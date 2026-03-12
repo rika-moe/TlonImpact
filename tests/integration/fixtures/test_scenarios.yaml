@@ -1,0 +1,84 @@
+# Test Scenarios for Integration Tests
+#
+# These scenarios define message sequences for testing multi-turn conversations.
+
+scenarios:
+  - id: TC002
+    name: "基础问候"
+    description: "简单的问候语，验证基本消息流转"
+    messages:
+      - turn: 1
+        content: "你好"
+        expect_response: true
+        expect_response_from: ["customer_service", "cs-001"]
+        timeout: 30
+
+  - id: TC003-A
+    name: "需求分析-项目启动"
+    description: "启动一个新项目，验证 PM 响应"
+    messages:
+      - turn: 1
+        content: "我想做一个读书笔记网站"
+        expect_response: true
+        expect_response_from: ["project_manager", "pm-001"]
+        timeout: 45
+
+  - id: TC003-B
+    name: "需求分析-技术咨询"
+    description: "询问技术栈，验证协作流程"
+    messages:
+      - turn: 1
+        content: "我想做一个读书笔记网站"
+        expect_response: true
+        timeout: 45
+      - turn: 2
+        content: "用什么技术栈比较好？"
+        expect_response: true
+        expect_mention: ["developer", "dev-001"]
+        timeout: 45
+
+  - id: TC003-C
+    name: "多轮对话-完整流程"
+    description: "完整的三轮对话"
+    messages:
+      - turn: 1
+        content: "帮我做个简单的网页"
+        expect_response: true
+        timeout: 45
+      - turn: 2
+        content: "需要什么技术栈？"
+        expect_response: true
+        timeout: 45
+      - turn: 3
+        content: "好的就按这个做"
+        expect_response: true
+        timeout: 30
+
+  - id: TC005
+    name: "多Agent协作"
+    description: "测试项目经理协调能力"
+    messages:
+      - turn: 1
+        content: "@项目经理 帮我安排一个全栈项目"
+        expect_response: true
+        timeout: 60
+
+  - id: TC_ADV_001
+    name: "技术实现询问"
+    description: "询问具体技术实现"
+    messages:
+      - turn: 1
+        content: "@开发工程师 怎么实现用户认证系统？"
+        expect_response: true
+        expect_response_from: ["developer", "dev-001"]
+        timeout: 60
+
+  - id: TC_ADV_002
+    name: "数据分析请求"
+    description: "请求数据分析"
+    messages:
+      - turn: 1
+        content: "帮我分析一下这个CSV文件的数据趋势"
+        expect_response: true
+        expect_response_from: ["data_analyst", "data-001"]
+        timeout: 60
