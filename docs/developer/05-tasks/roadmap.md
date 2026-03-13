@@ -34,7 +34,7 @@
 **验收标准:**
 
 ```python
-from tlon.tasks import Task, TaskManager
+from tlon.subsystem.tools.tasks import Task, TaskManager
 
 manager = TaskManager(agent_id="dev-001")
 task = manager.create_task("实现登录API")

@@ -1,5 +1,5 @@
 """Agent components for Tlon."""
 
-from .config import AgentConfig
+from tlon.base.config.config import AgentConfig
 
 __all__ = ["AgentConfig"]

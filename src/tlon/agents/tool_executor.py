@@ -5,8 +5,8 @@ Manages tool registration and execution.
 
 from typing import Any, Dict, List
 
-from ..logger import get_logger
-from ..tools.base import Tool, ToolResult
+from tlon.base.logger import get_logger
+from tlon.subsystem.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 

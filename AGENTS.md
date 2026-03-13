@@ -98,133 +98,181 @@ rich>=14.3.3
 ## 项目结构
 
 ```
-tlon/
-├── src/tlon/                 # 主源代码
-│   ├── __init__.py
-│   ├── __main__.py           # 模块入口
-│   ├── settings.py           # 全局配置
-│   ├── logger.py             # 日志配置
-│   │
-│   ├── adapters/             # 交互层（预留）
-│   │   ├── base.py
+src/tlon/
+│
+├── __init__.py                     # 包入口
+│
+├── agents/                         # 【Agent 层】智能体核心实现
+│   ├── agent.py                    #   Agent 核心类
+│   ├── agent_registry.py           #   Agent 注册表（生命周期管理）
+│   ├── llm_client.py               #   LLM 客户端
+│   ├── prompt_builder.py           #   系统提示构建
+│   └── tool_executor.py            #   工具执行器
+│
+├── app/                            # 【应用层】CLI、Server、Clients、Wizard
+│   ├── cli/                        #   命令行入口
+│   │   ├── main.py                 #     CLI 主入口
 │   │   └── __init__.py
-│   │
-│   ├── agents/               # Agent 核心实现
-│   │   ├── agent.py          # Agent 类（核心）
-│   │   ├── agent_registry.py # Agent 注册表
-│   │   ├── config.py         # Agent 配置
-│   │   ├── docker_runtime.py # Docker 运行时
-│   │   ├── llm_client.py     # LLM 客户端
-│   │   ├── prompt_builder.py # 系统提示构建
-│   │   └── tool_executor.py  # 工具执行器
-│   │
-│   ├── cli/                  # 命令行界面
-│   │   ├── main.py           # CLI 主入口
-│   │   ├── tui.py            # TUI 实现（富文本）
-│   │   ├── tui_simple.py     # 简化 TUI（主要实现）
-│   │   └── wizard.py         # 配置向导
-│   │
-│   ├── clients/              # 客户端 SDK
-│   │   └── sdk.py
-│   │
-│   ├── config/               # 配置管理
-│   │   ├── loader.py         # 配置加载器
-│   │   ├── models.py         # 配置模型
-│   │   ├── prompts.py        # 提示模板管理
-│   │   ├── saver.py          # 配置保存
-│   │   └── validator.py      # 配置验证
-│   │
-│   ├── memory/               # 记忆系统（Shakespeare）
-│   │   ├── manager.py        # 记忆管理器
-│   │   ├── models.py         # 记忆模型
-│   │   ├── working_store.py  # 工作记忆存储
-│   │   ├── episodic_store.py # 情景记忆存储
-│   │   ├── summarizer.py     # 摘要生成器
-│   │   └── base.py           # 基础定义
-│   │
-│   ├── messaging/            # 消息系统
-│   │   ├── congress.py       # 聊天室（代表大会）
-│   │   ├── event_bus.py      # 事件总线
+│   ├── clients/                    #   客户端实现
+│   │   ├── tui/                    #     TUI 客户端
+│   │   │   └── tui_simple.py       #       简化 TUI 实现
+│   │   ├── sdk.py                  #     SDK 客户端
+│   │   ├── webui/                  #     WebUI (预留)
+│   │   └── imui/                   #     IMUI (预留)
+│   ├── server/                     #   服务端
+│   │   ├── app.py                  #     ServerApp 主应用
+│   │   ├── api/                    #     API 层
+│   │   │   ├── rest.py             #       REST API
+│   │   │   └── websocket.py        #       WebSocket API
+│   │   └── core/                   #     核心服务
+│   │       └── server.py           #       TlonServer
+│   └── wizard/                     #   配置向导（Mirror）
+│       ├── core.py                 #     向导核心
+│       ├── agent_store.py          #     Agent 存储
+│       ├── position_store.py       #     岗位存储
+│       ├── diagnostics.py          #     诊断工具
+│       ├── templates.py            #     模板
+│       └── menus/                  #     菜单
+│           ├── agent_menu.py
+│           ├── position_menu.py
+│           ├── diagnostics_menu.py
+│           ├── settings_menu.py
+│           └── quickstart.py
+│
+├── base/                           # 【基础层】基础设施
+│   ├── config/                     #   配置管理
+│   │   ├── config.py               #     配置类
+│   │   ├── loader.py               #     配置加载器
+│   │   ├── models.py               #     配置模型
+│   │   ├── prompts.py              #     Prompt 模板管理
+│   │   ├── saver.py                #     配置保存器
+│   │   └── validator.py            #     配置验证器
+│   ├── events/                     #   事件系统
+│   │   ├── event.py                #     Event 类（原 protocol/event.py）
+│   │   └── event_bus.py            #     EventBus（原 messaging/event_bus.py）
+│   ├── logger.py                   #   日志配置
+│   └── settings.py                 #   全局设置
+│
+├── organization/                   # 【组织层】多 Agent 协作基础设施
+│   ├── messaging/                  #   消息系统
+│   │   ├── congress.py             #     Congress（代表大会）
+│   │   ├── message.py              #     Message 类（原 protocol/message.py）
 │   │   └── __init__.py
-│   │
-│   ├── positions/            # 岗位系统
-│   │   ├── models.py         # 岗位模型
-│   │   ├── registry.py       # 岗位注册表
-│   │   └── prompt_renderer.py
-│   │
-│   ├── protocol/             # 协议定义
-│   │   ├── message.py        # 消息格式
-│   │   └── event.py          # 事件格式
-│   │
-│   ├── server/               # 服务端
-│   │   ├── app.py            # 服务端应用
-│   │   ├── core/server.py    # 核心服务
-│   │   └── api/              # API 层
-│   │       ├── rest.py       # REST API
-│   │       └── websocket.py  # WebSocket API
-│   │
-│   ├── skills/               # 技能系统（Library of Babel）
-│   │   ├── manager.py        # 技能管理器
-│   │   ├── models.py         # 技能模型
-│   │   └── validator.py      # 技能验证
-│   │
-│   ├── tasks/                # 任务系统
-│   │   ├── manager.py
-│   │   └── models.py
-│   │
-│   ├── tools/                # 工具集
-│   │   ├── base.py           # 工具基类
-│   │   ├── execute_bash.py   # Bash 执行
-│   │   ├── send_message.py   # 消息发送
-│   │   ├── activate_skill.py # 技能激活
-│   │   ├── remember_fact.py  # 记忆记录
-│   │   ├── search_memories.py
-│   │   ├── create_task.py    # 任务创建
-│   │   └── ...
-│   │
-│   └── wizard/               # 配置向导（Mirror）
-│       ├── core.py           # 向导核心
-│       ├── agent_store.py    # Agent 存储
-│       ├── position_store.py # 岗位存储
-│       ├── diagnostics.py    # 诊断工具
-│       ├── templates.py      # 模板
-│       └── menus/            # 菜单
+│   └── positions/                  #   岗位系统
+│       ├── models.py               #     岗位模型
+│       ├── registry.py             #     岗位注册表
+│       └── prompt_renderer.py      #     Prompt 渲染器
 │
-├── config/                   # 配置文件
-│   ├── agents/               # Agent 配置（YAML）
-│   │   ├── lin-zhiyao.yaml   # 林知遥
-│   │   ├── su-wanqing.yaml   # 苏晚晴
-│   │   └── ...
-│   ├── positions/            # 岗位配置（YAML）
-│   │   ├── developer.yaml
-│   │   ├── project_manager.yaml
-│   │   └── ...
-│   └── prompt_templates.yaml # 提示模板
+├── sandbox/                        # 【Sandbox 层】Docker 隔离
+│   └── docker_runtime.py           #   Docker 运行时（从 agents/ 移出）
 │
-├── skills/                   # 技能定义（Library）
-│   ├── git-operations/       # Git 操作
-│   │   ├── SKILL.md
-│   │   └── scripts/
-│   ├── file-operations/      # 文件操作
-│   ├── csv-pipeline/         # CSV 处理
-│   ├── frontend-design/      # 前端设计
-│   └── plan-i/               # 计划生成
-│
-├── data/                     # 数据存储
-│   └── agents/
-│       └── {agent_id}/
-│           └── memory/       # Agent 记忆
-│
-├── tests/                    # 测试
-│   ├── config/               # 配置测试
-│   ├── wizard/               # 向导测试
-│   ├── tasks/                # 任务测试
-│   └── test_skills/          # 技能测试
-│
-└── docs/                     # 文档
-    ├── developer/            # 开发文档
-    ├── user/                 # 用户文档
-    └── marketing/            # 品牌文档
+└── subsystem/                      # 【子系统层】Memory、Skills、Tools
+    ├── memory/                     #   记忆系统（Shakespeare）
+    │   ├── base.py                 #     基础定义
+    │   ├── manager.py              #     记忆管理器
+    │   ├── models.py               #     记忆模型
+    │   ├── working_store.py        #     工作记忆存储
+    │   ├── episodic_store.py       #     情景记忆存储
+    │   └── summarizer.py           #     摘要生成器
+    ├── skills/                     #   技能系统（Library of Babel）
+    │   ├── manager.py              #     技能管理器
+    │   ├── models.py               #     技能模型
+    │   └── validator.py            #     技能验证器
+    └── tools/                      #   工具层
+        ├── base.py                 #     工具基类
+        ├── complete_dialog/        #     对话完成工具
+        │   ├── complete_dialog.py
+        │   └── send_message.py
+        ├── memory/                 #     记忆工具
+        │   ├── remember_fact.py
+        │   ├── search_memories.py
+        │   ├── forget_memory.py
+        │   └── generate_summary.py
+        ├── shell/                  #     Shell 工具
+        │   └── execute_bash.py
+        ├── skills/                 #     技能工具
+        │   ├── activate_skill.py
+        │   ├── deactivate_skill.py
+        │   └── load_skill_resource.py
+        └── tasks/                  #     任务工具 + 任务管理
+            ├── complete_task.py
+            ├── create_task.py
+            ├── get_current_task.py
+            ├── list_tasks.py
+            ├── manager.py
+            ├── models.py
+            ├── pause_task.py
+            ├── remove_task.py
+            └── start_task.py
+```
+
+---
+
+## 架构设计
+
+### 7 层架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 入口层 (Entry)                                            │
+│    __main__.py, app/cli/main.py                             │
+├─────────────────────────────────────────────────────────────┤
+│ 2. 应用层 (App)                                              │
+│    app/cli/, app/server/, app/clients/, app/wizard/         │
+├─────────────────────────────────────────────────────────────┤
+│ 3. 基础层 (Base)                                             │
+│    base/config/, base/events/, base/logger.py               │
+├─────────────────────────────────────────────────────────────┤
+│ 4. 组织层 (Organization)                                     │
+│    organization/messaging/, organization/positions/         │
+│    （原「核心层 Core」，protocol/ 已拆分）                    │
+├─────────────────────────────────────────────────────────────┤
+│ 5. Agent 层                                                  │
+│    agents/                                                  │
+├─────────────────────────────────────────────────────────────┤
+│ 6. Sandbox 层                                                │
+│    sandbox/                                                 │
+├─────────────────────────────────────────────────────────────┤
+│ 7. 子系统层 (Subsystems)                                     │
+│    subsystem/memory/, subsystem/skills/, subsystem/tools/   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 数据流向
+
+```
+用户输入 → CLI → ServerApp → TlonServer → Event Bus → Congress → Agent
+                                                                  │
+                                                                  ▼
+                                                            ┌────────────┐
+                                                            │   Memory   │
+                                                            │  (Context) │
+                                                            └────────────┘
+                                                                  │
+                                                                  ▼
+                            ┌─────────────────────────┬───────────┴───────────┐
+                            │                         │                       │
+                            ▼                         ▼                       ▼
+                     ┌────────────┐          ┌────────────┐           ┌────────────┐
+                     │sendMessage │          │executeBash │           │createTask  │
+                     │   Tool     │          │   Tool     │           │   Tool     │
+                     └─────┬──────┘          └─────┬──────┘           └─────┬──────┘
+                           │                       │                        │
+                           ▼                       ▼                        │
+                      ChatRoom广播           Docker API                   │
+                           │                       │                        │
+                           │              ┌────────▼─────────┐              │
+                           │              │  🔒 Sandbox 层   │              │
+                           │              │ Docker Container │              │
+                           │              └────────┬─────────┘              │
+                           │                       │                        │
+                           └───────────────────────┼────────────────────────┘
+                                                   │
+                                                   ▼
+                                              返回结果
+                                                   │
+                                                   ▼
+用户输出 ← CLI ← ServerApp ← Event Bus ← Congress ← Agent
 ```
 
 ---
@@ -357,123 +405,47 @@ mypy src/tlon
 
 ---
 
-## 架构设计
+## 导入路径速查
 
-### 三层架构
+### 基础层
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         交互层 (Adapters)                    │
-│              CLI │ TUI │ WebSocket │ Telegram               │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-┌────────────────────────────▼────────────────────────────────┐
-│                          核心层 (Core)                       │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
-│  │  Event Bus  │  │   Congress   │  │  Message Protocol   │ │
-│  │  事件总线   │  │   聊天室     │  │    消息协议         │ │
-│  └─────────────┘  └──────────────┘  └─────────────────────┘ │
-└────────────────────────────┬────────────────────────────────┘
-                             │
-┌────────────────────────────▼────────────────────────────────┐
-│                         Agent 层                             │
-│  ┌─────────┐ ┌────────────┐ ┌────────────┐ ┌─────────────┐ │
-│  │ Agent   │ │ LLM Client │ │Tool Executor│ │Docker Runtime│ │
-│  │ 智能体  │ │ LLM客户端  │ │  工具执行   │ │ Docker运行时 │ │
-│  └────┬────┘ └────────────┘ └────────────┘ └─────────────┘ │
-│       │                                                     │
-│  ┌────┴────┐ ┌─────────────────┐ ┌──────────────────────┐ │
-│  │ Skills  │ │  Memory Manager │ │    Task Manager      │ │
-│  │ 技能系统 │ │    记忆管理     │ │     任务管理         │ │
-│  └─────────┘ └─────────────────┘ └──────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+```python
+from tlon.base.config import ConfigLoader, ConfigSaver
+from tlon.base.config.models import AgentConfig, PositionConfig
+from tlon.base.events import Event, EventType, EventBus
+from tlon.base.logger import get_logger
+from tlon.base.settings import settings
 ```
 
-### 数据流向
+### 组织层
 
-```
-用户输入 → CLI/TUI → Event Bus → Congress → Agent → LLM
-                                              │
-                    ┌─────────────────────────┼─────────────────────────┐
-                    ▼                         ▼                         ▼
-               sendMessage              executeBash               activateSkill
-                    │                         │                         │
-                    └─────────────────────────┴─────────────────────────┘
-                                              │
-                                              ▼
-                                         返回结果
-                                              │
-用户输出 ← CLI/TUI ← Event Bus ← Congress ← Agent
+```python
+from tlon.organization.messaging import Congress, Message
+from tlon.organization.positions import PositionRegistry, Position
 ```
 
-### Agent 生命周期
+### Agent 层
 
-1. **初始化**: 加载配置 → 启动 Docker → 加载记忆 → 发现技能
-2. **运行**: 订阅事件 → 处理消息队列（串行）→ 调用 LLM → 执行工具
-3. **关闭**: 停止队列 → 保存记忆 → 停止 Docker
-
----
-
-## 配置系统
-
-### 岗位配置（Position）
-
-`config/positions/{position_id}.yaml`:
-
-```yaml
-position:
-  id: "developer"
-  type: "developer"
-  title: "开发工程师"
-  department: "技术部"
-  jd: |
-    负责代码编写、Bug 修复和技术方案实现。
-  proactive: false           # 是否主动响应
-  contact_when: "有技术问题时" # 何时联系
-  rules:                     # 行为规则
-    - "只在你被@时响应"
-  default_skills:
-    - "git-operations"
+```python
+from tlon.agents import Agent, AgentRegistry
+from tlon.agents.llm_client import LLMClient
+from tlon.agents.tool_executor import ToolExecutor
+from tlon.agents.prompt_builder import SystemPromptBuilder
 ```
 
-### Agent 配置
+### Sandbox 层
 
-`config/agents/{agent_id}.yaml`:
-
-```yaml
-agent:
-  id: "lin-zhiyao"
-  name: "林知遥"
-  personality: "技术能力强、注重细节"
-  position_id: "developer"
-  skills:
-    - "git-operations"
-    - "file-operations"
-  llm:
-    model_name: "kimi-k2.5"
-    temperature: 0.7
-  docker:
-    image: "ubuntu:22.04"
-    memory_limit: "512m"
+```python
+from tlon.sandbox.docker_runtime import DockerRuntime
 ```
 
-### 技能定义
+### 子系统层
 
-`skills/{skill-name}/SKILL.md`:
-
-```yaml
----
-name: git-operations
-description: Perform Git version control operations
-metadata:
-  author: Tlon Team
-  version: "1.0.0"
-  tags: ["git", "vcs"]
----
-
-# Git Operations
-
-详细使用说明...
+```python
+from tlon.subsystem.memory import MemoryManager
+from tlon.subsystem.skills import SkillManager
+from tlon.subsystem.tools.base import Tool, ToolResult
+from tlon.subsystem.tools.tasks import TaskManager, Task
 ```
 
 ---
@@ -551,13 +523,13 @@ metadata:
 
 ### 添加新 Tool
 
-1. 在 `src/tlon/tools/` 创建新文件，继承 `Tool` 基类
+1. 在 `src/tlon/subsystem/tools/{category}/` 创建新文件，继承 `Tool` 基类
 2. 实现 `name`, `description`, `parameters`, `execute()` 方法
 3. 在 `Agent._register_tools()` 中注册
 
 ```python
-# src/tlon/tools/my_tool.py
-from .base import Tool, ToolResult
+# src/tlon/subsystem/tools/my_category/my_tool.py
+from ..base import Tool, ToolResult
 
 class MyTool(Tool):
     name = "myTool"
@@ -646,8 +618,12 @@ docker exec -it tlon-agent-{agent_id} bash
 | 文档 | 内容 |
 |------|------|
 | `docs/developer/01-architecture/overview.md` | 架构设计文档 |
+| `docs/developer/01-architecture/memory.md` | Memory 系统详细设计 |
+| `docs/developer/01-architecture/multi-agent.md` | 多 Agent 协作系统设计 |
+| `docs/developer/01-architecture/ui-architecture.md` | UI 架构设计 |
 | `docs/developer/03-wizard/` | 配置向导设计 |
 | `docs/developer/04-skills/` | 技能系统设计 |
+| `docs/developer/05-tasks/` | 任务系统设计 |
 | `docs/developer/06-testing/` | 测试体系 |
 | `docs/user/` | 用户指南 |
 | `docs/marketing/brand-narrative-v2.md` | 品牌叙事 |
@@ -662,4 +638,4 @@ docker exec -it tlon-agent-{agent_id} bash
 
 ---
 
-*最后更新：2026-03-09*
+*最后更新：2026-03-13*

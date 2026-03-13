@@ -7,17 +7,16 @@ This module provides AgentRegistry class that manages:
 - Resident vs lazy loading strategies
 """
 
-import asyncio
 from typing import Dict, List, Optional, Set
 
-from ..messaging import Congress, Participant
-from ..protocol import Event, EventType
-from ..messaging import EventBus
-from ..protocol import Message
-from ..logger import get_logger
-from .agent import Agent
-from .config import AgentConfig
-from ..positions import PositionRegistry
+from tlon.organization.messaging import Congress, Participant
+from tlon.base.events.event import Event, EventType
+from tlon.organization.messaging import EventBus
+from tlon.organization.messaging.message import Message
+from tlon.base.logger import get_logger
+from tlon.agents.agent import Agent
+from tlon.base.config.config import AgentConfig
+from tlon.organization.positions import PositionRegistry
 
 logger = get_logger(__name__)
 

@@ -362,48 +362,103 @@ type EventType =
 ## 5. 代码结构
 
 ```
-minions/
-├── __init__.py
-├── __main__.py
-├── cli/                    # 命令行入口
-│   ├── __init__.py
-│   ├── main.py            # 命令分发
-│   ├── server.py          # minions server
-│   ├── tui.py             # minions tui (入口)
-│   ├── tui_simple.py      # 极简 TUI 实现 ⭐ 主推
-│   ├── tui_textual.py     # Textual 版本 (已废弃)
-│   └── wizard.py          # minions wizard
-├── server/                 # Server 进程
-│   ├── __init__.py
-│   ├── app.py             # Server 主类
-│   ├── api/               # API 层
+src/tlon/
+│
+├── __init__.py                     # 包入口
+├── __main__.py                     # 模块入口
+│
+├── app/                            # 【应用层】CLI、Server、Clients、Wizard
+│   ├── cli/                        #   命令行入口
 │   │   ├── __init__.py
-│   │   ├── rest.py        # REST endpoints
-│   │   └── websocket.py   # WebSocket handlers
-│   ├── auth.py            # 认证管理
-│   └── session.py         # 会话管理
-├── clients/                # 客户端
-│   ├── __init__.py
-│   ├── base.py            # 客户端基类
-│   ├── sdk.py             # MinionsClient SDK
-│   ├── tui/               # TUI 客户端目录 (可选)
-│   ├── web/               # Web 前端 (未来)
-│   └── telegram/          # Telegram Bot (未来)
+│   │   └── main.py                #     命令分发
+│   ├── clients/                    #   客户端实现
+│   │   ├── __init__.py
+│   │   ├── sdk.py                 #     SDK 客户端 (MinionsClient)
+│   │   ├── tui/                   #     TUI 客户端
+│   │   │   ├── __init__.py
+│   │   │   └── tui_simple.py      #       极简 TUI 实现 ⭐ 主推
+│   │   ├── webui/                 #     Web 前端 (预留)
+│   │   └── imui/                  #     IM 客户端 (预留，如 Telegram)
+│   ├── server/                     #   服务端
+│   │   ├── __init__.py
+│   │   ├── app.py                 #     Server 主类 (ServerApp)
+│   │   ├── auth.py                #     认证管理
+│   │   ├── session.py             #     会话管理
+│   │   └── api/                   #     API 层
+│   │       ├── __init__.py
+│   │       ├── rest.py            #       REST endpoints
+│   │       └── websocket.py       #       WebSocket handlers
+│   └── wizard/                     #   配置向导 (Mirror)
 │       ├── __init__.py
-│       └── bot.py
-├── core/                   # 核心组件
-│   ├── event_bus.py
-│   ├── chatroom.py
-│   └── message.py
-├── agents/                 # Agent 层
-│   ├── agent.py
-│   ├── agent_registry.py
-│   └── ...
-└── wizard/                 # 配置向导
+│       ├── core.py                #     向导核心
+│       ├── validators.py          #     验证器
+│       ├── templates.py           #     模板
+│       └── menus/                 #     菜单
+│
+├── base/                           # 【基础层】配置、事件、日志
+│   ├── __init__.py
+│   ├── logger.py                  #   日志配置
+│   ├── settings.py                #   全局设置
+│   ├── config/                     #   配置管理
+│   │   ├── __init__.py
+│   │   ├── config.py
+│   │   ├── loader.py
+│   │   ├── models.py
+│   │   ├── prompts.py
+│   │   ├── saver.py
+│   │   └── validator.py
+│   └── events/                     #   事件系统
+│       ├── __init__.py
+│       ├── event.py               #     Event 类 (原 protocol/)
+│       └── event_bus.py           #     EventBus (原 messaging/)
+│
+├── organization/                   # 【组织层】多 Agent 协作基础设施
+│   ├── __init__.py
+│   ├── messaging/                  #   消息系统
+│   │   ├── __init__.py
+│   │   ├── congress.py            #     Congress (代表大会)
+│   │   └── message.py             #     Message 类 (原 protocol/)
+│   └── positions/                  #   岗位系统
+│       ├── __init__.py
+│       ├── models.py
+│       ├── registry.py
+│       └── prompt_renderer.py
+│
+├── agents/                         # 【Agent 层】智能体核心
+│   ├── __init__.py
+│   ├── agent.py                   #   Agent 核心类
+│   ├── agent_registry.py          #   Agent 注册表
+│   ├── llm_client.py              #   LLM 客户端
+│   ├── prompt_builder.py          #   系统提示构建
+│   └── tool_executor.py           #   工具执行器
+│
+├── sandbox/                        # 【Sandbox 层】Docker 隔离
+│   ├── __init__.py
+│   └── docker_runtime.py          #   Docker 运行时
+│
+└── subsystem/                      # 【子系统层】Memory、Skills、Tools
     ├── __init__.py
-    ├── core.py
-    ├── validators.py
-    └── templates/
+    ├── memory/                     #   记忆系统 (Shakespeare)
+    │   ├── __init__.py
+    │   ├── base.py
+    │   ├── manager.py
+    │   ├── models.py
+    │   ├── working_store.py
+    │   ├── episodic_store.py
+    │   └── summarizer.py
+    ├── skills/                     #   技能系统 (Library of Babel)
+    │   ├── __init__.py
+    │   ├── manager.py
+    │   ├── models.py
+    │   └── validator.py
+    └── tools/                      #   工具层
+        ├── __init__.py
+        ├── base.py                #     工具基类
+        ├── complete_dialog/        #     对话完成工具
+        ├── memory/                 #     记忆工具
+        ├── shell/                  #     Shell 工具
+        ├── skills/                 #     技能工具
+        └── tasks/                  #     任务工具 + 任务管理
 ```
 
 ---

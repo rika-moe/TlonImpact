@@ -61,7 +61,7 @@ dev = [
 ]
 
 [project.scripts]
-tlon = "tlon.cli.main:main"
+tlon = "tlon.app.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]

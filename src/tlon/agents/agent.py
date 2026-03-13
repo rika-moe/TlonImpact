@@ -8,37 +8,37 @@ import asyncio
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from ..messaging import Congress
-from ..protocol import Event, EventType
-from ..messaging import EventBus
-from ..protocol import Message
-from ..logger import get_logger
-from ..skills.manager import SkillManager
-from ..tools.activate_skill import ActivateSkillTool
-from ..tools.deactivate_skill import DeactivateSkillTool
-from ..tools.execute_bash import ExecuteBashTool
-from ..tools.forget_memory import ForgetMemoryTool
-from ..tools.generate_summary import GenerateSummaryTool
-from ..tools.load_skill_resource import LoadSkillResourceTool
-from ..tools.remember_fact import RememberFactTool
-from ..tools.search_memories import SearchMemoriesTool
-from ..tools.send_message import SendMessageTool
-from ..tools.complete_dialog import CompleteDialogTool
-from ..tools.create_task import CreateTaskTool
-from ..tools.list_tasks import ListTasksTool
-from ..tools.start_task import StartTaskTool
-from ..tools.pause_task import PauseTaskTool
-from ..tools.complete_task import CompleteTaskTool
-from ..tools.remove_task import RemoveTaskTool
-from ..tools.get_current_task import GetCurrentTaskTool
-from .config import AgentConfig
-from .docker_runtime import DockerRuntime
-from .llm_client import LLMClient, LLMResponse, ToolCall
-from .tool_executor import ToolExecutor
-from ..memory import MemoryManager, MemoryConfig
-from ..config import PromptTemplateManager, ConfigLoader
-from .prompt_builder import SystemPromptBuilder
-from ..tasks import TaskManager
+from tlon.organization.messaging import Congress
+from tlon.base.events.event import Event, EventType
+from tlon.organization.messaging import EventBus
+from tlon.organization.messaging.message import Message
+from tlon.base.logger import get_logger
+from tlon.subsystem.skills import SkillManager
+from tlon.subsystem.tools.skills.activate_skill import ActivateSkillTool
+from tlon.subsystem.tools.skills.deactivate_skill import DeactivateSkillTool
+from tlon.subsystem.tools.shell.execute_bash import ExecuteBashTool
+from tlon.subsystem.tools.memory.forget_memory import ForgetMemoryTool
+from tlon.subsystem.tools.memory.generate_summary import GenerateSummaryTool
+from tlon.subsystem.tools.skills.load_skill_resource import LoadSkillResourceTool
+from tlon.subsystem.tools.memory.remember_fact import RememberFactTool
+from tlon.subsystem.tools.memory.search_memories import SearchMemoriesTool
+from tlon.subsystem.tools.complete_dialog.send_message import SendMessageTool
+from tlon.subsystem.tools.complete_dialog.complete_dialog import CompleteDialogTool
+from tlon.subsystem.tools.tasks.create_task import CreateTaskTool
+from tlon.subsystem.tools.tasks.list_tasks import ListTasksTool
+from tlon.subsystem.tools.tasks.start_task import StartTaskTool
+from tlon.subsystem.tools.tasks.pause_task import PauseTaskTool
+from tlon.subsystem.tools.tasks.complete_task import CompleteTaskTool
+from tlon.subsystem.tools.tasks.remove_task import RemoveTaskTool
+from tlon.subsystem.tools.tasks.get_current_task import GetCurrentTaskTool
+from tlon.base.config.config import AgentConfig
+from tlon.sandbox.docker_runtime import DockerRuntime
+from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
+from tlon.agents.tool_executor import ToolExecutor
+from tlon.subsystem.memory import MemoryManager, MemoryConfig
+from tlon.base.config import PromptTemplateManager, ConfigLoader
+from tlon.agents.prompt_builder import SystemPromptBuilder
+from tlon.subsystem.tools.tasks import TaskManager
 
 logger = get_logger(__name__)
 

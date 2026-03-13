@@ -1109,7 +1109,6 @@ wizard = [
 ## 7. 入口点
 
 ```python
-# tlon/cli/wizard.py
 import click
 from ..wizard.core import Wizard
 
@@ -1121,7 +1120,6 @@ def wizard():
 ```
 
 ```python
-# tlon/__main__.py
 import click
 from .cli.wizard import wizard
 

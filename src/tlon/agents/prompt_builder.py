@@ -153,7 +153,7 @@ class SystemPromptBuilder:
             
             return "\n\n".join(parts)
         except Exception as e:
-            from ..logger import get_logger
+            from tlon.base.logger import get_logger
             logger = get_logger(__name__)
             logger.warning(f"Failed to build memory context: {e}")
             return None

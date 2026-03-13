@@ -10,8 +10,8 @@ from typing import Any, Dict, List, Optional
 
 import openai
 
-from .config import LLMConfig
-from ..logger import get_logger
+from tlon.base.config.config import LLMConfig
+from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
 

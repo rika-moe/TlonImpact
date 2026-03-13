@@ -1,8 +1,8 @@
 # Minions 配置模块架构设计
 
-> 版本: 1.0  
-> 日期: 2026-03-08  
-> 状态: 设计中
+> **版本**: 2.0  
+> **日期**: 2026-03-13  
+> **状态**: 已同步代码结构
 
 ---
 
@@ -50,64 +50,63 @@ minions/
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────────────────┐
-│                          交互层 (CLI/Adapters)                          │
-│  ┌─────────────┐  ┌───────────────┐  ┌─────────────┐  ┌───────────────┐ │
-│  │ cli/tui_    │  │ cli/tui.py    │  │ adapters/   │  │ clients/sdk.py│ │
-│  │ simple.py   │  │ (富文本TUI)   │  │ base.py     │  │ (SDK客户端)   │ │
-│  └─────────────┘  └───────────────┘  └─────────────┘  └───────────────┘ │
+│                          应用层 (App)                                    │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐ │  │
+│  │  │   cli/      │  │   server/   │  │  clients/   │  │  wizard/  │ │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └───────────┘ │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
 └───────────────────────────────┬─────────────────────────────────────────┘
-                                │ WebSocket / REST API
+                                │
 ┌───────────────────────────────▼─────────────────────────────────────────┐
-│                          服务端层 (Server)                               │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                      server/app.py (ServerApp)                    │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
+│                          基础层 (Base)                                   │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                         base/config/                               │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────┐  │  │
+│  │  │   models    │  │   loader    │  │    saver    │  │ prompts  │  │  │
+│  │  │  (数据模型)  │  │  (加载配置)  │  │  (保存配置)  │  │(Prompt模板)│ │  │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └──────────┘  │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  validator (配置验证)                                          │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
+│  │  base/events/   │  │ base/logger.py  │  │   base/settings.py      │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘  │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────────────────┐
 │                          组织层 (Organization)                           │
-│                    （原「核心层 Core」，管理协作基础设施）                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐ │
-│  │ messaging/      │  │  protocol/      │  │  positions/             │ │
-│  │ ├─ congress.py  │  │  ├─ event.py    │  │  ├─ models.py           │ │
-│  │ ├─ event_bus.py │  │  ├─ message.py  │  │  ├─ registry.py         │ │
-│  │                 │  │                 │  │  └─ prompt_renderer.py  │ │
-│  │ Congress        │  │ Event, Message  │  │                         │ │
-│  │ EventBus        │  │                 │  │ PositionRegistry        │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘ │
+│                    （管理多 Agent 协作的基础设施）                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
+│  │   messaging/    │  │    positions/   │  │   (EventBus from base)  │  │
+│  │  ├─ congress.py │  │  ├─ models.py   │  │                         │  │
+│  │  ├─ message.py  │  │  ├─ registry.py │  │                         │  │
+│  │  └─ __init__.py │  │  └─ ...         │  │                         │  │
+│  │                 │  │                 │  │                         │  │
+│  │ Congress        │  │ PositionRegistry│  │                         │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘  │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────────────────┐
 │                         Agent 层 (agents/)                               │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌─────────────────┐ │
-│  │ agent.py     │ │ llm_client.py│ │docker_runtime│ │ tool_executor.py│ │
-│  │ Agent类      │ │ LLMClient    │ │DockerRuntime │ │ ToolExecutor    │ │
-│  └──────┬───────┘ └──────────────┘ └──────┬───────┘ └─────────────────┘ │
-└─────────┼──────────────────────────────────┼────────────────────────────┘
-          │                                  │ Docker API
-          │                                  ▼
-┌─────────┴───────────────────────────────────────────────────────────────┐
-│                    🔒 Sandbox 层 (Docker 容器)                           │
-│  - 每个 Agent 独立的隔离执行环境                                           │
-│  - executeBashCommand 在此层执行                                          │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌─────────────────┐  │
+│  │ agent.py     │ │ llm_client.py│ │tool_executor │ │prompt_builder   │  │
+│  │ Agent类      │ │ LLMClient    │ │   .py        │ │   .py           │  │
+│  │ (核心智能体) │ │ (LLM调用)    │ │ToolExecutor  │ │SystemPrompt     │  │
+│  └──────────────┘ └──────────────┘ └──────────────┘ └─────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         配置模块 (config/)                               │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │   models    │  │   loader    │  │    saver    │  │    prompts      │ │
-│  │  (数据模型)  │  │  (加载配置)  │  │  (保存配置)  │  │ (Prompt模板)    │ │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘ │
-│  ┌─────────────────────────────────────────────────────────────────────┐ │
-│  │  validator (配置验证)                                                │ │
-│  └─────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────┘
+**层次说明**:
+- **应用层** → **基础层** → **组织层** → **Agent 层**
+- Config 模块位于基础层，为上层提供配置服务
 ```
 
 ### 2.2 模块依赖关系
 
 ```
-config/             # 配置模块（基础设施层）
+base/config/         # 配置模块（基础层）
 ├── models          # 无依赖（纯数据类）
 ├── validator       # 依赖 models
 ├── loader          # 依赖 models, validator
@@ -115,23 +114,15 @@ config/             # 配置模块（基础设施层）
 ├── prompts         # 依赖 loader
 └── registry        # 依赖 loader, models
 
+app/wizard/         # 应用层 - 向导模块
+└── menus           # 依赖 base.config.loader, base.config.saver
+
 agents/             # Agent 层
-└── agent           # 依赖 config.models
+└── agent           # 依赖 base.config.models
 
-messaging/          # 组织层 (Organization)
-├── event_bus.py    # 依赖 config
-└── congress.py
-
-wizard/             # 向导模块（基础设施层）
-└── menus           # 依赖 config.loader, config.saver, config.validator
-
-server/             # 服务端层
-└── app             # 依赖 config.registry
+organization/       # 组织层
+└── messaging       # 依赖 base.events
 ```
-
-**层次说明**:
-- **服务端层** → **组织层** → **Agent 层** → **🔒 Sandbox 层**
-- 组织层（原核心层 Core）包含 EventBus、ChatRoom(Congress)、PositionRegistry 等协作基础设施
 
 ---
 
@@ -142,7 +133,7 @@ server/             # 服务端层
 职责: 定义所有配置相关的数据类
 
 ```python
-# tlon/config/models.py
+# tlon/base/config/models.py
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
@@ -307,7 +298,7 @@ class PromptTemplates:
 职责: 验证配置数据的有效性和一致性
 
 ```python
-# tlon/config/validator.py
+# tlon/base/config/validator.py
 
 from typing import List, Tuple, Optional
 from .models import PositionConfig, AgentConfig, PromptTemplates
@@ -397,7 +388,7 @@ class ConfigValidator:
 职责: 从 YAML 文件加载配置到数据模型
 
 ```python
-# tlon/config/loader.py
+# tlon/base/config/loader.py
 
 import yaml
 from pathlib import Path
@@ -527,7 +518,7 @@ class ConfigLoader:
 职责: 将数据模型保存到 YAML 文件
 
 ```python
-# tlon/config/saver.py
+# tlon/base/config/saver.py
 
 import yaml
 from pathlib import Path
@@ -606,7 +597,7 @@ class ConfigSaver:
 职责: 管理 Prompt 模板，处理 Position 覆盖逻辑
 
 ```python
-# tlon/config/prompts.py
+# tlon/base/config/prompts.py
 
 from typing import Optional, List
 from pathlib import Path
@@ -660,7 +651,7 @@ class PromptTemplateManager:
 ### 3.6 __init__.py - 模块入口
 
 ```python
-# tlon/config/__init__.py
+# tlon/base/config/__init__.py
 
 """Minions 配置模块
 
@@ -671,8 +662,8 @@ class PromptTemplateManager:
 - Prompt 模板管理
 
 使用示例:
-    >>> from tlon.config import ConfigLoader, ConfigSaver
-    >>> from tlon.config.models import AgentConfig
+    >>> from tlon.base.config import ConfigLoader, ConfigSaver
+    >>> from tlon.base.config.models import AgentConfig
     >>> 
     >>> # 加载配置
     >>> loader = ConfigLoader()
@@ -722,7 +713,7 @@ __all__ = [
 
 ### 4.1 Wizard 模块迁移
 
-**当前代码** (minions/wizard/agent_store.py):
+**当前代码** (tlon/app/wizard/agent_store.py):
 ```python
 # 当前 - 自己实现加载/保存逻辑
 class AgentStore:
@@ -737,8 +728,8 @@ class AgentStore:
 
 ```python
 # 迁移后 - 使用 config 模块
-from tlon.config import ConfigLoader, ConfigSaver
-from tlon.config.models import AgentConfig
+from tlon.base.config import ConfigLoader, ConfigSaver
+from tlon.base.config.models import AgentConfig
 
 
 class AgentStore:
@@ -753,73 +744,47 @@ class AgentStore:
         return self.saver.save_agent(config)
 ```
 
-### 4.2 Agent 模块迁移
+### 4.2 导入路径变更
 
-**当前代码** (minions/agents/config.py):
-```python
-# 当前 - 独立的 AgentConfig
-@dataclass
-class AgentConfig:
-    # ... 定义 ...
-```
-
-**迁移后**:
-
-```python
-# 迁移后 - 从 config 模块导入
-from tlon.config.models import AgentConfig  # 直接导入
-```
-
-### 4.3 Positions 模块迁移
-
-**当前代码** (minions/positions/models.py):
-```python
-# 当前 - 独立的 Position 类
-@dataclass
-class Position:
-    # ... 定义 ...
-```
-
-**迁移后**:
-
-```python
-# 迁移后 - 从 config 模块导入
-from tlon.config.models import PositionConfig as Position
-```
+| 旧导入路径 | 新导入路径 |
+|------------|------------|
+| `from tlon.config import ConfigLoader` | `from tlon.base.config import ConfigLoader` |
+| `from tlon.config.models import AgentConfig` | `from tlon.base.config.models import AgentConfig` |
+| `from tlon.agents.config import AgentConfig` | `from tlon.base.config.models import AgentConfig` |
 
 ---
 
 ## 5. 实施步骤
 
-### Phase 1: 创建 config 模块
-1. 创建 `minions/config/` 目录
-2. 实现 `models.py` - 数据模型
-3. 实现 `validator.py` - 验证器
-4. 实现 `loader.py` - 加载器
-5. 实现 `saver.py` - 保存器
-6. 实现 `prompts.py` - Prompt 管理
-7. 实现 `__init__.py` - 模块入口
+### Phase 1: 创建 config 模块 ✅
+- [x] 创建 `tlon/base/config/` 目录
+- [x] 实现 `models.py` - 数据模型
+- [x] 实现 `validator.py` - 验证器
+- [x] 实现 `loader.py` - 加载器
+- [x] 实现 `saver.py` - 保存器
+- [x] 实现 `prompts.py` - Prompt 管理
+- [x] 实现 `__init__.py` - 模块入口
 
-### Phase 2: 迁移现有配置模型
-1. 将 `agents/config.py` 的 `AgentConfig` 迁移到 `config/models.py`
-2. 将 `positions/models.py` 的 `Position` 迁移到 `config/models.py`（重命名为 `PositionConfig`）
-3. 在原有位置保留兼容导入（可选）
+### Phase 2: 迁移现有配置模型 🔄
+- [ ] 将 `agents/config.py` 的 `AgentConfig` 迁移到 `base/config/models.py`
+- [ ] 将 `positions/models.py` 的 `Position` 迁移到 `base/config/models.py`（重命名为 `PositionConfig`）
+- [ ] 在原有位置保留兼容导入（可选）
 
-### Phase 3: 迁移 Wizard 模块
-1. 修改 `wizard/agent_store.py` 使用 `ConfigLoader` 和 `ConfigSaver`
-2. 修改 `wizard/position_store.py` 使用 `ConfigLoader` 和 `ConfigSaver`
-3. 删除重复的配置加载/保存逻辑
+### Phase 3: 迁移 Wizard 模块 🔄
+- [ ] 修改 `app/wizard/agent_store.py` 使用 `ConfigLoader` 和 `ConfigSaver`
+- [ ] 修改 `app/wizard/position_store.py` 使用 `ConfigLoader` 和 `ConfigSaver`
+- [ ] 删除重复的配置加载/保存逻辑
 
-### Phase 4: 迁移 Agent 模块
-1. 修改 `agents/agent.py` 使用 `PromptTemplateManager`
-2. 重构 `_build_system_prompt()` 方法
-3. 删除 `_build_role_prompt()` 方法
+### Phase 4: 迁移 Agent 模块 🔄
+- [ ] 修改 `agents/agent.py` 使用 `PromptTemplateManager`
+- [ ] 重构 `_build_system_prompt()` 方法
+- [ ] 删除 `_build_role_prompt()` 方法
 
-### Phase 5: 测试验证
-1. 单元测试
-2. 集成测试
-3. Wizard 功能测试
-4. Agent 功能测试
+### Phase 5: 测试验证 🔄
+- [ ] 单元测试
+- [ ] 集成测试
+- [ ] Wizard 功能测试
+- [ ] Agent 功能测试
 
 ---
 
@@ -839,3 +804,26 @@ from tlon.config.models import PositionConfig as Position
 - **新功能**: 添加新的配置类型更容易
 - **工具支持**: 可以基于 config 模块开发配置验证工具
 - **IDE 支持**: 类型提示和自动补全更好
+
+---
+
+## 7. 架构位置
+
+Config 模块位于 **基础层 (Base)**，是整个应用的配置基础设施：
+
+```
+基础层 (Base)
+├── base/config/          ← 配置模块（本文档）
+├── base/events/          ← 事件系统
+├── base/logger.py        ← 日志配置
+└── base/settings.py      ← 全局设置
+```
+
+上层模块通过 `base.config` 访问配置服务：
+- **应用层**: `app/wizard/` 使用 ConfigLoader/ConfigSaver
+- **组织层**: `organization/` 使用配置定义
+- **Agent 层**: `agents/` 使用 AgentConfig
+
+---
+
+*更新日期: 2026-03-13*
