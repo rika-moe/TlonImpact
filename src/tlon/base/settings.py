@@ -1,7 +1,10 @@
-"""Configuration management for Tlon."""
+"""Configuration management for Tlon.
+
+This module provides environment variable based configuration.
+It only handles environment variables, not YAML file configurations.
+"""
 
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -29,7 +32,7 @@ def _load_dotenv_files() -> None:
 _load_dotenv_files()
 
 
-def get_project_root() -> Path:
+def get_tlon_home() -> Path:
     """Get the project root directory.
     
     Priority:
@@ -59,7 +62,7 @@ def get_default_data_dir() -> Path:
     Returns:
         Path to the data directory (project root / data).
     """
-    return get_project_root() / "data"
+    return get_tlon_home() / "data"
 
 
 def get_default_config_dir() -> Path:
@@ -68,118 +71,71 @@ def get_default_config_dir() -> Path:
     Returns:
         Path to the config directory (project root / config).
     """
-    return get_project_root() / "config"
-
-
-@dataclass
-class AppConfig:
-    """Application configuration."""
-    
-    name: str = "Tlon"
-    log_level: str = "INFO"
-    data_dir: Path = field(default_factory=get_default_data_dir)
-    debug: bool = False
-    
-    def __post_init__(self):
-        """Ensure data directory exists."""
-        self.data_dir = Path(self.data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-
-
-@dataclass
-class LLMConfig:
-    """LLM configuration."""
-    
-    base_url: str = "https://api.openai.com/v1"
-    auth_token: str = ""
-    model_name: str = "gpt-4"
-    temperature: float = 0.7
-    max_retries: int = 3
-    base_delay: float = 1.0
-    
-    def __post_init__(self):
-        """Validate configuration."""
-        # Always prefer environment variables
-        env_token = os.getenv("OPENAI_API_KEY", "")
-        if env_token:
-            self.auth_token = env_token
-        
-        env_base_url = os.getenv("OPENAI_BASE_URL")
-        if env_base_url:
-            self.base_url = env_base_url
-        
-        env_model = os.getenv("OPENAI_MODEL_NAME")
-        if env_model:
-            self.model_name = env_model
-        
-        env_temp = os.getenv("OPENAI_TEMPERATURE")
-        if env_temp:
-            self.temperature = float(env_temp)
-
-
-@dataclass
-class DockerConfig:
-    """Docker configuration."""
-    
-    image: str = "ubuntu:22.04"
-    working_dir: str = "/workspace"
-    memory_limit: str = "512m"
-    cpu_limit: float = 1.0
-    network_mode: str = "host"
-
-
-@dataclass
-class TelegramConfig:
-    """Telegram bot configuration."""
-    
-    enabled: bool = False
-    bot_token: str = ""
-    chat_id: str = ""
-    
-    def __post_init__(self):
-        """Load from environment."""
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN", self.bot_token)
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID", self.chat_id)
-        self.enabled = bool(self.bot_token and self.chat_id)
-
-
-@dataclass
-class MemoryConfig:
-    """Memory configuration."""
-    
-    max_history: int = 1000
-    summary_window: int = 20
+    return get_tlon_home() / "config"
 
 
 class Settings:
-    """Application settings container."""
+    """Application settings container.
+    
+    All settings are loaded from environment variables.
+    This class does not define dataclasses, only flat attributes.
+    """
     
     def __init__(self):
         """Initialize settings from environment variables."""
-        self.app = AppConfig(
-            name=os.getenv("APP_NAME", "Tlon"),
-            log_level=os.getenv("LOG_LEVEL", "INFO"),
-            data_dir=Path(os.getenv("DATA_DIR", get_default_data_dir())),
-            debug=os.getenv("DEBUG", "false").lower() == "true",
-        )
+        # App settings
+        self.app_name = os.getenv("APP_NAME", "Tlon")
+        self.log_level = os.getenv("LOG_LEVEL", "INFO")
+        self.data_dir = Path(os.getenv("DATA_DIR", get_default_data_dir()))
+        self.debug = os.getenv("DEBUG", "false").lower() == "true"
         
-        self.llm = LLMConfig()
+        # LLM settings
+        self.llm_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self.llm_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.llm_model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4")
+        self.llm_temperature = float(os.getenv("OPENAI_TEMPERATURE", "1.0"))
+        self.llm_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "3"))
+        self.llm_base_delay = float(os.getenv("OPENAI_BASE_DELAY", "1.0"))
         
-        self.docker = DockerConfig(
-            image=os.getenv("DOCKER_DEFAULT_IMAGE", "ubuntu:22.04"),
-            network_mode=os.getenv("DOCKER_NETWORK_MODE", "host"),
-        )
+        # Docker settings
+        self.docker_image = os.getenv("DOCKER_DEFAULT_IMAGE", "ubuntu:22.04")
+        self.docker_working_dir = "/workspace"
+        self.docker_memory_limit = "512m"
+        self.docker_cpu_limit = 1.0
+        self.docker_network_mode = os.getenv("DOCKER_NETWORK_MODE", "host")
         
-        self.telegram = TelegramConfig()
+        # Telegram settings
+        self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        self.telegram_enabled = bool(self.telegram_bot_token and self.telegram_chat_id)
         
-        self.memory = MemoryConfig(
-            max_history=int(os.getenv("MEMORY_MAX_HISTORY", "1000")),
-            summary_window=int(os.getenv("MEMORY_SUMMARY_WINDOW", "20")),
+        # Memory settings
+        self.memory_max_history = int(os.getenv("MEMORY_MAX_HISTORY", "1000"))
+        self.memory_summary_window = int(os.getenv("MEMORY_SUMMARY_WINDOW", "20"))
+        
+        # Ensure data directory exists
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+    
+    def to_llm_config(self) -> "LLMConfig":
+        """Create LLMConfig from settings.
+        
+        Returns:
+            LLMConfig instance populated from environment variables.
+        """
+        from tlon.base.config import LLMConfig
+        
+        return LLMConfig(
+            model_name=self.llm_model_name,
+            temperature=self.llm_temperature,
+            base_url=self.llm_base_url,
+            auth_token=self.llm_api_key,
+            max_retries=self.llm_max_retries,
+            base_delay=self.llm_base_delay,
         )
     
     def get_agent_data_dir(self, agent_id: str) -> Path:
         """Get data directory for a specific agent."""
-        agent_dir = self.app.data_dir / "agents" / agent_id
+        agent_dir = self.data_dir / "agents" / agent_id
         agent_dir.mkdir(parents=True, exist_ok=True)
         return agent_dir
 

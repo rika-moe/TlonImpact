@@ -15,7 +15,7 @@ from tlon.organization.messaging import EventBus
 from tlon.organization.messaging.message import Message
 from tlon.base.logger import get_logger
 from tlon.agents.agent import Agent
-from tlon.base.config.config import AgentConfig
+from tlon.base.config import AgentConfig
 from tlon.organization.positions import PositionRegistry
 
 logger = get_logger(__name__)
@@ -81,19 +81,13 @@ class AgentRegistry:
         self._configs[config.id] = config
         self._standby.add(config.id)
         
-        # Determine if proactive from position registry
-        is_proactive = False
-        if self.position_registry and config.position_id:
-            position = self.position_registry.get(config.position_id)
-            if position:
-                is_proactive = position.proactive
-        
-        if is_proactive:
-            # Proactive positions are resident (start immediately)
+        # Determine if proactive from agent config
+        if config.proactive:
+            # Proactive agents are resident (start immediately)
             self._resident_ids.add(config.id)
-            logger.info(f"Registered resident agent: {config.name} ({config.id})")
+            logger.info(f"Registered resident agent: {config.name} ({config.id}) - proactive=True")
         else:
-            logger.info(f"Registered lazy-load agent: {config.name} ({config.id})")
+            logger.info(f"Registered lazy-load agent: {config.name} ({config.id}) - proactive=False")
     
     def register_all(self, configs: List[AgentConfig]) -> None:
         """Register multiple agent configurations.
@@ -111,6 +105,8 @@ class AgentRegistry:
         Lazy agents remain in standby until activated.
         """
         logger.info("Initializing AgentRegistry...")
+        logger.info(f"Resident agents to start: {self._resident_ids}")
+        logger.info(f"Standby agents: {self._standby}")
         
         # Subscribe to message events for lazy activation
         self._event_subscription = self.event_bus.subscribe(
@@ -119,16 +115,21 @@ class AgentRegistry:
         )
         
         # Start resident agents
-        for agent_id in self._resident_ids:
+        for agent_id in list(self._resident_ids):
             if agent_id in self._standby:
+                logger.info(f"Starting resident agent: {agent_id}")
                 try:
                     await self.activate(agent_id)
+                    logger.info(f"Resident agent {agent_id} started successfully")
                 except Exception as e:
-                    logger.error(f"Failed to start resident agent {agent_id}: {e}")
+                    logger.error(f"Failed to start resident agent {agent_id}: {e}", exc_info=True)
+            else:
+                logger.warning(f"Resident agent {agent_id} not in standby, cannot start")
         
         standby_count = len(self._standby)
         active_count = len(self._agents)
         logger.info(f"AgentRegistry initialized: {active_count} active, {standby_count} standby")
+        logger.info(f"Active agents: {list(self._agents.keys())}")
     
     async def shutdown(self) -> None:
         """Shutdown all agents and cleanup."""

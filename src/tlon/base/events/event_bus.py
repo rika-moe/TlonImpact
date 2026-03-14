@@ -132,8 +132,12 @@ class EventBus:
         Args:
             event: The event to publish
         """
+        if not self._running:
+            logger.error(f"[EventBus] Cannot publish event {event.type.value}: EventBus is not running")
+            return
+        
         await self._event_queue.put(event)
-        logger.debug(f"Event queued: {event.type.value} from {event.source}")
+        logger.info(f"[EventBus] Event queued: {event.type.value} from {event.source} (queue size: {self._event_queue.qsize()})")
     
     async def _process_events(self) -> None:
         """Event processing loop.
@@ -141,6 +145,7 @@ class EventBus:
         Continuously processes events from the queue and dispatches
         them to subscribers.
         """
+        logger.info("[EventBus] Event processor started")
         try:
             while self._running:
                 try:
@@ -149,18 +154,21 @@ class EventBus:
                         self._event_queue.get(), 
                         timeout=0.5
                     )
+                    logger.debug(f"[EventBus] Processing event from queue: {event.type.value}")
                     await self._dispatch(event)
+                    self._event_queue.task_done()
                 except asyncio.TimeoutError:
                     continue
                 except asyncio.CancelledError:
                     # Task was cancelled, exit cleanly
+                    logger.info("[EventBus] Event processor cancelled")
                     break
                 except Exception as e:
-                    logger.error(f"Error in event processing loop: {e}", exc_info=True)
+                    logger.error(f"[EventBus] Error in event processing loop: {e}", exc_info=True)
         except asyncio.CancelledError:
             # Exit cleanly when cancelled
-            pass
-        logger.debug("Event processor stopped")
+            logger.info("[EventBus] Event processor cancelled (outer)")
+        logger.info("[EventBus] Event processor stopped")
     
     async def _dispatch(self, event: Event) -> None:
         """Dispatch an event to all subscribers.
@@ -171,18 +179,23 @@ class EventBus:
         handlers = self._subscribers.get(event.type, [])
         
         if not handlers:
-            logger.debug(f"No handlers for event type: {event.type.value}")
+            logger.warning(f"[EventBus] No handlers for event type: {event.type.value}")
             return
         
-        logger.debug(f"Dispatching {event.type.value} to {len(handlers)} handlers")
+        logger.info(f"[EventBus] Dispatching {event.type.value} to {len(handlers)} handlers")
+        handler_names = [sid for sid, _ in handlers]
+        logger.info(f"[EventBus] Handler IDs: {handler_names}")
         
         for subscription_id, handler in handlers:
             try:
+                handler_name = getattr(handler, '__name__', str(handler))
+                logger.info(f"[EventBus] Calling handler {subscription_id} ({handler_name}) for {event.type.value}")
                 if asyncio.iscoroutinefunction(handler):
                     # Schedule async handler as a task
                     asyncio.create_task(
                         self._run_handler(handler, event, subscription_id)
                     )
+                    logger.info(f"[EventBus] Scheduled async handler {subscription_id}")
                 else:
                     # Run sync handler in thread pool
                     await asyncio.get_event_loop().run_in_executor(
@@ -190,7 +203,7 @@ class EventBus:
                     )
             except Exception as e:
                 logger.error(
-                    f"Error dispatching event to {subscription_id}: {e}",
+                    f"[EventBus] Error dispatching event to {subscription_id}: {e}",
                     exc_info=True
                 )
     
@@ -207,11 +220,14 @@ class EventBus:
             event: The event to handle
             subscription_id: For logging purposes
         """
+        handler_name = getattr(handler, '__name__', str(handler))
+        logger.info(f"[EventBus] Running async handler {subscription_id} ({handler_name}) for {event.type.value}")
         try:
             await handler(event)
+            logger.info(f"[EventBus] Handler {subscription_id} completed successfully")
         except Exception as e:
             logger.error(
-                f"Error in handler {subscription_id}: {e}",
+                f"[EventBus] Error in handler {subscription_id}: {e}",
                 exc_info=True
             )
     

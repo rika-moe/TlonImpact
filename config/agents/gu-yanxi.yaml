@@ -1,21 +1,18 @@
 agent:
-  id: "gu-yanxi"
-  name: "顾言蹊"
-  personality: "友好耐心、善于沟通、专业高效"
-  
-  position_id: "customer_service"
-  
-  skills:
-    - "file-operations"
-    - "git-operations"
-    - "csv-pipeline"
-    - "plan-i"
-    - "frontend-design"
-  
+  id: gu-yanxi
+  name: 顾言蹊
+  personality: 友好耐心、善于沟通、专业高效
+  position_id: customer_service
   llm:
-    model_name: "kimi-k2.5"
-    temperature: 0.7
-  
+    model_name: kimi-k2.5
+    temperature: 1.0
   docker:
-    image: "ubuntu:22.04"
-    memory_limit: "512m"
+    image: ubuntu:22.04
+    memory_limit: 512m
+  proactive: true
+  skills:
+  - file-operations
+  - git-operations
+  - csv-pipeline
+  - plan-i
+  - frontend-design

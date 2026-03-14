@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-from tlon.base.config.config import AgentConfig, DockerRuntimeConfig, LLMConfig
+from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
@@ -103,6 +103,8 @@ class AgentStore:
     def save_agent(self, agent: AgentConfig) -> Tuple[bool, str]:
         """Save an agent to YAML file.
         
+        Uses standardized field format compatible with Server config loader.
+        
         Args:
             agent: AgentConfig to save
             
@@ -112,7 +114,7 @@ class AgentStore:
         try:
             self._ensure_directory()
             
-            # Convert agent to dict
+            # Build agent dict with standardized fields
             agent_dict = {
                 "id": agent.id,
                 "name": agent.name,
@@ -120,22 +122,40 @@ class AgentStore:
                 "position_id": agent.position_id,
             }
             
-            # Add LLM config if present
+            # Add LLM config with all fields
             if agent.llm:
-                agent_dict["llm"] = {
+                llm_dict = {
                     "model_name": agent.llm.model_name,
                     "temperature": agent.llm.temperature,
                 }
+                # Add optional LLM fields if not default values
+                if agent.llm.max_tokens != 4096:  # Only save if non-default
+                    llm_dict["max_tokens"] = agent.llm.max_tokens
+                if agent.llm.top_p != 0.9:  # Only save if non-default
+                    llm_dict["top_p"] = agent.llm.top_p
+                agent_dict["llm"] = llm_dict
             
-            # Add Docker config if present
+            # Add Docker config with all fields
             if agent.docker:
-                agent_dict["docker"] = {
+                docker_dict = {
                     "image": agent.docker.image,
                     "memory_limit": agent.docker.memory_limit,
                 }
+                # Add optional Docker fields if not default values
+                if agent.docker.working_dir != "/workspace":
+                    docker_dict["working_dir"] = agent.docker.working_dir
+                if agent.docker.cpu_limit != 1.0:
+                    docker_dict["cpu_limit"] = agent.docker.cpu_limit
+                if agent.docker.network_mode != "host":
+                    docker_dict["network_mode"] = agent.docker.network_mode
+                agent_dict["docker"] = docker_dict
             
-            # Add skills
-            agent_dict["skills"] = agent.skills
+            # Add proactive setting
+            agent_dict["proactive"] = agent.proactive
+            
+            # Add skills if present
+            if agent.skills:
+                agent_dict["skills"] = agent.skills
             
             data = {"agent": agent_dict}
             

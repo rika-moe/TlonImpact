@@ -1,6 +1,5 @@
 position:
   id: "product_manager"
-  type: "product_manager"
   title: "产品经理"
   department: "产品部"
   

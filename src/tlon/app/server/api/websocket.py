@@ -218,6 +218,8 @@ class WebSocketHandler:
     async def _handle_send_message(self, session_id: str, msg: Dict) -> None:
         """Handle a send message request from client."""
         content = msg.get('content', '').strip()
+        logger.info(f"[WebSocket] Received message from session {session_id}: {content[:50]}...")
+        
         if not content:
             await self._send_error_to_session(session_id, "Message content is empty")
             return
@@ -225,6 +227,7 @@ class WebSocketHandler:
         mentions = msg.get('mentions', [])
         
         # Send message through server
+        logger.debug(f"[WebSocket] Calling server.send_message for session {session_id}")
         await self.server.send_message(
             content=content,
             sender_id="human",
@@ -232,6 +235,7 @@ class WebSocketHandler:
             sender_type="human",
             mentions=mentions,
         )
+        logger.debug(f"[WebSocket] server.send_message completed for session {session_id}")
     
     async def _handle_mode_change(self, session_id: str, msg: Dict) -> None:
         """Handle a mode change request from client."""
@@ -349,7 +353,7 @@ class WebSocketHandler:
             "source": event.source,
             "timestamp": event.timestamp,
         }
-        logger.debug(f"[WebSocket] Sending event {event.type.value} to client")
+        logger.debug(f"[WebSocket] Sending event {event.type.value} to client (ws closed: {ws.closed})")
         await self._send_message(ws, event_data)
     
     async def _send_message(self, ws: web.WebSocketResponse, data: Dict) -> None:

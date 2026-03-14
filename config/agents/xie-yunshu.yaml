@@ -4,6 +4,7 @@ agent:
   personality: "严谨细致、善于发现规律、数据敏感"
   
   position_id: "data_analyst"
+  proactive: false
   
   skills:
     - "file-operations"
@@ -14,7 +15,7 @@ agent:
   
   llm:
     model_name: "kimi-k2.5"
-    temperature: 0.7
+    temperature: 1.0
   
   docker:
     image: "ubuntu:22.04"

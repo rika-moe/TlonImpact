@@ -7,7 +7,7 @@ with standard or custom team configurations.
 from pathlib import Path
 from typing import TYPE_CHECKING, List
 
-from tlon.base.config.config import AgentConfig, DockerRuntimeConfig, LLMConfig
+from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
 from tlon.organization.positions.models import Position
 from ..agent_store import AgentStore
 from ..position_store import PositionStore

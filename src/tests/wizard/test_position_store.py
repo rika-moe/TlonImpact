@@ -31,7 +31,6 @@ class TestPositionStore:
                 title="测试岗位",
                 jd="这是一个测试岗位",
                 department="测试部",
-                proactive=False,
                 rules=["规则1", "规则2"],
                 default_skills=["skill1"],
             )
@@ -92,7 +91,7 @@ class TestPositionStore:
         with tempfile.TemporaryDirectory() as tmpdir:
             with tempfile.TemporaryDirectory() as agent_tmpdir:
                 from tlon.app.wizard.agent_store import AgentStore
-                from tlon.base.config.config import AgentConfig
+                from tlon.base.config import AgentConfig
                 
                 pos_store = PositionStore(tmpdir)
                 agent_store = AgentStore(agent_tmpdir)
@@ -139,7 +138,7 @@ class TestPositionStore:
         
         # Valid data
         valid, errors = store.validate_position_data({
-            "type": "valid_type",
+            "id": "valid_id",
             "title": "Valid Title",
             "jd": "Valid description",
         })
@@ -148,7 +147,7 @@ class TestPositionStore:
         
         # Missing required fields
         valid, errors = store.validate_position_data({
-            "type": "",
+            "id": "",
             "title": "",
         })
         assert not valid

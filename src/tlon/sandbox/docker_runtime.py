@@ -11,7 +11,7 @@ from typing import Optional
 import docker
 from docker.errors import ImageNotFound, NotFound
 
-from tlon.base.config.config import DockerRuntimeConfig
+from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)

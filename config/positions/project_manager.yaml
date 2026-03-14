@@ -1,6 +1,5 @@
 position:
   id: "project_manager"
-  type: "project_manager"
   title: "项目经理"
   department: "项目部"
   

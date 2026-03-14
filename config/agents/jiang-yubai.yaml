@@ -4,6 +4,7 @@ agent:
   personality: "沉稳冷静、善于排查问题、注重稳定性"
   
   position_id: "operator"
+  proactive: false
   
   skills:
     - "file-operations"
@@ -14,7 +15,7 @@ agent:
   
   llm:
     model_name: "kimi-k2.5"
-    temperature: 0.7
+    temperature: 1.0
   
   docker:
     image: "ubuntu:22.04"

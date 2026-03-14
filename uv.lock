@@ -1633,6 +1633,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
     { name = "pyyaml" },
+    { name = "questionary" },
     { name = "rich" },
     { name = "structlog" },
 ]
@@ -1677,6 +1678,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-telegram-bot", specifier = ">=20.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "questionary", specifier = ">=2.1.1" },
     { name = "questionary", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "questionary", marker = "extra == 'wizard'", specifier = ">=2.0.0" },
     { name = "rich", specifier = ">=14.3.3" },

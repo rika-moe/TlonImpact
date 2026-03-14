@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import aiofiles
 
-from tlon.base.settings import LLMConfig
+from tlon.base.config import LLMConfig
 from tlon.base.logger import get_logger
 from .episodic_store import EpisodicMemoryStore
 from .models import (

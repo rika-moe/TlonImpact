@@ -67,7 +67,6 @@ class PromptRenderer:
                 "title": position.title,
                 "jd": position.jd,
                 "department": position.department,
-                "proactive": position.proactive,
                 "rules": position.rules,
             },
             "agent": agent,

@@ -149,7 +149,6 @@ class PositionConfig:
         title: Human-readable position title (e.g., "开发工程师")
         jd: Job description and responsibilities (岗位职责)
         department: Optional department name
-        proactive: Whether agents in this position actively participate
         rules: List of behavior rules for this position
         default_skills: Default skills for agents in this position
         contact_when: When to contact this role
@@ -160,7 +159,6 @@ class PositionConfig:
     title: str = ""
     jd: str = ""  # Job Description
     department: str = ""
-    proactive: bool = False
     rules: List[str] = field(default_factory=list)
     default_skills: List[str] = field(default_factory=list)
     contact_when: str = ""  # 何时应该联系该角色
@@ -174,7 +172,6 @@ class PositionConfig:
             "title": self.title,
             "jd": self.jd,
             "department": self.department,
-            "proactive": self.proactive,
             "rules": self.rules,
             "default_skills": self.default_skills,
             "contact_when": self.contact_when,
@@ -192,7 +189,6 @@ class PositionConfig:
             title=data.get("title", ""),
             jd=data.get("jd", data.get("description", "")),
             department=data.get("department", ""),
-            proactive=data.get("proactive", False),
             rules=data.get("rules", []),
             default_skills=data.get("default_skills", data.get("skills", [])),
             contact_when=data.get("contact_when", ""),
@@ -210,15 +206,37 @@ class PositionConfig:
 
 @dataclass
 class LLMConfig:
-    """LLM configuration for an agent."""
+    """LLM configuration for an agent.
+    
+    This class is used for both YAML file configuration and runtime configuration.
+    It combines fields needed for file persistence with fields needed for API calls.
+    
+    Attributes:
+        model_name: Model identifier (e.g., "gpt-4", "kimi-k2.5")
+        temperature: Sampling temperature (0-2)
+        max_tokens: Maximum tokens to generate
+        top_p: Nucleus sampling parameter
+        base_url: API base URL (for runtime, not persisted to YAML)
+        auth_token: API authentication token (for runtime, not persisted to YAML)
+        max_retries: Maximum number of retries for failed requests
+        base_delay: Base delay between retries in seconds
+    """
     
     model_name: str = "kimi-k2.5"
     temperature: float = 0.7
     max_tokens: int = 4096
     top_p: float = 0.9
+    base_url: str = ""  # Runtime only, not persisted
+    auth_token: str = ""  # Runtime only, not persisted
+    max_retries: int = 3  # Runtime only, not persisted
+    base_delay: float = 1.0  # Runtime only, not persisted
     
     def to_dict(self) -> dict:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+        
+        Only persists fields that should be saved to YAML.
+        Runtime-only fields (base_url, auth_token, max_retries, base_delay) are excluded.
+        """
         return {
             "model_name": self.model_name,
             "temperature": self.temperature,
@@ -228,12 +246,17 @@ class LLMConfig:
     
     @classmethod
     def from_dict(cls, data: dict) -> "LLMConfig":
-        """Create from dictionary."""
+        """Create from dictionary.
+        
+        Note: Runtime-only fields (base_url, auth_token, max_retries, base_delay) 
+        are set to defaults and should be populated separately if needed.
+        """
         return cls(
             model_name=data.get("model_name", "kimi-k2.5"),
             temperature=data.get("temperature", 0.7),
             max_tokens=data.get("max_tokens", 4096),
             top_p=data.get("top_p", 0.9),
+            # base_url, auth_token, max_retries, base_delay use defaults for file-loaded configs
         )
 
 
@@ -292,6 +315,7 @@ class AgentConfig:
         memory: Memory configuration (Any type for flexibility)
         skills: List of skill names this agent has
         respond_to_all: If True, respond to all messages
+        proactive: If True, agent starts automatically and responds to all messages
     """
     id: str
     name: str
@@ -302,11 +326,21 @@ class AgentConfig:
     memory: Any = field(default_factory=lambda: None)
     skills: List[str] = field(default_factory=list)
     respond_to_all: bool = False
+    proactive: bool = False  # Agent-level proactive setting
     
     def __post_init__(self):
         """Validate configuration and set defaults."""
+        # Set default memory config if not provided
+        if self.memory is None:
+            # Delayed import to avoid circular dependency
+            from tlon.subsystem.memory.models import MemoryConfig
+            self.memory = MemoryConfig(agent_id=self.id)
+        
+        # Set default LLM config
         if self.llm is None:
             self.llm = LLMConfig()
+        
+        # Set default Docker config
         if self.docker is None:
             self.docker = DockerRuntimeConfig()
     
@@ -319,6 +353,7 @@ class AgentConfig:
             "position_id": self.position_id,
             "skills": self.skills,
             "respond_to_all": self.respond_to_all,
+            "proactive": self.proactive,
         }
         if self.llm:
             result["llm"] = self.llm.to_dict()
@@ -349,6 +384,7 @@ class AgentConfig:
             memory=data.get("memory"),
             skills=data.get("skills", []),
             respond_to_all=data.get("respond_to_all", False),
+            proactive=data.get("proactive", False),
         )
     
     def get_data_dir(self, base_dir: Path) -> Path:

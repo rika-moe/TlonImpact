@@ -2,7 +2,7 @@
 
 import tempfile
 
-from tlon.base.config.config import AgentConfig, LLMConfig, DockerRuntimeConfig
+from tlon.base.config import AgentConfig, LLMConfig, DockerRuntimeConfig
 from tlon.app.wizard.agent_store import AgentStore
 
 

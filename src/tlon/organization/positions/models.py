@@ -21,7 +21,6 @@ class Position:
         title: Human-readable position title (e.g., "开发工程师")
         jd: Job description and responsibilities (岗位职责)
         department: Optional department name
-        proactive: Whether agents in this position actively participate
         rules: List of behavior rules for this position
         default_skills: Default skills for agents in this position
         prompt_template: Optional Jinja2 template for system prompt
@@ -32,7 +31,6 @@ class Position:
         ...     type="developer",
         ...     title="开发工程师",
         ...     jd="负责代码编写、Bug修复和技术方案实现",
-        ...     proactive=False,
         ...     rules=["只被@时响应", "可以执行bash命令"],
         ...     default_skills=["file-operations", "git-operations"],
         ... )
@@ -42,7 +40,6 @@ class Position:
     title: str = ""
     jd: str = ""  # Job Description
     department: str = ""
-    proactive: bool = False
     rules: List[str] = field(default_factory=list)
     default_skills: List[str] = field(default_factory=list)
     prompt_template: Optional[str] = None
@@ -60,7 +57,6 @@ class Position:
             "title": self.title,
             "jd": self.jd,
             "department": self.department,
-            "proactive": self.proactive,
             "rules": self.rules,
             "default_skills": self.default_skills,
             "prompt_template": self.prompt_template,
@@ -83,7 +79,6 @@ class Position:
             title=data.get("title", ""),
             jd=data.get("jd", data.get("description", "")),
             department=data.get("department", ""),
-            proactive=data.get("proactive", False),
             rules=data.get("rules", []),
             default_skills=data.get("default_skills", data.get("skills", [])),
             prompt_template=data.get("prompt_template"),

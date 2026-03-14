@@ -20,7 +20,7 @@ from tlon.organization.messaging import Congress, CongressMetadata, Participant
 from tlon.base.events.event import Event, EventType
 from tlon.organization.messaging.message import Message
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.base.config.config import AgentConfig
+from tlon.base.config import AgentConfig
 from tlon.base.settings import settings
 from tlon.base.logger import get_logger
 
@@ -76,12 +76,12 @@ class TlonServer:
         Args:
             host: Host to bind the server to
             port: Port to listen on
-            data_dir: Directory for persistence (default: settings.app.data_dir)
+            data_dir: Directory for persistence (default: settings.data_dir)
             position_registry: Position registry for agent position lookups
         """
         self.host = host
         self.port = port
-        self.data_dir = data_dir or settings.app.data_dir
+        self.data_dir = data_dir or settings.data_dir
         self.position_registry = position_registry
         
         # Core components
@@ -163,10 +163,12 @@ class TlonServer:
     
     async def _on_message_event(self, event: Event) -> None:
         """Handle message events for broadcasting to clients."""
+        logger.debug(f"[Server] Received message event: {event.type.value}")
         await self._broadcast_event(event)
     
     async def _on_agent_event(self, event: Event) -> None:
         """Handle agent events for broadcasting to clients."""
+        logger.debug(f"[Server] Received agent event: {event.type.value}")
         await self._broadcast_event(event)
     
     async def _broadcast_event(self, event: Event) -> None:
@@ -177,6 +179,10 @@ class TlonServer:
         """
         async with self._session_lock:
             handlers = list(self._client_handlers.items())
+        
+        if not handlers:
+            logger.warning(f"[Server] No connected clients to receive event {event.type.value}")
+            return
         
         logger.debug(f"[Server] Broadcasting event {event.type.value} to {len(handlers)} clients")
         
@@ -214,6 +220,7 @@ class TlonServer:
         if session.mode == "chat":
             # Chat mode: only send message events
             if event.type not in (EventType.MESSAGE_NEW, EventType.MESSAGE_MENTION):
+                logger.debug(f"[Server] Event {event.type.value} filtered for session {session.id}: not a message event in chat mode")
                 return False
         elif session.mode == "event":
             # Event mode: send all events, apply filters if set
@@ -226,6 +233,7 @@ class TlonServer:
                 EventType.AGENT_ERROR,
                 EventType.AGENT_STATE_CHANGED,
             ):
+                logger.debug(f"[Server] Event {event.type.value} filtered for session {session.id}: not an agent event in agent mode")
                 return False
         
         # Apply custom filters
@@ -236,11 +244,13 @@ class TlonServer:
             agent_filter = filters["agent"]
             source = getattr(event, 'source', None)
             if source and not self._match_wildcard(source, agent_filter):
+                logger.debug(f"[Server] Event {event.type.value} filtered for session {session.id}: agent filter mismatch")
                 return False
         
         # Filter by event type
         if "event_type" in filters:
             if event.type.value != filters["event_type"]:
+                logger.debug(f"[Server] Event {event.type.value} filtered for session {session.id}: event_type filter mismatch")
                 return False
         
         return True

@@ -156,7 +156,7 @@ def check_configuration() -> bool:
     """
     errors = []
 
-    if not settings.llm.auth_token:
+    if not settings.llm_api_key:
         errors.append("OPENAI_API_KEY not set in .env file")
 
     if errors:
@@ -192,7 +192,7 @@ async def run_dream(args) -> int:
     from ..server.app import run_server
 
     is_lucid = getattr(args, "debug", False)
-    log_level = "DEBUG" if is_lucid else settings.app.log_level
+    log_level = "DEBUG" if is_lucid else settings.log_level
 
     # Literary output
     print("""
@@ -321,7 +321,7 @@ async def _mirror_reflect() -> int:
 
     for agent_file in sorted(agent_files):
         try:
-            with open(agent_file) as f:
+            with open(agent_file, encoding = "utf-8") as f:
                 config = yaml.safe_load(f)
 
             agent = config.get("agent", {})
@@ -392,7 +392,7 @@ async def _mirror_create(name: str, position: Optional[str], template: str) -> i
 
     # Load position to get default skills
     try:
-        with open(position_file) as f:
+        with open(position_file, encoding = "utf-8") as f:
             pos_config = yaml.safe_load(f)
         default_skills = pos_config.get("position", {}).get("default_skills", [])
     except Exception as e:
@@ -424,7 +424,7 @@ async def _mirror_create(name: str, position: Optional[str], template: str) -> i
 
     # Write config file
     try:
-        with open(agent_file, 'w') as f:
+        with open(agent_file, 'w', encoding = "utf-8") as f:
             yaml.dump(agent_config, f, allow_unicode=True, sort_keys=False)
 
         print(f"\n🪞 倒影已凝聚")
@@ -506,9 +506,9 @@ async def main_async(args=None) -> int:
         args = parser.parse_args()
 
     # Configure logging - use --debug flag if provided
-    is_debug = getattr(args, "debug", False) or settings.app.debug
+    is_debug = getattr(args, "debug", False) or settings.debug
     configure_logging(
-        log_level="DEBUG" if is_debug else settings.app.log_level,
+        log_level="DEBUG" if is_debug else settings.log_level,
         debug=is_debug,
     )
 

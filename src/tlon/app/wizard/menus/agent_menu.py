@@ -187,8 +187,8 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
         
         pos_choices = [
             self.questionary.Choice(
-                f"{p.title} - {p.jd[:30]}... {'[常驻]' if p.proactive else ''}",
-                value=p.type
+                f"{p.title} - {p.jd[:30]}...",
+                value=p.id
             )
             for p in sorted(positions.values(), key=lambda x: x.title)
         ]
@@ -255,7 +255,7 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
         ).ask()
         
         # Step 5: Skills
-        self.console.print("\n[bold]步骤 5/5: 技能选择[/bold]\n")
+        self.console.print("\n[bold]步骤 5/6: 技能选择[/bold]\n")
         
         all_skills = [
             ("file-operations", "文件操作"),
@@ -275,6 +275,16 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
             choices=skill_choices,
         ).ask() or []
         
+        # Step 6: Proactive setting
+        self.console.print("\n[bold]步骤 6/6: 启动模式[/bold]\n")
+        
+        proactive = self.questionary.confirm(
+            "是否设置为常驻启动?\n"
+            "常驻: 自动启动，响应所有消息\n"
+            "延迟: 手动唤醒，只响应@消息",
+            default=False,
+        ).ask()
+        
         # Generate ID
         existing_ids = list(self.agent_store.load_all_agents().keys())
         agent_id = self.agent_store.generate_agent_id(position_id, existing_ids)
@@ -285,13 +295,14 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
         self.console.print(f"姓名: {name}")
         self.console.print(f"岗位: {position.title if position else position_id}")
         self.console.print(f"模型: {model}")
+        self.console.print(f"启动模式: {'常驻' if proactive else '延迟'}")
         
         if not self.questionary.confirm("确认创建?").ask():
             self.console.print("[yellow]已取消[/yellow]")
             return
         
         # Create agent
-        from tlon.base.config.config import AgentConfig, DockerRuntimeConfig, LLMConfig
+        from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
         
         agent = AgentConfig(
             id=agent_id,
@@ -301,6 +312,7 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
             llm=LLMConfig(model_name=model, temperature=temperature),
             docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=memory or "512m"),
             skills=selected_skills,
+            proactive=proactive,
         )
         
         success, msg = self.agent_store.save_agent(agent)
@@ -345,6 +357,9 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
             
             self.console.print(f"\n[bold]✏️  编辑 Agent: {agent.name}[/bold]\n")
             
+            # Determine current mode display
+            mode_display = "常驻" if agent.proactive else "延迟"
+            
             edit_choice = self.questionary.select(
                 "选择要修改的项:",
                 choices=[
@@ -354,6 +369,7 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
                     self.questionary.Choice(f"🤖 模型 - 当前: {agent.llm.model_name if agent.llm else 'default'}", value="model"),
                     self.questionary.Choice(f"💾 内存 - 当前: {agent.docker.memory_limit if agent.docker else 'default'}", value="memory"),
                     self.questionary.Choice(f"⭐ 技能 - 当前: {len(agent.skills)}个", value="skills"),
+                    self.questionary.Choice(f"🚀 启动模式 - 当前: {mode_display}", value="proactive"),
                     self.questionary.Separator(),
                     self.questionary.Choice("✓ 完成", value="done"),
                 ],
@@ -398,7 +414,7 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
                 ).ask()
                 if new_model:
                     if not agent.llm:
-                        from tlon.base.config.config import LLMConfig
+                        from tlon.base.config import LLMConfig
                         agent.llm = LLMConfig(model_name=new_model)
                     else:
                         agent.llm.model_name = new_model
@@ -412,7 +428,7 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
                 ).ask()
                 if new_mem:
                     if not agent.docker:
-                        from tlon.base.config.config import DockerRuntimeConfig
+                        from tlon.base.config import DockerRuntimeConfig
                         agent.docker = DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=new_mem)
                     else:
                         agent.docker.memory_limit = new_mem
@@ -420,6 +436,17 @@ Temperature: {agent.llm.temperature if agent.llm else 'default'}
             
             elif edit_choice == "skills":
                 agent.skills = self._edit_skills(agent.skills)
+            
+            elif edit_choice == "proactive":
+                new_proactive = self.questionary.confirm(
+                    "是否设置为常驻启动 (proactive)?\n"
+                    "常驻: 自动启动，响应所有消息\n"
+                    "延迟: 手动唤醒，只响应@消息",
+                    default=agent.proactive,
+                ).ask()
+                agent.proactive = new_proactive
+                mode_str = "常驻" if agent.proactive else "延迟"
+                self.console.print(f"[green]✓ 启动模式已更新为: {mode_str}[/green]")
         
         # Save changes
         success, msg = self.agent_store.save_agent(agent)

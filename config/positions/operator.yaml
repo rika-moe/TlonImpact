@@ -1,6 +1,5 @@
 position:
   id: "operator"
-  type: "operator"
   title: "运维工程师"
   department: "技术部"
   

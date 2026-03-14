@@ -5,6 +5,7 @@ agent:
   
   # 关联岗位
   position_id: "developer"
+  proactive: false
   
   # 个性化技能配置
   skills:
@@ -16,7 +17,7 @@ agent:
   
   llm:
     model_name: "kimi-k2.5"
-    temperature: 0.7
+    temperature: 1.0
   
   docker:
     image: "ubuntu:22.04"

@@ -151,6 +151,8 @@ class Congress:
         Args:
             message: The message to send
         """
+        logger.info(f"[Congress] Sending message from {message.sender_name} ({message.sender_id}): {message.content[:50]}...")
+        
         async with self._lock:
             self.history.append(message)
             # Persist to disk
@@ -162,7 +164,9 @@ class Congress:
             payload=message,
             source=message.sender_id,
         )
+        logger.debug(f"[Congress] Publishing MESSAGE_NEW event to EventBus (event_bus running: {self.event_bus.is_running()})")
         await self.event_bus.publish(event)
+        logger.debug(f"[Congress] Event published successfully")
         
         # Check for mentions and publish mention event
         if message.mentions:

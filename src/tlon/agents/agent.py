@@ -31,7 +31,7 @@ from tlon.subsystem.tools.tasks.pause_task import PauseTaskTool
 from tlon.subsystem.tools.tasks.complete_task import CompleteTaskTool
 from tlon.subsystem.tools.tasks.remove_task import RemoveTaskTool
 from tlon.subsystem.tools.tasks.get_current_task import GetCurrentTaskTool
-from tlon.base.config.config import AgentConfig
+from tlon.base.config import AgentConfig
 from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.agents.tool_executor import ToolExecutor
@@ -95,7 +95,10 @@ class Agent:
         self.position_id = config.position_id
         
         # Initialize components
-        self.llm_client = LLMClient(config.llm)
+        # Merge YAML config with runtime settings for LLM
+        from tlon.base.settings import settings
+        llm_config = self._merge_llm_config(config.llm, settings)
+        self.llm_client = LLMClient(llm_config)
         self.docker_runtime = DockerRuntime(config.docker, config.id)
         self.tool_executor = ToolExecutor()
         
@@ -107,11 +110,13 @@ class Agent:
         data_dir = chatroom.metadata.data_dir.parent
         memory_config = config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
         memory_config.agent_id = config.id
+        # Use merged LLM config for summarization (needs API key)
+        llm_config = self._merge_llm_config(config.llm, settings)
         self.memory = MemoryManager(
             agent_id=config.id,
             config=memory_config,
             data_dir=data_dir,
-            llm_config=config.llm,
+            llm_config=llm_config,
         )
         
         # Initialize task manager
@@ -135,6 +140,37 @@ class Agent:
         self._worker_running = False
         
         logger.info(f"Agent {self.name} ({self.id}) initialized")
+    
+    def _merge_llm_config(self, file_config, settings) -> "LLMConfig":
+        """Merge LLM config from YAML file with runtime settings.
+        
+        File config provides model parameters (model_name, temperature, etc.)
+        Settings provide runtime parameters (base_url, auth_token, etc.)
+        
+        Args:
+            file_config: LLMConfig from YAML file
+            settings: Application settings from environment variables
+            
+        Returns:
+            Merged LLMConfig with all fields populated
+        """
+        from tlon.base.config import LLMConfig
+        
+        # If file_config is None, create default
+        if file_config is None:
+            file_config = LLMConfig()
+        
+        # Use file config for model parameters, settings for runtime parameters
+        return LLMConfig(
+            model_name=file_config.model_name,
+            temperature=file_config.temperature,
+            max_tokens=file_config.max_tokens,
+            top_p=file_config.top_p,
+            base_url=settings.llm_base_url,
+            auth_token=settings.llm_api_key,
+            max_retries=settings.llm_max_retries,
+            base_delay=settings.llm_base_delay,
+        )
     
     async def initialize(self) -> None:
         """Initialize the agent.
@@ -362,8 +398,8 @@ class Agent:
         """Determine if we should respond to this message.
         
         Phase 4 Multi-Agent Response Rules:
-        - Customer Service (proactive=True): Responds to direct user input + when @mentioned
-        - Other roles (proactive=False): Only respond when @mentioned
+        - Proactive agents (proactive=True): Responds to direct user input + when @mentioned
+        - Other agents (proactive=False): Only respond when @mentioned
         
         Args:
             message: The incoming message
@@ -377,21 +413,21 @@ class Agent:
         
         # Rule 1: Check if directly mentioned (in mentions list or content)
         if self._is_mentioned(message):
+            logger.debug(f"{self.name} will respond: mentioned by {message.sender_name}")
             return True
         
-        # Rule 2: Proactive positions respond to direct human input (no mentions)
-        is_proactive = False
-        if self.position_registry and self.position_id:
-            position = self.position_registry.get(self.position_id)
-            if position:
-                is_proactive = position.proactive
+        # Rule 2: Proactive agents respond to direct human input (no mentions)
+        logger.debug(f"{self.name} checking proactive: proactive={self.config.proactive}, "
+                    f"sender_type={message.sender_type}, mentions={message.mentions}")
         
-        if is_proactive and message.sender_type == "human":
+        if self.config.proactive and message.sender_type == "human":
             # Check if message has no mentions (direct user input)
             if not message.mentions:
+                logger.info(f"{self.name} will respond: proactive response to {message.sender_name}")
                 return True
         
         # Not applicable - don't respond
+        logger.debug(f"{self.name} will not respond to message from {message.sender_name}")
         return False
     
     def _is_mentioned(self, message: Message) -> bool:

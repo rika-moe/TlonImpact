@@ -24,10 +24,10 @@ import yaml
 from .core.server import TlonServer
 from .api.rest import RESTServer
 from .api.websocket import WebSocketServer
-from tlon.base.config.config import AgentConfig, DockerRuntimeConfig, LLMConfig
+from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
 from tlon.subsystem.memory import MemoryConfig
 from tlon.organization.positions import PositionRegistry
-from tlon.base.settings import settings
+from tlon.base.settings import settings, get_tlon_home
 from tlon.base.logger import get_logger, configure_logging
 
 logger = get_logger(__name__)
@@ -65,12 +65,9 @@ class ServerApp:
         self.host = host
         self.rest_port = rest_port
         self.ws_port = ws_port
-        self.data_dir = data_dir or settings.app.data_dir
-        # __file__ is src/tlon/server/app.py
-        # parent.parent.parent.parent gives us the project root
-        self.config_dir = config_dir or (
-            Path(__file__).parent.parent.parent.parent / "config"
-        )
+        self.data_dir = data_dir or settings.data_dir
+        # Use TLON_HOME based project root for config directory
+        self.config_dir = config_dir or (get_tlon_home() / "config")
         
         # Config subdirectories
         self.positions_dir = self.config_dir / "positions"
@@ -253,17 +250,17 @@ class ServerApp:
         
         llm_data = data.get('llm', {})
         llm_config = LLMConfig(
-            base_url=llm_data.get('base_url', settings.llm.base_url),
-            auth_token=settings.llm.auth_token,
-            model_name=llm_data.get('model_name', settings.llm.model_name),
-            temperature=llm_data.get('temperature', settings.llm.temperature),
+            base_url=llm_data.get('base_url', settings.llm_base_url),
+            auth_token=settings.llm_api_key,
+            model_name=llm_data.get('model_name', settings.llm_model_name),
+            temperature=llm_data.get('temperature', settings.llm_temperature),
         )
         
         docker_data = data.get('docker', {})
-        skills_dir = str(Path(__file__).parent.parent.parent.parent / "skills")
+        skills_dir = str(get_tlon_home() / "skills")
         docker_config = DockerRuntimeConfig(
-            image=docker_data.get('image', settings.docker.image),
-            memory_limit=docker_data.get('memory_limit', settings.docker.memory_limit),
+            image=docker_data.get('image', settings.docker_image),
+            memory_limit=docker_data.get('memory_limit', settings.docker_memory_limit),
             skills_dir=skills_dir,
         )
         
@@ -286,6 +283,7 @@ class ServerApp:
             memory=memory_config,
             skills=data.get('skills', position.default_skills if position else []),
             respond_to_all=False,
+            proactive=data.get('proactive', False),
         )
     
     def _create_default_configs(self) -> List[AgentConfig]:
@@ -296,7 +294,7 @@ class ServerApp:
         """
         logger.info("Creating default agent configuration")
         
-        skills_dir = str(Path(__file__).parent.parent.parent.parent / "skills")
+        skills_dir = str(get_tlon_home() / "skills")
         
         return [AgentConfig(
             id="dev-001",
@@ -304,14 +302,14 @@ class ServerApp:
             personality="技术能力强、注重细节、喜欢钻研",
             position_id="developer",
             llm=LLMConfig(
-                base_url=settings.llm.base_url,
-                auth_token=settings.llm.auth_token,
-                model_name=settings.llm.model_name,
-                temperature=settings.llm.temperature,
+                base_url=settings.llm_base_url,
+                auth_token=settings.llm_api_key,
+                model_name=settings.llm_model_name,
+                temperature=settings.llm_temperature,
             ),
             docker=DockerRuntimeConfig(
-                image=settings.docker.image,
-                memory_limit=settings.docker.memory_limit,
+                image=settings.docker_image,
+                memory_limit=settings.docker_memory_limit,
                 skills_dir=skills_dir,
             ),
             memory=MemoryConfig(agent_id="dev-001"),
