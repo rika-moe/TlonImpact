@@ -3,7 +3,7 @@
 Provides a clean, composable way to build agent system prompts.
 """
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -66,6 +66,77 @@ class SystemPromptBuilder:
         return self._position.jd if self._position else ""
     
     # =========================================================================
+    # Team Building Helpers
+    # =========================================================================
+    
+    def _get_agent_name_by_position(self, position_id: str) -> Optional[str]:
+        """Get agent name by position ID from team members.
+        
+        Args:
+            position_id: The position ID to look up
+            
+        Returns:
+            Agent name if found, None otherwise
+        """
+        for member_config in self.agent.team_members:
+            if member_config.position_id == position_id:
+                return member_config.name
+        return None
+    
+    def _get_role_info_from_config(self, member_config) -> Dict[str, str]:
+        """Get role info for a team member from their config.
+        
+        Args:
+            member_config: AgentConfig of the team member
+            
+        Returns:
+            Dictionary with role, desc, and when fields
+        """
+        position_id = member_config.position_id
+        
+        # Try to get position info from registry
+        if self.agent.position_registry and position_id:
+            position = self.agent.position_registry.get(position_id)
+            if position:
+                # Extract a brief description from jd (first line or first 20 chars)
+                jd_summary = position.jd.strip().split("\n")[0] if position.jd else ""
+                if len(jd_summary) > 30:
+                    jd_summary = jd_summary[:30] + "..."
+                
+                return {
+                    "role": position.title or position_id,
+                    "desc": jd_summary or "协助处理问题",
+                    "when": position.contact_when or "需要协助时",
+                }
+        
+        # Fallback: return generic team member info
+        return {"role": position_id or "团队成员", "desc": "协助处理问题", "when": "需要协助时"}
+    
+    def _build_team_table(self) -> str:
+        """Build a table of team members for the prompt.
+        
+        Uses team_members config to show all team members including inactive ones.
+        """
+        lines = []
+        # 明确告诉 LLM 使用"名字"列来 @mention
+        lines.append("| 名字（@mention时用这个名字） | 职务 | 职责 | 何时@他 |")
+        lines.append("|---------------------------|------|------|---------|")
+        
+        # Add human user
+        lines.append("| 用户 | 用户 | 提出需求和问题 | 任务完成时汇报 |")
+        
+        # Add all team members from config (including inactive ones)
+        for member_config in self.agent.team_members:
+            # Skip self
+            if member_config.id == self.agent.id:
+                continue
+            
+            role_info = self._get_role_info_from_config(member_config)
+            lines.append(f"| {member_config.name} | {role_info['role']} | {role_info['desc']} | {role_info['when']} |")
+        
+        return "\n".join(lines) if len(lines) > 2 else ""
+    
+    # =========================================================================
     # Section Builders
     # =========================================================================
     
@@ -114,7 +185,7 @@ class SystemPromptBuilder:
     
     def build_team(self) -> Optional[str]:
         """Build team members table."""
-        team_table = self.agent._build_team_table()
+        team_table = self._build_team_table()
         if not team_table:
             return None
         
@@ -158,19 +229,46 @@ class SystemPromptBuilder:
             logger.warning(f"Failed to build memory context: {e}")
             return None
     
+    def build_discipline_rules(self) -> str:
+        """Build discipline rules for multi-agent collaboration.
+        
+        This is the enhanced version that includes dynamic agent names.
+        """
+        # Get agent names for specific positions
+        customer_service_name = self._get_agent_name_by_position("customer_service") or "客服"
+        project_manager_name = self._get_agent_name_by_position("project_manager") or "项目经理"
+        
+        rules = [
+            "## 协作纪律",
+            "",
+            "1. **收到任务时**: 确认收到即可，不要重复 @发送者",
+            f'   - ✅ 正确: "收到，我来处理"',
+            f'   - ❌ 错误: "@{customer_service_name} 收到，我来处理"（不要回@）',
+            "",
+            "2. **任务完成时**: 向任务分派者汇报",
+            f"   - 如果 @{project_manager_name} 派的活 → 完成后 @{project_manager_name}",
+            "   - 如果 @人类 直接派的活 → 完成后 @人类",
+            "",
+            '3. **避免无意义回应**: 不要对 "收到"、"好的"、"谢谢"进行回复',
+            "",
+            "4. **循环检测**: 如果你和另一个 Agent 来回@超过2轮，停止回复，让人类介入",
+            "",
+            "5. **@mention 规则**: 使用 completeDialog 的 mentions 参数指定负责人",
+            "   - 只有被 mentions 的人才会收到通知并响应",
+        ]
+        
+        return "\n".join(rules)
+    
     def build_guidelines(self) -> str:
         """Build guidelines section: discipline rules + workflow.
         
-        Uses templates from config/prompt_templates.yaml
+        Uses templates from config/prompt_templates.yaml for workflow,
+        but uses local build_discipline_rules for enhanced discipline rules.
         """
         parts = []
         
-        # Discipline rules (from template + position rules)
-        discipline = self.agent._prompt_manager.build_discipline_rules_prompt(
-            position_type=self.agent.position_id,
-            position_rules=self._position_rules,
-        )
-        parts.append(discipline)
+        # Discipline rules (enhanced version with dynamic agent names)
+        parts.append(self.build_discipline_rules())
         
         # Workflow (from template)
         workflow = self.agent._prompt_manager.build_workflow_prompt(

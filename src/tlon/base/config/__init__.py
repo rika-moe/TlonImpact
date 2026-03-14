@@ -25,12 +25,6 @@ Usage:
     saver.save_position(position)
     saver.save_agent(agent)
     
-    # Manage prompt templates
-    from tlon.config import PromptTemplateManager
-    
-    manager = PromptTemplateManager()
-    system_prompt = manager.build_system_prompt(agent, position)
-    
     # Data models
     from tlon.config import (
         PositionConfig,

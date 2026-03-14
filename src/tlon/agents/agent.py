@@ -75,6 +75,7 @@ class Agent:
         event_bus: EventBus,
         chatroom: Congress,
         position_registry = None,
+        team_members: Optional[List["AgentConfig"]] = None,
     ):
         """Initialize the agent.
         
@@ -83,11 +84,13 @@ class Agent:
             event_bus: Event bus for receiving messages
             chatroom: Chat room for sending messages
             position_registry: Position registry for looking up position info
+            team_members: List of all team member configs (including inactive ones)
         """
         self.config = config
         self.event_bus = event_bus
         self.chatroom = chatroom
         self.position_registry = position_registry
+        self.team_members = team_members or []
         
         self.id = config.id
         self.name = config.name
@@ -716,127 +719,6 @@ class Agent:
         """
         builder = SystemPromptBuilder(self)
         return await builder.build()
-    
-    def _build_role_prompt(self) -> str:
-        """Build role-specific prompt from position configuration.
-        
-        Loads role description from position registry's jd field.
-        """
-        if self.position_registry and self.position_id:
-            position = self.position_registry.get(self.position_id)
-            if position and position.jd:
-                return f"岗位职责:\n{position.jd}"
-        
-        return ""
-    
-    def _build_team_table(self) -> str:
-        """Build a table of team members for the prompt."""
-        participants = self.chatroom.get_all_participants()
-        
-        lines = []
-        # 明确告诉 LLM 使用"名字"列来 @mention
-        lines.append("| 名字（@mention时用这个名字） | 职务 | 职责 | 何时@他 |")
-        lines.append("|---------------------------|------|------|---------|")
-        
-        for p in participants:
-            if p.type == "human":
-                lines.append(f"| {p.name} | 用户 | 提出需求和问题 | 任务完成时汇报 |")
-            elif p.type == "agent":
-                # Get role description from position registry
-                if p.id == self.id:
-                    continue  # Skip self
-                
-                role_info = self._get_role_info(p)
-                lines.append(f"| {p.name} | {role_info['role']} | {role_info['desc']} | {role_info['when']} |")
-        
-        return "\n".join(lines) if len(lines) > 2 else ""
-    
-    def _get_role_info(self, participant) -> dict:
-        """Get role info for a team member from position registry.
-        
-        Args:
-            participant: The participant to get role info for
-            
-        Returns:
-            Dictionary with role, desc, and when fields
-        """
-        # Get position_id from participant metadata
-        position_id = participant.metadata.get("position_id", "") if participant.metadata else ""
-        
-        # Try to get position info from registry
-        if self.position_registry and position_id:
-            position = self.position_registry.get(position_id)
-            if position:
-                # Extract a brief description from jd (first line or first 20 chars)
-                jd_summary = position.jd.strip().split("\n")[0] if position.jd else ""
-                if len(jd_summary) > 30:
-                    jd_summary = jd_summary[:30] + "..."
-                
-                return {
-                    "role": position.title or position_id,
-                    "desc": jd_summary or "协助处理问题",
-                    "when": position.contact_when or "需要协助时",
-                }
-        
-        # Fallback: return generic team member info
-        return {"role": "团队成员", "desc": "协助处理问题", "when": "需要协助时"}
-    
-    def _get_agent_name_by_position(self, position_id: str) -> Optional[str]:
-        """Get agent name by position ID from chatroom participants.
-        
-        Args:
-            position_id: The position ID to look up
-            
-        Returns:
-            Agent name if found, None otherwise
-        """
-        for p in self.chatroom.get_all_participants():
-            if p.type == "agent" and p.metadata:
-                if p.metadata.get("position_id") == position_id:
-                    return p.name
-        return None
-    
-    def _build_discipline_rules(self) -> str:
-        """Build self-discipline rules for multi-agent collaboration."""
-        # Get agent names for specific positions
-        customer_service_name = self._get_agent_name_by_position("customer_service") or "客服"
-        project_manager_name = self._get_agent_name_by_position("project_manager") or "项目经理"
-        
-        rules = [
-            "1. **收到任务时**: 确认收到即可，不要重复 @发送者",
-            f'   - ✅ 正确: "收到，我来处理"',
-            f'   - ❌ 错误: "@{customer_service_name} 收到，我来处理"（不要回@）',
-            "",
-            "2. **任务完成时**: 向任务分派者汇报",
-            f"   - 如果 @{project_manager_name} 派的活 → 完成后 @{project_manager_name}",
-            "   - 如果 @人类 直接派的活 → 完成后 @人类",
-            "",
-            '3. **避免无意义回应**: 不要对 "收到"、"好的"、"谢谢"进行回复',
-            "",
-            "4. **循环检测**: 如果你和另一个 Agent 来回@超过2轮，停止回复，让人类介入",
-            "",
-            "5. **@mention 规则**: 使用 completeDialog 的 mentions 参数指定负责人",
-            "   - 只有被 mentions 的人才会收到通知并响应",
-            "   - 分派任务时必须通过 mentions 明确指定负责人",
-        ]
-        
-        # Add position-specific rules from position configuration (excluding common rules)
-        common_rules = {"使用 completeDialog 的 mentions 参数指定负责人", 
-                       "分派任务时使用 completeDialog 的 mentions 参数指定负责人"}
-        if self.position_registry and self.position_id:
-            position = self.position_registry.get(self.position_id)
-            if position and position.rules:
-                # Filter out common rules that are already covered
-                specific_rules = [r for r in position.rules if r not in common_rules]
-                if specific_rules:
-                    rules.extend([
-                        "",
-                        f"6. **{position.title}特殊规则**:",
-                    ])
-                    for rule in specific_rules:
-                        rules.append(f"   - {rule}")
-        
-        return "\n".join(rules)
     
     async def _execute_tool_call(self, tool_call: ToolCall) -> Any:
         """Execute a tool call.

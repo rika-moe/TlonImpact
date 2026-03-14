@@ -176,8 +176,20 @@ class AgentRegistry:
         try:
             logger.info(f"Activating agent: {config.name} ({agent_id})")
             
+            # Prepare team members config (all other agents)
+            team_members = [
+                cfg for cfg in self._configs.values()
+                if cfg.id != agent_id
+            ]
+            
             # Create and initialize agent
-            agent = Agent(config, self.event_bus, self.chatroom, self.position_registry)
+            agent = Agent(
+                config=config,
+                event_bus=self.event_bus,
+                chatroom=self.chatroom,
+                position_registry=self.position_registry,
+                team_members=team_members,
+            )
             await agent.initialize()
             
             # Track active agent
