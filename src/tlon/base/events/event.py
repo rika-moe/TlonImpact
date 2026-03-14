@@ -41,6 +41,7 @@ class EventType(str, Enum):
     SYSTEM_STARTUP = "system.startup"
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_ERROR = "system.error"
+    CONFIG_RELOADED = "config.reloaded"
 
 
 @dataclass

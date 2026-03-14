@@ -6,9 +6,10 @@ and provides lookup and management capabilities.
 
 from pathlib import Path
 from typing import Dict, List, Optional
-import yaml
 
-from .models import Position
+from tlon.base.config.loader import ConfigLoader
+from tlon.base.config.saver import ConfigSaver
+from tlon.base.config.models import PositionConfig
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,12 +28,21 @@ class PositionRegistry:
         >>> all_tech = registry.get_by_department("技术部")
     """
     
-    def __init__(self):
-        """Initialize empty position registry."""
-        self._positions: Dict[str, Position] = {}
+    def __init__(self, positions_dir: Optional[Path] = None):
+        """Initialize position registry.
+        
+        Args:
+            positions_dir: Directory containing position YAML files
+        """
+        self._positions: Dict[str, PositionConfig] = {}
         self._loaded_paths: List[Path] = []
+        
+        # Use ConfigLoader and ConfigSaver for actual operations
+        positions_dir_str = str(positions_dir) if positions_dir else None
+        self._loader = ConfigLoader(positions_dir=positions_dir_str)
+        self._saver = ConfigSaver(positions_dir=positions_dir_str)
     
-    def register(self, position: Position) -> None:
+    def register(self, position: PositionConfig) -> None:
         """Register a position.
         
         Args:
@@ -41,32 +51,42 @@ class PositionRegistry:
         self._positions[position.id] = position
         logger.debug(f"Registered position: {position.id} ({position.title})")
     
-    def get(self, position_id: str) -> Optional[Position]:
+    def get(self, position_id: str) -> Optional[PositionConfig]:
         """Get a position by id.
         
         Args:
             position_id: Position identifier
             
         Returns:
-            Position or None if not found
+            PositionConfig or None if not found
         """
+        # First check cache, then try loading
+        if position_id not in self._positions:
+            position = self._loader.load_position(position_id)
+            if position:
+                self._positions[position_id] = position
         return self._positions.get(position_id)
     
-    def get_by_type(self, position_type: str) -> Optional[Position]:
+    def get_by_type(self, position_type: str) -> Optional[PositionConfig]:
         """Get a position by type.
         
         Args:
             position_type: Position type code
             
         Returns:
-            Position or None if not found
+            PositionConfig or None if not found
         """
         for position in self._positions.values():
             if position.type == position_type:
                 return position
+        # Try loading from file
+        position = self._loader.load_position(position_type)
+        if position:
+            self._positions[position.id] = position
+            return position
         return None
     
-    def get_all(self) -> List[Position]:
+    def get_all(self) -> List[PositionConfig]:
         """Get all registered positions.
         
         Returns:
@@ -74,7 +94,7 @@ class PositionRegistry:
         """
         return list(self._positions.values())
     
-    def get_by_department(self, department: str) -> List[Position]:
+    def get_by_department(self, department: str) -> List[PositionConfig]:
         """Get positions by department.
         
         Args:
@@ -85,7 +105,7 @@ class PositionRegistry:
         """
         return [p for p in self._positions.values() if p.department == department]
     
-    def load_from_file(self, path: Path) -> Optional[Position]:
+    def load_from_file(self, path: Path) -> Optional[PositionConfig]:
         """Load a position from a YAML file.
         
         Args:
@@ -95,26 +115,18 @@ class PositionRegistry:
             Loaded position or None if failed
         """
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
-            
-            if not data or 'position' not in data:
-                logger.warning(f"No 'position' key found in {path}")
-                return None
-            
-            position_data = data['position']
-            position = Position.from_dict(position_data)
-            self.register(position)
-            self._loaded_paths.append(path)
-            
-            logger.info(f"Loaded position from {path}: {position.id}")
-            return position
-            
+            # Use ConfigLoader for loading
+            position = self._loader._load_position_file(path)
+            if position:
+                self._positions[position.id] = position
+                self._loaded_paths.append(path)
+                logger.info(f"Loaded position from {path}: {position.id}")
+                return position
         except Exception as e:
             logger.error(f"Failed to load position from {path}: {e}")
-            return None
+        return None
     
-    def load_from_directory(self, directory: Path) -> List[Position]:
+    def load_from_directory(self, directory: Path) -> List[PositionConfig]:
         """Load all positions from a directory.
         
         Scans directory for YAML files and loads position configurations.
@@ -142,6 +154,16 @@ class PositionRegistry:
         logger.info(f"Loaded {len(loaded)} positions from {directory}")
         return loaded
     
+    def load_all(self) -> Dict[str, PositionConfig]:
+        """Load all positions using ConfigLoader.
+        
+        Returns:
+            Dictionary mapping position id to PositionConfig
+        """
+        positions = self._loader.load_all_positions()
+        self._positions.update(positions)
+        return positions
+    
     def has_position(self, position_id: str) -> bool:
         """Check if a position exists.
         
@@ -151,10 +173,14 @@ class PositionRegistry:
         Returns:
             True if position exists
         """
-        return position_id in self._positions
+        return self.get(position_id) is not None
     
     def clear(self) -> None:
         """Clear all registered positions."""
         self._positions.clear()
         self._loaded_paths.clear()
+        self._loader.clear_cache()
         logger.debug("Position registry cleared")
+
+
+__all__ = ["PositionRegistry"]

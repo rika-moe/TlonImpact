@@ -59,13 +59,15 @@ class RESTAPIHandler:
         >>> await site.start()
     """
     
-    def __init__(self, server):
+    def __init__(self, server, config_manager=None):
         """Initialize the REST API handler.
         
         Args:
             server: The TlonServer instance
+            config_manager: Optional ConfigManager for hot-reload support
         """
         self.server = server
+        self.config_manager = config_manager
     
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application.
@@ -85,6 +87,13 @@ class RESTAPIHandler:
         app.router.add_post('/agents/{agent_id}/stop', self.handle_stop_agent)
         app.router.add_get('/sessions', self.handle_list_sessions)
         app.router.add_get('/participants', self.handle_list_participants)
+        
+        # Admin routes for hot-reload (only if config_manager is available)
+        if self.config_manager:
+            app.router.add_post('/admin/reload/positions', self.handle_reload_positions)
+            app.router.add_post('/admin/reload/agents', self.handle_reload_agents)
+            app.router.add_get('/admin/config/positions', self.handle_list_positions)
+            app.router.add_get('/admin/config/agents', self.handle_list_agent_configs)
         
         # Add WebUI static files
         webui_path = get_webui_path()
@@ -365,6 +374,128 @@ Or use the build script:
             "participants": participant_info,
             "count": len(participant_info),
         })
+    
+    # ========== Admin Routes for Hot-Reload ==========
+    
+    async def handle_reload_positions(self, request: web.Request) -> web.Response:
+        """POST /admin/reload/positions - Hot-reload position configuration.
+        
+        Returns:
+            Success or error response
+        """
+        if not self.config_manager:
+            return self._json_response({
+                "status": "error",
+                "message": "Config manager not available"
+            }, status=503)
+        
+        try:
+            success = await self.config_manager.reload_positions()
+            if success:
+                return self._json_response({
+                    "status": "success",
+                    "message": "Positions reloaded successfully",
+                    "count": len(self.config_manager.positions)
+                })
+            else:
+                return self._json_response({
+                    "status": "error",
+                    "message": "Failed to reload positions"
+                }, status=500)
+        except Exception as e:
+            logger.error(f"Error reloading positions: {e}")
+            return self._json_response({
+                "status": "error",
+                "message": str(e)
+            }, status=500)
+    
+    async def handle_reload_agents(self, request: web.Request) -> web.Response:
+        """POST /admin/reload/agents - Hot-reload agent configuration.
+        
+        Returns:
+            Success or error response
+        """
+        if not self.config_manager:
+            return self._json_response({
+                "status": "error",
+                "message": "Config manager not available"
+            }, status=503)
+        
+        try:
+            success = await self.config_manager.reload_agents()
+            if success:
+                return self._json_response({
+                    "status": "success",
+                    "message": "Agents reloaded successfully",
+                    "count": len(self.config_manager.agents)
+                })
+            else:
+                return self._json_response({
+                    "status": "error",
+                    "message": "Failed to reload agents"
+                }, status=500)
+        except Exception as e:
+            logger.error(f"Error reloading agents: {e}")
+            return self._json_response({
+                "status": "error",
+                "message": str(e)
+            }, status=500)
+    
+    async def handle_list_positions(self, request: web.Request) -> web.Response:
+        """GET /admin/config/positions - List current position configurations.
+        
+        Returns:
+            List of position configurations
+        """
+        if not self.config_manager:
+            return self._json_response({
+                "status": "error",
+                "message": "Config manager not available"
+            }, status=503)
+        
+        positions = []
+        for pos in self.config_manager.positions.values():
+            positions.append({
+                "id": pos.id,
+                "type": pos.type,
+                "title": pos.title,
+                "department": pos.department,
+                "description": pos.description,
+            })
+        
+        return self._json_response({
+            "status": "success",
+            "positions": positions,
+            "count": len(positions)
+        })
+    
+    async def handle_list_agent_configs(self, request: web.Request) -> web.Response:
+        """GET /admin/config/agents - List current agent configurations.
+        
+        Returns:
+            List of agent configurations (sanitized)
+        """
+        if not self.config_manager:
+            return self._json_response({
+                "status": "error",
+                "message": "Config manager not available"
+            }, status=503)
+        
+        agents = []
+        for agent in self.config_manager.agents.values():
+            agents.append({
+                "id": agent.id,
+                "name": agent.name,
+                "position_id": agent.position_id,
+                "personality": agent.personality,
+                "skills": agent.skills,
+            })
+        
+        return self._json_response({
+            "status": "success",
+            "agents": agents,
+            "count": len(agents)
+        })
 
 
 class RESTServer:
@@ -373,7 +504,7 @@ class RESTServer:
     Wraps the aiohttp server with lifecycle management.
     
     Example:
-        >>> rest = RESTServer(server, port=8080)
+        >>> rest = RESTServer(server, config_manager, port=8080)
         >>> await rest.start()
         >>> # Server is running
         >>> await rest.stop()
@@ -382,6 +513,7 @@ class RESTServer:
     def __init__(
         self,
         server,
+        config_manager=None,
         host: str = "127.0.0.1",
         port: int = 8080,
     ):
@@ -389,13 +521,14 @@ class RESTServer:
         
         Args:
             server: The TlonServer instance
+            config_manager: Optional ConfigManager for hot-reload support
             host: Host to bind to
             port: Port to listen on
         """
         self.server = server
         self.host = host
         self.port = port
-        self._handler = RESTAPIHandler(server)
+        self._handler = RESTAPIHandler(server, config_manager)
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None

@@ -3,7 +3,7 @@
 import tempfile
 
 from tlon.organization.positions.models import Position
-from tlon.app.wizard.position_store import PositionStore, DEFAULT_POSITION_TEMPLATES
+from tlon.app.wizard.position_store import PositionStore, DEFAULT_POSITIONS
 
 
 class TestPositionStore:
@@ -16,7 +16,7 @@ class TestPositionStore:
             positions = store.load_all_positions()
             
             # Should load default templates
-            assert len(positions) == len(DEFAULT_POSITION_TEMPLATES)
+            assert len(positions) == len(DEFAULT_POSITIONS)
             assert "developer" in positions
             assert "operator" in positions
     
@@ -136,9 +136,9 @@ class TestPositionStore:
         """Test position data validation."""
         store = PositionStore()
         
-        # Valid data
+        # Valid data (note: validate_position_data expects 'type', not 'id')
         valid, errors = store.validate_position_data({
-            "id": "valid_id",
+            "type": "valid_type",
             "title": "Valid Title",
             "jd": "Valid description",
         })
@@ -147,16 +147,16 @@ class TestPositionStore:
         
         # Missing required fields
         valid, errors = store.validate_position_data({
-            "id": "",
+            "type": "",
             "title": "",
         })
         assert not valid
         assert len(errors) > 0
     
-    def test_get_default_templates(self):
-        """Test getting default templates."""
+    def test_get_default_positions(self):
+        """Test getting default positions."""
         store = PositionStore()
-        templates = store.get_default_templates()
+        templates = store.get_default_positions()
         
         assert len(templates) > 0
         assert "developer" in templates

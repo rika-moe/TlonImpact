@@ -136,9 +136,13 @@ class ConfigLoader:
         
         position_data = data["position"]
         
-        # Ensure id is set (use type if not specified)
-        if "id" not in position_data:
-            position_data["id"] = position_data.get("type", "")
+        # Ensure id is set (use type if not specified, or filename)
+        if "id" not in position_data or not position_data["id"]:
+            position_data["id"] = position_data.get("type", filepath.stem)
+        
+        # Ensure type is set (use id if not specified)
+        if "type" not in position_data or not position_data["type"]:
+            position_data["type"] = position_data.get("id", filepath.stem)
         
         # Validate data
         is_valid, errors = ConfigValidator.validate_position_data(position_data)

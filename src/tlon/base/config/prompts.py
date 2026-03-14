@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING, List, Optional
 
 from .loader import ConfigLoader
 from .models import PositionConfig, PromptTemplates
+from ..logger import get_logger
 
 if TYPE_CHECKING:
     from .models import AgentConfig
 
+logger = get_logger(__name__)
 
 class PromptTemplateManager:
     """Manages prompt templates with three-layer architecture.
@@ -274,7 +276,9 @@ class PromptTemplateManager:
         )
         sections.append(discipline)
         
-        return "\n".join(sections)
+        ret = "\n".join(sections)
+        logger.info("building system prompt {}".format(ret))
+        return ret
     
     def reload_templates(self) -> None:
         """Reload all templates from disk."""

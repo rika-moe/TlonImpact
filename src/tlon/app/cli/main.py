@@ -189,7 +189,7 @@ async def run_dream(args) -> int:
     if not check_configuration():
         return 1
 
-    from ..server.app import run_server
+    from ..server.serverapp import run_server
 
     is_lucid = getattr(args, "debug", False)
     log_level = "DEBUG" if is_lucid else settings.log_level
@@ -301,17 +301,12 @@ async def run_mirror(args) -> int:
 
 async def _mirror_reflect() -> int:
     """List all existing agents (view mirrors)."""
-    from pathlib import Path
-    import yaml
+    from tlon.base.config import ConfigLoader
 
-    agents_dir = Path("config/agents")
-    if not agents_dir.exists():
-        print("\n🪞 镜中尚无倒影")
-        print("   还没有创建任何 Agent")
-        return 0
+    config_loader = ConfigLoader()
+    agents = config_loader.load_all_agents()
 
-    agent_files = list(agents_dir.glob("*.yaml"))
-    if not agent_files:
+    if not agents:
         print("\n🪞 镜中尚无倒影")
         print("   还没有创建任何 Agent")
         return 0
@@ -319,51 +314,52 @@ async def _mirror_reflect() -> int:
     print("\n🪞 镜中倒影:")
     print("-" * 50)
 
-    for agent_file in sorted(agent_files):
+    for agent in agents.values():
         try:
-            with open(agent_file, encoding = "utf-8") as f:
-                config = yaml.safe_load(f)
-
-            agent = config.get("agent", {})
-            name = agent.get("name", "Unknown")
-            agent_id = agent.get("id", agent_file.stem)
-            position = agent.get("position_id", "unknown")
-            personality = agent.get("personality", "")
-
-            print(f"\n  📋 {name} ({agent_id})")
-            print(f"     职位: {position}")
-            if personality:
+            print(f"\n  📋 {agent.name} ({agent.id})")
+            print(f"     职位: {agent.position_id}")
+            if agent.personality:
+                personality = agent.personality
                 print(f"     性格: {personality[:40]}{'...' if len(personality) > 40 else ''}")
         except Exception as e:
-            print(f"\n  ⚠️ {agent_file.stem}: 读取失败 ({e})")
+            print(f"\n  ⚠️ {agent.id}: 读取失败 ({e})")
 
     print(f"\n-" * 50)
-    print(f"总计: {len(agent_files)} 个 Agent")
+    print(f"总计: {len(agents)} 个 Agent")
     return 0
 
 
 async def _mirror_destroy(name: str) -> int:
     """Destroy an agent."""
-    from pathlib import Path
+    from tlon.base.config import ConfigSaver
 
-    agent_file = Path(f"config/agents/{name}.yaml")
-    if not agent_file.exists():
+    config_saver = ConfigSaver()
+
+    # Check if agent exists first
+    from tlon.base.config import ConfigLoader
+    config_loader = ConfigLoader()
+    agent = config_loader.load_agent(name)
+
+    if not agent:
         print(f"\n❌ 镜中没有名为 '{name}' 的倒影")
         return 1
 
-    try:
-        agent_file.unlink()
+    success, error = config_saver.delete_agent(name, delete_data=True)
+
+    if success:
         print(f"\n🪞 倒影已消散")
         print(f"   Agent '{name}' 已被移除")
         return 0
-    except Exception as e:
-        print(f"\n❌ 无法消散倒影: {e}")
+    else:
+        print(f"\n❌ 无法消散倒影: {error}")
         return 1
 
 
 async def _mirror_create(name: str, position: Optional[str], template: str) -> int:
     """Create an agent non-interactively."""
-    import yaml
+    from tlon.base.config import ConfigLoader, ConfigSaver, AgentConfig, LLMConfig, DockerRuntimeConfig
+    from tlon.subsystem.memory import MemoryConfig
+    from tlon.base.settings import settings
 
     if not position:
         print("\n❌ 必须指定 --position 来创建 Agent")
@@ -371,13 +367,15 @@ async def _mirror_create(name: str, position: Optional[str], template: str) -> i
         return 1
 
     # Validate position exists
-    position_file = Path(f"config/positions/{position}.yaml")
-    if not position_file.exists():
+    config_loader = ConfigLoader()
+    position_config = config_loader.load_position(position)
+
+    if not position_config:
         print(f"\n❌ 职位 '{position}' 不存在")
         # List available positions
-        positions_dir = Path("config/positions")
-        if positions_dir.exists():
-            available = [f.stem for f in positions_dir.glob("*.yaml")]
+        positions = config_loader.load_all_positions()
+        if positions:
+            available = list(positions.keys())
             print(f"   可用职位: {', '.join(available)}")
         return 1
 
@@ -385,57 +383,49 @@ async def _mirror_create(name: str, position: Optional[str], template: str) -> i
     agent_id = _generate_agent_id(name)
 
     # Check if agent already exists
-    agent_file = Path(f"config/agents/{agent_id}.yaml")
-    if agent_file.exists():
+    existing = config_loader.load_agent(agent_id)
+    if existing:
         print(f"\n❌ Agent '{agent_id}' 已存在")
         return 1
 
-    # Load position to get default skills
-    try:
-        with open(position_file, encoding = "utf-8") as f:
-            pos_config = yaml.safe_load(f)
-        default_skills = pos_config.get("position", {}).get("default_skills", [])
-    except Exception as e:
-        print(f"\n⚠️ 无法读取职位配置: {e}")
-        default_skills = []
+    # Get default skills from position
+    default_skills = position_config.default_skills if position_config else []
 
-    # Create agent config
-    agent_config = {
-        "agent": {
-            "id": agent_id,
-            "name": name,
-            "personality": "专业、高效、善于协作",
-            "position_id": position,
-            "skills": default_skills,
-            "llm": {
-                "model_name": "kimi-k2.5",
-                "temperature": 0.7
-            },
-            "docker": {
-                "image": "ubuntu:22.04",
-                "memory_limit": "512m"
-            }
-        }
-    }
+    # Create agent config using ConfigSaver
+    config_saver = ConfigSaver()
 
-    # Ensure agents directory exists
-    agents_dir = Path("config/agents")
-    agents_dir.mkdir(parents=True, exist_ok=True)
+    agent_config = AgentConfig(
+        id=agent_id,
+        name=name,
+        personality="专业、高效、善于协作",
+        position_id=position,
+        skills=default_skills,
+        llm=LLMConfig(
+            model_name=settings.llm_model_name or "kimi-k2.5",
+            temperature=settings.llm_temperature or 0.7,
+            base_url=settings.llm_base_url,
+            auth_token=settings.llm_api_key,
+        ),
+        docker=DockerRuntimeConfig(
+            image=settings.docker_image or "ubuntu:22.04",
+            memory_limit=settings.docker_memory_limit or "512m",
+        ),
+        memory=MemoryConfig(agent_id=agent_id),
+    )
 
-    # Write config file
-    try:
-        with open(agent_file, 'w', encoding = "utf-8") as f:
-            yaml.dump(agent_config, f, allow_unicode=True, sort_keys=False)
+    # Save agent config
+    success, error = config_saver.save_agent(agent_config)
 
+    if success:
         print(f"\n🪞 倒影已凝聚")
         print(f"   ID: {agent_id}")
         print(f"   名称: {name}")
         print(f"   职位: {position}")
-        print(f"   配置: {agent_file}")
+        print(f"   配置: config/agents/{agent_id}.yaml")
         print(f"\n   [镜子] 轮廓凝聚，一个新的存在睁开眼睛。")
         return 0
-    except Exception as e:
-        print(f"\n❌ 创建失败: {e}")
+    else:
+        print(f"\n❌ 创建失败: {error}")
         return 1
 
 
@@ -461,13 +451,18 @@ async def _mirror_edit(name: str) -> int:
     import os
     import subprocess
 
-    agent_file = Path(f"config/agents/{name}.yaml")
-    if not agent_file.exists():
-        # Try with .yaml extension if not provided
-        agent_file = Path(f"config/agents/{name}")
-        if not agent_file.exists():
-            print(f"\n❌ 镜中没有名为 '{name}' 的倒影")
-            return 1
+    from tlon.base.config import ConfigLoader
+
+    # Find agent file
+    config_loader = ConfigLoader()
+    agent = config_loader.load_agent(name)
+
+    if not agent:
+        print(f"\n❌ 镜中没有名为 '{name}' 的倒影")
+        return 1
+
+    # Get agent file path
+    agent_file = config_loader.agents_dir / f"{agent.id}.yaml"
 
     # Get editor from environment or use defaults
     editor = os.environ.get('EDITOR', 'vi')
@@ -478,7 +473,7 @@ async def _mirror_edit(name: str) -> int:
                 editor = fallback
                 break
 
-    print(f"\n🪞 编辑倒影: {name}")
+    print(f"\n🪞 编辑倒影: {agent.name}")
     print(f"   使用编辑器: {editor}")
     print(f"   配置文件: {agent_file}")
 

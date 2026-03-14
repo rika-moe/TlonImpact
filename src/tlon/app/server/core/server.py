@@ -20,6 +20,7 @@ from tlon.organization.messaging import Congress, CongressMetadata, Participant
 from tlon.base.events.event import Event, EventType
 from tlon.organization.messaging.message import Message
 from tlon.agents.agent_registry import AgentRegistry
+from tlon.organization.positions import PositionRegistry
 from tlon.base.config import AgentConfig
 from tlon.base.settings import settings
 from tlon.base.logger import get_logger
@@ -48,46 +49,69 @@ class ClientSession:
 
 
 class TlonServer:
-    """Main server class for Tlon.
+    """Main server class for Tlon - pure coordinator with DI.
     
-    Manages:
-    - Core components (EventBus, ChatRoom, AgentRegistry)
-    - Client sessions (TUI, Web, Telegram)
+    TlonServer acts as a coordinator that receives all dependencies via
+    dependency injection. It does NOT create any components, only coordinates
+    their interaction.
+    
+    Responsibilities:
+    - Client session management
     - Event distribution to connected clients
-    - Configuration and state persistence
+    - Coordinating configuration reloads
+    
+    All core components (EventBus, Congress, AgentRegistry) are created
+    by ServerApp and injected into TlonServer.
     
     Example:
-        >>> server = TlonServer()
+        >>> server = TlonServer(
+        ...     event_bus=event_bus,
+        ...     congress=congress,
+        ...     agent_registry=agent_registry,
+        ...     ...
+        ... )
         >>> await server.initialize()
         >>> await server.start()
-        >>> # Server is running, accepting client connections
         >>> await server.shutdown()
     """
     
     def __init__(
         self,
-        host: str = "127.0.0.1",
-        port: int = 8888,
-        data_dir: Optional[Path] = None,
-        position_registry = None,
+        *,
+        # Core components - all injected (DI)
+        event_bus: EventBus,
+        congress: Congress,
+        position_registry: PositionRegistry,
+        agent_registry: AgentRegistry,
+        # Configuration management
+        config_manager: Any,  # ConfigManager
+        # Other parameters
+        data_dir: Path,
+        host: str,
+        port: int,
     ):
-        """Initialize the server.
+        """Initialize the server with all dependencies injected.
         
         Args:
+            event_bus: The EventBus instance (injected)
+            congress: The Congress/ChatRoom instance (injected)
+            position_registry: Position registry for lookups (injected)
+            agent_registry: Agent registry for agent management (injected)
+            config_manager: ConfigManager for reload support (injected)
+            data_dir: Directory for persistence
             host: Host to bind the server to
             port: Port to listen on
-            data_dir: Directory for persistence (default: settings.data_dir)
-            position_registry: Position registry for agent position lookups
         """
+        # Store injected dependencies
+        self._event_bus = event_bus
+        self._congress = congress
+        self._position_registry = position_registry
+        self._agent_registry = agent_registry
+        self._config_manager = config_manager
+        
         self.host = host
         self.port = port
-        self.data_dir = data_dir or settings.data_dir
-        self.position_registry = position_registry
-        
-        # Core components
-        self.event_bus: Optional[EventBus] = None
-        self.chatroom: Optional[Congress] = None
-        self.agent_registry: Optional[AgentRegistry] = None
+        self.data_dir = data_dir
         
         # Session management
         self.sessions: Dict[str, ClientSession] = {}
@@ -101,62 +125,114 @@ class TlonServer:
         self._running = False
         self._shutdown_event = asyncio.Event()
         
-        logger.info(f"TlonServer initialized (host={host}, port={port})")
+        logger.info(f"TlonServer initialized as coordinator (host={host}, port={port})")
     
     async def initialize(self) -> None:
-        """Initialize all core components."""
-        logger.info("Initializing TlonServer...")
+        """Initialize TlonServer as coordinator.
         
-        # Start event bus
-        self.event_bus = EventBus()
-        await self.event_bus.start()
-        logger.info("EventBus started")
+        Validates all dependencies are properly injected and subscribes
+        to events for broadcasting to clients.
+        """
+        logger.info("Initializing TlonServer as coordinator...")
         
-        # Create chat room
-        room_metadata = CongressMetadata(
-            id="main-room",
-            name="主聊天室",
-            created_at=datetime.now().isoformat(),
-            data_dir=self.data_dir / "chat_history",
-        )
-        self.chatroom = Congress(room_metadata, self.event_bus)
-        await self.chatroom.initialize()
-        logger.info(f"ChatRoom '{room_metadata.name}' initialized")
+        # Validate dependencies (all must be non-null)
+        assert self._event_bus is not None, "EventBus not injected"
+        assert self._congress is not None, "Congress not injected"
+        assert self._agent_registry is not None, "AgentRegistry not injected"
+        assert self._position_registry is not None, "PositionRegistry not injected"
+        assert self._config_manager is not None, "ConfigManager not injected"
         
-        # Create agent registry
-        self.agent_registry = AgentRegistry(
-            self.event_bus,
-            self.chatroom,
-            self.position_registry
-        )
+        logger.info("All dependencies validated")
         
         # Subscribe to events for broadcasting to clients
         self._subscribe_to_events()
         
-        logger.info("TlonServer initialized successfully")
+        logger.info("TlonServer initialized as coordinator")
+    
+    # ========== Configuration Reload Handlers ==========
+    
+    async def on_positions_changed(self, new_positions: Dict[str, Any]) -> None:
+        """Handle position configuration changes.
+        
+        Broadcasts CONFIG_RELOADED event to all connected clients.
+        
+        Args:
+            new_positions: New position configurations
+        """
+        logger.info(f"Notifying clients of position reload: {len(new_positions)} positions")
+        
+        await self._event_bus.publish(Event(
+            type=EventType.CONFIG_RELOADED,
+            source="server",
+            data={
+                "type": "positions",
+                "count": len(new_positions),
+            }
+        ))
+    
+    async def on_agents_changed(self, new_agents: Dict[str, Any]) -> None:
+        """Handle agent configuration changes.
+        
+        Broadcasts CONFIG_RELOADED event to all connected clients.
+        
+        Args:
+            new_agents: New agent configurations
+        """
+        logger.info(f"Notifying clients of agent reload: {len(new_agents)} agents")
+        
+        await self._event_bus.publish(Event(
+            type=EventType.CONFIG_RELOADED,
+            source="server",
+            data={
+                "type": "agents",
+                "count": len(new_agents),
+            }
+        ))
+    
+    # ========== Property Accessors (for backward compatibility) ==========
+    
+    @property
+    def event_bus(self) -> EventBus:
+        """Access the injected EventBus."""
+        return self._event_bus
+    
+    @property
+    def chatroom(self) -> Congress:
+        """Access the injected Congress (chatroom)."""
+        return self._congress
+    
+    @property
+    def agent_registry(self) -> AgentRegistry:
+        """Access the injected AgentRegistry."""
+        return self._agent_registry
+    
+    @property
+    def position_registry(self) -> PositionRegistry:
+        """Access the injected PositionRegistry."""
+        return self._position_registry
     
     def _subscribe_to_events(self) -> None:
         """Subscribe to events for broadcasting to clients."""
         # Subscribe to message events
-        self.event_bus.subscribe(
+        self._event_bus.subscribe(
             EventType.MESSAGE_NEW,
             self._on_message_event
         )
-        self.event_bus.subscribe(
+        self._event_bus.subscribe(
             EventType.MESSAGE_MENTION,
             self._on_message_event
         )
         
         # Subscribe to agent events
-        self.event_bus.subscribe(
+        self._event_bus.subscribe(
             EventType.AGENT_STARTED,
             self._on_agent_event
         )
-        self.event_bus.subscribe(
+        self._event_bus.subscribe(
             EventType.AGENT_STOPPED,
             self._on_agent_event
         )
-        self.event_bus.subscribe(
+        self._event_bus.subscribe(
             EventType.AGENT_ERROR,
             self._on_agent_event
         )
@@ -290,11 +366,15 @@ class TlonServer:
         logger.info("TlonServer stopping...")
     
     async def shutdown(self) -> None:
-        """Shutdown the server gracefully."""
+        """Shutdown the server gracefully.
+        
+        Note: Core components are managed by ServerApp, TlonServer only
+        handles client disconnections and state cleanup.
+        """
         if not self._running:
             return
         
-        logger.info("Shutting down TlonServer...")
+        logger.info("Shutting down TlonServer (coordinator)...")
         self._running = False
         self._shutdown_event.set()
         
@@ -305,28 +385,9 @@ class TlonServer:
         for session_id in session_ids:
             await self.disconnect_client(session_id)
         
-        # Shutdown agent registry
-        if self.agent_registry:
-            try:
-                await self.agent_registry.shutdown()
-            except Exception as e:
-                logger.warning(f"Error shutting down agent registry: {e}")
-        
-        # Shutdown chatroom
-        if self.chatroom:
-            try:
-                await self.chatroom.shutdown()
-            except Exception as e:
-                logger.warning(f"Error shutting down chatroom: {e}")
-        
-        # Stop event bus
-        if self.event_bus:
-            try:
-                await self.event_bus.stop()
-            except Exception as e:
-                logger.warning(f"Error stopping event bus: {e}")
-        
-        logger.info("TlonServer shutdown complete")
+        # Note: Component shutdown is handled by ServerApp (who created them)
+        # We only clear our references
+        logger.info("TlonServer coordinator shutdown complete")
     
     # ==================== Session Management ====================
     

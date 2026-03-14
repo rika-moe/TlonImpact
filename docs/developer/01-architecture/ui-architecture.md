@@ -149,7 +149,7 @@
 
 **启动流程**：
 ```python
-# tlon/server/app.py
+# tlon/server/serverapp.py
 class ServerApp:
     async def initialize(self):
         # 1. 启动 EventBus（内部消息总线）

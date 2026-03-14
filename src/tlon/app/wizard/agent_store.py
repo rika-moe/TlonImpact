@@ -2,15 +2,19 @@
 
 Handles loading, saving, and managing Agent configurations
 from individual YAML files in config/agents/ directory.
+
+This module is a thin wrapper around ConfigLoader/ConfigSaver
+with additional convenience methods for agent management.
 """
 
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import yaml
-
-from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
+from tlon.base.config.loader import ConfigLoader
+from tlon.base.config.saver import ConfigSaver
+from tlon.base.config.models import AgentConfig, LLMConfig, DockerRuntimeConfig
+from tlon.base.config.validator import ConfigValidator
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
@@ -19,8 +23,14 @@ logger = get_logger(__name__)
 class AgentStore:
     """Store for managing Agent configurations.
     
-    Handles loading agents from individual YAML files and provides
-    CRUD operations with position reference management.
+    A thin wrapper around ConfigLoader/ConfigSaver that provides
+    CRUD operations with reference management.
+    
+    Attributes:
+        agents_dir: Directory containing agent YAML files
+        data_dir: Base directory for agent data storage
+        _loader: ConfigLoader instance for loading
+        _saver: ConfigSaver instance for saving
     """
     
     def __init__(self, agents_dir: str = "config/agents", data_dir: str = "data"):
@@ -32,7 +42,8 @@ class AgentStore:
         """
         self.agents_dir = Path(agents_dir)
         self.data_dir = Path(data_dir)
-        self._agents: Dict[str, AgentConfig] = {}
+        self._loader = ConfigLoader(agents_dir=agents_dir)
+        self._saver = ConfigSaver(agents_dir=agents_dir, data_dir=data_dir)
         self._ensure_directory()
     
     def _ensure_directory(self) -> None:
@@ -48,29 +59,7 @@ class AgentStore:
         Returns:
             Dictionary mapping agent ID to AgentConfig object
         """
-        if self._agents and not force_reload:
-            return self._agents.copy()
-        
-        self._agents = {}
-        
-        if not self.agents_dir.exists():
-            return self._agents.copy()
-        
-        yaml_files = list(self.agents_dir.glob("*.yaml"))
-        
-        for yaml_file in yaml_files:
-            try:
-                with open(yaml_file, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                
-                if data and "agent" in data:
-                    agent = self._dict_to_agent(data["agent"])
-                    self._agents[agent.id] = agent
-                    logger.debug(f"Loaded agent: {agent.id}")
-            except Exception as e:
-                logger.error(f"Failed to load agent from {yaml_file}: {e}")
-        
-        return self._agents.copy()
+        return self._loader.load_all_agents(force_reload=force_reload)
     
     def get_agent(self, agent_id: str) -> Optional[AgentConfig]:
         """Get an agent by ID.
@@ -81,9 +70,7 @@ class AgentStore:
         Returns:
             AgentConfig object or None if not found
         """
-        if not self._agents:
-            self.load_all_agents()
-        return self._agents.get(agent_id)
+        return self._loader.load_agent(agent_id)
     
     def get_agent_by_name(self, name: str) -> Optional[AgentConfig]:
         """Get an agent by name.
@@ -94,16 +81,12 @@ class AgentStore:
         Returns:
             AgentConfig object or None if not found
         """
-        agents = self.load_all_agents()
-        for agent in agents.values():
-            if agent.name == name:
-                return agent
-        return None
+        return self._loader.load_agent_by_name(name)
     
     def save_agent(self, agent: AgentConfig) -> Tuple[bool, str]:
         """Save an agent to YAML file.
         
-        Uses standardized field format compatible with Server config loader.
+        Uses ConfigSaver for the actual save operation.
         
         Args:
             agent: AgentConfig to save
@@ -111,74 +94,7 @@ class AgentStore:
         Returns:
             Tuple of (success, message)
         """
-        try:
-            self._ensure_directory()
-            
-            # Build agent dict with standardized fields
-            agent_dict = {
-                "id": agent.id,
-                "name": agent.name,
-                "personality": agent.personality,
-                "position_id": agent.position_id,
-            }
-            
-            # Add LLM config with all fields
-            if agent.llm:
-                llm_dict = {
-                    "model_name": agent.llm.model_name,
-                    "temperature": agent.llm.temperature,
-                }
-                # Add optional LLM fields if not default values
-                if agent.llm.max_tokens != 4096:  # Only save if non-default
-                    llm_dict["max_tokens"] = agent.llm.max_tokens
-                if agent.llm.top_p != 0.9:  # Only save if non-default
-                    llm_dict["top_p"] = agent.llm.top_p
-                agent_dict["llm"] = llm_dict
-            
-            # Add Docker config with all fields
-            if agent.docker:
-                docker_dict = {
-                    "image": agent.docker.image,
-                    "memory_limit": agent.docker.memory_limit,
-                }
-                # Add optional Docker fields if not default values
-                if agent.docker.working_dir != "/workspace":
-                    docker_dict["working_dir"] = agent.docker.working_dir
-                if agent.docker.cpu_limit != 1.0:
-                    docker_dict["cpu_limit"] = agent.docker.cpu_limit
-                if agent.docker.network_mode != "host":
-                    docker_dict["network_mode"] = agent.docker.network_mode
-                agent_dict["docker"] = docker_dict
-            
-            # Add proactive setting
-            agent_dict["proactive"] = agent.proactive
-            
-            # Add skills if present
-            if agent.skills:
-                agent_dict["skills"] = agent.skills
-            
-            data = {"agent": agent_dict}
-            
-            # Write to file
-            filename = f"{agent.id}.yaml"
-            filepath = self.agents_dir / filename
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
-            
-            # Update cache
-            self._agents[agent.id] = agent
-            
-            # Ensure data directory exists
-            agent_data_dir = self.data_dir / "agents" / agent.id
-            agent_data_dir.mkdir(parents=True, exist_ok=True)
-            
-            logger.info(f"Saved agent: {agent.id} to {filepath}")
-            return True, f"Agent saved to {filepath}"
-            
-        except Exception as e:
-            logger.error(f"Failed to save agent {agent.id}: {e}")
-            return False, f"Error: {e}"
+        return self._saver.save_agent(agent, create_data_dir=True)
     
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> Tuple[bool, str]:
         """Delete an agent.
@@ -190,35 +106,7 @@ class AgentStore:
         Returns:
             Tuple of (success, message)
         """
-        # Check if agent exists
-        agent = self.get_agent(agent_id)
-        if not agent:
-            return False, f"Agent '{agent_id}' not found"
-        
-        try:
-            # Delete config file
-            filename = f"{agent_id}.yaml"
-            filepath = self.agents_dir / filename
-            
-            if filepath.exists():
-                filepath.unlink()
-            
-            # Remove from cache
-            self._agents.pop(agent_id, None)
-            
-            # Delete data directory
-            if delete_data:
-                agent_data_dir = self.data_dir / "agents" / agent_id
-                if agent_data_dir.exists():
-                    shutil.rmtree(agent_data_dir)
-                    logger.info(f"Deleted agent data directory: {agent_data_dir}")
-            
-            logger.info(f"Deleted agent: {agent_id}")
-            return True, f"Agent '{agent_id}' deleted"
-            
-        except Exception as e:
-            logger.error(f"Failed to delete agent {agent_id}: {e}")
-            return False, f"Error: {e}"
+        return self._saver.delete_agent(agent_id, delete_data=delete_data)
     
     def get_agents_by_position(self, position_id: str) -> List[AgentConfig]:
         """Get all agents with a specific position.
@@ -229,8 +117,7 @@ class AgentStore:
         Returns:
             List of AgentConfig objects
         """
-        agents = self.load_all_agents()
-        return [agent for agent in agents.values() if agent.position_id == position_id]
+        return list(self._loader.get_agents_by_position(position_id).values())
     
     def agent_exists(self, agent_id: str) -> bool:
         """Check if an agent exists.
@@ -243,7 +130,11 @@ class AgentStore:
         """
         return self.get_agent(agent_id) is not None
     
-    def generate_agent_id(self, position_type: str, existing_ids: Optional[List[str]] = None) -> str:
+    def generate_agent_id(
+        self, 
+        position_type: str, 
+        existing_ids: Optional[List[str]] = None
+    ) -> str:
         """Generate a unique agent ID.
         
         Args:
@@ -256,16 +147,7 @@ class AgentStore:
         if existing_ids is None:
             existing_ids = list(self.load_all_agents().keys())
         
-        # Normalize position type for ID
-        prefix = position_type.replace("_", "-")
-        
-        # Find next available number
-        counter = 1
-        while True:
-            agent_id = f"{prefix}-{counter:03d}"
-            if agent_id not in existing_ids:
-                return agent_id
-            counter += 1
+        return self._saver.generate_agent_id(position_type, existing_ids)
     
     def transfer_position(self, agent_id: str, new_position_id: str) -> Tuple[bool, str]:
         """Transfer an agent to a new position.
@@ -281,17 +163,7 @@ class AgentStore:
         if not agent:
             return False, f"Agent '{agent_id}' not found"
         
-        old_position_id = agent.position_id
-        agent.position_id = new_position_id
-        
-        success, msg = self.save_agent(agent)
-        if success:
-            logger.info(f"Transferred agent {agent_id} from {old_position_id} to {new_position_id}")
-            return True, f"Agent transferred from '{old_position_id}' to '{new_position_id}'"
-        else:
-            # Revert on failure
-            agent.position_id = old_position_id
-            return False, msg
+        return self._saver.transfer_agent_position(agent, new_position_id)
     
     def validate_agent_data(self, data: Dict) -> Tuple[bool, List[str]]:
         """Validate agent data.
@@ -302,67 +174,7 @@ class AgentStore:
         Returns:
             Tuple of (is_valid, list_of_errors)
         """
-        errors = []
-        
-        # Check required fields
-        required_fields = ["id", "name", "position_id"]
-        for field in required_fields:
-            if field not in data or not data[field]:
-                errors.append(f"Missing required field: {field}")
-        
-        # Validate ID format
-        if "id" in data:
-            agent_id = data["id"]
-            if not agent_id.replace("-", "").replace("_", "").isalnum():
-                errors.append("Agent ID must be alphanumeric with hyphens/underscores only")
-        
-        # Validate LLM config if present
-        if "llm" in data and data["llm"]:
-            llm = data["llm"]
-            if "model_name" not in llm or not llm["model_name"]:
-                errors.append("LLM config missing model_name")
-        
-        # Validate Docker config if present
-        if "docker" in data and data["docker"]:
-            docker = data["docker"]
-            if "image" not in docker or not docker["image"]:
-                errors.append("Docker config missing image")
-        
-        return len(errors) == 0, errors
-    
-    def _dict_to_agent(self, data: Dict) -> AgentConfig:
-        """Convert dictionary to AgentConfig object.
-        
-        Args:
-            data: Agent data dictionary
-            
-        Returns:
-            AgentConfig object
-        """
-        # Parse LLM config
-        llm = None
-        if "llm" in data and data["llm"]:
-            llm_data = data["llm"]
-            llm = LLMConfig(
-                model_name=llm_data.get("model_name", "kimi-k2.5"),
-                temperature=llm_data.get("temperature", 0.7),
-            )
-        
-        # Parse Docker config
-        docker = None
-        if "docker" in data and data["docker"]:
-            docker_data = data["docker"]
-            docker = DockerRuntimeConfig(
-                image=docker_data.get("image", "ubuntu:22.04"),
-                memory_limit=docker_data.get("memory_limit", "512m"),
-            )
-        
-        return AgentConfig(
-            id=data.get("id", ""),
-            name=data.get("name", ""),
-            personality=data.get("personality", ""),
-            position_id=data.get("position_id", ""),
-            llm=llm,
-            docker=docker,
-            skills=data.get("skills", []),
-        )
+        return ConfigValidator.validate_agent_data(data)
+
+
+__all__ = ["AgentStore"]

@@ -1,6 +1,7 @@
 """Wizard validators for input validation.
 
-Provides validation functions for various configuration inputs.
+Provides validation functions for user input and environment checks.
+Note: Data validation (YAML structure) is handled by ConfigValidator in base.config.
 """
 
 import re
@@ -8,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
+# Re-export ConfigValidator for backward compatibility
+from tlon.base.config.validator import ConfigValidator
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
@@ -267,6 +270,8 @@ class APIValidator:
         """
         import time
         
+        start_time = time.time()
+        
         try:
             from openai import OpenAI
             
@@ -274,8 +279,6 @@ class APIValidator:
                 base_url=base_url,
                 api_key=api_key,
             )
-            
-            start_time = time.time()
             
             # Try to list models or make a simple completion
             try:
@@ -305,13 +308,13 @@ class APIValidator:
 
 
 class AgentValidator:
-    """Validate Agent configuration."""
+    """Validate Agent user input (not data validation - that's ConfigValidator's job)."""
     
     ID_PATTERN = re.compile(r'^[a-z0-9][a-z0-9_-]*$', re.IGNORECASE)
     
     @classmethod
     def validate_agent_id(cls, agent_id: str) -> Tuple[bool, str]:
-        """Validate agent ID format.
+        """Validate agent ID format for user input.
         
         Args:
             agent_id: Agent ID to validate
@@ -335,7 +338,7 @@ class AgentValidator:
     
     @staticmethod
     def validate_agent_name(name: str) -> Tuple[bool, str]:
-        """Validate agent name.
+        """Validate agent name for user input.
         
         Args:
             name: Agent name to validate
@@ -353,47 +356,14 @@ class AgentValidator:
             return False, "Agent 名字不能超过 50 个字符"
         
         return True, "Agent 名字格式正确"
-    
-    @staticmethod
-    def generate_agent_id(role: str, existing_ids: list) -> str:
-        """Generate a unique agent ID based on role.
-        
-        Args:
-            role: Role identifier (e.g., "developer")
-            existing_ids: List of existing agent IDs
-            
-        Returns:
-            Unique agent ID
-        """
-        # Map role to prefix
-        role_prefixes = {
-            "developer": "dev",
-            "operator": "ops",
-            "project_manager": "pm",
-            "frontend": "fe",
-            "data_analyst": "data",
-            "security": "sec",
-            "customer_service": "cs",
-            "product_manager": "prd",
-            "qa": "qa",
-        }
-        
-        prefix = role_prefixes.get(role, "agent")
-        
-        # Find next available number
-        counter = 1
-        while f"{prefix}-{counter:03d}" in existing_ids:
-            counter += 1
-        
-        return f"{prefix}-{counter:03d}"
 
 
-class ConfigValidator:
-    """Validate configuration values."""
+class InputValidator:
+    """Validate user input values."""
     
     @staticmethod
     def validate_temperature(value: str) -> Tuple[bool, float, str]:
-        """Validate temperature value.
+        """Validate temperature value from user input.
         
         Args:
             value: Temperature string
@@ -412,7 +382,7 @@ class ConfigValidator:
     
     @staticmethod
     def validate_memory_limit(value: str) -> Tuple[bool, str, str]:
-        """Validate Docker memory limit.
+        """Validate Docker memory limit from user input.
         
         Args:
             value: Memory limit string (e.g., "512m", "1g")
@@ -443,3 +413,12 @@ class ConfigValidator:
         
         normalized = f"{num}m" if num < 1024 else f"{num // 1024}g"
         return True, normalized, f"内存限制设置为 {normalized}"
+
+
+__all__ = [
+    "EnvironmentChecker",
+    "APIValidator",
+    "AgentValidator",
+    "InputValidator",
+    "ConfigValidator",  # Re-exported from base.config
+]
