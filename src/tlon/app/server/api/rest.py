@@ -85,8 +85,7 @@ class RESTAPIHandler:
         app.router.add_get('/history', self.handle_history)
         app.router.add_get('/agents', self.handle_list_agents)
         app.router.add_get('/agents/{agent_id}', self.handle_get_agent)
-        app.router.add_post('/agents/{agent_id}/wake', self.handle_wake_agent)
-        app.router.add_post('/agents/{agent_id}/stop', self.handle_stop_agent)
+        # Wake/stop endpoints removed - all agents start at system startup
         app.router.add_get('/sessions', self.handle_list_sessions)
         app.router.add_get('/participants', self.handle_list_participants)
         
@@ -262,14 +261,7 @@ Or use the build script:
             )
         
         agent = self.agent_registry.get_agent(agent_id)
-        from tlon.agents.agent import AgentState
-        
-        if agent:
-            state = agent.state.value
-        elif agent_id in self.agent_registry.get_standby_ids():
-            state = AgentState.STANDBY.value
-        else:
-            state = "unknown"
+        state = agent.get_state() if agent else "unknown"
         
         status = {
             "id": agent_id,
@@ -282,67 +274,7 @@ Or use the build script:
         }
         return self._json_response(status)
     
-    async def handle_wake_agent(self, request: web.Request) -> web.Response:
-        """POST /agents/{agent_id}/wake - Wake up a lazy agent.
-        
-        Returns:
-            Success status or 404 if not found
-        """
-        agent_id = request.match_info['agent_id']
-        
-        # Check if agent exists first
-        config = self.agent_registry.get_config(agent_id)
-        if config is None:
-            return self._json_response(
-                {"error": f"Agent '{agent_id}' not found"},
-                status=404
-            )
-        
-        success = await self.agent_registry.wake_agent(agent_id)
-        
-        if success:
-            return self._json_response({
-                "success": True,
-                "message": f"Agent '{agent_id}' woken successfully",
-            })
-        else:
-            # Agent exists but cannot be woken (already active)
-            return self._json_response({
-                "success": False,
-                "message": f"Agent '{agent_id}' is already active or cannot be woken",
-            }, status=400)
-    
-    async def handle_stop_agent(self, request: web.Request) -> web.Response:
-        """POST /agents/{agent_id}/stop - Stop an active agent.
-        
-        Returns:
-            Success status or 404 if not found
-        """
-        agent_id = request.match_info['agent_id']
-        
-        # Check if agent exists first
-        config = self.agent_registry.get_config(agent_id)
-        if config is None:
-            return self._json_response(
-                {"error": f"Agent '{agent_id}' not found"},
-                status=404
-            )
-        
-        success = await self.agent_registry.stop_agent(agent_id)
-        
-        if success:
-            return self._json_response({
-                "success": True,
-                "message": f"Agent '{agent_id}' stopped successfully",
-            })
-        else:
-            # Agent exists but is not active
-            return self._json_response({
-                "success": False,
-                "message": f"Agent '{agent_id}' is not active or cannot be stopped",
-            }, status=400)
-    
-    async def handle_list_sessions(self, request: web.Request) -> web.Response:
+    async def handle_list_sessions(self, request: web.Request):
         """GET /sessions - List active client sessions.
         
         Returns:

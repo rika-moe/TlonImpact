@@ -44,7 +44,6 @@ logger = get_logger(__name__)
 
 class AgentState(Enum):
     """Agent lifecycle states."""
-    STANDBY = "standby"      # Registered but not started
     INITIALIZING = "initializing"  # Starting up
     ACTIVE = "active"        # Running and processing messages
     THINKING = "thinking"    # Currently processing a message
@@ -131,7 +130,7 @@ class Agent:
         self._prompt_manager = PromptTemplateManager(ConfigLoader())
         
         # Agent state
-        self.state = AgentState.STANDBY
+        self.state: Optional[AgentState] = None
         
         # Message queue for serial processing (Phase 4)
         self._message_queue: asyncio.Queue = asyncio.Queue()
@@ -139,6 +138,14 @@ class Agent:
         self._worker_running = False
         
         logger.info(f"Agent {self.name} ({self.id}) initialized")
+    
+    def get_state(self) -> str:
+        """Get agent state as string.
+        
+        Returns:
+            State string (initializing, active, thinking, error, shutdown, unknown)
+        """
+        return self.state.value if self.state else "unknown"
     
     def _merge_llm_config(self, file_config, settings) -> "LLMConfig":
         """Merge LLM config from YAML file with runtime settings.

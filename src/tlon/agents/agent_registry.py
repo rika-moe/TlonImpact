@@ -1,13 +1,12 @@
-"""Agent Registry for managing multiple agent lifecycle.
+"""Agent Registry for managing multiple agents.
 
 This module provides AgentRegistry class that manages:
 - Agent configuration registration
-- Standby pool for lazy loading
-- Activation/deactivation of agents
-- Resident vs lazy loading strategies
+- Agent lifecycle (all agents start at system startup)
+- Agent shutdown
 """
 import asyncio
-from typing import Any, Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -20,17 +19,16 @@ logger = get_logger(__name__)
 
 
 class AgentRegistry:
-    """Registry for managing multiple agents with lifecycle control.
+    """Registry for managing multiple agents.
     
-    Supports two loading strategies:
-    - Resident: Agent starts immediately with application
-    - Lazy: Agent starts on first @mention
+    All agents are started at system initialization.
+    No lazy loading support.
     
     Example:
         >>> registry = AgentRegistry(event_bus, position_registry)
-        >>> registry.register(agent_config)  # Add to standby pool
-        >>> await registry.initialize()  # Start resident agents
-        >>> agent = await registry.activate("dev-001")  # Activate lazy agent
+        >>> registry.register(agent_config)  # Register config
+        >>> await registry.initialize()  # Start all agents
+        >>> agent = registry.get_agent("dev-001")  # Get running agent
     """
     
     def __init__(
@@ -50,30 +48,21 @@ class AgentRegistry:
         # Configuration storage
         self._configs: Dict[str, AgentConfig] = {}
         
-        # Active agents
+        # Active agents (all agents are active after initialize)
         self._agents: Dict[str, Agent] = {}
-        
-        # Standby agent IDs (registered but not activated)
-        self._standby: Set[str] = set()
-        
-        # Resident agent IDs (start immediately)
-        self._resident_ids: Set[str] = set()
-        
-        # Event subscription for activation
-        self._event_subscription: Optional[str] = None
         
         logger.info("AgentRegistry initialized")
     
     def register(self, config: AgentConfig) -> None:
         """Register an agent configuration.
+        
+        The agent will be started during initialize().
+        
         Args:
             config: Agent configuration
         """
         self._configs[config.id] = config
-        self._standby.add(config.id)
-        # All agents are resident (start immediately)
-        self._resident_ids.add(config.id)
-        logger.info(f"Registered resident agent: {config.name} ({config.id}) - proactive=True")
+        logger.info(f"Registered agent: {config.name} ({config.id})")
     
     def register_all(self, configs: List[AgentConfig]) -> None:
         """Register multiple agent configurations.
@@ -85,39 +74,27 @@ class AgentRegistry:
             self.register(config)
     
     async def initialize(self) -> None:
-        """Initialize the registry and start resident agents.
-        
-        Resident agents (proactive=True) are started immediately.
-        Lazy agents remain in standby until activated.
-        """
+        """Initialize the registry and start all registered agents."""
         logger.info("Initializing AgentRegistry...")
-        logger.info(f"Resident agents to start: {self._resident_ids}")
-        logger.info(f"Standby agents: {self._standby}")
+        logger.info(f"Agents to start: {list(self._configs.keys())}")
 
-        # Start resident agents
-        for agent_id in list(self._resident_ids):
-            if agent_id in self._standby:
-                logger.info(f"Starting resident agent: {agent_id}")
+        # Start all registered agents
+        for agent_id in list(self._configs.keys()):
+            if agent_id not in self._agents:
+                logger.info(f"Starting agent: {agent_id}")
                 try:
-                    await self.activate(agent_id)
-                    logger.info(f"Resident agent {agent_id} started successfully")
+                    await self._start_agent(agent_id)
+                    logger.info(f"Agent {agent_id} started successfully")
                 except Exception as e:
-                    logger.error(f"Failed to start resident agent {agent_id}: {e}", exc_info=True)
-            else:
-                logger.warning(f"Resident agent {agent_id} not in standby, cannot start")
+                    logger.error(f"Failed to start agent {agent_id}: {e}", exc_info=True)
         
-        standby_count = len(self._standby)
         active_count = len(self._agents)
-        logger.info(f"AgentRegistry initialized: {active_count} active, {standby_count} standby")
+        logger.info(f"AgentRegistry initialized: {active_count} active agents")
         logger.info(f"Active agents: {list(self._agents.keys())}")
     
     async def shutdown(self) -> None:
         """Shutdown all agents and cleanup."""
         logger.info("Shutting down AgentRegistry...")
-        
-        # Unsubscribe from events
-        if self._event_subscription:
-            self.event_bus.unsubscribe(self._event_subscription)
         
         # Shutdown all active agents
         for agent_id, agent in list(self._agents.items()):
@@ -128,33 +105,33 @@ class AgentRegistry:
                 logger.error(f"Error shutting down agent {agent_id}: {e}")
         
         self._agents.clear()
-        self._standby.clear()
-        self._resident_ids.clear()
         self._configs.clear()
         
         logger.info("AgentRegistry shutdown complete")
     
-    async def activate(self, agent_id: str) -> Optional[Agent]:
-        """Activate (start) an agent from standby.
+    async def _start_agent(self, agent_id: str) -> Optional[Agent]:
+        """Start an agent.
+        
+        Internal method called by initialize().
         
         Args:
-            agent_id: ID of the agent to activate
+            agent_id: ID of the agent to start
             
         Returns:
-            The activated Agent instance, or None if not found
+            The started Agent instance, or None if not found
         """
         if agent_id in self._agents:
             # Already active
             return self._agents[agent_id]
         
         if agent_id not in self._configs:
-            logger.error(f"Cannot activate unknown agent: {agent_id}")
+            logger.error(f"Cannot start unknown agent: {agent_id}")
             return None
         
         config = self._configs[agent_id]
         
         try:
-            logger.info(f"Activating agent: {config.name} ({agent_id})")
+            logger.info(f"Starting agent: {config.name} ({agent_id})")
             
             # Prepare team members config (all other agents)
             team_members = [
@@ -173,7 +150,6 @@ class AgentRegistry:
             
             # Track active agent
             self._agents[agent_id] = agent
-            self._standby.discard(agent_id)
             
             # Publish agent started event
             event = Event(
@@ -183,42 +159,12 @@ class AgentRegistry:
             )
             await self.event_bus.publish(event)
             
-            logger.info(f"Agent {config.name} activated successfully")
+            logger.info(f"Agent {config.name} started successfully")
             return agent
             
         except Exception as e:
-            logger.error(f"Failed to activate agent {agent_id}: {e}", exc_info=True)
+            logger.error(f"Failed to start agent {agent_id}: {e}", exc_info=True)
             return None
-    
-    async def deactivate(self, agent_id: str) -> None:
-        """Deactivate (stop) an active agent.
-        
-        The agent is stopped but its configuration remains registered.
-        It can be re-activated later.
-        
-        Args:
-            agent_id: ID of the agent to deactivate
-        """
-        if agent_id not in self._agents:
-            return
-        
-        agent = self._agents.pop(agent_id)
-        
-        try:
-            await agent.shutdown()
-            self._standby.add(agent_id)
-            
-            # Publish agent stopped event
-            event = Event(
-                type=EventType.AGENT_STOPPED,
-                payload={"agent_id": agent_id},
-                source="agent_registry",
-            )
-            await self.event_bus.publish(event)
-            
-            logger.info(f"Agent {agent_id} deactivated")
-        except Exception as e:
-            logger.error(f"Error deactivating agent {agent_id}: {e}")
     
     def get_agent(self, agent_id: str) -> Optional[Agent]:
         """Get an active agent by ID.
@@ -231,7 +177,7 @@ class AgentRegistry:
         """
         return self._agents.get(agent_id)
     
-    def get_all_active_agents(self) -> List[Agent]:
+    def get_all_agents(self) -> List[Agent]:
         """Get all currently active agents.
         
         Returns:
@@ -240,16 +186,12 @@ class AgentRegistry:
         return list(self._agents.values())
     
     def get_all_ids(self) -> List[str]:
-        """Get all registered agent IDs (both active and standby).
+        """Get all registered agent IDs.
         
         Returns:
             List of all agent IDs
         """
-        # Combine configs, active agents, and standby
-        all_ids = set(self._configs.keys())
-        all_ids.update(self._agents.keys())
-        all_ids.update(self._standby)
-        return list(all_ids)
+        return list(self._configs.keys())
     
     def get_all(self) -> List[str]:
         """Get all registered agent IDs.
@@ -273,7 +215,7 @@ class AgentRegistry:
         return self._configs.get(agent_id)
     
     def unregister(self, agent_id: str) -> bool:
-        """Unregister and deactivate an agent.
+        """Unregister and stop an agent.
         
         Args:
             agent_id: Agent ID to unregister
@@ -281,19 +223,16 @@ class AgentRegistry:
         Returns:
             True if agent was found and removed
         """
-        if agent_id not in self._configs and agent_id not in self._agents and agent_id not in self._standby:
+        if agent_id not in self._configs and agent_id not in self._agents:
             return False
         
-        # Deactivate if active
+        # Stop if active
         if agent_id in self._agents:
-            agent = self._agents[agent_id]
-            asyncio.create_task(agent.stop())
-            del self._agents[agent_id]
+            agent = self._agents.pop(agent_id)
+            asyncio.create_task(agent.shutdown())
         
-        # Remove from all tracking sets
+        # Remove from configs
         self._configs.pop(agent_id, None)
-        self._standby.discard(agent_id)
-        self._resident_ids.discard(agent_id)
         
         logger.info(f"Unregistered agent: {agent_id}")
         return True
@@ -325,55 +264,28 @@ class AgentRegistry:
         logger.info(f"Updated config for agent: {agent_id}")
         return True
     
-    async def update_position_references(self, new_positions: Dict[str, Any]) -> None:
-        """Update position references for all agents.
-        
-        This is called when positions are reloaded.
-        
-        Args:
-            new_positions: New position configurations
-        """
-        # Update position registry reference
-        if self.position_registry:
-            # Position registry is updated externally
-            pass
-        
-        # Notify active agents of position changes if needed
-        for agent_id, agent in self._agents.items():
-            # Agents may need to refresh their position info
-            pass
-        
-        logger.info(f"Updated position references for {len(self._configs)} agents")
-    
-    def get_standby_ids(self) -> List[str]:
-        """Get IDs of agents in standby mode.
-        
-        Returns:
-            List of standby agent IDs
-        """
-        return list(self._standby)
-    
-    def is_active(self, agent_id: str) -> bool:
-        """Check if an agent is currently active.
+    def get_agent_status(self, agent_id: str) -> Optional[Dict]:
+        """Get status of a specific agent.
         
         Args:
             agent_id: Agent ID
             
         Returns:
-            True if the agent is active
+            Agent status dictionary or None if not found
         """
-        return agent_id in self._agents
-    
-    def is_standby(self, agent_id: str) -> bool:
-        """Check if an agent is in standby mode.
+        config = self._configs.get(agent_id)
+        if not config:
+            return None
         
-        Args:
-            agent_id: Agent ID
-            
-        Returns:
-            True if the agent is in standby
-        """
-        return agent_id in self._standby
+        agent = self._agents.get(agent_id)
+        
+        return {
+            "id": agent_id,
+            "name": config.name,
+            "state": agent.get_state() if agent else "unknown",
+            "position": config.position_id,
+            "skills": config.skills,
+        }
     
     def get_all_agent_status(self) -> List[Dict]:
         """Get status of all registered agents.
@@ -381,71 +293,7 @@ class AgentRegistry:
         Returns:
             List of agent status dictionaries
         """
-        statuses = []
-        
-        # Get all registered agent IDs
-        all_ids = set(self._configs.keys())
-        
-        for agent_id in all_ids:
-            config = self._configs.get(agent_id)
-            agent = self._agents.get(agent_id)
-            
-            from .agent import AgentState
-            
-            if agent:
-                state = agent.state.value
-            elif agent_id in self._standby:
-                state = AgentState.STANDBY.value
-            else:
-                state = "unknown"
-            
-            status = {
-                "id": agent_id,
-                "name": config.name if config else agent_id,
-                "state": state,
-                "position": config.position_id if config else "unknown",
-                "skills": config.skills if config else [],
-            }
-            statuses.append(status)
-        
-        return statuses
-    
-    async def wake_agent(self, agent_id: str) -> bool:
-        """Wake up a lazy agent.
-        
-        Alias for activate() for semantic clarity.
-        
-        Args:
-            agent_id: Agent ID to wake
-            
-        Returns:
-            True if agent was woken successfully
-        """
-        if agent_id in self._agents:
-            # Already active
-            return True
-        
-        if agent_id not in self._standby:
-            # Not in standby (either not registered or already active)
-            return False
-        
-        agent = await self.activate(agent_id)
-        return agent is not None
-    
-    async def stop_agent(self, agent_id: str) -> bool:
-        """Stop an active agent.
-        
-        Alias for deactivate() for semantic clarity.
-        
-        Args:
-            agent_id: Agent ID to stop
-            
-        Returns:
-            True if agent was stopped successfully
-        """
-        if agent_id not in self._agents:
-            # Not active
-            return False
-        
-        await self.deactivate(agent_id)
-        return True
+        return [
+            self.get_agent_status(agent_id)
+            for agent_id in self._configs.keys()
+        ]

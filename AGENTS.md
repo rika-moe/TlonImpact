@@ -58,222 +58,13 @@ Tlon（特隆）是一个多智能体协作系统，模拟软件工程团队的�
 ## 技术栈
 
 - **语言**: Python 3.11+
-- **构建工具**: Hatchling (PEP 517)
 - **包管理**: uv (现代化 Python 包管理器)
+- **构建工具**: Hatchling (PEP 517)
 - **异步框架**: asyncio + aiohttp
 - **LLM 集成**: OpenAI 兼容 API
 - **容器化**: Docker Python SDK
 - **配置**: YAML + python-dotenv
 - **日志**: structlog + rich
-
-### 关键依赖
-
-```toml
-# 核心
-pydantic>=2.0.0
-PyYAML>=6.0
-python-dotenv>=1.0.0
-aiofiles>=23.0.0
-jinja2>=3.1.0
-
-# LLM
-openai>=1.0.0
-
-# Docker
-docker>=6.0.0
-
-# Server
-aiohttp>=3.9.0
-
-# Telegram
-python-telegram-bot>=20.0
-
-# CLI TUI
-prompt-toolkit>=3.0.52
-rich>=14.3.3
-```
-
----
-
-## 项目结构
-
-```
-src/tlon/
-│
-├── __init__.py                     # 包入口
-│
-├── agents/                         # 【Agent 层】智能体核心实现
-│   ├── agent.py                    #   Agent 核心类
-│   ├── agent_registry.py           #   Agent 注册表（生命周期管理）
-│   ├── llm_client.py               #   LLM 客户端
-│   ├── prompt_builder.py           #   系统提示构建
-│   └── tool_executor.py            #   工具执行器
-│
-├── app/                            # 【应用层】CLI、Server、Clients、Wizard
-│   ├── cli/                        #   命令行入口
-│   │   ├── main.py                 #     CLI 主入口
-│   │   └── __init__.py
-│   ├── clients/                    #   客户端实现
-│   │   ├── tui/                    #     TUI 客户端
-│   │   │   └── tui_simple.py       #       简化 TUI 实现
-│   │   ├── sdk.py                  #     SDK 客户端
-│   │   ├── webui/                  #     WebUI (预留)
-│   │   └── imui/                   #     IMUI (预留)
-│   ├── server/                     #   服务端
-│   │   ├── app.py                  #     ServerApp 主应用
-│   │   ├── api/                    #     API 层
-│   │   │   ├── rest.py             #       REST API
-│   │   │   └── websocket.py        #       WebSocket API
-│   │   └── core/                   #     核心服务
-│   │       └── server.py           #       TlonServer
-│   └── wizard/                     #   配置向导（Mirror）
-│       ├── core.py                 #     向导核心
-│       ├── agent_store.py          #     Agent 存储
-│       ├── position_store.py       #     岗位存储
-│       ├── diagnostics.py          #     诊断工具
-│       ├── templates.py            #     模板
-│       └── menus/                  #     菜单
-│           ├── agent_menu.py
-│           ├── position_menu.py
-│           ├── diagnostics_menu.py
-│           ├── settings_menu.py
-│           └── quickstart.py
-│
-├── base/                           # 【基础层】基础设施
-│   ├── config/                     #   配置管理
-│   │   ├── config.py               #     配置类
-│   │   ├── loader.py               #     配置加载器
-│   │   ├── models.py               #     配置模型
-│   │   ├── prompts.py              #     Prompt 模板管理
-│   │   ├── saver.py                #     配置保存器
-│   │   └── validator.py            #     配置验证器
-│   ├── events/                     #   事件系统
-│   │   ├── event.py                #     Event 类（原 protocol/event.py）
-│   │   └── event_bus.py            #     EventBus（原 messaging/event_bus.py）
-│   ├── logger.py                   #   日志配置
-│   └── settings.py                 #   全局设置
-│
-├── organization/                   # 【组织层】多 Agent 协作基础设施
-│   ├── messaging/                  #   消息系统
-│   │   ├── congress.py             #     Congress（代表大会）
-│   │   ├── message.py              #     Message 类（原 protocol/message.py）
-│   │   └── __init__.py
-│   └── positions/                  #   岗位系统
-│       ├── models.py               #     岗位模型
-│       ├── registry.py             #     岗位注册表
-│       └── prompt_renderer.py      #     Prompt 渲染器
-│
-├── sandbox/                        # 【Sandbox 层】Docker 隔离
-│   └── docker_runtime.py           #   Docker 运行时（从 agents/ 移出）
-│
-└── subsystem/                      # 【子系统层】Memory、Skills、Tools
-    ├── memory/                     #   记忆系统（Shakespeare）
-    │   ├── base.py                 #     基础定义
-    │   ├── manager.py              #     记忆管理器
-    │   ├── models.py               #     记忆模型
-    │   ├── working_store.py        #     工作记忆存储
-    │   ├── episodic_store.py       #     情景记忆存储
-    │   └── summarizer.py           #     摘要生成器
-    ├── skills/                     #   技能系统（Library of Babel）
-    │   ├── manager.py              #     技能管理器
-    │   ├── models.py               #     技能模型
-    │   └── validator.py            #     技能验证器
-    └── tools/                      #   工具层
-        ├── base.py                 #     工具基类
-        ├── complete_dialog/        #     对话完成工具
-        │   ├── complete_dialog.py
-        │   └── send_message.py
-        ├── memory/                 #     记忆工具
-        │   ├── remember_fact.py
-        │   ├── search_memories.py
-        │   ├── forget_memory.py
-        │   └── generate_summary.py
-        ├── shell/                  #     Shell 工具
-        │   └── execute_bash.py
-        ├── skills/                 #     技能工具
-        │   ├── activate_skill.py
-        │   ├── deactivate_skill.py
-        │   └── load_skill_resource.py
-        └── tasks/                  #     任务工具 + 任务管理
-            ├── complete_task.py
-            ├── create_task.py
-            ├── get_current_task.py
-            ├── list_tasks.py
-            ├── manager.py
-            ├── models.py
-            ├── pause_task.py
-            ├── remove_task.py
-            └── start_task.py
-```
-
----
-
-## 架构设计
-
-### 7 层架构
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. 入口层 (Entry)                                            │
-│    __main__.py, app/cli/main.py                             │
-├─────────────────────────────────────────────────────────────┤
-│ 2. 应用层 (App)                                              │
-│    app/cli/, app/server/, app/clients/, app/wizard/         │
-├─────────────────────────────────────────────────────────────┤
-│ 3. 基础层 (Base)                                             │
-│    base/config/, base/events/, base/logger.py               │
-├─────────────────────────────────────────────────────────────┤
-│ 4. 组织层 (Organization)                                     │
-│    organization/messaging/, organization/positions/         │
-│    （原「核心层 Core」，protocol/ 已拆分）                    │
-├─────────────────────────────────────────────────────────────┤
-│ 5. Agent 层                                                  │
-│    agents/                                                  │
-├─────────────────────────────────────────────────────────────┤
-│ 6. Sandbox 层                                                │
-│    sandbox/                                                 │
-├─────────────────────────────────────────────────────────────┤
-│ 7. 子系统层 (Subsystems)                                     │
-│    subsystem/memory/, subsystem/skills/, subsystem/tools/   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 数据流向
-
-```
-用户输入 → CLI → ServerApp → TlonServer → Event Bus → Congress → Agent
-                                                                  │
-                                                                  ▼
-                                                            ┌────────────┐
-                                                            │   Memory   │
-                                                            │  (Context) │
-                                                            └────────────┘
-                                                                  │
-                                                                  ▼
-                            ┌─────────────────────────┬───────────┴───────────┐
-                            │                         │                       │
-                            ▼                         ▼                       ▼
-                     ┌────────────┐          ┌────────────┐           ┌────────────┐
-                     │sendMessage │          │executeBash │           │createTask  │
-                     │   Tool     │          │   Tool     │           │   Tool     │
-                     └─────┬──────┘          └─────┬──────┘           └─────┬──────┘
-                           │                       │                        │
-                           ▼                       ▼                        │
-                      ChatRoom广播           Docker API                   │
-                           │                       │                        │
-                           │              ┌────────▼─────────┐              │
-                           │              │  🔒 Sandbox 层   │              │
-                           │              │ Docker Container │              │
-                           │              └────────┬─────────┘              │
-                           │                       │                        │
-                           └───────────────────────┼────────────────────────┘
-                                                   │
-                                                   ▼
-                                              返回结果
-                                                   │
-                                                   ▼
-用户输出 ← CLI ← ServerApp ← Event Bus ← Congress ← Agent
-```
 
 ---
 
@@ -290,9 +81,6 @@ src/tlon/
 ```bash
 # 使用 uv 安装依赖
 uv sync
-
-# 或使用 pip
-pip install -e ".[dev]"
 ```
 
 ### 配置
@@ -308,14 +96,14 @@ cp .env.example .env
 
 ```bash
 # 方式一：服务端 + TUI 客户端（推荐）
-tlon server    # 终端 1：启动服务
-tlon tui       # 终端 2：启动 TUI
+uv run tlon server    # 终端 1：启动服务
+uv run tlon tui       # 终端 2：启动 TUI
 
 # 方式二：配置向导
-tlon wizard
+uv run tlon wizard
 
 # 方式三：查看帮助
-tlon --help
+uv run tlon --help
 ```
 
 ---
@@ -326,26 +114,14 @@ tlon --help
 
 ```bash
 # 运行所有测试
-pytest
+uv run pytest
 
 # 运行特定模块测试
-pytest tests/config/
-pytest tests/wizard/
+uv run pytest tests/config/
+uv run pytest tests/wizard/
 
 # 带覆盖率
-pytest --cov=tlon --cov-report=html
-```
-
-### 测试配置
-
-在 `pyproject.toml` 中配置：
-
-```toml
-[tool.pytest.ini_options]
-minversion = "7.0"
-testpaths = ["tests"]
-asyncio_mode = "auto"
-addopts = "-v --tb=short"
+uv run pytest --cov=tlon --cov-report=html
 ```
 
 ---
@@ -638,4 +414,4 @@ docker exec -it tlon-agent-{agent_id} bash
 
 ---
 
-*最后更新：2026-03-13*
+*最后更新：2026-03-15*

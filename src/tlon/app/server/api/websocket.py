@@ -202,12 +202,6 @@ class WebSocketHandler:
             elif msg_type == 'filter':
                 await self._handle_filter_change(session_id, msg)
             
-            elif msg_type == 'wake':
-                await self._handle_wake_agent(session_id, msg)
-            
-            elif msg_type == 'stop':
-                await self._handle_stop_agent(session_id, msg)
-            
             else:
                 await self._send_error_to_session(session_id, f"Unknown message type: {msg_type}")
         
@@ -273,34 +267,6 @@ class WebSocketHandler:
             })
         else:
             await self._send_error_to_session(session_id, "Failed to update filters")
-    
-    async def _handle_wake_agent(self, session_id: str, msg: Dict) -> None:
-        """Handle a wake agent request from client."""
-        agent_id = msg.get('agent_id')
-        if not agent_id:
-            await self._send_error_to_session(session_id, "agent_id is required")
-            return
-        
-        success = await self.agent_registry.wake_agent(agent_id)
-        await self._send_message_to_session(session_id, {
-            "type": "wake_result",
-            "agent_id": agent_id,
-            "success": success,
-        })
-    
-    async def _handle_stop_agent(self, session_id: str, msg: Dict) -> None:
-        """Handle a stop agent request from client."""
-        agent_id = msg.get('agent_id')
-        if not agent_id:
-            await self._send_error_to_session(session_id, "agent_id is required")
-            return
-        
-        success = await self.agent_registry.stop_agent(agent_id)
-        await self._send_message_to_session(session_id, {
-            "type": "stop_result",
-            "agent_id": agent_id,
-            "success": success,
-        })
     
     async def _send_initial_data(
         self,

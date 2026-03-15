@@ -397,36 +397,6 @@ class TlonClient:
             'filters': filters,
         })
     
-    # ==================== Agent Operations ====================
-    
-    async def wake_agent(self, agent_id: str) -> bool:
-        """Wake up a lazy agent.
-        
-        Args:
-            agent_id: Agent ID to wake
-            
-        Returns:
-            True if request sent successfully
-        """
-        return await self._send({
-            'type': 'wake',
-            'agent_id': agent_id,
-        })
-    
-    async def stop_agent(self, agent_id: str) -> bool:
-        """Stop an active agent.
-        
-        Args:
-            agent_id: Agent ID to stop
-            
-        Returns:
-            True if request sent successfully
-        """
-        return await self._send({
-            'type': 'stop',
-            'agent_id': agent_id,
-        })
-    
     # ==================== REST API ====================
     
     async def get_history(self, limit: int = 100) -> List[Dict]:

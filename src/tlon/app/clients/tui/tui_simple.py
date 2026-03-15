@@ -74,12 +74,12 @@ class AgentInfo:
         self.id = data.get("id", "unknown")
         self.name = data.get("name", "Unknown")
         self.role = data.get("role", "")
-        self.state = data.get("state", "standby")
+        self.state = data.get("state", "unknown")
         self.emoji, self.color = self.AGENT_COLORS.get(self.id, ("🤖", "cyan"))
 
     @property
     def status_icon(self) -> str:
-        return {"active": "🟢", "waking": "🟡", "standby": "⚪"}.get(self.state, "⚪")
+        return {"active": "🟢", "initializing": "🟡", "thinking": "🔵"}.get(self.state, "⚪")
 
 
 class MentionCompleter(Completer):
@@ -244,57 +244,6 @@ class SimpleTUIClient:
         except Exception as e:
             print(f"❌ 发送失败: {e}")
             return False
-
-    async def wake_agent(self, agent_id: str) -> bool:
-        """Wake up an agent via REST API."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.rest_url}/agents/{agent_id}/wake") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        print(f"✅ {data.get('message', f'Agent {agent_id} woken')}")
-                        # Refresh agent list
-                        await self.load_agents()
-                        return True
-                    elif resp.status == 404:
-                        print(f"❌ Agent '{agent_id}' 不存在")
-                    else:
-                        data = await resp.json()
-                        print(f"❌ {data.get('message', f'Failed to wake {agent_id}')}")
-                    return False
-        except Exception as e:
-            print(f"❌ 唤醒失败: {e}")
-            return False
-
-    async def sleep_agent(self, agent_id: str) -> bool:
-        """Stop an agent via REST API."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.rest_url}/agents/{agent_id}/stop") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        print(f"✅ {data.get('message', f'Agent {agent_id} stopped')}")
-                        # Refresh agent list
-                        await self.load_agents()
-                        return True
-                    elif resp.status == 404:
-                        print(f"❌ Agent '{agent_id}' 不存在")
-                    else:
-                        data = await resp.json()
-                        print(f"❌ {data.get('message', f'Failed to stop {agent_id}')}")
-                    return False
-        except Exception as e:
-            print(f"❌ 休眠失败: {e}")
-            return False
-
-    async def restart_agent(self, agent_id: str) -> bool:
-        """Restart an agent (stop then wake)."""
-        print(f"🔄 正在重启 {agent_id}...")
-        if await self.sleep_agent(agent_id):
-            # Give it a moment to stop
-            await asyncio.sleep(1)
-            return await self.wake_agent(agent_id)
-        return False
 
     async def get_agent_logs(self, agent_id: str) -> Optional[str]:
         """Get agent logs (placeholder - not yet implemented in server)."""
@@ -499,9 +448,8 @@ class SimpleTUIClient:
         rprint(table)
 
         # Count stats
-        active = sum(1 for a in self.agents.values() if a.state == "active")
-        standby = sum(1 for a in self.agents.values() if a.state == "standby")
-        print(f"在线: {active} | 待机: {standby} | 总计: {len(self.agents)}")
+        total = len(self.agents)
+        print(f"总计: {total} 个 Agent")
 
     def _print_top_table(self):
         """Print resource monitor table."""
@@ -563,9 +511,6 @@ Event 模式命令：
 
 Agent 模式命令：
   /list, /ls             打印状态表格
-  /wake <id>             唤醒 Agent
-  /sleep <id>            休眠 Agent
-  /restart <id>          重启 Agent
   /logs <id>             查看日志
   /top                   资源监控
 
@@ -686,27 +631,6 @@ Agent 模式命令：
         elif self.current_mode == "agent":
             if cmd_lower in ['/list', '/ls']:
                 self._print_agent_table()
-
-            elif cmd_lower == '/wake':
-                if args:
-                    agent_id = args[0]
-                    await self.wake_agent(agent_id)
-                else:
-                    print("❌ 请指定 Agent ID")
-
-            elif cmd_lower == '/sleep':
-                if args:
-                    agent_id = args[0]
-                    await self.sleep_agent(agent_id)
-                else:
-                    print("❌ 请指定 Agent ID")
-
-            elif cmd_lower == '/restart':
-                if args:
-                    agent_id = args[0]
-                    await self.restart_agent(agent_id)
-                else:
-                    print("❌ 请指定 Agent ID")
 
             elif cmd_lower == '/logs':
                 if args:
