@@ -18,10 +18,7 @@ class EventType(str, Enum):
     """
     # Message events
     MESSAGE_NEW = "message.new"
-    MESSAGE_MENTION = "message.mention"
-    MESSAGE_EDIT = "message.edit"
-    MESSAGE_DELETE = "message.delete"
-    
+
     # Agent events
     AGENT_JOIN = "agent.join"
     AGENT_LEAVE = "agent.leave"
@@ -41,7 +38,6 @@ class EventType(str, Enum):
     SYSTEM_STARTUP = "system.startup"
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_ERROR = "system.error"
-    CONFIG_RELOADED = "config.reloaded"
 
 
 @dataclass

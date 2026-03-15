@@ -7,7 +7,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import aiofiles
 
@@ -83,6 +83,9 @@ class Congress:
         self.history: List[Message] = []
         self._lock = asyncio.Lock()
         self._mention_subscription: Optional[str] = None
+        
+        # Event subscription ID
+        self._message_subscription: Optional[str] = None
     
     async def initialize(self) -> None:
         """Initialize the chat room.
@@ -90,17 +93,37 @@ class Congress:
         Loads history from disk and sets up event subscriptions.
         """
         await self._load_history()
+        
+        # Subscribe to MESSAGE_NEW to store messages from Agent
+        self._message_subscription = self.event_bus.subscribe(
+            EventType.MESSAGE_NEW,
+            self._on_message_new
+        )
+        
         logger.info(f"Congress '{self.metadata.name}' initialized with {len(self.history)} messages")
-    
+
     async def shutdown(self) -> None:
         """Shutdown the chat room.
         
         Ensures all pending writes are completed.
         """
+        # Unsubscribe from events
+        if self._message_subscription:
+            self.event_bus.unsubscribe(self._message_subscription)
+        
         # Save current state
         await self._save_all_history()
         logger.info(f"Congress '{self.metadata.name}' shutdown")
-    
+
+    # participant = Participant(
+    #                 id=config.id,
+    #                 name=config.name,
+    #                 type="agent",
+    #                 metadata={"position_id": config.position_id},
+    #             )
+    #             await self.chatroom.join(participant)
+
+
     async def join(self, participant: Participant) -> None:
         """Add a participant to the room.
         
@@ -110,7 +133,7 @@ class Congress:
         async with self._lock:
             self.participants[participant.id] = participant
         
-        # Broadcast system message
+        # Publish system message via EventBus
         system_msg = Message.create(
             sender_id="system",
             sender_name="系统",
@@ -118,7 +141,11 @@ class Congress:
             content=f"{participant.name} 加入了聊天室",
             content_type="system",
         )
-        await self.send_message(system_msg)
+        await self.event_bus.publish(Event(
+            type=EventType.MESSAGE_NEW,
+            payload=system_msg,
+            source="system",
+        ))
         
         logger.info(f"Participant joined: {participant.name} ({participant.id})")
     
@@ -139,45 +166,13 @@ class Congress:
                 content=f"{participant.name} 离开了聊天室",
                 content_type="system",
             )
-            await self.send_message(system_msg)
+            await self.event_bus.publish(Event(
+                type=EventType.MESSAGE_NEW,
+                payload=system_msg,
+                source="system",
+            ))
             logger.info(f"Participant left: {participant.name} ({participant_id})")
-    
-    async def send_message(self, message: Message) -> None:
-        """Send a message to the room.
-        
-        The message is added to history, persisted, and published
-        to the event bus.
-        
-        Args:
-            message: The message to send
-        """
-        logger.info(f"[Congress] Sending message from {message.sender_name} ({message.sender_id}): {message.content[:50]}...")
-        
-        async with self._lock:
-            self.history.append(message)
-            # Persist to disk
-            await self._save_message(message)
-        
-        # Publish to event bus
-        event = Event(
-            type=EventType.MESSAGE_NEW,
-            payload=message,
-            source=message.sender_id,
-        )
-        logger.debug(f"[Congress] Publishing MESSAGE_NEW event to EventBus (event_bus running: {self.event_bus.is_running()})")
-        await self.event_bus.publish(event)
-        logger.debug(f"[Congress] Event published successfully")
-        
-        # Check for mentions and publish mention event
-        if message.mentions:
-            mention_event = Event(
-                type=EventType.MESSAGE_MENTION,
-                payload=message,
-                source=message.sender_id,
-            )
-            await self.event_bus.publish(mention_event)
-            logger.debug(f"Mention event published for {len(message.mentions)} users")
-    
+
     async def get_history(
         self, 
         limit: int = 100, 
@@ -285,3 +280,25 @@ class Congress:
             logger.info(f"Saved {len(self.history)} messages to history")
         except Exception as e:
             logger.error(f"Error saving history: {e}", exc_info=True)
+    
+    async def _on_message_new(self, event: Event) -> None:
+        """Handle MESSAGE_NEW event from EventBus.
+        
+        Stores messages from Agents to history. Messages from TlonServer
+        are already stored by send_message(), so we only handle Agent messages.
+        
+        Args:
+            event: The MESSAGE_NEW event
+        """
+        message: Message = event.payload
+        
+        # Only store messages from agents (TlonServer already stored others)
+        if message.sender_type != "agent":
+            return
+        
+        # Store to history
+        async with self._lock:
+            self.history.append(message)
+            await self._save_message(message)
+        
+        logger.debug(f"[Congress] Stored agent message from {message.sender_id}")

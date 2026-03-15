@@ -173,11 +173,6 @@ class PromptTemplateManager:
         return f"""## 工作纪律
 
 {rules_text}"""
-    
-    def reload_templates(self) -> None:
-        """Reload all templates from disk."""
-        self._global_templates = None
-        self.loader.clear_cache()
 
 
 __all__ = [

@@ -40,18 +40,20 @@ class WebSocketHandler:
     Manages client connections and handles bidirectional communication.
     
     Example:
-        >>> ws_handler = WebSocketHandler(server)
+        >>> ws_handler = WebSocketHandler(client_gateway, agent_registry)
         >>> app = web.Application()
         >>> app.router.add_get('/ws', ws_handler.handle_websocket)
     """
     
-    def __init__(self, server):
+    def __init__(self, client_gateway, agent_registry):
         """Initialize the WebSocket handler.
         
         Args:
-            server: The Tlon Server instance
+            client_gateway: The ClientGateway instance
+            agent_registry: The AgentRegistry instance for agent operations
         """
-        self.server = server
+        self.client_gateway = client_gateway
+        self.agent_registry = agent_registry
         self._connections: Dict[str, web.WebSocketResponse] = {}
         self._lock = asyncio.Lock()
     
@@ -110,7 +112,7 @@ class WebSocketHandler:
             if session_id:
                 async with self._lock:
                     self._connections.pop(session_id, None)
-                await self.server.disconnect_client(session_id)
+                await self.client_gateway.disconnect_client(session_id)
                 logger.info(f"WebSocket disconnected: {session_id}")
         
         return ws
@@ -151,7 +153,7 @@ class WebSocketHandler:
                 await self._send_event(ws, event)
             
             # Connect client to server
-            session = await self.server.connect_client(
+            session = await self.client_gateway.connect_client(
                 client_type=client_type,
                 event_handler=event_handler,
                 metadata=metadata,
@@ -228,7 +230,7 @@ class WebSocketHandler:
         
         # Send message through server
         logger.debug(f"[WebSocket] Calling server.send_message for session {session_id}")
-        await self.server.send_message(
+        await self.client_gateway.send_message(
             content=content,
             sender_id="human",
             sender_name="人类",
@@ -244,14 +246,14 @@ class WebSocketHandler:
             await self._send_error_to_session(session_id, f"Invalid mode: {mode}")
             return
         
-        success = await self.server.update_session_mode(session_id, mode)
+        success = await self.client_gateway.update_session_mode(session_id, mode)
         if success:
             await self._send_message_to_session(session_id, {
                 "type": "mode_changed",
                 "mode": mode,
             })
             # Send initial data for new mode
-            session = self.server.get_session(session_id)
+            session = self.client_gateway.get_session(session_id)
             if session:
                 ws = self._connections.get(session_id)
                 if ws:
@@ -263,7 +265,7 @@ class WebSocketHandler:
         """Handle a filter change request from client."""
         filters = msg.get('filters', {})
         
-        success = await self.server.update_session_filters(session_id, filters)
+        success = await self.client_gateway.update_session_filters(session_id, filters)
         if success:
             await self._send_message_to_session(session_id, {
                 "type": "filters_updated",
@@ -279,7 +281,7 @@ class WebSocketHandler:
             await self._send_error_to_session(session_id, "agent_id is required")
             return
         
-        success = await self.server.wake_agent(agent_id)
+        success = await self.agent_registry.wake_agent(agent_id)
         await self._send_message_to_session(session_id, {
             "type": "wake_result",
             "agent_id": agent_id,
@@ -293,7 +295,7 @@ class WebSocketHandler:
             await self._send_error_to_session(session_id, "agent_id is required")
             return
         
-        success = await self.server.stop_agent(agent_id)
+        success = await self.agent_registry.stop_agent(agent_id)
         await self._send_message_to_session(session_id, {
             "type": "stop_result",
             "agent_id": agent_id,
@@ -313,13 +315,13 @@ class WebSocketHandler:
         """
         if session.mode == 'chat':
             # Send recent history
-            history = await self.server.get_history(limit=50)
+            history = await self.client_gateway.get_history(limit=50)
             await self._send_message(ws, {
                 "type": "history",
                 "messages": [msg.to_dict() for msg in history],
             })
             # Send participant list
-            participants = self.server.chatroom.get_all_participants()
+            participants = self.client_gateway.get_all_participants()
             await self._send_message(ws, {
                 "type": "participants",
                 "participants": [
@@ -330,7 +332,7 @@ class WebSocketHandler:
         
         elif session.mode == 'agent':
             # Send agent statuses
-            agents = self.server.get_all_agent_statuses()
+            agents = self.agent_registry.get_all_agent_status()
             await self._send_message(ws, {
                 "type": "agents",
                 "agents": agents,
@@ -427,21 +429,23 @@ class WebSocketServer:
     
     def __init__(
         self,
-        server,
+        client_gateway,
+        agent_registry,
         host: str = "127.0.0.1",
         port: int = 8888,
     ):
         """Initialize the WebSocket server.
         
         Args:
-            server: The Tlon Server instance
+            client_gateway: The ClientGateway instance
+            agent_registry: The AgentRegistry instance for agent operations
             host: Host to bind to
             port: Port to listen on
         """
-        self.server = server
+        self.client_gateway = client_gateway
         self.host = host
         self.port = port
-        self._handler = WebSocketHandler(server)
+        self._handler = WebSocketHandler(client_gateway, agent_registry)
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
@@ -474,7 +478,7 @@ class WebSocketServer:
         
         # Close all connections
         for session_id in list(self._handler._connections.keys()):
-            await self.server.disconnect_client(session_id)
+            await self.client_gateway.disconnect_client(session_id)
         
         if self._runner:
             await self._runner.cleanup()

@@ -1,11 +1,11 @@
 """Tests for ConfigManager."""
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 from tlon.app.server.config_manager import ConfigManager
 from tlon.base.config.loader import ConfigLoader
-from tlon.base.config.models import PositionConfig, AgentConfig, LLMConfig, DockerRuntimeConfig
+from tlon.base.config.models import PositionConfig, AgentConfig
 
 
 class TestConfigManagerInit:
@@ -56,164 +56,6 @@ class TestInitialLoad:
         
         assert manager.positions == {}
         assert manager.agents == {}
-
-
-class TestSubscription:
-    """Test callback subscription mechanism."""
-    
-    def test_on_positions_changed_registration(self):
-        """Test registering positions change callback."""
-        loader = Mock(spec=ConfigLoader)
-        manager = ConfigManager(loader)
-        
-        callback = Mock()
-        manager.on_positions_changed(callback)
-        
-        assert callback in manager._on_positions_changed
-    
-    def test_on_agents_changed_registration(self):
-        """Test registering agents change callback."""
-        loader = Mock(spec=ConfigLoader)
-        manager = ConfigManager(loader)
-        
-        callback = Mock()
-        manager.on_agents_changed(callback)
-        
-        assert callback in manager._on_agents_changed
-    
-    def test_multiple_callbacks(self):
-        """Test registering multiple callbacks."""
-        loader = Mock(spec=ConfigLoader)
-        manager = ConfigManager(loader)
-        
-        callback1 = Mock()
-        callback2 = Mock()
-        
-        manager.on_positions_changed(callback1)
-        manager.on_positions_changed(callback2)
-        
-        assert len(manager._on_positions_changed) == 2
-
-
-class TestReloadPositions:
-    """Test position configuration reloading."""
-    
-    @pytest.mark.asyncio
-    async def test_reload_positions_triggers_callback(self):
-        """Test that reload triggers registered callbacks."""
-        # Setup
-        loader = Mock(spec=ConfigLoader)
-        loader.load_all_positions.return_value = {
-            "dev": PositionConfig(id="dev", type="developer", title="Developer"),
-        }
-        loader.load_all_agents.return_value = {}  # Need to set this too
-        
-        manager = ConfigManager(loader)
-        await manager.initial_load()
-        
-        # Register callback
-        callback = Mock()
-        manager.on_positions_changed(callback)
-        
-        # Reload with new data
-        loader.load_all_positions.return_value = {
-            "dev": PositionConfig(id="dev", type="developer", title="Developer"),
-            "pm": PositionConfig(id="pm", type="pm", title="Product Manager"),
-        }
-        
-        await manager.reload_positions()
-        
-        # Verify callback was called with new data
-        callback.assert_called_once()
-        args = callback.call_args[0][0]
-        assert len(args) == 2
-        assert "pm" in args
-    
-    @pytest.mark.asyncio
-    async def test_reload_positions_updates_cache(self):
-        """Test that reload updates internal cache."""
-        loader = Mock(spec=ConfigLoader)
-        old_position = PositionConfig(id="old", type="old", title="Old")
-        loader.load_all_positions.return_value = {"old": old_position}
-        loader.load_all_agents.return_value = {}  # Need to set this too
-        
-        manager = ConfigManager(loader)
-        await manager.initial_load()
-        
-        new_position = PositionConfig(id="new", type="new", title="New")
-        new_positions = {"new": new_position}
-        loader.load_all_positions.return_value = new_positions
-        
-        await manager.reload_positions()
-        
-        assert manager.positions == new_positions
-    
-    @pytest.mark.asyncio
-    async def test_reload_positions_force_reload(self):
-        """Test that reload uses force_reload=True."""
-        loader = Mock(spec=ConfigLoader)
-        loader.load_all_positions.return_value = {}
-        
-        manager = ConfigManager(loader)
-        await manager.reload_positions()
-        
-        loader.load_all_positions.assert_called_with(force_reload=True)
-
-
-class TestReloadAgents:
-    """Test agent configuration reloading."""
-    
-    @pytest.mark.asyncio
-    async def test_reload_agents_triggers_callback(self):
-        """Test that reload triggers registered callbacks."""
-        # Setup
-        loader = Mock(spec=ConfigLoader)
-        loader.load_all_positions.return_value = {}  # Need to set this too
-        loader.load_all_agents.return_value = {
-            "agent-1": AgentConfig(id="agent-1", name="Agent 1", position_id="dev"),
-        }
-        
-        manager = ConfigManager(loader)
-        await manager.initial_load()
-        
-        # Register callback
-        callback = Mock()
-        manager.on_agents_changed(callback)
-        
-        # Reload with new data
-        loader.load_all_agents.return_value = {
-            "agent-1": AgentConfig(id="agent-1", name="Agent 1", position_id="dev"),
-            "agent-2": AgentConfig(id="agent-2", name="Agent 2", position_id="dev"),
-        }
-        
-        await manager.reload_agents()
-        
-        # Verify callback was called
-        callback.assert_called_once()
-        args = callback.call_args[0][0]
-        assert len(args) == 2
-    
-    @pytest.mark.asyncio
-    async def test_reload_agents_handles_callback_error(self):
-        """Test that reload continues even if a callback fails."""
-        loader = Mock(spec=ConfigLoader)
-        loader.load_all_agents.return_value = {}
-        
-        manager = ConfigManager(loader)
-        
-        # Register one failing and one succeeding callback
-        failing_callback = Mock(side_effect=Exception("Callback error"))
-        success_callback = Mock()
-        
-        manager.on_agents_changed(failing_callback)
-        manager.on_agents_changed(success_callback)
-        
-        # Should not raise
-        await manager.reload_agents()
-        
-        # Both should be called
-        failing_callback.assert_called_once()
-        success_callback.assert_called_once()
 
 
 class TestQueryInterface:

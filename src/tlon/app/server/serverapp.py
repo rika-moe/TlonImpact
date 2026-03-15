@@ -4,7 +4,7 @@ Main entry point for the server process. ServerApp acts as the component
 assembler, creating all core components and injecting them into TlonServer.
 
 Usage:
-    >>> from tlon.server.app import ServerApp
+    >>> from tlon.app.client_gateway.serverapp import ServerApp
     >>> app = ServerApp()
     >>> await app.initialize()  # DI assembly, load config, setup components
     >>> await app.start()       # Start servers, block until shutdown
@@ -17,19 +17,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from .core.server import TlonServer
+from .core.client_gateway import ClientGateway
 from .api.rest import RESTServer
 from .api.websocket import WebSocketServer
 from .config_manager import ConfigManager
-from tlon.base.config import (
-    AgentConfig,
-    ConfigLoader,
-    DockerRuntimeConfig,
-    LLMConfig,
-    PositionConfig,
-)
+from tlon.base.config import AgentConfig, ConfigLoader, DockerRuntimeConfig, LLMConfig
 from tlon.subsystem.memory import MemoryConfig
-from tlon.organization.messaging import EventBus, Congress, CongressMetadata
+from tlon.base.events.event_bus import EventBus
+from tlon.organization.messaging import Congress, CongressMetadata
 from tlon.organization.positions import PositionRegistry
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.settings import settings, get_tlon_home
@@ -44,11 +39,7 @@ class ServerApp:
     ServerApp is responsible for:
     - Creating all core components (DI container)
     - Managing component lifecycle (initialize → start → shutdown)
-    - Handling configuration reloads
     - Coordinating graceful shutdown
-    
-    All components are created in initialize() and injected into TlonServer,
-    which acts as a pure coordinator without creating any components.
     
     Example:
         >>> app = ServerApp(host="0.0.0.0", rest_port=8080, ws_port=8888)
@@ -88,7 +79,7 @@ class ServerApp:
         self._components: Dict[str, Any] = {}
         
         # Subsystem references (for convenient access)
-        self.core: Optional[TlonServer] = None
+        self.client_gateway: Optional[ClientGateway] = None
         self.rest: Optional[RESTServer] = None
         self.websocket: Optional[WebSocketServer] = None
         
@@ -137,7 +128,17 @@ class ServerApp:
         await congress.initialize()
         self._components["congress"] = congress
         logger.info(f"Congress '{congress_metadata.name}' initialized")
-        
+
+        for agent_config in config_manager.agents.values():
+            from tlon.organization.messaging import Participant
+            participant = Participant(
+                            id=agent_config.id,
+                            name=agent_config.name,
+                            type="agent",
+                            metadata={"position_id": agent_config.position_id},
+                        )
+            await congress.join(participant)
+
         # 2.3 PositionRegistry - position template registry
         position_registry = PositionRegistry()
         for position in config_manager.positions.values():
@@ -148,24 +149,21 @@ class ServerApp:
         # 2.4 AgentRegistry - agent management (depends on EventBus, Congress, PositionRegistry)
         agent_registry = AgentRegistry(
             event_bus=event_bus,  # DI
-            chatroom=congress,     # DI (AgentRegistry uses 'chatroom' as param name)
             position_registry=position_registry,  # DI
         )
         # Register initial agents
-        initial_agents = self._get_initial_agents(config_manager)
-        for agent_config in initial_agents:
+        for agent_config in config_manager.agents.values():
             agent_registry.register(agent_config)
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
         logger.info(f"Loaded {len(agent_registry.get_all())} agents")
         
-        # ========== Step 3: TlonServer (pure coordinator, receives all dependencies) ==========
-        self.core = TlonServer(
+        # ========== Step 3: ClientGateway ==========
+        self.client_gateway = ClientGateway(
             # Core components (injected)
             event_bus=event_bus,
             congress=congress,
             position_registry=position_registry,
-            agent_registry=agent_registry,  # Injected from ServerApp
             # Configuration management
             config_manager=config_manager,
             # Other parameters
@@ -173,23 +171,20 @@ class ServerApp:
             host=self.host,
             port=self.ws_port,
         )
-        await self.core.initialize()
-        logger.info("TlonServer initialized as coordinator")
-        
-        # ========== Step 4: Register config reload callbacks ==========
-        config_manager.on_positions_changed(self._on_positions_reloaded)
-        config_manager.on_agents_changed(self._on_agents_reloaded)
-        logger.info("Config reload callbacks registered")
-        
+        await self.client_gateway.initialize()
+        logger.info("ClientGateway initialized")
+
         # ========== Step 5: API Layer (DI) ==========
         self.rest = RESTServer(
-            self.core,
-            config_manager=config_manager,  # For /admin/reload endpoints
+            self.client_gateway,
+            agent_registry=agent_registry,  # Direct access for agent operations
+            config_manager=config_manager,  # For /admin endpoints
             host=self.host,
             port=self.rest_port,
         )
         self.websocket = WebSocketServer(
-            self.core,
+            self.client_gateway,
+            agent_registry=agent_registry,  # Direct access for agent operations
             host=self.host,
             port=self.ws_port,
         )
@@ -240,66 +235,7 @@ class ServerApp:
             skills=[],
             respond_to_all=False,
         )]
-    
-    # ========== Config Reload Handlers ==========
-    
-    async def _on_positions_reloaded(self, new_positions: Dict[str, PositionConfig]) -> None:
-        """Handle position configuration reload.
-        
-        Args:
-            new_positions: New position configurations
-        """
-        logger.info(f"Reloading {len(new_positions)} positions...")
-        
-        position_registry = self._components["position_registry"]
-        
-        # Update PositionRegistry
-        position_registry.clear()
-        for position in new_positions.values():
-            position_registry.register(position)
-        
-        # Notify AgentRegistry to update position references
-        agent_registry = self._components["agent_registry"]
-        await agent_registry.update_position_references(new_positions)
-        
-        # Notify TlonServer to broadcast to clients
-        await self.core.on_positions_changed(new_positions)
-    
-    async def _on_agents_reloaded(self, new_agents: Dict[str, AgentConfig]) -> None:
-        """Handle agent configuration reload.
-        
-        Args:
-            new_agents: New agent configurations
-        """
-        logger.info(f"Reloading {len(new_agents)} agents...")
-        
-        agent_registry = self._components["agent_registry"]
-        
-        # Calculate differences
-        current_ids = set(agent_registry.get_all_ids())
-        new_ids = set(new_agents.keys())
-        
-        # Remove agents that no longer exist
-        for agent_id in current_ids - new_ids:
-            logger.info(f"Removing agent: {agent_id}")
-            await agent_registry.unregister(agent_id)
-        
-        # Add or update agents
-        for agent_id in new_ids:
-            if agent_id not in current_ids:
-                # New agent
-                logger.info(f"Adding new agent: {agent_id}")
-                await agent_registry.register(new_agents[agent_id])
-            else:
-                # Check if changed
-                old_config = agent_registry.get_config(agent_id)
-                if old_config != new_agents[agent_id]:
-                    logger.info(f"Updating agent: {agent_id}")
-                    await agent_registry.update_config(agent_id, new_agents[agent_id])
-        
-        # Notify TlonServer to broadcast to clients
-        await self.core.on_agents_changed(new_agents)
-    
+
     # ========== Lifecycle Methods ==========
     
     async def start(self) -> None:
@@ -347,9 +283,9 @@ class ServerApp:
         if self.rest:
             await self.rest.stop()
         
-        # Shutdown TlonServer (coordinator)
-        if self.core:
-            await self.core.shutdown()
+        # Shutdown ClientGateway
+        if self.client_gateway:
+            await self.client_gateway.shutdown()
         
         # Shutdown core components (reverse order of creation)
         agent_registry = self._components.get("agent_registry")

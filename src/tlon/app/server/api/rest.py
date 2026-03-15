@@ -51,7 +51,7 @@ class RESTAPIHandler:
     - GET /events/history - Event history (from persistence)
     
     Example:
-        >>> handler = RESTAPIHandler(server)
+        >>> handler = RESTAPIHandler(server, agent_registry)
         >>> app = handler.create_app()
         >>> runner = web.AppRunner(app)
         >>> await runner.setup()
@@ -59,14 +59,16 @@ class RESTAPIHandler:
         >>> await site.start()
     """
     
-    def __init__(self, server, config_manager=None):
+    def __init__(self, client_gateway, agent_registry, config_manager=None):
         """Initialize the REST API handler.
         
         Args:
-            server: The TlonServer instance
+            client_gateway: The ClientGateway instance
+            agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
         """
-        self.server = server
+        self.client_gateway = client_gateway
+        self.agent_registry = agent_registry
         self.config_manager = config_manager
     
     def create_app(self) -> web.Application:
@@ -90,8 +92,6 @@ class RESTAPIHandler:
         
         # Admin routes for hot-reload (only if config_manager is available)
         if self.config_manager:
-            app.router.add_post('/admin/reload/positions', self.handle_reload_positions)
-            app.router.add_post('/admin/reload/agents', self.handle_reload_agents)
             app.router.add_get('/admin/config/positions', self.handle_list_positions)
             app.router.add_get('/admin/config/agents', self.handle_list_agent_configs)
         
@@ -183,7 +183,7 @@ Or use the build script:
         """
         return self._json_response({
             "status": "healthy",
-            "running": self.server.is_running(),
+            "running": self.client_gateway.is_running(),
             "timestamp": datetime.now().isoformat(),
             "version": "0.2.0",
         })
@@ -197,20 +197,14 @@ Or use the build script:
         # Return non-sensitive configuration
         config = {
             "server": {
-                "host": self.server.host,
-                "port": self.server.port,
-            },
-            "chatroom": {
-                "id": self.server.chatroom.metadata.id,
-                "name": self.server.chatroom.metadata.name,
-                "participant_count": len(self.server.chatroom.participants),
-                "message_count": len(self.server.chatroom.history),
+                "host": self.client_gateway.host,
+                "port": self.client_gateway.port,
             },
             "agents": {
-                "count": len(self.server.agent_registry.get_all_agent_status()),
+                "count": len(self.agent_registry.get_all_agent_status()),
             },
             "sessions": {
-                "active": len(self.server.get_all_sessions()),
+                "active": len(self.client_gateway.get_all_sessions()),
             }
         }
         return self._json_response(config)
@@ -233,7 +227,7 @@ Or use the build script:
         
         before_id = request.query.get('before')
         
-        messages = await self.server.get_history(limit, before_id)
+        messages = await self.client_gateway.get_history(limit, before_id)
         
         return self._json_response({
             "messages": [msg.to_dict() for msg in messages],
@@ -246,7 +240,7 @@ Or use the build script:
         Returns:
             List of agent statuses
         """
-        agents = self.server.get_all_agent_statuses()
+        agents = self.agent_registry.get_all_agent_status()
         return self._json_response({
             "agents": agents,
             "count": len(agents),
@@ -259,15 +253,34 @@ Or use the build script:
             Agent status or 404 if not found
         """
         agent_id = request.match_info['agent_id']
-        status = self.server.get_agent_status(agent_id)
         
-        if status:
-            return self._json_response(status)
-        else:
+        config = self.agent_registry.get_config(agent_id)
+        if config is None:
             return self._json_response(
                 {"error": f"Agent '{agent_id}' not found"},
                 status=404
             )
+        
+        agent = self.agent_registry.get_agent(agent_id)
+        from tlon.agents.agent import AgentState
+        
+        if agent:
+            state = agent.state.value
+        elif agent_id in self.agent_registry.get_standby_ids():
+            state = AgentState.STANDBY.value
+        else:
+            state = "unknown"
+        
+        status = {
+            "id": agent_id,
+            "name": config.name,
+            "state": state,
+            "config": {
+                "role": config.role.name if hasattr(config.role, 'name') else str(config.role),
+                "skills": config.skills,
+            }
+        }
+        return self._json_response(status)
     
     async def handle_wake_agent(self, request: web.Request) -> web.Response:
         """POST /agents/{agent_id}/wake - Wake up a lazy agent.
@@ -277,7 +290,15 @@ Or use the build script:
         """
         agent_id = request.match_info['agent_id']
         
-        success = await self.server.wake_agent(agent_id)
+        # Check if agent exists first
+        config = self.agent_registry.get_config(agent_id)
+        if config is None:
+            return self._json_response(
+                {"error": f"Agent '{agent_id}' not found"},
+                status=404
+            )
+        
+        success = await self.agent_registry.wake_agent(agent_id)
         
         if success:
             return self._json_response({
@@ -285,19 +306,11 @@ Or use the build script:
                 "message": f"Agent '{agent_id}' woken successfully",
             })
         else:
-            # Check if agent exists
-            status = self.server.get_agent_status(agent_id)
-            if status:
-                return self._json_response({
-                    "success": False,
-                    "message": f"Agent '{agent_id}' is already active or cannot be woken",
-                    "status": status,
-                }, status=400)
-            else:
-                return self._json_response(
-                    {"error": f"Agent '{agent_id}' not found"},
-                    status=404
-                )
+            # Agent exists but cannot be woken (already active)
+            return self._json_response({
+                "success": False,
+                "message": f"Agent '{agent_id}' is already active or cannot be woken",
+            }, status=400)
     
     async def handle_stop_agent(self, request: web.Request) -> web.Response:
         """POST /agents/{agent_id}/stop - Stop an active agent.
@@ -307,7 +320,15 @@ Or use the build script:
         """
         agent_id = request.match_info['agent_id']
         
-        success = await self.server.stop_agent(agent_id)
+        # Check if agent exists first
+        config = self.agent_registry.get_config(agent_id)
+        if config is None:
+            return self._json_response(
+                {"error": f"Agent '{agent_id}' not found"},
+                status=404
+            )
+        
+        success = await self.agent_registry.stop_agent(agent_id)
         
         if success:
             return self._json_response({
@@ -315,18 +336,11 @@ Or use the build script:
                 "message": f"Agent '{agent_id}' stopped successfully",
             })
         else:
-            status = self.server.get_agent_status(agent_id)
-            if status:
-                return self._json_response({
-                    "success": False,
-                    "message": f"Agent '{agent_id}' is not active or cannot be stopped",
-                    "status": status,
-                }, status=400)
-            else:
-                return self._json_response(
-                    {"error": f"Agent '{agent_id}' not found"},
-                    status=404
-                )
+            # Agent exists but is not active
+            return self._json_response({
+                "success": False,
+                "message": f"Agent '{agent_id}' is not active or cannot be stopped",
+            }, status=400)
     
     async def handle_list_sessions(self, request: web.Request) -> web.Response:
         """GET /sessions - List active client sessions.
@@ -334,7 +348,7 @@ Or use the build script:
         Returns:
             List of session info
         """
-        sessions = self.server.get_all_sessions()
+        sessions = self.client_gateway.get_all_sessions()
         
         session_info = []
         for session in sessions:
@@ -358,7 +372,7 @@ Or use the build script:
         Returns:
             List of participants
         """
-        participants = self.server.chatroom.get_all_participants()
+        participants = self.client_gateway.get_all_participants()
         
         participant_info = []
         for p in participants:
@@ -374,73 +388,7 @@ Or use the build script:
             "participants": participant_info,
             "count": len(participant_info),
         })
-    
-    # ========== Admin Routes for Hot-Reload ==========
-    
-    async def handle_reload_positions(self, request: web.Request) -> web.Response:
-        """POST /admin/reload/positions - Hot-reload position configuration.
-        
-        Returns:
-            Success or error response
-        """
-        if not self.config_manager:
-            return self._json_response({
-                "status": "error",
-                "message": "Config manager not available"
-            }, status=503)
-        
-        try:
-            success = await self.config_manager.reload_positions()
-            if success:
-                return self._json_response({
-                    "status": "success",
-                    "message": "Positions reloaded successfully",
-                    "count": len(self.config_manager.positions)
-                })
-            else:
-                return self._json_response({
-                    "status": "error",
-                    "message": "Failed to reload positions"
-                }, status=500)
-        except Exception as e:
-            logger.error(f"Error reloading positions: {e}")
-            return self._json_response({
-                "status": "error",
-                "message": str(e)
-            }, status=500)
-    
-    async def handle_reload_agents(self, request: web.Request) -> web.Response:
-        """POST /admin/reload/agents - Hot-reload agent configuration.
-        
-        Returns:
-            Success or error response
-        """
-        if not self.config_manager:
-            return self._json_response({
-                "status": "error",
-                "message": "Config manager not available"
-            }, status=503)
-        
-        try:
-            success = await self.config_manager.reload_agents()
-            if success:
-                return self._json_response({
-                    "status": "success",
-                    "message": "Agents reloaded successfully",
-                    "count": len(self.config_manager.agents)
-                })
-            else:
-                return self._json_response({
-                    "status": "error",
-                    "message": "Failed to reload agents"
-                }, status=500)
-        except Exception as e:
-            logger.error(f"Error reloading agents: {e}")
-            return self._json_response({
-                "status": "error",
-                "message": str(e)
-            }, status=500)
-    
+
     async def handle_list_positions(self, request: web.Request) -> web.Response:
         """GET /admin/config/positions - List current position configurations.
         
@@ -512,7 +460,8 @@ class RESTServer:
     
     def __init__(
         self,
-        server,
+        client_gateway,
+        agent_registry,
         config_manager=None,
         host: str = "127.0.0.1",
         port: int = 8080,
@@ -520,15 +469,16 @@ class RESTServer:
         """Initialize the REST server.
         
         Args:
-            server: The TlonServer instance
+            client_gateway: The ClientGateway instance
+            agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
             host: Host to bind to
             port: Port to listen on
         """
-        self.server = server
+        self.client_gateway = client_gateway
         self.host = host
         self.port = port
-        self._handler = RESTAPIHandler(server, config_manager)
+        self._handler = RESTAPIHandler(client_gateway, agent_registry, config_manager)
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None

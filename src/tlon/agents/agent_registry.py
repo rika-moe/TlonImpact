@@ -6,13 +6,11 @@ This module provides AgentRegistry class that manages:
 - Activation/deactivation of agents
 - Resident vs lazy loading strategies
 """
-
+import asyncio
 from typing import Any, Dict, List, Optional, Set
 
-from tlon.organization.messaging import Congress, Participant
 from tlon.base.events.event import Event, EventType
-from tlon.organization.messaging import EventBus
-from tlon.organization.messaging.message import Message
+from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.agents.agent import Agent
 from tlon.base.config import AgentConfig
@@ -29,7 +27,7 @@ class AgentRegistry:
     - Lazy: Agent starts on first @mention
     
     Example:
-        >>> registry = AgentRegistry(event_bus, chatroom, position_registry)
+        >>> registry = AgentRegistry(event_bus, position_registry)
         >>> registry.register(agent_config)  # Add to standby pool
         >>> await registry.initialize()  # Start resident agents
         >>> agent = await registry.activate("dev-001")  # Activate lazy agent
@@ -38,18 +36,15 @@ class AgentRegistry:
     def __init__(
         self,
         event_bus: EventBus,
-        chatroom: Congress,
         position_registry: Optional[PositionRegistry] = None
     ):
         """Initialize the agent registry.
         
         Args:
             event_bus: Event bus for message routing
-            chatroom: Chat room for participant management
             position_registry: Position registry for looking up position info
         """
         self.event_bus = event_bus
-        self.chatroom = chatroom
         self.position_registry = position_registry
         
         # Configuration storage
@@ -71,23 +66,14 @@ class AgentRegistry:
     
     def register(self, config: AgentConfig) -> None:
         """Register an agent configuration.
-        
-        The agent is added to standby pool and will be activated
-        based on its loading strategy (resident or lazy).
-        
         Args:
             config: Agent configuration
         """
         self._configs[config.id] = config
         self._standby.add(config.id)
-        
-        # Determine if proactive from agent config
-        if config.proactive:
-            # Proactive agents are resident (start immediately)
-            self._resident_ids.add(config.id)
-            logger.info(f"Registered resident agent: {config.name} ({config.id}) - proactive=True")
-        else:
-            logger.info(f"Registered lazy-load agent: {config.name} ({config.id}) - proactive=False")
+        # All agents are resident (start immediately)
+        self._resident_ids.add(config.id)
+        logger.info(f"Registered resident agent: {config.name} ({config.id}) - proactive=True")
     
     def register_all(self, configs: List[AgentConfig]) -> None:
         """Register multiple agent configurations.
@@ -107,13 +93,7 @@ class AgentRegistry:
         logger.info("Initializing AgentRegistry...")
         logger.info(f"Resident agents to start: {self._resident_ids}")
         logger.info(f"Standby agents: {self._standby}")
-        
-        # Subscribe to message events for lazy activation
-        self._event_subscription = self.event_bus.subscribe(
-            EventType.MESSAGE_NEW,
-            self._on_message_for_activation
-        )
-        
+
         # Start resident agents
         for agent_id in list(self._resident_ids):
             if agent_id in self._standby:
@@ -186,7 +166,6 @@ class AgentRegistry:
             agent = Agent(
                 config=config,
                 event_bus=self.event_bus,
-                chatroom=self.chatroom,
                 position_registry=self.position_registry,
                 team_members=team_members,
             )
@@ -196,17 +175,7 @@ class AgentRegistry:
             self._agents[agent_id] = agent
             self._standby.discard(agent_id)
             
-            # Add to chatroom participants
-            participant = Participant(
-                id=config.id,
-                name=config.name,
-                type="agent",
-                metadata={"position_id": config.position_id},
-            )
-            await self.chatroom.join(participant)
-            
             # Publish agent started event
-            from ..protocol import Event
             event = Event(
                 type=EventType.AGENT_STARTED,
                 payload={"agent_id": agent_id, "name": config.name},
@@ -240,7 +209,6 @@ class AgentRegistry:
             self._standby.add(agent_id)
             
             # Publish agent stopped event
-            from ..protocol import Event
             event = Event(
                 type=EventType.AGENT_STOPPED,
                 payload={"agent_id": agent_id},
@@ -481,57 +449,3 @@ class AgentRegistry:
         
         await self.deactivate(agent_id)
         return True
-    
-    async def _on_message_for_activation(self, event: Event) -> None:
-        """Handle messages to check for lazy agent activation.
-        
-        If a message @mentions a standby agent, activate it and
-        re-deliver the message to the newly activated agent.
-        
-        Args:
-            event: The message event
-        """
-        message: Message = event.payload
-        
-        # Check if message mentions any standby agents
-        for agent_id in list(self._standby):
-            config = self._configs.get(agent_id)
-            if not config:
-                continue
-            
-            # Check if mentioned by ID or name
-            is_mentioned = (
-                agent_id in message.mentions or
-                config.name in message.mentions
-            )
-            
-            if is_mentioned:
-                # Notify user that agent is waking up
-                await self._notify_waking_up(config.name)
-                
-                # Activate the agent
-                agent = await self.activate(agent_id)
-                
-                # Re-deliver the triggering message to the newly activated agent
-                # This is crucial because the agent missed the message while starting up
-                if agent:
-                    logger.debug(f"Re-delivering message to newly activated agent {agent_id}")
-                    await agent._on_message(event)
-    
-    async def _notify_waking_up(self, agent_name: str) -> None:
-        """Send a system message indicating an agent is waking up.
-        
-        Args:
-            agent_name: Name of the agent being activated
-        """
-        try:
-            system_msg = Message.create(
-                sender_id="system",
-                sender_name="系统",
-                sender_type="system",
-                content=f"正在唤醒 {agent_name}...",
-                content_type="system",
-            )
-            await self.chatroom.send_message(system_msg)
-        except Exception as e:
-            logger.error(f"Failed to send wake-up notification: {e}")

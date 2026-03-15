@@ -154,7 +154,7 @@ class EventBus:
                         self._event_queue.get(), 
                         timeout=0.5
                     )
-                    logger.debug(f"[EventBus] Processing event from queue: {event.type.value}")
+                    logger.info(f"[EventBus] Processing event from queue: {event.type.value}")
                     await self._dispatch(event)
                     self._event_queue.task_done()
                 except asyncio.TimeoutError:

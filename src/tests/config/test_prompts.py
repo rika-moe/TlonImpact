@@ -160,19 +160,3 @@ class TestBuildDisciplineRulesPrompt:
         
         assert "额外的规则1" in prompt
         assert "额外的规则2" in prompt
-
-
-class TestReloadTemplates:
-    """Test reloading templates."""
-    
-    def test_reload_clears_cache(self):
-        """Test reload clears all caches."""
-        manager = PromptTemplateManager()
-        
-        # Load templates to cache
-        manager.load_global_templates()
-        assert manager._global_templates is not None
-        
-        # Reload should clear cache
-        manager.reload_templates()
-        assert manager._global_templates is None

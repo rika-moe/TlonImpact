@@ -8,9 +8,9 @@ import asyncio
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from tlon.organization.messaging import Congress
+from tlon.base.settings import get_tlon_home
 from tlon.base.events.event import Event, EventType
-from tlon.organization.messaging import EventBus
+from tlon.base.events.event_bus import EventBus
 from tlon.organization.messaging.message import Message
 from tlon.base.logger import get_logger
 from tlon.subsystem.skills import SkillManager
@@ -22,7 +22,6 @@ from tlon.subsystem.tools.memory.generate_summary import GenerateSummaryTool
 from tlon.subsystem.tools.skills.load_skill_resource import LoadSkillResourceTool
 from tlon.subsystem.tools.memory.remember_fact import RememberFactTool
 from tlon.subsystem.tools.memory.search_memories import SearchMemoriesTool
-from tlon.subsystem.tools.complete_dialog.send_message import SendMessageTool
 from tlon.subsystem.tools.complete_dialog.complete_dialog import CompleteDialogTool
 from tlon.subsystem.tools.tasks.create_task import CreateTaskTool
 from tlon.subsystem.tools.tasks.list_tasks import ListTasksTool
@@ -64,7 +63,7 @@ class Agent:
     
     Example:
         >>> config = AgentConfig(id="dev-001", name="林知遥", ...)
-        >>> agent = Agent(config, event_bus, chatroom, position_registry)
+        >>> agent = Agent(config, event_bus, position_registry)
         >>> await agent.initialize()
         >>> # Agent will now respond to messages via EventBus
     """
@@ -73,7 +72,6 @@ class Agent:
         self,
         config: AgentConfig,
         event_bus: EventBus,
-        chatroom: Congress,
         position_registry = None,
         team_members: Optional[List["AgentConfig"]] = None,
     ):
@@ -82,13 +80,11 @@ class Agent:
         Args:
             config: Agent configuration
             event_bus: Event bus for receiving messages
-            chatroom: Chat room for sending messages
             position_registry: Position registry for looking up position info
             team_members: List of all team member configs (including inactive ones)
         """
         self.config = config
         self.event_bus = event_bus
-        self.chatroom = chatroom
         self.position_registry = position_registry
         self.team_members = team_members or []
         
@@ -110,7 +106,7 @@ class Agent:
         self._skills_discovered = False
         
         # Initialize memory manager
-        data_dir = chatroom.metadata.data_dir.parent
+        data_dir = get_tlon_home() / "data"
         memory_config = config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
         memory_config.agent_id = config.id
         # Use merged LLM config for summarization (needs API key)
@@ -264,9 +260,6 @@ class Agent:
         # Built-in tools
         self.tool_executor.register_tool(
             ExecuteBashTool(self.docker_runtime)
-        )
-        self.tool_executor.register_tool(
-            SendMessageTool(self.chatroom, self.id, self.name)
         )
         
         # Task completion tool (always last in the list to emphasize it's the exit)
@@ -572,12 +565,25 @@ class Agent:
                         "content": self._tool_result_to_string(tool_result),
                     })
                 
-                # If completeTask was called, send final response and exit
+                # If completeDialog was called, send final response and exit
                 if complete_dialog_call and final_response is not None:
                     logger.info(f"{self.name} is completing task with: {final_response[:50]}...")
                     try:
-                        await self._send_message(final_response, mentions=final_mentions)
-                        logger.info(f"{self.name} response sent successfully")
+                        # Construct message and publish via EventBus
+                        from tlon.organization.messaging.message import Message
+                        message = Message.create(
+                            sender_id=self.id,
+                            sender_name=self.name,
+                            sender_type="agent",
+                            content=final_response,
+                            mentions=final_mentions or [],
+                        )
+                        await self.event_bus.publish(Event(
+                            type=EventType.MESSAGE_NEW,
+                            payload=message,
+                            source=self.id,
+                        ))
+                        logger.info(f"{self.name} response sent successfully via EventBus")
                     except Exception as e:
                         logger.error(f"Failed to send message: {e}", exc_info=True)
                     
@@ -659,8 +665,11 @@ class Agent:
         
         # Get recent messages from ChatRoom history
         # This ensures Agent has context even after restart
-        room_history = await self.chatroom.get_history(limit=20)
-        
+
+        # 我们不能之间从Chatroom中获取，而是应该从event_bus中获取。
+        # room_history = await self.chatroom.get_history(limit=20)
+        room_history = []
+
         # Convert ChatRoom messages to OpenAI format
         for msg in room_history:
             # Skip system messages (join/leave notifications)
@@ -739,17 +748,26 @@ class Agent:
         return result
     
     async def _send_message(self, content: str, mentions: Optional[List[str]] = None) -> None:
-        """Send a message via the sendMessage tool.
+        """Send a message via EventBus.
         
         Args:
             content: Message content
             mentions: Optional list of user IDs to mention
         """
         try:
-            tool = self.tool_executor.get_tool("sendMessage")
-            result = await tool.execute(content=content, mentions=mentions or [])
-            if not result.success:
-                logger.error(f"sendMessage tool failed: {result.error}")
+            from tlon.organization.messaging.message import Message
+            message = Message.create(
+                sender_id=self.id,
+                sender_name=self.name,
+                sender_type="agent",
+                content=content,
+                mentions=mentions or [],
+            )
+            await self.event_bus.publish(Event(
+                type=EventType.MESSAGE_NEW,
+                payload=message,
+                source=self.id,
+            ))
         except Exception as e:
             logger.error(f"Error in _send_message: {e}", exc_info=True)
             raise
