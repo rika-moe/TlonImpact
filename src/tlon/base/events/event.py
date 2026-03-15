@@ -18,6 +18,8 @@ class EventType(str, Enum):
     """
     # Message events
     MESSAGE_NEW = "message.new"
+    MESSAGE_ROUTED = "message.routed"  # Message after routing decision
+    MESSAGE_DELIVERED = "message.delivered"  # Confirmation of delivery
 
     # Agent events
     AGENT_JOIN = "agent.join"

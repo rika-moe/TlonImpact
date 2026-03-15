@@ -1,10 +1,10 @@
 """Tlon Server Application with full Dependency Injection.
 
 Main entry point for the server process. ServerApp acts as the component
-assembler, creating all core components and injecting them into TlonServer.
+assembler, creating all core components and injecting them into ClientGateway.
 
 Usage:
-    >>> from tlon.app.client_gateway.serverapp import ServerApp
+    >>> from tlon.app.server.serverapp import ServerApp
     >>> app = ServerApp()
     >>> await app.initialize()  # DI assembly, load config, setup components
     >>> await app.start()       # Start servers, block until shutdown
@@ -24,7 +24,8 @@ from .config_manager import ConfigManager
 from tlon.base.config import AgentConfig, ConfigLoader, DockerRuntimeConfig, LLMConfig
 from tlon.subsystem.memory import MemoryConfig
 from tlon.base.events.event_bus import EventBus
-from tlon.organization.messaging import Congress, CongressMetadata
+from tlon.organization.messaging.store import FileMessageStore
+from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.positions import PositionRegistry
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.settings import settings, get_tlon_home
@@ -114,46 +115,45 @@ class ServerApp:
         self._components["event_bus"] = event_bus
         logger.info("EventBus started")
         
-        # 2.2 Congress - chat room (depends on EventBus)
-        congress_metadata = CongressMetadata(
-            id="main-room",
-            name="主聊天室",
-            created_at=datetime.now().isoformat(),
+        # 2.2 MessageStore - storage for messages (stateful)
+        message_store = FileMessageStore(
             data_dir=self.data_dir / "chat_history",
+            filename="messages.jsonl"
         )
-        congress = Congress(
-            metadata=congress_metadata,
-            event_bus=event_bus,  # DI
+        await message_store.initialize()
+        self._components["message_store"] = message_store
+        logger.info("MessageStore initialized")
+        
+        # 2.3 MessageRouter - stateless message routing
+        message_router = MessageRouter(
+            event_bus=event_bus,
+            message_store=message_store,
+            agent_registry=None,  # Will be set after AgentRegistry is created
         )
-        await congress.initialize()
-        self._components["congress"] = congress
-        logger.info(f"Congress '{congress_metadata.name}' initialized")
-
-        for agent_config in config_manager.agents.values():
-            from tlon.organization.messaging import Participant
-            participant = Participant(
-                            id=agent_config.id,
-                            name=agent_config.name,
-                            type="agent",
-                            metadata={"position_id": agent_config.position_id},
-                        )
-            await congress.join(participant)
-
-        # 2.3 PositionRegistry - position template registry
+        await message_router.start()
+        self._components["message_router"] = message_router
+        logger.info("MessageRouter started")
+        
+        # 2.4 PositionRegistry - position template registry
         position_registry = PositionRegistry()
         for position in config_manager.positions.values():
             position_registry.register(position)
         self._components["position_registry"] = position_registry
         logger.info(f"Loaded {len(position_registry.get_all())} positions")
         
-        # 2.4 AgentRegistry - agent management (depends on EventBus, Congress, PositionRegistry)
+        # 2.5 AgentRegistry - agent management (depends on EventBus, PositionRegistry, MessageStore)
         agent_registry = AgentRegistry(
             event_bus=event_bus,  # DI
             position_registry=position_registry,  # DI
+            message_store=message_store,  # DI - Agents can now query history!
         )
         # Register initial agents
         for agent_config in config_manager.agents.values():
             agent_registry.register(agent_config)
+        
+        # Now that AgentRegistry is created, update router with it
+        message_router._agent_registry = agent_registry
+        
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
         logger.info(f"Loaded {len(agent_registry.get_all())} agents")
@@ -162,7 +162,8 @@ class ServerApp:
         self.client_gateway = ClientGateway(
             # Core components (injected)
             event_bus=event_bus,
-            congress=congress,
+            message_store=message_store,
+            agent_registry=agent_registry,
             position_registry=position_registry,
             # Configuration management
             config_manager=config_manager,
@@ -174,7 +175,7 @@ class ServerApp:
         await self.client_gateway.initialize()
         logger.info("ClientGateway initialized")
 
-        # ========== Step 5: API Layer (DI) ==========
+        # ========== Step 4: API Layer (DI) ==========
         self.rest = RESTServer(
             self.client_gateway,
             agent_registry=agent_registry,  # Direct access for agent operations
@@ -292,9 +293,9 @@ class ServerApp:
         if agent_registry:
             await agent_registry.shutdown()
         
-        congress = self._components.get("congress")
-        if congress:
-            await congress.shutdown()
+        message_router = self._components.get("message_router")
+        if message_router:
+            await message_router.stop()
         
         event_bus = self._components.get("event_bus")
         if event_bus:

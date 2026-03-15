@@ -2,9 +2,27 @@
 
 This module contains the messaging infrastructure components:
 - EventBus: Async pub-sub event routing
-- ChatRoom: Chat room state and participant management
+- MessageStore: Message persistence abstraction
+- MessageRouter: Stateless message routing
+- Message: Unified message format
 """
 
-from .congress import Congress, Participant, CongressMetadata
+from .store import MessageStore, FileMessageStore, MessageFilter
+from .router import MessageRouter, RoutedMessage
+from .message import Message, MessageType
+from .participant import Participant
 
-__all__ = ["Congress", "Participant"]
+
+__all__ = [
+    # Core classes
+    "Participant",
+    "Message",
+    "MessageType",
+    # Storage
+    "MessageStore",
+    "FileMessageStore",
+    "MessageFilter",
+    # Routing
+    "MessageRouter",
+    "RoutedMessage",
+]

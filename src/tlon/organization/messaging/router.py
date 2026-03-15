@@ -1,0 +1,375 @@
+"""Message Router for Tlon.
+
+The MessageRouter is a stateless component responsible for:
+1. Receiving messages from EventBus (MESSAGE_NEW)
+2. Persisting messages to MessageStore
+3. Making routing decisions (who should receive this message)
+4. Publishing routed messages (MESSAGE_ROUTED)
+
+This separation allows:
+- Router to be stateless and scalable
+- Storage to be handled by dedicated MessageStore
+- Routing logic to be independent of storage
+"""
+
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
+
+from tlon.base.events.event import Event, EventType
+from tlon.base.events.event_bus import EventBus
+from tlon.organization.messaging.message import Message
+from tlon.organization.messaging.store import MessageStore
+from tlon.base.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class RoutedMessage:
+    """A message that has been routed to specific targets.
+    
+    Attributes:
+        original: The original message
+        target_ids: List of target recipient IDs (agents, clients, etc.)
+        routing_reason: Why this routing decision was made
+    """
+    original: Message
+    target_ids: List[str]
+    routing_reason: str = ""
+
+
+class MessageRouter:
+    """Stateless message router for distributing messages to recipients.
+    
+    The router:
+    - Subscribes to MESSAGE_NEW events
+    - Stores messages via MessageStore
+    - Decides who should receive the message
+    - Publishes MESSAGE_ROUTED events
+    
+    Example:
+        >>> router = MessageRouter(event_bus, message_store, agent_registry)
+        >>> await router.start()  # Begins listening for messages
+        >>> 
+        >>> # Messages are automatically routed when published to EventBus
+        >>> await event_bus.publish(Event(
+        ...     type=EventType.MESSAGE_NEW,
+        ...     payload=message,
+        ...     source="human"
+        ... ))
+    """
+    
+    def __init__(
+        self,
+        event_bus: EventBus,
+        message_store: MessageStore,
+        agent_registry=None,  # Optional, for looking up agents
+    ):
+        """Initialize the message router.
+        
+        Args:
+            event_bus: Event bus for subscribing and publishing
+            message_store: Store for persisting messages
+            agent_registry: Optional registry for agent lookups
+        """
+        self._event_bus = event_bus
+        self._message_store = message_store
+        self._agent_registry = agent_registry
+        
+        # Subscription ID
+        self._subscription_id: Optional[str] = None
+        
+        # Routing rules cache
+        self._proactive_agents: Set[str] = set()
+        
+        logger.info("MessageRouter initialized")
+    
+    async def start(self) -> None:
+        """Start the router by subscribing to MESSAGE_NEW events."""
+        self._subscription_id = self._event_bus.subscribe(
+            EventType.MESSAGE_NEW,
+            self._on_message_new
+        )
+        logger.info("MessageRouter started, listening for messages")
+    
+    async def stop(self) -> None:
+        """Stop the router by unsubscribing from events."""
+        if self._subscription_id:
+            self._event_bus.unsubscribe(self._subscription_id)
+            self._subscription_id = None
+        logger.info("MessageRouter stopped")
+    
+    async def _on_message_new(self, event: Event) -> None:
+        """Handle new message events.
+        
+        This is the core routing logic:
+        1. Store the message
+        2. Decide targets
+        3. Publish routed message
+        
+        Args:
+            event: The MESSAGE_NEW event
+        """
+        message: Message = event.payload
+        
+        try:
+            # Step 1: Persist message (non-blocking, fire-and-forget is ok)
+            await self._store_message(message)
+            
+            # Step 2: Decide routing targets
+            targets = self._decide_targets(message)
+            
+            # Step 3: Publish routed message
+            if targets:
+                await self._publish_routed(message, targets)
+                logger.debug(f"Routed message {message.id} to {targets}")
+            else:
+                logger.debug(f"No targets for message {message.id}")
+                
+        except Exception as e:
+            logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
+    
+    async def _store_message(self, message: Message) -> None:
+        """Store message to persistent store.
+        
+        Args:
+            message: The message to store
+        """
+        try:
+            await self._message_store.append(message)
+        except Exception as e:
+            logger.error(f"Failed to store message {message.id}: {e}")
+            # Don't fail routing if storage fails - message flow is more important
+    
+    def _decide_targets(self, message: Message) -> List[str]:
+        """Decide which recipients should receive this message.
+        
+        Routing logic:
+        - Human messages:
+          - If has mentions: route to mentioned agents
+          - If no mentions: route to all proactive agents
+        - Agent messages:
+          - Route to all clients (for display)
+          - Route to agents mentioned in the message
+        - System messages:
+          - Route to all clients
+        
+        Args:
+            message: The message to route
+            
+        Returns:
+            List of target recipient IDs
+        """
+        targets: Set[str] = set()
+        
+        if message.sender_type == "human":
+            targets.update(self._route_human_message(message))
+        elif message.sender_type == "agent":
+            targets.update(self._route_agent_message(message))
+        elif message.sender_type == "system":
+            targets.update(self._route_system_message(message))
+        
+        return list(targets)
+    
+    def _route_human_message(self, message: Message) -> Set[str]:
+        """Route a message from a human user.
+        
+        Args:
+            message: The human message
+            
+        Returns:
+            Set of target agent IDs
+        """
+        targets: Set[str] = set()
+        
+        if message.mentions:
+            # Explicit mentions - resolve to agent IDs and route
+            resolved = self._resolve_mentions_to_ids(message.mentions)
+            targets.update(resolved)
+            logger.debug(f"Routing to mentioned agents: {message.mentions} -> {resolved}")
+        else:
+            # No mentions - route to proactive agents
+            proactive = self._get_proactive_agents()
+            targets.update(proactive)
+            logger.debug(f"Routing to proactive agents: {proactive}")
+        
+        return targets
+    
+    def _route_agent_message(self, message: Message) -> Set[str]:
+        """Route a message from an agent.
+        
+        Args:
+            message: The agent message
+            
+        Returns:
+            Set of target IDs (clients + mentioned agents)
+        """
+        targets: Set[str] = set()
+        
+        # Agent messages go to clients for display
+        targets.add("@clients")
+        
+        # Also route to agents that are mentioned (resolve names to IDs)
+        if message.mentions:
+            resolved = self._resolve_mentions_to_ids(message.mentions)
+            targets.update(resolved)
+            logger.debug(f"Agent message routing to: @clients + {resolved}")
+        
+        return targets
+    
+    def _route_system_message(self, message: Message) -> Set[str]:
+        """Route a system message.
+        
+        System messages go to all clients for display.
+        
+        Args:
+            message: The system message
+            
+        Returns:
+            Set of target IDs
+        """
+        return {"@clients"}
+    
+    def _get_proactive_agents(self) -> Set[str]:
+        """Get the set of proactive agent IDs.
+        
+        Proactive agents respond to general human messages (no @mentions).
+        
+        Returns:
+            Set of agent IDs that are proactive
+        """
+        # Refresh from registry if available
+        if self._agent_registry:
+            self._proactive_agents = {
+                agent_id for agent_id in self._agent_registry.get_all()
+                if self._is_proactive(agent_id)
+            }
+        
+        return self._proactive_agents.copy()
+    
+    def _is_proactive(self, agent_id: str) -> bool:
+        """Check if an agent is proactive.
+        
+        Args:
+            agent_id: The agent ID to check
+            
+        Returns:
+            True if the agent responds to general messages
+        """
+        if not self._agent_registry:
+            return False
+        
+        config = self._agent_registry.get_config(agent_id)
+        if config:
+            # Check if config has proactive flag (or respond_to_all for backward compat)
+            return getattr(config, 'proactive', False) or getattr(config, 'respond_to_all', False)
+        
+        return False
+    
+    def _resolve_mentions_to_ids(self, mentions: List[str]) -> Set[str]:
+        """Resolve mentions (names or IDs) to agent IDs.
+        
+        Mentions can be either agent IDs or agent names.
+        This method converts all mentions to agent IDs for routing.
+        
+        Args:
+            mentions: List of mentions (names or IDs)
+            
+        Returns:
+            Set of resolved agent IDs
+        """
+        if not self._agent_registry:
+            # No registry, assume mentions are already IDs
+            return set(mentions)
+        
+        resolved: Set[str] = set()
+        
+        for mention in mentions:
+            # Check if it's already an ID
+            if self._agent_registry.get_config(mention):
+                resolved.add(mention)
+                continue
+            
+            # Check if it's a name - look up by name
+            found = False
+            for agent_id in self._agent_registry.get_all():
+                config = self._agent_registry.get_config(agent_id)
+                if config and config.name == mention:
+                    resolved.add(agent_id)
+                    found = True
+                    break
+            
+            if not found:
+                # Could not resolve, log warning but keep original
+                # (might be a future agent or typo)
+                logger.warning(f"Could not resolve mention '{mention}' to agent ID")
+                resolved.add(mention)  # Keep as-is, agent will ignore if not matching
+        
+        return resolved
+    
+    async def _publish_routed(self, message: Message, targets: List[str]) -> None:
+        """Publish a routed message event.
+        
+        Args:
+            message: The original message
+            targets: List of target recipient IDs
+        """
+        routed = RoutedMessage(
+            original=message,
+            target_ids=targets,
+            routing_reason=self._get_routing_reason(message, targets)
+        )
+        
+        await self._event_bus.publish(Event(
+            type=EventType.MESSAGE_ROUTED,
+            payload=routed,
+            source="message_router"
+        ))
+    
+    def _get_routing_reason(self, message: Message, targets: List[str]) -> str:
+        """Generate a human-readable routing reason for logging.
+        
+        Args:
+            message: The message
+            targets: The routing targets
+            
+        Returns:
+            Description of why this routing occurred
+        """
+        if message.sender_type == "human":
+            if message.mentions:
+                return f"explicit_mentions: {message.mentions}"
+            else:
+                return "proactive_broadcast"
+        elif message.sender_type == "agent":
+            return f"agent_response_to: {targets}"
+        else:
+            return "system_broadcast"
+    
+    # ==================== Public API for manual routing ====================
+    
+    async def route_manually(self, message: Message, targets: List[str]) -> None:
+        """Manually route a message to specific targets.
+        
+        This bypasses the automatic routing logic.
+        
+        Args:
+            message: The message to route
+            targets: Explicit target IDs
+        """
+        # Store first
+        await self._store_message(message)
+        
+        # Then publish routed event
+        await self._publish_routed(message, targets)
+    
+    def update_proactive_agents(self, agent_ids: Set[str]) -> None:
+        """Update the set of proactive agents.
+        
+        This can be called when agent configurations change.
+        
+        Args:
+            agent_ids: New set of proactive agent IDs
+        """
+        self._proactive_agents = agent_ids.copy()
+        logger.info(f"Updated proactive agents: {agent_ids}")

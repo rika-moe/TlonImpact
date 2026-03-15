@@ -4,8 +4,6 @@ The Server is a long-running process that manages the core functionality:
 - Agent lifecycle management
 - Client session management
 
-Message broadcasting to clients is handled by Congress directly.
-
 It exposes REST API for configuration and WebSocket for real-time updates.
 """
 
@@ -16,7 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any
 
 from tlon.base.events.event_bus import EventBus
-from tlon.organization.messaging import Congress, Participant
+from tlon.organization.messaging import Participant
+from tlon.organization.messaging.store import MessageStore
 from tlon.base.events.event import Event, EventType
 from tlon.organization.messaging.message import Message
 from tlon.organization.positions import PositionRegistry
@@ -50,20 +49,18 @@ class ClientGateway:
 
     Responsibilities:
     - Client session management
-    - Coordinating configuration reloads
+    - Message history access
+    - Participant list aggregation
     
-    Note: Message broadcasting to clients is now handled by Congress.
-    ClientGateway registers client handlers with Congress during connect_client().
-    
-    All core components (EventBus, Congress) are created
+    All core components (EventBus, MessageStore) are created
     by ServerApp and injected into ClientGateway.
     Agent lifecycle is managed directly by AgentRegistry.
     
     Example:
         >>> server = ClientGateway(
         ...     event_bus=event_bus,
-        ...     congress=congress,
-        ...     position_registry=position_registry,
+        ...     message_store=message_store,
+        ...     agent_registry=agent_registry,
         ...     config_manager=config_manager,
         ...     ...
         ... )
@@ -77,7 +74,8 @@ class ClientGateway:
         *,
         # Core components - all injected (DI)
         event_bus: EventBus,
-        congress: Congress,
+        message_store: MessageStore,
+        agent_registry: Any,  # AgentRegistry
         position_registry: PositionRegistry,
 
         # Configuration management
@@ -91,7 +89,8 @@ class ClientGateway:
         
         Args:
             event_bus: The EventBus instance (injected)
-            congress: The Congress/ChatRoom instance (injected)
+            message_store: The MessageStore instance (injected)
+            agent_registry: The AgentRegistry instance (injected)
             position_registry: Position registry for lookups (injected)
 
             config_manager: ConfigManager for reload support (injected)
@@ -101,7 +100,8 @@ class ClientGateway:
         """
         # Store injected dependencies
         self._event_bus = event_bus
-        self._congress = congress
+        self._message_store = message_store
+        self._agent_registry = agent_registry
         self._position_registry = position_registry
 
         self._config_manager = config_manager
@@ -136,8 +136,8 @@ class ClientGateway:
         
         # Validate dependencies (all must be non-null)
         assert self._event_bus is not None, "EventBus not injected"
-        assert self._congress is not None, "Congress not injected"
-
+        assert self._message_store is not None, "MessageStore not injected"
+        assert self._agent_registry is not None, "AgentRegistry not injected"
         assert self._position_registry is not None, "PositionRegistry not injected"
         assert self._config_manager is not None, "ConfigManager not injected"
         
@@ -151,7 +151,7 @@ class ClientGateway:
         logger.info("All dependencies validated")
         logger.info("ClientGateway initialized")
     
-    # ========== Property Accessors (for backward compatibility) ==========
+    # ========== Property Accessors ==========
     
     @property
     def event_bus(self) -> EventBus:
@@ -159,17 +159,59 @@ class ClientGateway:
         return self._event_bus
     
     @property
-    def chatroom(self) -> Congress:
-        """Access the injected Congress (chatroom)."""
-        return self._congress
-
+    def message_store(self) -> MessageStore:
+        """Access the injected MessageStore."""
+        return self._message_store
+    
+    @property
+    def agent_registry(self) -> Any:
+        """Access the injected AgentRegistry."""
+        return self._agent_registry
+    
     @property
     def position_registry(self) -> PositionRegistry:
         """Access the injected PositionRegistry."""
         return self._position_registry
-
-    def get_all_participants(self):
-        return self.chatroom.get_all_participants()
+    
+    def get_all_participants(self) -> List[Participant]:
+        """Get all participants by aggregating from AgentRegistry and sessions.
+        
+        This replaces the old Congress-based participant management with
+        a real-time aggregation approach.
+        
+        Returns:
+            List of all participants (agents + connected humans)
+        """
+        participants: List[Participant] = []
+        
+        # Add all agents from AgentRegistry
+        for agent_id in self._agent_registry.get_all():
+            config = self._agent_registry.get_config(agent_id)
+            if config:
+                participants.append(Participant(
+                    id=agent_id,
+                    name=config.name,
+                    type="agent",
+                    metadata={"position_id": config.position_id}
+                ))
+        
+        # Add human if there are connected sessions
+        if self.sessions:
+            participants.append(Participant(
+                id="human",
+                name="人类",
+                type="human"
+            ))
+        
+        return participants
+    
+    def get_participant_names(self) -> List[str]:
+        """Get names of all participants.
+        
+        Returns:
+            List of participant names
+        """
+        return [p.name for p in self.get_all_participants()]
 
     async def start(self) -> None:
         """Start the server.
@@ -240,15 +282,6 @@ class ClientGateway:
             self.sessions[session_id] = session
             # Store the event handler for this session
             self._session_handlers[session_id] = event_handler
-        
-        # Add human participant if first connection
-        if len(self.sessions) == 1:
-            human = Participant(
-                id="human",
-                name="人类",
-                type="human",
-            )
-            await self.chatroom.join(human)
         
         logger.info(f"Client connected: {session_id} ({client_type})")
         return session
@@ -339,12 +372,6 @@ class ClientGateway:
         
         if session:
             logger.info(f"Client disconnected: {session_id}")
-            
-            # Remove human participant if last connection
-            async with self._session_lock:
-                if len(self.sessions) == 0:
-                    await self.chatroom.leave("human")
-            
             return True
         
         return False
@@ -419,7 +446,7 @@ class ClientGateway:
     ) -> Message:
         """Send a message to the chatroom.
         
-        Publishes message via EventBus. Congress will store it and
+        Publishes message via EventBus. MessageRouter will store it and
         other components will receive it.
         
         Args:
@@ -442,7 +469,7 @@ class ClientGateway:
             mentions=mentions,
         )
         
-        # Publish via EventBus - Congress will store, ClientGateway will push to clients
+        # Publish via EventBus - MessageRouter will store, ClientGateway will push to clients
         await self._event_bus.publish(Event(
             type=EventType.MESSAGE_NEW,
             payload=message,
@@ -464,7 +491,7 @@ class ClientGateway:
         Returns:
             List of messages
         """
-        return await self.chatroom.get_history(limit, before_id)
+        return await self._message_store.get_history(limit, before_id)
     
     def is_running(self) -> bool:
         """Check if the server is running.

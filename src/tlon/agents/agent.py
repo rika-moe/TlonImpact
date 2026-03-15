@@ -12,6 +12,7 @@ from tlon.base.settings import get_tlon_home
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.organization.messaging.message import Message
+from tlon.organization.messaging.store import MessageStore, MessageFilter
 from tlon.base.logger import get_logger
 from tlon.subsystem.skills import SkillManager
 from tlon.subsystem.tools.skills.activate_skill import ActivateSkillTool
@@ -73,6 +74,7 @@ class Agent:
         event_bus: EventBus,
         position_registry = None,
         team_members: Optional[List["AgentConfig"]] = None,
+        message_store: Optional[MessageStore] = None,
     ):
         """Initialize the agent.
         
@@ -86,6 +88,7 @@ class Agent:
         self.event_bus = event_bus
         self.position_registry = position_registry
         self.team_members = team_members or []
+        self.message_store = message_store  # Now Agent can query history!
         
         self.id = config.id
         self.name = config.name
@@ -204,9 +207,11 @@ class Agent:
         self._register_tools()
         
         # Subscribe to events
+        # Subscribe to MESSAGE_ROUTED instead of MESSAGE_NEW
+        # This way we only receive messages intended for us
         self._event_subscription = self.event_bus.subscribe(
-            EventType.MESSAGE_NEW,
-            self._on_message
+            EventType.MESSAGE_ROUTED,
+            self._on_message_routed
         )
         
         # Start message processing worker
@@ -328,29 +333,36 @@ class Agent:
         
         logger.debug(f"Registered {len(self.tool_executor.list_tools())} tools for {self.name}")
     
-    async def _on_message(self, event: Event) -> None:
-        """Handle incoming message event.
+    async def _on_message_routed(self, event: Event) -> None:
+        """Handle routed message events.
         
-        Phase 4: Messages are queued for serial processing instead of
-        being processed immediately. This ensures that an agent processes
-        messages one at a time, maintaining order.
+        This is called for MESSAGE_ROUTED events. The router has already
+        decided which agents should receive this message.
         
         Args:
-            event: The message event
+            event: The MESSAGE_ROUTED event containing RoutedMessage
         """
-        message: Message = event.payload
+        from tlon.organization.messaging.router import RoutedMessage
+        
+        routed: RoutedMessage = event.payload
+        message = routed.original
+        
+        # Check if this agent is a target for this message
+        if self.id not in routed.target_ids and "@all" not in routed.target_ids:
+            return
         
         # Ignore own messages
         if message.sender_id == self.id:
             return
         
-        # Check if we should respond
+        # Additional check: should we respond to this message
+        # (router makes initial decision, but agent can still filter)
         if not self._should_respond(message):
             return
         
         # Queue the message for serial processing
         await self._message_queue.put(message)
-        logger.debug(f"{self.name} queued message from {message.sender_name}")
+        logger.debug(f"{self.name} queued message from {message.sender_name} (reason: {routed.routing_reason})")
     
     async def _message_worker(self) -> None:
         """Worker task to process messages serially from the queue.
@@ -659,7 +671,7 @@ class Agent:
         """Build conversation context for LLM.
         
         Builds context from:
-        1. ChatRoom history (all messages in the room)
+        1. MessageStore history (all messages in the room)
         2. Agent's own memory (interactions it processed)
         
         Args:
@@ -670,14 +682,19 @@ class Agent:
         """
         context = []
         
-        # Get recent messages from ChatRoom history
+        # Get recent messages from MessageStore
         # This ensures Agent has context even after restart
+        room_history: List[Message] = []
+        if self.message_store:
+            room_history = await self.message_store.get_history(
+                limit=20,
+                before_id=current_message.id
+            )
+            logger.debug(f"Retrieved {len(room_history)} messages from store for context")
+        else:
+            logger.warning("No message store available, context will be limited")
 
-        # 我们不能之间从Chatroom中获取，而是应该从event_bus中获取。
-        # room_history = await self.chatroom.get_history(limit=20)
-        room_history = []
-
-        # Convert ChatRoom messages to OpenAI format
+        # Convert messages to OpenAI format
         for msg in room_history:
             # Skip system messages (join/leave notifications)
             if msg.sender_type == "system":

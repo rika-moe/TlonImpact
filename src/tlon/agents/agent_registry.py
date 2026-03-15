@@ -14,6 +14,7 @@ from tlon.base.logger import get_logger
 from tlon.agents.agent import Agent
 from tlon.base.config import AgentConfig
 from tlon.organization.positions import PositionRegistry
+from tlon.organization.messaging.store import MessageStore
 
 logger = get_logger(__name__)
 
@@ -34,16 +35,19 @@ class AgentRegistry:
     def __init__(
         self,
         event_bus: EventBus,
-        position_registry: Optional[PositionRegistry] = None
+        position_registry: Optional[PositionRegistry] = None,
+        message_store: Optional[MessageStore] = None,
     ):
         """Initialize the agent registry.
         
         Args:
             event_bus: Event bus for message routing
             position_registry: Position registry for looking up position info
+            message_store: Message store for agent history access
         """
         self.event_bus = event_bus
         self.position_registry = position_registry
+        self.message_store = message_store
         
         # Configuration storage
         self._configs: Dict[str, AgentConfig] = {}
@@ -145,6 +149,7 @@ class AgentRegistry:
                 event_bus=self.event_bus,
                 position_registry=self.position_registry,
                 team_members=team_members,
+                message_store=self.message_store,  # Agents can now query history!
             )
             await agent.initialize()
             
