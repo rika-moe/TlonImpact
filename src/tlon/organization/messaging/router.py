@@ -13,13 +13,16 @@ This separation allows:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.base.logger import get_logger
+
+if TYPE_CHECKING:
+    from tlon.base.config.agent_info import AgentInfoProvider
 
 logger = get_logger(__name__)
 
@@ -48,7 +51,7 @@ class MessageRouter:
     - Publishes MESSAGE_ROUTED events
     
     Example:
-        >>> router = MessageRouter(event_bus, message_store, agent_registry)
+        >>> router = MessageRouter(event_bus, message_store, agent_info_provider)
         >>> await router.start()  # Begins listening for messages
         >>> 
         >>> # Messages are automatically routed when published to EventBus
@@ -63,18 +66,18 @@ class MessageRouter:
         self,
         event_bus: EventBus,
         message_store: MessageStore,
-        agent_registry=None,  # Optional, for looking up agents
+        agent_info_provider: Optional["AgentInfoProvider"] = None,
     ):
         """Initialize the message router.
         
         Args:
             event_bus: Event bus for subscribing and publishing
             message_store: Store for persisting messages
-            agent_registry: Optional registry for agent lookups
+            agent_info_provider: Optional provider for agent configuration queries
         """
         self._event_bus = event_bus
         self._message_store = message_store
-        self._agent_registry = agent_registry
+        self._agent_info = agent_info_provider
         
         # Subscription ID
         self._subscription_id: Optional[str] = None
@@ -238,11 +241,11 @@ class MessageRouter:
         Returns:
             Set of agent IDs that are proactive
         """
-        # Refresh from registry if available
-        if self._agent_registry:
+        # Refresh from provider if available
+        if self._agent_info:
             self._proactive_agents = {
-                agent_id for agent_id in self._agent_registry.get_all()
-                if self._is_proactive(agent_id)
+                agent_id for agent_id in self._agent_info.get_all_ids()
+                if self._agent_info.is_proactive(agent_id)
             }
         
         return self._proactive_agents.copy()
@@ -256,15 +259,10 @@ class MessageRouter:
         Returns:
             True if the agent responds to general messages
         """
-        if not self._agent_registry:
+        if not self._agent_info:
             return False
         
-        config = self._agent_registry.get_config(agent_id)
-        if config:
-            # Check if config has proactive flag (or respond_to_all for backward compat)
-            return getattr(config, 'proactive', False) or getattr(config, 'respond_to_all', False)
-        
-        return False
+        return self._agent_info.is_proactive(agent_id)
     
     def _resolve_mentions_to_ids(self, mentions: List[str]) -> Set[str]:
         """Resolve mentions (names or IDs) to agent IDs.
@@ -278,22 +276,23 @@ class MessageRouter:
         Returns:
             Set of resolved agent IDs
         """
-        if not self._agent_registry:
-            # No registry, assume mentions are already IDs
+        if not self._agent_info:
+            # No provider, assume mentions are already IDs
             return set(mentions)
         
         resolved: Set[str] = set()
+        all_ids = self._agent_info.get_all_ids()
         
         for mention in mentions:
             # Check if it's already an ID
-            if self._agent_registry.get_config(mention):
+            if mention in all_ids:
                 resolved.add(mention)
                 continue
             
             # Check if it's a name - look up by name
             found = False
-            for agent_id in self._agent_registry.get_all():
-                config = self._agent_registry.get_config(agent_id)
+            for agent_id in all_ids:
+                config = self._agent_info.get_config(agent_id)
                 if config and config.name == mention:
                     resolved.add(agent_id)
                     found = True

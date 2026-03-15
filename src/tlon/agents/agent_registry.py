@@ -1,12 +1,13 @@
 """Agent Registry for managing multiple agents.
 
 This module provides AgentRegistry class that manages:
-- Agent configuration registration
 - Agent lifecycle (all agents start at system startup)
 - Agent shutdown
+
+Configuration is delegated to AgentInfoProvider (typically ConfigManager).
 """
 import asyncio
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -15,6 +16,9 @@ from tlon.agents.agent import Agent
 from tlon.base.config import AgentConfig
 from tlon.organization.positions import PositionRegistry
 from tlon.organization.messaging.store import MessageStore
+
+if TYPE_CHECKING:
+    from tlon.base.config.agent_info import AgentInfoProvider
 
 logger = get_logger(__name__)
 
@@ -25,9 +29,12 @@ class AgentRegistry:
     All agents are started at system initialization.
     No lazy loading support.
     
+    Configuration is provided by AgentInfoProvider (typically ConfigManager),
+    allowing this class to focus on agent lifecycle management only.
+    
     Example:
-        >>> registry = AgentRegistry(event_bus, position_registry)
-        >>> registry.register(agent_config)  # Register config
+        >>> registry = AgentRegistry(event_bus, agent_info_provider)
+        >>> registry.register("dev-001")  # Register by ID
         >>> await registry.initialize()  # Start all agents
         >>> agent = registry.get_agent("dev-001")  # Get running agent
     """
@@ -35,6 +42,7 @@ class AgentRegistry:
     def __init__(
         self,
         event_bus: EventBus,
+        agent_info_provider: "AgentInfoProvider",
         position_registry: Optional[PositionRegistry] = None,
         message_store: Optional[MessageStore] = None,
     ):
@@ -42,48 +50,58 @@ class AgentRegistry:
         
         Args:
             event_bus: Event bus for message routing
+            agent_info_provider: Provider for agent configuration queries
             position_registry: Position registry for looking up position info
             message_store: Message store for agent history access
         """
         self.event_bus = event_bus
+        self._agent_info = agent_info_provider
         self.position_registry = position_registry
         self.message_store = message_store
         
-        # Configuration storage
-        self._configs: Dict[str, AgentConfig] = {}
+        # Registered agent IDs (to be started during initialize)
+        self._registered_ids: List[str] = []
         
         # Active agents (all agents are active after initialize)
         self._agents: Dict[str, Agent] = {}
         
         logger.info("AgentRegistry initialized")
     
-    def register(self, config: AgentConfig) -> None:
-        """Register an agent configuration.
+    def register(self, agent_id: str) -> None:
+        """Register an agent to be started.
         
+        The agent configuration is looked up from AgentInfoProvider.
         The agent will be started during initialize().
         
         Args:
-            config: Agent configuration
+            agent_id: The agent ID to register
+            
+        Raises:
+            ValueError: If agent configuration is not found
         """
-        self._configs[config.id] = config
-        logger.info(f"Registered agent: {config.name} ({config.id})")
+        if not self._agent_info.get_config(agent_id):
+            raise ValueError(f"Cannot register unknown agent: {agent_id}")
+        
+        if agent_id not in self._registered_ids:
+            self._registered_ids.append(agent_id)
+            logger.info(f"Registered agent: {agent_id}")
     
-    def register_all(self, configs: List[AgentConfig]) -> None:
-        """Register multiple agent configurations.
+    def register_all(self, agent_ids: List[str]) -> None:
+        """Register multiple agents.
         
         Args:
-            configs: List of agent configurations
+            agent_ids: List of agent IDs
         """
-        for config in configs:
-            self.register(config)
+        for agent_id in agent_ids:
+            self.register(agent_id)
     
     async def initialize(self) -> None:
         """Initialize the registry and start all registered agents."""
         logger.info("Initializing AgentRegistry...")
-        logger.info(f"Agents to start: {list(self._configs.keys())}")
+        logger.info(f"Agents to start: {self._registered_ids}")
 
         # Start all registered agents
-        for agent_id in list(self._configs.keys()):
+        for agent_id in list(self._registered_ids):
             if agent_id not in self._agents:
                 logger.info(f"Starting agent: {agent_id}")
                 try:
@@ -109,7 +127,7 @@ class AgentRegistry:
                 logger.error(f"Error shutting down agent {agent_id}: {e}")
         
         self._agents.clear()
-        self._configs.clear()
+        self._registered_ids.clear()
         
         logger.info("AgentRegistry shutdown complete")
     
@@ -128,19 +146,20 @@ class AgentRegistry:
             # Already active
             return self._agents[agent_id]
         
-        if agent_id not in self._configs:
+        config = self._agent_info.get_config(agent_id)
+        if not config:
             logger.error(f"Cannot start unknown agent: {agent_id}")
             return None
-        
-        config = self._configs[agent_id]
         
         try:
             logger.info(f"Starting agent: {config.name} ({agent_id})")
             
             # Prepare team members config (all other agents)
+            all_ids = self._agent_info.get_all_ids()
             team_members = [
-                cfg for cfg in self._configs.values()
-                if cfg.id != agent_id
+                self._agent_info.get_config(aid)
+                for aid in all_ids
+                if aid != agent_id and self._agent_info.get_config(aid)
             ]
             
             # Create and initialize agent
@@ -194,9 +213,9 @@ class AgentRegistry:
         """Get all registered agent IDs.
         
         Returns:
-            List of all agent IDs
+            List of all agent IDs from AgentInfoProvider
         """
-        return list(self._configs.keys())
+        return list(self._agent_info.get_all_ids())
     
     def get_all(self) -> List[str]:
         """Get all registered agent IDs.
@@ -211,13 +230,15 @@ class AgentRegistry:
     def get_config(self, agent_id: str) -> Optional[AgentConfig]:
         """Get an agent's configuration.
         
+        Delegates to AgentInfoProvider.
+        
         Args:
             agent_id: Agent ID
             
         Returns:
             AgentConfig or None if not found
         """
-        return self._configs.get(agent_id)
+        return self._agent_info.get_config(agent_id)
     
     def unregister(self, agent_id: str) -> bool:
         """Unregister and stop an agent.
@@ -228,16 +249,21 @@ class AgentRegistry:
         Returns:
             True if agent was found and removed
         """
-        if agent_id not in self._configs and agent_id not in self._agents:
+        # Check if registered or active
+        is_registered = agent_id in self._registered_ids
+        is_active = agent_id in self._agents
+        
+        if not is_registered and not is_active:
             return False
         
         # Stop if active
-        if agent_id in self._agents:
+        if is_active:
             agent = self._agents.pop(agent_id)
             asyncio.create_task(agent.shutdown())
         
-        # Remove from configs
-        self._configs.pop(agent_id, None)
+        # Remove from registered list
+        if is_registered:
+            self._registered_ids.remove(agent_id)
         
         logger.info(f"Unregistered agent: {agent_id}")
         return True
@@ -245,28 +271,26 @@ class AgentRegistry:
     def update_config(self, agent_id: str, config: AgentConfig) -> bool:
         """Update an agent's configuration.
         
-        This updates the stored config but does not restart the agent.
-        The agent needs to be restarted for changes to take effect.
+        Note: Configuration updates should be done through AgentInfoProvider
+        (e.g., ConfigManager). This method only validates that the agent
+        is registered and logs a warning if the agent is active.
         
         Args:
             agent_id: Agent ID to update
-            config: New configuration
+            config: New configuration (for validation only)
             
         Returns:
-            True if agent was found and updated
+            True if agent is registered
         """
-        if agent_id not in self._configs:
+        if agent_id not in self._registered_ids and agent_id not in self._agents:
             return False
-        
-        # Update config
-        self._configs[agent_id] = config
         
         # If agent is active, we should restart it
         # For now, just log the warning
         if agent_id in self._agents:
             logger.warning(f"Agent {agent_id} is active, config updated but restart required for changes")
         
-        logger.info(f"Updated config for agent: {agent_id}")
+        logger.info(f"Config update notification for agent: {agent_id}")
         return True
     
     def get_agent_status(self, agent_id: str) -> Optional[Dict]:
@@ -278,7 +302,7 @@ class AgentRegistry:
         Returns:
             Agent status dictionary or None if not found
         """
-        config = self._configs.get(agent_id)
+        config = self._agent_info.get_config(agent_id)
         if not config:
             return None
         
@@ -300,5 +324,5 @@ class AgentRegistry:
         """
         return [
             self.get_agent_status(agent_id)
-            for agent_id in self._configs.keys()
+            for agent_id in self._agent_info.get_all_ids()
         ]

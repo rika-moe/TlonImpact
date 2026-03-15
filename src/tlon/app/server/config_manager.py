@@ -4,7 +4,7 @@ Provides ConfigManager which loads configuration from files,
 maintains cached state, and notifies subscribers of changes.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from tlon.base.config import ConfigLoader, PositionConfig, AgentConfig
 from tlon.base.logger import get_logger
@@ -90,3 +90,42 @@ class ConfigManager:
             AgentConfig or None if not found
         """
         return self._agents.get(agent_id)
+    
+    # ========== AgentInfoProvider Interface ==========
+    
+    def get_config(self, agent_id: str) -> Optional[AgentConfig]:
+        """Get agent configuration by ID (AgentInfoProvider interface).
+        
+        Args:
+            agent_id: The unique agent identifier
+            
+        Returns:
+            AgentConfig if found, None otherwise
+        """
+        return self._agents.get(agent_id)
+    
+    def get_all_ids(self) -> Set[str]:
+        """Get all agent IDs (AgentInfoProvider interface).
+        
+        Returns:
+            Set of all registered agent IDs
+        """
+        return set(self._agents.keys())
+    
+    def is_proactive(self, agent_id: str) -> bool:
+        """Check if an agent is proactive (AgentInfoProvider interface).
+        
+        An agent is proactive if it responds to general messages
+        without explicit @mentions.
+        
+        Args:
+            agent_id: The agent identifier
+            
+        Returns:
+            True if agent responds to general messages
+        """
+        config = self._agents.get(agent_id)
+        if config:
+            # Check proactive flag (or respond_to_all for backward compat)
+            return getattr(config, 'proactive', False) or getattr(config, 'respond_to_all', False)
+        return False

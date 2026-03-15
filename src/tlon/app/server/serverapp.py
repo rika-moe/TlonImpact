@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from .core.client_gateway import ClientGateway
+from .core.session_manager import SessionManager
+from .core.notification_service import NotificationService
+from .core.participant_directory import ParticipantDirectory
 from .api.rest import RESTServer
 from .api.websocket import WebSocketServer
 from .config_manager import ConfigManager
@@ -125,10 +128,11 @@ class ServerApp:
         logger.info("MessageStore initialized")
         
         # 2.3 MessageRouter - stateless message routing
+        # Depends on EventBus, MessageStore, and ConfigManager (as AgentInfoProvider)
         message_router = MessageRouter(
             event_bus=event_bus,
             message_store=message_store,
-            agent_registry=None,  # Will be set after AgentRegistry is created
+            agent_info_provider=config_manager,  # ConfigManager implements AgentInfoProvider
         )
         await message_router.start()
         self._components["message_router"] = message_router
@@ -141,33 +145,53 @@ class ServerApp:
         self._components["position_registry"] = position_registry
         logger.info(f"Loaded {len(position_registry.get_all())} positions")
         
-        # 2.5 AgentRegistry - agent management (depends on EventBus, PositionRegistry, MessageStore)
+        # 2.5 AgentRegistry - agent management
+        # Depends on EventBus, ConfigManager (as AgentInfoProvider), PositionRegistry, MessageStore
+        # No circular dependency: both MessageRouter and AgentRegistry depend on ConfigManager
         agent_registry = AgentRegistry(
-            event_bus=event_bus,  # DI
-            position_registry=position_registry,  # DI
-            message_store=message_store,  # DI - Agents can now query history!
+            event_bus=event_bus,
+            agent_info_provider=config_manager,  # ConfigManager implements AgentInfoProvider
+            position_registry=position_registry,
+            message_store=message_store,
         )
-        # Register initial agents
-        for agent_config in config_manager.agents.values():
-            agent_registry.register(agent_config)
-        
-        # Now that AgentRegistry is created, update router with it
-        message_router._agent_registry = agent_registry
+        # Register initial agents (by ID, config is looked up from provider)
+        for agent_id in config_manager.agents.keys():
+            agent_registry.register(agent_id)
         
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
         logger.info(f"Loaded {len(agent_registry.get_all())} agents")
         
-        # ========== Step 3: ClientGateway ==========
+        # ========== Step 3: Client Gateway Components ==========
+        # 3.1 Session Manager - session lifecycle management
+        session_manager = SessionManager()
+        self._components["session_manager"] = session_manager
+        logger.info("SessionManager created")
+        
+        # 3.2 Notification Service - event pushing to clients
+        notification_service = NotificationService(
+            event_bus=event_bus,
+            session_manager=session_manager,
+        )
+        self._components["notification_service"] = notification_service
+        logger.info("NotificationService created")
+        
+        # 3.3 Participant Directory - participant aggregation
+        participant_directory = ParticipantDirectory(
+            agent_registry=agent_registry,
+            session_manager=session_manager,
+        )
+        self._components["participant_directory"] = participant_directory
+        logger.info("ParticipantDirectory created")
+        
+        # 3.4 Client Gateway - facade coordinating all components
         self.client_gateway = ClientGateway(
-            # Core components (injected)
+            session_manager=session_manager,
+            notification_service=notification_service,
+            participant_directory=participant_directory,
             event_bus=event_bus,
             message_store=message_store,
-            agent_registry=agent_registry,
-            position_registry=position_registry,
-            # Configuration management
             config_manager=config_manager,
-            # Other parameters
             data_dir=self.data_dir,
             host=self.host,
             port=self.ws_port,

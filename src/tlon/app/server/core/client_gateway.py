@@ -1,253 +1,138 @@
-"""Tlon Server Core.
+"""Tlon Server Client Gateway.
 
-The Server is a long-running process that manages the core functionality:
-- Agent lifecycle management
-- Client session management
+ClientGateway serves as a Facade (外观模式) providing a unified interface
+to the client-facing subsystems:
+- Session management (via SessionManager)
+- Event notification (via NotificationService)
+- Participant discovery (via ParticipantDirectory)
+- Message operations (via EventBus and MessageStore)
 
-It exposes REST API for configuration and WebSocket for real-time updates.
+This simplifies the API layer (WebSocketHandler, RESTHandler) by providing
+a single entry point while delegating to specialized components internally.
 """
 
 import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any
+from typing import Callable, Dict, List, Optional, Any
 
-from tlon.base.events.event_bus import EventBus
-from tlon.organization.messaging import Participant
-from tlon.organization.messaging.store import MessageStore
 from tlon.base.events.event import Event, EventType
-from tlon.organization.messaging.message import Message
-from tlon.organization.positions import PositionRegistry
+from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.organization.messaging.message import Message
+from tlon.organization.messaging.participant import Participant
+from tlon.organization.messaging.store import MessageStore
+from .session_manager import SessionManager, ClientSession
+from .notification_service import NotificationService
+from .participant_directory import ParticipantDirectory
 
 logger = get_logger(__name__)
 
 
-@dataclass
-class ClientSession:
-    """A client session connected to the server.
-    
-    Attributes:
-        id: Unique session ID
-        client_type: Client type ("tui", "web", "telegram")
-        connected_at: Connection timestamp
-        mode: Current operation mode ("chat", "event", "agent")
-        filters: Event filters for this session
-        metadata: Additional metadata
-    """
-    id: str
-    client_type: str  # "tui" | "web" | "telegram"
-    connected_at: str
-    mode: str = "chat"  # "chat" | "event" | "agent"
-    filters: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
 class ClientGateway:
-    """Main server class for Tlon
+    """Client Gateway - Facade for client-facing operations.
+    
+    The Gateway provides a simplified, unified interface for:
+    - Client session lifecycle (connect/disconnect)
+    - Message sending and history retrieval
+    - Participant listing and discovery
+    - Event subscription for real-time updates
+    
+    Internally, it coordinates three specialized components:
+    - SessionManager: Session lifecycle management
+    - NotificationService: Event pushing to clients
+    - ParticipantDirectory: Participant aggregation
 
-    Responsibilities:
-    - Client session management
-    - Message history access
-    - Participant list aggregation
-    
-    All core components (EventBus, MessageStore) are created
-    by ServerApp and injected into ClientGateway.
-    Agent lifecycle is managed directly by AgentRegistry.
-    
     Example:
-        >>> server = ClientGateway(
+        >>> gateway = ClientGateway(
+        ...     session_manager=session_manager,
+        ...     notification_service=notification_service,
+        ...     participant_directory=participant_directory,
         ...     event_bus=event_bus,
         ...     message_store=message_store,
-        ...     agent_registry=agent_registry,
-        ...     config_manager=config_manager,
-        ...     ...
         ... )
-        >>> await server.initialize()
-        >>> await server.start()
-        >>> await server.shutdown()
+        >>> await gateway.initialize()
+        >>> session = await gateway.connect_client("tui", handler)
+        >>> await gateway.send_message("Hello")
+        >>> participants = gateway.get_all_participants()
     """
     
     def __init__(
         self,
         *,
-        # Core components - all injected (DI)
+        # Core specialized components (injected via DI)
+        session_manager: SessionManager,
+        notification_service: NotificationService,
+        participant_directory: ParticipantDirectory,
+        # Additional dependencies
         event_bus: EventBus,
         message_store: MessageStore,
-        agent_registry: Any,  # AgentRegistry
-        position_registry: PositionRegistry,
-
-        # Configuration management
-        config_manager: Any,  # ConfigManager
-        # Other parameters
+        config_manager: Any,  # ConfigManager for reload support
+        # Configuration
         data_dir: Path,
         host: str,
         port: int,
     ):
-        """Initialize the server with all dependencies injected.
+        """Initialize the client gateway.
         
         Args:
-            event_bus: The EventBus instance (injected)
-            message_store: The MessageStore instance (injected)
-            agent_registry: The AgentRegistry instance (injected)
-            position_registry: Position registry for lookups (injected)
-
-            config_manager: ConfigManager for reload support (injected)
+            session_manager: Session lifecycle manager
+            notification_service: Event notification service
+            participant_directory: Participant discovery service
+            event_bus: Event bus for message publishing
+            message_store: Message storage
+            config_manager: Configuration manager
             data_dir: Directory for persistence
-            host: Host to bind the server to
-            port: Port to listen on
+            host: Server host
+            port: Server port
         """
         # Store injected dependencies
+        self._session_manager = session_manager
+        self._notifications = notification_service
+        self._participants = participant_directory
         self._event_bus = event_bus
         self._message_store = message_store
-        self._agent_registry = agent_registry
-        self._position_registry = position_registry
-
         self._config_manager = config_manager
         
+        # Server configuration
         self.host = host
         self.port = port
         self.data_dir = data_dir
         
-        # Session management
-        self.sessions: Dict[str, ClientSession] = {}
-        self.session_counter = 0
-        self._session_lock = asyncio.Lock()
-        
-        # Event subscription ID for receiving messages
-        self._message_subscription: Optional[str] = None
-        
-        # Session event handlers (session_id -> handler)
-        self._session_handlers: Dict[str, Callable[[Event], None]] = {}
-        
-        # Server state
+        # State
         self._running = False
         self._shutdown_event = asyncio.Event()
         
         logger.info(f"ClientGateway initialized (host={host}, port={port})")
     
     async def initialize(self) -> None:
-        """Initialize ClientGateway.
+        """Initialize the gateway and its sub-components.
         
-        Validates all dependencies and subscribes to EventBus for messages.
+        Starts the notification service to begin listening for events.
         """
         logger.info("Initializing ClientGateway...")
         
-        # Validate dependencies (all must be non-null)
-        assert self._event_bus is not None, "EventBus not injected"
-        assert self._message_store is not None, "MessageStore not injected"
-        assert self._agent_registry is not None, "AgentRegistry not injected"
-        assert self._position_registry is not None, "PositionRegistry not injected"
-        assert self._config_manager is not None, "ConfigManager not injected"
+        # Start notification service
+        await self._notifications.start()
         
-        # Subscribe to MESSAGE_NEW to push messages to clients
-        self._message_subscription = self._event_bus.subscribe(
-            EventType.MESSAGE_NEW,
-            self._on_message_new
-        )
-        logger.info("Subscribed to MESSAGE_NEW events")
-        
-        logger.info("All dependencies validated")
-        logger.info("ClientGateway initialized")
-    
-    # ========== Property Accessors ==========
-    
-    @property
-    def event_bus(self) -> EventBus:
-        """Access the injected EventBus."""
-        return self._event_bus
-    
-    @property
-    def message_store(self) -> MessageStore:
-        """Access the injected MessageStore."""
-        return self._message_store
-    
-    @property
-    def agent_registry(self) -> Any:
-        """Access the injected AgentRegistry."""
-        return self._agent_registry
-    
-    @property
-    def position_registry(self) -> PositionRegistry:
-        """Access the injected PositionRegistry."""
-        return self._position_registry
-    
-    def get_all_participants(self) -> List[Participant]:
-        """Get all participants by aggregating from AgentRegistry and sessions.
-        
-        This replaces the old Congress-based participant management with
-        a real-time aggregation approach.
-        
-        Returns:
-            List of all participants (agents + connected humans)
-        """
-        participants: List[Participant] = []
-        
-        # Add all agents from AgentRegistry
-        for agent_id in self._agent_registry.get_all():
-            config = self._agent_registry.get_config(agent_id)
-            if config:
-                participants.append(Participant(
-                    id=agent_id,
-                    name=config.name,
-                    type="agent",
-                    metadata={"position_id": config.position_id}
-                ))
-        
-        # Add human if there are connected sessions
-        if self.sessions:
-            participants.append(Participant(
-                id="human",
-                name="人类",
-                type="human"
-            ))
-        
-        return participants
-    
-    def get_participant_names(self) -> List[str]:
-        """Get names of all participants.
-        
-        Returns:
-            List of participant names
-        """
-        return [p.name for p in self.get_all_participants()]
-
-    async def start(self) -> None:
-        """Start the server.
-        
-        This method blocks until the server is shut down.
-        """
         self._running = True
-        logger.info(f"ClientGateway started on {self.host}:{self.port}")
-        
-        # Wait for shutdown signal
-        await self._shutdown_event.wait()
-        
-        logger.info("ClientGateway stopping...")
+        logger.info("ClientGateway initialized successfully")
     
     async def shutdown(self) -> None:
-        """Shutdown the server gracefully.
+        """Shutdown the gateway gracefully.
         
-        Note: Core components are managed by ServerApp, ClientGateway only
-        handles client disconnections and state cleanup.
+        Stops the notification service and cleans up resources.
         """
         if not self._running:
             return
         
         logger.info("Shutting down ClientGateway...")
+        
         self._running = False
         self._shutdown_event.set()
         
-        # Disconnect all clients
-        async with self._session_lock:
-            session_ids = list(self.sessions.keys())
+        # Stop notification service
+        await self._notifications.stop()
         
-        for session_id in session_ids:
-            await self.disconnect_client(session_id)
-        
-        # Note: Component shutdown is handled by ServerApp (who created them)
-        # We only clear our references
         logger.info("ClientGateway shutdown complete")
     
     # ==================== Session Management ====================
@@ -260,6 +145,8 @@ class ClientGateway:
     ) -> ClientSession:
         """Connect a new client session.
         
+        Creates a session and registers the event handler for real-time updates.
+        
         Args:
             client_type: Type of client ("tui", "web", "telegram")
             event_handler: Callback for events
@@ -268,93 +155,17 @@ class ClientGateway:
         Returns:
             The created client session
         """
-        async with self._session_lock:
-            self.session_counter += 1
-            session_id = f"{client_type}-{self.session_counter:04d}"
-            
-            session = ClientSession(
-                id=session_id,
-                client_type=client_type,
-                connected_at=datetime.now().isoformat(),
-                metadata=metadata or {},
-            )
-            
-            self.sessions[session_id] = session
-            # Store the event handler for this session
-            self._session_handlers[session_id] = event_handler
+        # Create session via SessionManager
+        session = await self._session_manager.create_session(
+            client_type=client_type,
+            metadata=metadata
+        )
         
-        logger.info(f"Client connected: {session_id} ({client_type})")
+        # Register event handler via NotificationService
+        self._notifications.register_handler(session.id, event_handler)
+        
+        logger.info(f"Client connected: {session.id} ({client_type})")
         return session
-    
-    async def _on_message_new(self, event: Event) -> None:
-        """Handle MESSAGE_NEW event from EventBus.
-        
-        Pushes messages to all connected client sessions.
-        
-        Args:
-            event: The MESSAGE_NEW event containing the message
-        """
-        message: Message = event.payload
-        
-        # Push to all connected sessions
-        async with self._session_lock:
-            sessions = list(self.sessions.items())
-        
-        for session_id, session in sessions:
-            # Check if this session should receive this message
-            if session.mode == "agent":
-                continue  # Agent mode - don't send messages
-            
-            # Apply custom filters if set
-            if session.filters:
-                if "agent" in session.filters:
-                    agent_filter = session.filters["agent"]
-                    source = message.sender_id
-                    if not self._match_wildcard(source, agent_filter):
-                        continue
-            
-            # Push to this session
-            await self._push_to_session(session_id, event)
-    
-    async def _push_to_session(self, session_id: str, event: Event) -> None:
-        """Push an event to a specific session.
-        
-        Args:
-            session_id: The target session ID
-            event: The event to push
-        """
-        handler = self._session_handlers.get(session_id)
-        if not handler:
-            return
-        
-        try:
-            if asyncio.iscoroutinefunction(handler):
-                await handler(event)
-            else:
-                handler(event)
-        except Exception as e:
-            logger.error(f"[Server] Error pushing event to session {session_id}: {e}")
-    
-    def _match_wildcard(self, value: str, pattern: str) -> bool:
-        """Match a value against a wildcard pattern.
-        
-        Supports simple wildcards:
-        - dev-* matches dev-001, dev-002, etc.
-        - * matches everything
-        
-        Args:
-            value: The value to match
-            pattern: The pattern with wildcards
-            
-        Returns:
-            True if value matches pattern
-        """
-        if pattern == "*":
-            return True
-        if "*" in pattern:
-            prefix = pattern.replace("*", "")
-            return value.startswith(prefix)
-        return value == pattern
     
     async def disconnect_client(self, session_id: str) -> bool:
         """Disconnect a client session.
@@ -365,16 +176,16 @@ class ClientGateway:
         Returns:
             True if session was found and removed
         """
-        async with self._session_lock:
-            session = self.sessions.pop(session_id, None)
-            # Remove event handler
-            self._session_handlers.pop(session_id, None)
+        # Unregister handler first
+        self._notifications.unregister_handler(session_id)
         
-        if session:
+        # Close session
+        result = await self._session_manager.close_session(session_id)
+        
+        if result:
             logger.info(f"Client disconnected: {session_id}")
-            return True
         
-        return False
+        return result
     
     def get_session(self, session_id: str) -> Optional[ClientSession]:
         """Get a session by ID.
@@ -385,7 +196,7 @@ class ClientGateway:
         Returns:
             The session or None if not found
         """
-        return self.sessions.get(session_id)
+        return self._session_manager.get_session(session_id)
     
     def get_all_sessions(self) -> List[ClientSession]:
         """Get all active sessions.
@@ -393,7 +204,7 @@ class ClientGateway:
         Returns:
             List of all sessions
         """
-        return list(self.sessions.values())
+        return self._session_manager.get_all_sessions()
     
     async def update_session_mode(self, session_id: str, mode: str) -> bool:
         """Update a session's operation mode.
@@ -403,14 +214,9 @@ class ClientGateway:
             mode: New mode ("chat", "event", "agent")
             
         Returns:
-            True if session was found and updated
+            True if updated successfully
         """
-        session = self.sessions.get(session_id)
-        if session:
-            session.mode = mode
-            logger.debug(f"Session {session_id} mode changed to {mode}")
-            return True
-        return False
+        return self._session_manager.update_session_mode(session_id, mode)
     
     async def update_session_filters(
         self,
@@ -424,16 +230,11 @@ class ClientGateway:
             filters: New filters
             
         Returns:
-            True if session was found and updated
+            True if updated successfully
         """
-        session = self.sessions.get(session_id)
-        if session:
-            session.filters = filters
-            logger.debug(f"Session {session_id} filters updated: {filters}")
-            return True
-        return False
+        return self._session_manager.update_session_filters(session_id, filters)
     
-    # ==================== Chat Operations ====================
+    # ==================== Message Operations ====================
     
     async def send_message(
         self,
@@ -446,8 +247,8 @@ class ClientGateway:
     ) -> Message:
         """Send a message to the chatroom.
         
-        Publishes message via EventBus. MessageRouter will store it and
-        other components will receive it.
+        Publishes the message via EventBus. MessageRouter will handle
+        routing, and NotificationService will push to clients.
         
         Args:
             content: Message content
@@ -466,15 +267,15 @@ class ClientGateway:
             sender_type=sender_type,
             content=content,
             content_type=content_type,
-            mentions=mentions,
+            mentions=mentions or [],
         )
         
-        # Publish via EventBus - MessageRouter will store, ClientGateway will push to clients
         await self._event_bus.publish(Event(
             type=EventType.MESSAGE_NEW,
             payload=message,
             source=sender_id,
         ))
+        
         return message
     
     async def get_history(
@@ -493,10 +294,41 @@ class ClientGateway:
         """
         return await self._message_store.get_history(limit, before_id)
     
-    def is_running(self) -> bool:
-        """Check if the server is running.
+    # ==================== Participant Operations ====================
+    
+    def get_all_participants(self) -> List[Participant]:
+        """Get all participants (agents + humans).
         
         Returns:
-            True if server is running
+            List of all participants
+        """
+        return self._participants.list_all()
+    
+    def get_participant_names(self) -> List[str]:
+        """Get names of all participants.
+        
+        Returns:
+            List of participant names
+        """
+        return self._participants.get_participant_names()
+    
+    def get_participant(self, participant_id: str) -> Optional[Participant]:
+        """Get a specific participant by ID.
+        
+        Args:
+            participant_id: The participant ID
+            
+        Returns:
+            The participant if found
+        """
+        return self._participants.get_participant(participant_id)
+    
+    # ==================== Server State ====================
+    
+    def is_running(self) -> bool:
+        """Check if the gateway is running.
+        
+        Returns:
+            True if running
         """
         return self._running
