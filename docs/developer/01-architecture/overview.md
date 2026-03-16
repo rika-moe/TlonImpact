@@ -185,7 +185,6 @@ src/tlon/
     └── tools/                      #   工具层
         ├── base.py                 #     工具基类
         ├── complete_dialog/        #     对话完成工具
-        │   ├── send_message.py
         │   └── complete_dialog.py
         ├── memory/                 #     记忆工具
         │   ├── remember_fact.py
@@ -228,7 +227,7 @@ src/tlon/
                               │                          │       │                         │
                               ▼                          ▼       ▼                         ▼
                        ┌──────────────┐          ┌──────────────┐     ┌──────────────┐ ┌──────────────┐
-                       │  sendMessage │          │executeBash   │     │createTask    │ │activateSkill │
+                       │ completeDialog│          │executeBash   │     │createTask    │ │activateSkill │
                        │    Tool      │          │   Tool       │     │   Tool       │ │   Tool       │
                        └──────┬───────┘          └──────┬───────┘     └──────┬───────┘ └──────┬───────┘
                               │                         │                    │                │
@@ -380,7 +379,7 @@ src/tlon/
 **职责**: 工具注册和执行
 
 **内置工具**:
-- `sendMessage`: 发送消息到聊天室
+- `completeDialog`: 完成对话并发送最终回复
 - `executeBashCommand`: 在 Docker 容器中执行命令
 
 #### 2.4.4 Agent Registry
@@ -455,8 +454,7 @@ Agent → ToolExecutor → ExecuteBashTool → DockerRuntime → Docker SDK → 
 subsystem/tools/
 ├── base.py                     # 工具基类
 ├── complete_dialog/            # 对话完成工具
-│   ├── complete_dialog.py
-│   └── send_message.py
+│   └── complete_dialog.py
 ├── memory/                     # 记忆工具
 │   ├── remember_fact.py
 │   ├── search_memories.py

@@ -22,9 +22,11 @@
 | 问题领域 | 状态 | 严重程度 |
 |---------|------|---------|
 | Mention 机制 | ⚠️ 部分工作 | 中 |
-| completeDialog/sendMessage | ❌ 工具缺失 | **高** |
+| completeDialog/sendMessage | ✅ 已解决 | - |
 | Skill 系统 | ⚠️ 实现有坑 | 中 |
 | 文件操作工具 | ✅ 可用但 UX 差 | 低 |
+
+> **更新 2026-03-17**: `sendMessage` 工具已从 Prompt 中彻底移除。Agent 现在**只能**通过 `completeDialog` 发送消息，简化了心智模型。
 
 ---
 
@@ -144,39 +146,36 @@ async def _on_message_routed(self, event: Event) -> None:
 
 ---
 
-## 3. 问题 2: completeDialog / sendMessage 工具逻辑
+## 3. 问题 2: completeDialog 工具逻辑 (已解决)
 
-### 3.1 严重发现: Prompt 欺骗 LLM
+> **状态更新 2026-03-17**: `sendMessage` 工具已从 Prompt 中彻底移除。
 
-**系统提示教导** (`prompt_builder.py:284-286`):
+### 3.1 原始问题: Prompt 欺骗 LLM
+
+**原系统提示** (`prompt_builder.py` 旧版本):
 
 ```markdown
 - **completeDialog**: 完成对话并发送最终回复。**这是唯一结束处理的方式！**
     - 参数: content（回复内容）, mentions（可选，要@的用户列表）
-- **sendMessage**: 发送中间消息（如'让我查一下'）
+- **sendMessage**: 发送中间消息（如'让我查一下'）  ← 工具不存在！
 ```
 
-**实际注册的工具** (`agent.py:270-334`):
+**问题**: Prompt 教导 LLM 使用 `sendMessage` 工具，但该工具从未实现，导致 LLM 幻觉调用。
 
-```python
-def _register_tools(self) -> None:
-    # 基础工具
-    self.tool_executor.register_tool(ExecuteBashTool(self.docker_runtime))
-    self.tool_executor.register_tool(CompleteDialogTool())  # ✅ 存在
-    
-    # 记忆工具
-    self.tool_executor.register_tool(RememberFactTool(self.memory))
-    # ... 省略其他工具
-    
-    # ❌ 没有 SendMessageTool！
-```
+### 3.2 解决方案
 
-### 3.2 影响分析
+**彻底移除 `sendMessage`**:
 
-| 场景 | 预期行为 | 实际行为 |
-|------|---------|---------|
-| Agent 想发送进度消息 | 调用 `sendMessage` | 工具不存在，LLM 可能:<br>1. 幻觉调用（失败）<br>2. 直接输出文本（被忽略）<br>3. 困惑后调用 `completeDialog` 提前结束 |
-| 工具执行失败通知用户 | 通过工具发送错误消息 | 只能调用内部 `_send_message()`，不在工具循环内 |
+- ✅ 从 `build_capabilities()` 移除
+- ✅ 从 `build_tool_usage()` 移除
+- ✅ 更新架构文档
+
+**当前工具列表**:
+- `completeDialog`: 唯一的发送消息方式（结束对话时）
+- `executeBashCommand`: 执行命令
+- `rememberFact`/`searchMemories`/`generateSummary`/`forget`: 记忆管理
+- `activateSkill`/`deactivateSkill`/`loadSkillResource`: 技能管理
+- `createTask`/`startTask`/`pauseTask`/`completeTask`/`removeTask`/`listTasks`/`getCurrentTask`: 任务管理
 
 ### 3.3 代码追踪
 
@@ -583,9 +582,9 @@ def _register_tools(self) -> None:
 
 ### 优先级矩阵
 
-| 优先级 | 问题 | 影响 | 建议行动 |
-|--------|------|------|---------|
-| 🔴 **P0** | `sendMessage` 工具缺失 | LLM 幻觉，用户体验差 | **立即修复**: 移除 Prompt 中的引用，或实现工具 |
+| 优先级 | 问题 | 影响 | 状态 |
+|--------|------|------|------|
+| ✅ **已完成** | `sendMessage` 已从 Prompt 彻底移除 | - | **2026-03-17 完成** |
 | 🔴 **P0** | Skill 解析中的 debug print | 污染日志 | **立即修复**: 移除或改用 logger |
 | 🔴 **P0** | Skill 未自动激活 | 配置不生效，用户困惑 | **立即修复**: Agent 启动时自动激活 |
 | 🟡 **P1** | Mention 机制冗余 | 代码维护难 | 建议重构，简化逻辑 |
@@ -594,29 +593,30 @@ def _register_tools(self) -> None:
 
 ### 实施路线图
 
-#### 阶段 1: 紧急修复（本周）
+#### 阶段 1: 已完成 ✓
 
-1. **修复 sendMessage 问题**
-   ```bash
-   # 快速方案：编辑 prompt_builder.py
-   # 注释掉 "- **sendMessage**: 发送中间消息..."
-   ```
+1. **✅ 移除 `sendMessage`** (2026-03-17)
+   - 从 `prompt_builder.py` 的 `build_capabilities()` 移除
+   - 从 `prompt_builder.py` 的 `build_tool_usage()` 移除
+   - 更新架构文档
 
-2. **移除 debug print**
+#### 阶段 2: 进行中
+
+1. **移除 debug print**
    ```python
    # models.py: 删除或注释掉两行 print
    ```
 
-3. **实现 Skill 自动激活**
+2. **实现 Skill 自动激活**
    ```python
    # agent.py: 在 _discover_skills() 中添加自动激活逻辑
    ```
 
-#### 阶段 2: 功能增强（下周）
+#### 阶段 3: 功能增强（后续）
 
-1. 实现 `SendMessageTool`
-2. 实现 `ReadFileTool` 和 `WriteFileTool`
-3. 更新 Prompt，重新引入 `sendMessage` 说明
+1. 实现 `ReadFileTool` 和 `WriteFileTool`
+2. 简化 Mention 机制（移除冗余检查）
+3. 统一 Skill 路径格式
 
 #### 阶段 3: 代码重构（后续）
 

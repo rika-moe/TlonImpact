@@ -138,7 +138,7 @@
 
 [工程层] Agent 正在激活 Skill：git-operations
 - 加载 SKILL.md 到上下文
-- 可用工具：executeBash, sendMessage
+- 可用工具：executeBash, completeDialog
 - 脚本目录挂载于容器内 ./skills/
 
 Agent 可以执行 Git 操作了。

@@ -159,7 +159,6 @@ class SystemPromptBuilder:
     def build_capabilities(self) -> str:
         """Build capabilities/tools section."""
         tools = [
-            "- sendMessage: 发送消息到聊天室",
             "- executeBashCommand: 在容器中执行 bash 命令",
             "- rememberFact: 记录重要事实到长期记忆",
             "- searchMemories: 搜索已记录的记忆",
@@ -283,7 +282,6 @@ class SystemPromptBuilder:
         tools = [
             "- **completeDialog**: 完成对话并发送最终回复。**这是唯一结束处理的方式！**",
             "    - 参数: content（回复内容）, mentions（可选，要@的用户列表）",
-            "- **sendMessage**: 发送中间消息（如'让我查一下'）",
             "- **executeBashCommand**: 在容器中执行 bash 命令",
             "- **rememberFact**: 记录重要事实到长期记忆",
             "- **searchMemories**: 搜索已记录的记忆",
