@@ -1,4 +1,4 @@
-# Minions Wizard 2.0 设计方案
+# Tlon Wizard 2.0 设计方案
 
 > 适配 Position-Agent 解耦架构的全新配置向导
 

@@ -716,11 +716,10 @@ class MyTool(Tool):
 
 | 文档 | 内容 |
 |------|------|
-| [spec.md](./spec.md) | 产品规格和需求 |
-| [roadmap.md](./roadmap.md) | 开发计划和里程碑 |
+| [品牌叙事](../../marketing/brand-narrative-v2.md) | 产品规格和需求 |
 | [memory.md](./memory.md) | Memory 系统详细设计 |
 | [multi-agent.md](./multi-agent.md) | 多 Agent 协作系统设计 |
-| [AGENTS.md](../../AGENTS.md) | 开发指南和代码规范 |
+| [AGENTS.md](../../../AGENTS.md) | 开发指南和代码规范 |
 | [ui-architecture.md](./ui-architecture.md) | 多界面架构设计 |
 
 ---

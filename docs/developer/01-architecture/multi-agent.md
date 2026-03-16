@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档描述 Minions 多 Agent 协作系统的详细设计方案。基于前三个里程碑（单 Agent、Skills 系统、Memory 系统）的基础，实现一个模拟真实软件工程团队的多 Agent 协作环境。
+本文档描述 Tlon 多 Agent 协作系统的详细设计方案。基于前三个里程碑（单 Agent、Skills 系统、Memory 系统）的基础，实现一个模拟真实软件工程团队的多 Agent 协作环境。
 
 ---
 

@@ -1,4 +1,4 @@
-# Minions 配置模块架构设计
+# Tlon 配置模块架构设计
 
 > **版本**: 2.0  
 > **日期**: 2026-03-13  
@@ -13,7 +13,7 @@
 现有的配置管理分散在多个模块中：
 
 ```
-minions/
+tlon/
 ├── agents/
 │   ├── config.py          # AgentConfig 定义
 │   └── agent_registry.py  # Agent 配置加载
@@ -653,7 +653,7 @@ class PromptTemplateManager:
 ```python
 # tlon/base/config/__init__.py
 
-"""Minions 配置模块
+"""Tlon 配置模块
 
 提供统一的配置管理功能，包括：
 - 配置数据模型 (PositionConfig, AgentConfig)

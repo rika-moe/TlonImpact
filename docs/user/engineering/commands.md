@@ -17,7 +17,7 @@ tlon [选项] <命令>
   -h, --help     显示帮助
 ```
 
-### minions server
+### tlon server
 
 启动服务端。
 
@@ -36,7 +36,7 @@ tlon server [选项]
   tlon server --host 0.0.0.0  # 允许远程连接
 ```
 
-### minions tui
+### tlon tui
 
 启动 TUI 客户端。
 
@@ -53,7 +53,7 @@ tlon tui [选项]
   tlon tui --host 192.168.1.100 --port 8888
 ```
 
-### minions wizard
+### tlon wizard
 
 运行配置向导。
 
@@ -65,6 +65,18 @@ tlon wizard
 # 2. 验证 API Key
 # 3. 创建初始 Agent 配置
 ```
+
+---
+
+## 命令别名
+
+Tlon 同时支持文学化命令名称（等效别名）：
+
+| 工程名称 | 文学名称（别名） | 说明 |
+|---------|-----------------|------|
+| `tlon server` | `tlon dream` | 维持梦境（启动服务） |
+| `tlon tui` | `tlon intrude` | 入侵现实（连接界面） |
+| `tlon wizard` | `tlon mirror` | 镜中造物（配置向导） |
 
 ---
 

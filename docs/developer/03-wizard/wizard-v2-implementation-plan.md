@@ -6,7 +6,7 @@
 
 ## 项目概览
 
-- **目标**: 重构 Minions Wizard，支持 Position-Agent 解耦架构
+- **目标**: 重构 Tlon Wizard，支持 Position-Agent 解耦架构
 - **预计工期**: 3-4 天
 - **优先级**: P1（核心配置工具）
 

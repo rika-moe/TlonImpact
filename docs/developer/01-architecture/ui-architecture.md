@@ -1,4 +1,4 @@
-# Minions 多界面架构设计方案
+# Tlon 多界面架构设计方案
 
 > **版本**: v2.0  
 > **更新日期**: 2026-03-08  
@@ -197,14 +197,14 @@ WS     /ws/v1/events              # 系统事件流
 
 **界面形态**：
 ```
-🐙 Minions TUI Client (极简模式)
+🐙 Tlon TUI Client (极简模式)
 Connecting to ws://localhost:8888/ws...
 ✅ Connected to ws://localhost:8888/ws
 📡 5 agents available
 
 输入 /help 查看帮助，/quit 退出
 
-[10:23:12] 🤖 客服: 欢迎使用 Minions！
+[10:23:12] 🤖 客服: 欢迎使用 Tlon！
 [10:23:15] 👤 你: @客服 帮我看一下问题
 [10:23:18] 🤖 客服: 收到，我来初步诊断一下...
 
@@ -277,7 +277,7 @@ class SimpleTUIClient:
 ```
 $ minions wizard
 
-🧙‍♂️  Minions 配置向导
+🧙‍♂️  Tlon 配置向导
 
 1. 环境检查
    ✓ Python 3.11+
@@ -373,7 +373,7 @@ src/tlon/
 │   │   └── main.py                #     命令分发
 │   ├── clients/                    #   客户端实现
 │   │   ├── __init__.py
-│   │   ├── sdk.py                 #     SDK 客户端 (MinionsClient)
+│   │   ├── sdk.py                 #     SDK 客户端 (TlonClient)
 │   │   ├── tui/                   #     TUI 客户端
 │   │   │   ├── __init__.py
 │   │   │   └── tui_simple.py      #       极简 TUI 实现 ⭐ 主推
@@ -566,7 +566,7 @@ tlon wizard reset
 ```bash
 $ tlon server
 
-🚀  Minions Server v0.1.0
+🚀  Tlon Server v0.1.0
 
 [2026-03-07 21:30:35] INFO  Loading configuration...
 [2026-03-07 21:30:35] INFO  ✓ Config loaded from config/agents.yaml
@@ -587,7 +587,7 @@ $ tlon server
 ```bash
 $ tlon tui
 
-🐙 Minions TUI Client (极简模式)
+🐙 Tlon TUI Client (极简模式)
 Connecting to ws://localhost:8888/ws...
 ✅ Connected to ws://localhost:8888/ws
 📡 5 agents available

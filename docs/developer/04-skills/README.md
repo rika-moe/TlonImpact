@@ -1,6 +1,8 @@
+> ⚠️ **注意**: Skill 系统当前实现已废弃，计划重新设计。本文档仅供参考。
+
 # Agent Skills 开发指南
 
-本指南介绍如何为 Minions 系统开发符合 [Agent Skills](https://github.com/agentskills/agentskills) 标准的技能。
+本指南介绍如何为 Tlon 系统开发符合 [Agent Skills](https://github.com/agentskills/agentskills) 标准的技能。
 
 ## 目录
 

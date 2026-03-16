@@ -55,7 +55,7 @@ agents:
   # 客服 - 主动响应
   - id: "support-001"
     name: "小夏"
-    position: "support"
+    position_id: "support"
     personality: |
       热情、耐心、善于倾听。
       擅长理解用户需求并协调资源。
@@ -79,7 +79,7 @@ agents:
   # 开发 - 被动响应
   - id: "dev-001"
     name: "陈代码"
-    position: "developer"
+    position_id: "developer"
     personality: |
       技术导向，注重代码质量。
       写代码前会思考架构。
@@ -109,7 +109,7 @@ agents:
 |-----|------|------|------|
 | `id` | string | 是 | 唯一标识符，系统使用 |
 | `name` | string | 是 | 显示名称，用户可见 |
-| `position` | string | 是 | 角色类型 (见下表) |
+| `position_id` | string | 是 | 角色类型 (见下表) |
 | `personality` | string | 否 | 性格描述，影响回复风格 |
 | `proactive` | bool | 否 | 是否主动响应 (默认 false) |
 

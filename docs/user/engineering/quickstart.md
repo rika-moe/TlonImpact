@@ -24,7 +24,7 @@ docker ps  # 确认守护进程运行中
 pip install tlon
 
 # 或从源码安装
-git clone https://github.com/yourusername/minions.git
+git clone https://github.com/yourusername/tlon.git
 cd tlon
 pip install -e ".[tui]"
 ```
@@ -99,26 +99,23 @@ tlon tui --port 8888 --rest-port 8080
 tlon wizard
 
 # 或手动编辑配置文件
-vim config/agents.yaml
+vim config/agents/dev-001.yaml
 ```
 
-Agent 配置示例:
+Agent 配置示例 (`config/agents/{agent_id}.yaml`):
 ```yaml
-agents:
-  - id: "dev-001"
-    name: "陈代码"
-    position: "developer"
-    personality: "技术导向，注重细节"
-    proactive: false
-    skills:
-      - "git-operations"
-      - "file-operations"
-    llm:
-      model_name: "gpt-4"
-      temperature: 0.7
-    docker:
-      image: "ubuntu:22.04"
-      memory_limit: "512m"
+agent:
+  id: "dev-001"
+  name: "陈代码"
+  position_id: "developer"
+  personality: "技术导向，注重细节"
+  respond_to_all: false
+  llm:
+    model_name: "gpt-4"
+    temperature: 0.7
+  docker:
+    image: "ubuntu:22.04"
+    memory_limit: "512m"
 ```
 
 重启服务端后生效:
@@ -174,14 +171,19 @@ curl http://localhost:8080/api/chatroom/messages
 .
 ├── .env                  # 环境变量
 ├── config/
-│   └── agents.yaml       # Agent 定义
+│   ├── agents/           # Agent 定义
+│   │   └── {id}.yaml
+│   └── positions/        # Position 定义
+│       └── {id}.yaml
 ├── data/                 # 运行时数据 (勿删)
 │   ├── agents/
 │   │   └── {id}/
 │   │       ├── memory/
-│   │       │   ├── working.json
-│   │       │   ├── episodes.json
-│   │       │   └── facts.json
+│   │       │   ├── working/
+│   │       │   │   └── interactions.jsonl
+│   │       │   └── episodic/
+│   │       │       ├── summaries.jsonl
+│   │       │       └── facts.jsonl
 │   │       └── state.json
 │   ├── chatroom/
 │   └── logs/

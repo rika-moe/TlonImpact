@@ -1,4 +1,4 @@
-# Minions Wizard 详细设计
+# Tlon Wizard 详细设计
 
 ## 1. 核心定位
 
@@ -7,7 +7,7 @@
 ```
 $ minions wizard
 
-🧙‍♂️  欢迎使用 Minions 配置向导
+🧙‍♂️  欢迎使用 Tlon 配置向导
 
 📋 主菜单
 > 🚀 快速开始 - 初始化完整配置
@@ -20,7 +20,7 @@ $ minions wizard
 ## 2. 功能模块
 
 ```
-🧙‍♂️ Minions Wizard
+🧙‍♂️ Tlon Wizard
 │
 ├── 🚀 快速开始 (Quick Start)
 │   ├── 环境检查
@@ -64,7 +64,7 @@ $ minions wizard
 ```
 $ minions wizard
 
-🧙‍♂️  欢迎使用 Minions 配置向导
+🧙‍♂️  欢迎使用 Tlon 配置向导
     版本: v0.1.0
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -570,7 +570,7 @@ Agent 配置预览:
 ```
 [选择 🔍 环境诊断]
 
-🧙‍♂️  Minions 环境诊断
+🧙‍♂️  Tlon 环境诊断
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 系统环境
@@ -616,7 +616,7 @@ API 连接
 ```
 [选择 🧪 测试验证]
 
-🧙‍♂️  Minions 功能测试
+🧙‍♂️  Tlon 功能测试
 
 请选择要测试的项目:
 
@@ -659,7 +659,7 @@ API 连接
 ```
 [选择 🗑️ 重置数据]
 
-🧙‍♂️  重置 Minions
+🧙‍♂️  重置 Tlon
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  警告
@@ -696,7 +696,7 @@ API 连接
 
 ```yaml
 # config/agents.yaml
-# 由 Minions Wizard 生成
+# 由 Tlon Wizard 生成
 
 agents:
   # 客服
@@ -1125,7 +1125,7 @@ from .cli.wizard import wizard
 
 @click.group()
 def cli():
-    """Minions - AI 多 Agent 协作系统"""
+    """Tlon - AI 多 Agent 协作系统"""
     pass
 
 cli.add_command(wizard, name="wizard")

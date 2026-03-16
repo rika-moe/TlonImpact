@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-**项目名称**: Minions  
+**项目名称**: Tlon  
 **目标**: 构建一个基于群聊的多 Agent 协作系统，支持 Agent Skills 标准  
 **技术栈**: Python 3.11+, asyncio, Docker, OpenAI API  
 **开发方式**: 分 4 个里程碑迭代开发
@@ -256,7 +256,7 @@ if __name__ == "__main__":
 
 **目标**: 实现 Agent 长时记忆，支持历史对话持久化和上下文增强
 
-**设计文档**: [memory.md](./memory.md)
+**设计文档**: [memory.md](../01-architecture/memory.md)
 
 **周期**: 预计 4-5 天
 
@@ -463,7 +463,7 @@ minions/tools/
 
 **目标**: 实现完整的多 Agent 团队，支持 Agent 间协作
 
-**设计文档**: [multi-agent.md](./multi-agent.md)
+**设计文档**: [multi-agent.md](../01-architecture/multi-agent.md)
 
 **周期**: 预计 6-7 天
 
@@ -599,14 +599,14 @@ minions/tools/
 **状态**: ✅ 完成 (Phase 5.1-5.6 全部完成)
 
 **设计文档**:
-- [UI 架构设计](./ui-architecture.md)
-- [TUI 设计](./tui-design.md)
-- [Wizard 设计](./wizard-design.md)
+- [UI 架构设计](../01-architecture/ui-architecture.md)
+- [TUI 设计](../cli/tui_spec.md)
+- [Wizard 设计](../03-wizard/wizard-design.md)
 
 **已交付**:
 - ✅ Server 主进程 (`minions server`) 支持 REST + WebSocket API
 - ✅ 多客户端 Session 管理
-- ✅ MinionsClient SDK (WebSocket + REST)
+- ✅ TlonClient SDK (WebSocket + REST)
 - ✅ CLI 命令重构 (`minions server/tui/wizard`)
 - ✅ Wizard 配置向导 (`minions wizard`)
   - 快速开始 (环境检查 → API 配置 → Agent 选择 → 创建配置)
@@ -631,7 +631,7 @@ minions/tools/
 #### Phase 5.2: Client SDK (Day 2)
 | 任务 | 优先级 | 依赖 | 验收标准 | 状态 |
 |------|--------|------|----------|------|
-| - [x] 5.2.1 创建 MinionsClient SDK | P0 | 5.1.3 | WebSocket 连接管理 | ✅ |
+| - [x] 5.2.1 创建 TlonClient SDK | P0 | 5.1.3 | WebSocket 连接管理 | ✅ |
 | - [x] 5.2.2 消息/事件/命令封装 | P0 | 5.2.1 | 统一接口 | ✅ |
 | - [x] 5.2.3 TUI 和 Server 共用 SDK | P0 | 5.2.2 | SDK 可复用 | ✅ |
 
@@ -690,8 +690,7 @@ minions/tools/
 **目标**: 实现 Web 客户端和 Telegram Bot，完善多界面支持
 
 **设计文档**:
-- [Web 设计](./web-design.md)
-- [Telegram 设计](./telegram-design.md)
+- [Web 设计](../web/web-design.md)
 
 **周期**: 预计 8-10 天
 
@@ -743,7 +742,7 @@ minions/tools/
 | 任务 | 优先级 | 依赖 | 验收标准 | 状态 |
 |------|--------|------|----------|------|
 | - [ ] 6.6.1 python-telegram-bot 集成 | P0 | - | Bot 基础框架 | ⬜ |
-| - [ ] 6.6.2 共用 MinionsClient SDK | P0 | 6.6.1 | 与 TUI 共用 SDK | ⬜ |
+| - [ ] 6.6.2 共用 TlonClient SDK | P0 | 6.6.1 | 与 TUI 共用 SDK | ⬜ |
 | - [ ] 6.6.3 模式切换内联键盘 | P0 | 6.6.2 | [💬 Chat] [📡 Event] [🎛️ Agent] | ⬜ |
 | - [ ] 6.6.4 ChatRoom 模式实现 | P0 | 6.6.3 | 收发信息 | ⬜ |
 | - [ ] 6.6.5 Event 模式（分页列表） | P0 | 6.6.4 | 过滤/详情 | ⬜ |
@@ -999,11 +998,10 @@ minions/
 ### 设计文档索引
 | 文档 | 内容 |
 |------|------|
-| [ui-architecture.md](./ui-architecture.md) | 多界面架构设计 |
-| [tui-design.md](./tui-design.md) | TUI 客户端（三种模式） |
-| [web-design.md](./web-design.md) | Web 客户端（React） |
-| [telegram-design.md](./telegram-design.md) | Telegram Bot |
-| [wizard-design.md](./wizard-design.md) | 配置向导 |
+| [ui-architecture.md](../01-architecture/ui-architecture.md) | 多界面架构设计 |
+| [tui_spec.md](../cli/tui_spec.md) | TUI 客户端（三种模式） |
+| [web-design.md](../web/web-design.md) | Web 客户端（React） |
+| [wizard-design.md](../03-wizard/wizard-design.md) | 配置向导 |
 
 **建议开始**: 里程碑 5 的 Phase 5.1 (Server 核心重构)
 - 5.1.1 创建 Server 主进程架构

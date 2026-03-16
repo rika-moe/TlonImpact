@@ -152,7 +152,7 @@ tlon mirror destroy 小雅
 agents:
   - id: "dev-002"           # 系统标识（唯一）
     name: "小雅"             # 显示名称
-    position: "developer"    # 职位类型
+    position_id: "developer"    # 职位类型
     personality: |           # 性格描述（影响回复风格）
       温柔但坚定，注重细节。
       喜欢简洁优雅的代码。
