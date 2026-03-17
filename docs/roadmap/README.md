@@ -1,7 +1,7 @@
 # Tlon 开发路线图
 
-> 状态: 🔄 里程碑 6 进行中
-> 最后更新: 2026-03-17
+> 状态: 🔄 里程碑 7 进行中
+> 最后更新: 2026-03-18
 
 ---
 
@@ -14,7 +14,8 @@
 | [M3: Memory 系统](milestone-3-memory.md) | ✅ 已完成 | Shakespeare 记忆 |
 | [M4: 多 Agent 系统](milestone-4-multi-agent.md) | ✅ 已完成 | 代表大会协作 |
 | [M5: Server + TUI](milestone-5-server-tui.md) | ✅ 已完成 | Client-Server 架构 |
-| [M6: Web + Telegram](milestone-6-web.md) | 🔄 进行中 | 多界面支持 |
+| [M6: Web + Telegram](milestone-6-web.md) | ✅ 已归档 | 多界面支持规划 |
+| [M7: Client 扩展与可观测性](milestone-7-client-expansion.md) | 🔄 进行中 | 协议版本化、Tracing、多 Client |
 
 ---
 
@@ -42,7 +43,8 @@
 | [milestone-3-memory.md](./milestone-3-memory.md) | Memory 系统 | 🗂️ 已归档 |
 | [milestone-4-multi-agent.md](./milestone-4-multi-agent.md) | 多 Agent | 🗂️ 已归档 |
 | [milestone-5-server-tui.md](./milestone-5-server-tui.md) | Server+TUI | 🗂️ 已归档 |
-| [milestone-6-web.md](./milestone-6-web.md) | Web 界面 | 🔄 进行中 |
+| [milestone-6-web.md](./milestone-6-web.md) | Web 界面 | 🗂️ 已归档 |
+| [milestone-7-client-expansion.md](./milestone-7-client-expansion.md) | Client 扩展 | 🔄 进行中 |
 
 ---
 

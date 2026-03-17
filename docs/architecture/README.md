@@ -48,6 +48,7 @@
 |------|------|------|
 | [layers.md](./layers.md) | 分层详解 | L2 |
 | [data-flow.md](./data-flow.md) | 数据流向 | L2 |
+| [client-server.md](./client-server.md) | Client-Server 架构 | L2 |
 | [domains/base.md](./domains/base.md) | 基础层 | L2 |
 | [domains/organization.md](./domains/organization.md) | 组织层 | L2 |
 | [domains/agents.md](./domains/agents.md) | Agent层 | L2 |

@@ -1,7 +1,8 @@
 # 里程碑 6: Web + Telegram
 
-> 状态: 🔄 进行中
-> 开始日期: 2026-03
+> 状态: ✅ 已归档
+> 完成日期: 2026-03-18
+> 说明: 已细化为 [里程碑 7](milestone-7-client-expansion.md)
 
 ---
 
@@ -11,13 +12,17 @@
 
 ---
 
-## 待实现功能
+## 交付物
 
-- [ ] Web UI 设计实现
-- [ ] React 前端
-- [ ] WebSocket 客户端
-- [ ] Telegram Bot 适配器
-- [ ] 用户认证系统
+- [x] Web UI 规划
+- [x] React 前端技术选型
+- [x] WebSocket 客户端设计
+- [x] Telegram Bot 适配器设计
+- [x] 用户认证策略
+
+## 详细实施计划
+
+详见 [里程碑 7: Client 扩展与可观测性](milestone-7-client-expansion.md)
 
 ---
 
@@ -34,4 +39,4 @@
 
 ---
 
-*当前活跃里程碑*
+*已归档，详见里程碑 7*

@@ -47,6 +47,7 @@ uv run tlon tui       # 终端 2
 | Agent 系统 | [design/agents.md](docs/design/agents.md) | [architecture/domains/agents.md](docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](docs/design/memory.md) | [architecture/domains/subsystem.md](docs/architecture/domains/subsystem.md) |
 | 消息系统 | [design/messaging.md](docs/design/messaging.md) | [architecture/domains/organization.md](docs/architecture/domains/organization.md) |
+| Client-Server | [design/client-server-protocol.md](docs/design/client-server-protocol.md) | [architecture/client-server.md](docs/architecture/client-server.md) |
 | 路线图 | - | [roadmap/README.md](docs/roadmap/README.md) |
 
 ---
@@ -59,6 +60,7 @@ uv run tlon tui       # 终端 2
 | Agent 系统 | ✅ 已验证 | 90/100 | 稳定 |
 | 记忆系统 | ✅ 已验证 | 85/100 | 稳定 |
 | 消息系统 | ✅ 已验证 | 90/100 | 稳定 |
+| Client-Server | 🚧 设计中 | - | 详见 [milestone-7](docs/roadmap/milestone-7-client-expansion.md) |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | Sandbox | ✅ 已验证 | 85/100 | 稳定 |
 
@@ -73,4 +75,4 @@ uv run tlon tui       # 终端 2
 
 ---
 
-*最后更新：2026-03-17*
+*最后更新：2026-03-18*
