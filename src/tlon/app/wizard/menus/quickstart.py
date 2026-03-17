@@ -284,7 +284,7 @@ class QuickstartWizard:
                 position_id=pos_type,
                 llm=LLMConfig(model_name=default_model, temperature=0.7),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
-                skills=["file-operations", "git-operations"],
+                skills=[],
             )
             agents.append(agent)
         
@@ -369,7 +369,7 @@ class QuickstartWizard:
                 position_id=pos_type,
                 llm=LLMConfig(model_name=default_model, temperature=0.7),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
-                skills=["file-operations"],
+                skills=[],
             )
             agents.append(agent)
         

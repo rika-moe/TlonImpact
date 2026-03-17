@@ -172,12 +172,6 @@ agents:
 ### 能力配置
 
 ```yaml
-    skills:                  # 可借阅的技能书
-      - "react"
-      - "typescript"
-      - "css"
-      - "git-operations"
-    
     llm:                     # 大脑配置
       model_name: "gpt-4"
       temperature: 0.7       # 0=严谨，1=创意
@@ -206,7 +200,6 @@ Mirror 提供了几种常见的轮廓模板：
 tlon mirror create --template developer
 ```
 - 性格：技术导向，注重细节
-- 技能：git, file-operations, code-linting
 - 可执行 bash 命令
 
 ### 产品经理  
@@ -288,26 +281,6 @@ personality: |
   代码风格严谨，注释详尽。
 ```
 
-### 技能选择
-
-不要贪多。技能越多，上下文越长，越容易混乱。
-
-```yaml
-# 好的配置
-skills:
-  - "react"           # 核心技能
-  - "typescript"      # 语言
-  - "git-operations"  # 必备工具
-
-# 过多的配置（可能降低效果）
-skills:
-  - "react"
-  - "vue"             # 冲突
-  - "angular"         # 更冲突
-  - "typescript"
-  - "python"          # 不相关
-  - "rust"            # 更不相关
-  - ...
 ```
 
 ---

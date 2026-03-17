@@ -10,7 +10,7 @@
 | 里程碑 | 状态 | 说明 |
 |--------|------|------|
 | [M1: CLI + 单 Agent](milestone-1-cli.md) | ✅ 已完成 | 基础架构验证 |
-| [M2: Skill 系统](milestone-2-skills.md) | ⚠️ 已废弃 | 待重新设计 |
+| [M2: Skill 系统](milestone-2-skills.md) | ❌ 已移除 | 2026-03-17 移除 |
 | [M3: Memory 系统](milestone-3-memory.md) | ✅ 已完成 | Shakespeare 记忆 |
 | [M4: 多 Agent 系统](milestone-4-multi-agent.md) | ✅ 已完成 | 代表大会协作 |
 | [M5: Server + TUI](milestone-5-server-tui.md) | ✅ 已完成 | Client-Server 架构 |

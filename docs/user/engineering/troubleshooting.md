@@ -300,9 +300,6 @@ llm:
 ```bash
 # 检查上下文长度
 wc -c data/agents/dev-001/memory/working.json
-
-# 检查 Skill 数量
-grep -c "skills:" config/agents.yaml
 ```
 
 **解决**:
@@ -310,10 +307,7 @@ grep -c "skills:" config/agents.yaml
 # 1. 清空工作记忆
 /summary  # 触发归档
 
-# 2. 减少加载的 Skills
-# 编辑 config/agents.yaml，减少 skills 列表
-
-# 3. 更换模型
+# 2. 更换模型
 llm:
   model_name: "gpt-4-turbo"  # 更强模型
 ```

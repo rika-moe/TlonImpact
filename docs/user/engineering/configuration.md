@@ -154,48 +154,11 @@ agents:
 
 ---
 
-## Skill 配置
+## ~~Skill 配置~~
 
-### 目录结构
-
-```
-skills/
-└── {skill-name}/
-    ├── SKILL.md           # 必需: 技能定义
-    ├── scripts/           # 可选: 可执行脚本
-    │   └── script.py
-    ├── references/        # 可选: 参考文档
-    │   └── guide.md
-    └── assets/            # 可选: 模板资源
-        └── template.json
-```
-
-### SKILL.md 格式
-
-```markdown
----
-name: git-operations
-description: Git 版本控制操作
----
-
-# Git Operations
-
-## 什么时候使用
-需要执行 Git 命令时。
-
-## 如何使用
-1. 使用 scripts/ 下的脚本
-2. 或执行原生 git 命令
-
-## 可用脚本
-- `scripts/commit.sh`: 提交变更
-  参数: -m "message"
-
-## 示例
-```bash
-./skills/git-operations/scripts/commit.sh -m "update"
-```
-```
+> ❌ **Skill 系统已于 2026-03-17 移除**
+>
+> 原 Skill 配置已失效。如需扩展 Agent 能力，请直接通过 `executeBashCommand` 执行命令。
 
 ### Frontmatter 字段
 

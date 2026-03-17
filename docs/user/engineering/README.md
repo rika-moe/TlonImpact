@@ -48,14 +48,9 @@ tlon tui
 └── logs/                 # 系统日志
 
 配置目录: ./config/
-├── agents.yaml           # Agent 定义
-└── skills.yaml           # Skill 配置
+└── agents.yaml           # Agent 定义
 
-Skill 目录: ./skills/
-├── {skill-name}/
-│   ├── SKILL.md          # 技能定义
-│   ├── scripts/          # 可执行脚本
-│   └── references/       # 参考文档
+~~Skill 目录: ./skills/~~ ❌ 已移除（2026-03-17）
 ```
 
 ---
@@ -66,7 +61,7 @@ Skill 目录: ./skills/
 |---------|---------|------|
 | 代表大会 | Chatroom | WebSocket 消息总线 |
 | 莎士比亚 | Memory System | 双层记忆：Working + Episodic |
-| 巴别图书馆 | Skill System | 可插拔能力模块 |
+| ~~巴别图书馆~~ | ~~Skill System~~ | ~~已移除~~ |
 | 花园 | Git Semantic Layer | Git 操作的抽象层 |
 | 镜子 | Mirror CLI | Agent 生命周期管理 |
 | 环形废墟 | Meta-programming | Agent 自举能力 |

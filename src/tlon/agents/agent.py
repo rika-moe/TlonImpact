@@ -14,13 +14,9 @@ from tlon.base.events.event_bus import EventBus
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore, MessageFilter
 from tlon.base.logger import get_logger
-from tlon.subsystem.skills import SkillManager
-from tlon.subsystem.tools.skills.activate_skill import ActivateSkillTool
-from tlon.subsystem.tools.skills.deactivate_skill import DeactivateSkillTool
 from tlon.subsystem.tools.shell.execute_bash import ExecuteBashTool
 from tlon.subsystem.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.subsystem.tools.memory.generate_summary import GenerateSummaryTool
-from tlon.subsystem.tools.skills.load_skill_resource import LoadSkillResourceTool
 from tlon.subsystem.tools.memory.remember_fact import RememberFactTool
 from tlon.subsystem.tools.memory.search_memories import SearchMemoriesTool
 from tlon.subsystem.tools.complete_dialog.complete_dialog import CompleteDialogTool
@@ -102,11 +98,7 @@ class Agent:
         self.llm_client = LLMClient(llm_config)
         self.docker_runtime = DockerRuntime(config.docker, config.id)
         self.tool_executor = ToolExecutor()
-        
-        # Initialize skill manager
-        self.skill_manager = SkillManager()
-        self._skills_discovered = False
-        
+
         # Initialize memory manager
         data_dir = get_tlon_home() / "data"
         memory_config = config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
@@ -183,26 +175,23 @@ class Agent:
     
     async def initialize(self) -> None:
         """Initialize the agent.
-        
-        Starts Docker container, loads memory, discovers skills,
+
+        Starts Docker container, loads memory,
         registers tools, and subscribes to events.
         """
         self.state = AgentState.INITIALIZING
         logger.info(f"Initializing agent: {self.name}")
-        
+
         # Start Docker container
         await self.docker_runtime.ensure_running()
         logger.info(f"Docker container ready for {self.name}")
-        
+
         # Load memory
         await self.memory.load()
-        
+
         # Load tasks
         self.task_manager.load()
-        
-        # Discover skills (if configured)
-        await self._discover_skills()
-        
+
         # Register tools
         self._register_tools()
         
@@ -246,27 +235,7 @@ class Agent:
         
         self.state = AgentState.SHUTDOWN
         logger.info(f"Agent {self.name} shutdown complete")
-    
-    async def _discover_skills(self) -> None:
-        """Discover skills configured for this agent.
-        
-        This is the Discovery phase of the Agent Skills lifecycle.
-        Only metadata is loaded, not full SKILL.md content.
-        """
-        if self._skills_discovered:
-            return
-        
-        if self.config.skills:
-            logger.info(f"Discovering skills for {self.name}: {self.config.skills}")
-            skills = self.skill_manager.discover_skills(self.config.skills)
-            logger.info(f"Discovered {len(skills)} skills for {self.name}")
-            for skill in skills:
-                logger.info(f"  - {skill.name}: {skill.description[:50]}...")
-        else:
-            logger.info(f"No skills configured for {self.name}")
-        
-        self._skills_discovered = True
-    
+
     def _register_tools(self) -> None:
         """Register available tools."""
         # Built-in tools
@@ -293,20 +262,7 @@ class Agent:
             ForgetMemoryTool(self.memory)
         )
         logger.debug(f"Registered memory tools for {self.name}")
-        
-        # Skill tools (only if skills are configured)
-        if self.config.skills:
-            self.tool_executor.register_tool(
-                ActivateSkillTool(self.skill_manager)
-            )
-            self.tool_executor.register_tool(
-                LoadSkillResourceTool(self.skill_manager)
-            )
-            self.tool_executor.register_tool(
-                DeactivateSkillTool(self.skill_manager)
-            )
-            logger.debug(f"Registered skill tools for {self.name}")
-        
+
         # Task management tools
         self.tool_executor.register_tool(
             CreateTaskTool(self.task_manager)

@@ -165,14 +165,7 @@ class SystemPromptBuilder:
             "- generateSummary: 生成当前会话摘要",
             "- forget: 删除不再需要的记忆",
         ]
-        
-        if self.agent.config.skills:
-            tools.extend([
-                "- activateSkill: 激活一个技能",
-                "- loadSkillResource: 加载技能目录下的资源文件",
-                "- deactivateSkill: 关闭技能释放资源",
-            ])
-        
+
         return PromptSection("## 可用工具", "\n".join(tools)).render()
     
     def build_role(self) -> Optional[str]:
@@ -191,23 +184,8 @@ class SystemPromptBuilder:
         return PromptSection("## 团队成员（你可以 @他们）", team_table).render()
     
     def build_skills(self) -> Optional[str]:
-        """Build skills section if agent has skills configured."""
-        if not self.agent.config.skills:
-            return None
-        
-        parts = []
-        
-        # Available skills table
-        skills_table = self.agent.skill_manager.get_skills_table_for_prompt()
-        if skills_table:
-            parts.append(PromptSection("## 可用技能", skills_table).render())
-        
-        # Active skills context
-        active_skills = self.agent.skill_manager.get_active_skills_context()
-        if active_skills:
-            parts.append(PromptSection("## 已激活技能", active_skills).render())
-        
-        return "\n\n".join(parts) if parts else None
+        """Build skills section - DEPRECATED, skills removed."""
+        return None
     
     async def build_memory(self) -> Optional[str]:
         """Build memory context section."""
@@ -288,14 +266,7 @@ class SystemPromptBuilder:
             "- **generateSummary**: 生成当前会话摘要",
             "- **forget**: 删除不再需要的记忆",
         ]
-        
-        if self.agent.config.skills:
-            tools.extend([
-                "- **activateSkill**: 激活一个技能",
-                "- **loadSkillResource**: 加载技能目录下的资源文件",
-                "- **deactivateSkill**: 关闭技能释放资源",
-            ])
-        
+
         return PromptSection("## 工具说明", "\n".join(tools)).render()
     
     def build_important_notes(self) -> str:
@@ -313,16 +284,7 @@ class SystemPromptBuilder:
             "  - 在 content 中写 '@林知遥' 只是显示效果，不会真正通知对方",
             "- 使用表格中'名字'列的完整姓名作为 mentions 参数（如 ['林知遥', '江予白']）",
         ]
-        
-        if self.agent.config.skills:
-            notes.extend([
-                "- 使用技能时，先调用 activateSkill 加载技能指南",
-                "- 技能脚本执行 (在 Docker 容器中，skills 目录挂载于 /skills):",
-                "  - Bash 脚本: `bash /skills/{skillName}/scripts/xxx.sh [args...]`",
-                "  - Python 脚本: `python3 /skills/{skillName}/scripts/xxx.py [args...]`",
-                "  - Python PEP 723 脚本 (带内联依赖): `uv run /skills/{skillName}/scripts/xxx.py`",
-            ])
-        
+
         return PromptSection("## @mention 机制说明", "\n".join(notes)).render()
     
     # =========================================================================

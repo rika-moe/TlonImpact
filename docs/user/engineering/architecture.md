@@ -28,9 +28,9 @@
 │                           │                                 │
 │  ┌────────────────────────┼────────────────────────────┐   │
 │  │                   核心服务                            │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │   │
-│  │  │ Agent    │  │ Skill    │  │ Memory           │   │   │
-│  │  │ Service  │  │ Service  │  │ Service          │   │   │
+│  │  ┌──────────┐  ┌──────────────────┐   │   │
+│  │  │ Agent    │  │ Memory           │   │   │
+│  │  │ Service  │  │ Service          │   │   │
 │  │  └────┬─────┘  └────┬─────┘  └────────┬─────────┘   │   │
 │  │       │             │                 │             │   │
 │  │       └─────────────┴─────────────────┘             │   │
@@ -189,39 +189,23 @@
 
 ---
 
-### 4. Skill 系统
+### ~~4. Skill 系统~~ ❌ 已移除
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  Skill Lifecycle                    │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  Discovery                    Activation            │
-│  ─────────                   ───────────            │
-│                                                     │
-│  扫描 skills/               Agent 需要时            │
-│      │                         │                    │
-│      ▼                         ▼                    │
-│  ┌─────────┐              ┌──────────┐              │
-│  │ Parse   │              │ Load     │              │
-│  │ SKILL.md│              │ SKILL.md │              │
-│  │ frontmatter            │ content  │              │
-│  └────┬────┘              └────┬─────┘              │
-│       │                        │                    │
-│       ▼                        ▼                    │
-│  ┌─────────────────────────────────────────┐       │
-│  │         Skill Registry                  │       │
-│  │  name ──► metadata                      │       │
-│  │       ──► full_content (lazy load)      │       │
-│  └─────────────────────────────────────────┘       │
-│                        │                            │
-│                        ▼                            │
-│                Execution                            │
-│                ─────────                            │
-│  scripts/script.py  │  references/guide.md          │
-│       │             │        │                      │
-│       └─────────────┴────────┘                      │
-│                     │                               │
+> **注意**: Skill 系统已于 2026-03-17 完全移除。
+>
+> 原设计理念：
+> ```
+> Discovery → Activation → Execution
+> 扫描 skills/ → 加载 SKILL.md → 执行脚本
+> ```
+>
+> 移除原因：使用场景不清晰，复杂度高于收益。
+>
+> **替代方案**: 直接通过 `executeBashCommand` 工具执行任意命令。
+
+---
+
+### 4. 任务系统
 │                     ▼                               │
 │              [Tool Use]                             │
 │          execute_bash                               │
@@ -324,11 +308,6 @@ project/
 │   │   ├── episodic.py        # 情节记忆
 │   │   └── manager.py         # 记忆管理器
 │   │
-│   ├── skills/                # Skill 系统
-│   │   ├── discovery.py       # 发现机制
-│   │   ├── registry.py        # 注册表
-│   │   └── loader.py          # 加载器
-│   │
 │   ├── messaging/             # 消息系统
 │   │   ├── chatroom.py        # 聊天室
 │   │   ├── router.py          # 路由器
@@ -352,12 +331,7 @@ project/
 ├── config/                    # 配置
 │   └── agents.yaml            # Agent 定义
 │
-├── skills/                    # Skill 目录
-│   └── {name}/
-│       ├── SKILL.md
-│       ├── scripts/
-│       └── references/
-│
+~~├── skills/~~                    ~~# Skill 目录~~ ❌ 已移除
 ├── data/                      # 运行时数据 (gitignore)
 │   ├── agents/
 │   │   └── {id}/

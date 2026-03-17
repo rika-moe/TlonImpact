@@ -237,9 +237,7 @@ class ServerApp:
     def _create_default_configs(self) -> List[AgentConfig]:
         """Create default agent configurations."""
         logger.info("Creating default agent configuration")
-        
-        skills_dir = str(get_tlon_home() / "skills")
-        
+
         return [AgentConfig(
             id="dev-001",
             name="林知遥",
@@ -254,7 +252,6 @@ class ServerApp:
             docker=DockerRuntimeConfig(
                 image=settings.docker_image,
                 memory_limit=settings.docker_memory_limit,
-                skills_dir=skills_dir,
             ),
             memory=MemoryConfig(agent_id="dev-001"),
             skills=[],

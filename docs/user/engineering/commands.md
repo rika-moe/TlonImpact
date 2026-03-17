@@ -274,29 +274,14 @@ Content-Type: application/json
 { "id": "msg-003", "timestamp": "2024-03-09T10:24:00Z" }
 ```
 
-### Skills
+### ~~Skills~~ ❌ 已移除
 
-#### 列出所有 Skills
+> Skill API 已于 2026-03-17 移除。原以下接口不再可用：
+> - `GET /api/skills`
+> - `POST /api/skills/{name}/activate`
+> - `POST /api/skills/{name}/deactivate`
 
-```bash
-GET /api/skills
-
-响应:
-{
-  "skills": [
-    {
-      "name": "git-operations",
-      "description": "Git 版本控制操作",
-      "status": "active"  // active, inactive
-    }
-  ]
-}
-```
-
-#### 激活 Skill
-
-```bash
-POST /api/skills/{name}/activate
+如需扩展 Agent 能力，请直接通过 `executeBashCommand` 工具执行命令。
 
 响应:
 { "status": "activated" }

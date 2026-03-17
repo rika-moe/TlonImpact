@@ -20,7 +20,7 @@ user/
 ├── 02-first-conversation.md # 第一次对话指南
 ├── 03-the-congress.md       # 代表大会（聊天室）
 ├── 04-memory.md             # 莎士比亚的记忆系统
-├── 05-library.md            # 巴别图书馆（Skill 系统）⚠️
+├── 05-library.md            # 巴别图书馆（已移除）❌
 ├── 06-mirror.md             # 镜子（Agent 管理）
 ├── 07-garden.md             # 花园（Git 工作流）
 ├── 08-ruins.md              # 环形废墟（高级功能）
@@ -74,7 +74,7 @@ user/
 | 里程碑 | 状态 | 说明 |
 |--------|------|------|
 | [milestone-1-cli.md](./roadmap/milestone-1-cli.md) | 🗂️ 已归档 | CLI 基础 |
-| [milestone-2-skills.md](./roadmap/milestone-2-skills.md) | 🗂️ 已归档 ⚠️ | Skill 系统（废弃） |
+| [milestone-2-skills.md](./roadmap/milestone-2-skills.md) | ❌ 已移除 | Skill 系统（2026-03-17 移除） |
 | [milestone-3-memory.md](./roadmap/milestone-3-memory.md) | 🗂️ 已归档 | Memory 系统 |
 | [milestone-4-multi-agent.md](./roadmap/milestone-4-multi-agent.md) | 🗂️ 已归档 | 多 Agent 协作 |
 | [milestone-5-server-tui.md](./roadmap/milestone-5-server-tui.md) | 🗂️ 已归档 | Server + TUI |

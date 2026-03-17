@@ -187,10 +187,7 @@ curl http://localhost:8080/api/chatroom/messages
 │   │       └── state.json
 │   ├── chatroom/
 │   └── logs/
-└── skills/               # Skill 目录
-    └── {skill-name}/
-        ├── SKILL.md
-        └── scripts/
+~~└── skills/~~               ~~# Skill 目录~~ ❌ 已移除
 ```
 
 ---

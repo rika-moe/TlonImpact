@@ -33,7 +33,7 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
             "完成任务后向给你派活的人汇报",
             "可以执行任意 bash 命令来完成任务",
         ],
-        default_skills=["file-operations", "git-operations", "bash-execution"],
+        default_skills=[],
     ),
     "operator": PositionConfig(
         id="operator",
@@ -47,7 +47,7 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
             "部署操作前必须确认环境",
             "记录所有故障处理过程",
         ],
-        default_skills=["docker-operations", "bash-execution", "monitoring"],
+        default_skills=[],
     ),
     "project_manager": PositionConfig(
         id="project_manager",
@@ -61,7 +61,7 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
             "定期跟进任务进度",
             "及时识别和上报风险",
         ],
-        default_skills=["task-management", "planning", "communication"],
+        default_skills=[],
     ),
     "customer_service": PositionConfig(
         id="customer_service",
@@ -77,7 +77,7 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
             "转派后不要持续跟进，相信同事会处理",
             "除非用户催促或被明确要求跟进",
         ],
-        default_skills=["communication", "problem-triage", "escalation"],
+        default_skills=[],
     ),
     "product_manager": PositionConfig(
         id="product_manager",
@@ -91,7 +91,7 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
             "与开发团队密切沟通",
             "确保产品方案可落地",
         ],
-        default_skills=["requirements-analysis", "documentation", "planning"],
+        default_skills=[],
     ),
     "data_analyst": PositionConfig(
         id="data_analyst",
@@ -105,7 +105,7 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
             "提供清晰的数据解读",
             "保护敏感数据安全",
         ],
-        default_skills=["data-processing", "visualization", "csv-pipeline"],
+        default_skills=[],
     ),
 }
 
