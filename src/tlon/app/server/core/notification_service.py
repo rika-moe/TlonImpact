@@ -2,6 +2,13 @@
 
 Responsible for pushing events to connected client sessions.
 Decouples event routing from session management.
+
+Architecture:
+    NotificationService is a Component that depends on:
+    - EventBus (for event subscription)
+    - SessionManager (for session lookup)
+    
+    All dependencies are injected via constructor (DAG rule).
 """
 
 import asyncio
@@ -9,6 +16,7 @@ from typing import Callable, Dict, Optional, Any
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.component import Component
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.message import Message
 from .session_manager import SessionManager, ClientSession
@@ -19,7 +27,7 @@ logger = get_logger(__name__)
 EventHandler = Callable[[Event], None]
 
 
-class NotificationService:
+class NotificationService(Component):
     """Pushes system events to connected clients.
     
     Responsibilities:
@@ -32,11 +40,18 @@ class NotificationService:
     - Message routing decisions
     - Message storage
     
+    Dependencies (constructor injected):
+        - event_bus: EventBus
+        - session_manager: SessionManager
+    
     Example:
-        >>> service = NotificationService(event_bus, session_manager)
-        >>> await service.start()
+        >>> service = NotificationService(
+        ...     event_bus=event_bus,
+        ...     session_manager=session_manager,
+        ... )
+        >>> await service.initialize()
         >>> service.register_handler(session_id, handler)
-        >>> await service.stop()
+        >>> await service.shutdown()
     """
     
     def __init__(
@@ -46,10 +61,13 @@ class NotificationService:
     ):
         """Initialize the notification service.
         
+        All dependencies are injected via constructor (DAG architecture).
+        
         Args:
             event_bus: Event bus to subscribe to
             session_manager: Session manager for session lookup
         """
+        super().__init__(name="NotificationService")
         self._event_bus = event_bus
         self._session_manager = session_manager
         
@@ -62,17 +80,18 @@ class NotificationService:
         # Internal lock for handler registration
         self._lock = asyncio.Lock()
         
-        logger.info("NotificationService initialized")
+        logger.info("NotificationService constructed")
     
-    async def start(self) -> None:
+    async def initialize(self) -> None:
         """Start the service by subscribing to events."""
         self._subscription_id = self._event_bus.subscribe(
             EventType.MESSAGE_NEW,
             self._on_message_new
         )
-        logger.info("NotificationService started")
+        self._initialized = True
+        logger.info("NotificationService initialized")
     
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         """Stop the service by unsubscribing from events."""
         if self._subscription_id:
             self._event_bus.unsubscribe(self._subscription_id)
@@ -81,7 +100,8 @@ class NotificationService:
         async with self._lock:
             self._handlers.clear()
         
-        logger.info("NotificationService stopped")
+        self._initialized = False
+        logger.info("NotificationService shutdown")
     
     def register_handler(
         self,

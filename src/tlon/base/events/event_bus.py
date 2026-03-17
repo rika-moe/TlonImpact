@@ -8,19 +8,24 @@ from typing import Dict, List, Optional, Callable
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
+from tlon.base.component import Component
 
 logger = get_logger(__name__)
 
 
-class EventBus:
+class EventBus(Component):
     """Central event bus for message routing.
     
     Uses async publish-subscribe pattern. Events are dispatched to
     all subscribers of the event type.
     
+    This is a core infrastructure component that other components
+    depend on for communication. It is created early in the
+    initialization sequence.
+    
     Example:
         >>> bus = EventBus()
-        >>> await bus.start()
+        >>> await bus.initialize()
         >>> 
         >>> def handler(event):
         ...     print(f"Received: {event.type}")
@@ -29,18 +34,19 @@ class EventBus:
         >>> await bus.publish(Event(...))
         >>> 
         >>> bus.unsubscribe(sub_id)
-        >>> await bus.stop()
+        >>> await bus.shutdown()
     """
     
     def __init__(self):
         """Initialize the event bus."""
+        super().__init__(name="EventBus")
         self._subscribers: Dict[EventType, List[tuple]] = {}
         self._event_queue: asyncio.Queue[Event] = asyncio.Queue()
         self._running = False
         self._processor_task: Optional[asyncio.Task] = None
         self._subscription_counter = 0
     
-    async def start(self) -> None:
+    async def initialize(self) -> None:
         """Start the event processor.
         
         Begins processing events from the queue.
@@ -51,9 +57,10 @@ class EventBus:
         
         self._running = True
         self._processor_task = asyncio.create_task(self._process_events())
+        self._initialized = True
         logger.info("EventBus started")
     
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         """Stop the event processor.
         
         Waits for current event processing to complete.

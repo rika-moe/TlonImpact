@@ -5,12 +5,22 @@ This module provides AgentRegistry class that manages:
 - Agent shutdown
 
 Configuration is delegated to AgentInfoProvider (typically ConfigManager).
+
+Architecture:
+    AgentRegistry is a Component that depends on:
+    - EventBus (for agent event publishing)
+    - AgentInfoProvider (for configuration queries)
+    - PositionRegistry (for position lookups)
+    - MessageStore (for agent history access)
+    
+    All dependencies are injected via constructor (DAG rule).
 """
 import asyncio
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.component import Component
 from tlon.base.logger import get_logger
 from tlon.agents.agent import Agent
 from tlon.base.config import AgentConfig
@@ -23,7 +33,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-class AgentRegistry:
+class AgentRegistry(Component):
     """Registry for managing multiple agents.
     
     All agents are started at system initialization.
@@ -32,8 +42,19 @@ class AgentRegistry:
     Configuration is provided by AgentInfoProvider (typically ConfigManager),
     allowing this class to focus on agent lifecycle management only.
     
+    Dependencies (constructor injected):
+        - event_bus: EventBus for agent event publishing
+        - agent_info_provider: AgentInfoProvider for configuration queries
+        - position_registry: PositionRegistry (optional)
+        - message_store: MessageStore (optional)
+    
     Example:
-        >>> registry = AgentRegistry(event_bus, agent_info_provider)
+        >>> registry = AgentRegistry(
+        ...     event_bus=event_bus,
+        ...     agent_info_provider=config_manager,
+        ...     position_registry=position_registry,
+        ...     message_store=message_store,
+        ... )
         >>> registry.register("dev-001")  # Register by ID
         >>> await registry.initialize()  # Start all agents
         >>> agent = registry.get_agent("dev-001")  # Get running agent
@@ -48,12 +69,15 @@ class AgentRegistry:
     ):
         """Initialize the agent registry.
         
+        All dependencies are injected via constructor (DAG architecture).
+        
         Args:
             event_bus: Event bus for message routing
             agent_info_provider: Provider for agent configuration queries
             position_registry: Position registry for looking up position info
             message_store: Message store for agent history access
         """
+        super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self.position_registry = position_registry
@@ -65,7 +89,7 @@ class AgentRegistry:
         # Active agents (all agents are active after initialize)
         self._agents: Dict[str, Agent] = {}
         
-        logger.info("AgentRegistry initialized")
+        logger.info("AgentRegistry constructed")
     
     def register(self, agent_id: str) -> None:
         """Register an agent to be started.
@@ -110,6 +134,7 @@ class AgentRegistry:
                 except Exception as e:
                     logger.error(f"Failed to start agent {agent_id}: {e}", exc_info=True)
         
+        self._initialized = True
         active_count = len(self._agents)
         logger.info(f"AgentRegistry initialized: {active_count} active agents")
         logger.info(f"Active agents: {list(self._agents.keys())}")
@@ -128,6 +153,7 @@ class AgentRegistry:
         
         self._agents.clear()
         self._registered_ids.clear()
+        self._initialized = False
         
         logger.info("AgentRegistry shutdown complete")
     

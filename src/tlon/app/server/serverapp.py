@@ -107,16 +107,16 @@ class ServerApp:
         self._components["config_loader"] = config_loader
         
         config_manager = ConfigManager(config_loader)
-        await config_manager.initial_load()
+        await config_manager.initialize()
         self._components["config_manager"] = config_manager
         
         # ========== Step 2: Core Components (all created in ServerApp) ==========
         
         # 2.1 EventBus - event bus for inter-component communication
         event_bus = EventBus()
-        await event_bus.start()
+        await event_bus.initialize()
         self._components["event_bus"] = event_bus
-        logger.info("EventBus started")
+        logger.info("EventBus initialized")
         
         # 2.2 MessageStore - storage for messages (stateful)
         message_store = FileMessageStore(
@@ -134,9 +134,9 @@ class ServerApp:
             message_store=message_store,
             agent_info_provider=config_manager,  # ConfigManager implements AgentInfoProvider
         )
-        await message_router.start()
+        await message_router.initialize()
         self._components["message_router"] = message_router
-        logger.info("MessageRouter started")
+        logger.info("MessageRouter initialized")
         
         # 2.4 PositionRegistry - position template registry
         position_registry = PositionRegistry()
@@ -316,11 +316,11 @@ class ServerApp:
         
         message_router = self._components.get("message_router")
         if message_router:
-            await message_router.stop()
+            await message_router.shutdown()
         
         event_bus = self._components.get("event_bus")
         if event_bus:
-            await event_bus.stop()
+            await event_bus.shutdown()
         
         self._running = False
         self._shutdown_event.set()

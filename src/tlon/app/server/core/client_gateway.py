@@ -9,6 +9,17 @@ to the client-facing subsystems:
 
 This simplifies the API layer (WebSocketHandler, RESTHandler) by providing
 a single entry point while delegating to specialized components internally.
+
+Architecture:
+    ClientGateway is a Component that depends on:
+    - SessionManager (session lifecycle)
+    - NotificationService (event pushing)
+    - ParticipantDirectory (participant aggregation)
+    - EventBus (for message publishing)
+    - MessageStore (for history retrieval)
+    - ConfigManager (for config reload support)
+    
+    All dependencies are injected via constructor (DAG rule).
 """
 
 import asyncio
@@ -17,6 +28,7 @@ from typing import Callable, Dict, List, Optional, Any
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.component import Component
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.participant import Participant
@@ -28,7 +40,7 @@ from .participant_directory import ParticipantDirectory
 logger = get_logger(__name__)
 
 
-class ClientGateway:
+class ClientGateway(Component):
     """Client Gateway - Facade for client-facing operations.
     
     The Gateway provides a simplified, unified interface for:
@@ -41,6 +53,14 @@ class ClientGateway:
     - SessionManager: Session lifecycle management
     - NotificationService: Event pushing to clients
     - ParticipantDirectory: Participant aggregation
+    
+    Dependencies (constructor injected):
+        - session_manager: SessionManager
+        - notification_service: NotificationService
+        - participant_directory: ParticipantDirectory
+        - event_bus: EventBus
+        - message_store: MessageStore
+        - config_manager: ConfigManager
 
     Example:
         >>> gateway = ClientGateway(
@@ -49,6 +69,10 @@ class ClientGateway:
         ...     participant_directory=participant_directory,
         ...     event_bus=event_bus,
         ...     message_store=message_store,
+        ...     config_manager=config_manager,
+        ...     data_dir=data_dir,
+        ...     host=host,
+        ...     port=port,
         ... )
         >>> await gateway.initialize()
         >>> session = await gateway.connect_client("tui", handler)
@@ -74,6 +98,8 @@ class ClientGateway:
     ):
         """Initialize the client gateway.
         
+        All dependencies are injected via constructor (DAG architecture).
+        
         Args:
             session_manager: Session lifecycle manager
             notification_service: Event notification service
@@ -85,6 +111,8 @@ class ClientGateway:
             host: Server host
             port: Server port
         """
+        super().__init__(name="ClientGateway")
+        
         # Store injected dependencies
         self._session_manager = session_manager
         self._notifications = notification_service
@@ -102,7 +130,7 @@ class ClientGateway:
         self._running = False
         self._shutdown_event = asyncio.Event()
         
-        logger.info(f"ClientGateway initialized (host={host}, port={port})")
+        logger.info(f"ClientGateway constructed (host={host}, port={port})")
     
     async def initialize(self) -> None:
         """Initialize the gateway and its sub-components.
@@ -111,10 +139,11 @@ class ClientGateway:
         """
         logger.info("Initializing ClientGateway...")
         
-        # Start notification service
-        await self._notifications.start()
+        # Initialize notification service
+        await self._notifications.initialize()
         
         self._running = True
+        self._initialized = True
         logger.info("ClientGateway initialized successfully")
     
     async def shutdown(self) -> None:
@@ -129,9 +158,10 @@ class ClientGateway:
         
         self._running = False
         self._shutdown_event.set()
+        self._initialized = False
         
-        # Stop notification service
-        await self._notifications.stop()
+        # Shutdown notification service
+        await self._notifications.shutdown()
         
         logger.info("ClientGateway shutdown complete")
     

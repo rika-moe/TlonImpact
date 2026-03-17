@@ -42,6 +42,7 @@ uv run tlon tui       # 终端 2
 | 领域 | 设计文档 | 架构文档 |
 |------|----------|----------|
 | 概述 | [design/README.md](docs/design/README.md) | [architecture/README.md](docs/architecture/README.md) |
+| 组件架构 | - | [dag-components.md](docs/architecture/dag-components.md), [explicit-boundaries.md](docs/architecture/explicit-boundaries.md) |
 | 配置系统 | [design/config.md](docs/design/config.md) | [architecture/domains/base.md](docs/architecture/domains/base.md) |
 | Agent 系统 | [design/agents.md](docs/design/agents.md) | [architecture/domains/agents.md](docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](docs/design/memory.md) | [architecture/domains/subsystem.md](docs/architecture/domains/subsystem.md) |

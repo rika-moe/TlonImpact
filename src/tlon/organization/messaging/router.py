@@ -10,6 +10,14 @@ This separation allows:
 - Router to be stateless and scalable
 - Storage to be handled by dedicated MessageStore
 - Routing logic to be independent of storage
+
+Architecture:
+    MessageRouter is a Component that depends on:
+    - EventBus (for event subscription/publishing)
+    - MessageStore (for persistence)
+    - AgentInfoProvider (for routing decisions)
+    
+    It subscribes to MESSAGE_NEW events and publishes MESSAGE_ROUTED events.
 """
 
 from dataclasses import dataclass
@@ -17,6 +25,7 @@ from typing import TYPE_CHECKING, List, Optional, Set
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.component import Component
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.base.logger import get_logger
@@ -41,7 +50,7 @@ class RoutedMessage:
     routing_reason: str = ""
 
 
-class MessageRouter:
+class MessageRouter(Component):
     """Stateless message router for distributing messages to recipients.
     
     The router:
@@ -50,9 +59,18 @@ class MessageRouter:
     - Decides who should receive the message
     - Publishes MESSAGE_ROUTED events
     
+    Dependencies (constructor injected):
+        - event_bus: EventBus for event subscription/publishing
+        - message_store: MessageStore for persistence
+        - agent_info_provider: AgentInfoProvider for routing decisions
+    
     Example:
-        >>> router = MessageRouter(event_bus, message_store, agent_info_provider)
-        >>> await router.start()  # Begins listening for messages
+        >>> router = MessageRouter(
+        ...     event_bus=event_bus,
+        ...     message_store=message_store,
+        ...     agent_info_provider=config_manager,
+        ... )
+        >>> await router.initialize()  # Begins listening for messages
         >>> 
         >>> # Messages are automatically routed when published to EventBus
         >>> await event_bus.publish(Event(
@@ -75,6 +93,7 @@ class MessageRouter:
             message_store: Store for persisting messages
             agent_info_provider: Optional provider for agent configuration queries
         """
+        super().__init__(name="MessageRouter")
         self._event_bus = event_bus
         self._message_store = message_store
         self._agent_info = agent_info_provider
@@ -87,15 +106,16 @@ class MessageRouter:
         
         logger.info("MessageRouter initialized")
     
-    async def start(self) -> None:
+    async def initialize(self) -> None:
         """Start the router by subscribing to MESSAGE_NEW events."""
         self._subscription_id = self._event_bus.subscribe(
             EventType.MESSAGE_NEW,
             self._on_message_new
         )
+        self._initialized = True
         logger.info("MessageRouter started, listening for messages")
     
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         """Stop the router by unsubscribing from events."""
         if self._subscription_id:
             self._event_bus.unsubscribe(self._subscription_id)
