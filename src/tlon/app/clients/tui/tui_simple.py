@@ -156,17 +156,27 @@ class SimpleTUIClient:
         self.completer = MentionCompleter(self)
         self.prompt_session = PromptSession(completer=self.completer)
 
+    # Protocol version
+    PROTOCOL_VERSION = "1.0.0"
+    SUPPORTED_VERSIONS = ["1.0.0"]
+
     async def connect(self) -> bool:
-        """Connect to WebSocket server."""
+        """Connect to WebSocket server with protocol version negotiation."""
         try:
             self.session = aiohttp.ClientSession()
             self.ws = await self.session.ws_connect(self.ws_url)
 
-            # Send authentication message
+            # Send authentication message with protocol version
             auth_msg = {
                 "type": "auth",
                 "client_type": "tui",
-                "metadata": {"version": "0.2.0"}
+                "protocol_version": self.PROTOCOL_VERSION,
+                "supported_versions": self.SUPPORTED_VERSIONS,
+                "capabilities": ["trace", "filter", "history"],
+                "metadata": {
+                    "client_version": "0.2.0",
+                    "platform": "terminal"
+                }
             }
             await self.ws.send_json(auth_msg)
 
@@ -176,8 +186,16 @@ class SimpleTUIClient:
                 data = json.loads(msg.data)
                 if data.get("type") == "auth_success":
                     self.connected = True
+                    server_version = data.get("protocol_version", "unknown")
                     print(f"✅ Connected to {self.ws_url}")
+                    print(f"   Protocol version: {server_version}")
                     return True
+                elif data.get("type") == "auth_failed":
+                    error_code = data.get("error_code", "UNKNOWN")
+                    error_msg = data.get("message", "Unknown error")
+                    print(f"❌ Authentication failed: [{error_code}] {error_msg}")
+                    if data.get("supported_versions"):
+                        print(f"   Server supports: {', '.join(data['supported_versions'])}")
                 else:
                     print(f"❌ Authentication failed: {data.get('message', 'Unknown error')}")
             else:

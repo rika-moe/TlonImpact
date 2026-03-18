@@ -35,6 +35,7 @@ from tlon.subsystem.memory import MemoryManager, MemoryConfig
 from tlon.base.config import PromptTemplateManager, ConfigLoader
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.subsystem.tools.tasks import TaskManager
+from tlon.base.tracing import start_span, get_current_trace
 
 logger = get_logger(__name__)
 
@@ -97,7 +98,7 @@ class Agent:
         llm_config = self._merge_llm_config(config.llm, settings)
         self.llm_client = LLMClient(llm_config)
         self.docker_runtime = DockerRuntime(config.docker, config.id)
-        self.tool_executor = ToolExecutor()
+        self.tool_executor = ToolExecutor(event_bus)
 
         # Initialize memory manager
         data_dir = get_tlon_home() / "data"
@@ -605,22 +606,97 @@ class Agent:
     
     async def think(self, context: List[Dict[str, Any]]) -> LLMResponse:
         """Call LLM to think and generate response.
-        
+
         Args:
             context: Conversation context
-            
+
         Returns:
             LLM response
         """
         system_prompt = await self._build_system_prompt()
         tools = self.tool_executor.get_tool_definitions()
-        
+
+        # Get current trace context if available
+        current_trace = get_current_trace()
+
+        # Emit thinking start event
+        thinking_event = Event(
+            type=EventType.AGENT_THINKING_START,
+            payload={
+                "agent_id": self.id,
+                "agent_name": self.name,
+                "context_length": len(context),
+            },
+            source=self.id,
+        )
+        if current_trace:
+            thinking_event.trace_id = current_trace.trace_id
+            thinking_event.span_id = current_trace.span_id
+            if current_trace.parent_span_id:
+                thinking_event.parent_span_id = current_trace.parent_span_id
+        await self.event_bus.publish(thinking_event)
+
+        # Emit LLM request event
+        llm_request_event = Event(
+            type=EventType.AGENT_LLM_REQUEST,
+            payload={
+                "agent_id": self.id,
+                "model": self.llm_client.config.model_name if hasattr(self.llm_client, 'config') else "unknown",
+                "messages_count": len(context),
+                "tools_count": len(tools) if tools else 0,
+            },
+            source=self.id,
+        )
+        if current_trace:
+            llm_request_event.trace_id = current_trace.trace_id
+            llm_request_event.span_id = current_trace.span_id
+        await self.event_bus.publish(llm_request_event)
+
+        # Call LLM
+        import time
+        start_time = time.time()
         response = await self.llm_client.chat(
             system_prompt=system_prompt,
             messages=context,
             tools=tools if tools else None,
         )
-        
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Emit LLM response event
+        llm_response_event = Event(
+            type=EventType.AGENT_LLM_RESPONSE,
+            payload={
+                "agent_id": self.id,
+                "model": self.llm_client.config.model_name if hasattr(self.llm_client, 'config') else "unknown",
+                "duration_ms": duration_ms,
+                "finish_reason": response.finish_reason,
+                "has_tool_calls": bool(response.tool_calls),
+                "tool_call_count": len(response.tool_calls) if response.tool_calls else 0,
+            },
+            source=self.id,
+        )
+        if current_trace:
+            llm_response_event.trace_id = current_trace.trace_id
+            llm_response_event.span_id = current_trace.span_id
+        await self.event_bus.publish(llm_response_event)
+
+        # Emit thinking end event
+        thinking_end_event = Event(
+            type=EventType.AGENT_THINKING_END,
+            payload={
+                "agent_id": self.id,
+                "agent_name": self.name,
+                "duration_ms": duration_ms,
+            },
+            source=self.id,
+        )
+        if current_trace:
+            thinking_end_event.trace_id = current_trace.trace_id
+            thinking_end_event.span_id = current_trace.span_id
+            if current_trace.parent_span_id:
+                thinking_end_event.parent_span_id = current_trace.parent_span_id
+        await self.event_bus.publish(thinking_end_event)
+
         return response
     
     async def _build_context(self, current_message: Message) -> List[Dict[str, Any]]:

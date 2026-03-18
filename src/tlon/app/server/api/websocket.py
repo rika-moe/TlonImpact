@@ -23,7 +23,8 @@ All messages are JSON with a "type" field:
 
 import asyncio
 import json
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Dict, List, Optional
 
 from aiohttp import web, WSMsgType
 
@@ -117,57 +118,91 @@ class WebSocketHandler:
         
         return ws
     
+    # Protocol version constants
+    PROTOCOL_VERSION = "1.0.0"
+    SUPPORTED_VERSIONS = ["1.0.0"]
+    MIN_SUPPORTED_VERSION = "1.0.0"
+
     async def _authenticate(
         self,
         ws: web.WebSocketResponse
     ) -> Optional[tuple]:
-        """Authenticate a new WebSocket connection.
-        
-        Waits for an auth message from the client.
-        
+        """Authenticate a new WebSocket connection with protocol version negotiation.
+
+        Waits for an auth message from the client and negotiates protocol version.
+
         Args:
             ws: The WebSocket connection
-            
+
         Returns:
             Tuple of (session, session_id) or None if auth failed
         """
         try:
             # Wait for auth message with timeout
             msg = await asyncio.wait_for(ws.receive(), timeout=10.0)
-            
+
             if msg.type != WSMsgType.TEXT:
                 await self._send_error(ws, "Expected text message for authentication")
                 return None
-            
+
             data = json.loads(msg.data)
-            
+
             if data.get('type') != 'auth':
                 await self._send_error(ws, "Expected auth message")
                 return None
-            
+
             client_type = data.get('client_type', 'unknown')
             metadata = data.get('metadata', {})
-            
+
+            # Protocol version negotiation
+            client_protocol_version = data.get('protocol_version')
+            client_supported_versions = data.get('supported_versions', [])
+            capabilities = data.get('capabilities', [])
+
+            # Negotiate protocol version
+            negotiated_version, error = self._negotiate_protocol_version(
+                client_protocol_version,
+                client_supported_versions
+            )
+
+            if error:
+                await self._send_message(ws, {
+                    "type": "auth_failed",
+                    "error_code": "VERSION_MISMATCH",
+                    "message": error,
+                    "supported_versions": self.SUPPORTED_VERSIONS,
+                })
+                return None
+
             # Define event handler for this session
             async def event_handler(event: Event) -> None:
                 await self._send_event(ws, event)
-            
+
             # Connect client to server
             session = await self.client_gateway.connect_client(
                 client_type=client_type,
                 event_handler=event_handler,
-                metadata=metadata,
+                metadata={
+                    **metadata,
+                    "protocol_version": negotiated_version,
+                    "capabilities": capabilities,
+                },
             )
-            
-            # Send auth success
+
+            # Send auth success with negotiated version
             await self._send_message(ws, {
                 "type": "auth_success",
                 "session_id": session.id,
+                "protocol_version": negotiated_version,
+                "server_version": "0.2.0",
+                "server_time": datetime.now().isoformat(),
+                "capabilities": ["trace", "filter", "history"],
                 "timestamp": session.connected_at,
             })
-            
+
+            logger.info(f"Client authenticated: {session.id} ({client_type}) protocol={negotiated_version}")
             return session, session.id
-        
+
         except asyncio.TimeoutError:
             await self._send_error(ws, "Authentication timeout")
             return None
@@ -178,6 +213,57 @@ class WebSocketHandler:
             logger.error(f"Authentication error: {e}")
             await self._send_error(ws, f"Authentication failed: {str(e)}")
             return None
+
+    def _negotiate_protocol_version(
+        self,
+        client_preferred: Optional[str],
+        client_supported: List[str]
+    ) -> tuple:
+        """Negotiate protocol version between client and server.
+
+        Args:
+            client_preferred: Client's preferred protocol version
+            client_supported: List of versions client supports
+
+        Returns:
+            Tuple of (negotiated_version, error_message)
+            If successful, error_message is None
+            If failed, negotiated_version is None
+        """
+        # Backward compatibility: if no version specified, assume 1.0.0
+        if not client_preferred and not client_supported:
+            return ("1.0.0", None)
+
+        # If client only provides preferred version
+        if client_preferred and not client_supported:
+            client_supported = [client_preferred]
+
+        # If client only provides supported versions (no preferred)
+        if client_supported and not client_preferred:
+            client_preferred = client_supported[0]
+
+        # Check if client's preferred version is supported
+        if client_preferred in self.SUPPORTED_VERSIONS:
+            return (client_preferred, None)
+
+        # Find highest common version
+        common_versions = set(client_supported) & set(self.SUPPORTED_VERSIONS)
+        if common_versions:
+            # Return highest common version (simple string comparison works for semver)
+            highest = max(common_versions)
+            logger.debug(f"Negotiated version {highest} from supported versions")
+            return (highest, None)
+
+        # Check if client version is too old
+        if client_preferred < self.MIN_SUPPORTED_VERSION:
+            return (None, f"Protocol version {client_preferred} is no longer supported. Please upgrade your client.")
+
+        # Check if client version is newer than server
+        if client_preferred > self.PROTOCOL_VERSION:
+            return (self.PROTOCOL_VERSION, None)
+
+        # Version mismatch
+        return (None, f"Protocol version {client_preferred} not supported")
     
     async def _handle_client_message(self, session_id: str, data: str) -> None:
         """Handle a message from a client.

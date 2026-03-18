@@ -232,8 +232,9 @@ async def run_intrude(args) -> int:
         print("\n正在突破现实边界...")
         print(f"连接至 ws://{args.host}:{args.port} ... ", end="", flush=True)
 
-        from tlon.app.clients.tui.tui_simple import run_tui_simple
-        result = await run_tui_simple(
+        # Use new SDK-based TUI client
+        from tlon.app.clients.tui import run_tui_client
+        result = await run_tui_client(
             host=args.host, port=args.port, rest_port=getattr(args, "rest_port", 8080)
         )
         return result

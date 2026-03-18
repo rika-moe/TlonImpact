@@ -31,6 +31,7 @@ from tlon.organization.messaging.store import FileMessageStore
 from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.positions import PositionRegistry
 from tlon.agents.agent_registry import AgentRegistry
+from tlon.base.tracing import FileTraceStore
 from tlon.base.settings import settings, get_tlon_home
 from tlon.base.logger import get_logger, configure_logging
 
@@ -126,6 +127,13 @@ class ServerApp:
         await message_store.initialize()
         self._components["message_store"] = message_store
         logger.info("MessageStore initialized")
+
+        # 2.2b TraceStore - storage for traces (stateful)
+        trace_store = FileTraceStore(
+            data_dir=self.data_dir / "traces"
+        )
+        self._components["trace_store"] = trace_store
+        logger.info("TraceStore initialized")
         
         # 2.3 MessageRouter - stateless message routing
         # Depends on EventBus, MessageStore, and ConfigManager (as AgentInfoProvider)
@@ -204,6 +212,7 @@ class ServerApp:
             self.client_gateway,
             agent_registry=agent_registry,  # Direct access for agent operations
             config_manager=config_manager,  # For /admin endpoints
+            trace_store=trace_store,  # For /traces endpoints
             host=self.host,
             port=self.rest_port,
         )

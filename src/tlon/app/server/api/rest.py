@@ -17,6 +17,7 @@ from aiohttp import web
 
 from tlon.base.logger import get_logger
 from tlon.base.settings import get_tlon_home
+from tlon.base.tracing import FileTraceStore
 
 logger = get_logger(__name__)
 
@@ -59,17 +60,19 @@ class RESTAPIHandler:
         >>> await site.start()
     """
     
-    def __init__(self, client_gateway, agent_registry, config_manager=None):
+    def __init__(self, client_gateway, agent_registry, config_manager=None, trace_store=None):
         """Initialize the REST API handler.
-        
+
         Args:
             client_gateway: The ClientGateway instance
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
+            trace_store: Optional TraceStore for trace operations
         """
         self.client_gateway = client_gateway
         self.agent_registry = agent_registry
         self.config_manager = config_manager
+        self.trace_store = trace_store
     
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application.
@@ -93,7 +96,19 @@ class RESTAPIHandler:
         if self.config_manager:
             app.router.add_get('/admin/config/positions', self.handle_list_positions)
             app.router.add_get('/admin/config/agents', self.handle_list_agent_configs)
-        
+
+        # Trace routes (only if trace_store is available)
+        if self.trace_store:
+            app.router.add_get('/traces', self.handle_list_traces)
+            app.router.add_get('/traces/{trace_id}', self.handle_get_trace)
+
+        # Agent logs route
+        app.router.add_get('/agents/{agent_id}/logs', self.handle_get_agent_logs)
+
+        # Test endpoints (only in test mode)
+        app.router.add_get('/test/ping', self.handle_test_ping)
+        app.router.add_post('/test/echo', self.handle_test_echo)
+
         # Add WebUI static files
         webui_path = get_webui_path()
         if webui_path:
@@ -377,40 +392,161 @@ Or use the build script:
             "count": len(agents)
         })
 
+    async def handle_list_traces(self, request: web.Request) -> web.Response:
+        """GET /traces - List traces with optional filtering.
+
+        Query Parameters:
+            limit: Maximum number of traces (default: 100, max: 1000)
+            source: Filter by source component
+
+        Returns:
+            List of trace records
+        """
+        if not self.trace_store:
+            return self._json_response({
+                "status": "error",
+                "message": "Trace store not available"
+            }, status=503)
+
+        try:
+            limit = int(request.query.get('limit', 100))
+            limit = min(limit, 1000)
+        except ValueError:
+            limit = 100
+
+        source = request.query.get('source')
+
+        traces = await self.trace_store.list_traces(limit=limit, source=source)
+
+        return self._json_response({
+            "traces": [trace.to_dict() for trace in traces],
+            "count": len(traces),
+        })
+
+    async def handle_get_trace(self, request: web.Request) -> web.Response:
+        """GET /traces/{trace_id} - Get a specific trace.
+
+        Returns:
+            Complete trace record with all spans
+        """
+        if not self.trace_store:
+            return self._json_response({
+                "status": "error",
+                "message": "Trace store not available"
+            }, status=503)
+
+        trace_id = request.match_info['trace_id']
+        trace = await self.trace_store.get_trace(trace_id)
+
+        if not trace:
+            return self._json_response(
+                {"error": f"Trace '{trace_id}' not found"},
+                status=404
+            )
+
+        return self._json_response({
+            "trace": trace.to_dict(),
+            "span_tree": trace.get_span_tree(),
+        })
+
+    async def handle_get_agent_logs(self, request: web.Request) -> web.Response:
+        """GET /agents/{agent_id}/logs - Get agent logs.
+
+        Query Parameters:
+            lines: Number of lines to return (default: 100)
+            level: Minimum log level (debug, info, warning, error)
+
+        Returns:
+            Agent log entries
+        """
+        agent_id = request.match_info['agent_id']
+
+        # Check if agent exists
+        config = self.agent_registry.get_config(agent_id)
+        if config is None:
+            return self._json_response(
+                {"error": f"Agent '{agent_id}' not found"},
+                status=404
+            )
+
+        try:
+            lines = int(request.query.get('lines', 100))
+            lines = min(lines, 10000)  # Cap at 10k lines
+        except ValueError:
+            lines = 100
+
+        level = request.query.get('level', 'info').lower()
+
+        # TODO: Implement actual log retrieval from log files
+        # For now, return placeholder
+        return self._json_response({
+            "agent_id": agent_id,
+            "agent_name": config.name,
+            "logs": [],
+            "message": "Agent log retrieval not yet implemented",
+            "lines_requested": lines,
+            "level_filter": level,
+        })
+
+    async def handle_test_ping(self, request: web.Request) -> web.Response:
+        """GET /test/ping - Simple ping endpoint for testing."""
+        return self._json_response({
+            "status": "ok",
+            "pong": True,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    async def handle_test_echo(self, request: web.Request) -> web.Response:
+        """POST /test/echo - Echo back the request body."""
+        try:
+            body = await request.json()
+            return self._json_response({
+                "status": "ok",
+                "echo": body,
+                "timestamp": datetime.now().isoformat(),
+            })
+        except json.JSONDecodeError:
+            return self._json_response(
+                {"error": "Invalid JSON"},
+                status=400
+            )
+
 
 class RESTServer:
     """REST API server for Tlon.
-    
+
     Wraps the aiohttp server with lifecycle management.
-    
+
     Example:
         >>> rest = RESTServer(server, config_manager, port=8080)
         >>> await rest.start()
         >>> # Server is running
         >>> await rest.stop()
     """
-    
+
     def __init__(
         self,
         client_gateway,
         agent_registry,
         config_manager=None,
+        trace_store=None,
         host: str = "127.0.0.1",
         port: int = 8080,
     ):
         """Initialize the REST server.
-        
+
         Args:
             client_gateway: The ClientGateway instance
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
+            trace_store: Optional TraceStore for trace operations
             host: Host to bind to
             port: Port to listen on
         """
         self.client_gateway = client_gateway
         self.host = host
         self.port = port
-        self._handler = RESTAPIHandler(client_gateway, agent_registry, config_manager)
+        self._handler = RESTAPIHandler(client_gateway, agent_registry, config_manager, trace_store)
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None

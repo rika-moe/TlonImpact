@@ -26,9 +26,11 @@ from typing import TYPE_CHECKING, List, Optional, Set
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.component import Component
+from tlon.base.tracing import start_trace, start_span
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.base.logger import get_logger
+import uuid
 
 if TYPE_CHECKING:
     from tlon.base.config.agent_info import AgentInfoProvider
@@ -124,33 +126,44 @@ class MessageRouter(Component):
     
     async def _on_message_new(self, event: Event) -> None:
         """Handle new message events.
-        
+
         This is the core routing logic:
         1. Store the message
         2. Decide targets
         3. Publish routed message
-        
+
         Args:
             event: The MESSAGE_NEW event
         """
         message: Message = event.payload
-        
-        try:
-            # Step 1: Persist message (non-blocking, fire-and-forget is ok)
-            await self._store_message(message)
-            
-            # Step 2: Decide routing targets
-            targets = self._decide_targets(message)
-            
-            # Step 3: Publish routed message
-            if targets:
-                await self._publish_routed(message, targets)
-                logger.debug(f"Routed message {message.id} to {targets}")
-            else:
-                logger.debug(f"No targets for message {message.id}")
-                
-        except Exception as e:
-            logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
+
+        # Use existing trace context if available, or create new one
+        trace_id = event.trace_id or str(uuid.uuid4())
+        parent_span_id = event.span_id
+
+        with start_span(
+            name="message_routing",
+            source="message_router",
+            parent_span_id=parent_span_id,
+            event_type=EventType.MESSAGE_ROUTED.value,
+            payload={"message_id": message.id, "sender": message.sender_id}
+        ) as ctx:
+            try:
+                # Step 1: Persist message (non-blocking, fire-and-forget is ok)
+                await self._store_message(message)
+
+                # Step 2: Decide routing targets
+                targets = self._decide_targets(message)
+
+                # Step 3: Publish routed message with trace context
+                if targets:
+                    await self._publish_routed(message, targets, ctx)
+                    logger.debug(f"Routed message {message.id} to {targets}")
+                else:
+                    logger.debug(f"No targets for message {message.id}")
+
+            except Exception as e:
+                logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
     
     async def _store_message(self, message: Message) -> None:
         """Store message to persistent store.
@@ -326,24 +339,32 @@ class MessageRouter(Component):
         
         return resolved
     
-    async def _publish_routed(self, message: Message, targets: List[str]) -> None:
+    async def _publish_routed(self, message: Message, targets: List[str], ctx=None) -> None:
         """Publish a routed message event.
-        
+
         Args:
             message: The original message
             targets: List of target recipient IDs
+            ctx: Optional trace context
         """
         routed = RoutedMessage(
             original=message,
             target_ids=targets,
             routing_reason=self._get_routing_reason(message, targets)
         )
-        
-        await self._event_bus.publish(Event(
-            type=EventType.MESSAGE_ROUTED,
-            payload=routed,
-            source="message_router"
-        ))
+
+        # Build event with trace context
+        event_kwargs = {
+            "type": EventType.MESSAGE_ROUTED,
+            "payload": routed,
+            "source": "message_router",
+        }
+        if ctx:
+            event_kwargs["trace_id"] = ctx.trace_id
+            event_kwargs["span_id"] = ctx.span_id
+            event_kwargs["parent_span_id"] = ctx.parent_span_id
+
+        await self._event_bus.publish(Event(**event_kwargs))
     
     def _get_routing_reason(self, message: Message, targets: List[str]) -> str:
         """Generate a human-readable routing reason for logging.
