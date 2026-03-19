@@ -68,6 +68,8 @@ uv run tlon tui       # 终端 2
 ## 开发规范
 - 合理划分模块，高内聚，低耦合
 - 排查bug要深挖根因，纵览全局，防止后续出现相同bug
+- **必须使用 type hint 类型注解**
+- 必须使用lint工具: `uv run ruff`
 
 ---
 

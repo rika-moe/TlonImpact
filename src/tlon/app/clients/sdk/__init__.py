@@ -18,14 +18,14 @@ Architecture:
     - WebAdapter: Adapter for Web clients (filtered events)
 """
 
-from .base_client import BaseClient, ConnectionState
 from .adapter import ClientAdapter, TerminalAdapter, WebAdapter
+from .base_client import BaseClient, ConnectionState
 from .client import TlonClient
 from .exceptions import (
-    TlonClientError,
-    ConnectionError,
     AuthenticationError,
+    ConnectionError,
     ProtocolError,
+    TlonClientError,
 )
 
 __all__ = [

@@ -15,12 +15,12 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import json
+import sys
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any
-
-import sys
+from typing import Any
 
 import aiohttp
 from prompt_toolkit import PromptSession
@@ -90,15 +90,13 @@ class MentionCompleter(Completer):
 
     def get_completions(self, document, complete_event):
         """Provide completions for @mentions."""
-        text = document.text
-        cursor_pos = document.cursor_position
 
         # Check if we're typing an @mention
         # Find the start of the current word
         word_before_cursor = document.get_word_before_cursor()
 
         # Check if current word starts with @ or if the text before cursor contains @
-        if word_before_cursor.startswith('@'):
+        if word_before_cursor.startswith("@"):
             prefix = word_before_cursor[1:].lower()
 
             # Get agent names and IDs for completion
@@ -137,20 +135,20 @@ class SimpleTUIClient:
         self.rest_url = f"http://{host}:{rest_port}"
 
         # Connection
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self.session: aiohttp.ClientSession | None = None
+        self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.connected = False
 
         # Data
-        self.agents: Dict[str, AgentInfo] = {}
-        self.messages: List[dict] = []
-        self.events: List[dict] = []
+        self.agents: dict[str, AgentInfo] = {}
+        self.messages: list[dict] = []
+        self.events: list[dict] = []
 
         # Mode state
         self.current_mode = "chat"  # chat | event | agent
         self.paused = False
-        self.event_filters: Optional[str] = None
-        self._pending_events: List[dict] = []
+        self.event_filters: str | None = None
+        self._pending_events: list[dict] = []
 
         # prompt-toolkit with mention completer
         self.completer = MentionCompleter(self)
@@ -173,10 +171,7 @@ class SimpleTUIClient:
                 "protocol_version": self.PROTOCOL_VERSION,
                 "supported_versions": self.SUPPORTED_VERSIONS,
                 "capabilities": ["trace", "filter", "history"],
-                "metadata": {
-                    "client_version": "0.2.0",
-                    "platform": "terminal"
-                }
+                "metadata": {"client_version": "0.2.0", "platform": "terminal"},
             }
             await self.ws.send_json(auth_msg)
 
@@ -205,8 +200,8 @@ class SimpleTUIClient:
             self.ws = None
             return False
 
-        except asyncio.TimeoutError:
-            print(f"❌ Connection timeout")
+        except TimeoutError:
+            print("❌ Connection timeout")
             return False
         except Exception as e:
             print(f"❌ Failed to connect: {e}")
@@ -223,28 +218,32 @@ class SimpleTUIClient:
     async def load_agents(self):
         """Load agents from REST API."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.rest_url}/agents") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self.agents = {a["id"]: AgentInfo(a) for a in data.get("agents", [])}
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(f"{self.rest_url}/agents") as resp,
+            ):
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.agents = {a["id"]: AgentInfo(a) for a in data.get("agents", [])}
         except Exception as e:
             logger.error(f"Failed to load agents: {e}")
 
     async def load_history(self):
         """Load message history."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.rest_url}/history?limit=50") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self.messages = data.get("messages", [])
-                        if self.messages and self.current_mode == "chat":
-                            print(f"📜 加载了 {len(self.messages)} 条历史消息")
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(f"{self.rest_url}/history?limit=50") as resp,
+            ):
+                if resp.status == 200:
+                    data = await resp.json()
+                    self.messages = data.get("messages", [])
+                    if self.messages and self.current_mode == "chat":
+                        print(f"📜 加载了 {len(self.messages)} 条历史消息")
         except Exception as e:
             logger.warning(f"Failed to load history: {e}")
 
-    async def send_message(self, content: str, mentions: List[str] = None) -> bool:
+    async def send_message(self, content: str, mentions: list[str] = None) -> bool:
         """Send a message."""
         if not self.connected or not self.ws:
             return False
@@ -253,7 +252,7 @@ class SimpleTUIClient:
             "type": "message",
             "content": content,
             "mentions": mentions or [],
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
         try:
@@ -263,7 +262,7 @@ class SimpleTUIClient:
             print(f"❌ 发送失败: {e}")
             return False
 
-    async def get_agent_logs(self, agent_id: str) -> Optional[str]:
+    async def get_agent_logs(self, agent_id: str) -> str | None:
         """Get agent logs (placeholder - not yet implemented in server)."""
         # TODO: Implement when server supports /agents/{id}/logs
         print(f"📋 Agent '{agent_id}' 的日志功能即将推出")
@@ -288,7 +287,9 @@ class SimpleTUIClient:
                 ts = time.time()
         return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
-    def _print_chat_message(self, sender_type: str, sender_name: str, content: str, timestamp: float = None):
+    def _print_chat_message(
+        self, sender_type: str, sender_name: str, content: str, timestamp: float = None
+    ):
         """Print a chat message."""
         if not content:
             return
@@ -420,16 +421,17 @@ class SimpleTUIClient:
                     if not content or sender_type == "human":
                         return
 
-                    self._print_chat_message(sender_type, sender_name, content, payload.get("timestamp"))
+                    self._print_chat_message(
+                        sender_type, sender_name, content, payload.get("timestamp")
+                    )
 
             elif self.current_mode == "event":
                 # Event mode: show all events (with filter)
                 self._print_event(data)
 
-            elif self.current_mode == "agent":
+            elif self.current_mode == "agent" and "agent" in event_type.lower():
                 # Agent mode: only show agent-related events
-                if "agent" in event_type.lower():
-                    self._print_event(data)
+                self._print_event(data)
 
         elif msg_type == "message":
             # Direct message format
@@ -441,7 +443,9 @@ class SimpleTUIClient:
                 return
 
             if self.current_mode == "chat":
-                self._print_chat_message(sender_type, sender_name, content, payload.get("timestamp"))
+                self._print_chat_message(
+                    sender_type, sender_name, content, payload.get("timestamp")
+                )
 
     def _print_agent_table(self):
         """Print agent status table."""
@@ -456,12 +460,7 @@ class SimpleTUIClient:
         table.add_column("职位")
 
         for agent in self.agents.values():
-            table.add_row(
-                agent.status_icon,
-                agent.id,
-                f"{agent.emoji} {agent.name}",
-                agent.role
-            )
+            table.add_row(agent.status_icon, agent.id, f"{agent.emoji} {agent.name}", agent.role)
 
         rprint(table)
 
@@ -489,16 +488,10 @@ class SimpleTUIClient:
                     "2.1%",  # TODO: get real metrics
                     "256M/512M",
                     "120M",
-                    "🟢"
+                    "🟢",
                 )
             else:
-                table.add_row(
-                    f"{agent.emoji} {agent.name}",
-                    "-",
-                    "-",
-                    "-",
-                    "⚪"
-                )
+                table.add_row(f"{agent.emoji} {agent.name}", "-", "-", "-", "⚪")
 
         rprint(table)
 
@@ -540,24 +533,24 @@ Agent 模式命令：
 """
         print(help_text)
 
-    async def _handle_command(self, cmd: str, args: List[str]):
+    async def _handle_command(self, cmd: str, args: list[str]):
         """Handle commands."""
         cmd_lower = cmd.lower()
 
         # Global commands
-        if cmd_lower in ['/help', '/h']:
+        if cmd_lower in ["/help", "/h"]:
             self._show_help()
 
-        elif cmd_lower in ['/quit', '/q', '/exit']:
+        elif cmd_lower in ["/quit", "/q", "/exit"]:
             return False  # Signal to exit
 
-        elif cmd_lower in ['/clear', '/cls']:
+        elif cmd_lower in ["/clear", "/cls"]:
             console.clear()
 
-        elif cmd_lower in ['/mode', '/m']:
+        elif cmd_lower in ["/mode", "/m"]:
             if args:
                 mode = args[0].lower()
-                if mode in ['chat', 'event', 'agent']:
+                if mode in ["chat", "event", "agent"]:
                     self.current_mode = mode
                     print(f"⚙️ 切换到 {mode} 模式")
                     if mode == "agent":
@@ -567,7 +560,7 @@ Agent 模式命令：
             else:
                 print(f"当前模式: {self.current_mode}")
 
-        elif cmd_lower in ['/connect', '/c']:
+        elif cmd_lower in ["/connect", "/c"]:
             print("正在重新连接...")
             await self.disconnect()
             if await self.connect():
@@ -576,11 +569,11 @@ Agent 模式命令：
             else:
                 print("❌ 连接失败")
 
-        elif cmd_lower in ['/status', '/s']:
+        elif cmd_lower in ["/status", "/s"]:
             status = "已连接" if self.connected else "未连接"
             print(f"连接状态: {status}\n服务器: {self.ws_url}")
 
-        elif cmd_lower in ['/agents', '/a']:
+        elif cmd_lower in ["/agents", "/a"]:
             if self.agents:
                 self._print_agent_table()
             else:
@@ -588,7 +581,7 @@ Agent 模式命令：
 
         # Chat mode commands
         elif self.current_mode == "chat":
-            if cmd_lower == '/history':
+            if cmd_lower == "/history":
                 n = int(args[0]) if args else 50
                 print(f"--- 最近 {min(len(self.messages), n)} 条历史消息 ---")
                 for msg in self.messages[-n:]:
@@ -598,7 +591,7 @@ Agent 模式命令：
                     self._print_chat_message(sender_type, sender_name, content, ts)
                 print("--- 历史消息结束 ---")
 
-            elif cmd_lower == '/who':
+            elif cmd_lower == "/who":
                 if self.agents:
                     online = [a.name for a in self.agents.values() if a.state == "active"]
                     print(f"在线: {', '.join(online) if online else '无'}")
@@ -610,9 +603,9 @@ Agent 模式命令：
 
         # Event mode commands
         elif self.current_mode == "event":
-            if cmd_lower == '/filter':
+            if cmd_lower == "/filter":
                 if args:
-                    if args[0] == 'clear':
+                    if args[0] == "clear":
                         self.event_filters = None
                         print("过滤器已清除")
                     else:
@@ -621,11 +614,11 @@ Agent 模式命令：
                 else:
                     print(f"当前过滤器: {self.event_filters or '无'}")
 
-            elif cmd_lower == '/pause':
+            elif cmd_lower == "/pause":
                 self.paused = True
                 print("⏸️ Event 监控已暂停（新事件将被缓存）")
 
-            elif cmd_lower == '/resume':
+            elif cmd_lower == "/resume":
                 self.paused = False
                 if self._pending_events:
                     print(f"▶️ 恢复监控，显示 {len(self._pending_events)} 条缓存事件...")
@@ -635,7 +628,7 @@ Agent 模式命令：
                 else:
                     print("▶️ 恢复监控")
 
-            elif cmd_lower == '/tail':
+            elif cmd_lower == "/tail":
                 n = int(args[0]) if args else 100
                 print(f"--- 最近 {min(len(self.events), n)} 条事件 ---")
                 for evt in self.events[-n:]:
@@ -647,17 +640,17 @@ Agent 模式命令：
 
         # Agent mode commands
         elif self.current_mode == "agent":
-            if cmd_lower in ['/list', '/ls']:
+            if cmd_lower in ["/list", "/ls"]:
                 self._print_agent_table()
 
-            elif cmd_lower == '/logs':
+            elif cmd_lower == "/logs":
                 if args:
                     agent_id = args[0]
                     await self.get_agent_logs(agent_id)
                 else:
                     print("❌ 请指定 Agent ID")
 
-            elif cmd_lower == '/top':
+            elif cmd_lower == "/top":
                 self._print_top_table()
 
             else:
@@ -679,7 +672,7 @@ Agent 模式命令：
                     continue
 
                 # Handle commands
-                if user_input.startswith('/'):
+                if user_input.startswith("/"):
                     parts = user_input.split()
                     cmd = parts[0]
                     args = parts[1:]
@@ -725,7 +718,9 @@ Agent 模式命令：
             # Connect
             if not await self.connect():
                 print("❌ 无法连接到服务器，请先启动 server")
-                print(f"提示: uv run tlon server --rest-port {self.rest_port} --ws-port {self.ws_port}")
+                print(
+                    f"提示: uv run tlon server --rest-port {self.rest_port} --ws-port {self.ws_port}"
+                )
                 return 1
 
             # Load data
@@ -749,14 +744,10 @@ Agent 模式命令：
                 print("👋 Goodbye!")
                 receive_task.cancel()
                 heartbeat_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await receive_task
-                except asyncio.CancelledError:
-                    pass
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
                 await self.disconnect()
 
         return 0

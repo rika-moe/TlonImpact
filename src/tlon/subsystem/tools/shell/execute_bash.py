@@ -10,19 +10,19 @@ if TYPE_CHECKING:
 
 class ExecuteBashTool(Tool):
     """Tool to execute bash commands in the agent's Docker container.
-    
+
     This tool allows agents to run arbitrary shell commands in their
     isolated container environment.
-    
+
     Example:
         >>> tool = ExecuteBashTool(docker_runtime)
         >>> result = await tool.execute(command="ls -la", timeout=30)
         >>> print(result.data["stdout"])
     """
-    
+
     def __init__(self, docker_runtime: "DockerRuntime"):
         """Initialize the tool.
-        
+
         Args:
             docker_runtime: Docker runtime for command execution
         """
@@ -34,7 +34,7 @@ class ExecuteBashTool(Tool):
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The bash command to execute. Can include pipes, redirects, and multiple commands separated by semicolons."
+                        "description": "The bash command to execute. Can include pipes, redirects, and multiple commands separated by semicolons.",
                     },
                     "timeout": {
                         "type": "integer",
@@ -42,26 +42,26 @@ class ExecuteBashTool(Tool):
                         "default": 60,
                         "minimum": 1,
                         "maximum": 300,
-                    }
+                    },
                 },
-                "required": ["command"]
-            }
+                "required": ["command"],
+            },
         )
         self.docker_runtime = docker_runtime
-    
+
     async def execute(self, command: str, timeout: int = 60) -> ToolResult:
         """Execute a bash command.
-        
+
         Args:
             command: The bash command to execute
             timeout: Maximum execution time in seconds
-            
+
         Returns:
             ToolResult with stdout, stderr, and exit code
         """
         try:
             result = await self.docker_runtime.execute(command, timeout=timeout)
-            
+
             return ToolResult(
                 success=result.exit_code == 0,
                 data={
@@ -69,12 +69,8 @@ class ExecuteBashTool(Tool):
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                 },
-                error=result.stderr if result.exit_code != 0 else ""
+                error=result.stderr if result.exit_code != 0 else "",
             )
-            
+
         except Exception as e:
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"Failed to execute command: {str(e)}"
-            )
+            return ToolResult(success=False, data={}, error=f"Failed to execute command: {str(e)}")

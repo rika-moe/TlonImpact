@@ -8,11 +8,10 @@ with additional support for default templates.
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 from tlon.base.config.loader import ConfigLoader
-from tlon.base.config.saver import ConfigSaver
 from tlon.base.config.models import PositionConfig
+from tlon.base.config.saver import ConfigSaver
 from tlon.base.config.validator import ConfigValidator
 from tlon.base.logger import get_logger
 
@@ -20,7 +19,7 @@ logger = get_logger(__name__)
 
 
 # Built-in default position templates (fallback when no YAML files exist)
-DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
+DEFAULT_POSITIONS: dict[str, PositionConfig] = {
     "developer": PositionConfig(
         id="developer",
         type="developer",
@@ -112,19 +111,19 @@ DEFAULT_POSITIONS: Dict[str, PositionConfig] = {
 
 class PositionStore:
     """Store for managing Position configurations.
-    
+
     A thin wrapper around ConfigLoader/ConfigSaver that provides
     CRUD operations with default template support.
-    
+
     Attributes:
         positions_dir: Directory containing position YAML files
         _loader: ConfigLoader instance for loading
         _saver: ConfigSaver instance for saving
     """
-    
+
     def __init__(self, positions_dir: str = "config/positions"):
         """Initialize the position store.
-        
+
         Args:
             positions_dir: Directory containing position YAML files
         """
@@ -132,37 +131,37 @@ class PositionStore:
         self._loader = ConfigLoader(positions_dir=positions_dir)
         self._saver = ConfigSaver(positions_dir=positions_dir)
         self._ensure_directory()
-    
+
     def _ensure_directory(self) -> None:
         """Ensure the positions directory exists."""
         self.positions_dir.mkdir(parents=True, exist_ok=True)
-    
-    def load_all_positions(self, force_reload: bool = False) -> Dict[str, PositionConfig]:
+
+    def load_all_positions(self, force_reload: bool = False) -> dict[str, PositionConfig]:
         """Load all positions from YAML files.
-        
+
         Falls back to default templates if no YAML files exist.
-        
+
         Args:
             force_reload: Force reload from disk even if cached
-            
+
         Returns:
             Dictionary mapping position id to PositionConfig object
         """
         positions = self._loader.load_all_positions(force_reload=force_reload)
-        
+
         # If no positions found, use defaults
         if not positions:
             logger.info("No position YAML files found, using default templates")
             positions = DEFAULT_POSITIONS.copy()
-        
+
         return positions
-    
-    def get_position(self, position_id: str) -> Optional[PositionConfig]:
+
+    def get_position(self, position_id: str) -> PositionConfig | None:
         """Get a position by id.
-        
+
         Args:
             position_id: Position identifier
-            
+
         Returns:
             PositionConfig object or None if not found
         """
@@ -170,34 +169,30 @@ class PositionStore:
         position = self._loader.load_position(position_id)
         if position:
             return position
-        
+
         # Fall back to default templates
         return DEFAULT_POSITIONS.get(position_id)
-    
-    def save_position(self, position: PositionConfig) -> Tuple[bool, str]:
+
+    def save_position(self, position: PositionConfig) -> tuple[bool, str]:
         """Save a position to YAML file.
-        
+
         Uses ConfigSaver for the actual save operation.
-        
+
         Args:
             position: PositionConfig to save
-            
+
         Returns:
             Tuple of (success, message)
         """
         return self._saver.save_position(position)
-    
-    def delete_position(
-        self, 
-        position_type: str, 
-        agent_store=None
-    ) -> Tuple[bool, str]:
+
+    def delete_position(self, position_type: str, agent_store=None) -> tuple[bool, str]:
         """Delete a position.
-        
+
         Args:
             position_type: Position type to delete
             agent_store: Optional AgentStore to check references
-            
+
         Returns:
             Tuple of (success, message)
         """
@@ -205,83 +200,84 @@ class PositionStore:
         position = self.get_position(position_type)
         if not position:
             return False, f"Position '{position_type}' not found"
-        
+
         # Check if any agents reference this position
         if agent_store:
             count = self.get_position_usage_count(position_type, agent_store)
             if count > 0:
                 return False, f"Cannot delete: {count} agent(s) are using this position"
-        
+
         # Cannot delete default positions (they don't have files)
-        if position_type in DEFAULT_POSITIONS and not (self.positions_dir / f"{position_type}.yaml").exists():
+        if (
+            position_type in DEFAULT_POSITIONS
+            and not (self.positions_dir / f"{position_type}.yaml").exists()
+        ):
             return False, f"Cannot delete built-in position '{position_type}'"
-        
+
         return self._saver.delete_position(position_type)
-    
+
     def get_position_usage_count(self, position_type: str, agent_store) -> int:
         """Get number of agents using this position.
-        
+
         Args:
             position_type: Position type to check
             agent_store: AgentStore instance
-            
+
         Returns:
             Number of agents referencing this position
         """
         agents = agent_store.load_all_agents()
         count = sum(1 for agent in agents.values() if agent.position_id == position_type)
         return count
-    
+
     def position_exists(self, position_type: str) -> bool:
         """Check if a position exists.
-        
+
         Args:
             position_type: Position type to check
-            
+
         Returns:
             True if position exists (in files or defaults)
         """
         return self.get_position(position_type) is not None
-    
-    def get_default_positions(self) -> Dict[str, PositionConfig]:
+
+    def get_default_positions(self) -> dict[str, PositionConfig]:
         """Get built-in default position templates.
-        
+
         Returns:
             Dictionary of default position templates
         """
         return DEFAULT_POSITIONS.copy()
-    
+
     def create_from_template(
-        self, 
-        template_key: str, 
-        customizations: Optional[Dict] = None
-    ) -> Optional[PositionConfig]:
+        self, template_key: str, customizations: dict | None = None
+    ) -> PositionConfig | None:
         """Create a position from a template.
-        
+
         Args:
             template_key: Key of the template to use
             customizations: Optional dict of fields to override
-            
+
         Returns:
             New PositionConfig object or None if template not found
         """
         template = DEFAULT_POSITIONS.get(template_key)
         if not template:
             return None
-        
+
         # Create a copy with customizations
         data = template.to_dict()
         if customizations:
             data.update(customizations)
-        
+
         return PositionConfig.from_dict(data)
-    
-    def validate_position_data(self, data: Dict) -> Tuple[bool, List[str]]:
+
+    def validate_position_data(self, data: dict) -> tuple[bool, list[str]]:
         """Validate position data.
-        
+
         Args:
             data: Position data dictionary
-            
+
         Returns:
             Tuple of (is_valid, list_of_errors)
         """

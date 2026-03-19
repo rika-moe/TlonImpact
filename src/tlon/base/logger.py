@@ -9,7 +9,7 @@ import structlog
 
 def configure_logging(log_level: str = "INFO", debug: bool = False) -> None:
     """Configure structured logging for the application.
-    
+
     Args:
         log_level: The log level (DEBUG, INFO, WARNING, ERROR)
         debug: If True, use more verbose pretty printing
@@ -20,7 +20,7 @@ def configure_logging(log_level: str = "INFO", debug: bool = False) -> None:
         stream=sys.stdout,
         level=getattr(logging, log_level.upper()),
     )
-    
+
     # Configure structlog
     shared_processors: list[Any] = [
         # Add log level to the event
@@ -39,18 +39,14 @@ def configure_logging(log_level: str = "INFO", debug: bool = False) -> None:
         # Decode unicode
         structlog.processors.UnicodeDecoder(),
     ]
-    
+
     if debug:
         # Pretty print in debug mode
-        processors = shared_processors + [
-            structlog.dev.ConsoleRenderer(colors=True)
-        ]
+        processors = shared_processors + [structlog.dev.ConsoleRenderer(colors=True)]
     else:
         # JSON format for production
-        processors = shared_processors + [
-            structlog.processors.JSONRenderer(ensure_ascii=False)
-        ]
-    
+        processors = shared_processors + [structlog.processors.JSONRenderer(ensure_ascii=False)]
+
     structlog.configure(
         processors=processors,
         context_class=dict,
@@ -62,10 +58,10 @@ def configure_logging(log_level: str = "INFO", debug: bool = False) -> None:
 
 def get_logger(name: str = None) -> structlog.stdlib.BoundLogger:
     """Get a structured logger instance.
-    
+
     Args:
         name: The logger name (typically __name__)
-        
+
     Returns:
         A configured structlog logger
     """

@@ -8,18 +8,18 @@ logger = get_logger(__name__)
 
 class SearchMemoriesTool(Tool):
     """Tool to search agent's memory.
-    
+
     This tool allows the agent to search for previously stored
     summaries and facts.
-    
+
     Example:
         >>> tool = SearchMemoriesTool(memory_manager)
         >>> result = await tool.execute(query="Python preferences")
     """
-    
+
     def __init__(self, memory_manager):
         """Initialize with memory manager.
-        
+
         Args:
             memory_manager: The MemoryManager instance
         """
@@ -42,24 +42,24 @@ class SearchMemoriesTool(Tool):
             },
         )
         self.memory = memory_manager
-    
+
     async def execute(
         self,
         query: str,
         limit: int = 5,
     ) -> ToolResult:
         """Execute the tool to search memories.
-        
+
         Args:
             query: Search query string
             limit: Maximum number of results
-            
+
         Returns:
             ToolResult with search results
         """
         try:
             results_text = await self.memory.search_memories(query, limit)
-            
+
             return ToolResult(
                 success=True,
                 data={"results": results_text},

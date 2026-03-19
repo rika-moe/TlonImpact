@@ -5,14 +5,17 @@ This is an internal class used by TlonClient, not intended for direct use.
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
 import aiohttp
 
 from tlon.base.logger import get_logger
+
 from .exceptions import AuthenticationError, ConnectionError, ProtocolError
 
 logger = get_logger(__name__)
@@ -20,6 +23,7 @@ logger = get_logger(__name__)
 
 class ConnectionState(Enum):
     """Connection state machine states."""
+
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
@@ -64,7 +68,7 @@ class BaseClient:
     def __init__(
         self,
         ws_url: str,
-        rest_url: Optional[str] = None,
+        rest_url: str | None = None,
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
         max_reconnect_attempts: int = 10,
@@ -87,33 +91,33 @@ class BaseClient:
         # Connection state
         self._state = ConnectionState.DISCONNECTED
         self._state_lock = asyncio.Lock()
-        self._session: Optional[aiohttp.ClientSession] = None
-        self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._session: aiohttp.ClientSession | None = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
 
         # Protocol state
-        self.session_id: Optional[str] = None
-        self.protocol_version: Optional[str] = None
-        self.server_version: Optional[str] = None
-        self.server_capabilities: Set[str] = set()
+        self.session_id: str | None = None
+        self.protocol_version: str | None = None
+        self.server_version: str | None = None
+        self.server_capabilities: set[str] = set()
 
         # Event handling
-        self._event_handlers: List[Callable[[Dict[str, Any]], None]] = []
-        self._message_handlers: List[Callable[[Dict[str, Any]], None]] = []
-        self._error_handlers: List[Callable[[str], None]] = []
-        self._state_handlers: List[Callable[[ConnectionState], None]] = []
+        self._event_handlers: list[Callable[[dict[str, Any]], None]] = []
+        self._message_handlers: list[Callable[[dict[str, Any]], None]] = []
+        self._error_handlers: list[Callable[[str], None]] = []
+        self._state_handlers: list[Callable[[ConnectionState], None]] = []
 
         # Tasks
-        self._receive_task: Optional[asyncio.Task] = None
-        self._heartbeat_task: Optional[asyncio.Task] = None
-        self._reconnect_task: Optional[asyncio.Task] = None
+        self._receive_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
         self._reconnect_count = 0
 
         # Event used to notify concurrent connect() callers
-        self._connecting_event: Optional[asyncio.Event] = None
+        self._connecting_event: asyncio.Event | None = None
 
         # Message sequence for ping/pong
         self._ping_seq = 0
-        self._pending_pongs: Dict[int, asyncio.Future] = {}
+        self._pending_pongs: dict[int, asyncio.Future] = {}
 
     def _derive_rest_url(self, ws_url: str) -> str:
         """Derive REST URL from WebSocket URL.
@@ -203,7 +207,7 @@ class BaseClient:
                     self._connecting_event.set()
                     self._connecting_event = None
             await self._cleanup()
-            raise ConnectionError(f"Failed to connect: {e}")
+            raise ConnectionError(f"Failed to connect: {e}") from e
 
     async def disconnect(self) -> None:
         """Disconnect from the server gracefully."""
@@ -213,10 +217,8 @@ class BaseClient:
         # Cancel reconnect if in progress
         if self._reconnect_task:
             self._reconnect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
             self._reconnect_task = None
 
         await self._cleanup()
@@ -232,35 +234,27 @@ class BaseClient:
         # Stop heartbeat
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
             self._heartbeat_task = None
 
         # Stop receive loop
         if self._receive_task:
             self._receive_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._receive_task
-            except asyncio.CancelledError:
-                pass
             self._receive_task = None
 
         # Close WebSocket
         if self._ws:
-            try:
+            with contextlib.suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
             self._ws = None
 
         # Close session
         if self._session:
-            try:
+            with contextlib.suppress(Exception):
                 await self._session.close()
-            except Exception:
-                pass
             self._session = None
 
         # Clear pending pongs
@@ -318,12 +312,17 @@ class BaseClient:
     async def _reconnect(self) -> None:
         """Attempt to reconnect to the server."""
         while self.auto_reconnect:
-            if self.max_reconnect_attempts > 0 and self._reconnect_count >= self.max_reconnect_attempts:
+            if (
+                self.max_reconnect_attempts > 0
+                and self._reconnect_count >= self.max_reconnect_attempts
+            ):
                 logger.error(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
                 break
 
             self._reconnect_count += 1
-            logger.info(f"Reconnecting in {self.reconnect_delay}s (attempt {self._reconnect_count})...")
+            logger.info(
+                f"Reconnecting in {self.reconnect_delay}s (attempt {self._reconnect_count})..."
+            )
 
             async with self._state_lock:
                 self._state = ConnectionState.RECONNECTING
@@ -344,8 +343,8 @@ class BaseClient:
     async def authenticate(
         self,
         client_type: str,
-        capabilities: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        capabilities: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         timeout: float = 10.0,
     ) -> bool:
         """Authenticate with the server.
@@ -395,10 +394,7 @@ class BaseClient:
             await self._send_raw(auth_msg)
 
             # Wait for auth response
-            response = await asyncio.wait_for(
-                self._wait_for_auth_response(),
-                timeout=timeout
-            )
+            response = await asyncio.wait_for(self._wait_for_auth_response(), timeout=timeout)
 
             if response.get("type") == "auth_success":
                 self.session_id = response.get("session_id")
@@ -413,7 +409,9 @@ class BaseClient:
                 # Start heartbeat
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
-                logger.info(f"Authenticated as {self.session_id} (protocol: {self.protocol_version})")
+                logger.info(
+                    f"Authenticated as {self.session_id} (protocol: {self.protocol_version})"
+                )
                 return True
 
             elif response.get("type") == "auth_failed":
@@ -422,27 +420,25 @@ class BaseClient:
 
                 if error_code == "VERSION_MISMATCH":
                     raise ProtocolError(
-                        message=message,
-                        server_versions=response.get("supported_versions", [])
+                        message=message, server_versions=response.get("supported_versions", [])
                     )
                 else:
                     raise AuthenticationError(
-                        message=message,
-                        supported_versions=response.get("supported_versions")
+                        message=message, supported_versions=response.get("supported_versions")
                     )
             else:
                 raise AuthenticationError(f"Unexpected response: {response.get('type')}")
 
-        except asyncio.TimeoutError:
-            raise AuthenticationError("Authentication timeout")
+        except TimeoutError as e:
+            raise AuthenticationError("Authentication timeout") from e
 
-    async def _wait_for_auth_response(self) -> Dict[str, Any]:
+    async def _wait_for_auth_response(self) -> dict[str, Any]:
         """Wait for and return the auth response.
 
         This is called by authenticate() to wait for the server's response.
         """
         # This will be set by _handle_message when auth response arrives
-        self._auth_response: Optional[Dict[str, Any]] = None
+        self._auth_response: dict[str, Any] | None = None
         self._auth_event = asyncio.Event()
 
         await self._auth_event.wait()
@@ -503,7 +499,7 @@ class BaseClient:
         except Exception as e:
             logger.error(f"Error handling message: {e}")
 
-    async def _dispatch_event(self, event: Dict[str, Any]) -> None:
+    async def _dispatch_event(self, event: dict[str, Any]) -> None:
         """Dispatch event to registered handlers."""
         for handler in self._event_handlers:
             try:
@@ -514,7 +510,7 @@ class BaseClient:
             except Exception as e:
                 logger.error(f"Event handler error: {e}")
 
-    async def _dispatch_message(self, msg: Dict[str, Any]) -> None:
+    async def _dispatch_message(self, msg: dict[str, Any]) -> None:
         """Dispatch message to registered handlers."""
         for handler in self._message_handlers:
             try:
@@ -549,7 +545,7 @@ class BaseClient:
 
     # ==================== Sending Messages ====================
 
-    async def send(self, data: Dict[str, Any]) -> bool:
+    async def send(self, data: dict[str, Any]) -> bool:
         """Send a message to the server.
 
         Args:
@@ -570,7 +566,7 @@ class BaseClient:
 
         return await self._send_raw(data)
 
-    async def _send_raw(self, data: Dict[str, Any]) -> bool:
+    async def _send_raw(self, data: dict[str, Any]) -> bool:
         """Send raw data to the server (internal use)."""
         if not self._ws or self._ws.closed:
             logger.error("Cannot send: not connected")
@@ -615,7 +611,7 @@ class BaseClient:
                 try:
                     await asyncio.wait_for(pong_future, timeout=5.0)
                     # TODO: Track latency
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("Pong timeout, connection may be lost")
                     # Don't disconnect immediately, let next ping fail
 
@@ -626,7 +622,7 @@ class BaseClient:
 
     # ==================== Handler Registration ====================
 
-    def on_event(self, handler: Callable[[Dict[str, Any]], None]) -> Callable:
+    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
         """Register an event handler.
 
         Args:
@@ -638,7 +634,7 @@ class BaseClient:
         self._event_handlers.append(handler)
         return handler
 
-    def on_message(self, handler: Callable[[Dict[str, Any]], None]) -> Callable:
+    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
         """Register a message handler.
 
         Args:
@@ -676,7 +672,7 @@ class BaseClient:
 
     # ==================== REST API ====================
 
-    async def rest_get(self, path: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    async def rest_get(self, path: str, params: dict | None = None) -> dict | None:
         """Make a GET request to the REST API.
 
         Args:
@@ -701,7 +697,7 @@ class BaseClient:
             logger.error(f"REST GET {path} error: {e}")
             return None
 
-    async def rest_post(self, path: str, data: Dict) -> Optional[Dict]:
+    async def rest_post(self, path: str, data: dict) -> dict | None:
         """Make a POST request to the REST API.
 
         Args:

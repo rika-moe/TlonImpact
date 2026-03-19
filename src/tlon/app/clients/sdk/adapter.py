@@ -13,12 +13,13 @@ Each adapter provides:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
-from enum import Enum
+from enum import StrEnum
+from typing import Any
 
 
-class ClientType(str, Enum):
+class ClientType(StrEnum):
     """Supported client types."""
+
     TUI = "tui"
     WEB = "web"
     TELEGRAM = "telegram"
@@ -27,6 +28,7 @@ class ClientType(str, Enum):
 @dataclass
 class ProtocolCapabilities:
     """Protocol capabilities supported by the client."""
+
     trace: bool = True
     filter: bool = True
     history: bool = True
@@ -46,8 +48,8 @@ class ClientAdapter(ABC):
     def __init__(self, client_type: ClientType):
         self._client_type = client_type
         self._capabilities = self._get_capabilities()
-        self._event_filters: Optional[Dict[str, Any]] = None
-        self._trace_filter: Optional[str] = None
+        self._event_filters: dict[str, Any] | None = None
+        self._trace_filter: str | None = None
 
     @property
     def client_type(self) -> str:
@@ -55,7 +57,7 @@ class ClientAdapter(ABC):
         return self._client_type.value
 
     @property
-    def capabilities(self) -> List[str]:
+    def capabilities(self) -> list[str]:
         """Return list of supported capabilities."""
         caps = []
         if self._capabilities.trace:
@@ -72,7 +74,7 @@ class ClientAdapter(ABC):
         pass
 
     @abstractmethod
-    def should_receive_event(self, event_type: str, event_data: Dict[str, Any]) -> bool:
+    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
         """Determine if this client should receive the given event.
 
         Args:
@@ -84,7 +86,7 @@ class ClientAdapter(ABC):
         """
         pass
 
-    def get_auth_metadata(self) -> Dict[str, Any]:
+    def get_auth_metadata(self) -> dict[str, Any]:
         """Get metadata to include in auth message.
 
         Returns:
@@ -98,9 +100,10 @@ class ClientAdapter(ABC):
     def _get_platform(self) -> str:
         """Get the platform identifier."""
         import sys
+
         return sys.platform
 
-    def set_event_filters(self, filters: Optional[Dict[str, Any]]) -> None:
+    def set_event_filters(self, filters: dict[str, Any] | None) -> None:
         """Set event filters for this adapter.
 
         Args:
@@ -113,7 +116,7 @@ class ClientAdapter(ABC):
         if filters and "trace_id" in filters:
             self._trace_filter = filters["trace_id"]
 
-    def set_trace_filter(self, trace_id: Optional[str]) -> None:
+    def set_trace_filter(self, trace_id: str | None) -> None:
         """Set filter to only show events for a specific trace.
 
         Args:
@@ -126,7 +129,7 @@ class ClientAdapter(ABC):
         self._event_filters = None
         self._trace_filter = None
 
-    def _matches_trace_filter(self, event_data: Dict[str, Any]) -> bool:
+    def _matches_trace_filter(self, event_data: dict[str, Any]) -> bool:
         """Check if event matches the current trace filter.
 
         Args:
@@ -209,7 +212,7 @@ class TerminalAdapter(ClientAdapter):
             raise ValueError(f"Invalid mode: {mode}. Must be 'chat', 'event', or 'agent'")
         self._mode = mode
 
-    def should_receive_event(self, event_type: str, event_data: Dict[str, Any]) -> bool:
+    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
         """Determine if terminal should receive this event.
 
         Terminal clients receive all events by default, but can filter:
@@ -296,7 +299,7 @@ class WebAdapter(ClientAdapter):
         """Web clients support trace and history, limited filter."""
         return ProtocolCapabilities(trace=True, filter=True, history=True)
 
-    def should_receive_event(self, event_type: str, event_data: Dict[str, Any]) -> bool:
+    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
         """Determine if web client should receive this event.
 
         Web clients filter out high-frequency events by default,
@@ -360,7 +363,7 @@ class TelegramAdapter(ClientAdapter):
         """Telegram clients have limited capabilities."""
         return ProtocolCapabilities(trace=False, filter=False, history=False)
 
-    def should_receive_event(self, event_type: str, event_data: Dict[str, Any]) -> bool:
+    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
         """Determine if Telegram client should receive this event.
 
         Telegram bots only receive message-related events.

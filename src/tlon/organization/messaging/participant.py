@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Any
 
 
 @dataclass
@@ -16,7 +16,8 @@ class Participant:
         type: Participant type ("human" | "agent")
         metadata: Additional metadata
     """
+
     id: str
     name: str
     type: str  # "human" | "agent"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)

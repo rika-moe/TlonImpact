@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from tlon.base.logger import get_logger
 
@@ -34,18 +34,19 @@ class SpanRecord:
         payload: Additional span data
         metadata: Additional metadata
     """
+
     span_id: str
     trace_id: str
     name: str
     start_time: datetime
     source: str
-    parent_span_id: Optional[str] = None
-    end_time: Optional[datetime] = None
-    event_type: Optional[str] = None
-    payload: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    parent_span_id: str | None = None
+    end_time: datetime | None = None
+    event_type: str | None = None
+    payload: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert span to dictionary."""
         result = {
             "span_id": self.span_id,
@@ -68,7 +69,7 @@ class SpanRecord:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SpanRecord":
+    def from_dict(cls, data: dict[str, Any]) -> "SpanRecord":
         """Create span from dictionary."""
         return cls(
             span_id=data["span_id"],
@@ -98,16 +99,17 @@ class TraceRecord:
         spans: List of spans in this trace
         metadata: Additional trace metadata
     """
+
     trace_id: str
     root_span_id: str
     start_time: datetime
     source: str
     name: str
-    end_time: Optional[datetime] = None
-    spans: List[SpanRecord] = field(default_factory=list)
-    metadata: Optional[Dict[str, Any]] = None
+    end_time: datetime | None = None
+    spans: list[SpanRecord] = field(default_factory=list)
+    metadata: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert trace to dictionary."""
         result = {
             "trace_id": self.trace_id,
@@ -124,7 +126,7 @@ class TraceRecord:
             result["metadata"] = self.metadata
         return result
 
-    def get_span_tree(self) -> Dict[str, Any]:
+    def get_span_tree(self) -> dict[str, Any]:
         """Get spans as a hierarchical tree structure.
 
         Returns:
@@ -155,11 +157,7 @@ class TraceStore(ABC):
 
     @abstractmethod
     async def start_trace(
-        self,
-        trace_id: str,
-        name: str,
-        source: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, trace_id: str, name: str, source: str, metadata: dict[str, Any] | None = None
     ) -> TraceRecord:
         """Start a new trace.
 
@@ -193,10 +191,10 @@ class TraceStore(ABC):
         span_id: str,
         name: str,
         source: str,
-        parent_span_id: Optional[str] = None,
-        event_type: Optional[str] = None,
-        payload: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        parent_span_id: str | None = None,
+        event_type: str | None = None,
+        payload: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SpanRecord:
         """Start a new span within a trace.
 
@@ -229,7 +227,7 @@ class TraceStore(ABC):
         pass
 
     @abstractmethod
-    async def get_trace(self, trace_id: str) -> Optional[TraceRecord]:
+    async def get_trace(self, trace_id: str) -> TraceRecord | None:
         """Get a trace by ID.
 
         Args:
@@ -242,11 +240,8 @@ class TraceStore(ABC):
 
     @abstractmethod
     async def list_traces(
-        self,
-        limit: int = 100,
-        before: Optional[datetime] = None,
-        source: Optional[str] = None
-    ) -> List[TraceRecord]:
+        self, limit: int = 100, before: datetime | None = None, source: str | None = None
+    ) -> list[TraceRecord]:
         """List traces with optional filtering.
 
         Args:
@@ -278,32 +273,27 @@ class FileTraceStore(TraceStore):
         """
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._active_traces: Dict[str, TraceRecord] = {}
-        self._active_spans: Dict[str, SpanRecord] = {}
+        self._active_traces: dict[str, TraceRecord] = {}
+        self._active_spans: dict[str, SpanRecord] = {}
         self._file_lock = Lock()
 
     def _get_trace_file(self, trace_id: str) -> Path:
         """Get the file path for a trace."""
         return self.data_dir / f"trace-{trace_id}.jsonl"
 
-    def _append_event_sync(self, trace_id: str, event: Dict[str, Any]) -> None:
+    def _append_event_sync(self, trace_id: str, event: dict[str, Any]) -> None:
         """Append an event to a trace file (called in thread pool)."""
         file_path = self._get_trace_file(trace_id)
         line = json.dumps(event, ensure_ascii=False, default=str) + "\n"
-        with self._file_lock:
-            with open(file_path, "a", encoding="utf-8") as f:
-                f.write(line)
+        with self._file_lock, open(file_path, "a", encoding="utf-8") as f:
+            f.write(line)
 
-    async def _append_event(self, trace_id: str, event: Dict[str, Any]) -> None:
+    async def _append_event(self, trace_id: str, event: dict[str, Any]) -> None:
         """Append an event to a trace file without blocking the event loop."""
         await asyncio.to_thread(self._append_event_sync, trace_id, event)
 
     async def start_trace(
-        self,
-        trace_id: str,
-        name: str,
-        source: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, trace_id: str, name: str, source: str, metadata: dict[str, Any] | None = None
     ) -> TraceRecord:
         """Start a new trace."""
         now = datetime.now()
@@ -322,15 +312,18 @@ class FileTraceStore(TraceStore):
         self._active_traces[trace_id] = trace
 
         # Write trace start event
-        await self._append_event(trace_id, {
-            "type": "trace_start",
-            "trace_id": trace_id,
-            "root_span_id": root_span_id,
-            "name": name,
-            "source": source,
-            "timestamp": now.isoformat(),
-            "metadata": metadata,
-        })
+        await self._append_event(
+            trace_id,
+            {
+                "type": "trace_start",
+                "trace_id": trace_id,
+                "root_span_id": root_span_id,
+                "name": name,
+                "source": source,
+                "timestamp": now.isoformat(),
+                "metadata": metadata,
+            },
+        )
 
         logger.debug(f"Started trace {trace_id}: {name}")
         return trace
@@ -346,11 +339,14 @@ class FileTraceStore(TraceStore):
         trace.end_time = now
 
         # Write trace end event
-        await self._append_event(trace_id, {
-            "type": "trace_end",
-            "trace_id": trace_id,
-            "timestamp": now.isoformat(),
-        })
+        await self._append_event(
+            trace_id,
+            {
+                "type": "trace_end",
+                "trace_id": trace_id,
+                "timestamp": now.isoformat(),
+            },
+        )
 
         logger.debug(f"Ended trace {trace_id}")
         return True
@@ -361,10 +357,10 @@ class FileTraceStore(TraceStore):
         span_id: str,
         name: str,
         source: str,
-        parent_span_id: Optional[str] = None,
-        event_type: Optional[str] = None,
-        payload: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        parent_span_id: str | None = None,
+        event_type: str | None = None,
+        payload: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SpanRecord:
         """Start a new span."""
         now = datetime.now()
@@ -389,18 +385,21 @@ class FileTraceStore(TraceStore):
             trace.spans.append(span)
 
         # Write span start event
-        await self._append_event(trace_id, {
-            "type": "span_start",
-            "span_id": span_id,
-            "trace_id": trace_id,
-            "parent_span_id": parent_span_id,
-            "name": name,
-            "source": source,
-            "event_type": event_type,
-            "timestamp": now.isoformat(),
-            "payload": payload,
-            "metadata": metadata,
-        })
+        await self._append_event(
+            trace_id,
+            {
+                "type": "span_start",
+                "span_id": span_id,
+                "trace_id": trace_id,
+                "parent_span_id": parent_span_id,
+                "name": name,
+                "source": source,
+                "event_type": event_type,
+                "timestamp": now.isoformat(),
+                "payload": payload,
+                "metadata": metadata,
+            },
+        )
 
         logger.debug(f"Started span {span_id} in trace {trace_id}: {name}")
         return span
@@ -416,69 +415,71 @@ class FileTraceStore(TraceStore):
         span.end_time = now
 
         # Write span end event
-        await self._append_event(trace_id, {
-            "type": "span_end",
-            "span_id": span_id,
-            "trace_id": trace_id,
-            "timestamp": now.isoformat(),
-        })
+        await self._append_event(
+            trace_id,
+            {
+                "type": "span_end",
+                "span_id": span_id,
+                "trace_id": trace_id,
+                "timestamp": now.isoformat(),
+            },
+        )
 
         logger.debug(f"Ended span {span_id} in trace {trace_id}")
         return True
 
-    def _load_trace_from_file(self, file_path: Path) -> Optional[TraceRecord]:
+    def _load_trace_from_file(self, file_path: Path) -> TraceRecord | None:
         """Load a trace from a JSONL file (runs in thread pool)."""
         trace = None
-        spans: Dict[str, SpanRecord] = {}
+        spans: dict[str, SpanRecord] = {}
 
-        with self._file_lock:
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                        event_type = event.get("type")
+        with self._file_lock, open(file_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    event_type = event.get("type")
 
-                        if event_type == "trace_start":
-                            trace = TraceRecord(
-                                trace_id=event["trace_id"],
-                                root_span_id=event["root_span_id"],
-                                start_time=datetime.fromisoformat(event["timestamp"]),
-                                source=event["source"],
-                                name=event["name"],
-                                metadata=event.get("metadata"),
-                            )
-                        elif event_type == "trace_end":
-                            if trace:
-                                trace.end_time = datetime.fromisoformat(event["timestamp"])
-                        elif event_type == "span_start":
-                            span = SpanRecord(
-                                span_id=event["span_id"],
-                                trace_id=event["trace_id"],
-                                name=event["name"],
-                                start_time=datetime.fromisoformat(event["timestamp"]),
-                                source=event["source"],
-                                parent_span_id=event.get("parent_span_id"),
-                                event_type=event.get("event_type"),
-                                payload=event.get("payload"),
-                                metadata=event.get("metadata"),
-                            )
-                            spans[span.span_id] = span
-                        elif event_type == "span_end":
-                            span = spans.get(event["span_id"])
-                            if span:
-                                span.end_time = datetime.fromisoformat(event["timestamp"])
-                    except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Error parsing trace event: {e}")
-                        continue
+                    if event_type == "trace_start":
+                        trace = TraceRecord(
+                            trace_id=event["trace_id"],
+                            root_span_id=event["root_span_id"],
+                            start_time=datetime.fromisoformat(event["timestamp"]),
+                            source=event["source"],
+                            name=event["name"],
+                            metadata=event.get("metadata"),
+                        )
+                    elif event_type == "trace_end":
+                        if trace:
+                            trace.end_time = datetime.fromisoformat(event["timestamp"])
+                    elif event_type == "span_start":
+                        span = SpanRecord(
+                            span_id=event["span_id"],
+                            trace_id=event["trace_id"],
+                            name=event["name"],
+                            start_time=datetime.fromisoformat(event["timestamp"]),
+                            source=event["source"],
+                            parent_span_id=event.get("parent_span_id"),
+                            event_type=event.get("event_type"),
+                            payload=event.get("payload"),
+                            metadata=event.get("metadata"),
+                        )
+                        spans[span.span_id] = span
+                    elif event_type == "span_end":
+                        span = spans.get(event["span_id"])
+                        if span:
+                            span.end_time = datetime.fromisoformat(event["timestamp"])
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(f"Error parsing trace event: {e}")
+                    continue
 
         if trace:
             trace.spans = list(spans.values())
         return trace
 
-    async def get_trace(self, trace_id: str) -> Optional[TraceRecord]:
+    async def get_trace(self, trace_id: str) -> TraceRecord | None:
         """Get a trace by loading from file."""
         # Check if it's an active trace
         if trace_id in self._active_traces:
@@ -491,11 +492,8 @@ class FileTraceStore(TraceStore):
         return await asyncio.to_thread(self._load_trace_from_file, file_path)
 
     async def list_traces(
-        self,
-        limit: int = 100,
-        before: Optional[datetime] = None,
-        source: Optional[str] = None
-    ) -> List[TraceRecord]:
+        self, limit: int = 100, before: datetime | None = None, source: str | None = None
+    ) -> list[TraceRecord]:
         """List traces from files."""
         traces = []
 

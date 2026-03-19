@@ -10,10 +10,10 @@ if TYPE_CHECKING:
 
 class CreateTaskTool(Tool):
     """Tool to create a new task.
-    
+
     Use this tool when you need to break down a complex task into smaller,
     manageable pieces. Each task represents one step in your work.
-    
+
     Example:
         >>> tool = CreateTaskTool(task_manager)
         >>> result = await tool.execute(
@@ -21,10 +21,10 @@ class CreateTaskTool(Tool):
         ...     description="Define endpoints for login/logout"
         ... )
     """
-    
+
     def __init__(self, task_manager: "TaskManager"):
         """Initialize the tool.
-        
+
         Args:
             task_manager: Task manager for task operations
         """
@@ -36,32 +36,32 @@ class CreateTaskTool(Tool):
                 "properties": {
                     "title": {
                         "type": "string",
-                        "description": "Short, clear title describing what needs to be done. Example: 'Design login API endpoints'"
+                        "description": "Short, clear title describing what needs to be done. Example: 'Design login API endpoints'",
                     },
                     "description": {
                         "type": "string",
                         "description": "Optional detailed description of the task. Include specific requirements, acceptance criteria, or notes.",
-                        "default": ""
-                    }
+                        "default": "",
+                    },
                 },
-                "required": ["title"]
-            }
+                "required": ["title"],
+            },
         )
         self.task_manager = task_manager
-    
+
     async def execute(self, title: str, description: str = "") -> ToolResult:
         """Create a new task.
-        
+
         Args:
             title: Task title
             description: Optional task description
-            
+
         Returns:
             ToolResult with created task info
         """
         try:
             task = self.task_manager.create_task(title, description)
-            
+
             return ToolResult(
                 success=True,
                 data={
@@ -69,12 +69,8 @@ class CreateTaskTool(Tool):
                     "title": task.title,
                     "status": task.status.value,
                 },
-                message=f"✅ 任务已创建: {task.title} ({task.id})"
+                message=f"✅ 任务已创建: {task.title} ({task.id})",
             )
-            
+
         except Exception as e:
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"Failed to create task: {str(e)}"
-            )
+            return ToolResult(success=False, data={}, error=f"Failed to create task: {str(e)}")

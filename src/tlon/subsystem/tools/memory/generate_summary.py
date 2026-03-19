@@ -8,18 +8,18 @@ logger = get_logger(__name__)
 
 class GenerateSummaryTool(Tool):
     """Tool to generate summary from working memory.
-    
+
     This tool allows the agent to explicitly trigger summary generation
     from current working memory interactions.
-    
+
     Example:
         >>> tool = GenerateSummaryTool(memory_manager)
         >>> result = await tool.execute()
     """
-    
+
     def __init__(self, memory_manager):
         """Initialize with memory manager.
-        
+
         Args:
             memory_manager: The MemoryManager instance
         """
@@ -37,22 +37,22 @@ class GenerateSummaryTool(Tool):
             },
         )
         self.memory = memory_manager
-    
+
     async def execute(
         self,
         force: bool = True,
     ) -> ToolResult:
         """Execute the tool to generate summary.
-        
+
         Args:
             force: If True, generate even if not enough interactions
-            
+
         Returns:
             ToolResult with the summary ID
         """
         try:
             summary_id = await self.memory.generate_summary(force=force)
-            
+
             if summary_id:
                 return ToolResult(
                     success=True,

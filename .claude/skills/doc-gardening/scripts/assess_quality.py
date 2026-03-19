@@ -17,23 +17,22 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
 
 
 @dataclass
 class DomainScore:
     """领域评分。"""
+
     name: str
-    completeness: int = 0      # 完整性 0-100
-    freshness: int = 0         # 时效性 0-100
-    accessibility: int = 0     # 可访问性 0-100
-    consistency: int = 0       # 一致性 0-100
-    gaps: List[str] = field(default_factory=list)
+    completeness: int = 0  # 完整性 0-100
+    freshness: int = 0  # 时效性 0-100
+    accessibility: int = 0  # 可访问性 0-100
+    consistency: int = 0  # 一致性 0-100
+    gaps: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return (self.completeness + self.freshness +
-                self.accessibility + self.consistency) // 4
+        return (self.completeness + self.freshness + self.accessibility + self.consistency) // 4
 
 
 class QualityAssessor:
@@ -54,9 +53,9 @@ class QualityAssessor:
     def __init__(self, design_dir: Path, agents_path: Path):
         self.design_dir = design_dir
         self.agents_path = agents_path
-        self.scores: Dict[str, DomainScore] = {}
+        self.scores: dict[str, DomainScore] = {}
 
-    def assess(self) -> Dict[str, DomainScore]:
+    def assess(self) -> dict[str, DomainScore]:
         """评估所有设计文档。"""
         print(f"🔍 评估设计文档目录: {self.design_dir}")
         print()
@@ -79,7 +78,7 @@ class QualityAssessor:
         score = DomainScore(name=name)
 
         try:
-            content = doc_path.read_text(encoding='utf-8')
+            content = doc_path.read_text(encoding="utf-8")
         except Exception as e:
             score.gaps.append(f"无法读取: {e}")
             return score
@@ -132,14 +131,14 @@ class QualityAssessor:
 
     def _assess_accessibility(self, content: str, doc_path: Path) -> int:
         """评估可访问性（链接有效性）。"""
-        links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
+        links = re.findall(r"\[([^\]]+)\]\(([^)]+)\)", content)
 
         broken = 0
         total = 0
 
-        for text, link in links:
+        for _text, link in links:
             # 忽略外部链接和锚点
-            if link.startswith(('http://', 'https://', '#', 'mailto:')):
+            if link.startswith(("http://", "https://", "#", "mailto:")):
                 continue
 
             total += 1
@@ -161,7 +160,7 @@ class QualityAssessor:
             "Minions": "应使用 Tlon",
         }
 
-        for term, suggestion in deprecated_terms.items():
+        for term, _suggestion in deprecated_terms.items():
             if term in content:
                 score -= 30
 
@@ -184,23 +183,23 @@ class QualityAssessor:
                 score.gaps.append("状态: 未标记验证状态")
 
         # 检查核心理念数量
-        core_ideas = re.findall(r'^\s*[\d\-\*]\s+.+$', content, re.MULTILINE)
+        core_ideas = re.findall(r"^\s*[\d\-\*]\s+.+$", content, re.MULTILINE)
         if len(core_ideas) < 3:
             score.gaps.append(f"核心理念过少 ({len(core_ideas)} 条，建议 3-5 条)")
 
-    def _resolve_link(self, from_file: Path, link: str) -> Optional[Path]:
+    def _resolve_link(self, from_file: Path, link: str) -> Path | None:
         """解析链接为绝对路径。"""
-        if '#' in link:
-            link = link.split('#')[0]
+        if "#" in link:
+            link = link.split("#")[0]
 
         if not link:
             return None
 
-        if link.startswith('./') or link.startswith('../'):
+        if link.startswith("./") or link.startswith("../"):
             return (from_file.parent / link).resolve()
 
-        if link.startswith('/'):
-            return (self.design_dir.parent / link.lstrip('/')).resolve()
+        if link.startswith("/"):
+            return (self.design_dir.parent / link.lstrip("/")).resolve()
 
         return (from_file.parent / link).resolve()
 
@@ -233,9 +232,11 @@ class QualityAssessor:
             else:
                 status = "❌"
 
-            print(f"{name:<15} {score.total:>6} {score.completeness:>6} "
-                  f"{score.freshness:>6} {score.accessibility:>6} "
-                  f"{score.consistency:>6}  {status}")
+            print(
+                f"{name:<15} {score.total:>6} {score.completeness:>6} "
+                f"{score.freshness:>6} {score.accessibility:>6} "
+                f"{score.consistency:>6}  {status}"
+            )
 
         avg_score = total_score // len(self.scores) if self.scores else 0
         print("-" * 70)
@@ -263,15 +264,14 @@ class QualityAssessor:
         print("=" * 70)
         print()
 
-        low_score_domains = [
-            (n, s) for n, s in self.scores.items()
-            if s.total < 60
-        ]
+        low_score_domains = [(n, s) for n, s in self.scores.items() if s.total < 60]
 
         if low_score_domains:
             print("低分领域（优先修复）:")
             for name, score in sorted(low_score_domains, key=lambda x: x[1].total):
-                print(f"  • {name}: {score.total}/100 - {score.gaps[0] if score.gaps else '无具体差距'}")
+                print(
+                    f"  • {name}: {score.total}/100 - {score.gaps[0] if score.gaps else '无具体差距'}"
+                )
         else:
             print("✅ 所有领域评分良好（>=60）")
 
@@ -293,9 +293,10 @@ class QualityAssessor:
                 "total_domains": len(self.scores),
                 "average_score": (
                     sum(s.total for s in self.scores.values()) // len(self.scores)
-                    if self.scores else 0
+                    if self.scores
+                    else 0
                 ),
-            }
+            },
         }
 
         output_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
@@ -308,19 +309,15 @@ def main():
         "--design-dir",
         type=Path,
         default=Path("./docs/design"),
-        help="设计文档目录 (默认: ./docs/design)"
+        help="设计文档目录 (默认: ./docs/design)",
     )
     parser.add_argument(
         "--agents-path",
         type=Path,
         default=Path("./AGENTS.md"),
-        help="AGENTS.md 路径 (默认: ./AGENTS.md)"
+        help="AGENTS.md 路径 (默认: ./AGENTS.md)",
     )
-    parser.add_argument(
-        "--json-output",
-        type=Path,
-        help="导出 JSON 报告的路径"
-    )
+    parser.add_argument("--json-output", type=Path, help="导出 JSON 报告的路径")
 
     args = parser.parse_args()
 

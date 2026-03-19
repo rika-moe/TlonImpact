@@ -8,20 +8,20 @@ Tests cover:
 
 import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from datetime import datetime
 
 from tlon.app.clients.sdk import (
-    TlonClient,
     BaseClient,
-    TerminalAdapter,
-    WebAdapter,
     ConnectionState,
+    TerminalAdapter,
+    TlonClient,
+    WebAdapter,
 )
 from tlon.app.clients.sdk.exceptions import (
-    ConnectionError,
     AuthenticationError,
+    ConnectionError,
     ProtocolError,
 )
 
@@ -166,9 +166,11 @@ class TestBaseClient:
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             await client.connect()
-            with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
-                with pytest.raises(ProtocolError) as exc_info:
-                    await client.authenticate("tui")
+            with (
+                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
+                pytest.raises(ProtocolError) as exc_info,
+            ):
+                await client.authenticate("tui")
 
         assert exc_info.value.error_code == "VERSION_MISMATCH"
         assert "1.1.0" in exc_info.value.server_versions
@@ -176,14 +178,17 @@ class TestBaseClient:
     @pytest.mark.asyncio
     async def test_authenticate_timeout(self, client, mock_session, mock_ws):
         """Test authentication timeout."""
+
         async def mock_wait_for_auth():
             await asyncio.sleep(100)  # Simulate timeout
 
         with patch("aiohttp.ClientSession", return_value=mock_session):
             await client.connect()
-            with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
-                with pytest.raises(AuthenticationError) as exc_info:
-                    await client.authenticate("tui", timeout=0.1)
+            with (
+                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
+                pytest.raises(AuthenticationError) as exc_info,
+            ):
+                await client.authenticate("tui", timeout=0.1)
 
         assert "timeout" in str(exc_info.value).lower()
 
@@ -445,13 +450,15 @@ class TestTlonClient:
     @pytest.mark.asyncio
     async def test_context_manager(self, client):
         """Test async context manager."""
-        with patch.object(client, "connect", AsyncMock(return_value=True)) as mock_connect:
-            with patch.object(client, "disconnect", AsyncMock()) as mock_disconnect:
-                async with client as c:
-                    assert c is client
+        with (
+            patch.object(client, "connect", AsyncMock(return_value=True)) as mock_connect,
+            patch.object(client, "disconnect", AsyncMock()) as mock_disconnect,
+        ):
+            async with client as c:
+                assert c is client
 
-                mock_connect.assert_called_once()
-                mock_disconnect.assert_called_once()
+            mock_connect.assert_called_once()
+            mock_disconnect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_send_message(self, client):
@@ -535,11 +542,13 @@ class TestTlonClient:
     async def test_rest_api_methods(self, client):
         """Test REST API wrapper methods."""
         client._base = AsyncMock()
-        client._base.rest_get = AsyncMock(side_effect=[
-            {"agents": [{"id": "agent-1"}]},
-            {"messages": [{"content": "test"}]},
-            {"trace_id": "t-1"},
-        ])
+        client._base.rest_get = AsyncMock(
+            side_effect=[
+                {"agents": [{"id": "agent-1"}]},
+                {"messages": [{"content": "test"}]},
+                {"trace_id": "t-1"},
+            ]
+        )
 
         agents = await client.get_agents()
         assert len(agents) == 1

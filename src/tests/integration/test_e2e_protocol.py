@@ -10,14 +10,14 @@ Tests the complete flow:
 """
 
 import asyncio
+import contextlib
 import json
-import pytest
-import aiohttp
-from typing import Optional
 
+import aiohttp
+import pytest
+
+from tlon.app.clients.sdk import TerminalAdapter, TlonClient
 from tlon.app.server.serverapp import ServerApp
-from tlon.app.clients.sdk import TlonClient, TerminalAdapter
-from tlon.base.settings import get_tlon_home
 
 
 @pytest.fixture
@@ -41,19 +41,14 @@ async def server():
     # Cleanup
     await app.shutdown()
     server_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await server_task
-    except asyncio.CancelledError:
-        pass
 
 
 @pytest.fixture
 async def client():
     """Create a test client."""
-    client = TlonClient(
-        "ws://127.0.0.1:18888/ws",
-        adapter=TerminalAdapter()
-    )
+    client = TlonClient("ws://127.0.0.1:18888/ws", adapter=TerminalAdapter())
     yield client
     await client.disconnect()
 
@@ -61,60 +56,57 @@ async def client():
 @pytest.mark.asyncio
 async def test_protocol_version_negotiation(server):
     """Test protocol version negotiation with new client."""
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect("ws://127.0.0.1:18888/ws") as ws:
-            # Send auth with protocol version
-            auth_msg = {
-                "type": "auth",
-                "client_type": "test",
-                "protocol_version": "1.0.0",
-                "supported_versions": ["1.0.0"],
-                "capabilities": ["trace", "filter"],
-                "metadata": {"test": True}
-            }
-            await ws.send_json(auth_msg)
+    async with (
+        aiohttp.ClientSession() as session,
+        session.ws_connect("ws://127.0.0.1:18888/ws") as ws,
+    ):
+        # Send auth with protocol version
+        auth_msg = {
+            "type": "auth",
+            "client_type": "test",
+            "protocol_version": "1.0.0",
+            "supported_versions": ["1.0.0"],
+            "capabilities": ["trace", "filter"],
+            "metadata": {"test": True},
+        }
+        await ws.send_json(auth_msg)
 
-            # Receive auth response
-            msg = await ws.receive()
-            assert msg.type == aiohttp.WSMsgType.TEXT
+        # Receive auth response
+        msg = await ws.receive()
+        assert msg.type == aiohttp.WSMsgType.TEXT
 
-            data = json.loads(msg.data)
-            assert data["type"] == "auth_success"
-            assert data["protocol_version"] == "1.0.0"
-            assert "session_id" in data
-            assert "capabilities" in data
+        data = json.loads(msg.data)
+        assert data["type"] == "auth_success"
+        assert data["protocol_version"] == "1.0.0"
+        assert "session_id" in data
+        assert "capabilities" in data
 
 
 @pytest.mark.asyncio
 async def test_backward_compatibility_old_client(server):
     """Test backward compatibility with old client (no protocol version)."""
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect("ws://127.0.0.1:18888/ws") as ws:
-            # Send auth without protocol version (old client)
-            auth_msg = {
-                "type": "auth",
-                "client_type": "tui",
-                "metadata": {"version": "0.1.0"}
-            }
-            await ws.send_json(auth_msg)
+    async with (
+        aiohttp.ClientSession() as session,
+        session.ws_connect("ws://127.0.0.1:18888/ws") as ws,
+    ):
+        # Send auth without protocol version (old client)
+        auth_msg = {"type": "auth", "client_type": "tui", "metadata": {"version": "0.1.0"}}
+        await ws.send_json(auth_msg)
 
-            # Receive auth response
-            msg = await ws.receive()
-            assert msg.type == aiohttp.WSMsgType.TEXT
+        # Receive auth response
+        msg = await ws.receive()
+        assert msg.type == aiohttp.WSMsgType.TEXT
 
-            data = json.loads(msg.data)
-            assert data["type"] == "auth_success"
-            # Should default to 1.0.0
-            assert data["protocol_version"] == "1.0.0"
+        data = json.loads(msg.data)
+        assert data["type"] == "auth_success"
+        # Should default to 1.0.0
+        assert data["protocol_version"] == "1.0.0"
 
 
 @pytest.mark.asyncio
 async def test_sdk_client_connection(server):
     """Test SDK client can connect and authenticate."""
-    client = TlonClient(
-        "ws://127.0.0.1:18888/ws",
-        adapter=TerminalAdapter()
-    )
+    client = TlonClient("ws://127.0.0.1:18888/ws", adapter=TerminalAdapter())
 
     try:
         # Connect
@@ -135,13 +127,15 @@ async def test_sdk_client_connection(server):
 @pytest.mark.asyncio
 async def test_rest_api_traces_endpoint(server):
     """Test REST API /traces endpoint."""
-    async with aiohttp.ClientSession() as session:
-        # Test /traces endpoint
-        async with session.get("http://127.0.0.1:18080/traces") as resp:
-            assert resp.status == 200
-            data = await resp.json()
-            assert "traces" in data
-            assert isinstance(data["traces"], list)
+    # Test /traces endpoint
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get("http://127.0.0.1:18080/traces") as resp,
+    ):
+        assert resp.status == 200
+        data = await resp.json()
+        assert "traces" in data
+        assert isinstance(data["traces"], list)
 
 
 @pytest.mark.asyncio
@@ -157,10 +151,7 @@ async def test_rest_api_test_endpoints(server):
 
         # Test /test/echo
         test_data = {"message": "hello", "number": 42}
-        async with session.post(
-            "http://127.0.0.1:18080/test/echo",
-            json=test_data
-        ) as resp:
+        async with session.post("http://127.0.0.1:18080/test/echo", json=test_data) as resp:
             assert resp.status == 200
             data = await resp.json()
             assert data["status"] == "ok"
@@ -203,21 +194,25 @@ async def test_message_flow_with_trace(server, client):
 @pytest.mark.asyncio
 async def test_health_endpoint(server):
     """Test health check endpoint."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get("http://127.0.0.1:18080/health") as resp:
-            assert resp.status == 200
-            data = await resp.json()
-            assert data["status"] == "healthy"
-            assert data["running"] is True
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get("http://127.0.0.1:18080/health") as resp,
+    ):
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "healthy"
+        assert data["running"] is True
 
 
 @pytest.mark.asyncio
 async def test_agents_endpoint(server):
     """Test /agents endpoint."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get("http://127.0.0.1:18080/agents") as resp:
-            assert resp.status == 200
-            data = await resp.json()
-            assert "agents" in data
-            assert isinstance(data["agents"], list)
-            assert "count" in data
+    async with (
+        aiohttp.ClientSession() as session,
+        session.get("http://127.0.0.1:18080/agents") as resp,
+    ):
+        assert resp.status == 200
+        data = await resp.json()
+        assert "agents" in data
+        assert isinstance(data["agents"], list)
+        assert "count" in data

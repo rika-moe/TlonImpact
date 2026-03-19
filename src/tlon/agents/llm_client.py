@@ -6,7 +6,7 @@ Supports multiple model providers with retry logic.
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import openai
 
@@ -19,12 +19,12 @@ logger = get_logger(__name__)
 @dataclass
 class ToolCall:
     """A tool call from LLM."""
-    
+
     id: str
     function_name: str
-    arguments: Dict[str, Any]
-    
-    def to_dict(self) -> Dict[str, Any]:
+    arguments: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -39,19 +39,19 @@ class ToolCall:
 @dataclass
 class LLMResponse:
     """Response from LLM."""
-    
-    content: Optional[str]
-    tool_calls: Optional[List[ToolCall]] = None
+
+    content: str | None
+    tool_calls: list[ToolCall] | None = None
     finish_reason: str = "stop"
-    usage: Optional[Dict[str, int]] = None
-    reasoning_content: Optional[str] = None  # For kimi-k2.5 thinking mode
+    usage: dict[str, int] | None = None
+    reasoning_content: str | None = None  # For kimi-k2.5 thinking mode
 
 
 class LLMClient:
     """Client for LLM API calls with retry logic.
-    
+
     Supports OpenAI-compatible APIs with exponential backoff retry.
-    
+
     Example:
         >>> config = LLMConfig(base_url="...", auth_token="...", model_name="gpt-4")
         >>> client = LLMClient(config)
@@ -61,10 +61,10 @@ class LLMClient:
         ...     tools=[...]
         ... )
     """
-    
+
     def __init__(self, config: LLMConfig):
         """Initialize the LLM client.
-        
+
         Args:
             config: LLM configuration
         """
@@ -75,39 +75,37 @@ class LLMClient:
         )
         self.max_retries = config.max_retries
         self.base_delay = config.base_delay
-    
+
     async def chat(
         self,
         system_prompt: str,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        temperature: Optional[float] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
         timeout: float = 60.0,
     ) -> LLMResponse:
         """Send a chat completion request with retry logic.
-        
+
         Args:
             system_prompt: System prompt message
             messages: List of conversation messages
             tools: Optional list of tool definitions
             temperature: Optional temperature override
             timeout: Request timeout in seconds
-            
+
         Returns:
             LLMResponse with content and/or tool calls
-            
+
         Raises:
             Exception: If all retries fail
         """
         # Check if API key is configured
         if not self.config.auth_token:
-            raise Exception(
-                "LLM API key not configured. Please set OPENAI_API_KEY in .env file"
-            )
-        
+            raise Exception("LLM API key not configured. Please set OPENAI_API_KEY in .env file")
+
         # Prepare messages
         all_messages = [{"role": "system", "content": system_prompt}] + messages
-        
+
         # Prepare request parameters
         params = {
             "model": self.config.model_name,
@@ -115,68 +113,68 @@ class LLMClient:
             "temperature": temperature if temperature is not None else self.config.temperature,
             "timeout": timeout,
         }
-        
+
         if tools:
             params["tools"] = tools
             params["tool_choice"] = "auto"
-        
+
         # Retry with exponential backoff
-        last_error: Optional[Exception] = None
-        
+        last_error: Exception | None = None
+
         for attempt in range(self.max_retries):
             try:
                 response = await self.client.chat.completions.create(**params)
                 return self._parse_response(response)
-                
+
             except openai.RateLimitError as e:
                 # Rate limit - retry with backoff
                 last_error = e
                 logger.warning(f"Rate limit hit (attempt {attempt + 1}/{self.max_retries})")
-                
+
             except openai.APITimeoutError as e:
                 # Timeout - retry
                 last_error = e
                 logger.warning(f"Request timeout (attempt {attempt + 1}/{self.max_retries})")
-                
+
             except openai.APIError as e:
                 # API error - may be transient, retry
                 last_error = e
                 logger.warning(f"API error (attempt {attempt + 1}/{self.max_retries}): {e}")
-                
+
             except openai.APIConnectionError as e:
                 # Connection error - retry
                 last_error = e
                 logger.warning(f"Connection error (attempt {attempt + 1}/{self.max_retries}): {e}")
-                
+
             except Exception as e:
                 # Other errors - don't retry
                 logger.error(f"Unexpected error in LLM call: {e}", exc_info=True)
                 raise
-            
+
             # Calculate delay with exponential backoff
             if attempt < self.max_retries - 1:
-                delay = self.base_delay * (2 ** attempt)
+                delay = self.base_delay * (2**attempt)
                 logger.info(f"Retrying in {delay}s...")
                 await asyncio.sleep(delay)
-        
+
         # All retries exhausted
         logger.error(f"LLM call failed after {self.max_retries} attempts: {last_error}")
         raise last_error or Exception("LLM call failed after all retries")
-    
+
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse the API response.
-        
+
         Args:
             response: Raw API response
-            
+
         Returns:
             Parsed LLMResponse
         """
         choice = response.choices[0]
         message = choice.message
-        
+
         # Parse tool calls
-        tool_calls: Optional[List[ToolCall]] = None
+        tool_calls: list[ToolCall] | None = None
         if message.tool_calls:
             tool_calls = []
             for tc in message.tool_calls:
@@ -185,16 +183,18 @@ class LLMClient:
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse tool arguments: {tc.function.arguments}")
                     args = {}
-                
-                tool_calls.append(ToolCall(
-                    id=tc.id,
-                    function_name=tc.function.name,
-                    arguments=args,
-                ))
-        
+
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.id,
+                        function_name=tc.function.name,
+                        arguments=args,
+                    )
+                )
+
         # Extract reasoning_content for kimi-k2.5
-        reasoning_content = getattr(message, 'reasoning_content', None)
-        
+        reasoning_content = getattr(message, "reasoning_content", None)
+
         return LLMResponse(
             content=message.content,
             tool_calls=tool_calls,

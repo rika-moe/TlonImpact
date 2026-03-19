@@ -7,11 +7,10 @@ This module contains the messaging infrastructure components:
 - Message: Unified message format
 """
 
-from .store import MessageStore, FileMessageStore, MessageFilter
-from .router import MessageRouter, RoutedMessage
 from .message import Message, MessageType
 from .participant import Participant
-
+from .router import MessageRouter, RoutedMessage
+from .store import FileMessageStore, MessageFilter, MessageStore
 
 __all__ = [
     # Core classes

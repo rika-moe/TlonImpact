@@ -3,10 +3,8 @@
 Provides predefined role templates and skill library for Agent configuration.
 """
 
-from typing import Dict, List
-
 # Role templates with default specialties
-ROLE_TEMPLATES: Dict[str, Dict] = {
+ROLE_TEMPLATES: dict[str, dict] = {
     "developer": {
         "name": "开发工程师",
         "description": "负责代码编写、Bug 修复和代码审查",
@@ -73,7 +71,7 @@ ROLE_TEMPLATES: Dict[str, Dict] = {
 }
 
 # Skill library organized by category
-SKILL_LIBRARY: Dict[str, List[Dict]] = {
+SKILL_LIBRARY: dict[str, list[dict]] = {
     "基础技能": [
         {"id": "file-ops", "name": "文件操作", "desc": "读写文件、目录管理"},
         {"id": "git", "name": "Git操作", "desc": "版本控制、分支管理、代码提交"},
@@ -146,42 +144,42 @@ PRESET_SKILLS = [
 ]
 
 
-def get_role_template(role_id: str) -> Dict:
+def get_role_template(role_id: str) -> dict:
     """Get a role template by ID.
-    
+
     Args:
         role_id: Role identifier
-        
+
     Returns:
         Role template dict or empty dict if not found
     """
     return ROLE_TEMPLATES.get(role_id, {})
 
 
-def get_all_roles() -> Dict[str, Dict]:
+def get_all_roles() -> dict[str, dict]:
     """Get all role templates.
-    
+
     Returns:
         Dictionary of all role templates
     """
     return ROLE_TEMPLATES.copy()
 
 
-def get_skills_by_category(category: str) -> List[Dict]:
+def get_skills_by_category(category: str) -> list[dict]:
     """Get skills for a specific category.
-    
+
     Args:
         category: Skill category name
-        
+
     Returns:
         List of skill dictionaries
     """
     return SKILL_LIBRARY.get(category, [])
 
 
-def get_all_skills() -> List[str]:
+def get_all_skills() -> list[str]:
     """Get all skill names flattened.
-    
+
     Returns:
         List of all skill names
     """
@@ -192,12 +190,12 @@ def get_all_skills() -> List[str]:
     return skills
 
 
-def suggest_skills_for_role(role_id: str) -> List[str]:
+def suggest_skills_for_role(role_id: str) -> list[str]:
     """Suggest skills based on role.
-    
+
     Args:
         role_id: Role identifier
-        
+
     Returns:
         List of suggested skill names
     """

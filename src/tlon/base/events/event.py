@@ -7,15 +7,16 @@ It is designed to be serialization-friendly for WebSocket transmission.
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Any, Dict, Optional
+from enum import Enum, StrEnum
+from typing import Any
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Types of events in the system.
 
     Using str Enum for easy JSON serialization/deserialization.
     """
+
     # Message events
     MESSAGE_NEW = "message.new"
     MESSAGE_ROUTED = "message.routed"  # Message after routing decision
@@ -77,16 +78,17 @@ class Event:
         span_id: Span ID for the current operation (UUID v4)
         parent_span_id: Parent span ID for hierarchical tracing (optional)
     """
+
     type: EventType
     payload: Any
     source: str
     timestamp: datetime = field(default_factory=datetime.now)
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    trace_id: Optional[str] = None
-    span_id: Optional[str] = None
-    parent_span_id: Optional[str] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
         """Serialize event to dictionary for JSON transmission.
 
         Returns:
@@ -95,7 +97,7 @@ class Event:
         payload = self.payload
         # Special handling for objects with to_dict method (like Message)
         # Using duck typing to avoid circular imports
-        if payload is not None and hasattr(payload, 'to_dict') and callable(payload.to_dict):
+        if payload is not None and hasattr(payload, "to_dict") and callable(payload.to_dict):
             payload = payload.to_dict()
 
         result = {
@@ -115,9 +117,9 @@ class Event:
             result["parent_span_id"] = self.parent_span_id
 
         return result
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Event":
+    def from_dict(cls, data: dict[str, Any]) -> "Event":
         """Deserialize event from dictionary.
 
         Handles multiple timestamp formats for compatibility:

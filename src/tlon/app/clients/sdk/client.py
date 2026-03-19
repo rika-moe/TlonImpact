@@ -4,13 +4,13 @@ Combines BaseClient (connection management) with ClientAdapter (client-type beha
 to provide a simple, unified interface for all client types.
 """
 
-from typing import Any, Callable, Dict, List, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 from tlon.base.logger import get_logger
 
 from .adapter import ClientAdapter, TerminalAdapter
 from .base_client import BaseClient, ConnectionState
-from .exceptions import AuthenticationError, ConnectionError
 
 logger = get_logger(__name__)
 
@@ -61,8 +61,8 @@ class TlonClient:
     def __init__(
         self,
         ws_url: str,
-        adapter: Optional[ClientAdapter] = None,
-        rest_url: Optional[str] = None,
+        adapter: ClientAdapter | None = None,
+        rest_url: str | None = None,
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
     ):
@@ -87,7 +87,7 @@ class TlonClient:
         self._base.on_event(self._on_event)
 
         # User event handlers (after adapter filtering)
-        self._user_event_handlers: List[Callable[[Dict[str, Any]], None]] = []
+        self._user_event_handlers: list[Callable[[dict[str, Any]], None]] = []
 
     # ==================== Properties ====================
 
@@ -107,12 +107,12 @@ class TlonClient:
         return self._base.is_authenticated
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         """Get server-assigned session ID."""
         return self._base.session_id
 
     @property
-    def protocol_version(self) -> Optional[str]:
+    def protocol_version(self) -> str | None:
         """Get negotiated protocol version."""
         return self._base.protocol_version
 
@@ -165,8 +165,8 @@ class TlonClient:
     async def send_message(
         self,
         content: str,
-        mentions: Optional[List[str]] = None,
-        reply_to: Optional[str] = None,
+        mentions: list[str] | None = None,
+        reply_to: str | None = None,
     ) -> bool:
         """Send a chat message.
 
@@ -201,12 +201,14 @@ class TlonClient:
         if hasattr(self._adapter, "set_mode"):
             self._adapter.set_mode(mode)
 
-        return await self._base.send({
-            "type": "mode",
-            "mode": mode,
-        })
+        return await self._base.send(
+            {
+                "type": "mode",
+                "mode": mode,
+            }
+        )
 
-    async def set_filters(self, filters: Dict[str, Any]) -> bool:
+    async def set_filters(self, filters: dict[str, Any]) -> bool:
         """Set event filters.
 
         Args:
@@ -221,12 +223,14 @@ class TlonClient:
         # Update adapter filters
         self._adapter.set_event_filters(filters)
 
-        return await self._base.send({
-            "type": "filter",
-            "filters": filters,
-        })
+        return await self._base.send(
+            {
+                "type": "filter",
+                "filters": filters,
+            }
+        )
 
-    async def set_trace_filter(self, trace_id: Optional[str]) -> bool:
+    async def set_trace_filter(self, trace_id: str | None) -> bool:
         """Filter events to show only those for a specific trace.
 
         This is a convenience method for setting trace-based filtering.
@@ -240,14 +244,16 @@ class TlonClient:
         """
         self._adapter.set_trace_filter(trace_id)
 
-        return await self._base.send({
-            "type": "filter",
-            "filters": {"trace_id": trace_id} if trace_id else {},
-        })
+        return await self._base.send(
+            {
+                "type": "filter",
+                "filters": {"trace_id": trace_id} if trace_id else {},
+            }
+        )
 
     # ==================== Event Handling ====================
 
-    def on_event(self, handler: Callable[[Dict[str, Any]], None]) -> Callable:
+    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
         """Register an event handler.
 
         Events are filtered by the adapter before being passed to the handler.
@@ -261,7 +267,7 @@ class TlonClient:
         self._user_event_handlers.append(handler)
         return handler
 
-    def _on_event(self, event: Dict[str, Any]) -> None:
+    def _on_event(self, event: dict[str, Any]) -> None:
         """Internal event handler - filters through adapter."""
         event_type = event.get("type", "")
         payload = event.get("payload", {})
@@ -276,7 +282,7 @@ class TlonClient:
             except Exception as e:
                 logger.error(f"User event handler error: {e}")
 
-    def on_message(self, handler: Callable[[Dict[str, Any]], None]) -> Callable:
+    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
         """Register a message handler.
 
         Args:
@@ -311,7 +317,7 @@ class TlonClient:
 
     # ==================== REST API ====================
 
-    async def get_history(self, limit: int = 100, before_id: Optional[str] = None) -> List[Dict]:
+    async def get_history(self, limit: int = 100, before_id: str | None = None) -> list[dict]:
         """Get message history.
 
         Args:
@@ -328,7 +334,7 @@ class TlonClient:
         result = await self._base.rest_get("/history", params)
         return result.get("messages", []) if result else []
 
-    async def get_agents(self) -> List[Dict]:
+    async def get_agents(self) -> list[dict]:
         """Get all agents.
 
         Returns:
@@ -337,7 +343,7 @@ class TlonClient:
         result = await self._base.rest_get("/agents")
         return result.get("agents", []) if result else []
 
-    async def get_agent(self, agent_id: str) -> Optional[Dict]:
+    async def get_agent(self, agent_id: str) -> dict | None:
         """Get a specific agent.
 
         Args:
@@ -349,7 +355,7 @@ class TlonClient:
         result = await self._base.rest_get(f"/agents/{agent_id}")
         return result
 
-    async def get_trace(self, trace_id: str) -> Optional[Dict]:
+    async def get_trace(self, trace_id: str) -> dict | None:
         """Get trace information.
 
         Args:
@@ -360,7 +366,7 @@ class TlonClient:
         """
         return await self._base.rest_get(f"/traces/{trace_id}")
 
-    async def get_traces(self, limit: int = 100) -> List[Dict]:
+    async def get_traces(self, limit: int = 100) -> list[dict]:
         """Get list of traces.
 
         Args:
@@ -372,7 +378,7 @@ class TlonClient:
         result = await self._base.rest_get("/traces", {"limit": limit})
         return result.get("traces", []) if result else []
 
-    async def get_agent_logs(self, agent_id: str) -> Optional[str]:
+    async def get_agent_logs(self, agent_id: str) -> str | None:
         """Get agent logs.
 
         Args:

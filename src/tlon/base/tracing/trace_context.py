@@ -6,20 +6,21 @@ in a way that automatically propagates trace IDs through the call stack.
 
 import contextvars
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Generator, Optional
+from typing import Any
 
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
 
 # Context variables for trace propagation
-_current_trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    'current_trace_id', default=None
+_current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_trace_id", default=None
 )
-_current_span_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    'current_span_id', default=None
+_current_span_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_span_id", default=None
 )
 
 
@@ -32,11 +33,12 @@ class TraceContext:
         span_id: The current span identifier
         parent_span_id: The parent span identifier (if any)
     """
+
     trace_id: str
     span_id: str
-    parent_span_id: Optional[str] = None
+    parent_span_id: str | None = None
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         """Convert to dictionary for event creation."""
         result = {
             "trace_id": self.trace_id,
@@ -47,7 +49,7 @@ class TraceContext:
         return result
 
 
-def get_current_trace() -> Optional[TraceContext]:
+def get_current_trace() -> TraceContext | None:
     """Get the current trace context.
 
     Returns:
@@ -84,10 +86,10 @@ def generate_span_id() -> str:
 
 @contextmanager
 def start_trace(
-    trace_id: Optional[str] = None,
+    trace_id: str | None = None,
     name: str = "unnamed",
     source: str = "system",
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None,
 ) -> Generator[TraceContext, None, None]:
     """Start a new trace context.
 
@@ -132,9 +134,9 @@ def start_trace(
 def start_span(
     name: str,
     source: str,
-    parent_span_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    payload: Optional[Dict[str, Any]] = None
+    parent_span_id: str | None = None,
+    event_type: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> Generator[TraceContext, None, None]:
     """Start a new span within the current trace.
 
@@ -185,9 +187,7 @@ def start_span(
 
 @contextmanager
 def continue_trace(
-    trace_id: str,
-    parent_span_id: Optional[str] = None,
-    source: str = "system"
+    trace_id: str, parent_span_id: str | None = None, source: str = "system"
 ) -> Generator[TraceContext, None, None]:
     """Continue an existing trace from another context.
 

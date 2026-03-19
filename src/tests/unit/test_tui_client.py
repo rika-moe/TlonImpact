@@ -7,17 +7,14 @@ Tests cover:
 - Mode switching
 """
 
-import asyncio
-import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from datetime import datetime
 
 from tlon.app.clients.tui.client import (
-    TUIClient,
     AgentInfo,
     MentionCompleter,
-    EVENT_ICONS,
+    TUIClient,
     run_tui_client,
 )
 
@@ -144,9 +141,11 @@ class TestTUIClient:
     @pytest.mark.asyncio
     async def test_connect(self, client):
         """Test connection."""
-        with patch("tlon.app.clients.sdk.TlonClient.connect", AsyncMock(return_value=True)):
-            with patch("tlon.app.clients.sdk.TlonClient.authenticate", AsyncMock(return_value=True)):
-                result = await client.connect()
+        with (
+            patch("tlon.app.clients.sdk.TlonClient.connect", AsyncMock(return_value=True)),
+            patch("tlon.app.clients.sdk.TlonClient.authenticate", AsyncMock(return_value=True)),
+        ):
+            result = await client.connect()
 
         assert result is True
         assert client._sdk is not None
@@ -508,9 +507,11 @@ class TestTUIClient:
     async def test_load_agents(self, client):
         """Test loading agents."""
         client._sdk = AsyncMock()
-        client._sdk.get_agents = AsyncMock(return_value=[
-            {"id": "dev-001", "name": "林知遥", "role": "开发", "state": "active"},
-        ])
+        client._sdk.get_agents = AsyncMock(
+            return_value=[
+                {"id": "dev-001", "name": "林知遥", "role": "开发", "state": "active"},
+            ]
+        )
 
         await client.load_agents()
 
@@ -521,9 +522,11 @@ class TestTUIClient:
     async def test_load_history(self, client):
         """Test loading history."""
         client._sdk = AsyncMock()
-        client._sdk.get_history = AsyncMock(return_value=[
-            {"content": "Hello", "timestamp": 1700000000.0},
-        ])
+        client._sdk.get_history = AsyncMock(
+            return_value=[
+                {"content": "Hello", "timestamp": 1700000000.0},
+            ]
+        )
 
         await client.load_history()
 

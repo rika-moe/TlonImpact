@@ -8,18 +8,18 @@ logger = get_logger(__name__)
 
 class ForgetMemoryTool(Tool):
     """Tool to forget/delete memories.
-    
+
     This tool allows the agent to delete memories that are
     no longer relevant or were stored incorrectly.
-    
+
     Example:
         >>> tool = ForgetMemoryTool(memory_manager)
         >>> result = await tool.execute(query="old Python preference", confirm=True)
     """
-    
+
     def __init__(self, memory_manager):
         """Initialize with memory manager.
-        
+
         Args:
             memory_manager: The MemoryManager instance
         """
@@ -42,24 +42,24 @@ class ForgetMemoryTool(Tool):
             },
         )
         self.memory = memory_manager
-    
+
     async def execute(
         self,
         query: str,
         confirm: bool = False,
     ) -> ToolResult:
         """Execute the tool to forget memories.
-        
+
         Args:
             query: Description of what to forget
             confirm: If True, actually delete; if False, just preview
-            
+
         Returns:
             ToolResult with result message
         """
         try:
             result = await self.memory.forget(query, confirm)
-            
+
             return ToolResult(
                 success=True,
                 data={"result": result},

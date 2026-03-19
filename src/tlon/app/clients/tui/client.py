@@ -6,12 +6,11 @@ This module provides a TUI client built on top of the new SDK with:
 - Trace visualization commands
 """
 
-import asyncio
+import sys
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import sys
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -19,8 +18,8 @@ from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
 
+from tlon.app.clients.sdk import TerminalAdapter, TlonClient
 from tlon.base.logger import get_logger
-from tlon.app.clients.sdk import TlonClient, TerminalAdapter
 
 logger = get_logger(__name__)
 console = Console(file=sys.stdout)
@@ -67,7 +66,7 @@ class AgentInfo:
         "prd-001": ("📝", "white"),
     }
 
-    def __init__(self, data: Dict[str, Any]):
+    def __init__(self, data: dict[str, Any]):
         self.id = data.get("id", "unknown")
         self.name = data.get("name", "Unknown")
         self.role = data.get("role", "")
@@ -89,7 +88,7 @@ class MentionCompleter(Completer):
         """Provide completions for @mentions."""
         word_before_cursor = document.get_word_before_cursor()
 
-        if word_before_cursor.startswith('@'):
+        if word_before_cursor.startswith("@"):
             prefix = word_before_cursor[1:].lower()
 
             for agent in self.client.agents.values():
@@ -133,20 +132,20 @@ class TUIClient:
 
         # SDK client
         self._adapter = TerminalAdapter()
-        self._sdk: Optional[TlonClient] = None
+        self._sdk: TlonClient | None = None
 
         # Data
-        self.agents: Dict[str, AgentInfo] = {}
-        self.messages: List[Dict] = []
-        self.events: List[Dict] = []
+        self.agents: dict[str, AgentInfo] = {}
+        self.messages: list[dict] = []
+        self.events: list[dict] = []
 
         # Mode state
         self.current_mode = "chat"  # chat | event | agent
         self.paused = False
-        self._pending_events: List[Dict] = []
+        self._pending_events: list[dict] = []
 
         # Trace filtering
-        self._current_trace_id: Optional[str] = None
+        self._current_trace_id: str | None = None
 
         # prompt-toolkit
         self.completer = MentionCompleter(self)
@@ -216,7 +215,7 @@ class TUIClient:
         except Exception as e:
             logger.warning(f"Failed to load history: {e}")
 
-    async def send_message(self, content: str, mentions: List[str] = None) -> bool:
+    async def send_message(self, content: str, mentions: list[str] = None) -> bool:
         """Send a message."""
         if not self._sdk:
             return False
@@ -227,7 +226,7 @@ class TUIClient:
             print(f"❌ 发送失败: {e}")
             return False
 
-    def _on_event(self, event: Dict[str, Any]):
+    def _on_event(self, event: dict[str, Any]):
         """Handle incoming events from SDK."""
         event_type = event.get("type", "")
         payload = event.get("payload", {})
@@ -252,16 +251,18 @@ class TUIClient:
                 if not content or sender_type == "human":
                     return
 
-                self._print_chat_message(sender_type, sender_name, content, payload.get("timestamp"))
+                self._print_chat_message(
+                    sender_type, sender_name, content, payload.get("timestamp")
+                )
 
-        elif self.current_mode == "event":
+        elif (
+            self.current_mode == "event"
+            or self.current_mode == "agent"
+            and "agent" in event_type.lower()
+        ):
             self._print_event(event_data)
 
-        elif self.current_mode == "agent":
-            if "agent" in event_type.lower():
-                self._print_event(event_data)
-
-    def _extract_sender_info(self, msg: Dict) -> tuple:
+    def _extract_sender_info(self, msg: dict) -> tuple:
         """Extract sender info from message."""
         sender = msg.get("sender", {})
         if sender and isinstance(sender, dict):
@@ -277,7 +278,9 @@ class TUIClient:
                 ts = time.time()
         return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
 
-    def _print_chat_message(self, sender_type: str, sender_name: str, content: str, timestamp: float = None):
+    def _print_chat_message(
+        self, sender_type: str, sender_name: str, content: str, timestamp: float = None
+    ):
         """Print a chat message."""
         if not content:
             return
@@ -296,7 +299,7 @@ class TUIClient:
                     break
             print(f"[{ts}] {emoji} {sender_name}: {content}")
 
-    def _format_event(self, event: Dict) -> str:
+    def _format_event(self, event: dict) -> str:
         """Format an event for display."""
         event_type = event.get("event_type", "")
         payload = event.get("payload", {})
@@ -331,7 +334,7 @@ class TUIClient:
         else:
             return f"[{time_str}]{trace_info} {icon} {event_type}"
 
-    def _print_event(self, event: Dict):
+    def _print_event(self, event: dict):
         """Print an event (with filtering)."""
         if self.paused:
             self._pending_events.append(event)
@@ -352,12 +355,7 @@ class TUIClient:
         table.add_column("职位")
 
         for agent in self.agents.values():
-            table.add_row(
-                agent.status_icon,
-                agent.id,
-                f"{agent.emoji} {agent.name}",
-                agent.role
-            )
+            table.add_row(agent.status_icon, agent.id, f"{agent.emoji} {agent.name}", agent.role)
 
         rprint(table)
         print(f"总计: {len(self.agents)} 个 Agent")
@@ -377,21 +375,9 @@ class TUIClient:
 
         for agent in self.agents.values():
             if agent.state == "active":
-                table.add_row(
-                    f"{agent.emoji} {agent.name}",
-                    "2.1%",
-                    "256M/512M",
-                    "120M",
-                    "🟢"
-                )
+                table.add_row(f"{agent.emoji} {agent.name}", "2.1%", "256M/512M", "120M", "🟢")
             else:
-                table.add_row(
-                    f"{agent.emoji} {agent.name}",
-                    "-",
-                    "-",
-                    "-",
-                    "⚪"
-                )
+                table.add_row(f"{agent.emoji} {agent.name}", "-", "-", "-", "⚪")
 
         rprint(table)
 
@@ -435,24 +421,24 @@ Agent 模式命令：
 """
         print(help_text)
 
-    async def _handle_command(self, cmd: str, args: List[str]) -> bool:
+    async def _handle_command(self, cmd: str, args: list[str]) -> bool:
         """Handle commands. Returns False to exit."""
         cmd_lower = cmd.lower()
 
         # Global commands
-        if cmd_lower in ['/help', '/h']:
+        if cmd_lower in ["/help", "/h"]:
             self._show_help()
 
-        elif cmd_lower in ['/quit', '/q', '/exit']:
+        elif cmd_lower in ["/quit", "/q", "/exit"]:
             return False
 
-        elif cmd_lower in ['/clear', '/cls']:
+        elif cmd_lower in ["/clear", "/cls"]:
             console.clear()
 
-        elif cmd_lower in ['/mode', '/m']:
+        elif cmd_lower in ["/mode", "/m"]:
             if args:
                 mode = args[0].lower()
-                if mode in ['chat', 'event', 'agent']:
+                if mode in ["chat", "event", "agent"]:
                     self.current_mode = mode
                     self._adapter.set_mode(mode)
                     print(f"⚙️ 切换到 {mode} 模式")
@@ -463,7 +449,7 @@ Agent 模式命令：
             else:
                 print(f"当前模式: {self.current_mode}")
 
-        elif cmd_lower in ['/connect', '/c']:
+        elif cmd_lower in ["/connect", "/c"]:
             print("正在重新连接...")
             await self.disconnect()
             if await self.connect():
@@ -472,7 +458,7 @@ Agent 模式命令：
             else:
                 print("❌ 连接失败")
 
-        elif cmd_lower in ['/status', '/s']:
+        elif cmd_lower in ["/status", "/s"]:
             status = "已连接" if self.connected else "未连接"
             session_id = self._sdk.session_id if self._sdk else None
             print(f"连接状态: {status}")
@@ -480,7 +466,7 @@ Agent 模式命令：
             if session_id:
                 print(f"会话ID: {session_id}")
 
-        elif cmd_lower in ['/agents', '/a']:
+        elif cmd_lower in ["/agents", "/a"]:
             if self.agents:
                 self._print_agent_table()
             else:
@@ -488,7 +474,7 @@ Agent 模式命令：
 
         # Chat mode commands
         elif self.current_mode == "chat":
-            if cmd_lower == '/history':
+            if cmd_lower == "/history":
                 n = int(args[0]) if args else 50
                 print(f"--- 最近 {min(len(self.messages), n)} 条历史消息 ---")
                 for msg in self.messages[-n:]:
@@ -498,7 +484,7 @@ Agent 模式命令：
                     self._print_chat_message(sender_type, sender_name, content, ts)
                 print("--- 历史消息结束 ---")
 
-            elif cmd_lower == '/who':
+            elif cmd_lower == "/who":
                 if self.agents:
                     online = [a.name for a in self.agents.values() if a.state == "active"]
                     print(f"在线: {', '.join(online) if online else '无'}")
@@ -510,14 +496,14 @@ Agent 模式命令：
 
         # Event mode commands
         elif self.current_mode == "event":
-            if cmd_lower == '/filter':
+            if cmd_lower == "/filter":
                 if args:
-                    if args[0] == 'clear':
+                    if args[0] == "clear":
                         self._adapter.clear_filters()
                         print("过滤器已清除")
                     else:
                         # Simple string filter on event type
-                        filters = {"event_types": [args[0]]} if '.' in args[0] else None
+                        filters = {"event_types": [args[0]]} if "." in args[0] else None
                         if filters:
                             self._adapter.set_event_filters(filters)
                         print(f"过滤器已设置: {args[0]}")
@@ -525,11 +511,11 @@ Agent 模式命令：
                     filters = self._adapter._event_filters
                     print(f"当前过滤器: {filters or '无'}")
 
-            elif cmd_lower == '/pause':
+            elif cmd_lower == "/pause":
                 self.paused = True
                 print("⏸️ Event 监控已暂停（新事件将被缓存）")
 
-            elif cmd_lower == '/resume':
+            elif cmd_lower == "/resume":
                 self.paused = False
                 if self._pending_events:
                     print(f"▶️ 恢复监控，显示 {len(self._pending_events)} 条缓存事件...")
@@ -539,16 +525,16 @@ Agent 模式命令：
                 else:
                     print("▶️ 恢复监控")
 
-            elif cmd_lower == '/tail':
+            elif cmd_lower == "/tail":
                 n = int(args[0]) if args else 100
                 print(f"--- 最近 {min(len(self.events), n)} 条事件 ---")
                 for evt in self.events[-n:]:
                     self._print_event(evt)
                 print("--- 显示结束 ---")
 
-            elif cmd_lower == '/trace':
+            elif cmd_lower == "/trace":
                 if args:
-                    if args[0] == 'clear':
+                    if args[0] == "clear":
                         self._current_trace_id = None
                         self._adapter.set_trace_filter(None)
                         if self._sdk:
@@ -573,17 +559,17 @@ Agent 模式命令：
 
         # Agent mode commands
         elif self.current_mode == "agent":
-            if cmd_lower in ['/list', '/ls']:
+            if cmd_lower in ["/list", "/ls"]:
                 self._print_agent_table()
 
-            elif cmd_lower == '/logs':
+            elif cmd_lower == "/logs":
                 if args:
                     agent_id = args[0]
                     await self._show_agent_logs(agent_id)
                 else:
                     print("❌ 请指定 Agent ID")
 
-            elif cmd_lower == '/top':
+            elif cmd_lower == "/top":
                 self._print_top_table()
 
             else:
@@ -620,7 +606,7 @@ Agent 模式命令：
                     continue
 
                 # Handle commands
-                if user_input.startswith('/'):
+                if user_input.startswith("/"):
                     parts = user_input.split()
                     cmd = parts[0]
                     args = parts[1:]
@@ -662,7 +648,9 @@ Agent 模式命令：
 
             if not await self.connect():
                 print("❌ 无法连接到服务器，请先启动 server")
-                print(f"提示: uv run tlon server --rest-port {self.rest_port} --ws-port {self.ws_port}")
+                print(
+                    f"提示: uv run tlon server --rest-port {self.rest_port} --ws-port {self.ws_port}"
+                )
                 return 1
 
             await self.load_agents()

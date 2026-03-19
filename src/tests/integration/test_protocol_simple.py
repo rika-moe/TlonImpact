@@ -1,10 +1,9 @@
 """Simple protocol tests without full server startup."""
 
-import pytest
 import json
 
-from tlon.app.server.api.websocket import WebSocketHandler
 from tlon.app.clients.sdk.base_client import BaseClient
+from tlon.app.server.api.websocket import WebSocketHandler
 
 
 class TestProtocolVersion:
@@ -33,10 +32,7 @@ class TestAuthMessageFormat:
             "protocol_version": "1.0.0",
             "supported_versions": ["1.0.0"],
             "capabilities": ["trace", "filter", "history"],
-            "metadata": {
-                "client_version": "0.2.0",
-                "platform": "terminal"
-            }
+            "metadata": {"client_version": "0.2.0", "platform": "terminal"},
         }
 
         # Verify structure
@@ -61,7 +57,7 @@ class TestAuthMessageFormat:
             "server_version": "0.2.0",
             "server_time": "2026-03-19T12:00:00Z",
             "capabilities": ["trace", "filter", "history"],
-            "timestamp": "2026-03-19T12:00:00Z"
+            "timestamp": "2026-03-19T12:00:00Z",
         }
 
         # Verify structure
@@ -78,7 +74,7 @@ class TestAuthMessageFormat:
             "type": "auth_failed",
             "error_code": "VERSION_MISMATCH",
             "message": "Protocol version not supported",
-            "supported_versions": ["1.0.0"]
+            "supported_versions": ["1.0.0"],
         }
 
         # Verify structure
@@ -93,8 +89,8 @@ class TestEventFormat:
 
     def test_event_with_trace_fields(self):
         """Test event includes trace fields."""
+
         from tlon.base.events.event import Event, EventType
-        from datetime import datetime
 
         event = Event(
             type=EventType.AGENT_THINKING_START,
@@ -102,7 +98,7 @@ class TestEventFormat:
             source="test-source",
             trace_id="trace-123",
             span_id="span-456",
-            parent_span_id="span-parent"
+            parent_span_id="span-parent",
         )
 
         # Convert to dict
@@ -116,13 +112,12 @@ class TestEventFormat:
     def test_event_to_dict_serialization(self):
         """Test event serializes correctly to JSON."""
         from tlon.base.events.event import Event, EventType
-        import json
 
         event = Event(
             type=EventType.MESSAGE_NEW,
             payload={"content": "Hello"},
             source="test",
-            trace_id="trace-abc"
+            trace_id="trace-abc",
         )
 
         event_dict = event.to_dict()

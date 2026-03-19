@@ -4,10 +4,10 @@ Provides interactive terminal interface for configuring Tlon
 with Position-Agent architecture.
 """
 
-from .core import Wizard
-from .position_store import PositionStore
 from .agent_store import AgentStore
+from .core import Wizard
 from .diagnostics import ConfigDiagnostics, DiagnosticReport, IssueSeverity
+from .position_store import PositionStore
 
 __all__ = [
     "Wizard",

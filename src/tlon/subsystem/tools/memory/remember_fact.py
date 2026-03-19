@@ -8,10 +8,10 @@ logger = get_logger(__name__)
 
 class RememberFactTool(Tool):
     """Tool to record a fact to agent's memory.
-    
+
     This tool allows the agent to remember important information
     about the user, project state, decisions, etc.
-    
+
     Example:
         >>> tool = RememberFactTool(memory_manager)
         >>> result = await tool.execute(
@@ -20,10 +20,10 @@ class RememberFactTool(Tool):
         ...     importance=0.8
         ... )
     """
-    
+
     def __init__(self, memory_manager):
         """Initialize with memory manager.
-        
+
         Args:
             memory_manager: The MemoryManager instance
         """
@@ -39,7 +39,13 @@ class RememberFactTool(Tool):
                     },
                     "fact_type": {
                         "type": "string",
-                        "enum": ["USER_PREFERENCE", "PROJECT_STATE", "TECH_STACK", "DECISION", "GENERAL"],
+                        "enum": [
+                            "USER_PREFERENCE",
+                            "PROJECT_STATE",
+                            "TECH_STACK",
+                            "DECISION",
+                            "GENERAL",
+                        ],
                         "description": "事实类型：USER_PREFERENCE(用户偏好), PROJECT_STATE(项目状态), TECH_STACK(技术栈), DECISION(决策), GENERAL(一般)",
                     },
                     "subject": {
@@ -63,7 +69,7 @@ class RememberFactTool(Tool):
             },
         )
         self.memory = memory_manager
-    
+
     async def execute(
         self,
         fact: str,
@@ -74,7 +80,7 @@ class RememberFactTool(Tool):
         importance: float = 0.5,
     ) -> ToolResult:
         """Execute the tool to remember a fact.
-        
+
         Args:
             fact: Natural language description of the fact
             fact_type: Type of fact (USER_PREFERENCE, PROJECT_STATE, etc.)
@@ -82,7 +88,7 @@ class RememberFactTool(Tool):
             predicate: Predicate/relationship
             object: Object of the fact
             importance: Importance score (0-1)
-            
+
         Returns:
             ToolResult with the fact ID
         """
@@ -95,7 +101,7 @@ class RememberFactTool(Tool):
                 object=object or fact[:50],
                 importance=importance,
             )
-            
+
             return ToolResult(
                 success=True,
                 data={"fact_id": fact_id},

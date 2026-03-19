@@ -21,13 +21,11 @@ import os
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
-import yaml
 
 
 @dataclass
@@ -38,8 +36,8 @@ class TestResult:
     name: str
     status: str  # passed, failed, skipped
     duration_ms: float
-    error: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -53,8 +51,8 @@ class TestRunReport:
     passed: int
     failed: int
     skipped: int
-    results: List[TestResult]
-    logs: Dict[str, str]
+    results: list[TestResult]
+    logs: dict[str, str]
 
     def to_json(self) -> str:
         """Convert to JSON string."""
@@ -96,11 +94,11 @@ class TestClient:
         self.rest_url = f"http://{host}:{rest_port}"
         self.timeout = timeout
 
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self.session: aiohttp.ClientSession | None = None
+        self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.connected = False
-        self.messages: List[Dict] = []
-        self.events: List[Dict] = []
+        self.messages: list[dict] = []
+        self.events: list[dict] = []
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -113,7 +111,7 @@ class TestClient:
         if self.session:
             await self.session.close()
 
-    async def check_health(self) -> tuple[bool, Dict]:
+    async def check_health(self) -> tuple[bool, dict]:
         """Check server health via REST API.
 
         Returns:
@@ -130,7 +128,7 @@ class TestClient:
         except Exception as e:
             return False, {"error": str(e)}
 
-    async def get_agents(self) -> List[Dict]:
+    async def get_agents(self) -> list[dict]:
         """Get list of agents via REST API."""
         try:
             async with self.session.get(
@@ -204,7 +202,7 @@ class TestClient:
             await self.ws.close()
         self.connected = False
 
-    async def send_message(self, content: str, mentions: List[str] = None) -> bool:
+    async def send_message(self, content: str, mentions: list[str] = None) -> bool:
         """Send a message.
 
         Args:
@@ -235,7 +233,7 @@ class TestClient:
         self,
         timeout: float = 30.0,
         predicate=None,
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Wait for a response matching predicate.
 
         Args:
@@ -267,14 +265,13 @@ class TestClient:
                         sender_type = sender.get("type", "unknown")
 
                         # Only count agent responses (not user echo)
-                        if sender_type != "human":
-                            if predicate is None or predicate(data):
-                                return data
+                        if sender_type != "human" and predicate is None or predicate(data):
+                            return data
 
                 elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
                     return None
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
         return None
@@ -286,7 +283,7 @@ class TestRunner:
     def __init__(self, client: TestClient, verbose: bool = False):
         self.client = client
         self.verbose = verbose
-        self.results: List[TestResult] = []
+        self.results: list[TestResult] = []
 
     def log(self, message: str):
         """Log a message if verbose mode."""
@@ -303,9 +300,9 @@ class TestRunner:
         Returns:
             TestResult with outcome
         """
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Running {test_id}: {test_name}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         start_time = time.time()
 
@@ -334,9 +331,7 @@ class TestRunner:
             duration = (time.time() - start_time) * 1000
 
             print(f"✅ {test_id} PASSED ({duration:.0f}ms)")
-            return TestResult(
-                id=test_id, name=test_name, status="passed", duration_ms=duration
-            )
+            return TestResult(id=test_id, name=test_name, status="passed", duration_ms=duration)
 
         except AssertionError as e:
             duration = (time.time() - start_time) * 1000
@@ -409,17 +404,17 @@ class TestRunner:
         ]
 
         for i, message in enumerate(conversation):
-            self.log(f"Turn {i+1}: Sending '{message[:30]}...'")
+            self.log(f"Turn {i + 1}: Sending '{message[:30]}...'")
             sent = await self.client.send_message(message)
-            assert sent, f"Failed to send message {i+1}"
+            assert sent, f"Failed to send message {i + 1}"
 
-            self.log(f"Turn {i+1}: Waiting for response...")
+            self.log(f"Turn {i + 1}: Waiting for response...")
             response = await self.client.wait_for_response(timeout=45.0)
-            assert response is not None, f"No response for turn {i+1}"
+            assert response is not None, f"No response for turn {i + 1}"
 
             payload = response.get("payload", {})
             content = payload.get("content", "")
-            assert len(content) > 0, f"Empty response for turn {i+1}"
+            assert len(content) > 0, f"Empty response for turn {i + 1}"
 
             # Small delay between turns
             await asyncio.sleep(0.5)
@@ -491,9 +486,7 @@ async def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Tlon Integration Test Client")
     parser.add_argument("--host", default=os.getenv("TLON_TEST_HOST", "127.0.0.1"))
-    parser.add_argument(
-        "--ws-port", type=int, default=int(os.getenv("TLON_TEST_WS_PORT", "8888"))
-    )
+    parser.add_argument("--ws-port", type=int, default=int(os.getenv("TLON_TEST_WS_PORT", "8888")))
     parser.add_argument(
         "--rest-port", type=int, default=int(os.getenv("TLON_TEST_REST_PORT", "8080"))
     )
@@ -501,9 +494,7 @@ async def main():
     parser.add_argument("--health-check", action="store_true", help="Only check health")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--output", "-o", help="Output report file")
-    parser.add_argument(
-        "--timeout", type=int, default=60, help="Default timeout in seconds"
-    )
+    parser.add_argument("--timeout", type=int, default=60, help="Default timeout in seconds")
 
     args = parser.parse_args()
 
@@ -571,14 +562,14 @@ async def main():
         )
 
         # Print summary
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("TEST SUMMARY")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Total:   {report.total}")
         print(f"Passed:  {report.passed} ✅")
         print(f"Failed:  {report.failed} ❌")
         print(f"Skipped: {report.skipped} ⏭️")
-        print(f"Duration: {total_duration/1000:.1f}s")
+        print(f"Duration: {total_duration / 1000:.1f}s")
 
         # Save report
         if args.output:

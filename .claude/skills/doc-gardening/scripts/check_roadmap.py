@@ -16,17 +16,17 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 
 @dataclass
 class MilestoneInfo:
     """里程碑信息。"""
+
     name: str
     path: Path
     status: str  # ✅ 🔄 ⏳ 🗂️
-    progress: Tuple[int, int] = (0, 0)  # (完成数, 总数)
-    risks: List[str] = field(default_factory=list)
+    progress: tuple[int, int] = (0, 0)  # (完成数, 总数)
+    risks: list[str] = field(default_factory=list)
 
 
 class RoadmapChecker:
@@ -39,8 +39,8 @@ class RoadmapChecker:
 
     def __init__(self, roadmap_dir: Path):
         self.roadmap_dir = roadmap_dir
-        self.issues: List[Tuple[str, str]] = []
-        self.milestones: List[MilestoneInfo] = []
+        self.issues: list[tuple[str, str]] = []
+        self.milestones: list[MilestoneInfo] = []
         self.readme_content: str = ""
 
     def check(self) -> bool:
@@ -67,10 +67,10 @@ class RoadmapChecker:
             self.issues.append(("README", "README.md 不存在"))
             return
 
-        self.readme_content = readme_path.read_text(encoding='utf-8')
+        self.readme_content = readme_path.read_text(encoding="utf-8")
 
         # 检查是否包含当前里程碑状态
-        current_patterns = ['当前里程碑', 'Current Milestone', '🔄', '进行中']
+        current_patterns = ["当前里程碑", "Current Milestone", "🔄", "进行中"]
         has_current = any(p in self.readme_content for p in current_patterns)
 
         if not has_current:
@@ -96,7 +96,7 @@ class RoadmapChecker:
 
     def _parse_milestone(self, path: Path) -> MilestoneInfo:
         """解析里程碑文件。"""
-        content = path.read_text(encoding='utf-8')
+        content = path.read_text(encoding="utf-8")
 
         # 提取状态
         status = self.STATUS_PLANNED
@@ -108,33 +108,25 @@ class RoadmapChecker:
             status = self.STATUS_ARCHIVED
 
         # 解析进度（从任务列表）
-        completed = len(re.findall(r'^[\s]*-[\s]*\[[xX]\]', content, re.MULTILINE))
-        total = len(re.findall(r'^[\s]*-[\s]*\[[\s]\]', content, re.MULTILINE)) + completed
+        completed = len(re.findall(r"^[\s]*-[\s]*\[[xX]\]", content, re.MULTILINE))
+        total = len(re.findall(r"^[\s]*-[\s]*\[[\s]\]", content, re.MULTILINE)) + completed
 
         # 查找风险点
         risks = []
         risk_section = re.search(
-            r'##?\s*风险|##?\s*Risk.*?(?=##|\Z)',
-            content,
-            re.DOTALL | re.IGNORECASE
+            r"##?\s*风险|##?\s*Risk.*?(?=##|\Z)", content, re.DOTALL | re.IGNORECASE
         )
         if risk_section:
-            risk_lines = re.findall(r'^[\s]*-[\s]+(.+)$', risk_section.group(), re.MULTILINE)
+            risk_lines = re.findall(r"^[\s]*-[\s]+(.+)$", risk_section.group(), re.MULTILINE)
             risks = [r.strip() for r in risk_lines if r.strip()]
 
         # 检查命名格式
         name = path.stem
-        if not re.match(r'milestone-\d+-.+', name):
-            self.issues.append(
-                ("命名", f"{name}.md 不符合命名规范（应为 milestone-N-*.md）")
-            )
+        if not re.match(r"milestone-\d+-.+", name):
+            self.issues.append(("命名", f"{name}.md 不符合命名规范（应为 milestone-N-*.md）"))
 
         return MilestoneInfo(
-            name=name,
-            path=path,
-            status=status,
-            progress=(completed, total),
-            risks=risks
+            name=name, path=path, status=status, progress=(completed, total), risks=risks
         )
 
     def _check_archived(self):
@@ -146,9 +138,7 @@ class RoadmapChecker:
         for ms in completed_ms:
             archived_path = completed_dir / f"{ms.name}.md"
             if not archived_path.exists():
-                self.issues.append(
-                    ("归档", f"已完成的里程碑 {ms.name}.md 未归档到 completed/")
-                )
+                self.issues.append(("归档", f"已完成的里程碑 {ms.name}.md 未归档到 completed/"))
 
         if completed_dir.exists():
             archived = list(completed_dir.glob("milestone-*.md"))
@@ -230,7 +220,7 @@ def main():
         "--roadmap-dir",
         type=Path,
         default=Path("./docs/roadmap"),
-        help="Roadmap 目录路径 (默认: ./docs/roadmap)"
+        help="Roadmap 目录路径 (默认: ./docs/roadmap)",
     )
 
     args = parser.parse_args()

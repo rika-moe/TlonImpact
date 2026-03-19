@@ -16,8 +16,6 @@ Usage:
 import argparse
 import asyncio
 import sys
-from pathlib import Path
-from typing import Optional
 
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.settings import settings
@@ -62,7 +60,7 @@ Legacy Aliases (for backward compatibility):
         aliases=["server"],  # Backward compatibility
         help="Maintain the dream (start server daemon)",
         description="""Start the Tlon server with REST and WebSocket APIs.
-        
+
 From "The Circular Ruins": The dreamer creates reality through dreams.
 The server is the dream that sustains the Tlon universe.""",
     )
@@ -76,10 +74,15 @@ The server is the dream that sustains the Tlon universe.""",
         "--ws-port", type=int, default=8888, help="Port for WebSocket (default: 8888)"
     )
     dream_parser.add_argument(
-        "--lucid", "-l", dest="debug", action="store_true",
-        help="Lucid dream mode - enable debug logging"
+        "--lucid",
+        "-l",
+        dest="debug",
+        action="store_true",
+        help="Lucid dream mode - enable debug logging",
     )
-    dream_parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)  # Hidden alias
+    dream_parser.add_argument(
+        "--debug", action="store_true", help=argparse.SUPPRESS
+    )  # Hidden alias
 
     # intrude command - intrude into reality (connect UI)
     intrude_parser = subparsers.add_parser(
@@ -87,7 +90,7 @@ The server is the dream that sustains the Tlon universe.""",
         aliases=["tui"],  # Backward compatibility
         help="Intrude into reality (connect interface)",
         description="""Connect to the Tlon server through various interfaces.
-        
+
 Tlon is invading reality. You choose the point of intrusion.
 
 From the story: The imagined universe of Tlon begins to manifest in the real world,
@@ -98,9 +101,11 @@ blurring the boundaries between fiction and reality.""",
         nargs="?",
         choices=["tui", "web", "telegram", "void"],
         default="tui",
-        help="Interface to use for intrusion (default: tui)"
+        help="Interface to use for intrusion (default: tui)",
     )
-    intrude_parser.add_argument("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
+    intrude_parser.add_argument(
+        "--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)"
+    )
     intrude_parser.add_argument(
         "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
     )
@@ -114,35 +119,32 @@ blurring the boundaries between fiction and reality.""",
         aliases=["wizard"],  # Backward compatibility
         help="Create in the mirror (configure agents)",
         description="""Interactive configuration wizard for creating and managing agents.
-        
+
 From "The Mirror and the Mask": The mirror reveals and creates.
 Through the mirror, you shape the forms that will inhabit Tlon.
 
 Use --reflect to view existing agent mirrors without entering the mirror.""",
     )
     mirror_parser.add_argument(
-        "--reflect", "-r", action="store_true",
-        help="View existing agent mirrors (list all agents)"
+        "--reflect", "-r", action="store_true", help="View existing agent mirrors (list all agents)"
     )
     mirror_parser.add_argument(
-        "--create", metavar="NAME",
-        help="Create a new agent non-interactively (requires --position)"
+        "--create",
+        metavar="NAME",
+        help="Create a new agent non-interactively (requires --position)",
     )
     mirror_parser.add_argument(
-        "--position", metavar="POS",
-        help="Position for the new agent (used with --create)"
+        "--position", metavar="POS", help="Position for the new agent (used with --create)"
     )
     mirror_parser.add_argument(
-        "--template", metavar="TPL", default="default",
-        help="Template for the new agent (default: default)"
+        "--template",
+        metavar="TPL",
+        default="default",
+        help="Template for the new agent (default: default)",
     )
+    mirror_parser.add_argument("--destroy", metavar="NAME", help="Destroy (remove) an agent")
     mirror_parser.add_argument(
-        "--destroy", metavar="NAME",
-        help="Destroy (remove) an agent"
-    )
-    mirror_parser.add_argument(
-        "--edit", metavar="NAME",
-        help="Edit an existing agent's configuration"
+        "--edit", metavar="NAME", help="Edit an existing agent's configuration"
     )
 
     return parser
@@ -195,16 +197,14 @@ async def run_dream(args) -> int:
     log_level = "DEBUG" if is_lucid else settings.log_level
 
     # Literary output
-    print("""
+    print(
+        """
 [梦境开始] 特隆正在入侵现实...
            Server: ws://{}:{}
            代表大会: 等待连接
            Agents: 休眠中
-{}""".format(
-        args.host,
-        args.ws_port,
-        "           模式: 清醒梦 (lucid dream)\n" if is_lucid else ""
-    ))
+{}""".format(args.host, args.ws_port, "           模式: 清醒梦 (lucid dream)\n" if is_lucid else "")
+    )
 
     return await run_server(
         host=args.host,
@@ -234,6 +234,7 @@ async def run_intrude(args) -> int:
 
         # Use new SDK-based TUI client
         from tlon.app.clients.tui import run_tui_client
+
         result = await run_tui_client(
             host=args.host, port=args.port, rest_port=getattr(args, "rest_port", 8080)
         )
@@ -284,7 +285,7 @@ async def run_mirror(args) -> int:
         return await _mirror_create(
             name=args.create,
             position=getattr(args, "position", None),
-            template=getattr(args, "template", "default")
+            template=getattr(args, "template", "default"),
         )
 
     # Handle --edit
@@ -297,6 +298,7 @@ async def run_mirror(args) -> int:
 """)
 
     from tlon.app.wizard.wizard import run_wizard
+
     return run_wizard()
 
 
@@ -325,7 +327,7 @@ async def _mirror_reflect() -> int:
         except Exception as e:
             print(f"\n  ⚠️ {agent.id}: 读取失败 ({e})")
 
-    print(f"\n-" * 50)
+    print("\n-" * 50)
     print(f"总计: {len(agents)} 个 Agent")
     return 0
 
@@ -338,6 +340,7 @@ async def _mirror_destroy(name: str) -> int:
 
     # Check if agent exists first
     from tlon.base.config import ConfigLoader
+
     config_loader = ConfigLoader()
     agent = config_loader.load_agent(name)
 
@@ -348,7 +351,7 @@ async def _mirror_destroy(name: str) -> int:
     success, error = config_saver.delete_agent(name, delete_data=True)
 
     if success:
-        print(f"\n🪞 倒影已消散")
+        print("\n🪞 倒影已消散")
         print(f"   Agent '{name}' 已被移除")
         return 0
     else:
@@ -356,11 +359,17 @@ async def _mirror_destroy(name: str) -> int:
         return 1
 
 
-async def _mirror_create(name: str, position: Optional[str], template: str) -> int:
+async def _mirror_create(name: str, position: str | None, template: str) -> int:
     """Create an agent non-interactively."""
-    from tlon.base.config import ConfigLoader, ConfigSaver, AgentConfig, LLMConfig, DockerRuntimeConfig
-    from tlon.subsystem.memory import MemoryConfig
+    from tlon.base.config import (
+        AgentConfig,
+        ConfigLoader,
+        ConfigSaver,
+        DockerRuntimeConfig,
+        LLMConfig,
+    )
     from tlon.base.settings import settings
+    from tlon.subsystem.memory import MemoryConfig
 
     if not position:
         print("\n❌ 必须指定 --position 来创建 Agent")
@@ -418,12 +427,12 @@ async def _mirror_create(name: str, position: Optional[str], template: str) -> i
     success, error = config_saver.save_agent(agent_config)
 
     if success:
-        print(f"\n🪞 倒影已凝聚")
+        print("\n🪞 倒影已凝聚")
         print(f"   ID: {agent_id}")
         print(f"   名称: {name}")
         print(f"   职位: {position}")
         print(f"   配置: config/agents/{agent_id}.yaml")
-        print(f"\n   [镜子] 轮廓凝聚，一个新的存在睁开眼睛。")
+        print("\n   [镜子] 轮廓凝聚，一个新的存在睁开眼睛。")
         return 0
     else:
         print(f"\n❌ 创建失败: {error}")
@@ -436,9 +445,9 @@ def _generate_agent_id(name: str) -> str:
 
     # Simple conversion: lowercase, replace spaces with hyphens, remove special chars
     agent_id = name.lower()
-    agent_id = re.sub(r'[^\w\s-]', '', agent_id)  # Remove special chars
-    agent_id = re.sub(r'\s+', '-', agent_id)  # Replace spaces with hyphens
-    agent_id = agent_id.strip('-')
+    agent_id = re.sub(r"[^\w\s-]", "", agent_id)  # Remove special chars
+    agent_id = re.sub(r"\s+", "-", agent_id)  # Replace spaces with hyphens
+    agent_id = agent_id.strip("-")
 
     # If empty (e.g., all special chars), use a fallback
     if not agent_id:
@@ -466,10 +475,10 @@ async def _mirror_edit(name: str) -> int:
     agent_file = config_loader.agents_dir / f"{agent.id}.yaml"
 
     # Get editor from environment or use defaults
-    editor = os.environ.get('EDITOR', 'vi')
+    editor = os.environ.get("EDITOR", "vi")
     if os.system(f"which {editor} > /dev/null 2>&1") != 0:
         # Try common editors
-        for fallback in ['vim', 'nano', 'code', 'notepad']:
+        for fallback in ["vim", "nano", "code", "notepad"]:
             if os.system(f"which {fallback} > /dev/null 2>&1") == 0:
                 editor = fallback
                 break
@@ -480,7 +489,7 @@ async def _mirror_edit(name: str) -> int:
 
     try:
         subprocess.call([editor, str(agent_file)])
-        print(f"\n✅ 编辑完成")
+        print("\n✅ 编辑完成")
         return 0
     except Exception as e:
         print(f"\n❌ 无法启动编辑器: {e}")
@@ -564,8 +573,12 @@ def main() -> int:
             from ..wizard.core import Wizard
 
             # Handle --reflect and other options that don't need interactive wizard
-            if getattr(args, "reflect", False) or getattr(args, "destroy", None) or \
-               getattr(args, "create", None) or getattr(args, "edit", None):
+            if (
+                getattr(args, "reflect", False)
+                or getattr(args, "destroy", None)
+                or getattr(args, "create", None)
+                or getattr(args, "edit", None)
+            ):
                 # These are handled in async main_async, but since they don't
                 # need the wizard UI, we can run them with a temporary event loop
                 return asyncio.run(run_mirror(args))
@@ -578,15 +591,15 @@ def main() -> int:
             wizard.run()
             return 0
 
-        except ImportError as e:
-            print("\n" + "="*50)
+        except ImportError:
+            print("\n" + "=" * 50)
             print("  Wizard 依赖未安装")
-            print("="*50)
+            print("=" * 50)
             print("\n请安装以下依赖:")
             print("  pip install rich questionary")
             print("\n或者安装完整依赖:")
             print("  pip install -e '.[dev]'")
-            print("="*50 + "\n")
+            print("=" * 50 + "\n")
             return 1
         except KeyboardInterrupt:
             print("\n\n镜中的倒影消散了...")

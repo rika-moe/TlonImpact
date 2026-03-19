@@ -3,13 +3,13 @@
 Manages tool registration and execution.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
-from tlon.base.logger import get_logger
-from tlon.subsystem.tools.base import Tool, ToolResult
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.logger import get_logger
 from tlon.base.tracing import get_current_trace
+from tlon.subsystem.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 
@@ -38,30 +38,30 @@ class ToolExecutor:
         Args:
             event_bus: Optional event bus for emitting tool execution events
         """
-        self._tools: Dict[str, Tool] = {}
+        self._tools: dict[str, Tool] = {}
         self._event_bus = event_bus
-    
+
     def register_tool(self, tool: Tool) -> None:
         """Register a tool.
-        
+
         Args:
             tool: The tool to register
-            
+
         Raises:
             ValueError: If a tool with the same name already exists
         """
         if tool.name in self._tools:
             logger.warning(f"Tool {tool.name} already registered, overwriting")
-        
+
         self._tools[tool.name] = tool
         logger.debug(f"Registered tool: {tool.name}")
-    
+
     def unregister_tool(self, tool_name: str) -> bool:
         """Unregister a tool.
-        
+
         Args:
             tool_name: Name of the tool to unregister
-            
+
         Returns:
             True if tool was found and removed
         """
@@ -70,58 +70,60 @@ class ToolExecutor:
             logger.debug(f"Unregistered tool: {tool_name}")
             return True
         return False
-    
+
     def get_tool(self, tool_name: str) -> Tool:
         """Get a tool by name.
-        
+
         Args:
             tool_name: Name of the tool
-            
+
         Returns:
             The tool instance
-            
+
         Raises:
             ValueError: If tool not found
         """
         if tool_name not in self._tools:
             raise ValueError(f"Tool not found: {tool_name}")
         return self._tools[tool_name]
-    
-    def get_tool_definitions(self) -> List[Dict[str, Any]]:
+
+    def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Get all tool definitions for LLM.
-        
+
         Returns:
             List of OpenAI tool definitions
         """
         return [tool.to_openai_definition() for tool in self._tools.values()]
-    
+
     def describe_tools(self) -> str:
         """Get human-readable description of all tools.
-        
+
         Returns:
             Description string for use in prompts
         """
         if not self._tools:
             return "No tools available."
-        
+
         lines = []
         for name, tool in self._tools.items():
             lines.append(f"\n{name}:")
             lines.append(f"  Description: {tool.description}")
-            lines.append(f"  Parameters:")
+            lines.append("  Parameters:")
             lines.append(f"{tool.get_parameter_description()}")
-        
+
         return "\n".join(lines)
-    
-    def list_tools(self) -> List[str]:
+
+    def list_tools(self) -> list[str]:
         """Get list of registered tool names.
-        
+
         Returns:
             List of tool names
         """
         return list(self._tools.keys())
-    
-    async def execute(self, tool_name: str, arguments: Dict[str, Any], source: str = "system") -> ToolResult:
+
+    async def execute(
+        self, tool_name: str, arguments: dict[str, Any], source: str = "system"
+    ) -> ToolResult:
         """Execute a tool.
 
         Args:
@@ -149,7 +151,7 @@ class ToolExecutor:
                 payload={
                     "tool": tool_name,
                     "arguments": arguments,
-                    "tool_type": getattr(tool, 'tool_type', 'unknown'),
+                    "tool_type": getattr(tool, "tool_type", "unknown"),
                 },
                 source=source,
             )
@@ -161,6 +163,7 @@ class ToolExecutor:
             await self._event_bus.publish(start_event)
 
         import time
+
         start_time = time.time()
 
         try:
@@ -210,18 +213,14 @@ class ToolExecutor:
                         error_event.parent_span_id = current_trace.parent_span_id
                 await self._event_bus.publish(error_event)
 
-            return ToolResult(
-                success=False,
-                data={},
-                error=f"Execution error: {str(e)}"
-            )
-    
+            return ToolResult(success=False, data={}, error=f"Execution error: {str(e)}")
+
     def has_tool(self, tool_name: str) -> bool:
         """Check if a tool is registered.
-        
+
         Args:
             tool_name: Name of the tool
-            
+
         Returns:
             True if tool is registered
         """

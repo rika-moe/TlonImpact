@@ -16,21 +16,21 @@ Architecture:
     - EventBus (for event subscription/publishing)
     - MessageStore (for persistence)
     - AgentInfoProvider (for routing decisions)
-    
+
     It subscribes to MESSAGE_NEW events and publishes MESSAGE_ROUTED events.
 """
 
+import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Optional
 
+from tlon.base.component import Component
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.component import Component
-from tlon.base.tracing import start_trace, start_span
+from tlon.base.logger import get_logger
+from tlon.base.tracing import start_span
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
-from tlon.base.logger import get_logger
-import uuid
 
 if TYPE_CHECKING:
     from tlon.base.config.agent_info import AgentInfoProvider
@@ -41,31 +41,32 @@ logger = get_logger(__name__)
 @dataclass
 class RoutedMessage:
     """A message that has been routed to specific targets.
-    
+
     Attributes:
         original: The original message
         target_ids: List of target recipient IDs (agents, clients, etc.)
         routing_reason: Why this routing decision was made
     """
+
     original: Message
-    target_ids: List[str]
+    target_ids: list[str]
     routing_reason: str = ""
 
 
 class MessageRouter(Component):
     """Stateless message router for distributing messages to recipients.
-    
+
     The router:
     - Subscribes to MESSAGE_NEW events
     - Stores messages via MessageStore
     - Decides who should receive the message
     - Publishes MESSAGE_ROUTED events
-    
+
     Dependencies (constructor injected):
         - event_bus: EventBus for event subscription/publishing
         - message_store: MessageStore for persistence
         - agent_info_provider: AgentInfoProvider for routing decisions
-    
+
     Example:
         >>> router = MessageRouter(
         ...     event_bus=event_bus,
@@ -73,7 +74,7 @@ class MessageRouter(Component):
         ...     agent_info_provider=config_manager,
         ... )
         >>> await router.initialize()  # Begins listening for messages
-        >>> 
+        >>>
         >>> # Messages are automatically routed when published to EventBus
         >>> await event_bus.publish(Event(
         ...     type=EventType.MESSAGE_NEW,
@@ -81,7 +82,7 @@ class MessageRouter(Component):
         ...     source="human"
         ... ))
     """
-    
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -89,7 +90,7 @@ class MessageRouter(Component):
         agent_info_provider: Optional["AgentInfoProvider"] = None,
     ):
         """Initialize the message router.
-        
+
         Args:
             event_bus: Event bus for subscribing and publishing
             message_store: Store for persisting messages
@@ -99,31 +100,30 @@ class MessageRouter(Component):
         self._event_bus = event_bus
         self._message_store = message_store
         self._agent_info = agent_info_provider
-        
+
         # Subscription ID
-        self._subscription_id: Optional[str] = None
-        
+        self._subscription_id: str | None = None
+
         # Routing rules cache
-        self._proactive_agents: Set[str] = set()
-        
+        self._proactive_agents: set[str] = set()
+
         logger.info("MessageRouter initialized")
-    
+
     async def initialize(self) -> None:
         """Start the router by subscribing to MESSAGE_NEW events."""
         self._subscription_id = self._event_bus.subscribe(
-            EventType.MESSAGE_NEW,
-            self._on_message_new
+            EventType.MESSAGE_NEW, self._on_message_new
         )
         self._initialized = True
         logger.info("MessageRouter started, listening for messages")
-    
+
     async def shutdown(self) -> None:
         """Stop the router by unsubscribing from events."""
         if self._subscription_id:
             self._event_bus.unsubscribe(self._subscription_id)
             self._subscription_id = None
         logger.info("MessageRouter stopped")
-    
+
     async def _on_message_new(self, event: Event) -> None:
         """Handle new message events.
 
@@ -138,7 +138,7 @@ class MessageRouter(Component):
         message: Message = event.payload
 
         # Use existing trace context if available, or create new one
-        trace_id = event.trace_id or str(uuid.uuid4())
+        event.trace_id or str(uuid.uuid4())
         parent_span_id = event.span_id
 
         with start_span(
@@ -146,7 +146,7 @@ class MessageRouter(Component):
             source="message_router",
             parent_span_id=parent_span_id,
             event_type=EventType.MESSAGE_ROUTED.value,
-            payload={"message_id": message.id, "sender": message.sender_id}
+            payload={"message_id": message.id, "sender": message.sender_id},
         ) as ctx:
             try:
                 # Step 1: Persist message (non-blocking, fire-and-forget is ok)
@@ -164,10 +164,10 @@ class MessageRouter(Component):
 
             except Exception as e:
                 logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
-    
+
     async def _store_message(self, message: Message) -> None:
         """Store message to persistent store.
-        
+
         Args:
             message: The message to store
         """
@@ -176,10 +176,10 @@ class MessageRouter(Component):
         except Exception as e:
             logger.error(f"Failed to store message {message.id}: {e}")
             # Don't fail routing if storage fails - message flow is more important
-    
-    def _decide_targets(self, message: Message) -> List[str]:
+
+    def _decide_targets(self, message: Message) -> list[str]:
         """Decide which recipients should receive this message.
-        
+
         Routing logic:
         - Human messages:
           - If has mentions: route to mentioned agents
@@ -189,35 +189,35 @@ class MessageRouter(Component):
           - Route to agents mentioned in the message
         - System messages:
           - Route to all clients
-        
+
         Args:
             message: The message to route
-            
+
         Returns:
             List of target recipient IDs
         """
-        targets: Set[str] = set()
-        
+        targets: set[str] = set()
+
         if message.sender_type == "human":
             targets.update(self._route_human_message(message))
         elif message.sender_type == "agent":
             targets.update(self._route_agent_message(message))
         elif message.sender_type == "system":
             targets.update(self._route_system_message(message))
-        
+
         return list(targets)
-    
-    def _route_human_message(self, message: Message) -> Set[str]:
+
+    def _route_human_message(self, message: Message) -> set[str]:
         """Route a message from a human user.
-        
+
         Args:
             message: The human message
-            
+
         Returns:
             Set of target agent IDs
         """
-        targets: Set[str] = set()
-        
+        targets: set[str] = set()
+
         if message.mentions:
             # Explicit mentions - resolve to agent IDs and route
             resolved = self._resolve_mentions_to_ids(message.mentions)
@@ -228,100 +228,101 @@ class MessageRouter(Component):
             proactive = self._get_proactive_agents()
             targets.update(proactive)
             logger.debug(f"Routing to proactive agents: {proactive}")
-        
+
         return targets
-    
-    def _route_agent_message(self, message: Message) -> Set[str]:
+
+    def _route_agent_message(self, message: Message) -> set[str]:
         """Route a message from an agent.
-        
+
         Args:
             message: The agent message
-            
+
         Returns:
             Set of target IDs (clients + mentioned agents)
         """
-        targets: Set[str] = set()
-        
+        targets: set[str] = set()
+
         # Agent messages go to clients for display
         targets.add("@clients")
-        
+
         # Also route to agents that are mentioned (resolve names to IDs)
         if message.mentions:
             resolved = self._resolve_mentions_to_ids(message.mentions)
             targets.update(resolved)
             logger.debug(f"Agent message routing to: @clients + {resolved}")
-        
+
         return targets
-    
-    def _route_system_message(self, message: Message) -> Set[str]:
+
+    def _route_system_message(self, message: Message) -> set[str]:
         """Route a system message.
-        
+
         System messages go to all clients for display.
-        
+
         Args:
             message: The system message
-            
+
         Returns:
             Set of target IDs
         """
         return {"@clients"}
-    
-    def _get_proactive_agents(self) -> Set[str]:
+
+    def _get_proactive_agents(self) -> set[str]:
         """Get the set of proactive agent IDs.
-        
+
         Proactive agents respond to general human messages (no @mentions).
-        
+
         Returns:
             Set of agent IDs that are proactive
         """
         # Refresh from provider if available
         if self._agent_info:
             self._proactive_agents = {
-                agent_id for agent_id in self._agent_info.get_all_ids()
+                agent_id
+                for agent_id in self._agent_info.get_all_ids()
                 if self._agent_info.is_proactive(agent_id)
             }
-        
+
         return self._proactive_agents.copy()
-    
+
     def _is_proactive(self, agent_id: str) -> bool:
         """Check if an agent is proactive.
-        
+
         Args:
             agent_id: The agent ID to check
-            
+
         Returns:
             True if the agent responds to general messages
         """
         if not self._agent_info:
             return False
-        
+
         return self._agent_info.is_proactive(agent_id)
-    
-    def _resolve_mentions_to_ids(self, mentions: List[str]) -> Set[str]:
+
+    def _resolve_mentions_to_ids(self, mentions: list[str]) -> set[str]:
         """Resolve mentions (names or IDs) to agent IDs.
-        
+
         Mentions can be either agent IDs or agent names.
         This method converts all mentions to agent IDs for routing.
-        
+
         Args:
             mentions: List of mentions (names or IDs)
-            
+
         Returns:
             Set of resolved agent IDs
         """
         if not self._agent_info:
             # No provider, assume mentions are already IDs
             return set(mentions)
-        
-        resolved: Set[str] = set()
+
+        resolved: set[str] = set()
         all_ids = self._agent_info.get_all_ids()
-        
+
         for mention in mentions:
             # Check if it's already an ID
             if mention in all_ids:
                 resolved.add(mention)
                 continue
-            
+
             # Check if it's a name - look up by name
             found = False
             for agent_id in all_ids:
@@ -330,16 +331,16 @@ class MessageRouter(Component):
                     resolved.add(agent_id)
                     found = True
                     break
-            
+
             if not found:
                 # Could not resolve, log warning but keep original
                 # (might be a future agent or typo)
                 logger.warning(f"Could not resolve mention '{mention}' to agent ID")
                 resolved.add(mention)  # Keep as-is, agent will ignore if not matching
-        
+
         return resolved
-    
-    async def _publish_routed(self, message: Message, targets: List[str], ctx=None) -> None:
+
+    async def _publish_routed(self, message: Message, targets: list[str], ctx=None) -> None:
         """Publish a routed message event.
 
         Args:
@@ -350,7 +351,7 @@ class MessageRouter(Component):
         routed = RoutedMessage(
             original=message,
             target_ids=targets,
-            routing_reason=self._get_routing_reason(message, targets)
+            routing_reason=self._get_routing_reason(message, targets),
         )
 
         # Build event with trace context
@@ -365,14 +366,14 @@ class MessageRouter(Component):
             event_kwargs["parent_span_id"] = ctx.parent_span_id
 
         await self._event_bus.publish(Event(**event_kwargs))
-    
-    def _get_routing_reason(self, message: Message, targets: List[str]) -> str:
+
+    def _get_routing_reason(self, message: Message, targets: list[str]) -> str:
         """Generate a human-readable routing reason for logging.
-        
+
         Args:
             message: The message
             targets: The routing targets
-            
+
         Returns:
             Description of why this routing occurred
         """
@@ -385,29 +386,29 @@ class MessageRouter(Component):
             return f"agent_response_to: {targets}"
         else:
             return "system_broadcast"
-    
+
     # ==================== Public API for manual routing ====================
-    
-    async def route_manually(self, message: Message, targets: List[str]) -> None:
+
+    async def route_manually(self, message: Message, targets: list[str]) -> None:
         """Manually route a message to specific targets.
-        
+
         This bypasses the automatic routing logic.
-        
+
         Args:
             message: The message to route
             targets: Explicit target IDs
         """
         # Store first
         await self._store_message(message)
-        
+
         # Then publish routed event
         await self._publish_routed(message, targets)
-    
-    def update_proactive_agents(self, agent_ids: Set[str]) -> None:
+
+    def update_proactive_agents(self, agent_ids: set[str]) -> None:
         """Update the set of proactive agents.
-        
+
         This can be called when agent configurations change.
-        
+
         Args:
             agent_ids: New set of proactive agent IDs
         """
