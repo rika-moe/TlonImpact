@@ -108,6 +108,9 @@ class BaseClient:
         self._reconnect_task: Optional[asyncio.Task] = None
         self._reconnect_count = 0
 
+        # Event used to notify concurrent connect() callers
+        self._connecting_event: Optional[asyncio.Event] = None
+
         # Message sequence for ping/pong
         self._ping_seq = 0
         self._pending_pongs: Dict[int, asyncio.Future] = {}
@@ -160,13 +163,18 @@ class BaseClient:
             if self._state in (ConnectionState.CONNECTED, ConnectionState.AUTHENTICATED):
                 return True
             if self._state == ConnectionState.CONNECTING:
-                # Wait for connection to complete
-                while self._state == ConnectionState.CONNECTING:
-                    await asyncio.sleep(0.1)
-                return self._state in (ConnectionState.CONNECTED, ConnectionState.AUTHENTICATED)
+                # Another coroutine is already connecting — wait for it to finish
+                event = self._connecting_event
+            else:
+                # We are the one connecting — set up the event
+                self._connecting_event = asyncio.Event()
+                event = None
+                self._state = ConnectionState.CONNECTING
+                self._notify_state_change(ConnectionState.CONNECTING)
 
-            self._state = ConnectionState.CONNECTING
-            self._notify_state_change(ConnectionState.CONNECTING)
+        if event is not None:
+            await event.wait()
+            return self._state in (ConnectionState.CONNECTED, ConnectionState.AUTHENTICATED)
 
         try:
             self._session = aiohttp.ClientSession()
@@ -176,6 +184,9 @@ class BaseClient:
                 self._state = ConnectionState.CONNECTED
                 self._notify_state_change(ConnectionState.CONNECTED)
                 self._reconnect_count = 0
+                if self._connecting_event:
+                    self._connecting_event.set()
+                    self._connecting_event = None
 
             # Start receive loop
             self._receive_task = asyncio.create_task(self._receive_loop())
@@ -185,10 +196,13 @@ class BaseClient:
 
         except Exception as e:
             logger.error(f"Failed to connect: {e}")
-            await self._cleanup()
             async with self._state_lock:
                 self._state = ConnectionState.ERROR
                 self._notify_state_change(ConnectionState.ERROR)
+                if self._connecting_event:
+                    self._connecting_event.set()
+                    self._connecting_event = None
+            await self._cleanup()
             raise ConnectionError(f"Failed to connect: {e}")
 
     async def disconnect(self) -> None:
@@ -292,6 +306,9 @@ class BaseClient:
             self._state = ConnectionState.DISCONNECTED
             self._notify_state_change(ConnectionState.DISCONNECTED)
 
+        # _cleanup cancels _receive_task, but we are called from within it (finally block).
+        # Clear the reference first so _cleanup skips cancelling the current task.
+        self._receive_task = None
         await self._cleanup()
 
         # Trigger auto-reconnect if enabled
@@ -371,7 +388,7 @@ class BaseClient:
         # TODO: Add msg_id and timestamp as per protocol spec
         # Waiting for Task 2.1 completion
         auth_msg["msg_id"] = str(uuid.uuid4())
-        auth_msg["timestamp"] = asyncio.get_event_loop().time()
+        auth_msg["timestamp"] = asyncio.get_running_loop().time()
 
         try:
             # Send auth message
@@ -549,7 +566,7 @@ class BaseClient:
         if "msg_id" not in data:
             data["msg_id"] = str(uuid.uuid4())
         if "timestamp" not in data:
-            data["timestamp"] = asyncio.get_event_loop().time()
+            data["timestamp"] = asyncio.get_running_loop().time()
 
         return await self._send_raw(data)
 
@@ -578,14 +595,15 @@ class BaseClient:
                     break
 
                 self._ping_seq += 1
+                loop = asyncio.get_running_loop()
                 ping_msg = {
                     "type": "ping",
                     "seq": self._ping_seq,
-                    "timestamp": asyncio.get_event_loop().time(),
+                    "timestamp": loop.time(),
                 }
 
                 # Create future for pong response
-                pong_future: asyncio.Future = asyncio.get_event_loop().create_future()
+                pong_future: asyncio.Future = loop.create_future()
                 self._pending_pongs[self._ping_seq] = pong_future
 
                 # Send ping

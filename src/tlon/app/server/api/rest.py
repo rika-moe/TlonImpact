@@ -60,7 +60,7 @@ class RESTAPIHandler:
         >>> await site.start()
     """
     
-    def __init__(self, client_gateway, agent_registry, config_manager=None, trace_store=None):
+    def __init__(self, client_gateway, agent_registry, config_manager=None, trace_store=None, debug: bool = False):
         """Initialize the REST API handler.
 
         Args:
@@ -68,10 +68,12 @@ class RESTAPIHandler:
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
+            debug: Whether to enable debug/test endpoints (never enable in production)
         """
         self.client_gateway = client_gateway
         self.agent_registry = agent_registry
         self.config_manager = config_manager
+        self.debug = debug
         self.trace_store = trace_store
     
     def create_app(self) -> web.Application:
@@ -105,9 +107,10 @@ class RESTAPIHandler:
         # Agent logs route
         app.router.add_get('/agents/{agent_id}/logs', self.handle_get_agent_logs)
 
-        # Test endpoints (only in test mode)
-        app.router.add_get('/test/ping', self.handle_test_ping)
-        app.router.add_post('/test/echo', self.handle_test_echo)
+        # Test endpoints (only in debug mode — never enable in production)
+        if self.debug:
+            app.router.add_get('/test/ping', self.handle_test_ping)
+            app.router.add_post('/test/echo', self.handle_test_echo)
 
         # Add WebUI static files
         webui_path = get_webui_path()
@@ -532,6 +535,7 @@ class RESTServer:
         trace_store=None,
         host: str = "127.0.0.1",
         port: int = 8080,
+        debug: bool = False,
     ):
         """Initialize the REST server.
 
@@ -542,11 +546,12 @@ class RESTServer:
             trace_store: Optional TraceStore for trace operations
             host: Host to bind to
             port: Port to listen on
+            debug: Whether to enable debug/test endpoints (never enable in production)
         """
         self.client_gateway = client_gateway
         self.host = host
         self.port = port
-        self._handler = RESTAPIHandler(client_gateway, agent_registry, config_manager, trace_store)
+        self._handler = RESTAPIHandler(client_gateway, agent_registry, config_manager, trace_store, debug)
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None

@@ -86,8 +86,8 @@ class TlonClient:
         # Set up event filtering through adapter
         self._base.on_event(self._on_event)
 
-        # User event handler (after adapter filtering)
-        self._user_event_handler: Optional[Callable[[Dict[str, Any]], None]] = None
+        # User event handlers (after adapter filtering)
+        self._user_event_handlers: List[Callable[[Dict[str, Any]], None]] = []
 
     # ==================== Properties ====================
 
@@ -258,7 +258,7 @@ class TlonClient:
         Returns:
             The handler (for use as decorator)
         """
-        self._user_event_handler = handler
+        self._user_event_handlers.append(handler)
         return handler
 
     def _on_event(self, event: Dict[str, Any]) -> None:
@@ -270,10 +270,9 @@ class TlonClient:
         if not self._adapter.should_receive_event(event_type, payload):
             return
 
-        # Pass to user handler
-        if self._user_event_handler:
+        for handler in self._user_event_handlers:
             try:
-                self._user_event_handler(event)
+                handler(event)
             except Exception as e:
                 logger.error(f"User event handler error: {e}")
 

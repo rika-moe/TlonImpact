@@ -234,8 +234,13 @@ class TerminalAdapter(ClientAdapter):
 
         # Mode-specific filtering
         if self._mode == "chat":
-            # Chat mode: only message events
-            return event_type.startswith("message.")
+            # Chat mode: messages, agent responses, and important system events
+            return (
+                event_type.startswith("message.")
+                or event_type in ("agent.response", "agent.started", "agent.stopped", "agent.error")
+                or event_type.startswith("system.")
+                or event_type.startswith("session.")
+            )
 
         elif self._mode == "agent":
             # Agent mode: only agent events
