@@ -39,7 +39,7 @@ Literary Commands:
   %(prog)s dream --lucid    Lucid dream mode (debug)
   %(prog)s mirror           Create in the mirror (configure agents)
   %(prog)s mirror --reflect View existing agent mirrors
-  %(prog)s intrude [tui|web|telegram|void]  Intrude into reality (connect UI)
+  %(prog)s intrude [tui]  Intrude into reality (connect UI)
 
 Legacy Aliases (for backward compatibility):
   %(prog)s server           Same as 'dream'
@@ -99,7 +99,7 @@ blurring the boundaries between fiction and reality.""",
     intrude_parser.add_argument(
         "interface",
         nargs="?",
-        choices=["tui", "web", "telegram", "void"],
+        choices=["tui"],
         default="tui",
         help="Interface to use for intrusion (default: tui)",
     )
@@ -241,22 +241,6 @@ async def run_intrude(args) -> int:
             host=args.host, port=args.port, rest_port=getattr(args, "rest_port", 8080)
         )
         return result
-
-    elif interface == "web":
-        print("\n🌐 Web 界面即将推出")
-        print("特隆的入侵尚未抵达浏览器的彼岸...")
-        return 0
-
-    elif interface == "telegram":
-        print("\n📱 Telegram Bot 即将推出")
-        print("特隆的入侵尚未抵达消息应用的彼岸...")
-        return 0
-
-    elif interface == "void":
-        print("\n🌑 进入虚空模式...")
-        print("你选择了静默的观察，不介入，只见证。")
-        print("(此模式尚未实现)")
-        return 0
 
     else:
         print(f"\n❌ 未知的入侵点: {interface}")
@@ -550,7 +534,7 @@ Usage:
   tlon dream --lucid            # Debug 模式
   tlon mirror                   # 配置向导
   tlon mirror --reflect         # 查看所有 Agents
-  tlon intrude [tui/web/telegram/void]  # 连接界面
+  tlon intrude [tui]  # 连接界面
 
 Run 'tlon --help' for more information.
 """)
