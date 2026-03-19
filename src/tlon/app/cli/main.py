@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import asyncio
+import signal
 import sys
 
 from tlon.base.logger import configure_logging, get_logger
@@ -112,6 +113,16 @@ blurring the boundaries between fiction and reality.""",
     intrude_parser.add_argument(
         "--rest-port", "-r", type=int, default=8080, help="Server REST API port (default: 8080)"
     )
+    intrude_parser.add_argument(
+        "--lucid",
+        "-l",
+        dest="debug",
+        action="store_true",
+        help="Lucid dream mode - enable debug logging",
+    )
+    intrude_parser.add_argument(
+        "--debug", action="store_true", help=argparse.SUPPRESS
+    )  # Hidden alias
 
     # mirror command - create in the mirror (configure agents)
     mirror_parser = subparsers.add_parser(
@@ -228,19 +239,47 @@ async def run_intrude(args) -> int:
     Returns:
         Exit code
     """
+    is_lucid = getattr(args, "debug", False)
+    log_level = "DEBUG" if is_lucid else settings.log_level
+    configure_logging(log_level=log_level, debug=is_lucid)
+
     interface = getattr(args, "interface", "tui")
 
     if interface == "tui":
         print("\n正在突破现实边界...")
+        if is_lucid:
+            print("           模式: 清醒梦 (lucid dream)")
         print(f"连接至 ws://{args.host}:{args.port} ... ", end="", flush=True)
 
         # Use new SDK-based TUI client
         from tlon.app.clients.tui import run_tui_client
 
-        result = await run_tui_client(
-            host=args.host, port=args.port, rest_port=getattr(args, "rest_port", 8080)
-        )
-        return result
+        # Register signal handlers for graceful shutdown (consistent with dream)
+        client_task: asyncio.Task | None = None
+
+        def _handle_signal(sig: signal.Signals) -> None:
+            logger.info(f"Received signal {sig.name}, shutting down client...")
+            if client_task and not client_task.done():
+                client_task.cancel()
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda s=sig: _handle_signal(s))
+
+        try:
+            client_task = asyncio.ensure_future(
+                run_tui_client(
+                    host=args.host, port=args.port, rest_port=getattr(args, "rest_port", 8080)
+                )
+            )
+            result = await client_task
+            return result
+        except asyncio.CancelledError:
+            print("\n\n入侵被中断...")
+            return 130
+        finally:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
 
     else:
         print(f"\n❌ 未知的入侵点: {interface}")
