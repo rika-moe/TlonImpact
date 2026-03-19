@@ -248,7 +248,7 @@ class QuickstartWizard:
         table.add_column("Agent", style="green")
         table.add_column("启动模式", style="blue")
 
-        templates = self.position_store.get_default_templates()
+        templates = self.position_store.get_default_positions()
 
         for pos_type, name, _ in self.STANDARD_TEAM:
             template = templates.get(pos_type, {})
@@ -311,7 +311,7 @@ class QuickstartWizard:
         self.console.print("\n[bold]自定义团队配置[/bold]\n")
 
         # Load available positions from templates
-        templates = self.position_store.get_default_templates()
+        templates = self.position_store.get_default_positions()
 
         # Select positions
         pos_choices = [
