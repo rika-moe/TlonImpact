@@ -91,7 +91,7 @@ class Settings:
         # LLM settings
         self.llm_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         self.llm_api_key = os.getenv("OPENAI_API_KEY", "")
-        self.llm_model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4")
+        self.llm_model_name = os.getenv("OPENAI_MODEL_NAME", "kimi-k2.5")
         self.llm_temperature = float(os.getenv("OPENAI_TEMPERATURE", "1.0"))
         self.llm_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "3"))
         self.llm_base_delay = float(os.getenv("OPENAI_BASE_DELAY", "1.0"))

@@ -168,7 +168,9 @@ def check_configuration() -> bool:
         for error in errors:
             print(f"  ❌ {error}")
         print("\n  Please create a .env file with:")
-        print("    OPENAI_API_KEY=sk-your-api-key-here")
+        print("    OPENAI_API_KEY=your-moonshot-api-key-here")
+        print("    OPENAI_BASE_URL=https://api.moonshot.cn/v1")
+        print("    OPENAI_MODEL_NAME=kimi-k2.5")
         print("\n  You can copy from .env.example:")
         print("    cp .env.example .env")
         print("=" * 50 + "\n")
