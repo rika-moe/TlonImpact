@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from tlon.base.logger import get_logger
+from tlon.base.settings import get_default_config_dir, get_default_data_dir
 
 from .menus import AgentMenu, DiagnosticsMenu, PositionMenu, QuickstartWizard, SettingsMenu
 
@@ -30,29 +31,37 @@ class Wizard:
 
     def __init__(
         self,
-        positions_dir: str = "config/positions",
-        agents_dir: str = "config/agents",
-        data_dir: str = "data",
+        agents_dir: str | None = None,
+        data_dir: str | None = None,
     ):
         """Initialize the wizard.
 
         Args:
-            positions_dir: Directory for position configs
-            agents_dir: Directory for agent configs
-            data_dir: Directory for agent data
+            agents_dir: Directory for agent configs (default: $TLON_HOME/config/agents)
+            data_dir: Directory for agent data (default: $TLON_HOME/data)
         """
+        cfg = get_default_config_dir()
+        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
+        self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
+        # positions_dir kept for backward compatibility with menus that still reference it
+        self.positions_dir = cfg / "positions"
 
         self.console = Console()
-        self.positions_dir = Path(positions_dir)
-        self.agents_dir = Path(agents_dir)
-        self.data_dir = Path(data_dir)
 
         # Initialize menu handlers
-        self.position_menu = PositionMenu(self.console, positions_dir)
-        self.agent_menu = AgentMenu(self.console, agents_dir, positions_dir)
-        self.quickstart = QuickstartWizard(self.console, positions_dir, agents_dir, data_dir)
-        self.diagnostics_menu = DiagnosticsMenu(self.console, positions_dir, agents_dir)
-        self.settings_menu = SettingsMenu(self.console, positions_dir, agents_dir, data_dir)
+        positions_dir_str = str(self.positions_dir)
+        agents_dir_str = str(self.agents_dir)
+        data_dir_str = str(self.data_dir)
+
+        self.position_menu = PositionMenu(self.console, positions_dir_str)
+        self.agent_menu = AgentMenu(self.console, agents_dir_str, positions_dir_str)
+        self.quickstart = QuickstartWizard(
+            self.console, positions_dir_str, agents_dir_str, data_dir_str
+        )
+        self.diagnostics_menu = DiagnosticsMenu(self.console, positions_dir_str, agents_dir_str)
+        self.settings_menu = SettingsMenu(
+            self.console, positions_dir_str, agents_dir_str, data_dir_str
+        )
 
     def run(self) -> None:
         """Run the main wizard loop."""

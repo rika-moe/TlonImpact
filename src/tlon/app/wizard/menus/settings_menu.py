@@ -23,22 +23,25 @@ class SettingsMenu:
     def __init__(
         self,
         console: "Console",
-        positions_dir: str = "config/positions",
-        agents_dir: str = "config/agents",
-        data_dir: str = "data",
+        positions_dir: str | None = None,
+        agents_dir: str | None = None,
+        data_dir: str | None = None,
     ):
         """Initialize the settings menu.
 
         Args:
             console: Rich console for output
-            positions_dir: Directory for position configs
-            agents_dir: Directory for agent configs
-            data_dir: Directory for agent data
+            positions_dir: Directory for position configs (caller should pass explicit path)
+            agents_dir: Directory for agent configs (caller should pass explicit path)
+            data_dir: Directory for agent data (caller should pass explicit path)
         """
+        from tlon.base.settings import get_default_config_dir, get_default_data_dir
+
+        cfg = get_default_config_dir()
         self.console = console
-        self.positions_dir = Path(positions_dir)
-        self.agents_dir = Path(agents_dir)
-        self.data_dir = Path(data_dir)
+        self.positions_dir = Path(positions_dir) if positions_dir is not None else cfg / "positions"
+        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
+        self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
         self.env_path = Path(".env")
 
         try:

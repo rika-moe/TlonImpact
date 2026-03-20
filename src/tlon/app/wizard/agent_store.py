@@ -31,17 +31,25 @@ class AgentStore:
         _saver: ConfigSaver instance for saving
     """
 
-    def __init__(self, agents_dir: str = "config/agents", data_dir: str = "data"):
+    def __init__(self, agents_dir: str | None = None, data_dir: str | None = None):
         """Initialize the agent store.
 
         Args:
-            agents_dir: Directory containing agent YAML files
-            data_dir: Base directory for agent data storage
+            agents_dir: Directory containing agent YAML files.
+                Defaults to $TLON_HOME/config/agents.
+            data_dir: Base directory for agent data storage.
+                Defaults to $TLON_HOME/data.
         """
-        self.agents_dir = Path(agents_dir)
-        self.data_dir = Path(data_dir)
-        self._loader = ConfigLoader(agents_dir=agents_dir)
-        self._saver = ConfigSaver(agents_dir=agents_dir, data_dir=data_dir)
+        from tlon.base.settings import get_default_config_dir, get_default_data_dir
+
+        cfg = get_default_config_dir()
+        resolved_agents_dir = agents_dir if agents_dir is not None else str(cfg / "agents")
+        resolved_data_dir = data_dir if data_dir is not None else str(get_default_data_dir())
+
+        self.agents_dir = Path(resolved_agents_dir)
+        self.data_dir = Path(resolved_data_dir)
+        self._loader = ConfigLoader(agents_dir=resolved_agents_dir)
+        self._saver = ConfigSaver(agents_dir=resolved_agents_dir, data_dir=resolved_data_dir)
         self._ensure_directory()
 
     def _ensure_directory(self) -> None:

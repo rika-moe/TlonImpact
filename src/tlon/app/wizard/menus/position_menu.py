@@ -15,15 +15,15 @@ if TYPE_CHECKING:
 class PositionMenu:
     """Menu for position management."""
 
-    def __init__(self, console: "Console", positions_dir: str = "config/positions"):
+    def __init__(self, console: "Console", positions_dir: str | None = None):
         """Initialize the position menu.
 
         Args:
             console: Rich console for output
-            positions_dir: Directory for position configs
+            positions_dir: Directory for position configs (caller should pass explicit path)
         """
         self.console = console
-        self.store = PositionStore(positions_dir)
+        self.store = PositionStore(positions_dir) if positions_dir is not None else PositionStore()
 
         # Import questionary here for optional dependency
         try:

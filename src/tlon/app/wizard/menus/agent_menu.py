@@ -19,19 +19,21 @@ class AgentMenu:
     def __init__(
         self,
         console: "Console",
-        agents_dir: str = "config/agents",
-        positions_dir: str = "config/positions",
+        agents_dir: str | None = None,
+        positions_dir: str | None = None,
     ):
         """Initialize the agent menu.
 
         Args:
             console: Rich console for output
-            agents_dir: Directory for agent configs
-            positions_dir: Directory for position configs
+            agents_dir: Directory for agent configs (caller should pass explicit path)
+            positions_dir: Directory for position configs (caller should pass explicit path)
         """
         self.console = console
-        self.agent_store = AgentStore(agents_dir)
-        self.position_store = PositionStore(positions_dir)
+        self.agent_store = AgentStore(agents_dir) if agents_dir is not None else AgentStore()
+        self.position_store = (
+            PositionStore(positions_dir) if positions_dir is not None else PositionStore()
+        )
 
         # Import questionary here for optional dependency
         try:

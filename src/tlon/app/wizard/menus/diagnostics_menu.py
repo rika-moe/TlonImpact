@@ -18,15 +18,15 @@ class DiagnosticsMenu:
     def __init__(
         self,
         console: "Console",
-        positions_dir: str = "config/positions",
-        agents_dir: str = "config/agents",
+        positions_dir: str | None = None,
+        agents_dir: str | None = None,
     ):
         """Initialize the diagnostics menu.
 
         Args:
             console: Rich console for output
-            positions_dir: Directory for position configs
-            agents_dir: Directory for agent configs
+            positions_dir: Directory for position configs (caller should pass explicit path)
+            agents_dir: Directory for agent configs (caller should pass explicit path)
         """
         self.console = console
         self.diagnostics = ConfigDiagnostics(positions_dir, agents_dir)

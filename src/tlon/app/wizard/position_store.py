@@ -121,15 +121,24 @@ class PositionStore:
         _saver: ConfigSaver instance for saving
     """
 
-    def __init__(self, positions_dir: str = "config/positions"):
+    def __init__(self, positions_dir: str | None = None):
         """Initialize the position store.
 
         Args:
-            positions_dir: Directory containing position YAML files
+            positions_dir: Directory containing position YAML files.
+                Defaults to $TLON_HOME/config/positions.
         """
-        self.positions_dir = Path(positions_dir)
-        self._loader = ConfigLoader(positions_dir=positions_dir)
-        self._saver = ConfigSaver(positions_dir=positions_dir)
+        from tlon.base.settings import get_default_config_dir
+
+        resolved_positions_dir = (
+            positions_dir
+            if positions_dir is not None
+            else str(get_default_config_dir() / "positions")
+        )
+
+        self.positions_dir = Path(resolved_positions_dir)
+        self._loader = ConfigLoader(positions_dir=resolved_positions_dir)
+        self._saver = ConfigSaver(positions_dir=resolved_positions_dir)
         self._ensure_directory()
 
     def _ensure_directory(self) -> None:

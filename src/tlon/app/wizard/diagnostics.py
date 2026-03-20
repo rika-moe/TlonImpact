@@ -100,15 +100,22 @@ class ConfigDiagnostics:
     Validates positions, agents, and their relationships.
     """
 
-    def __init__(self, positions_dir: str = "config/positions", agents_dir: str = "config/agents"):
+    def __init__(
+        self, positions_dir: str | None = None, agents_dir: str | None = None
+    ):
         """Initialize diagnostics.
 
         Args:
-            positions_dir: Directory containing position YAML files
-            agents_dir: Directory containing agent YAML files
+            positions_dir: Directory containing position YAML files.
+                Defaults to $TLON_HOME/config/positions.
+            agents_dir: Directory containing agent YAML files.
+                Defaults to $TLON_HOME/config/agents.
         """
-        self.positions_dir = Path(positions_dir)
-        self.agents_dir = Path(agents_dir)
+        from tlon.base.settings import get_default_config_dir
+
+        cfg = get_default_config_dir()
+        self.positions_dir = Path(positions_dir) if positions_dir is not None else cfg / "positions"
+        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
         self.report = DiagnosticReport()
 
     def run_all_checks(self) -> DiagnosticReport:
