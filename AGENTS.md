@@ -31,6 +31,9 @@ cp .env.example .env
 # 运行（服务端 + TUI）
 uv run tlon server    # 终端 1
 uv run tlon tui       # 终端 2
+
+# 单元测试
+uv run pytest
 ```
 
 **文学化命令别名**：`server` = `dream`, `tui` = `intrude`, `wizard` = `mirror`
