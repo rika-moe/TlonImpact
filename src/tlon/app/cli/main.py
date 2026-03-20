@@ -18,6 +18,7 @@ import asyncio
 import signal
 import sys
 
+from tlon.app.wizard import Wizard
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.settings import settings
 
@@ -322,9 +323,16 @@ async def run_mirror(args) -> int:
 你站在镜前，镜中的轮廓在等待...
 """)
 
-    from tlon.app.wizard.wizard import run_wizard
+    try:
+        wizard = Wizard()
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, wizard.run)
+        return 0
 
-    return run_wizard()
+    except Exception as e:
+        logger.error(f"Wizard error: {e}", exc_info=True)
+        print(f"\n错误: {e}")
+        return 1
 
 
 async def _mirror_reflect() -> int:
@@ -543,7 +551,6 @@ async def main_async(args=None) -> int:
     )
 
     # Route to appropriate command
-    # Note: wizard is handled in main() due to its own event loop
     cmd = args.command
 
     # dream / server (start server)
@@ -554,8 +561,8 @@ async def main_async(args=None) -> int:
     elif cmd in ("intrude", "tui"):
         return await run_intrude(args)
 
-    # mirror / wizard (configure agents) - wizard handled in main()
-    elif cmd == "mirror":
+    # mirror / wizard (configure agents)
+    elif cmd in ("mirror", "wizard"):
         return await run_mirror(args)
 
     else:
@@ -590,51 +597,6 @@ def main() -> int:
     parser = create_parser()
     args = parser.parse_args()
 
-    # mirror/wizard uses questionary which has its own event loop
-    # So we run it synchronously
-    if args.command in ("mirror", "wizard"):
-        try:
-            # Import here to avoid circular imports
-            from ..wizard.core import Wizard
-
-            # Handle --reflect and other options that don't need interactive wizard
-            if (
-                getattr(args, "reflect", False)
-                or getattr(args, "destroy", None)
-                or getattr(args, "create", None)
-                or getattr(args, "edit", None)
-            ):
-                # These are handled in async main_async, but since they don't
-                # need the wizard UI, we can run them with a temporary event loop
-                return asyncio.run(run_mirror(args))
-
-            # Interactive wizard mode
-            print("""
-你站在镜前，镜中的轮廓在等待...
-""")
-            wizard = Wizard()
-            wizard.run()
-            return 0
-
-        except ImportError:
-            print("\n" + "=" * 50)
-            print("  Wizard 依赖未安装")
-            print("=" * 50)
-            print("\n请安装以下依赖:")
-            print("  pip install rich questionary")
-            print("\n或者安装完整依赖:")
-            print("  pip install -e '.[dev]'")
-            print("=" * 50 + "\n")
-            return 1
-        except KeyboardInterrupt:
-            print("\n\n镜中的倒影消散了...")
-            return 130
-        except Exception as e:
-            logger.error(f"Wizard error: {e}", exc_info=True)
-            print(f"\n❌ 错误: {e}")
-            return 1
-
-    # Other commands use asyncio
     try:
         return asyncio.run(main_async(args))
     except KeyboardInterrupt:

@@ -5,9 +5,9 @@ with Position-Agent architecture.
 """
 
 from .agent_store import AgentStore
-from .core import Wizard
 from .diagnostics import ConfigDiagnostics, DiagnosticReport, IssueSeverity
 from .position_store import PositionStore
+from .wizard import Wizard
 
 __all__ = [
     "Wizard",
