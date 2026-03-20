@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..validators import APIValidator, ConfigValidator
+from ..validators import APIValidator, InputValidator
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -143,7 +143,7 @@ class SettingsMenu:
             default=str(current_config.get("temperature", "0.7")),
         ).ask()
 
-        valid, temp, _ = ConfigValidator.validate_temperature(temp_str or "0.7")
+        valid, temp, _ = InputValidator.validate_temperature(temp_str or "0.7")
         if not valid:
             temp = 0.7
 
@@ -364,23 +364,43 @@ class SettingsMenu:
     def _save_env_config(self, config: dict) -> None:
         """Save configuration to .env file.
 
+        Reads existing .env, updates only the relevant keys,
+        and writes back — preserving all other entries.
+
         Args:
             config: Configuration dictionary
         """
-        env_content = f"""# Tlon Configuration
+        key_map = {
+            "OPENAI_API_KEY": config.get("api_key", ""),
+            "OPENAI_BASE_URL": config.get("base_url", "https://api.openai.com/v1"),
+            "OPENAI_MODEL_NAME": config.get("model", "kimi-k2.5"),
+            "OPENAI_TEMPERATURE": str(config.get("temperature", 0.7)),
+            "DATA_DIR": config.get("data_dir", "./data"),
+        }
 
-# LLM API Configuration
-OPENAI_API_KEY={config.get("api_key", "")}
-OPENAI_BASE_URL={config.get("base_url", "https://api.openai.com/v1")}
-OPENAI_MODEL_NAME={config.get("model", "kimi-k2.5")}
-OPENAI_TEMPERATURE={config.get("temperature", 0.7)}
+        # Read existing lines, or start fresh
+        lines = self.env_path.read_text().splitlines() if self.env_path.exists() else []
 
-# Application Settings
-LOG_LEVEL=INFO
-DATA_DIR={config.get("data_dir", "./data")}
-"""
+        updated_keys: set[str] = set()
+        new_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("#") or "=" not in stripped:
+                new_lines.append(line)
+                continue
+            key = stripped.split("=", 1)[0].strip()
+            if key in key_map:
+                new_lines.append(f"{key}={key_map[key]}")
+                updated_keys.add(key)
+            else:
+                new_lines.append(line)
 
-        self.env_path.write_text(env_content)
+        # Append any keys not yet present
+        for key, value in key_map.items():
+            if key not in updated_keys:
+                new_lines.append(f"{key}={value}")
+
+        self.env_path.write_text("\n".join(new_lines) + "\n")
 
     def _update_data_dir(self, new_dir: str) -> None:
         """Update data directory in .env.
