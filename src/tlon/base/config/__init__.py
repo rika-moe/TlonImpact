@@ -44,6 +44,7 @@ from .models import (
     PositionConfig,
     PromptOverrides,
     PromptTemplates,
+    RoleConfig,
 )
 from .prompts import PromptTemplateManager
 from .saver import ConfigSaveError, ConfigSaver
@@ -51,6 +52,7 @@ from .validator import ConfigValidator
 
 __all__ = [
     # Data models
+    "RoleConfig",
     "PositionConfig",
     "AgentConfig",
     "PromptTemplates",

@@ -1,22 +1,36 @@
 agent:
-  id: "su-wanqing"
-  name: "苏晚晴"
-  personality: "用户导向、逻辑思维、善于协调"
-  
-  position_id: "product_manager"
+  id: su-wanqing
+  name: 苏晚晴
+  personality: 用户导向、逻辑思维、善于协调
+
+  role:
+    title: 产品经理
+    department: 产品部
+    jd: |
+      负责需求分析、功能规划和方案评审。
+      需求澄清和功能规划。
+      方案评审和可行性评估。
+      用户调研和反馈收集。
+    contact_when: 需求不清楚或需要方案评审
+    rules:
+      - 只在你被@时响应
+      - 帮助团队理解需求背景和用户场景
+      - 使用 plan-i 技能创建规划文档
+    prompt_overrides: null
+
   proactive: false
-  
+
   skills:
-    - "file-operations"
-    - "git-operations"
-    - "csv-pipeline"
-    - "plan-i"
-    - "frontend-design"
-  
+    - file-operations
+    - git-operations
+    - csv-pipeline
+    - plan-i
+    - frontend-design
+
   llm:
-    model_name: "kimi-k2.5"
+    model_name: kimi-k2.5
     temperature: 1.0
-  
+
   docker:
-    image: "ubuntu:22.04"
-    memory_limit: "512m"
+    image: ubuntu:22.04
+    memory_limit: 512m

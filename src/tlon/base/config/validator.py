@@ -3,7 +3,7 @@
 Provides validation functions for Position, Agent, and Prompt configurations.
 """
 
-from .models import AgentConfig, PositionConfig, PromptTemplates
+from .models import AgentConfig, PositionConfig, PromptTemplates, RoleConfig
 
 
 class ConfigValidator:
@@ -81,6 +81,58 @@ class ConfigValidator:
         return len(errors) == 0, errors
 
     @staticmethod
+    def validate_role_data(data: dict) -> tuple[bool, list[str]]:
+        """Validate role data dictionary.
+
+        Args:
+            data: Role data dictionary
+
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+        """
+        errors = []
+
+        # Check required fields
+        required_fields = ["title", "jd"]
+        for field in required_fields:
+            if field not in data or not data[field]:
+                errors.append(f"Missing required role field: {field}")
+
+        # Validate prompt_overrides if present
+        if "prompt_overrides" in data and data["prompt_overrides"]:
+            overrides = data["prompt_overrides"]
+            if not isinstance(overrides, dict):
+                errors.append("role.prompt_overrides must be a dictionary")
+            else:
+                valid_keys = {"workflow", "important_notes", "discipline_rules"}
+                for key in overrides:
+                    if key not in valid_keys:
+                        errors.append(f"Invalid role.prompt_overrides key: {key}")
+                    elif overrides[key] is not None and not isinstance(overrides[key], str):
+                        errors.append(f"role.prompt_overrides.{key} must be a string or null")
+
+        return len(errors) == 0, errors
+
+    @staticmethod
+    def validate_role_config(role: RoleConfig) -> tuple[bool, list[str]]:
+        """Validate a RoleConfig object.
+
+        Args:
+            role: RoleConfig instance to validate
+
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+        """
+        errors = []
+
+        if not role.title:
+            errors.append("Role title is required")
+        if not role.jd:
+            errors.append("Role jd (job description) is required")
+
+        return len(errors) == 0, errors
+
+    @staticmethod
     def validate_agent_data(data: dict) -> tuple[bool, list[str]]:
         """Validate agent data dictionary.
 
@@ -92,11 +144,19 @@ class ConfigValidator:
         """
         errors = []
 
-        # Check required fields
-        required_fields = ["id", "name", "position_id"]
+        # Check required fields (position_id is optional for backward compat)
+        required_fields = ["id", "name"]
         for field in required_fields:
             if field not in data or not data[field]:
                 errors.append(f"Missing required field: {field}")
+
+        # Validate role sub-structure if present
+        if "role" in data and data["role"]:
+            if not isinstance(data["role"], dict):
+                errors.append("role must be a dictionary")
+            else:
+                _, role_errors = ConfigValidator.validate_role_data(data["role"])
+                errors.extend(role_errors)
 
         # Validate ID format
         if "id" in data and data["id"]:
@@ -155,12 +215,15 @@ class ConfigValidator:
             errors.append("Agent id is required")
         if not agent.name:
             errors.append("Agent name is required")
-        if not agent.position_id:
-            errors.append("Agent position_id is required")
 
         # Validate ID format
         if agent.id and not agent.id.replace("-", "").replace("_", "").isalnum():
             errors.append("Agent ID must be alphanumeric with hyphens/underscores only")
+
+        # Validate role if present
+        if agent.role is not None:
+            _, role_errors = ConfigValidator.validate_role_config(agent.role)
+            errors.extend(role_errors)
 
         return len(errors) == 0, errors
 

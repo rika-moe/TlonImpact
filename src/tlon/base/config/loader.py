@@ -251,6 +251,28 @@ class ConfigLoader:
 
         agent_data = data["agent"]
 
+        # Backward compat: if agent has position_id but no role, try to load role from position file
+        if "position_id" in agent_data and agent_data["position_id"] and "role" not in agent_data:
+            position_id = agent_data["position_id"]
+            position_file = self.positions_dir / f"{position_id}.yaml"
+            if position_file.exists():
+                try:
+                    with open(position_file, encoding="utf-8") as pf:
+                        pos_data = yaml.safe_load(pf)
+                    if isinstance(pos_data, dict) and "position" in pos_data:
+                        pos_fields = pos_data["position"]
+                        # Build inline role from position data
+                        agent_data["role"] = {
+                            "title": pos_fields.get("title", ""),
+                            "jd": pos_fields.get("jd", pos_fields.get("description", "")),
+                            "department": pos_fields.get("department", ""),
+                            "rules": pos_fields.get("rules", []),
+                            "contact_when": pos_fields.get("contact_when", ""),
+                            "prompt_overrides": pos_fields.get("prompt_overrides"),
+                        }
+                except Exception:
+                    pass  # If migration fails, continue without role
+
         # Validate data
         is_valid, errors = ConfigValidator.validate_agent_data(agent_data)
         if not is_valid:

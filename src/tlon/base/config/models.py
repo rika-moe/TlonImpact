@@ -139,6 +139,62 @@ class PromptTemplates:
 
 
 # =============================================================================
+# Role Configuration (inline agent role, replaces separate PositionConfig)
+# =============================================================================
+
+
+@dataclass
+class RoleConfig:
+    """Role configuration inlined directly into AgentConfig.
+
+    Replaces the separate PositionConfig concept. Each agent now carries its
+    own role definition instead of referencing a shared position by ID.
+
+    Attributes:
+        title: Human-readable role title (e.g., "开发工程师")
+        jd: Job description and responsibilities (岗位职责)
+        department: Optional department name
+        rules: List of behavior rules for this role
+        contact_when: When to contact this agent
+        prompt_overrides: Optional overrides for global prompt templates
+    """
+
+    title: str = ""
+    jd: str = ""  # Job Description
+    department: str = ""
+    rules: list[str] = field(default_factory=list)
+    contact_when: str = ""  # 何时应该联系该角色
+    prompt_overrides: PromptOverrides | None = None
+
+    def to_dict(self) -> dict:
+        """Convert role to dictionary."""
+        result = {
+            "title": self.title,
+            "jd": self.jd,
+            "department": self.department,
+            "rules": self.rules,
+            "contact_when": self.contact_when,
+        }
+        if self.prompt_overrides:
+            result["prompt_overrides"] = self.prompt_overrides.to_dict()
+        else:
+            result["prompt_overrides"] = None
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RoleConfig":
+        """Create role from dictionary."""
+        return cls(
+            title=data.get("title", ""),
+            jd=data.get("jd", data.get("description", "")),
+            department=data.get("department", ""),
+            rules=data.get("rules", []),
+            contact_when=data.get("contact_when", ""),
+            prompt_overrides=PromptOverrides.from_dict(data.get("prompt_overrides")),
+        )
+
+
+# =============================================================================
 # Position Configuration
 # =============================================================================
 
@@ -146,6 +202,10 @@ class PromptTemplates:
 @dataclass
 class PositionConfig:
     """Position (Job Role) configuration.
+
+    .. deprecated::
+        PositionConfig is deprecated. Use RoleConfig inlined in AgentConfig instead.
+        This class is retained for backward compatibility with existing tests and code.
 
     A Position defines the standardized job description, responsibilities,
     and behavior for a type of role. Multiple agents can share the same position.
@@ -311,14 +371,16 @@ class AgentConfig:
     """Complete agent (person) configuration.
 
     Each agent represents an individual person with their own personality,
-    skills, and configuration. Agents are associated with a Position (job role)
-    via position_id.
+    skills, and configuration. The agent carries its own role definition
+    inline via the ``role`` field (RoleConfig).
 
     Attributes:
         id: Unique agent identifier
         name: Display name (e.g., "林知遥")
         personality: Individual personality traits (个体性格特征)
-        position_id: Reference to a Position type
+        role: Inline role configuration (title, jd, department, rules, etc.)
+        position_id: Deprecated. Previously referenced a shared Position type.
+            Retained for backward compatibility; new configs should use ``role``.
         llm: LLM configuration
         docker: Docker runtime configuration
         memory: Memory configuration (Any type for flexibility)
@@ -330,7 +392,8 @@ class AgentConfig:
     id: str
     name: str
     personality: str = ""  # Individual traits, not position-based
-    position_id: str = ""  # Reference to Position.type
+    role: "RoleConfig | None" = None  # Inline role definition
+    position_id: str = ""  # Deprecated: use role instead
     llm: LLMConfig | None = None
     docker: DockerRuntimeConfig | None = None
     memory: Any = field(default_factory=lambda: None)
@@ -361,11 +424,15 @@ class AgentConfig:
             "id": self.id,
             "name": self.name,
             "personality": self.personality,
-            "position_id": self.position_id,
             "skills": self.skills,
             "respond_to_all": self.respond_to_all,
             "proactive": self.proactive,
         }
+        if self.role is not None:
+            result["role"] = self.role.to_dict()
+        elif self.position_id:
+            # Deprecated: preserve position_id when no inline role is present (backward compat)
+            result["position_id"] = self.position_id
         if self.llm:
             result["llm"] = self.llm.to_dict()
         if self.docker:
@@ -385,11 +452,17 @@ class AgentConfig:
         if "docker" in data and data["docker"]:
             docker = DockerRuntimeConfig.from_dict(data["docker"])
 
+        # Parse role config (new format)
+        role = None
+        if "role" in data and data["role"]:
+            role = RoleConfig.from_dict(data["role"])
+
         return cls(
             id=data.get("id", ""),
             name=data.get("name", ""),
             personality=data.get("personality", ""),
-            position_id=data.get("position_id", ""),
+            role=role,
+            position_id=data.get("position_id", ""),  # kept for backward compat
             llm=llm,
             docker=docker,
             memory=data.get("memory"),
@@ -415,6 +488,7 @@ class AgentConfig:
 __all__ = [
     "PromptOverrides",
     "PromptTemplates",
+    "RoleConfig",
     "PositionConfig",
     "LLMConfig",
     "DockerRuntimeConfig",

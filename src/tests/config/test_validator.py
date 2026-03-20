@@ -151,11 +151,10 @@ class TestValidateAgentData:
 
     def test_missing_required_fields(self):
         """Test validation catches missing required fields."""
-        data = {"id": "dev-001"}  # missing name and position_id
+        data = {"id": "dev-001"}  # missing name (position_id is now optional)
         is_valid, errors = ConfigValidator.validate_agent_data(data)
         assert is_valid is False
         assert any("name" in e for e in errors)
-        assert any("position_id" in e for e in errors)
 
     def test_invalid_id_format(self):
         """Test validation catches invalid ID format."""
