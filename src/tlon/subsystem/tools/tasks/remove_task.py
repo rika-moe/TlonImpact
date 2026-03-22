@@ -28,13 +28,13 @@ class RemoveTaskTool(Tool):
         """
         super().__init__(
             name="removeTask",
-            description="Remove a completed task from the list. Use this to clean up finished tasks and keep your list manageable. Only 'done' tasks can be removed. This action is permanent.",
+            description="从列表中移除已完成的任务，清理已结束的任务以保持列表整洁。仅 'done' 状态的任务可移除，操作不可撤销。",
             parameters={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "The task ID to remove. Example: 't-001'",
+                        "description": "要移除的任务 ID，示例：'t-001'",
                     }
                 },
                 "required": ["task_id"],

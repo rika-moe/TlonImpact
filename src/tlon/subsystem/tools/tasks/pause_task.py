@@ -31,17 +31,17 @@ class PauseTaskTool(Tool):
         """
         super().__init__(
             name="pauseTask",
-            description="Pause a task. Use this when you need to temporarily stop working on a task. Record your current progress so you can resume later. Only tasks in 'doing' status can be paused.",
+            description="暂停一个任务。需要临时中断当前任务时使用，记录进度以便后续恢复。仅 'doing' 状态的任务可暂停。",
             parameters={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "The task ID to pause. Example: 't-001'",
+                        "description": "要暂停的任务 ID，示例：'t-001'",
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Optional reason for pausing. Record your current progress and why you're stopping. This helps when you resume later.",
+                        "description": "可选的暂停原因，记录当前进度和中断原因，便于恢复时参考。",
                         "default": "",
                     },
                 },

@@ -31,17 +31,17 @@ class CompleteTaskTool(Tool):
         """
         super().__init__(
             name="completeTask",
-            description="Mark a task as completed. Use this when you finish a task. Record what was accomplished so you can reference it later. Task duration is calculated automatically.",
+            description="将任务标记为已完成。任务结束时调用，记录完成内容以供后续参考。任务耗时自动计算。",
             parameters={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "The task ID to complete. Example: 't-001'",
+                        "description": "要完成的任务 ID，示例：'t-001'",
                     },
                     "result": {
                         "type": "string",
-                        "description": "Summary of what was accomplished. Record key deliverables, outputs, or findings. This helps track progress and reference later.",
+                        "description": "完成情况摘要，记录关键交付物、输出结果或发现，便于后续追踪和参考。",
                         "default": "",
                     },
                 },

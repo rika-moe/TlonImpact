@@ -19,17 +19,64 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from tlon.agents.agent import Agent
+from tlon.agents.llm_client import LLMClient
+from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig
+from tlon.base.config import AgentConfig, ConfigLoader, LLMConfig, PromptTemplateManager
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.settings import get_tlon_home
 from tlon.organization.messaging.store import MessageStore
+from tlon.sandbox.docker_runtime import DockerRuntime
+from tlon.subsystem.memory import MemoryConfig, MemoryManager
+from tlon.subsystem.tools.complete_dialog.complete_dialog import CompleteDialogTool
+from tlon.subsystem.tools.memory.forget_memory import ForgetMemoryTool
+from tlon.subsystem.tools.memory.generate_summary import GenerateSummaryTool
+from tlon.subsystem.tools.memory.remember_fact import RememberFactTool
+from tlon.subsystem.tools.memory.search_memories import SearchMemoriesTool
+from tlon.subsystem.tools.shell.execute_bash import ExecuteBashTool
+from tlon.subsystem.tools.tasks import TaskManager
+from tlon.subsystem.tools.tasks.complete_task import CompleteTaskTool
+from tlon.subsystem.tools.tasks.create_task import CreateTaskTool
+from tlon.subsystem.tools.tasks.get_current_task import GetCurrentTaskTool
+from tlon.subsystem.tools.tasks.list_tasks import ListTasksTool
+from tlon.subsystem.tools.tasks.pause_task import PauseTaskTool
+from tlon.subsystem.tools.tasks.remove_task import RemoveTaskTool
+from tlon.subsystem.tools.tasks.start_task import StartTaskTool
 
 if TYPE_CHECKING:
     from tlon.base.config.agent_info import AgentInfoProvider
 
 logger = get_logger(__name__)
+
+
+def _build_llm_config(file_config: LLMConfig | None, settings) -> LLMConfig:
+    """Merge LLM config from YAML file with runtime settings.
+
+    File config provides model parameters (model_name, temperature, etc.)
+    Settings provide runtime parameters (base_url, auth_token, etc.)
+
+    Args:
+        file_config: LLMConfig from agent YAML (may be None)
+        settings: Application settings from environment variables
+
+    Returns:
+        Merged LLMConfig with all fields populated
+    """
+    if file_config is None:
+        file_config = LLMConfig()
+
+    return LLMConfig(
+        model_name=file_config.model_name,
+        temperature=file_config.temperature,
+        max_tokens=file_config.max_tokens,
+        top_p=file_config.top_p,
+        base_url=settings.llm_base_url,
+        auth_token=settings.llm_api_key,
+        max_retries=settings.llm_max_retries,
+        base_delay=settings.llm_base_delay,
+    )
 
 
 class AgentRegistry(Component):
@@ -152,9 +199,10 @@ class AgentRegistry(Component):
         logger.info("AgentRegistry shutdown complete")
 
     async def _start_agent(self, agent_id: str) -> Agent | None:
-        """Start an agent.
+        """Assemble all dependencies and start an agent.
 
-        Internal method called by initialize().
+        This is the sole assembler for Agent and its infrastructure.
+        All deps are constructed here and injected via Agent's constructor.
 
         Args:
             agent_id: ID of the agent to start
@@ -174,6 +222,50 @@ class AgentRegistry(Component):
         try:
             logger.info(f"Starting agent: {config.name} ({agent_id})")
 
+            from tlon.base.settings import settings
+
+            # Build infrastructure dependencies
+            llm_config = _build_llm_config(config.llm, settings)
+            llm_client = LLMClient(llm_config)
+
+            docker_runtime = DockerRuntime(config.docker, config.id)
+
+            data_dir = get_tlon_home() / "data"
+            memory_config = (
+                config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
+            )
+            memory_config.agent_id = config.id
+            memory = MemoryManager(
+                agent_id=config.id,
+                config=memory_config,
+                data_dir=data_dir,
+                llm_config=llm_config,
+            )
+
+            task_manager = TaskManager(
+                agent_id=config.id,
+                data_dir=str(data_dir),
+            )
+
+            prompt_manager = PromptTemplateManager(ConfigLoader())
+
+            # Build tool executor and register all tools
+            tool_executor = ToolExecutor()
+            tool_executor.register_tool(ExecuteBashTool(docker_runtime))
+            tool_executor.register_tool(CompleteDialogTool())
+            tool_executor.register_tool(RememberFactTool(memory))
+            tool_executor.register_tool(SearchMemoriesTool(memory))
+            tool_executor.register_tool(GenerateSummaryTool(memory))
+            tool_executor.register_tool(ForgetMemoryTool(memory))
+            tool_executor.register_tool(CreateTaskTool(task_manager))
+            tool_executor.register_tool(ListTasksTool(task_manager))
+            tool_executor.register_tool(StartTaskTool(task_manager))
+            tool_executor.register_tool(PauseTaskTool(task_manager))
+            tool_executor.register_tool(CompleteTaskTool(task_manager))
+            tool_executor.register_tool(RemoveTaskTool(task_manager))
+            tool_executor.register_tool(GetCurrentTaskTool(task_manager))
+            logger.debug(f"Registered {len(tool_executor.list_tools())} tools for {config.name}")
+
             # Prepare team members config (all other agents)
             all_ids = self._agent_info.get_all_ids()
             team_members = [
@@ -182,10 +274,16 @@ class AgentRegistry(Component):
                 if aid != agent_id and self._agent_info.get_config(aid)
             ]
 
-            # Create and initialize agent
+            # Create and initialize agent with all deps injected
             agent = Agent(
                 config=config,
                 event_bus=self.event_bus,
+                llm_client=llm_client,
+                docker_runtime=docker_runtime,
+                memory=memory,
+                task_manager=task_manager,
+                prompt_manager=prompt_manager,
+                tool_executor=tool_executor,
                 team_members=team_members,
                 message_store=self.message_store,
             )

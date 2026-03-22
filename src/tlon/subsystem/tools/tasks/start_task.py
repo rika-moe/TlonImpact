@@ -27,13 +27,13 @@ class StartTaskTool(Tool):
         """
         super().__init__(
             name="startTask",
-            description="Start or resume a task. If another task is currently in progress, it will be automatically paused. Use this when you begin working on a task.",
+            description="开始或恢复一个任务。若当前有其他任务正在进行，会自动暂停。开始处理任务时调用此工具。",
             parameters={
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "The task ID to start. Example: 't-001'",
+                        "description": "要开始的任务 ID，示例：'t-001'",
                     }
                 },
                 "required": ["task_id"],

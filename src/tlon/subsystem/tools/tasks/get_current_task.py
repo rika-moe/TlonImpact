@@ -28,7 +28,7 @@ class GetCurrentTaskTool(Tool):
         """
         super().__init__(
             name="getCurrentTask",
-            description="Get the currently active task. Returns the task currently in progress (doing), or the most recently paused task. Use this to check what you're working on.",
+            description="获取当前正在进行的任务。返回 'doing' 状态的任务，若无则返回最近暂停的任务。用于确认当前工作内容。",
             parameters={"type": "object", "properties": {}},
         )
         self.task_manager = task_manager

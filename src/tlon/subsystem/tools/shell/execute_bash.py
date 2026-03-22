@@ -28,17 +28,17 @@ class ExecuteBashTool(Tool):
         """
         super().__init__(
             name="executeBashCommand",
-            description="Execute a bash command in the Docker container. Use this to run shell commands, install packages, check system status, etc. The command runs in the agent's isolated container with full network access.",
+            description="在 Docker 容器中执行 bash 命令。用于运行 shell 命令、安装软件包、检查系统状态等。命令在 Agent 的隔离容器中执行，拥有完整的网络访问权限。",
             parameters={
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The bash command to execute. Can include pipes, redirects, and multiple commands separated by semicolons.",
+                        "description": "要执行的 bash 命令，支持管道、重定向及用分号分隔的多条命令。",
                     },
                     "timeout": {
                         "type": "integer",
-                        "description": "Maximum execution time in seconds. Default is 60 seconds. For long-running commands like installations, use 120 or more.",
+                        "description": "最大执行时间（秒），默认 60 秒。对于安装等长时间运行的命令，可设为 120 或更大。",
                         "default": 60,
                         "minimum": 1,
                         "maximum": 300,

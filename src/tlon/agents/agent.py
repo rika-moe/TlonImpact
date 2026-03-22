@@ -11,31 +11,19 @@ from typing import Any
 
 from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.agents.prompt_builder import SystemPromptBuilder
+from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.base.config import AgentConfig, ConfigLoader, LLMConfig, PromptTemplateManager
+from tlon.base.component import Component
+from tlon.base.config import AgentConfig, PromptTemplateManager
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.settings import get_tlon_home
 from tlon.base.tracing import get_current_trace
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.sandbox.docker_runtime import DockerRuntime
-from tlon.subsystem.memory import MemoryConfig, MemoryManager
-from tlon.subsystem.tools.complete_dialog.complete_dialog import CompleteDialogTool
-from tlon.subsystem.tools.memory.forget_memory import ForgetMemoryTool
-from tlon.subsystem.tools.memory.generate_summary import GenerateSummaryTool
-from tlon.subsystem.tools.memory.remember_fact import RememberFactTool
-from tlon.subsystem.tools.memory.search_memories import SearchMemoriesTool
-from tlon.subsystem.tools.shell.execute_bash import ExecuteBashTool
+from tlon.subsystem.memory import MemoryManager
 from tlon.subsystem.tools.tasks import TaskManager
-from tlon.subsystem.tools.tasks.complete_task import CompleteTaskTool
-from tlon.subsystem.tools.tasks.create_task import CreateTaskTool
-from tlon.subsystem.tools.tasks.get_current_task import GetCurrentTaskTool
-from tlon.subsystem.tools.tasks.list_tasks import ListTasksTool
-from tlon.subsystem.tools.tasks.pause_task import PauseTaskTool
-from tlon.subsystem.tools.tasks.remove_task import RemoveTaskTool
-from tlon.subsystem.tools.tasks.start_task import StartTaskTool
 
 logger = get_logger(__name__)
 
@@ -50,8 +38,11 @@ class AgentState(Enum):
     SHUTDOWN = "shutdown"  # Stopped
 
 
-class Agent:
+class Agent(Component):
     """An intelligent agent that can process messages and execute tools.
+
+    Device: holds an EventBus reference and publishes observability events.
+    All infrastructure dependencies are injected via constructor (no internal construction).
 
     Each agent has:
     - A unique identity and role
@@ -61,7 +52,7 @@ class Agent:
 
     Example:
         >>> config = AgentConfig(id="dev-001", name="林知遥", ...)
-        >>> agent = Agent(config, event_bus)
+        >>> agent = Agent(config, event_bus, llm_client, docker_runtime, ...)
         >>> await agent.initialize()
         >>> # Agent will now respond to messages via EventBus
     """
@@ -70,6 +61,12 @@ class Agent:
         self,
         config: AgentConfig,
         event_bus: EventBus,
+        llm_client: LLMClient,
+        docker_runtime: DockerRuntime,
+        memory: MemoryManager,
+        task_manager: TaskManager,
+        prompt_manager: PromptTemplateManager,
+        tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
     ):
@@ -77,57 +74,45 @@ class Agent:
 
         Args:
             config: Agent configuration
-            event_bus: Event bus for receiving messages
+            event_bus: Event bus for publishing/subscribing (Device dependency)
+            llm_client: LLM client for inference
+            docker_runtime: Docker sandbox for bash tool execution
+            memory: Memory manager for long-term storage
+            task_manager: Task manager for task tracking
+            prompt_manager: Template manager for system prompt sections
+            tool_executor: Executor holding registered tools (Non-Device)
             team_members: List of all team member configs (including inactive ones)
             message_store: Message store for querying history
         """
+        super().__init__(name=config.name)
+
         self.config = config
         self.event_bus = event_bus
         self.team_members = team_members or []
         self.message_store = message_store
 
         self.id = config.id
-        self.name = config.name
         self.personality = config.personality
 
-        # Initialize components
-        # Merge YAML config with runtime settings for LLM
-        from tlon.base.settings import settings
-
-        llm_config = self._merge_llm_config(config.llm, settings)
-        self.llm_client = LLMClient(llm_config)
-        self.docker_runtime = DockerRuntime(config.docker, config.id)
-        self.tool_executor = ToolExecutor(event_bus)
-
-        # Initialize memory manager
-        data_dir = get_tlon_home() / "data"
-        memory_config = config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
-        memory_config.agent_id = config.id
-        # Use merged LLM config for summarization (needs API key)
-        llm_config = self._merge_llm_config(config.llm, settings)
-        self.memory = MemoryManager(
-            agent_id=config.id,
-            config=memory_config,
-            data_dir=data_dir,
-            llm_config=llm_config,
-        )
-
-        # Initialize task manager
-        self.task_manager = TaskManager(
-            agent_id=config.id,
-            data_dir=str(data_dir),
-        )
+        # Injected infrastructure dependencies
+        self.llm_client = llm_client
+        self.docker_runtime = docker_runtime
+        self.memory = memory
+        self.task_manager = task_manager
+        self._prompt_manager = prompt_manager
+        self.tool_executor = tool_executor
 
         # Subscription ID for event bus
         self._event_subscription: str | None = None
 
-        # Prompt template manager for building system prompts
-        self._prompt_manager = PromptTemplateManager(ConfigLoader())
+        # Prompt cache — invalidated when memory-modifying tools run
+        self._system_prompt_cache: str | None = None
+        self._system_prompt_dirty: bool = True
 
         # Agent state
         self.state: AgentState | None = None
 
-        # Message queue for serial processing (Phase 4)
+        # Message queue for serial processing
         self._message_queue: asyncio.Queue = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._worker_running = False
@@ -142,41 +127,11 @@ class Agent:
         """
         return self.state.value if self.state else "unknown"
 
-    def _merge_llm_config(self, file_config, settings) -> LLMConfig:
-        """Merge LLM config from YAML file with runtime settings.
-
-        File config provides model parameters (model_name, temperature, etc.)
-        Settings provide runtime parameters (base_url, auth_token, etc.)
-
-        Args:
-            file_config: LLMConfig from YAML file
-            settings: Application settings from environment variables
-
-        Returns:
-            Merged LLMConfig with all fields populated
-        """
-
-        # If file_config is None, create default
-        if file_config is None:
-            file_config = LLMConfig()
-
-        # Use file config for model parameters, settings for runtime parameters
-        return LLMConfig(
-            model_name=file_config.model_name,
-            temperature=file_config.temperature,
-            max_tokens=file_config.max_tokens,
-            top_p=file_config.top_p,
-            base_url=settings.llm_base_url,
-            auth_token=settings.llm_api_key,
-            max_retries=settings.llm_max_retries,
-            base_delay=settings.llm_base_delay,
-        )
-
     async def initialize(self) -> None:
         """Initialize the agent.
 
         Starts Docker container, loads memory,
-        registers tools, and subscribes to events.
+        and subscribes to events.
         """
         self.state = AgentState.INITIALIZING
         logger.info(f"Initializing agent: {self.name}")
@@ -191,12 +146,7 @@ class Agent:
         # Load tasks
         self.task_manager.load()
 
-        # Register tools
-        self._register_tools()
-
-        # Subscribe to events
-        # Subscribe to MESSAGE_ROUTED instead of MESSAGE_NEW
-        # This way we only receive messages intended for us
+        # Subscribe to MESSAGE_ROUTED — only receive messages intended for us
         self._event_subscription = self.event_bus.subscribe(
             EventType.MESSAGE_ROUTED, self._on_message_routed
         )
@@ -231,33 +181,6 @@ class Agent:
 
         self.state = AgentState.SHUTDOWN
         logger.info(f"Agent {self.name} shutdown complete")
-
-    def _register_tools(self) -> None:
-        """Register available tools."""
-        # Built-in tools
-        self.tool_executor.register_tool(ExecuteBashTool(self.docker_runtime))
-
-        # Task completion tool (always last in the list to emphasize it's the exit)
-        self.tool_executor.register_tool(CompleteDialogTool())
-
-        # Memory tools
-        self.tool_executor.register_tool(RememberFactTool(self.memory))
-        self.tool_executor.register_tool(SearchMemoriesTool(self.memory))
-        self.tool_executor.register_tool(GenerateSummaryTool(self.memory))
-        self.tool_executor.register_tool(ForgetMemoryTool(self.memory))
-        logger.debug(f"Registered memory tools for {self.name}")
-
-        # Task management tools
-        self.tool_executor.register_tool(CreateTaskTool(self.task_manager))
-        self.tool_executor.register_tool(ListTasksTool(self.task_manager))
-        self.tool_executor.register_tool(StartTaskTool(self.task_manager))
-        self.tool_executor.register_tool(PauseTaskTool(self.task_manager))
-        self.tool_executor.register_tool(CompleteTaskTool(self.task_manager))
-        self.tool_executor.register_tool(RemoveTaskTool(self.task_manager))
-        self.tool_executor.register_tool(GetCurrentTaskTool(self.task_manager))
-        logger.debug(f"Registered task management tools for {self.name}")
-
-        logger.debug(f"Registered {len(self.tool_executor.list_tools())} tools for {self.name}")
 
     async def _on_message_routed(self, event: Event) -> None:
         """Handle routed message events.
@@ -460,13 +383,10 @@ class Agent:
 
                 # Check if completeTask is called
                 complete_dialog_call = None
-                other_tool_calls = []
 
                 for tool_call in response.tool_calls:
                     if tool_call.function_name == "completeDialog":
                         complete_dialog_call = tool_call
-                    else:
-                        other_tool_calls.append(tool_call)
 
                 # Execute all tools and collect results
                 tool_results_list = []
@@ -599,7 +519,7 @@ class Agent:
         Returns:
             LLM response
         """
-        system_prompt = await self._build_system_prompt()
+        system_prompt = await self._get_system_prompt()
         tools = self.tool_executor.get_tool_definitions()
 
         # Get current trace context if available
@@ -770,23 +690,41 @@ class Agent:
 
         return context
 
-    async def _build_system_prompt(self) -> str:
-        """Build the system prompt for the agent.
+    async def _build_prompt_context(self) -> AgentPromptContext:
+        """Build AgentPromptContext by pre-fetching all async data.
 
-        Uses SystemPromptBuilder to compose sections from:
-        - Agent config (identity, personality)
-        - Position config (role, rules)
-        - Templates (workflow, important_notes, discipline_rules)
-        - Runtime state (skills, memory, team)
+        Returns:
+            AgentPromptContext with all data needed for SystemPromptBuilder
+        """
+        memory_blocks = await self.memory.build_context_blocks()
+        return AgentPromptContext(
+            config=self.config,
+            team_members=self.team_members,
+            tool_definitions=self.tool_executor.get_tool_definitions(),
+            memory_blocks=memory_blocks,
+            prompt_manager=self._prompt_manager,
+        )
+
+    async def _get_system_prompt(self) -> str:
+        """Get system prompt, using cache when not dirty.
+
+        The cache is invalidated when memory-modifying tools run
+        (rememberFact, forget, generateSummary).
 
         Returns:
             System prompt string
         """
-        builder = SystemPromptBuilder(self)
-        return await builder.build()
+        if self._system_prompt_dirty or self._system_prompt_cache is None:
+            context = await self._build_prompt_context()
+            self._system_prompt_cache = SystemPromptBuilder(context).build()
+            self._system_prompt_dirty = False
+        return self._system_prompt_cache
 
     async def _execute_tool_call(self, tool_call: ToolCall) -> Any:
-        """Execute a tool call.
+        """Execute a tool call and publish observability events.
+
+        Agent is the Device responsible for publishing tool events;
+        ToolExecutor (Non-Device) holds no EventBus reference.
 
         Args:
             tool_call: The tool call to execute
@@ -796,9 +734,52 @@ class Agent:
         """
         logger.debug(f"Executing tool: {tool_call.function_name}")
 
-        result = await self.tool_executor.execute(tool_call.function_name, tool_call.arguments)
+        await self.event_bus.publish(
+            Event(
+                type=EventType.TOOL_EXECUTE_START,
+                payload={
+                    "agent_id": self.id,
+                    "tool_name": tool_call.function_name,
+                    "arguments": tool_call.arguments,
+                },
+                source=self.id,
+            )
+        )
 
-        return result
+        try:
+            result = await self.tool_executor.execute(tool_call.function_name, tool_call.arguments)
+
+            # Invalidate prompt cache for memory-modifying tools
+            if tool_call.function_name in ("rememberFact", "forget", "generateSummary"):
+                self._system_prompt_dirty = True
+
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.TOOL_EXECUTE_END,
+                    payload={
+                        "agent_id": self.id,
+                        "tool_name": tool_call.function_name,
+                        "success": result.success,
+                    },
+                    source=self.id,
+                )
+            )
+
+            return result
+
+        except Exception as e:
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.TOOL_ERROR,
+                    payload={
+                        "agent_id": self.id,
+                        "tool_name": tool_call.function_name,
+                        "error": str(e),
+                    },
+                    source=self.id,
+                )
+            )
+            raise
 
     async def _send_message(self, content: str, mentions: list[str] | None = None) -> None:
         """Send a message via EventBus.

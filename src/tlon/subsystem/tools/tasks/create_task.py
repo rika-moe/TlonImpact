@@ -30,17 +30,17 @@ class CreateTaskTool(Tool):
         """
         super().__init__(
             name="createTask",
-            description="Create a new task. Use this to break down complex work into smaller, manageable tasks. Each task should represent one clear step or deliverable.",
+            description="创建新任务。将复杂工作拆解为更小、可管理的任务，每个任务应代表一个清晰的步骤或交付物。",
             parameters={
                 "type": "object",
                 "properties": {
                     "title": {
                         "type": "string",
-                        "description": "Short, clear title describing what needs to be done. Example: 'Design login API endpoints'",
+                        "description": "简短清晰的任务标题，描述需要完成的事项。示例：'设计登录 API 接口'",
                     },
                     "description": {
                         "type": "string",
-                        "description": "Optional detailed description of the task. Include specific requirements, acceptance criteria, or notes.",
+                        "description": "可选的详细描述，包含具体需求、验收标准或备注。",
                         "default": "",
                     },
                 },

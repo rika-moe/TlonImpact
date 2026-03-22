@@ -27,13 +27,13 @@ class ListTasksTool(Tool):
         """
         super().__init__(
             name="listTasks",
-            description="List all tasks with their status. Use this to check your current workload and progress. You can filter by status to see specific tasks.",
+            description="列出所有任务及其状态。用于查看当前工作量和进度，可按状态筛选。",
             parameters={
                 "type": "object",
                 "properties": {
                     "filter": {
                         "type": "string",
-                        "description": "Optional filter by status. Options: 'all' (default), 'todo', 'doing', 'paused', 'done'",
+                        "description": "按状态筛选，可选值：'all'（默认）、'todo'、'doing'、'paused'、'done'",
                         "enum": ["all", "todo", "doing", "paused", "done"],
                         "default": "all",
                     }
