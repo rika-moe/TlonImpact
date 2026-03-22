@@ -19,6 +19,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from tlon.agents.agent import Agent
+from tlon.agents.eventbus_tool_executor import EventBusToolExecutor
 from tlon.agents.llm_client import LLMClient
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
@@ -249,8 +250,17 @@ class AgentRegistry(Component):
 
             prompt_manager = PromptTemplateManager(ConfigLoader())
 
-            # Build tool executor and register all tools
-            tool_executor = ToolExecutor()
+            # Check if EventBus tool execution is enabled (Phase 3)
+            use_eventbus_tools = getattr(settings, "ENABLE_EVENTBUS_TOOLS", False)
+
+            if use_eventbus_tools:
+                # Phase 3: Use EventBusToolExecutor (shared, async)
+                tool_executor = EventBusToolExecutor(self.event_bus)
+            else:
+                # Phase 2: Use synchronous ToolExecutor
+                tool_executor = ToolExecutor()
+
+            # Register tools
             tool_executor.register_tool(ExecuteBashTool(docker_runtime))
             tool_executor.register_tool(CompleteDialogTool())
             tool_executor.register_tool(RememberFactTool(memory))
@@ -266,6 +276,10 @@ class AgentRegistry(Component):
             tool_executor.register_tool(GetCurrentTaskTool(task_manager))
             logger.debug(f"Registered {len(tool_executor.list_tools())} tools for {config.name}")
 
+            # Initialize EventBusToolExecutor if in Phase 3 mode
+            if use_eventbus_tools and isinstance(tool_executor, EventBusToolExecutor):
+                await tool_executor.initialize()
+
             # Prepare team members config (all other agents)
             all_ids = self._agent_info.get_all_ids()
             team_members = [
@@ -273,6 +287,10 @@ class AgentRegistry(Component):
                 for aid in all_ids
                 if aid != agent_id and self._agent_info.get_config(aid)
             ]
+
+            # Read tool timeout settings from config
+            total_tool_timeout = getattr(settings, "TOTAL_TOOL_TIMEOUT", 60.0)
+            per_tool_timeout = getattr(settings, "PER_TOOL_TIMEOUT", 30.0)
 
             # Create and initialize agent with all deps injected
             agent = Agent(
@@ -286,6 +304,9 @@ class AgentRegistry(Component):
                 tool_executor=tool_executor,
                 team_members=team_members,
                 message_store=self.message_store,
+                use_eventbus_tools=use_eventbus_tools,
+                total_tool_timeout=total_tool_timeout,
+                per_tool_timeout=per_tool_timeout,
             )
             await agent.initialize()
 

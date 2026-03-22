@@ -48,6 +48,10 @@ class EventType(StrEnum):
     TOOL_EXECUTE_START = "tool.execute_start"
     TOOL_EXECUTE_END = "tool.execute_end"
 
+    # Phase 3: EventBus-based tool execution
+    TOOL_EXECUTE_REQUEST = "tool.execute_request"  # Agent -> ToolExecutor
+    TOOL_EXECUTE_RESULT = "tool.execute_result"  # ToolExecutor -> Agent
+
     # System events
     SYSTEM_STARTUP = "system.startup"
     SYSTEM_SHUTDOWN = "system.shutdown"

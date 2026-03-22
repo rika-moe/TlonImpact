@@ -19,6 +19,7 @@ from tlon.base.config import AgentConfig, PromptTemplateManager
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.settings import settings
 from tlon.base.tracing import get_current_trace
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
@@ -70,6 +71,9 @@ class Agent(Component):
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
+        use_eventbus_tools: bool | None = None,
+        total_tool_timeout: float = 60.0,
+        per_tool_timeout: float = 30.0,
     ):
         """Initialize the agent.
 
@@ -84,6 +88,10 @@ class Agent(Component):
             tool_executor: Executor holding registered tools (Non-Device)
             team_members: List of all team member configs (including inactive ones)
             message_store: Message store for querying history
+            use_eventbus_tools: Use EventBus for async tool execution (Phase 3).
+                If None, read from settings.ENABLE_EVENTBUS_TOOLS.
+            total_tool_timeout: Total timeout for all tools in EventBus mode (deadline)
+            per_tool_timeout: Timeout for each individual tool in EventBus mode
         """
         super().__init__(name=config.name)
 
@@ -102,6 +110,14 @@ class Agent(Component):
         self.task_manager = task_manager
         self._prompt_manager = prompt_manager
         self.tool_executor = tool_executor
+
+        # Phase 3: EventBus tool execution settings
+        if use_eventbus_tools is None:
+            # Read from settings, default to False
+            use_eventbus_tools = getattr(settings, "ENABLE_EVENTBUS_TOOLS", False)
+        self._use_eventbus_tools = use_eventbus_tools
+        self._total_tool_timeout = total_tool_timeout
+        self._per_tool_timeout = per_tool_timeout
 
         # Subscription ID for event bus
         self._event_subscription: str | None = None
@@ -363,6 +379,9 @@ class Agent(Component):
                 content, mentions, message
             ),
             save_to_memory_callback=self._save_interaction_to_memory,
+            use_eventbus_tools=self._use_eventbus_tools,
+            total_tool_timeout=self._total_tool_timeout,
+            per_tool_timeout=self._per_tool_timeout,
         )
 
         # Run state machine to completion
