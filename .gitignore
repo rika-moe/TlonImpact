@@ -38,6 +38,7 @@ env/
 # Data
 data/agents/
 data/chat_history/
+data/csp/
 !data/.gitkeep
 
 # WebUI build output

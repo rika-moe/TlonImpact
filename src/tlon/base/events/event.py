@@ -31,6 +31,7 @@ class EventType(StrEnum):
     AGENT_STOPPED = "agent.stopped"
     AGENT_ERROR = "agent.error"
     AGENT_STATE_CHANGED = "agent.state_changed"
+    AGENT_REACT_STATE_TRANSITION = "agent.react_state_transition"  # ReAct state machine transition
 
     # Agent thinking process (observability)
     AGENT_THINKING_START = "agent.thinking_start"

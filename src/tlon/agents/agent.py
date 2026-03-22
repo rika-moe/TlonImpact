@@ -12,6 +12,7 @@ from typing import Any
 from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
+from tlon.agents.react_state_machine import ReActContext, ReActStateMachine
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig, PromptTemplateManager
@@ -318,14 +319,10 @@ class Agent(Component):
         return self.name in message.mentions
 
     async def _process_message(self, message: Message) -> None:
-        """Process a message and generate response.
+        """Process a message using ReAct State Machine.
 
-        The main processing loop:
-        1. Check idle timeout (generate summary if needed)
-        2. Build context from history
-        3. Call LLM to think
-        4. Execute any tool calls
-        5. Send final response
+        Replaces the implicit for-loop with an explicit state machine
+        that emits state change events for observability.
 
         Args:
             message: The message to process
@@ -336,179 +333,101 @@ class Agent(Component):
         await self.memory.check_idle_timeout()
 
         # Build context
-        context = await self._build_context(message)
-        logger.debug(f"Context built with {len(context)} messages")
+        messages = await self._build_context(message)
+        logger.debug(f"Context built with {len(messages)} messages")
 
-        # Track tool results for memory
-        all_tool_results = []
+        # Get trace context for observability
+        current_trace = get_current_trace()
 
-        # Thinking loop (with tool execution)
-        max_iterations = 10
-        final_response = None
-        final_mentions = []
+        # Create ReAct context
+        react_context = ReActContext(
+            messages=messages,
+            original_message_id=message.id,
+            original_message_sender_id=message.sender_id,
+            original_message_sender_type=message.sender_type,
+            max_iterations=10,
+            trace_id=current_trace.trace_id if current_trace else None,
+            span_id=current_trace.span_id if current_trace else None,
+        )
 
-        for iteration in range(max_iterations):
-            logger.debug(f"Thinking iteration {iteration + 1}")
+        # Create state machine with callbacks
+        state_machine = ReActStateMachine(
+            agent_id=self.id,
+            agent_name=self.name,
+            llm_client=self.llm_client,
+            tool_executor=self.tool_executor,
+            event_bus=self.event_bus,
+            system_prompt_provider=self._get_system_prompt,
+            tool_defs_provider=self.tool_executor.get_tool_definitions,
+            send_message_callback=lambda content, mentions: self._send_final_message(
+                content, mentions, message
+            ),
+            save_to_memory_callback=self._save_interaction_to_memory,
+        )
 
-            # Call LLM
-            try:
-                response = await self.think(context)
-                logger.debug(
-                    f"LLM response: finish_reason={response.finish_reason}, "
-                    f"has_content={response.content is not None}, "
-                    f"tool_calls={len(response.tool_calls) if response.tool_calls else 0}"
-                )
-            except Exception as e:
-                logger.error(f"LLM call failed: {e}")
-                error_msg = str(e)
-                if "API key" in error_msg or "auth" in error_msg.lower():
-                    error_msg = "API 密钥未配置或无效，请检查 .env 文件中的 OPENAI_API_KEY"
-                elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                    error_msg = "请求超时，请检查网络连接或稍后重试"
-                elif "connection" in error_msg.lower():
-                    error_msg = "网络连接失败，请检查网络设置"
-
-                await self._send_message(
-                    f"抱歉，我无法连接到 AI 服务: {error_msg}",
-                    mentions=[message.sender_id] if message.sender_type == "human" else [],
-                )
-                return
-
-            # Handle tool calls
-            if response.tool_calls:
-                tool_names = [tc.function_name for tc in response.tool_calls]
-                logger.info(
-                    f"{self.name} is using {len(response.tool_calls)} tool(s): {', '.join(tool_names)}"
-                )
-
-                # Check if completeTask is called
-                complete_dialog_call = None
-
-                for tool_call in response.tool_calls:
-                    if tool_call.function_name == "completeDialog":
-                        complete_dialog_call = tool_call
-
-                # Execute all tools and collect results
-                tool_results_list = []
-                for tool_call in response.tool_calls:
-                    # Log tool call with truncated arguments for readability
-                    args_str = str(tool_call.arguments) if hasattr(tool_call, "arguments") else "{}"
-                    if len(args_str) > 100:
-                        args_str = args_str[:100] + "..."
-                    logger.info(f"  → Executing: {tool_call.function_name}({args_str})")
-
-                    tool_result = await self._execute_tool_call(tool_call)
-
-                    # Log result
-                    success = tool_result.success if hasattr(tool_result, "success") else False
-                    msg = (
-                        tool_result.message
-                        if hasattr(tool_result, "message") and tool_result.message
-                        else ("OK" if success else "Failed")
-                    )
-                    logger.info(f"  ✓ Result: {msg}")
-                    all_tool_results.append(
-                        {
-                            "tool_call": tool_call,
-                            "result": tool_result,
-                        }
-                    )
-                    tool_results_list.append((tool_call, tool_result))
-
-                    # If this is completeTask, extract the final response
-                    if tool_call.function_name == "completeDialog" and tool_result.success:
-                        final_response = tool_result.data.get("content", "")
-                        final_mentions = tool_result.data.get("mentions", [])
-
-                # Add assistant message with all tool calls (once)
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [self._tool_call_to_dict(tc) for tc in response.tool_calls],
-                }
-                if response.reasoning_content:
-                    assistant_msg["reasoning_content"] = response.reasoning_content
-                context.append(assistant_msg)
-
-                # Add tool results
-                for tool_call, tool_result in tool_results_list:
-                    context.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": self._tool_result_to_string(tool_result),
-                        }
-                    )
-
-                # If completeDialog was called, send final response and exit
-                if complete_dialog_call and final_response is not None:
-                    logger.info(f"{self.name} is completing task with: {final_response[:50]}...")
-                    try:
-                        # Construct message and publish via EventBus
-                        from tlon.organization.messaging.message import Message
-
-                        message = Message.create(
-                            sender_id=self.id,
-                            sender_name=self.name,
-                            sender_type="agent",
-                            content=final_response,
-                            mentions=final_mentions or [],
-                        )
-                        await self.event_bus.publish(
-                            Event(
-                                type=EventType.MESSAGE_NEW,
-                                payload=message,
-                                source=self.id,
-                            )
-                        )
-                        logger.info(f"{self.name} response sent successfully via EventBus")
-                    except Exception as e:
-                        logger.error(f"Failed to send message: {e}", exc_info=True)
-
-                    # Save to memory
-                    try:
-                        await self.memory.add_interaction(message, response, all_tool_results)
-                    except Exception as e:
-                        logger.error(f"Failed to save to memory: {e}")
-
-                    return  # Exit the processing loop
-
-                # Otherwise, continue to next iteration for more thinking
-                continue
-
-            # No tool calls - this is an error state as we require completeTask to finish
-            logger.warning(f"{self.name} returned no tool calls. Waiting for completeTask...")
-
-            # Add the assistant message to context to let it try again
-            if response.content:
-                context.append(
-                    {
-                        "role": "assistant",
-                        "content": response.content,
-                    }
-                )
-                context.append(
-                    {
-                        "role": "user",
-                        "content": "请注意：你必须使用 completeDialog 工具来结束处理并发送最终回复。请不要直接输出文本，而是调用 completeDialog 工具。",
-                    }
-                )
-            else:
-                context.append(
-                    {
-                        "role": "user",
-                        "content": '你必须使用 completeDialog 工具来完成对话。请调用 completeDialog(content="你的回复") 来结束。',
-                    }
-                )
-
-            continue
-        else:
-            # Max iterations reached
-            logger.warning(f"Max iterations reached for {self.name}")
+        # Run state machine to completion
+        try:
+            final_state = await state_machine.start(react_context)
+            logger.info(f"{self.name} finished processing with state: {final_state.value}")
+        except Exception as e:
+            logger.error(f"State machine failed: {e}", exc_info=True)
+            # Fallback error handling
             await self._send_message(
-                "思考时间过长，请简化您的问题。",
+                "抱歉，处理消息时出现了内部错误。",
                 mentions=[message.sender_id] if message.sender_type == "human" else [],
             )
+
+    async def _send_final_message(
+        self, content: str, mentions: list[str], original_message: Message
+    ) -> None:
+        """Send final response message via EventBus.
+
+        Args:
+            content: Message content
+            mentions: List of mentions
+            original_message: Original message being responded to
+        """
+        from tlon.organization.messaging.message import Message
+
+        message = Message.create(
+            sender_id=self.id,
+            sender_name=self.name,
+            sender_type="agent",
+            content=content,
+            mentions=mentions or [],
+        )
+        await self.event_bus.publish(
+            Event(
+                type=EventType.MESSAGE_NEW,
+                payload=message,
+                source=self.id,
+            )
+        )
+        logger.info(f"{self.name} response sent successfully via EventBus")
+
+    async def _save_interaction_to_memory(
+        self, final_response: str, llm_response: LLMResponse, tool_results: list
+    ) -> None:
+        """Save interaction to memory.
+
+        Args:
+            final_response: Final response content
+            llm_response: The LLM response object
+            tool_results: List of tool execution results
+        """
+        try:
+            # Create a minimal message object for memory storage
+            from tlon.organization.messaging.message import Message
+
+            msg = Message.create(
+                sender_id=self.id,
+                sender_name=self.name,
+                sender_type="agent",
+                content=final_response,
+            )
+            await self.memory.add_interaction(msg, llm_response, tool_results)
+        except Exception as e:
+            logger.error(f"Failed to save to memory: {e}")
 
     async def think(self, context: list[dict[str, Any]]) -> LLMResponse:
         """Call LLM to think and generate response.
