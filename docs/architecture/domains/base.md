@@ -16,7 +16,7 @@
 ```
 base/
 ├── config/                 # 配置管理
-│   ├── models.py          # 数据模型 (AgentConfig, PositionConfig)
+│   ├── models.py          # 数据模型 (AgentConfig, RoleConfig)
 │   ├── loader.py          # 配置加载
 │   ├── saver.py           # 配置保存
 │   ├── validator.py       # 配置验证

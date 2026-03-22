@@ -15,9 +15,9 @@ from typing import Any, Optional
 
 @dataclass
 class PromptOverrides:
-    """Position-level prompt overrides for complete replacement of global templates.
+    """Role-level prompt overrides for complete replacement of global templates.
 
-    When a Position provides prompt_overrides, it completely replaces the corresponding
+    When a Role provides prompt_overrides, it completely replaces the corresponding
     global template (not appends to it).
 
     Attributes:
@@ -58,7 +58,7 @@ class PromptTemplates:
     """Global default prompt templates.
 
     These templates serve as the base defaults that can be overridden by
-    Position configurations via prompt_overrides.
+    Role configurations via prompt_overrides.
 
     Attributes:
         workflow: Default workflow description template
@@ -102,7 +102,7 @@ class PromptTemplates:
         Overrides completely replace the corresponding template (not append).
 
         Args:
-            overrides: Position-level overrides
+            overrides: Role-level overrides
 
         Returns:
             New PromptTemplates with overrides applied
@@ -192,80 +192,6 @@ class RoleConfig:
             contact_when=data.get("contact_when", ""),
             prompt_overrides=PromptOverrides.from_dict(data.get("prompt_overrides")),
         )
-
-
-# =============================================================================
-# Position Configuration
-# =============================================================================
-
-
-@dataclass
-class PositionConfig:
-    """Position (Job Role) configuration.
-
-    .. deprecated::
-        PositionConfig is deprecated. Use RoleConfig inlined in AgentConfig instead.
-        This class is retained for backward compatibility with existing tests and code.
-
-    A Position defines the standardized job description, responsibilities,
-    and behavior for a type of role. Multiple agents can share the same position.
-
-    Attributes:
-        id: Unique position identifier (e.g., "developer", "project_manager")
-        type: Position type code (usually same as id)
-        title: Human-readable position title (e.g., "开发工程师")
-        jd: Job description and responsibilities (岗位职责)
-        department: Optional department name
-        rules: List of behavior rules for this position
-        default_skills: Default skills for agents in this position
-        contact_when: When to contact this role
-        prompt_overrides: Optional overrides for global prompt templates
-    """
-
-    id: str
-    type: str
-    title: str = ""
-    jd: str = ""  # Job Description
-    department: str = ""
-    rules: list[str] = field(default_factory=list)
-    default_skills: list[str] = field(default_factory=list)
-    contact_when: str = ""  # 何时应该联系该角色
-    prompt_overrides: PromptOverrides | None = None
-
-    def to_dict(self) -> dict:
-        """Convert position to dictionary."""
-        result = {
-            "id": self.id,
-            "type": self.type,
-            "title": self.title,
-            "jd": self.jd,
-            "department": self.department,
-            "rules": self.rules,
-            "default_skills": self.default_skills,
-            "contact_when": self.contact_when,
-        }
-        if self.prompt_overrides:
-            result["prompt_overrides"] = self.prompt_overrides.to_dict()
-        return result
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "PositionConfig":
-        """Create position from dictionary."""
-        return cls(
-            id=data["id"],
-            type=data.get("type", data["id"]),
-            title=data.get("title", ""),
-            jd=data.get("jd", data.get("description", "")),
-            department=data.get("department", ""),
-            rules=data.get("rules", []),
-            default_skills=data.get("default_skills", data.get("skills", [])),
-            contact_when=data.get("contact_when", ""),
-            prompt_overrides=PromptOverrides.from_dict(data.get("prompt_overrides")),
-        )
-
-    def get_display_name(self) -> str:
-        """Get the display name for this position."""
-        return self.title or self.id
 
 
 # =============================================================================
@@ -379,8 +305,6 @@ class AgentConfig:
         name: Display name (e.g., "林知遥")
         personality: Individual personality traits (个体性格特征)
         role: Inline role configuration (title, jd, department, rules, etc.)
-        position_id: Deprecated. Previously referenced a shared Position type.
-            Retained for backward compatibility; new configs should use ``role``.
         llm: LLM configuration
         docker: Docker runtime configuration
         memory: Memory configuration (Any type for flexibility)
@@ -391,9 +315,8 @@ class AgentConfig:
 
     id: str
     name: str
-    personality: str = ""  # Individual traits, not position-based
-    role: "RoleConfig | None" = None  # Inline role definition
-    position_id: str = ""  # Deprecated: use role instead
+    personality: str = ""
+    role: "RoleConfig | None" = None
     llm: LLMConfig | None = None
     docker: DockerRuntimeConfig | None = None
     memory: Any = field(default_factory=lambda: None)
@@ -430,9 +353,6 @@ class AgentConfig:
         }
         if self.role is not None:
             result["role"] = self.role.to_dict()
-        elif self.position_id:
-            # Deprecated: preserve position_id when no inline role is present (backward compat)
-            result["position_id"] = self.position_id
         if self.llm:
             result["llm"] = self.llm.to_dict()
         if self.docker:
@@ -462,7 +382,6 @@ class AgentConfig:
             name=data.get("name", ""),
             personality=data.get("personality", ""),
             role=role,
-            position_id=data.get("position_id", ""),  # kept for backward compat
             llm=llm,
             docker=docker,
             memory=data.get("memory"),
@@ -489,7 +408,6 @@ __all__ = [
     "PromptOverrides",
     "PromptTemplates",
     "RoleConfig",
-    "PositionConfig",
     "LLMConfig",
     "DockerRuntimeConfig",
     "AgentConfig",

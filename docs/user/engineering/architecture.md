@@ -323,7 +323,7 @@ project/
 │   │   ├── file.py            # 文件操作
 │   │   └── message.py         # 消息发送
 │   │
-│   └── positions/             # 角色定义
+
 │       ├── developer.py
 │       ├── pm.py
 │       └── support.py

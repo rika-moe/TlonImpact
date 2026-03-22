@@ -10,7 +10,7 @@ import yaml
 
 from tlon.base.settings import get_default_config_dir, get_default_data_dir
 
-from .models import AgentConfig, PositionConfig, PromptTemplates
+from .models import AgentConfig, PromptTemplates
 from .validator import ConfigValidator
 
 
@@ -23,12 +23,11 @@ class ConfigSaveError(Exception):
 class ConfigSaver:
     """Unified configuration saver.
 
-    Saves Position, Agent, and Prompt configurations to YAML files.
+    Saves Agent and Prompt configurations to YAML files.
     Provides validation and backup functionality.
 
     Attributes:
         config_dir: Root configuration directory
-        positions_dir: Directory for position YAML files
         agents_dir: Directory for agent YAML files
         data_dir: Base directory for agent data
     """
@@ -36,103 +35,24 @@ class ConfigSaver:
     def __init__(
         self,
         config_dir: str | None = None,
-        positions_dir: str | None = None,
         agents_dir: str | None = None,
         data_dir: str | None = None,
+        **kwargs,
     ):
         """Initialize the configuration saver.
 
         Args:
             config_dir: Root configuration directory (default: project_root/config)
-            positions_dir: Override for positions subdirectory
             agents_dir: Override for agents subdirectory
             data_dir: Base directory for agent data storage (default: project_root/data)
         """
         self.config_dir = Path(config_dir) if config_dir else get_default_config_dir()
-        self.positions_dir = Path(positions_dir) if positions_dir else self.config_dir / "positions"
         self.agents_dir = Path(agents_dir) if agents_dir else self.config_dir / "agents"
         self.data_dir = Path(data_dir) if data_dir else get_default_data_dir()
 
     def _ensure_directory(self, directory: Path) -> None:
         """Ensure a directory exists."""
         directory.mkdir(parents=True, exist_ok=True)
-
-    # =========================================================================
-    # Position Saving
-    # =========================================================================
-
-    def save_position(
-        self,
-        position: PositionConfig,
-        create_backup: bool = False,
-    ) -> tuple[bool, str]:
-        """Save a position to YAML file.
-
-        Args:
-            position: PositionConfig to save
-            create_backup: Whether to create a backup of existing file
-
-        Returns:
-            Tuple of (success, message)
-        """
-        # Validate first
-        is_valid, errors = ConfigValidator.validate_position_config(position)
-        if not is_valid:
-            return False, f"Validation failed: {', '.join(errors)}"
-
-        try:
-            self._ensure_directory(self.positions_dir)
-
-            # Prepare data
-            data = {"position": position.to_dict()}
-
-            # Write to file
-            filename = f"{position.type}.yaml"
-            filepath = self.positions_dir / filename
-
-            # Create backup if requested and file exists
-            if create_backup and filepath.exists():
-                backup_path = filepath.with_suffix(".yaml.bak")
-                shutil.copy2(filepath, backup_path)
-
-            with open(filepath, "w", encoding="utf-8") as f:
-                yaml.dump(data, f, allow_unicode=True, sort_keys=False)
-
-            return True, f"Position saved to {filepath}"
-
-        except Exception as e:
-            return False, f"Failed to save position: {e}"
-
-    def delete_position(
-        self,
-        position_type: str,
-        agent_ids: list[str] | None = None,
-    ) -> tuple[bool, str]:
-        """Delete a position.
-
-        Args:
-            position_type: Position type to delete
-            agent_ids: Optional list of agent IDs using this position
-
-        Returns:
-            Tuple of (success, message)
-        """
-        # Check if any agents use this position
-        if agent_ids:
-            return False, f"Cannot delete: {len(agent_ids)} agent(s) are using this position"
-
-        try:
-            filename = f"{position_type}.yaml"
-            filepath = self.positions_dir / filename
-
-            if not filepath.exists():
-                return False, f"Position '{position_type}' not found"
-
-            filepath.unlink()
-            return True, f"Position '{position_type}' deleted"
-
-        except Exception as e:
-            return False, f"Failed to delete position: {e}"
 
     # =========================================================================
     # Agent Saving
@@ -154,7 +74,6 @@ class ConfigSaver:
         Returns:
             Tuple of (success, message)
         """
-        # Validate first
         is_valid, errors = ConfigValidator.validate_agent_config(agent)
         if not is_valid:
             return False, f"Validation failed: {', '.join(errors)}"
@@ -162,14 +81,11 @@ class ConfigSaver:
         try:
             self._ensure_directory(self.agents_dir)
 
-            # Prepare data
             data = {"agent": agent.to_dict()}
 
-            # Write to file
             filename = f"{agent.id}.yaml"
             filepath = self.agents_dir / filename
 
-            # Create backup if requested and file exists
             if create_backup and filepath.exists():
                 backup_path = filepath.with_suffix(".yaml.bak")
                 shutil.copy2(filepath, backup_path)
@@ -177,7 +93,6 @@ class ConfigSaver:
             with open(filepath, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, allow_unicode=True, sort_keys=False)
 
-            # Create data directory if requested
             if create_data_dir:
                 agent.get_data_dir(self.data_dir)
 
@@ -209,7 +124,6 @@ class ConfigSaver:
 
             filepath.unlink()
 
-            # Delete data directory if requested
             if delete_data:
                 agent_data_dir = self.data_dir / "agents" / agent_id
                 if agent_data_dir.exists():
@@ -219,31 +133,6 @@ class ConfigSaver:
 
         except Exception as e:
             return False, f"Failed to delete agent: {e}"
-
-    def transfer_agent_position(
-        self,
-        agent: AgentConfig,
-        new_position_id: str,
-    ) -> tuple[bool, str]:
-        """Transfer an agent to a new position.
-
-        Args:
-            agent: AgentConfig to update
-            new_position_id: New position type
-
-        Returns:
-            Tuple of (success, message)
-        """
-        old_position_id = agent.position_id
-        agent.position_id = new_position_id
-
-        success, msg = self.save_agent(agent)
-        if success:
-            return True, f"Agent transferred from '{old_position_id}' to '{new_position_id}'"
-        else:
-            # Revert on failure
-            agent.position_id = old_position_id
-            return False, msg
 
     # =========================================================================
     # Prompt Templates Saving
@@ -265,7 +154,6 @@ class ConfigSaver:
         Returns:
             Tuple of (success, message)
         """
-        # Validate first
         is_valid, errors = ConfigValidator.validate_prompt_templates_config(templates)
         if not is_valid:
             return False, f"Validation failed: {', '.join(errors)}"
@@ -278,10 +166,8 @@ class ConfigSaver:
 
             self._ensure_directory(filepath.parent)
 
-            # Prepare data
             data = {"templates": templates.to_dict()}
 
-            # Create backup if requested and file exists
             if create_backup and filepath.exists():
                 backup_path = filepath.with_suffix(".yaml.bak")
                 shutil.copy2(filepath, backup_path)
@@ -300,13 +186,13 @@ class ConfigSaver:
 
     def generate_agent_id(
         self,
-        position_type: str,
+        prefix: str,
         existing_ids: list[str] | None = None,
     ) -> str:
         """Generate a unique agent ID.
 
         Args:
-            position_type: Position type (used as prefix)
+            prefix: Prefix for the agent ID
             existing_ids: List of existing IDs to avoid
 
         Returns:
@@ -315,10 +201,8 @@ class ConfigSaver:
         if existing_ids is None:
             existing_ids = []
 
-        # Normalize position type for ID
-        prefix = position_type.replace("_", "-")
+        prefix = prefix.replace("_", "-")
 
-        # Find next available number
         counter = 1
         while True:
             agent_id = f"{prefix}-{counter:03d}"

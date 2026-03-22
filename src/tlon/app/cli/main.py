@@ -143,16 +143,7 @@ Use --reflect to view existing agent mirrors without entering the mirror.""",
     mirror_parser.add_argument(
         "--create",
         metavar="NAME",
-        help="Create a new agent non-interactively (requires --position)",
-    )
-    mirror_parser.add_argument(
-        "--position", metavar="POS", help="Position for the new agent (used with --create)"
-    )
-    mirror_parser.add_argument(
-        "--template",
-        metavar="TPL",
-        default="default",
-        help="Template for the new agent (default: default)",
+        help="Create a new agent non-interactively",
     )
     mirror_parser.add_argument("--destroy", metavar="NAME", help="Destroy (remove) an agent")
     mirror_parser.add_argument(
@@ -308,11 +299,7 @@ async def run_mirror(args) -> int:
 
     # Handle --create
     if getattr(args, "create", None):
-        return await _mirror_create(
-            name=args.create,
-            position=getattr(args, "position", None),
-            template=getattr(args, "template", "default"),
-        )
+        return await _mirror_create(name=args.create)
 
     # Handle --edit
     if getattr(args, "edit", None):
@@ -353,7 +340,8 @@ async def _mirror_reflect() -> int:
     for agent in agents.values():
         try:
             print(f"\n  📋 {agent.name} ({agent.id})")
-            print(f"     职位: {agent.position_id}")
+            role_title = agent.role.title if agent.role else "-"
+            print(f"     职务: {role_title}")
             if agent.personality:
                 personality = agent.personality
                 print(f"     性格: {personality[:40]}{'...' if len(personality) > 40 else ''}")
@@ -392,7 +380,7 @@ async def _mirror_destroy(name: str) -> int:
         return 1
 
 
-async def _mirror_create(name: str, position: str | None, template: str) -> int:
+async def _mirror_create(name: str) -> int:
     """Create an agent non-interactively."""
     from tlon.base.config import (
         AgentConfig,
@@ -402,37 +390,16 @@ async def _mirror_create(name: str, position: str | None, template: str) -> int:
         LLMConfig,
     )
     from tlon.base.settings import settings
-    from tlon.subsystem.memory import MemoryConfig
-
-    if not position:
-        print("\n❌ 必须指定 --position 来创建 Agent")
-        print("   示例: tlon mirror --create my-agent --position developer")
-        return 1
-
-    # Validate position exists
-    config_loader = ConfigLoader()
-    position_config = config_loader.load_position(position)
-
-    if not position_config:
-        print(f"\n❌ 职位 '{position}' 不存在")
-        # List available positions
-        positions = config_loader.load_all_positions()
-        if positions:
-            available = list(positions.keys())
-            print(f"   可用职位: {', '.join(available)}")
-        return 1
 
     # Generate agent ID from name (pinyin/ascii)
     agent_id = _generate_agent_id(name)
 
     # Check if agent already exists
+    config_loader = ConfigLoader()
     existing = config_loader.load_agent(agent_id)
     if existing:
         print(f"\n❌ Agent '{agent_id}' 已存在")
         return 1
-
-    # Get default skills from position
-    default_skills = position_config.default_skills if position_config else []
 
     # Create agent config using ConfigSaver
     config_saver = ConfigSaver()
@@ -441,8 +408,7 @@ async def _mirror_create(name: str, position: str | None, template: str) -> int:
         id=agent_id,
         name=name,
         personality="专业、高效、善于协作",
-        position_id=position,
-        skills=default_skills,
+        skills=[],
         llm=LLMConfig(
             model_name=settings.llm_model_name or "kimi-k2.5",
             temperature=settings.llm_temperature or 0.7,
@@ -453,7 +419,6 @@ async def _mirror_create(name: str, position: str | None, template: str) -> int:
             image=settings.docker_image or "ubuntu:22.04",
             memory_limit=settings.docker_memory_limit or "512m",
         ),
-        memory=MemoryConfig(agent_id=agent_id),
     )
 
     # Save agent config
@@ -463,7 +428,6 @@ async def _mirror_create(name: str, position: str | None, template: str) -> int:
         print("\n🪞 倒影已凝聚")
         print(f"   ID: {agent_id}")
         print(f"   名称: {name}")
-        print(f"   职位: {position}")
         print(f"   配置: config/agents/{agent_id}.yaml")
         print("\n   [镜子] 轮廓凝聚，一个新的存在睁开眼睛。")
         return 0

@@ -17,14 +17,14 @@
     ┌─────────────┬───────────┼───────────┬─────────────┐
     ▼             ▼           ▼           ▼             ▼
 ┌───────┐    ┌───────┐  ┌────────┐  ┌──────────┐  ┌─────────┐
-│Config │    │EventBus│  │Message │  │Position  │  │Session  │
-│Manager│    │        │  │Store   │  │Registry  │  │Manager  │
-└───────┘    └───┬───┘  └───┬────┘  └────┬─────┘  └────┬────┘
-    │            │          │            │             │
-    │            │          ▼            │             │
-    │            │    ┌──────────┐       │             │
-    │            └───►│Message   │◄──────┘             │
-    │                 │Router    │                       │
+│Config │    │EventBus│  │Message │  │Session  │
+│Manager│    │        │  │Store   │  │Manager  │
+└───────┘    └───┬───┘  └───┬────┘  └────┬────┘
+    │            │          │            │
+    │            │          ▼            │
+    │            │    ┌──────────┐       │
+    │            └───►│Message   │       │
+    │                 │Router    │       │
     │                 └────┬─────┘                       │
     │                      │                             │
     │            ┌─────────┘                             │
@@ -216,8 +216,7 @@ class ServerApp:
 | `ConfigManager` | `ConfigLoader` | Configuration loading and caching |
 | `MessageStore` | File path | Message persistence |
 | `MessageRouter` | `EventBus`, `MessageStore`, `AgentInfoProvider` | Message routing decisions |
-| `PositionRegistry` | None | Position template registry |
-| `AgentRegistry` | `EventBus`, `AgentInfoProvider`, `PositionRegistry`, `MessageStore` | Agent lifecycle management |
+| `AgentRegistry` | `EventBus`, `AgentInfoProvider`, `MessageStore` | Agent lifecycle management |
 | `SessionManager` | None | Client session lifecycle |
 | `NotificationService` | `EventBus`, `SessionManager` | Push events to clients |
 | `ParticipantDirectory` | `AgentRegistry`, `SessionManager` | Participant aggregation |

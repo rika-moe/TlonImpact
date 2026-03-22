@@ -10,7 +10,6 @@ Architecture:
     AgentRegistry is a Component that depends on:
     - EventBus (for agent event publishing)
     - AgentInfoProvider (for configuration queries)
-    - PositionRegistry (for position lookups)
     - MessageStore (for agent history access)
 
     All dependencies are injected via constructor (DAG rule).
@@ -26,7 +25,6 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.store import MessageStore
-from tlon.organization.positions import PositionRegistry
 
 if TYPE_CHECKING:
     from tlon.base.config.agent_info import AgentInfoProvider
@@ -46,14 +44,12 @@ class AgentRegistry(Component):
     Dependencies (constructor injected):
         - event_bus: EventBus for agent event publishing
         - agent_info_provider: AgentInfoProvider for configuration queries
-        - position_registry: PositionRegistry (optional)
         - message_store: MessageStore (optional)
 
     Example:
         >>> registry = AgentRegistry(
         ...     event_bus=event_bus,
         ...     agent_info_provider=config_manager,
-        ...     position_registry=position_registry,
         ...     message_store=message_store,
         ... )
         >>> registry.register("dev-001")  # Register by ID
@@ -65,7 +61,6 @@ class AgentRegistry(Component):
         self,
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
-        position_registry: PositionRegistry | None = None,
         message_store: MessageStore | None = None,
     ):
         """Initialize the agent registry.
@@ -75,13 +70,11 @@ class AgentRegistry(Component):
         Args:
             event_bus: Event bus for message routing
             agent_info_provider: Provider for agent configuration queries
-            position_registry: Position registry for looking up position info
             message_store: Message store for agent history access
         """
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
-        self.position_registry = position_registry
         self.message_store = message_store
 
         # Registered agent IDs (to be started during initialize)
@@ -193,9 +186,8 @@ class AgentRegistry(Component):
             agent = Agent(
                 config=config,
                 event_bus=self.event_bus,
-                position_registry=self.position_registry,
                 team_members=team_members,
-                message_store=self.message_store,  # Agents can now query history!
+                message_store=self.message_store,
             )
             await agent.initialize()
 
@@ -341,7 +333,6 @@ class AgentRegistry(Component):
             "id": agent_id,
             "name": config.name,
             "state": agent.get_state() if agent else "unknown",
-            "position": config.position_id,
             "skills": config.skills,
         }
 

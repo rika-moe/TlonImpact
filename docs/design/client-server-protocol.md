@@ -170,7 +170,7 @@ interface TlonMessage {
 
 | 事件类型 | 方向 | payload | 说明 |
 |----------|------|---------|------|
-| `agent.started` | S→C | `{agent_id, position_id}` | Agent 启动 |
+| `agent.started` | S→C | `{agent_id}` | Agent 启动 |
 | `agent.stopped` | S→C | `{agent_id, reason}` | Agent 停止 |
 | `agent.error` | S→C | `{agent_id, error}` | Agent 错误 |
 | `agent.state_changed` | S→C | `{agent_id, old_state, new_state}` | 状态变更 |

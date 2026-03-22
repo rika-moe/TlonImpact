@@ -18,7 +18,6 @@ class TestAgentStore:
                 id="test-001",
                 name="测试 Agent",
                 personality="测试性格",
-                position_id="developer",
                 llm=LLMConfig(model_name="gpt-4", temperature=0.5),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="1g"),
                 skills=["file-operations"],
@@ -32,7 +31,6 @@ class TestAgentStore:
 
             assert loaded is not None
             assert loaded.name == "测试 Agent"
-            assert loaded.position_id == "developer"
             # LLMConfig reads from env, so we just check llm exists
             assert loaded.llm is not None
 
@@ -44,7 +42,6 @@ class TestAgentStore:
             agent = AgentConfig(
                 id="test-002",
                 name="Agent By Name",
-                position_id="developer",
             )
             store.save_agent(agent)
 
@@ -60,7 +57,6 @@ class TestAgentStore:
             agent = AgentConfig(
                 id="existing",
                 name="Existing Agent",
-                position_id="developer",
             )
             store.save_agent(agent)
 
@@ -75,7 +71,6 @@ class TestAgentStore:
             agent = AgentConfig(
                 id="deletable",
                 name="Deletable Agent",
-                position_id="developer",
             )
             store.save_agent(agent)
             assert store.agent_exists("deletable")
@@ -84,26 +79,6 @@ class TestAgentStore:
             success, msg = store.delete_agent("deletable")
             assert success
             assert not store.agent_exists("deletable")
-
-    def test_get_agents_by_position(self):
-        """Test getting agents by position."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = AgentStore(tmpdir)
-
-            # Create agents with different positions
-            agent1 = AgentConfig(id="dev-001", name="Dev 1", position_id="developer")
-            agent2 = AgentConfig(id="dev-002", name="Dev 2", position_id="developer")
-            agent3 = AgentConfig(id="ops-001", name="Ops 1", position_id="operator")
-
-            store.save_agent(agent1)
-            store.save_agent(agent2)
-            store.save_agent(agent3)
-
-            dev_agents = store.get_agents_by_position("developer")
-            assert len(dev_agents) == 2
-
-            ops_agents = store.get_agents_by_position("operator")
-            assert len(ops_agents) == 1
 
     def test_generate_agent_id(self):
         """Test generating unique agent IDs."""
@@ -116,26 +91,6 @@ class TestAgentStore:
             assert new_id == "developer-003"
             assert new_id not in existing
 
-    def test_transfer_position(self):
-        """Test transferring agent to new position."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = AgentStore(tmpdir)
-
-            agent = AgentConfig(
-                id="transferable",
-                name="Transferable Agent",
-                position_id="developer",
-            )
-            store.save_agent(agent)
-
-            # Transfer
-            success, msg = store.transfer_position("transferable", "operator")
-            assert success
-
-            # Verify
-            loaded = store.get_agent("transferable")
-            assert loaded.position_id == "operator"
-
     def test_validate_agent_data(self):
         """Test agent data validation."""
         store = AgentStore()
@@ -145,7 +100,6 @@ class TestAgentStore:
             {
                 "id": "valid-id",
                 "name": "Valid Name",
-                "position_id": "developer",
             }
         )
         assert valid

@@ -27,7 +27,7 @@
 │    config/, events/, logger, settings   │
 ├─────────────────────────────────────────┤
 │ 4. 组织层 (Organization)                 │
-│    messaging/, positions/               │
+│    messaging/                           │
 ├─────────────────────────────────────────┤
 │ 5. Agent 层                              │
 │    agents/                              │

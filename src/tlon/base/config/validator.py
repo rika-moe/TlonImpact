@@ -3,82 +3,15 @@
 Provides validation functions for Position, Agent, and Prompt configurations.
 """
 
-from .models import AgentConfig, PositionConfig, PromptTemplates, RoleConfig
+from .models import AgentConfig, PromptTemplates, RoleConfig
 
 
 class ConfigValidator:
     """Validator for Tlon configuration data.
 
-    Validates PositionConfig, AgentConfig, and PromptTemplates to ensure
+    Validates RoleConfig, AgentConfig, and PromptTemplates to ensure
     they meet the required format and constraints.
     """
-
-    @staticmethod
-    def validate_position_data(data: dict) -> tuple[bool, list[str]]:
-        """Validate position data dictionary.
-
-        Args:
-            data: Position data dictionary
-
-        Returns:
-            Tuple of (is_valid, list_of_errors)
-        """
-        errors = []
-
-        # Check required fields
-        required_fields = ["type", "title", "jd"]
-        for field in required_fields:
-            if field not in data or not data[field]:
-                errors.append(f"Missing required field: {field}")
-
-        # Validate type format (alphanumeric and underscore)
-        if "type" in data and data["type"]:
-            type_val = data["type"]
-            if not type_val.replace("_", "").replace("-", "").isalnum():
-                errors.append("Position type must be alphanumeric with underscores/hyphens only")
-
-        # Validate prompt_overrides if present
-        if "prompt_overrides" in data and data["prompt_overrides"]:
-            overrides = data["prompt_overrides"]
-            if not isinstance(overrides, dict):
-                errors.append("prompt_overrides must be a dictionary")
-            else:
-                valid_keys = {"workflow", "important_notes", "discipline_rules"}
-                for key in overrides:
-                    if key not in valid_keys:
-                        errors.append(f"Invalid prompt_overrides key: {key}")
-                    elif overrides[key] is not None and not isinstance(overrides[key], str):
-                        errors.append(f"prompt_overrides.{key} must be a string or null")
-
-        return len(errors) == 0, errors
-
-    @staticmethod
-    def validate_position_config(position: PositionConfig) -> tuple[bool, list[str]]:
-        """Validate a PositionConfig object.
-
-        Args:
-            position: PositionConfig instance to validate
-
-        Returns:
-            Tuple of (is_valid, list_of_errors)
-        """
-        errors = []
-
-        # Check required fields
-        if not position.id:
-            errors.append("Position id is required")
-        if not position.type:
-            errors.append("Position type is required")
-        if not position.title:
-            errors.append("Position title is required")
-        if not position.jd:
-            errors.append("Position jd (job description) is required")
-
-        # Validate type format
-        if position.type and not position.type.replace("_", "").replace("-", "").isalnum():
-            errors.append("Position type must be alphanumeric with underscores/hyphens only")
-
-        return len(errors) == 0, errors
 
     @staticmethod
     def validate_role_data(data: dict) -> tuple[bool, list[str]]:
@@ -144,7 +77,7 @@ class ConfigValidator:
         """
         errors = []
 
-        # Check required fields (position_id is optional for backward compat)
+        # Check required fields
         required_fields = ["id", "name"]
         for field in required_fields:
             if field not in data or not data[field]:
@@ -282,7 +215,7 @@ def validate_yaml_structure(data: dict, expected_key: str) -> tuple[bool, list[s
 
     Args:
         data: Loaded YAML data
-        expected_key: Expected top-level key (e.g., "position", "agent")
+        expected_key: Expected top-level key (e.g., "agent", "templates")
 
     Returns:
         Tuple of (is_valid, list_of_errors)

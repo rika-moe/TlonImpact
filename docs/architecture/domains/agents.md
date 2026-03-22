@@ -47,7 +47,7 @@ agents/
 
 1. 检查 @mention
 2. 检查 `respond_to_all` 配置
-3. 检查 Position 的 proactive 设置
+3. 检查 Agent 的 proactive 配置
 
 ---
 
@@ -62,5 +62,5 @@ agents/
 ## 验证清单
 
 - [x] Agent 配置字段与代码一致
-- [x] position_id 关联逻辑正确
+- [x] role 内联字段与代码一致
 - [x] Tool 注册机制正确

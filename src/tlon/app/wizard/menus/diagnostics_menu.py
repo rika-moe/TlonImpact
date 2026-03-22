@@ -18,18 +18,16 @@ class DiagnosticsMenu:
     def __init__(
         self,
         console: "Console",
-        positions_dir: str | None = None,
         agents_dir: str | None = None,
     ):
         """Initialize the diagnostics menu.
 
         Args:
             console: Rich console for output
-            positions_dir: Directory for position configs (caller should pass explicit path)
             agents_dir: Directory for agent configs (caller should pass explicit path)
         """
         self.console = console
-        self.diagnostics = ConfigDiagnostics(positions_dir, agents_dir)
+        self.diagnostics = ConfigDiagnostics(agents_dir)
 
         try:
             import questionary
@@ -53,7 +51,6 @@ class DiagnosticsMenu:
                 "请选择操作:",
                 choices=[
                     self.questionary.Choice("🔍 运行完整诊断", value="run"),
-                    self.questionary.Choice("📊 查看引用统计", value="stats"),
                     self.questionary.Separator(),
                     self.questionary.Choice("← 返回", value="back"),
                 ],
@@ -61,8 +58,6 @@ class DiagnosticsMenu:
 
             if choice == "run":
                 self.run_diagnostics()
-            elif choice == "stats":
-                self.show_stats()
             else:
                 break
 
@@ -156,37 +151,3 @@ class DiagnosticsMenu:
 
         if not report.issues:
             self.console.print("[green]未发现任何问题[/green]\n")
-
-    def show_stats(self) -> None:
-        """Show position usage statistics."""
-        from rich.table import Table
-
-        self.console.print("\n[bold]📊 岗位引用统计[/bold]\n")
-
-        stats = self.diagnostics.get_position_usage_stats()
-
-        if not stats:
-            self.console.print("[yellow]暂无 Agent 配置[/yellow]")
-            self.questionary.press_any_key_to_continue("按回车继续...").ask()
-            return
-
-        # Load positions for names
-        from ..position_store import PositionStore
-
-        position_store = PositionStore()
-        positions = position_store.load_all_positions()
-
-        table = Table()
-        table.add_column("岗位标识", style="cyan")
-        table.add_column("岗位名称", style="green")
-        table.add_column("Agent 数量", style="yellow")
-
-        for pos_type, count in sorted(stats.items()):
-            position = positions.get(pos_type)
-            title = position.title if position else pos_type
-            table.add_row(pos_type, title, str(count))
-
-        self.console.print(table)
-        self.console.print(f"\n[dim]共 {len(stats)} 个岗位被引用[/dim]")
-
-        self.questionary.press_any_key_to_continue("按回车继续...").ask()

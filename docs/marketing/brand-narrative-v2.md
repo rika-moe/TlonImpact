@@ -325,7 +325,7 @@ Agent 配置（YAML）：
 agents:
   - id: "pm-001"
     name: "林知遥"
-    position_id: "project_manager"
+
     llm:
       model_name: "gpt-4"
       temperature: 0.7

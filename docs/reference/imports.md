@@ -1,7 +1,7 @@
 # 导入路径速查
 
 > 状态: ✅ 已验证
-> 最后验证: 2026-03-17
+> 最后验证: 2026-03-22
 
 ---
 
@@ -9,7 +9,7 @@
 
 ```python
 from tlon.base.config import ConfigLoader, ConfigSaver
-from tlon.base.config.models import AgentConfig, PositionConfig
+from tlon.base.config.models import AgentConfig, RoleConfig
 from tlon.base.events import Event, EventType, EventBus
 from tlon.base.logger import get_logger
 from tlon.base.settings import settings
@@ -19,7 +19,6 @@ from tlon.base.settings import settings
 
 ```python
 from tlon.organization.messaging import Congress, Message
-from tlon.organization.positions import PositionRegistry, Position
 ```
 
 ## Agent 层

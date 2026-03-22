@@ -1,13 +1,13 @@
 # 组织层 (Organization)
 
 > 状态: ✅ 已验证
-> 最后验证: 2026-03-17
+> 最后验证: 2026-03-22
 
 ---
 
 ## 职责
 
-管理多 Agent 协作的组织基础设施：消息系统和岗位系统
+管理多 Agent 协作的组织基础设施：消息系统
 
 ---
 
@@ -15,14 +15,10 @@
 
 ```
 organization/
-├── messaging/              # 消息系统
-│   ├── congress.py        # Congress (代表大会) 聊天室
-│   ├── message.py         # Message 类
-│   └── __init__.py
-└── positions/             # 岗位系统
-    ├── models.py          # Position 模型
-    ├── registry.py        # PositionRegistry
-    └── prompt_renderer.py # Prompt 渲染
+└── messaging/              # 消息系统
+    ├── congress.py        # Congress (代表大会) 聊天室
+    ├── message.py         # Message 类
+    └── __init__.py
 ```
 
 ---
@@ -33,7 +29,6 @@ organization/
 |----|------|------|
 | `Congress` | 聊天室状态管理 | `organization/messaging/congress.py` |
 | `Message` | 消息协议 | `organization/messaging/message.py` |
-| `PositionRegistry` | 岗位注册表 | `organization/positions/registry.py` |
 
 ---
 
@@ -57,4 +52,3 @@ organization/
 
 - [x] Congress 使用 EventBus 通信
 - [x] Message 格式与代码一致
-- [x] Position 配置字段正确

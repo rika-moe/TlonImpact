@@ -24,7 +24,6 @@ from tlon.base.settings import get_tlon_home, settings
 from tlon.base.tracing import FileTraceStore
 from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.messaging.store import FileMessageStore
-from tlon.organization.positions import PositionRegistry
 from tlon.subsystem.memory import MemoryConfig
 
 from .api.rest import RESTServer
@@ -68,7 +67,7 @@ class ServerApp:
             rest_port: Port for REST API
             ws_port: Port for WebSocket API
             data_dir: Directory for persistence
-            config_dir: Directory containing position and agent configs
+            config_dir: Directory containing agent configs
         """
         self.host = host
         self.rest_port = rest_port
@@ -77,7 +76,6 @@ class ServerApp:
         self.config_dir = config_dir or (get_tlon_home() / "config")
 
         # Config subdirectories
-        self.positions_dir = self.config_dir / "positions"
         self.agents_dir = self.config_dir / "agents"
 
         # DI Container - all components created in initialize()
@@ -102,7 +100,6 @@ class ServerApp:
 
         # ========== Step 1: Configuration Layer ==========
         config_loader = ConfigLoader(
-            positions_dir=str(self.positions_dir),
             agents_dir=str(self.agents_dir),
         )
         self._components["config_loader"] = config_loader
@@ -143,20 +140,11 @@ class ServerApp:
         self._components["message_router"] = message_router
         logger.info("MessageRouter initialized")
 
-        # 2.4 PositionRegistry - position template registry
-        position_registry = PositionRegistry()
-        for position in config_manager.positions.values():
-            position_registry.register(position)
-        self._components["position_registry"] = position_registry
-        logger.info(f"Loaded {len(position_registry.get_all())} positions")
-
-        # 2.5 AgentRegistry - agent management
-        # Depends on EventBus, ConfigManager (as AgentInfoProvider), PositionRegistry, MessageStore
-        # No circular dependency: both MessageRouter and AgentRegistry depend on ConfigManager
+        # 2.4 AgentRegistry - agent management
+        # Depends on EventBus, ConfigManager (as AgentInfoProvider), MessageStore
         agent_registry = AgentRegistry(
             event_bus=event_bus,
-            agent_info_provider=config_manager,  # ConfigManager implements AgentInfoProvider
-            position_registry=position_registry,
+            agent_info_provider=config_manager,
             message_store=message_store,
         )
         # Register initial agents (by ID, config is looked up from provider)
@@ -222,7 +210,6 @@ class ServerApp:
 
         self._running = False
         logger.info("ServerApp initialized successfully")
-        logger.info(f"  Positions: {len(position_registry.get_all())}")
         logger.info(f"  Agents: {len(agent_registry.get_all())}")
         logger.info(f"  REST API: http://{self.host}:{self.rest_port}")
         logger.info(f"  WebSocket: ws://{self.host}:{self.ws_port}/ws")
@@ -249,7 +236,6 @@ class ServerApp:
                 id="dev-001",
                 name="林知遥",
                 personality="技术能力强、注重细节、喜欢钻研",
-                position_id="developer",
                 llm=LLMConfig(
                     base_url=settings.llm_base_url,
                     auth_token=settings.llm_api_key,

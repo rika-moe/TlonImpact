@@ -23,7 +23,6 @@ class SettingsMenu:
     def __init__(
         self,
         console: "Console",
-        positions_dir: str | None = None,
         agents_dir: str | None = None,
         data_dir: str | None = None,
     ):
@@ -31,7 +30,6 @@ class SettingsMenu:
 
         Args:
             console: Rich console for output
-            positions_dir: Directory for position configs (caller should pass explicit path)
             agents_dir: Directory for agent configs (caller should pass explicit path)
             data_dir: Directory for agent data (caller should pass explicit path)
         """
@@ -39,7 +37,6 @@ class SettingsMenu:
 
         cfg = get_default_config_dir()
         self.console = console
-        self.positions_dir = Path(positions_dir) if positions_dir is not None else cfg / "positions"
         self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
         self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
         self.env_path = Path(".env")
@@ -240,11 +237,6 @@ class SettingsMenu:
 
         try:
             with zipfile.ZipFile(filename, "w", zipfile.ZIP_DEFLATED) as zf:
-                # Add positions
-                if self.positions_dir.exists():
-                    for yaml_file in self.positions_dir.glob("*.yaml"):
-                        zf.write(yaml_file, f"positions/{yaml_file.name}")
-
                 # Add agents
                 if self.agents_dir.exists():
                     for yaml_file in self.agents_dir.glob("*.yaml"):
@@ -259,14 +251,10 @@ class SettingsMenu:
             table.add_column("类型", style="cyan")
             table.add_column("数量", style="green")
 
-            pos_count = (
-                len(list(self.positions_dir.glob("*.yaml"))) if self.positions_dir.exists() else 0
-            )
             agent_count = (
                 len(list(self.agents_dir.glob("*.yaml"))) if self.agents_dir.exists() else 0
             )
 
-            table.add_row("Positions", str(pos_count))
             table.add_row("Agents", str(agent_count))
 
             self.console.print(table)
@@ -300,16 +288,12 @@ class SettingsMenu:
         try:
             with zipfile.ZipFile(filepath, "r") as zf:
                 # Preview contents
-                positions_files = [
-                    n for n in zf.namelist() if n.startswith("positions/") and n.endswith(".yaml")
-                ]
                 agents_files = [
                     n for n in zf.namelist() if n.startswith("agents/") and n.endswith(".yaml")
                 ]
                 has_env = ".env" in zf.namelist()
 
                 self.console.print("\n导入内容预览:")
-                self.console.print(f"  Positions: {len(positions_files)}")
                 self.console.print(f"  Agents: {len(agents_files)}")
                 self.console.print(f"  .env: {'是' if has_env else '否'}")
 
@@ -318,9 +302,7 @@ class SettingsMenu:
 
                 # Extract
                 for name in zf.namelist():
-                    if name.startswith("positions/"):
-                        zf.extract(name, self.positions_dir.parent)
-                    elif name.startswith("agents/"):
+                    if name.startswith("agents/"):
                         zf.extract(name, self.agents_dir.parent)
                     elif name == ".env":
                         zf.extract(name, Path(""))

@@ -108,7 +108,7 @@ class ParticipantDirectory:
                 id=participant_id,
                 name=config.name,
                 type="agent",
-                metadata={"position_id": config.position_id},
+                metadata={},
             )
 
         return None
@@ -137,7 +137,7 @@ class ParticipantDirectory:
                         id=agent_id,
                         name=config.name,
                         type="agent",
-                        metadata={"position_id": config.position_id},
+                        metadata={},
                     )
                 )
 

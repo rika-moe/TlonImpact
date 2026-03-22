@@ -1,15 +1,10 @@
 """Tests for prompt template manager."""
 
-import tempfile
-from pathlib import Path
-
-import yaml
-
 from tlon.base.config import (
     ConfigLoader,
-    PositionConfig,
     PromptOverrides,
     PromptTemplateManager,
+    RoleConfig,
 )
 
 
@@ -62,61 +57,44 @@ class TestLoadGlobalTemplates:
         assert templates1.workflow == templates2.workflow
 
 
-class TestGetTemplatesForPosition:
-    """Test getting templates for position."""
+class TestGetTemplatesForRole:
+    """Test getting templates for role."""
 
     def test_get_without_overrides(self):
-        """Test getting templates without position overrides."""
+        """Test getting templates without role overrides."""
         manager = PromptTemplateManager()
-        position = PositionConfig(
-            id="dev",
-            type="developer",
-            title="开发",
+        role = RoleConfig(
+            title="开发工程师",
             jd="负责开发",
         )
 
-        templates = manager.get_templates_for_position(position)
+        templates = manager.get_templates_for_role(role)
 
         # Should return global defaults
         global_templates = manager.load_global_templates()
         assert templates.workflow == global_templates.workflow
 
-    def test_get_with_overrides(self):
-        """Test getting templates with position overrides."""
+    def test_get_with_none_role(self):
+        """Test getting templates with no role returns global defaults."""
         manager = PromptTemplateManager()
-        position = PositionConfig(
-            id="dev",
-            type="developer",
-            title="开发",
+
+        templates = manager.get_templates_for_role(None)
+
+        global_templates = manager.load_global_templates()
+        assert templates.workflow == global_templates.workflow
+
+    def test_get_with_overrides(self):
+        """Test getting templates with role-level overrides."""
+        manager = PromptTemplateManager()
+        role = RoleConfig(
+            title="开发工程师",
             jd="负责开发",
             prompt_overrides=PromptOverrides(workflow="custom workflow"),
         )
 
-        templates = manager.get_templates_for_position(position)
+        templates = manager.get_templates_for_role(role)
 
         assert templates.workflow == "custom workflow"
-
-    def test_get_by_type(self):
-        """Test getting templates by position type."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a position file with overrides
-            position_data = {
-                "position": {
-                    "type": "developer",
-                    "title": "开发",
-                    "jd": "负责开发",
-                    "prompt_overrides": {"workflow": "developer specific workflow"},
-                }
-            }
-            with open(Path(tmpdir) / "developer.yaml", "w") as f:
-                yaml.dump(position_data, f)
-
-            loader = ConfigLoader(positions_dir=tmpdir)
-            manager = PromptTemplateManager(loader)
-
-            templates = manager.get_templates_for_position(position_type="developer")
-
-            assert templates.workflow == "developer specific workflow"
 
 
 class TestBuildWorkflowPrompt:
@@ -154,12 +132,12 @@ class TestBuildDisciplineRulesPrompt:
         assert "## 工作纪律" in prompt
         assert len(prompt) > len("## 工作纪律\n\n")
 
-    def test_build_with_position_rules(self):
-        """Test building with additional position rules."""
+    def test_build_with_role_rules(self):
+        """Test building with additional role rules."""
         manager = PromptTemplateManager()
-        position_rules = ["额外的规则1", "额外的规则2"]
+        role_rules = ["额外的规则1", "额外的规则2"]
 
-        prompt = manager.build_discipline_rules_prompt(position_rules=position_rules)
+        prompt = manager.build_discipline_rules_prompt(role_rules=role_rules)
 
         assert "额外的规则1" in prompt
         assert "额外的规则2" in prompt

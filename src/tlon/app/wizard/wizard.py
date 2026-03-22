@@ -1,7 +1,6 @@
 """Tlon Wizard - Interactive configuration tool.
 
-Provides interactive terminal interface for configuring Tlon
-with Position-Agent architecture.
+Provides interactive terminal interface for configuring Tlon.
 """
 
 from pathlib import Path
@@ -13,7 +12,7 @@ from rich.panel import Panel
 from tlon.base.logger import get_logger
 from tlon.base.settings import get_default_config_dir, get_default_data_dir
 
-from .menus import AgentMenu, DiagnosticsMenu, PositionMenu, QuickstartWizard, SettingsMenu
+from .menus import AgentMenu, DiagnosticsMenu, QuickstartWizard, SettingsMenu
 
 logger = get_logger(__name__)
 
@@ -23,8 +22,7 @@ class Wizard:
 
     Provides interactive menus for:
     - Quick start setup
-    - Position management (CRUD)
-    - Agent management (CRUD + position transfer)
+    - Agent management (CRUD)
     - Configuration diagnostics
     - System settings
     """
@@ -43,25 +41,16 @@ class Wizard:
         cfg = get_default_config_dir()
         self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
         self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
-        # positions_dir kept for backward compatibility with menus that still reference it
-        self.positions_dir = cfg / "positions"
 
         self.console = Console()
 
-        # Initialize menu handlers
-        positions_dir_str = str(self.positions_dir)
         agents_dir_str = str(self.agents_dir)
         data_dir_str = str(self.data_dir)
 
-        self.position_menu = PositionMenu(self.console, positions_dir_str)
-        self.agent_menu = AgentMenu(self.console, agents_dir_str, positions_dir_str)
-        self.quickstart = QuickstartWizard(
-            self.console, positions_dir_str, agents_dir_str, data_dir_str
-        )
-        self.diagnostics_menu = DiagnosticsMenu(self.console, positions_dir_str, agents_dir_str)
-        self.settings_menu = SettingsMenu(
-            self.console, positions_dir_str, agents_dir_str, data_dir_str
-        )
+        self.agent_menu = AgentMenu(self.console, agents_dir_str)
+        self.quickstart = QuickstartWizard(self.console, agents_dir_str, data_dir_str)
+        self.diagnostics_menu = DiagnosticsMenu(self.console, agents_dir_str)
+        self.settings_menu = SettingsMenu(self.console, agents_dir_str, data_dir_str)
 
     def run(self) -> None:
         """Run the main wizard loop."""
@@ -72,8 +61,6 @@ class Wizard:
 
             if choice == "quickstart":
                 self.quickstart.run()
-            elif choice == "positions":
-                self.position_menu.show()
             elif choice == "agents":
                 self.agent_menu.show()
             elif choice == "diagnostics":
@@ -90,8 +77,6 @@ class Wizard:
         """Display the wizard banner."""
         banner_text = """
 🧙‍♂️  欢迎使用 Tlon 配置向导
-
-    版本: v2.0 (Position-Agent 架构)
 
     使用方向键 ↑↓ 选择菜单，回车确认
         """
@@ -113,10 +98,9 @@ class Wizard:
                     "🚀 快速开始 - 初始化完整配置（推荐首次使用）", value="quickstart"
                 ),
                 questionary.Separator(),
-                questionary.Choice("🏢 岗位管理 - 管理职位模板和协作规则", value="positions"),
-                questionary.Choice("👤 人员管理 - 管理 Agent 和换岗操作", value="agents"),
+                questionary.Choice("👤 人员管理 - 管理 Agent 配置", value="agents"),
                 questionary.Separator(),
-                questionary.Choice("🔍 配置诊断 - 检查配置完整性和引用关系", value="diagnostics"),
+                questionary.Choice("🔍 配置诊断 - 检查配置完整性", value="diagnostics"),
                 questionary.Choice("⚙️  系统设置 - API、存储和导入导出", value="settings"),
                 questionary.Separator(),
                 questionary.Choice("🗑️  重置数据 - 清理所有配置和数据（谨慎）", value="reset"),
@@ -142,11 +126,9 @@ class Wizard:
 
         self.console.print("此操作将删除以下内容:")
         self.console.print("  ✗ .env 文件")
-        self.console.print(f"  ✗ {self.positions_dir}/ 目录 (所有岗位配置)")
         self.console.print(f"  ✗ {self.agents_dir}/ 目录 (所有 Agent 配置)")
         self.console.print(f"  ✗ {self.data_dir}/ 目录 (所有聊天记录和 Agent 记忆)")
         self.console.print("\n保留的内容:")
-        self.console.print("  - skills/ 目录 (自定义技能)")
         self.console.print("  - 源代码\n")
 
         confirm = questionary.text(
@@ -158,15 +140,10 @@ class Wizard:
             questionary.press_any_key_to_continue("按回车继续...").ask()
             return
 
-        # Delete files
         env_path = Path(".env")
         if env_path.exists():
             env_path.unlink()
             self.console.print("[green]✓ 删除 .env[/green]")
-
-        if self.positions_dir.exists():
-            shutil.rmtree(self.positions_dir)
-            self.console.print(f"[green]✓ 删除 {self.positions_dir}/[/green]")
 
         if self.agents_dir.exists():
             shutil.rmtree(self.agents_dir)

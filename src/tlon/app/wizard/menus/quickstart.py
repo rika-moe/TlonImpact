@@ -7,11 +7,9 @@ with standard or custom team configurations.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
-from tlon.organization.positions.models import Position
+from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, RoleConfig
 
 from ..agent_store import AgentStore
-from ..position_store import PositionStore
 from ..validators import APIValidator, ConfigValidator, EnvironmentChecker
 
 if TYPE_CHECKING:
@@ -21,20 +19,67 @@ if TYPE_CHECKING:
 class QuickstartWizard:
     """Quickstart wizard for initial setup."""
 
-    # Standard team configuration
+    # Standard team configuration: (id_prefix, name, personality, role_title, role_jd, department, proactive)
     STANDARD_TEAM = [
-        ("developer", "林知遥", "技术能力强、注重细节、喜欢钻研"),
-        ("operator", "江予白", "沉稳冷静、善于排查问题、注重稳定性"),
-        ("project_manager", "沈清晏", "善于沟通、有条理、结果导向"),
-        ("customer_service", "顾言蹊", "友好耐心、善于沟通、专业高效"),
-        ("product_manager", "苏晚晴", "用户导向、逻辑思维、善于协调"),
-        ("data_analyst", "谢云舒", "严谨细致、善于发现规律、数据敏感"),
+        {
+            "id": "developer-001",
+            "name": "林知遥",
+            "personality": "技术能力强、注重细节、喜欢钻研",
+            "role_title": "开发工程师",
+            "role_jd": "负责系统设计、编码实现和代码审查，确保软件质量和开发效率",
+            "department": "技术部",
+            "proactive": False,
+        },
+        {
+            "id": "operator-001",
+            "name": "江予白",
+            "personality": "沉稳冷静、善于排查问题、注重稳定性",
+            "role_title": "运维工程师",
+            "role_jd": "负责系统部署、监控和维护，保障服务稳定运行",
+            "department": "技术部",
+            "proactive": False,
+        },
+        {
+            "id": "project-manager-001",
+            "name": "沈清晏",
+            "personality": "善于沟通、有条理、结果导向",
+            "role_title": "项目经理",
+            "role_jd": "负责项目规划、进度管理和团队协调，确保项目按时交付",
+            "department": "管理部",
+            "proactive": True,
+        },
+        {
+            "id": "customer-service-001",
+            "name": "顾言蹊",
+            "personality": "友好耐心、善于沟通、专业高效",
+            "role_title": "客服专员",
+            "role_jd": "负责用户咨询、问题处理和满意度提升，提供优质服务体验",
+            "department": "服务部",
+            "proactive": True,
+        },
+        {
+            "id": "product-manager-001",
+            "name": "苏晚晴",
+            "personality": "用户导向、逻辑思维、善于协调",
+            "role_title": "产品经理",
+            "role_jd": "负责产品规划、需求分析和功能设计，推动产品持续迭代",
+            "department": "产品部",
+            "proactive": False,
+        },
+        {
+            "id": "data-analyst-001",
+            "name": "谢云舒",
+            "personality": "严谨细致、善于发现规律、数据敏感",
+            "role_title": "数据分析师",
+            "role_jd": "负责数据采集、分析建模和报告输出，为决策提供数据支撑",
+            "department": "数据部",
+            "proactive": False,
+        },
     ]
 
     def __init__(
         self,
         console: "Console",
-        positions_dir: str | None = None,
         agents_dir: str | None = None,
         data_dir: str | None = None,
     ):
@@ -42,7 +87,6 @@ class QuickstartWizard:
 
         Args:
             console: Rich console for output
-            positions_dir: Directory for position configs (caller should pass explicit path)
             agents_dir: Directory for agent configs (caller should pass explicit path)
             data_dir: Directory for agent data (caller should pass explicit path)
         """
@@ -50,12 +94,8 @@ class QuickstartWizard:
 
         cfg = get_default_config_dir()
         self.console = console
-        self.positions_dir = Path(positions_dir) if positions_dir is not None else cfg / "positions"
         self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
         self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
-        self.position_store = (
-            PositionStore(positions_dir) if positions_dir is not None else PositionStore()
-        )
         self.agent_store = (
             AgentStore(agents_dir, data_dir)
             if agents_dir is not None
@@ -226,9 +266,9 @@ class QuickstartWizard:
             "选择初始化方式:",
             choices=[
                 self.questionary.Choice(
-                    "🏢 使用标准团队（推荐）- 自动创建6个岗位和6个Agent", value="standard"
+                    "🏢 使用标准团队（推荐）- 自动创建6个 Agent", value="standard"
                 ),
-                self.questionary.Choice("⚙️  自定义团队 - 选择需要的岗位并配置", value="custom"),
+                self.questionary.Choice("⚙️  自定义团队 - 选择需要的角色并配置", value="custom"),
             ],
             default="standard",
         ).ask()
@@ -249,62 +289,43 @@ class QuickstartWizard:
         """
         self.console.print("\n[bold]标准团队配置[/bold]\n")
 
-        # Show preview
         from rich.table import Table
 
         table = Table(title="标准团队预览")
-        table.add_column("岗位", style="cyan")
         table.add_column("Agent", style="green")
+        table.add_column("职务", style="cyan")
         table.add_column("启动模式", style="blue")
 
-        templates = self.position_store.get_default_positions()
-
-        for pos_type, name, _ in self.STANDARD_TEAM:
-            template = templates.get(pos_type, {})
-            mode = "常驻" if template.get("proactive") else "延迟"
-            table.add_row(template.get("title", pos_type), name, mode)
+        for member in self.STANDARD_TEAM:
+            mode = "常驻" if member["proactive"] else "延迟"
+            table.add_row(member["name"], member["role_title"], mode)
 
         self.console.print(table)
 
         if not self.questionary.confirm("确认使用标准团队配置?").ask():
             return None
 
-        # Build configuration
-        positions = []
         agents = []
-
-        for pos_type, name, personality in self.STANDARD_TEAM:
-            template = templates.get(pos_type)
-            if not template:
-                continue
-
-            # Create position
-            position = Position(
-                type=template["type"],
-                title=template["title"],
-                jd=template["jd"],
-                department=template.get("department", ""),
-                proactive=template.get("proactive", False),
-                rules=template.get("rules", []),
-                prompt_template=template.get("prompt_template"),
+        for member in self.STANDARD_TEAM:
+            role = RoleConfig(
+                title=member["role_title"],
+                jd=member["role_jd"],
+                department=member["department"],
             )
-            positions.append(position)
-
-            # Create agent
             agent = AgentConfig(
-                id=f"{pos_type}-001",
-                name=name,
-                personality=personality,
-                position_id=pos_type,
+                id=member["id"],
+                name=member["name"],
+                personality=member["personality"],
+                role=role,
                 llm=LLMConfig(model_name=default_model, temperature=0.7),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
                 skills=[],
+                proactive=member["proactive"],
             )
             agents.append(agent)
 
         return {
             "type": "standard",
-            "positions": positions,
             "agents": agents,
         }
 
@@ -319,75 +340,59 @@ class QuickstartWizard:
         """
         self.console.print("\n[bold]自定义团队配置[/bold]\n")
 
-        # Load available positions from templates
-        templates = self.position_store.get_default_positions()
-
-        # Select positions
-        pos_choices = [
-            self.questionary.Choice(
-                f"{t['title']} - {t['jd'][:30]}...", value=pos_type, checked=True
-            )
-            for pos_type, t in sorted(templates.items(), key=lambda x: x[1]["title"])
+        # Select from standard roles
+        role_choices = [
+            self.questionary.Choice(f"{m['name']} ({m['role_title']})", value=m["id"], checked=True)
+            for m in self.STANDARD_TEAM
         ]
 
-        selected_positions = self.questionary.checkbox(
-            "选择需要的岗位 (空格选择/取消):",
-            choices=pos_choices,
+        selected_ids = self.questionary.checkbox(
+            "选择需要的 Agent (空格选择/取消):",
+            choices=role_choices,
         ).ask()
 
-        if not selected_positions:
-            self.console.print("[yellow]未选择任何岗位[/yellow]")
+        if not selected_ids:
+            self.console.print("[yellow]未选择任何 Agent[/yellow]")
             return None
 
-        # Create positions and configure agents
-        positions = []
         agents = []
+        selected_members = [m for m in self.STANDARD_TEAM if m["id"] in selected_ids]
 
-        for pos_type in selected_positions:
-            template = templates.get(pos_type)
-            if not template:
-                continue
-
-            # Create position
-            position = Position(
-                type=template["type"],
-                title=template["title"],
-                jd=template["jd"],
-                department=template.get("department", ""),
-                proactive=template.get("proactive", False),
-                rules=template.get("rules", []),
-                prompt_template=template.get("prompt_template"),
+        for member in selected_members:
+            self.console.print(
+                f"\n[bold]配置 Agent: {member['name']} ({member['role_title']})[/bold]"
             )
-            positions.append(position)
 
-            # Ask for agent config
-            self.console.print(f"\n[bold]配置 Agent: {template['title']}[/bold]")
-
-            if not self.questionary.confirm(f"为 {template['title']} 创建 Agent?").ask():
+            if not self.questionary.confirm(f"为 {member['role_title']} 创建 Agent?").ask():
                 continue
 
             name = self.questionary.text(
                 "Agent 姓名:",
-                default=template["title"][:2],  # Suggest something
+                default=member["name"],
             ).ask()
 
             if not name:
                 continue
 
+            role = RoleConfig(
+                title=member["role_title"],
+                jd=member["role_jd"],
+                department=member["department"],
+            )
             agent = AgentConfig(
-                id=f"{pos_type}-001",
+                id=member["id"],
                 name=name,
-                personality=template.get("personality", "专业、可靠"),
-                position_id=pos_type,
+                personality=member["personality"],
+                role=role,
                 llm=LLMConfig(model_name=default_model, temperature=0.7),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
                 skills=[],
+                proactive=member["proactive"],
             )
             agents.append(agent)
 
         return {
             "type": "custom",
-            "positions": positions,
             "agents": agents,
         }
 
@@ -412,15 +417,12 @@ class QuickstartWizard:
         table.add_row("API Base URL", api_config["base_url"])
         table.add_row("Model", api_config["model"])
         table.add_row("Temperature", str(api_config["temperature"]))
-        table.add_row("Position 数量", str(len(team_config["positions"])))
         table.add_row("Agent 数量", str(len(team_config["agents"])))
 
         self.console.print(table)
 
         # Show file list
         self.console.print("\n[bold]将创建以下文件:[/bold]")
-        for pos in team_config["positions"]:
-            self.console.print(f"  config/positions/{pos.type}.yaml")
         for agent in team_config["agents"]:
             self.console.print(f"  config/agents/{agent.id}.yaml")
 
@@ -437,14 +439,6 @@ class QuickstartWizard:
 
         # Create .env file
         self._create_env_file(api_config)
-
-        # Create positions
-        for position in team_config["positions"]:
-            success, msg = self.position_store.save_position(position)
-            if success:
-                self.console.print(f"[green]✓ 创建岗位: {position.title}[/green]")
-            else:
-                self.console.print(f"[red]✗ 创建岗位失败: {msg}[/red]")
 
         # Create agents
         for agent in team_config["agents"]:

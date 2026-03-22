@@ -101,7 +101,6 @@ class RESTAPIHandler:
 
         # Admin routes for hot-reload (only if config_manager is available)
         if self.config_manager:
-            app.router.add_get("/admin/config/positions", self.handle_list_positions)
             app.router.add_get("/admin/config/agents", self.handle_list_agent_configs)
 
         # Trace routes (only if trace_store is available)
@@ -347,33 +346,6 @@ Or use the build script:
             }
         )
 
-    async def handle_list_positions(self, request: web.Request) -> web.Response:
-        """GET /admin/config/positions - List current position configurations.
-
-        Returns:
-            List of position configurations
-        """
-        if not self.config_manager:
-            return self._json_response(
-                {"status": "error", "message": "Config manager not available"}, status=503
-            )
-
-        positions = []
-        for pos in self.config_manager.positions.values():
-            positions.append(
-                {
-                    "id": pos.id,
-                    "type": pos.type,
-                    "title": pos.title,
-                    "department": pos.department,
-                    "description": pos.description,
-                }
-            )
-
-        return self._json_response(
-            {"status": "success", "positions": positions, "count": len(positions)}
-        )
-
     async def handle_list_agent_configs(self, request: web.Request) -> web.Response:
         """GET /admin/config/agents - List current agent configurations.
 
@@ -391,7 +363,6 @@ Or use the build script:
                 {
                     "id": agent.id,
                     "name": agent.name,
-                    "position_id": agent.position_id,
                     "personality": agent.personality,
                     "skills": agent.skills,
                 }

@@ -61,7 +61,7 @@ class Agent:
 
     Example:
         >>> config = AgentConfig(id="dev-001", name="林知遥", ...)
-        >>> agent = Agent(config, event_bus, position_registry)
+        >>> agent = Agent(config, event_bus)
         >>> await agent.initialize()
         >>> # Agent will now respond to messages via EventBus
     """
@@ -70,7 +70,6 @@ class Agent:
         self,
         config: AgentConfig,
         event_bus: EventBus,
-        position_registry=None,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
     ):
@@ -79,19 +78,17 @@ class Agent:
         Args:
             config: Agent configuration
             event_bus: Event bus for receiving messages
-            position_registry: Position registry for looking up position info
             team_members: List of all team member configs (including inactive ones)
+            message_store: Message store for querying history
         """
         self.config = config
         self.event_bus = event_bus
-        self.position_registry = position_registry
         self.team_members = team_members or []
-        self.message_store = message_store  # Now Agent can query history!
+        self.message_store = message_store
 
         self.id = config.id
         self.name = config.name
         self.personality = config.personality
-        self.position_id = config.position_id
 
         # Initialize components
         # Merge YAML config with runtime settings for LLM

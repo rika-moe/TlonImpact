@@ -107,7 +107,7 @@ Agent 配置示例 (`config/agents/{agent_id}.yaml`):
 agent:
   id: "dev-001"
   name: "陈代码"
-  position_id: "developer"
+
   personality: "技术导向，注重细节"
   respond_to_all: false
   llm:
@@ -173,7 +173,7 @@ curl http://localhost:8080/api/chatroom/messages
 ├── config/
 │   ├── agents/           # Agent 定义
 │   │   └── {id}.yaml
-│   └── positions/        # Position 定义
+
 │       └── {id}.yaml
 ├── data/                 # 运行时数据 (勿删)
 │   ├── agents/

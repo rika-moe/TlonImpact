@@ -114,17 +114,6 @@ class AgentStore:
         """
         return self._saver.delete_agent(agent_id, delete_data=delete_data)
 
-    def get_agents_by_position(self, position_id: str) -> list[AgentConfig]:
-        """Get all agents with a specific position.
-
-        Args:
-            position_id: Position type to filter by
-
-        Returns:
-            List of AgentConfig objects
-        """
-        return list(self._loader.get_agents_by_position(position_id).values())
-
     def agent_exists(self, agent_id: str) -> bool:
         """Check if an agent exists.
 
@@ -136,11 +125,11 @@ class AgentStore:
         """
         return self.get_agent(agent_id) is not None
 
-    def generate_agent_id(self, position_type: str, existing_ids: list[str] | None = None) -> str:
+    def generate_agent_id(self, prefix: str, existing_ids: list[str] | None = None) -> str:
         """Generate a unique agent ID.
 
         Args:
-            position_type: Position type (used as prefix)
+            prefix: Prefix for the agent ID
             existing_ids: List of existing IDs to avoid
 
         Returns:
@@ -149,23 +138,7 @@ class AgentStore:
         if existing_ids is None:
             existing_ids = list(self.load_all_agents().keys())
 
-        return self._saver.generate_agent_id(position_type, existing_ids)
-
-    def transfer_position(self, agent_id: str, new_position_id: str) -> tuple[bool, str]:
-        """Transfer an agent to a new position.
-
-        Args:
-            agent_id: Agent ID to transfer
-            new_position_id: New position type
-
-        Returns:
-            Tuple of (success, message)
-        """
-        agent = self.get_agent(agent_id)
-        if not agent:
-            return False, f"Agent '{agent_id}' not found"
-
-        return self._saver.transfer_agent_position(agent, new_position_id)
+        return self._saver.generate_agent_id(prefix, existing_ids)
 
     def validate_agent_data(self, data: dict) -> tuple[bool, list[str]]:
         """Validate agent data.

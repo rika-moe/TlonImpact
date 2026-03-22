@@ -42,46 +42,28 @@ class SystemPromptBuilder:
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
-        self._position = None
-        self._position_rules: list[str] = []
-        self._load_position_info()
-
-    def _load_position_info(self) -> None:
-        """Load position info from registry."""
-        if not self.agent.position_registry or not self.agent.position_id:
-            return
-
-        self._position = self.agent.position_registry.get(self.agent.position_id)
-        if self._position:
-            self._position_rules = self._position.rules or []
 
     @property
-    def position_title(self) -> str:
-        """Get position title."""
-        return self._position.title if self._position else self.agent.position_id
+    def role_title(self) -> str:
+        """Get role title from agent config."""
+        role = self.agent.config.role
+        return role.title if role and role.title else self.agent.name
 
     @property
-    def position_jd(self) -> str:
-        """Get position job description."""
-        return self._position.jd if self._position else ""
+    def role_jd(self) -> str:
+        """Get role job description from agent config."""
+        role = self.agent.config.role
+        return role.jd if role else ""
+
+    @property
+    def role_rules(self) -> list[str]:
+        """Get role rules from agent config."""
+        role = self.agent.config.role
+        return role.rules if role else []
 
     # =========================================================================
     # Team Building Helpers
     # =========================================================================
-
-    def _get_agent_name_by_position(self, position_id: str) -> str | None:
-        """Get agent name by position ID from team members.
-
-        Args:
-            position_id: The position ID to look up
-
-        Returns:
-            Agent name if found, None otherwise
-        """
-        for member_config in self.agent.team_members:
-            if member_config.position_id == position_id:
-                return member_config.name
-        return None
 
     def _get_role_info_from_config(self, member_config) -> dict[str, str]:
         """Get role info for a team member from their config.
@@ -92,42 +74,28 @@ class SystemPromptBuilder:
         Returns:
             Dictionary with role, desc, and when fields
         """
-        position_id = member_config.position_id
+        role = member_config.role
+        if role:
+            jd_summary = role.jd.strip().split("\n")[0] if role.jd else ""
+            if len(jd_summary) > 30:
+                jd_summary = jd_summary[:30] + "..."
+            return {
+                "role": role.title or member_config.name,
+                "desc": jd_summary or "协助处理问题",
+                "when": role.contact_when or "需要协助时",
+            }
 
-        # Try to get position info from registry
-        if self.agent.position_registry and position_id:
-            position = self.agent.position_registry.get(position_id)
-            if position:
-                # Extract a brief description from jd (first line or first 20 chars)
-                jd_summary = position.jd.strip().split("\n")[0] if position.jd else ""
-                if len(jd_summary) > 30:
-                    jd_summary = jd_summary[:30] + "..."
-
-                return {
-                    "role": position.title or position_id,
-                    "desc": jd_summary or "协助处理问题",
-                    "when": position.contact_when or "需要协助时",
-                }
-
-        # Fallback: return generic team member info
-        return {"role": position_id or "团队成员", "desc": "协助处理问题", "when": "需要协助时"}
+        return {"role": member_config.name, "desc": "协助处理问题", "when": "需要协助时"}
 
     def _build_team_table(self) -> str:
-        """Build a table of team members for the prompt.
-
-        Uses team_members config to show all team members including inactive ones.
-        """
+        """Build a table of team members for the prompt."""
         lines = []
-        # 明确告诉 LLM 使用"名字"列来 @mention
         lines.append("| 名字（@mention时用这个名字） | 职务 | 职责 | 何时@他 |")
         lines.append("|---------------------------|------|------|---------|")
 
-        # Add human user
         lines.append("| 用户 | 用户 | 提出需求和问题 | 任务完成时汇报 |")
 
-        # Add all team members from config (including inactive ones)
         for member_config in self.agent.team_members:
-            # Skip self
             if member_config.id == self.agent.id:
                 continue
 
@@ -147,11 +115,11 @@ class SystemPromptBuilder:
         lines = [
             f"# 你是 {self.agent.name}",
             "",
-            f"岗位: {self.position_title}",
+            f"岗位: {self.role_title}",
         ]
 
-        if self.position_jd:
-            lines.extend(["", "岗位职责:", self.position_jd])
+        if self.role_jd:
+            lines.extend(["", "岗位职责:", self.role_jd])
 
         if self.agent.personality:
             lines.extend(["", f"个人特点: {self.agent.personality}"])
@@ -171,11 +139,11 @@ class SystemPromptBuilder:
         return PromptSection("## 可用工具", "\n".join(tools)).render()
 
     def build_role(self) -> str | None:
-        """Build role section from position jd."""
-        if not self.position_jd:
+        """Build role section from role jd."""
+        if not self.role_jd:
             return None
 
-        return PromptSection("## 角色职责", f"岗位职责:\n{self.position_jd}").render()
+        return PromptSection("## 角色职责", f"岗位职责:\n{self.role_jd}").render()
 
     def build_team(self) -> str | None:
         """Build team members table."""
@@ -210,23 +178,16 @@ class SystemPromptBuilder:
             return None
 
     def build_discipline_rules(self) -> str:
-        """Build discipline rules for multi-agent collaboration.
-
-        This is the enhanced version that includes dynamic agent names.
-        """
-        # Get agent names for specific positions
-        customer_service_name = self._get_agent_name_by_position("customer_service") or "客服"
-        project_manager_name = self._get_agent_name_by_position("project_manager") or "项目经理"
-
+        """Build discipline rules for multi-agent collaboration."""
         rules = [
             "## 协作纪律",
             "",
             "1. **收到任务时**: 确认收到即可，不要重复 @发送者",
             '   - ✅ 正确: "收到，我来处理"',
-            f'   - ❌ 错误: "@{customer_service_name} 收到，我来处理"（不要回@）',
+            '   - ❌ 错误: "@客服 收到，我来处理"（不要回@）',
             "",
             "2. **任务完成时**: 向任务分派者汇报",
-            f"   - 如果 @{project_manager_name} 派的活 → 完成后 @{project_manager_name}",
+            "   - 如果 @项目经理 派的活 → 完成后 @项目经理",
             "   - 如果 @人类 直接派的活 → 完成后 @人类",
             "",
             '3. **避免无意义回应**: 不要对 "收到"、"好的"、"谢谢"进行回复',
@@ -240,20 +201,12 @@ class SystemPromptBuilder:
         return "\n".join(rules)
 
     def build_guidelines(self) -> str:
-        """Build guidelines section: discipline rules + workflow.
-
-        Uses templates from config/prompt_templates.yaml for workflow,
-        but uses local build_discipline_rules for enhanced discipline rules.
-        """
+        """Build guidelines section: discipline rules + workflow."""
         parts = []
 
-        # Discipline rules (enhanced version with dynamic agent names)
         parts.append(self.build_discipline_rules())
 
-        # Workflow (from template)
-        workflow = self.agent._prompt_manager.build_workflow_prompt(
-            position_type=self.agent.position_id
-        )
+        workflow = self.agent._prompt_manager.build_workflow_prompt(role=self.agent.config.role)
         parts.append(workflow)
 
         return "\n\n".join(parts)
@@ -274,9 +227,7 @@ class SystemPromptBuilder:
 
     def build_important_notes(self) -> str:
         """Build important notes section (from template)."""
-        return self.agent._prompt_manager.build_important_notes_prompt(
-            position_type=self.agent.position_id
-        )
+        return self.agent._prompt_manager.build_important_notes_prompt(role=self.agent.config.role)
 
     def build_mention_guide(self) -> str:
         """Build @mention mechanism guide."""
@@ -313,7 +264,6 @@ class SystemPromptBuilder:
             self.build_mention_guide(),
         ]
 
-        # Filter out None/empty sections and join with double newlines
         return "\n\n".join(filter(None, sections))
 
 

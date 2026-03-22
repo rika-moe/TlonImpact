@@ -4,7 +4,6 @@ from tlon.base.config import (
     AgentConfig,
     DockerRuntimeConfig,
     LLMConfig,
-    PositionConfig,
     PromptOverrides,
     PromptTemplates,
 )
@@ -125,102 +124,6 @@ class TestPromptTemplates:
         assert templates.important_notes == PromptTemplates.important_notes
 
 
-class TestPositionConfig:
-    """Test PositionConfig model."""
-
-    def test_creation(self):
-        """Test creating PositionConfig."""
-        position = PositionConfig(
-            id="dev",
-            type="developer",
-            title="开发工程师",
-            jd="负责开发",
-            contact_when="需要开发时",
-        )
-        assert position.id == "dev"
-        assert position.type == "developer"
-        assert position.title == "开发工程师"
-        assert position.jd == "负责开发"
-        assert position.contact_when == "需要开发时"
-
-    def test_get_display_name(self):
-        """Test display name uses title when available."""
-        position = PositionConfig(id="dev", type="developer", title="开发")
-        assert position.get_display_name() == "开发"
-
-        position_no_title = PositionConfig(id="dev", type="developer", title="")
-        assert position_no_title.get_display_name() == "dev"
-
-    def test_to_dict(self):
-        """Test to_dict includes all fields."""
-        position = PositionConfig(
-            id="dev",
-            type="developer",
-            title="开发",
-            jd="负责开发",
-            rules=["rule1"],
-        )
-        result = position.to_dict()
-        assert result["id"] == "dev"
-        assert result["title"] == "开发"
-        assert result["rules"] == ["rule1"]
-
-    def test_to_dict_includes_overrides(self):
-        """Test to_dict includes prompt_overrides when present."""
-        position = PositionConfig(
-            id="dev",
-            type="developer",
-            prompt_overrides=PromptOverrides(workflow="custom"),
-        )
-        result = position.to_dict()
-        assert "prompt_overrides" in result
-        assert result["prompt_overrides"]["workflow"] == "custom"
-
-    def test_to_dict_excludes_empty_overrides(self):
-        """Test to_dict excludes prompt_overrides when None."""
-        position = PositionConfig(id="dev", type="developer")
-        result = position.to_dict()
-        assert "prompt_overrides" not in result
-
-    def test_from_dict(self):
-        """Test from_dict creates correct object."""
-        data = {
-            "id": "dev",
-            "type": "developer",
-            "title": "开发",
-            "jd": "负责开发",
-            "contact_when": "需要时",
-            "rules": ["rule1"],
-        }
-        position = PositionConfig.from_dict(data)
-        assert position.id == "dev"
-        assert position.title == "开发"
-        assert position.contact_when == "需要时"
-        assert position.rules == ["rule1"]
-
-    def test_from_dict_type_defaults_to_id(self):
-        """Test type defaults to id if not specified."""
-        data = {"id": "dev"}
-        position = PositionConfig.from_dict(data)
-        assert position.type == "dev"
-
-    def test_from_dict_jd_from_description(self):
-        """Test jd can be loaded from description field."""
-        data = {"id": "dev", "description": "desc"}
-        position = PositionConfig.from_dict(data)
-        assert position.jd == "desc"
-
-    def test_from_dict_with_overrides(self):
-        """Test from_dict loads prompt_overrides."""
-        data = {
-            "id": "dev",
-            "prompt_overrides": {"workflow": "custom"},
-        }
-        position = PositionConfig.from_dict(data)
-        assert position.prompt_overrides is not None
-        assert position.prompt_overrides.workflow == "custom"
-
-
 class TestLLMConfig:
     """Test LLMConfig model."""
 
@@ -287,12 +190,10 @@ class TestAgentConfig:
         agent = AgentConfig(
             id="dev-001",
             name="林知遥",
-            position_id="developer",
             personality="细心",
         )
         assert agent.id == "dev-001"
         assert agent.name == "林知遥"
-        assert agent.position_id == "developer"
         assert agent.personality == "细心"
 
     def test_post_init_defaults(self):
@@ -308,7 +209,6 @@ class TestAgentConfig:
         agent = AgentConfig(
             id="dev-001",
             name="Test",
-            position_id="developer",
             skills=["bash"],
         )
         result = agent.to_dict()
@@ -322,7 +222,6 @@ class TestAgentConfig:
         data = {
             "id": "dev-001",
             "name": "Test",
-            "position_id": "developer",
             "llm": {"model_name": "gpt-4"},
             "docker": {"image": "python:3.11"},
         }
@@ -336,7 +235,5 @@ class TestAgentConfig:
         data = {"id": "dev-001", "name": "Test"}
         agent = AgentConfig.from_dict(data)
         # from_dict returns None for missing llm/docker, but post_init sets defaults
-        # Note: In real usage, from_dict is used by loader which then doesn't call post_init
-        # This tests the pure from_dict behavior before post_init
         assert agent.llm is not None  # post_init sets default
         assert agent.docker is not None  # post_init sets default
