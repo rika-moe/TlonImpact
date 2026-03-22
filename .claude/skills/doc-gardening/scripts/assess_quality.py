@@ -183,7 +183,7 @@ class QualityAssessor:
                 score.gaps.append("状态: 未标记验证状态")
 
         # 检查核心理念数量
-        core_ideas = re.findall(r"^\s*[\d\-\*]\s+.+$", content, re.MULTILINE)
+        core_ideas = re.findall(r"^\s*(?:\d+[\.\)]\s+|[\-\*]\s+).+$", content, re.MULTILINE)
         if len(core_ideas) < 3:
             score.gaps.append(f"核心理念过少 ({len(core_ideas)} 条，建议 3-5 条)")
 

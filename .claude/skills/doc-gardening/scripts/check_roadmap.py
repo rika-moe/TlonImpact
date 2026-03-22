@@ -159,6 +159,9 @@ class RoadmapChecker:
 
         for orphan in orphans:
             if orphan.name != "README.md":
+                # 已归档到 completed/ 的文件不视为孤立
+                if orphan.parent.name == "completed":
+                    continue
                 self.issues.append(
                     ("孤立文件", f"{orphan.relative_to(self.roadmap_dir)} 不是标准里程碑文件")
                 )
