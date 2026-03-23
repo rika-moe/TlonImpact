@@ -1,6 +1,7 @@
 # 里程碑 7: Client 扩展与可观测性
 
-> 状态: 🚧 计划中
+> 状态: 🔄 进行中 (Phase 1)
+> 实际开始: 2026-03-18
 > 计划完成: 2026-04
 > 负责人: 架构师 + 开发团队
 
@@ -30,9 +31,10 @@
 
 ## 交付物
 
-### Phase 1: 基础架构（Week 1）
+### Phase 1: 基础架构（Week 1）🔄 进行中
 
-- [ ] GitHub Actions CI（lint + type check + unit test）
+- [x] GitHub Actions CI（lint + type check + unit test）
+- [x] Agent 系统重构（解耦 + ReAct + EventBus）
 - [ ] Event 扩展（trace_id, span_id, 新增事件类型）
 - [ ] TraceStore 实现（文件存储）
 - [ ] TUI Event 模式增强（按 trace_id 过滤）
@@ -74,27 +76,31 @@ Client Ecosystem
 
 ### Phase 1: 基础架构
 
-#### Task 1.1: CI/CD 基础
+#### Task 1.1: CI/CD 基础 ✅ 已完成
 - **负责人**: DevOps Agent
 - **工期**: 1 人天
-- **依赖**: 无
+- **完成日期**: 2026-03-18
 - **任务**:
   - 配置 GitHub Actions（`.github/workflows/ci.yml`）
   - 配置 ruff（lint + format）
   - 配置 mypy（type check）
   - 配置 pytest（unit test）
-- **验收标准**:
+- **验收标准**: ✅ 已验证
   ```bash
   ruff check src/ && ruff format --check src/
   mypy src/tlon/
   pytest tests/unit/ -xvs
   ```
 
-#### Task 1.2: Event 扩展
+#### Task 1.2: Event 扩展 🔄 部分完成
 - **负责人**: Backend Agent
 - **工期**: 2 人天
-- **依赖**: 无
-- **任务**:
+- **状态**: EventBus 重构完成，trace 元数据待添加
+- **已完成**:
+  - ✅ EventBus 化工具执行（ ）
+  - ✅ 显式状态机 ReAct Loop（）
+  - ✅ Agent 解耦：PromptContext + 组件注入化（ ）
+- **待完成**:
   - 扩展 `Event` 类，添加 `trace_id`, `span_id`, `parent_span_id`
   - 新增 EventType：
     - `AGENT_THINKING_START`, `AGENT_THINKING_END`
@@ -248,12 +254,12 @@ Week 3-4: Phase 3 - Client 实现
 
 ## 里程碑
 
-| 里程碑 | 日期 | 验收标准 |
-|--------|------|----------|
-| M1: 可观测基础 | Week 1 周五 | 1. CI 通过<br>2. Event 扩展完成<br>3. Trace 基础可用 |
-| M2: 协议标准化 | Week 2 周五 | 1. 版本协商工作<br>2. SDK 重构完成<br>3. REST API 扩展 |
-| M3: 多 Client 支持 | Week 4 周五 | 1. TUI 适配完成<br>2. Web Client 可用<br>3. Telegram Bot 可用 |
-| M4: 集成测试 | Week 4 周日 | 1. 集成测试通过<br>2. 文档完成 |
+| 里程碑 | 日期 | 状态 | 验收标准 |
+|--------|------|------|----------|
+| M1: 可观测基础 | Week 1 周五 | 🔄 进行中 | 1. CI 通过 ✅<br>2. Event 扩展完成<br>3. Trace 基础可用 |
+| M2: 协议标准化 | Week 2 周五 | ⏳ 待开始 | 1. 版本协商工作<br>2. SDK 重构完成<br>3. REST API 扩展 |
+| M3: 多 Client 支持 | Week 4 周五 | ⏳ 待开始 | 1. TUI 适配完成<br>2. Web Client 可用<br>3. Telegram Bot 可用 |
+| M4: 集成测试 | Week 4 周日 | ⏳ 待开始 | 1. 集成测试通过<br>2. 文档完成 |
 
 ---
 
@@ -283,7 +289,14 @@ Week 3-4: Phase 3 - Client 实现
 ## 依赖关系
 
 ```
-Task 1.1 (CI/CD)
+Task 1.1 (CI/CD) ✅
+    │
+Task 1.2 (Event 扩展) 🔄
+    │
+    ├──► Task 1.3 (Trace 基础)
+    │         │
+    │         ▼
+    │    Task 2.3 (REST 扩展)
     │
     ▼
 Task 2.1 (协议版本化)
@@ -293,11 +306,6 @@ Task 2.1 (协议版本化)
     │        ├──► Task 3.1 (TUI 适配)
     │        ├──► Task 3.2 (Web Client) ──► Task 2.3 (REST 扩展)
     │        └──► Task 3.3 (Telegram Bot)
-    │
-Task 1.2 (Event 扩展)
-    │
-    ▼
-Task 1.3 (Trace 基础) ──► Task 2.3 (REST 扩展)
 ```
 
 ---
@@ -313,8 +321,9 @@ Task 1.3 (Trace 基础) ──► Task 2.3 (REST 扩展)
 
 ## 验证清单
 
-- [ ] CI/CD 通过（lint + type check + unit test）
-- [ ] Event 扩展实现（thinking_start, llm_request, tool_execute_start）
+- [x] CI/CD 通过（lint + type check + unit test）
+- [x] Agent 系统重构完成（解耦 + ReAct + EventBus）
+- [ ] Event 扩展实现（trace_id, span_id）
 - [ ] Trace 系统可用（创建、查询、展示）
 - [ ] 协议版本协商工作
 - [ ] SDK 重构完成（BaseClient + Adapters）
@@ -327,3 +336,4 @@ Task 1.3 (Trace 基础) ──► Task 2.3 (REST 扩展)
 ---
 
 *计划制定时间: 2026-03-18*
+*最后更新: 2026-03-23*

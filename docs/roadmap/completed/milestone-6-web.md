@@ -2,7 +2,7 @@
 
 > 状态: ✅ 已归档
 > 完成日期: 2026-03-18
-> 说明: 已细化为 [里程碑 7](milestone-7-client-expansion.md)
+> 说明: 已细化为 [里程碑 7](../milestone-7-client-expansion.md)
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 详细实施计划
 
-详见 [里程碑 7: Client 扩展与可观测性](milestone-7-client-expansion.md)
+详见 [里程碑 7: Client 扩展与可观测性](../milestone-7-client-expansion.md)
 
 ---
 

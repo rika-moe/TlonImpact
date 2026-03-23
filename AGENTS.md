@@ -63,7 +63,7 @@ uv run pytest
 | Agent 系统 | ✅ 已验证 | 90/100 | 稳定 |
 | 记忆系统 | ✅ 已验证 | 85/100 | 稳定 |
 | 消息系统 | ✅ 已验证 | 90/100 | 稳定 |
-| Client-Server | 🚧 设计中 | - | 详见 [milestone-7](docs/roadmap/milestone-7-client-expansion.md) |
+| Client-Server | 🔄 重构中 | 70/100 | Phase 1: CI ✅, EventBus ✅, Trace 待开始 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | Sandbox | ✅ 已验证 | 85/100 | 稳定 |
 
@@ -85,4 +85,4 @@ uv run pytest
 
 ---
 
-*最后更新：2026-03-19*
+*最后更新：2026-03-23*
