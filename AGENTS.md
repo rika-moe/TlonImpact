@@ -59,13 +59,13 @@ uv run pytest
 
 | 领域 | 状态 | 评分 | 备注 |
 |------|------|------|------|
-| 配置系统 | ✅ 已验证 | 85/100 | 稳定 |
-| Agent 系统 | ✅ 已验证 | 90/100 | 稳定 |
-| 记忆系统 | ✅ 已验证 | 85/100 | 稳定 |
-| 消息系统 | ✅ 已验证 | 90/100 | 稳定 |
-| Client-Server | 🔄 重构中 | 70/100 | Phase 1: CI ✅, EventBus ✅, Trace 待开始 |
+| 配置系统 | ✅ 已验证 | 100/100 | 稳定 |
+| Agent 系统 | ✅ 已验证 | 100/100 | EventBus 化完成 |
+| 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
+| 消息系统 | ✅ 已验证 | 100/100 | 稳定 |
+| Client-Server | ✅ 已验证 | 90/100 | Device/Component 重构完成 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
-| Sandbox | ✅ 已验证 | 85/100 | 稳定 |
+| Sandbox | ✅ 已验证 | 100/100 | 稳定 |
 
 -- 
 ## 开发规范
@@ -78,11 +78,13 @@ uv run pytest
 
 ## 参考链接
 
-- [开发流程](docs/design/development-process.md)
-- [代码风格](docs/design/code-style.md)
-- [导入路径速查](docs/reference/imports.md)
-- [故障排除](docs/design/debugging.md)
+| 类型 | 文档 |
+|------|------|
+| 开发规范 | [开发流程](docs/design/development-process.md), [代码风格](docs/design/code-style.md), [故障排除](docs/design/debugging.md) |
+| 架构 | [组件架构](docs/architecture/dag-components.md), [显式边界](docs/architecture/explicit-boundaries.md), [分层](docs/architecture/layers.md), [数据流](docs/architecture/data-flow.md) |
+| 路线图 | [Roadmap](docs/roadmap/README.md), [已归档](docs/roadmap/completed/) |
+| 速查 | [导入路径速查](docs/reference/imports.md) |
 
 ---
 
-*最后更新：2026-03-23*
+*最后更新：2026-03-24*
