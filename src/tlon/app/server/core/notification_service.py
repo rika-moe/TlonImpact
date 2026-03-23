@@ -4,7 +4,7 @@ Responsible for pushing events to connected client sessions.
 Decouples event routing from session management.
 
 Architecture:
-    NotificationService is a Component that depends on:
+    NotificationService is a Device that depends on:
     - EventBus (for event subscription)
     - SessionManager (for session lookup)
 
@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import Callable
 
 from tlon.base.component import Component
+from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
@@ -27,7 +28,7 @@ logger = get_logger(__name__)
 EventHandler = Callable[[Event], None]
 
 
-class NotificationService(Component):
+class NotificationService(Component, Device):
     """Pushes system events to connected clients.
 
     Responsibilities:
@@ -67,15 +68,14 @@ class NotificationService(Component):
             event_bus: Event bus to subscribe to
             session_manager: Session manager for session lookup
         """
-        super().__init__(name="NotificationService")
-        self._event_bus = event_bus
+        # Initialize both parents
+        Component.__init__(self, name="NotificationService")
+        Device.__init__(self, event_bus=event_bus, name="NotificationService")
+
         self._session_manager = session_manager
 
         # session_id -> handler mapping
         self._handlers: dict[str, EventHandler] = {}
-
-        # Event bus subscription ID
-        self._subscription_id: str | None = None
 
         # Internal lock for handler registration
         self._lock = asyncio.Lock()
@@ -84,23 +84,22 @@ class NotificationService(Component):
 
     async def initialize(self) -> None:
         """Start the service by subscribing to events."""
-        self._subscription_id = self._event_bus.subscribe(
-            EventType.MESSAGE_NEW, self._on_message_new
-        )
-        self._initialized = True
+        self.subscribe(EventType.MESSAGE_NEW, self._on_message_new)
+        # Device has no async initialize, just log
         logger.info("NotificationService initialized")
+        # Mark Component as initialized
+        self._initialized = True
 
     async def shutdown(self) -> None:
         """Stop the service by unsubscribing from events."""
-        if self._subscription_id:
-            self._event_bus.unsubscribe(self._subscription_id)
-            self._subscription_id = None
-
         async with self._lock:
             self._handlers.clear()
 
+        # Cleanup Device subscriptions
+        self.unsubscribe_all()
+        # Mark Component as shut down
         self._initialized = False
-        logger.info("NotificationService shutdown")
+        logger.info("NotificationService shut down")
 
     def register_handler(self, session_id: str, handler: EventHandler) -> None:
         """Register an event handler for a session.

@@ -12,7 +12,7 @@ This separation allows:
 - Routing logic to be independent of storage
 
 Architecture:
-    MessageRouter is a Component that depends on:
+    MessageRouter is a Device that depends on:
     - EventBus (for event subscription/publishing)
     - MessageStore (for persistence)
     - AgentInfoProvider (for routing decisions)
@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from tlon.base.component import Component
+from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
@@ -53,7 +54,7 @@ class RoutedMessage:
     routing_reason: str = ""
 
 
-class MessageRouter(Component):
+class MessageRouter(Component, Device):
     """Stateless message router for distributing messages to recipients.
 
     The router:
@@ -96,33 +97,28 @@ class MessageRouter(Component):
             message_store: Store for persisting messages
             agent_info_provider: Optional provider for agent configuration queries
         """
-        super().__init__(name="MessageRouter")
-        self._event_bus = event_bus
+        # Initialize both parents
+        Component.__init__(self, name="MessageRouter")
+        Device.__init__(self, event_bus=event_bus, name="MessageRouter")
         self._message_store = message_store
         self._agent_info = agent_info_provider
-
-        # Subscription ID
-        self._subscription_id: str | None = None
 
         # Routing rules cache
         self._proactive_agents: set[str] = set()
 
-        logger.info("MessageRouter initialized")
+        logger.info("MessageRouter constructed")
 
     async def initialize(self) -> None:
         """Start the router by subscribing to MESSAGE_NEW events."""
-        self._subscription_id = self._event_bus.subscribe(
-            EventType.MESSAGE_NEW, self._on_message_new
-        )
+        self.subscribe(EventType.MESSAGE_NEW, self._on_message_new)
+        logger.info("MessageRouter initialized")
         self._initialized = True
-        logger.info("MessageRouter started, listening for messages")
 
     async def shutdown(self) -> None:
-        """Stop the router by unsubscribing from events."""
-        if self._subscription_id:
-            self._event_bus.unsubscribe(self._subscription_id)
-            self._subscription_id = None
-        logger.info("MessageRouter stopped")
+        """Stop the router."""
+        self.unsubscribe_all()
+        self._initialized = False
+        logger.info("MessageRouter shut down")
 
     async def _on_message_new(self, event: Event) -> None:
         """Handle new message events.
@@ -365,7 +361,7 @@ class MessageRouter(Component):
             event_kwargs["span_id"] = ctx.span_id
             event_kwargs["parent_span_id"] = ctx.parent_span_id
 
-        await self._event_bus.publish(Event(**event_kwargs))
+        await self.publish(Event(**event_kwargs))
 
     def _get_routing_reason(self, message: Message, targets: list[str]) -> str:
         """Generate a human-readable routing reason for logging.

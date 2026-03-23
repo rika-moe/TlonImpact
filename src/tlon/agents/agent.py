@@ -16,6 +16,7 @@ from tlon.agents.react_state_machine import ReActContext, ReActStateMachine
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig, PromptTemplateManager
+from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
@@ -40,7 +41,7 @@ class AgentState(Enum):
     SHUTDOWN = "shutdown"  # Stopped
 
 
-class Agent(Component):
+class Agent(Component, Device):
     """An intelligent agent that can process messages and execute tools.
 
     Device: holds an EventBus reference and publishes observability events.
@@ -93,10 +94,11 @@ class Agent(Component):
             total_tool_timeout: Total timeout for all tools in EventBus mode (deadline)
             per_tool_timeout: Timeout for each individual tool in EventBus mode
         """
-        super().__init__(name=config.name)
+        # Initialize both parents
+        Component.__init__(self, name=config.name)
+        Device.__init__(self, event_bus=event_bus, name=config.name)
 
         self.config = config
-        self.event_bus = event_bus
         self.team_members = team_members or []
         self.message_store = message_store
 
@@ -118,9 +120,6 @@ class Agent(Component):
         self._use_eventbus_tools = use_eventbus_tools
         self._total_tool_timeout = total_tool_timeout
         self._per_tool_timeout = per_tool_timeout
-
-        # Subscription ID for event bus
-        self._event_subscription: str | None = None
 
         # Prompt cache — invalidated when memory-modifying tools run
         self._system_prompt_cache: str | None = None
@@ -164,15 +163,14 @@ class Agent(Component):
         self.task_manager.load()
 
         # Subscribe to MESSAGE_ROUTED — only receive messages intended for us
-        self._event_subscription = self.event_bus.subscribe(
-            EventType.MESSAGE_ROUTED, self._on_message_routed
-        )
+        self.subscribe(EventType.MESSAGE_ROUTED, self._on_message_routed)
 
         # Start message processing worker
         self._worker_running = True
         self._worker_task = asyncio.create_task(self._message_worker())
 
         self.state = AgentState.ACTIVE
+        self._initialized = True  # Mark Component as initialized
         logger.info(f"Agent {self.name} ready")
 
     async def shutdown(self) -> None:
@@ -189,14 +187,14 @@ class Agent(Component):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._worker_task
 
-        # Unsubscribe from events
-        if self._event_subscription:
-            self.event_bus.unsubscribe(self._event_subscription)
+        # Unsubscribe from events (Device cleanup)
+        self.unsubscribe_all()
 
         # Stop Docker container (but don't remove - persist for next time)
         await self.docker_runtime.stop()
 
         self.state = AgentState.SHUTDOWN
+        self._initialized = False  # Mark Component as shut down
         logger.info(f"Agent {self.name} shutdown complete")
 
     async def _on_message_routed(self, event: Event) -> None:
@@ -415,12 +413,10 @@ class Agent(Component):
             content=content,
             mentions=mentions or [],
         )
-        await self.event_bus.publish(
-            Event(
-                type=EventType.MESSAGE_NEW,
-                payload=message,
-                source=self.id,
-            )
+        await self.emit(
+            EventType.MESSAGE_NEW,
+            payload=message,
+            source=self.id,
         )
         logger.info(f"{self.name} response sent successfully via EventBus")
 
@@ -464,25 +460,22 @@ class Agent(Component):
         current_trace = get_current_trace()
 
         # Emit thinking start event
-        thinking_event = Event(
-            type=EventType.AGENT_THINKING_START,
+        await self.emit(
+            EventType.AGENT_THINKING_START,
             payload={
                 "agent_id": self.id,
                 "agent_name": self.name,
                 "context_length": len(context),
             },
             source=self.id,
+            trace_id=current_trace.trace_id if current_trace else None,
+            span_id=current_trace.span_id if current_trace else None,
+            parent_span_id=current_trace.parent_span_id if current_trace else None,
         )
-        if current_trace:
-            thinking_event.trace_id = current_trace.trace_id
-            thinking_event.span_id = current_trace.span_id
-            if current_trace.parent_span_id:
-                thinking_event.parent_span_id = current_trace.parent_span_id
-        await self.event_bus.publish(thinking_event)
 
         # Emit LLM request event
-        llm_request_event = Event(
-            type=EventType.AGENT_LLM_REQUEST,
+        await self.emit(
+            EventType.AGENT_LLM_REQUEST,
             payload={
                 "agent_id": self.id,
                 "model": self.llm_client.config.model_name
@@ -492,11 +485,9 @@ class Agent(Component):
                 "tools_count": len(tools) if tools else 0,
             },
             source=self.id,
+            trace_id=current_trace.trace_id if current_trace else None,
+            span_id=current_trace.span_id if current_trace else None,
         )
-        if current_trace:
-            llm_request_event.trace_id = current_trace.trace_id
-            llm_request_event.span_id = current_trace.span_id
-        await self.event_bus.publish(llm_request_event)
 
         # Call LLM
         import time
@@ -510,8 +501,8 @@ class Agent(Component):
         duration_ms = int((time.time() - start_time) * 1000)
 
         # Emit LLM response event
-        llm_response_event = Event(
-            type=EventType.AGENT_LLM_RESPONSE,
+        await self.emit(
+            EventType.AGENT_LLM_RESPONSE,
             payload={
                 "agent_id": self.id,
                 "model": self.llm_client.config.model_name
@@ -523,28 +514,23 @@ class Agent(Component):
                 "tool_call_count": len(response.tool_calls) if response.tool_calls else 0,
             },
             source=self.id,
+            trace_id=current_trace.trace_id if current_trace else None,
+            span_id=current_trace.span_id if current_trace else None,
         )
-        if current_trace:
-            llm_response_event.trace_id = current_trace.trace_id
-            llm_response_event.span_id = current_trace.span_id
-        await self.event_bus.publish(llm_response_event)
 
         # Emit thinking end event
-        thinking_end_event = Event(
-            type=EventType.AGENT_THINKING_END,
+        await self.emit(
+            EventType.AGENT_THINKING_END,
             payload={
                 "agent_id": self.id,
                 "agent_name": self.name,
                 "duration_ms": duration_ms,
             },
             source=self.id,
+            trace_id=current_trace.trace_id if current_trace else None,
+            span_id=current_trace.span_id if current_trace else None,
+            parent_span_id=current_trace.parent_span_id if current_trace else None,
         )
-        if current_trace:
-            thinking_end_event.trace_id = current_trace.trace_id
-            thinking_end_event.span_id = current_trace.span_id
-            if current_trace.parent_span_id:
-                thinking_end_event.parent_span_id = current_trace.parent_span_id
-        await self.event_bus.publish(thinking_end_event)
 
         return response
 
@@ -672,16 +658,14 @@ class Agent(Component):
         """
         logger.debug(f"Executing tool: {tool_call.function_name}")
 
-        await self.event_bus.publish(
-            Event(
-                type=EventType.TOOL_EXECUTE_START,
-                payload={
-                    "agent_id": self.id,
-                    "tool_name": tool_call.function_name,
-                    "arguments": tool_call.arguments,
-                },
-                source=self.id,
-            )
+        await self.emit(
+            EventType.TOOL_EXECUTE_START,
+            payload={
+                "agent_id": self.id,
+                "tool_name": tool_call.function_name,
+                "arguments": tool_call.arguments,
+            },
+            source=self.id,
         )
 
         try:
@@ -691,31 +675,27 @@ class Agent(Component):
             if tool_call.function_name in ("rememberFact", "forget", "generateSummary"):
                 self._system_prompt_dirty = True
 
-            await self.event_bus.publish(
-                Event(
-                    type=EventType.TOOL_EXECUTE_END,
-                    payload={
-                        "agent_id": self.id,
-                        "tool_name": tool_call.function_name,
-                        "success": result.success,
-                    },
-                    source=self.id,
-                )
+            await self.emit(
+                EventType.TOOL_EXECUTE_END,
+                payload={
+                    "agent_id": self.id,
+                    "tool_name": tool_call.function_name,
+                    "success": result.success,
+                },
+                source=self.id,
             )
 
             return result
 
         except Exception as e:
-            await self.event_bus.publish(
-                Event(
-                    type=EventType.TOOL_ERROR,
-                    payload={
-                        "agent_id": self.id,
-                        "tool_name": tool_call.function_name,
-                        "error": str(e),
-                    },
-                    source=self.id,
-                )
+            await self.emit(
+                EventType.TOOL_ERROR,
+                payload={
+                    "agent_id": self.id,
+                    "tool_name": tool_call.function_name,
+                    "error": str(e),
+                },
+                source=self.id,
             )
             raise
 
@@ -736,12 +716,10 @@ class Agent(Component):
                 content=content,
                 mentions=mentions or [],
             )
-            await self.event_bus.publish(
-                Event(
-                    type=EventType.MESSAGE_NEW,
-                    payload=message,
-                    source=self.id,
-                )
+            await self.emit(
+                EventType.MESSAGE_NEW,
+                payload=message,
+                source=self.id,
             )
         except Exception as e:
             logger.error(f"Error in _send_message: {e}", exc_info=True)
