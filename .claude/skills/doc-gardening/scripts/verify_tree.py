@@ -102,8 +102,8 @@ class DocTreeVerifier:
         """查找孤立文档（无法从根节点到达）。"""
         all_docs = set(self.docs_dir.rglob("*.md"))
 
-        # 排除 archive 目录
-        all_docs = {d for d in all_docs if "archive" not in str(d)}
+        # 排除 archive 目录，并转换为绝对路径以便比较
+        all_docs = {d.resolve() for d in all_docs if "archive" not in str(d)}
 
         unreachable = all_docs - self.visited
 

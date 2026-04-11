@@ -112,6 +112,7 @@ agents:
 | `role.title` | string | 否 | 职务名称（如：开发工程师） |
 | `role.jd` | string | 否 | 职责描述 |
 | `role.department` | string | 否 | 所属部门 |
+| `skills` | list[string] | 否 | ⏳ 描述性标签（旧实现已移除，新实现待重做） |
 
 #### 行为规则
 

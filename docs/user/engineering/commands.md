@@ -179,7 +179,10 @@ GET /api/agents
     {
       "id": "dev-001",
       "name": "陈代码",
-      "position": "developer",
+      "role": {           // 内联角色信息
+        "title": "开发工程师",
+        "department": "技术部"
+      },
       "status": "online",  // online, offline, sleeping
       "proactive": false
     }

@@ -45,7 +45,13 @@ agent:
   docker:
     image: "ubuntu:22.04"
     memory_limit: "512m"
+  skills:                   # ⏳ 描述性标签（旧实现已移除，新实现待重做）
+    - "file-operations"
+    - "git-operations"
 ```
+
+> **关于 `skills` 字段**: 当前仅作为 Agent 能力的描述性标签使用。
+> 动态 Skill 系统旧实现已于 2026-03-17 移除，新实现待重做。
 
 ---
 

@@ -44,14 +44,15 @@ uv run pytest
 
 | 领域 | 设计文档 | 架构文档 |
 |------|----------|----------|
-| 概述 | [design/README.md](docs/design/README.md) | [architecture/README.md](docs/architecture/README.md) |
-| 组件架构 | - | [dag-components.md](docs/architecture/dag-components.md), [explicit-boundaries.md](docs/architecture/explicit-boundaries.md) |
-| 配置系统 | [design/config.md](docs/design/config.md) | [architecture/domains/base.md](docs/architecture/domains/base.md) |
-| Agent 系统 | [design/agents.md](docs/design/agents.md) | [architecture/domains/agents.md](docs/architecture/domains/agents.md) |
-| 记忆系统 | [design/memory.md](docs/design/memory.md) | [architecture/domains/subsystem.md](docs/architecture/domains/subsystem.md) |
-| 消息系统 | [design/messaging.md](docs/design/messaging.md) | [architecture/domains/organization.md](docs/architecture/domains/organization.md) |
-| Client-Server | [design/client-server-protocol.md](docs/design/client-server-protocol.md) | [architecture/client-server.md](docs/architecture/client-server.md) |
-| 路线图 | - | [roadmap/README.md](docs/roadmap/README.md) |
+| 概述 | [design/README.md](./docs/design/README.md) | [architecture/README.md](./docs/architecture/README.md) |
+| 用户指南 | [user/README.md](./docs/user/README.md) | - |
+| 组件架构 | - | [dag-components.md](./docs/architecture/dag-components.md), [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
+| 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
+| Agent 系统 | [design/agents.md](./docs/design/agents.md) | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
+| 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/domains/subsystem.md](./docs/architecture/domains/subsystem.md) |
+| 消息系统 | [design/messaging.md](./docs/design/messaging.md) | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
+| Client-Server | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | [architecture/client-server.md](./docs/architecture/client-server.md) |
+| 路线图 | - | [roadmap/README.md](./docs/roadmap/README.md) |
 
 ---
 
@@ -80,10 +81,10 @@ uv run pytest
 
 | 类型 | 文档 |
 |------|------|
-| 开发规范 | [开发流程](docs/design/development-process.md), [代码风格](docs/design/code-style.md), [故障排除](docs/design/debugging.md) |
-| 架构 | [组件架构](docs/architecture/dag-components.md), [显式边界](docs/architecture/explicit-boundaries.md), [分层](docs/architecture/layers.md), [数据流](docs/architecture/data-flow.md) |
-| 路线图 | [Roadmap](docs/roadmap/README.md), [已归档](docs/roadmap/completed/) |
-| 速查 | [导入路径速查](docs/reference/imports.md) |
+| 开发规范 | [开发流程](./docs/design/development-process.md), [代码风格](./docs/design/code-style.md), [故障排除](./docs/design/debugging.md) |
+| 架构 | [组件架构](./docs/architecture/dag-components.md), [显式边界](./docs/architecture/explicit-boundaries.md), [分层](./docs/architecture/layers.md), [数据流](./docs/architecture/data-flow.md) |
+| 路线图 | [Roadmap](./docs/roadmap/README.md), [已归档](./docs/roadmap/completed/) |
+| 速查 | [导入路径速查](./docs/reference/imports.md) |
 
 ---
 

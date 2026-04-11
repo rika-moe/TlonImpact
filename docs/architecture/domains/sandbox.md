@@ -33,7 +33,7 @@ sandbox/
 - 每个 Agent 独立 Docker 容器
 - 容器长期运行（应用重启后保留）
 - 支持任意 bash 命令执行
-- Skills 目录挂载到 `/workspace`
+- ~~Skills 目录挂载~~ ⏳ Skills 系统旧实现已移除
 - 资源限制：内存、CPU、网络隔离
 
 ---
