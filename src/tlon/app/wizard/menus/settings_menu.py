@@ -140,12 +140,12 @@ class SettingsMenu:
         # Temperature
         temp_str = self.questionary.text(
             "Temperature:",
-            default=str(current_config.get("temperature", "0.7")),
+            default=str(current_config.get("temperature", "1.0")),
         ).ask()
 
-        valid, temp, _ = InputValidator.validate_temperature(temp_str or "0.7")
+        valid, temp, _ = InputValidator.validate_temperature(temp_str or "1.0")
         if not valid:
-            temp = 0.7
+            temp = 1.0
 
         # Save
         self._save_env_config(
@@ -325,7 +325,7 @@ class SettingsMenu:
             "base_url": "https://api.openai.com/v1",
             "api_key": "",
             "model": "kimi-k2.5",
-            "temperature": 0.7,
+            "temperature": 1.0,
             "data_dir": "./data",
         }
 
@@ -359,7 +359,7 @@ class SettingsMenu:
             "OPENAI_API_KEY": config.get("api_key", ""),
             "OPENAI_BASE_URL": config.get("base_url", "https://api.openai.com/v1"),
             "OPENAI_MODEL_NAME": config.get("model", "kimi-k2.5"),
-            "OPENAI_TEMPERATURE": str(config.get("temperature", 0.7)),
+            "OPENAI_TEMPERATURE": str(config.get("temperature", 1.0)),
             "DATA_DIR": config.get("data_dir", "./data"),
         }
 

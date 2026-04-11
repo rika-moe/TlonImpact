@@ -63,6 +63,9 @@ class EventType(StrEnum):
     TRACE_SPAN_START = "trace.span_start"
     TRACE_SPAN_END = "trace.span_end"
 
+    # Config events
+    CONFIG_UPDATED = "config.updated"
+
 
 @dataclass
 class Event:

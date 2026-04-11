@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 from tlon.agents.agent import Agent
 from tlon.base.component import Component
-from tlon.base.config.models import AgentConfig
+from tlon.base.config import AgentConfig, PromptTemplates
 
 
 def _make_agent(**kwargs):
@@ -25,7 +25,7 @@ def _make_agent(**kwargs):
         "docker_runtime": MagicMock(),
         "memory": MagicMock(),
         "task_manager": MagicMock(),
-        "prompt_manager": MagicMock(),
+        "templates": PromptTemplates(),
         "tool_executor": MagicMock(),
     }
     defaults.update(kwargs)

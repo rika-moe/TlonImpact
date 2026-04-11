@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.base.config import AgentConfig, ConfigLoader, DockerRuntimeConfig, LLMConfig
+from tlon.base.config import AgentConfig, ConfigService, DockerRuntimeConfig, LLMConfig
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.settings import get_tlon_home, settings
@@ -28,7 +28,6 @@ from tlon.organization.messaging.store import FileMessageStore
 
 from .api.rest import RESTServer
 from .api.websocket import WebSocketServer
-from .config_manager import ConfigManager
 from .core.client_gateway import ClientGateway
 from .core.notification_service import NotificationService
 from .core.participant_directory import ParticipantDirectory
@@ -98,23 +97,23 @@ class ServerApp:
         """
         logger.info("Initializing Tlon Server with full DI...")
 
-        # ========== Step 1: Configuration Layer ==========
-        config_loader = ConfigLoader(
-            agents_dir=str(self.agents_dir),
-        )
-        self._components["config_loader"] = config_loader
-
-        config_manager = ConfigManager(config_loader)
-        await config_manager.initialize()
-        self._components["config_manager"] = config_manager
-
-        # ========== Step 2: Core Components (all created in ServerApp) ==========
-
-        # 2.1 EventBus - event bus for inter-component communication
+        # ========== Step 1: Core Infrastructure ==========
+        # 1.1 EventBus - event bus for inter-component communication (create first)
         event_bus = EventBus()
         await event_bus.initialize()
         self._components["event_bus"] = event_bus
         logger.info("EventBus initialized")
+
+        # 1.2 ConfigService - configuration management (needs EventBus)
+        config_service = ConfigService(
+            event_bus=event_bus,
+            config_dir=self.agents_dir.parent,
+            data_dir=self.data_dir,
+        )
+        await config_service.initialize()
+        self._components["config_service"] = config_service
+
+        # ========== Step 2: Other Core Components ==========
 
         # 2.2 MessageStore - storage for messages (stateful)
         message_store = FileMessageStore(
@@ -130,25 +129,25 @@ class ServerApp:
         logger.info("TraceStore initialized")
 
         # 2.3 MessageRouter - stateless message routing
-        # Depends on EventBus, MessageStore, and ConfigManager (as AgentInfoProvider)
+        # Depends on EventBus, MessageStore, and ConfigService (as AgentInfoProvider)
         message_router = MessageRouter(
             event_bus=event_bus,
             message_store=message_store,
-            agent_info_provider=config_manager,  # ConfigManager implements AgentInfoProvider
+            agent_info_provider=config_service,  # ConfigService implements AgentInfoProvider
         )
         await message_router.initialize()
         self._components["message_router"] = message_router
         logger.info("MessageRouter initialized")
 
         # 2.4 AgentRegistry - agent management
-        # Depends on EventBus, ConfigManager (as AgentInfoProvider), MessageStore
+        # Depends on EventBus, ConfigService (as AgentInfoProvider), MessageStore
         agent_registry = AgentRegistry(
             event_bus=event_bus,
-            agent_info_provider=config_manager,
+            agent_info_provider=config_service,
             message_store=message_store,
         )
         # Register initial agents (by ID, config is looked up from provider)
-        for agent_id in config_manager.agents:
+        for agent_id in config_service.agents:
             agent_registry.register(agent_id)
 
         await agent_registry.initialize()
@@ -184,7 +183,7 @@ class ServerApp:
             participant_directory=participant_directory,
             event_bus=event_bus,
             message_store=message_store,
-            config_manager=config_manager,
+            config_manager=config_service,
             data_dir=self.data_dir,
             host=self.host,
             port=self.ws_port,
@@ -196,7 +195,7 @@ class ServerApp:
         self.rest = RESTServer(
             self.client_gateway,
             agent_registry=agent_registry,  # Direct access for agent operations
-            config_manager=config_manager,  # For /admin endpoints
+            config_manager=config_service,  # For /admin endpoints
             trace_store=trace_store,  # For /traces endpoints
             host=self.host,
             port=self.rest_port,
@@ -214,12 +213,12 @@ class ServerApp:
         logger.info(f"  REST API: http://{self.host}:{self.rest_port}")
         logger.info(f"  WebSocket: ws://{self.host}:{self.ws_port}/ws")
 
-    def _get_initial_agents(self, config_manager: ConfigManager) -> list[AgentConfig]:
+    def _get_initial_agents(self, config_service: ConfigService) -> list[AgentConfig]:
         """Get initial agent configurations.
 
         Returns agents from config files, or defaults if none exist.
         """
-        agents = config_manager.agents
+        agents = config_service.agents
         if agents:
             logger.info(f"Loaded {len(agents)} agents from config")
             return list(agents.values())

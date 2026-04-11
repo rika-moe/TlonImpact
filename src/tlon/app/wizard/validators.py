@@ -1,15 +1,13 @@
 """Wizard validators for input validation.
 
 Provides validation functions for user input and environment checks.
-Note: Data validation (YAML structure) is handled by ConfigValidator in base.config.
+Note: Data validation is handled by Pydantic models in AgentConfig.
 """
 
 import re
 import sys
 from pathlib import Path
 
-# Re-export ConfigValidator for backward compatibility
-from tlon.base.config.validator import ConfigValidator
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
@@ -307,7 +305,7 @@ class APIValidator:
 
 
 class AgentValidator:
-    """Validate Agent user input (not data validation - that's ConfigValidator's job)."""
+    """Validate Agent user input (not data validation - that's Pydantic's job)."""
 
     ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$", re.IGNORECASE)
 
@@ -419,5 +417,4 @@ __all__ = [
     "APIValidator",
     "AgentValidator",
     "InputValidator",
-    "ConfigValidator",  # Re-exported from base.config
 ]

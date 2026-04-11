@@ -193,11 +193,11 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             default="kimi-k2.5",
         ).ask()
 
-        temp_str = self.questionary.text("Temperature [0.7]:", default="0.7").ask()
+        temp_str = self.questionary.text("Temperature [1.0]:", default="1.0").ask()
         try:
-            temperature = float(temp_str or "0.7")
+            temperature = float(temp_str or "1.0")
         except ValueError:
-            temperature = 0.7
+            temperature = 1.0
 
         # Step 3: Docker Config
         self.console.print("\n[bold]步骤 3/5: Docker 配置[/bold]\n")

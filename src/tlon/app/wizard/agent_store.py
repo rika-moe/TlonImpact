@@ -2,18 +2,16 @@
 
 Handles loading, saving, and managing Agent configurations
 from individual YAML files in config/agents/ directory.
-
-This module is a thin wrapper around ConfigLoader/ConfigSaver
-with additional convenience methods for agent management.
 """
 
 from pathlib import Path
 
-from tlon.base.config.loader import ConfigLoader
-from tlon.base.config.models import AgentConfig
-from tlon.base.config.saver import ConfigSaver
-from tlon.base.config.validator import ConfigValidator
+import yaml
+from pydantic import ValidationError
+
+from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
+from tlon.base.settings import get_default_config_dir, get_default_data_dir
 
 logger = get_logger(__name__)
 
@@ -21,14 +19,11 @@ logger = get_logger(__name__)
 class AgentStore:
     """Store for managing Agent configurations.
 
-    A thin wrapper around ConfigLoader/ConfigSaver that provides
-    CRUD operations with reference management.
+    Provides CRUD operations for agent YAML files.
 
     Attributes:
         agents_dir: Directory containing agent YAML files
         data_dir: Base directory for agent data storage
-        _loader: ConfigLoader instance for loading
-        _saver: ConfigSaver instance for saving
     """
 
     def __init__(self, agents_dir: str | None = None, data_dir: str | None = None):
@@ -40,32 +35,44 @@ class AgentStore:
             data_dir: Base directory for agent data storage.
                 Defaults to $TLON_HOME/data.
         """
-        from tlon.base.settings import get_default_config_dir, get_default_data_dir
-
         cfg = get_default_config_dir()
         resolved_agents_dir = agents_dir if agents_dir is not None else str(cfg / "agents")
         resolved_data_dir = data_dir if data_dir is not None else str(get_default_data_dir())
 
         self.agents_dir = Path(resolved_agents_dir)
         self.data_dir = Path(resolved_data_dir)
-        self._loader = ConfigLoader(agents_dir=resolved_agents_dir)
-        self._saver = ConfigSaver(agents_dir=resolved_agents_dir, data_dir=resolved_data_dir)
         self._ensure_directory()
 
     def _ensure_directory(self) -> None:
         """Ensure the agents directory exists."""
         self.agents_dir.mkdir(parents=True, exist_ok=True)
 
-    def load_all_agents(self, force_reload: bool = False) -> dict[str, AgentConfig]:
-        """Load all agents from YAML files.
+    def _load_agent_file(self, filepath: Path) -> AgentConfig | None:
+        """Load a single agent from YAML file."""
+        try:
+            data = yaml.safe_load(filepath.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or "agent" not in data:
+                return None
+            return AgentConfig.model_validate(data["agent"])
+        except (yaml.YAMLError, ValidationError, Exception) as e:
+            logger.warning(f"Failed to load agent from {filepath}: {e}")
+            return None
 
-        Args:
-            force_reload: Force reload from disk even if cached
+    def load_all_agents(self) -> dict[str, AgentConfig]:
+        """Load all agents from YAML files.
 
         Returns:
             Dictionary mapping agent ID to AgentConfig object
         """
-        return self._loader.load_all_agents(force_reload=force_reload)
+        agents: dict[str, AgentConfig] = {}
+        if not self.agents_dir.exists():
+            return agents
+
+        for yaml_file in self.agents_dir.glob("*.yaml"):
+            agent = self._load_agent_file(yaml_file)
+            if agent:
+                agents[agent.id] = agent
+        return agents
 
     def get_agent(self, agent_id: str) -> AgentConfig | None:
         """Get an agent by ID.
@@ -76,7 +83,10 @@ class AgentStore:
         Returns:
             AgentConfig object or None if not found
         """
-        return self._loader.load_agent(agent_id)
+        filepath = self.agents_dir / f"{agent_id}.yaml"
+        if not filepath.exists():
+            return None
+        return self._load_agent_file(filepath)
 
     def get_agent_by_name(self, name: str) -> AgentConfig | None:
         """Get an agent by name.
@@ -87,12 +97,13 @@ class AgentStore:
         Returns:
             AgentConfig object or None if not found
         """
-        return self._loader.load_agent_by_name(name)
+        for agent in self.load_all_agents().values():
+            if agent.name == name:
+                return agent
+        return None
 
     def save_agent(self, agent: AgentConfig) -> tuple[bool, str]:
         """Save an agent to YAML file.
-
-        Uses ConfigSaver for the actual save operation.
 
         Args:
             agent: AgentConfig to save
@@ -100,7 +111,19 @@ class AgentStore:
         Returns:
             Tuple of (success, message)
         """
-        return self._saver.save_agent(agent, create_data_dir=True)
+        try:
+            self._ensure_directory()
+            data = {"agent": agent.model_dump(exclude_none=True)}
+            filepath = self.agents_dir / f"{agent.id}.yaml"
+            filepath.write_text(
+                yaml.dump(data, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+            # Create data directory
+            agent.get_data_dir(self.data_dir)
+            return True, f"Agent saved to {filepath}"
+        except Exception as e:
+            return False, f"Failed to save agent: {e}"
 
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> tuple[bool, str]:
         """Delete an agent.
@@ -112,7 +135,23 @@ class AgentStore:
         Returns:
             Tuple of (success, message)
         """
-        return self._saver.delete_agent(agent_id, delete_data=delete_data)
+        try:
+            filepath = self.agents_dir / f"{agent_id}.yaml"
+            if not filepath.exists():
+                return False, f"Agent '{agent_id}' not found"
+
+            filepath.unlink()
+
+            if delete_data:
+                import shutil
+
+                agent_data_dir = self.data_dir / "agents" / agent_id
+                if agent_data_dir.exists():
+                    shutil.rmtree(agent_data_dir)
+
+            return True, f"Agent '{agent_id}' deleted"
+        except Exception as e:
+            return False, f"Failed to delete agent: {e}"
 
     def agent_exists(self, agent_id: str) -> bool:
         """Check if an agent exists.
@@ -138,7 +177,13 @@ class AgentStore:
         if existing_ids is None:
             existing_ids = list(self.load_all_agents().keys())
 
-        return self._saver.generate_agent_id(prefix, existing_ids)
+        prefix = prefix.replace("_", "-")
+        counter = 1
+        while True:
+            agent_id = f"{prefix}-{counter:03d}"
+            if agent_id not in existing_ids:
+                return agent_id
+            counter += 1
 
     def validate_agent_data(self, data: dict) -> tuple[bool, list[str]]:
         """Validate agent data.
@@ -149,7 +194,12 @@ class AgentStore:
         Returns:
             Tuple of (is_valid, list_of_errors)
         """
-        return ConfigValidator.validate_agent_data(data)
+        try:
+            AgentConfig.model_validate(data)
+            return True, []
+        except ValidationError as e:
+            errors = [f"{err['loc']}: {err['msg']}" for err in e.errors()]
+            return False, errors
 
 
 __all__ = ["AgentStore"]

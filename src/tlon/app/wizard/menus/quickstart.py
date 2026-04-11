@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, RoleConfig
 
 from ..agent_store import AgentStore
-from ..validators import APIValidator, ConfigValidator, EnvironmentChecker
+from ..validators import APIValidator, EnvironmentChecker
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -236,14 +236,16 @@ class QuickstartWizard:
 
         # Temperature
         temp_str = self.questionary.text(
-            "Temperature [0.7]:",
-            default="0.7",
+            "Temperature [1.0]:",
+            default="1.0",
         ).ask()
 
-        valid, temp, _ = ConfigValidator.validate_temperature(temp_str or "0.7")
-        if not valid:
-            temp = 0.7
-
+        try:
+            temp = float(temp_str or "1.0")
+            if not 0 <= temp <= 2:
+                temp = 1.0
+        except ValueError:
+            temp = 1.0
         return {
             "base_url": base_url,
             "api_key": api_key,
@@ -317,7 +319,7 @@ class QuickstartWizard:
                 name=member["name"],
                 personality=member["personality"],
                 role=role,
-                llm=LLMConfig(model_name=default_model, temperature=0.7),
+                llm=LLMConfig(model_name=default_model, temperature=1.0),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
                 skills=[],
                 proactive=member["proactive"],
@@ -384,7 +386,7 @@ class QuickstartWizard:
                 name=name,
                 personality=member["personality"],
                 role=role,
-                llm=LLMConfig(model_name=default_model, temperature=0.7),
+                llm=LLMConfig(model_name=default_model, temperature=1.0),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
                 skills=[],
                 proactive=member["proactive"],

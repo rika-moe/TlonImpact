@@ -7,8 +7,7 @@ container with everything needed to construct a system prompt.
 from dataclasses import dataclass, field
 from typing import Any
 
-from tlon.base.config.models import AgentConfig
-from tlon.base.config.prompts import PromptTemplateManager
+from tlon.base.config import AgentConfig, PromptTemplates
 
 
 @dataclass
@@ -23,12 +22,12 @@ class AgentPromptContext:
         team_members: Configs of all other agents in the team.
         tool_definitions: OpenAI-format tool definitions from ToolExecutor.
         memory_blocks: Pre-fetched memory context blocks.
-        prompt_manager: Template manager for workflow and important_notes sections.
+        templates: Merged prompt templates for this agent.
     """
 
     config: AgentConfig
     team_members: list[AgentConfig]
     tool_definitions: list[dict[str, Any]]
     memory_blocks: list
-    prompt_manager: PromptTemplateManager
+    templates: PromptTemplates
     extra: dict[str, Any] = field(default_factory=dict)

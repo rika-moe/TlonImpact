@@ -12,7 +12,7 @@ import pytest
 
 from tlon.agents.agent_registry import AgentRegistry, _build_llm_config
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.base.config.models import AgentConfig, LLMConfig
+from tlon.base.config import AgentConfig, LLMConfig
 
 
 class MockSettings:
@@ -55,7 +55,7 @@ class TestBuildLLMConfig:
 
         # Default values from LLMConfig()
         assert result.model_name == "kimi-k2.5"
-        assert result.temperature == 0.7
+        assert result.temperature == 1.0
         assert result.max_tokens == 4096
 
         # Settings still applied

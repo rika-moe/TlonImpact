@@ -15,7 +15,7 @@ from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.react_state_machine import ReActContext, ReActStateMachine
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, PromptTemplateManager
+from tlon.base.config import AgentConfig, PromptTemplates
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -67,7 +67,7 @@ class Agent(Component, Device):
         docker_runtime: DockerRuntime,
         memory: MemoryManager,
         task_manager: TaskManager,
-        prompt_manager: PromptTemplateManager,
+        templates: PromptTemplates,
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
@@ -83,7 +83,7 @@ class Agent(Component, Device):
             docker_runtime: Docker sandbox for bash tool execution
             memory: Memory manager for long-term storage
             task_manager: Task manager for task tracking
-            prompt_manager: Template manager for system prompt sections
+            templates: Prompt templates for system prompt sections
             tool_executor: Executor holding registered tools (Component)
             team_members: List of all team member configs (including inactive ones)
             message_store: Message store for querying history
@@ -106,7 +106,7 @@ class Agent(Component, Device):
         self.docker_runtime = docker_runtime
         self.memory = memory
         self.task_manager = task_manager
-        self._prompt_manager = prompt_manager
+        self._templates = templates
         self.tool_executor = tool_executor
 
         # Tool execution timeout settings
@@ -616,7 +616,7 @@ class Agent(Component, Device):
             team_members=self.team_members,
             tool_definitions=self.tool_executor.get_tool_definitions(),
             memory_blocks=memory_blocks,
-            prompt_manager=self._prompt_manager,
+            templates=self._templates,
         )
 
     async def _get_system_prompt(self) -> str:

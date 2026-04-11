@@ -173,7 +173,9 @@ class SystemPromptBuilder:
 
     def build_guidelines(self) -> str:
         parts = [self.build_discipline_rules()]
-        workflow = self.context.prompt_manager.build_workflow_prompt(role=self._config.role)
+        workflow = f"""## 工作流程
+
+{self.context.templates.workflow}"""
         parts.append(workflow)
         return "\n\n".join(parts)
 
@@ -186,7 +188,9 @@ class SystemPromptBuilder:
         return PromptSection("## 工具说明", "\n".join(lines)).render()
 
     def build_important_notes(self) -> str:
-        return self.context.prompt_manager.build_important_notes_prompt(role=self._config.role)
+        return f"""## 重要提示
+
+{self.context.templates.important_notes}"""
 
     def build_mention_guide(self) -> str:
         notes = [

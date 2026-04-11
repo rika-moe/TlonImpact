@@ -13,7 +13,7 @@ import pytest
 
 from tlon.agents.agent import Agent
 from tlon.agents.llm_client import ToolCall
-from tlon.base.config.models import AgentConfig
+from tlon.base.config import AgentConfig, PromptTemplates
 
 
 def _make_agent():
@@ -34,7 +34,7 @@ def _make_agent():
         docker_runtime=MagicMock(),
         memory=memory,
         task_manager=MagicMock(),
-        prompt_manager=MagicMock(),
+        templates=PromptTemplates(),
         tool_executor=tool_executor,
     )
 

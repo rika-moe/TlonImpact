@@ -22,7 +22,7 @@ from tlon.agents.agent import Agent
 from tlon.agents.llm_client import LLMClient
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, ConfigLoader, LLMConfig, PromptTemplateManager
+from tlon.base.config import AgentConfig, LLMConfig, PromptTemplates
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
@@ -46,7 +46,7 @@ from tlon.tools.tasks.remove_task import RemoveTaskTool
 from tlon.tools.tasks.start_task import StartTaskTool
 
 if TYPE_CHECKING:
-    from tlon.base.config.agent_info import AgentInfoProvider
+    from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
 
@@ -247,7 +247,21 @@ class AgentRegistry(Component):
                 data_dir=str(data_dir),
             )
 
-            prompt_manager = PromptTemplateManager(ConfigLoader())
+            # Load templates for this agent
+            from tlon.base.settings import get_default_config_dir
+
+            config_dir = get_default_config_dir()
+            templates_data = {}
+            templates_file = config_dir / "prompt_templates.yaml"
+            if templates_file.exists():
+                import yaml
+
+                data = yaml.safe_load(templates_file.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and "templates" in data:
+                    templates_data = data["templates"]
+            templates = PromptTemplates.model_validate(templates_data)
+            if config.role and config.role.prompt_overrides:
+                templates = templates.merge_with_overrides(config.role.prompt_overrides)
 
             # Create ToolExecutor (EventBus-based async)
             tool_executor = ToolExecutor(self.event_bus)
@@ -291,7 +305,7 @@ class AgentRegistry(Component):
                 docker_runtime=docker_runtime,
                 memory=memory,
                 task_manager=task_manager,
-                prompt_manager=prompt_manager,
+                templates=templates,
                 tool_executor=tool_executor,
                 team_members=team_members,
                 message_store=self.message_store,

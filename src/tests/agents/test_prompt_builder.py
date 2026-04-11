@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
-from tlon.base.config.models import AgentConfig, RoleConfig
+from tlon.base.config import AgentConfig, PromptTemplates, RoleConfig
 
 
 def _make_config(agent_id="a-001", name="林知遥", role=None):
@@ -16,16 +16,18 @@ def _make_tool_def(name, description):
 
 
 def _make_context(config=None, tool_definitions=None, memory_blocks=None, team_members=None):
-    prompt_manager = MagicMock()
-    prompt_manager.build_workflow_prompt.return_value = "workflow text"
-    prompt_manager.build_important_notes_prompt.return_value = "notes text"
+    templates = PromptTemplates(
+        workflow="workflow text",
+        important_notes="notes text",
+        discipline_rules="rules text",
+    )
 
     return AgentPromptContext(
         config=config or _make_config(),
         team_members=team_members or [],
         tool_definitions=tool_definitions or [],
         memory_blocks=memory_blocks or [],
-        prompt_manager=prompt_manager,
+        templates=templates,
     )
 
 

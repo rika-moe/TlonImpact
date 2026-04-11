@@ -13,14 +13,20 @@ Usage:
     $ tlon mirror           # Run configuration wizard
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import signal
 import sys
+from typing import TYPE_CHECKING
 
 from tlon.app.wizard import Wizard
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.settings import settings
+
+if TYPE_CHECKING:
+    from tlon.base.config import AgentConfig
 
 logger = get_logger(__name__)
 
@@ -322,12 +328,101 @@ async def run_mirror(args) -> int:
         return 1
 
 
+def _load_all_agents() -> dict[str, AgentConfig]:
+    """Load all agents from YAML files."""
+
+    import yaml
+
+    from tlon.base.config import AgentConfig
+    from tlon.base.logger import get_logger
+    from tlon.base.settings import get_default_config_dir
+
+    logger = get_logger(__name__)
+    agents_dir = get_default_config_dir() / "agents"
+    agents: dict[str, AgentConfig] = {}
+
+    if not agents_dir.exists():
+        return agents
+
+    for yaml_file in agents_dir.glob("*.yaml"):
+        try:
+            data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "agent" in data:
+                agent = AgentConfig.model_validate(data["agent"])
+                agents[agent.id] = agent
+        except Exception as e:
+            logger.warning(f"Failed to load agent from {yaml_file}: {e}")
+
+    return agents
+
+
+def _load_agent(agent_id: str) -> AgentConfig | None:
+    """Load a specific agent by ID."""
+
+    import yaml
+
+    from tlon.base.config import AgentConfig
+    from tlon.base.logger import get_logger
+    from tlon.base.settings import get_default_config_dir
+
+    logger = get_logger(__name__)
+    filepath = get_default_config_dir() / "agents" / f"{agent_id}.yaml"
+    if not filepath.exists():
+        return None
+
+    try:
+        data = yaml.safe_load(filepath.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and "agent" in data:
+            return AgentConfig.model_validate(data["agent"])
+    except Exception as e:
+        logger.warning(f"Failed to load agent {agent_id}: {e}")
+    return None
+
+
+def _save_agent(agent: AgentConfig) -> None:
+    """Save an agent to YAML file."""
+
+    import yaml
+
+    from tlon.base.settings import get_default_config_dir, get_default_data_dir
+
+    agents_dir = get_default_config_dir() / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    data = {"agent": agent.model_dump(exclude_none=True)}
+    filepath = agents_dir / f"{agent.id}.yaml"
+    filepath.write_text(
+        yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2),
+        encoding="utf-8",
+    )
+
+    # Create data directory
+    data_dir = get_default_data_dir()
+    agent.get_data_dir(data_dir)
+
+
+def _delete_agent(agent_id: str) -> None:
+    """Delete an agent."""
+
+    from tlon.base.settings import get_default_config_dir, get_default_data_dir
+
+    filepath = get_default_config_dir() / "agents" / f"{agent_id}.yaml"
+    if not filepath.exists():
+        raise ValueError(f"Agent '{agent_id}' not found")
+
+    filepath.unlink()
+
+    # Delete data directory
+    import shutil
+
+    agent_data_dir = get_default_data_dir() / "agents" / agent_id
+    if agent_data_dir.exists():
+        shutil.rmtree(agent_data_dir)
+
+
 async def _mirror_reflect() -> int:
     """List all existing agents (view mirrors)."""
-    from tlon.base.config import ConfigLoader
-
-    config_loader = ConfigLoader()
-    agents = config_loader.load_all_agents()
+    agents = _load_all_agents()
 
     if not agents:
         print("\n🪞 镜中尚无倒影")
@@ -355,28 +450,19 @@ async def _mirror_reflect() -> int:
 
 async def _mirror_destroy(name: str) -> int:
     """Destroy an agent."""
-    from tlon.base.config import ConfigSaver
-
-    config_saver = ConfigSaver()
-
-    # Check if agent exists first
-    from tlon.base.config import ConfigLoader
-
-    config_loader = ConfigLoader()
-    agent = config_loader.load_agent(name)
+    agent = _load_agent(name)
 
     if not agent:
         print(f"\n❌ 镜中没有名为 '{name}' 的倒影")
         return 1
 
-    success, error = config_saver.delete_agent(name, delete_data=True)
-
-    if success:
+    try:
+        _delete_agent(name)
         print("\n🪞 倒影已消散")
         print(f"   Agent '{name}' 已被移除")
         return 0
-    else:
-        print(f"\n❌ 无法消散倒影: {error}")
+    except Exception as e:
+        print(f"\n❌ 无法消散倒影: {e}")
         return 1
 
 
@@ -384,8 +470,6 @@ async def _mirror_create(name: str) -> int:
     """Create an agent non-interactively."""
     from tlon.base.config import (
         AgentConfig,
-        ConfigLoader,
-        ConfigSaver,
         DockerRuntimeConfig,
         LLMConfig,
     )
@@ -395,14 +479,10 @@ async def _mirror_create(name: str) -> int:
     agent_id = _generate_agent_id(name)
 
     # Check if agent already exists
-    config_loader = ConfigLoader()
-    existing = config_loader.load_agent(agent_id)
+    existing = _load_agent(agent_id)
     if existing:
         print(f"\n❌ Agent '{agent_id}' 已存在")
         return 1
-
-    # Create agent config using ConfigSaver
-    config_saver = ConfigSaver()
 
     agent_config = AgentConfig(
         id=agent_id,
@@ -411,7 +491,7 @@ async def _mirror_create(name: str) -> int:
         skills=[],
         llm=LLMConfig(
             model_name=settings.llm_model_name or "kimi-k2.5",
-            temperature=settings.llm_temperature or 0.7,
+            temperature=settings.llm_temperature or 1.0,
             base_url=settings.llm_base_url,
             auth_token=settings.llm_api_key,
         ),
@@ -422,18 +502,14 @@ async def _mirror_create(name: str) -> int:
     )
 
     # Save agent config
-    success, error = config_saver.save_agent(agent_config)
+    _save_agent(agent_config)
 
-    if success:
-        print("\n🪞 倒影已凝聚")
-        print(f"   ID: {agent_id}")
-        print(f"   名称: {name}")
-        print(f"   配置: config/agents/{agent_id}.yaml")
-        print("\n   [镜子] 轮廓凝聚，一个新的存在睁开眼睛。")
-        return 0
-    else:
-        print(f"\n❌ 创建失败: {error}")
-        return 1
+    print("\n🪞 倒影已凝聚")
+    print(f"   ID: {agent_id}")
+    print(f"   名称: {name}")
+    print(f"   配置: config/agents/{agent_id}.yaml")
+    print("\n   [镜子] 轮廓凝聚，一个新的存在睁开眼睛。")
+    return 0
 
 
 def _generate_agent_id(name: str) -> str:
@@ -458,18 +534,17 @@ async def _mirror_edit(name: str) -> int:
     import os
     import subprocess
 
-    from tlon.base.config import ConfigLoader
+    from tlon.base.settings import get_default_config_dir
 
-    # Find agent file
-    config_loader = ConfigLoader()
-    agent = config_loader.load_agent(name)
+    # Find agent
+    agent = _load_agent(name)
 
     if not agent:
         print(f"\n❌ 镜中没有名为 '{name}' 的倒影")
         return 1
 
     # Get agent file path
-    agent_file = config_loader.agents_dir / f"{agent.id}.yaml"
+    agent_file = get_default_config_dir() / "agents" / f"{agent.id}.yaml"
 
     # Get editor from environment or use defaults
     editor = os.environ.get("EDITOR", "vi")

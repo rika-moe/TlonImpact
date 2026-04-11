@@ -34,7 +34,7 @@ from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 
 if TYPE_CHECKING:
-    from tlon.base.config.agent_info import AgentInfoProvider
+    from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
 
