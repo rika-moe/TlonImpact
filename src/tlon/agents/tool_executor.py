@@ -1,42 +1,50 @@
-"""Tool Executor for Agents.
+"""Tool Executor - EventBus-based async tool execution.
 
-Manages tool registration and execution.
-A pure service with no EventBus dependency — the owning Agent
-is responsible for publishing observability events around execute().
+Manages tool registration and execution via EventBus.
+Subscribes to TOOL_EXECUTE_REQUEST events and publishes TOOL_EXECUTE_RESULT events.
 """
 
+import warnings
 from typing import Any
 
+from tlon.agents.tool_execution import ToolExecuteRequest, ToolExecuteResult
+from tlon.base.component import Component
+from tlon.base.events.event import Event, EventType
+from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.subsystem.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 
 
-class ToolExecutor:
-    """Executor for agent tools.
+class ToolExecutor(Component):
+    """Tool executor that runs as an independent EventBus consumer.
 
-    Manages tool registration and execution. Tools can be registered
-    at initialization or dynamically added.
+    Subscribes to TOOL_EXECUTE_REQUEST events, executes tools,
+    and publishes TOOL_EXECUTE_RESULT events.
 
-    This is a Non-Device: it holds no EventBus reference.
-    The Agent (Device) that owns this executor is responsible for
-    publishing tool observability events.
+    Can be deployed in a separate process for:
+    - Resource isolation (Docker containers)
+    - Shared resource pool (limit concurrent containers)
+    - Scaling (multiple executor instances)
 
     Example:
-        >>> executor = ToolExecutor()
+        >>> executor = ToolExecutor(event_bus)
         >>> executor.register_tool(ExecuteBashTool(docker_runtime))
-        >>>
-        >>> # Get tool definitions for LLM
-        >>> tool_defs = executor.get_tool_definitions()
-        >>>
-        >>> # Execute a tool
-        >>> result = await executor.execute("executeBashCommand", {"command": "ls"})
+        >>> await executor.initialize()
+        >>> # Now listens for TOOL_EXECUTE_REQUEST events
     """
 
-    def __init__(self):
-        """Initialize the tool executor."""
+    def __init__(self, event_bus: EventBus):
+        """Initialize the tool executor.
+
+        Args:
+            event_bus: Event bus for receiving requests and sending results
+        """
+        super().__init__(name="ToolExecutor")
+        self.event_bus = event_bus
         self._tools: dict[str, Tool] = {}
+        self._subscription_id: str | None = None
 
     def register_tool(self, tool: Tool) -> None:
         """Register a tool.
@@ -118,8 +126,23 @@ class ToolExecutor:
         """
         return list(self._tools.keys())
 
+    def has_tool(self, tool_name: str) -> bool:
+        """Check if a tool is registered.
+
+        Args:
+            tool_name: Name of the tool
+
+        Returns:
+            True if tool is registered
+        """
+        return tool_name in self._tools
+
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Execute a tool.
+        """Execute a tool directly (for testing/backward compatibility).
+
+        Warning: This method bypasses EventBus and should only be used for testing.
+        In production, tools should be executed via EventBus by publishing
+        TOOL_EXECUTE_REQUEST events.
 
         Args:
             tool_name: Name of the tool to execute
@@ -131,6 +154,11 @@ class ToolExecutor:
         Raises:
             ValueError: If tool not found
         """
+        warnings.warn(
+            "Direct execute() bypasses EventBus; use for testing only",
+            UserWarning,
+            stacklevel=2,
+        )
         tool = self.get_tool(tool_name)
         logger.debug(f"Executing tool: {tool_name} with args: {arguments}")
 
@@ -142,13 +170,96 @@ class ToolExecutor:
             logger.error(f"Tool {tool_name} execution failed: {e}", exc_info=True)
             return ToolResult(success=False, data={}, error=f"Execution error: {str(e)}")
 
-    def has_tool(self, tool_name: str) -> bool:
-        """Check if a tool is registered.
+    async def initialize(self) -> None:
+        """Initialize the executor and subscribe to events."""
+        logger.info("Initializing ToolExecutor...")
+
+        self._subscription_id = self.event_bus.subscribe(
+            EventType.TOOL_EXECUTE_REQUEST, self._on_tool_execute_request
+        )
+
+        logger.info(
+            f"ToolExecutor ready, listening for TOOL_EXECUTE_REQUEST events "
+            f"({len(self.list_tools())} tools registered)"
+        )
+
+    async def shutdown(self) -> None:
+        """Shutdown the executor and unsubscribe from events."""
+        logger.info("Shutting down ToolExecutor...")
+
+        if self._subscription_id:
+            self.event_bus.unsubscribe(self._subscription_id)
+            self._subscription_id = None
+
+        logger.info("ToolExecutor shutdown complete")
+
+    async def _on_tool_execute_request(self, event: Event) -> None:
+        """Handle tool execution request.
 
         Args:
-            tool_name: Name of the tool
-
-        Returns:
-            True if tool is registered
+            event: TOOL_EXECUTE_REQUEST event
         """
-        return tool_name in self._tools
+        try:
+            # Handle both dict payload and dataclass payload
+            payload = event.payload
+            if isinstance(payload, ToolExecuteRequest):
+                request = payload
+            elif isinstance(payload, dict):
+                request = ToolExecuteRequest(**payload)
+            else:
+                logger.error(f"Unexpected payload type: {type(payload)}")
+                return
+        except (TypeError, KeyError) as e:
+            logger.error(f"Invalid tool execute request payload: {e}")
+            return
+
+        logger.debug(
+            f"Received tool execution request: {request.tool_name} "
+            f"(correlation_id={request.correlation_id})"
+        )
+
+        # Execute the tool
+        try:
+            result = await self.execute(request.tool_name, request.arguments)
+
+            # Publish success result
+            result_payload = ToolExecuteResult(
+                correlation_id=request.correlation_id,
+                agent_id=request.agent_id,
+                success=result.success,
+                result=result.to_dict()
+                if hasattr(result, "to_dict")
+                else {"data": result.data, "error": result.error},
+                error=result.error,
+            )
+
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.TOOL_EXECUTE_RESULT,
+                    payload=result_payload,
+                    source="tool_executor",
+                )
+            )
+
+            logger.debug(
+                f"Tool execution completed: {request.tool_name} (success={result.success})"
+            )
+
+        except Exception as e:
+            logger.error(f"Tool execution failed: {e}", exc_info=True)
+
+            # Publish error result
+            result_payload = ToolExecuteResult(
+                correlation_id=request.correlation_id,
+                agent_id=request.agent_id,
+                success=False,
+                error=str(e),
+            )
+
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.TOOL_EXECUTE_RESULT,
+                    payload=result_payload,
+                    source="tool_executor",
+                )
+            )

@@ -19,7 +19,6 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from tlon.agents.agent import Agent
-from tlon.agents.eventbus_tool_executor import EventBusToolExecutor
 from tlon.agents.llm_client import LLMClient
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
@@ -250,15 +249,8 @@ class AgentRegistry(Component):
 
             prompt_manager = PromptTemplateManager(ConfigLoader())
 
-            # Check if EventBus tool execution is enabled (Phase 3)
-            use_eventbus_tools = getattr(settings, "ENABLE_EVENTBUS_TOOLS", False)
-
-            if use_eventbus_tools:
-                # Phase 3: Use EventBusToolExecutor (shared, async)
-                tool_executor = EventBusToolExecutor(self.event_bus)
-            else:
-                # Phase 2: Use synchronous ToolExecutor
-                tool_executor = ToolExecutor()
+            # Create ToolExecutor (EventBus-based async)
+            tool_executor = ToolExecutor(self.event_bus)
 
             # Register tools
             tool_executor.register_tool(ExecuteBashTool(docker_runtime))
@@ -276,9 +268,8 @@ class AgentRegistry(Component):
             tool_executor.register_tool(GetCurrentTaskTool(task_manager))
             logger.debug(f"Registered {len(tool_executor.list_tools())} tools for {config.name}")
 
-            # Initialize EventBusToolExecutor if in Phase 3 mode
-            if use_eventbus_tools and isinstance(tool_executor, EventBusToolExecutor):
-                await tool_executor.initialize()
+            # Initialize ToolExecutor
+            await tool_executor.initialize()
 
             # Prepare team members config (all other agents)
             all_ids = self._agent_info.get_all_ids()
@@ -304,7 +295,6 @@ class AgentRegistry(Component):
                 tool_executor=tool_executor,
                 team_members=team_members,
                 message_store=self.message_store,
-                use_eventbus_tools=use_eventbus_tools,
                 total_tool_timeout=total_tool_timeout,
                 per_tool_timeout=per_tool_timeout,
             )

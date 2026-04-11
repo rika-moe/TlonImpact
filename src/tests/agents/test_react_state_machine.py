@@ -4,10 +4,11 @@ Verifies explicit state machine behavior:
 - State transitions
 - AGENT_REACT_STATE_TRANSITION event emission
 - Terminal states (COMPLETED, MAX_ITERATIONS, ERROR)
-- Tool execution flow
+- Tool execution flow via EventBus
 - Error recovery
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from tlon.agents.llm_client import LLMResponse, ToolCall
@@ -17,7 +18,7 @@ from tlon.agents.react_state_machine import (
     ReActStateMachine,
     StateTransition,
 )
-from tlon.base.events.event import EventType
+from tlon.base.events.event import Event, EventType
 from tlon.subsystem.tools.base import ToolResult
 
 
@@ -37,20 +38,62 @@ class MockLLMClient:
         return LLMResponse(content="Default response", finish_reason="stop")
 
 
-class MockToolExecutor:
-    """Mock tool executor."""
+class MockEventBus:
+    """Mock EventBus that can handle tool execution."""
 
-    def __init__(self, results: dict[str, ToolResult] | None = None):
-        self.results = results or {}
-        self.call_count = 0
-        self.executed_tools: list[tuple[str, dict]] = []
+    def __init__(self, tool_results: dict[str, ToolResult] | None = None):
+        self.tool_results = tool_results or {}
+        self.subscribers: dict[EventType, list] = {}
+        self.published_events: list[Event] = []
+        self.publish = AsyncMock(side_effect=self._handle_publish)
+        self.subscribe = MagicMock(side_effect=self._handle_subscribe)
+        self.unsubscribe = MagicMock()
 
-    async def execute(self, tool_name: str, arguments: dict) -> ToolResult:
-        self.call_count += 1
-        self.executed_tools.append((tool_name, arguments))
-        return self.results.get(
-            tool_name, ToolResult(success=True, data={"result": f"mock_{tool_name}"})
-        )
+    def _handle_subscribe(self, event_type: EventType, handler):
+        if event_type not in self.subscribers:
+            self.subscribers[event_type] = []
+        sub_id = f"sub-{len(self.subscribers[event_type])}"
+        self.subscribers[event_type].append((sub_id, handler))
+        return sub_id
+
+    async def _handle_publish(self, event: Event):
+        self.published_events.append(event)
+
+        # If this is a tool execution request, auto-respond with mock result
+        if event.type == EventType.TOOL_EXECUTE_REQUEST:
+            from tlon.agents.tool_execution import ToolExecuteRequest, ToolExecuteResult
+
+            payload = event.payload
+            if isinstance(payload, dict):
+                payload = ToolExecuteRequest(**payload)
+
+            tool_name = payload.tool_name
+            result = self.tool_results.get(
+                tool_name, ToolResult(success=True, data={"result": f"mock_{tool_name}"})
+            )
+
+            # Schedule result to be published
+            result_event = Event(
+                type=EventType.TOOL_EXECUTE_RESULT,
+                payload=ToolExecuteResult(
+                    correlation_id=payload.correlation_id,
+                    agent_id=payload.agent_id,
+                    success=result.success,
+                    result=result.to_dict()
+                    if hasattr(result, "to_dict")
+                    else {"data": result.data, "error": result.error},
+                    error=result.error,
+                ),
+                source="mock_tool_executor",
+            )
+
+            # Immediately notify subscribers
+            if EventType.TOOL_EXECUTE_RESULT in self.subscribers:
+                for _, handler in self.subscribers[EventType.TOOL_EXECUTE_RESULT]:
+                    if asyncio.iscoroutinefunction(handler):
+                        await handler(result_event)
+                    else:
+                        handler(result_event)
 
     def get_tool_definitions(self) -> list[dict]:
         return [
@@ -74,21 +117,20 @@ def _make_context(messages: list | None = None, **kwargs) -> ReActContext:
 
 def _make_state_machine(
     llm_client=None,
-    tool_executor=None,
     event_bus=None,
     send_message_callback=None,
     save_to_memory_callback=None,
     **kwargs,
 ) -> ReActStateMachine:
     """Create a ReActStateMachine with mocks."""
+    event_bus = event_bus or MockEventBus()
     return ReActStateMachine(
         agent_id="a-001",
         agent_name="TestAgent",
         llm_client=llm_client or MockLLMClient(),
-        tool_executor=tool_executor or MockToolExecutor(),
-        event_bus=event_bus or AsyncMock(),
+        event_bus=event_bus,
         system_prompt_provider=lambda: "system prompt",
-        tool_defs_provider=lambda: [],
+        tool_defs_provider=event_bus.get_tool_definitions,
         send_message_callback=send_message_callback or AsyncMock(),
         save_to_memory_callback=save_to_memory_callback or AsyncMock(),
         **kwargs,
@@ -118,7 +160,7 @@ class TestReActStateMachineBasics:
                 )
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {"completeDialog": ToolResult(success=True, data={"content": "Done!", "mentions": []})}
         )
         send_msg = AsyncMock()
@@ -126,7 +168,7 @@ class TestReActStateMachineBasics:
 
         sm = _make_state_machine(
             llm_client=llm,
-            tool_executor=tools,
+            event_bus=event_bus,
             send_message_callback=send_msg,
             save_to_memory_callback=save_memory,
         )
@@ -152,12 +194,12 @@ class TestReActStateMachineBasics:
                 for i in range(15)  # More than max_iterations
             ]
         )
-        tools = MockToolExecutor()
+        event_bus = MockEventBus()
         send_msg = AsyncMock()
 
         sm = _make_state_machine(
             llm_client=llm,
-            tool_executor=tools,
+            event_bus=event_bus,
             send_message_callback=send_msg,
         )
 
@@ -187,11 +229,11 @@ class TestReActStateMachineBasics:
                 ),
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {"completeDialog": ToolResult(success=True, data={"content": "Done!", "mentions": []})}
         )
 
-        sm = _make_state_machine(llm_client=llm, tool_executor=tools)
+        sm = _make_state_machine(llm_client=llm, event_bus=event_bus)
         context = _make_context()
         final_state = await sm.start(context)
 
@@ -204,7 +246,9 @@ class TestReActStateTransitions:
 
     async def test_emits_state_change_events(self):
         """Test that state changes emit AGENT_REACT_STATE_TRANSITION events."""
-        event_bus = AsyncMock()
+        event_bus = MockEventBus(
+            {"completeDialog": ToolResult(success=True, data={"content": "Done!", "mentions": []})}
+        )
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -219,13 +263,9 @@ class TestReActStateTransitions:
                 )
             ]
         )
-        tools = MockToolExecutor(
-            {"completeDialog": ToolResult(success=True, data={"content": "Done!", "mentions": []})}
-        )
 
         sm = _make_state_machine(
             llm_client=llm,
-            tool_executor=tools,
             event_bus=event_bus,
         )
 
@@ -233,15 +273,16 @@ class TestReActStateTransitions:
         await sm.start(context)
 
         # Check that events were published
-        publish_calls = event_bus.publish.call_args_list
-        event_types = [c.args[0].type for c in publish_calls]
+        event_types = [e.type for e in event_bus.published_events]
 
         # Should have state change events
         assert EventType.AGENT_REACT_STATE_TRANSITION in event_types
 
     async def test_state_transition_payload(self):
         """Test state transition event payload structure."""
-        event_bus = AsyncMock()
+        event_bus = MockEventBus(
+            {"completeDialog": ToolResult(success=True, data={"content": "Done!"})}
+        )
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -252,13 +293,9 @@ class TestReActStateTransitions:
                 )
             ]
         )
-        tools = MockToolExecutor(
-            {"completeDialog": ToolResult(success=True, data={"content": "Done!"})}
-        )
 
         sm = _make_state_machine(
             llm_client=llm,
-            tool_executor=tools,
             event_bus=event_bus,
         )
 
@@ -266,17 +303,16 @@ class TestReActStateTransitions:
         await sm.start(context)
 
         # Find state change events
-        state_change_calls = [
-            c
-            for c in event_bus.publish.call_args_list
-            if c.args[0].type == EventType.AGENT_REACT_STATE_TRANSITION
+        state_change_events = [
+            e
+            for e in event_bus.published_events
+            if e.type == EventType.AGENT_REACT_STATE_TRANSITION
         ]
 
-        assert len(state_change_calls) > 0
+        assert len(state_change_events) > 0
 
         # Check payload structure
-        for sc in state_change_calls:
-            event = sc.args[0]
+        for event in state_change_events:
             payload = event.payload
             assert isinstance(payload, StateTransition)
             assert payload.agent_id == "a-001"
@@ -286,7 +322,9 @@ class TestReActStateTransitions:
 
     async def test_state_transition_sequence(self):
         """Test the expected state transition sequence."""
-        event_bus = AsyncMock()
+        event_bus = MockEventBus(
+            {"completeDialog": ToolResult(success=True, data={"content": "Done!"})}
+        )
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -297,13 +335,9 @@ class TestReActStateTransitions:
                 )
             ]
         )
-        tools = MockToolExecutor(
-            {"completeDialog": ToolResult(success=True, data={"content": "Done!"})}
-        )
 
         sm = _make_state_machine(
             llm_client=llm,
-            tool_executor=tools,
             event_bus=event_bus,
         )
 
@@ -311,13 +345,13 @@ class TestReActStateTransitions:
         await sm.start(context)
 
         # Get state transitions in order
-        state_change_calls = [
-            c
-            for c in event_bus.publish.call_args_list
-            if c.args[0].type == EventType.AGENT_REACT_STATE_TRANSITION
+        state_change_events = [
+            e
+            for e in event_bus.published_events
+            if e.type == EventType.AGENT_REACT_STATE_TRANSITION
         ]
 
-        transitions = [c.args[0].payload for c in state_change_calls]
+        transitions = [e.payload for e in state_change_events]
         states = [(t.from_state, t.to_state) for t in transitions]
 
         # Expected sequence (may vary, but should include these key transitions)
@@ -328,7 +362,7 @@ class TestReActStateTransitions:
 
 
 class TestReActToolExecution:
-    """Test tool execution flow."""
+    """Test tool execution flow via EventBus."""
 
     async def test_executes_multiple_tools(self):
         """Test executing multiple tools in one iteration."""
@@ -349,16 +383,19 @@ class TestReActToolExecution:
                 ),
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {"completeDialog": ToolResult(success=True, data={"content": "Done!"})}
         )
 
-        sm = _make_state_machine(llm_client=llm, tool_executor=tools)
+        sm = _make_state_machine(llm_client=llm, event_bus=event_bus)
         context = _make_context()
         await sm.start(context)
 
-        # Should have executed both tools
-        assert len(tools.executed_tools) == 3  # 2 first iteration + 1 second iteration
+        # Check tool requests were published
+        tool_requests = [
+            e for e in event_bus.published_events if e.type == EventType.TOOL_EXECUTE_REQUEST
+        ]
+        assert len(tool_requests) == 3  # 2 first iteration + 1 second iteration
 
     async def test_tool_results_added_to_context(self):
         """Test that tool results are added to the context messages."""
@@ -376,14 +413,14 @@ class TestReActToolExecution:
                 ),
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {
                 "testTool": ToolResult(success=True, data={"value": 42}),
                 "completeDialog": ToolResult(success=True, data={"content": "Done!"}),
             }
         )
 
-        sm = _make_state_machine(llm_client=llm, tool_executor=tools)
+        sm = _make_state_machine(llm_client=llm, event_bus=event_bus)
         context = _make_context()
         await sm.start(context)
 
@@ -408,7 +445,7 @@ class TestReActToolExecution:
                 )
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {
                 "testTool": ToolResult(success=True, data={}),
                 "completeDialog": ToolResult(
@@ -420,7 +457,7 @@ class TestReActToolExecution:
 
         sm = _make_state_machine(
             llm_client=llm,
-            tool_executor=tools,
+            event_bus=event_bus,
             send_message_callback=send_msg,
         )
 
@@ -448,11 +485,11 @@ class TestReActErrorHandling:
                 ),
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {"completeDialog": ToolResult(success=True, data={"content": "Done!"})}
         )
 
-        sm = _make_state_machine(llm_client=llm, tool_executor=tools)
+        sm = _make_state_machine(llm_client=llm, event_bus=event_bus)
         context = _make_context(max_errors=3)
         final_state = await sm.start(context)
 
@@ -494,14 +531,14 @@ class TestReActErrorHandling:
                 ),
             ]
         )
-        tools = MockToolExecutor(
+        event_bus = MockEventBus(
             {
                 "failingTool": ToolResult(success=False, data={}, error="Tool failed!"),
                 "completeDialog": ToolResult(success=True, data={"content": "Done!"}),
             }
         )
 
-        sm = _make_state_machine(llm_client=llm, tool_executor=tools)
+        sm = _make_state_machine(llm_client=llm, event_bus=event_bus)
         context = _make_context()
         final_state = await sm.start(context)
 

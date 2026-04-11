@@ -3,8 +3,7 @@
 Explicit state machine replacing the implicit for-loop in _process_message().
 Makes the ReAct flow observable, testable, and recoverable.
 
-Phase 2: Synchronous tool execution (direct calls)
-Phase 3: Will support EventBus-based async tool execution
+Tool execution is via EventBus for async operation.
 """
 
 import asyncio
@@ -20,7 +19,6 @@ from tlon.agents.tool_execution import (
     ToolExecutionManager,
     ToolTimeoutError,
 )
-from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
@@ -115,8 +113,7 @@ class ReActStateMachine:
     Replaces the implicit for-loop in Agent._process_message() with
     explicit state transitions and observability.
 
-    Phase 2: Tool execution is synchronous (direct calls)
-    Phase 3: AWAITING_TOOL will use EventBus for async execution
+    Tool execution is via EventBus for async operation.
 
     Example:
         >>> context = ReActContext(
@@ -125,7 +122,7 @@ class ReActStateMachine:
         ...     original_message_sender_id="user-001",
         ...     original_message_sender_type="human",
         ... )
-        >>> sm = ReActStateMachine(agent_id="a-001", llm_client=llm, tool_executor=tools, event_bus=bus)
+        >>> sm = ReActStateMachine(agent_id="a-001", llm_client=llm, event_bus=bus)
         >>> await sm.start(context)
         >>> # State machine drives itself through states until COMPLETED/ERROR
     """
@@ -135,13 +132,11 @@ class ReActStateMachine:
         agent_id: str,
         agent_name: str,
         llm_client: LLMClient,
-        tool_executor: ToolExecutor,
         event_bus: EventBus,
         system_prompt_provider: Callable[[], str] | Callable[[], Awaitable[str]],
         tool_defs_provider: Callable[[], list[dict]],
         send_message_callback: Callable[[str, list[str]], Any],
         save_to_memory_callback: Callable[[Any, Any, list], Any],
-        use_eventbus_tools: bool = False,
         total_tool_timeout: float = 60.0,
         per_tool_timeout: float = 30.0,
     ):
@@ -151,26 +146,22 @@ class ReActStateMachine:
             agent_id: Unique identifier for the agent
             agent_name: Human-readable name
             llm_client: LLM client for inference
-            tool_executor: Tool executor for tool calls (sync mode)
-            event_bus: Event bus for publishing state changes
+            event_bus: Event bus for publishing state changes and tool execution
             system_prompt_provider: Callback to get system prompt
             tool_defs_provider: Callback to get tool definitions
             send_message_callback: Callback to send final message
             save_to_memory_callback: Callback to save interaction to memory
-            use_eventbus_tools: If True, use EventBus for async tool execution (Phase 3)
             total_tool_timeout: Total timeout for all tools (deadline mode)
             per_tool_timeout: Timeout for each individual tool
         """
         self.agent_id = agent_id
         self.agent_name = agent_name
         self._llm_client = llm_client
-        self._tool_executor = tool_executor
         self._event_bus = event_bus
         self._get_system_prompt = system_prompt_provider
         self._get_tool_definitions = tool_defs_provider
         self._send_message = send_message_callback
         self._save_to_memory = save_to_memory_callback
-        self._use_eventbus_tools = use_eventbus_tools
         self._total_tool_timeout = total_tool_timeout
         self._per_tool_timeout = per_tool_timeout
 
@@ -178,7 +169,7 @@ class ReActStateMachine:
         self._context: ReActContext | None = None
         self._last_llm_response: LLMResponse | None = None
 
-        # Phase 3: Tool execution over EventBus
+        # Tool execution over EventBus
         self._tool_execution_manager = ToolExecutionManager(default_timeout=per_tool_timeout)
         self._tool_result_subscription: str | None = None
 
@@ -197,11 +188,10 @@ class ReActStateMachine:
         """
         self._context = context
 
-        # Phase 3: Subscribe to tool results if using EventBus tools
-        if self._use_eventbus_tools:
-            self._tool_result_subscription = self._event_bus.subscribe(
-                EventType.TOOL_EXECUTE_RESULT, self._on_tool_result
-            )
+        # Subscribe to tool results
+        self._tool_result_subscription = self._event_bus.subscribe(
+            EventType.TOOL_EXECUTE_RESULT, self._on_tool_result
+        )
 
         try:
             # Initial transition to THINKING
@@ -376,8 +366,7 @@ class ReActStateMachine:
     async def _do_awaiting_tool(self) -> ReActState:
         """Execute AWAITING_TOOL state: execute tools and decide next state.
 
-        Phase 2: Synchronous execution (direct call)
-        Phase 3: EventBus-based async execution
+        Tool execution is via EventBus.
 
         Returns:
             Next state (RESPONDING if completeDialog called, THINKING to continue, or ERROR)
@@ -395,11 +384,8 @@ class ReActStateMachine:
         tool_names = [tc.function_name for tc in tool_calls]
         logger.info(f"{self.agent_name} using {len(tool_calls)} tool(s): {', '.join(tool_names)}")
 
-        # Execute tools (sync or async based on configuration)
-        if self._use_eventbus_tools:
-            tool_results_list = await self._execute_tools_via_eventbus(tool_calls)
-        else:
-            tool_results_list = await self._execute_tools_sync(tool_calls)
+        # Execute tools via EventBus
+        tool_results_list = await self._execute_tools(tool_calls)
 
         if tool_results_list is None:
             # Error during execution
@@ -446,52 +432,10 @@ class ReActStateMachine:
             # Continue thinking
             return ReActState.THINKING
 
-    async def _execute_tools_sync(
+    async def _execute_tools(
         self, tool_calls: list[ToolCall]
     ) -> list[tuple[ToolCall, ToolResult]] | None:
-        """Execute tools synchronously (Phase 2).
-
-        Args:
-            tool_calls: List of tool calls to execute
-
-        Returns:
-            List of (tool_call, result) tuples, or None on error
-        """
-        tool_results_list: list[tuple[ToolCall, ToolResult]] = []
-
-        for tool_call in tool_calls:
-            # Log with truncated args
-            args_str = str(tool_call.arguments) if hasattr(tool_call, "arguments") else "{}"
-            if len(args_str) > 100:
-                args_str = args_str[:100] + "..."
-            logger.info(f"  → Executing: {tool_call.function_name}({args_str})")
-
-            # Execute tool (synchronous)
-            try:
-                result = await self._tool_executor.execute(
-                    tool_call.function_name, tool_call.arguments
-                )
-                success = result.success
-                msg = result.message if result.message else ("OK" if success else "Failed")
-                logger.info(f"  ✓ Result: {msg}")
-            except Exception as e:
-                logger.error(f"Tool execution failed: {e}")
-                result = ToolResult(success=False, error=str(e))
-
-            tool_results_list.append((tool_call, result))
-            self._context.all_tool_results.append(
-                {
-                    "tool_call": tool_call,
-                    "result": result,
-                }
-            )
-
-        return tool_results_list
-
-    async def _execute_tools_via_eventbus(
-        self, tool_calls: list[ToolCall]
-    ) -> list[tuple[ToolCall, ToolResult]] | None:
-        """Execute tools via EventBus (Phase 3).
+        """Execute tools via EventBus.
 
         Publishes TOOL_EXECUTE_REQUEST events and waits for TOOL_EXECUTE_RESULT.
         Supports concurrent execution and timeout handling.
@@ -649,7 +593,7 @@ class ReActStateMachine:
         if result_data.success and result_data.result:
             result = ToolResult(**result_data.result)
         else:
-            result = ToolResult(success=False, error=result_data.error or "Unknown error")
+            result = ToolResult(success=False, data={}, error=result_data.error or "Unknown error")
 
         resolved = self._tool_execution_manager.resolve(correlation_id, result)
         if not resolved:
