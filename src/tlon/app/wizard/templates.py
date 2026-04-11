@@ -1,6 +1,6 @@
-"""Wizard templates for roles and skills.
+"""Wizard templates for roles.
 
-Provides predefined role templates and skill library for Agent configuration.
+Provides predefined role templates for Agent configuration.
 """
 
 # Role templates with default specialties
@@ -70,55 +70,6 @@ ROLE_TEMPLATES: dict[str, dict] = {
     },
 }
 
-# Skill library organized by category
-SKILL_LIBRARY: dict[str, list[dict]] = {
-    "基础技能": [
-        {"id": "file-ops", "name": "文件操作", "desc": "读写文件、目录管理"},
-        {"id": "git", "name": "Git操作", "desc": "版本控制、分支管理、代码提交"},
-        {"id": "shell", "name": "Shell脚本", "desc": "Bash脚本编写和执行"},
-    ],
-    "编程语言": [
-        {"id": "python", "name": "Python", "desc": "Python开发"},
-        {"id": "javascript", "name": "JavaScript", "desc": "前端和后端JS开发"},
-        {"id": "typescript", "name": "TypeScript", "desc": "带类型的JavaScript"},
-        {"id": "go", "name": "Go", "desc": "Go语言开发"},
-        {"id": "rust", "name": "Rust", "desc": "Rust系统编程"},
-        {"id": "java", "name": "Java", "desc": "Java企业级开发"},
-        {"id": "sql", "name": "SQL", "desc": "数据库查询和操作"},
-    ],
-    "框架/库": [
-        {"id": "fastapi", "name": "FastAPI", "desc": "Python高性能Web框架"},
-        {"id": "django", "name": "Django", "desc": "Python全栈Web框架"},
-        {"id": "flask", "name": "Flask", "desc": "轻量级Python Web框架"},
-        {"id": "react", "name": "React", "desc": "前端UI框架"},
-        {"id": "vue", "name": "Vue", "desc": "渐进式前端框架"},
-        {"id": "pandas", "name": "Pandas", "desc": "数据分析和处理"},
-        {"id": "numpy", "name": "NumPy", "desc": "科学计算"},
-    ],
-    "运维/工具": [
-        {"id": "docker", "name": "Docker", "desc": "容器化部署"},
-        {"id": "k8s", "name": "Kubernetes", "desc": "容器编排"},
-        {"id": "cicd", "name": "CI/CD", "desc": "持续集成/部署"},
-        {"id": "aws", "name": "AWS", "desc": "亚马逊云服务"},
-        {"id": "nginx", "name": "Nginx", "desc": "Web服务器和反向代理"},
-        {"id": "linux", "name": "Linux系统", "desc": "Linux系统管理"},
-    ],
-    "数据库": [
-        {"id": "mysql", "name": "MySQL", "desc": "关系型数据库"},
-        {"id": "postgresql", "name": "PostgreSQL", "desc": "高级关系型数据库"},
-        {"id": "redis", "name": "Redis", "desc": "内存数据库和缓存"},
-        {"id": "mongodb", "name": "MongoDB", "desc": "文档型数据库"},
-        {"id": "elasticsearch", "name": "Elasticsearch", "desc": "搜索引擎"},
-    ],
-    "AI/ML": [
-        {"id": "ml", "name": "机器学习", "desc": "机器学习基础"},
-        {"id": "pytorch", "name": "PyTorch", "desc": "深度学习框架"},
-        {"id": "tensorflow", "name": "TensorFlow", "desc": "机器学习平台"},
-        {"id": "nlp", "name": "自然语言处理", "desc": "NLP技术"},
-        {"id": "openai", "name": "OpenAI API", "desc": "大语言模型API调用"},
-    ],
-}
-
 # Available LLM models
 AVAILABLE_MODELS = [
     "kimi-k2.5",
@@ -132,15 +83,6 @@ AVAILABLE_MODELS = [
     "deepseek-chat",
     "qwen-max",
     "glm-4",
-]
-
-# Preset skills for the skills field in agents.yaml
-PRESET_SKILLS = [
-    "file-operations",
-    "git-operations",
-    "csv-pipeline",
-    "plan-i",
-    "frontend-design",
 ]
 
 
@@ -163,41 +105,3 @@ def get_all_roles() -> dict[str, dict]:
         Dictionary of all role templates
     """
     return ROLE_TEMPLATES.copy()
-
-
-def get_skills_by_category(category: str) -> list[dict]:
-    """Get skills for a specific category.
-
-    Args:
-        category: Skill category name
-
-    Returns:
-        List of skill dictionaries
-    """
-    return SKILL_LIBRARY.get(category, [])
-
-
-def get_all_skills() -> list[str]:
-    """Get all skill names flattened.
-
-    Returns:
-        List of all skill names
-    """
-    skills = []
-    for category_skills in SKILL_LIBRARY.values():
-        for skill in category_skills:
-            skills.append(skill["name"])
-    return skills
-
-
-def suggest_skills_for_role(role_id: str) -> list[str]:
-    """Suggest skills based on role.
-
-    Args:
-        role_id: Role identifier
-
-    Returns:
-        List of suggested skill names
-    """
-    template = ROLE_TEMPLATES.get(role_id, {})
-    return template.get("default_specialties", [])

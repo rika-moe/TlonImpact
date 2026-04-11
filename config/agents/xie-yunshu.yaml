@@ -17,13 +17,6 @@ agent:
 
   proactive: false
 
-  skills:
-    - file-operations
-    - git-operations
-    - csv-pipeline
-    - plan-i
-    - frontend-design
-
   llm:
     model_name: kimi-k2.5
     temperature: 1.0

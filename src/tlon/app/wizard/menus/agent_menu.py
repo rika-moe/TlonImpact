@@ -142,13 +142,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 [bold]Docker 配置[/bold]
 镜像: {agent.docker.image if agent.docker else "default"}
 内存限制: {agent.docker.memory_limit if agent.docker else "default"}
-
-[bold]技能[/bold]
 """
-        if agent.skills:
-            content += ", ".join(agent.skills)
-        else:
-            content += "暂无技能"
 
         self.console.print(Panel(content, title=f"Agent 详情: {agent.name}"))
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
@@ -158,7 +152,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.console.print("\n[bold]➕ 招聘新人[/bold]\n")
 
         # Step 1: Basic info
-        self.console.print("[bold]步骤 1/5: 基本信息[/bold]\n")
+        self.console.print("[bold]步骤 1/4: 基本信息[/bold]\n")
 
         name = self.questionary.text("姓名:").ask()
         if not name:
@@ -174,7 +168,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         ).ask()
 
         # Step 2: LLM Config
-        self.console.print("\n[bold]步骤 2/5: LLM 配置[/bold]\n")
+        self.console.print("\n[bold]步骤 2/4: LLM 配置[/bold]\n")
 
         models = [
             "kimi-k2.5",
@@ -200,32 +194,12 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             temperature = 1.0
 
         # Step 3: Docker Config
-        self.console.print("\n[bold]步骤 3/5: Docker 配置[/bold]\n")
+        self.console.print("\n[bold]步骤 3/4: Docker 配置[/bold]\n")
 
         memory = self.questionary.text("内存限制 [512m]:", default="512m").ask()
 
-        # Step 4: Skills
-        self.console.print("\n[bold]步骤 4/5: 技能选择[/bold]\n")
-
-        all_skills = [
-            ("file-operations", "文件操作"),
-            ("git-operations", "Git操作"),
-            ("csv-pipeline", "CSV处理"),
-            ("plan-i", "任务规划"),
-            ("frontend-design", "前端设计"),
-        ]
-
-        skill_choices = [
-            self.questionary.Choice(label, value=value, checked=True) for value, label in all_skills
-        ]
-
-        selected_skills = (
-            self.questionary.checkbox("选择技能 (空格选择/取消):", choices=skill_choices).ask()
-            or []
-        )
-
-        # Step 5: Proactive setting
-        self.console.print("\n[bold]步骤 5/5: 启动模式[/bold]\n")
+        # Step 4: Proactive setting
+        self.console.print("\n[bold]步骤 4/4: 启动模式[/bold]\n")
 
         proactive = self.questionary.confirm(
             "是否设置为常驻启动?\n常驻: 自动启动，响应所有消息\n延迟: 手动唤醒，只响应@消息",
@@ -260,7 +234,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             role=role,
             llm=LLMConfig(model_name=model, temperature=temperature),
             docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=memory or "512m"),
-            skills=selected_skills,
             proactive=proactive,
         )
 
@@ -318,9 +291,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                     self.questionary.Choice(
                         f"💾 内存 - 当前: {agent.docker.memory_limit if agent.docker else 'default'}",
                         value="memory",
-                    ),
-                    self.questionary.Choice(
-                        f"⭐ 技能 - 当前: {len(agent.skills)}个", value="skills"
                     ),
                     self.questionary.Choice(
                         f"🚀 启动模式 - 当前: {mode_display}", value="proactive"
@@ -400,9 +370,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                         agent.docker.memory_limit = new_mem
                     self.console.print("[green]✓ 内存限制已更新[/green]")
 
-            elif edit_choice == "skills":
-                agent.skills = self._edit_skills(agent.skills)
-
             elif edit_choice == "proactive":
                 new_proactive = self.questionary.confirm(
                     "是否设置为常驻启动 (proactive)?\n"
@@ -421,28 +388,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             self.console.print(f"[red]✗ {msg}[/red]")
 
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
-
-    def _edit_skills(self, current_skills: list) -> list:
-        """Interactive skill editor."""
-        all_skills = [
-            ("file-operations", "文件操作"),
-            ("git-operations", "Git操作"),
-            ("csv-pipeline", "CSV处理"),
-            ("plan-i", "任务规划"),
-            ("frontend-design", "前端设计"),
-        ]
-
-        skill_choices = [
-            self.questionary.Choice(label, value=value, checked=value in current_skills)
-            for value, label in all_skills
-        ]
-
-        selected = (
-            self.questionary.checkbox("选择技能 (空格选择/取消):", choices=skill_choices).ask()
-            or []
-        )
-
-        return selected
 
     def delete_agent(self) -> None:
         """Delete an agent."""

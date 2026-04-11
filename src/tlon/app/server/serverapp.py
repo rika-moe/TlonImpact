@@ -246,7 +246,6 @@ class ServerApp:
                     memory_limit=settings.docker_memory_limit,
                 ),
                 memory=MemoryConfig(agent_id="dev-001"),
-                skills=[],
                 respond_to_all=False,
             )
         ]

@@ -321,7 +321,6 @@ class QuickstartWizard:
                 role=role,
                 llm=LLMConfig(model_name=default_model, temperature=1.0),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
-                skills=[],
                 proactive=member["proactive"],
             )
             agents.append(agent)
@@ -388,7 +387,6 @@ class QuickstartWizard:
                 role=role,
                 llm=LLMConfig(model_name=default_model, temperature=1.0),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
-                skills=[],
                 proactive=member["proactive"],
             )
             agents.append(agent)

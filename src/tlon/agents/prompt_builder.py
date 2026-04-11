@@ -130,9 +130,6 @@ class SystemPromptBuilder:
             return None
         return PromptSection("## 团队成员（你可以 @他们）", team_table).render()
 
-    def build_skills(self) -> str | None:
-        return None
-
     def build_memory(self) -> str | None:
         """Build memory context section from pre-fetched memory blocks."""
         try:
@@ -217,7 +214,6 @@ class SystemPromptBuilder:
             self.build_capabilities(),
             self.build_role(),
             self.build_team(),
-            self.build_skills(),
             self.build_memory(),
             self.build_guidelines(),
             self.build_tool_usage(),

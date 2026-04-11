@@ -488,7 +488,6 @@ async def _mirror_create(name: str) -> int:
         id=agent_id,
         name=name,
         personality="专业、高效、善于协作",
-        skills=[],
         llm=LLMConfig(
             model_name=settings.llm_model_name or "kimi-k2.5",
             temperature=settings.llm_temperature or 1.0,

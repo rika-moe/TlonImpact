@@ -5,7 +5,6 @@ Manages Docker containers for agent execution environments.
 
 import asyncio
 from dataclasses import dataclass
-from pathlib import Path
 
 import docker
 from docker.errors import ImageNotFound, NotFound
@@ -88,16 +87,6 @@ class DockerRuntime:
 
         # Prepare volumes (for persistence)
         volumes = {}
-
-        # Mount skills directory if configured
-        if self.config.skills_dir:
-            skills_host_path = Path(self.config.skills_dir).resolve()
-            if skills_host_path.exists():
-                # Mount to /skills in container (read-only for safety)
-                volumes[str(skills_host_path)] = {"bind": "/skills", "mode": "ro"}
-                logger.info(f"Mounting skills directory: {skills_host_path} -> /skills")
-            else:
-                logger.warning(f"Skills directory not found: {skills_host_path}")
 
         logger.info(f"Creating container {self.container_name} from image {image}")
 

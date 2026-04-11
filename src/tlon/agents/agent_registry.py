@@ -456,7 +456,6 @@ class AgentRegistry(Component):
             "id": agent_id,
             "name": config.name,
             "state": agent.get_state() if agent else "unknown",
-            "skills": config.skills,
         }
 
     def get_all_agent_status(self) -> list[dict]:

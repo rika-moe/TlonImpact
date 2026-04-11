@@ -38,8 +38,6 @@ agent:
   docker:
     image: ubuntu:22.04
     memory_limit: 512m
-  skills:
-    - file-operations
 """)
 
             diag = ConfigDiagnostics(agent_tmpdir)

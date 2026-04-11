@@ -223,11 +223,6 @@ class ConfigDiagnostics:
                     IssueSeverity.WARNING, "agents", "Docker config missing image", file_str
                 )
 
-        if "skills" in agent and not isinstance(agent["skills"], list):
-            self.report.add(
-                IssueSeverity.ERROR, "agents", "Field 'skills' must be a list", file_str
-            )
-
     def _validate_jinja2_template(self, template: str, file_path: str, category: str) -> None:
         """Validate Jinja2 template syntax.
 

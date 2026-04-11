@@ -156,7 +156,6 @@ class DockerRuntimeConfig(BaseModel):
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
     network_mode: str = "host"
-    skills_dir: str | None = None
 
 
 class AgentConfig(BaseModel):
@@ -169,7 +168,6 @@ class AgentConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     memory: Any = None
-    skills: list[str] = Field(default_factory=list)
     respond_to_all: bool = False
     proactive: bool = False
 

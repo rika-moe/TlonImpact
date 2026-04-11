@@ -290,7 +290,6 @@ Or use the build script:
             "state": state,
             "config": {
                 "role": config.role.name if hasattr(config.role, "name") else str(config.role),
-                "skills": config.skills,
             },
         }
         return self._json_response(status)
@@ -364,7 +363,6 @@ Or use the build script:
                     "id": agent.id,
                     "name": agent.name,
                     "personality": agent.personality,
-                    "skills": agent.skills,
                 }
             )
 
