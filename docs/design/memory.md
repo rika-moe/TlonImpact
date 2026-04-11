@@ -36,7 +36,7 @@ Working Memory 满/空闲 → LLM 生成摘要 → 提取关键事实 → 存入
 
 | 文档 | 目的 | 深度 |
 |------|------|------|
-| [architecture/domains/subsystem.md](../architecture/domains/subsystem.md) | 子系统层架构 | L2 |
+| [architecture/modules.md](../architecture/modules.md) | 模块架构（含 MemoryModule） | L2 |
 
 ---
 

@@ -329,7 +329,7 @@ class AgentConfig:
         # Set default memory config if not provided
         if self.memory is None:
             # Delayed import to avoid circular dependency
-            from tlon.subsystem.memory.models import MemoryConfig
+            from tlon.memory.models import MemoryConfig
 
             self.memory = MemoryConfig(agent_id=self.id)
 

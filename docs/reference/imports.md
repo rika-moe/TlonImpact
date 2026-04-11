@@ -36,13 +36,12 @@ from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.sandbox.docker_runtime import DockerRuntime
 ```
 
-## 子系统层
+## 功能模块
 
 ```python
-from tlon.subsystem.memory import MemoryManager
-from tlon.subsystem.skills import SkillManager
-from tlon.subsystem.tools.base import Tool, ToolResult
-from tlon.subsystem.tools.tasks import TaskManager, Task
+from tlon.memory import MemoryManager, MemoryConfig
+from tlon.tools import Tool, ToolResult, ExecuteBashTool
+from tlon.tools.tasks import TaskManager, Task
 ```
 
 ---

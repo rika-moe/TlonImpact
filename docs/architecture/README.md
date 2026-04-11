@@ -1,19 +1,62 @@
 # 架构总览
 
 > 状态: ✅ 已验证
-> 最后验证: 2026-03-17
+> 最后验证: 2026-04-11
+> 核心理念: **按功能域划分模块，按通信模式定义关系**
 
 ---
 
 ## 核心理念
 
 1. **显式依赖注入**: 所有依赖通过构造函数注入，无全局状态
-2. **事件驱动解耦**: 组件间通过 EventBus 通信，不直接调用
-3. **分层边界清晰**: 每层有明确职责，单向依赖
+2. **事件驱动解耦**: 模块间通过 EventBus 通信，不直接调用
+3. **模块边界清晰**: 按功能域组织，而非抽象层次
 
 ---
 
-## 分层架构
+## 模块架构 (推荐)
+
+Tlon 是**模块化、以通信为中心**的系统，推荐使用模块视角理解架构：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    基础设施模块 (Infrastructure)              │
+│              EventBus | Config | Logger | Tracing           │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (EventBus 通信)
+┌─────────────────────────────────────────────────────────────┐
+│                      核心域模块 (Core Domains)                │
+│     AgentModule | MessageModule | ClientModule              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (依赖注入)
+┌─────────────────────────────────────────────────────────────┐
+│                    功能子模块 (Functional Submodules)         │
+│   Sandbox | Memory | Tasks | Tools (插件化)                  │
+│                                                             │
+│   ⚠️ Sandbox 是 executeBashCommand 的实现细节，非独立层次    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 快速导航
+
+| 文档 | 内容 | 推荐度 |
+|------|------|--------|
+| **[modules.md](./modules.md)** | **模块架构详解（推荐）** | ⭐⭐⭐ |
+| [dag-components.md](./dag-components.md) | 组件依赖关系与 DAG 原则 | ⭐⭐⭐ |
+| [data-flow.md](./data-flow.md) | 数据流向图 | ⭐⭐ |
+| [client-server.md](./client-server.md) | Client-Server 通信协议 | ⭐⭐ |
+| [explicit-boundaries.md](./explicit-boundaries.md) | 架构边界规则 | ⭐⭐ |
+
+---
+
+## 分层架构（旧视角，参考用）
+
+<details>
+<summary>点击展开旧版分层架构图</summary>
 
 ```
 ┌─────────────────────────────────────────┐
@@ -37,29 +80,19 @@
 ├─────────────────────────────────────────┤
 │ 7. 子系统层 (Subsystem)                  │
 │    memory/, tools/                      │
-│    ~~skills/~~ ⏳ 旧实现已移除，新实现待重做  │
 └─────────────────────────────────────────┘
 ```
 
----
+**注意**: 分层架构将 Sandbox 描述为独立层次，容易误导其使用范围。实际上 Sandbox 只是 `executeBashCommand` 的实现细节。
 
-## 文档索引
-
-| 文档 | 目的 | 深度 |
-|------|------|------|
-| [layers.md](./layers.md) | 分层详解 | L2 |
-| [data-flow.md](./data-flow.md) | 数据流向 | L2 |
-| [client-server.md](./client-server.md) | Client-Server 架构 | L2 |
-| [domains/base.md](./domains/base.md) | 基础层 | L2 |
-| [domains/organization.md](./domains/organization.md) | 组织层 | L2 |
-| [domains/agents.md](./domains/agents.md) | Agent层 | L2 |
-| [domains/sandbox.md](./domains/sandbox.md) | Sandbox层 | L2 |
-| [domains/subsystem.md](./domains/subsystem.md) | 子系统层 | L2 |
+参见: [layers.md](./layers.md) (旧版，仅供参考)
+</details>
 
 ---
 
 ## 验证清单
 
-- [x] 分层与代码目录一致
-- [x] 依赖方向正确（上层依赖下层）
+- [x] 模块与代码目录一致
+- [x] 模块间通过 EventBus 通信（非直接调用）
+- [x] Sandbox 仅被 ExecuteBashTool 依赖
 - [x] 无循环依赖

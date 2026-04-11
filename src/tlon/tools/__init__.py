@@ -1,6 +1,6 @@
 """Tools for Tlon Agents."""
 
-from tlon.subsystem.tools.shell.execute_bash import ExecuteBashTool
+from tlon.tools.shell.execute_bash import ExecuteBashTool
 
 from .base import Tool, ToolResult
 

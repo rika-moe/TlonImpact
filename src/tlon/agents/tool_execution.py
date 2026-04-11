@@ -8,7 +8,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from tlon.subsystem.tools.base import ToolResult
+from tlon.tools import ToolResult
 
 
 @dataclass

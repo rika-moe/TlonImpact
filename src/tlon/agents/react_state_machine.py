@@ -22,7 +22,7 @@ from tlon.agents.tool_execution import (
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.subsystem.tools.base import ToolResult
+from tlon.tools import ToolResult
 
 # Re-export for convenience
 AGENT_REACT_STATE_TRANSITION = EventType.AGENT_REACT_STATE_TRANSITION

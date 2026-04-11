@@ -4,7 +4,7 @@ This tool allows agents to explicitly mark the end of their thinking loop
 and deliver their final response.
 """
 
-from tlon.subsystem.tools.base import Tool, ToolResult
+from tlon.tools.base import Tool, ToolResult
 
 
 class CompleteDialogTool(Tool):

@@ -21,11 +21,11 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.tracing import get_current_trace
+from tlon.memory import MemoryManager
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.sandbox.docker_runtime import DockerRuntime
-from tlon.subsystem.memory import MemoryManager
-from tlon.subsystem.tools.tasks import TaskManager
+from tlon.tools.tasks.manager import TaskManager
 
 logger = get_logger(__name__)
 

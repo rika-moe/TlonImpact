@@ -1,11 +1,25 @@
-# 分层架构详解
+# 分层架构详解 (已归档)
 
-> 状态: ✅ 已验证
-> 最后验证: 2026-03-17
+> ⚠️ **本文档已归档**：分层架构描述已更新为 [模块架构](./modules.md)。
+>
+> 保留本文档仅供历史参考。新开发请参考 [modules.md](./modules.md)。
 
 ---
 
-## 分层总图
+## 为什么从分层转向模块？
+
+| 分层视角的问题 | 模块视角的解决 |
+|--------------|--------------|
+| Sandbox 被描述为独立"层" | Sandbox 是 `executeBashCommand` 的实现细节 |
+| Subsystem 在最"底层" | Memory/Tasks 是与 CoreDomains 平等的功能模块 |
+| 层间通信关系隐式 | 显式 EventBus 通信机制 |
+| 7 层堆叠难以理解 | 3 类模块 + 插件，边界清晰 |
+
+**核心洞察**: Tlon 是模块化的、以通信为中心的系统，而非严格的分层系统。
+
+---
+
+## 原分层总图
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -55,30 +69,81 @@
 │  ┌─────────────────┐  ┌─────────────────────────────┐                      │
 │  │   memory/       │  │          tools/             │                      │
 │  └─────────────────┘  └─────────────────────────────┘                      │
-│  ┌─────────────────┐                                                       │
-│  │  skills/        │  ⏳ 旧实现已移除，新实现待重做                          │
-│  └─────────────────┘                                                       │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 层职责
+## 分层的问题分析
 
-| 层级 | 职责 | 关键模块 |
-|------|------|----------|
-| 入口层 | 程序入口点 | `__main__.py`, `cli/main.py` |
-| 应用层 | 整合交互和服务端 | `cli/`, `server/`, `clients/`, `wizard/` |
-| 基础层 | 基础设施服务 | `config/`, `events/`, `logger` |
-| 组织层 | 多 Agent 协作基础设施 | `messaging/` |
-| Agent 层 | 智能体实现 | `agents/` |
-| Sandbox 层 | Docker 容器隔离 | `sandbox/` |
-| 子系统层 | 扩展功能 | `memory/`, `tools/`, ~~`skills/`~~ ⏳ |
+### 问题 1: Sandbox 位置误导
+
+**分层描述**: Sandbox 是 Agent 层的下层
+
+**实际情况**:
+```python
+# Sandbox 只是 ExecuteBashTool 的实现细节
+class ExecuteBashTool(Tool):
+    def __init__(self, docker_runtime: DockerRuntime):
+        self.docker_runtime = docker_runtime  # 内部使用
+
+# Agent 不直接感知 Sandbox
+class Agent:
+    def __init__(self, tool_executor: ToolExecutor):
+        self.tool_executor = tool_executor  # 通过 EventBus 通信
+```
+
+### 问题 2: Subsystem 的"底层"定位不准确
+
+**分层描述**: Subsystem 在最底层，被上层依赖
+
+**实际情况**:
+- Memory/Tasks 是**功能模块**，与 Agent 是**组合关系**
+- 通过**依赖注入**集成，不是层次依赖
+- Tools 是**插件**，各 Tool 自行声明依赖
+
+### 问题 3: 通信关系隐式
+
+**分层描述**: 层间调用关系不明确
+
+**实际情况**:
+- 模块间通过 **EventBus** 异步通信
+- 这是核心架构特征，分层图无法表达
 
 ---
 
-## 验证清单
+## 新架构视角
 
-- [x] 每层职责边界清晰
-- [x] 无跨层直接调用
-- [x] 依赖方向自上而下
+参见 **[模块架构](./modules.md)** 了解：
+
+1. **3 类模块**替代 7 层：
+   - 基础设施模块 (EventBus, Config, Logger, Tracing)
+   - 核心域模块 (Agent, Message, Client)
+   - 功能子模块 (Sandbox, Memory, Tasks, Tools)
+
+2. **显式通信机制**：
+   - EventBus 是所有模块间的通信总线
+   - 模块内直接调用
+
+3. **Sandbox 正确定位**：
+   - `executeBashCommand` 的实现细节
+   - 仅被 ExecuteBashTool 依赖
+
+---
+
+## 迁移说明
+
+| 旧概念 | 新概念 | 说明 |
+|--------|--------|------|
+| 7 层架构 | 3 类模块 + 插件 | 更清晰，边界明确 |
+| Sandbox 层 | Sandbox 模块 (工具实现) | 降低抽象级别 |
+| Subsystem 层 | 功能子模块 | 平等地位，DI 集成 |
+| 层间调用 | EventBus 通信 | 显式异步 |
+
+---
+
+## 参考
+
+- **[modules.md](./modules.md)** - 当前推荐的架构文档
+- [dag-components.md](./dag-components.md) - 组件依赖关系
+- [explicit-boundaries.md](./explicit-boundaries.md) - 架构边界规则

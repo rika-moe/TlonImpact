@@ -2,10 +2,10 @@
 
 from typing import TYPE_CHECKING
 
-from tlon.subsystem.tools.base import Tool, ToolResult
+from tlon.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
-    from tlon.subsystem.tools.tasks.manager import TaskManager
+    from tlon.tools.tasks.manager import TaskManager
 
 
 class ListTasksTool(Tool):

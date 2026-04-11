@@ -1,7 +1,7 @@
 """Tool for searching memories."""
 
 from tlon.base.logger import get_logger
-from tlon.subsystem.tools.base import Tool, ToolResult
+from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 

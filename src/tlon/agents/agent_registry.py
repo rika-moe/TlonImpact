@@ -27,23 +27,23 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.settings import get_tlon_home
+from tlon.memory import MemoryConfig, MemoryManager
 from tlon.organization.messaging.store import MessageStore
 from tlon.sandbox.docker_runtime import DockerRuntime
-from tlon.subsystem.memory import MemoryConfig, MemoryManager
-from tlon.subsystem.tools.complete_dialog.complete_dialog import CompleteDialogTool
-from tlon.subsystem.tools.memory.forget_memory import ForgetMemoryTool
-from tlon.subsystem.tools.memory.generate_summary import GenerateSummaryTool
-from tlon.subsystem.tools.memory.remember_fact import RememberFactTool
-from tlon.subsystem.tools.memory.search_memories import SearchMemoriesTool
-from tlon.subsystem.tools.shell.execute_bash import ExecuteBashTool
-from tlon.subsystem.tools.tasks import TaskManager
-from tlon.subsystem.tools.tasks.complete_task import CompleteTaskTool
-from tlon.subsystem.tools.tasks.create_task import CreateTaskTool
-from tlon.subsystem.tools.tasks.get_current_task import GetCurrentTaskTool
-from tlon.subsystem.tools.tasks.list_tasks import ListTasksTool
-from tlon.subsystem.tools.tasks.pause_task import PauseTaskTool
-from tlon.subsystem.tools.tasks.remove_task import RemoveTaskTool
-from tlon.subsystem.tools.tasks.start_task import StartTaskTool
+from tlon.tools.complete_dialog.complete_dialog import CompleteDialogTool
+from tlon.tools.memory.forget_memory import ForgetMemoryTool
+from tlon.tools.memory.generate_summary import GenerateSummaryTool
+from tlon.tools.memory.remember_fact import RememberFactTool
+from tlon.tools.memory.search_memories import SearchMemoriesTool
+from tlon.tools.shell.execute_bash import ExecuteBashTool
+from tlon.tools.tasks.complete_task import CompleteTaskTool
+from tlon.tools.tasks.create_task import CreateTaskTool
+from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
+from tlon.tools.tasks.list_tasks import ListTasksTool
+from tlon.tools.tasks.manager import TaskManager
+from tlon.tools.tasks.pause_task import PauseTaskTool
+from tlon.tools.tasks.remove_task import RemoveTaskTool
+from tlon.tools.tasks.start_task import StartTaskTool
 
 if TYPE_CHECKING:
     from tlon.base.config.agent_info import AgentInfoProvider

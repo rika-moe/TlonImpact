@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from tlon.subsystem.tools.base import Tool, ToolResult
+from tlon.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
     from tlon.sandbox.docker_runtime import DockerRuntime

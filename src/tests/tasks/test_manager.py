@@ -3,7 +3,7 @@
 import shutil
 import tempfile
 
-from tlon.subsystem.tools.tasks import TaskManager, TaskStatus
+from tlon.tools.tasks.manager import TaskManager, TaskStatus
 
 
 class TestTaskManager:

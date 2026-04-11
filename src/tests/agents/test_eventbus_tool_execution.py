@@ -23,7 +23,7 @@ from tlon.agents.tool_execution import (
 )
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.events.event import Event, EventType
-from tlon.subsystem.tools.base import ToolResult
+from tlon.tools import ToolResult
 
 
 class TestToolExecuteRequest:

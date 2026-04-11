@@ -247,10 +247,10 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.sandbox.docker_runtime import DockerRuntime
 
 # 子系统层
-from tlon.subsystem.memory import MemoryManager
+from tlon.memory import MemoryManager
 from tlon.subsystem.skills import SkillManager
-from tlon.subsystem.tools.base import Tool, ToolResult
-from tlon.subsystem.tools.tasks import TaskManager
+from tlon.tools import Tool, ToolResult
+from tlon.tools import TaskManager
 ```
 
 ---

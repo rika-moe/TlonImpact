@@ -1,6 +1,14 @@
 # DAG Component Architecture
 
-> **TL;DR**: ServerApp components form a Directed Acyclic Graph (DAG). Dependencies are injected via constructor only. Component communication happens through EventBus (indirect). This ensures no circular dependencies and clear component boundaries.
+> **TL;DR**: ServerApp components form a Directed Acyclic Graph (DAG). Dependencies are injected via constructor only. **Component communication happens through EventBus (indirect)**. This ensures no circular dependencies and clear component boundaries.
+
+---
+
+## 架构定位
+
+本文档描述**模块内部**的组件组织方式。配合 [modules.md](./modules.md) 阅读：
+- `modules.md`: 模块间关系（宏观）
+- `dag-components.md`: 模块内组件关系（微观）
 
 ---
 
@@ -293,8 +301,47 @@ Architecture rules are enforced by:
 
 ---
 
+## 与模块架构的关系
+
+DAG 组件架构是**模块内部**的组织原则：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  AgentModule (模块边界)                                         │
+│                                                                 │
+│  ┌─────────────┐      EventBus      ┌─────────────┐            │
+│  │    Agent    │ ◄────────────────► │ ToolExecutor│            │
+│  │  (Device)   │   (跨模块通信)      │ (Component) │            │
+│  └──────┬──────┘                    └──────┬──────┘            │
+│         │                                  │                    │
+│         │ 直接调用                          │ 工具注册           │
+│         ▼                                  ▼                    │
+│  ┌─────────────┐                    ┌─────────────┐            │
+│  │  LLMClient  │                    │ExecuteBash  │            │
+│  │  (Component)│                    │    Tool     │            │
+│  └─────────────┘                    └──────┬──────┘            │
+│                                            │                    │
+│                                            │ 实现细节           │
+│                                            ▼                    │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              SandboxModule (外部模块)                    │   │
+│  │                 DockerRuntime                            │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**关键理解**:
+1. **Agent ↔ ToolExecutor**: 模块内组件，通过构造函数组装
+2. **ToolExecutor → Tool**: 插件注册，Tool 声明自己的依赖
+3. **ExecuteBashTool → DockerRuntime**: 跨模块依赖（允许，但仅限于 Tool 实现）
+4. **Agent ×× DockerRuntime**: Agent 不直接依赖 Sandbox（架构规则）
+
+参见: [modules.md](./modules.md) 了解模块间通信规则。
+
+---
+
 ## References
 
 - [Component Base Class](../../../src/tlon/base/component.py)
 - [ServerApp](../../../src/tlon/app/server/serverapp.py) - See DI assembly
-- [Design Principles](../design/README.md)
+- [Modules Architecture](./modules.md) - Module-level organization
