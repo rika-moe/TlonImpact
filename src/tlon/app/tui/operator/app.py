@@ -88,6 +88,15 @@ class HelpScreen(ModalScreen[None]):
                 yield Static("5 - Config view", classes="help-row")
 
             with Vertical(classes="help-section"):
+                yield Label("Agents View", classes="help-section-title")
+                yield Static("n - New Agent", classes="help-row")
+                yield Static("e - Edit Agent", classes="help-row")
+                yield Static("d - Delete Agent", classes="help-row")
+                yield Static("s - Stop/Start Agent", classes="help-row")
+                yield Static("l - View Logs", classes="help-row")
+                yield Static("Space - Expand/Collapse", classes="help-row")
+
+            with Vertical(classes="help-section"):
                 yield Label("General", classes="help-section-title")
                 yield Static("r - Refresh current view", classes="help-row")
                 yield Static("q / Ctrl+C - Quit", classes="help-row")

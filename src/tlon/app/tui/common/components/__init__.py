@@ -5,8 +5,8 @@ from .status_bar import StatusBar
 from .data_table import DataTable
 from .tree_view import TreeView
 from .dropdown import Dropdown
-from .modal import Modal
-from .toast import Toast
+from .modal import Modal, ConfirmModal, AlertModal
+from .toast import Toast, ToastLevel
 
 __all__ = [
     "Header",
@@ -15,5 +15,8 @@ __all__ = [
     "TreeView",
     "Dropdown",
     "Modal",
+    "ConfirmModal",
+    "AlertModal",
     "Toast",
+    "ToastLevel",
 ]
