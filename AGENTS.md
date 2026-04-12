@@ -53,6 +53,7 @@ uv run pytest
 | 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/modules.md](./docs/architecture/modules.md) |
 | 消息系统 | [design/messaging.md](./docs/design/messaging.md) | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
 | Client-Server | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | [architecture/client-server.md](./docs/architecture/client-server.md) |
+| **TUI 设计** | **[design/tui-console-v3.md](./docs/design/tui-console-v3.md)** 🆕 | - |
 | 路线图 | - | [roadmap/README.md](./docs/roadmap/README.md) |
 
 ---
@@ -89,4 +90,4 @@ uv run pytest
 
 ---
 
-*最后更新：2026-03-24*
+*最后更新：2026-04-12*
