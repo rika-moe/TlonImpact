@@ -1,14 +1,8 @@
-"""Congress TUI - Chat interface for Agent collaboration.
+"""Congress TUI - Minimal chat interface for Tlon.
 
-A minimal chat TUI for communicating with Agents.
+A simple, single-column chat interface for talking with agents.
 """
 
-from tlon.app.tui.congress.client import CongressWebSocketClient
-from tlon.app.tui.congress.state import AgentInfo, CongressState, Message
+from .app import CongressApp, run_congress
 
-__all__ = [
-    "AgentInfo",
-    "CongressState",
-    "CongressWebSocketClient",
-    "Message",
-]
+__all__ = ["CongressApp", "run_congress"]
