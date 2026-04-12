@@ -21,6 +21,7 @@ from tlon.app.tui.common.utils.time_utils import format_timestamp, format_durati
 from tlon.app.tui.common.utils.state import StateManager
 from tlon.app.tui.congress.client import CongressWebSocketClient
 from tlon.app.tui.congress.state import AgentInfo, CongressState, Message
+from tlon.app.tui.operator.app import OperatorApp
 
 __all__ = [
     # Common Components
@@ -44,4 +45,6 @@ __all__ = [
     "AgentInfo",
     "Message",
     "CongressWebSocketClient",
+    # Operator
+    "OperatorApp",
 ]

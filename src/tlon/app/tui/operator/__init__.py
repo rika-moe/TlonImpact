@@ -1,3 +1,9 @@
-"""Tlon Operator - Agent administration console."""
+"""Tlon Operator TUI package.
 
-__all__ = []
+Provides the Operator TUI application for managing and monitoring
+Tlon Agent clusters.
+"""
+
+from tlon.app.tui.operator.app import OperatorApp
+
+__all__ = ["OperatorApp"]
