@@ -19,9 +19,11 @@ from tlon.app.tui.common.styles.colors import (
 )
 from tlon.app.tui.common.utils.time_utils import format_timestamp, format_duration
 from tlon.app.tui.common.utils.state import StateManager
+from tlon.app.tui.congress.client import CongressWebSocketClient
+from tlon.app.tui.congress.state import AgentInfo, CongressState, Message
 
 __all__ = [
-    # Components
+    # Common Components
     "Header",
     "StatusBar",
     "DataTable",
@@ -37,4 +39,9 @@ __all__ = [
     "format_timestamp",
     "format_duration",
     "StateManager",
+    # Congress
+    "CongressState",
+    "AgentInfo",
+    "Message",
+    "CongressWebSocketClient",
 ]
