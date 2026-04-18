@@ -153,8 +153,8 @@ class ConfigView(BaseView):
 
         with Horizontal(classes="config-toolbar"):
             yield Static("[Valid]", classes="config-status status-valid", id="config-status")
-            yield Button("Save (s)", id="btn-save", variant="primary")
-            yield Button("Revert (r)", id="btn-revert")
+            yield Button("Save (ctrl+s)", id="btn-save", variant="primary")
+            yield Button("Revert (ctrl+r)", id="btn-revert")
 
         with Vertical(classes="config-form"):
             # Basic info section

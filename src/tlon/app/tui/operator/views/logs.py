@@ -222,6 +222,9 @@ class LogsView(BaseView):
 
     def _refresh_display(self) -> None:
         """Refresh the log display."""
+        if self.is_paused:
+            return
+
         log_widget = self.query_one("#log-stream", RichLog)
         log_widget.clear()
 

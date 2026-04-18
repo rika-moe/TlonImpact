@@ -12,7 +12,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Label
-from textual.widgets._tree import TreeNode
+from textual.widgets.tree import TreeNode
 
 from tlon.app.tui.common.components.tree_view import TreeView
 from tlon.app.tui.common.styles.colors import get_status_icon

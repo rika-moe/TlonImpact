@@ -98,7 +98,9 @@ class AgentDetail(Vertical):
             ComposeResult: The composed widgets
         """
         yield Label("Inspector", classes="detail-header")
-        yield Static(self._render_no_selection(), classes="detail-content", id="detail-content")
+        yield Static(
+            self._render_no_selection(), classes="detail-content", id="detail-content", markup=True
+        )
 
         with Horizontal(classes="detail-actions"):
             yield Button("Restart", id="btn-restart", classes="action-btn", disabled=True)

@@ -31,7 +31,7 @@ class CodeBlock(Static):
     }
     """
 
-    def __init__(self, code: str, language: str = "python"):
+    def __init__(self, code: str, language: str = "text"):
         """Initialize code block.
 
         Args:
@@ -196,24 +196,18 @@ class MessageBubble(Vertical):
 
         for part_type, part_content in parts:
             if part_type == "code":
-                # Extract language from first line if present
-                lines = part_content.split("\n", 1)
-                language = "python"
-                code = part_content
-
-                if lines and lines[0].strip():
-                    lang = lines[0].strip()
-                    if lang and not lang.startswith(" "):
-                        language = lang
-                        code = lines[1] if len(lines) > 1 else ""
-
-                yield CodeBlock(code, language)
+                yield CodeBlock(part_content, language="text")
             else:
                 # Regular text
                 yield Static(part_content, classes="text-content")
 
     def _parse_content(self, content: str) -> list[tuple[str, str]]:
         """Parse content into text and code blocks.
+
+        Supports:
+        - ```language\ncode\n``` (with language identifier)
+        - ```\ncode\n``` (without language identifier)
+        - Inline code blocks without trailing newline before ```
 
         Args:
             content: Raw message content
@@ -224,8 +218,9 @@ class MessageBubble(Vertical):
         parts = []
         current_pos = 0
 
-        # Match code blocks: ```language\ncode\n```
-        pattern = r"```(\w*)\n(.*?)```"
+        # Match code blocks: ```[language]\ncode[\n]```
+        # Group 1: optional language, Group 2: code content
+        pattern = r"```(?:([\w+]+)\n?)?\n?(.*?)```"
 
         for match in re.finditer(pattern, content, re.DOTALL):
             # Text before code block
@@ -234,8 +229,8 @@ class MessageBubble(Vertical):
                 if text:
                     parts.append(("text", text))
 
-            # Code block
-            code = match.group(2)
+            # Code block - strip trailing whitespace/newlines from code
+            code = match.group(2).strip("\n")
             parts.append(("code", code))
 
             current_pos = match.end()
