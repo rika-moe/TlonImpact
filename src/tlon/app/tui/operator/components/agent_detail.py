@@ -7,11 +7,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from textual.containers import Vertical, Horizontal
+from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Label, Button, Static
+from textual.widgets import Button, Label, Static
 
-from tlon.app.tui.common.styles.colors import get_status_icon, get_status_color
+from tlon.app.tui.common.styles.colors import get_status_icon
 from tlon.app.tui.common.utils.time_utils import format_duration
 from tlon.app.tui.operator.components.agent_tree import AgentInfo
 
@@ -111,10 +112,7 @@ class AgentDetail(Vertical):
         Returns:
             Content string
         """
-        return (
-            "[No agent selected]\n\n"
-            "Select an agent from the tree to view details."
-        )
+        return "[No agent selected]\n\nSelect an agent from the tree to view details."
 
     def _render_agent(self, agent: AgentInfo) -> str:
         """Render agent details.
@@ -208,7 +206,7 @@ class AgentDetail(Vertical):
         elif button_id == "btn-config":
             self.post_message(self.AgentAction(self.agent.id, "config"))
 
-    class AgentAction(Vertical.Message):
+    class AgentAction(Message):
         """Message sent when an agent action is triggered."""
 
         def __init__(self, agent_id: str, action: str) -> None:
