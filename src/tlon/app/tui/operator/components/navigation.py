@@ -83,10 +83,10 @@ class NavigationBar(Horizontal):
 
         with Horizontal(classes="tabs"):
             for tab_id, label, _ in self.TABS:
-                btn = Button(label, id=f"tab-{tab_id}", classes="tab")
+                classes = "tab"
                 if tab_id == self.current_tab:
-                    btn.add_class("active")
-                yield btn
+                    classes += " active"
+                yield Button(label, id=f"tab-{tab_id}", classes=classes)
 
     def watch_current_tab(self, tab: str) -> None:
         """Watch for tab changes and update button styles.
@@ -94,6 +94,8 @@ class NavigationBar(Horizontal):
         Args:
             tab: The new active tab ID
         """
+        if not self.is_mounted:
+            return
         for tab_id, _, _ in self.TABS:
             button = self.query_one(f"#tab-{tab_id}", Button)
             if tab_id == tab:
