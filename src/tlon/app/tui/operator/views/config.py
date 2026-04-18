@@ -130,8 +130,8 @@ class ConfigView(BaseView):
     """
 
     BINDINGS = [
-        Binding("s", "save_config", "Save", show=True),
-        Binding("r", "revert_config", "Revert", show=True),
+        Binding("ctrl+s", "save_config", "Save", show=True),
+        Binding("ctrl+r", "revert_config", "Revert", show=True),
     ]
 
     # Reactive state tracking whether config has unsaved changes
@@ -173,7 +173,6 @@ class ConfigView(BaseView):
                     yield Label("Model:", classes="form-label")
                     yield Select(
                         [(model, model) for model in self._get_model_options()],
-                        value="GPT-4",
                         id="select-model",
                         classes="form-input",
                     )
@@ -321,20 +320,34 @@ class ConfigView(BaseView):
         Returns:
             Dictionary with current form values
         """
+        errors: list[str] = []
+
         try:
             temperature = float(self.query_one("#input-temperature", Input).value)
-        except ValueError:
-            temperature = 0.7
+            if not (0.0 <= temperature <= 2.0):
+                raise ValueError("Temperature must be between 0.0 and 2.0")
+        except ValueError as e:
+            errors.append(str(e) if str(e) != "" else "Invalid temperature value")
+            temperature = self._original_config.get("temperature", 0.7)
 
         try:
             max_tokens = int(self.query_one("#input-max-tokens", Input).value)
-        except ValueError:
-            max_tokens = 4096
+            if max_tokens <= 0:
+                raise ValueError("Max tokens must be positive")
+        except ValueError as e:
+            errors.append(str(e) if str(e) != "" else "Invalid max tokens value")
+            max_tokens = self._original_config.get("max_tokens", 4096)
 
         try:
             timeout = int(self.query_one("#input-timeout", Input).value)
-        except ValueError:
-            timeout = 30
+            if timeout <= 0:
+                raise ValueError("Timeout must be positive")
+        except ValueError as e:
+            errors.append(str(e) if str(e) != "" else "Invalid timeout value")
+            timeout = self._original_config.get("timeout", 30)
+
+        if errors:
+            self.app.notify(f"Input validation errors: {', '.join(errors)}", severity="error")
 
         return {
             "name": self.query_one("#input-name", Input).value,
