@@ -19,7 +19,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Header, Label
 
-from tlon.app.clients.sdk import TerminalAdapter, TlonClient
+from tlon.app.clients.sdk import ConnectionState, TerminalAdapter, TlonClient
 from tlon.base.logger import get_logger
 
 from .components import (
@@ -28,7 +28,6 @@ from .components import (
     CommandPalette,
     InputBox,
     MentionPopup,
-    MessageBubble,
     MessageType,
 )
 
@@ -118,8 +117,14 @@ class CongressApp(App[None]):
         self.host = host
         self.ws_port = ws_port
         self.rest_port = rest_port
-        self.ws_url = f"ws://{host}:{ws_port}/ws"
-        self.rest_url = f"http://{host}:{rest_port}"
+        host_clean = (
+            host.replace("ws://", "")
+            .replace("wss://", "")
+            .replace("http://", "")
+            .replace("https://", "")
+        )
+        self.ws_url = f"ws://{host_clean}:{ws_port}/ws"
+        self.rest_url = f"http://{host_clean}:{rest_port}"
 
         self._client: TlonClient | None = None
         self._input_buffer = ""
@@ -325,14 +330,22 @@ class CongressApp(App[None]):
 
     def _on_state_change(self, state: Any) -> None:
         """Handle connection state changes."""
-        state_str = str(state)
-        if "authenticated" in state_str.lower():
+        # Normalize to enum for robust comparison
+        if isinstance(state, ConnectionState):
+            state_enum = state
+        else:
+            try:
+                state_enum = ConnectionState(str(state).lower())
+            except ValueError:
+                return
+
+        if state_enum == ConnectionState.AUTHENTICATED:
             self.is_connected = True
             self._update_status("已连接")
-        elif "disconnected" in state_str.lower():
+        elif state_enum == ConnectionState.DISCONNECTED:
             self.is_connected = False
             self._update_status("已断开")
-        elif "connecting" in state_str.lower() or "reconnecting" in state_str.lower():
+        elif state_enum in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING):
             self._update_status("连接中...")
 
     # ==================== Actions ====================
@@ -399,7 +412,7 @@ class CongressApp(App[None]):
             return
 
         cmd = parts[0].lower()
-        args = parts[1:]
+        _ = parts[1:]
 
         if cmd == "clear":
             chat_view = self.query_one(ChatView)
