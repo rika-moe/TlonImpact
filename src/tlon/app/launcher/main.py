@@ -21,7 +21,7 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from tlon.app.cli.commands import run_chat, run_dream, run_mirror, run_ops
+from tlon.app.launcher.commands import run_chat, run_dream, run_mirror, run_ops
 from tlon.base.logger import configure_logging
 from tlon.base.settings import settings
 

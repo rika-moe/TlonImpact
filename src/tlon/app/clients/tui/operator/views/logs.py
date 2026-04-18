@@ -20,7 +20,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Input, Label, RichLog, Select, Static
 
-from tlon.app.tui.operator.views.base import BaseView
+from tlon.app.clients.tui.operator.views.base import BaseView
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult

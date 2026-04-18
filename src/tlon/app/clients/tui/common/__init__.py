@@ -1,6 +1,6 @@
 """Common TUI components shared between Congress and Operator."""
 
-from tlon.app.tui.common.components import (
+from tlon.app.clients.tui.common.components import (
     DataTable,
     Dropdown,
     Header,
@@ -9,13 +9,13 @@ from tlon.app.tui.common.components import (
     Toast,
     TreeView,
 )
-from tlon.app.tui.common.styles.colors import (
+from tlon.app.clients.tui.common.styles.colors import (
     AgentStatusColors,
     LogLevelColors,
     ThemeColors,
 )
-from tlon.app.tui.common.utils.state import StateManager
-from tlon.app.tui.common.utils.time_utils import format_duration, format_timestamp
+from tlon.app.clients.tui.common.utils.state import StateManager
+from tlon.app.clients.tui.common.utils.time_utils import format_duration, format_timestamp
 
 __all__ = [
     "Header",

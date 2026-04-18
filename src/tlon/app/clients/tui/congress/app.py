@@ -16,8 +16,8 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Header, Label
 
-from tlon.app.tui.congress.client import ClientConnectionState, CongressWebSocketClient
-from tlon.app.tui.congress.state import AgentInfo, AgentState, Message, MessageType
+from tlon.app.clients.tui.congress.client import ClientConnectionState, CongressWebSocketClient
+from tlon.app.clients.tui.congress.state import AgentInfo, AgentState, Message, MessageType
 from tlon.base.logger import get_logger
 
 from .components import (

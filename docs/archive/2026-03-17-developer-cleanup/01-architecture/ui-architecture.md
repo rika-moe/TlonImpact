@@ -215,7 +215,6 @@ Connecting to ws://localhost:8888/ws...
 
 **核心设计**：
 ```python
-# tlon/cli/tui_simple.py
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout

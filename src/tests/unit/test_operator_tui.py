@@ -13,37 +13,37 @@ class TestOperatorViews:
 
     def test_base_view_import(self):
         """Test BaseView can be imported."""
-        from tlon.app.tui.operator.views.base import BaseView
+        from tlon.app.clients.tui.operator.views.base import BaseView
 
         assert BaseView is not None
 
     def test_agents_view_import(self):
         """Test AgentsView can be imported."""
-        from tlon.app.tui.operator.views.agents import AgentsView
+        from tlon.app.clients.tui.operator.views import AgentsView
 
         assert AgentsView is not None
 
     def test_events_view_import(self):
         """Test EventsView can be imported."""
-        from tlon.app.tui.operator.views.events import EventsView
+        from tlon.app.clients.tui.operator.views.events import EventsView
 
         assert EventsView is not None
 
     def test_logs_view_import(self):
         """Test LogsView can be imported."""
-        from tlon.app.tui.operator.views.logs import LogsView
+        from tlon.app.clients.tui.operator.views.logs import LogsView
 
         assert LogsView is not None
 
     def test_traces_view_import(self):
         """Test TracesView can be imported."""
-        from tlon.app.tui.operator.views.traces import TracesView
+        from tlon.app.clients.tui.operator.views.traces import TracesView
 
         assert TracesView is not None
 
     def test_config_view_import(self):
         """Test ConfigView can be imported."""
-        from tlon.app.tui.operator.views.config import ConfigView
+        from tlon.app.clients.tui.operator.views import ConfigView
 
         assert ConfigView is not None
 
@@ -55,7 +55,7 @@ class TestTracesView:
         """Test TracesView mounts and loads mock data."""
         from textual.app import App
 
-        from tlon.app.tui.operator.views.traces import TracesView
+        from tlon.app.clients.tui.operator.views.traces import TracesView
 
         class TestApp(App):
             def compose(self):
@@ -72,7 +72,7 @@ class TestTracesView:
         """Test flame chart rendering produces expected output."""
         from textual.app import App
 
-        from tlon.app.tui.operator.views.traces import TracesView
+        from tlon.app.clients.tui.operator.views.traces import TracesView
 
         class TestApp(App):
             def compose(self):
@@ -92,7 +92,7 @@ class TestTracesView:
         """Test detail rendering includes key information."""
         from textual.app import App
 
-        from tlon.app.tui.operator.views.traces import TracesView
+        from tlon.app.clients.tui.operator.views.traces import TracesView
 
         class TestApp(App):
             def compose(self):
@@ -113,7 +113,7 @@ class TestTracesView:
         """Test status filter reduces visible traces."""
         from textual.app import App
 
-        from tlon.app.tui.operator.views.traces import TracesView
+        from tlon.app.clients.tui.operator.views.traces import TracesView
 
         class TestApp(App):
             def compose(self):
@@ -138,7 +138,7 @@ class TestConfigView:
         """Test ConfigView mounts and loads mock config."""
         from textual.app import App
 
-        from tlon.app.tui.operator.views.config import ConfigView
+        from tlon.app.clients.tui.operator.views import ConfigView
 
         class TestApp(App):
             def compose(self):
@@ -157,7 +157,7 @@ class TestConfigView:
         """Test model options list is populated."""
         from textual.app import App
 
-        from tlon.app.tui.operator.views.config import ConfigView
+        from tlon.app.clients.tui.operator.views import ConfigView
 
         class TestApp(App):
             def compose(self):
@@ -176,7 +176,7 @@ class TestConfigView:
         from textual.app import App
         from textual.widgets import Input
 
-        from tlon.app.tui.operator.views.config import ConfigView
+        from tlon.app.clients.tui.operator.views import ConfigView
 
         class TestApp(App):
             def compose(self):
@@ -203,25 +203,25 @@ class TestOperatorComponents:
 
     def test_navigation_bar_import(self):
         """Test NavigationBar can be imported."""
-        from tlon.app.tui.operator.components.navigation import NavigationBar
+        from tlon.app.clients.tui.operator.components.navigation import NavigationBar
 
         assert NavigationBar is not None
 
     def test_sidebar_import(self):
         """Test Sidebar can be imported."""
-        from tlon.app.tui.operator.components.sidebar import Sidebar
+        from tlon.app.clients.tui.operator.components.sidebar import Sidebar
 
         assert Sidebar is not None
 
     def test_inspector_panel_import(self):
         """Test InspectorPanel can be imported."""
-        from tlon.app.tui.operator.components.inspector import InspectorPanel
+        from tlon.app.clients.tui.operator.components.inspector import InspectorPanel
 
         assert InspectorPanel is not None
 
     def test_mini_event_stream_import(self):
         """Test MiniEventStream can be imported."""
-        from tlon.app.tui.operator.components.sidebar import MiniEventStream
+        from tlon.app.clients.tui.operator.components.sidebar import MiniEventStream
 
         assert MiniEventStream is not None
 
@@ -231,13 +231,13 @@ class TestOperatorApp:
 
     def test_app_import(self):
         """Test OperatorApp can be imported."""
-        from tlon.app.tui.operator.app import OperatorApp
+        from tlon.app.clients.tui.operator.app import OperatorApp
 
         assert OperatorApp is not None
 
     def test_app_initialization(self):
         """Test OperatorApp initialization."""
-        from tlon.app.tui.operator.app import OperatorApp
+        from tlon.app.clients.tui.operator.app import OperatorApp
 
         app = OperatorApp(
             host="127.0.0.1",
@@ -251,7 +251,7 @@ class TestOperatorApp:
 
     def test_app_bindings(self):
         """Test OperatorApp has correct key bindings."""
-        from tlon.app.tui.operator.app import OperatorApp
+        from tlon.app.clients.tui.operator.app import OperatorApp
 
         app = OperatorApp()
 
@@ -272,13 +272,6 @@ class TestTextualClient:
 
     def test_tlon_textual_app_import(self):
         """Test TlonTextualApp can be imported."""
-        from tlon.app.clients.textual import TlonTextualApp
+        from tlon.app.clients.tui.operator.app import OperatorApp
 
-        assert TlonTextualApp is not None
-
-    def test_tlon_textual_app_is_operator_app(self):
-        """Test TlonTextualApp is an alias for OperatorApp."""
-        from tlon.app.clients.textual import TlonTextualApp
-        from tlon.app.tui.operator.app import OperatorApp
-
-        assert TlonTextualApp is OperatorApp
+        assert OperatorApp is not None

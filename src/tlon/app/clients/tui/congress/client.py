@@ -11,7 +11,13 @@ from enum import Enum
 from typing import Any
 
 from tlon.app.clients.sdk import ConnectionState, TerminalAdapter, TlonClient
-from tlon.app.tui.congress.state import AgentInfo, AgentState, CongressState, Message, MessageType
+from tlon.app.clients.tui.congress.state import (
+    AgentInfo,
+    AgentState,
+    CongressState,
+    Message,
+    MessageType,
+)
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)

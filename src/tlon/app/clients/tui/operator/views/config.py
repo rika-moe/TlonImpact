@@ -25,8 +25,8 @@ from textual.widgets import (
     TextArea,
 )
 
-from tlon.app.tui.common.components.modal import ConfirmModal
-from tlon.app.tui.operator.views.base import BaseView
+from tlon.app.clients.tui.common.components.modal import ConfirmModal
+from tlon.app.clients.tui.operator.views.base import BaseView
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult

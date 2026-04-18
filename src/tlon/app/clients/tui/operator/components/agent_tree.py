@@ -14,8 +14,8 @@ from textual.reactive import reactive
 from textual.widgets import Button, Label
 from textual.widgets.tree import TreeNode
 
-from tlon.app.tui.common.components.tree_view import TreeView
-from tlon.app.tui.common.styles.colors import get_status_icon
+from tlon.app.clients.tui.common.components.tree_view import TreeView
+from tlon.app.clients.tui.common.styles.colors import get_status_icon
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult

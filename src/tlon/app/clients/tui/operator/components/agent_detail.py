@@ -12,9 +12,9 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Label, Static
 
-from tlon.app.tui.common.styles.colors import get_status_icon
-from tlon.app.tui.common.utils.time_utils import format_duration
-from tlon.app.tui.operator.components.agent_tree import AgentInfo
+from tlon.app.clients.tui.common.styles.colors import get_status_icon
+from tlon.app.clients.tui.common.utils.time_utils import format_duration
+from tlon.app.clients.tui.operator.components.agent_tree import AgentInfo
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult

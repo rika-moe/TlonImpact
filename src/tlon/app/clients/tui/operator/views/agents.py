@@ -15,10 +15,10 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from tlon.app.tui.common.components.modal import ConfirmModal
-from tlon.app.tui.operator.components.agent_detail import AgentDetail
-from tlon.app.tui.operator.components.agent_tree import AgentInfo, AgentTree
-from tlon.app.tui.operator.views.base import BaseView
+from tlon.app.clients.tui.common.components.modal import ConfirmModal
+from tlon.app.clients.tui.operator.components.agent_detail import AgentDetail
+from tlon.app.clients.tui.operator.components.agent_tree import AgentInfo, AgentTree
+from tlon.app.clients.tui.operator.views.base import BaseView
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult

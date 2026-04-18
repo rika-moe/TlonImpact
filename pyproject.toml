@@ -44,7 +44,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tlon = "tlon.app.cli.main:main"
+tlon = "tlon.app.launcher.main:main"
 
 [build-system]
 requires = ["hatchling"]

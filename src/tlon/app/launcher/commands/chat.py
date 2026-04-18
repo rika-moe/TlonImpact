@@ -34,7 +34,7 @@ async def run_chat(args: Namespace) -> int:
 
     # Import here to avoid loading textual unless needed
     try:
-        from tlon.app.tui.congress.app import CongressApp
+        from tlon.app.clients.tui.congress.app import CongressApp
     except ImportError as e:
         logger.error(f"Failed to import Congress TUI: {e}")
         print("\n❌ Congress TUI not available. Is textual installed?")
