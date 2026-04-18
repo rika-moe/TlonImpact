@@ -1,13 +1,15 @@
 """Toast notification component for Tlon TUI."""
 
-from textual.widgets import Static
+from enum import Enum
+
 from textual.reactive import reactive
 from textual.timer import Timer
-from enum import Enum
+from textual.widgets import Static
 
 
 class ToastLevel(Enum):
     """Toast notification levels."""
+
     INFO = "info"
     SUCCESS = "success"
     WARNING = "warning"
@@ -46,11 +48,7 @@ class Toast(Static):
     level: reactive[ToastLevel] = reactive(ToastLevel.INFO)
 
     def __init__(
-        self,
-        message: str,
-        level: ToastLevel = ToastLevel.INFO,
-        duration: float = 3.0,
-        **kwargs
+        self, message: str, level: ToastLevel = ToastLevel.INFO, duration: float = 3.0, **kwargs
     ) -> None:
         """Initialize toast notification.
 

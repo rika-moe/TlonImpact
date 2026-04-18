@@ -320,10 +320,10 @@ class EventsView(BaseView):
         detail = EventDetailPanel(id="event-detail", classes="events-detail hidden")
         yield detail
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Handle mount event."""
-        super().on_mount()
-        self.call_after_refresh(self._load_data)
+        await super().on_mount()
+        await self._load_data()
 
     async def _load_data(self) -> None:
         """Load events data with mock data."""

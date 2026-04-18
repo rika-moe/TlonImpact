@@ -1,11 +1,10 @@
 """Time formatting utilities for Tlon TUI."""
 
 from datetime import datetime
-from typing import Union
 
 
 def format_timestamp(
-    timestamp: Union[float, str, datetime, None],
+    timestamp: float | str | datetime | None,
     format_str: str = "%H:%M:%S",
 ) -> str:
     """Format timestamp for display.
@@ -39,7 +38,7 @@ def format_timestamp(
         return "--:--:--"
 
 
-def format_duration(seconds: Union[float, int, None]) -> str:
+def format_duration(seconds: float | int | None) -> str:
     """Format duration for display.
 
     Args:
@@ -87,7 +86,7 @@ def format_duration(seconds: Union[float, int, None]) -> str:
     return " ".join(parts)
 
 
-def format_relative_time(timestamp: Union[float, str, datetime]) -> str:
+def format_relative_time(timestamp: float | str | datetime) -> str:
     """Format timestamp as relative time (e.g., "2 minutes ago").
 
     Args:

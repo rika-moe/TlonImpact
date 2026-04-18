@@ -5,6 +5,7 @@ with automatic reconnection, heartbeat, and message protocol handling.
 """
 
 import asyncio
+import contextlib
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
@@ -198,10 +199,8 @@ class CongressWebSocketClient:
         # Cancel any pending reconnection
         if self._reconnect_task:
             self._reconnect_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
             self._reconnect_task = None
 
         # Disconnect SDK
@@ -248,11 +247,15 @@ class CongressWebSocketClient:
         new_state = state_map.get(state, ClientConnectionState.ERROR)
 
         # Handle disconnection for auto-reconnect
-        if state == ConnectionState.DISCONNECTED and self.auto_reconnect and not self._should_stop:
-            if self._connection_state == ClientConnectionState.AUTHENTICATED:
-                logger.info("Connection lost, starting reconnection")
-                self._start_reconnect()
-                return
+        if (
+            state == ConnectionState.DISCONNECTED
+            and self.auto_reconnect
+            and not self._should_stop
+            and self._connection_state == ClientConnectionState.AUTHENTICATED
+        ):
+            logger.info("Connection lost, starting reconnection")
+            self._start_reconnect()
+            return
 
         self._set_connection_state(new_state)
 

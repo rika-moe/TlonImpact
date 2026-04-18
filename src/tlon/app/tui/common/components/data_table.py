@@ -1,8 +1,9 @@
 """Data table component for Tlon TUI."""
 
-from textual.widgets import DataTable as TextualDataTable
-from textual.reactive import reactive
 from typing import Any
+
+from textual.reactive import reactive
+from textual.widgets import DataTable as TextualDataTable
 
 
 class DataTable(TextualDataTable):
@@ -35,7 +36,7 @@ class DataTable(TextualDataTable):
         self,
         columns: list[str] | None = None,
         column_widths: dict[str, int] | None = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         """Initialize data table.
 
@@ -50,9 +51,8 @@ class DataTable(TextualDataTable):
         self._all_rows: list[tuple] = []
         self._filtered_rows: list[tuple] = []
 
-    def compose(self):
-        """Compose the data table."""
-        # Add columns
+    def on_mount(self) -> None:
+        """Mount the data table and add columns."""
         for col in self._columns:
             width = self._column_widths.get(col)
             self.add_column(col, width=width)
@@ -80,10 +80,7 @@ class DataTable(TextualDataTable):
         if not self.filter_text:
             return True
         filter_lower = self.filter_text.lower()
-        return any(
-            filter_lower in str(cell).lower()
-            for cell in cells
-        )
+        return any(filter_lower in str(cell).lower() for cell in cells)
 
     def set_filter(self, text: str) -> None:
         """Set filter text and refresh table.
@@ -118,7 +115,6 @@ class DataTable(TextualDataTable):
 
         col_index = self._columns.index(column)
         self._all_rows.sort(
-            key=lambda x: x[0][col_index] if col_index < len(x[0]) else "",
-            reverse=reverse
+            key=lambda x: x[0][col_index] if col_index < len(x[0]) else "", reverse=reverse
         )
         self._apply_filter()

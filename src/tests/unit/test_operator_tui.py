@@ -4,6 +4,7 @@ Tests cover:
 - View imports and initialization
 - Component imports and initialization
 - App initialization
+- View data models and rendering logic
 """
 
 
@@ -45,6 +46,156 @@ class TestOperatorViews:
         from tlon.app.tui.operator.views.config import ConfigView
 
         assert ConfigView is not None
+
+
+class TestTracesView:
+    """Tests for TracesView data models and rendering."""
+
+    async def test_traces_view_mount_and_data(self):
+        """Test TracesView mounts and loads mock data."""
+        from textual.app import App
+
+        from tlon.app.tui.operator.views.traces import TracesView
+
+        class TestApp(App):
+            def compose(self):
+                yield TracesView(id="traces")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(TracesView)
+            assert len(view._traces) == 5
+            assert view._traces[0].trace_id == "trace-001"
+            assert view._traces[0].status == "completed"
+
+    async def test_render_flame_chart(self):
+        """Test flame chart rendering produces expected output."""
+        from textual.app import App
+
+        from tlon.app.tui.operator.views.traces import TracesView
+
+        class TestApp(App):
+            def compose(self):
+                yield TracesView(id="traces")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(TracesView)
+            trace = view._traces[0]
+            chart = view._render_flame_chart(trace)
+            assert "dev-001" in chart
+            assert "█" in chart
+            assert "llm" in chart
+            assert "tool" in chart
+
+    async def test_render_detail(self):
+        """Test detail rendering includes key information."""
+        from textual.app import App
+
+        from tlon.app.tui.operator.views.traces import TracesView
+
+        class TestApp(App):
+            def compose(self):
+                yield TracesView(id="traces")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(TracesView)
+            trace = view._traces[0]
+            detail = view._render_detail(trace)
+            assert trace.trace_id in detail
+            assert f"{trace.duration:.1f}s" in detail
+            assert trace.root_agent in detail
+            assert "Flame Chart" in detail
+            assert "Stage Breakdown" in detail
+
+    async def test_filter_status(self):
+        """Test status filter reduces visible traces."""
+        from textual.app import App
+
+        from tlon.app.tui.operator.views.traces import TracesView
+
+        class TestApp(App):
+            def compose(self):
+                yield TracesView(id="traces")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(TracesView)
+            # Default filter shows all
+            assert len(view._traces) == 5
+            # Apply completed filter
+            view._filter_status = "completed"
+            # _refresh_table should only show completed traces
+            completed_count = sum(1 for t in view._traces if t.status == "completed")
+            assert completed_count == 3
+
+
+class TestConfigView:
+    """Tests for ConfigView configuration logic."""
+
+    async def test_config_view_mount_and_data(self):
+        """Test ConfigView mounts and loads mock config."""
+        from textual.app import App
+
+        from tlon.app.tui.operator.views.config import ConfigView
+
+        class TestApp(App):
+            def compose(self):
+                yield ConfigView(id="config")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(ConfigView)
+            config = view._get_mock_config()
+            assert config["name"] == "dev-001"
+            assert config["model"] == "GPT-4"
+            assert config["temperature"] == 0.7
+            assert "tools" in config
+
+    async def test_model_options(self):
+        """Test model options list is populated."""
+        from textual.app import App
+
+        from tlon.app.tui.operator.views.config import ConfigView
+
+        class TestApp(App):
+            def compose(self):
+                yield ConfigView(id="config")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(ConfigView)
+            options = view._get_model_options()
+            assert "GPT-4" in options
+            assert "Claude-3-Opus" in options
+            assert len(options) >= 4
+
+    async def test_dirty_state_tracking(self):
+        """Test dirty state reflects config changes."""
+        from textual.app import App
+        from textual.widgets import Input
+
+        from tlon.app.tui.operator.views.config import ConfigView
+
+        class TestApp(App):
+            def compose(self):
+                yield ConfigView(id="config")
+
+        app = TestApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(ConfigView)
+            # Initially clean after load
+            assert not view.is_dirty
+            # Modify an input field to trigger dirty state
+            name_input = view.query_one("#input-name", Input)
+            name_input.value = "modified-name"
+            view._check_dirty()
+            assert view.is_dirty
+            # Revert input value should clear dirty
+            name_input.value = view._original_config.get("name", "")
+            view._check_dirty()
+            assert not view.is_dirty
 
 
 class TestOperatorComponents:

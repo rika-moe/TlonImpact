@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Any
 
 from rich.syntax import Syntax
 from textual.containers import Horizontal, Vertical
@@ -174,10 +173,9 @@ class MessageBubble(Vertical):
         """Compose message bubble."""
         if self.sender_type == MessageType.USER:
             # User message: right-aligned
-            with Horizontal(classes="message-row"):
-                with Vertical(classes="bubble-content"):
-                    yield Label(f"{self.sender_name} {self.timestamp}", classes="sender-name")
-                    yield from self._render_content()
+            with Horizontal(classes="message-row"), Vertical(classes="bubble-content"):
+                yield Label(f"{self.sender_name} {self.timestamp}", classes="sender-name")
+                yield from self._render_content()
 
         elif self.sender_type == MessageType.AGENT:
             # Agent message: left-aligned with avatar
@@ -244,7 +242,6 @@ class MessageBubble(Vertical):
                     parts.append(("text", text))
 
             # Code block
-            language = match.group(1) or "text"
             code = match.group(2)
             parts.append(("code", code))
 

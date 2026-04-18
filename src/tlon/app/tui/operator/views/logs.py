@@ -127,10 +127,10 @@ class LogsView(BaseView):
         with Vertical(classes="logs-container"):
             yield RichLog(id="log-stream", highlight=True, markup=True)
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Handle mount event."""
-        super().on_mount()
-        self.call_after_refresh(self._load_data)
+        await super().on_mount()
+        await self._load_data()
 
     async def _load_data(self) -> None:
         """Load initial mock log data."""

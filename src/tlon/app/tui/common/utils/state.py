@@ -1,8 +1,9 @@
 """State management utilities for Tlon TUI."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, TypeVar
-from textual.reactive import reactive
+from typing import Any, Generic, TypeVar
+
 from textual.message import Message
 
 T = TypeVar("T")

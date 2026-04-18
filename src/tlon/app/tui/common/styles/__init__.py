@@ -1,5 +1,5 @@
 """TUI styles and themes."""
 
-from .colors import ThemeColors, AgentStatusColors, LogLevelColors
+from .colors import AgentStatusColors, LogLevelColors, ThemeColors
 
 __all__ = ["ThemeColors", "AgentStatusColors", "LogLevelColors"]

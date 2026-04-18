@@ -1,12 +1,12 @@
 """Common UI components for Tlon TUI."""
 
-from .header import Header
-from .status_bar import StatusBar
 from .data_table import DataTable
-from .tree_view import TreeView
 from .dropdown import Dropdown
-from .modal import Modal, ConfirmModal, AlertModal
+from .header import Header
+from .modal import AlertModal, ConfirmModal, Modal
+from .status_bar import StatusBar
 from .toast import Toast, ToastLevel
+from .tree_view import TreeView
 
 __all__ = [
     "Header",

@@ -1,8 +1,9 @@
 """Tree view component for Tlon TUI."""
 
-from textual.widgets import Tree
-from textual.reactive import reactive
 from typing import Any
+
+from textual.reactive import reactive
+from textual.widgets import Tree
 
 
 class TreeView(Tree):
@@ -41,12 +42,7 @@ class TreeView(Tree):
         self._nodes: dict[str, Any] = {}
 
     def add_node(
-        self,
-        label: str,
-        key: str,
-        parent_key: str | None = None,
-        data: Any = None,
-        icon: str = ""
+        self, label: str, key: str, parent_key: str | None = None, data: Any = None, icon: str = ""
     ) -> Any:
         """Add a node to the tree.
 
