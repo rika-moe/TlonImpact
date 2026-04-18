@@ -7,19 +7,29 @@ from typing import Any
 import structlog
 
 
-def configure_logging(log_level: str = "INFO", debug: bool = False) -> None:
+def configure_logging(log_level: str = "INFO", debug: bool = False, silent: bool = False) -> None:
     """Configure structured logging for the application.
 
     Args:
         log_level: The log level (DEBUG, INFO, WARNING, ERROR)
         debug: If True, use more verbose pretty printing
+        silent: If True, suppress all log output (used for TUI commands)
     """
     # Configure standard library logging
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=getattr(logging, log_level.upper()),
-    )
+    if silent:
+        logging.basicConfig(
+            handlers=[logging.NullHandler()],
+            format="%(message)s",
+            level=logging.CRITICAL + 1,
+            force=True,
+        )
+    else:
+        logging.basicConfig(
+            format="%(message)s",
+            stream=sys.stdout,
+            level=getattr(logging, log_level.upper()),
+            force=True,
+        )
 
     # Configure structlog
     shared_processors: list[Any] = [

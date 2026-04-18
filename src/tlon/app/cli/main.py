@@ -169,7 +169,7 @@ Defaults to the Operator console for backward compatibility.""",
     )  # Hidden alias
 
     # mirror command - create in the mirror (configure agents)
-    subparsers.add_parser(
+    mirror_parser = subparsers.add_parser(
         "mirror",
         aliases=["wizard"],  # Backward compatibility
         help="Create in the mirror (configure agents)",
@@ -178,6 +178,16 @@ Defaults to the Operator console for backward compatibility.""",
 From "The Mirror and the Mask": The mirror reveals and creates.
 Through the mirror, you shape the forms that will inhabit Tlon.""",
     )
+    mirror_parser.add_argument(
+        "--lucid",
+        "-l",
+        dest="debug",
+        action="store_true",
+        help="Lucid dream mode - enable debug logging",
+    )
+    mirror_parser.add_argument(
+        "--debug", action="store_true", help=argparse.SUPPRESS
+    )  # Hidden alias
 
     return parser
 

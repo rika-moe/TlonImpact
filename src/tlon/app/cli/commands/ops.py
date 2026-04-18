@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tlon.base.logger import configure_logging, get_logger
-from tlon.base.settings import settings
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -28,8 +27,10 @@ async def run_ops(args: Namespace) -> int:
         Exit code
     """
     is_lucid = getattr(args, "debug", False)
-    log_level = "DEBUG" if is_lucid else settings.log_level
-    configure_logging(log_level=log_level, debug=is_lucid)
+    if is_lucid:
+        configure_logging(log_level="DEBUG", debug=True)
+    else:
+        configure_logging(silent=True)
 
     # Import here to avoid loading textual unless needed
     try:
