@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from textual.containers import Horizontal
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Label
 
@@ -123,7 +124,7 @@ class NavigationBar(Horizontal):
             self.current_tab = tab_id
             self.post_message(self.TabChanged(tab_id))
 
-    class TabChanged(Horizontal.Message):
+    class TabChanged(Message):
         """Message sent when the active tab changes."""
 
         def __init__(self, tab_id: str) -> None:
