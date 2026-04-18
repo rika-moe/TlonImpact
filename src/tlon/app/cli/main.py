@@ -3,13 +3,14 @@
 Provides commands (Borgesian metaphor):
 - tlon dream    : Maintain the dream (start server) - from "The Circular Ruins"
 - tlon mirror   : Create in the mirror (configure agents) - from "The Mirror and the Mask"
-- tlon intrude  : Intrude into reality (connect interface) - Tlon invading reality
+- tlon chat     : Enter Congress (chat with agents)
+- tlon ops      : Open Operator console (monitor and manage)
 
 Usage:
     $ tlon dream            # Start server on default ports
     $ tlon dream --lucid    # Debug mode (lucid dream)
-    $ tlon intrude          # Connect TUI client (default)
-    $ tlon intrude tui      # Explicit TUI
+    $ tlon chat             # Connect chat TUI
+    $ tlon ops              # Connect operator TUI
     $ tlon mirror           # Run configuration wizard
 """
 
@@ -20,7 +21,7 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from tlon.app.cli.commands import run_dream, run_intrude, run_mirror
+from tlon.app.cli.commands import run_chat, run_dream, run_mirror, run_ops
 from tlon.base.logger import configure_logging
 from tlon.base.settings import settings
 
@@ -39,16 +40,17 @@ def create_parser() -> argparse.ArgumentParser:
         description="🐙 Tlon - A universe constructed of ideas, invading reality",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Literary Commands:
+Commands:
   %(prog)s dream            Maintain the dream (start server)
   %(prog)s dream --lucid    Lucid dream mode (debug)
+  %(prog)s chat             Enter Congress (chat TUI)
+  %(prog)s ops              Open Operator console (ops TUI)
   %(prog)s mirror           Create in the mirror (configure agents)
-  %(prog)s mirror --reflect View existing agent mirrors
-  %(prog)s intrude [tui]  Intrude into reality (connect UI)
 
 Legacy Aliases (for backward compatibility):
   %(prog)s server           Same as 'dream'
-  %(prog)s tui              Same as 'intrude'
+  %(prog)s intrude          Same as 'ops'
+  %(prog)s tui              Same as 'ops'
   %(prog)s wizard           Same as 'mirror'
         """,
     )
@@ -89,24 +91,62 @@ The server is the dream that sustains the Tlon universe.""",
         "--debug", action="store_true", help=argparse.SUPPRESS
     )  # Hidden alias
 
-    # intrude command - intrude into reality (connect UI)
+    # chat command - enter Congress (chat TUI)
+    chat_parser = subparsers.add_parser(
+        "chat",
+        help="Enter Congress (chat with agents)",
+        description="""Connect to the Tlon server through the Congress chat interface.
+
+Talk with agents in a terminal-based chat room.""",
+    )
+    chat_parser.add_argument("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
+    chat_parser.add_argument(
+        "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
+    )
+    chat_parser.add_argument(
+        "--rest-port", "-r", type=int, default=8080, help="Server REST API port (default: 8080)"
+    )
+    chat_parser.add_argument(
+        "--lucid",
+        "-l",
+        dest="debug",
+        action="store_true",
+        help="Lucid dream mode - enable debug logging",
+    )
+    chat_parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)  # Hidden alias
+
+    # ops command - open Operator console (ops TUI)
+    ops_parser = subparsers.add_parser(
+        "ops",
+        help="Open Operator console (monitor and manage)",
+        description="""Connect to the Tlon server through the Operator console.
+
+Professional operations console for monitoring and managing agents.""",
+    )
+    ops_parser.add_argument("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
+    ops_parser.add_argument(
+        "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
+    )
+    ops_parser.add_argument(
+        "--rest-port", "-r", type=int, default=8080, help="Server REST API port (default: 8080)"
+    )
+    ops_parser.add_argument(
+        "--lucid",
+        "-l",
+        dest="debug",
+        action="store_true",
+        help="Lucid dream mode - enable debug logging",
+    )
+    ops_parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)  # Hidden alias
+
+    # intrude command - intrude into reality (legacy, now same as ops)
     intrude_parser = subparsers.add_parser(
         "intrude",
         aliases=["tui"],  # Backward compatibility
-        help="Intrude into reality (connect interface)",
-        description="""Connect to the Tlon server through various interfaces.
+        help="Intrude into reality (legacy alias for 'ops')",
+        description="""Legacy command - use 'tlon ops' or 'tlon chat' instead.
 
-Tlon is invading reality. You choose the point of intrusion.
-
-From the story: The imagined universe of Tlon begins to manifest in the real world,
-blurring the boundaries between fiction and reality.""",
-    )
-    intrude_parser.add_argument(
-        "interface",
-        nargs="?",
-        choices=["tui"],
-        default="tui",
-        help="Interface to use for intrusion (default: tui)",
+Defaults to the Operator console for backward compatibility.""",
     )
     intrude_parser.add_argument(
         "--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)"
@@ -169,30 +209,35 @@ async def main_async(args: Namespace | None = None) -> int:
     if cmd in ("dream", "server"):
         return await run_dream(args)
 
-    # intrude / tui (connect interface)
-    elif cmd in ("intrude", "tui"):
-        return await run_intrude(args)
+    # chat (Congress TUI)
+    elif cmd == "chat":
+        return await run_chat(args)
+
+    # ops / intrude / tui (Operator TUI)
+    elif cmd in ("ops", "intrude", "tui"):
+        return await run_ops(args)
 
     # mirror / wizard (configure agents)
     elif cmd in ("mirror", "wizard"):
         return await run_mirror(args)
 
     else:
-        # No command - show literary help
+        # No command - show help
         print("""
 🐙 Tlon - 一个由观念构建的、正在入侵现实的宇宙
 
 Commands:
   dream       维持梦境（启动 Server）
+  chat        进入议会（聊天界面）
+  ops         打开运维控制台
   mirror      镜中造物（配置 Agent）
-  intrude     入侵现实（连接界面）
 
 Usage:
   tlon dream                    # 启动服务
   tlon dream --lucid            # Debug 模式
+  tlon chat                     # 聊天界面
+  tlon ops                      # 运维控制台
   tlon mirror                   # 配置向导
-  tlon mirror --reflect         # 查看所有 Agents
-  tlon intrude [tui]  # 连接界面
 
 Run 'tlon --help' for more information.
 """)

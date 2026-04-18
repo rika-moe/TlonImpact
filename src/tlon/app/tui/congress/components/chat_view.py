@@ -35,7 +35,7 @@ class ChatView(VerticalScroll):
         text-align: center;
         color: $text-muted;
         text-style: dim;
-        margin-top: 50%;
+        margin-top: 1;
     }
     """
 

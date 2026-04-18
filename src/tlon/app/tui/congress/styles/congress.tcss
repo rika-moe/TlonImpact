@@ -202,23 +202,6 @@ CommandPalette.open {
     display: block;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-    width: 1;
-}
-
-::-webkit-scrollbar-track {
-    background: $surface-darken-2;
-}
-
-::-webkit-scrollbar-thumb {
-    background: $primary-darken-2;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: $primary;
-}
-
 /* Focus states */
 *:focus {
     border: solid $primary;

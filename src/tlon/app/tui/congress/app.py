@@ -142,7 +142,7 @@ class CongressApp(App[None]):
             )
 
             # Set up event handlers
-            self._client.on_message(self._on_message)
+            self._client.on_message(self._handle_new_message)
             self._client.on_agent_update(self._on_agent_update)
             self._client.on_connection_change(self._on_connection_change)
             self._client.on_error(self._on_error)
@@ -196,7 +196,7 @@ class CongressApp(App[None]):
         # Update header count
         self._update_agent_count()
 
-    def _on_message(self, message: Message) -> None:
+    def _handle_new_message(self, message: Message) -> None:
         """Handle new message from CongressWebSocketClient."""
         time_str = ""
         if message.timestamp:

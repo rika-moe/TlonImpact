@@ -6,12 +6,16 @@ This module provides the command implementations for the Tlon CLI:
 - mirror: Configure agents (create in the mirror)
 """
 
+from .chat import run_chat
 from .dream import run_dream
 from .intrude import run_intrude
 from .mirror import run_mirror
+from .ops import run_ops
 
 __all__ = [
+    "run_chat",
     "run_dream",
     "run_intrude",
     "run_mirror",
+    "run_ops",
 ]

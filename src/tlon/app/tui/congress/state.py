@@ -71,7 +71,14 @@ class Message:
         """
         sender_type = data.get("sender_type", "agent")
         if isinstance(sender_type, str):
-            sender_type = MessageType(sender_type)
+            # Map server-side sender types to Congress MessageType
+            sender_type_map = {
+                "user": MessageType.USER,
+                "human": MessageType.USER,
+                "agent": MessageType.AGENT,
+                "system": MessageType.SYSTEM,
+            }
+            sender_type = sender_type_map.get(sender_type.lower(), MessageType.AGENT)
 
         timestamp = data.get("timestamp")
         if isinstance(timestamp, (int, float)):

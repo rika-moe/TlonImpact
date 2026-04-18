@@ -33,7 +33,7 @@ async def run_ops(args: Namespace) -> int:
 
     # Import here to avoid loading textual unless needed
     try:
-        from tlon.app.clients.operator import OperatorApp
+        from tlon.app.tui.operator.app import OperatorApp
     except ImportError as e:
         logger.error(f"Failed to import Operator TUI: {e}")
         print("\n❌ Operator TUI not available. Is textual installed?")
@@ -44,8 +44,6 @@ async def run_ops(args: Namespace) -> int:
         host=args.host,
         ws_port=args.port,
         rest_port=args.rest_port,
-        initial_view=getattr(args, "view", "agents"),
-        initial_agent=getattr(args, "agent", None),
     )
 
     try:
