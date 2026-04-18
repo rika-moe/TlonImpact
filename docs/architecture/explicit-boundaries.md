@@ -35,10 +35,10 @@
 
 #### ❌ 隐式边界
 ```python
-# config_manager.py
-class ConfigManager:
-    def __init__(self, config_loader: ConfigLoader):
-        self._loader = config_loader
+# config_service.py
+class ConfigService:
+    def __init__(self, config_dir: Path):
+        self._config_dir = config_dir
 
 # 规则存在吗？存在，在代码审查者的脑中
 # 新成员怎么知道？看之前的代码、问同事
@@ -60,11 +60,12 @@ class Component(ABC):
     @abstractmethod
     async def initialize(self) -> None: ...
 
-# config_manager.py
-class ConfigManager(Component):  # <-- 显式：我是 Component
-    def __init__(self, config_loader: ConfigLoader):
-        super().__init__(name="ConfigManager")
-        self._loader = config_loader  # 构造函数注入
+# config_service.py
+class ConfigService(Component, Device, AgentInfoProvider):  # <-- 显式：我是 Component
+    def __init__(self, event_bus: EventBus, config_dir: Path | None = None):
+        super().__init__(name="ConfigService")
+        self._event_bus = event_bus
+        self._config_dir = config_dir  # 构造函数注入
 
 # 工具检查
 $ python scripts/check_architecture.py

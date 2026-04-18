@@ -49,7 +49,7 @@ uv run pytest
 | 用户指南 | [user/README.md](./docs/user/README.md) | - |
 | 组件架构 | - | [dag-components.md](./docs/architecture/dag-components.md), [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
 | 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
-| Agent 系统 | [design/agents.md](./docs/design/agents.md) | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
+| Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md) | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/modules.md](./docs/architecture/modules.md) |
 | 消息系统 | [design/messaging.md](./docs/design/messaging.md) | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
 | Client-Server | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | [architecture/client-server.md](./docs/architecture/client-server.md) |
@@ -66,10 +66,10 @@ uv run pytest
 | Agent 系统 | ✅ 已验证 | 100/100 | EventBus 化完成 |
 | 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
 | 消息系统 | ✅ 已验证 | 100/100 | 稳定 |
-| Client-Server | ✅ 已验证 | 90/100 | Device/Component 重构完成 |
+| Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
-| TUI (Congress) | ⚠️ 待验证 | 61/100 | 设计中 |
-| TUI (Operator) | ⚠️ 待验证 | 76/100 | 设计中 |
+| TUI (Congress) | ⚠️ 待验证 | 65/100 | 基础功能可用 |
+| TUI (Operator) | ⚠️ 待验证 | 80/100 | 基础功能可用 |
 | Sandbox | ✅ 已验证 | 100/100 | 稳定 |
 
 -- 
@@ -92,4 +92,4 @@ uv run pytest
 
 ---
 
-*最后更新：2026-04-12*
+*最后更新：2026-04-19*

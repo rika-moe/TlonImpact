@@ -1,7 +1,7 @@
 # Client-Server 架构设计
 
-> 状态: 🚧 设计中
-> 最后验证: 待验证
+> 状态: ⚠️ 部分实现
+> 最后验证: 2026-04-19
 
 ---
 
@@ -219,7 +219,7 @@ Trace: trace-abc-123 (一条用户消息的完整生命周期)
 │   │
 │   ├── Span: llm-request
 │   │   ├── parent: agent-thinking
-│   │   ├── attributes: {model: "gpt-4", tokens: 2048}
+│   │   ├── attributes: {model_name: "kimi-k2.5", tokens: 2048}
 │   │   └── duration: 2000ms
 │   │
 │   └── Span: tool-execute

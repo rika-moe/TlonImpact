@@ -1,6 +1,6 @@
 # 里程碑 7: Client 扩展与可观测性
 
-> 状态: 🔄 进行中 (Phase 1)
+> 状态: 🔄 进行中 (Phase 2)
 > 实际开始: 2026-03-18
 > 计划完成: 2026-04
 > 负责人: 架构师 + 开发团队
@@ -31,19 +31,20 @@
 
 ## 交付物
 
-### Phase 1: 基础架构（Week 1）🔄 进行中
+### Phase 1: 基础架构（Week 1）✅ 已完成
 
 - [x] GitHub Actions CI（lint + type check + unit test）
 - [x] Agent 系统重构（解耦 + ReAct + EventBus）
-- [ ] Event 扩展（trace_id, span_id, 新增事件类型）
-- [ ] TraceStore 实现（文件存储）
-- [ ] TUI Event 模式增强（按 trace_id 过滤）
+- [x] Event 扩展（trace_id, span_id, 新增事件类型）
+- [x] TraceStore 实现（文件存储）
+- [x] TUI Event 模式增强（按 trace_id 过滤）
 
-### Phase 2: 协议与 SDK（Week 2）
+### Phase 2: 协议与 SDK（Week 2）🔄 进行中
 
 - [ ] 协议版本协商机制
 - [ ] SDK 重构（BaseClient + Adapter 模式）
-- [ ] REST API 扩展（/traces, /agents/{id}/logs, /test/*）
+- [x] REST API 扩展（/traces）
+- [ ] REST API 扩展（/agents/{id}/logs, /test/*）
 
 ### Phase 3: Client 实现（Week 3-4）
 
@@ -92,31 +93,30 @@ Client Ecosystem
   pytest tests/unit/ -xvs
   ```
 
-#### Task 1.2: Event 扩展 🔄 部分完成
+#### Task 1.2: Event 扩展 ✅ 已完成
 - **负责人**: Backend Agent
 - **工期**: 2 人天
-- **状态**: EventBus 重构完成，trace 元数据待添加
+- **状态**: 已完成
 - **已完成**:
   - ✅ EventBus 化工具执行（ ）
   - ✅ 显式状态机 ReAct Loop（）
   - ✅ Agent 解耦：PromptContext + 组件注入化（ ）
-- **待完成**:
-  - 扩展 `Event` 类，添加 `trace_id`, `span_id`, `parent_span_id`
-  - 新增 EventType：
-    - `AGENT_THINKING_START`, `AGENT_THINKING_END`
-    - `AGENT_LLM_REQUEST`, `AGENT_LLM_RESPONSE`
-    - `TOOL_EXECUTE_START`, `TOOL_EXECUTE_END`
-  - 埋点：MessageRouter, Agent.think(), ToolExecutor
-- **验收标准**: TUI Event 模式可见 trace_id 链路
+  - ✅ 扩展 `Event` 类，添加 `trace_id`, `span_id`, `parent_span_id`
+  - ✅ 新增 EventType：`AGENT_THINKING_START/END`, `AGENT_LLM_REQUEST/RESPONSE`, `TOOL_EXECUTE_START/END`
+  - ✅ 埋点：MessageRouter, Agent.think(), Agent._execute_tool_call()
+- **验收标准**: ✅ TUI Event 模式可见 trace_id 链路
 
-#### Task 1.3: Trace 基础
+#### Task 1.3: Trace 基础 ✅ 已完成
 - **负责人**: Backend Agent
 - **工期**: 2 人天
 - **依赖**: Task 1.2
-- **任务**:
-  - `TraceStore` 接口与文件实现
-  - `TraceViewer` API (`/traces/{trace_id}`)
-  - EventBus 集成（自动记录 span）
+- **状态**: 已完成
+- **已完成**:
+  - ✅ `TraceStore` 接口与文件实现（`FileTraceStore`）
+  - ✅ REST API (`/traces/{trace_id}`)
+  - ✅ EventBus 集成（`start_span` 上下文管理器）
+  - ✅ MessageRouter 自动记录 span
+- **待完成**:
   - TUI 新增 `/trace <trace_id>` 命令
 - **验收标准**:
   ```bash
@@ -256,8 +256,8 @@ Week 3-4: Phase 3 - Client 实现
 
 | 里程碑 | 日期 | 状态 | 验收标准 |
 |--------|------|------|----------|
-| M1: 可观测基础 | Week 1 周五 | 🔄 进行中 | 1. CI 通过 ✅<br>2. Event 扩展完成<br>3. Trace 基础可用 |
-| M2: 协议标准化 | Week 2 周五 | ⏳ 待开始 | 1. 版本协商工作<br>2. SDK 重构完成<br>3. REST API 扩展 |
+| M1: 可观测基础 | Week 1 周五 | ✅ 已完成 | 1. CI 通过 ✅<br>2. Event 扩展完成 ✅<br>3. Trace 基础可用 ✅ |
+| M2: 协议标准化 | Week 2 周五 | 🔄 进行中 | 1. 版本协商工作<br>2. SDK 重构完成<br>3. REST API 扩展 ✅ |
 | M3: 多 Client 支持 | Week 4 周五 | ⏳ 待开始 | 1. TUI 适配完成<br>2. Web Client 可用<br>3. Telegram Bot 可用 |
 | M4: 集成测试 | Week 4 周日 | ⏳ 待开始 | 1. 集成测试通过<br>2. 文档完成 |
 
@@ -323,10 +323,11 @@ Task 2.1 (协议版本化)
 
 - [x] CI/CD 通过（lint + type check + unit test）
 - [x] Agent 系统重构完成（解耦 + ReAct + EventBus）
-- [ ] Event 扩展实现（trace_id, span_id）
-- [ ] Trace 系统可用（创建、查询、展示）
+- [x] Event 扩展实现（trace_id, span_id）
+- [x] Trace 系统可用（创建、查询、展示）
 - [ ] 协议版本协商工作
 - [ ] SDK 重构完成（BaseClient + Adapters）
+- [x] REST API 扩展（/traces）
 - [ ] TUI 适配新 SDK
 - [ ] Web Client 可用（收发消息、查看状态）
 - [ ] Telegram Bot 可用（消息转发）
@@ -336,4 +337,4 @@ Task 2.1 (协议版本化)
 ---
 
 *计划制定时间: 2026-03-18*
-*最后更新: 2026-03-23*
+*最后更新: 2026-04-19*

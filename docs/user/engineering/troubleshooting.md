@@ -131,7 +131,7 @@ grep "dev-001" data/logs/server.log
 |-----|------|------|
 | 容器启动失败 | `docker ps` 无容器 | 检查 Docker 资源，重启服务端 |
 | LLM API 错误 | 日志显示 API 调用失败 | 检查 API Key 有效性 |
-| 配置错误 | 日志显示配置解析错误 | 检查 `config/agents.yaml` 语法 |
+| 配置错误 | 日志显示配置解析错误 | 检查 `config/agents/*.yaml` 语法 |
 
 ---
 
@@ -157,7 +157,7 @@ Ctrl+C
 tlon server
 
 # 3. 修改配置，添加规则
-# config/agents.yaml:
+# config/agents/{id}.yaml:
 rules:
   - "不主动@其他Agent，除非被明确要求"
 ```
@@ -236,7 +236,7 @@ docker system prune
 docker pull ubuntu:22.04
 
 # 或修改配置使用轻量镜像
-# config/agents.yaml:
+# config/agents/{id}.yaml:
 docker:
   image: "alpine:latest"
 ```
@@ -253,7 +253,7 @@ docker:
 **解决**:
 ```bash
 # 增加内存限制
-# config/agents.yaml:
+# config/agents/{id}.yaml:
 docker:
   memory_limit: "2g"  # 从 512m 增加
 
@@ -279,7 +279,7 @@ Error: RateLimitError: You exceeded your current quota
 
 # 降低调用频率
 # 修改 temperature 减少重试
-# config/agents.yaml:
+# config/agents/{id}.yaml:
 llm:
   temperature: 0.3  # 更确定性，减少重试
 
@@ -463,7 +463,7 @@ docker --version
 
 # 配置检查
 cat .env
-cat config/agents.yaml
+ls config/agents/
 
 # 状态检查
 curl http://localhost:8080/api/health

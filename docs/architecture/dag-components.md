@@ -221,7 +221,7 @@ class ServerApp:
 | Component | Dependencies | Responsibility |
 |-----------|--------------|----------------|
 | `EventBus` | None | Event publish/subscribe infrastructure |
-| `ConfigManager` | `ConfigLoader` | Configuration loading and caching |
+| `ConfigService` | `EventBus` | Configuration loading, caching, saving, and EventBus notifications |
 | `MessageStore` | File path | Message persistence |
 | `MessageRouter` | `EventBus`, `MessageStore`, `AgentInfoProvider` | Message routing decisions |
 | `AgentRegistry` | `EventBus`, `AgentInfoProvider`, `MessageStore` | Agent lifecycle management |

@@ -1,7 +1,7 @@
 # 模块架构 (Module Architecture)
 
 > 状态: ✅ 已验证
-> 最后验证: 2026-04-11
+> 最后验证: 2026-04-19
 > 核心理念: **按功能域划分模块，按通信模式定义关系**
 
 ---
@@ -97,7 +97,7 @@
 | 模块 | 职责 | 关键接口 | 被谁依赖 |
 |------|------|----------|----------|
 | **EventBus** | 异步消息总线，模块间解耦通信 | `publish()`, `subscribe()` | 所有核心模块 |
-| **Config** | 配置加载、验证、模型定义 | `ConfigLoader`, `AgentConfig` | ServerApp, Agents |
+| **Config** | 配置加载、缓存、保存、验证 | `ConfigService`, `AgentConfig` | ServerApp, Agents |
 | **Logger** | 结构化日志、上下文追踪 | `get_logger()`, `log_context` | 所有模块 |
 | **Tracing** | 分布式链路追踪 | `TraceContext`, `TraceStore` | EventBus, Agents |
 
@@ -131,10 +131,11 @@ class Agent(Component, Device):
         config: AgentConfig,
         event_bus: EventBus,           # ◄── 基础设施
         llm_client: LLMClient,         # ◄── 同模块
-        docker_runtime: DockerRuntime, # ◄── Sandbox 模块
         memory: MemoryManager,         # ◄── Memory 模块
         task_manager: TaskManager,     # ◄── Tasks 模块
         tool_executor: ToolExecutor,   # ◄── 同模块
+        team_members: list[AgentConfig] | None = None,
+        message_store: MessageStore | None = None,
         ...
     ):
 ```

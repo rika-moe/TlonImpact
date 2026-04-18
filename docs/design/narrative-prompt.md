@@ -1,7 +1,7 @@
 # Narrative-Driven Prompt 架构设计
 
-> 状态: 📝 草案（待实现）
-> 提出日期: 2026-04-19
+> 状态: ✅ 已验证
+> 最后验证: 2026-04-19
 
 ---
 
@@ -358,6 +358,37 @@ agent:
 - 本方案建立在 [config.md](./config.md) 的显式配置原则之上
 - 与 [agents.md](./agents.md) 的依赖注入架构兼容：所有基础设施仍通过构造函数注入
 - 与 [memory.md](./memory.md) 的记忆系统兼容：只是将 memory blocks 的注入位置从 system prompt 移到 user prompt
+
+---
+
+## 核心理念
+
+1. **一段式配置**: `identity` / `profile` / `behavior` 各是一段自由文本，不是字段集合
+2. **动静分离**: system prompt 完全静态（只来自配置），user prompt 承载所有动态内容
+3. **工具外置**: tool 描述完全交给 OpenAI `tools` 参数，system prompt 中零提及
+4. **协议统一**: 交互协议框架硬编码，所有 agent 共享
+
+---
+
+## 文档索引
+
+| 文档 | 目的 | 深度 |
+|------|------|------|
+| [config.md](./config.md) | 配置系统设计 | L1 |
+| [agents.md](./agents.md) | Agent 系统设计 | L1 |
+| [memory.md](./memory.md) | 记忆系统设计 | L1 |
+| [architecture/domains/agents.md](../architecture/domains/agents.md) | Agent 层架构 | L2 |
+
+---
+
+## 验证清单
+
+- [x] `RoleConfig` 已完全移除
+- [x] `AgentConfig` 字段与代码一致（`identity`/`profile`/`behavior`）
+- [x] SystemPromptBuilder 4 个 section 与代码一致
+- [x] Knowledge 注入 user prompt，非 system prompt
+- [x] 无 `_system_prompt_dirty` 机制
+- [x] 工具描述从 system prompt 中移除
 
 ---
 

@@ -329,7 +329,7 @@ project/
 │       └── support.py
 │
 ├── config/                    # 配置
-│   └── agents.yaml            # Agent 定义
+│   └── agents/                # Agent 定义 (*.yaml)
 │
 ~~├── skills/~~                    ~~# Skill 目录~~ ❌ 已移除
 ├── data/                      # 运行时数据 (gitignore)
