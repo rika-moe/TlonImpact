@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from textual.containers import Vertical
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Label
 from textual.widgets._tree import TreeNode
@@ -257,7 +258,7 @@ class AgentTree(Vertical):
         """Action to create new agent."""
         self.post_message(self.NewAgentRequested())
 
-    class AgentSelected(Vertical.Message):
+    class AgentSelected(Message):
         """Message sent when an agent is selected."""
 
         def __init__(self, agent_id: str, agent_info: AgentInfo) -> None:
@@ -271,7 +272,7 @@ class AgentTree(Vertical):
             self.agent_id = agent_id
             self.agent_info = agent_info
 
-    class NewAgentRequested(Vertical.Message):
+    class NewAgentRequested(Message):
         """Message sent when new agent is requested."""
 
         def __init__(self) -> None:
