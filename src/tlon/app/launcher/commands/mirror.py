@@ -24,7 +24,7 @@ async def run_mirror(args: Namespace) -> int:
         Exit code
     """
     # Runtime import - only load Wizard when needed
-    from tlon.app.wizard import Wizard
+    from tlon.app.wizard.wizard import Wizard
 
     try:
         wizard = Wizard()

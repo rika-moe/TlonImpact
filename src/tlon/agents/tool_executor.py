@@ -12,7 +12,7 @@ from tlon.base.component import Component
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.tools import Tool, ToolResult
+from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 

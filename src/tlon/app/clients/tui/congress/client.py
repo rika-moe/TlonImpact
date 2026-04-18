@@ -10,7 +10,9 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
-from tlon.app.clients.sdk import ConnectionState, TerminalAdapter, TlonClient
+from tlon.app.clients.sdk.adapter import TerminalAdapter
+from tlon.app.clients.sdk.base_client import ConnectionState
+from tlon.app.clients.sdk.client import TlonClient
 from tlon.app.clients.tui.congress.state import (
     AgentInfo,
     AgentState,

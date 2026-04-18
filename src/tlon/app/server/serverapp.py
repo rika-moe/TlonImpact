@@ -21,8 +21,8 @@ from tlon.base.config import AgentConfig, ConfigService, DockerRuntimeConfig, LL
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.settings import get_tlon_home, settings
-from tlon.base.tracing import FileTraceStore
-from tlon.memory import MemoryConfig
+from tlon.base.tracing.trace_store import FileTraceStore
+from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.messaging.store import FileMessageStore
 

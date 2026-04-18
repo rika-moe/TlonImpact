@@ -20,13 +20,11 @@ from tlon.app.clients.tui.congress.client import ClientConnectionState, Congress
 from tlon.app.clients.tui.congress.state import AgentInfo, AgentState, Message, MessageType
 from tlon.base.logger import get_logger
 
-from .components import (
-    AgentSelector,
-    ChatView,
-    CommandPalette,
-    InputBox,
-    MentionPopup,
-)
+from .components.agent_selector import AgentSelector
+from .components.chat_view import ChatView
+from .components.command_palette import CommandPalette
+from .components.input_box import InputBox
+from .components.mention_popup import MentionPopup
 
 logger = get_logger(__name__)
 

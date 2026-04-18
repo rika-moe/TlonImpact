@@ -19,7 +19,7 @@ from tlon.agents.react_state_machine import (
     StateTransition,
 )
 from tlon.base.events.event import Event, EventType
-from tlon.tools import ToolResult
+from tlon.tools.base import ToolResult
 
 
 class MockLLMClient:

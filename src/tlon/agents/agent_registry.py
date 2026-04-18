@@ -27,7 +27,8 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.settings import get_tlon_home
-from tlon.memory import MemoryConfig, MemoryManager
+from tlon.memory.manager import MemoryManager
+from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
 from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.complete_dialog.complete_dialog import CompleteDialogTool

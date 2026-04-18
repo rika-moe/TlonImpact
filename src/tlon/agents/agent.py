@@ -20,8 +20,8 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.tracing import get_current_trace
-from tlon.memory import MemoryManager
+from tlon.base.tracing.trace_context import get_current_trace
+from tlon.memory.manager import MemoryManager
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.sandbox.docker_runtime import DockerRuntime

@@ -19,7 +19,7 @@ class TestOperatorViews:
 
     def test_agents_view_import(self):
         """Test AgentsView can be imported."""
-        from tlon.app.clients.tui.operator.views import AgentsView
+        from tlon.app.clients.tui.operator.views.agents import AgentsView
 
         assert AgentsView is not None
 
@@ -43,7 +43,7 @@ class TestOperatorViews:
 
     def test_config_view_import(self):
         """Test ConfigView can be imported."""
-        from tlon.app.clients.tui.operator.views import ConfigView
+        from tlon.app.clients.tui.operator.views.config import ConfigView
 
         assert ConfigView is not None
 
@@ -138,7 +138,7 @@ class TestConfigView:
         """Test ConfigView mounts and loads mock config."""
         from textual.app import App
 
-        from tlon.app.clients.tui.operator.views import ConfigView
+        from tlon.app.clients.tui.operator.views.config import ConfigView
 
         class TestApp(App):
             def compose(self):
@@ -157,7 +157,7 @@ class TestConfigView:
         """Test model options list is populated."""
         from textual.app import App
 
-        from tlon.app.clients.tui.operator.views import ConfigView
+        from tlon.app.clients.tui.operator.views.config import ConfigView
 
         class TestApp(App):
             def compose(self):
@@ -176,7 +176,7 @@ class TestConfigView:
         from textual.app import App
         from textual.widgets import Input
 
-        from tlon.app.clients.tui.operator.views import ConfigView
+        from tlon.app.clients.tui.operator.views.config import ConfigView
 
         class TestApp(App):
             def compose(self):

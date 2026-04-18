@@ -12,13 +12,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tlon.app.clients.sdk import (
-    BaseClient,
-    ConnectionState,
-    TerminalAdapter,
-    TlonClient,
-    WebAdapter,
-)
+from tlon.app.clients.sdk.adapter import TerminalAdapter, WebAdapter
+from tlon.app.clients.sdk.base_client import BaseClient, ConnectionState
+from tlon.app.clients.sdk.client import TlonClient
 from tlon.app.clients.sdk.exceptions import (
     AuthenticationError,
     ConnectionError,

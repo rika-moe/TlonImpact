@@ -12,7 +12,10 @@ from rich.panel import Panel
 from tlon.base.logger import get_logger
 from tlon.base.settings import get_default_config_dir, get_default_data_dir
 
-from .menus import AgentMenu, DiagnosticsMenu, QuickstartWizard, SettingsMenu
+from .menus.agent_menu import AgentMenu
+from .menus.diagnostics_menu import DiagnosticsMenu
+from .menus.quickstart import QuickstartWizard
+from .menus.settings_menu import SettingsMenu
 
 logger = get_logger(__name__)
 
