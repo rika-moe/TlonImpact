@@ -7,7 +7,6 @@ Click the robot icon to expand dropdown list showing:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
@@ -15,32 +14,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Label, ListItem, ListView
 
-
-@dataclass
-class AgentInfo:
-    """Agent information for display."""
-
-    id: str
-    name: str
-    state: str = "unknown"
-    emoji: str = "🤖"
-
-    @property
-    def status_icon(self) -> str:
-        """Get status icon based on state."""
-        icons = {
-            "online": "🟢",
-            "idle": "🟡",
-            "busy": "🔴",
-            "offline": "⚪",
-            "unknown": "⚪",
-        }
-        return icons.get(self.state, "⚪")
-
-    @property
-    def display_name(self) -> str:
-        """Get display name with status."""
-        return f"{self.status_icon} @{self.name}"
+from ..state import AgentInfo, AgentState
 
 
 class AgentSelector(Horizontal):
@@ -140,22 +114,20 @@ class AgentSelector(Horizontal):
         agent_list = []
 
         for agent in agents:
-            if isinstance(agent, dict):
-                info = AgentInfo(
-                    id=agent.get("id", "unknown"),
-                    name=agent.get("name", "Unknown"),
-                    state=agent.get("state", "unknown"),
-                    emoji=agent.get("emoji", "🤖"),
-                )
-            else:
-                info = agent
+            info = AgentInfo.from_dict(agent) if isinstance(agent, dict) else agent
 
             self._agent_map[info.id] = info
             agent_list.append(info)
 
-        # Sort: online/idle first, then busy, then offline
-        state_order = {"online": 0, "idle": 1, "busy": 2, "offline": 3, "unknown": 4}
-        agent_list.sort(key=lambda a: state_order.get(a.state, 4))
+        # Sort: idle/active first, then thinking, then busy, then offline
+        state_order = {
+            AgentState.IDLE: 0,
+            AgentState.ACTIVE: 1,
+            AgentState.THINKING: 2,
+            AgentState.BUSY: 3,
+            AgentState.OFFLINE: 4,
+        }
+        agent_list.sort(key=lambda a: state_order.get(a.state, 5))
 
         self.agents = agent_list
         self._refresh_list()
@@ -168,8 +140,9 @@ class AgentSelector(Horizontal):
 
         # Add agents
         for i, agent in enumerate(self.agents):
+            display = f"{agent.status_icon} @{agent.name}"
             item = ListItem(
-                Label(agent.display_name),
+                Label(display),
                 classes="list-item",
             )
             list_view.append(item)

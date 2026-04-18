@@ -10,19 +10,12 @@ Supports:
 from __future__ import annotations
 
 import re
-from enum import Enum
 
 from rich.syntax import Syntax
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Label, Static
 
-
-class MessageType(Enum):
-    """Message type enumeration."""
-
-    USER = "user"
-    AGENT = "agent"
-    SYSTEM = "system"
+from ..state import MessageType
 
 
 class CodeBlock(Static):

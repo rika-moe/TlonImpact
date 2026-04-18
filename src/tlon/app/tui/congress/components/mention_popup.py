@@ -8,7 +8,6 @@ Triggered when typing @, shows:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from textual.containers import Vertical
@@ -16,15 +15,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Label, ListItem, ListView
 
-
-@dataclass
-class AgentInfo:
-    """Agent information for mention completion."""
-
-    id: str
-    name: str
-    state: str = "unknown"
-    emoji: str = "🤖"
+from ..state import AgentInfo, AgentState
 
 
 class MentionPopup(Vertical):
@@ -166,15 +157,7 @@ class MentionPopup(Vertical):
         """
         result = []
         for agent in agents:
-            if isinstance(agent, dict):
-                info = AgentInfo(
-                    id=agent.get("id", "unknown"),
-                    name=agent.get("name", "Unknown"),
-                    state=agent.get("state", "unknown"),
-                    emoji=agent.get("emoji", "🤖"),
-                )
-            else:
-                info = agent
+            info = AgentInfo.from_dict(agent) if isinstance(agent, dict) else agent
             result.append(info)
         return result
 
@@ -190,8 +173,14 @@ class MentionPopup(Vertical):
             ]
 
         # Sort by status: idle first, then online, then busy, then offline
-        state_order = {"idle": 0, "online": 1, "busy": 2, "offline": 3, "unknown": 4}
-        self._filtered_agents.sort(key=lambda a: state_order.get(a.state, 4))
+        state_order = {
+            AgentState.IDLE: 0,
+            AgentState.ACTIVE: 1,
+            AgentState.BUSY: 2,
+            AgentState.OFFLINE: 3,
+            AgentState.THINKING: 4,
+        }
+        self._filtered_agents.sort(key=lambda a: state_order.get(a.state, 5))
 
     def _refresh_list(self) -> None:
         """Refresh the agent list."""
@@ -209,7 +198,7 @@ class MentionPopup(Vertical):
 
         # Add filtered agents
         for i, agent in enumerate(self._filtered_agents, start=1):
-            status_class = f"status-{agent.state}"
+            status_class = f"status-{agent.state.value}"
             display = f"{agent.emoji} @{agent.name}"
 
             item = ListItem(

@@ -8,10 +8,7 @@ Single-column chat interface with:
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -19,7 +16,8 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Header, Label
 
-from tlon.app.clients.sdk import ConnectionState, TerminalAdapter, TlonClient
+from tlon.app.tui.congress.client import ClientConnectionState, CongressWebSocketClient
+from tlon.app.tui.congress.state import AgentInfo, AgentState, Message, MessageType
 from tlon.base.logger import get_logger
 
 from .components import (
@@ -28,38 +26,9 @@ from .components import (
     CommandPalette,
     InputBox,
     MentionPopup,
-    MessageType,
 )
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class AgentInfo:
-    """Agent information for UI display."""
-
-    id: str
-    name: str
-    state: str = "unknown"  # online, busy, idle, offline
-    emoji: str = "🤖"
-    color: str = "cyan"
-
-    @property
-    def status_icon(self) -> str:
-        """Get status icon based on state."""
-        icons = {
-            "online": "🟢",
-            "idle": "🟡",
-            "busy": "🔴",
-            "offline": "⚪",
-            "unknown": "⚪",
-        }
-        return icons.get(self.state, "⚪")
-
-    @property
-    def display_name(self) -> str:
-        """Get display name with emoji."""
-        return f"{self.emoji} {self.name}"
 
 
 class CongressApp(App[None]):
@@ -94,7 +63,6 @@ class CongressApp(App[None]):
 
     # Reactive state
     agents: reactive[dict[str, AgentInfo]] = reactive({}, always_update=True)
-    messages: reactive[list[dict[str, Any]]] = reactive([], always_update=True)
     current_agent_id: reactive[str | None] = reactive(None)
     input_history: reactive[list[str]] = reactive([])
     history_index: reactive[int] = reactive(-1)
@@ -126,7 +94,7 @@ class CongressApp(App[None]):
         self.ws_url = f"ws://{host_clean}:{ws_port}/ws"
         self.rest_url = f"http://{host_clean}:{rest_port}"
 
-        self._client: TlonClient | None = None
+        self._client: CongressWebSocketClient | None = None
         self._input_buffer = ""
 
     def compose(self) -> ComposeResult:
@@ -166,30 +134,25 @@ class CongressApp(App[None]):
         await self._connect()
 
     async def _connect(self) -> None:
-        """Connect to Tlon server."""
+        """Connect to Tlon server via CongressWebSocketClient."""
         try:
-            adapter = TerminalAdapter()
-            self._client = TlonClient(
+            self._client = CongressWebSocketClient(
                 ws_url=self.ws_url,
-                adapter=adapter,
                 rest_url=self.rest_url,
-                auto_reconnect=True,
             )
 
             # Set up event handlers
-            self._client.on_event(self._on_event)
-            self._client.on_state_change(self._on_state_change)
+            self._client.on_message(self._on_message)
+            self._client.on_agent_update(self._on_agent_update)
+            self._client.on_connection_change(self._on_connection_change)
+            self._client.on_error(self._on_error)
 
-            # Connect and authenticate
+            # Connect
             connected = await self._client.connect()
             if connected:
-                authenticated = await self._client.authenticate()
-                if authenticated:
-                    self.is_connected = True
-                    await self._load_initial_data()
-                    self._update_status("已连接")
-                else:
-                    self._update_status("认证失败")
+                self.is_connected = True
+                self._sync_state_from_client()
+                self._update_status("已连接")
             else:
                 self._update_status("连接失败")
 
@@ -197,40 +160,30 @@ class CongressApp(App[None]):
             logger.error(f"Connection error: {e}")
             self._update_status(f"错误: {e}")
 
-    async def _load_initial_data(self) -> None:
-        """Load initial data from server."""
+    def _sync_state_from_client(self) -> None:
+        """Sync initial state from CongressWebSocketClient."""
         if not self._client:
             return
 
-        try:
-            # Load agents
-            agents_data = await self._client.get_agents()
-            self._update_agents(agents_data)
+        # Sync agents
+        self.agents = dict(self._client.state.agents)
+        self._refresh_agent_ui()
 
-            # Load history
-            history = await self._client.get_history(limit=50)
-            for msg in history:
-                self._add_message_from_dict(msg)
-
-        except Exception as e:
-            logger.error(f"Failed to load initial data: {e}")
-
-    def _update_agents(self, agents_data: list[dict]) -> None:
-        """Update agents from server data."""
-        new_agents = {}
-        for data in agents_data:
-            agent_id = data.get("id", "unknown")
-            agent = AgentInfo(
-                id=agent_id,
-                name=data.get("name", "Unknown"),
-                state=data.get("state", "unknown"),
-                emoji=self._get_agent_emoji(data.get("role", "")),
+        # Sync message history
+        chat_view = self.query_one(ChatView)
+        for message in self._client.state.messages:
+            time_str = ""
+            if message.timestamp:
+                time_str = message.timestamp.strftime("%H:%M")
+            chat_view.add_message(
+                content=message.content,
+                sender_name=message.sender_name,
+                sender_type=message.sender_type,
+                timestamp=time_str,
             )
-            new_agents[agent_id] = agent
 
-        self.agents = new_agents
-
-        # Update agent selector
+    def _refresh_agent_ui(self) -> None:
+        """Refresh agent-related UI components."""
         selector = self.query_one(AgentSelector)
         selector.update_agents(list(self.agents.values()))
 
@@ -243,110 +196,69 @@ class CongressApp(App[None]):
         # Update header count
         self._update_agent_count()
 
-    def _get_agent_emoji(self, role: str) -> str:
-        """Get emoji based on agent role."""
-        role_emojis = {
-            "dev": "💻",
-            "developer": "💻",
-            "pm": "📊",
-            "test": "🧪",
-            "review": "👁️",
-            "ops": "🔧",
-            "default": "🤖",
-        }
-        return role_emojis.get(role.lower(), role_emojis["default"])
+    def _on_message(self, message: Message) -> None:
+        """Handle new message from CongressWebSocketClient."""
+        time_str = ""
+        if message.timestamp:
+            time_str = message.timestamp.strftime("%H:%M")
+
+        chat_view = self.query_one(ChatView)
+        chat_view.add_message(
+            content=message.content,
+            sender_name=message.sender_name,
+            sender_type=message.sender_type,
+            timestamp=time_str,
+        )
+
+    def _on_agent_update(self, agent_info: AgentInfo) -> None:
+        """Handle agent update from CongressWebSocketClient."""
+        self.agents = {**self.agents, agent_info.id: agent_info}
+        self._refresh_agent_ui()
+
+    def _on_connection_change(self, state: ClientConnectionState) -> None:
+        """Handle connection state changes."""
+        if state == ClientConnectionState.AUTHENTICATED:
+            self.is_connected = True
+            self._update_status("已连接")
+        elif state == ClientConnectionState.DISCONNECTED:
+            self.is_connected = False
+            self._update_status("已断开")
+        elif state in (ClientConnectionState.CONNECTING, ClientConnectionState.RECONNECTING):
+            self._update_status("连接中...")
+        elif state == ClientConnectionState.ERROR:
+            self._update_status("连接错误")
+
+    def _on_error(self, error: str) -> None:
+        """Handle client errors."""
+        logger.error(f"Client error: {error}")
+        self._update_status(f"错误: {error}")
+
+    def _update_agents(self, agents_data: list[dict]) -> None:
+        """Update agents from server data.
+
+        Args:
+            agents_data: List of agent dictionaries from server
+        """
+        new_agents = {}
+        for data in agents_data:
+            agent_info = AgentInfo.from_dict(data)
+            new_agents[agent_info.id] = agent_info
+
+        self.agents = new_agents
+        self._refresh_agent_ui()
 
     def _update_agent_count(self) -> None:
         """Update agent count display."""
         count_label = self.query_one("#agent-count", Label)
-        online_count = sum(1 for a in self.agents.values() if a.state == "online")
+        online_count = sum(
+            1 for a in self.agents.values() if a.state in (AgentState.IDLE, AgentState.ACTIVE)
+        )
         count_label.update(f"在线: {online_count}/{len(self.agents)}")
 
     def _update_status(self, status: str) -> None:
         """Update connection status display."""
         status_label = self.query_one("#connection-status", Label)
         status_label.update(status)
-
-    def _add_message_from_dict(self, msg: dict[str, Any]) -> None:
-        """Add a message from dictionary."""
-        sender_type = msg.get("sender_type", "agent")
-        sender_name = msg.get("sender_name", "Unknown")
-        content = msg.get("content", "")
-        timestamp = msg.get("timestamp")
-
-        # Parse timestamp
-        time_str = ""
-        if timestamp:
-            try:
-                if isinstance(timestamp, str):
-                    dt = datetime.fromisoformat(timestamp)
-                else:
-                    dt = datetime.fromtimestamp(float(timestamp))
-                time_str = dt.strftime("%H:%M")
-            except (ValueError, TypeError):
-                time_str = "--:--"
-
-        # Determine message type
-        msg_type = MessageType.AGENT
-        if sender_type == "human":
-            msg_type = MessageType.USER
-        elif sender_type == "system":
-            msg_type = MessageType.SYSTEM
-
-        # Add to chat view
-        chat_view = self.query_one(ChatView)
-        chat_view.add_message(
-            content=content,
-            sender_name=sender_name,
-            sender_type=msg_type,
-            timestamp=time_str,
-        )
-
-    def _on_event(self, event: dict[str, Any]) -> None:
-        """Handle incoming events from server."""
-        event_type = event.get("type", "")
-        payload = event.get("payload", {})
-
-        if event_type in ("message.new", "message"):
-            # New message
-            self._add_message_from_dict(payload)
-        elif event_type == "participants":
-            # Participants update
-            participants = payload.get("participants", [])
-            self._update_agents_from_participants(participants)
-        elif event_type == "agents":
-            # Agent status update
-            agents = payload.get("agents", [])
-            self._update_agents(agents)
-
-    def _update_agents_from_participants(self, participants: list[dict]) -> None:
-        """Update agents from participants list."""
-        for p in participants:
-            if p.get("type") == "agent":
-                agent_id = p.get("id")
-                if agent_id and agent_id in self.agents:
-                    # Update existing agent
-                    pass  # State updates come via agents event
-
-    def _on_state_change(self, state: Any) -> None:
-        """Handle connection state changes."""
-        # Normalize to enum for robust comparison
-        if isinstance(state, ConnectionState):
-            state_enum = state
-        else:
-            try:
-                state_enum = ConnectionState(str(state).lower())
-            except ValueError:
-                return
-
-        if state_enum == ConnectionState.AUTHENTICATED:
-            self.is_connected = True
-            self._update_status("已连接")
-        elif state_enum == ConnectionState.DISCONNECTED:
-            self.is_connected = False
-            self._update_status("已断开")
-        elif state_enum in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING):
-            self._update_status("连接中...")
 
     # ==================== Actions ====================
 
@@ -390,14 +302,15 @@ class CongressApp(App[None]):
                 mentions = [self.current_agent_id]
 
             try:
-                await self._client.send_message(content, mentions=mentions)
+                success = await self._client.send_message(content, mentions=mentions)
 
-                # Add to input history
-                self.input_history.append(content)
-                self.history_index = -1
+                if success:
+                    # Add to input history
+                    self.input_history.append(content)
+                    self.history_index = -1
 
-                # Clear input
-                input_box.clear()
+                    # Clear input
+                    input_box.clear()
 
             except Exception as e:
                 logger.error(f"Failed to send message: {e}")
@@ -431,7 +344,7 @@ class CongressApp(App[None]):
         chat_view = self.query_one(ChatView)
         lines = ["**Agent 列表:**"]
         for agent in self.agents.values():
-            lines.append(f"{agent.status_icon} {agent.display_name} ({agent.state})")
+            lines.append(f"{agent.status_icon} {agent.display_name} ({agent.state.value})")
 
         chat_view.add_message(
             content="\n".join(lines),
@@ -589,4 +502,6 @@ async def run_congress(
 
 
 if __name__ == "__main__":
+    import asyncio
+
     asyncio.run(run_congress())
