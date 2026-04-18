@@ -39,7 +39,7 @@ class TreeView(Tree):
             id: Component ID
         """
         super().__init__(label, name=name, id=id)
-        self._nodes: dict[str, Any] = {}
+        self._node_map: dict[str, Any] = {}
 
     def add_node(
         self, label: str, key: str, parent_key: str | None = None, data: Any = None, icon: str = ""
@@ -58,13 +58,13 @@ class TreeView(Tree):
         """
         full_label = f"{icon} {label}" if icon else label
 
-        if parent_key and parent_key in self._nodes:
-            parent = self._nodes[parent_key]
+        if parent_key and parent_key in self._node_map:
+            parent = self._node_map[parent_key]
             node = parent.add(full_label, data=data)
         else:
             node = self.root.add(full_label, data=data)
 
-        self._nodes[key] = node
+        self._node_map[key] = node
         return node
 
     def remove_node(self, key: str) -> bool:
@@ -76,10 +76,10 @@ class TreeView(Tree):
         Returns:
             True if node was removed
         """
-        if key in self._nodes:
-            node = self._nodes[key]
+        if key in self._node_map:
+            node = self._node_map[key]
             node.remove()
-            del self._nodes[key]
+            del self._node_map[key]
             return True
         return False
 
@@ -92,9 +92,9 @@ class TreeView(Tree):
         Returns:
             True if node was selected
         """
-        if key in self._nodes:
+        if key in self._node_map:
             self.selected_key = key
-            self.select(self._nodes[key])
+            self.select(self._node_map[key])
             return True
         return False
 
@@ -104,8 +104,8 @@ class TreeView(Tree):
         Returns:
             Node data or None
         """
-        if self.selected_key and self.selected_key in self._nodes:
-            return self._nodes[self.selected_key].data
+        if self.selected_key and self.selected_key in self._node_map:
+            return self._node_map[self.selected_key].data
         return None
 
     def update_node_icon(self, key: str, icon: str) -> bool:
@@ -118,8 +118,8 @@ class TreeView(Tree):
         Returns:
             True if icon was updated
         """
-        if key in self._nodes:
-            node = self._nodes[key]
+        if key in self._node_map:
+            node = self._node_map[key]
             # Preserve label text, update icon
             current_label = str(node.label)
             # Remove existing icon if any
@@ -132,4 +132,4 @@ class TreeView(Tree):
     def clear_nodes(self) -> None:
         """Clear all nodes from the tree."""
         self.root.remove_children()
-        self._nodes.clear()
+        self._node_map.clear()
