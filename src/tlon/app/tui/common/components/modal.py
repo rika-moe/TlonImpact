@@ -1,9 +1,10 @@
 """Modal dialog component for Tlon TUI."""
 
-from textual.widgets import Static, Button
-from textual.containers import Vertical, Horizontal
+from collections.abc import Callable
+
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from typing import Callable
+from textual.widgets import Button, Static
 
 
 class Modal(ModalScreen):
@@ -37,11 +38,7 @@ class Modal(ModalScreen):
     """
 
     def __init__(
-        self,
-        title: str,
-        message: str,
-        buttons: list[tuple[str, str]] | None = None,
-        **kwargs
+        self, title: str, message: str, buttons: list[tuple[str, str]] | None = None, **kwargs
     ) -> None:
         """Initialize modal dialog.
 
@@ -100,10 +97,7 @@ class ConfirmModal(Modal):
             **kwargs: Additional arguments
         """
         super().__init__(
-            title=title,
-            message=message,
-            buttons=[("Yes", "yes"), ("No", "no")],
-            **kwargs
+            title=title, message=message, buttons=[("Yes", "yes"), ("No", "no")], **kwargs
         )
 
 
@@ -118,9 +112,4 @@ class AlertModal(Modal):
             message: Alert message
             **kwargs: Additional arguments
         """
-        super().__init__(
-            title=title,
-            message=message,
-            buttons=[("OK", "ok")],
-            **kwargs
-        )
+        super().__init__(title=title, message=message, buttons=[("OK", "ok")], **kwargs)

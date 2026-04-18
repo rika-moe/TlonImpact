@@ -490,13 +490,12 @@ Esc - 关闭弹窗/退出
 
     def action_history_next(self) -> None:
         """Navigate to next input history."""
+        input_box = self.query_one(InputBox)
         if self.history_index > 0:
             self.history_index -= 1
-            input_box = self.query_one(InputBox)
             input_box.set_input(self.input_history[-(self.history_index + 1)])
         elif self.history_index == 0:
             self.history_index = -1
-            input_box = self.query_one(InputBox)
             input_box.set_input("")
 
     def action_command_palette(self) -> None:
@@ -561,10 +560,10 @@ Esc - 关闭弹窗/退出
         if event.button.id == "send-button":
             await self.action_send_message()
 
-    async def on_unmount(self) -> None:
+    def on_unmount(self) -> None:
         """Cleanup when app unmounts."""
         if self._client:
-            await self._client.disconnect()
+            asyncio.create_task(self._client.disconnect())
 
 
 async def run_congress(

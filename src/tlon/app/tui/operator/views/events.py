@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Button, DataTable, Input, Label, Static
+from textual.widgets import Button, DataTable, Input, Label, Select, Static
 
 from tlon.app.tui.operator.views.base import BaseView
 
@@ -184,11 +184,39 @@ class FilterPanel(Horizontal):
     def compose(self) -> ComposeResult:
         """Compose the filter panel."""
         yield Label("Level:", classes="filter-label")
-        yield Static("[All]", id="filter-level", classes="filter-select")
+        yield Select(
+            [
+                ("All", "all"),
+                ("DEBUG", "debug"),
+                ("INFO", "info"),
+                ("WARN", "warn"),
+                ("ERROR", "error"),
+                ("FATAL", "fatal"),
+            ],
+            value="all",
+            id="filter-level",
+            classes="filter-select",
+        )
         yield Label("Type:", classes="filter-label")
-        yield Static("[All]", id="filter-type", classes="filter-select")
+        yield Select(
+            [
+                ("All", "all"),
+                ("task", "task"),
+                ("tool", "tool"),
+                ("lifecycle", "lifecycle"),
+                ("system", "system"),
+            ],
+            value="all",
+            id="filter-type",
+            classes="filter-select",
+        )
         yield Label("Agent:", classes="filter-label")
-        yield Static("[All]", id="filter-agent", classes="filter-select")
+        yield Select(
+            [("All", "all"), ("dev-001", "dev-001"), ("pm-001", "pm-001"), ("system", "system")],
+            value="all",
+            id="filter-agent",
+            classes="filter-select",
+        )
         yield Static("", classes="filter-spacer")
         yield Input(placeholder="Search...", id="filter-search", classes="filter-input")
 
@@ -494,6 +522,15 @@ class EventsView(BaseView):
             value: New search text
         """
         self._apply_filters()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle filter dropdown changes."""
+        if event.select.id == "filter-level":
+            self.filter_level = str(event.value) if event.value else "all"
+        elif event.select.id == "filter-type":
+            self.filter_type = str(event.value) if event.value else "all"
+        elif event.select.id == "filter-agent":
+            self.filter_agent = str(event.value) if event.value else "all"
 
     def action_toggle_filter(self) -> None:
         """Toggle filter panel focus or cycle through filter options."""

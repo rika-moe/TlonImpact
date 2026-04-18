@@ -6,6 +6,7 @@ including state management and refresh mechanisms.
 
 from __future__ import annotations
 
+import time
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -95,7 +96,7 @@ class BaseView(Container):
 
         try:
             await self._load_data()
-            self.last_refresh = self.app.current_time if hasattr(self.app, "current_time") else 0
+            self.last_refresh = time.time()
         except Exception as e:
             self.error_message = str(e)
         finally:
