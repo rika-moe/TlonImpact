@@ -122,6 +122,19 @@ MessageBubble .avatar {
     content-align: center middle;
 }
 
+MessageBubble .text-content {
+    width: auto;
+    max-width: 100%;
+}
+
+MessageBubble .spacer {
+    width: 1fr;
+}
+
+MessageBubble .message-row {
+    height: auto;
+}
+
 /* Code blocks */
 CodeBlock {
     width: 100%;

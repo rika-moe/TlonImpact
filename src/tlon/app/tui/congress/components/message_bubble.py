@@ -18,6 +18,18 @@ from textual.widgets import Button, Label, Static
 from ..state import MessageType
 
 
+class BubbleContent(Vertical):
+    """Bubble content container with shrink disabled for proper auto-width."""
+
+    DEFAULT_CSS = """
+    BubbleContent {
+        height: auto;
+    }
+    """
+
+    shrink = False
+
+
 class CodeBlock(Static):
     """Code block with syntax highlighting."""
 
@@ -133,6 +145,19 @@ class MessageBubble(Vertical):
         width: 3;
         content-align: center middle;
     }
+
+    MessageBubble .text-content {
+        width: auto;
+        max-width: 100%;
+    }
+
+    MessageBubble .spacer {
+        width: 1fr;
+    }
+
+    MessageBubble .message-row {
+        height: auto;
+    }
     """
 
     def __init__(
@@ -166,15 +191,17 @@ class MessageBubble(Vertical):
         """Compose message bubble."""
         if self.sender_type == MessageType.USER:
             # User message: right-aligned
-            with Horizontal(classes="message-row"), Vertical(classes="bubble-content"):
-                yield Label(f"{self.sender_name} {self.timestamp}", classes="sender-name")
-                yield from self._render_content()
+            with Horizontal(classes="message-row"):
+                yield Static("", classes="spacer")
+                with BubbleContent(classes="bubble-content"):
+                    yield Label(f"{self.sender_name} {self.timestamp}", classes="sender-name")
+                    yield from self._render_content()
 
         elif self.sender_type == MessageType.AGENT:
             # Agent message: left-aligned with avatar
             with Horizontal(classes="message-row"):
                 yield Label(self.avatar, classes="avatar")
-                with Vertical(classes="bubble-content"):
+                with BubbleContent(classes="bubble-content"):
                     yield Label(
                         f"{self.sender_name} {self.timestamp}",
                         classes="sender-name",
