@@ -4,10 +4,9 @@ Decouples SystemPromptBuilder from Agent by providing a plain data
 container with everything needed to construct a system prompt.
 """
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
-from tlon.base.config import AgentConfig, PromptTemplates
+from tlon.base.config import AgentConfig
 
 
 @dataclass
@@ -15,19 +14,11 @@ class AgentPromptContext:
     """Pure data object carrying all information needed to build a system prompt.
 
     No references to Agent or any infrastructure components.
-    All async data (memory blocks) must be pre-fetched before constructing this.
 
     Attributes:
-        config: The agent's own configuration (identity, role, personality).
-        team_members: Configs of all other agents in the team.
-        tool_definitions: OpenAI-format tool definitions from ToolExecutor.
-        memory_blocks: Pre-fetched memory context blocks.
-        templates: Merged prompt templates for this agent.
+        config: The agent's own configuration (identity, profile, behavior).
+        team_profiles: List of (name, profile) tuples for all other agents.
     """
 
     config: AgentConfig
-    team_members: list[AgentConfig]
-    tool_definitions: list[dict[str, Any]]
-    memory_blocks: list
-    templates: PromptTemplates
-    extra: dict[str, Any] = field(default_factory=dict)
+    team_profiles: list[tuple[str, str]]

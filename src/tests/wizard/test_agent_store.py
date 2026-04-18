@@ -17,7 +17,6 @@ class TestAgentStore:
             agent = AgentConfig(
                 id="test-001",
                 name="测试 Agent",
-                personality="测试性格",
                 llm=LLMConfig(model_name="gpt-4", temperature=0.5),
                 docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="1g"),
             )

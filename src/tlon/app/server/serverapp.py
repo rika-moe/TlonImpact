@@ -234,7 +234,9 @@ class ServerApp:
             AgentConfig(
                 id="dev-001",
                 name="林知遥",
-                personality="技术能力强、注重细节、喜欢钻研",
+                identity="你是一名技术能力强的开发工程师，注重细节，喜欢钻研。",
+                profile="开发工程师。负责代码编写、Bug 修复和技术方案实现。",
+                behavior="收到@时响应。被@时先分析问题，再规划方案，调用工具验证，最后给出回复。",
                 llm=LLMConfig(
                     base_url=settings.llm_base_url,
                     auth_token=settings.llm_api_key,
@@ -246,7 +248,7 @@ class ServerApp:
                     memory_limit=settings.docker_memory_limit,
                 ),
                 memory=MemoryConfig(agent_id="dev-001"),
-                respond_to_all=False,
+                proactive=False,
             )
         ]
 

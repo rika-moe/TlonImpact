@@ -31,7 +31,6 @@ class TestConfigDiagnostics:
 agent:
   id: dev-001
   name: 测试开发
-  personality: 测试性格
   llm:
     model_name: gpt-4
     temperature: 0.7
@@ -66,7 +65,7 @@ agent:
             agent_file = Path(tmpdir) / "incomplete.yaml"
             agent_file.write_text("""
 agent:
-  personality: test
+  identity: test
   # missing id and name
 """)
 

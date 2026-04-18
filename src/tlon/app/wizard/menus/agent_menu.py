@@ -86,13 +86,13 @@ class AgentMenu:
         table = Table(title="Agent 列表")
         table.add_column("ID", style="cyan")
         table.add_column("姓名", style="green")
-        table.add_column("职务", style="yellow")
+        table.add_column("启动模式", style="yellow")
         table.add_column("模型", style="magenta")
 
         for _agent_id, agent in sorted(agents.items()):
-            role_title = agent.role.title if agent.role else "-"
+            mode = "常驻" if agent.proactive else "延迟"
             model = agent.llm.model_name if agent.llm else "default"
-            table.add_row(agent.id, agent.name, role_title, model)
+            table.add_row(agent.id, agent.name, mode, model)
 
         self.console.print(table)
         self.console.print(f"\n[dim]共 {len(agents)} 个 Agent[/dim]")
@@ -124,16 +124,22 @@ class AgentMenu:
 
         from rich.panel import Panel
 
-        role = agent.role
+        def _truncate(text: str, length: int = 200) -> str:
+            return (text[:length] + "...") if len(text) > length else text
+
         content = f"""[bold]基本信息[/bold]
 ID: {agent.id}
 姓名: {agent.name}
-个性: {agent.personality or "-"}
+启动模式: {"常驻" if agent.proactive else "延迟"}
 
-[bold]角色信息[/bold]
-职务: {role.title if role else "-"}
-部门: {role.department if role else "-"}
-职责: {(role.jd[:80] + "...") if role and len(role.jd) > 80 else (role.jd if role else "-")}
+[bold]身份 (Identity)[/bold]
+{_truncate(agent.identity)}
+
+[bold]公开档案 (Profile)[/bold]
+{_truncate(agent.profile)}
+
+[bold]行为守则 (Behavior)[/bold]
+{_truncate(agent.behavior)}
 
 [bold]LLM 配置[/bold]
 模型: {agent.llm.model_name if agent.llm else "default"}
@@ -152,23 +158,47 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.console.print("\n[bold]➕ 招聘新人[/bold]\n")
 
         # Step 1: Basic info
-        self.console.print("[bold]步骤 1/4: 基本信息[/bold]\n")
+        self.console.print("[bold]步骤 1/5: 基本信息[/bold]\n")
 
         name = self.questionary.text("姓名:").ask()
         if not name:
             self.console.print("[red]姓名不能为空[/red]")
             return
 
-        role_title = self.questionary.text("职务名称 (如: 开发工程师):").ask() or ""
-        role_jd = self.questionary.text("职责描述 (简短描述):").ask() or ""
+        identity = (
+            self.questionary.text(
+                "身份描述 (你是谁、性格特点):",
+                default="",
+            ).ask()
+            or ""
+        )
 
-        personality = self.questionary.text(
-            "个性特征:",
-            default="专业、可靠",
-        ).ask()
+        # Step 2: Profile
+        self.console.print("\n[bold]步骤 2/5: 公开档案[/bold]\n")
+        self.console.print("[dim]公开档案会展示给所有队友，描述你的职责和能力。[/dim]\n")
 
-        # Step 2: LLM Config
-        self.console.print("\n[bold]步骤 2/4: LLM 配置[/bold]\n")
+        profile = (
+            self.questionary.text(
+                "公开档案 (职务、职责、何时可以@你):",
+                default="",
+            ).ask()
+            or ""
+        )
+
+        # Step 3: Behavior
+        self.console.print("\n[bold]步骤 3/5: 行为守则[/bold]\n")
+        self.console.print("[dim]描述你的工作流程、响应规则和协作习惯。[/dim]\n")
+
+        behavior = (
+            self.questionary.text(
+                "行为守则 (工作流程、响应规则):",
+                default="",
+            ).ask()
+            or ""
+        )
+
+        # Step 4: LLM Config
+        self.console.print("\n[bold]步骤 4/5: LLM 配置[/bold]\n")
 
         models = [
             "kimi-k2.5",
@@ -193,13 +223,10 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         except ValueError:
             temperature = 1.0
 
-        # Step 3: Docker Config
-        self.console.print("\n[bold]步骤 3/4: Docker 配置[/bold]\n")
+        # Step 5: Docker + Proactive
+        self.console.print("\n[bold]步骤 5/5: 运行时配置[/bold]\n")
 
         memory = self.questionary.text("内存限制 [512m]:", default="512m").ask()
-
-        # Step 4: Proactive setting
-        self.console.print("\n[bold]步骤 4/4: 启动模式[/bold]\n")
 
         proactive = self.questionary.confirm(
             "是否设置为常驻启动?\n常驻: 自动启动，响应所有消息\n延迟: 手动唤醒，只响应@消息",
@@ -215,23 +242,27 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.console.print("\n[bold]预览配置[/bold]\n")
         self.console.print(f"ID: {agent_id}")
         self.console.print(f"姓名: {name}")
-        self.console.print(f"职务: {role_title}")
-        self.console.print(f"模型: {model}")
         self.console.print(f"启动模式: {'常驻' if proactive else '延迟'}")
+        self.console.print(f"模型: {model}")
+        if identity:
+            self.console.print("[dim]身份: 已填写[/dim]")
+        if profile:
+            self.console.print("[dim]档案: 已填写[/dim]")
+        if behavior:
+            self.console.print("[dim]守则: 已填写[/dim]")
 
         if not self.questionary.confirm("确认创建?").ask():
             self.console.print("[yellow]已取消[/yellow]")
             return
 
-        from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, RoleConfig
-
-        role = RoleConfig(title=role_title, jd=role_jd) if (role_title or role_jd) else None
+        from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
 
         agent = AgentConfig(
             id=agent_id,
             name=name,
-            personality=personality,
-            role=role,
+            identity=identity,
+            profile=profile,
+            behavior=behavior,
             llm=LLMConfig(model_name=model, temperature=temperature),
             docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=memory or "512m"),
             proactive=proactive,
@@ -270,19 +301,24 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         if not agent:
             return
 
-        while True:
-            role_title = agent.role.title if agent.role else "-"
-            mode_display = "常驻" if agent.proactive else "延迟"
+        def _preview(text: str, length: int = 30) -> str:
+            return (text[:length] + "...") if len(text) > length else (text or "-")
 
+        while True:
             self.console.print(f"\n[bold]✏️  编辑 Agent: {agent.name}[/bold]\n")
 
             edit_choice = self.questionary.select(
                 "选择要修改的项:",
                 choices=[
                     self.questionary.Choice(f"🏷️  姓名 - 当前: {agent.name}", value="name"),
-                    self.questionary.Choice(f"💼 职务 - 当前: {role_title}", value="role_title"),
                     self.questionary.Choice(
-                        f"🎭 个性 - 当前: {agent.personality or '-'}", value="personality"
+                        f"🎭 身份 - 当前: {_preview(agent.identity)}", value="identity"
+                    ),
+                    self.questionary.Choice(
+                        f"💼 档案 - 当前: {_preview(agent.profile)}", value="profile"
+                    ),
+                    self.questionary.Choice(
+                        f"📋 守则 - 当前: {_preview(agent.behavior)}", value="behavior"
                     ),
                     self.questionary.Choice(
                         f"🤖 模型 - 当前: {agent.llm.model_name if agent.llm else 'default'}",
@@ -293,7 +329,8 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                         value="memory",
                     ),
                     self.questionary.Choice(
-                        f"🚀 启动模式 - 当前: {mode_display}", value="proactive"
+                        f"🚀 启动模式 - 当前: {'常驻' if agent.proactive else '延迟'}",
+                        value="proactive",
                     ),
                     self.questionary.Separator(),
                     self.questionary.Choice("✓ 完成", value="done"),
@@ -309,28 +346,23 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                     agent.name = new_name
                     self.console.print("[green]✓ 姓名已更新[/green]")
 
-            elif edit_choice == "role_title":
-                from tlon.base.config import RoleConfig
+            elif edit_choice == "identity":
+                new_identity = self.questionary.text("身份描述:", default=agent.identity).ask()
+                if new_identity is not None:
+                    agent.identity = new_identity
+                    self.console.print("[green]✓ 身份已更新[/green]")
 
-                current_title = agent.role.title if agent.role else ""
-                current_jd = agent.role.jd if agent.role else ""
-                new_title = self.questionary.text("职务名称:", default=current_title).ask() or ""
-                new_jd = self.questionary.text("职责描述:", default=current_jd).ask() or ""
-                agent.role = RoleConfig(
-                    title=new_title,
-                    jd=new_jd,
-                    department=agent.role.department if agent.role else "",
-                    rules=agent.role.rules if agent.role else [],
-                    contact_when=agent.role.contact_when if agent.role else "",
-                )
-                self.console.print("[green]✓ 角色信息已更新[/green]")
+            elif edit_choice == "profile":
+                new_profile = self.questionary.text("公开档案:", default=agent.profile).ask()
+                if new_profile is not None:
+                    agent.profile = new_profile
+                    self.console.print("[green]✓ 档案已更新[/green]")
 
-            elif edit_choice == "personality":
-                new_personality = self.questionary.text(
-                    "个性特征:", default=agent.personality
-                ).ask()
-                agent.personality = new_personality or ""
-                self.console.print("[green]✓ 个性已更新[/green]")
+            elif edit_choice == "behavior":
+                new_behavior = self.questionary.text("行为守则:", default=agent.behavior).ask()
+                if new_behavior is not None:
+                    agent.behavior = new_behavior
+                    self.console.print("[green]✓ 守则已更新[/green]")
 
             elif edit_choice == "model":
                 models = [

@@ -15,7 +15,7 @@ from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.react_state_machine import ReActContext, ReActStateMachine
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, PromptTemplates
+from tlon.base.config import AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -67,7 +67,6 @@ class Agent(Component, Device):
         docker_runtime: DockerRuntime,
         memory: MemoryManager,
         task_manager: TaskManager,
-        templates: PromptTemplates,
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
@@ -77,13 +76,12 @@ class Agent(Component, Device):
         """Initialize the agent.
 
         Args:
-            config: Agent configuration
+            config: Agent configuration (includes identity, profile, behavior)
             event_bus: Event bus for publishing/subscribing (Device dependency)
             llm_client: LLM client for inference
             docker_runtime: Docker sandbox for bash tool execution
             memory: Memory manager for long-term storage
             task_manager: Task manager for task tracking
-            templates: Prompt templates for system prompt sections
             tool_executor: Executor holding registered tools (Component)
             team_members: List of all team member configs (including inactive ones)
             message_store: Message store for querying history
@@ -99,23 +97,20 @@ class Agent(Component, Device):
         self.message_store = message_store
 
         self.id = config.id
-        self.personality = config.personality
 
         # Injected infrastructure dependencies
         self.llm_client = llm_client
         self.docker_runtime = docker_runtime
         self.memory = memory
         self.task_manager = task_manager
-        self._templates = templates
         self.tool_executor = tool_executor
 
         # Tool execution timeout settings
         self._total_tool_timeout = total_tool_timeout
         self._per_tool_timeout = per_tool_timeout
 
-        # Prompt cache — invalidated when memory-modifying tools run
+        # Prompt cache — system prompt is now fully static (only config changes invalidate)
         self._system_prompt_cache: str | None = None
-        self._system_prompt_dirty: bool = True
 
         # Agent state
         self.state: AgentState | None = None
@@ -524,12 +519,32 @@ class Agent(Component, Device):
 
         return response
 
+    async def _build_knowledge_context(self) -> str:
+        """Build knowledge text from memory blocks for user prompt injection.
+
+        Returns:
+            Formatted knowledge string or empty string
+        """
+        try:
+            blocks = await self.memory.build_context_blocks()
+            if not blocks:
+                return ""
+            parts = []
+            for block in blocks:
+                msg = block.to_openai_message()
+                parts.append(msg["content"])
+            return "\n\n".join(parts)
+        except Exception:
+            logger.warning("Failed to build knowledge context from memory blocks")
+            return ""
+
     async def _build_context(self, current_message: Message) -> list[dict[str, Any]]:
         """Build conversation context for LLM.
 
         Builds context from:
-        1. MessageStore history (all messages in the room)
-        2. Agent's own memory (interactions it processed)
+        1. Dynamic knowledge (memory blocks) as first user message
+        2. MessageStore history (all messages in the room)
+        3. Current message
 
         Args:
             current_message: The current message to respond to
@@ -538,6 +553,16 @@ class Agent(Component, Device):
             List of messages in OpenAI format
         """
         context = []
+
+        # 1. Inject dynamic knowledge as first user message
+        knowledge = await self._build_knowledge_context()
+        if knowledge:
+            context.append(
+                {
+                    "role": "user",
+                    "content": f"[已知信息]\n\n{knowledge}",
+                }
+            )
 
         # Get recent messages from MessageStore
         # This ensures Agent has context even after restart
@@ -610,28 +635,24 @@ class Agent(Component, Device):
         Returns:
             AgentPromptContext with all data needed for SystemPromptBuilder
         """
-        memory_blocks = await self.memory.build_context_blocks()
+        team_profiles = [(m.name, m.profile) for m in self.team_members if m.id != self.config.id]
         return AgentPromptContext(
             config=self.config,
-            team_members=self.team_members,
-            tool_definitions=self.tool_executor.get_tool_definitions(),
-            memory_blocks=memory_blocks,
-            templates=self._templates,
+            team_profiles=team_profiles,
         )
 
     async def _get_system_prompt(self) -> str:
-        """Get system prompt, using cache when not dirty.
+        """Get system prompt, using cache.
 
-        The cache is invalidated when memory-modifying tools run
-        (rememberFact, forget, generateSummary).
+        System prompt is fully static (only config changes invalidate).
+        Knowledge/memory is injected in user prompt, not here.
 
         Returns:
             System prompt string
         """
-        if self._system_prompt_dirty or self._system_prompt_cache is None:
+        if self._system_prompt_cache is None:
             context = await self._build_prompt_context()
             self._system_prompt_cache = SystemPromptBuilder(context).build()
-            self._system_prompt_dirty = False
         return self._system_prompt_cache
 
     async def _execute_tool_call(self, tool_call: ToolCall) -> Any:
@@ -660,10 +681,6 @@ class Agent(Component, Device):
 
         try:
             result = await self.tool_executor.execute(tool_call.function_name, tool_call.arguments)
-
-            # Invalidate prompt cache for memory-modifying tools
-            if tool_call.function_name in ("rememberFact", "forget", "generateSummary"):
-                self._system_prompt_dirty = True
 
             await self.emit(
                 EventType.TOOL_EXECUTE_END,

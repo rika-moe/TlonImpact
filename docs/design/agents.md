@@ -7,9 +7,9 @@
 
 ## 核心理念
 
-1. **角色驱动**: Agent 行为由内联的 role 字段（RoleConfig）定义决定
+1. **Narrative 驱动**: Agent 行为由 `identity`/`profile`/`behavior` 三段自由文本定义，非结构化字段
 2. **工具扩展**: 通过 Tool 系统扩展能力，非硬编码
-3. **记忆感知**: 自动注入相关记忆到 Context
+3. **记忆感知**: 自动注入相关记忆到 User Prompt（非 System Prompt）
 4. **沙箱执行**: 所有外部操作在 Docker 容器中执行
 
 ---
@@ -50,6 +50,7 @@
 
 ## 验证清单
 
-- [x] Agent 配置字段与代码一致
-- [x] role 内联字段与代码一致
+- [x] Agent 配置字段与代码一致（`identity`/`profile`/`behavior`）
+- [x] `RoleConfig` 已移除，角色信息合并入 narrative 文本
+- [x] 记忆注入到 User Prompt，System Prompt 保持静态
 - [x] Tool 注册机制与代码一致

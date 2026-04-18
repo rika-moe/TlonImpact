@@ -49,78 +49,6 @@ class AgentInfoProvider(ABC):
 # =============================================================================
 
 
-class PromptOverrides(BaseModel):
-    """Role-level prompt overrides for complete replacement of global templates."""
-
-    workflow: str | None = None
-    important_notes: str | None = None
-    discipline_rules: str | None = None
-
-
-class PromptTemplates(BaseModel):
-    """Global default prompt templates."""
-
-    workflow: str = """对于普通用户的消息，自由响应。
-对于同事：
-- 收到直接@时，必须响应
-- 未被@时，观察对话决定是否参与
-- 讨论偏离主题时，可以主动介入
-
-被@时的工作流程：
-1. 分析问题：理解问题背景和需求
-2. 规划方案：制定解决思路
-3. 如需工具：调用 bash/python 工具辅助分析
-4. 给出答案：提供完整、准确、有帮助的回复
-"""
-
-    important_notes: str = """消息格式说明：
-- 来自用户的普通消息：user: 消息内容
-- 来自同事的广播消息：agent_name: 消息内容
-- 被@的消息格式：agent_name @你: 消息内容
-
-重要提示：
-- 正常对话时，使用自然语言回复即可
-- 必须使用 completeDialog 工具结束对话，即使没有工具调用
-"""
-
-    discipline_rules: str = """严格遵守以下规则：
-1. 禁止捏造信息或假装执行操作
-2. 不确定时主动询问或查资料
-3. 代码和配置必须验证后再提交
-4. 操作生产环境前必须确认
-"""
-
-    def merge_with_overrides(self, overrides: PromptOverrides | None) -> "PromptTemplates":
-        """Create new templates with overrides applied (complete replacement)."""
-        if not overrides:
-            return self
-        return PromptTemplates(
-            workflow=overrides.workflow if overrides.workflow is not None else self.workflow,
-            important_notes=overrides.important_notes
-            if overrides.important_notes is not None
-            else self.important_notes,
-            discipline_rules=overrides.discipline_rules
-            if overrides.discipline_rules is not None
-            else self.discipline_rules,
-        )
-
-
-# =============================================================================
-# Role Configuration
-# =============================================================================
-
-
-class RoleConfig(BaseModel):
-    """Role configuration inlined directly into AgentConfig."""
-
-    title: str = ""
-    jd: str = Field(default="", description="Job Description")
-    department: str = ""
-    rules: list[str] = Field(default_factory=list)
-    contact_when: str = ""
-    prompt_overrides: PromptOverrides | None = None
-
-
 # =============================================================================
 # Agent Configuration
 # =============================================================================
@@ -163,12 +91,15 @@ class AgentConfig(BaseModel):
 
     id: str
     name: str
-    personality: str = ""
-    role: RoleConfig | None = None
+
+    # Prompt narratives (free text, not structured fields)
+    identity: str = ""
+    profile: str = ""
+    behavior: str = ""
+
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     memory: Any = None
-    respond_to_all: bool = False
     proactive: bool = False
 
     @field_validator("id")
@@ -221,14 +152,12 @@ class ConfigService(Component, Device, AgentInfoProvider):
         self._agents_dir = self._config_dir / "agents"
         self._data_dir = data_dir or get_default_data_dir()
         self._agents: dict[str, AgentConfig] = {}
-        self._templates: PromptTemplates | None = None
         logger.info("ConfigService constructed")
 
     async def initialize(self) -> None:
         """Initialize by loading all configurations."""
         logger.info("Loading initial configuration...")
         self._load_all_agents()
-        self._load_prompt_templates()
         self._initialized = True
         logger.info(f"Loaded {len(self._agents)} agents")
 
@@ -283,7 +212,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
         """Check if an agent is proactive (AgentInfoProvider interface)."""
         config = self._agents.get(agent_id)
         if config:
-            return config.proactive or config.respond_to_all
+            return config.proactive
         return False
 
     # AgentInfoProvider interface alias
@@ -360,61 +289,9 @@ class ConfigService(Component, Device, AgentInfoProvider):
         self._agents.pop(agent_id, None)
         logger.info(f"Agent '{agent_id}' deleted")
 
-    def _load_prompt_templates(self) -> None:
-        """Load global prompt templates from YAML file."""
-        filepath = self._config_dir / "prompt_templates.yaml"
-
-        if not filepath.exists():
-            self._templates = PromptTemplates()
-            return
-
-        try:
-            data = yaml.safe_load(filepath.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "templates" in data:
-                self._templates = PromptTemplates.model_validate(data["templates"])
-            else:
-                self._templates = PromptTemplates()
-        except Exception as e:
-            logger.warning(f"Failed to load prompt templates: {e}. Using defaults.")
-            self._templates = PromptTemplates()
-
-    def get_prompt_templates(self) -> PromptTemplates:
-        """Get global prompt templates."""
-        if self._templates is None:
-            self._load_prompt_templates()
-        return self._templates or PromptTemplates()
-
-    def get_templates_for_role(self, role: RoleConfig | None = None) -> PromptTemplates:
-        """Get merged templates for a role (with overrides applied)."""
-        templates = self.get_prompt_templates()
-        if role and role.prompt_overrides:
-            return templates.merge_with_overrides(role.prompt_overrides)
-        return templates
-
-    def get_templates_for_agent(self, agent: AgentConfig) -> PromptTemplates:
-        """Get merged templates for an agent's role."""
-        return self.get_templates_for_role(agent.role)
-
-    def save_prompt_templates(self, templates: PromptTemplates) -> None:
-        """Save global prompt templates to YAML file."""
-        filepath = self._config_dir / "prompt_templates.yaml"
-        self._config_dir.mkdir(parents=True, exist_ok=True)
-        data = {"templates": templates.model_dump()}
-        filepath.write_text(
-            yaml.dump(
-                data, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2
-            ),
-            encoding="utf-8",
-        )
-        self._templates = templates
-        logger.info(f"Prompt templates saved to {filepath}")
-
 
 __all__ = [
     "AgentInfoProvider",
-    "PromptOverrides",
-    "PromptTemplates",
-    "RoleConfig",
     "LLMConfig",
     "DockerRuntimeConfig",
     "AgentConfig",

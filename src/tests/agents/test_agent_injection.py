@@ -11,12 +11,12 @@ from unittest.mock import MagicMock
 
 from tlon.agents.agent import Agent
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, PromptTemplates
+from tlon.base.config import AgentConfig
 
 
 def _make_agent(**kwargs):
     """Build an Agent with all deps as MagicMocks."""
-    config = AgentConfig(id="a-001", name="林知遥", personality="冷静")
+    config = AgentConfig(id="a-001", name="林知遥", identity="技术能力强")
 
     defaults = {
         "config": config,
@@ -25,7 +25,6 @@ def _make_agent(**kwargs):
         "docker_runtime": MagicMock(),
         "memory": MagicMock(),
         "task_manager": MagicMock(),
-        "templates": PromptTemplates(),
         "tool_executor": MagicMock(),
     }
     defaults.update(kwargs)
@@ -57,10 +56,10 @@ class TestAgentIdentity:
         agent = _make_agent(config=config)
         assert agent.name == "测试员"
 
-    def test_personality_set_from_config(self):
-        config = AgentConfig(id="a-001", name="林知遥", personality="冷静理性")
+    def test_identity_set_from_config(self):
+        config = AgentConfig(id="a-001", name="林知遥", identity="冷静理性")
         agent = _make_agent(config=config)
-        assert agent.personality == "冷静理性"
+        assert agent.config.identity == "冷静理性"
 
 
 class TestAgentInjectedDeps:
@@ -106,10 +105,6 @@ class TestAgentInjectedDeps:
 
 
 class TestAgentPromptCache:
-    def test_prompt_dirty_initially(self):
-        agent = _make_agent()
-        assert agent._system_prompt_dirty is True
-
     def test_prompt_cache_initially_none(self):
         agent = _make_agent()
         assert agent._system_prompt_cache is None

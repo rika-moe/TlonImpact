@@ -1,10 +1,10 @@
-"""Tests for Agent prompt cache dirty-flag behavior.
+"""Tests for Agent prompt cache behavior.
 
 Verifies that:
-- _get_system_prompt() builds on first call (dirty=True)
-- _get_system_prompt() reuses cache on second call (dirty=False)
-- rememberFact / forget / generateSummary invalidate the cache
-- Other tools (executeBash, listTasks, etc.) do NOT invalidate the cache
+- _get_system_prompt() builds on first call
+- _get_system_prompt() reuses cache on subsequent calls
+- System prompt is static (no dirty mechanism needed)
+- _build_knowledge_context() injects memory into user prompt
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,7 +13,7 @@ import pytest
 
 from tlon.agents.agent import Agent
 from tlon.agents.llm_client import ToolCall
-from tlon.base.config import AgentConfig, PromptTemplates
+from tlon.base.config import AgentConfig
 
 
 def _make_agent():
@@ -34,7 +34,6 @@ def _make_agent():
         docker_runtime=MagicMock(),
         memory=memory,
         task_manager=MagicMock(),
-        templates=PromptTemplates(),
         tool_executor=tool_executor,
     )
 
@@ -58,14 +57,12 @@ class TestPromptCacheBasic:
                 result = await agent._get_system_prompt()
 
         assert result == "built prompt"
-        assert agent._system_prompt_dirty is False
         assert agent._system_prompt_cache == "built prompt"
 
     @pytest.mark.asyncio
     async def test_second_call_uses_cache(self):
         agent = _make_agent()
         agent._system_prompt_cache = "cached prompt"
-        agent._system_prompt_dirty = False
 
         with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
             result = await agent._get_system_prompt()
@@ -73,33 +70,58 @@ class TestPromptCacheBasic:
 
         assert result == "cached prompt"
 
+
+class TestKnowledgeContext:
     @pytest.mark.asyncio
-    async def test_dirty_flag_triggers_rebuild(self):
+    async def test_build_knowledge_returns_empty_when_no_blocks(self):
         agent = _make_agent()
-        agent._system_prompt_cache = "old prompt"
-        agent._system_prompt_dirty = True
+        agent.memory.build_context_blocks = AsyncMock(return_value=[])
+        result = await agent._build_knowledge_context()
+        assert result == ""
 
-        with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
-            mock_ctx.return_value = MagicMock()
-            with patch("tlon.agents.agent.SystemPromptBuilder") as mock_builder_cls:
-                mock_builder_cls.return_value.build.return_value = "new prompt"
-                result = await agent._get_system_prompt()
+    @pytest.mark.asyncio
+    async def test_build_knowledge_formats_blocks(self):
+        agent = _make_agent()
+        block = MagicMock()
+        block.to_openai_message.return_value = {"content": "历史记忆内容"}
+        agent.memory.build_context_blocks = AsyncMock(return_value=[block])
+        result = await agent._build_knowledge_context()
+        assert "历史记忆内容" in result
 
-        assert result == "new prompt"
-        assert agent._system_prompt_dirty is False
+    @pytest.mark.asyncio
+    async def test_build_context_includes_knowledge(self):
+        """User prompt should include knowledge as first user message."""
+        from tlon.organization.messaging.message import Message
+
+        agent = _make_agent()
+        block = MagicMock()
+        block.to_openai_message.return_value = {"content": "历史记忆内容"}
+        agent.memory.build_context_blocks = AsyncMock(return_value=[block])
+        agent.message_store = MagicMock()
+        agent.message_store.get_history = AsyncMock(return_value=[])
+
+        msg = Message.create(
+            sender_id="user-001",
+            sender_name="用户",
+            sender_type="human",
+            content="你好",
+        )
+        context = await agent._build_context(msg)
+
+        # Find the knowledge message
+        assert any(m["role"] == "user" and "[已知信息]" in m.get("content", "") for m in context)
 
 
-class TestPromptCacheInvalidation:
-    """Memory-modifying tools must set _system_prompt_dirty = True."""
+class TestToolExecutionDoesNotInvalidateCache:
+    """Memory-modifying tools no longer invalidate system prompt cache."""
 
     MEMORY_TOOLS = ["rememberFact", "forget", "generateSummary"]
     NEUTRAL_TOOLS = ["executeBash", "listTasks", "startTask", "completeDialog", "searchMemories"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", MEMORY_TOOLS)
-    async def test_memory_tool_invalidates_cache(self, tool_name):
+    @pytest.mark.parametrize("tool_name", MEMORY_TOOLS + NEUTRAL_TOOLS)
+    async def test_no_tool_invalidates_cache(self, tool_name):
         agent = _make_agent()
-        agent._system_prompt_dirty = False
         agent._system_prompt_cache = "cached"
 
         tool_call = _make_tool_call(tool_name)
@@ -109,25 +131,8 @@ class TestPromptCacheInvalidation:
 
         await agent._execute_tool_call(tool_call)
 
-        assert agent._system_prompt_dirty is True, f"{tool_name} should invalidate the prompt cache"
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", NEUTRAL_TOOLS)
-    async def test_neutral_tool_does_not_invalidate_cache(self, tool_name):
-        agent = _make_agent()
-        agent._system_prompt_dirty = False
-        agent._system_prompt_cache = "cached"
-
-        tool_call = _make_tool_call(tool_name)
-        mock_result = MagicMock()
-        mock_result.success = True
-        agent.tool_executor.execute = AsyncMock(return_value=mock_result)
-
-        await agent._execute_tool_call(tool_call)
-
-        assert agent._system_prompt_dirty is False, (
-            f"{tool_name} should NOT invalidate the prompt cache"
-        )
+        # Cache should remain unchanged
+        assert agent._system_prompt_cache == "cached"
 
 
 class TestPromptCacheObservabilityEvents:
