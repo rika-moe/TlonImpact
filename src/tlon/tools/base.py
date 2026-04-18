@@ -88,6 +88,22 @@ class Tool(ABC):
         """
         pass
 
+    async def initialize(self) -> None:  # noqa: B027
+        """Lifecycle hook called when ToolExecutor starts.
+
+        Tools that manage external resources (e.g., Docker containers)
+        should override this to initialize those resources.
+        """
+        pass
+
+    async def shutdown(self) -> None:  # noqa: B027
+        """Lifecycle hook called when ToolExecutor stops.
+
+        Tools that manage external resources should override this
+        to clean up those resources.
+        """
+        pass
+
     def get_parameter_description(self) -> str:
         """Get a human-readable description of parameters.
 

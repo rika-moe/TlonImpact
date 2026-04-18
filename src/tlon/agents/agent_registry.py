@@ -30,7 +30,6 @@ from tlon.base.settings import get_tlon_home
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
-from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.complete_dialog.complete_dialog import CompleteDialogTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.generate_summary import GenerateSummaryTool
@@ -229,8 +228,6 @@ class AgentRegistry(Component):
             llm_config = _build_llm_config(config.llm, settings)
             llm_client = LLMClient(llm_config)
 
-            docker_runtime = DockerRuntime(config.docker, config.id)
-
             data_dir = get_tlon_home() / "data"
             memory_config = (
                 config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
@@ -252,7 +249,7 @@ class AgentRegistry(Component):
             tool_executor = ToolExecutor(self.event_bus)
 
             # Register tools
-            tool_executor.register_tool(ExecuteBashTool(docker_runtime))
+            tool_executor.register_tool(ExecuteBashTool(config.docker, config.id))
             tool_executor.register_tool(CompleteDialogTool())
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))
@@ -287,7 +284,6 @@ class AgentRegistry(Component):
                 config=config,
                 event_bus=self.event_bus,
                 llm_client=llm_client,
-                docker_runtime=docker_runtime,
                 memory=memory,
                 task_manager=task_manager,
                 tool_executor=tool_executor,

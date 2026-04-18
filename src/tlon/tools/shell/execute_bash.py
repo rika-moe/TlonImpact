@@ -5,26 +5,25 @@ from typing import TYPE_CHECKING
 from tlon.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
+    from tlon.base.config import DockerRuntimeConfig
     from tlon.sandbox.docker_runtime import DockerRuntime
 
 
 class ExecuteBashTool(Tool):
     """Tool to execute bash commands in the agent's Docker container.
 
-    This tool allows agents to run arbitrary shell commands in their
-    isolated container environment.
-
-    Example:
-        >>> tool = ExecuteBashTool(docker_runtime)
-        >>> result = await tool.execute(command="ls -la", timeout=30)
-        >>> print(result.data["stdout"])
+    This tool manages its own DockerRuntime lifecycle:
+    - initialize() starts the container
+    - shutdown() stops the container
+    - execute() runs commands inside the container
     """
 
-    def __init__(self, docker_runtime: "DockerRuntime"):
+    def __init__(self, docker_config: "DockerRuntimeConfig", agent_id: str):
         """Initialize the tool.
 
         Args:
-            docker_runtime: Docker runtime for command execution
+            docker_config: Docker runtime configuration
+            agent_id: ID of the agent this tool belongs to
         """
         super().__init__(
             name="executeBashCommand",
@@ -47,7 +46,21 @@ class ExecuteBashTool(Tool):
                 "required": ["command"],
             },
         )
-        self.docker_runtime = docker_runtime
+        self._docker_config = docker_config
+        self._agent_id = agent_id
+        self._docker_runtime: "DockerRuntime | None" = None  # noqa: UP037
+
+    async def initialize(self) -> None:
+        """Start the Docker container."""
+        from tlon.sandbox.docker_runtime import DockerRuntime
+
+        self._docker_runtime = DockerRuntime(self._docker_config, self._agent_id)
+        await self._docker_runtime.ensure_running()
+
+    async def shutdown(self) -> None:
+        """Stop the Docker container."""
+        if self._docker_runtime:
+            await self._docker_runtime.stop()
 
     async def execute(self, command: str, timeout: int = 60) -> ToolResult:
         """Execute a bash command.
@@ -59,8 +72,15 @@ class ExecuteBashTool(Tool):
         Returns:
             ToolResult with stdout, stderr, and exit code
         """
+        if self._docker_runtime is None:
+            return ToolResult(
+                success=False,
+                data={},
+                error="Docker runtime not initialized",
+            )
+
         try:
-            result = await self.docker_runtime.execute(command, timeout=timeout)
+            result = await self._docker_runtime.execute(command, timeout=timeout)
 
             return ToolResult(
                 success=result.exit_code == 0,

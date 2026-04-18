@@ -178,6 +178,9 @@ class ToolExecutor(Component):
             EventType.TOOL_EXECUTE_REQUEST, self._on_tool_execute_request
         )
 
+        for tool in self._tools.values():
+            await tool.initialize()
+
         logger.info(
             f"ToolExecutor ready, listening for TOOL_EXECUTE_REQUEST events "
             f"({len(self.list_tools())} tools registered)"
@@ -190,6 +193,9 @@ class ToolExecutor(Component):
         if self._subscription_id:
             self.event_bus.unsubscribe(self._subscription_id)
             self._subscription_id = None
+
+        for tool in self._tools.values():
+            await tool.shutdown()
 
         logger.info("ToolExecutor shutdown complete")
 

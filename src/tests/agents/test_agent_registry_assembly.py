@@ -108,25 +108,18 @@ class TestAgentRegistryStartAgent:
     @pytest.mark.asyncio
     async def test_start_agent_registers_all_13_tools(self, registry, mock_event_bus):
         """Agent should be created with all 13 tools registered in ToolExecutor."""
-        # Mock DockerRuntime to avoid actual container creation
-        with patch("tlon.agents.agent_registry.DockerRuntime") as mock_docker_cls:
-            mock_docker = MagicMock()
-            mock_docker.ensure_running = AsyncMock()
-            mock_docker_cls.return_value = mock_docker
+        with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
+            mock_memory = MagicMock()
+            mock_memory.load = AsyncMock()
+            mock_memory_cls.return_value = mock_memory
 
-            # Patch memory and task_manager to avoid file operations
-            with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
-                mock_memory = MagicMock()
-                mock_memory.load = AsyncMock()
-                mock_memory_cls.return_value = mock_memory
+            with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
+                mock_tm = MagicMock()
+                mock_tm.load = MagicMock()
+                mock_tm_cls.return_value = mock_tm
 
-                with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
-                    mock_tm = MagicMock()
-                    mock_tm.load = MagicMock()
-                    mock_tm_cls.return_value = mock_tm
-
-                    # Call _start_agent
-                    agent = await registry._start_agent("a-001")
+                # Call _start_agent
+                agent = await registry._start_agent("a-001")
 
         assert agent is not None
         tools = agent.tool_executor.list_tools()
@@ -152,29 +145,23 @@ class TestAgentRegistryStartAgent:
 
     @pytest.mark.asyncio
     async def test_start_agent_injects_all_deps(self, registry, mock_event_bus):
-        """Agent should receive all 8+ infrastructure dependencies."""
-        with patch("tlon.agents.agent_registry.DockerRuntime") as mock_docker_cls:
-            mock_docker = MagicMock()
-            mock_docker.ensure_running = AsyncMock()
-            mock_docker_cls.return_value = mock_docker
+        """Agent should receive all infrastructure dependencies."""
+        with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
+            mock_memory = MagicMock()
+            mock_memory.load = AsyncMock()
+            mock_memory_cls.return_value = mock_memory
 
-            with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
-                mock_memory = MagicMock()
-                mock_memory.load = AsyncMock()
-                mock_memory_cls.return_value = mock_memory
+            with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
+                mock_tm = MagicMock()
+                mock_tm.load = MagicMock()
+                mock_tm_cls.return_value = mock_tm
 
-                with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
-                    mock_tm = MagicMock()
-                    mock_tm.load = MagicMock()
-                    mock_tm_cls.return_value = mock_tm
-
-                    agent = await registry._start_agent("a-001")
+                agent = await registry._start_agent("a-001")
 
         assert agent is not None
         # Verify all deps are the mocked instances
         assert agent.event_bus is mock_event_bus
         assert agent.llm_client is not None
-        assert agent.docker_runtime is mock_docker
         assert agent.memory is mock_memory
         assert agent.task_manager is mock_tm
         assert agent.tool_executor is not None
@@ -183,49 +170,39 @@ class TestAgentRegistryStartAgent:
     @pytest.mark.asyncio
     async def test_start_agent_creates_own_tool_executor(self, registry, mock_event_bus):
         """Each agent gets its own ToolExecutor instance."""
-        with patch("tlon.agents.agent_registry.DockerRuntime") as mock_docker_cls:
-            mock_docker = MagicMock()
-            mock_docker.ensure_running = AsyncMock()
-            mock_docker_cls.return_value = mock_docker
+        with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
+            mock_memory = MagicMock()
+            mock_memory.load = AsyncMock()
+            mock_memory_cls.return_value = mock_memory
 
-            with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
-                mock_memory = MagicMock()
-                mock_memory.load = AsyncMock()
-                mock_memory_cls.return_value = mock_memory
+            with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
+                mock_tm = MagicMock()
+                mock_tm.load = MagicMock()
+                mock_tm_cls.return_value = mock_tm
 
-                with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
-                    mock_tm = MagicMock()
-                    mock_tm.load = MagicMock()
-                    mock_tm_cls.return_value = mock_tm
-
-                    agent = await registry._start_agent("a-001")
+                agent = await registry._start_agent("a-001")
 
         # ToolExecutor should be created and have tools registered
         assert agent.tool_executor is not None
         assert len(agent.tool_executor.list_tools()) == 13
-        # Verify executeBash tool has the docker_runtime injected
+        # Verify executeBash tool has the docker config and agent id
         bash_tool = agent.tool_executor.get_tool("executeBashCommand")
         assert bash_tool is not None
 
     @pytest.mark.asyncio
     async def test_start_agent_publishes_started_event(self, registry, mock_event_bus):
         """Agent started event should be published."""
-        with patch("tlon.agents.agent_registry.DockerRuntime") as mock_docker_cls:
-            mock_docker = MagicMock()
-            mock_docker.ensure_running = AsyncMock()
-            mock_docker_cls.return_value = mock_docker
+        with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
+            mock_memory = MagicMock()
+            mock_memory.load = AsyncMock()
+            mock_memory_cls.return_value = mock_memory
 
-            with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
-                mock_memory = MagicMock()
-                mock_memory.load = AsyncMock()
-                mock_memory_cls.return_value = mock_memory
+            with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
+                mock_tm = MagicMock()
+                mock_tm.load = MagicMock()
+                mock_tm_cls.return_value = mock_tm
 
-                with patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls:
-                    mock_tm = MagicMock()
-                    mock_tm.load = MagicMock()
-                    mock_tm_cls.return_value = mock_tm
-
-                    await registry._start_agent("a-001")
+                await registry._start_agent("a-001")
 
         from tlon.base.events.event import EventType
 

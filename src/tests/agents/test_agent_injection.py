@@ -22,7 +22,6 @@ def _make_agent(**kwargs):
         "config": config,
         "event_bus": MagicMock(),
         "llm_client": MagicMock(),
-        "docker_runtime": MagicMock(),
         "memory": MagicMock(),
         "task_manager": MagicMock(),
         "tool_executor": MagicMock(),
@@ -68,11 +67,6 @@ class TestAgentInjectedDeps:
         agent = _make_agent(llm_client=llm)
         assert agent.llm_client is llm
 
-    def test_holds_injected_docker_runtime(self):
-        docker = MagicMock()
-        agent = _make_agent(docker_runtime=docker)
-        assert agent.docker_runtime is docker
-
     def test_holds_injected_memory(self):
         memory = MagicMock()
         agent = _make_agent(memory=memory)
@@ -110,11 +104,9 @@ class TestAgentPromptCache:
         assert agent._system_prompt_cache is None
 
     def test_no_internal_construction(self):
-        """Agent should not construct LLMClient or DockerRuntime internally."""
+        """Agent should not construct LLMClient internally."""
         # If Agent constructed these internally, passing a sentinel would be ignored.
         # Verifying the injected sentinel is what's stored.
         sentinel_llm = object()
-        sentinel_docker = object()
-        agent = _make_agent(llm_client=sentinel_llm, docker_runtime=sentinel_docker)
+        agent = _make_agent(llm_client=sentinel_llm)
         assert agent.llm_client is sentinel_llm
-        assert agent.docker_runtime is sentinel_docker

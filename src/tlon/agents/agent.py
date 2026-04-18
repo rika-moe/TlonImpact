@@ -24,7 +24,6 @@ from tlon.base.tracing.trace_context import get_current_trace
 from tlon.memory.manager import MemoryManager
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
-from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.tasks.manager import TaskManager
 
 logger = get_logger(__name__)
@@ -48,13 +47,12 @@ class Agent(Component, Device):
 
     Each agent has:
     - A unique identity and role
-    - An isolated Docker runtime environment
     - Long-term memory
     - Access to tools (bash execution, messaging, etc.)
 
     Example:
         >>> config = AgentConfig(id="dev-001", name="林知遥", ...)
-        >>> agent = Agent(config, event_bus, llm_client, docker_runtime, ...)
+        >>> agent = Agent(config, event_bus, llm_client, memory, ...)
         >>> await agent.initialize()
         >>> # Agent will now respond to messages via EventBus
     """
@@ -64,7 +62,6 @@ class Agent(Component, Device):
         config: AgentConfig,
         event_bus: EventBus,
         llm_client: LLMClient,
-        docker_runtime: DockerRuntime,
         memory: MemoryManager,
         task_manager: TaskManager,
         tool_executor: ToolExecutor,
@@ -79,7 +76,6 @@ class Agent(Component, Device):
             config: Agent configuration (includes identity, profile, behavior)
             event_bus: Event bus for publishing/subscribing (Device dependency)
             llm_client: LLM client for inference
-            docker_runtime: Docker sandbox for bash tool execution
             memory: Memory manager for long-term storage
             task_manager: Task manager for task tracking
             tool_executor: Executor holding registered tools (Component)
@@ -100,7 +96,6 @@ class Agent(Component, Device):
 
         # Injected infrastructure dependencies
         self.llm_client = llm_client
-        self.docker_runtime = docker_runtime
         self.memory = memory
         self.task_manager = task_manager
         self.tool_executor = tool_executor
@@ -133,15 +128,10 @@ class Agent(Component, Device):
     async def initialize(self) -> None:
         """Initialize the agent.
 
-        Starts Docker container, loads memory,
-        and subscribes to events.
+        Loads memory and subscribes to events.
         """
         self.state = AgentState.INITIALIZING
         logger.info(f"Initializing agent: {self.name}")
-
-        # Start Docker container
-        await self.docker_runtime.ensure_running()
-        logger.info(f"Docker container ready for {self.name}")
 
         # Load memory
         await self.memory.load()
@@ -163,7 +153,7 @@ class Agent(Component, Device):
     async def shutdown(self) -> None:
         """Shutdown the agent.
 
-        Unsubscribes from events and stops Docker container.
+        Unsubscribes from events.
         """
         logger.info(f"Shutting down agent: {self.name}")
 
@@ -176,9 +166,6 @@ class Agent(Component, Device):
 
         # Unsubscribe from events (Device cleanup)
         self.unsubscribe_all()
-
-        # Stop Docker container (but don't remove - persist for next time)
-        await self.docker_runtime.stop()
 
         self.state = AgentState.SHUTDOWN
         self._initialized = False  # Mark Component as shut down

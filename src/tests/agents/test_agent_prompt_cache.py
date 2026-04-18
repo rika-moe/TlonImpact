@@ -31,7 +31,6 @@ def _make_agent():
         config=config,
         event_bus=event_bus,
         llm_client=MagicMock(),
-        docker_runtime=MagicMock(),
         memory=memory,
         task_manager=MagicMock(),
         tool_executor=tool_executor,
