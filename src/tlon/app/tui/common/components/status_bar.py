@@ -22,8 +22,8 @@ class StatusBar(Static):
         self.connection_status = "disconnected"
         self.message = ""
 
-    def compose(self):
-        """Compose the status bar."""
+    def on_mount(self) -> None:
+        """Mount the status bar."""
         self.update_status("disconnected", "Ready")
 
     def update_status(self, status: str, message: str = "") -> None:

@@ -64,13 +64,10 @@ class Toast(Static):
         self.duration = duration
         self._timer: Timer | None = None
 
-    def compose(self):
-        """Compose the toast."""
+    def on_mount(self) -> None:
+        """Mount the toast and start dismiss timer."""
         self.update(self.message)
         self.add_class(self.level.value)
-
-    def on_mount(self) -> None:
-        """Start dismiss timer when mounted."""
         self._timer = self.set_timer(self.duration, self.dismiss)
 
     def dismiss(self) -> None:

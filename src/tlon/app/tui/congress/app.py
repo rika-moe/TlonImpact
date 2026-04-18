@@ -555,15 +555,21 @@ Esc - 关闭弹窗/退出
         input_box.set_input(event.command)
         input_box.focus()
 
+    async def on_input_box_send(self, event: InputBox.Send) -> None:
+        """Handle input box send message (Enter key)."""
+        input_box = self.query_one(InputBox)
+        input_box.set_input(event.value)
+        await self.action_send_message()
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "send-button":
             await self.action_send_message()
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Cleanup when app unmounts."""
         if self._client:
-            asyncio.create_task(self._client.disconnect())
+            await self._client.disconnect()
 
 
 async def run_congress(

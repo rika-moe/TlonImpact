@@ -23,16 +23,12 @@ class Header(Static):
             title: Main title to display
             subtitle: Optional subtitle
         """
-        super().__init__()
+        content = f"{title}"
+        if subtitle:
+            content += f" - {subtitle}"
+        super().__init__(content)
         self.title = title
         self.subtitle = subtitle
-
-    def compose(self):
-        """Compose the header."""
-        content = f"{self.title}"
-        if self.subtitle:
-            content += f" - {self.subtitle}"
-        self.update(content)
 
     def update_title(self, title: str, subtitle: str = "") -> None:
         """Update the header title.

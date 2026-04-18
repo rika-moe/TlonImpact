@@ -265,15 +265,3 @@ class OperatorApp(App[None]):
     def action_show_help(self) -> None:
         """Show the help screen."""
         self.push_screen(HelpScreen())
-
-    async def run_async(self) -> int:
-        """Run the application asynchronously.
-
-        Returns:
-            Exit code
-        """
-        try:
-            await self.run_async_inline()
-            return 0
-        except Exception:
-            return 1

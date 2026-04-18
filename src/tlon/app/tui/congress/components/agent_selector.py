@@ -236,7 +236,14 @@ class AgentSelector(Horizontal):
         agent_id = self._item_map.get(index)
         self.select_agent(agent_id)
 
-    def on_click(self) -> None:
-        """Handle click outside dropdown."""
-        if self.is_open:
-            self._close_dropdown()
+    def on_click(self, event) -> None:
+        """Handle click - close dropdown if clicking outside."""
+        if not self.is_open:
+            return
+
+        # Check if click is inside dropdown
+        dropdown = self.query_one("#dropdown", Vertical)
+        if dropdown.screen_region.contains(event.screen_x, event.screen_y):
+            return
+
+        self._close_dropdown()
