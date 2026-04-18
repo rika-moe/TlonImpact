@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from textual.containers import Vertical
 from textual.reactive import reactive
-from textual.widgets import Label, Button, Static
+from textual.widgets import Button, Label
 from textual.widgets._tree import TreeNode
 
 from tlon.app.tui.common.components.tree_view import TreeView
-from tlon.app.tui.common.styles.colors import get_status_icon, get_agent_emoji
+from tlon.app.tui.common.styles.colors import get_status_icon
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -115,20 +115,9 @@ class AgentTree(Vertical):
             yield Button("+ New Agent", id="new-agent-btn", classes="new-agent-btn")
 
     def on_mount(self) -> None:
-        """Handle mount event - initialize with sample data."""
-        self._init_sample_data()
-
-    def _init_sample_data(self) -> None:
-        """Initialize with sample agent data."""
-        sample_agents = [
-            AgentInfo("dev-001", "dev-001", "developer", "GPT-4", "healthy", "production", 172800, 142, 3, 12.0, 256.0, True),
-            AgentInfo("pm-001", "pm-001", "pm", "GPT-4", "idle", "production", 86400, 89, 0, 5.0, 128.0, True),
-            AgentInfo("dev-local", "dev-local", "developer", "Claude", "busy", "development", 3600, 12, 1, 25.0, 512.0, True),
-            AgentInfo("scheduler", "scheduler", "system", "Local", "healthy", "system", 604800, 9999, 0, 2.0, 64.0, True),
-        ]
-
-        for agent in sample_agents:
-            self.add_agent(agent)
+        """Handle mount event."""
+        # Agent data is loaded externally via add_agent() calls
+        pass
 
     def add_agent(self, agent: AgentInfo) -> None:
         """Add an agent to the tree.
@@ -143,10 +132,8 @@ class AgentTree(Vertical):
             self._add_group(agent.group)
 
         # Add agent node under group
-        tree = self.query_one("#agent-tree-view", TreeView)
         group_node = self._groups[agent.group]
 
-        agent_icon = get_agent_emoji(agent.role)
         status_icon = get_status_icon(agent.status)
 
         label = f"{agent.name} {status_icon}"
@@ -161,7 +148,9 @@ class AgentTree(Vertical):
         """
         tree = self.query_one("#agent-tree-view", TreeView)
         folder_icon = "📁"
-        node = tree.root.add(f"{folder_icon} {group_name}", data={"type": "group", "name": group_name})
+        node = tree.root.add(
+            f"{folder_icon} {group_name}", data={"type": "group", "name": group_name}
+        )
         node.expand()
         self._groups[group_name] = node
 

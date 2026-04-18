@@ -12,14 +12,13 @@ from typing import TYPE_CHECKING
 
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Label, Button, Static, Input
 from textual.screen import ModalScreen
+from textual.widgets import Button, Input, Label, Static
 
-from tlon.app.tui.operator.views.base import BaseView
-from tlon.app.tui.operator.components.agent_tree import AgentTree, AgentInfo
-from tlon.app.tui.operator.components.agent_detail import AgentDetail
 from tlon.app.tui.common.components.modal import ConfirmModal
-from tlon.app.tui.common.components.toast import Toast
+from tlon.app.tui.operator.components.agent_detail import AgentDetail
+from tlon.app.tui.operator.components.agent_tree import AgentInfo, AgentTree
+from tlon.app.tui.operator.views.base import BaseView
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -83,12 +82,14 @@ class NewAgentModal(ModalScreen):
             group = self.query_one("#agent-group", Input).value or "production"
 
             if name:
-                self.dismiss({
-                    "name": name,
-                    "role": role,
-                    "model": model,
-                    "group": group,
-                })
+                self.dismiss(
+                    {
+                        "name": name,
+                        "role": role,
+                        "model": model,
+                        "group": group,
+                    }
+                )
             else:
                 self.app.notify("Agent name is required", severity="error")
         else:
@@ -154,11 +155,13 @@ class EditAgentModal(ModalScreen):
             model = self.query_one("#agent-model", Input).value
             group = self.query_one("#agent-group", Input).value
 
-            self.dismiss({
-                "role": role,
-                "model": model,
-                "group": group,
-            })
+            self.dismiss(
+                {
+                    "role": role,
+                    "model": model,
+                    "group": group,
+                }
+            )
         else:
             self.dismiss(None)
 
@@ -260,6 +263,7 @@ class AgentsView(BaseView):
 
     def on_mount(self) -> None:
         """Handle mount event."""
+        super().on_mount()
         # Load initial data
         self.call_after_refresh(self._load_data)
 
@@ -302,6 +306,7 @@ class AgentsView(BaseView):
 
     def action_new_agent(self) -> None:
         """Action to create a new agent."""
+
         def handle_result(result: dict | None) -> None:
             if result:
                 tree = self.query_one("#agent-tree", AgentTree)
@@ -359,10 +364,9 @@ class AgentsView(BaseView):
 
         self.app.push_screen(
             ConfirmModal(
-                title="Delete Agent",
-                message=f"Are you sure you want to delete '{agent.name}'?"
+                title="Delete Agent", message=f"Are you sure you want to delete '{agent.name}'?"
             ),
-            handle_confirm
+            handle_confirm,
         )
 
     def action_toggle_agent(self) -> None:

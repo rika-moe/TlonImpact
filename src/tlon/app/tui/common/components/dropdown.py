@@ -1,8 +1,9 @@
 """Dropdown component for Tlon TUI."""
 
+from collections.abc import Callable
+from typing import Any
+
 from textual.widgets import Select
-from textual.reactive import reactive
-from typing import Any, Callable
 
 
 class Dropdown(Select):
@@ -28,7 +29,7 @@ class Dropdown(Select):
         options: list[tuple[str, Any]] | None = None,
         prompt: str = "Select...",
         allow_blank: bool = True,
-        **kwargs
+        **kwargs,
     ) -> None:
         """Initialize dropdown.
 
@@ -38,12 +39,7 @@ class Dropdown(Select):
             allow_blank: Allow empty selection
             **kwargs: Additional arguments
         """
-        super().__init__(
-            options=options or [],
-            prompt=prompt,
-            allow_blank=allow_blank,
-            **kwargs
-        )
+        super().__init__(options=options or [], prompt=prompt, allow_blank=allow_blank, **kwargs)
         self._options = options or []
         self._on_change_handler: Callable | None = None
 
@@ -54,7 +50,7 @@ class Dropdown(Select):
             options: New list of (label, value) tuples
         """
         self._options = options
-        self.set_options(options)
+        super().set_options(options)
 
     def on_change(self, handler: Callable[[Any], None]) -> None:
         """Register change handler.
