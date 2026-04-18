@@ -126,6 +126,10 @@ class AgentTree(Vertical):
         Args:
             agent: Agent information
         """
+        if agent.id in self._agents:
+            self.update_agent_status(agent.id, agent.status)
+            return
+
         self._agents[agent.id] = agent
 
         # Ensure group exists

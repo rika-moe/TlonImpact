@@ -229,7 +229,7 @@ class CongressState:
     current_agent: str | None = None
     messages: list[Message] = field(default_factory=list)
     input_history: list[str] = field(default_factory=list)
-    is_typing: bool = False
+    typing_agents: set[str] = field(default_factory=set)
     agents: dict[str, AgentInfo] = field(default_factory=dict)
     connection_state: str = "disconnected"
     current_trace_id: str | None = None
@@ -270,6 +270,11 @@ class CongressState:
             if self.current_agent == agent_id:
                 self.current_agent = None
 
+    @property
+    def is_typing(self) -> bool:
+        """Check if any agent is currently typing."""
+        return len(self.typing_agents) > 0
+
     def set_typing(self, agent_id: str | None, is_typing: bool) -> None:
         """Set typing state for an agent.
 
@@ -277,10 +282,14 @@ class CongressState:
             agent_id: ID of agent typing (or None to clear)
             is_typing: Whether the agent is typing
         """
-        self.is_typing = is_typing
-        if agent_id and agent_id in self.agents and is_typing:
+        if not agent_id or agent_id not in self.agents:
+            return
+
+        if is_typing:
+            self.typing_agents.add(agent_id)
             self.agents[agent_id].state = AgentState.THINKING
-        elif agent_id and agent_id in self.agents and not is_typing:
+        else:
+            self.typing_agents.discard(agent_id)
             self.agents[agent_id].state = AgentState.IDLE
 
     def get_agent_list(self) -> list[AgentInfo]:

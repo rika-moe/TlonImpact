@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Button, DataTable, Input, Label, Select, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
+from tlon.app.tui.common.components.data_table import DataTable
 from tlon.app.tui.operator.views.base import BaseView
 
 if TYPE_CHECKING:

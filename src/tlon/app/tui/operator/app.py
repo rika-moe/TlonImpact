@@ -242,11 +242,9 @@ class OperatorApp(App[None]):
             if vid == view_id:
                 view.display = True
                 view.remove_class("hidden")
-                view.on_show()
             else:
                 view.display = False
                 view.add_class("hidden")
-                view.on_hide()
 
     def action_switch_view(self, view_id: str) -> None:
         """Switch to a specific view.
