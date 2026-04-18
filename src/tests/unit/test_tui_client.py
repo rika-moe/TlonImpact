@@ -388,7 +388,9 @@ class TestTUIClient:
     def test_on_event_chat_mode(self, client):
         """Test event handling in chat mode."""
         client.current_mode = "chat"
-        client.agents = {"dev-001": AgentInfo({"id": "dev-001", "name": "林知遥"})}
+        client.agents = {
+            "dev-001": AgentInfo({"id": "dev-001", "name": "林知遥", "role": "developer"})
+        }
 
         # Message event should be processed
         message_event = {
@@ -472,7 +474,9 @@ class TestTUIClient:
 
     def test_print_chat_message_agent(self, client, capsys):
         """Test printing agent message."""
-        client.agents = {"dev-001": AgentInfo({"id": "dev-001", "name": "林知遥"})}
+        client.agents = {
+            "dev-001": AgentInfo({"id": "dev-001", "name": "林知遥", "role": "developer"})
+        }
         client._print_chat_message("agent", "林知遥", "Hello", 1700000000.0)
 
         captured = capsys.readouterr()

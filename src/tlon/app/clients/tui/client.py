@@ -6,19 +6,20 @@ and interacting with Agents.
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
+from rich.console import Console
 
-from tlon.app.clients.sdk import ConnectionState, TerminalAdapter, TlonClient
+from tlon.app.clients.sdk import TerminalAdapter, TlonClient
+from tlon.app.tui.common.styles.colors import get_agent_emoji
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
+console = Console()
 
 
 @dataclass
@@ -57,18 +58,16 @@ class AgentInfo:
 
         # Set emoji based on role
         if self.emoji == "🤖" and self.role:
-            role_emojis = {
-                "dev": "💻",
-                "developer": "💻",
-                "pm": "📊",
-                "test": "🧪",
-                "review": "👀",
-            }
-            role_lower = self.role.lower()
-            for key, emoji in role_emojis.items():
-                if key in role_lower:
-                    self.emoji = emoji
-                    break
+            self.emoji = get_agent_emoji(self.role)
+
+    @property
+    def display_name(self) -> str:
+        """Get display name with emoji.
+
+        Returns:
+            Formatted display name
+        """
+        return f"{self.emoji} {self.name}"
 
     @property
     def status_icon(self) -> str:
@@ -103,9 +102,7 @@ class MentionCompleter(Completer):
         """
         self._client = client
 
-    def get_completions(
-        self, document: Document, complete_event: Any
-    ) -> list[Completion]:
+    def get_completions(self, document: Document, complete_event: Any) -> list[Completion]:
         """Get completions for the current word.
 
         Args:
@@ -126,7 +123,8 @@ class MentionCompleter(Completer):
         for agent in self._client.agents.values():
             # Match by name or ID
             if query in agent.name.lower() or query in agent.id.lower():
-                text = f"@{agent.name}"
+                # Use id for completion text if matched by id, otherwise use name
+                text = f"@{agent.id}" if query in agent.id.lower() else f"@{agent.name}"
                 display = f"@{agent.name} ({agent.id})"
                 completions.append(
                     Completion(
@@ -357,7 +355,11 @@ class TUIClient:
 
         # Format payload
         if "content" in payload:
-            content = payload["content"][:50] + "..." if len(payload["content"]) > 50 else payload["content"]
+            content = (
+                payload["content"][:50] + "..."
+                if len(payload["content"]) > 50
+                else payload["content"]
+            )
         elif "agent_id" in payload:
             content = f"agent_id={payload['agent_id']}"
         else:
@@ -502,9 +504,7 @@ class TUIClient:
             print(f"Agents: {len(self.agents)}")
 
         elif cmd == "/clear":
-            import os
-
-            os.system("clear" if os.name != "nt" else "cls")
+            console.clear()
 
         else:
             print(f"Unknown command: {command}")
@@ -555,9 +555,7 @@ Available commands:
         except Exception as e:
             logger.error(f"Failed to load history: {e}")
 
-    async def send_message(
-        self, content: str, mentions: list[str] | None = None
-    ) -> bool:
+    async def send_message(self, content: str, mentions: list[str] | None = None) -> bool:
         """Send a message.
 
         Args:

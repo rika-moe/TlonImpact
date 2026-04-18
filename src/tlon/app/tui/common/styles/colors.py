@@ -39,13 +39,13 @@ class ThemeColors:
 class AgentStatusColors(Enum):
     """Agent status colors."""
 
-    HEALTHY = ("#10B981", "●")      # Green
-    IDLE = ("#6B7280", "○")          # Gray
-    BUSY = ("#F59E0B", "◐")          # Yellow
-    DEGRADED = ("#8B5CF6", "◌")      # Purple
-    ERROR = ("#EF4444", "✕")         # Red
-    PAUSED = ("#3B82F6", "⏸")        # Blue
-    OFFLINE = ("", "○")       # Dark gray
+    HEALTHY = ("#10B981", "●")  # Green
+    IDLE = ("#6B7280", "○")  # Gray
+    BUSY = ("#F59E0B", "◐")  # Yellow
+    DEGRADED = ("#8B5CF6", "◌")  # Purple
+    ERROR = ("#EF4444", "✕")  # Red
+    PAUSED = ("#3B82F6", "⏸")  # Blue
+    OFFLINE = ("", "○")  # Dark gray
 
     def __init__(self, color: str, icon: str):
         self.color = color
@@ -55,11 +55,11 @@ class AgentStatusColors(Enum):
 class LogLevelColors(Enum):
     """Log level colors."""
 
-    DEBUG = ("#6B7280", "🔍")        # Gray
-    INFO = ("#3B82F6", "ℹ️")         # Blue
-    WARNING = ("#F59E0B", "⚠️")      # Yellow
-    ERROR = ("#EF4444", "❌")        # Red
-    FATAL = ("#DC2626", "💀")        # Dark Red
+    DEBUG = ("#6B7280", "🔍")  # Gray
+    INFO = ("#3B82F6", "ℹ️")  # Blue
+    WARNING = ("#F59E0B", "⚠️")  # Yellow
+    ERROR = ("#EF4444", "❌")  # Red
+    FATAL = ("#DC2626", "💀")  # Dark Red
 
     def __init__(self, color: str, icon: str):
         self.color = color
@@ -68,16 +68,18 @@ class LogLevelColors(Enum):
 
 # Message type colors
 MESSAGE_TYPE_COLORS = {
-    "user": "#3B82F6",      # Blue
-    "agent": "#10B981",     # Green
-    "system": "#6B7280",    # Gray
-    "error": "#EF4444",     # Red
+    "user": "#3B82F6",  # Blue
+    "agent": "#10B981",  # Green
+    "system": "#6B7280",  # Gray
+    "error": "#EF4444",  # Red
 }
 
 # Agent role emoji mapping
 AGENT_ROLE_EMOJI = {
     "developer": "💻",
     "dev": "💻",
+    "开发工程师": "💻",
+    "开发": "💻",
     "pm": "👔",
     "product_manager": "👔",
     "test": "🧪",

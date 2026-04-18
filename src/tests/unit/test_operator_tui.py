@@ -6,10 +6,6 @@ Tests cover:
 - App initialization
 """
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 
 class TestOperatorViews:
     """Tests for Operator views."""
