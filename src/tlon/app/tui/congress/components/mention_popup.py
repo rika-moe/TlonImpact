@@ -119,6 +119,7 @@ class MentionPopup(Vertical):
         super().__init__(*args, **kwargs)
         self._all_agents: list[AgentInfo] = []
         self._filtered_agents: list[AgentInfo] = []
+        self._item_map: dict[int, tuple[str | None, str]] = {}
 
     def compose(self):
         """Compose mention popup."""
@@ -144,7 +145,10 @@ class MentionPopup(Vertical):
         self.add_class("open")
 
         # Position popup near input
-        self.styles.offset = (0, -self._filtered_agents.__len__() - 3 if self._filtered_agents else -5)
+        self.styles.offset = (
+            0,
+            -self._filtered_agents.__len__() - 3 if self._filtered_agents else -5,
+        )
 
     def close(self) -> None:
         """Close the mention popup."""
@@ -182,8 +186,7 @@ class MentionPopup(Vertical):
             self._filtered_agents = list(self._all_agents)
         else:
             self._filtered_agents = [
-                a for a in self._all_agents
-                if query in a.name.lower() or query in a.id.lower()
+                a for a in self._all_agents if query in a.name.lower() or query in a.id.lower()
             ]
 
         # Sort by status: idle first, then online, then busy, then offline
@@ -194,34 +197,36 @@ class MentionPopup(Vertical):
         """Refresh the agent list."""
         list_view = self.query_one("#agent-list", ListView)
         list_view.clear()
+        self._item_map.clear()
 
         # Add @All option first
         all_item = ListItem(
             Label("@All - 通知所有人"),
             classes="list-item",
-            data_agent_id=None,
-            data_agent_name="All",
         )
         list_view.append(all_item)
+        self._item_map[0] = (None, "All")
 
         # Add filtered agents
-        for agent in self._filtered_agents:
+        for i, agent in enumerate(self._filtered_agents, start=1):
             status_class = f"status-{agent.state}"
             display = f"{agent.emoji} @{agent.name}"
 
             item = ListItem(
                 Label(display, classes=status_class),
                 classes="list-item",
-                data_agent_id=agent.id,
-                data_agent_name=agent.name,
             )
             list_view.append(item)
+            self._item_map[i] = (agent.id, agent.name)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle list item selection."""
-        item = event.item
-        agent_id = item.data_agent_id
-        agent_name = item.data_agent_name
+        list_view = self.query_one("#agent-list", ListView)
+        try:
+            index = list_view.children.index(event.item)
+        except ValueError:
+            return
+        agent_id, agent_name = self._item_map.get(index, (None, ""))
 
         self.post_message(self.Selected(agent_id, agent_name))
         self.close()
@@ -239,10 +244,17 @@ class MentionPopup(Vertical):
         elif event.key == "enter":
             # Select current item
             if list_view.index is not None:
-                item = list_view.get_child_at(list_view.index)
+                try:
+                    item = list_view.children[list_view.index]
+                except IndexError:
+                    item = None
                 if item:
-                    agent_id = item.data_agent_id
-                    agent_name = item.data_agent_name
-                    self.post_message(self.Selected(agent_id, agent_name))
-                    self.close()
+                    try:
+                        index = list_view.children.index(item)
+                    except ValueError:
+                        index = None
+                    if index is not None:
+                        agent_id, agent_name = self._item_map.get(index, (None, ""))
+                        self.post_message(self.Selected(agent_id, agent_name))
+                        self.close()
             event.stop()

@@ -121,6 +121,7 @@ class AgentSelector(Horizontal):
         """Initialize agent selector."""
         super().__init__(*args, **kwargs)
         self._agent_map: dict[str, AgentInfo] = {}
+        self._item_map: dict[int, str | None] = {}
 
     def compose(self):
         """Compose agent selector."""
@@ -163,23 +164,24 @@ class AgentSelector(Horizontal):
         """Refresh the dropdown list."""
         list_view = self.query_one("#agent-list", ListView)
         list_view.clear()
+        self._item_map.clear()
 
         # Add agents
-        for agent in self.agents:
+        for i, agent in enumerate(self.agents):
             item = ListItem(
                 Label(agent.display_name),
                 classes="list-item",
-                data_agent_id=agent.id,
             )
             list_view.append(item)
+            self._item_map[i] = agent.id
 
         # Add @All option
         all_item = ListItem(
             Label("@All - 通知所有人"),
             classes="list-item all-option",
-            data_agent_id=None,
         )
         list_view.append(all_item)
+        self._item_map[len(self.agents)] = None
 
     def select_agent(self, agent_id: str | None) -> None:
         """Select an agent.
@@ -226,8 +228,12 @@ class AgentSelector(Horizontal):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle list item selection."""
-        item = event.item
-        agent_id = item.data_agent_id
+        list_view = self.query_one("#agent-list", ListView)
+        try:
+            index = list_view.children.index(event.item)
+        except ValueError:
+            return
+        agent_id = self._item_map.get(index)
         self.select_agent(agent_id)
 
     def on_click(self) -> None:

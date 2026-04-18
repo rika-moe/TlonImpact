@@ -109,6 +109,7 @@ class CommandPalette(Vertical):
     def __init__(self, *args, **kwargs):
         """Initialize command palette."""
         super().__init__(*args, **kwargs)
+        self._item_map: dict[int, str] = {}
 
     def compose(self):
         """Compose command palette."""
@@ -130,19 +131,24 @@ class CommandPalette(Vertical):
         """Refresh the command list."""
         list_view = self.query_one("#command-list", ListView)
         list_view.clear()
+        self._item_map.clear()
 
-        for cmd in self.COMMANDS:
+        for i, cmd in enumerate(self.COMMANDS):
             item = ListItem(
                 Label(f"/{cmd.name} - {cmd.description}"),
                 classes="list-item",
-                data_command=cmd.shortcut,
             )
             list_view.append(item)
+            self._item_map[i] = cmd.shortcut
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle list item selection."""
-        item = event.item
-        command = item.data_command
+        list_view = self.query_one("#command-list", ListView)
+        try:
+            index = list_view.children.index(event.item)
+        except ValueError:
+            return
+        command = self._item_map.get(index, "")
 
         self.post_message(self.Selected(command))
         self.close()
@@ -158,9 +164,17 @@ class CommandPalette(Vertical):
         elif event.key == "enter":
             list_view = self.query_one("#command-list", ListView)
             if list_view.index is not None:
-                item = list_view.get_child_at(list_view.index)
+                try:
+                    item = list_view.children[list_view.index]
+                except IndexError:
+                    item = None
                 if item:
-                    command = item.data_command
-                    self.post_message(self.Selected(command))
-                    self.close()
+                    try:
+                        index = list_view.children.index(item)
+                    except ValueError:
+                        index = None
+                    if index is not None:
+                        command = self._item_map.get(index, "")
+                        self.post_message(self.Selected(command))
+                        self.close()
             event.stop()
