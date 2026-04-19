@@ -38,8 +38,10 @@ agents/
 ## Agent 核心流程
 
 ```
-接收消息 → _should_respond? → 构建 Context → LLM Think → 执行 Tool → 发送响应 → 保存记忆
+接收消息 → _should_respond? → 构建 Context → LLM Think → 直接调用 Tool → 发送响应 → 保存记忆
 ```
+
+**Tool 执行**: Agent 直接调用 `tool_executor.execute()`（模块内聚合），非 EventBus RPC。
 
 ---
 

@@ -37,7 +37,7 @@ from tlon.agents.llm_client import LLMClient
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
-from tlon.agents.react_state_machine import ReActStateMachine, ReActContext
+# ReAct loop is implemented directly in Agent._process_message()
 ```
 
 ## Sandbox 层

@@ -44,12 +44,12 @@
 │  │                     │    │                     │    │                 │ │
 │  │  ┌───────────────┐  │    │  ┌───────────────┐  │    │ ┌─────────────┐ │ │
 │  │  │     Agent     │  │    │  │MessageRouter  │  │◄───│ │  Session    │ │ │
-│  │  │  (ReAct SM)   │  │    │  │  (路由决策)    │  │    │ │  Manager    │ │ │
+│  │  │ (ReAct Loop)  │  │    │  │  (路由决策)    │  │    │ │  Manager    │ │ │
 │  │  └───────┬───────┘  │    │  └───────┬───────┘  │    │ └─────────────┘ │ │
 │  │          │          │    │          │          │    │                 │ │
 │  │  ┌───────▼───────┐  │    │  ┌───────▼───────┐  │    │ ┌─────────────┐ │ │
 │  │  │ ToolExecutor  │  │    │  │ MessageStore  │  │    │ │ Notification│ │ │
-│  │  │ (EventBus版)  │  │    │  │  (消息存储)    │  │    │ │   Service   │ │ │
+│  │  │   (Direct)    │  │    │  │  (消息存储)    │  │    │ │   Service   │ │ │
 │  │  └───────────────┘  │    │  └───────────────┘  │    │ └─────────────┘ │ │
 │  │                     │    │                     │    │                 │ │
 │  │  ┌───────────────┐  │    │  ┌───────────────┐  │    │ ┌─────────────┐ │ │
@@ -114,9 +114,8 @@
 **组成**:
 ```
 agents/
-├── agent.py              # Agent 类 - 协调推理与执行
-├── react_state_machine.py # ReAct 状态机
-├── tool_executor.py      # 工具执行器 (EventBus 消费者)
+├── agent.py              # Agent 类 - ReAct 推理与执行
+├── tool_executor.py      # 工具注册与直接执行
 ├── llm_client.py         # LLM API 客户端
 ├── prompt_builder.py     # 系统提示构建
 └── agent_registry.py     # Agent 生命周期管理
@@ -142,7 +141,7 @@ class Agent(Component, Device):
 
 **通信模式**:
 - 接收: 订阅 `MESSAGE_ROUTED` 事件
-- 发送: 发布 `MESSAGE_NEW`, `TOOL_EXECUTE_REQUEST` 事件
+- 发送: 发布 `MESSAGE_NEW` 事件
 
 ---
 
@@ -206,7 +205,7 @@ class ExecuteBashTool(Tool):
 **模块边界**:
 ```
 AgentModule
-    └── ToolExecutor (通过 EventBus 通信)
+    └── ToolExecutor (Agent 直接调用)
             └── 注册 ExecuteBashTool
                     └── 内部使用 DockerRuntime (SandboxModule)
 ```
@@ -281,27 +280,14 @@ tools/
 ### 模式 1: EventBus 异步通信（模块间解耦）
 
 ```python
-# Agent 发布工具执行请求
-await self.event_bus.publish(Event(
-    type=EventType.TOOL_EXECUTE_REQUEST,
-    payload=ToolExecuteRequest(
-        tool_name="executeBashCommand",
-        arguments={"command": "ls -la"},
-        correlation_id=trace_id,
-    ),
-    source=self.id,
-))
-
-# ToolExecutor（可能在不同进程）接收并处理
-class ToolExecutor(Component):
-    async def initialize(self) -> None:
-        self.event_bus.subscribe(
-            EventType.TOOL_EXECUTE_REQUEST,
-            self._on_execute_request
-        )
+# Agent 直接调用 ToolExecutor（模块内聚合）
+result = await self.tool_executor.execute(
+    tool_name="executeBashCommand",
+    arguments={"command": "ls -la"},
+)
 ```
 
-**适用场景**: 跨模块、可能需要异步/分布式执行的调用
+**适用场景**: 模块内紧耦合调用，简单直接
 
 ---
 

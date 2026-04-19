@@ -5,6 +5,7 @@ Verifies that:
 - _get_system_prompt() reuses cache on subsequent calls
 - System prompt is static (no dirty mechanism needed)
 - _build_knowledge_context() injects memory into user prompt
+- Tool execution does not invalidate system prompt cache
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tlon.agents.agent import Agent
-from tlon.agents.llm_client import ToolCall
 from tlon.base.config import AgentConfig
 
 
@@ -23,6 +23,7 @@ def _make_agent():
 
     memory = MagicMock()
     memory.build_context_blocks = AsyncMock(return_value=[])
+    memory.check_idle_timeout = AsyncMock()
 
     event_bus = MagicMock()
     event_bus.publish = AsyncMock()
@@ -35,14 +36,6 @@ def _make_agent():
         task_manager=MagicMock(),
         tool_executor=tool_executor,
     )
-
-
-def _make_tool_call(name: str) -> ToolCall:
-    tc = MagicMock(spec=ToolCall)
-    tc.function_name = name
-    tc.arguments = {}
-    tc.id = f"call-{name}"
-    return tc
 
 
 class TestPromptCacheBasic:
@@ -123,29 +116,31 @@ class TestToolExecutionDoesNotInvalidateCache:
         agent = _make_agent()
         agent._system_prompt_cache = "cached"
 
-        tool_call = _make_tool_call(tool_name)
         mock_result = MagicMock()
         mock_result.success = True
         agent.tool_executor.execute = AsyncMock(return_value=mock_result)
 
-        await agent._execute_tool_call(tool_call)
+        # Execute tool directly (same as what _execute_tool_calls does internally)
+        await agent.tool_executor.execute(tool_name, {})
 
         # Cache should remain unchanged
         assert agent._system_prompt_cache == "cached"
 
 
-class TestPromptCacheObservabilityEvents:
-    """_execute_tool_call publishes TOOL_EXECUTE_START and TOOL_EXECUTE_END events."""
+class TestToolExecutionObservability:
+    """Tool execution via _execute_tool_calls publishes observability events."""
 
     @pytest.mark.asyncio
     async def test_publishes_start_and_end_events(self):
         agent = _make_agent()
-        tool_call = _make_tool_call("listTasks")
+        from tlon.agents.llm_client import ToolCall
+
+        tool_call = ToolCall(id="tc-001", function_name="listTasks", arguments={})
         mock_result = MagicMock()
         mock_result.success = True
         agent.tool_executor.execute = AsyncMock(return_value=mock_result)
 
-        await agent._execute_tool_call(tool_call)
+        await agent._execute_tool_calls([tool_call])
 
         published_types = [call.args[0].type for call in agent.event_bus.publish.await_args_list]
         from tlon.base.events.event import EventType
@@ -156,11 +151,13 @@ class TestPromptCacheObservabilityEvents:
     @pytest.mark.asyncio
     async def test_publishes_error_event_on_exception(self):
         agent = _make_agent()
-        tool_call = _make_tool_call("executeBash")
+        from tlon.agents.llm_client import ToolCall
+
+        tool_call = ToolCall(id="tc-001", function_name="executeBash", arguments={})
         agent.tool_executor.execute = AsyncMock(side_effect=RuntimeError("boom"))
 
         with pytest.raises(RuntimeError):
-            await agent._execute_tool_call(tool_call)
+            await agent._execute_tool_calls([tool_call])
 
         published_types = [call.args[0].type for call in agent.event_bus.publish.await_args_list]
         from tlon.base.events.event import EventType

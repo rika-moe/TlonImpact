@@ -2,6 +2,7 @@
 
 > 状态: ✅ 已验证
 > 最后验证: 2026-04-19
+> 工具执行: Agent 直接调用 ToolExecutor（非 EventBus RPC）
 
 ---
 

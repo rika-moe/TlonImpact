@@ -98,8 +98,8 @@ Client Ecosystem
 - **工期**: 2 人天
 - **状态**: 已完成
 - **已完成**:
-  - ✅ EventBus 化工具执行（ ）
-  - ✅ 显式状态机 ReAct Loop（）
+  - ✅ ~~EventBus 化工具执行~~（ ）→ 2026-04-19 再次重构为直接调用（）
+  - ✅ ~~显式状态机 ReAct Loop~~（）→ 2026-04-19 简化为内联循环（）
   - ✅ Agent 解耦：PromptContext + 组件注入化（ ）
   - ✅ 扩展 `Event` 类，添加 `trace_id`, `span_id`, `parent_span_id`
   - ✅ 新增 EventType：`AGENT_THINKING_START/END`, `AGENT_LLM_REQUEST/RESPONSE`, `TOOL_EXECUTE_START/END`

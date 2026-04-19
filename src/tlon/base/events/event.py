@@ -31,7 +31,6 @@ class EventType(StrEnum):
     AGENT_STOPPED = "agent.stopped"
     AGENT_ERROR = "agent.error"
     AGENT_STATE_CHANGED = "agent.state_changed"
-    AGENT_REACT_STATE_TRANSITION = "agent.react_state_transition"  # ReAct state machine transition
 
     # Agent thinking process (observability)
     AGENT_THINKING_START = "agent.thinking_start"
@@ -47,10 +46,6 @@ class EventType(StrEnum):
     # Tool execution (observability)
     TOOL_EXECUTE_START = "tool.execute_start"
     TOOL_EXECUTE_END = "tool.execute_end"
-
-    # Phase 3: EventBus-based tool execution
-    TOOL_EXECUTE_REQUEST = "tool.execute_request"  # Agent -> ToolExecutor
-    TOOL_EXECUTE_RESULT = "tool.execute_result"  # ToolExecutor -> Agent
 
     # System events
     SYSTEM_STARTUP = "system.startup"

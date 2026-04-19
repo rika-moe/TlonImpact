@@ -245,8 +245,8 @@ class AgentRegistry(Component):
                 data_dir=str(data_dir),
             )
 
-            # Create ToolExecutor (EventBus-based async)
-            tool_executor = ToolExecutor(self.event_bus)
+            # Create ToolExecutor (direct execution, no EventBus)
+            tool_executor = ToolExecutor()
 
             # Register tools
             tool_executor.register_tool(ExecuteBashTool(config.docker, config.id))
@@ -264,7 +264,7 @@ class AgentRegistry(Component):
             tool_executor.register_tool(GetCurrentTaskTool(task_manager))
             logger.debug(f"Registered {len(tool_executor.list_tools())} tools for {config.name}")
 
-            # Initialize ToolExecutor
+            # Initialize tools
             await tool_executor.initialize()
 
             # Prepare team members config (all other agents)

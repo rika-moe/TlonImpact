@@ -9,7 +9,7 @@ Key Design: Device and Component are orthogonal concepts.
 
 A class can be:
 - Only Component: MessageStore (no EventBus interaction)
-- Only Device: ReActStateMachine (runtime event handler, not registry-managed)
+- Only Device: TraceCollector (runtime event handler, not registry-managed)
 - Both: NotificationService (registry-managed + EventBus interaction)
 
 Example:

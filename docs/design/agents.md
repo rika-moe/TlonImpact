@@ -24,8 +24,8 @@
 |------|------|
 | 注册 | AgentRegistry 管理生命周期 |
 | 加载 | 从 YAML 加载配置和记忆 |
-| 激活 | 加载 Tools，订阅 EventBus |
-| 消息循环 | 接收消息 → 构建 Context → LLM 决策 → 执行 Tool |
+| 激活 | 加载 Tools，订阅 EventBus (MESSAGE_ROUTED) |
+| 消息循环 | 接收消息 → 构建 Context → LLM 决策 → **直接调用 Tool** → 发送响应 |
 | 停用 | 保存记忆，停止容器 |
 
 ---
