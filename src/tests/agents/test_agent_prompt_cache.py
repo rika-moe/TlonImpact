@@ -108,7 +108,7 @@ class TestToolExecutionDoesNotInvalidateCache:
     """Memory-modifying tools no longer invalidate system prompt cache."""
 
     MEMORY_TOOLS = ["rememberFact", "forget", "generateSummary"]
-    NEUTRAL_TOOLS = ["executeBash", "listTasks", "startTask", "completeDialog", "searchMemories"]
+    NEUTRAL_TOOLS = ["executeBash", "listTasks", "startTask", "sendMessage", "searchMemories"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool_name", MEMORY_TOOLS + NEUTRAL_TOOLS)

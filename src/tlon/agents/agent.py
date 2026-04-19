@@ -263,30 +263,49 @@ class Agent(Component, Device):
                     return
                 continue
 
-            # No tool calls — remind agent to use tools
+            # No tool calls — abnormal, remind agent to use tools
             if not response.tool_calls:
                 await self._add_no_tool_reminder(context, response)
+                continue
+
+            # ── Pre-execution conflict detection ──
+            # sendMessage(is_complete=true) must not coexist with other tools
+            send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendMessage"]
+            other_calls = [tc for tc in response.tool_calls if tc.function_name != "sendMessage"]
+            has_complete = any(tc.arguments.get("is_complete") for tc in send_calls)
+
+            if has_complete and other_calls:
+                context.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "冲突：当 sendMessage 的 is_complete 设为 true 时，"
+                            "不得与其他工具同时调用。\n"
+                            "请重新规划：要么只调用 sendMessage(is_complete=true) 结束本轮，"
+                            "要么先调用其他工具，下一轮再发送最终消息。"
+                        ),
+                    }
+                )
                 continue
 
             # Execute tools directly
             tool_results_list = await self._execute_tool_calls(response.tool_calls)
             all_tool_results.extend([{"tool_call": tc, "result": r} for tc, r in tool_results_list])
 
-            # Check for special tool calls
-            complete_dialog_result: ToolResult | None = None
-            send_message_results: list[ToolResult] = []
-            for tc, result in tool_results_list:
-                if tc.function_name == "completeDialog" and result.success:
-                    complete_dialog_result = result
-                elif tc.function_name == "sendMessage" and result.success:
-                    send_message_results.append(result)
+            # Process sendMessage tool calls
+            is_complete = False
+            final_content = ""
 
-            # Send intermediate messages (does not end the loop)
-            for result in send_message_results:
-                content = result.data.get("content", "")
-                mentions = result.data.get("mentions", [])
-                await self._send_message(content, mentions)
-                logger.info(f"{self.name} sent message: {content[:50]}...")
+            for tc, result in tool_results_list:
+                if tc.function_name == "sendMessage" and result.success:
+                    content = result.data.get("content", "")
+                    mentions = result.data.get("mentions", [])
+                    await self._send_message(content, mentions)
+                    logger.info(f"{self.name} sent message: {content[:50]}...")
+
+                    if result.data.get("is_complete"):
+                        is_complete = True
+                        final_content = content
 
             # Build assistant message with tool calls
             assistant_msg: dict[str, Any] = {
@@ -308,16 +327,13 @@ class Agent(Component, Device):
                     }
                 )
 
-            # If completeDialog was called, send final response and exit
-            if complete_dialog_result is not None:
-                content = complete_dialog_result.data.get("content", "")
-                mentions = complete_dialog_result.data.get("mentions", [])
-                await self._send_message(content, mentions)
+            # If sendMessage(is_complete=true) was called, exit
+            if is_complete:
                 if last_llm_response:
                     await self._save_interaction_to_memory(
-                        content, last_llm_response, all_tool_results
+                        final_content, last_llm_response, all_tool_results
                     )
-                logger.info(f"{self.name} completed: {content[:50]}...")
+                logger.info(f"{self.name} completed: {final_content[:50]}...")
                 return
 
         # Max iterations reached
@@ -424,8 +440,11 @@ class Agent(Component, Device):
                 {
                     "role": "user",
                     "content": (
-                        "请注意：你必须使用 completeDialog 工具来结束处理并发送最终回复。"
-                        "请不要直接输出文本，而是调用 completeDialog 工具。"
+                        "注意：你必须调用至少一个工具，禁止直接输出文本。\n"
+                        "请使用 sendMessage 工具发送消息：\n"
+                        "- 最终回复：sendMessage(content='你的回复', is_complete=true)\n"
+                        "- 中间进度：sendMessage(content='进度报告', is_complete=false)，"
+                        "然后继续调用其他工具。"
                     ),
                 }
             )
@@ -434,8 +453,10 @@ class Agent(Component, Device):
                 {
                     "role": "user",
                     "content": (
-                        "你必须使用 completeDialog 工具来完成对话。"
-                        '请调用 completeDialog(content="你的回复") 来结束。'
+                        "你必须调用至少一个工具。"
+                        "请使用 sendMessage 工具来发送消息，并设置 is_complete 参数：\n"
+                        "- is_complete=true：最终回复，结束本轮\n"
+                        "- is_complete=false：中间进度，继续思考"
                     ),
                 }
             )

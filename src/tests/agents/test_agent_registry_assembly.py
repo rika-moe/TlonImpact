@@ -124,10 +124,9 @@ class TestAgentRegistryStartAgent:
         assert agent is not None
         tools = agent.tool_executor.list_tools()
 
-        # All 17 tools should be registered
+        # All 16 tools should be registered
         expected_tools = {
             "executeBashCommand",
-            "completeDialog",
             "readFile",
             "writeFile",
             "editFile",
@@ -188,7 +187,7 @@ class TestAgentRegistryStartAgent:
 
         # ToolExecutor should be created and have tools registered
         assert agent.tool_executor is not None
-        assert len(agent.tool_executor.list_tools()) == 17
+        assert len(agent.tool_executor.list_tools()) == 16
         # Verify executeBash tool has the docker config and agent id
         bash_tool = agent.tool_executor.get_tool("executeBashCommand")
         assert bash_tool is not None

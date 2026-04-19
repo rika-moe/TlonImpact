@@ -15,9 +15,11 @@ _PROTOCOL = """## 交互协议
    - 被@消息：`agent_name @你: 消息内容`
 
 2. **输出机制**
-   - 必须使用 `completeDialog` 工具结束对话
+   - 必须使用 `sendMessage` 工具发送所有消息
    - 直接输出文本不会发送消息
-   - 只有通过 `completeDialog` 的 `mentions` 参数指定的人才会收到通知
+   - sendMessage 的 `is_complete` 参数控制循环：true=最终回复（结束本轮），false=中间进度（继续思考）
+   - 当 `is_complete=true` 时，本轮只能调用 sendMessage，不能同时调用其他工具
+   - 只有通过 `sendMessage` 的 `mentions` 参数指定的人才会收到通知
    - content 中写 `@林知遥` 只是显示效果，不会真正通知对方
 
 3. **协作规则**

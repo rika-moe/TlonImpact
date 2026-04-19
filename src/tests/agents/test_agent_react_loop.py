@@ -1,7 +1,7 @@
 """Tests for Agent ReAct loop (direct execution mode).
 
 Verifies:
-- Successful completion with completeDialog
+- Successful completion with sendMessage(is_complete=true)
 - Max iterations limit
 - No-tool-calls retry reminder
 - LLM error recovery
@@ -70,8 +70,8 @@ class MockLLMClient:
 
 
 class TestReActCompletion:
-    async def test_completes_with_complete_dialog(self):
-        """Agent calls completeDialog and sends final message."""
+    async def test_completes_with_send_message(self):
+        """Agent calls sendMessage(is_complete=true) and sends final message."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -79,8 +79,8 @@ class TestReActCompletion:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!", "mentions": []},
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
                 )
@@ -89,11 +89,14 @@ class TestReActCompletion:
 
         agent = _make_agent(llm_client=llm)
 
-        # Register a mock completeDialog tool
+        # Register a mock sendMessage tool
         mock_tool = MagicMock()
-        mock_tool.name = "completeDialog"
+        mock_tool.name = "sendMessage"
         mock_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+            return_value=ToolResult(
+                success=True,
+                data={"content": "Done!", "is_complete": True, "mentions": []},
+            )
         )
         agent.tool_executor.register_tool(mock_tool)
 
@@ -126,8 +129,8 @@ class TestReActCompletion:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="completeDialog",
-                            arguments={"content": "Found it!", "mentions": []},
+                            function_name="sendMessage",
+                            arguments={"content": "Found it!", "is_complete": True, "mentions": []},
                         )
                     ],
                 ),
@@ -140,14 +143,16 @@ class TestReActCompletion:
         search_tool.name = "searchMemories"
         search_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"results": []}))
 
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Found it!", "mentions": []})
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True, data={"content": "Found it!", "is_complete": True, "mentions": []}
+            )
         )
 
         agent.tool_executor.register_tool(search_tool)
-        agent.tool_executor.register_tool(complete_tool)
+        agent.tool_executor.register_tool(send_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
@@ -160,7 +165,7 @@ class TestReActCompletion:
 class TestReActMaxIterations:
     async def test_max_iterations_reached(self):
         """Agent gives up after max iterations."""
-        # LLM never calls completeDialog, keeps returning other tools
+        # LLM never calls sendMessage(is_complete=true), keeps returning other tools
         responses = [
             LLMResponse(
                 content=None,
@@ -198,8 +203,8 @@ class TestReActNoToolCalls:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!", "mentions": []},
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
                 ),
@@ -209,9 +214,11 @@ class TestReActNoToolCalls:
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "completeDialog"
+        mock_tool.name = "sendMessage"
         mock_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+            return_value=ToolResult(
+                success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
+            )
         )
         agent.tool_executor.register_tool(mock_tool)
 
@@ -232,7 +239,11 @@ class TestReActErrorHandling:
                 LLMResponse(
                     content=None,
                     tool_calls=[
-                        ToolCall(id="tc-001", function_name="completeDialog", arguments={})
+                        ToolCall(
+                            id="tc-001",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
+                        )
                     ],
                 ),
             ]
@@ -241,9 +252,9 @@ class TestReActErrorHandling:
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "completeDialog"
+        mock_tool.name = "sendMessage"
         mock_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!"})
+            return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
         agent.tool_executor.register_tool(mock_tool)
 
@@ -274,15 +285,18 @@ class TestReActErrorHandling:
             [
                 LLMResponse(
                     content=None,
+                    tool_calls=[ToolCall(id="tc-001", function_name="failingTool", arguments={})],
+                ),
+                LLMResponse(
+                    content=None,
                     tool_calls=[
-                        ToolCall(id="tc-001", function_name="failingTool", arguments={}),
                         ToolCall(
                             id="tc-002",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!"},
-                        ),
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
+                        )
                     ],
-                )
+                ),
             ]
         )
 
@@ -294,21 +308,21 @@ class TestReActErrorHandling:
             return_value=ToolResult(success=False, data={}, error="boom")
         )
 
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!"})
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
 
         agent.tool_executor.register_tool(failing_tool)
-        agent.tool_executor.register_tool(complete_tool)
+        agent.tool_executor.register_tool(send_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
             await agent._process_message(msg)
 
         failing_tool.execute.assert_awaited_once()
-        complete_tool.execute.assert_awaited_once()
+        send_tool.execute.assert_awaited_once()
 
 
 class TestReActMultipleTools:
@@ -326,7 +340,11 @@ class TestReActMultipleTools:
                 LLMResponse(
                     content=None,
                     tool_calls=[
-                        ToolCall(id="tc-003", function_name="completeDialog", arguments={})
+                        ToolCall(
+                            id="tc-003",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
+                        )
                     ],
                 ),
             ]
@@ -354,15 +372,15 @@ class TestReActMultipleTools:
         tool_b.name = "toolB"
         tool_b.execute = AsyncMock(side_effect=slow_tool_b)
 
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!"})
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
 
         agent.tool_executor.register_tool(tool_a)
         agent.tool_executor.register_tool(tool_b)
-        agent.tool_executor.register_tool(complete_tool)
+        agent.tool_executor.register_tool(send_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
@@ -385,8 +403,8 @@ class TestReActObservability:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!"},
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
                 )
@@ -396,9 +414,9 @@ class TestReActObservability:
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "completeDialog"
+        mock_tool.name = "sendMessage"
         mock_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!"})
+            return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
         agent.tool_executor.register_tool(mock_tool)
 
@@ -427,7 +445,11 @@ class TestReActObservability:
                 LLMResponse(
                     content=None,
                     tool_calls=[
-                        ToolCall(id="tc-002", function_name="completeDialog", arguments={})
+                        ToolCall(
+                            id="tc-002",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
+                        )
                     ],
                 ),
             ]
@@ -439,14 +461,14 @@ class TestReActObservability:
         mock_tool.name = "testTool"
         mock_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"value": 42}))
 
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!"})
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
 
         agent.tool_executor.register_tool(mock_tool)
-        agent.tool_executor.register_tool(complete_tool)
+        agent.tool_executor.register_tool(send_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
@@ -469,7 +491,11 @@ class TestReActObservability:
                 LLMResponse(
                     content=None,
                     tool_calls=[
-                        ToolCall(id="tc-002", function_name="completeDialog", arguments={})
+                        ToolCall(
+                            id="tc-002",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
+                        )
                     ],
                 ),
             ]
@@ -485,14 +511,14 @@ class TestReActObservability:
         slow_tool.name = "slowTool"
         slow_tool.execute = very_slow
 
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!"})
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
 
         agent.tool_executor.register_tool(slow_tool)
-        agent.tool_executor.register_tool(complete_tool)
+        agent.tool_executor.register_tool(send_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
@@ -511,7 +537,7 @@ class TestReActObservability:
 
 class TestReActSendMessage:
     async def test_send_message_does_not_end_loop(self):
-        """Agent calls sendMessage, sends it, then continues thinking."""
+        """Agent calls sendMessage(is_complete=false), sends it, then continues thinking."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -520,7 +546,11 @@ class TestReActSendMessage:
                         ToolCall(
                             id="tc-001",
                             function_name="sendMessage",
-                            arguments={"content": "Working on it...", "mentions": []},
+                            arguments={
+                                "content": "Working on it...",
+                                "is_complete": False,
+                                "mentions": [],
+                            },
                         )
                     ],
                 ),
@@ -529,8 +559,8 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!", "mentions": []},
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
                 ),
@@ -542,26 +572,30 @@ class TestReActSendMessage:
         send_tool = MagicMock()
         send_tool.name = "sendMessage"
         send_tool.execute = AsyncMock(
-            return_value=ToolResult(
-                success=True,
-                data={"content": "Working on it...", "mentions": [], "action": "send_message"},
-            )
-        )
-
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+            side_effect=[
+                ToolResult(
+                    success=True,
+                    data={
+                        "content": "Working on it...",
+                        "is_complete": False,
+                        "mentions": [],
+                        "action": "send_message",
+                    },
+                ),
+                ToolResult(
+                    success=True,
+                    data={"content": "Done!", "is_complete": True, "mentions": []},
+                ),
+            ]
         )
 
         agent.tool_executor.register_tool(send_tool)
-        agent.tool_executor.register_tool(complete_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
             await agent._process_message(msg)
 
-        # Should have made 2 LLM calls (sendMessage does not end loop)
+        # Should have made 2 LLM calls (sendMessage(is_complete=false) does not end loop)
         assert llm.call_count == 2
 
         # Should have sent 2 messages: intermediate + final
@@ -581,7 +615,11 @@ class TestReActSendMessage:
                         ToolCall(
                             id="tc-001",
                             function_name="sendMessage",
-                            arguments={"content": "Hey @人类", "mentions": ["人类"]},
+                            arguments={
+                                "content": "Hey @人类",
+                                "is_complete": False,
+                                "mentions": ["人类"],
+                            },
                         )
                     ],
                 ),
@@ -590,8 +628,8 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!", "mentions": []},
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
                 ),
@@ -603,20 +641,19 @@ class TestReActSendMessage:
         send_tool = MagicMock()
         send_tool.name = "sendMessage"
         send_tool.execute = AsyncMock(
-            return_value=ToolResult(
-                success=True,
-                data={"content": "Hey @人类", "mentions": ["人类"], "action": "send_message"},
-            )
-        )
-
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+            side_effect=[
+                ToolResult(
+                    success=True,
+                    data={"content": "Hey @人类", "is_complete": False, "mentions": ["人类"]},
+                ),
+                ToolResult(
+                    success=True,
+                    data={"content": "Done!", "is_complete": True, "mentions": []},
+                ),
+            ]
         )
 
         agent.tool_executor.register_tool(send_tool)
-        agent.tool_executor.register_tool(complete_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
@@ -636,7 +673,7 @@ class TestReActSendMessage:
                         ToolCall(
                             id="tc-001",
                             function_name="sendMessage",
-                            arguments={"content": "Hey", "mentions": []},
+                            arguments={"content": "Hey", "is_complete": False, "mentions": []},
                         )
                     ],
                 ),
@@ -645,8 +682,8 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="completeDialog",
-                            arguments={"content": "Done!", "mentions": []},
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
                 ),
@@ -658,23 +695,87 @@ class TestReActSendMessage:
         send_tool = MagicMock()
         send_tool.name = "sendMessage"
         send_tool.execute = AsyncMock(
-            return_value=ToolResult(success=False, data={}, error="Some error")
-        )
-
-        complete_tool = MagicMock()
-        complete_tool.name = "completeDialog"
-        complete_tool.execute = AsyncMock(
-            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+            side_effect=[
+                ToolResult(success=False, data={}, error="Some error"),
+                ToolResult(
+                    success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
+                ),
+            ]
         )
 
         agent.tool_executor.register_tool(send_tool)
-        agent.tool_executor.register_tool(complete_tool)
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             msg = _make_message()
             await agent._process_message(msg)
 
         # Should complete despite failed sendMessage
+        calls = agent.event_bus.publish.await_args_list
+        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        assert len(message_events) == 1
+        assert message_events[0].args[0].payload.content == "Done!"
+
+
+class TestReActConflictDetection:
+    async def test_conflict_send_complete_with_other_tools(self):
+        """sendMessage(is_complete=true) with other tools triggers conflict reminder."""
+        llm = MockLLMClient(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-001",
+                            function_name="readFile",
+                            arguments={"path": "/tmp/test"},
+                        ),
+                        ToolCall(
+                            id="tc-002",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
+                        ),
+                    ],
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-003",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        agent = _make_agent(llm_client=llm)
+
+        read_tool = MagicMock()
+        read_tool.name = "readFile"
+        read_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"content": "x"}))
+
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
+            )
+        )
+
+        agent.tool_executor.register_tool(read_tool)
+        agent.tool_executor.register_tool(send_tool)
+
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            msg = _make_message()
+            await agent._process_message(msg)
+
+        # First response should be rejected (conflict), second accepted
+        assert llm.call_count == 2
+        # readFile should NOT have been executed because conflict was detected before execution
+        read_tool.execute.assert_not_awaited()
+        send_tool.execute.assert_awaited_once()
+
         calls = agent.event_bus.publish.await_args_list
         message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
         assert len(message_events) == 1

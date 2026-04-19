@@ -30,7 +30,6 @@ from tlon.base.settings import get_tlon_home
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
-from tlon.tools.complete_dialog.complete_dialog import CompleteDialogTool
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
@@ -254,7 +253,6 @@ class AgentRegistry(Component):
 
             # Register tools
             tool_executor.register_tool(ExecuteBashTool(config.docker, config.id))
-            tool_executor.register_tool(CompleteDialogTool())
             tool_executor.register_tool(ReadFileTool(config.docker, config.id))
             tool_executor.register_tool(WriteFileTool(config.docker, config.id))
             tool_executor.register_tool(EditFileTool(config.docker, config.id))
