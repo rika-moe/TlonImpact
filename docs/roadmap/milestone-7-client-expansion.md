@@ -34,7 +34,7 @@
 ### Phase 1: 基础架构（Week 1）✅ 已完成
 
 - [x] GitHub Actions CI（lint + type check + unit test）
-- [x] Agent 系统重构（解耦 + ReAct + EventBus）
+- [x] Agent 系统重构（解耦 + 直接调用）
 - [x] Event 扩展（trace_id, span_id, 新增事件类型）
 - [x] TraceStore 实现（文件存储）
 - [x] TUI Event 模式增强（按 trace_id 过滤）
@@ -322,7 +322,7 @@ Task 2.1 (协议版本化)
 ## 验证清单
 
 - [x] CI/CD 通过（lint + type check + unit test）
-- [x] Agent 系统重构完成（解耦 + ReAct + EventBus）
+- [x] Agent 系统重构完成（解耦 + 直接调用）
 - [x] Event 扩展实现（trace_id, span_id）
 - [x] Trace 系统可用（创建、查询、展示）
 - [ ] 协议版本协商工作
