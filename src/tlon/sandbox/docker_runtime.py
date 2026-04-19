@@ -1,9 +1,12 @@
 """Docker Runtime for Tlon.
 
 Manages Docker containers for agent execution environments.
+Provides both command execution and file I/O APIs.
 """
 
 import asyncio
+import base64
+import shlex
 from dataclasses import dataclass
 
 import docker
@@ -29,6 +32,9 @@ class DockerRuntime:
 
     Each agent gets its own isolated container with full network access.
     Containers are created on-demand and persist across sessions.
+
+    File I/O is performed via shell commands (cat / python3+base64) so that
+    symlinks are followed automatically and no tar handling is needed.
 
     Example:
         >>> config = DockerRuntimeConfig(image="ubuntu:22.04")
@@ -283,3 +289,92 @@ class DockerRuntime:
         except Exception as e:
             logger.error(f"Error getting logs: {e}")
             return ""
+
+    # ------------------------------------------------------------------
+    # File I/O APIs (sandbox-only — Agent never touches host filesystem)
+    # ------------------------------------------------------------------
+
+    async def read_file(self, path: str) -> bytes:
+        """Read a file from the container.
+
+        Uses 'cat' inside the container — symlinks are followed automatically.
+
+        Args:
+            path: Absolute path inside the container.
+
+        Returns:
+            Raw file contents as bytes.
+
+        Raises:
+            FileNotFoundError: If the file does not exist in the container.
+            RuntimeError: If the read operation fails.
+        """
+        if not self.container:
+            await self.ensure_running()
+
+        logger.debug(f"Reading file from container: {path}")
+
+        result = await self.execute(f"cat {shlex.quote(path)}")
+
+        if result.exit_code != 0:
+            if "No such file" in result.stderr or "not found" in result.stderr.lower():
+                raise FileNotFoundError(f"File not found in container: {path}")
+            logger.error(f"cat failed for {path}: {result.stderr}")
+            raise RuntimeError(f"cat failed: {result.stderr}")
+
+        return result.stdout.encode("utf-8")
+
+    async def write_file(self, path: str, content: bytes) -> bool:
+        """Write a file into the container.
+
+        Uses python3 + base64 inside the container to avoid all shell escaping issues.
+        Automatically creates parent directories.
+
+        Args:
+            path: Absolute path inside the container where the file will be written.
+            content: Raw file contents as bytes.
+
+        Returns:
+            True if the file was written successfully.
+
+        Raises:
+            RuntimeError: If the write operation fails.
+        """
+        if not self.container:
+            await self.ensure_running()
+
+        # Ensure parent directories exist
+        parent = path.rsplit("/", 1)[0] if "/" in path else "/"
+        if parent and parent != "/":
+            await self.execute(f"mkdir -p {shlex.quote(parent)}")
+
+        # Encode content as base64 and decode inside container with python3
+        b64 = base64.b64encode(content).decode("ascii")
+        cmd = (
+            f"python3 -c 'import base64; "
+            f'open({shlex.quote(path)}, "wb").write(base64.b64decode("{b64}"))\''
+        )
+
+        result = await self.execute(cmd)
+
+        if result.exit_code != 0:
+            logger.error(f"write_file failed for {path}: {result.stderr}")
+            raise RuntimeError(f"write_file failed: {result.stderr}")
+
+        logger.debug(f"Wrote {len(content)} bytes to {path}")
+        return True
+
+    async def file_exists(self, path: str) -> bool:
+        """Check if a path exists in the container.
+
+        Args:
+            path: Absolute path inside the container.
+
+        Returns:
+            True if the path exists.
+        """
+        if not self.container:
+            await self.ensure_running()
+
+        result = await self.execute(f"test -e {shlex.quote(path)} && echo EXISTS || echo MISSING")
+        return "EXISTS" in result.stdout

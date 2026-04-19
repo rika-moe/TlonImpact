@@ -272,11 +272,21 @@ class Agent(Component, Device):
             tool_results_list = await self._execute_tool_calls(response.tool_calls)
             all_tool_results.extend([{"tool_call": tc, "result": r} for tc, r in tool_results_list])
 
-            # Check for completeDialog
+            # Check for special tool calls
             complete_dialog_result: ToolResult | None = None
+            send_message_results: list[ToolResult] = []
             for tc, result in tool_results_list:
                 if tc.function_name == "completeDialog" and result.success:
                     complete_dialog_result = result
+                elif tc.function_name == "sendMessage" and result.success:
+                    send_message_results.append(result)
+
+            # Send intermediate messages (does not end the loop)
+            for result in send_message_results:
+                content = result.data.get("content", "")
+                mentions = result.data.get("mentions", [])
+                await self._send_message(content, mentions)
+                logger.info(f"{self.name} sent message: {content[:50]}...")
 
             # Build assistant message with tool calls
             assistant_msg: dict[str, Any] = {

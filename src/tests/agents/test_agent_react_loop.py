@@ -507,3 +507,175 @@ class TestReActObservability:
         ]
         assert len(tool_end_events) == 1
         assert tool_end_events[0].args[0].payload["success"] is False
+
+
+class TestReActSendMessage:
+    async def test_send_message_does_not_end_loop(self):
+        """Agent calls sendMessage, sends it, then continues thinking."""
+        llm = MockLLMClient(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-001",
+                            function_name="sendMessage",
+                            arguments={"content": "Working on it...", "mentions": []},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-002",
+                            function_name="completeDialog",
+                            arguments={"content": "Done!", "mentions": []},
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        agent = _make_agent(llm_client=llm)
+
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True,
+                data={"content": "Working on it...", "mentions": [], "action": "send_message"},
+            )
+        )
+
+        complete_tool = MagicMock()
+        complete_tool.name = "completeDialog"
+        complete_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+        )
+
+        agent.tool_executor.register_tool(send_tool)
+        agent.tool_executor.register_tool(complete_tool)
+
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            msg = _make_message()
+            await agent._process_message(msg)
+
+        # Should have made 2 LLM calls (sendMessage does not end loop)
+        assert llm.call_count == 2
+
+        # Should have sent 2 messages: intermediate + final
+        calls = agent.event_bus.publish.await_args_list
+        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        assert len(message_events) == 2
+        assert message_events[0].args[0].payload.content == "Working on it..."
+        assert message_events[1].args[0].payload.content == "Done!"
+
+    async def test_send_message_with_mentions(self):
+        """sendMessage includes mentions in the sent message."""
+        llm = MockLLMClient(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-001",
+                            function_name="sendMessage",
+                            arguments={"content": "Hey @人类", "mentions": ["人类"]},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-002",
+                            function_name="completeDialog",
+                            arguments={"content": "Done!", "mentions": []},
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        agent = _make_agent(llm_client=llm)
+
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True,
+                data={"content": "Hey @人类", "mentions": ["人类"], "action": "send_message"},
+            )
+        )
+
+        complete_tool = MagicMock()
+        complete_tool.name = "completeDialog"
+        complete_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+        )
+
+        agent.tool_executor.register_tool(send_tool)
+        agent.tool_executor.register_tool(complete_tool)
+
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            msg = _make_message()
+            await agent._process_message(msg)
+
+        calls = agent.event_bus.publish.await_args_list
+        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        assert message_events[0].args[0].payload.mentions == ["人类"]
+
+    async def test_send_message_failure_ignored(self):
+        """Failed sendMessage does not crash the loop."""
+        llm = MockLLMClient(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-001",
+                            function_name="sendMessage",
+                            arguments={"content": "Hey", "mentions": []},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-002",
+                            function_name="completeDialog",
+                            arguments={"content": "Done!", "mentions": []},
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        agent = _make_agent(llm_client=llm)
+
+        send_tool = MagicMock()
+        send_tool.name = "sendMessage"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(success=False, data={}, error="Some error")
+        )
+
+        complete_tool = MagicMock()
+        complete_tool.name = "completeDialog"
+        complete_tool.execute = AsyncMock(
+            return_value=ToolResult(success=True, data={"content": "Done!", "mentions": []})
+        )
+
+        agent.tool_executor.register_tool(send_tool)
+        agent.tool_executor.register_tool(complete_tool)
+
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            msg = _make_message()
+            await agent._process_message(msg)
+
+        # Should complete despite failed sendMessage
+        calls = agent.event_bus.publish.await_args_list
+        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        assert len(message_events) == 1
+        assert message_events[0].args[0].payload.content == "Done!"
