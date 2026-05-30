@@ -265,8 +265,8 @@ tools/
 │   └── ...
 ├── tasks/
 │   └── ...                    # ◄── 依赖 TasksModule
-└── complete_dialog/
-    └── complete_dialog.py     # ◄── 无额外依赖
+└── messaging/
+    └── send_message.py        # ◄── 无额外依赖
 ```
 
 **依赖规则**:

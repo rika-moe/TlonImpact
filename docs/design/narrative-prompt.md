@@ -26,7 +26,7 @@
 | **一段式配置** | `identity` / `profile` / `behavior` 各是一段自由文本，不是字段集合 |
 | **动静分离** | system prompt 完全静态（只来自配置），user prompt 承载所有动态内容 |
 | **工具外置** | tool 描述完全交给 OpenAI `tools` 参数，system prompt 中零提及 |
-| **协议统一** | 交互协议（输入格式、completeDialog 强制、@mention 机制）框架硬编码，所有 agent 共享 |
+| **协议统一** | 交互协议（输入格式、sendMessage 统一出口、@mention 机制）框架硬编码，所有 agent 共享 |
 | **队友裸奔** | team section 直接放入队友完整 `profile`，接受 token 爆炸 |
 
 ---
@@ -149,9 +149,10 @@ class AgentConfig(BaseModel):
    - 被@消息：`agent_name @你: 消息内容`
 
 2. **输出机制**
-   - 必须使用 `completeDialog` 工具结束对话
-   - 直接输出文本不会发送消息
-   - 只有通过 `completeDialog` 的 `mentions` 参数指定的人才会收到通知
+   - 必须使用 `sendMessage` 工具发送所有消息
+   - `is_complete=false`：发送中间进度/阶段性发现，发送后继续思考
+   - `is_complete=true`：发送最终回复，发送后结束本轮（此时不能同时调用其他工具）
+   - 只有通过 `sendMessage` 的 `mentions` 参数指定的人才会收到通知
    - content 中写 `@林知遥` 只是显示效果，不会真正通知对方
 
 3. **协作规则**
