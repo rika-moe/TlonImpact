@@ -40,10 +40,9 @@ tlon mirror
        
        小雅已进入代表大会。
        
-       [系统] Agent 小雅 已创建并唤醒。
-              Docker 容器：运行中
-              记忆：已初始化
-              技能标签：[react, css, typescript]  ⏳ 动态技能系统待重做
+[系统] Agent 小雅 已创建并唤醒。
+               Docker 容器：运行中
+               记忆：已初始化
 ```
 
 你创造了一个新的意识。
@@ -56,91 +55,44 @@ Mirror 是 Agent 的生命周期管理中心：
 
 ### 1. 创造（Create）
 
-从模糊轮廓到具体存在：
+启动交互式向导，从模糊轮廓到具体存在：
 
 ```bash
-# 交互式
-tlon mirror create
-
-# 或从模板
-tlon mirror create --from-template developer
+tlon mirror
 ```
 
-需要定义：
+向导会引导你定义：
 - **名字**：如何称呼它（如"小雅"、"林知遥"）
 - **角色**：职位类型（开发、产品经理、运维等）
 - **性格**：行为风格（严谨、灵活、温和、直接）
-- **技能标签**：Agent 的能力标签 ⏳ 动态技能系统待重做
 - **LLM 配置**：使用哪个模型、温度参数等
 
-### 2. 唤醒（Wake）
+> ⏳ 模板创建（`--from-template`）和技能标签系统尚未实现。Agent 能力通过 Bash 工具和内置记忆工具扩展。
 
-Agent 默认处于"休眠"状态（不占用资源）。
+### 2. 唤醒与休眠
 
-```bash
-# 在代表大会中 @ 它
+Agent 默认随系统启动。通过 @ 即可触发响应：
+
+```
 > @小雅 帮忙写个组件
-[系统] 正在唤醒 小雅...
 
-# 或手动唤醒
-/wake 小雅
+[小雅] 好的，我来看看...
 ```
 
-唤醒过程：
-1. 启动 Docker 容器
-2. 加载莎士比亚的记忆
-3. 连接代表大会的消息总线
-4. 就绪，可以响应
+长时间不 @ 的 Agent 会自动进入低资源状态（记忆保留，Docker 容器可能停止），下次 @ 时自动恢复。
 
-### 3. 休眠（Sleep）
+### 3. 重塑（Reconfigure）
 
-长时间不用，自动或手动休眠：
+重新运行 `tlon mirror` 可修改已存在的 Agent。同样通过交互式向导：
 
-```
-[系统] 小雅 已空闲 30 分钟，进入休眠。
-       （记忆已保存，容器已停止）
-
-# 或手动
-/sleep 小雅
-```
-
-休眠后：
-- 不再响应消息
-- 释放 Docker 资源
-- 但记忆完整保留
-
-### 4. 重塑（Reconfigure）
-
-修改已存在的 Agent：
-
-```bash
-tlon mirror edit 小雅
-```
-
-可以改：
 - 性格（会更改行为风格）
-- 技能（添加或移除）
 - LLM 参数（换模型、调温度）
 
 **注意**：修改性格后，记忆保留，但"人格"会变化。有点像是同一个人经历了性格转变。
 
-### 5. 销毁（Destroy）
+### 4. 销毁（Destroy）
 
-彻底删除一个 Agent：
-
-```bash
-tlon mirror destroy 小雅
-```
-
-会询问：
-```
-[镜子] 确定要销毁 小雅 吗？
-       她的所有记忆将永远丢失。
-       
-       是否保留记忆备份？ [y/N]
-```
-
-这是不可逆的。镜子里的轮廓消散，不再凝聚。
+彻底删除一个 Agent 及其所有记忆。通过 `tlon mirror` 向导中的删除选项执行。这是不可逆的——镜子里的轮廓消散，不再凝聚。
 
 ---
 
@@ -189,43 +141,6 @@ agents:
       volumes:               # 额外挂载
         - "./frontend:/workspace"
 ```
-
----
-
-## 预设模板
-
-Mirror 提供了几种常见的轮廓模板：
-
-### 开发工程师
-```bash
-tlon mirror create --template developer
-```
-- 性格：技术导向，注重细节
-- 可执行 bash 命令
-
-### 产品经理  
-```bash
-tlon mirror create --template product-manager
-```
-- 性格：用户导向，善于分析
-- 技能：documentation, web-search
-- 不可执行命令（只分析和规划）
-
-### 项目经理
-```bash
-tlon mirror create --template project-manager
-```
-- 性格：协调型，善于沟通
-- 技能：plan-i, documentation
-- 专注任务分派和进度把控
-
-### 运维工程师
-```bash
-tlon mirror create --template devops
-```
-- 性格：谨慎，注重稳定
-- 技能：docker-operations, shell-scripting
-- 专注部署和故障处理
 
 ---
 
@@ -289,7 +204,13 @@ personality: |
 ## 下一步
 
 - [第七章：花园](07-garden.md) - 让时间分叉
-- [第八章：环形废墟](08-ruins.md) - 递归的觉醒（高级）
+- [第八章：环形废墟](08-ruins.md) - 递归的觉醒（愿景）
+
+---
+
+## 🔧 工程参考
+
+Agent 配置 YAML 语法、命令参考 → [配置说明](engineering/configuration.md) · [命令参考](engineering/commands.md)
 
 ---
 

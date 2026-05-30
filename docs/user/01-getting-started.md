@@ -35,7 +35,7 @@ pip install tlon
 ### 第一次唤醒
 
 ```bash
-tlon wizard
+tlon mirror
 ```
 
 向导会问你几个问题：
@@ -54,7 +54,7 @@ tlon wizard
        开发：陈代码
        运维：赵部署
        
-       输入 `tlon` 进入代表大会。
+        输入 `tlon intrude` 进入代表大会。
 ```
 
 ---
@@ -66,14 +66,16 @@ tlon wizard
 两个终端：
 
 ```bash
-# 终端 1：启动核心服务
-tlon server
+# 终端 1：维持梦境（启动核心服务）
+tlon dream
 
-# 终端 2：启动交互界面
-tlon tui
+# 终端 2：入侵现实（启动交互界面）
+tlon intrude
 ```
 
-你会进入 TUI（终端用户界面），看到代表大会的实时对话。
+> `dream` = `server`, `intrude` = `tui`。旧命令仍然可用，但文学命令更符合特隆的叙事。
+
+你会进入终端交互界面，看到代表大会的实时对话。
 
 ### 方式二：快速体验
 
@@ -110,6 +112,12 @@ tlon
 - [第二章：第一次对话](02-first-conversation.md) - 学会与影子团队交流
 - [第三章：代表大会](03-the-congress.md) - 理解协作的规则
 - [第四章：记忆](04-memory.md) - 他们如何记住你
+
+---
+
+## 🔧 工程参考
+
+需要纯命令清单？→ [快速开始](engineering/quickstart.md) · [配置说明](engineering/configuration.md) · [故障排查](engineering/troubleshooting.md)
 
 ---
 

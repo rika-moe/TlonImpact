@@ -34,10 +34,12 @@
 
 | 模块 | 路径 |
 |------|------|
-| 核心模块 | `src/tlon/subsystem/skills/` |
-| 工具实现 | `src/tlon/subsystem/tools/skills/` |
+| ~~核心模块~~ | ~~`src/tlon/subsystem/skills/`~~ |
+| ~~工具实现~~ | ~~`src/tlon/subsystem/tools/skills/`~~ |
 | 数据目录 | `skills/` |
 | 测试 | `src/tests/test_skills/` |
+
+> ⚠️ Skill 系统已于 2026-03-17 移除。以上路径仅作历史参考。
 
 ---
 
