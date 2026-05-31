@@ -20,13 +20,8 @@ docker ps  # 确认守护进程运行中
 ## 安装
 
 ```bash
-# 从 PyPI 安装
-pip install tlon
-
-# 或从源码安装
-git clone https://github.com/yourusername/tlon.git
-cd tlon
-pip install -e ".[tui]"
+# 安装依赖
+uv sync
 ```
 
 ---
@@ -47,7 +42,7 @@ cp .env.example .env
 ### 2. 验证配置
 
 ```bash
-tlon wizard
+uv run tlon mirror
 ```
 
 ---
@@ -58,22 +53,24 @@ tlon wizard
 
 终端 1 - 启动服务端:
 ```bash
-tlon server
+uv run tlon dream
 ```
 
 终端 2 - 启动 TUI 客户端:
 ```bash
-tlon tui
+uv run tlon intrude
 ```
+
+> `dream` = `server`, `intrude` = `tui`。
 
 ### 方式 2: 自定义端口
 
 ```bash
 # 服务端
-tlon server --rest-port 8080 --ws-port 8888
+uv run tlon dream --rest-port 8080 --ws-port 8888
 
 # 客户端
-tlon tui --port 8888 --rest-port 8080
+uv run tlon intrude --port 8888 --rest-port 8080
 ```
 
 ---
@@ -96,7 +93,7 @@ tlon tui --port 8888 --rest-port 8080
 
 ```bash
 # 使用向导
-tlon wizard
+uv run tlon mirror
 
 # 或手动编辑配置文件
 vim config/agents/dev-001.yaml
@@ -121,7 +118,7 @@ agent:
 重启服务端后生效:
 ```bash
 # Ctrl+C 停止旧进程
-tlon server
+uv run tlon dream
 ```
 
 ---
@@ -137,17 +134,11 @@ tlon server
 # @ 提及 Agent
 > @陈代码 写个函数
 
-# 切换模式
-/mode chat      # 聊天模式
-/mode event     # 事件监控
-/mode agent     # Agent 管理
-
-# Agent 管理
-/wake <name>    # 唤醒 Agent
-/sleep <name>   # 休眠 Agent
-/history        # 查看记忆
-/facts          # 查看事实
-/help           # 显示帮助
+# 命令
+/clear     # 清空对话
+/agents    # 查看 Agent 列表
+/help      # 显示帮助
+/quit      # 退出
 ```
 
 ### 服务端管理

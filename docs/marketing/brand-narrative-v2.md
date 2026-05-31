@@ -519,6 +519,22 @@ Agent 在迷宫的深处徘徊，寻找真理的光芒...
 
 ---
 
+## 附录：隐喻-工程映射表
+
+文学命名与工程概念的对应关系：
+
+| 文学隐喻 | 工程概念 |
+|---------|---------|
+| 代表大会 | 聊天室 / Chatroom，多 Agent 消息总线 |
+| 莎士比亚 / 记忆 | 持久化记忆系统（Working + Episodic Memory） |
+| 镜子 / 镜中创造 | Agent 配置管理 (`tlon mirror`，YAML 配置) |
+| 花园 / 分叉 | Git 分支工作流（branch / merge / conflict） |
+| 环形废墟 / 递归 | Agent 自我扩展（愿景阶段，未实现） |
+| 梦境 / 做梦 | Server 运行 (`tlon dream` = `tlon server`) |
+| 入侵 / intrude | TUI 客户端启动 (`tlon intrude` = `tlon tui`) |
+
+---
+
 *文档版本：2.0*
 *语调：诗意 + 工程精确*
 *最后更新：2026-03-09*

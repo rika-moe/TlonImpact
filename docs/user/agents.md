@@ -9,7 +9,7 @@
 在 Tlon 里，创造一个新 Agent 不是写代码，是**凝视镜子**。
 
 ```bash
-tlon mirror
+uv run tlon mirror
 ```
 
 ```
@@ -58,7 +58,7 @@ Mirror 是 Agent 的生命周期管理中心：
 启动交互式向导，从模糊轮廓到具体存在：
 
 ```bash
-tlon mirror
+uv run tlon mirror
 ```
 
 向导会引导你定义：
@@ -203,8 +203,8 @@ personality: |
 
 ## 下一步
 
-- [第七章：花园](07-garden.md) - 让时间分叉
-- [第八章：环形废墟](08-ruins.md) - 递归的觉醒（愿景）
+- [第七章：花园](garden.md) - 让时间分叉
+- [第八章：环形废墟](advanced/ruins.md) - 递归的觉醒（愿景）
 
 ---
 

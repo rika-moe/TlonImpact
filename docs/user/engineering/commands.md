@@ -4,12 +4,16 @@
 
 ---
 
+> 所有命令需在项目目录下通过 `uv run tlon` 执行。下文以 `tlon` 指代，实际输入时加 `uv run` 前缀。
+
+---
+
 ## CLI 命令
 
 ### 全局选项
 
 ```bash
-tlon [选项] <命令>
+uv run tlon [选项] <命令>
 
 选项:
   --version      显示版本
@@ -17,12 +21,12 @@ tlon [选项] <命令>
   -h, --help     显示帮助
 ```
 
-### tlon server
+### tlon dream
 
 启动服务端。
 
 ```bash
-tlon server [选项]
+uv run tlon dream [选项]
 
 选项:
   --host HOST         绑定地址 (默认: 127.0.0.1)
@@ -31,17 +35,17 @@ tlon server [选项]
   --debug             调试模式
 
 示例:
-  tlon server
-  tlon server --rest-port 9000 --ws-port 9001
-  tlon server --host 0.0.0.0  # 允许远程连接
+  uv run tlon dream
+  uv run tlon dream --rest-port 9000 --ws-port 9001
+  uv run tlon dream --host 0.0.0.0  # 允许远程连接
 ```
 
-### tlon tui
+### tlon intrude
 
 启动 TUI 客户端。
 
 ```bash
-tlon tui [选项]
+uv run tlon intrude [选项]
 
 选项:
   --host HOST         服务端地址 (默认: 127.0.0.1)
@@ -49,16 +53,16 @@ tlon tui [选项]
   --rest-port PORT    REST API 端口 (默认: 8080)
 
 示例:
-  tlon tui
-  tlon tui --host 192.168.1.100 --port 8888
+  uv run tlon intrude
+  uv run tlon intrude --host 192.168.1.100 --port 8888
 ```
 
-### tlon wizard
+### tlon mirror
 
 运行配置向导。
 
 ```bash
-tlon wizard
+uv run tlon mirror
 
 # 交互式配置:
 # 1. 检查环境变量
@@ -72,11 +76,11 @@ tlon wizard
 
 Tlon 同时支持文学化命令名称（等效别名）：
 
-| 工程名称 | 文学名称（别名） | 说明 |
-|---------|-----------------|------|
-| `tlon server` | `tlon dream` | 维持梦境（启动服务） |
-| `tlon tui` | `tlon intrude` | 入侵现实（连接界面） |
-| `tlon wizard` | `tlon mirror` | 镜中造物（配置向导） |
+| 文学名称 | 工程别名 | 说明 |
+|---------|---------|------|
+| `uv run tlon dream` | `uv run tlon server` | 维持梦境（启动服务） |
+| `uv run tlon intrude` | `uv run tlon tui` | 入侵现实（连接界面） |
+| `uv run tlon mirror` | `uv run tlon wizard` | 镜中造物（配置向导） |
 
 ---
 

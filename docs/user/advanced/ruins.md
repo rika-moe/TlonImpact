@@ -17,7 +17,7 @@
 
 | 功能 | 实现状态 | 入口 |
 |------|---------|------|
-| 手动创建 Agent | ✅ | `tlon mirror`（第六章） |
+| 手动创建 Agent | ✅ | `uv run tlon mirror`（第六章） |
 | 在代表大会中协作 | ✅ | Congress TUI（第二章） |
 | Git 分支管理 | ✅ | Agent 对话（第七章） |
 | Agent 递归创造 | ❌ | 本章为愿景 |
@@ -127,4 +127,4 @@ tlon ruins prune 陈代码 --children  # 销毁分支及所有子 Agent
 
 ## 🔧 相关参考
 
-环形废墟尚无工程实现。当前可用的 Agent 管理方式 → [命令参考](engineering/commands.md) · [系统架构](engineering/architecture.md)
+环形废墟尚无工程实现。当前可用的 Agent 管理方式 → [命令参考](../engineering/commands.md) · [系统架构](../engineering/architecture.md)

@@ -1,5 +1,7 @@
 # 故障排查
 
+> 所有命令需在项目目录下通过 `uv run tlon` 执行。以下用 `tlon` 指代，实际输入时加 `uv run` 前缀。
+
 > 问题诊断与解决方案。
 
 ---
@@ -70,7 +72,7 @@ lsof -i :8080  # REST API
 lsof -i :8888  # WebSocket
 
 # 重新启动服务端
-tlon server
+uv run tlon dream
 ```
 
 ---
@@ -154,7 +156,7 @@ grep "dev-001" data/logs/server.log
 
 # 2. 重启服务端 (紧急)
 Ctrl+C
-tlon server
+uv run tlon dream
 
 # 3. 修改配置，添加规则
 # config/agents/{id}.yaml:
@@ -341,7 +343,7 @@ export LANG=en_US.UTF-8
 **解决**:
 ```bash
 # 使用简单 TUI (默认)
-tlon tui
+uv run tlon intrude
 
 # 或使用 REST API 发送消息
 curl -X POST http://localhost:8080/api/chatroom/messages \
@@ -357,11 +359,11 @@ curl -X POST http://localhost:8080/api/chatroom/messages \
 
 ```bash
 # 服务端调试
-tlon server --debug
+uv run tlon dream --debug
 
 # 或环境变量
 export LOG_LEVEL=DEBUG
-tlon server
+uv run tlon dream
 ```
 
 ### 日志位置
@@ -415,7 +417,7 @@ tar xzvf tlon-backup-20240309.tar.gz
 pkill -f "minions server"
 
 # 恢复后重启
-tlon server
+uv run tlon dream
 ```
 
 ---
@@ -432,7 +434,7 @@ pkill -f "minions server"
 rm -rf data/agents/*/memory/*
 
 # 重启
-tlon server
+uv run tlon dream
 ```
 
 ### 硬重置 (清空所有)
@@ -445,8 +447,8 @@ pkill -f "minions server"
 rm -rf data/
 
 # 重新运行向导
-tlon wizard
-tlon server
+uv run tlon mirror
+uv run tlon dream
 ```
 
 ---
@@ -457,7 +459,7 @@ tlon server
 
 ```bash
 # 系统信息
-tlon --version
+uv run tlon --version
 python --version
 docker --version
 

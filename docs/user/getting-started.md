@@ -26,16 +26,16 @@
 - Docker（用于隔离执行环境）
 - OpenAI API Key 或兼容的 LLM 服务
 
-### 一键安装
+### 安装依赖
 
 ```bash
-pip install tlon
+uv sync
 ```
 
 ### 第一次唤醒
 
 ```bash
-tlon mirror
+uv run tlon mirror
 ```
 
 向导会问你几个问题：
@@ -67,10 +67,10 @@ tlon mirror
 
 ```bash
 # 终端 1：维持梦境（启动核心服务）
-tlon dream
+uv run tlon dream
 
 # 终端 2：入侵现实（启动交互界面）
-tlon intrude
+uv run tlon intrude
 ```
 
 > `dream` = `server`, `intrude` = `tui`。旧命令仍然可用，但文学命令更符合特隆的叙事。
@@ -80,7 +80,7 @@ tlon intrude
 ### 方式二：快速体验
 
 ```bash
-tlon
+uv run tlon
 ```
 
 嵌入式模式，适合快速试用。所有功能可用，但退出后服务停止。
@@ -109,9 +109,9 @@ tlon
 
 ## 接下来
 
-- [第二章：第一次对话](02-first-conversation.md) - 学会与影子团队交流
-- [第三章：代表大会](03-the-congress.md) - 理解协作的规则
-- [第四章：记忆](04-memory.md) - 他们如何记住你
+- [第二章：第一次对话](first-conversation.md) - 学会与影子团队交流
+- [第三章：代表大会](advanced/congress.md) - 理解协作的规则
+- [第四章：记忆](memory.md) - 他们如何记住你
 
 ---
 

@@ -173,10 +173,10 @@ Agents 被设计成不会互相无限 @。
 Congress 专注于对话。需要**事件监控、Agent 管理、日志查看**时，使用 Operator TUI：
 
 ```bash
-tlon ops
+uv run tlon ops
 ```
 
-Operator 提供五个标签页：Agents（团队状态）、Events（系统事件流）、Logs（执行日志）、Traces（调用链路）、Config（配置查看）。详见 [命令参考](engineering/commands.md)。
+Operator 提供五个标签页：Agents（团队状态）、Events（系统事件流）、Logs（执行日志）、Traces（调用链路）、Config（配置查看）。详见 [命令参考](../engineering/commands.md)。
 
 ---
 
@@ -212,14 +212,14 @@ Operator 提供五个标签页：Agents（团队状态）、Events（系统事�
 
 ## 下一步
 
-- [第四章：记忆](04-memory.md) - 他们如何记住你
-- [第六章：镜子](06-mirror.md) - 创造新的意识
+- [第四章：记忆](../memory.md) - 他们如何记住你
+- [第六章：镜子](../agents.md) - 创造新的意识
 
 ---
 
 ## 🔧 工程参考
 
-TUI 模式切换、命令速查 → [命令参考](engineering/commands.md) · [系统架构](engineering/architecture.md)
+TUI 模式切换、命令速查 → [命令参考](../engineering/commands.md) · [系统架构](../engineering/architecture.md)
 
 ---
 

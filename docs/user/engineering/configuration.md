@@ -149,7 +149,7 @@ minions server \
 ### 客户端连接
 
 ```bash
-tlon tui \
+uv run tlon intrude \
   --host 127.0.0.1 \
   --port 8888 \
   --rest-port 8080
@@ -212,7 +212,7 @@ data/agents/{agent-id}/
 
 ```bash
 # 使用 wizard 验证
-tlon wizard
+uv run tlon mirror
 
 # 手动检查 (Python)
 python -c "from minions.settings import settings; print(settings.llm.model_name)"
