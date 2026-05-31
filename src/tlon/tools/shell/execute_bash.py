@@ -2,7 +2,10 @@
 
 from typing import TYPE_CHECKING
 
+from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from tlon.base.config import DockerRuntimeConfig
@@ -54,8 +57,12 @@ class ExecuteBashTool(Tool):
         """Start the Docker container."""
         from tlon.sandbox.docker_runtime import DockerRuntime
 
-        self._docker_runtime = DockerRuntime(self._docker_config, self._agent_id)
-        await self._docker_runtime.ensure_running()
+        try:
+            self._docker_runtime = DockerRuntime(self._docker_config, self._agent_id)
+            await self._docker_runtime.ensure_running()
+        except Exception as e:
+            self._docker_runtime = None
+            logger.warning(f"Docker unavailable, bash tool disabled: {e}")
 
     async def shutdown(self) -> None:
         """Stop the Docker container."""

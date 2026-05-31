@@ -8,6 +8,7 @@ import asyncio
 import base64
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 
 import docker
 from docker.errors import ImageNotFound, NotFound
@@ -54,9 +55,45 @@ class DockerRuntime:
         self.config = config
         self.agent_id = agent_id
         self.container_name = f"tlon-agent-{agent_id}"
-        self.client = docker.from_env()
+        self.client = self._create_client()
         self.container: docker.models.containers.Container | None = None
         self._uv_installed = False  # Track uv installation status
+
+    def _create_client(self) -> docker.DockerClient:
+        """Create a Docker client, trying multiple connection methods.
+
+        Supports:
+        - DOCKER_HOST env var (Colima, Docker Desktop, custom setups)
+        - Default Unix socket (/var/run/docker.sock)
+        - macOS Colima socket (~/.colima/default/docker.sock)
+        - macOS Docker Desktop socket (~/.docker/run/docker.sock)
+        """
+        # First try: environment variables (honors DOCKER_HOST set by Colima/Docker Desktop)
+        try:
+            return docker.from_env()
+        except Exception:
+            pass
+
+        # Second try: common socket paths on macOS
+        socket_paths = [
+            Path.home() / ".colima" / "default" / "docker.sock",
+            Path.home() / ".docker" / "run" / "docker.sock",
+            Path("/var/run/docker.sock"),
+            Path.home() / ".colima" / "docker.sock",
+        ]
+
+        for sock_path in socket_paths:
+            if sock_path.exists():
+                try:
+                    return docker.DockerClient(
+                        base_url=f"unix://{sock_path}",
+                        timeout=60,
+                    )
+                except Exception:
+                    continue
+
+        # Last resort: let from_env raise the original error
+        return docker.from_env()
 
     async def ensure_running(self) -> None:
         """Ensure the container is running.

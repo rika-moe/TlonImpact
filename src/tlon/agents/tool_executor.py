@@ -150,8 +150,11 @@ class ToolExecutor:
         """Initialize all registered tools."""
         logger.info(f"Initializing ToolExecutor ({len(self._tools)} tools)...")
         for tool in self._tools.values():
-            await tool.initialize()
-        logger.info("ToolExecutor ready")
+            try:
+                await tool.initialize()
+            except Exception as e:
+                logger.warning(f"Tool {tool.name} failed to initialize: {e}")
+        logger.info(f"ToolExecutor ready: {len(self._tools)} tools registered")
 
     async def shutdown(self) -> None:
         """Shutdown all registered tools."""
