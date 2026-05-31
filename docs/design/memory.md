@@ -36,7 +36,7 @@ Working Memory 满/空闲 → LLM 生成摘要 → 提取关键事实 → 存入
 
 | 文档 | 目的 | 深度 |
 |------|------|------|
-| [architecture/modules.md](../architecture/modules.md) | 模块架构（含 MemoryModule） | L2 |
+| [architecture/dream.md](../architecture/dream.md) | 模块架构（含 MemoryModule） | L2 |
 
 ---
 

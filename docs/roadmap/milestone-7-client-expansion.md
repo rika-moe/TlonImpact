@@ -315,7 +315,7 @@ Task 2.1 (协议版本化)
 | 文档 | 目的 |
 |------|------|
 | [design/client-server-protocol.md](../design/client-server-protocol.md) | 协议规范详情 |
-| [architecture/client-server.md](../architecture/client-server.md) | 架构设计详情 |
+| [architecture/protocol.md](../architecture/protocol.md) | 架构设计详情 |
 
 ---
 

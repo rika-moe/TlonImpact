@@ -242,7 +242,7 @@ interface TlonMessage {
 
 | 文档 | 目的 | 深度 |
 |------|------|------|
-| [architecture/client-server.md](../architecture/client-server.md) | Client-Server 架构设计 | L2 |
+| [architecture/protocol.md](../architecture/protocol.md) | Client-Server 架构设计 | L2 |
 | [roadmap/milestone-7-client-expansion.md](../roadmap/milestone-7-client-expansion.md) | 实施路线图 | L3 |
 
 ---

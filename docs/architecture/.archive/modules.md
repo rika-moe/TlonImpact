@@ -398,4 +398,4 @@ Sandbox ──► AgentModule (反向)
 
 - [DAG Components](./dag-components.md) - 组件依赖图详细说明
 - [Data Flow](./data-flow.md) - 数据流向图
-- [Explicit Boundaries](./explicit-boundaries.md) - 架构边界规则
+- [Explicit Boundaries](../explicit-boundaries.md) - 架构边界规则

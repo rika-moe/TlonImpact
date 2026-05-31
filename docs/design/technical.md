@@ -33,7 +33,7 @@
 
 | 文档 | 目的 | 深度 |
 |------|------|------|
-| [architecture/layers.md](../architecture/layers.md) | 分层架构详解 | L2 |
+| [architecture/dream.md](../architecture/dream.md) | 模块架构详解 | L2 |
 | [code-style.md](./code-style.md) | 代码规范 | L1 |
 
 ---

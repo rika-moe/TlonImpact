@@ -1,98 +1,89 @@
 # 架构总览
 
-> 状态: ✅ 已验证
-> 最后验证: 2026-04-19
-> 核心理念: **按功能域划分模块，按通信模式定义关系**
+> Tlon 是**四个独立进程**组成的系统。每个进程有各自的入口、组件树和生命周期。
 
 ---
 
-## 核心理念
+## 命令 ↔ 类名映射
 
-1. **显式依赖注入**: 所有依赖通过构造函数注入，无全局状态
-2. **事件驱动解耦**: 模块间通过 EventBus 通信，不直接调用
-3. **模块边界清晰**: 按功能域组织，而非抽象层次
+| 命令 | 进程文档 | 代码类名 | 代码路径 |
+|------|---------|---------|---------|
+| `tlon dream` | [dream.md](./dream.md) | `ServerApp` | `src/tlon/app/server/serverapp.py` |
+| `tlon chat` | [client.md](./client.md) | `CongressApp` | `src/tlon/app/clients/tui/congress/app.py` |
+| `tlon ops` | [client.md](./client.md) | `OperatorApp` | `src/tlon/app/clients/tui/operator/app.py` |
+| `tlon mirror` | [mirror.md](./mirror.md) | `Wizard` | `src/tlon/app/wizard/wizard.py` |
 
 ---
 
-## 模块架构 (推荐)
-
-Tlon 是**模块化、以通信为中心**的系统，推荐使用模块视角理解架构：
+## 进程模型
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    基础设施模块 (Infrastructure)              │
-│              EventBus | Config | Logger | Tracing           │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ (EventBus 通信)
-┌─────────────────────────────────────────────────────────────┐
-│                      核心域模块 (Core Domains)                │
-│     AgentModule | MessageModule | ClientModule              │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼ (依赖注入)
-┌─────────────────────────────────────────────────────────────┐
-│                    功能子模块 (Functional Submodules)         │
-│   Sandbox | Memory | Tasks | Tools (插件化)                  │
-│                                                             │
-│   ⚠️ Sandbox 是 executeBashCommand 的实现细节，非独立层次    │
-└─────────────────────────────────────────────────────────────┘
+launcher (main.py)
+    │
+    ├── tlon dream ──→ ServerApp
+    │   │                dream.md（内部架构）
+    │   │
+    │   │  进程：常驻后台
+    │   │  职责：承载 Agent、消息路由、工具执行、记忆存储
+    │   │  通信：REST :8080 + WebSocket :8888
+    │   │  代码：src/tlon/app/server/
+    │   │  组件：EventBus + DAG 组件树
+    │   │
+    ├── tlon chat ───→ CongressApp
+    │   │                client.md（内部架构）
+    │   │
+    │   │  进程：交互式 TUI，连接到 dream
+    │   │  职责：与 Agent 对话的聊天界面
+    │   │  通信：WebSocket → dream
+    │   │  代码：src/tlon/app/clients/tui/congress/
+    │   │  组件：Textual widget 树
+    │   │
+    ├── tlon ops ────→ OperatorApp
+    │   │                client.md（内部架构）
+    │   │
+    │   │  进程：交互式 TUI，连接到 dream
+    │   │  职责：运维监控、事件查看、配置管理
+    │   │  通信：WebSocket + REST → dream
+    │   │  代码：src/tlon/app/clients/tui/operator/
+    │   │  组件：多标签页 Textual 应用
+    │   │
+    └── tlon mirror ─→ Wizard
+                        mirror.md（内部架构）
+
+        进程：一次性交互式向导
+        职责：创建和管理 Agent 的 YAML 配置
+        通信：直接读写文件系统
+        代码：src/tlon/app/wizard/
+        组件：Rich 交互式菜单
 ```
 
 ---
 
-## 快速导航
+## 进程间通信
 
-| 文档 | 内容 | 推荐度 |
+```
+dream ──WebSocket :8888──→ chat
+dream ──WebSocket :8888──→ ops
+        └─REST :8080─────→ ops
+mirror ──读写文件────────→ config/agents/*.yaml
+```
+
+| 方式 | 端口 | 用途 |
+|------|------|------|
+| WebSocket | 8888 | 实时双向通信、事件推送 |
+| REST API | 8080 | 历史查询、健康检查、配置读取 |
+| 文件系统 | — | Wizard 读写 Agent YAML 配置 |
+
+---
+
+## 文档导航
+
+| 文档 | 描述 | 适合谁 |
 |------|------|--------|
-| **[modules.md](./modules.md)** | **模块架构详解（推荐）** | ⭐⭐⭐ |
-| [dag-components.md](./dag-components.md) | 组件依赖关系与 DAG 原则 | ⭐⭐⭐ |
-| [data-flow.md](./data-flow.md) | 数据流向图 | ⭐⭐ |
-| [client-server.md](./client-server.md) | Client-Server 通信协议 | ⭐⭐ |
-| [explicit-boundaries.md](./explicit-boundaries.md) | 架构边界规则 | ⭐⭐ |
+| [dream.md](./dream.md) | dream 进程：ServerApp、EventBus、DAG 组件 | 想理解服务端、加 Agent、改消息路由 |
+| [client.md](./client.md) | chat + ops 进程：Congress + Operator TUI | 想改 TUI 界面、加快捷键、调样式 |
+| [protocol.md](./protocol.md) | 进程间通信：REST + WebSocket 协议 | 想写新 Client、调试事件 |
+| [mirror.md](./mirror.md) | mirror 进程：Wizard 配置向导 | 想改配置向导、加校验逻辑 |
+| [explicit-boundaries.md](./explicit-boundaries.md) | 架构边界规则（所有进程通用） | 所有贡献者
 
 ---
-
-## 分层架构（旧视角，参考用）
-
-<details>
-<summary>点击展开旧版分层架构图</summary>
-
-```
-┌─────────────────────────────────────────┐
-│ 1. 入口层 (Entry)                        │
-│    __main__.py, cli/main.py             │
-├─────────────────────────────────────────┤
-│ 2. 应用层 (App)                          │
-│    cli/, server/, clients/, wizard/     │
-├─────────────────────────────────────────┤
-│ 3. 基础层 (Base)                         │
-│    config/, events/, logger, settings   │
-├─────────────────────────────────────────┤
-│ 4. 组织层 (Organization)                 │
-│    messaging/                           │
-├─────────────────────────────────────────┤
-│ 5. Agent 层                              │
-│    agents/                              │
-├─────────────────────────────────────────┤
-│ 6. Sandbox 层                            │
-│    sandbox/                             │
-├─────────────────────────────────────────┤
-│ 7. 子系统层 (Subsystem)                  │
-│    memory/, tools/                      │
-└─────────────────────────────────────────┘
-```
-
-**注意**: 分层架构将 Sandbox 描述为独立层次，容易误导其使用范围。实际上 Sandbox 只是 `executeBashCommand` 的实现细节。
-
-参见: [layers.md](./layers.md) (旧版，仅供参考)
-</details>
-
----
-
-## 验证清单
-
-- [x] 模块与代码目录一致
-- [x] 模块间通过 EventBus 通信（非直接调用）
-- [x] Sandbox 仅被 ExecuteBashTool 依赖
-- [x] 无循环依赖
