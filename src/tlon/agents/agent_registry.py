@@ -225,10 +225,10 @@ class AgentRegistry(Component):
         try:
             logger.info(f"Starting agent: {config.name} ({agent_id})")
 
-            from tlon.base.settings import settings
+            from tlon.base.settings import get_settings
 
             # Build infrastructure dependencies
-            llm_config = _build_llm_config(config.llm, settings)
+            llm_config = _build_llm_config(config.llm, get_settings())
             llm_client = LLMClient(llm_config)
 
             data_dir = get_tlon_home() / "data"
@@ -281,9 +281,9 @@ class AgentRegistry(Component):
                 if aid != agent_id and self._agent_info.get_config(aid)
             ]
 
-            # Read tool timeout settings from config
-            total_tool_timeout = getattr(settings, "TOTAL_TOOL_TIMEOUT", 60.0)
-            per_tool_timeout = getattr(settings, "PER_TOOL_TIMEOUT", 30.0)
+            # Read tool timeout settings from agent config
+            total_tool_timeout = config.tool.total_timeout
+            per_tool_timeout = config.tool.per_timeout
 
             # Create and initialize agent with all deps injected
             agent = Agent(

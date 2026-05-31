@@ -5,7 +5,6 @@ Unified configuration management with validation and EventBus integration.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -86,6 +85,20 @@ class DockerRuntimeConfig(BaseModel):
     network_mode: str = "host"
 
 
+class MemoryConfig(BaseModel):
+    """Memory configuration for an agent."""
+
+    max_history: int = 10
+    summary_window: int = 20
+
+
+class ToolConfig(BaseModel):
+    """Tool execution configuration for an agent."""
+
+    total_timeout: float = 60.0
+    per_timeout: float = 30.0
+
+
 class AgentConfig(BaseModel):
     """Complete agent configuration."""
 
@@ -99,7 +112,8 @@ class AgentConfig(BaseModel):
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
-    memory: Any = None
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    tool: ToolConfig = Field(default_factory=ToolConfig)
     proactive: bool = False
 
     @field_validator("id")
@@ -123,6 +137,69 @@ class AgentConfig(BaseModel):
         agent_dir = base_dir / "agents" / self.id
         agent_dir.mkdir(parents=True, exist_ok=True)
         return agent_dir
+
+
+# =============================================================================
+# Standalone YAML CRUD operations (shared by ConfigService and Wizard)
+# =============================================================================
+
+
+def _yaml_ensure_dir(agents_dir: Path) -> None:
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _yaml_load_file(filepath: Path) -> AgentConfig | None:
+    """Load a single agent from a YAML file."""
+    try:
+        data = yaml.safe_load(filepath.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "agent" not in data:
+            return None
+        return AgentConfig.model_validate(data["agent"])
+    except Exception:
+        return None
+
+
+def _yaml_load_all(agents_dir: Path) -> dict[str, AgentConfig]:
+    """Load all agents from YAML files in directory."""
+    agents: dict[str, AgentConfig] = {}
+    if not agents_dir.exists():
+        return agents
+    for yaml_file in agents_dir.glob("*.yaml"):
+        agent = _yaml_load_file(yaml_file)
+        if agent:
+            agents[agent.id] = agent
+    return agents
+
+
+def _yaml_save(agent: AgentConfig, agents_dir: Path, data_dir: Path | None = None) -> None:
+    """Save an agent to a YAML file."""
+    _yaml_ensure_dir(agents_dir)
+    data = {"agent": agent.model_dump(exclude_none=True)}
+    filepath = agents_dir / f"{agent.id}.yaml"
+    filepath.write_text(
+        yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2),
+        encoding="utf-8",
+    )
+    if data_dir:
+        agent.get_data_dir(data_dir)
+
+
+def _yaml_delete(agent_id: str, agents_dir: Path, data_dir: Path | None = None) -> None:
+    """Delete an agent YAML file and optionally its data directory."""
+    filepath = agents_dir / f"{agent_id}.yaml"
+    if not filepath.exists():
+        raise ValueError(f"Agent '{agent_id}' not found")
+    filepath.unlink()
+    if data_dir:
+        import shutil
+        agent_data_dir = data_dir / "agents" / agent_id
+        if agent_data_dir.exists():
+            shutil.rmtree(agent_data_dir)
+
+
+def _yaml_exists(agent_id: str, agents_dir: Path) -> bool:
+    """Check if an agent YAML file exists."""
+    return (agents_dir / f"{agent_id}.yaml").exists()
 
 
 # =============================================================================
@@ -243,57 +320,25 @@ class ConfigService(Component, Device, AgentInfoProvider):
     def save_agent(self, agent: AgentConfig, create_data_dir: bool = True) -> None:
         """Save an agent to YAML file.
 
-        Note: Updates memory cache first, then writes to file for atomicity.
-        If file write fails, memory will be consistent on next reload.
+        Writes to file, then updates memory cache.
         """
-        self._agents_dir.mkdir(parents=True, exist_ok=True)
-
-        # Step 1: Update memory first (idempotent, can be retried)
+        _yaml_save(agent, self._agents_dir, self._data_dir if create_data_dir else None)
         self._agents[agent.id] = agent
-
-        # Step 2: Create data directory
-        if create_data_dir:
-            agent.get_data_dir(self._data_dir)
-
-        # Step 3: Write to file (with rollback on failure)
-        data = {"agent": agent.model_dump(exclude_none=True)}
-        filepath = self._agents_dir / f"{agent.id}.yaml"
-        try:
-            filepath.write_text(
-                yaml.dump(
-                    data, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2
-                ),
-                encoding="utf-8",
-            )
-            logger.info(f"Agent saved to {filepath}")
-        except Exception:
-            # Rollback memory on file write failure
-            self._agents.pop(agent.id, None)
-            raise
+        logger.info(f"Agent saved: {agent.id}")
 
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> None:
         """Delete an agent."""
-        import shutil
-
-        filepath = self._agents_dir / f"{agent_id}.yaml"
-        if not filepath.exists():
-            raise ValueError(f"Agent '{agent_id}' not found")
-
-        filepath.unlink()
-
-        if delete_data:
-            agent_data_dir = self._data_dir / "agents" / agent_id
-            if agent_data_dir.exists():
-                shutil.rmtree(agent_data_dir)
-
+        _yaml_delete(agent_id, self._agents_dir, self._data_dir if delete_data else None)
         self._agents.pop(agent_id, None)
-        logger.info(f"Agent '{agent_id}' deleted")
+        logger.info(f"Agent deleted: {agent_id}")
 
 
 __all__ = [
     "AgentInfoProvider",
     "LLMConfig",
     "DockerRuntimeConfig",
+    "MemoryConfig",
+    "ToolConfig",
     "AgentConfig",
     "ConfigService",
 ]

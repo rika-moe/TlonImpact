@@ -26,7 +26,7 @@ from tlon.app.launcher.commands.dream import run_dream
 from tlon.app.launcher.commands.mirror import run_mirror
 from tlon.app.launcher.commands.ops import run_ops
 from tlon.base.logger import configure_logging
-from tlon.base.settings import settings
+from tlon.base.settings import get_settings
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -209,9 +209,10 @@ async def main_async(args: Namespace | None = None) -> int:
         args = parser.parse_args()
 
     # Configure logging - use --debug flag if provided
-    is_debug = getattr(args, "debug", False) or settings.debug
+    is_debug = getattr(args, "debug", False) or get_settings().debug
+
     configure_logging(
-        log_level="DEBUG" if is_debug else settings.log_level,
+        log_level="DEBUG" if is_debug else get_settings().log_level,
         debug=is_debug,
     )
 

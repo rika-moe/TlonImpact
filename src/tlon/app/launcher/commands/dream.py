@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tlon.base.settings import settings
+from tlon.base.settings import get_settings
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -27,7 +27,7 @@ async def run_dream(args: Namespace) -> int:
     from tlon.app.server.serverapp import run_server
 
     is_lucid = getattr(args, "debug", False)
-    log_level = "DEBUG" if is_lucid else settings.log_level
+    log_level = "DEBUG" if is_lucid else get_settings().log_level
 
     return await run_server(
         host=args.host,

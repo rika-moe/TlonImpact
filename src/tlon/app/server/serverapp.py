@@ -20,7 +20,7 @@ from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.config import AgentConfig, ConfigService, DockerRuntimeConfig, LLMConfig
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
-from tlon.base.settings import get_tlon_home, settings
+from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.router import MessageRouter
@@ -71,7 +71,7 @@ class ServerApp:
         self.host = host
         self.rest_port = rest_port
         self.ws_port = ws_port
-        self.data_dir = data_dir or settings.data_dir
+        self.data_dir = data_dir or get_settings().data_dir
         self.config_dir = config_dir or (get_tlon_home() / "config")
 
         # Config subdirectories
@@ -238,15 +238,12 @@ class ServerApp:
                 profile="开发工程师。负责代码编写、Bug 修复和技术方案实现。",
                 behavior="收到@时响应。被@时先分析问题，再规划方案，调用工具验证，最后给出回复。",
                 llm=LLMConfig(
-                    base_url=settings.llm_base_url,
-                    auth_token=settings.llm_api_key,
-                    model_name=settings.llm_model_name,
-                    temperature=settings.llm_temperature,
+                    base_url=get_settings().llm_base_url,
+                    auth_token=get_settings().llm_api_key,
+                    model_name=get_settings().llm_model_name,
+                    temperature=get_settings().llm_temperature,
                 ),
-                docker=DockerRuntimeConfig(
-                    image=settings.docker_image,
-                    memory_limit=settings.docker_memory_limit,
-                ),
+                docker=DockerRuntimeConfig(),
                 memory=MemoryConfig(agent_id="dev-001"),
                 proactive=False,
             )
