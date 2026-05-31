@@ -1,9 +1,15 @@
 """Tests for AgentStore."""
 
 import tempfile
+from pathlib import Path
 
 from tlon.app.wizard.agent_store import AgentStore
 from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
+from tlon.base.paths import TlonPaths
+
+
+def _make_store(tmpdir: str) -> AgentStore:
+    return AgentStore(paths=TlonPaths(home=Path(tmpdir)))
 
 
 class TestAgentStore:
@@ -12,7 +18,7 @@ class TestAgentStore:
     def test_save_and_load_agent(self):
         """Test saving and loading an agent."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = AgentStore(tmpdir)
+            store = _make_store(tmpdir)
 
             agent = AgentConfig(
                 id="test-001",
@@ -24,18 +30,15 @@ class TestAgentStore:
             success, msg = store.save_agent(agent)
             assert success
 
-            # Reload and check (must use force_reload=True since same store)
             loaded = store.get_agent("test-001")
-
             assert loaded is not None
             assert loaded.name == "测试 Agent"
-            # LLMConfig reads from env, so we just check llm exists
             assert loaded.llm is not None
 
     def test_get_agent_by_name(self):
         """Test getting agent by name."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = AgentStore(tmpdir)
+            store = _make_store(tmpdir)
 
             agent = AgentConfig(
                 id="test-002",
@@ -50,7 +53,7 @@ class TestAgentStore:
     def test_agent_exists(self):
         """Test checking if agent exists."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = AgentStore(tmpdir)
+            store = _make_store(tmpdir)
 
             agent = AgentConfig(
                 id="existing",
@@ -63,8 +66,8 @@ class TestAgentStore:
 
     def test_delete_agent(self):
         """Test deleting an agent."""
-        with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as data_tmpdir:
-            store = AgentStore(tmpdir, data_tmpdir)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
 
             agent = AgentConfig(
                 id="deletable",
@@ -73,7 +76,6 @@ class TestAgentStore:
             store.save_agent(agent)
             assert store.agent_exists("deletable")
 
-            # Delete
             success, msg = store.delete_agent("deletable")
             assert success
             assert not store.agent_exists("deletable")
@@ -81,7 +83,7 @@ class TestAgentStore:
     def test_generate_agent_id(self):
         """Test generating unique agent IDs."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = AgentStore(tmpdir)
+            store = _make_store(tmpdir)
 
             existing = ["developer-001", "developer-002"]
             new_id = store.generate_agent_id("developer", existing)
@@ -91,24 +93,25 @@ class TestAgentStore:
 
     def test_validate_agent_data(self):
         """Test agent data validation."""
-        store = AgentStore()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
 
-        # Valid data
-        valid, errors = store.validate_agent_data(
-            {
-                "id": "valid-id",
-                "name": "Valid Name",
-            }
-        )
-        assert valid
-        assert len(errors) == 0
+            # Valid data
+            valid, errors = store.validate_agent_data(
+                {
+                    "id": "valid-id",
+                    "name": "Valid Name",
+                }
+            )
+            assert valid
+            assert len(errors) == 0
 
-        # Missing required fields
-        valid, errors = store.validate_agent_data(
-            {
-                "id": "",
-                "name": "",
-            }
-        )
-        assert not valid
-        assert len(errors) > 0
+            # Missing required fields
+            valid, errors = store.validate_agent_data(
+                {
+                    "id": "",
+                    "name": "",
+                }
+            )
+            assert not valid
+            assert len(errors) > 0

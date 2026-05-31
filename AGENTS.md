@@ -52,6 +52,7 @@ uv run pytest
 | 用户指南 | [user/README.md](./docs/user/README.md) | - |
 | 架构边界 | - | [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
 | 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
+| **文件系统布局** | **[design/config.md](./docs/design/config.md)** (含 ~/.tlon/ 目录结构) | - |
 | Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md), [async-agent-loop.md](./docs/design/async-agent-loop.md) | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/dream.md](./docs/architecture/dream.md) |
 | 消息系统 | [design/messaging.md](./docs/design/messaging.md) | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
@@ -95,4 +96,4 @@ uv run pytest
 
 ---
 
-*最后更新：2026-04-19*
+*最后更新：2026-06-01*

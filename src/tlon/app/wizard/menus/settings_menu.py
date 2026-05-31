@@ -23,22 +23,18 @@ class SettingsMenu:
     def __init__(
         self,
         console: "Console",
-        agents_dir: str | None = None,
-        data_dir: str | None = None,
+        tlon_home: str | None = None,
     ):
         """Initialize the settings menu.
 
         Args:
             console: Rich console for output
-            agents_dir: Directory for agent configs (caller should pass explicit path)
-            data_dir: Directory for agent data (caller should pass explicit path)
+            tlon_home: Tlon home directory (~/.tlon/)
         """
-        from tlon.base.settings import get_default_config_dir, get_default_data_dir
+        from tlon.base.paths import paths
 
-        cfg = get_default_config_dir()
         self.console = console
-        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
-        self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
+        self.tlon_home = Path(tlon_home) if tlon_home else paths.tlon_home()
         self.env_path = Path(".env")
 
         try:
@@ -163,44 +159,28 @@ class SettingsMenu:
     def storage_settings(self) -> None:
         """Configure storage settings."""
         self.console.print("\n[bold]💾 存储设置[/bold]\n")
-
-        current_config = self._load_env_config()
-        current_dir = current_config.get("data_dir", "./data")
-
-        self.console.print(f"当前数据目录: {current_dir}\n")
+        self.console.print(f"Tlon 数据目录: {self.tlon_home}\n")
 
         choice = self.questionary.select(
             "请选择操作:",
             choices=[
-                self.questionary.Choice("修改数据目录", value="change"),
-                self.questionary.Choice("清理历史记录", value="clean"),
+                self.questionary.Choice("清理聊天历史记录", value="clean"),
                 self.questionary.Choice("← 返回", value="back"),
             ],
         ).ask()
 
-        if choice == "change":
-            new_dir = self.questionary.text(
-                "新的数据目录:",
-                default=current_dir,
-            ).ask()
+        if choice == "clean" and self.questionary.confirm("确定要清理所有聊天历史记录? 此操作不可撤销！").ask():
+            from tlon.base.paths import paths
 
-            if new_dir and new_dir != current_dir:
-                self._update_data_dir(new_dir)
-                self.console.print(f"[green]✓ 数据目录已更新为 {new_dir}[/green]")
-                self.questionary.press_any_key_to_continue("按回车继续...").ask()
-
-        elif choice == "clean":
-            if self.questionary.confirm("确定要清理所有历史记录? 此操作不可撤销！").ask():
-                chat_history_dir = self.data_dir / "chat_history"
-                if chat_history_dir.exists():
-                    # Count files
-                    count = len(list(chat_history_dir.glob("*.json")))
-                    shutil.rmtree(chat_history_dir)
-                    chat_history_dir.mkdir(parents=True, exist_ok=True)
-                    self.console.print(f"[green]✓ 已清理 {count} 条历史记录[/green]")
-                else:
-                    self.console.print("[yellow]暂无历史记录[/yellow]")
-                self.questionary.press_any_key_to_continue("按回车继续...").ask()
+            chat_history_dir = paths.chat_history_dir()
+            if chat_history_dir.exists():
+                count = len(list(chat_history_dir.glob("*")))
+                shutil.rmtree(chat_history_dir)
+                chat_history_dir.mkdir(parents=True, exist_ok=True)
+                self.console.print(f"[green]✓ 已清理 {count} 条历史记录[/green]")
+            else:
+                self.console.print("[yellow]暂无历史记录[/yellow]")
+            self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def import_export(self) -> None:
         """Import/export configuration."""
@@ -235,25 +215,26 @@ class SettingsMenu:
         if not filename:
             return
 
+        agent_count = 0
         try:
             with zipfile.ZipFile(filename, "w", zipfile.ZIP_DEFLATED) as zf:
-                # Add agents
-                if self.agents_dir.exists():
-                    for yaml_file in self.agents_dir.glob("*.yaml"):
-                        zf.write(yaml_file, f"agents/{yaml_file.name}")
+                # Add agent configs from ~/.tlon/{id}/config/agent.yaml
+                if self.tlon_home.exists():
+                    for agent_dir in sorted(self.tlon_home.iterdir()):
+                        if not agent_dir.is_dir() or agent_dir.name == "shared":
+                            continue
+                        yaml_file = agent_dir / "config" / "agent.yaml"
+                        if yaml_file.exists():
+                            zf.write(yaml_file, f"agents/{agent_dir.name}.yaml")
+                            agent_count += 1
 
                 # Add .env if exists
                 if self.env_path.exists():
                     zf.write(self.env_path, ".env")
 
-            # Show what was exported
             table = Table(title="导出内容")
             table.add_column("类型", style="cyan")
             table.add_column("数量", style="green")
-
-            agent_count = (
-                len(list(self.agents_dir.glob("*.yaml"))) if self.agents_dir.exists() else 0
-            )
 
             table.add_row("Agents", str(agent_count))
 
@@ -287,7 +268,6 @@ class SettingsMenu:
 
         try:
             with zipfile.ZipFile(filepath, "r") as zf:
-                # Preview contents
                 agents_files = [
                     n for n in zf.namelist() if n.startswith("agents/") and n.endswith(".yaml")
                 ]
@@ -300,12 +280,16 @@ class SettingsMenu:
                 if not self.questionary.confirm("确认导入?").ask():
                     return
 
-                # Extract
-                for name in zf.namelist():
-                    if name.startswith("agents/"):
-                        zf.extract(name, self.agents_dir.parent)
-                    elif name == ".env":
-                        zf.extract(name, Path(""))
+                # Extract agent YAML files into per-agent config dirs
+                for name in agents_files:
+                    agent_id = Path(name).stem
+                    from tlon.base.paths import paths
+
+                    dest = paths.agent_config_dir(agent_id)
+                    zf.extract(name, dest.parent)
+
+                if has_env:
+                    zf.extract(".env", Path(""))
 
             self.console.print("[green]✓ 配置导入成功[/green]")
             self.console.print("[dim]请重启 server 使新配置生效[/dim]")
@@ -326,7 +310,6 @@ class SettingsMenu:
             "api_key": "",
             "model": "kimi-k2.5",
             "temperature": 1.0,
-            "data_dir": "./data",
         }
 
         if self.env_path.exists():
@@ -341,8 +324,6 @@ class SettingsMenu:
                 elif line.startswith("OPENAI_TEMPERATURE="):
                     with contextlib.suppress(ValueError):
                         config["temperature"] = float(line.split("=", 1)[1].strip())
-                elif line.startswith("DATA_DIR="):
-                    config["data_dir"] = line.split("=", 1)[1].strip()
 
         return config
 
@@ -360,7 +341,6 @@ class SettingsMenu:
             "OPENAI_BASE_URL": config.get("base_url", "https://api.openai.com/v1"),
             "OPENAI_MODEL_NAME": config.get("model", "kimi-k2.5"),
             "OPENAI_TEMPERATURE": str(config.get("temperature", 1.0)),
-            "DATA_DIR": config.get("data_dir", "./data"),
         }
 
         # Read existing lines, or start fresh
@@ -386,13 +366,3 @@ class SettingsMenu:
                 new_lines.append(f"{key}={value}")
 
         self.env_path.write_text("\n".join(new_lines) + "\n")
-
-    def _update_data_dir(self, new_dir: str) -> None:
-        """Update data directory in .env.
-
-        Args:
-            new_dir: New data directory path
-        """
-        config = self._load_env_config()
-        config["data_dir"] = new_dir
-        self._save_env_config(config)

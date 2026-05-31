@@ -9,6 +9,7 @@ import aiofiles
 
 from tlon.base.config import LLMConfig
 from tlon.base.logger import get_logger
+from tlon.base.paths import paths
 
 from .episodic_store import EpisodicMemoryStore
 from .models import (
@@ -46,7 +47,7 @@ class MemoryManager:
         self,
         agent_id: str,
         config: MemoryConfig,
-        data_dir: Path,
+        data_dir: Path | None = None,
         llm_config: LLMConfig | None = None,
     ):
         """Initialize Memory Manager.
@@ -54,18 +55,16 @@ class MemoryManager:
         Args:
             agent_id: The agent ID
             config: Memory configuration
-            data_dir: Base data directory (will create agents/{id}/memory/)
-            llm_config: Optional LLM config for summarization (uses default if not provided)
+            data_dir: Ignored (for backward compat). Uses TlonPaths internally.
+            llm_config: Optional LLM config for summarization
         """
         self.agent_id = agent_id
         self.config = config
 
-        # Storage path: data/agents/{agent_id}/memory/
-        self.storage_path = data_dir / "agents" / agent_id / "memory"
-        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self.storage_path = paths.agent_memory_dir(agent_id)
 
         # Config file path
-        self.config_file = self.storage_path / "config.json"
+        self.config_file = paths.memory_config_file(agent_id)
 
         # Initialize stores
         self.working = WorkingMemoryStore(

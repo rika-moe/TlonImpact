@@ -24,9 +24,11 @@ class TestConfigDiagnostics:
 
     def test_valid_agent_configuration(self):
         """Test diagnostics with valid agent configuration."""
-        with tempfile.TemporaryDirectory() as agent_tmpdir:
-            # Create a valid agent file
-            agent_file = Path(agent_tmpdir) / "dev-001.yaml"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tlon_home = Path(tmpdir)
+            config_dir = tlon_home / "dev-001" / "config"
+            config_dir.mkdir(parents=True)
+            agent_file = config_dir / "agent.yaml"
             agent_file.write_text("""
 agent:
   id: dev-001
@@ -39,7 +41,7 @@ agent:
     memory_limit: 512m
 """)
 
-            diag = ConfigDiagnostics(agent_tmpdir)
+            diag = ConfigDiagnostics(str(tlon_home))
             report = diag.run_all_checks()
 
             # Should have no errors
@@ -48,11 +50,13 @@ agent:
     def test_invalid_yaml(self):
         """Test diagnostics with invalid YAML."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create invalid YAML
-            bad_file = Path(tmpdir) / "bad.yaml"
+            tlon_home = Path(tmpdir)
+            config_dir = tlon_home / "bad" / "config"
+            config_dir.mkdir(parents=True)
+            bad_file = config_dir / "agent.yaml"
             bad_file.write_text("invalid: yaml: [")
 
-            diag = ConfigDiagnostics(tmpdir)
+            diag = ConfigDiagnostics(str(tlon_home))
             report = diag.run_all_checks()
 
             # Should have errors
@@ -61,15 +65,17 @@ agent:
     def test_missing_required_fields(self):
         """Test diagnostics with missing required fields."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create agent missing required fields
-            agent_file = Path(tmpdir) / "incomplete.yaml"
+            tlon_home = Path(tmpdir)
+            config_dir = tlon_home / "incomplete" / "config"
+            config_dir.mkdir(parents=True)
+            agent_file = config_dir / "agent.yaml"
             agent_file.write_text("""
 agent:
   identity: test
   # missing id and name
 """)
 
-            diag = ConfigDiagnostics(tmpdir)
+            diag = ConfigDiagnostics(str(tlon_home))
             report = diag.validate_agents()
 
             # Should have errors about missing fields

@@ -9,6 +9,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from tlon.base.paths import paths
+
 
 def _load_dotenv_files() -> None:
     load_dotenv()
@@ -19,22 +21,31 @@ def _load_dotenv_files() -> None:
 
 
 def get_tlon_home() -> Path:
-    tlon_home = os.getenv("TLON_HOME")
-    if tlon_home:
-        path = Path(tlon_home).expanduser().resolve()
-        if path.exists() and path.is_dir():
-            return path
-    default_path = Path.home() / ".tlon"
-    default_path.mkdir(parents=True, exist_ok=True)
-    return default_path
+    """Get the Tlon home directory (~/.tlon or $TLON_HOME).
+
+    Prefer paths.tlon_home() in new code.
+    """
+    return paths.tlon_home()
+
+
+def get_agent_home(agent_id: str) -> Path:
+    """Get per-agent directory — delegates to paths.agent_dir()."""
+    return paths.agent_dir(agent_id)
+
+
+def get_shared_dir() -> Path:
+    """Get shared data directory — delegates to paths.shared_dir()."""
+    return paths.shared_dir()
 
 
 def get_default_data_dir() -> Path:
-    return get_tlon_home() / "data"
+    """Legacy: returns tlon home root. Prefer TlonPaths directly."""
+    return paths.tlon_home()
 
 
 def get_default_config_dir() -> Path:
-    return get_tlon_home() / "config"
+    """Legacy: config is now per-agent. Returns tlon home root."""
+    return paths.tlon_home()
 
 
 class Settings:
@@ -48,7 +59,8 @@ class Settings:
         # App settings
         self.app_name = os.getenv("APP_NAME", "Tlon")
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
-        self.data_dir = Path(os.getenv("DATA_DIR", get_default_data_dir()))
+        self.tlon_home = paths.tlon_home()
+        self.shared_dir = paths.shared_dir()
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
 
         # LLM client settings (secrets and endpoints)
@@ -59,13 +71,11 @@ class Settings:
         self.llm_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "3"))
         self.llm_base_delay = float(os.getenv("OPENAI_BASE_DELAY", "1.0"))
 
-        # Ensure data directory exists
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.tlon_home.mkdir(parents=True, exist_ok=True)
 
     def get_agent_data_dir(self, agent_id: str) -> Path:
-        agent_dir = self.data_dir / "agents" / agent_id
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        return agent_dir
+        """Get per-agent data directory — delegates to paths.agent_dir()."""
+        return paths.agent_dir(agent_id)
 
 
 _settings: Settings | None = None

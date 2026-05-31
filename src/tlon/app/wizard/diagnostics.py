@@ -103,13 +103,12 @@ class ConfigDiagnostics:
         """Initialize diagnostics.
 
         Args:
-            agents_dir: Directory containing agent YAML files.
-                Defaults to $TLON_HOME/config/agents.
+            agents_dir: Tlon home directory (for backward compat; ignored).
+                Agents are found at ~/.tlon/{id}/config/agent.yaml.
         """
-        from tlon.base.settings import get_default_config_dir
+        from tlon.base.paths import TlonPaths
 
-        cfg = get_default_config_dir()
-        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
+        self.tlon_home = TlonPaths().tlon_home() if agents_dir is None else Path(agents_dir)
         self.report = DiagnosticReport()
 
     def run_all_checks(self) -> DiagnosticReport:
@@ -130,12 +129,12 @@ class ConfigDiagnostics:
 
     def _check_directories(self) -> None:
         """Check if configuration directories exist."""
-        if not self.agents_dir.exists():
+        if not self.tlon_home.exists():
             self.report.add(
                 IssueSeverity.WARNING,
                 "filesystem",
-                f"Agents directory does not exist: {self.agents_dir}",
-                str(self.agents_dir),
+                f"Tlon home directory does not exist: {self.tlon_home}",
+                str(self.tlon_home),
             )
 
     def validate_agents(self) -> DiagnosticReport:
@@ -144,17 +143,26 @@ class ConfigDiagnostics:
         Returns:
             DiagnosticReport with agent issues
         """
-        if not self.agents_dir.exists():
+        if not self.tlon_home.exists():
             return self.report
 
-        yaml_files = list(self.agents_dir.glob("*.yaml"))
+        from tlon.base.paths import TlonPaths
+
+        p = TlonPaths(home=self.tlon_home)
+        yaml_files = []
+        for agent_dir in sorted(self.tlon_home.iterdir()):
+            if not agent_dir.is_dir() or agent_dir.name == "shared":
+                continue
+            yaml_file = p.agent_config_file(agent_dir.name)
+            if yaml_file.exists():
+                yaml_files.append(yaml_file)
 
         if not yaml_files:
             self.report.add(
                 IssueSeverity.WARNING,
                 "agents",
                 "No agent configuration files found",
-                str(self.agents_dir),
+                str(self.tlon_home),
             )
             return self.report
 
@@ -199,7 +207,7 @@ class ConfigDiagnostics:
                 )
 
         if "id" in agent:
-            expected_filename = f"{agent['id']}.yaml"
+            expected_filename = "agent.yaml"
             if file_path.name != expected_filename:
                 self.report.add(
                     IssueSeverity.WARNING,

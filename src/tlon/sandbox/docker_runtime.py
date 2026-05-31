@@ -15,6 +15,7 @@ from docker.errors import ImageNotFound, NotFound
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
+from tlon.base.paths import paths
 
 logger = get_logger(__name__)
 
@@ -128,8 +129,14 @@ class DockerRuntime:
             await asyncio.to_thread(self.client.images.pull, image)
             logger.info(f"Image {image} pulled successfully")
 
-        # Prepare volumes (for persistence)
-        volumes = {}
+        # Prepare volumes — mount agent workspace into container
+        workspace = paths.agent_workspace_dir(self.agent_id)
+        volumes = {
+            str(workspace): {
+                "bind": self.config.working_dir,
+                "mode": "rw",
+            }
+        }
 
         logger.info(f"Creating container {self.container_name} from image {image}")
 

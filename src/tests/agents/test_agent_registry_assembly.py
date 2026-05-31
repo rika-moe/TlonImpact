@@ -6,6 +6,7 @@ Verifies that:
 - _start_agent() creates Agent with all 17 tools registered
 """
 
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from tlon.agents.agent_registry import AgentRegistry, _build_llm_config
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig, LLMConfig
+from tlon.base.paths import TlonPaths
 
 
 class MockSettings:
@@ -94,13 +96,19 @@ class TestAgentRegistryStartAgent:
         return MagicMock()
 
     @pytest.fixture
-    def registry(self, mock_event_bus, mock_message_store):
+    def temp_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield TlonPaths(home=tmpdir)
+
+    @pytest.fixture
+    def registry(self, mock_event_bus, mock_message_store, temp_paths):
         config = AgentConfig(id="a-001", name="林知遥")
         provider = MockAgentInfoProvider({"a-001": config})
         reg = AgentRegistry(
             event_bus=mock_event_bus,
             agent_info_provider=provider,
             message_store=mock_message_store,
+            paths=temp_paths,
         )
         reg.register("a-001")
         return reg

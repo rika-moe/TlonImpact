@@ -20,6 +20,7 @@ from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.config import AgentConfig, ConfigService, DockerRuntimeConfig, LLMConfig
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
+from tlon.base.paths import paths
 from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.memory.models import MemoryConfig
@@ -71,13 +72,10 @@ class ServerApp:
         self.host = host
         self.rest_port = rest_port
         self.ws_port = ws_port
-        self.data_dir = data_dir or get_settings().data_dir
-        self.config_dir = config_dir or (get_tlon_home() / "config")
+        self.tlon_home = get_tlon_home()
+        self.shared_dir = paths.shared_dir()
 
-        # Config subdirectories
-        self.agents_dir = self.config_dir / "agents"
-
-        # DI Container - all components created in initialize()
+        # State
         self._components: dict[str, Any] = {}
 
         # Subsystem references (for convenient access)
@@ -107,8 +105,7 @@ class ServerApp:
         # 1.2 ConfigService - configuration management (needs EventBus)
         config_service = ConfigService(
             event_bus=event_bus,
-            config_dir=self.agents_dir.parent,
-            data_dir=self.data_dir,
+            tlon_home=self.tlon_home,
         )
         await config_service.initialize()
         self._components["config_service"] = config_service
@@ -117,14 +114,11 @@ class ServerApp:
 
         # 2.2 MessageStore - storage for messages (stateful)
         message_store = FileMessageStore(
-            data_dir=self.data_dir / "chat_history", filename="messages.jsonl"
+            data_dir=paths.chat_history_dir(), filename="messages.jsonl"
         )
-        await message_store.initialize()
-        self._components["message_store"] = message_store
-        logger.info("MessageStore initialized")
-
+        ...
         # 2.2b TraceStore - storage for traces (stateful)
-        trace_store = FileTraceStore(data_dir=self.data_dir / "traces")
+        trace_store = FileTraceStore(data_dir=paths.traces_dir())
         self._components["trace_store"] = trace_store
         logger.info("TraceStore initialized")
 
@@ -184,7 +178,7 @@ class ServerApp:
             event_bus=event_bus,
             message_store=message_store,
             config_manager=config_service,
-            data_dir=self.data_dir,
+            data_dir=self.shared_dir,
             host=self.host,
             port=self.ws_port,
         )

@@ -3,21 +3,22 @@
 Thin wrapper around base/config.py YAML CRUD functions.
 """
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from tlon.base.config import (
     AgentConfig,
     _yaml_delete,
-    _yaml_ensure_dir,
     _yaml_exists,
     _yaml_load_all,
     _yaml_load_file,
     _yaml_save,
 )
 from tlon.base.logger import get_logger
-from tlon.base.settings import get_default_config_dir, get_default_data_dir
+
+if TYPE_CHECKING:
+    from tlon.base.paths import TlonPaths as _TlonPaths
 
 logger = get_logger(__name__)
 
@@ -28,20 +29,16 @@ class AgentStore:
     Delegates to base/config.py standalone YAML CRUD functions.
     """
 
-    def __init__(self, agents_dir: str | None = None, data_dir: str | None = None):
-        cfg = get_default_config_dir()
-        resolved_agents_dir = agents_dir if agents_dir is not None else str(cfg / "agents")
-        resolved_data_dir = data_dir if data_dir is not None else str(get_default_data_dir())
+    def __init__(self, agents_dir: str | None = None, data_dir: str | None = None, paths: "_TlonPaths | None" = None):
+        from tlon.base.paths import paths as _paths
 
-        self.agents_dir = Path(resolved_agents_dir)
-        self.data_dir = Path(resolved_data_dir)
-        _yaml_ensure_dir(self.agents_dir)
+        self._paths = paths or _paths
 
     def load_all_agents(self) -> dict[str, AgentConfig]:
-        return _yaml_load_all(self.agents_dir)
+        return _yaml_load_all(self._paths.tlon_home())
 
     def get_agent(self, agent_id: str) -> AgentConfig | None:
-        filepath = self.agents_dir / f"{agent_id}.yaml"
+        filepath = self._paths.agent_config_file(agent_id)
         if not filepath.exists():
             return None
         return _yaml_load_file(filepath)
@@ -54,14 +51,14 @@ class AgentStore:
 
     def save_agent(self, agent: AgentConfig) -> tuple[bool, str]:
         try:
-            _yaml_save(agent, self.agents_dir, self.data_dir)
+            _yaml_save(agent, self._paths.tlon_home())
             return True, "Agent saved"
         except Exception as e:
             return False, f"Failed to save agent: {e}"
 
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> tuple[bool, str]:
         try:
-            _yaml_delete(agent_id, self.agents_dir, self.data_dir if delete_data else None)
+            _yaml_delete(agent_id, self._paths.tlon_home())
             return True, f"Agent '{agent_id}' deleted"
         except ValueError as e:
             return False, str(e)
@@ -69,7 +66,7 @@ class AgentStore:
             return False, f"Failed to delete agent: {e}"
 
     def agent_exists(self, agent_id: str) -> bool:
-        return _yaml_exists(agent_id, self.agents_dir)
+        return _yaml_exists(agent_id, self._paths.tlon_home())
 
     def validate_agent_data(self, data: dict) -> tuple[bool, list[str]]:
         """Validate agent data against the AgentConfig model.

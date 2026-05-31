@@ -26,7 +26,7 @@ from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.settings import get_tlon_home
+from tlon.base.paths import TlonPaths, paths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
@@ -113,6 +113,7 @@ class AgentRegistry(Component):
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
         message_store: MessageStore | None = None,
+        paths: "TlonPaths | None" = None,
     ):
         """Initialize the agent registry.
 
@@ -122,11 +123,13 @@ class AgentRegistry(Component):
             event_bus: Event bus for message routing
             agent_info_provider: Provider for agent configuration queries
             message_store: Message store for agent history access
+            paths: TlonPaths instance (defaults to module singleton)
         """
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self.message_store = message_store
+        self._paths = paths  # None means use module singleton
 
         # Registered agent IDs (to be started during initialize)
         self._registered_ids: list[str] = []
@@ -232,7 +235,7 @@ class AgentRegistry(Component):
             llm_config = _build_llm_config(config.llm, get_settings())
             llm_client = LLMClient(llm_config)
 
-            data_dir = get_tlon_home() / "data"
+            agent_home = (self._paths or paths).agent_dir(config.id)
             memory_config = (
                 config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
             )
@@ -240,13 +243,13 @@ class AgentRegistry(Component):
             memory = MemoryManager(
                 agent_id=config.id,
                 config=memory_config,
-                data_dir=data_dir,
+                data_dir=agent_home,
                 llm_config=llm_config,
             )
 
             task_manager = TaskManager(
                 agent_id=config.id,
-                data_dir=str(data_dir),
+                data_dir=str(agent_home),
             )
 
             # Create Docker runtime (shared by shell + filesystem tools)

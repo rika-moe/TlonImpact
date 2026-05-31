@@ -3,6 +3,7 @@
 import shutil
 import tempfile
 
+from tlon.base.paths import TlonPaths
 from tlon.tools.tasks.manager import TaskManager, TaskStatus
 
 
@@ -12,7 +13,8 @@ class TestTaskManager:
     def setup_method(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
-        self.manager = TaskManager(agent_id="test-agent", data_dir=self.temp_dir)
+        self._paths = TlonPaths(home=self.temp_dir)
+        self.manager = TaskManager(agent_id="test-agent", paths=self._paths)
 
     def teardown_method(self):
         """Clean up test fixtures."""
@@ -178,7 +180,7 @@ class TestTaskManager:
         self.manager.save()
 
         # Create new manager and load
-        new_manager = TaskManager(agent_id="test-agent", data_dir=self.temp_dir)
+        new_manager = TaskManager(agent_id="test-agent", paths=self._paths)
         new_manager.load()
 
         # Verify

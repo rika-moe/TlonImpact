@@ -23,27 +23,19 @@ class QuickstartWizard:
     def __init__(
         self,
         console: "Console",
-        agents_dir: str | None = None,
-        data_dir: str | None = None,
+        tlon_home: str | None = None,
     ):
         """Initialize the quickstart wizard.
 
         Args:
             console: Rich console for output
-            agents_dir: Directory for agent configs (caller should pass explicit path)
-            data_dir: Directory for agent data (caller should pass explicit path)
+            tlon_home: Tlon home directory (~/.tlon/)
         """
-        from tlon.base.settings import get_default_config_dir, get_default_data_dir
+        from tlon.base.paths import paths
 
-        cfg = get_default_config_dir()
         self.console = console
-        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
-        self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
-        self.agent_store = (
-            AgentStore(agents_dir, data_dir)
-            if agents_dir is not None
-            else AgentStore(data_dir=str(self.data_dir))
-        )
+        self.tlon_home = Path(tlon_home) if tlon_home else paths.tlon_home()
+        self.agent_store = AgentStore()
 
         try:
             import questionary
@@ -356,7 +348,7 @@ class QuickstartWizard:
         # Show file list
         self.console.print("\n[bold]将创建以下文件:[/bold]")
         for agent in team_config["agents"]:
-            self.console.print(f"  config/agents/{agent.id}.yaml")
+            self.console.print(f"  ~/.tlon/{agent.id}/config/agent.yaml")
 
         return self.questionary.confirm("确认创建以上配置?").ask()
 
@@ -380,8 +372,8 @@ class QuickstartWizard:
             else:
                 self.console.print(f"[red]✗ 创建 Agent 失败: {msg}[/red]")
 
-        # Create data directories
-        self._create_data_directories(team_config["agents"])
+        # Create shared data directories
+        self._create_data_directories()
 
         # Success message
         self.console.print("\n[green]✓ 配置创建成功！[/green]\n")
@@ -409,25 +401,16 @@ OPENAI_TEMPERATURE={api_config["temperature"]}
 
 # Application Settings
 LOG_LEVEL=INFO
-DATA_DIR=./data
 """
 
         env_path = Path(".env")
         env_path.write_text(env_content)
         self.console.print("[green]✓ 创建 .env[/green]")
 
-    def _create_data_directories(self, agents: list[AgentConfig]) -> None:
-        """Create data directories for agents.
+    def _create_data_directories(self) -> None:
+        """Create shared data directories under ~/.tlon/shared/."""
+        from tlon.base.paths import paths
 
-        Args:
-            agents: List of agents
-        """
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        (self.data_dir / "chat_history").mkdir(exist_ok=True)
-        (self.data_dir / "agents").mkdir(exist_ok=True)
-
-        for agent in agents:
-            agent_dir = self.data_dir / "agents" / agent.id
-            agent_dir.mkdir(parents=True, exist_ok=True)
-
+        paths.chat_history_dir()
+        paths.traces_dir()
         self.console.print("[green]✓ 创建数据目录结构[/green]")

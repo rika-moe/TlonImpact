@@ -23,10 +23,10 @@ class AgentMenu:
 
         Args:
             console: Rich console for output
-            agents_dir: Directory for agent configs (caller should pass explicit path)
+            agents_dir: Tlon home directory (for backward compat; ignored)
         """
         self.console = console
-        self.agent_store = AgentStore(agents_dir) if agents_dir is not None else AgentStore()
+        self.agent_store = AgentStore()
 
         try:
             import questionary

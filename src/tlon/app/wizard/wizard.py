@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from tlon.base.logger import get_logger
-from tlon.base.settings import get_default_config_dir, get_default_data_dir
+from tlon.base.paths import paths
 
 from .menus.agent_menu import AgentMenu
 from .menus.diagnostics_menu import DiagnosticsMenu
@@ -30,30 +30,17 @@ class Wizard:
     - System settings
     """
 
-    def __init__(
-        self,
-        agents_dir: str | None = None,
-        data_dir: str | None = None,
-    ):
-        """Initialize the wizard.
-
-        Args:
-            agents_dir: Directory for agent configs (default: $TLON_HOME/config/agents)
-            data_dir: Directory for agent data (default: $TLON_HOME/data)
-        """
-        cfg = get_default_config_dir()
-        self.agents_dir = Path(agents_dir) if agents_dir is not None else cfg / "agents"
-        self.data_dir = Path(data_dir) if data_dir is not None else get_default_data_dir()
-
+    def __init__(self):
+        """Initialize the wizard."""
+        self.tlon_home = paths.tlon_home()
         self.console = Console()
 
-        agents_dir_str = str(self.agents_dir)
-        data_dir_str = str(self.data_dir)
+        tlon_home_str = str(self.tlon_home)
 
-        self.agent_menu = AgentMenu(self.console, agents_dir_str)
-        self.quickstart = QuickstartWizard(self.console, agents_dir_str, data_dir_str)
-        self.diagnostics_menu = DiagnosticsMenu(self.console, agents_dir_str)
-        self.settings_menu = SettingsMenu(self.console, agents_dir_str, data_dir_str)
+        self.agent_menu = AgentMenu(self.console, tlon_home_str)
+        self.quickstart = QuickstartWizard(self.console, tlon_home_str)
+        self.diagnostics_menu = DiagnosticsMenu(self.console, tlon_home_str)
+        self.settings_menu = SettingsMenu(self.console, tlon_home_str)
 
     def run(self) -> None:
         """Run the main wizard loop."""
@@ -129,8 +116,7 @@ class Wizard:
 
         self.console.print("此操作将删除以下内容:")
         self.console.print("  ✗ .env 文件")
-        self.console.print(f"  ✗ {self.agents_dir}/ 目录 (所有 Agent 配置)")
-        self.console.print(f"  ✗ {self.data_dir}/ 目录 (所有聊天记录和 Agent 记忆)")
+        self.console.print(f"  ✗ {self.tlon_home}/ 目录下所有 Agent 目录和配置文件")
         self.console.print("\n保留的内容:")
         self.console.print("  - 源代码\n")
 
@@ -148,13 +134,12 @@ class Wizard:
             env_path.unlink()
             self.console.print("[green]✓ 删除 .env[/green]")
 
-        if self.agents_dir.exists():
-            shutil.rmtree(self.agents_dir)
-            self.console.print(f"[green]✓ 删除 {self.agents_dir}/[/green]")
-
-        if self.data_dir.exists():
-            shutil.rmtree(self.data_dir)
-            self.console.print(f"[green]✓ 删除 {self.data_dir}/[/green]")
+        for entry in sorted(self.tlon_home.iterdir()):
+            if entry.is_dir():
+                shutil.rmtree(entry)
+                self.console.print(f"[green]✓ 删除 {entry}/[/green]")
+            elif entry.is_file():
+                entry.unlink()
 
         self.console.print("\n[bold]系统已重置为初始状态。[/bold]")
         self.console.print("运行 [dim]tlon wizard[/dim] 重新配置。")

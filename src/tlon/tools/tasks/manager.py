@@ -1,9 +1,10 @@
 """Task Manager for agent personal task management."""
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from tlon.base.settings import get_default_data_dir
+if TYPE_CHECKING:
+    from tlon.base.paths import TlonPaths as _TlonPaths
 
 from .models import Task, TaskStatus
 
@@ -18,21 +19,22 @@ class TaskManager:
     - Persistent storage to JSONL file
     """
 
-    def __init__(self, agent_id: str, data_dir: str | None = None):
+    def __init__(self, agent_id: str, data_dir: str | None = None, paths: "_TlonPaths | None" = None):
         """Initialize TaskManager.
 
         Args:
             agent_id: Unique identifier for the agent
-            data_dir: Base directory for data storage (default: project_root/data)
+            data_dir: Ignored (backward compat)
+            paths: TlonPaths instance (defaults to module singleton)
         """
+        from tlon.base.paths import paths as _paths
+
         self.agent_id = agent_id
-        self.data_dir = Path(data_dir) if data_dir else get_default_data_dir()
+        self._paths = paths or _paths
         self.tasks: dict[str, Task] = {}
         self._counter = 0
 
-        # Ensure storage directory exists
-        self._storage_path = self.data_dir / "agents" / agent_id / "tasks.jsonl"
-        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._storage_path = self._paths.agent_tasks_file(agent_id)
 
     def _generate_id(self) -> str:
         """Generate a new task ID.

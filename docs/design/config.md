@@ -1,7 +1,7 @@
 # 配置系统设计
 
 > 状态: ✅ 已验证
-> 最后验证: 2026-04-19
+> 最后验证: 2026-04-19 | 更新: 2026-06-01 (per-agent 布局)
 
 ---
 
@@ -12,6 +12,7 @@
 3. **分层加载**: 系统配置 → Agent 配置
 4. **环境覆盖**: 敏感信息通过环境变量注入
 5. **验证优先**: 启动时验证配置，拒绝无效配置
+6. **Per-agent 布局**: 一个 agent = 一个目录，隔离存储，备份/迁移友好
 
 ---
 
@@ -23,8 +24,49 @@ system (.env) → agent (yaml)
 
 | 层级 | 位置 | 内容 |
 |------|------|------|
-| 系统 | `.env` | API Key、日志级别、数据目录 |
-| Agent | `config/agents/*.yaml` | identity、profile、behavior、LLM 参数、Docker 配置 |
+| 系统 | `.env` | API Key、日志级别 |
+| Agent | `~/.tlon/{id}/config/agent.yaml` | identity、profile、behavior、LLM 参数、Docker 配置 |
+
+---
+
+## 文件系统布局
+
+```
+~/.tlon/
+├── shared/
+│   ├── chat_history/
+│   │   └── messages.jsonl
+│   └── traces/
+│       └── trace-{uuid}.jsonl
+├── {agent_id}/
+│   ├── config/
+│   │   └── agent.yaml
+│   ├── memory/
+│   │   ├── config.json
+│   │   ├── working/
+│   │   │   └── interactions.jsonl
+│   │   └── episodic/
+│   │       ├── summaries.jsonl
+│   │       └── facts.jsonl
+│   ├── tasks.jsonl
+│   └── workspace/          ← Docker volume mount → /workspace/
+└── ...
+```
+
+| 目录 | 用途 | 访问者 |
+|------|------|--------|
+| `shared/` | 跨 agent 共享数据（聊天记录、trace） | MessageStore, TraceStore |
+| `{id}/config/` | Agent YAML 配置 | ConfigService, Wizard |
+| `{id}/memory/` | 双层记忆 (working + episodic) | MemoryManager (host 独占) |
+| `{id}/tasks.jsonl` | 任务持久化 | TaskManager (host 独占) |
+| `{id}/workspace/` | Agent 工具读写的工作区 | Docker 容器内 Agent (唯一挂载的目录) |
+
+**路径集中管理**: 所有路径通过 `tlon.base.paths.TlonPaths` 解析，其他模块零硬编码字符串。测试使用 `TlonPaths(home=tmpdir)` 隔离。
+
+```python
+from tlon.base.paths import paths
+paths.agent_config_file("dev-001")  # ~/.tlon/dev-001/config/agent.yaml
+```
 
 ---
 
@@ -71,3 +113,6 @@ agent:
 - [x] `RoleConfig` 已移除，role 信息合并入 narrative 文本
 - [x] YAML 格式有效
 - [x] 环境变量可覆盖
+- [x] Per-agent 目录布局已实施
+- [x] TlonPaths 集中路径解析已实施
+- [x] 测试隔离不污染 ~/.tlon/

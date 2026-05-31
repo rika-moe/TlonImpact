@@ -8,6 +8,7 @@ from typing import Any
 import aiofiles
 
 from tlon.base.logger import get_logger
+from tlon.base.paths import paths
 
 from .base import MemoryStore
 
@@ -44,13 +45,12 @@ class EpisodicMemoryStore(MemoryStore):
 
         Args:
             agent_id: The agent ID
-            storage_path: Directory for storage
+            storage_path: Ignored (for backward compat). Uses TlonPaths internally.
             max_summaries: Maximum summaries to keep (default: 20)
             max_facts: Maximum facts to keep (default: 50)
         """
         super().__init__(agent_id)
-        self.storage_path = storage_path
-        self.episodic_dir = storage_path / "episodic"
+        self.episodic_dir = paths.memory_episodic_dir(agent_id)
         self.summaries_file = self.episodic_dir / "summaries.jsonl"
         self.facts_file = self.episodic_dir / "facts.jsonl"
         self.max_summaries = max_summaries

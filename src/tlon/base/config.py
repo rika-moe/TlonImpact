@@ -14,7 +14,8 @@ from tlon.base.device import Device
 from tlon.base.events.event import EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.settings import get_default_config_dir, get_default_data_dir
+from tlon.base.paths import TlonPaths, paths
+from tlon.base.settings import get_agent_home, get_tlon_home
 
 logger = get_logger(__name__)
 
@@ -41,11 +42,6 @@ class AgentInfoProvider(ABC):
     def is_proactive(self, agent_id: str) -> bool:
         """Check if an agent is proactive."""
         pass
-
-
-# =============================================================================
-# Prompt Template Models
-# =============================================================================
 
 
 # =============================================================================
@@ -135,18 +131,12 @@ class AgentConfig(BaseModel):
 
     def get_data_dir(self, base_dir: Path) -> Path:
         """Get the data directory for this agent."""
-        agent_dir = base_dir / "agents" / self.id
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        return agent_dir
+        return get_agent_home(self.id)
 
 
 # =============================================================================
 # Standalone YAML CRUD operations (shared by ConfigService and Wizard)
 # =============================================================================
-
-
-def _yaml_ensure_dir(agents_dir: Path) -> None:
-    agents_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _yaml_load_file(filepath: Path) -> AgentConfig | None:
@@ -160,47 +150,60 @@ def _yaml_load_file(filepath: Path) -> AgentConfig | None:
         return None
 
 
-def _yaml_load_all(agents_dir: Path) -> dict[str, AgentConfig]:
-    """Load all agents from YAML files in directory."""
+def _yaml_load_all(tlon_home: Path | None = None) -> dict[str, AgentConfig]:
+    """Load all agents by scanning ~/.tlon/*/config/agent.yaml.
+
+    Skips the 'shared' directory and non-directory entries.
+    """
+    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    home = p.tlon_home()
     agents: dict[str, AgentConfig] = {}
-    if not agents_dir.exists():
+    if not home.exists():
         return agents
-    for yaml_file in agents_dir.glob("*.yaml"):
-        agent = _yaml_load_file(yaml_file)
-        if agent:
-            agents[agent.id] = agent
+    for agent_dir in sorted(home.iterdir()):
+        if not agent_dir.is_dir() or agent_dir.name == "shared":
+            continue
+        yaml_file = p.agent_config_file(agent_dir.name)
+        if yaml_file.exists():
+            agent = _yaml_load_file(yaml_file)
+            if agent:
+                agents[agent.id] = agent
     return agents
 
 
-def _yaml_save(agent: AgentConfig, agents_dir: Path, data_dir: Path | None = None) -> None:
-    """Save an agent to a YAML file."""
-    _yaml_ensure_dir(agents_dir)
+def _yaml_save(agent: AgentConfig, tlon_home: Path | None = None) -> None:
+    """Save an agent to its per-agent config directory.
+
+    Writes ~/.tlon/{agent.id}/config/agent.yaml and ensures
+    standard subdirectories (workspace, memory) exist.
+    """
+    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    yaml_file = p.agent_config_file(agent.id)
+    yaml_file.parent.mkdir(parents=True, exist_ok=True)
     data = {"agent": agent.model_dump(exclude_none=True)}
-    filepath = agents_dir / f"{agent.id}.yaml"
-    filepath.write_text(
+    yaml_file.write_text(
         yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2),
         encoding="utf-8",
     )
-    if data_dir:
-        agent.get_data_dir(data_dir)
+    p.agent_workspace_dir(agent.id)
+    p.agent_memory_dir(agent.id)
 
 
-def _yaml_delete(agent_id: str, agents_dir: Path, data_dir: Path | None = None) -> None:
-    """Delete an agent YAML file and optionally its data directory."""
-    filepath = agents_dir / f"{agent_id}.yaml"
-    if not filepath.exists():
+def _yaml_delete(agent_id: str, tlon_home: Path | None = None) -> None:
+    """Delete an agent entirely — removes ~/.tlon/{agent_id}/ directory."""
+    import shutil
+
+    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    agent_home = p.agent_dir(agent_id)
+    if not agent_home.exists():
         raise ValueError(f"Agent '{agent_id}' not found")
-    filepath.unlink()
-    if data_dir:
-        import shutil
-        agent_data_dir = data_dir / "agents" / agent_id
-        if agent_data_dir.exists():
-            shutil.rmtree(agent_data_dir)
+    shutil.rmtree(agent_home)
 
 
-def _yaml_exists(agent_id: str, agents_dir: Path) -> bool:
-    """Check if an agent YAML file exists."""
-    return (agents_dir / f"{agent_id}.yaml").exists()
+def _yaml_exists(agent_id: str, tlon_home: Path | None = None) -> bool:
+    """Check if an agent config exists at ~/.tlon/{agent_id}/config/agent.yaml."""
+    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    return p.agent_config_file(agent_id).exists()
 
 
 # =============================================================================
@@ -212,7 +215,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
     """Unified configuration service with loading, caching, and EventBus notifications.
 
     Responsibilities:
-    - Load configuration from YAML files
+    - Load configuration from per-agent YAML files (~/.tlon/{id}/config/agent.yaml)
     - Maintain cached configuration state
     - Notify subscribers of configuration changes via EventBus
     - Save configuration changes to files
@@ -221,14 +224,11 @@ class ConfigService(Component, Device, AgentInfoProvider):
     def __init__(
         self,
         event_bus: EventBus,
-        config_dir: Path | None = None,
-        data_dir: Path | None = None,
+        tlon_home: Path | None = None,
     ):
         super().__init__(name="ConfigService")
         self._event_bus = event_bus
-        self._config_dir = config_dir or get_default_config_dir()
-        self._agents_dir = self._config_dir / "agents"
-        self._data_dir = data_dir or get_default_data_dir()
+        self._tlon_home = tlon_home or get_tlon_home()
         self._agents: dict[str, AgentConfig] = {}
         logger.info("ConfigService constructed")
 
@@ -246,18 +246,8 @@ class ConfigService(Component, Device, AgentInfoProvider):
         logger.info("ConfigService shutdown")
 
     def _load_all_agents(self) -> None:
-        """Load all agents from YAML files."""
-        self._agents = {}
-        if not self._agents_dir.exists():
-            return
-
-        for yaml_file in self._agents_dir.glob("*.yaml"):
-            try:
-                agent = self._load_agent_file(yaml_file)
-                if agent:
-                    self._agents[agent.id] = agent
-            except Exception as e:
-                logger.warning(f"Failed to load agent from {yaml_file}: {e}")
+        """Load all agents by scanning ~/.tlon/*/config/agent.yaml."""
+        self._agents = _yaml_load_all(self._tlon_home)
 
     def _load_agent_file(self, filepath: Path) -> AgentConfig | None:
         """Load a single agent from YAML file."""
@@ -300,7 +290,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
 
     async def reload_agent(self, agent_id: str) -> bool:
         """Reload a specific agent from file and emit update event."""
-        filepath = self._agents_dir / f"{agent_id}.yaml"
+        filepath = paths.agent_config_file(agent_id)
         if not filepath.exists():
             return False
 
@@ -321,15 +311,24 @@ class ConfigService(Component, Device, AgentInfoProvider):
     def save_agent(self, agent: AgentConfig, create_data_dir: bool = True) -> None:
         """Save an agent to YAML file.
 
-        Writes to file, then updates memory cache.
+        Writes to ~/.tlon/{agent.id}/config/agent.yaml, then updates memory cache.
         """
-        _yaml_save(agent, self._agents_dir, self._data_dir if create_data_dir else None)
+        _yaml_save(agent, self._tlon_home)
         self._agents[agent.id] = agent
         logger.info(f"Agent saved: {agent.id}")
 
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> None:
-        """Delete an agent."""
-        _yaml_delete(agent_id, self._agents_dir, self._data_dir if delete_data else None)
+        """Delete an agent.
+
+        If delete_data is True, removes the entire ~/.tlon/{agent_id}/ directory.
+        If False, only removes the config YAML file.
+        """
+        if delete_data:
+            _yaml_delete(agent_id, self._tlon_home)
+        else:
+            yaml_file = paths.agent_config_file(agent_id)
+            if yaml_file.exists():
+                yaml_file.unlink()
         self._agents.pop(agent_id, None)
         logger.info(f"Agent deleted: {agent_id}")
 
