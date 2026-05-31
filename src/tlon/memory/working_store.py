@@ -1,5 +1,6 @@
 """Working Memory store implementation using JSONL files."""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,7 @@ class WorkingMemoryStore(MemoryStore):
         self.max_items = max_items
         self._cache: list[dict[str, Any]] = []
         self._loaded = False
+        self._lock = asyncio.Lock()
 
     async def _ensure_dir(self) -> None:
         """Ensure storage directory exists."""
@@ -132,146 +134,126 @@ class WorkingMemoryStore(MemoryStore):
         if not self._loaded:
             await self.load()
 
+        async with self._lock:
+            return await self._add_locked(item)
+
+    async def _add_locked(self, item: dict[str, Any]) -> str:
         item_id = item.get("id")
         if not item_id:
             raise ValueError("Interaction must have an 'id' field")
 
-        # Add to cache
         self._cache.append(item)
 
-        # Trim if exceeds max
         if len(self._cache) > self.max_items:
             removed = self._cache[: -self.max_items]
             self._cache = self._cache[-self.max_items :]
             logger.debug(f"Trimmed {len(removed)} old interactions from working memory")
 
-        # Append to file (more efficient than rewriting)
         await self._ensure_dir()
         try:
             async with aiofiles.open(self.interactions_file, "a", encoding="utf-8") as f:
                 await f.write(json.dumps(item, ensure_ascii=False, cls=_ToolCallEncoder) + "\n")
         except Exception as e:
             logger.error(f"Error appending interaction: {e}")
-            # Try full persist as fallback
             await self._persist()
 
         return item_id
 
     async def get(self, item_id: str) -> dict[str, Any] | None:
-        """Get an interaction by ID.
-
-        Args:
-            item_id: The interaction ID
-
-        Returns:
-            The interaction if found, None otherwise
-        """
+        """Get an interaction by ID."""
         if not self._loaded:
             await self.load()
 
-        for item in self._cache:
-            if item.get("id") == item_id:
-                return item
-        return None
+        async with self._lock:
+            for item in self._cache:
+                if item.get("id") == item_id:
+                    return item
+            return None
 
     async def get_recent(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent interactions.
-
-        Args:
-            limit: Maximum number to return
-
-        Returns:
-            List of interactions, newest first
-        """
+        """Get recent interactions, newest first."""
         if not self._loaded:
             await self.load()
 
-        return self._cache[-limit:] if limit < len(self._cache) else self._cache.copy()
+        async with self._lock:
+            return self._cache[-limit:] if limit < len(self._cache) else self._cache.copy()
 
     async def get_all(self) -> list[dict[str, Any]]:
-        """Get all interactions in working memory.
-
-        Returns:
-            All interactions, in chronological order
-        """
+        """Get all interactions in working memory."""
         if not self._loaded:
             await self.load()
 
-        return self._cache.copy()
+        async with self._lock:
+            return self._cache.copy()
 
     async def delete(self, item_id: str) -> bool:
-        """Delete an interaction by ID.
-
-        Args:
-            item_id: The interaction ID
-
-        Returns:
-            True if deleted, False if not found
-        """
+        """Delete an interaction by ID."""
         if not self._loaded:
             await self.load()
 
-        for i, item in enumerate(self._cache):
-            if item.get("id") == item_id:
-                self._cache.pop(i)
-                await self._persist()
-                return True
-        return False
+        async with self._lock:
+            for i, item in enumerate(self._cache):
+                if item.get("id") == item_id:
+                    self._cache.pop(i)
+                    await self._persist()
+                    return True
+            return False
 
     async def clear(self) -> None:
         """Clear all interactions."""
+        async with self._lock:
+            self._cache = []
+            if self.interactions_file.exists():
+                try:
+                    self.interactions_file.unlink()
+                except Exception as e:
+                    logger.error(f"Error clearing working memory file: {e}")
+
+    async def count(self) -> int:
+        """Get count of interactions."""
+        if not self._loaded:
+            await self.load()
+        async with self._lock:
+            return len(self._cache)
+
+    async def is_full(self) -> bool:
+        """Check if working memory is at capacity."""
+        count = await self.count()
+        return count >= self.max_items
+
+    async def get_oldest(self, n: int = 1) -> list[dict[str, Any]]:
+        """Get the oldest N interactions."""
+        if not self._loaded:
+            await self.load()
+        async with self._lock:
+            return self._cache[:n] if n <= len(self._cache) else self._cache.copy()
+
+    async def remove_by_ids(self, ids: set[str]) -> int:
+        """Remove interactions by ID set atomically. Returns count removed."""
+        async with self._lock:
+            before = len(self._cache)
+            self._cache = [i for i in self._cache if i.get("id") not in ids]
+            removed = before - len(self._cache)
+            if removed:
+                await self._persist()
+            return removed
+
+    async def archive_and_clear(self) -> list[dict[str, Any]]:
+        """Archive all interactions and clear working memory."""
+        if not self._loaded:
+            await self.load()
+
+        async with self._lock:
+            archived = self._cache.copy()
+            await self._clear_locked()
+            logger.info(f"Archived {len(archived)} interactions from working memory")
+            return archived
+
+    async def _clear_locked(self) -> None:
+        """Clear without acquiring lock (caller holds lock)."""
         self._cache = []
         if self.interactions_file.exists():
             try:
                 self.interactions_file.unlink()
             except Exception as e:
                 logger.error(f"Error clearing working memory file: {e}")
-
-    async def count(self) -> int:
-        """Get count of interactions."""
-        if not self._loaded:
-            await self.load()
-
-        return len(self._cache)
-
-    async def is_full(self) -> bool:
-        """Check if working memory is at capacity.
-
-        Returns:
-            True if count >= max_items
-        """
-        count = await self.count()
-        return count >= self.max_items
-
-    async def get_oldest(self, n: int = 1) -> list[dict[str, Any]]:
-        """Get the oldest N interactions.
-
-        Useful for summarization - get items to be archived.
-
-        Args:
-            n: Number of items to get
-
-        Returns:
-            Oldest interactions
-        """
-        if not self._loaded:
-            await self.load()
-
-        return self._cache[:n] if n <= len(self._cache) else self._cache.copy()
-
-    async def archive_and_clear(self) -> list[dict[str, Any]]:
-        """Archive all interactions and clear working memory.
-
-        Called after generating a summary. Returns the archived
-        interactions for reference.
-
-        Returns:
-            The archived interactions
-        """
-        if not self._loaded:
-            await self.load()
-
-        archived = self._cache.copy()
-        await self.clear()
-        logger.info(f"Archived {len(archived)} interactions from working memory")
-        return archived

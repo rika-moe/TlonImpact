@@ -82,7 +82,7 @@ class LLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
-        timeout: float = 60.0,
+        timeout: float | None = None,
     ) -> LLMResponse:
         """Send a chat completion request with retry logic.
 
@@ -111,7 +111,7 @@ class LLMClient:
             "model": self.config.model_name,
             "messages": all_messages,
             "temperature": temperature if temperature is not None else self.config.temperature,
-            "timeout": timeout,
+            "timeout": timeout if timeout is not None else self.config.request_timeout,
         }
 
         if tools:

@@ -66,6 +66,7 @@ class LLMConfig(BaseModel):
     auth_token: str = Field(default="", exclude=True)
     max_retries: int = Field(default=3, exclude=True)
     base_delay: float = Field(default=1.0, exclude=True)
+    request_timeout: float = Field(default=300.0, exclude=True)
 
     @field_validator("temperature")
     @classmethod

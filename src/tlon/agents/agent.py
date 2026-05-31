@@ -374,6 +374,9 @@ class Agent(Component, Device):
                 "content": None,
                 "tool_calls": [self._tool_call_to_dict(tc)],
             }
+            llm_resp = session.last_llm_response
+            if llm_resp and llm_resp.reasoning_content:
+                assistant_msg["reasoning_content"] = llm_resp.reasoning_content
             session.context.append(assistant_msg)
             session.context.append({
                 "role": "tool",
@@ -448,7 +451,10 @@ class Agent(Component, Device):
     ) -> None:
         """Add reminder when LLM returns no tool calls."""
         if response.content:
-            context.append({"role": "assistant", "content": response.content})
+            msg = {"role": "assistant", "content": response.content}
+            if response.reasoning_content:
+                msg["reasoning_content"] = response.reasoning_content
+            context.append(msg)
             context.append(
                 {
                     "role": "user",

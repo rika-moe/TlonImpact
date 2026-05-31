@@ -452,9 +452,9 @@ class MemoryManager:
     async def generate_summary(self, force: bool = False) -> str | None:
         """Generate a session summary from working memory.
 
-        Takes all interactions from working memory, uses LLM to generate
-        a natural language summary, extracts key facts, stores them in
-        episodic memory, and clears working memory.
+        Uses snapshot + delta-clear: snapshots working memory before the
+        LLM call, and only removes snapshot items after. Items added to
+        working memory during the LLM call are preserved.
 
         Args:
             force: If True, generate summary even if not enough interactions
@@ -465,32 +465,29 @@ class MemoryManager:
         if not self._loaded:
             await self.load()
 
-        # Get all working memory interactions
+        # ── 1. Snapshot working memory (atomically, inside store lock) ──
         interactions = await self.working.get_all()
         if not interactions:
             logger.debug("No interactions to summarize")
             return None
 
-        # Check if we have enough interactions (unless forced)
         if not force and len(interactions) < self.config.working_summary_window:
             logger.debug(
-                f"Not enough interactions to summarize ({len(interactions)} < {self.config.working_summary_window})"
+                f"Not enough interactions to summarize "
+                f"({len(interactions)} < {self.config.working_summary_window})"
             )
             return None
 
-        # Get source interaction IDs
-        source_ids = [i.get("id") for i in interactions]
+        snapshot_ids = {i["id"] for i in interactions}
+        source_ids = list(snapshot_ids)
         count = len(interactions)
+        logger.info(f"Generating summary from {count} interactions (snapshot mode)...")
 
-        logger.info(f"Generating summary from {count} interactions...")
-
-        # Use LLM to generate summary and extract facts
+        # ── 2. LLM call (no locks held, can run long) ──
+        summary_id: str | None = None
         if self.summarizer:
             try:
-                # Get existing facts to avoid duplicates
                 existing_facts = await self.episodic.get_recent_facts(20)
-
-                # Generate summary and extract facts
                 summary_dict, facts = await self.summarizer.process_interactions(
                     interactions=interactions,
                     session_id=self._session_id or "unknown",
@@ -498,17 +495,15 @@ class MemoryManager:
                 )
 
                 if summary_dict:
-                    # Add metadata
-                    summary_dict["id"] = Summary(timestamp="", session_id="", summary_text="").id
+                    summary_dict["id"] = Summary(
+                        timestamp="", session_id="", summary_text=""
+                    ).id
                     summary_dict["source_interactions"] = source_ids
-
-                    # Create and store summary
                     summary = Summary.from_dict(summary_dict)
                     summary_id = await self.episodic.add_summary(summary.to_dict())
 
-                    # Store extracted facts
                     for fact_data in facts:
-                        fact = Fact(
+                        fact_obj = Fact(
                             timestamp=datetime.now().isoformat(),
                             session_id=self._session_id or "unknown",
                             fact_type=FactType(fact_data.get("fact_type", "GENERAL")),
@@ -518,23 +513,25 @@ class MemoryManager:
                             description=fact_data.get("description", ""),
                             confidence=fact_data.get("confidence", 0.5),
                         )
-                        await self.episodic.add_fact(fact.to_dict())
+                        await self.episodic.add_fact(fact_obj.to_dict())
 
-                    logger.info(f"Generated summary {summary_id} and extracted {len(facts)} facts")
+                    logger.info(
+                        f"Generated summary {summary_id} and extracted {len(facts)} facts"
+                    )
                 else:
-                    # Fallback to simple summary
                     summary_id = await self._generate_simple_summary(interactions, source_ids)
 
             except Exception as e:
                 logger.error(f"Error during LLM summarization: {e}")
-                # Fallback to simple summary
                 summary_id = await self._generate_simple_summary(interactions, source_ids)
         else:
-            # No summarizer configured, use simple summary
             summary_id = await self._generate_simple_summary(interactions, source_ids)
 
-        # Clear working memory
-        await self.working.archive_and_clear()
+        # ── 3. Delta-clear: only remove snapshot items ──
+        removed = await self.working.remove_by_ids(snapshot_ids)
+        logger.info(
+            f"Delta-cleared {removed}/{count} interactions from working memory"
+        )
 
         return summary_id
 
