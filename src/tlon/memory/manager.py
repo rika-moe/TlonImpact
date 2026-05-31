@@ -721,6 +721,36 @@ class MemoryManager:
 
         return f"已删除 {deleted_count} 条记忆。"
 
+    async def get_memory_digest(self) -> dict[str, Any]:
+        """Get a digest of current memory state for reflection/audit.
+
+        Returns a dict with summaries, facts, and working memory count
+        for the reflection sub-agent to analyze.
+
+        Returns:
+            Dict with keys: working_count, summary_count, fact_count,
+            summaries, facts, last_interaction_time
+        """
+        if not self._loaded:
+            await self.load()
+
+        summaries = await self.episodic.get_recent_summaries(20)
+        facts = await self.episodic.get_recent_facts(50)
+        working_count = await self.working.count()
+
+        return {
+            "working_count": working_count,
+            "summary_count": len(summaries),
+            "fact_count": len(facts),
+            "summaries": summaries,
+            "facts": facts,
+            "last_interaction_time": (
+                self._last_interaction_time.isoformat()
+                if self._last_interaction_time
+                else None
+            ),
+        }
+
     # ===== User Command Operations =====
 
     async def get_history_text(self, limit: int = 20) -> str:

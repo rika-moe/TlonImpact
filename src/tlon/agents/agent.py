@@ -7,6 +7,7 @@ execute tools, and respond.
 import asyncio
 import contextlib
 import json
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -57,6 +58,27 @@ class Agent(Component, Device):
         >>> # Agent will now respond to messages via EventBus
     """
 
+    _REFLECTION_SYSTEM_PROMPT = (
+        "你是一个记忆梳理助手。你的任务是审视一个 Agent 的持久记忆，"
+        "发现冗余、矛盾、过时或遗漏的信息，并决定需要执行的操作。\n\n"
+        "可用的操作类型：\n"
+        '- record_fact: 记录从对话中推断出的新事实。需要提供 description（自然语言描述）、'
+        "fact_type（USER_PREFERENCE/PROJECT_STATE/TECH_STACK/DECISION/GENERAL）、"
+        "subject、predicate、object、confidence（0.0-1.0）。\n"
+        "- delete_fact: 删除过时、冗余或矛盾的事实。需要提供 fact_id 或 description 用于匹配。\n"
+        "- consolidate: 如果工作记忆中有未处理的交互，请求触发摘要生成。\n"
+        "- noop: 当前记忆状态良好，无需操作。\n\n"
+        "原则：\n"
+        "1. 只记录明确、重要的信息，不要推测\n"
+        "2. 发现两个事实描述相同内容时，只保留更完整的一个\n"
+        "3. 发现事实互相矛盾时，删除置信度更低的一个\n"
+        "4. 如果工作记忆中有 >= 5 条交互且没有近期摘要，建议 consolidate\n"
+        "5. 多数情况下不需要操作，noop 是正常的\n\n"
+        "请用 JSON 格式返回：\n"
+        '{"analysis": "对当前记忆状态的简要分析", '
+        '"operations": [{"action": "...", ...}]}'
+    )
+
     def __init__(
         self,
         config: AgentConfig,
@@ -102,6 +124,18 @@ class Agent(Component, Device):
 
         # Prompt cache — system prompt is fully static
         self._system_prompt_cache: str | None = None
+
+        # Reflection state (agent self-driven memory audit)
+        self._reflection_enabled = getattr(memory.config, "reflection_enabled", True)
+        self._reflection_interval = (
+            getattr(memory.config, "reflection_interval_minutes", 15) * 60
+        )
+        self._reflection_min_interactions = getattr(
+            memory.config, "reflection_min_interactions", 5
+        )
+        self._last_reflection_time: datetime | None = None
+        self._interaction_count_since_reflection = 0
+        self._reflection_running = False
 
         # Agent state
         self.state: AgentState | None = None
@@ -175,6 +209,7 @@ class Agent(Component, Device):
         """Agent's continuous main loop with multi-session scheduling.
 
         Cycles through all active sessions each pass:
+        0. Check idle timeout + reflection trigger (proactive, no message needed)
         1. New messages -> create/resume sessions
         2. ACTIVE sessions -> one think+dispatch step
         3. WAITING sessions -> collect completed background tools
@@ -185,6 +220,10 @@ class Agent(Component, Device):
         session_messages: dict[str, Message] = {}
 
         while self._worker_running:
+            # ── 0. Proactive memory triggers (no message required) ──
+            await self.memory.check_idle_timeout()
+            await self._check_reflection_trigger()
+
             # ── 1. New messages ──
             try:
                 msg = self._message_queue.get_nowait()
@@ -262,7 +301,6 @@ class Agent(Component, Device):
 
         # Build context on first call (after LLM error: skip rebuild)
         if not session.context:
-            await self.memory.check_idle_timeout()
             context = await self._build_context(message)
             session.context = context
             logger.debug(f"Session {session.id}: context built with {len(context)} messages")
@@ -647,6 +685,7 @@ class Agent(Component, Device):
                 content=final_response,
             )
             await self.memory.add_interaction(msg, llm_response, tool_results)
+            self._interaction_count_since_reflection += 1
         except Exception as e:
             logger.error(f"Failed to save to memory: {e}")
 
@@ -667,6 +706,165 @@ class Agent(Component, Device):
             )
         except Exception:
             logger.error("Failed to emit MESSAGE_NEW event", exc_info=True)
+
+    async def _check_reflection_trigger(self) -> None:
+        """Check if memory reflection should run and trigger if needed."""
+        if not self._reflection_enabled:
+            return
+        if self._reflection_running:
+            return
+
+        now = datetime.now()
+        if self._last_reflection_time:
+            elapsed = (now - self._last_reflection_time).total_seconds()
+            if elapsed < self._reflection_interval:
+                return
+
+        if self._interaction_count_since_reflection < self._reflection_min_interactions:
+            return
+
+        self._last_reflection_time = now
+        self._interaction_count_since_reflection = 0
+        self._reflection_running = True
+        asyncio.create_task(self._run_reflection())
+
+    async def _run_reflection(self) -> None:
+        """Run a background memory reflection/audit.
+
+        Takes a snapshot of memory state, asks LLM to analyze it, and applies
+        the resulting operations (add/delete facts, trigger consolidation).
+        Runs in a background task to avoid blocking the main loop.
+        """
+        try:
+            digest = await self.memory.get_memory_digest()
+
+            if digest["working_count"] == 0 and digest["summary_count"] == 0 and digest["fact_count"] == 0:
+                logger.debug(f"{self.name}: no memory to reflect on")
+                return
+
+            prompt = self._build_reflection_prompt(digest)
+            response = await self.llm_client.chat(
+                system_prompt=self._REFLECTION_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                timeout=60.0,
+            )
+
+            if not response.content:
+                return
+
+            operations = self._parse_reflection_response(response.content)
+            await self._apply_reflection_operations(operations)
+
+            logger.info(
+                f"{self.name}: reflection completed, "
+                f"{len(operations)} operations applied"
+            )
+        except Exception as e:
+            logger.warning(f"{self.name}: reflection failed: {e}")
+        finally:
+            self._reflection_running = False
+
+    def _build_reflection_prompt(self, digest: dict[str, Any]) -> str:
+        """Build the reflection prompt from memory digest."""
+        parts = ["## 当前记忆状态\n"]
+
+        parts.append(f"工作记忆交互数：{digest['working_count']}")
+        parts.append(f"会话摘要数：{digest['summary_count']}")
+        parts.append(f"已知事实数：{digest['fact_count']}")
+        if digest["last_interaction_time"]:
+            parts.append(f"最后交互时间：{digest['last_interaction_time'][:19]}")
+        parts.append("")
+
+        if digest["summaries"]:
+            parts.append("### 会话摘要")
+            for s in digest["summaries"][-10:]:
+                text = s.get("summary_text", "")[:200]
+                ts = s.get("timestamp", "")[:19]
+                parts.append(f"- [{ts}] {text}")
+            parts.append("")
+
+        if digest["facts"]:
+            parts.append("### 已知事实")
+            for f in digest["facts"]:
+                fid = f.get("id", "")[:8]
+                desc = f.get("description", "")
+                if not desc:
+                    desc = (
+                        f"{f.get('subject', '')} {f.get('predicate', '')} "
+                        f"{f.get('object', '')}"
+                    )
+                ftype = f.get("fact_type", "GENERAL")
+                conf = f.get("confidence", 0.5)
+                parts.append(f"- [{fid}] [{ftype}] {desc} (置信度:{conf:.1f})")
+            parts.append("")
+
+        parts.append("### 工作记忆概览")
+        if digest["working_count"] > 0:
+            parts.append(f"有 {digest['working_count']} 条交互待处理")
+        else:
+            parts.append("工作记忆为空")
+
+        parts.append("")
+        parts.append("请分析以上记忆状态，返回需要执行的 JSON 操作列表。")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _parse_reflection_response(content: str) -> list[dict[str, Any]]:
+        """Parse LLM reflection response into operations list."""
+        import json as json_mod
+
+        content = content.strip()
+        if "```json" in content:
+            start = content.find("```json") + 7
+            end = content.find("```", start)
+            if end > start:
+                content = content[start:end].strip()
+        elif "```" in content:
+            start = content.find("```") + 3
+            end = content.find("```", start)
+            if end > start:
+                content = content[start:end].strip()
+
+        try:
+            result = json_mod.loads(content)
+            return result.get("operations", [])
+        except json_mod.JSONDecodeError:
+            logger.warning(f"Failed to parse reflection JSON: {content[:200]}")
+            return []
+
+    async def _apply_reflection_operations(
+        self, operations: list[dict[str, Any]]
+    ) -> None:
+        """Apply reflection operations to memory."""
+        for op in operations:
+            action = op.get("action", "")
+            try:
+                if action == "record_fact":
+                    await self.memory.remember_fact(
+                        fact=op.get("description", ""),
+                        fact_type=op.get("fact_type", "GENERAL"),
+                        subject=op.get("subject", "用户"),
+                        predicate=op.get("predicate", "提到"),
+                        object=op.get("object", ""),
+                        importance=float(op.get("confidence", 0.5)),
+                    )
+                    logger.debug(f"Reflection: recorded fact: {op.get('description', '')[:50]}")
+                elif action == "delete_fact":
+                    query = op.get("description") or op.get("fact_id", "")
+                    if query:
+                        await self.memory.forget(query=query, confirm=True)
+                        logger.debug(f"Reflection: deleted fact matching: {query[:50]}")
+                elif action == "consolidate":
+                    await self.memory.generate_summary(force=True)
+                    logger.debug("Reflection: triggered consolidation summary")
+                elif action == "noop":
+                    pass
+                else:
+                    logger.debug(f"Reflection: unknown action: {action}")
+            except Exception as e:
+                logger.warning(f"Reflection: failed to apply {action}: {e}")
 
     @staticmethod
     def _tool_call_to_dict(tool_call: ToolCall) -> dict[str, Any]:
