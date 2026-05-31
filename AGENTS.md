@@ -52,7 +52,7 @@ uv run pytest
 | 用户指南 | [user/README.md](./docs/user/README.md) | - |
 | 架构边界 | - | [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
 | 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
-| Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md) | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
+| Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md), [async-agent-loop.md](./docs/design/async-agent-loop.md) | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/dream.md](./docs/architecture/dream.md) |
 | 消息系统 | [design/messaging.md](./docs/design/messaging.md) | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
 | **TUI 设计** | **[Congress](./docs/design/tui-congres.md)** · **[Operator](./docs/design/tui-operator.md)** 🆕 | - |
@@ -65,17 +65,18 @@ uv run pytest
 | 领域 | 状态 | 评分 | 备注 |
 |------|------|------|------|
 | 配置系统 | ✅ 已验证 | 100/100 | 稳定 |
-| Agent 系统 | ✅ 已验证 | 100/100 | 直接调用，-58% 代码 |
+| Agent 系统 | ✅ 已验证 | 95/100 | 异步多 Session、步进调度 |
 | 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
 | 消息系统 | ✅ 已验证 | 100/100 | 稳定 |
 | Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | TUI (Congress) | ⚠️ 待验证 | 65/100 | 基础功能可用 |
 | TUI (Operator) | ⚠️ 待验证 | 80/100 | 基础功能可用 |
-| Sandbox | ✅ 已验证 | 100/100 | 稳定 |
+| Sandbox | ✅ 已验证 | 95/100 | 共享 DockerRuntime, macOS 支持 |
 
 -- 
 ## 开发规范
+- **禁止直接推送 main 分支** — 所有修改必须通过分支 + PR
 - 合理划分模块，高内聚，低耦合
 - 排查bug要深挖根因，纵览全局，防止后续出现相同bug
 - **必须使用 type hint 类型注解**

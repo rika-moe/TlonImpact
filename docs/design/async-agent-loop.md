@@ -1,7 +1,24 @@
 # Agent 异步协作设计
 
-> 主循环 + Session 步进调度
-> 目标：Agent 可同时处理多个任务，工具调用不阻塞，消息收发不影响
+> 状态: ✅ 已验证
+> 最后验证: 2026-05-31
+
+## 核心理念
+
+1. **Session 状态机**：每个对话是一个独立的 ACTIVE → WAITING → COMPLETED 状态机
+2. **步进调度**：主循环每轮推进每个 Session 至多一步，不阻塞在工具等待上
+3. **工具后台执行**：工具调用通过 `asyncio.create_task` 派发，Agent 在此期间可处理其他 Session
+4. **冲突检测**：`sendMessage(is_complete=true)` 不得与其他工具同时调用
+5. **异常安全**：所有工具异常转换为 `ToolResult(success=False)`，不传播到主循环
+
+## 文档索引
+
+| 文档 | 目的 | 深度 |
+|------|------|------|
+| [agents.md](./agents.md) | Agent 系统总体设计 | L2 |
+| [memory.md](./memory.md) | 记忆系统 | L1 |
+| [../architecture/dream.md](../architecture/dream.md) | dream 进程架构 | L2 |
+| [../architecture/domains/agents.md](../architecture/domains/agents.md) | Agent 层架构详细 | L3 |
 
 ---
 
@@ -243,3 +260,13 @@ Agent: think → executeBashCommand("npm install", background=True)
 ---
 
 *最后更新: 2026-05-31*
+
+## 验证清单
+
+- [x] AgentSession 状态机实现与文档一致（`session.py`）
+- [x] `_main_loop` 正确调度 ACTIVE/WAITING/COMPLETED 状态
+- [x] `_step_session` 单步执行（think + dispatch），不阻塞等待工具
+- [x] `_collect_session_results` 收集后台工具结果，处理 sendMessage
+- [x] 所有工具异常不传播到主循环（`_execute_one_tool` 捕获全部）
+- [x] 后台 bash 通过 `background: bool` 参数 + `CheckBashTaskTool` 实现
+- [x] 175 个 agent 相关测试全部通过

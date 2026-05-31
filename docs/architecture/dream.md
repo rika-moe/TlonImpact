@@ -158,13 +158,13 @@ DAG 组件树的拓扑序保证无循环依赖。初始化顺序即依赖顺序�
          ├── Episodic Memory（相关摘要）
          ├── Working Memory（最近 10 条）
          └── 当前消息
-     → ReAct Loop（最多 10 轮）
-         LLM.think() → 回复 或 工具调用
-         if 工具: ToolExecutor.execute()
-           ExecuteBash → DockerRuntime.run()
-           RememberFact → MemoryManager.store()
-           SearchMemories → MemoryManager.search()
-         if 回复: 跳出循环
+     → 创建 AgentSession → 进入主循环调度
+     → _step_session: LLM.think() → 派发工具调用（asyncio.create_task）
+     → _collect_session_results: 收集后台工具结果
+         ExecuteBash → DockerRuntime.run()
+         RememberFact → MemoryManager.store()
+         SearchMemories → MemoryManager.search()
+     → sendMessage(is_complete=true) → Session COMPLETED → 保存记忆
      → EventBus.publish(MESSAGE_NEW)
 
 4. NotificationService (subscribe MESSAGE_NEW)
