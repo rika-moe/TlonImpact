@@ -13,6 +13,7 @@ from typing import Any
 from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
+from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
@@ -46,9 +47,8 @@ class Agent(Component, Device):
     Device: holds an EventBus reference and publishes observability events.
     All infrastructure dependencies are injected via constructor.
 
-    ReAct loop is implemented as a simple async for-loop inside
-    _process_message() — no state machine, no EventBus RPC.
-    Tool execution is direct: Agent calls tool_executor.execute().
+    ReAct loop is implemented via step/collect scheduling in _main_loop()
+    with multi-session support. Tool execution uses background asyncio tasks.
 
     Example:
         >>> config = AgentConfig(id="dev-001", name="林知遥", ...)
@@ -67,7 +67,6 @@ class Agent(Component, Device):
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
-        total_tool_timeout: float = 60.0,
         per_tool_timeout: float = 30.0,
     ):
         """Initialize the agent.
@@ -81,7 +80,6 @@ class Agent(Component, Device):
             tool_executor: Tool registry and executor
             team_members: List of all team member configs
             message_store: Message store for querying history
-            total_tool_timeout: Total timeout for all tools (deadline)
             per_tool_timeout: Timeout for each individual tool
         """
         Component.__init__(self, name=config.name)
@@ -99,8 +97,7 @@ class Agent(Component, Device):
         self.task_manager = task_manager
         self.tool_executor = tool_executor
 
-        # Tool execution timeout settings
-        self._total_tool_timeout = total_tool_timeout
+        # Tool execution timeout
         self._per_tool_timeout = per_tool_timeout
 
         # Prompt cache — system prompt is fully static
@@ -131,7 +128,7 @@ class Agent(Component, Device):
         self.subscribe(EventType.MESSAGE_ROUTED, self._on_message_routed)
 
         self._worker_running = True
-        self._worker_task = asyncio.create_task(self._message_worker())
+        self._worker_task = asyncio.create_task(self._main_loop())
 
         self.state = AgentState.ACTIVE
         self._initialized = True
@@ -174,38 +171,64 @@ class Agent(Component, Device):
             f"{self.name} queued message from {message.sender_name} (reason: {routed.routing_reason})"
         )
 
-    async def _message_worker(self) -> None:
-        """Worker task to process messages serially from the queue."""
-        logger.info(f"{self.name} message worker started")
+    async def _main_loop(self) -> None:
+        """Agent's continuous main loop with multi-session scheduling.
+
+        Cycles through all active sessions each pass:
+        1. New messages -> create/resume sessions
+        2. ACTIVE sessions -> one think+dispatch step
+        3. WAITING sessions -> collect completed background tools
+        4. COMPLETED -> cleanup
+        """
+        logger.info(f"{self.name} main loop started")
+        sessions: dict[str, AgentSession] = {}
+        session_messages: dict[str, Message] = {}
 
         while self._worker_running:
+            # ── 1. New messages ──
             try:
-                message = await self._message_queue.get()
-                logger.info(f"{self.name} processing message from {message.sender_name}")
+                msg = self._message_queue.get_nowait()
+                sid = f"{self.id}-{msg.id}"
+                session = AgentSession(sid, msg.content)
+                sessions[sid] = session
+                session_messages[sid] = msg
+                logger.info(f"{self.name} new session {sid}: {msg.content[:50]}")
+            except asyncio.QueueEmpty:
+                # No new messages — if no sessions either, block
+                if not sessions:
+                    try:
+                        msg = await asyncio.wait_for(self._message_queue.get(), timeout=0.5)
+                        sid = f"{self.id}-{msg.id}"
+                        sessions[sid] = AgentSession(sid, msg.content)
+                        session_messages[sid] = msg
+                    except TimeoutError:
+                        continue
 
-                self.state = AgentState.THINKING
+            # ── 2 & 3. Advance sessions ──
+            for sid in list(sessions.keys()):
+                session = sessions[sid]
+                if session.id not in session_messages:
+                    continue
 
                 try:
-                    await self._process_message(message)
+                    if session.state == SessionState.WAITING:
+                        await self._collect_session_results(session)
+                    elif session.state == SessionState.ACTIVE:
+                        msg = session_messages[sid]
+                        await self._step_session(session, msg)
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}", exc_info=True)
-                    with contextlib.suppress(Exception):
-                        await self._send_message(
-                            f"抱歉，处理消息时出现了错误: {str(e)[:100]}",
-                            mentions=[message.sender_id] if message.sender_type == "human" else [],
-                        )
-                finally:
-                    self._message_queue.task_done()
-                    if self.state == AgentState.THINKING:
-                        self.state = AgentState.ACTIVE
+                    logger.error(f"Session {sid} error: {e}", exc_info=True)
+                    session.mark_completed()
 
-            except asyncio.CancelledError:
-                logger.info(f"{self.name} message worker cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Error in message worker: {e}", exc_info=True)
+                # ── 4. Cleanup ──
+                if session.is_completed:
+                    del sessions[sid]
+                    session_messages.pop(sid, None)
 
-        logger.info(f"{self.name} message worker stopped")
+            # Yield control
+            await asyncio.sleep(0.01 if sessions else 0.05)
+
+        logger.info(f"{self.name} main loop stopped")
 
     def _should_respond(self, message: Message) -> bool:
         """Determine if we should respond to this message."""
@@ -229,206 +252,196 @@ class Agent(Component, Device):
             return True
         return self.name in message.mentions
 
-    async def _process_message(self, message: Message) -> None:
-        """Process a message using ReAct loop.
+    async def _step_session(self, session: AgentSession, message: Message) -> None:
+        """Advance a session by one ReAct step: think + dispatch tools.
 
-        Direct async for-loop — no state machine, no EventBus RPC.
-        Tool execution calls tool_executor.execute() directly.
+        The session's state transitions ACTIVE -> WAITING (tools running).
+        When tools complete, _collect_session_results transitions back to ACTIVE.
         """
-        logger.info(f"{self.name} is thinking...")
+        self.state = AgentState.THINKING
 
-        await self.memory.check_idle_timeout()
-        context = await self._build_context(message)
-        logger.debug(f"Context built with {len(context)} messages")
+        # Build context on first call (after LLM error: skip rebuild)
+        if not session.context:
+            await self.memory.check_idle_timeout()
+            context = await self._build_context(message)
+            session.context = context
+            logger.debug(f"Session {session.id}: context built with {len(context)} messages")
 
         max_iterations = 10
         max_errors = 3
-        error_count = 0
-        all_tool_results: list[dict] = []
-        last_llm_response: LLMResponse | None = None
 
-        for _iteration in range(max_iterations):
-            # Think: call LLM
-            try:
-                response = await self.think(context)
-                last_llm_response = response
-            except Exception as e:
-                logger.error(f"LLM call failed: {e}", exc_info=True)
-                error_count += 1
-                if error_count >= max_errors:
-                    await self._send_message(
-                        "抱歉，处理消息时出现了错误。",
-                        mentions=[message.sender_id] if message.sender_type == "human" else [],
-                    )
-                    return
-                continue
+        # Check iteration limit
+        if session.iteration >= max_iterations:
+            logger.warning(f"Session {session.id}: max iterations reached")
+            await self._send_message(
+                "思考时间过长，请简化您的问题。",
+                mentions=[message.sender_id] if message.sender_type == "human" else [],
+            )
+            session.mark_completed()
+            return
 
-            # No tool calls — abnormal, remind agent to use tools
-            if not response.tool_calls:
-                await self._add_no_tool_reminder(context, response)
-                continue
-
-            # ── Pre-execution conflict detection ──
-            # sendMessage(is_complete=true) must not coexist with other tools
-            send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendMessage"]
-            other_calls = [tc for tc in response.tool_calls if tc.function_name != "sendMessage"]
-            has_complete = any(tc.arguments.get("is_complete") for tc in send_calls)
-
-            if has_complete and other_calls:
-                context.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "冲突：当 sendMessage 的 is_complete 设为 true 时，"
-                            "不得与其他工具同时调用。\n"
-                            "请重新规划：要么只调用 sendMessage(is_complete=true) 结束本轮，"
-                            "要么先调用其他工具，下一轮再发送最终消息。"
-                        ),
-                    }
+        # Think: call LLM
+        try:
+            response = await self.think(session.context)
+            session.set_last_llm_response(response)
+        except Exception as e:
+            logger.error(f"Session {session.id}: LLM call failed: {e}", exc_info=True)
+            session.record_error()
+            session.advance_iteration()
+            if session.error_count >= max_errors:
+                await self._send_message(
+                    "抱歉，处理消息时出现了错误。",
+                    mentions=[message.sender_id] if message.sender_type == "human" else [],
                 )
-                continue
+                session.mark_completed()
+            return
 
-            # Execute tools directly
-            tool_results_list = await self._execute_tool_calls(response.tool_calls)
-            all_tool_results.extend([{"tool_call": tc, "result": r} for tc, r in tool_results_list])
+        # No tool calls
+        if not response.tool_calls:
+            await self._add_no_tool_reminder(session.context, response)
+            session.advance_iteration()
+            return
 
-            # Process sendMessage tool calls
-            is_complete = False
-            final_content = ""
+        # Conflict detection
+        send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendMessage"]
+        other_calls = [tc for tc in response.tool_calls if tc.function_name != "sendMessage"]
+        has_complete = any(tc.arguments.get("is_complete") for tc in send_calls)
 
-            for tc, result in tool_results_list:
-                if tc.function_name == "sendMessage" and result.success:
-                    content = result.data.get("content", "")
-                    mentions = result.data.get("mentions", [])
-                    await self._send_message(content, mentions)
-                    logger.info(f"{self.name} sent message: {content[:50]}...")
+        if has_complete and other_calls:
+            session.context.append({
+                "role": "user",
+                "content": (
+                    "冲突：当 sendMessage 的 is_complete 设为 true 时，"
+                    "不得与其他工具同时调用。\n"
+                    "请重新规划。"
+                ),
+            })
+            session.advance_iteration()
+            return
 
-                    if result.data.get("is_complete"):
-                        is_complete = True
-                        final_content = content
-
-            # Build assistant message with tool calls
-            assistant_msg: dict[str, Any] = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [self._tool_call_to_dict(tc) for tc, _ in tool_results_list],
-            }
-            if response.reasoning_content:
-                assistant_msg["reasoning_content"] = response.reasoning_content
-            context.append(assistant_msg)
-
-            # Add tool results to context
-            for tc, result in tool_results_list:
-                context.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": self._tool_result_to_string(result),
-                    }
-                )
-
-            # If sendMessage(is_complete=true) was called, exit
-            if is_complete:
-                if last_llm_response:
-                    await self._save_interaction_to_memory(
-                        final_content, last_llm_response, all_tool_results
-                    )
-                logger.info(f"{self.name} completed: {final_content[:50]}...")
-                return
-
-        # Max iterations reached
-        logger.warning(f"{self.name} reached max iterations")
-        await self._send_message(
-            "思考时间过长，请简化您的问题。",
-            mentions=[message.sender_id] if message.sender_type == "human" else [],
-        )
-
-    async def _execute_tool_calls(
-        self, tool_calls: list[ToolCall]
-    ) -> list[tuple[ToolCall, ToolResult]]:
-        """Execute tool calls directly with observability.
-
-        Args:
-            tool_calls: List of tool calls from LLM
-
-        Returns:
-            List of (tool_call, result) tuples
-        """
-        tool_names = [tc.function_name for tc in tool_calls]
-        logger.info(f"{self.name} using {len(tool_calls)} tool(s): {', '.join(tool_names)}")
-
-        async def _execute_one(tc: ToolCall) -> tuple[ToolCall, ToolResult]:
-            args_str = str(tc.arguments)
-            if len(args_str) > 100:
-                args_str = args_str[:100] + "..."
-            logger.info(f"  → {tc.function_name}({args_str})")
-
+        # ── Dispatch tools as background tasks ──
+        tasks = {}
+        for tc in response.tool_calls:
+            tasks[tc.id] = asyncio.create_task(self._execute_one_tool(tc))
             await self.emit(
                 EventType.TOOL_EXECUTE_START,
-                payload={
-                    "agent_id": self.id,
-                    "tool_name": tc.function_name,
-                    "arguments": tc.arguments,
-                },
+                payload={"agent_id": self.id, "tool_name": tc.function_name, "arguments": tc.arguments},
                 source=self.id,
             )
 
-            try:
-                result = await asyncio.wait_for(
-                    self.tool_executor.execute(tc.function_name, tc.arguments),
-                    timeout=self._per_tool_timeout,
-                )
+        session.dispatch_tools(response.tool_calls, tasks)
+        session.mark_waiting()
 
-                await self.emit(
-                    EventType.TOOL_EXECUTE_END,
-                    payload={
-                        "agent_id": self.id,
-                        "tool_name": tc.function_name,
-                        "success": result.success,
-                    },
-                    source=self.id,
-                )
+    async def _collect_session_results(self, session: AgentSession) -> None:
+        """Collect completed background tools for a WAITING session.
 
-                msg = (
-                    result.message
-                    if hasattr(result, "message") and result.message
-                    else ("OK" if result.success else "Failed")
-                )
-                logger.info(f"  ✓ Result: {msg}")
-                return tc, result
+        Processes results, handles sendMessage, and transitions state
+        back to ACTIVE (continue thinking) or COMPLETED (done).
+        """
+        completed = session.collect_completed()
+        if not completed:
+            return  # still waiting
 
-            except TimeoutError:
-                result = ToolResult(
-                    success=False,
-                    data={},
-                    error=f"Timeout after {self._per_tool_timeout}s",
-                )
-                await self.emit(
-                    EventType.TOOL_EXECUTE_END,
-                    payload={
-                        "agent_id": self.id,
-                        "tool_name": tc.function_name,
-                        "success": False,
-                    },
-                    source=self.id,
-                )
-                logger.error(f"  ✗ Timeout: {tc.function_name}")
-                return tc, result
+        is_complete = False
+        final_content = ""
 
-            except Exception as e:
+        for tc, result in completed:
+            session.add_tool_result(tc, result)
+
+            await self.emit(
+                EventType.TOOL_EXECUTE_END,
+                payload={"agent_id": self.id, "tool_name": tc.function_name, "success": result.success},
+                source=self.id,
+            )
+            if not result.success and result.error:
                 await self.emit(
                     EventType.TOOL_ERROR,
-                    payload={
-                        "agent_id": self.id,
-                        "tool_name": tc.function_name,
-                        "error": str(e),
-                    },
+                    payload={"agent_id": self.id, "tool_name": tc.function_name, "error": result.error},
                     source=self.id,
                 )
-                logger.error(f"  ✗ Error: {tc.function_name}: {e}")
-                raise
 
-        return await asyncio.gather(*[_execute_one(tc) for tc in tool_calls])
+            if tc.function_name == "sendMessage" and result.success:
+                content = result.data.get("content", "")
+                mentions = result.data.get("mentions", [])
+                await self._send_message(content, mentions)
+                if result.data.get("is_complete"):
+                    is_complete = True
+                    final_content = content
+
+            # Append to context
+            assistant_msg = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [self._tool_call_to_dict(tc)],
+            }
+            session.context.append(assistant_msg)
+            session.context.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": self._tool_result_to_string(result),
+            })
+
+        if is_complete:
+            llm_resp = session.last_llm_response
+            if llm_resp:
+                await self._save_interaction_to_memory(
+                    final_content, llm_resp, session.all_tool_results
+                )
+            logger.info(f"Session {session.id} completed: {final_content[:50]}")
+            session.mark_completed()
+        elif not session.has_pending_tools:
+            session.advance_iteration()
+            session.mark_active()
+
+    async def _execute_one_tool(self, tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+        """Execute one tool with timeout, returning (tc, result) tuple.
+
+        Catches all exceptions and returns ToolResult(success=False).
+        Designed to run via asyncio.create_task in _step_session.
+        """
+        try:
+            return tc, await asyncio.wait_for(
+                self.tool_executor.execute(tc.function_name, tc.arguments),
+                timeout=self._per_tool_timeout,
+            )
+        except TimeoutError:
+            return tc, ToolResult(
+                success=False, data={}, error=f"Timeout after {self._per_tool_timeout}s"
+            )
+        except Exception as e:
+            return tc, ToolResult(
+                success=False, data={}, error=str(e)
+            )
+
+    # ── Synchronous message processing (for tests) ──
+
+    async def _process_message(self, message: Message) -> None:
+        """Process a single message synchronously via inline step/collect loop.
+
+        Used by tests. Creates a session and drives _step_session /
+        _collect_session_results until completion.
+        """
+        import uuid
+
+        session = AgentSession(
+            session_id=f"{self.id}-msg-{uuid.uuid4().hex[:8]}",
+            trigger_content=message.content,
+        )
+
+        while not session.is_completed:
+            if session.state == SessionState.WAITING:
+                # Yield to let background tool tasks start executing
+                await asyncio.sleep(0)
+                await self._collect_session_results(session)
+                if session.has_pending_tools:
+                    # Wait for all pending tasks to complete, then collect
+                    pending = list(session.get_pending_tasks().values())
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    await self._collect_session_results(session)
+            elif session.state == SessionState.ACTIVE:
+                await self._step_session(session, message)
+            else:
+                break
 
     async def _add_no_tool_reminder(
         self, context: list[dict[str, Any]], response: LLMResponse
@@ -646,9 +659,8 @@ class Agent(Component, Device):
                 payload=message,
                 source=self.id,
             )
-        except Exception as e:
-            logger.error(f"Error in _send_message: {e}", exc_info=True)
-            raise
+        except Exception:
+            logger.error("Failed to emit MESSAGE_NEW event", exc_info=True)
 
     @staticmethod
     def _tool_call_to_dict(tool_call: ToolCall) -> dict[str, Any]:

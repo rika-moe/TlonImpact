@@ -3,7 +3,7 @@
 Verifies that:
 - _build_llm_config() merges file config with settings
 - _build_llm_config() handles None file_config
-- _start_agent() creates Agent with all 13 tools registered
+- _start_agent() creates Agent with all 17 tools registered
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -106,8 +106,8 @@ class TestAgentRegistryStartAgent:
         return reg
 
     @pytest.mark.asyncio
-    async def test_start_agent_registers_all_13_tools(self, registry, mock_event_bus):
-        """Agent should be created with all 13 tools registered in ToolExecutor."""
+    async def test_start_agent_registers_all_17_tools(self, registry, mock_event_bus):
+        """Agent should be created with all 17 tools registered in ToolExecutor."""
         with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
             mock_memory = MagicMock()
             mock_memory.load = AsyncMock()
@@ -124,9 +124,10 @@ class TestAgentRegistryStartAgent:
         assert agent is not None
         tools = agent.tool_executor.list_tools()
 
-        # All 16 tools should be registered
+        # All 17 tools should be registered
         expected_tools = {
             "executeBashCommand",
+            "checkBashTask",
             "readFile",
             "writeFile",
             "editFile",
@@ -187,7 +188,7 @@ class TestAgentRegistryStartAgent:
 
         # ToolExecutor should be created and have tools registered
         assert agent.tool_executor is not None
-        assert len(agent.tool_executor.list_tools()) == 16
+        assert len(agent.tool_executor.list_tools()) == 17
         # Verify executeBash tool has the docker config and agent id
         bash_tool = agent.tool_executor.get_tool("executeBashCommand")
         assert bash_tool is not None

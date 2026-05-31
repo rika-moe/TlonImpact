@@ -39,7 +39,7 @@ from tlon.tools.memory.generate_summary import GenerateSummaryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.messaging.send_message import SendMessageTool
-from tlon.tools.shell.execute_bash import ExecuteBashTool
+from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
 from tlon.tools.tasks.create_task import CreateTaskTool
 from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
@@ -262,6 +262,7 @@ class AgentRegistry(Component):
 
             # Register tools
             tool_executor.register_tool(ExecuteBashTool(config.docker, docker_runtime))
+            tool_executor.register_tool(CheckBashTaskTool())
             tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime))
             tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime))
             tool_executor.register_tool(EditFileTool(config.docker, docker_runtime))
@@ -290,8 +291,7 @@ class AgentRegistry(Component):
                 if aid != agent_id and self._agent_info.get_config(aid)
             ]
 
-            # Read tool timeout settings from agent config
-            total_tool_timeout = config.tool.total_timeout
+            # Read tool timeout from agent config
             per_tool_timeout = config.tool.per_timeout
 
             # Create and initialize agent with all deps injected
@@ -304,7 +304,6 @@ class AgentRegistry(Component):
                 tool_executor=tool_executor,
                 team_members=team_members,
                 message_store=self.message_store,
-                total_tool_timeout=total_tool_timeout,
                 per_tool_timeout=per_tool_timeout,
             )
             await agent.initialize()

@@ -128,21 +128,48 @@ class TestToolExecutionDoesNotInvalidateCache:
 
 
 class TestToolExecutionObservability:
-    """Tool execution via _execute_tool_calls publishes observability events."""
+    """Tool execution via _process_message (step/collect loop) publishes events."""
 
     @pytest.mark.asyncio
     async def test_publishes_start_and_end_events(self):
+        from tlon.agents.llm_client import LLMResponse, ToolCall
+        from tlon.tools.base import ToolResult
+
         agent = _make_agent()
-        from tlon.agents.llm_client import ToolCall
+        agent._system_prompt_cache = "prompt"
 
-        tool_call = ToolCall(id="tc-001", function_name="listTasks", arguments={})
-        mock_result = MagicMock()
-        mock_result.success = True
-        agent.tool_executor.execute = AsyncMock(return_value=mock_result)
+        # LLM returns tool call + completion
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="tc-001", function_name="sendMessage",
+                                         arguments={"content": "Done!", "is_complete": True})],
+                ),
+            ]
+        )
+        agent.llm_client = llm_client
 
-        await agent._execute_tool_calls([tool_call])
+        async def _mock_execute(name, args):
+            return ToolResult(
+                success=True,
+                data={"content": "Done!", "is_complete": True, "mentions": []},
+            )
 
-        published_types = [call.args[0].type for call in agent.event_bus.publish.await_args_list]
+        agent.tool_executor = MagicMock()
+        agent.tool_executor.get_tool_definitions = MagicMock(return_value=[])
+        agent.tool_executor.execute = _mock_execute
+
+        from tlon.organization.messaging.message import Message
+
+        msg = Message.create(sender_id="u1", sender_name="U", sender_type="human", content="hi")
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            await agent._process_message(msg)
+
+        published_types = [
+            call.args[0].type for call in agent.event_bus.publish.await_args_list
+        ]
         from tlon.base.events.event import EventType
 
         assert EventType.TOOL_EXECUTE_START in published_types
@@ -150,16 +177,49 @@ class TestToolExecutionObservability:
 
     @pytest.mark.asyncio
     async def test_publishes_error_event_on_exception(self):
+        from tlon.agents.llm_client import LLMResponse, ToolCall
+        from tlon.tools.base import ToolResult
+
         agent = _make_agent()
-        from tlon.agents.llm_client import ToolCall
+        agent._system_prompt_cache = "prompt"
 
-        tool_call = ToolCall(id="tc-001", function_name="executeBash", arguments={})
-        agent.tool_executor.execute = AsyncMock(side_effect=RuntimeError("boom"))
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="tc-001", function_name="executeBash", arguments={})],
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="tc-002", function_name="sendMessage",
+                                         arguments={"content": "Done!", "is_complete": True})],
+                ),
+            ]
+        )
+        agent.llm_client = llm_client
 
-        with pytest.raises(RuntimeError):
-            await agent._execute_tool_calls([tool_call])
+        async def _mock_execute(name, args):
+            if name == "executeBash":
+                raise RuntimeError("boom")
+            return ToolResult(
+                success=True,
+                data={"content": "Done!", "is_complete": True, "mentions": []},
+            )
 
-        published_types = [call.args[0].type for call in agent.event_bus.publish.await_args_list]
+        agent.tool_executor = MagicMock()
+        agent.tool_executor.get_tool_definitions = MagicMock(return_value=[])
+        agent.tool_executor.execute = _mock_execute
+
+        from tlon.organization.messaging.message import Message
+
+        msg = Message.create(sender_id="u1", sender_name="U", sender_type="human", content="hi")
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            await agent._process_message(msg)
+
+        published_types = [
+            call.args[0].type for call in agent.event_bus.publish.await_args_list
+        ]
         from tlon.base.events.event import EventType
 
         assert EventType.TOOL_ERROR in published_types
