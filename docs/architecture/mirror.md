@@ -54,7 +54,7 @@ Wizard 读写 `config/agents/*.yaml`，每个 Agent 一个文件：
 ```yaml
 agent:
   id: "dev-001"
-  name: "陈代码"
+  name: "林知遥"
   personality: "技术导向，注重细节"
   respond_to_all: false
   llm:

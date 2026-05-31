@@ -103,7 +103,7 @@ Agent 配置示例 (`config/agents/{agent_id}.yaml`):
 ```yaml
 agent:
   id: "dev-001"
-  name: "陈代码"
+  name: "林知遥"
 
   personality: "技术导向，注重细节"
   respond_to_all: false
@@ -132,7 +132,7 @@ uv run tlon dream
 直接输入文字，回车
 
 # @ 提及 Agent
-> @陈代码 写个函数
+> @林知遥 写个函数
 
 # 命令
 /clear     # 清空对话

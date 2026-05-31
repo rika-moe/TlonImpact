@@ -92,8 +92,8 @@ Tlon 同时支持文学化命令名称（等效别名）：
 
 ```
 > 你好                          # 发送消息给客服
-> @陈代码 写个函数               # @提及特定 Agent
-> @林知遥 @陈代码 讨论方案       # 同时@多个
+> @林知遥 写个函数               # @提及特定 Agent
+> @林知遥 @林知遥 讨论方案       # 同时@多个
 ```
 
 ### 模式切换
@@ -108,10 +108,10 @@ Tlon 同时支持文学化命令名称（等效别名）：
 
 | 命令 | 说明 | 示例 |
 |-----|------|------|
-| `/wake <name>` | 唤醒 Agent | `/wake 陈代码` |
-| `/sleep <name>` | 休眠 Agent | `/sleep 陈代码` |
+| `/wake <name>` | 唤醒 Agent | `/wake 林知遥` |
+| `/sleep <name>` | 休眠 Agent | `/sleep 林知遥` |
 | `/list` | 列出所有 Agent | - |
-| `/status <name>` | 查看 Agent 状态 | `/status 陈代码` |
+| `/status <name>` | 查看 Agent 状态 | `/status 林知遥` |
 
 ### 记忆操作
 
@@ -182,7 +182,7 @@ GET /api/agents
   "agents": [
     {
       "id": "dev-001",
-      "name": "陈代码",
+      "name": "林知遥",
       "role": {           // 内联角色信息
         "title": "开发工程师",
         "department": "技术部"
@@ -202,7 +202,7 @@ GET /api/agents/{id}
 响应:
 {
   "id": "dev-001",
-  "name": "陈代码",
+  "name": "林知遥",
   "config": { ... },
   "state": {
     "status": "online",
@@ -273,7 +273,7 @@ Content-Type: application/json
 
 请求体:
 {
-  "content": "@陈代码 优化这个函数",
+  "content": "@林知遥 优化这个函数",
   "mentions": ["dev-001"]
 }
 
@@ -366,7 +366,7 @@ ws.onmessage = (event) => {
 // 发送聊天消息
 {
   "type": "chat",
-  "content": "@陈代码 写代码",
+  "content": "@林知遥 写代码",
   "mentions": ["dev-001"]
 }
 
@@ -380,7 +380,7 @@ ws.onmessage = (event) => {
 {
   "type": "command",
   "command": "/wake",
-  "args": ["陈代码"]
+  "args": ["林知遥"]
 }
 ```
 

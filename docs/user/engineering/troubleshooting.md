@@ -105,8 +105,8 @@ export DATA_DIR=/path/with/permission
 #### 现象: Agent 无响应
 
 ```
-> @陈代码 写代码
-[系统] 正在唤醒 陈代码...
+> @林知遥 写代码
+[系统] 正在唤醒 林知遥...
 (无后续响应)
 ```
 
@@ -140,10 +140,10 @@ grep "dev-001" data/logs/server.log
 #### 现象: Agent 重复响应/循环
 
 ```
-[陈代码] @林知遥 请确认
-[林知遥] @陈代码 已确认
-[陈代码] @林知遥 好的
-[林知遥] @陈代码 收到
+[林知遥] @林知遥 请确认
+[林知遥] @林知遥 已确认
+[林知遥] @林知遥 好的
+[林知遥] @林知遥 收到
 ...
 ```
 
@@ -152,7 +152,7 @@ grep "dev-001" data/logs/server.log
 **解决**:
 ```bash
 # 1. 在 TUI 中手动休眠一方
-/sleep 陈代码
+/sleep 林知遥
 
 # 2. 重启服务端 (紧急)
 Ctrl+C
@@ -170,7 +170,7 @@ rules:
 
 ```
 > 继续昨天那个项目
-[陈代码] 什么项目？我没有相关记忆。
+[林知遥] 什么项目？我没有相关记忆。
 ```
 
 **诊断**:
@@ -220,7 +220,7 @@ sudo usermod -aG docker $USER
 #### 现象: 容器启动超时
 
 ```
-[系统] 正在唤醒 陈代码...
+[系统] 正在唤醒 林知遥...
 [错误] Docker container start timeout
 ```
 
@@ -248,7 +248,7 @@ docker:
 #### 现象: 容器内存溢出
 
 ```
-[陈代码] [执行: npm build]
+[林知遥] [执行: npm build]
 [错误] Container OOM killed
 ```
 
@@ -260,8 +260,8 @@ docker:
   memory_limit: "2g"  # 从 512m 增加
 
 # 重启 Agent
-/sleep 陈代码
-/wake 陈代码
+/sleep 林知遥
+/wake 林知遥
 ```
 
 ---
@@ -295,7 +295,7 @@ llm:
 #### 现象: 响应质量下降
 
 ```
-[陈代码] 胡言乱语，代码错误
+[林知遥] 胡言乱语，代码错误
 ```
 
 **诊断**:
@@ -348,7 +348,7 @@ uv run tlon intrude
 # 或使用 REST API 发送消息
 curl -X POST http://localhost:8080/api/chatroom/messages \
   -H "Content-Type: application/json" \
-  -d '{"content": "@陈代码 写代码"}'
+  -d '{"content": "@林知遥 写代码"}'
 ```
 
 ---
