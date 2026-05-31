@@ -30,6 +30,7 @@ from tlon.base.settings import get_tlon_home
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
+from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
@@ -248,14 +249,22 @@ class AgentRegistry(Component):
                 data_dir=str(data_dir),
             )
 
+            # Create Docker runtime (shared by shell + filesystem tools)
+            docker_runtime: DockerRuntime | None = None
+            try:
+                docker_runtime = DockerRuntime(config.docker, config.id)
+                await docker_runtime.ensure_running()
+            except Exception as e:
+                logger.warning(f"Docker unavailable for {config.name}: {e}")
+
             # Create ToolExecutor (direct execution, no EventBus)
             tool_executor = ToolExecutor()
 
             # Register tools
-            tool_executor.register_tool(ExecuteBashTool(config.docker, config.id))
-            tool_executor.register_tool(ReadFileTool(config.docker, config.id))
-            tool_executor.register_tool(WriteFileTool(config.docker, config.id))
-            tool_executor.register_tool(EditFileTool(config.docker, config.id))
+            tool_executor.register_tool(ExecuteBashTool(config.docker, docker_runtime))
+            tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime))
+            tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime))
+            tool_executor.register_tool(EditFileTool(config.docker, docker_runtime))
             tool_executor.register_tool(SendMessageTool())
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))

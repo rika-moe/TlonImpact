@@ -121,3 +121,43 @@ class Tool(ABC):
             lines.append(f"  - {name} ({type_str}){req_str}: {desc}")
 
         return "\n".join(lines) if lines else "  (no parameters)"
+
+    def validate_arguments(self, arguments: dict[str, Any]) -> list[str]:
+        """Validate arguments against the parameter schema.
+
+        Args:
+            arguments: Arguments to validate
+
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        errors: list[str] = []
+        props = self.parameters.get("properties", {})
+        required = self.parameters.get("required", [])
+
+        for field in required:
+            if field not in arguments or arguments[field] is None:
+                errors.append(f"Missing required parameter: '{field}'")
+
+        for field, value in arguments.items():
+            if field not in props:
+                errors.append(f"Unknown parameter: '{field}'")
+                continue
+            expected_type = props[field].get("type")
+            if expected_type and value is not None:
+                type_map = {
+                    "string": str,
+                    "integer": int,
+                    "number": (int, float),
+                    "boolean": bool,
+                    "array": list,
+                    "object": dict,
+                }
+                py_type = type_map.get(expected_type)
+                if py_type and not isinstance(value, py_type):
+                    actual = type(value).__name__
+                    errors.append(
+                        f"Parameter '{field}': expected {expected_type}, got {actual}"
+                    )
+
+        return errors

@@ -132,6 +132,17 @@ class ToolExecutor:
             logger.error(f"Tool not found: {tool_name}")
             return ToolResult(success=False, data={}, error=f"Tool not found: {tool_name}")
 
+        # Validate arguments against JSON Schema before execution
+        validation_errors = tool.validate_arguments(arguments)
+        if isinstance(validation_errors, list) and len(validation_errors) > 0:
+            error_msg = "; ".join(validation_errors)
+            logger.warning(f"Tool {tool_name} argument validation failed: {error_msg}")
+            return ToolResult(
+                success=False,
+                data={},
+                error=f"Argument validation failed: {error_msg}",
+            )
+
         logger.debug(f"Executing tool: {tool_name} with args: {arguments}")
 
         try:

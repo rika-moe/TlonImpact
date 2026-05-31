@@ -30,12 +30,12 @@ class EditFileTool(Tool):
         ... )
     """
 
-    def __init__(self, docker_config: "DockerRuntimeConfig", agent_id: str):
+    def __init__(self, docker_config: "DockerRuntimeConfig", docker_runtime: "DockerRuntime | None"):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration.
-            agent_id: ID of the agent this tool belongs to.
+            docker_runtime: DockerRuntime instance (shared across tools)
         """
         super().__init__(
             name="editFile",
@@ -64,20 +64,7 @@ class EditFileTool(Tool):
             },
         )
         self._docker_config = docker_config
-        self._agent_id = agent_id
-        self._docker_runtime: "DockerRuntime | None" = None  # noqa: UP037
-
-    async def initialize(self) -> None:
-        """Start the Docker container."""
-        from tlon.sandbox.docker_runtime import DockerRuntime
-
-        self._docker_runtime = DockerRuntime(self._docker_config, self._agent_id)
-        await self._docker_runtime.ensure_running()
-
-    async def shutdown(self) -> None:
-        """Stop the Docker container."""
-        if self._docker_runtime:
-            await self._docker_runtime.stop()
+        self._docker_runtime = docker_runtime
 
     async def execute(self, file_path: str, old_string: str, new_string: str) -> ToolResult:
         """Edit a file by replacing old_string with new_string in the sandbox.

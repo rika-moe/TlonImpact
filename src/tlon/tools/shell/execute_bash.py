@@ -1,32 +1,22 @@
 """Execute Bash command tool."""
 
-from typing import TYPE_CHECKING
-
+from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
+from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 
-if TYPE_CHECKING:
-    from tlon.base.config import DockerRuntimeConfig
-    from tlon.sandbox.docker_runtime import DockerRuntime
-
 
 class ExecuteBashTool(Tool):
-    """Tool to execute bash commands in the agent's Docker container.
+    """Tool to execute bash commands in the agent's Docker container."""
 
-    This tool manages its own DockerRuntime lifecycle:
-    - initialize() starts the container
-    - shutdown() stops the container
-    - execute() runs commands inside the container
-    """
-
-    def __init__(self, docker_config: "DockerRuntimeConfig", agent_id: str):
+    def __init__(self, docker_config: DockerRuntimeConfig, docker_runtime: DockerRuntime | None):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration
-            agent_id: ID of the agent this tool belongs to
+            docker_runtime: DockerRuntime instance (shared across tools)
         """
         super().__init__(
             name="executeBashCommand",
@@ -50,24 +40,7 @@ class ExecuteBashTool(Tool):
             },
         )
         self._docker_config = docker_config
-        self._agent_id = agent_id
-        self._docker_runtime: "DockerRuntime | None" = None  # noqa: UP037
-
-    async def initialize(self) -> None:
-        """Start the Docker container."""
-        from tlon.sandbox.docker_runtime import DockerRuntime
-
-        try:
-            self._docker_runtime = DockerRuntime(self._docker_config, self._agent_id)
-            await self._docker_runtime.ensure_running()
-        except Exception as e:
-            self._docker_runtime = None
-            logger.warning(f"Docker unavailable, bash tool disabled: {e}")
-
-    async def shutdown(self) -> None:
-        """Stop the Docker container."""
-        if self._docker_runtime:
-            await self._docker_runtime.stop()
+        self._docker_runtime = docker_runtime
 
     async def execute(self, command: str, timeout: int = 60) -> ToolResult:
         """Execute a bash command.
