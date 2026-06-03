@@ -2,6 +2,10 @@
 
 Manages Docker containers for agent execution environments.
 Provides both command execution and file I/O APIs.
+
+The container is created from the configured image as-is — no software
+installation is performed at runtime. Tools (python3, curl, git, etc.)
+must be present in the base image or installed via a Dockerfile.
 """
 
 import asyncio
@@ -58,7 +62,6 @@ class DockerRuntime:
         self.container_name = f"tlon-agent-{agent_id}"
         self.client = self._create_client()
         self.container: docker.models.containers.Container | None = None
-        self._uv_installed = False  # Track uv installation status
 
     def _create_client(self) -> docker.DockerClient:
         """Create a Docker client, trying multiple connection methods.
@@ -117,10 +120,13 @@ class DockerRuntime:
             await self._create_container()
 
     async def _create_container(self) -> None:
-        """Create a new container from the configured image."""
+        """Create a new container from the configured image.
+
+        Image is pulled if not cached locally. No software is installed —
+        the image is used as-is.
+        """
         image = self.config.image
 
-        # Pull image if not exists locally
         try:
             self.client.images.get(image)
             logger.debug(f"Image {image} found locally")
@@ -129,7 +135,6 @@ class DockerRuntime:
             await asyncio.to_thread(self.client.images.pull, image)
             logger.info(f"Image {image} pulled successfully")
 
-        # Prepare volumes — mount agent workspace into container
         workspace = paths.agent_workspace_dir(self.agent_id)
         volumes = {
             str(workspace): {
@@ -140,90 +145,23 @@ class DockerRuntime:
 
         logger.info(f"Creating container {self.container_name} from image {image}")
 
-        try:
-            self.container = self.client.containers.run(
-                image=image,
-                name=self.container_name,
-                command="sleep infinity",  # Keep container running
-                working_dir=self.config.working_dir,
-                volumes=volumes,
-                mem_limit=self.config.memory_limit,
-                cpu_period=100000,
-                cpu_quota=int(self.config.cpu_limit * 100000),
-                detach=True,
-                network_mode=self.config.network_mode,  # Full network access
-                auto_remove=False,  # Persist container
-                stdin_open=True,
-                tty=True,
-            )
+        self.container = self.client.containers.run(
+            image=image,
+            name=self.container_name,
+            command="sleep infinity",
+            working_dir=self.config.working_dir,
+            volumes=volumes,
+            mem_limit=self.config.memory_limit,
+            cpu_period=100000,
+            cpu_quota=int(self.config.cpu_limit * 100000),
+            detach=True,
+            network_mode=self.config.network_mode,
+            auto_remove=False,
+            stdin_open=True,
+            tty=True,
+        )
 
-            # Wait for container to be ready
-            await asyncio.sleep(2)
-
-            # Initialize container with basic tools
-            await self._init_container()
-
-            logger.info(f"Container {self.container_name} created and initialized")
-
-        except Exception as e:
-            logger.error(f"Failed to create container: {e}", exc_info=True)
-            raise
-
-    async def _init_container(self) -> None:
-        """Initialize container with basic tools."""
-        init_commands = [
-            "apt-get update -qq",
-            "apt-get install -y -qq curl wget git vim nano python3 python3-pip",
-        ]
-
-        for cmd in init_commands:
-            logger.debug(f"Running init command: {cmd}")
-            result = await self.execute(cmd, timeout=120)
-            if result.exit_code != 0:
-                logger.warning(f"Init command failed: {cmd}\n{result.stderr}")
-                # Continue even if some commands fail
-
-        # Install uv for PEP 723 script support
-        await self._install_uv()
-
-    async def _install_uv(self) -> None:
-        """Install uv package manager for PEP 723 script support.
-
-        uv allows running Python scripts with inline dependency declarations
-        without requiring a separate virtual environment or requirements.txt.
-
-        See: https://docs.astral.sh/uv/
-        """
-        if self._uv_installed:
-            return
-
-        logger.info("Installing uv package manager...")
-
-        # Install uv using the official installer
-        install_cmd = "curl -LsSf https://astral.sh/uv/install.sh | sh"
-        result = await self.execute(install_cmd, timeout=60)
-
-        if result.exit_code == 0:
-            # Add uv to PATH for the container
-            # The installer puts uv in ~/.local/bin
-            path_cmd = 'export PATH="$HOME/.local/bin:$PATH" && uv --version'
-            result = await self.execute(path_cmd, timeout=10)
-
-            if result.exit_code == 0:
-                self._uv_installed = True
-                logger.info(f"uv installed successfully: {result.stdout.strip()}")
-            else:
-                logger.warning(f"uv installed but version check failed: {result.stderr}")
-        else:
-            logger.warning(f"Failed to install uv: {result.stderr}")
-
-    def is_uv_installed(self) -> bool:
-        """Check if uv is installed in the container.
-
-        Returns:
-            True if uv is available
-        """
-        return self._uv_installed
+        logger.info(f"Container {self.container_name} created")
 
     async def execute(
         self, command: str, timeout: int = 60, workdir: str | None = None

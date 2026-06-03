@@ -6,8 +6,6 @@ container with everything needed to construct a system prompt.
 
 from dataclasses import dataclass
 
-from tlon.base.config import AgentConfig
-
 
 @dataclass
 class AgentPromptContext:
@@ -16,9 +14,11 @@ class AgentPromptContext:
     No references to Agent or any infrastructure components.
 
     Attributes:
-        config: The agent's own configuration (identity, profile, behavior).
-        team_profiles: List of (name, profile) tuples for all other agents.
+        agent_name: The agent's display name.
+        agent_home: Path to agent's ~/.tlon/{id}/ directory (for reading .md files).
+        team_profiles: List of (name, profile_text) tuples for all other agents.
     """
 
-    config: AgentConfig
+    agent_name: str
+    agent_home: str
     team_profiles: list[tuple[str, str]]

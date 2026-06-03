@@ -1,9 +1,10 @@
 """System prompt builder for Agent.
 
-Provides a clean, composable way to build agent system prompts.
-Accepts AgentPromptContext — a plain data object — with no reference
-to Agent or any infrastructure component.
+Composes agent system prompt from IDENTITY.md, SOUL.md, RULES.md files
+under the agent's home directory and framework-level protocol rules.
 """
+
+from pathlib import Path
 
 from tlon.agents.prompt_context import AgentPromptContext
 
@@ -33,11 +34,22 @@ _PROTOCOL = """## 交互协议
    - rememberFact：发现重要的用户偏好、决策或事实时立即记录
    - generateSummary：当前会话信息密集时主动触发摘要巩固
    - forget：发现过时或矛盾的记忆时主动清理
-   - 记忆管理不是收尾工作，而是贯穿整个思考过程的习惯"""
+   - 记忆管理不是收尾工作，而是贯穿整个思考过程的习惯
+
+5. **人格文件来源**
+   - 你的身份、角色和行为守则来自以下文件：
+     IDENTITY.md — 你是谁、你的核心自我认知
+     SOUL.md     — 你的角色定位、工作风格（队友也会看到这个文件）
+     RULES.md    — 你的行为约束和工作流程
+   - 这些文件位于宿主机的数据目录中
+   - 如需更新自己的人格设定，告知用户修改对应文件，或建议用户运行 `tlon mirror` 编辑"""
 
 
 class SystemPromptBuilder:
-    """Builds system prompts by composing sections.
+    """Builds system prompts by composing files + protocol.
+
+    Reads IDENTITY.md, SOUL.md, RULES.md from the agent's home directory
+    and composes them with team profiles and framework protocol rules.
 
     Usage:
         context = AgentPromptContext(...)
@@ -48,43 +60,46 @@ class SystemPromptBuilder:
     def __init__(self, context: AgentPromptContext):
         self.context = context
 
+    def _read(self, filename: str) -> str | None:
+        p = Path(self.context.agent_home) / "config" / filename
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip()
+        return None
+
     def build_identity(self) -> str:
-        """Build identity section."""
-        parts = [f"你是 {self.context.config.name}。"]
-        if self.context.config.identity:
+        parts = [f"你是 {self.context.agent_name}。"]
+        identity = self._read("IDENTITY.md")
+        if identity:
             parts.append("")
-            parts.append(self.context.config.identity)
+            parts.append("## IDENTITY.md")
+            parts.append(identity)
+        soul = self._read("SOUL.md")
+        if soul:
+            parts.append("")
+            parts.append("## SOUL.md")
+            parts.append(soul)
         return "\n".join(parts)
 
     def build_team(self) -> str | None:
-        """Build team section from teammates' profiles."""
         if not self.context.team_profiles:
             return None
-
         lines = ["## 团队成员"]
         for name, profile in self.context.team_profiles:
             lines.append("")
             lines.append(f"### {name}")
             lines.append(profile)
-
         return "\n".join(lines)
 
     def build_behavior(self) -> str | None:
-        """Build behavior section."""
-        if not self.context.config.behavior:
+        rules = self._read("RULES.md")
+        if not rules:
             return None
-        return f"## 行为守则\n\n{self.context.config.behavior}"
+        return f"## RULES.md\n\n{rules}"
 
     def build_protocol(self) -> str:
-        """Build protocol section (framework hardcoded)."""
         return _PROTOCOL
 
     def build(self) -> str:
-        """Build complete system prompt by composing all sections.
-
-        Returns:
-            Complete system prompt string
-        """
         sections = [
             self.build_identity(),
             self.build_team(),

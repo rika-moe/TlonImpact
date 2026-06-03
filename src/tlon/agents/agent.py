@@ -22,6 +22,7 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.paths import paths
 from tlon.base.tracing.trace_context import get_current_trace
 from tlon.memory.manager import MemoryManager
 from tlon.organization.messaging.message import Message
@@ -659,10 +660,18 @@ class Agent(Component, Device):
         return context
 
     async def _build_prompt_context(self) -> AgentPromptContext:
-        """Build AgentPromptContext by pre-fetching all async data."""
-        team_profiles = [(m.name, m.profile) for m in self.team_members if m.id != self.config.id]
+        """Build AgentPromptContext by pre-fetching team SOUL.md files."""
+        team_profiles: list[tuple[str, str]] = []
+        for m in self.team_members:
+            if m.id == self.config.id:
+                continue
+            soul_file = paths.agent_soul_file(m.id)
+            profile = soul_file.read_text(encoding="utf-8").strip() if soul_file.exists() else m.name
+            team_profiles.append((m.name, profile))
+
         return AgentPromptContext(
-            config=self.config,
+            agent_name=self.config.name,
+            agent_home=str(paths.agent_dir(self.config.id)),
             team_profiles=team_profiles,
         )
 

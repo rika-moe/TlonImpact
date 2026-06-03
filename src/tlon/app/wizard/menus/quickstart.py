@@ -7,8 +7,8 @@ with standard or custom team configurations.
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig
-from tlon.base.default_team import STANDARD_TEAM_DICTS
+from tlon.base.config import DockerRuntimeConfig, LLMConfig
+from tlon.base.default_team import STANDARD_TEAM_DICTS, make_agent_config
 
 from ..agent_store import AgentStore
 from ..validators import APIValidator, EnvironmentChecker
@@ -243,17 +243,10 @@ class QuickstartWizard:
 
         agents = []
         for member in STANDARD_TEAM_DICTS:
-            agent = AgentConfig(
-                id=member["id"],
-                name=member["name"],
-                identity=member["identity"],
-                profile=member["profile"],
-                behavior=member["behavior"],
-                llm=LLMConfig(model_name=default_model, temperature=1.0),
-                docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
-                proactive=member["proactive"],
-            )
-            agents.append(agent)
+            agent = make_agent_config(member)
+            agent.llm = LLMConfig(model_name=default_model, temperature=1.0)
+            agent.docker = DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m")
+            agents.append({"config": agent, "data": member})
 
         return {
             "type": "standard",
@@ -303,17 +296,11 @@ class QuickstartWizard:
             if not name:
                 continue
 
-            agent = AgentConfig(
-                id=member["id"],
-                name=name,
-                identity=member["identity"],
-                profile=member["profile"],
-                behavior=member["behavior"],
-                llm=LLMConfig(model_name=default_model, temperature=1.0),
-                docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m"),
-                proactive=member["proactive"],
-            )
-            agents.append(agent)
+            agent = make_agent_config(member)
+            agent.name = name
+            agent.llm = LLMConfig(model_name=default_model, temperature=1.0)
+            agent.docker = DockerRuntimeConfig(image="ubuntu:22.04", memory_limit="512m")
+            agents.append({"config": agent, "data": member})
 
         return {
             "type": "custom",
@@ -347,8 +334,10 @@ class QuickstartWizard:
 
         # Show file list
         self.console.print("\n[bold]将创建以下文件:[/bold]")
-        for agent in team_config["agents"]:
-            self.console.print(f"  ~/.tlon/{agent.id}/config/agent.yaml")
+        for entry in team_config["agents"]:
+            a = entry["config"]
+            self.console.print(f"  ~/.tlon/{a.id}/config/agent.yaml")
+            self.console.print(f"  ~/.tlon/{a.id}/config/IDENTITY.md, SOUL.md, RULES.md")
 
         return self.questionary.confirm("确认创建以上配置?").ask()
 
@@ -365,9 +354,21 @@ class QuickstartWizard:
         self._create_env_file(api_config)
 
         # Create agents
-        for agent in team_config["agents"]:
+        for entry in team_config["agents"]:
+            agent = entry["config"]
+            data = entry.get("data", {})
             success, msg = self.agent_store.save_agent(agent)
             if success:
+                # Write narrative .md files
+                config_dir = Path(self.agent_store._paths.agent_config_dir(agent.id))
+                for field, filename in [
+                    ("identity", "IDENTITY.md"),
+                    ("profile", "SOUL.md"),
+                    ("behavior", "RULES.md"),
+                ]:
+                    content = data.get(field, "")
+                    if content:
+                        (config_dir / filename).write_text(content.strip() + "\n")
                 self.console.print(f"[green]✓ 创建 Agent: {agent.name}[/green]")
             else:
                 self.console.print(f"[red]✗ 创建 Agent 失败: {msg}[/red]")

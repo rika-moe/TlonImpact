@@ -16,6 +16,7 @@ Architecture:
 """
 
 import asyncio
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from tlon.agents.agent import Agent
@@ -168,23 +169,57 @@ class AgentRegistry(Component):
             self.register(agent_id)
 
     async def initialize(self) -> None:
-        """Initialize the registry and start all registered agents."""
+        """Initialize the registry and start all registered agents in parallel.
+
+        Each agent gets up to `_agent_start_timeout` seconds to start.
+        Agents that fail or time out are logged and skipped — the server
+        continues operating with the agents that did start successfully.
+        """
         logger.info("Initializing AgentRegistry...")
         logger.info(f"Agents to start: {self._registered_ids}")
 
-        # Start all registered agents
-        for agent_id in list(self._registered_ids):
-            if agent_id not in self._agents:
+        agent_ids = [aid for aid in self._registered_ids if aid not in self._agents]
+        if not agent_ids:
+            self._initialized = True
+            return
+
+        async def _start_one(agent_id: str) -> tuple[str, Exception | None]:
+            try:
                 logger.info(f"Starting agent: {agent_id}")
-                try:
-                    await self._start_agent(agent_id)
-                    logger.info(f"Agent {agent_id} started successfully")
-                except Exception as e:
-                    logger.error(f"Failed to start agent {agent_id}: {e}", exc_info=True)
+                await self._start_agent(agent_id)
+                logger.info(f"Agent {agent_id} started successfully")
+                return agent_id, None
+            except Exception as e:
+                logger.error(f"Failed to start agent {agent_id}: {e}")
+                return agent_id, e
+
+        per_agent_timeout = 60
+        overall_timeout = len(agent_ids) * per_agent_timeout
+
+        tasks = [asyncio.create_task(_start_one(aid)) for aid in agent_ids]
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=False),
+                timeout=overall_timeout,
+            )
+        except TimeoutError:
+            logger.error(
+                f"Agent startup timed out after {overall_timeout}s. "
+                f"Cancelling remaining tasks..."
+            )
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            for t in tasks:
+                with suppress(asyncio.CancelledError, Exception):
+                    await t
 
         self._initialized = True
         active_count = len(self._agents)
-        logger.info(f"AgentRegistry initialized: {active_count} active agents")
+        total = len(agent_ids)
+        logger.info(
+            f"AgentRegistry initialized: {active_count}/{total} agents active"
+        )
         logger.info(f"Active agents: {list(self._agents.keys())}")
 
     async def shutdown(self) -> None:

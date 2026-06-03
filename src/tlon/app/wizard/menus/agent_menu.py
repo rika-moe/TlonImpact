@@ -1,6 +1,7 @@
 """Agent (personnel) management menu.
 
 Interactive menu for managing Agent configurations with CRUD operations.
+Supports IDENTITY.md / SOUL.md / RULES.md file-based persona editing.
 """
 
 from typing import TYPE_CHECKING
@@ -19,12 +20,6 @@ class AgentMenu:
         console: "Console",
         agents_dir: str | None = None,
     ):
-        """Initialize the agent menu.
-
-        Args:
-            console: Rich console for output
-            agents_dir: Tlon home directory (for backward compat; ignored)
-        """
         self.console = console
         self.agent_store = AgentStore()
 
@@ -36,7 +31,6 @@ class AgentMenu:
             self.questionary = None
 
     def show(self) -> None:
-        """Show the agent management menu."""
         if not self.questionary:
             self.console.print(
                 "[red]Wizard requires 'questionary'. Install with: pip install questionary[/red]"
@@ -73,11 +67,9 @@ class AgentMenu:
                 break
 
     def list_agents(self) -> None:
-        """List all agents in a table."""
         from rich.table import Table
 
         agents = self.agent_store.load_all_agents()
-
         if not agents:
             self.console.print("[yellow]暂无 Agent 配置[/yellow]")
             self.questionary.press_any_key_to_continue("按回车继续...").ask()
@@ -99,9 +91,7 @@ class AgentMenu:
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def view_agent(self) -> None:
-        """View agent details."""
         agents = self.agent_store.load_all_agents()
-
         if not agents:
             self.console.print("[yellow]暂无 Agent 可查看[/yellow]")
             self.questionary.press_any_key_to_continue("按回车继续...").ask()
@@ -114,7 +104,6 @@ class AgentMenu:
         choices.append(self.questionary.Choice("← 返回", value="back"))
 
         agent_id = self.questionary.select("选择 Agent:", choices=choices).ask()
-
         if agent_id == "back":
             return
 
@@ -127,19 +116,24 @@ class AgentMenu:
         def _truncate(text: str, length: int = 200) -> str:
             return (text[:length] + "...") if len(text) > length else text
 
+        store = self.agent_store
+        identity = store.read_persona_file(agent_id, "IDENTITY.md")
+        soul = store.read_persona_file(agent_id, "SOUL.md")
+        rules = store.read_persona_file(agent_id, "RULES.md")
+
         content = f"""[bold]基本信息[/bold]
 ID: {agent.id}
 姓名: {agent.name}
 启动模式: {"常驻" if agent.proactive else "延迟"}
 
-[bold]身份 (Identity)[/bold]
-{_truncate(agent.identity)}
+[bold]身份 (IDENTITY.md)[/bold]
+{_truncate(identity) if identity else "[dim](未设置)[/dim]"}
 
-[bold]公开档案 (Profile)[/bold]
-{_truncate(agent.profile)}
+[bold]灵魂 (SOUL.md)[/bold]
+{_truncate(soul) if soul else "[dim](未设置)[/dim]"}
 
-[bold]行为守则 (Behavior)[/bold]
-{_truncate(agent.behavior)}
+[bold]守则 (RULES.md)[/bold]
+{_truncate(rules) if rules else "[dim](未设置)[/dim]"}
 
 [bold]LLM 配置[/bold]
 模型: {agent.llm.model_name if agent.llm else "default"}
@@ -154,77 +148,44 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def create_agent(self) -> None:
-        """Create a new agent."""
         self.console.print("\n[bold]➕ 招聘新人[/bold]\n")
 
         # Step 1: Basic info
         self.console.print("[bold]步骤 1/5: 基本信息[/bold]\n")
-
         name = self.questionary.text("姓名:").ask()
         if not name:
             self.console.print("[red]姓名不能为空[/red]")
             return
 
-        identity = (
-            self.questionary.text(
-                "身份描述 (你是谁、性格特点):",
-                default="",
-            ).ask()
-            or ""
-        )
+        # Step 2: Identity
+        self.console.print("\n[bold]步骤 2/5: 身份 (IDENTITY.md)[/bold]\n")
+        self.console.print("[dim]你是谁、你的角色定位和核心自我认知。[/dim]\n")
+        identity = self.questionary.text("身份描述:", default="").ask() or ""
 
-        # Step 2: Profile
-        self.console.print("\n[bold]步骤 2/5: 公开档案[/bold]\n")
-        self.console.print("[dim]公开档案会展示给所有队友，描述你的职责和能力。[/dim]\n")
+        # Step 3: Soul
+        self.console.print("\n[bold]步骤 3/5: 灵魂 (SOUL.md)[/bold]\n")
+        self.console.print("[dim]你的工作部门、职责、性格特质，其他同事会看到这份档案。[/dim]\n")
+        soul = self.questionary.text("灵魂/档案描述:", default="").ask() or ""
 
-        profile = (
-            self.questionary.text(
-                "公开档案 (职务、职责、何时可以@你):",
-                default="",
-            ).ask()
-            or ""
-        )
+        # Step 4: Rules
+        self.console.print("\n[bold]步骤 4/5: 守则 (RULES.md)[/bold]\n")
+        self.console.print("[dim]你的工作流程、响应规则、协作习惯和禁止事项。[/dim]\n")
+        rules = self.questionary.text("行为守则:", default="").ask() or ""
 
-        # Step 3: Behavior
-        self.console.print("\n[bold]步骤 3/5: 行为守则[/bold]\n")
-        self.console.print("[dim]描述你的工作流程、响应规则和协作习惯。[/dim]\n")
-
-        behavior = (
-            self.questionary.text(
-                "行为守则 (工作流程、响应规则):",
-                default="",
-            ).ask()
-            or ""
-        )
-
-        # Step 4: LLM Config
-        self.console.print("\n[bold]步骤 4/5: LLM 配置[/bold]\n")
+        # Step 5: LLM + Docker + Proactive
+        self.console.print("\n[bold]步骤 5/5: 运行时配置[/bold]\n")
 
         models = [
-            "kimi-k2.5",
-            "kimi-k2",
-            "gpt-4o",
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo",
-            "claude-3-opus",
-            "claude-3-sonnet",
+            "kimi-k2.5", "kimi-k2", "gpt-4o", "gpt-4",
+            "gpt-4-turbo", "gpt-3.5-turbo", "claude-3-opus", "claude-3-sonnet",
         ]
-
-        model = self.questionary.select(
-            "选择模型:",
-            choices=models,
-            default="kimi-k2.5",
-        ).ask()
+        model = self.questionary.select("选择模型:", choices=models, default="kimi-k2.5").ask()
 
         temp_str = self.questionary.text("Temperature [1.0]:", default="1.0").ask()
         try:
             temperature = float(temp_str or "1.0")
         except ValueError:
             temperature = 1.0
-
-        # Step 5: Docker + Proactive
-        self.console.print("\n[bold]步骤 5/5: 运行时配置[/bold]\n")
 
         memory = self.questionary.text("内存限制 [512m]:", default="512m").ask()
 
@@ -235,7 +196,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 
         # Generate ID
         existing_ids = list(self.agent_store.load_all_agents().keys())
-        prefix = name.lower().replace(" ", "-")
+        prefix = name
         agent_id = self.agent_store.generate_agent_id(prefix, existing_ids)
 
         # Preview
@@ -245,11 +206,11 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.console.print(f"启动模式: {'常驻' if proactive else '延迟'}")
         self.console.print(f"模型: {model}")
         if identity:
-            self.console.print("[dim]身份: 已填写[/dim]")
-        if profile:
-            self.console.print("[dim]档案: 已填写[/dim]")
-        if behavior:
-            self.console.print("[dim]守则: 已填写[/dim]")
+            self.console.print("[dim]IDENTITY.md: 已填写[/dim]")
+        if soul:
+            self.console.print("[dim]SOUL.md: 已填写[/dim]")
+        if rules:
+            self.console.print("[dim]RULES.md: 已填写[/dim]")
 
         if not self.questionary.confirm("确认创建?").ask():
             self.console.print("[yellow]已取消[/yellow]")
@@ -260,9 +221,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         agent = AgentConfig(
             id=agent_id,
             name=name,
-            identity=identity,
-            profile=profile,
-            behavior=behavior,
             llm=LLMConfig(model_name=model, temperature=temperature),
             docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=memory or "512m"),
             proactive=proactive,
@@ -270,6 +228,12 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 
         success, msg = self.agent_store.save_agent(agent)
         if success:
+            if identity:
+                self.agent_store.write_persona_file(agent_id, "IDENTITY.md", identity)
+            if soul:
+                self.agent_store.write_persona_file(agent_id, "SOUL.md", soul)
+            if rules:
+                self.agent_store.write_persona_file(agent_id, "RULES.md", rules)
             self.console.print(f"[green]✓ {msg}[/green]")
             self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
         else:
@@ -278,9 +242,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def edit_agent(self) -> None:
-        """Edit an existing agent."""
         agents = self.agent_store.load_all_agents()
-
         if not agents:
             self.console.print("[yellow]暂无 Agent 可编辑[/yellow]")
             self.questionary.press_any_key_to_continue("按回车继续...").ask()
@@ -293,7 +255,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         choices.append(self.questionary.Choice("← 返回", value="back"))
 
         agent_id = self.questionary.select("选择要编辑的 Agent:", choices=choices).ask()
-
         if agent_id == "back":
             return
 
@@ -301,8 +262,15 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         if not agent:
             return
 
+        store = self.agent_store
+
         def _preview(text: str, length: int = 30) -> str:
             return (text[:length] + "...") if len(text) > length else (text or "-")
+
+        # Load current persona files
+        identity = store.read_persona_file(agent_id, "IDENTITY.md")
+        soul = store.read_persona_file(agent_id, "SOUL.md")
+        rules = store.read_persona_file(agent_id, "RULES.md")
 
         while True:
             self.console.print(f"\n[bold]✏️  编辑 Agent: {agent.name}[/bold]\n")
@@ -312,13 +280,13 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                 choices=[
                     self.questionary.Choice(f"🏷️  姓名 - 当前: {agent.name}", value="name"),
                     self.questionary.Choice(
-                        f"🎭 身份 - 当前: {_preview(agent.identity)}", value="identity"
+                        f"🎭 IDENTITY.md - 当前: {_preview(identity)}", value="identity"
                     ),
                     self.questionary.Choice(
-                        f"💼 档案 - 当前: {_preview(agent.profile)}", value="profile"
+                        f"💼 SOUL.md - 当前: {_preview(soul)}", value="soul"
                     ),
                     self.questionary.Choice(
-                        f"📋 守则 - 当前: {_preview(agent.behavior)}", value="behavior"
+                        f"📋 RULES.md - 当前: {_preview(rules)}", value="rules"
                     ),
                     self.questionary.Choice(
                         f"🤖 模型 - 当前: {agent.llm.model_name if agent.llm else 'default'}",
@@ -347,33 +315,30 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                     self.console.print("[green]✓ 姓名已更新[/green]")
 
             elif edit_choice == "identity":
-                new_identity = self.questionary.text("身份描述:", default=agent.identity).ask()
-                if new_identity is not None:
-                    agent.identity = new_identity
-                    self.console.print("[green]✓ 身份已更新[/green]")
+                new_text = self.questionary.text("IDENTITY.md 内容:", default=identity).ask()
+                if new_text is not None:
+                    identity = new_text
+                    store.write_persona_file(agent_id, "IDENTITY.md", new_text)
+                    self.console.print("[green]✓ IDENTITY.md 已更新[/green]")
 
-            elif edit_choice == "profile":
-                new_profile = self.questionary.text("公开档案:", default=agent.profile).ask()
-                if new_profile is not None:
-                    agent.profile = new_profile
-                    self.console.print("[green]✓ 档案已更新[/green]")
+            elif edit_choice == "soul":
+                new_text = self.questionary.text("SOUL.md 内容:", default=soul).ask()
+                if new_text is not None:
+                    soul = new_text
+                    store.write_persona_file(agent_id, "SOUL.md", new_text)
+                    self.console.print("[green]✓ SOUL.md 已更新[/green]")
 
-            elif edit_choice == "behavior":
-                new_behavior = self.questionary.text("行为守则:", default=agent.behavior).ask()
-                if new_behavior is not None:
-                    agent.behavior = new_behavior
-                    self.console.print("[green]✓ 守则已更新[/green]")
+            elif edit_choice == "rules":
+                new_text = self.questionary.text("RULES.md 内容:", default=rules).ask()
+                if new_text is not None:
+                    rules = new_text
+                    store.write_persona_file(agent_id, "RULES.md", new_text)
+                    self.console.print("[green]✓ RULES.md 已更新[/green]")
 
             elif edit_choice == "model":
                 models = [
-                    "kimi-k2.5",
-                    "kimi-k2",
-                    "gpt-4o",
-                    "gpt-4",
-                    "gpt-4-turbo",
-                    "gpt-3.5-turbo",
-                    "claude-3-opus",
-                    "claude-3-sonnet",
+                    "kimi-k2.5", "kimi-k2", "gpt-4o", "gpt-4",
+                    "gpt-4-turbo", "gpt-3.5-turbo", "claude-3-opus", "claude-3-sonnet",
                 ]
                 current_model = agent.llm.model_name if agent.llm else "kimi-k2.5"
                 new_model = self.questionary.select(
@@ -395,9 +360,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                     if not agent.docker:
                         from tlon.base.config import DockerRuntimeConfig
 
-                        agent.docker = DockerRuntimeConfig(
-                            image="ubuntu:22.04", memory_limit=new_mem
-                        )
+                        agent.docker = DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=new_mem)
                     else:
                         agent.docker.memory_limit = new_mem
                     self.console.print("[green]✓ 内存限制已更新[/green]")
@@ -422,9 +385,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def delete_agent(self) -> None:
-        """Delete an agent."""
         agents = self.agent_store.load_all_agents()
-
         if not agents:
             self.console.print("[yellow]暂无 Agent 可删除[/yellow]")
             self.questionary.press_any_key_to_continue("按回车继续...").ask()
@@ -439,7 +400,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         choices.append(self.questionary.Choice("← 取消", value="cancel"))
 
         agent_id = self.questionary.select("选择要删除的 Agent:", choices=choices).ask()
-
         if agent_id == "cancel":
             return
 

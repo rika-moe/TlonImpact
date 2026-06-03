@@ -95,5 +95,19 @@ class AgentStore:
                 return agent_id
             counter += 1
 
+    # ===== Persona .md file operations =====
+
+    def read_persona_file(self, agent_id: str, filename: str) -> str:
+        """Read a persona markdown file (IDENTITY.md, SOUL.md, RULES.md)."""
+        filepath = self._paths.agent_config_dir(agent_id) / filename
+        if filepath.exists():
+            return filepath.read_text(encoding="utf-8").strip()
+        return ""
+
+    def write_persona_file(self, agent_id: str, filename: str, content: str) -> None:
+        """Write a persona markdown file (IDENTITY.md, SOUL.md, RULES.md)."""
+        filepath = self._paths.agent_config_dir(agent_id) / filename
+        filepath.write_text(content.strip() + "\n", encoding="utf-8")
+
 
 __all__ = ["AgentStore"]

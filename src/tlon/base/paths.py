@@ -99,6 +99,20 @@ class TlonPaths:
     def agent_tasks_file(self, agent_id: str) -> Path:
         return self.agent_dir(agent_id) / "tasks.jsonl"
 
+    # ===== Agent persona files =====
+
+    def agent_identity_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/config/IDENTITY.md"""
+        return self.agent_config_dir(agent_id) / "IDENTITY.md"
+
+    def agent_soul_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/config/SOUL.md"""
+        return self.agent_config_dir(agent_id) / "SOUL.md"
+
+    def agent_rules_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/config/RULES.md"""
+        return self.agent_config_dir(agent_id) / "RULES.md"
+
     # ===== Memory =====
 
     def memory_config_file(self, agent_id: str) -> Path:

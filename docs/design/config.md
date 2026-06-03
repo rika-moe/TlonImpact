@@ -40,7 +40,10 @@ system (.env) → agent (yaml)
 │       └── trace-{uuid}.jsonl
 ├── {agent_id}/
 │   ├── config/
-│   │   └── agent.yaml
+│   │   ├── agent.yaml
+│   │   ├── IDENTITY.md
+│   │   ├── SOUL.md
+│   │   └── RULES.md
 │   ├── memory/
 │   │   ├── config.json
 │   │   ├── working/

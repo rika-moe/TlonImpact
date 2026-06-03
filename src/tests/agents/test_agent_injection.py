@@ -16,7 +16,7 @@ from tlon.base.config import AgentConfig
 
 def _make_agent(**kwargs):
     """Build an Agent with all deps as MagicMocks."""
-    config = AgentConfig(id="a-001", name="林知遥", identity="技术能力强")
+    config = AgentConfig(id="a-001", name="林知遥")
 
     defaults = {
         "config": config,
@@ -54,11 +54,6 @@ class TestAgentIdentity:
         config = AgentConfig(id="dev-007", name="测试员")
         agent = _make_agent(config=config)
         assert agent.name == "测试员"
-
-    def test_identity_set_from_config(self):
-        config = AgentConfig(id="a-001", name="林知遥", identity="冷静理性")
-        agent = _make_agent(config=config)
-        assert agent.config.identity == "冷静理性"
 
 
 class TestAgentInjectedDeps:

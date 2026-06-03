@@ -24,7 +24,7 @@ from tlon.tools.base import ToolResult
 
 def _make_agent(**kwargs):
     """Build an Agent with all deps as mocks."""
-    config = AgentConfig(id="a-001", name="TestAgent", identity="测试")
+    config = AgentConfig(id="a-001", name="TestAgent")
 
     event_bus = MagicMock()
     event_bus.publish = AsyncMock()

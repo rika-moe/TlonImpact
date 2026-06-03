@@ -97,15 +97,14 @@ class ToolConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Complete agent configuration."""
+    """Complete agent configuration.
+
+    Narrative identity/personality/rules are stored as .md files
+    (IDENTITY.md, SOUL.md, RULES.md) in the agent's home directory.
+    """
 
     id: str
     name: str
-
-    # Prompt narratives (free text, not structured fields)
-    identity: str = ""
-    profile: str = ""
-    behavior: str = ""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
