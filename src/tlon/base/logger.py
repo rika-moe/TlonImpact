@@ -7,6 +7,19 @@ from typing import Any
 import structlog
 
 
+def _add_trace_context(logger: Any, method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """Inject trace_id and span_id from ContextVars into log entries."""
+    from tlon.base.tracing.trace_context import _current_span_id, _current_trace_id
+
+    trace_id = _current_trace_id.get()
+    if trace_id:
+        event_dict["trace_id"] = trace_id
+    span_id = _current_span_id.get()
+    if span_id:
+        event_dict["span_id"] = span_id
+    return event_dict
+
+
 def configure_logging(log_level: str = "INFO", debug: bool = False, silent: bool = False) -> None:
     """Configure structured logging for the application.
 
@@ -33,6 +46,7 @@ def configure_logging(log_level: str = "INFO", debug: bool = False, silent: bool
 
     # Configure structlog
     shared_processors: list[Any] = [
+        _add_trace_context,
         # Add log level to the event
         structlog.stdlib.filter_by_level,
         # Add timestamp

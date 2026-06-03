@@ -18,6 +18,7 @@ from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.config import AgentConfig, ConfigService, DockerRuntimeConfig, LLMConfig
+from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.paths import paths
@@ -139,6 +140,7 @@ class ServerApp:
             event_bus=event_bus,
             agent_info_provider=config_service,
             message_store=message_store,
+            trace_store=trace_store,
         )
         # Register initial agents (by ID, config is looked up from provider)
         for agent_id in config_service.agents:
@@ -202,6 +204,11 @@ class ServerApp:
         )
 
         self._running = False
+        await event_bus.publish(Event(
+            type=EventType.SYSTEM_STARTUP,
+            payload={"agents": len(agent_registry.get_all())},
+            source="server",
+        ))
         logger.info("ServerApp initialized successfully")
         logger.info(f"  Agents: {len(agent_registry.get_all())}")
         logger.info(f"  REST API: http://{self.host}:{self.rest_port}")
@@ -278,6 +285,14 @@ class ServerApp:
         """
         if not self._running and not self._components:
             return
+
+        event_bus = self._components.get("event_bus")
+        if event_bus:
+            await event_bus.publish(Event(
+                type=EventType.SYSTEM_SHUTDOWN,
+                payload={},
+                source="server",
+            ))
 
         logger.info("Shutting down Tlon Server...")
 

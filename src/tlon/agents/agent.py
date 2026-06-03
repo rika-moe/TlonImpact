@@ -9,7 +9,7 @@ import contextlib
 import json
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.agents.prompt_builder import SystemPromptBuilder
@@ -29,6 +29,9 @@ from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.tools.base import ToolResult
 from tlon.tools.tasks.manager import TaskManager
+
+if TYPE_CHECKING:
+    from tlon.base.tracing.trace_store import TraceStore
 
 logger = get_logger(__name__)
 
@@ -90,6 +93,7 @@ class Agent(Component, Device):
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
+        trace_store: "TraceStore | None" = None,
         per_tool_timeout: float = 30.0,
     ):
         """Initialize the agent.
@@ -103,6 +107,7 @@ class Agent(Component, Device):
             tool_executor: Tool registry and executor
             team_members: List of all team member configs
             message_store: Message store for querying history
+            trace_store: Trace store for distributed tracing
             per_tool_timeout: Timeout for each individual tool
         """
         Component.__init__(self, name=config.name)
@@ -119,6 +124,12 @@ class Agent(Component, Device):
         self.memory = memory
         self.task_manager = task_manager
         self.tool_executor = tool_executor
+
+        # Trace store for observability
+        self._trace_store = trace_store
+
+        # Per-agent bound logger
+        self._logger = get_logger(f"{__name__}.{config.id}").bind(agent_id=config.id)
 
         # Tool execution timeout
         self._per_tool_timeout = per_tool_timeout
@@ -304,14 +315,14 @@ class Agent(Component, Device):
         if not session.context:
             context = await self._build_context(message)
             session.context = context
-            logger.debug(f"Session {session.id}: context built with {len(context)} messages")
+            self._logger.debug(f"Session {session.id}: context built with {len(context)} messages")
 
         max_iterations = 10
         max_errors = 3
 
         # Check iteration limit
         if session.iteration >= max_iterations:
-            logger.warning(f"Session {session.id}: max iterations reached")
+            self._logger.warning(f"Session {session.id}: max iterations reached")
             await self._send_message(
                 "思考时间过长，请简化您的问题。",
                 mentions=[message.sender_id] if message.sender_type == "human" else [],
@@ -319,12 +330,13 @@ class Agent(Component, Device):
             session.mark_completed()
             return
 
-        # Think: call LLM
+        # Think: call LLM (wrapped in trace span)
         try:
-            response = await self.think(session.context)
+            async with self._traced_span("agent.think"):
+                response = await self.think(session.context)
             session.set_last_llm_response(response)
         except Exception as e:
-            logger.error(f"Session {session.id}: LLM call failed: {e}", exc_info=True)
+            self._logger.error(f"Session {session.id}: LLM call failed: {e}", exc_info=True)
             session.record_error()
             session.advance_iteration()
             if session.error_count >= max_errors:
@@ -429,7 +441,7 @@ class Agent(Component, Device):
                 await self._save_interaction_to_memory(
                     final_content, llm_resp, session.all_tool_results
                 )
-            logger.info(f"Session {session.id} completed: {final_content[:50]}")
+            self._logger.info(f"Session {session.id} completed: {final_content[:50]}")
             session.mark_completed()
         elif not session.has_pending_tools:
             session.advance_iteration()
@@ -696,7 +708,7 @@ class Agent(Component, Device):
             await self.memory.add_interaction(msg, llm_response, tool_results)
             self._interaction_count_since_reflection += 1
         except Exception as e:
-            logger.error(f"Failed to save to memory: {e}")
+            self._logger.error(f"Failed to save to memory: {e}")
 
     async def _send_message(self, content: str, mentions: list[str] | None = None) -> None:
         """Send a message via EventBus."""
@@ -714,7 +726,7 @@ class Agent(Component, Device):
                 source=self.id,
             )
         except Exception:
-            logger.error("Failed to emit MESSAGE_NEW event", exc_info=True)
+            self._logger.error("Failed to emit MESSAGE_NEW event", exc_info=True)
 
     async def _check_reflection_trigger(self) -> None:
         """Check if memory reflection should run and trigger if needed."""
@@ -874,6 +886,29 @@ class Agent(Component, Device):
                     logger.debug(f"Reflection: unknown action: {action}")
             except Exception as e:
                 logger.warning(f"Reflection: failed to apply {action}: {e}")
+
+    @contextlib.asynccontextmanager
+    async def _traced_span(self, name: str):
+        """Async context manager combining ContextVar span + TraceStore persistence."""
+        from tlon.base.tracing.trace_context import start_span
+
+        with start_span(name=name, source=self.id) as ctx:
+            ts = self._trace_store
+            if ts:
+                is_root = ctx.parent_span_id is None
+                if is_root:
+                    await ts.start_trace(ctx.trace_id, name, self.id)
+                await ts.start_span(
+                    ctx.trace_id, ctx.span_id, name, self.id,
+                    parent_span_id=ctx.parent_span_id,
+                )
+            try:
+                yield ctx
+            finally:
+                if ts:
+                    await ts.end_span(ctx.trace_id, ctx.span_id)
+                    if is_root:
+                        await ts.end_trace(ctx.trace_id)
 
     @staticmethod
     def _tool_call_to_dict(tool_call: ToolCall) -> dict[str, Any]:
