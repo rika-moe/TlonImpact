@@ -80,6 +80,22 @@ class AgentSession:
         self._pending_tasks = tasks
         self._pending_tool_calls = tool_calls
 
+    async def cancel_pending(self) -> None:
+        """Cancel all unfinished background tool tasks.
+
+        Called when the session ends (normal completion or error) so no
+        orphaned tasks keep running after the session is gone.
+        """
+        pending: list[asyncio.Task] = [
+            t for t in self._pending_tasks.values() if t is not None and not t.done()
+        ]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._pending_tasks = {}
+        self._pending_tool_calls = []
+
     def collect_completed(self) -> list:
         """Return list of (tool_call, result) for completed tasks."""
         completed = []

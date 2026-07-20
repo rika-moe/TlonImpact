@@ -2,21 +2,23 @@
 
 Verifies that:
 - _get_system_prompt() builds on first call
-- _get_system_prompt() reuses cache on subsequent calls
-- System prompt is static (no dirty mechanism needed)
+- _get_system_prompt() reuses cache while persona files are unchanged
+- _get_system_prompt() rebuilds when a persona file (own or team) changes
 - _build_knowledge_context() injects memory into user prompt
 - Tool execution does not invalidate system prompt cache
 """
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from tlon.agents.agent import Agent
 from tlon.base.config import AgentConfig
+from tlon.base.paths import TlonPaths
 
 
-def _make_agent():
+def _make_agent(team_members: list[AgentConfig] | None = None):
     config = AgentConfig(id="a-001", name="林知遥")
     tool_executor = MagicMock()
     tool_executor.get_tool_definitions.return_value = []
@@ -35,12 +37,21 @@ def _make_agent():
         memory=memory,
         task_manager=MagicMock(),
         tool_executor=tool_executor,
+        team_members=team_members,
     )
+
+
+def _use_tmp_paths(monkeypatch, tmp_path) -> TlonPaths:
+    """Redirect the paths singleton to a tmp dir (keeps tests hermetic)."""
+    test_paths = TlonPaths(home=tmp_path)
+    monkeypatch.setattr("tlon.agents.agent.paths", test_paths)
+    return test_paths
 
 
 class TestPromptCacheBasic:
     @pytest.mark.asyncio
-    async def test_first_call_builds_prompt(self):
+    async def test_first_call_builds_prompt(self, tmp_path, monkeypatch):
+        _use_tmp_paths(monkeypatch, tmp_path)
         agent = _make_agent()
         with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
             mock_ctx.return_value = MagicMock()
@@ -52,15 +63,73 @@ class TestPromptCacheBasic:
         assert agent._system_prompt_cache == "built prompt"
 
     @pytest.mark.asyncio
-    async def test_second_call_uses_cache(self):
+    async def test_second_call_uses_cache(self, tmp_path, monkeypatch):
+        _use_tmp_paths(monkeypatch, tmp_path)
         agent = _make_agent()
         agent._system_prompt_cache = "cached prompt"
+        agent._system_prompt_mtime = agent._persona_mtime_signature(agent._persona_files())
 
         with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
             result = await agent._get_system_prompt()
             mock_ctx.assert_not_called()
 
         assert result == "cached prompt"
+
+
+class TestPromptCacheInvalidation:
+    """Cache is keyed on persona file mtimes: edits take effect without restart."""
+
+    @pytest.mark.asyncio
+    async def test_rebuilds_when_own_soul_file_changes(self, tmp_path, monkeypatch):
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        soul_file = test_paths.agent_soul_file("a-001")
+        soul_file.write_text("旧灵魂", encoding="utf-8")
+
+        agent = _make_agent()
+        prompt1 = await agent._get_system_prompt()
+        assert "旧灵魂" in prompt1
+
+        # Edit the file and bump mtime (guard against mtime resolution)
+        soul_file.write_text("新灵魂", encoding="utf-8")
+        new_mtime = soul_file.stat().st_mtime + 10
+        os.utime(soul_file, (new_mtime, new_mtime))
+
+        prompt2 = await agent._get_system_prompt()
+        assert "新灵魂" in prompt2
+        assert "旧灵魂" not in prompt2
+
+    @pytest.mark.asyncio
+    async def test_rebuilds_when_team_soul_file_changes(self, tmp_path, monkeypatch):
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        member = AgentConfig(id="b-002", name="队友")
+        team_soul = test_paths.agent_soul_file("b-002")
+        team_soul.write_text("团队旧设定", encoding="utf-8")
+
+        agent = _make_agent(team_members=[member])
+        prompt1 = await agent._get_system_prompt()
+        assert "团队旧设定" in prompt1
+
+        team_soul.write_text("团队新设定", encoding="utf-8")
+        new_mtime = team_soul.stat().st_mtime + 10
+        os.utime(team_soul, (new_mtime, new_mtime))
+
+        prompt2 = await agent._get_system_prompt()
+        assert "团队新设定" in prompt2
+        assert "团队旧设定" not in prompt2
+
+    @pytest.mark.asyncio
+    async def test_no_rebuild_when_files_unchanged(self, tmp_path, monkeypatch):
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        test_paths.agent_soul_file("a-001").write_text("灵魂", encoding="utf-8")
+
+        agent = _make_agent()
+        with patch("tlon.agents.agent.SystemPromptBuilder") as mock_builder_cls:
+            mock_builder_cls.return_value.build.return_value = "prompt"
+            await agent._get_system_prompt()
+            await agent._get_system_prompt()
+            await agent._get_system_prompt()
+
+        assert mock_builder_cls.call_count == 1
 
 
 class TestKnowledgeContext:

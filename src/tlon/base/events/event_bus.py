@@ -174,6 +174,12 @@ class EventBus(Component):
     async def _dispatch(self, event: Event) -> None:
         """Dispatch an event to all subscribers.
 
+        Handlers are invoked sequentially in subscription order. Because the
+        event processing loop has a single consumer, each handler is awaited
+        before the next one starts: event order is preserved, at most one
+        handler runs at a time, and one handler's failure does not affect
+        the others.
+
         Args:
             event: The event to dispatch
         """
@@ -194,9 +200,10 @@ class EventBus(Component):
                     f"[EventBus] Calling handler {subscription_id} ({handler_name}) for {event.type.value}"
                 )
                 if asyncio.iscoroutinefunction(handler):
-                    # Schedule async handler as a task
-                    asyncio.create_task(self._run_handler(handler, event, subscription_id))
-                    logger.info(f"[EventBus] Scheduled async handler {subscription_id}")
+                    # Await async handler sequentially (errors are isolated
+                    # inside _run_handler so later handlers still run)
+                    await self._run_handler(handler, event, subscription_id)
+                    logger.info(f"[EventBus] Completed async handler {subscription_id}")
                 else:
                     # Run sync handler in thread pool
                     await asyncio.get_event_loop().run_in_executor(None, handler, event)

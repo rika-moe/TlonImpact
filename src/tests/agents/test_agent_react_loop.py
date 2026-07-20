@@ -13,8 +13,9 @@ Verifies:
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tlon.agents.agent import Agent
+from tlon.agents.agent import Agent, AgentState
 from tlon.agents.llm_client import LLMResponse, ToolCall
+from tlon.agents.session import AgentSession
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
@@ -780,3 +781,191 @@ class TestReActConflictDetection:
         message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
         assert len(message_events) == 1
         assert message_events[0].args[0].payload.content == "Done!"
+
+
+class TestAgentStateDerivation:
+    """Agent-level state is derived from live sessions, not assigned per step."""
+
+    async def test_state_derived_from_live_sessions(self):
+        """One session ending must not reset state to idle while another lives."""
+        agent = _make_agent()
+        agent.state = AgentState.ACTIVE
+
+        s1 = AgentSession("s1", "task A")
+        s2 = AgentSession("s2", "task B")
+
+        # Both sessions alive -> THINKING
+        agent._derive_state({"s1": s1, "s2": s2})
+        assert agent.state == AgentState.THINKING
+
+        # s2 completes and is cleaned up, s1 still active -> stays THINKING
+        s2.mark_completed()
+        agent._derive_state({"s1": s1})
+        assert agent.state == AgentState.THINKING
+
+        # No live sessions -> ACTIVE (idle)
+        agent._derive_state({})
+        assert agent.state == AgentState.ACTIVE
+
+    async def test_derive_state_leaves_lifecycle_states_untouched(self):
+        """INITIALIZING/ERROR/SHUTDOWN/None are not overwritten by derivation."""
+        agent = _make_agent()
+        agent.state = AgentState.SHUTDOWN
+        agent._derive_state({"s1": AgentSession("s1", "x")})
+        assert agent.state == AgentState.SHUTDOWN
+
+        agent.state = None
+        agent._derive_state({})
+        assert agent.state is None
+
+    async def test_main_loop_state_not_reset_while_other_session_alive(self):
+        """Integration: session 2 completes while session 1 still runs a tool."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hanging_tool(**kwargs):
+            started.set()
+            await release.wait()
+            return ToolResult(success=True, data={})
+
+        llm = MockLLMClient(
+            [
+                # Session 1: dispatches a hanging tool, stays WAITING
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="tc-1", function_name="hangingTool", arguments={})],
+                ),
+                # Session 2: completes immediately
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-2",
+                            function_name="sendMessage",
+                            arguments={"content": "Done!", "is_complete": True},
+                        )
+                    ],
+                ),
+            ]
+        )
+        agent = _make_agent(llm_client=llm)
+        agent._reflection_enabled = False
+        agent.state = AgentState.ACTIVE
+
+        hang = MagicMock()
+        hang.name = "hangingTool"
+        hang.execute = hanging_tool
+        send = MagicMock()
+        send.name = "sendMessage"
+        send.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
+            )
+        )
+        agent.tool_executor.register_tool(hang)
+        agent.tool_executor.register_tool(send)
+
+        agent._worker_running = True
+        agent._message_queue.put_nowait(_make_message("first"))
+        agent._message_queue.put_nowait(_make_message("second"))
+
+        task = asyncio.create_task(agent._main_loop())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            # Wait until session 2's final message has been sent
+            message_events = []
+            for _ in range(200):
+                message_events = [
+                    c
+                    for c in agent.event_bus.publish.await_args_list
+                    if c.args[0].type == EventType.MESSAGE_NEW
+                ]
+                if message_events:
+                    break
+                await asyncio.sleep(0.01)
+            assert message_events
+            # Let the loop run a few more passes so session 2 is cleaned up
+            await asyncio.sleep(0.1)
+            # Session 1 is still alive -> state must NOT fall back to ACTIVE
+            assert agent.state == AgentState.THINKING
+        finally:
+            agent._worker_running = False
+            release.set()
+            await asyncio.wait_for(task, timeout=2)
+
+
+class TestOrphanTaskCleanup:
+    """Pending background tool tasks are cancelled when a session ends."""
+
+    async def test_cancel_pending_cancels_unfinished_tasks(self):
+        """AgentSession.cancel_pending cancels and reaps unfinished tasks."""
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def hanging():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        session = AgentSession("s1", "x")
+        task = asyncio.create_task(hanging())
+        tc = ToolCall(id="tc-1", function_name="hangingTool", arguments={})
+        session.dispatch_tools([tc], {"tc-1": task})
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        await session.cancel_pending()
+
+        assert cancelled.is_set()
+        assert task.cancelled()
+        assert not session.has_pending_tools
+
+    async def test_main_loop_cancels_pending_tasks_on_session_error(self):
+        """Exception path: errored session's pending tool tasks are cancelled."""
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def hanging_tool(**kwargs):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return ToolResult(success=True, data={})
+
+        llm = MockLLMClient(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="tc-1", function_name="hangingTool", arguments={})],
+                ),
+            ]
+        )
+        agent = _make_agent(llm_client=llm)
+        agent._reflection_enabled = False
+        agent.state = AgentState.ACTIVE
+
+        hang = MagicMock()
+        hang.name = "hangingTool"
+        hang.execute = hanging_tool
+        agent.tool_executor.register_tool(hang)
+
+        agent._worker_running = True
+        agent._message_queue.put_nowait(_make_message())
+
+        with patch.object(
+            agent, "_collect_session_results", new=AsyncMock(side_effect=RuntimeError("boom"))
+        ):
+            task = asyncio.create_task(agent._main_loop())
+            try:
+                await asyncio.wait_for(started.wait(), timeout=2)
+                # Session errors on collect -> cleanup must cancel the orphan
+                await asyncio.wait_for(cancelled.wait(), timeout=2)
+            finally:
+                agent._worker_running = False
+                await asyncio.wait_for(task, timeout=2)
+
+        assert cancelled.is_set()

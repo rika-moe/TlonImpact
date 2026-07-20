@@ -9,6 +9,7 @@ import contextlib
 import json
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
@@ -134,8 +135,9 @@ class Agent(Component, Device):
         # Tool execution timeout
         self._per_tool_timeout = per_tool_timeout
 
-        # Prompt cache — system prompt is fully static
+        # Prompt cache — rebuilt when persona file mtimes change
         self._system_prompt_cache: str | None = None
+        self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
 
         # Reflection state (agent self-driven memory audit)
         self._reflection_enabled = getattr(memory.config, "reflection_enabled", True)
@@ -162,6 +164,22 @@ class Agent(Component, Device):
     def get_state(self) -> str:
         """Get agent state as string."""
         return self.state.value if self.state else "unknown"
+
+    def _derive_state(self, sessions: dict[str, AgentSession]) -> None:
+        """Recompute agent-level state from live sessions.
+
+        With multi-session scheduling, per-step assignment would let one
+        session's lifecycle overwrite another's. Instead the state is
+        derived: THINKING while any session is still alive, ACTIVE (idle)
+        when none remain. Lifecycle states (INITIALIZING/ERROR/SHUTDOWN)
+        are left untouched.
+        """
+        if self.state not in (AgentState.ACTIVE, AgentState.THINKING):
+            return
+        if any(not s.is_completed for s in sessions.values()):
+            self.state = AgentState.THINKING
+        else:
+            self.state = AgentState.ACTIVE
 
     async def initialize(self) -> None:
         """Initialize the agent."""
@@ -273,8 +291,12 @@ class Agent(Component, Device):
 
                 # ── 4. Cleanup ──
                 if session.is_completed:
+                    await session.cancel_pending()
                     del sessions[sid]
                     session_messages.pop(sid, None)
+
+            # ── 5. Agent state derives from live sessions ──
+            self._derive_state(sessions)
 
             # Yield control
             await asyncio.sleep(0.01 if sessions else 0.05)
@@ -309,8 +331,6 @@ class Agent(Component, Device):
         The session's state transitions ACTIVE -> WAITING (tools running).
         When tools complete, _collect_session_results transitions back to ACTIVE.
         """
-        self.state = AgentState.THINKING
-
         # Build context on first call (after LLM error: skip rebuild)
         if not session.context:
             context = await self._build_context(message)
@@ -482,20 +502,25 @@ class Agent(Component, Device):
             trigger_content=message.content,
         )
 
-        while not session.is_completed:
-            if session.state == SessionState.WAITING:
-                # Yield to let background tool tasks start executing
-                await asyncio.sleep(0)
-                await self._collect_session_results(session)
-                if session.has_pending_tools:
-                    # Wait for all pending tasks to complete, then collect
-                    pending = list(session.get_pending_tasks().values())
-                    await asyncio.gather(*pending, return_exceptions=True)
+        self._derive_state({session.id: session})
+        try:
+            while not session.is_completed:
+                if session.state == SessionState.WAITING:
+                    # Yield to let background tool tasks start executing
+                    await asyncio.sleep(0)
                     await self._collect_session_results(session)
-            elif session.state == SessionState.ACTIVE:
-                await self._step_session(session, message)
-            else:
-                break
+                    if session.has_pending_tools:
+                        # Wait for all pending tasks to complete, then collect
+                        pending = list(session.get_pending_tasks().values())
+                        await asyncio.gather(*pending, return_exceptions=True)
+                        await self._collect_session_results(session)
+                elif session.state == SessionState.ACTIVE:
+                    await self._step_session(session, message)
+                else:
+                    break
+        finally:
+            await session.cancel_pending()
+            self._derive_state({})
 
     async def _add_no_tool_reminder(
         self, context: list[dict[str, Any]], response: LLMResponse
@@ -687,11 +712,43 @@ class Agent(Component, Device):
             team_profiles=team_profiles,
         )
 
+    def _persona_files(self) -> list[Path]:
+        """Persona files that feed the system prompt (self + team SOUL files)."""
+        files = [
+            paths.agent_identity_file(self.config.id),
+            paths.agent_soul_file(self.config.id),
+            paths.agent_rules_file(self.config.id),
+        ]
+        files.extend(
+            paths.agent_soul_file(m.id)
+            for m in self.team_members
+            if m.id != self.config.id
+        )
+        return files
+
+    @staticmethod
+    def _persona_mtime_signature(files: list[Path]) -> tuple[tuple[str, float | None], ...]:
+        """Snapshot persona file mtimes; missing files map to None."""
+        signature: list[tuple[str, float | None]] = []
+        for f in files:
+            try:
+                signature.append((str(f), f.stat().st_mtime))
+            except OSError:
+                signature.append((str(f), None))
+        return tuple(signature)
+
     async def _get_system_prompt(self) -> str:
-        """Get system prompt, using cache."""
-        if self._system_prompt_cache is None:
+        """Get system prompt, rebuilding the cache when persona files change.
+
+        The cache is keyed on the mtime signature of all persona files
+        (own IDENTITY/SOUL/RULES plus team SOUL files), so editing any of
+        them takes effect without restarting the process.
+        """
+        signature = self._persona_mtime_signature(self._persona_files())
+        if self._system_prompt_cache is None or signature != self._system_prompt_mtime:
             context = await self._build_prompt_context()
             self._system_prompt_cache = SystemPromptBuilder(context).build()
+            self._system_prompt_mtime = signature
         return self._system_prompt_cache
 
     async def _save_interaction_to_memory(
