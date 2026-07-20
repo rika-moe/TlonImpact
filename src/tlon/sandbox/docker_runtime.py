@@ -9,8 +9,9 @@ must be present in the base image or installed via a Dockerfile.
 """
 
 import asyncio
-import base64
+import io
 import shlex
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,8 +40,9 @@ class DockerRuntime:
     Each agent gets its own isolated container with full network access.
     Containers are created on-demand and persist across sessions.
 
-    File I/O is performed via shell commands (cat / python3+base64) so that
-    symlinks are followed automatically and no tar handling is needed.
+    File I/O is performed via 'cat' (reads) and put_archive with an
+    in-memory tar (writes), so no software needs to be installed inside
+    the container.
 
     Example:
         >>> config = DockerRuntimeConfig(image="ubuntu:22.04")
@@ -105,12 +107,14 @@ class DockerRuntime:
         Creates the container if it doesn't exist, starts it if stopped.
         """
         try:
-            # Try to get existing container
-            self.container = self.client.containers.get(self.container_name)
+            # Try to get existing container (blocking docker SDK call → thread)
+            self.container = await asyncio.to_thread(
+                self.client.containers.get, self.container_name
+            )
 
             if self.container.status != "running":
                 logger.info(f"Starting existing container: {self.container_name}")
-                self.container.start()
+                await asyncio.to_thread(self.container.start)
                 # Wait a moment for container to be ready
                 await asyncio.sleep(1)
 
@@ -128,7 +132,7 @@ class DockerRuntime:
         image = self.config.image
 
         try:
-            self.client.images.get(image)
+            await asyncio.to_thread(self.client.images.get, image)
             logger.debug(f"Image {image} found locally")
         except ImageNotFound:
             logger.info(f"Pulling image: {image}")
@@ -145,7 +149,8 @@ class DockerRuntime:
 
         logger.info(f"Creating container {self.container_name} from image {image}")
 
-        self.container = self.client.containers.run(
+        self.container = await asyncio.to_thread(
+            self.client.containers.run,
             image=image,
             name=self.container_name,
             command="sleep infinity",
@@ -183,30 +188,42 @@ class DockerRuntime:
             return ExecutionResult(exit_code=-1, stdout="", stderr="Container not available")
 
         try:
-            # Run command in container
-            exec_result = self.container.exec_run(
-                cmd=["bash", "-c", command],
-                workdir=workdir or self.config.working_dir,
-                demux=True,  # Separate stdout/stderr
-            )
-
-            # Wait for completion with timeout
+            # exec_run is a blocking docker SDK call — run it in a thread so
+            # the event loop stays responsive, and enforce the timeout in two
+            # layers: `timeout` inside the container actually kills the
+            # process (a timed-out thread cannot be cancelled), while
+            # asyncio.wait_for (with a grace period) is the outer backstop.
             try:
-                exit_code, output = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: (exec_result.exit_code, exec_result.output)),
-                    timeout=timeout,
+                exec_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.container.exec_run,
+                        cmd=["timeout", str(timeout), "bash", "-c", command],
+                        workdir=workdir or self.config.working_dir,
+                        demux=True,  # Separate stdout/stderr
+                    ),
+                    timeout=timeout + 5,
                 )
             except TimeoutError:
-                # Try to kill the exec if possible
                 logger.warning(f"Command timed out after {timeout}s: {command[:100]}")
                 return ExecutionResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout} seconds"
                 )
 
+            exit_code, output = exec_result.exit_code, exec_result.output
+
             # Parse output (demux returns tuple of (stdout_bytes, stderr_bytes))
             stdout_bytes, stderr_bytes = output if output else (b"", b"")
             stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
             stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+
+            # `timeout` kills the command with exit code 124
+            if exit_code == 124:
+                logger.warning(f"Command timed out after {timeout}s: {command[:100]}")
+                return ExecutionResult(
+                    exit_code=-1,
+                    stdout=stdout,
+                    stderr=f"Command timed out after {timeout} seconds",
+                )
 
             return ExecutionResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
@@ -309,7 +326,8 @@ class DockerRuntime:
     async def write_file(self, path: str, content: bytes) -> bool:
         """Write a file into the container.
 
-        Uses python3 + base64 inside the container to avoid all shell escaping issues.
+        Uses the docker SDK's put_archive with an in-memory tar archive, so
+        no software (python3, base64, ...) needs to exist inside the container.
         Automatically creates parent directories.
 
         Args:
@@ -325,23 +343,30 @@ class DockerRuntime:
         if not self.container:
             await self.ensure_running()
 
+        if not self.container:
+            raise RuntimeError("Container not available")
+
         # Ensure parent directories exist
         parent = path.rsplit("/", 1)[0] if "/" in path else "/"
         if parent and parent != "/":
-            await self.execute(f"mkdir -p {shlex.quote(parent)}")
+            result = await self.execute(f"mkdir -p {shlex.quote(parent)}")
+            if result.exit_code != 0:
+                raise RuntimeError(f"mkdir -p failed for {parent}: {result.stderr}")
 
-        # Encode content as base64 and decode inside container with python3
-        b64 = base64.b64encode(content).decode("ascii")
-        cmd = (
-            f"python3 -c 'import base64; "
-            f'open({shlex.quote(path)}, "wb").write(base64.b64decode("{b64}"))\''
+        # Build an in-memory tar archive containing the single file
+        filename = path.rsplit("/", 1)[-1]
+        tar_stream = io.BytesIO()
+        info = tarfile.TarInfo(name=filename)
+        info.size = len(content)
+        with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+            tar.addfile(info, io.BytesIO(content))
+
+        ok = await asyncio.to_thread(
+            self.container.put_archive, parent or "/", tar_stream.getvalue()
         )
-
-        result = await self.execute(cmd)
-
-        if result.exit_code != 0:
-            logger.error(f"write_file failed for {path}: {result.stderr}")
-            raise RuntimeError(f"write_file failed: {result.stderr}")
+        if not ok:
+            logger.error(f"write_file failed for {path}: put_archive returned False")
+            raise RuntimeError(f"write_file failed: put_archive returned False for {path}")
 
         logger.debug(f"Wrote {len(content)} bytes to {path}")
         return True

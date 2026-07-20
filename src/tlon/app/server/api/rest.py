@@ -16,7 +16,6 @@ from typing import Any
 from aiohttp import web
 
 from tlon.base.logger import get_logger
-from tlon.base.settings import get_tlon_home
 
 logger = get_logger(__name__)
 
@@ -27,9 +26,9 @@ def get_webui_path() -> Path | None:
     Returns:
         Path to webui directory if it exists, None otherwise
     """
-    # Try to find webui directory relative to project root
-    # Uses TLON_HOME environment variable if set
-    webui_path = get_tlon_home() / "src" / "tlon" / "webui"
+    # WebUI is packaged inside the tlon package (see scripts/build.sh),
+    # e.g. src/tlon/webui/ in the source tree.
+    webui_path = Path(__file__).resolve().parents[3] / "webui"
     if webui_path.exists() and webui_path.is_dir() and (webui_path / "index.html").exists():
         # Check if it has index.html
         return webui_path

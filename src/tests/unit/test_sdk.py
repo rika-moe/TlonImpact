@@ -259,6 +259,101 @@ class TestBaseClient:
         handler.assert_called()
         assert any(call.args[0] == ConnectionState.CONNECTED for call in handler.call_args_list)
 
+    @pytest.mark.asyncio
+    async def test_authenticate_response_arriving_before_wait(self, client, mock_session, mock_ws):
+        """Regression: an auth response arriving before the wait starts must not be lost.
+
+        The auth event must be created before the auth message is sent,
+        otherwise a fast response is dropped and authentication times out.
+        """
+        auth_response = {
+            "type": "auth_success",
+            "session_id": "early-session",
+            "protocol_version": "1.0.0",
+            "server_version": "0.2.0",
+            "capabilities": ["trace"],
+        }
+
+        async def fake_send_raw(data):
+            # Simulate the server responding during the send itself,
+            # i.e. before authenticate() starts waiting for the response.
+            if data.get("type") == "auth":
+                await client._handle_message(json.dumps(auth_response))
+            return True
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await client.connect()
+            with patch.object(client, "_send_raw", fake_send_raw):
+                result = await client.authenticate("tui", capabilities=["trace"], timeout=1.0)
+
+        assert result is True
+        assert client.is_authenticated
+        assert client.session_id == "early-session"
+
+    @pytest.mark.asyncio
+    async def test_reconnect_reauthenticates(self):
+        """Regression: auto-reconnect must re-authenticate so send() works again."""
+        import aiohttp
+
+        client = BaseClient(
+            ws_url="ws://localhost:8888/ws",
+            rest_url="http://localhost:8080",
+            auto_reconnect=True,
+            reconnect_delay=0.01,
+        )
+
+        # Each (re)connection gets a fresh mock ws whose receive() blocks on a
+        # queue, so we control exactly when the connection drops.
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def make_ws():
+            ws = AsyncMock()
+            ws.closed = False
+            ws.receive = AsyncMock(side_effect=queue.get)
+            ws.send_str = AsyncMock()
+            ws.close = AsyncMock()
+            return ws
+
+        session = AsyncMock()
+        session.ws_connect = AsyncMock(side_effect=lambda url: make_ws())
+        session.close = AsyncMock()
+
+        auth_response = {
+            "type": "auth_success",
+            "session_id": "reconnect-session",
+            "protocol_version": "1.0.0",
+            "server_version": "0.2.0",
+            "capabilities": ["trace"],
+        }
+
+        async def mock_wait_for_auth():
+            return auth_response
+
+        try:
+            with patch("aiohttp.ClientSession", return_value=session):
+                await client.connect()
+                with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
+                    await client.authenticate("tui", capabilities=["trace"])
+                    assert client.is_authenticated
+
+                    # Simulate the server closing the connection
+                    queue.put_nowait(MagicMock(type=aiohttp.WSMsgType.CLOSED))
+
+                    # Wait for auto-reconnect + re-authentication to complete
+                    for _ in range(200):
+                        await asyncio.sleep(0.01)
+                        if client.is_authenticated:
+                            break
+
+                    assert client.is_authenticated
+                    assert session.ws_connect.call_count == 2
+
+                    # send() must work on the reconnected session
+                    result = await client.send({"type": "message", "content": "hi"})
+                    assert result is True
+        finally:
+            await client.disconnect()
+
 
 class TestTerminalAdapter:
     """Tests for TerminalAdapter class."""

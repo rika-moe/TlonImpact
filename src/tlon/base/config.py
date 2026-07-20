@@ -225,8 +225,9 @@ class ConfigService(Component, Device, AgentInfoProvider):
         event_bus: EventBus,
         tlon_home: Path | None = None,
     ):
-        super().__init__(name="ConfigService")
-        self._event_bus = event_bus
+        # Initialize both parents (MRO super() would skip Device.__init__)
+        Component.__init__(self, name="ConfigService")
+        Device.__init__(self, event_bus=event_bus, name="ConfigService")
         self._tlon_home = tlon_home or get_tlon_home()
         self._agents: dict[str, AgentConfig] = {}
         logger.info("ConfigService constructed")

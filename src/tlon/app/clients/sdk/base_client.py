@@ -7,6 +7,7 @@ This is an internal class used by TlonClient, not intended for direct use.
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from collections.abc import Callable
 from enum import Enum
@@ -114,6 +115,15 @@ class BaseClient:
 
         # Event used to notify concurrent connect() callers
         self._connecting_event: asyncio.Event | None = None
+
+        # Auth response coordination. The event is created by authenticate()
+        # BEFORE the auth message is sent, so an early response is never lost.
+        self._auth_response: dict[str, Any] | None = None
+        self._auth_event: asyncio.Event | None = None
+
+        # Params of the last authenticate() call, used by _reconnect() to
+        # re-authenticate automatically after a reconnect.
+        self._auth_params: dict[str, Any] | None = None
 
         # Message sequence for ping/pong
         self._ping_seq = 0
@@ -332,8 +342,17 @@ class BaseClient:
 
             try:
                 if await self.connect():
+                    # Re-authenticate using the params from the original
+                    # authenticate() call, otherwise the reconnected session
+                    # is unusable (send() requires authentication).
+                    if self._auth_params is not None:
+                        try:
+                            await self.authenticate(**self._auth_params)
+                        except Exception as e:
+                            logger.error(f"Re-authentication after reconnect failed: {e}")
+                            await self._dispatch_error(f"Re-authentication failed: {e}")
+                            continue
                     logger.info("Reconnected successfully")
-                    # Note: Re-authentication must be handled by the caller (TlonClient)
                     return
             except Exception as e:
                 logger.warning(f"Reconnection attempt failed: {e}")
@@ -387,7 +406,19 @@ class BaseClient:
         # TODO: Add msg_id and timestamp as per protocol spec
         # Waiting for Task 2.1 completion
         auth_msg["msg_id"] = str(uuid.uuid4())
-        auth_msg["timestamp"] = asyncio.get_running_loop().time()
+        auth_msg["timestamp"] = time.time()
+
+        # Remember auth params so _reconnect() can re-authenticate automatically
+        self._auth_params = {
+            "client_type": client_type,
+            "capabilities": capabilities,
+            "metadata": metadata,
+        }
+
+        # Create the response event BEFORE sending the auth message, so a
+        # response arriving before we start waiting is not dropped.
+        self._auth_response = None
+        self._auth_event = asyncio.Event()
 
         try:
             # Send auth message
@@ -436,12 +467,13 @@ class BaseClient:
         """Wait for and return the auth response.
 
         This is called by authenticate() to wait for the server's response.
+        The event is created by authenticate() before the auth message is
+        sent, so a response that arrived earlier is still caught here.
         """
-        # This will be set by _handle_message when auth response arrives
-        self._auth_response: dict[str, Any] | None = None
-        self._auth_event = asyncio.Event()
-
-        await self._auth_event.wait()
+        event = self._auth_event
+        if event is None:
+            raise ProtocolError("authenticate() must create the auth event before waiting")
+        await event.wait()
         return self._auth_response or {}
 
     # ==================== Message Handling ====================
@@ -459,7 +491,7 @@ class BaseClient:
             # Handle auth response
             if msg_type in ("auth_success", "auth_failed"):
                 self._auth_response = msg
-                if hasattr(self, "_auth_event"):
+                if self._auth_event is not None:
                     self._auth_event.set()
                 return
 
@@ -562,7 +594,7 @@ class BaseClient:
         if "msg_id" not in data:
             data["msg_id"] = str(uuid.uuid4())
         if "timestamp" not in data:
-            data["timestamp"] = asyncio.get_running_loop().time()
+            data["timestamp"] = time.time()
 
         return await self._send_raw(data)
 

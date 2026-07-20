@@ -1,7 +1,9 @@
 """Episodic Memory store implementation using JSONL files."""
 
 import asyncio
+import contextlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -139,13 +141,17 @@ class EpisodicMemoryStore(MemoryStore):
             logger.error(f"Error persisting summaries: {e}")
 
     async def _persist_facts(self) -> None:
-        """Write facts to disk."""
+        """Write facts to disk atomically (temp file + os.replace)."""
+        tmp_file = self.facts_file.with_name(self.facts_file.name + ".tmp")
         try:
-            async with aiofiles.open(self.facts_file, "w", encoding="utf-8") as f:
+            async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
                 for item in self._facts_cache:
                     await f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            await asyncio.to_thread(os.replace, tmp_file, self.facts_file)
         except Exception as e:
             logger.error(f"Error persisting facts: {e}")
+            with contextlib.suppress(OSError):
+                tmp_file.unlink(missing_ok=True)
 
     # ===== Summary Operations =====
 
@@ -242,6 +248,7 @@ class EpisodicMemoryStore(MemoryStore):
         predicate = fact.get("predicate")
         obj = fact.get("object")
 
+        superseded = False
         for existing in self._facts_cache:
             if (
                 existing.get("subject") == subject
@@ -249,6 +256,7 @@ class EpisodicMemoryStore(MemoryStore):
                 and existing.get("object") == obj
             ):
                 existing["superseded_by"] = fact_id
+                superseded = True
                 logger.debug(f"Fact superseded: {existing.get('id')} -> {fact_id}")
                 break
 
@@ -256,13 +264,18 @@ class EpisodicMemoryStore(MemoryStore):
 
         if len(self._facts_cache) > self.max_facts:
             non_superseded = [f for f in self._facts_cache if not f.get("superseded_by")]
-            superseded = [f for f in self._facts_cache if f.get("superseded_by")]
+            superseded_facts = [f for f in self._facts_cache if f.get("superseded_by")]
             if len(non_superseded) > self.max_facts:
                 non_superseded = non_superseded[-self.max_facts :]
-            self._facts_cache = superseded + non_superseded
+            self._facts_cache = superseded_facts + non_superseded
             self._facts_cache = self._facts_cache[-self.max_facts :]
 
         await self._ensure_dir()
+        if superseded:
+            # The superseded_by marker mutated an existing line, so a plain
+            # append would lose it on restart; rewrite the whole file instead.
+            await self._persist_facts()
+            return fact_id
         try:
             async with aiofiles.open(self.facts_file, "a", encoding="utf-8") as f:
                 await f.write(json.dumps(fact, ensure_ascii=False) + "\n")
