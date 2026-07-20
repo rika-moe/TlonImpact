@@ -2,6 +2,8 @@
 
 > 本文基于对 `src/tlon` 实际代码的逐文件分析，**不依赖 `docs/` 中的设计文档**。
 > 凡文档与代码不符之处，均以代码为准并单独标注。
+>
+> **修复进度（2026-07-20 更新）**：P0 全部 8 项已修复并合并（PR ）；P1 的 /// 已修复并合并（PR ）。下文中已过时的描述已就地修订，Issue 清单保留原始记录并标注状态。
 
 ---
 
@@ -43,7 +45,7 @@
 - **step/collect 调度**（`agent.py:237-299`）：每轮 ① 检查 idle/reflection 触发 → ② 取新消息建 `AgentSession`（sid = `{agent_id}-{msg.id}`）→ ③ ACTIVE 态 `_step_session`（一次 think + 并发派发工具，`asyncio.create_task`）→ WAITING 态 `_collect_session_results` 收割 → ④ 清理 COMPLETED。轮询间隔 10–50ms。
 - **LLM client**（`agents/llm_client.py:67`）：`AsyncOpenAI`，OpenAI 兼容协议，**非流式**，标准 function calling；提取 `reasoning_content`；指数退避重试。
 - **工具执行**（`agents/tool_executor.py:32`）：dict 注册表 + JSON Schema 参数校验 + 直接 `await tool.execute()`。17 个工具分四类：shell、文件、记忆、任务 + SendMessage。`SendMessageTool` 不发消息，只返回 action 由 Agent 循环转发 EventBus。
-- **Prompt 组装**（`agents/prompt_builder.py`）：从 `~/.tlon/{id}/config/` 读 `IDENTITY.md`/`SOUL.md`/`RULES.md`，拼接 identity → 团队成员 SOUL → RULES → 硬编码交互协议（`_PROTOCOL`，强制一切输出走 `sendMessage` 工具）。系统 prompt 构建一次后永久缓存。
+- **Prompt 组装**（`agents/prompt_builder.py`）：从 `~/.tlon/{id}/config/` 读 `IDENTITY.md`/`SOUL.md`/`RULES.md`，拼接 identity → 团队成员 SOUL → RULES → 硬编码交互协议（`_PROTOCOL`，强制一切输出走 `sendMessage` 工具）。系统 prompt 按人格文件 mtime 签名缓存，文件变更即重建（PR ；原为构建一次后永久缓存）。
 - **动态上下文**（`agent.py:635-689`）：记忆知识块 + 聊天室最近 20 条历史 + 当前消息。
 - **两种 session**（同名不同物）：
   - `ClientSession`（`session_manager.py:35`）：WS 连接句柄，内存态，无持久化；
@@ -71,16 +73,16 @@
 - **Tracing**（`base/tracing/`）：`ContextVar` 传播 trace/span id，structlog processor 注入每条日志；`FileTraceStore` 每 trace 一个 JSONL 文件，写盘走 `to_thread` + `threading.Lock`。
 - **记忆系统**（`memory/`）：**全部 JSONL + 内存缓存，无 SQLite、无向量库**。
   - Working memory：滚动窗口（默认 10 条）；
-  - Episodic memory：summaries + facts，fact 支持 supersede（仅内存，不落盘，见 bug 清单）；
+  - Episodic memory：summaries + facts，fact 支持 supersede（命中时原子重写 `facts.jsonl` 落盘，PR ；原仅改内存、重启后旧事实复活）；
   - 检索：纯关键词子串匹配，默认实现会拉 1000 条全量过滤；
   - Summarizer 触发：working memory 满 / 空闲超时（默认 30min）/ LLM 主动调 `generateSummary`；流程为「快照 → LLM 调用（不持锁）→ delta 清理」。
 - **消息路由**（`organization/messaging/router.py`）：human 消息有 mention → 路由给被 @ 的 agent，无 mention → 广播给所有 proactive agent；agent 消息 → `@clients` + 被 @ 的 agent。store 失败仅 log 不阻断路由。
 - **DockerRuntime**（`sandbox/docker_runtime.py`）：每 agent 一容器 `tlon-agent-{id}`，`sleep infinity` 常驻，workspace 卷挂载，mem/cpu 限额，network 默认 `host`。客户端连接多级回退（from_env → Colima/Docker Desktop socket）。同一实例注入 shell/文件四个工具。**无 Docker 降级 = 工具可用但永远失败，无本地执行回退**。
-- **Tools 框架**（`tools/base.py`）：`Tool` ABC + `to_openai_definition()` + 参数校验 + 统一 `ToolResult`。无全局注册表，AgentRegistry 手工注册。**无权限模型、无目录白名单**。
+- **Tools 框架**（`tools/base.py`）：`Tool` ABC + `to_openai_definition()` + 参数校验 + 统一 `ToolResult`。无全局注册表，AgentRegistry 手工注册。文件工具有 `allowed_paths` 目录白名单（`path_guard.py`，默认 `/workspace`；2026-07-20 新增，此前无权限模型）；shell 工具不设限。
 
 ### 1.3 客户端与协议
 
-- **SDK**（`clients/sdk/`）：`BaseClient`（连接/心跳/重连）+ `ClientAdapter`（客户端类型策略：TUI/WEB/TELEGRAM，能力上报 + 本地事件二次过滤）+ `TlonClient` 组合对外。
+- **SDK**（`clients/sdk/`）：`BaseClient`（连接/心跳/重连）+ `ClientAdapter`（客户端类型策略：TUI/WEB/TELEGRAM，能力上报 + 声明有效过滤器）+ `TlonClient` 组合对外。事件过滤由服务端统一执行（2026-07-20 起为单一过滤点，此前 SDK 本地二次过滤）。
 - **Congress TUI**（`tlon chat`）：textual 应用 + 自研 `CongressWebSocketClient`（**关掉 SDK 的 auto_reconnect，自己实现指数退避重连**——两套重连逻辑并存）。
 - **Operator TUI**（`tlon ops`）：IDE 式三栏布局 + 5 个 view，**但根本不连服务器**，展示占位/随机数据。
 - **Launcher**：server / chat / ops / mirror 均为独立 OS 进程，argparse 分发；textual 延迟导入。
@@ -110,6 +112,8 @@
 
 ### P0 — 会实际出故障的 bug
 
+> ✅ **全部 8 项已修复并合并**（PR ，2026-07-20）。下表保留为原始审计记录。
+
 | # | 问题 | 位置 | 说明 |
 |---|------|------|------|
 | 1 | `DockerRuntime.execute` 阻塞事件循环，timeout 失效 | `src/tlon/sandbox/docker_runtime.py:204` | 同步 `exec_run` 未包 `to_thread`，长命令卡死所有 Agent；`containers.get`/`start`/`run` 同样未包（:126/:130/:165） |
@@ -123,19 +127,21 @@
 
 ### P1 — 设计缺陷
 
+>  /  /  /  /  /  /  已修复（/// 于 PR ，// 于 2026-07-20 同批次修复），行内已标 ✅；其余待处理。
+
 | # | 问题 | 位置 | 说明 |
 |---|------|------|------|
 | 9 | `agent.py` 上帝类（947 行） | `src/tlon/agents/agent.py` | ReAct 循环 + 路由判断 + prompt 组装 + 记忆写入 + reflection 子系统（:748-905）+ tracing 全在一个类 |
 | 10 | Facade 名不副实 | `src/tlon/app/server/serverapp.py:210,218` | REST/WS 绕过 `ClientGateway` 直取 `AgentRegistry`；`client_gateway.py:112` 的 `config_manager: Any` 无类型 |
 | 11 | 抽象漏洞成片 | `base/config.py:148-150`、`memory/manager.py:75`、`working_store.py:77`、`episodic_store.py:65` | `get_data_dir(base_dir)` 等参数被忽略、硬用全局 `paths` 单例，测试隔离只能靠替换单例 |
 | 12 | `paths` 单例 getter 带 `mkdir` 副作用 | `src/tlon/base/paths.py:86-158` | 读操作产生写副作用；`$TLON_HOME` 不存在时静默回退（:63-67） |
-| 13 | 层级反向依赖 | `src/tlon/memory/summarizer.py:24` | 基础设施层 import `agents.llm_client`，违反自身宣称的 DAG |
-| 14 | 事件处理无序且 fire-and-forget | `src/tlon/base/events/event_bus.py:215` | 异步 handler `create_task` 无顺序保证、无并发上限；未运行时 publish 静默丢事件（:152-156） |
-| 15 | 系统 prompt 永久缓存 | `src/tlon/agents/agent.py:711` | 改 SOUL.md 必须重启进程，与"热编辑人格"的文档宣称矛盾 |
-| 16 | 过滤逻辑双份 | `clients/sdk/client.py:228-248` + `adapter.py:232` | filter 既发服务端又本地过滤，两处规则可能漂移 |
-| 17 | 工具无沙箱权限模型 | `src/tlon/tools/filesystem/*` | 无目录白名单，绝对路径可读写容器内任意位置 |
-| 18 | Agent 级状态被多 session 互相覆盖 | `src/tlon/agents/agent.py:329` | 对外暴露的 `AgentState` 不可信 |
-| 19 | 孤儿后台任务 | `src/tlon/agents/agent.py:289,393` | session 异常结束后，其派发的工具任务不会被取消 |
+| 13 | ✅ 层级反向依赖 | `src/tlon/memory/summarizer.py:24` | 基础设施层 import `agents.llm_client`，违反自身宣称的 DAG。**已修**：`llm_client.py` 移至 `base/`（它本就只依赖 base 层），全部 import 更新（2026-07-20） |
+| 14 | ✅ 事件处理无序且 fire-and-forget | `src/tlon/base/events/event_bus.py:215` | 异步 handler `create_task` 无顺序保证、无并发上限；未运行时 publish 静默丢事件（:152-156）。**已修**：`_dispatch` 按订阅顺序逐个 await（PR ）；publish 丢弃行为保留 |
+| 15 | ✅ 系统 prompt 永久缓存 | `src/tlon/agents/agent.py:711` | 改 SOUL.md 必须重启进程，与"热编辑人格"的文档宣称矛盾。**已修**：按人格文件 mtime 签名失效重建（PR ） |
+| 16 | ✅ 过滤逻辑双份 | `clients/sdk/client.py:228-248` + `adapter.py:232` | filter 既发服务端又本地过滤，两处规则可能漂移。**已修**：服务端成为唯一过滤点（notification_service 订阅全部事件、支持 mode/trace_id/event_types/exclude/agent 维度），adapter 只声明 `get_effective_filters()` 上报；顺带修复服务端只推送 `message.new` 的缺陷（2026-07-20） |
+| 17 | ✅ 工具无沙箱权限模型 | `src/tlon/tools/filesystem/*` | 无目录白名单，绝对路径可读写容器内任意位置。**已修**：`ToolConfig.allowed_paths`（默认 `/workspace`）+ `path_guard.py` 共享校验，越界/`..` 逃逸在触达 Docker 前拒绝；遗留：容器内 symlink 可绕过字符串校验（2026-07-20） |
+| 18 | ✅ Agent 级状态被多 session 互相覆盖 | `src/tlon/agents/agent.py:329` | 对外暴露的 `AgentState` 不可信。**已修**：`_derive_state()` 由存活 session 派生（PR ） |
+| 19 | ✅ 孤儿后台任务 | `src/tlon/agents/agent.py:289,393` | session 异常结束后，其派发的工具任务不会被取消。**已修**：`AgentSession.cancel_pending()` 所有结束路径统一取消（PR ） |
 
 ### P2 — 代码质量 / 清理项
 
@@ -165,9 +171,11 @@
 
 ## 四、建议修复顺序
 
-1. **修 pytest 配置**（）——让测试真正能跑，这是一切修复的前提；
-2. **修 `DockerRuntime.execute` 阻塞**（）——全系统最严重的单点；
-3. **修 `ConfigService` MRO**（）与 facts supersede 落盘（）；
-4. **清理对外露出的半成品**（、、）——Operator TUI、假端点、死 WebUI；
-5. **统一 SDK 重连/认证**（、），删掉 Congress 的第二套重连；
+> 进度：第 1–3、5 步已完成（PR  / ，2026-07-20）。
+
+1. ~~**修 pytest 配置**（）~~ ✅ PR ；
+2. ~~**修 `DockerRuntime.execute` 阻塞**（）~~ ✅ PR ；
+3. ~~**修 `ConfigService` MRO**（）与 facts supersede 落盘（）~~ ✅ PR ；
+4. **清理对外露出的半成品**（、、~~~~）—— 已随 PR  修复；Operator TUI、假端点仍待处理；
+5. ~~**统一 SDK 重连/认证**（、）~~ ✅ PR ；注意 Congress 的第二套重连逻辑仍存在，可后续收敛回 SDK；
 6. 然后才轮到结构性重构：拆 `agent.py` 上帝类（）、补 gateway 抽象（）、解全局单例（、）。

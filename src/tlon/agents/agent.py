@@ -12,7 +12,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tlon.agents.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.session import AgentSession, SessionState
@@ -22,6 +21,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
 from tlon.base.tracing.trace_context import get_current_trace

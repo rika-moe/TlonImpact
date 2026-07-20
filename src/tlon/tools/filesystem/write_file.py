@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from tlon.tools.base import Tool, ToolResult
+from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_container_path
 
 if TYPE_CHECKING:
     from tlon.base.config import DockerRuntimeConfig
@@ -23,12 +24,19 @@ class WriteFileTool(Tool):
         ... )
     """
 
-    def __init__(self, docker_config: "DockerRuntimeConfig", docker_runtime: "DockerRuntime | None"):
+    def __init__(
+        self,
+        docker_config: "DockerRuntimeConfig",
+        docker_runtime: "DockerRuntime | None",
+        allowed_paths: list[str] | None = None,
+    ):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration.
             docker_runtime: DockerRuntime instance (shared across tools)
+            allowed_paths: Whitelisted absolute container paths the tool may
+                access. Defaults to the container working directory.
         """
         super().__init__(
             name="writeFile",
@@ -54,6 +62,7 @@ class WriteFileTool(Tool):
         )
         self._docker_config = docker_config
         self._docker_runtime = docker_runtime
+        self._allowed_paths = allowed_paths or list(DEFAULT_ALLOWED_PATHS)
 
     async def execute(self, file_path: str, content: str) -> ToolResult:
         """Write content to a file in the sandbox container.
@@ -72,8 +81,17 @@ class WriteFileTool(Tool):
                 error="Docker runtime not initialized",
             )
 
-        workdir = self._docker_config.working_dir
-        container_path = f"{workdir}/{file_path}" if not file_path.startswith("/") else file_path
+        # Resolve and sandbox-check the path (POSIX container semantics)
+        try:
+            container_path = resolve_container_path(
+                file_path, self._docker_config.working_dir, self._allowed_paths
+            )
+        except ValueError as e:
+            return ToolResult(
+                success=False,
+                data={},
+                error=str(e),
+            )
 
         # Ensure parent directories exist
         parent = "/".join(container_path.split("/")[:-1])

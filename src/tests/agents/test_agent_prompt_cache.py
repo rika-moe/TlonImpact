@@ -201,7 +201,7 @@ class TestToolExecutionObservability:
 
     @pytest.mark.asyncio
     async def test_publishes_start_and_end_events(self):
-        from tlon.agents.llm_client import LLMResponse, ToolCall
+        from tlon.base.llm_client import LLMResponse, ToolCall
         from tlon.tools.base import ToolResult
 
         agent = _make_agent()
@@ -246,7 +246,7 @@ class TestToolExecutionObservability:
 
     @pytest.mark.asyncio
     async def test_publishes_error_event_on_exception(self):
-        from tlon.agents.llm_client import LLMResponse, ToolCall
+        from tlon.base.llm_client import LLMResponse, ToolCall
         from tlon.tools.base import ToolResult
 
         agent = _make_agent()

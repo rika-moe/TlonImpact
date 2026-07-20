@@ -7,12 +7,18 @@ Provides real-time bidirectional communication:
 Protocol:
 All messages are JSON with a "type" field:
 - Client → Server:
-  - {"type": "auth", "client_type": "tui", ...}
+  - {"type": "auth", "client_type": "tui", "filters": {...}, ...}
   - {"type": "message", "content": "...", "mentions": [...]}
   - {"type": "mode", "mode": "chat|event|agent"}
   - {"type": "filter", "filters": {...}}
   - {"type": "wake", "agent_id": "..."}
   - {"type": "ping"}
+
+  Filter dimensions (declared by the client, enforced by the server):
+  - event_types: include list ("prefix.*" wildcard supported)
+  - exclude_event_types: exclusion list ("prefix.*" wildcard supported)
+  - trace_id: only events carrying this trace ID
+  - agent: event source pattern ("*" wildcard supported)
 
 - Server → Client:
   - {"type": "event", "event_type": "...", "payload": {...}}
@@ -176,7 +182,13 @@ class WebSocketHandler:
             async def event_handler(event: Event) -> None:
                 await self._send_event(ws, event)
 
-            # Connect client to server
+            # Connect client to server. Initial filters declared by the client
+            # (e.g. client-type default exclusions) become the session filters;
+            # all event filtering is then enforced server-side.
+            filters = data.get("filters")
+            if not isinstance(filters, dict):
+                filters = None
+
             session = await self.client_gateway.connect_client(
                 client_type=client_type,
                 event_handler=event_handler,
@@ -185,6 +197,7 @@ class WebSocketHandler:
                     "protocol_version": negotiated_version,
                     "capabilities": capabilities,
                 },
+                filters=filters,
             )
 
             # Send auth success with negotiated version
@@ -419,6 +432,13 @@ class WebSocketHandler:
             "source": event.source,
             "timestamp": event.timestamp,
         }
+        # Include tracing fields so clients can observe server-side trace filtering
+        if event.trace_id:
+            event_data["trace_id"] = event.trace_id
+        if event.span_id:
+            event_data["span_id"] = event.span_id
+        if event.parent_span_id:
+            event_data["parent_span_id"] = event.parent_span_id
         logger.debug(
             f"[WebSocket] Sending event {event.type.value} to client (ws closed: {ws.closed})"
         )

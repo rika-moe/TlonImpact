@@ -14,6 +14,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.component import Component, ComponentRegistry
 from tlon.base.device import Device
 from tlon.base.logger import get_logger
+from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.base.settings import settings
 from tlon.base.tracing.trace_context import start_span, get_current_trace
 from tlon.base.tracing.trace_store import FileTraceStore
@@ -33,7 +34,6 @@ from tlon.organization.messaging.participant import Participant
 ```python
 from tlon.agents.agent import Agent
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.agents.llm_client import LLMClient
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext

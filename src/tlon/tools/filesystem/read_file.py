@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_container_path
 
 logger = get_logger(__name__)
 
@@ -25,12 +26,19 @@ class ReadFileTool(Tool):
 
     _MAX_LIMIT = 500
 
-    def __init__(self, docker_config: "DockerRuntimeConfig", docker_runtime: "DockerRuntime | None"):
+    def __init__(
+        self,
+        docker_config: "DockerRuntimeConfig",
+        docker_runtime: "DockerRuntime | None",
+        allowed_paths: list[str] | None = None,
+    ):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration.
             docker_runtime: DockerRuntime instance (shared across tools)
+            allowed_paths: Whitelisted absolute container paths the tool may
+                access. Defaults to the container working directory.
         """
         super().__init__(
             name="readFile",
@@ -65,6 +73,7 @@ class ReadFileTool(Tool):
         )
         self._docker_config = docker_config
         self._docker_runtime = docker_runtime
+        self._allowed_paths = allowed_paths or list(DEFAULT_ALLOWED_PATHS)
 
     async def execute(self, file_path: str, offset: int = 1, limit: int = 100) -> ToolResult:
         """Read a file from the sandbox container.
@@ -84,9 +93,17 @@ class ReadFileTool(Tool):
                 error="Docker runtime not initialized",
             )
 
-        # Normalize path to absolute inside container
-        workdir = self._docker_config.working_dir
-        container_path = f"{workdir}/{file_path}" if not file_path.startswith("/") else file_path
+        # Resolve and sandbox-check the path (POSIX container semantics)
+        try:
+            container_path = resolve_container_path(
+                file_path, self._docker_config.working_dir, self._allowed_paths
+            )
+        except ValueError as e:
+            return ToolResult(
+                success=False,
+                data={},
+                error=str(e),
+            )
 
         try:
             raw = await self._docker_runtime.read_file(container_path)

@@ -17,10 +17,11 @@
 agents/
 ├── agent.py               # Agent 核心类
 ├── agent_registry.py      # Agent 生命周期管理
-├── llm_client.py          # LLM 客户端
 ├── prompt_builder.py      # 系统提示构建
 └── tool_executor.py       # 工具执行器
 ```
+
+> 注：`LLMClient` 位于 `base/llm_client.py`（基础设施层，供 agents 与 memory 共用）。
 
 ---
 
@@ -30,7 +31,7 @@ agents/
 |----|------|------|
 | `Agent` | 智能体核心 | `agents/agent.py` |
 | `AgentRegistry` | 生命周期管理 | `agents/agent_registry.py` |
-| `LLMClient` | LLM API 调用 | `agents/llm_client.py` |
+| `LLMClient` | LLM API 调用 | `base/llm_client.py` |
 | `ToolExecutor` | 工具注册执行 | `agents/tool_executor.py` |
 
 ---

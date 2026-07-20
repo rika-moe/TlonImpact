@@ -64,13 +64,18 @@ class SessionManager:
         logger.info("SessionManager initialized")
 
     async def create_session(
-        self, client_type: str, metadata: dict[str, Any] | None = None
+        self,
+        client_type: str,
+        metadata: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> ClientSession:
         """Create a new client session.
 
         Args:
             client_type: Type of client ("tui", "web", "telegram")
             metadata: Optional session metadata
+            filters: Optional initial event filters (declared by the client,
+                e.g. client-type default exclusions)
 
         Returns:
             The created client session
@@ -83,6 +88,7 @@ class SessionManager:
                 id=session_id,
                 client_type=client_type,
                 connected_at=datetime.now().isoformat(),
+                filters=dict(filters) if filters else {},
                 metadata=metadata or {},
             )
 

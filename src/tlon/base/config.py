@@ -94,6 +94,19 @@ class ToolConfig(BaseModel):
 
     total_timeout: float = 60.0
     per_timeout: float = 30.0
+    # Filesystem tools (read/write/edit) may only touch paths under these
+    # absolute container directories.
+    allowed_paths: list[str] = Field(default_factory=lambda: ["/workspace"])
+
+    @field_validator("allowed_paths")
+    @classmethod
+    def validate_allowed_paths(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("allowed_paths must not be empty")
+        for p in v:
+            if not p.startswith("/"):
+                raise ValueError(f"allowed_paths entries must be absolute container paths: {p!r}")
+        return v
 
 
 class AgentConfig(BaseModel):

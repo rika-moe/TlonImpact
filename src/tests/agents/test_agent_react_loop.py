@@ -14,11 +14,11 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tlon.agents.agent import Agent, AgentState
-from tlon.agents.llm_client import LLMResponse, ToolCall
 from tlon.agents.session import AgentSession
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
+from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.organization.messaging.message import Message
 from tlon.tools.base import ToolResult
 

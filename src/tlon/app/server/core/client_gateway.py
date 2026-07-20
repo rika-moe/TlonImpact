@@ -174,6 +174,7 @@ class ClientGateway(Component):
         client_type: str,
         event_handler: Callable[[Event], None],
         metadata: dict[str, Any] | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> ClientSession:
         """Connect a new client session.
 
@@ -183,13 +184,14 @@ class ClientGateway(Component):
             client_type: Type of client ("tui", "web", "telegram")
             event_handler: Callback for events
             metadata: Optional client metadata
+            filters: Optional initial event filters declared by the client
 
         Returns:
             The created client session
         """
         # Create session via SessionManager
         session = await self._session_manager.create_session(
-            client_type=client_type, metadata=metadata
+            client_type=client_type, metadata=metadata, filters=filters
         )
 
         # Register event handler via NotificationService

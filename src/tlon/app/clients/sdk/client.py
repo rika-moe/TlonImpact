@@ -25,7 +25,7 @@ class TlonClient:
     Features:
     - Automatic connection management (connect, reconnect, disconnect)
     - Protocol version negotiation
-    - Event filtering based on client type
+    - Server-side event filtering (declared by the adapter)
     - REST API access
     - Async context manager support
 
@@ -36,7 +36,7 @@ class TlonClient:
         >>> async with TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter()) as client:
         ...     await client.authenticate()
         ...     await client.send_message("Hello!")
-        ...     # Events are automatically filtered by the adapter
+        ...     # Events are filtered by the server per the adapter's declarations
         ...
         >>> # Or manual management
         >>> client = TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter())
@@ -141,7 +141,9 @@ class TlonClient:
     async def authenticate(self, timeout: float = 10.0) -> bool:
         """Authenticate with the server.
 
-        Uses the adapter's client type and capabilities for authentication.
+        Uses the adapter's client type and capabilities for authentication,
+        and declares the adapter's effective filters so the server (the
+        single filtering point) can enforce them for the whole session.
 
         Args:
             timeout: Authentication timeout in seconds
@@ -158,6 +160,7 @@ class TlonClient:
             capabilities=self._adapter.capabilities,
             metadata=self._adapter.get_auth_metadata(),
             timeout=timeout,
+            filters=self._adapter.get_effective_filters(),
         )
 
     # ==================== Message Operations ====================
@@ -191,6 +194,11 @@ class TlonClient:
     async def set_mode(self, mode: str) -> bool:
         """Set the operation mode (for TUI clients).
 
+        Mode semantics are enforced server-side; the adapter only tracks the
+        mode locally. The adapter's effective filters (which may depend on the
+        mode, e.g. high-frequency exclusion in event mode) are re-synced to
+        the server.
+
         Args:
             mode: Mode ("chat", "event", "agent")
 
@@ -201,21 +209,35 @@ class TlonClient:
         if hasattr(self._adapter, "set_mode"):
             self._adapter.set_mode(mode)
 
-        return await self._base.send(
+        mode_sent = await self._base.send(
             {
                 "type": "mode",
                 "mode": mode,
             }
         )
 
+        # Re-sync effective filters (they may depend on the mode)
+        filters_sent = await self._base.send(
+            {
+                "type": "filter",
+                "filters": self._adapter.get_effective_filters(),
+            }
+        )
+
+        return mode_sent and filters_sent
+
     async def set_filters(self, filters: dict[str, Any]) -> bool:
         """Set event filters.
+
+        The filters are merged with the adapter's client-type defaults and
+        sent to the server, which is the single filtering point.
 
         Args:
             filters: Filter dictionary, e.g.:
                 - {"event_types": ["message.new", "agent.response"]}
                 - {"trace_id": "trace-abc-123"}
-                - {"sources": ["dev-001", "pm-001"]}
+                - {"exclude_event_types": ["agent.llm_request"]}
+                - {"agent": "dev-*"}
 
         Returns:
             True if successful
@@ -226,7 +248,7 @@ class TlonClient:
         return await self._base.send(
             {
                 "type": "filter",
-                "filters": filters,
+                "filters": self._adapter.get_effective_filters(),
             }
         )
 
@@ -247,7 +269,7 @@ class TlonClient:
         return await self._base.send(
             {
                 "type": "filter",
-                "filters": {"trace_id": trace_id} if trace_id else {},
+                "filters": self._adapter.get_effective_filters(),
             }
         )
 
@@ -256,7 +278,9 @@ class TlonClient:
     def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
         """Register an event handler.
 
-        Events are filtered by the adapter before being passed to the handler.
+        Events are pre-filtered by the server (the single filtering point)
+        according to the session's mode and declared filters; every event
+        received here is passed to the handler as-is.
 
         Args:
             handler: Callback function for events
@@ -268,14 +292,7 @@ class TlonClient:
         return handler
 
     def _on_event(self, event: dict[str, Any]) -> None:
-        """Internal event handler - filters through adapter."""
-        event_type = event.get("type", "")
-        payload = event.get("payload", {})
-
-        # Check if adapter wants this event
-        if not self._adapter.should_receive_event(event_type, payload):
-            return
-
+        """Internal event handler - dispatches server-filtered events."""
         for handler in self._user_event_handlers:
             try:
                 handler(event)

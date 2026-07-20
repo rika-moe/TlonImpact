@@ -28,6 +28,9 @@ Client → Server (auth)
   "protocol_version": "1.0.0",       // 首选版本
   "supported_versions": ["1.0.0"],   // 支持的版本列表
   "capabilities": ["trace", "filter"],
+  "filters": {                       // 可选：客户端声明的初始事件过滤器
+    "exclude_event_types": ["agent.llm_request"]
+  },
   "metadata": {
     "client_version": "0.2.0",
     "platform": "macOS"
@@ -84,7 +87,7 @@ interface TlonMessage {
 | `auth` | 认证请求 | `client_type`, `protocol_version` |
 | `message` | 发送消息 | `content`, `mentions`, `reply_to` |
 | `mode` | 切换模式 | `mode`: "chat" \| "event" \| "agent" |
-| `filter` | 设置过滤器 | `filters`: `{event_types?, sources?}` |
+| `filter` | 设置过滤器 | `filters`: `{event_types?, exclude_event_types?, trace_id?, agent?}` |
 | `ping` | 心跳 | `seq`: 序列号 |
 
 ### Server → Client
@@ -200,6 +203,24 @@ interface TlonMessage {
 | `system.shutdown` | S→C | `{reason}` | 系统关闭 |
 | `session.join` | S→C | `{session_id, client_type}` | 用户加入 |
 | `session.leave` | S→C | `{session_id, duration}` | 用户离开 |
+
+---
+
+## 事件过滤（服务端单一过滤点）
+
+事件过滤**只在服务端执行**（`NotificationService`）。客户端（SDK Adapter）只**声明**过滤器，通过 `auth` 消息的 `filters` 字段（初始过滤器，如 client type 的默认排除集）或 `filter` 消息（运行时更新，整体替换）上报，本地不再做二次匹配。
+
+过滤管线（各步骤为 AND 关系）：
+
+1. **模式语义**（`mode` 消息切换）：
+   - `chat`: `message.*`、`agent.response/started/stopped/error`、`system.*`、`session.*`
+   - `agent`: 仅 `agent.*`
+   - `event`: 全部事件
+2. **会话过滤器**（`session.filters`，均可选）：
+   - `event_types`: 包含列表（支持 `prefix.*` 通配）
+   - `exclude_event_types`: 排除列表（支持 `prefix.*` 通配）
+   - `trace_id`: 仅推送携带该 trace 的事件
+   - `agent`: 按事件来源匹配（支持 `*` 通配，如 `dev-*`）
 
 ---
 

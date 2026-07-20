@@ -20,12 +20,12 @@ from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from tlon.agents.agent import Agent
-from tlon.agents.llm_client import LLMClient
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 from tlon.memory.manager import MemoryManager
@@ -304,9 +304,10 @@ class AgentRegistry(Component):
             # Register tools
             tool_executor.register_tool(ExecuteBashTool(config.docker, docker_runtime))
             tool_executor.register_tool(CheckBashTaskTool())
-            tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime))
-            tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime))
-            tool_executor.register_tool(EditFileTool(config.docker, docker_runtime))
+            allowed_paths = config.tool.allowed_paths
+            tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
+            tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
+            tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
             tool_executor.register_tool(SendMessageTool())
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))

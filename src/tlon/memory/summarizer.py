@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 from typing import Any
 
-from tlon.agents.llm_client import LLMClient, LLMConfig
+from tlon.base.config import LLMConfig
+from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)

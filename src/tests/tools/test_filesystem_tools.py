@@ -3,8 +3,11 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
+from tlon.base.config import ToolConfig
 from tlon.tools.filesystem.edit_file import EditFileTool
+from tlon.tools.filesystem.path_guard import normalize_container_path, resolve_container_path
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
 
@@ -25,6 +28,7 @@ class TestReadFileTool:
         tool = ReadFileTool.__new__(ReadFileTool)
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._agent_id = "test-agent"
+        tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
         return tool
 
@@ -105,6 +109,7 @@ class TestWriteFileTool:
         tool = WriteFileTool.__new__(WriteFileTool)
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._agent_id = "test-agent"
+        tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
         return tool
 
@@ -165,6 +170,7 @@ class TestEditFileTool:
         tool = EditFileTool.__new__(EditFileTool)
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._agent_id = "test-agent"
+        tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
         return tool
 
@@ -237,3 +243,166 @@ class TestEditFileTool:
 
         assert result.success is False
         assert "not initialized" in result.error.lower()
+
+
+class TestPathGuard:
+    """Unit tests for container-path normalization and whitelist checks."""
+
+    def test_normalize_collapses_dot_and_duplicate_separators(self):
+        assert normalize_container_path("/workspace//a/./b/") == "/workspace/a/b"
+
+    def test_normalize_resolves_dotdot(self):
+        assert normalize_container_path("/workspace/a/../b") == "/workspace/b"
+
+    def test_normalize_clamps_dotdot_at_root(self):
+        assert normalize_container_path("/../etc") == "/etc"
+
+    def test_normalize_collapses_leading_double_slash(self):
+        assert normalize_container_path("//workspace/a") == "/workspace/a"
+
+    def test_resolve_valid_relative_path(self):
+        resolved = resolve_container_path("src/main.py", "/workspace", ["/workspace"])
+        assert resolved == "/workspace/src/main.py"
+
+    def test_resolve_valid_relative_path_with_dotdot_inside_sandbox(self):
+        resolved = resolve_container_path("a/../b.txt", "/workspace", ["/workspace"])
+        assert resolved == "/workspace/b.txt"
+
+    def test_resolve_valid_absolute_path_in_whitelist(self):
+        resolved = resolve_container_path("/workspace/notes/x.md", "/workspace", ["/workspace"])
+        assert resolved == "/workspace/notes/x.md"
+
+    def test_resolve_absolute_path_outside_whitelist_rejected(self):
+        with pytest.raises(ValueError, match="outside the allowed paths"):
+            resolve_container_path("/etc/passwd", "/workspace", ["/workspace"])
+
+    def test_resolve_dotdot_escape_rejected(self):
+        with pytest.raises(ValueError, match="outside the allowed paths"):
+            resolve_container_path("../outside.txt", "/workspace", ["/workspace"])
+
+    def test_resolve_deep_dotdot_escape_rejected(self):
+        with pytest.raises(ValueError, match="outside the allowed paths"):
+            resolve_container_path("a/../../etc/passwd", "/workspace", ["/workspace"])
+
+    def test_resolve_sibling_prefix_not_allowed(self):
+        # "/workspace2" shares a string prefix with "/workspace" but is outside
+        with pytest.raises(ValueError, match="outside the allowed paths"):
+            resolve_container_path("/workspace2/a.txt", "/workspace", ["/workspace"])
+
+    def test_resolve_custom_allowed_paths(self):
+        resolved = resolve_container_path(
+            "/data/shared/f.txt", "/workspace", ["/workspace", "/data/shared"]
+        )
+        assert resolved == "/data/shared/f.txt"
+
+    def test_resolve_custom_allowed_paths_still_rejects_others(self):
+        with pytest.raises(ValueError, match="outside the allowed paths"):
+            resolve_container_path("/root/.ssh/id_rsa", "/workspace", ["/workspace", "/data"])
+
+    def test_resolve_allowed_root_itself(self):
+        resolved = resolve_container_path("/workspace/", "/workspace", ["/workspace"])
+        assert resolved == "/workspace"
+
+    def test_resolve_empty_path_rejected(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            resolve_container_path("", "/workspace", ["/workspace"])
+
+
+class TestFilesystemToolSandbox:
+    """Tools must reject paths outside the whitelist before touching Docker."""
+
+    async def test_read_rejects_absolute_path_outside_whitelist(self):
+        tool = ReadFileTool.__new__(ReadFileTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        result = await tool.execute(file_path="/etc/passwd")
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.read_file.assert_not_awaited()
+
+    async def test_read_rejects_dotdot_escape(self):
+        tool = ReadFileTool.__new__(ReadFileTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        result = await tool.execute(file_path="../../etc/shadow")
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.read_file.assert_not_awaited()
+
+    async def test_write_rejects_absolute_path_outside_whitelist(self):
+        tool = WriteFileTool.__new__(WriteFileTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        result = await tool.execute(file_path="/usr/bin/evil", content="x")
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.write_file.assert_not_awaited()
+
+    async def test_edit_rejects_dotdot_escape(self):
+        tool = EditFileTool.__new__(EditFileTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        result = await tool.execute(file_path="../secret.txt", old_string="a", new_string="b")
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.read_file.assert_not_awaited()
+
+    async def test_read_allows_absolute_path_in_whitelist(self):
+        tool = ReadFileTool.__new__(ReadFileTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+        tool._docker_runtime.read_file.return_value = b"hello\n"
+
+        result = await tool.execute(file_path="/workspace//a/./b.txt")
+
+        assert result.success is True
+        tool._docker_runtime.read_file.assert_awaited_once_with("/workspace/a/b.txt")
+
+    async def test_write_honors_custom_allowed_paths(self):
+        tool = WriteFileTool.__new__(WriteFileTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace", "/data/shared"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        ok = await tool.execute(file_path="/data/shared/out.txt", content="x")
+        assert ok.success is True
+        tool._docker_runtime.write_file.assert_awaited_once_with("/data/shared/out.txt", b"x")
+
+        rejected = await tool.execute(file_path="/etc/cron.d/job", content="x")
+        assert rejected.success is False
+        assert "outside the allowed paths" in rejected.error
+
+    def test_tool_constructor_defaults_allowed_paths(self):
+        tool = ReadFileTool(MagicMock(working_dir="/workspace"), None)
+        assert tool._allowed_paths == ["/workspace"]
+
+
+class TestToolConfigAllowedPaths:
+    def test_default_allowed_paths(self):
+        config = ToolConfig()
+        assert config.allowed_paths == ["/workspace"]
+
+    def test_custom_allowed_paths(self):
+        config = ToolConfig(allowed_paths=["/workspace", "/data"])
+        assert config.allowed_paths == ["/workspace", "/data"]
+
+    def test_rejects_empty_allowed_paths(self):
+        with pytest.raises(ValidationError):
+            ToolConfig(allowed_paths=[])
+
+    def test_rejects_relative_allowed_paths(self):
+        with pytest.raises(ValidationError):
+            ToolConfig(allowed_paths=["workspace"])

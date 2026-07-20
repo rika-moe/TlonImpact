@@ -365,6 +365,7 @@ class BaseClient:
         capabilities: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float = 10.0,
+        filters: dict[str, Any] | None = None,
     ) -> bool:
         """Authenticate with the server.
 
@@ -373,6 +374,9 @@ class BaseClient:
             capabilities: List of supported capabilities
             metadata: Optional client metadata
             timeout: Authentication timeout in seconds
+            filters: Optional initial event filters declared by the client.
+                The server enforces them for the whole session; later
+                "filter" messages replace them wholesale.
 
         Returns:
             True if authenticated successfully
@@ -402,6 +406,8 @@ class BaseClient:
             "capabilities": capabilities or [],
             "metadata": metadata or {},
         }
+        if filters:
+            auth_msg["filters"] = filters
 
         # TODO: Add msg_id and timestamp as per protocol spec
         # Waiting for Task 2.1 completion
@@ -413,6 +419,7 @@ class BaseClient:
             "client_type": client_type,
             "capabilities": capabilities,
             "metadata": metadata,
+            "filters": filters,
         }
 
         # Create the response event BEFORE sending the auth message, so a

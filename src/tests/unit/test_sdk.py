@@ -2,7 +2,8 @@
 
 Tests cover:
 - BaseClient connection/disconnection/authentication
-- TerminalAdapter event filtering logic
+- Adapter filter declaration logic (get_effective_filters) — the actual
+  event matching is server-side and tested in test_notification_service.py
 - Protocol version handling
 """
 
@@ -381,78 +382,38 @@ class TestTerminalAdapter:
         with pytest.raises(ValueError):
             adapter.set_mode("invalid")
 
-    def test_should_receive_event_chat_mode(self, adapter):
-        """Test event filtering in chat mode."""
-        adapter.set_mode("chat")
+    def test_effective_filters_default(self, adapter):
+        """By default a terminal client declares no filters."""
+        assert adapter.get_effective_filters() == {}
 
-        # Should receive message events
-        assert adapter.should_receive_event("message.new", {"content": "test"})
-        assert adapter.should_receive_event("message.delivered", {})
-
-        # Should not receive other events
-        assert not adapter.should_receive_event("agent.thinking", {})
-        assert not adapter.should_receive_event("tool.execute", {})
-
-    def test_should_receive_event_event_mode(self, adapter):
-        """Test event filtering in event mode."""
-        adapter.set_mode("event")
-
-        # Should receive all events
-        assert adapter.should_receive_event("message.new", {})
-        assert adapter.should_receive_event("agent.thinking", {})
-        assert adapter.should_receive_event("tool.execute", {})
-        assert adapter.should_receive_event("system.startup", {})
-
-    def test_should_receive_event_agent_mode(self, adapter):
-        """Test event filtering in agent mode."""
-        adapter.set_mode("agent")
-
-        # Should receive agent events
-        assert adapter.should_receive_event("agent.thinking", {})
-        assert adapter.should_receive_event("agent.response", {})
-        assert adapter.should_receive_event("agent.started", {})
-
-        # Should not receive other events
-        assert not adapter.should_receive_event("message.new", {})
-        assert not adapter.should_receive_event("tool.execute", {})
-
-    def test_should_receive_event_with_trace_filter(self, adapter):
-        """Test event filtering with trace_id filter."""
-        adapter.set_mode("event")
+    def test_effective_filters_with_trace_filter(self, adapter):
+        """Trace filter is declared as a trace_id filter."""
         adapter.set_trace_filter("trace-abc-123")
+        assert adapter.get_effective_filters() == {"trace_id": "trace-abc-123"}
 
-        # Should receive events with matching trace_id
-        assert adapter.should_receive_event("agent.thinking", {"trace_id": "trace-abc-123"})
-
-        # Should not receive events with different trace_id
-        assert not adapter.should_receive_event("agent.thinking", {"trace_id": "trace-other"})
-        assert not adapter.should_receive_event("agent.thinking", {})
-
-    def test_should_receive_event_with_event_type_filter(self, adapter):
-        """Test event filtering with event type filter."""
-        adapter.set_mode("event")  # Set mode to event to bypass mode filtering
+    def test_effective_filters_with_event_type_filter(self, adapter):
+        """User event filters are passed through."""
         adapter.set_event_filters({"event_types": ["message.new", "agent.response"]})
+        assert adapter.get_effective_filters() == {
+            "event_types": ["message.new", "agent.response"]
+        }
 
-        # Should receive allowed event types
-        assert adapter.should_receive_event("message.new", {})
-        assert adapter.should_receive_event("agent.response", {})
-
-        # Should not receive other event types
-        assert not adapter.should_receive_event("agent.thinking", {})
-        assert not adapter.should_receive_event("tool.execute", {})
-
-    def test_should_receive_event_high_frequency_exclusion(self, adapter):
-        """Test high-frequency event exclusion."""
-        adapter.set_mode("event")
+    def test_effective_filters_high_frequency_exclusion(self, adapter):
+        """High-frequency exclusion only applies in event mode."""
         adapter.set_exclude_high_frequency(True)
 
-        # Should not receive high-frequency events
-        assert not adapter.should_receive_event("agent.llm_request", {})
-        assert not adapter.should_receive_event("agent.llm_response", {})
+        # In chat mode: no exclusion declared (chat mode never carries these)
+        adapter.set_mode("chat")
+        assert "exclude_event_types" not in adapter.get_effective_filters()
 
-        # Should receive other events
-        assert adapter.should_receive_event("message.new", {})
-        assert adapter.should_receive_event("agent.thinking", {})
+        # In event mode: exclusion declared for the server to enforce
+        adapter.set_mode("event")
+        filters = adapter.get_effective_filters()
+        assert set(filters["exclude_event_types"]) == adapter.HIGH_FREQUENCY_EVENTS
+
+        # In agent mode: no exclusion declared
+        adapter.set_mode("agent")
+        assert "exclude_event_types" not in adapter.get_effective_filters()
 
     def test_clear_filters(self, adapter):
         """Test clearing filters."""
@@ -463,6 +424,7 @@ class TestTerminalAdapter:
 
         assert adapter._trace_filter is None
         assert adapter._event_filters is None
+        assert adapter.get_effective_filters() == {}
 
     def test_get_auth_metadata(self, adapter):
         """Test auth metadata generation."""
@@ -484,34 +446,26 @@ class TestWebAdapter:
         """Test WebAdapter initialization."""
         assert adapter.client_type == "web"
 
-    def test_should_receive_event_default_filtering(self, adapter):
-        """Test default event filtering for web clients."""
-        # Should receive message events
-        assert adapter.should_receive_event("message.new", {})
+    def test_effective_filters_default_exclusions(self, adapter):
+        """Web clients declare high-frequency exclusions by default."""
+        filters = adapter.get_effective_filters()
+        assert set(filters["exclude_event_types"]) == adapter.EXCLUDED_EVENTS
 
-        # Should not receive high-frequency events by default
-        assert not adapter.should_receive_event("agent.llm_request", {})
-        assert not adapter.should_receive_event("agent.llm_response", {})
-        assert not adapter.should_receive_event("agent.thinking_start", {})
-
-    def test_should_receive_event_in_trace_mode(self, adapter):
-        """Test event filtering in trace mode."""
+    def test_effective_filters_in_trace_mode(self, adapter):
+        """Trace mode lifts the default exclusions."""
         adapter.set_trace_mode(True)
+        assert adapter.get_effective_filters() == {}
 
-        # Should receive all events in trace mode
-        assert adapter.should_receive_event("agent.llm_request", {})
-        assert adapter.should_receive_event("agent.llm_response", {})
-        assert adapter.should_receive_event("message.new", {})
-
-    def test_should_receive_event_with_trace_filter(self, adapter):
-        """Test event filtering with trace filter."""
+    def test_effective_filters_with_trace_filter(self, adapter):
+        """A trace filter lifts the default exclusions and declares trace_id."""
         adapter.set_trace_filter("trace-xyz-789")
+        assert adapter.get_effective_filters() == {"trace_id": "trace-xyz-789"}
 
-        # Should receive events with matching trace_id even if high-frequency
-        assert adapter.should_receive_event("agent.llm_request", {"trace_id": "trace-xyz-789"})
-
-        # Should not receive events with different trace_id
-        assert not adapter.should_receive_event("agent.llm_request", {"trace_id": "trace-other"})
+    def test_effective_filters_merge_user_exclusions(self, adapter):
+        """User-supplied exclusions are unioned with the defaults."""
+        adapter.set_event_filters({"exclude_event_types": ["tool.execute"]})
+        filters = adapter.get_effective_filters()
+        assert set(filters["exclude_event_types"]) == adapter.EXCLUDED_EVENTS | {"tool.execute"}
 
 
 class TestTlonClient:
@@ -598,13 +552,10 @@ class TestTlonClient:
         assert client.adapter._trace_filter is None
 
     @pytest.mark.asyncio
-    async def test_on_event_with_adapter_filtering(self, client):
-        """Test that events are filtered through adapter."""
+    async def test_on_event_dispatches_without_local_filtering(self, client):
+        """Events are filtered server-side; _on_event dispatches everything."""
         handler = MagicMock()
         client.on_event(handler)
-
-        # Set adapter to chat mode (only message events)
-        client.adapter.set_mode("chat")
 
         # Simulate receiving a message event
         message_event = {
@@ -612,22 +563,50 @@ class TestTlonClient:
             "payload": {"content": "Hello"},
         }
         client._on_event(message_event)
-
-        # Handler should be called
         handler.assert_called_once_with(message_event)
 
-        # Reset mock
         handler.reset_mock()
 
-        # Simulate receiving an agent event (should be filtered out)
+        # Agent events are dispatched too (server already decided to send them)
         agent_event = {
             "type": "agent.thinking",
             "payload": {"agent_id": "dev-001"},
         }
         client._on_event(agent_event)
+        handler.assert_called_once_with(agent_event)
 
-        # Handler should not be called
-        handler.assert_not_called()
+    @pytest.mark.asyncio
+    async def test_authenticate_declares_adapter_filters(self, client):
+        """authenticate() passes the adapter's effective filters to the server."""
+        client._base = AsyncMock()
+        client._base.authenticate = AsyncMock(return_value=True)
+
+        result = await client.authenticate()
+
+        assert result is True
+        call_kwargs = client._base.authenticate.call_args.kwargs
+        assert call_kwargs["client_type"] == "tui"
+        assert call_kwargs["filters"] == client.adapter.get_effective_filters()
+
+    @pytest.mark.asyncio
+    async def test_set_mode_syncs_mode_and_filters(self, client):
+        """set_mode sends both the mode and the re-synced effective filters."""
+        client._base = AsyncMock()
+        client._base.send = AsyncMock(return_value=True)
+
+        result = await client.set_mode("event")
+
+        assert result is True
+        assert client.adapter.mode == "event"
+        assert client._base.send.call_count == 2
+
+        mode_msg = client._base.send.call_args_list[0][0][0]
+        assert mode_msg["type"] == "mode"
+        assert mode_msg["mode"] == "event"
+
+        filter_msg = client._base.send.call_args_list[1][0][0]
+        assert filter_msg["type"] == "filter"
+        assert filter_msg["filters"] == client.adapter.get_effective_filters()
 
     @pytest.mark.asyncio
     async def test_rest_api_methods(self, client):

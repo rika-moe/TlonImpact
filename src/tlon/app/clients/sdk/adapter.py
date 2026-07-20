@@ -1,12 +1,15 @@
 """Client Adapter Pattern for Tlon SDK.
 
 Adapters encapsulate client-type-specific behavior:
-- TerminalAdapter: Receives all events, supports event filtering by trace_id
-- WebAdapter: Receives filtered events (excludes high-frequency events)
+- TerminalAdapter: Declares mode display state and optional high-frequency exclusions
+- WebAdapter: Declares default exclusion of high-frequency events
+- TelegramAdapter: Declares a strict allowlist of message-related events
 
 Each adapter provides:
 - Client type identification
-- Event filtering logic
+- Filter DECLARATION (get_effective_filters) — the actual matching is
+  enforced by the server (NotificationService), which is the single
+  filtering point. Adapters never match events locally.
 - Protocol capabilities
 - Client-specific metadata
 """
@@ -40,7 +43,7 @@ class ClientAdapter(ABC):
 
     Adapters encapsulate client-type-specific behavior including:
     - Client type identification
-    - Event filtering logic
+    - Filter declaration (matching happens server-side)
     - Protocol capabilities
     - Client-specific metadata
     """
@@ -73,18 +76,23 @@ class ClientAdapter(ABC):
         """Get capabilities for this client type."""
         pass
 
-    @abstractmethod
-    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
-        """Determine if this client should receive the given event.
+    def get_effective_filters(self) -> dict[str, Any]:
+        """Compute the effective filter declaration for this adapter.
 
-        Args:
-            event_type: The type of event
-            event_data: The event payload data
+        Combines user filters (set_event_filters / set_trace_filter) with
+        client-type defaults. The result is sent to the server, which is the
+        single filtering point — adapters never match events locally.
 
         Returns:
-            True if the client should receive this event
+            Filter dictionary understood by the server, e.g.:
+                - event_types: include list ("prefix.*" wildcard supported)
+                - exclude_event_types: exclusion list
+                - trace_id: only events carrying this trace ID
         """
-        pass
+        filters: dict[str, Any] = dict(self._event_filters or {})
+        if self._trace_filter:
+            filters["trace_id"] = self._trace_filter
+        return filters
 
     def get_auth_metadata(self) -> dict[str, Any]:
         """Get metadata to include in auth message.
@@ -129,53 +137,22 @@ class ClientAdapter(ABC):
         self._event_filters = None
         self._trace_filter = None
 
-    def _matches_trace_filter(self, event_data: dict[str, Any]) -> bool:
-        """Check if event matches the current trace filter.
-
-        Args:
-            event_data: The event payload data
-
-        Returns:
-            True if event matches (or no filter set)
-        """
-        if not self._trace_filter:
-            return True
-
-        event_trace_id = event_data.get("trace_id")
-        return event_trace_id == self._trace_filter
-
-    def _matches_event_type_filter(self, event_type: str) -> bool:
-        """Check if event type matches the current filter.
-
-        Args:
-            event_type: The type of event
-
-        Returns:
-            True if event matches (or no filter set)
-        """
-        if not self._event_filters:
-            return True
-
-        allowed_types = self._event_filters.get("event_types")
-        if allowed_types is None:
-            return True
-
-        return event_type in allowed_types
-
 
 class TerminalAdapter(ClientAdapter):
     """Adapter for Terminal (TUI) clients.
 
-    Terminal clients receive all events and support:
-    - Full event stream (chat, agent, system events)
-    - Event filtering by type and trace_id
-    - Command mode switching (/mode chat|event|agent)
+    Terminal clients receive all events allowed by their mode and support:
+    - Mode display state (chat | event | agent) — mode semantics are
+      enforced server-side; the adapter only tracks the current mode
+    - Event filtering by type and trace_id (declared, enforced server-side)
+    - Optional high-frequency event exclusion in event mode
     - Trace visualization (/trace <trace_id>)
 
     Example:
         >>> adapter = TerminalAdapter()
         >>> adapter.set_trace_filter("trace-abc-123")
-        >>> # Only events with trace_id="trace-abc-123" will pass
+        >>> adapter.get_effective_filters()
+        {'trace_id': 'trace-abc-123'}
     """
 
     # High-frequency events that can be filtered in event mode
@@ -212,53 +189,23 @@ class TerminalAdapter(ClientAdapter):
             raise ValueError(f"Invalid mode: {mode}. Must be 'chat', 'event', or 'agent'")
         self._mode = mode
 
-    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
-        """Determine if terminal should receive this event.
+    def get_effective_filters(self) -> dict[str, Any]:
+        """Compute the effective filters for a terminal client.
 
-        Terminal clients receive all events by default, but can filter:
-        - By trace_id (when set_trace_filter is called)
-        - By event type (in agent mode, only agent.* events)
-        - High-frequency events (can be excluded)
-
-        Args:
-            event_type: The type of event
-            event_data: The event payload data
-
-        Returns:
-            True if the terminal should display this event
+        Adds the high-frequency exclusion only in event mode (when enabled);
+        mode semantics themselves are enforced server-side.
         """
-        # Check trace filter first
-        if not self._matches_trace_filter(event_data):
-            return False
-
-        # Check event type filter
-        if not self._matches_event_type_filter(event_type):
-            return False
-
-        # Mode-specific filtering
-        if self._mode == "chat":
-            # Chat mode: messages, agent responses, and important system events
-            return (
-                event_type.startswith("message.")
-                or event_type in ("agent.response", "agent.started", "agent.stopped", "agent.error")
-                or event_type.startswith("system.")
-                or event_type.startswith("session.")
-            )
-
-        elif self._mode == "agent":
-            # Agent mode: only agent events
-            return event_type.startswith("agent.")
-
-        elif self._mode == "event":
-            # Event mode: all events (with optional high-frequency exclusion)
-            if self._exclude_high_frequency:
-                return event_type not in self.HIGH_FREQUENCY_EVENTS
-            return True
-
-        return True
+        filters = super().get_effective_filters()
+        if self._mode == "event" and self._exclude_high_frequency:
+            excluded = set(filters.get("exclude_event_types", [])) | self.HIGH_FREQUENCY_EVENTS
+            filters["exclude_event_types"] = sorted(excluded)
+        return filters
 
     def set_exclude_high_frequency(self, exclude: bool) -> None:
         """Set whether to exclude high-frequency events in event mode.
+
+        Takes effect the next time the client syncs filters to the server
+        (set_mode / set_filters / set_trace_filter / authenticate).
 
         Args:
             exclude: True to exclude high-frequency events
@@ -269,15 +216,16 @@ class TerminalAdapter(ClientAdapter):
 class WebAdapter(ClientAdapter):
     """Adapter for Web clients.
 
-    Web clients receive filtered events by default:
+    Web clients exclude high-frequency events by default:
     - Excludes high-frequency events (llm_request, llm_response, etc.)
-    - Supports trace visualization mode
+    - Supports trace visualization mode (all exclusions lifted)
     - Supports filtered event streams
 
     Example:
         >>> adapter = WebAdapter()
         >>> adapter.set_trace_filter("trace-abc-123")
-        >>> # Will receive all events for this trace, including high-frequency ones
+        >>> adapter.get_effective_filters()
+        {'trace_id': 'trace-abc-123'}
     """
 
     # Events that are excluded by default for web clients
@@ -299,38 +247,25 @@ class WebAdapter(ClientAdapter):
         """Web clients support trace and history, limited filter."""
         return ProtocolCapabilities(trace=True, filter=True, history=True)
 
-    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
-        """Determine if web client should receive this event.
+    def get_effective_filters(self) -> dict[str, Any]:
+        """Compute the effective filters for a web client.
 
-        Web clients filter out high-frequency events by default,
-        but show all events when in trace visualization mode.
-
-        Args:
-            event_type: The type of event
-            event_data: The event payload data
-
-        Returns:
-            True if the web client should receive this event
+        Default exclusions apply unless trace viewing is active (trace mode
+        or a trace filter), in which case all events for the trace pass.
         """
-        # Check trace filter first
-        if not self._matches_trace_filter(event_data):
-            return False
-
-        # Check event type filter
-        if not self._matches_event_type_filter(event_type):
-            return False
-
-        # In trace mode, show all events for the trace
+        filters = super().get_effective_filters()
         if self._trace_mode or self._trace_filter:
-            return True
-
-        # Default: exclude high-frequency events
-        return event_type not in self.EXCLUDED_EVENTS
+            # Trace viewing: lift the default exclusions
+            return filters
+        excluded = set(filters.get("exclude_event_types", [])) | self.EXCLUDED_EVENTS
+        filters["exclude_event_types"] = sorted(excluded)
+        return filters
 
     def set_trace_mode(self, enabled: bool) -> None:
         """Enable/disable trace visualization mode.
 
         When enabled, all events (including high-frequency) are received.
+        Takes effect the next time the client syncs filters to the server.
 
         Args:
             enabled: True to enable trace mode
@@ -344,6 +279,7 @@ class TelegramAdapter(ClientAdapter):
     Telegram clients receive only message-related events:
     - message.new
     - message.delivered
+    - message.edit
     - agent.response (when mentioned)
 
     They do not receive system events or detailed agent lifecycle events.
@@ -363,16 +299,16 @@ class TelegramAdapter(ClientAdapter):
         """Telegram clients have limited capabilities."""
         return ProtocolCapabilities(trace=False, filter=False, history=False)
 
-    def should_receive_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
-        """Determine if Telegram client should receive this event.
+    def get_effective_filters(self) -> dict[str, Any]:
+        """Compute the effective filters for a Telegram client.
 
-        Telegram bots only receive message-related events.
-
-        Args:
-            event_type: The type of event
-            event_data: The event payload data
-
-        Returns:
-            True if the Telegram client should receive this event
+        The allowlist is intersected with any user-supplied event_types.
         """
-        return event_type in self.ALLOWED_EVENTS
+        filters = super().get_effective_filters()
+        user_types = filters.get("event_types")
+        if user_types is None:
+            allowed = self.ALLOWED_EVENTS
+        else:
+            allowed = self.ALLOWED_EVENTS & set(user_types)
+        filters["event_types"] = sorted(allowed)
+        return filters
