@@ -57,7 +57,7 @@ class MemoryStore(ABC):
             limit: Maximum number of items to return
 
         Returns:
-            List of items, ordered by recency (newest first)
+            List of items in chronological order (oldest first, newest last)
         """
         pass
 

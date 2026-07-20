@@ -1,7 +1,12 @@
 """Tool for searching memories."""
 
+from typing import TYPE_CHECKING
+
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from tlon.memory.manager import MemoryManager
 
 logger = get_logger(__name__)
 
@@ -17,7 +22,7 @@ class SearchMemoriesTool(Tool):
         >>> result = await tool.execute(query="Python preferences")
     """
 
-    def __init__(self, memory_manager):
+    def __init__(self, memory_manager: "MemoryManager"):
         """Initialize with memory manager.
 
         Args:

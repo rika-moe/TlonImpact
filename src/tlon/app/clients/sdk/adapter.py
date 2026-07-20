@@ -3,7 +3,6 @@
 Adapters encapsulate client-type-specific behavior:
 - TerminalAdapter: Declares mode display state and optional high-frequency exclusions
 - WebAdapter: Declares default exclusion of high-frequency events
-- TelegramAdapter: Declares a strict allowlist of message-related events
 
 Each adapter provides:
 - Client type identification
@@ -271,44 +270,3 @@ class WebAdapter(ClientAdapter):
             enabled: True to enable trace mode
         """
         self._trace_mode = enabled
-
-
-class TelegramAdapter(ClientAdapter):
-    """Adapter for Telegram Bot clients.
-
-    Telegram clients receive only message-related events:
-    - message.new
-    - message.delivered
-    - message.edit
-    - agent.response (when mentioned)
-
-    They do not receive system events or detailed agent lifecycle events.
-    """
-
-    ALLOWED_EVENTS = {
-        "message.new",
-        "message.delivered",
-        "message.edit",
-        "agent.response",
-    }
-
-    def __init__(self):
-        super().__init__(ClientType.TELEGRAM)
-
-    def _get_capabilities(self) -> ProtocolCapabilities:
-        """Telegram clients have limited capabilities."""
-        return ProtocolCapabilities(trace=False, filter=False, history=False)
-
-    def get_effective_filters(self) -> dict[str, Any]:
-        """Compute the effective filters for a Telegram client.
-
-        The allowlist is intersected with any user-supplied event_types.
-        """
-        filters = super().get_effective_filters()
-        user_types = filters.get("event_types")
-        if user_types is None:
-            allowed = self.ALLOWED_EVENTS
-        else:
-            allowed = self.ALLOWED_EVENTS & set(user_types)
-        filters["event_types"] = sorted(allowed)
-        return filters

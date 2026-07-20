@@ -136,15 +136,15 @@ class LLMClient:
                 last_error = e
                 logger.warning(f"Request timeout (attempt {attempt + 1}/{self.max_retries})")
 
+            except openai.APIConnectionError as e:
+                # Connection error - retry (must come before APIError, its parent class)
+                last_error = e
+                logger.warning(f"Connection error (attempt {attempt + 1}/{self.max_retries}): {e}")
+
             except openai.APIError as e:
                 # API error - may be transient, retry
                 last_error = e
                 logger.warning(f"API error (attempt {attempt + 1}/{self.max_retries}): {e}")
-
-            except openai.APIConnectionError as e:
-                # Connection error - retry
-                last_error = e
-                logger.warning(f"Connection error (attempt {attempt + 1}/{self.max_retries}): {e}")
 
             except Exception as e:
                 # Other errors - don't retry
@@ -181,7 +181,10 @@ class LLMClient:
                 try:
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse tool arguments: {tc.function.arguments}")
+                    logger.warning(
+                        f"Failed to parse tool arguments for tool call "
+                        f"{tc.id} ({tc.function.name}): {tc.function.arguments}"
+                    )
                     args = {}
 
                 tool_calls.append(

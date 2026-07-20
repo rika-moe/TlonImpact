@@ -20,7 +20,6 @@ Architecture:
     It subscribes to MESSAGE_NEW events and publishes MESSAGE_ROUTED events.
 """
 
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -133,8 +132,6 @@ class MessageRouter(Component, Device):
         """
         message: Message = event.payload
 
-        # Use existing trace context if available, or create new one
-        event.trace_id or str(uuid.uuid4())
         parent_span_id = event.span_id
 
         with start_span(

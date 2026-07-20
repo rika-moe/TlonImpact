@@ -3,7 +3,7 @@
 > 本文基于对 `src/tlon` 实际代码的逐文件分析，**不依赖 `docs/` 中的设计文档**。
 > 凡文档与代码不符之处，均以代码为准并单独标注。
 >
-> **修复进度（2026-07-20 更新）**：P0 全部 8 项已修复并合并（PR ）；P1 的 /// 已修复并合并（PR ）。下文中已过时的描述已就地修订，Issue 清单保留原始记录并标注状态。
+> **修复进度（2026-07-20 更新）**：P0 全部 8 项已修复并合并（PR ）；P1 的 – 已修复（/// 于 PR ，// 于 PR ）；P2 的 14 项易修项已修复（同批次， 为本地清理）。下文中已过时的描述已就地修订，Issue 清单保留原始记录并标注状态。
 
 ---
 
@@ -145,26 +145,28 @@
 
 ### P2 — 代码质量 / 清理项
 
+> //–/– 已修复（2026-07-20 同批次，行内标 ✅）；//// 待处理（/ 建议立项，// 需先定方向）。
+
 | # | 问题 | 位置 | 说明 |
 |---|------|------|------|
-| 20 | 字面 `...` 残留在 initialize() | `src/tlon/app/server/serverapp.py:137` | 重构残留 |
-| 21 | 死代码 | `serverapp.py:234-265`（`_get_initial_agents`/`_create_default_configs`）、`clients/tui/common/utils/state.py`（StateManager 无人引用）、`adapter.py:358`（TelegramAdapter 无调用方） | — |
+| 20 | ✅ 字面 `...` 残留在 initialize() | `src/tlon/app/server/serverapp.py:137` | 重构残留。已删除（2026-07-20） |
+| 21 | ✅ 死代码 | `serverapp.py:234-265`（`_get_initial_agents`/`_create_default_configs`）、`clients/tui/common/utils/state.py`（StateManager 无人引用）、`adapter.py:358`（TelegramAdapter 无调用方） | 已全部删除（2026-07-20）；`ClientType.TELEGRAM` 枚举保留为协议词汇 |
 | 22 | Operator TUI 未接线 | `src/tlon/app/clients/tui/operator/app.py:168-186`、`views/agents.py:286-289` | 展示占位/随机数据，不应作为可用功能外露 |
 | 23 | `/agents/{id}/logs` 假端点 | `src/tlon/app/server/api/rest.py:469-480` | 永远返回空（TODO） |
-| 24 | `FileMessageStore._id_index` 坏且无效 | `src/tlon/organization/messaging/store.py:186,214,322-326` | load 存行号、append 存计数；`get_by_id` 仍全文件线性扫描；多处 `__import__("json")` 补丁式写法 |
-| 25 | tool arguments JSON 解析失败静默降级为 `{}` | `src/tlon/agents/llm_client.py:200-202` | LLM 拿到空参数结果，难以排查 |
-| 26 | `APIConnectionError` 重试分支是死代码 | `src/tlon/agents/llm_client.py:156-164` | `APIError` 的 except 在前，子类分支永远捕获不到 |
-| 27 | 消息路由死代码 | `src/tlon/organization/messaging/router.py:154` | `event.trace_id or str(uuid.uuid4())` 结果被丢弃 |
-| 28 | 文档与实现不符 | `memory/base.py:70-79`（get_recent 声称 newest first，实现正序）等 | — |
-| 29 | 假时间戳 | `clients/sdk/base_client.py:407,582` | 用单调时钟 `loop.time()` 当协议 timestamp，跨进程无意义 |
-| 30 | 重复的降级摘要逻辑 | `memory/manager.py:554` 与 `summarizer.py:343` | 两份实现 |
-| 31 | 同步 IO 混入异步路径 | `tools/tasks/manager.py:242,247,279`（阻塞 open + print）、`agents/agent.py:698`（read_text） | TaskManager 出错用 `print` 告警 |
+| 24 | ✅ `FileMessageStore._id_index` 坏且无效 | `src/tlon/organization/messaging/store.py:186,214,322-326` | load 存行号、append 存计数；`get_by_id` 仍全文件线性扫描；多处 `__import__("json")` 补丁式写法。已删除假索引（get_by_id 显式线性扫描）并改为正常 import（2026-07-20） |
+| 25 | ✅ tool arguments JSON 解析失败静默降级为 `{}` | `src/tlon/base/llm_client.py:200-205` | LLM 拿到空参数结果，难以排查。已在 warning 中补 tool call id / function name（2026-07-20） |
+| 26 | ✅ `APIConnectionError` 重试分支是死代码 | `src/tlon/base/llm_client.py:156-165` | `APIError` 的 except 在前，子类分支永远捕获不到。已调整顺序（2026-07-20）；两分支重试逻辑一致，仅日志文案变化 |
+| 27 | ✅ 消息路由死代码 | `src/tlon/organization/messaging/router.py:154` | `event.trace_id or str(uuid.uuid4())` 结果被丢弃。已删除（赋值反而会写入与实际 span 不一致的错误 trace_id，2026-07-20） |
+| 28 | ✅ 文档与实现不符 | `memory/base.py:70-79`（get_recent 声称 newest first，实现正序）等 | 已对齐 docstring 与实现（时间正序），全部调用方已排查无依赖（2026-07-20） |
+| 29 | ✅ 假时间戳 | `clients/sdk/base_client.py:407,582,654` | 用单调时钟 `loop.time()` 当协议 timestamp，跨进程无意义。已全部改 `time.time()`（PR  + 2026-07-20 补 heartbeat ping） |
+| 30 | ✅ 重复的降级摘要逻辑 | `memory/manager.py:554` 与 `summarizer.py:343` | 两份实现。已去重：manager 委托 summarizer 的 `_generate_fallback_summary`（2026-07-20） |
+| 31 | ✅ 同步 IO 混入异步路径 | `tools/tasks/manager.py:242,247,279`（阻塞 open + print）、`agents/agent.py:698`（read_text） | TaskManager 出错用 `print` 告警。已改 logger；IO 抽为 `_write_lines`/`_read_lines` 内部函数，async 化切入点已在 docstring 注明（约 30 处同步调用点，级联改造留作后续，2026-07-20） |
 | 32 | JSONL 文件只增不减 | `memory/working_store.py:171`、`episodic_store.py:191,284` | 裁剪只在 load()，运行期文件无界增长 |
 | 33 | 硬编码 | `base/config.py:99`（network_mode="host"，macOS 无效）、`tools/shell/execute_bash.py:30`（全局后台任务 dict 无清理）、`memory/summarizer.py:99,207`（timeout=30.0）、summarizer prompt 全中文硬编码 | — |
-| 34 | settings 的 .env 路径算错 | `src/tlon/base/settings.py:17-18` | 解析到 `src/` 而非项目根，靠裸 `load_dotenv()` 兜底 |
-| 35 | memory 工具缺类型注解 | `src/tlon/tools/memory/*.py` 各 `__init__` | 违反项目自身规范 |
-| 36 | WS 文档声明支持 `wake` 但未实现 | `src/tlon/app/server/api/websocket.py:31` vs `:289-309` | — |
-| 37 | `apps/tui/dist/` 遗留物 | `apps/tui/` | 废弃 Node TUI 构建产物，未 git 跟踪，可删除 |
+| 34 | ✅ settings 的 .env 路径算错 | `src/tlon/base/settings.py:17-18` | 解析到 `src/` 而非项目根，靠裸 `load_dotenv()` 兜底。已加一级 parent 修正到项目根（2026-07-20） |
+| 35 | ✅ memory 工具缺类型注解 | `src/tlon/tools/memory/*.py` 各 `__init__` | 违反项目自身规范。已补 `memory_manager: MemoryManager`（TYPE_CHECKING import，2026-07-20） |
+| 36 | ✅ WS 文档声明支持 `wake` 但未实现 | `src/tlon/app/server/api/websocket.py:31` vs `:289-309` | 已从协议注释删除该条（只改注释，2026-07-20） |
+| 37 | ✅ `apps/tui/dist/` 遗留物 | `apps/tui/` | 废弃 Node TUI 构建产物，未 git 跟踪。已本地删除（2026-07-20，无需 PR） |
 | 38 | 测试覆盖空洞 | `src/tests/` | 服务端 rest/websocket/gateway、congress client/app、launcher 无测试；无集成测试；`test_operator_tui.py` 基本是 import 冒烟 |
 
 ---

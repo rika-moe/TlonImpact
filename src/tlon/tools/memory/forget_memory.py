@@ -1,7 +1,12 @@
 """Tool for forgetting/deleting memories."""
 
+from typing import TYPE_CHECKING
+
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from tlon.memory.manager import MemoryManager
 
 logger = get_logger(__name__)
 
@@ -17,7 +22,7 @@ class ForgetMemoryTool(Tool):
         >>> result = await tool.execute(query="old Python preference", confirm=True)
     """
 
-    def __init__(self, memory_manager):
+    def __init__(self, memory_manager: "MemoryManager"):
         """Initialize with memory manager.
 
         Args:

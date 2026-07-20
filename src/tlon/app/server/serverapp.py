@@ -17,14 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.base.config import AgentConfig, ConfigService, DockerRuntimeConfig, LLMConfig
+from tlon.base.config import ConfigService
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.paths import paths
-from tlon.base.settings import get_settings, get_tlon_home
+from tlon.base.settings import get_tlon_home
 from tlon.base.tracing.trace_store import FileTraceStore
-from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.messaging.store import FileMessageStore
 
@@ -117,7 +116,6 @@ class ServerApp:
         message_store = FileMessageStore(
             data_dir=paths.chat_history_dir(), filename="messages.jsonl"
         )
-        ...
         # 2.2b TraceStore - storage for traces (stateful)
         trace_store = FileTraceStore(data_dir=paths.traces_dir())
         self._components["trace_store"] = trace_store
@@ -213,39 +211,6 @@ class ServerApp:
         logger.info(f"  Agents: {len(agent_registry.get_all())}")
         logger.info(f"  REST API: http://{self.host}:{self.rest_port}")
         logger.info(f"  WebSocket: ws://{self.host}:{self.ws_port}/ws")
-
-    def _get_initial_agents(self, config_service: ConfigService) -> list[AgentConfig]:
-        """Get initial agent configurations.
-
-        Returns agents from config files, or defaults if none exist.
-        """
-        agents = config_service.agents
-        if agents:
-            logger.info(f"Loaded {len(agents)} agents from config")
-            return list(agents.values())
-
-        logger.warning("No agent configs found, using defaults")
-        return self._create_default_configs()
-
-    def _create_default_configs(self) -> list[AgentConfig]:
-        """Create default agent configurations."""
-        logger.info("Creating default agent configuration")
-
-        return [
-            AgentConfig(
-                id="dev-001",
-                name="林知遥",
-                llm=LLMConfig(
-                    base_url=get_settings().llm_base_url,
-                    auth_token=get_settings().llm_api_key,
-                    model_name=get_settings().llm_model_name,
-                    temperature=get_settings().llm_temperature,
-                ),
-                docker=DockerRuntimeConfig(),
-                memory=MemoryConfig(agent_id="dev-001"),
-                proactive=False,
-            )
-        ]
 
     # ========== Lifecycle Methods ==========
 

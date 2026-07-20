@@ -634,7 +634,7 @@ class BaseClient:
                 ping_msg = {
                     "type": "ping",
                     "seq": self._ping_seq,
-                    "timestamp": loop.time(),
+                    "timestamp": time.time(),
                 }
 
                 # Create future for pong response

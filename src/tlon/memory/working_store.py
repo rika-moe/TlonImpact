@@ -171,7 +171,7 @@ class WorkingMemoryStore(MemoryStore):
             return None
 
     async def get_recent(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent interactions, newest first."""
+        """Get recent interactions in chronological order (oldest first, newest last)."""
         if not self._loaded:
             await self.load()
 

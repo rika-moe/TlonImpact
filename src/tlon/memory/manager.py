@@ -537,16 +537,13 @@ class MemoryManager:
     async def _generate_simple_summary(
         self, interactions: list[dict[str, Any]], source_ids: list[str]
     ) -> str:
-        """Generate a simple fallback summary without LLM."""
-        count = len(interactions)
-        start_time = interactions[0].get("timestamp", "")[:19] if interactions else ""
-        end_time = interactions[-1].get("timestamp", "")[:19] if interactions else ""
-        tool_count = sum(1 for i in interactions if i.get("tool_results"))
+        """Generate a simple fallback summary without LLM.
 
-        summary_text = (
-            f"会话包含 {count} 次交互，使用了 {tool_count} 次工具。"
-            f"时间：{start_time} 至 {end_time}。"
-        )
+        Delegates the summary text to Summarizer._generate_fallback_summary
+        to keep a single fallback implementation.
+        """
+        count = len(interactions)
+        summary_text = Summarizer._generate_fallback_summary(interactions)
 
         summary = Summary(
             timestamp=datetime.now().isoformat(),

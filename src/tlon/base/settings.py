@@ -14,7 +14,7 @@ from tlon.base.paths import paths
 
 def _load_dotenv_files() -> None:
     load_dotenv()
-    project_dir = Path(__file__).parent.parent.parent
+    project_dir = Path(__file__).parent.parent.parent.parent
     project_env = project_dir / ".env"
     if project_env.exists():
         load_dotenv(project_env, override=True)

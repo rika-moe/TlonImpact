@@ -3,10 +3,14 @@
 import json
 from typing import TYPE_CHECKING
 
+from tlon.base.logger import get_logger
+
+from .models import Task, TaskStatus
+
 if TYPE_CHECKING:
     from tlon.base.paths import TlonPaths as _TlonPaths
 
-from .models import Task, TaskStatus
+logger = get_logger(__name__)
 
 
 class TaskManager:
@@ -220,17 +224,33 @@ class TaskManager:
         }
 
     def save(self) -> None:
-        """Save all tasks to JSONL file."""
+        """Save all tasks to JSONL file.
+
+        Note: the file IO is blocking but isolated in _write_lines(). The
+        public mutation API is synchronous (called from sync tool code and
+        tests), so save() stays sync; the per-agent task file is small enough
+        that the blocking cost is negligible. If the API is ever made async,
+        only _write_lines() needs to be offloaded to a thread.
+        """
         try:
-            with open(self._storage_path, "w", encoding="utf-8") as f:
-                for task in self.tasks.values():
-                    f.write(json.dumps(task.to_dict(), ensure_ascii=False) + "\n")
+            lines = [json.dumps(task.to_dict(), ensure_ascii=False) for task in self.tasks.values()]
+            self._write_lines(lines)
         except Exception as e:
             # Log error but don't crash
-            print(f"Warning: Failed to save tasks: {e}")
+            logger.warning(f"Failed to save tasks: {e}")
+
+    def _write_lines(self, lines: list[str]) -> None:
+        """Write lines to the storage file (blocking IO, isolated for save())."""
+        with open(self._storage_path, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line + "\n")
 
     def load(self) -> None:
-        """Load tasks from JSONL file."""
+        """Load tasks from JSONL file.
+
+        Note: same blocking-IO caveat as save(); the IO is isolated in
+        _read_lines().
+        """
         if not self._storage_path.exists():
             return
 
@@ -238,30 +258,30 @@ class TaskManager:
             self.tasks = {}
             max_counter = 0
 
-            with open(self._storage_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
+            for line in self._read_lines():
+                data = json.loads(line)
+                task = Task.from_dict(data)
+                self.tasks[task.id] = task
 
-                    data = json.loads(line)
-                    task = Task.from_dict(data)
-                    self.tasks[task.id] = task
-
-                    # Update counter from loaded tasks
-                    try:
-                        counter = int(task.id.split("-")[1])
-                        max_counter = max(max_counter, counter)
-                    except (IndexError, ValueError):
-                        pass
+                # Update counter from loaded tasks
+                try:
+                    counter = int(task.id.split("-")[1])
+                    max_counter = max(max_counter, counter)
+                except (IndexError, ValueError):
+                    pass
 
             self._counter = max_counter
 
         except Exception as e:
             # Log error and start fresh
-            print(f"Warning: Failed to load tasks: {e}")
+            logger.warning(f"Failed to load tasks: {e}")
             self.tasks = {}
             self._counter = 0
+
+    def _read_lines(self) -> list[str]:
+        """Read non-empty stripped lines from the storage file (blocking IO)."""
+        with open(self._storage_path, encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
 
     def clear(self) -> None:
         """Clear all tasks (for testing)."""

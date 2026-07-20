@@ -6,6 +6,7 @@ the stateless MessageRouter.
 """
 
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -139,9 +140,6 @@ class FileMessageStore(MessageStore):
         # Lock for thread safety
         self._lock = asyncio.Lock()
 
-        # Index for fast ID lookup
-        self._id_index: dict[str, int] = {}  # message_id -> position in file/cache
-
         logger.info(f"FileMessageStore initialized: {self._file_path}")
 
     async def initialize(self) -> None:
@@ -163,10 +161,9 @@ class FileMessageStore(MessageStore):
                 if not line.strip():
                     continue
                 try:
-                    data = __import__("json").loads(line)
+                    data = json.loads(line)
                     msg = Message.from_dict(data)
                     messages.append(msg)
-                    self._id_index[msg.id] = line_num
                 except Exception as e:
                     logger.warning(f"Failed to parse message at line {line_num}: {e}")
 
@@ -193,15 +190,12 @@ class FileMessageStore(MessageStore):
             # Persist to file
             await self._persist(message)
 
-            # Update index (approximate position)
-            self._id_index[message.id] = len(self._id_index)
-
     async def _persist(self, message: Message) -> None:
         """Persist a single message to disk."""
         try:
             async with aiofiles.open(self._file_path, "a", encoding="utf-8") as f:
                 await f.write(
-                    __import__("json").dumps(message.to_dict(), ensure_ascii=False) + "\n"
+                    json.dumps(message.to_dict(), ensure_ascii=False) + "\n"
                 )
         except Exception as e:
             logger.error(f"Failed to persist message: {e}", exc_info=True)
@@ -256,7 +250,7 @@ class FileMessageStore(MessageStore):
                 if not line.strip():
                     continue
                 try:
-                    data = __import__("json").loads(line.strip())
+                    data = json.loads(line.strip())
                     messages.append(Message.from_dict(data))
                 except Exception:
                     continue
@@ -294,19 +288,18 @@ class FileMessageStore(MessageStore):
         return result
 
     async def get_by_id(self, message_id: str) -> Message | None:
-        """Get message by ID using index."""
+        """Get message by ID via linear scan (cache first, then file)."""
         async with self._lock:
             # Check cache first
             for msg in reversed(self._cache):
                 if msg.id == message_id:
                     return msg
 
-            # Fall back to file if not in cache
-            if message_id in self._id_index:
-                all_messages = await self._read_from_file(10000)
-                for msg in all_messages:
-                    if msg.id == message_id:
-                        return msg
+            # Fall back to a linear scan of the file if not in cache
+            all_messages = await self._read_from_file(10000)
+            for msg in all_messages:
+                if msg.id == message_id:
+                    return msg
 
             return None
 

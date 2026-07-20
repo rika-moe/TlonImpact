@@ -11,7 +11,6 @@ All messages are JSON with a "type" field:
   - {"type": "message", "content": "...", "mentions": [...]}
   - {"type": "mode", "mode": "chat|event|agent"}
   - {"type": "filter", "filters": {...}}
-  - {"type": "wake", "agent_id": "..."}
   - {"type": "ping"}
 
   Filter dimensions (declared by the client, enforced by the server):

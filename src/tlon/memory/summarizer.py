@@ -324,7 +324,8 @@ class Summarizer:
 
         return json.loads(content)
 
-    def _generate_fallback_summary(self, interactions: list[dict[str, Any]]) -> str:
+    @staticmethod
+    def _generate_fallback_summary(interactions: list[dict[str, Any]]) -> str:
         """Generate a simple fallback summary without LLM."""
         if not interactions:
             return "No interactions."

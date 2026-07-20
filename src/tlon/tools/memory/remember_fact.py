@@ -1,7 +1,12 @@
 """Tool for recording facts to memory."""
 
+from typing import TYPE_CHECKING
+
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from tlon.memory.manager import MemoryManager
 
 logger = get_logger(__name__)
 
@@ -21,7 +26,7 @@ class RememberFactTool(Tool):
         ... )
     """
 
-    def __init__(self, memory_manager):
+    def __init__(self, memory_manager: "MemoryManager"):
         """Initialize with memory manager.
 
         Args:
