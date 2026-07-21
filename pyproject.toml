@@ -52,10 +52,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tlon"]
-artifacts = ["src/tlon/webui/**/*"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src", "web", "scripts", "config", "skills", "docs", "tests", "README.md", "pyproject.toml", "uv.lock", ".python-version"]
+only-include = ["src", "scripts", "config", "skills", "docs", "tests", "README.md", "pyproject.toml", "uv.lock", ".python-version"]
 
 [tool.ruff]
 target-version = "py311"

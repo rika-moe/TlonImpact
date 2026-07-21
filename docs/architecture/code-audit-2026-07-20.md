@@ -3,7 +3,7 @@
 > 本文基于对 `src/tlon` 实际代码的逐文件分析，**不依赖 `docs/` 中的设计文档**。
 > 凡文档与代码不符之处，均以代码为准并单独标注。
 >
-> **修复进度（2026-07-20 更新）**：P0 全部 8 项已修复并合并（PR ）；P1 的 – 已修复（/// 于 PR ，// 于 PR ）；P2 的 14 项易修项已修复（同批次， 为本地清理）。下文中已过时的描述已就地修订，Issue 清单保留原始记录并标注状态。
+> **修复进度（2026-07-20 更新）**：P0 全部 8 项已修复并合并（PR ）；P1 的 – 已修复（/// 于 PR ，// 于 PR ）；P2 的 14 项易修项已修复（同批次， 为本地清理）， 由 PR （TS/Ink Operator）销项；web/ 前端已彻底删除（确认不再做）。下文中已过时的描述已就地修订，Issue 清单保留原始记录并标注状态。
 
 ---
 
@@ -28,18 +28,18 @@
 │    └─ FileTraceStore（trace context 注入 structlog）               │
 └──────────────────────────────────────────────────────────────────┘
         ▲ WS (auth/message/event)      ▲ REST (history/agents/traces)
-┌─ 进程 2: chat (Congress TUI) ─┐  ┌─ 进程 3: ops (Operator TUI) ─┐
-│ 自研重连客户端（绕开 SDK 重连）  │  │ ⚠️ 根本没连服务器，展示占位数据 │
-└───────────────────────────────┘  └──────────────────────────────┘
+┌─ 进程 2: chat (Congress TUI) ─┐  ┌─ 进程 3: ops (Operator，TS/Ink) ─┐
+│ SDK auto_reconnect（ 收敛）  │  │ apps/operator，真实连接（）   │
+└───────────────────────────────┘  └──────────────────────────────────┘
 ┌─ mirror (wizard)：纯本地配置工具，不连服务端 ─┐
-└─ web/：React 脚手架，停滞；apps/tui/：废弃 Node 构建产物 ─┘
+└─ web/ 已删除（2026-07-20）；apps/tui 已删除 ─┘
 ```
 
 ### 1.1 服务端与 Agent 核心
 
 - **框架**：aiohttp（非 FastAPI），REST（默认 8080）+ WebSocket（默认 8888，路径 `/ws`）两个独立站点。**REST 只读，写操作全走 WebSocket**；无 SSE。
 - **入口链**：`uv run tlon server`（别名 `dream`）→ `src/tlon/app/launcher/commands/dream.py:33` → `src/tlon/app/server/serverapp.py:354` `run_server()`。`ServerApp`（`serverapp.py:58`）是手写 DI 容器，按 EventBus → ConfigService → Store → Router → AgentRegistry → Gateway → API 顺序装配，shutdown 逆序。
-- **REST 端点**（`api/rest.py:110-149`）：`/health`、`/config`、`/history`、`/agents`、`/agents/{id}`、`/agents/{id}/logs`（占位假实现）、`/sessions`、`/participants`、`/admin/config/agents`、`/traces`、`/traces/{id}`、`/ui/*`。
+- **REST 端点**（`api/rest.py`）：`/health`、`/config`、`/history`、`/agents`、`/agents/{id}`、`/agents/{id}/logs`（占位假实现）、`/sessions`、`/participants`、`/admin/config/agents`、`/traces`、`/traces/{id}`。（`/ui/*` WebUI 静态服务已随 web/ 一并删除，2026-07-20）
 - **WS 协议**（`api/websocket.py`）：JSON 文本帧，首条须为 `auth`（协议版本协商，仅 `1.0.0`，10s 超时），之后支持 `message`/`mode`/`filter`/`ping`；下行 `auth_success`/`event`/`error`/`pong` + 初始 `participants`/`history`。
 - **Agent 循环**（`agents/agent.py`）：纯 asyncio 单事件循环。每 Agent 一个 `asyncio.Queue`（`agent.py:173`）+ `_main_loop` 协程。订阅 `MESSAGE_ROUTED` → 目标过滤 / 防自回复 / `_should_respond`（mention 或 proactive）→ 入队。
 - **step/collect 调度**（`agent.py:237-299`）：每轮 ① 检查 idle/reflection 触发 → ② 取新消息建 `AgentSession`（sid = `{agent_id}-{msg.id}`）→ ③ ACTIVE 态 `_step_session`（一次 think + 并发派发工具，`asyncio.create_task`）→ WAITING 态 `_collect_session_results` 收割 → ④ 清理 COMPLETED。轮询间隔 10–50ms。
@@ -82,13 +82,13 @@
 
 ### 1.3 客户端与协议
 
-- **SDK**（`clients/sdk/`）：`BaseClient`（连接/心跳/重连）+ `ClientAdapter`（客户端类型策略：TUI/WEB/TELEGRAM，能力上报 + 声明有效过滤器）+ `TlonClient` 组合对外。事件过滤由服务端统一执行（2026-07-20 起为单一过滤点，此前 SDK 本地二次过滤）。
-- **Congress TUI**（`tlon chat`）：textual 应用 + 自研 `CongressWebSocketClient`（**关掉 SDK 的 auto_reconnect，自己实现指数退避重连**——两套重连逻辑并存）。
-- **Operator TUI**（`tlon ops`）：IDE 式三栏布局 + 5 个 view，**但根本不连服务器**，展示占位/随机数据。
+- **SDK**（`clients/sdk/`）：`BaseClient`（连接/心跳/重连）+ `TerminalAdapter`（声明有效过滤器，随 auth/set_mode 上报）+ `TlonClient` 组合对外。事件过滤由服务端统一执行（2026-07-20 起为单一过滤点，此前 SDK 本地二次过滤）。WebAdapter/TelegramAdapter 已删除（无真实消费者），`ClientType` 枚举保留为协议词汇。
+- **Congress TUI**（`tlon chat`）：textual 应用 + `CongressWebSocketClient`（已收敛回 SDK auto_reconnect，PR ；恢复动作挂 `on_reconnect` 回调）。
+- **Operator**（`tlon ops`）：TypeScript + Ink 实现（`apps/operator/`，PR ），真实连接服务器，Agents/Events/Traces/Config 四视图。（原为从不连服务器的 Python 空壳，已删除）
 - **Launcher**：server / chat / ops / mirror 均为独立 OS 进程，argparse 分发；textual 延迟导入。
-- **web/**：React 18 + Vite 脚手架，实质停滞（最后一次提交是初始提交），裸 `new WebSocket` 直连，不用 Python SDK。
-- **apps/tui/**：废弃 Node TUI 的构建产物残留（未 git 跟踪），可安全删除。
-- **测试**：pytest + pytest-asyncio，测试在 `src/tests/`。SDK、agents、tools、wizard 有真实单测；服务端 rest/websocket/gateway、congress 客户端、launcher 无测试；无集成测试。
+- ~~**web/**：React 脚手架~~ 已彻底删除（2026-07-20，确认不再做 Web 前端）；服务端 `/ui/*` 静态服务、`scripts/build.sh`、pyproject webui 打包配置一并移除。
+- ~~**apps/tui/**：废弃 Node TUI 构建产物~~ 已删除（2026-07-20）。
+- **测试**：pytest + pytest-asyncio，测试在 `src/tests/`。SDK、agents、tools、wizard、congress client、notification_service 有真实单测；服务端 rest/websocket/gateway、launcher 无测试；无集成测试。
 
 ---
 
@@ -151,7 +151,7 @@
 |---|------|------|------|
 | 20 | ✅ 字面 `...` 残留在 initialize() | `src/tlon/app/server/serverapp.py:137` | 重构残留。已删除（2026-07-20） |
 | 21 | ✅ 死代码 | `serverapp.py:234-265`（`_get_initial_agents`/`_create_default_configs`）、`clients/tui/common/utils/state.py`（StateManager 无人引用）、`adapter.py:358`（TelegramAdapter 无调用方） | 已全部删除（2026-07-20）；`ClientType.TELEGRAM` 枚举保留为协议词汇 |
-| 22 | Operator TUI 未接线 | `src/tlon/app/clients/tui/operator/app.py:168-186`、`views/agents.py:286-289` | 展示占位/随机数据，不应作为可用功能外露 |
+| 22 | ✅ Operator TUI 未接线 | 原 `src/tlon/app/clients/tui/operator/` | 展示占位/随机数据，不应作为可用功能外露。**已销项**：Python 空壳删除，改用 TypeScript + Ink 实现（`apps/operator/`，真实连接服务器，PR ） |
 | 23 | `/agents/{id}/logs` 假端点 | `src/tlon/app/server/api/rest.py:469-480` | 永远返回空（TODO） |
 | 24 | ✅ `FileMessageStore._id_index` 坏且无效 | `src/tlon/organization/messaging/store.py:186,214,322-326` | load 存行号、append 存计数；`get_by_id` 仍全文件线性扫描；多处 `__import__("json")` 补丁式写法。已删除假索引（get_by_id 显式线性扫描）并改为正常 import（2026-07-20） |
 | 25 | ✅ tool arguments JSON 解析失败静默降级为 `{}` | `src/tlon/base/llm_client.py:200-205` | LLM 拿到空参数结果，难以排查。已在 warning 中补 tool call id / function name（2026-07-20） |
@@ -167,7 +167,15 @@
 | 35 | ✅ memory 工具缺类型注解 | `src/tlon/tools/memory/*.py` 各 `__init__` | 违反项目自身规范。已补 `memory_manager: MemoryManager`（TYPE_CHECKING import，2026-07-20） |
 | 36 | ✅ WS 文档声明支持 `wake` 但未实现 | `src/tlon/app/server/api/websocket.py:31` vs `:289-309` | 已从协议注释删除该条（只改注释，2026-07-20） |
 | 37 | ✅ `apps/tui/dist/` 遗留物 | `apps/tui/` | 废弃 Node TUI 构建产物，未 git 跟踪。已本地删除（2026-07-20，无需 PR） |
-| 38 | 测试覆盖空洞 | `src/tests/` | 服务端 rest/websocket/gateway、congress client/app、launcher 无测试；无集成测试；`test_operator_tui.py` 基本是 import 冒烟 |
+| 38 | 测试覆盖空洞 | `src/tests/` | 服务端 rest/websocket/gateway、launcher 无测试；无集成测试。~~congress client 无测试、test_operator_tui 冒烟~~（已分别于 PR  /  解决） |
+
+### 修复过程中新发现的问题（2026-07-20 登记）
+
+| # | 问题 | 位置 | 说明 |
+|---|------|------|------|
+| 39 | trace 传播断点 | `src/tlon/organization/messaging/router.py`（`_on_message_new`） | 未用 `continue_trace` 延续事件已有 trace_id，`start_span` 在无 contextvar 时另起新 trace，消息 → 路由 → Agent 的链路 trace 断裂。P2  修复时发现 |
+| 40 | 容器 symlink 可绕过路径白名单 | `src/tlon/tools/filesystem/path_guard.py` | 校验在字符串层面，`/workspace` 内指向 `/etc` 的 symlink 可逃逸（ 修复时记录的遗留）。根治方向：容器内 `readlink` 校验或根文件系统只读挂载 |
+| 41 | TaskManager 同步 IO 未 async 化 | `src/tlon/tools/tasks/manager.py` |  部分修复的遗留：IO 已抽为 `_write_lines`/`_read_lines`，但 `save()`/`load()` 仍在事件循环内被同步调用；async 化涉及约 30 处调用点级联 |
 
 ---
 

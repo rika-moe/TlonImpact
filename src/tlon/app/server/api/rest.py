@@ -5,12 +5,10 @@ Provides HTTP endpoints for:
 - Message history retrieval
 - Agent management
 - Session information
-- WebUI static files
 """
 
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -18,21 +16,6 @@ from aiohttp import web
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-def get_webui_path() -> Path | None:
-    """Get the path to WebUI static files.
-
-    Returns:
-        Path to webui directory if it exists, None otherwise
-    """
-    # WebUI is packaged inside the tlon package (see scripts/build.sh),
-    # e.g. src/tlon/webui/ in the source tree.
-    webui_path = Path(__file__).resolve().parents[3] / "webui"
-    if webui_path.exists() and webui_path.is_dir() and (webui_path / "index.html").exists():
-        # Check if it has index.html
-        return webui_path
-    return None
 
 
 class RESTAPIHandler:
@@ -115,49 +98,10 @@ class RESTAPIHandler:
             app.router.add_get("/test/ping", self.handle_test_ping)
             app.router.add_post("/test/echo", self.handle_test_echo)
 
-        # Add WebUI static files
-        webui_path = get_webui_path()
-        if webui_path:
-            logger.info(f"Serving WebUI from {webui_path}")
-            # Serve static files
-            app.router.add_static("/ui/", path=webui_path, name="webui-static")
-            # SPA fallback: serve index.html for all /ui/* routes
-            app.router.add_get("/ui/{path:.*}", self.handle_webui_spa)
-        else:
-            logger.warning("WebUI not found, serving without static files")
-            app.router.add_get("/ui", self.handle_webui_not_found)
-
         # CORS
         app.router.add_options("/{path:.*}", self.handle_options)
 
         return app
-
-    async def handle_webui_spa(self, request: web.Request) -> web.Response:
-        """Serve index.html for SPA routes.
-
-        This allows React Router to handle client-side routing.
-        """
-        webui_path = get_webui_path()
-        if webui_path:
-            index_path = webui_path / "index.html"
-            if index_path.exists():
-                return web.FileResponse(index_path)
-        return web.Response(text="WebUI not found", status=404, content_type="text/plain")
-
-    async def handle_webui_not_found(self, request: web.Request) -> web.Response:
-        """Return helpful message when WebUI is not built."""
-        return web.Response(
-            text="""WebUI not available.
-
-To use the WebUI, you need to build it first:
-    cd web && npm install && npm run build
-
-Or use the build script:
-    ./scripts/build.sh
-""",
-            status=404,
-            content_type="text/plain",
-        )
 
     def _json_response(self, data: Any, status: int = 200) -> web.Response:
         """Create a JSON response.
