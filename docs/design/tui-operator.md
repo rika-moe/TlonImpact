@@ -5,6 +5,10 @@
 > 版本: 1.0 (工程师版)
 > 产品定位: **Agent 集群的运维与调试工具**
 
+> **实现说明（2026-07-20）**：Operator 的实现已迁移至 `apps/operator/`（TypeScript + Ink），
+> 通过 WebSocket/REST 真实连接 dream 服务端；原 Python/Textual 实现（`src/tlon/app/clients/tui/operator/`）
+> 已删除，`tlon ops` 命令现在负责启动该 TS 应用。本文档保留为产品设计参考。
+
 ---
 
 ## 核心理念

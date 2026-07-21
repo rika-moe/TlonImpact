@@ -10,7 +10,7 @@
 |------|---------|---------|---------|
 | `tlon dream` | [dream.md](./dream.md) | `ServerApp` | `src/tlon/app/server/serverapp.py` |
 | `tlon chat` | [client.md](./client.md) | `CongressApp` | `src/tlon/app/clients/tui/congress/app.py` |
-| `tlon ops` | [client.md](./client.md) | `OperatorApp` | `src/tlon/app/clients/tui/operator/app.py` |
+| `tlon ops` | [client.md](./client.md) | Operator (TS/Ink) | `apps/operator/` |
 | `tlon mirror` | [mirror.md](./mirror.md) | `Wizard` | `src/tlon/app/wizard/wizard.py` |
 
 ---
@@ -38,14 +38,14 @@ launcher (main.py)
     │   │  代码：src/tlon/app/clients/tui/congress/
     │   │  组件：Textual widget 树
     │   │
-    ├── tlon ops ────→ OperatorApp
+    ├── tlon ops ────→ Operator (TypeScript/Ink)
     │   │                client.md（内部架构）
     │   │
     │   │  进程：交互式 TUI，连接到 dream
-    │   │  职责：运维监控、事件查看、配置管理
+    │   │  职责：运维监控、事件查看、配置查看
     │   │  通信：WebSocket + REST → dream
-    │   │  代码：src/tlon/app/clients/tui/operator/
-    │   │  组件：多标签页 Textual 应用
+    │   │  代码：apps/operator/（由 ops 命令经 node 启动）
+    │   │  组件：多视图 Ink 应用
     │   │
     └── tlon mirror ─→ Wizard
                         mirror.md（内部架构）

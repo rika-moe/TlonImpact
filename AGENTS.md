@@ -72,7 +72,7 @@ uv run pytest
 | Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | TUI (Congress) | ⚠️ 待验证 | 65/100 | 基础功能可用 |
-| TUI (Operator) | ⚠️ 待验证 | 80/100 | 基础功能可用 |
+| TUI (Operator) | ⚠️ 待验证 | 80/100 | TypeScript/Ink 实现（apps/operator），真实连接服务端 |
 | Sandbox | ✅ 已验证 | 95/100 | 共享 DockerRuntime, macOS 支持 |
 
 -- 

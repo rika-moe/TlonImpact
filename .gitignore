@@ -48,6 +48,8 @@ src/tlon/webui/*
 # Node
 web/node_modules/
 web/dist/
+apps/operator/node_modules/
+apps/operator/dist/
 
 # Testing
 .pytest_cache/
