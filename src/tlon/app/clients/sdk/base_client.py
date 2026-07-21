@@ -106,6 +106,7 @@ class BaseClient:
         self._message_handlers: list[Callable[[dict[str, Any]], None]] = []
         self._error_handlers: list[Callable[[str], None]] = []
         self._state_handlers: list[Callable[[ConnectionState], None]] = []
+        self._reconnect_handlers: list[Callable[[], Any]] = []
 
         # Tasks
         self._receive_task: asyncio.Task | None = None
@@ -327,6 +328,9 @@ class BaseClient:
                 and self._reconnect_count >= self.max_reconnect_attempts
             ):
                 logger.error(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
+                async with self._state_lock:
+                    self._state = ConnectionState.ERROR
+                    self._notify_state_change(ConnectionState.ERROR)
                 break
 
             self._reconnect_count += 1
@@ -353,6 +357,7 @@ class BaseClient:
                             await self._dispatch_error(f"Re-authentication failed: {e}")
                             continue
                     logger.info("Reconnected successfully")
+                    self._notify_reconnect()
                     return
             except Exception as e:
                 logger.warning(f"Reconnection attempt failed: {e}")
@@ -582,6 +587,17 @@ class BaseClient:
             except Exception as e:
                 logger.error(f"State handler error: {e}")
 
+    def _notify_reconnect(self) -> None:
+        """Notify reconnect handlers after a successful auto-reconnect."""
+        for handler in self._reconnect_handlers:
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    asyncio.create_task(handler())
+                else:
+                    handler()
+            except Exception as e:
+                logger.error(f"Reconnect handler error: {e}")
+
     # ==================== Sending Messages ====================
 
     async def send(self, data: dict[str, Any]) -> bool:
@@ -707,6 +723,22 @@ class BaseClient:
             The handler (for use as decorator)
         """
         self._state_handlers.append(handler)
+        return handler
+
+    def on_reconnect(self, handler: Callable[[], Any]) -> Callable:
+        """Register a reconnect handler.
+
+        The handler is called after a successful auto-reconnect (including
+        re-authentication), so clients can restore session state. It is not
+        called for the initial connect.
+
+        Args:
+            handler: Callback function (sync or async) with no arguments
+
+        Returns:
+            The handler (for use as decorator)
+        """
+        self._reconnect_handlers.append(handler)
         return handler
 
     # ==================== REST API ====================

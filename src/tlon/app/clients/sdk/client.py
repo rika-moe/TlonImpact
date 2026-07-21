@@ -47,10 +47,11 @@ class TlonClient:
 
     Args:
         ws_url: WebSocket server URL (e.g., "ws://localhost:8888/ws")
-        adapter: Client adapter (TerminalAdapter, WebAdapter, etc.)
+        adapter: Client adapter (defaults to TerminalAdapter)
         rest_url: Optional REST API URL (auto-derived if not provided)
         auto_reconnect: Whether to auto-reconnect on disconnect
         reconnect_delay: Delay between reconnection attempts (seconds)
+        max_reconnect_attempts: Maximum reconnection attempts (0 = unlimited)
 
     Attributes:
         state: Current connection state
@@ -65,6 +66,7 @@ class TlonClient:
         rest_url: str | None = None,
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
+        max_reconnect_attempts: int = 10,
     ):
         """Initialize the Tlon client.
 
@@ -74,6 +76,7 @@ class TlonClient:
             rest_url: Optional REST API URL
             auto_reconnect: Whether to auto-reconnect
             reconnect_delay: Reconnection delay in seconds
+            max_reconnect_attempts: Maximum reconnection attempts (0 = unlimited)
         """
         self._adapter = adapter or TerminalAdapter()
         self._base = BaseClient(
@@ -81,6 +84,7 @@ class TlonClient:
             rest_url=rest_url,
             auto_reconnect=auto_reconnect,
             reconnect_delay=reconnect_delay,
+            max_reconnect_attempts=max_reconnect_attempts,
         )
 
         # Set up event filtering through adapter
@@ -331,6 +335,21 @@ class TlonClient:
             The handler (for use as decorator)
         """
         return self._base.on_state_change(handler)
+
+    def on_reconnect(self, handler: Callable[[], None]) -> Callable:
+        """Register a reconnect handler.
+
+        Called after a successful auto-reconnect (and re-authentication),
+        so clients can restore session state (mode, history, etc.). Not
+        called for the initial connect.
+
+        Args:
+            handler: Callback function (sync or async) with no arguments
+
+        Returns:
+            The handler (for use as decorator)
+        """
+        return self._base.on_reconnect(handler)
 
     # ==================== REST API ====================
 

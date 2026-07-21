@@ -2,7 +2,6 @@
 
 Adapters encapsulate client-type-specific behavior:
 - TerminalAdapter: Declares mode display state and optional high-frequency exclusions
-- WebAdapter: Declares default exclusion of high-frequency events
 
 Each adapter provides:
 - Client type identification
@@ -210,63 +209,3 @@ class TerminalAdapter(ClientAdapter):
             exclude: True to exclude high-frequency events
         """
         self._exclude_high_frequency = exclude
-
-
-class WebAdapter(ClientAdapter):
-    """Adapter for Web clients.
-
-    Web clients exclude high-frequency events by default:
-    - Excludes high-frequency events (llm_request, llm_response, etc.)
-    - Supports trace visualization mode (all exclusions lifted)
-    - Supports filtered event streams
-
-    Example:
-        >>> adapter = WebAdapter()
-        >>> adapter.set_trace_filter("trace-abc-123")
-        >>> adapter.get_effective_filters()
-        {'trace_id': 'trace-abc-123'}
-    """
-
-    # Events that are excluded by default for web clients
-    EXCLUDED_EVENTS = {
-        "agent.llm_request",
-        "agent.llm_response",
-        "agent.thinking_start",
-        "agent.thinking_end",
-        "agent.thinking_chunk",
-        "tool.execute_start",
-        "tool.execute_end",
-    }
-
-    def __init__(self):
-        super().__init__(ClientType.WEB)
-        self._trace_mode = False
-
-    def _get_capabilities(self) -> ProtocolCapabilities:
-        """Web clients support trace and history, limited filter."""
-        return ProtocolCapabilities(trace=True, filter=True, history=True)
-
-    def get_effective_filters(self) -> dict[str, Any]:
-        """Compute the effective filters for a web client.
-
-        Default exclusions apply unless trace viewing is active (trace mode
-        or a trace filter), in which case all events for the trace pass.
-        """
-        filters = super().get_effective_filters()
-        if self._trace_mode or self._trace_filter:
-            # Trace viewing: lift the default exclusions
-            return filters
-        excluded = set(filters.get("exclude_event_types", [])) | self.EXCLUDED_EVENTS
-        filters["exclude_event_types"] = sorted(excluded)
-        return filters
-
-    def set_trace_mode(self, enabled: bool) -> None:
-        """Enable/disable trace visualization mode.
-
-        When enabled, all events (including high-frequency) are received.
-        Takes effect the next time the client syncs filters to the server.
-
-        Args:
-            enabled: True to enable trace mode
-        """
-        self._trace_mode = enabled

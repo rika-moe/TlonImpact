@@ -5,7 +5,6 @@ with automatic reconnection, heartbeat, and message protocol handling.
 """
 
 import asyncio
-import contextlib
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
@@ -42,7 +41,8 @@ class CongressWebSocketClient:
     """WebSocket client for Congress TUI.
 
     Wraps TlonClient with Congress-specific functionality:
-    - Automatic reconnection with exponential backoff
+    - Automatic reconnection (delegated to the SDK's auto-reconnect, which
+      re-authenticates and replays filters on every reconnect)
     - Connection state management
     - Heartbeat/ping-pong handling
     - Message protocol processing
@@ -61,10 +61,8 @@ class CongressWebSocketClient:
         >>> await client.disconnect()
     """
 
-    # Exponential backoff configuration
-    INITIAL_RECONNECT_DELAY = 1.0
-    MAX_RECONNECT_DELAY = 30.0
-    RECONNECT_BACKOFF_FACTOR = 2.0
+    # Reconnection configuration (enforced by the SDK's auto-reconnect)
+    RECONNECT_DELAY = 1.0
     MAX_RECONNECT_ATTEMPTS = 10
 
     def __init__(
@@ -92,12 +90,6 @@ class CongressWebSocketClient:
         self._adapter = TerminalAdapter()
         self._sdk: TlonClient | None = None
 
-        # Reconnection state
-        self._reconnect_delay = self.INITIAL_RECONNECT_DELAY
-        self._reconnect_attempts = 0
-        self._reconnect_task: asyncio.Task | None = None
-        self._should_stop = False
-
         # Event handlers
         self._message_handlers: list[Callable[[Message], None]] = []
         self._typing_handlers: list[Callable[[str, bool], None]] = []
@@ -114,7 +106,9 @@ class CongressWebSocketClient:
             ws_url=self.ws_url,
             adapter=self._adapter,
             rest_url=self.rest_url,
-            auto_reconnect=False,  # We handle reconnection ourselves
+            auto_reconnect=self.auto_reconnect,
+            reconnect_delay=self.RECONNECT_DELAY,
+            max_reconnect_attempts=self.MAX_RECONNECT_ATTEMPTS,
         )
 
         # Set up SDK event handlers
@@ -122,6 +116,7 @@ class CongressWebSocketClient:
         self._sdk.on_message(self._on_sdk_message)
         self._sdk.on_error(self._on_sdk_error)
         self._sdk.on_state_change(self._on_sdk_state_change)
+        self._sdk.on_reconnect(self._on_reconnected)
 
     # ==================== Properties ====================
 
@@ -156,7 +151,6 @@ class CongressWebSocketClient:
             return self.is_connected
 
         self._set_connection_state(ClientConnectionState.CONNECTING)
-        self._should_stop = False
 
         try:
             if not self._sdk:
@@ -180,10 +174,6 @@ class CongressWebSocketClient:
             # Set mode to chat for Congress TUI
             await self._sdk.set_mode("chat")
 
-            # Reset reconnection state on successful connection
-            self._reconnect_delay = self.INITIAL_RECONNECT_DELAY
-            self._reconnect_attempts = 0
-
             self._set_connection_state(ClientConnectionState.AUTHENTICATED)
             logger.info("Connected and authenticated successfully")
 
@@ -195,23 +185,13 @@ class CongressWebSocketClient:
         except Exception as e:
             logger.error(f"Connection error: {e}")
             self._set_connection_state(ClientConnectionState.ERROR)
-            if self.auto_reconnect:
-                self._start_reconnect()
             return False
 
     async def disconnect(self) -> None:
         """Disconnect from the server gracefully."""
-        self._should_stop = True
         self._set_connection_state(ClientConnectionState.DISCONNECTING)
 
-        # Cancel any pending reconnection
-        if self._reconnect_task:
-            self._reconnect_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._reconnect_task
-            self._reconnect_task = None
-
-        # Disconnect SDK
+        # Disconnect SDK (cancels any pending auto-reconnect)
         if self._sdk:
             await self._sdk.disconnect()
 
@@ -254,57 +234,35 @@ class CongressWebSocketClient:
 
         new_state = state_map.get(state, ClientConnectionState.ERROR)
 
-        # Handle disconnection for auto-reconnect
+        # When an authenticated connection drops, the SDK auto-reconnect
+        # engages immediately and reports RECONNECTING next — skip the
+        # intermediate DISCONNECTED to avoid a UI status flicker.
         if (
             state == ConnectionState.DISCONNECTED
             and self.auto_reconnect
-            and not self._should_stop
             and self._connection_state == ClientConnectionState.AUTHENTICATED
         ):
-            logger.info("Connection lost, starting reconnection")
-            self._start_reconnect()
+            logger.info("Connection lost, SDK auto-reconnect engaged")
             return
 
         self._set_connection_state(new_state)
 
-    def _start_reconnect(self) -> None:
-        """Start reconnection process with exponential backoff."""
-        if self._reconnect_task and not self._reconnect_task.done():
+    async def _on_reconnected(self) -> None:
+        """Restore Congress session state after an SDK auto-reconnect.
+
+        The SDK has already re-authenticated and replayed the declared
+        filters; the server-side session is fresh, so re-declare the chat
+        mode and reload agents/history.
+        """
+        if not self._sdk:
             return
 
-        self._set_connection_state(ClientConnectionState.RECONNECTING)
-        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
-
-    async def _reconnect_loop(self) -> None:
-        """Reconnection loop with exponential backoff."""
-        while not self._should_stop and self.auto_reconnect:
-            if self._reconnect_attempts >= self.MAX_RECONNECT_ATTEMPTS:
-                logger.error(f"Max reconnection attempts ({self.MAX_RECONNECT_ATTEMPTS}) reached")
-                self._set_connection_state(ClientConnectionState.ERROR)
-                break
-
-            self._reconnect_attempts += 1
-            logger.info(
-                f"Reconnecting in {self._reconnect_delay}s "
-                f"(attempt {self._reconnect_attempts}/{self.MAX_RECONNECT_ATTEMPTS})"
-            )
-
-            await asyncio.sleep(self._reconnect_delay)
-
-            # Try to connect
-            try:
-                success = await self.connect()
-                if success:
-                    logger.info("Reconnected successfully")
-                    return
-            except Exception as e:
-                logger.warning(f"Reconnection attempt failed: {e}")
-
-            # Increase delay for next attempt (exponential backoff)
-            self._reconnect_delay = min(
-                self._reconnect_delay * self.RECONNECT_BACKOFF_FACTOR,
-                self.MAX_RECONNECT_DELAY,
-            )
+        logger.info("Reconnected, restoring session state")
+        try:
+            await self._sdk.set_mode("chat")
+            await self._load_initial_data()
+        except Exception as e:
+            logger.warning(f"Failed to restore session after reconnect: {e}")
 
     # ==================== Message Handling ====================
 

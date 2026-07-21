@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tlon.app.clients.sdk.adapter import TerminalAdapter, WebAdapter
+from tlon.app.clients.sdk.adapter import TerminalAdapter
 from tlon.app.clients.sdk.base_client import BaseClient, ConnectionState
 from tlon.app.clients.sdk.client import TlonClient
 from tlon.app.clients.sdk.exceptions import (
@@ -355,6 +355,70 @@ class TestBaseClient:
         finally:
             await client.disconnect()
 
+    @pytest.mark.asyncio
+    async def test_reconnect_notifies_on_reconnect(self):
+        """on_reconnect handlers fire after auto-reconnect + re-authentication."""
+        import aiohttp
+
+        client = BaseClient(
+            ws_url="ws://localhost:8888/ws",
+            rest_url="http://localhost:8080",
+            auto_reconnect=True,
+            reconnect_delay=0.01,
+        )
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def make_ws():
+            ws = AsyncMock()
+            ws.closed = False
+            ws.receive = AsyncMock(side_effect=queue.get)
+            ws.send_str = AsyncMock()
+            ws.close = AsyncMock()
+            return ws
+
+        session = AsyncMock()
+        session.ws_connect = AsyncMock(side_effect=lambda url: make_ws())
+        session.close = AsyncMock()
+
+        auth_response = {
+            "type": "auth_success",
+            "session_id": "reconnect-session",
+            "protocol_version": "1.0.0",
+            "server_version": "0.2.0",
+            "capabilities": ["trace"],
+        }
+
+        async def mock_wait_for_auth():
+            return auth_response
+
+        on_reconnect = MagicMock()
+        client.on_reconnect(on_reconnect)
+
+        try:
+            with patch("aiohttp.ClientSession", return_value=session):
+                await client.connect()
+                with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
+                    await client.authenticate("tui", capabilities=["trace"])
+                    assert client.is_authenticated
+
+                    # Initial connect must not trigger the reconnect handlers
+                    on_reconnect.assert_not_called()
+
+                    # Simulate the server closing the connection
+                    queue.put_nowait(MagicMock(type=aiohttp.WSMsgType.CLOSED))
+
+                    # Wait for auto-reconnect + re-authentication to complete
+                    for _ in range(200):
+                        await asyncio.sleep(0.01)
+                        if client.is_authenticated:
+                            break
+
+                    assert client.is_authenticated
+                    on_reconnect.assert_called_once_with()
+        finally:
+            await client.disconnect()
+
 
 class TestTerminalAdapter:
     """Tests for TerminalAdapter class."""
@@ -432,40 +496,6 @@ class TestTerminalAdapter:
 
         assert "client_version" in metadata
         assert "platform" in metadata
-
-
-class TestWebAdapter:
-    """Tests for WebAdapter class."""
-
-    @pytest.fixture
-    def adapter(self):
-        """Create a WebAdapter instance."""
-        return WebAdapter()
-
-    def test_init(self, adapter):
-        """Test WebAdapter initialization."""
-        assert adapter.client_type == "web"
-
-    def test_effective_filters_default_exclusions(self, adapter):
-        """Web clients declare high-frequency exclusions by default."""
-        filters = adapter.get_effective_filters()
-        assert set(filters["exclude_event_types"]) == adapter.EXCLUDED_EVENTS
-
-    def test_effective_filters_in_trace_mode(self, adapter):
-        """Trace mode lifts the default exclusions."""
-        adapter.set_trace_mode(True)
-        assert adapter.get_effective_filters() == {}
-
-    def test_effective_filters_with_trace_filter(self, adapter):
-        """A trace filter lifts the default exclusions and declares trace_id."""
-        adapter.set_trace_filter("trace-xyz-789")
-        assert adapter.get_effective_filters() == {"trace_id": "trace-xyz-789"}
-
-    def test_effective_filters_merge_user_exclusions(self, adapter):
-        """User-supplied exclusions are unioned with the defaults."""
-        adapter.set_event_filters({"exclude_event_types": ["tool.execute"]})
-        filters = adapter.get_effective_filters()
-        assert set(filters["exclude_event_types"]) == adapter.EXCLUDED_EVENTS | {"tool.execute"}
 
 
 class TestTlonClient:
