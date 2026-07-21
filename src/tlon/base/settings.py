@@ -74,6 +74,9 @@ class Settings:
         # Observability (OTel): optional OTLP collector, requires the `otlp` extra
         self.otel_exporter_otlp_endpoint: str | None = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
+        # Logging: retention (days) for the daily server log file sink
+        self.log_retention_days = int(os.getenv("TLON_LOG_RETENTION_DAYS", "7"))
+
         self.tlon_home.mkdir(parents=True, exist_ok=True)
 
     def get_agent_data_dir(self, agent_id: str) -> Path:

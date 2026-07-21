@@ -109,6 +109,13 @@ class LLMClient:
         # Prepare messages
         all_messages = [{"role": "system", "content": system_prompt}] + messages
 
+        logger.info(
+            "llm_request",
+            model=self.config.model_name,
+            message_count=len(all_messages),
+            messages=all_messages,
+        )
+
         # The span covers the whole call, retries included
         with start_span(
             "llm.request",
@@ -124,6 +131,7 @@ class LLMClient:
                     all_messages, tools, temperature, timeout
                 )
             except Exception as e:
+                logger.error("llm_error", model=self.config.model_name, error=str(e))
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
                 raise
@@ -135,6 +143,19 @@ class LLMClient:
                     span.set_attribute("llm.usage.prompt_tokens", prompt_tokens)
                 if completion_tokens is not None:
                     span.set_attribute("llm.usage.completion_tokens", completion_tokens)
+
+            logger.info(
+                "llm_response",
+                model=self.config.model_name,
+                usage=response.usage,
+                response=response.content,
+                tool_calls=[
+                    {"name": tc.function_name, "arguments": tc.arguments}
+                    for tc in response.tool_calls
+                ]
+                if response.tool_calls
+                else None,
+            )
             return response
 
     async def _chat_with_retries(
@@ -181,36 +202,58 @@ class LLMClient:
             except openai.RateLimitError as e:
                 # Rate limit - retry with backoff
                 last_error = e
-                logger.warning(f"Rate limit hit (attempt {attempt + 1}/{self.max_retries})")
+                logger.warning(
+                    "llm_retry",
+                    reason="rate_limit",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                )
 
             except openai.APITimeoutError as e:
                 # Timeout - retry
                 last_error = e
-                logger.warning(f"Request timeout (attempt {attempt + 1}/{self.max_retries})")
+                logger.warning(
+                    "llm_retry",
+                    reason="timeout",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                )
 
             except openai.APIConnectionError as e:
                 # Connection error - retry (must come before APIError, its parent class)
                 last_error = e
-                logger.warning(f"Connection error (attempt {attempt + 1}/{self.max_retries}): {e}")
+                logger.warning(
+                    "llm_retry",
+                    reason="connection_error",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    error=str(e),
+                )
 
             except openai.APIError as e:
                 # API error - may be transient, retry
                 last_error = e
-                logger.warning(f"API error (attempt {attempt + 1}/{self.max_retries}): {e}")
+                logger.warning(
+                    "llm_retry",
+                    reason="api_error",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    error=str(e),
+                )
 
             except Exception as e:
                 # Other errors - don't retry
-                logger.error(f"Unexpected error in LLM call: {e}", exc_info=True)
+                logger.error("llm_error", error=str(e), exc_info=True)
                 raise
 
             # Calculate delay with exponential backoff
             if attempt < self.max_retries - 1:
                 delay = self.base_delay * (2**attempt)
-                logger.info(f"Retrying in {delay}s...")
+                logger.info("llm_retry_wait", delay_seconds=delay)
                 await asyncio.sleep(delay)
 
         # All retries exhausted
-        logger.error(f"LLM call failed after {self.max_retries} attempts: {last_error}")
+        logger.error("llm_error", error=str(last_error), max_retries=self.max_retries)
         raise last_error or Exception("LLM call failed after all retries")
 
     def _parse_response(self, response: Any) -> LLMResponse:
@@ -234,8 +277,10 @@ class LLMClient:
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     logger.warning(
-                        f"Failed to parse tool arguments for tool call "
-                        f"{tc.id} ({tc.function.name}): {tc.function.arguments}"
+                        "tool_arguments_parse_failed",
+                        tool_call_id=tc.id,
+                        tool_name=tc.function.name,
+                        arguments=tc.function.arguments,
                     )
                     args = {}
 

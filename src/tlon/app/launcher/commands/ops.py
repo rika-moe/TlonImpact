@@ -85,7 +85,7 @@ async def run_ops(args: Namespace) -> int:
         str(args.rest_port),
     ]
 
-    logger.info(f"Launching Operator TUI: {' '.join(command)}")
+    logger.info("operator_tui_launched", command=command)
 
     try:
         result = subprocess.run(command, cwd=OPERATOR_DIR, check=False)
@@ -94,6 +94,6 @@ async def run_ops(args: Namespace) -> int:
         print("\n\n运维控制台已关闭...")
         return 130
     except Exception as e:
-        logger.error(f"Operator TUI error: {e}")
+        logger.error("operator_tui_failed", error=str(e), exc_info=True)
         print(f"\n❌ Operator TUI error: {e}")
         return 1

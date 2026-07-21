@@ -94,7 +94,7 @@ class ServerApp:
         This is the DI assembly phase where all components are created
         and wired together. No network ports are opened yet.
         """
-        logger.info("Initializing Tlon Server with full DI...")
+        logger.info("server_initializing")
 
         # ========== Step 0: Tracing (must precede any span creation) ==========
         init_tracing(
@@ -107,7 +107,7 @@ class ServerApp:
         event_bus = EventBus()
         await event_bus.initialize()
         self._components["event_bus"] = event_bus
-        logger.info("EventBus initialized")
+        logger.info("component_initialized", component="event_bus")
 
         # 1.2 ConfigService - configuration management (needs EventBus)
         config_service = ConfigService(
@@ -126,7 +126,7 @@ class ServerApp:
         # 2.2b TraceStore - storage for traces (stateful)
         trace_store = FileTraceStore(data_dir=paths.traces_dir())
         self._components["trace_store"] = trace_store
-        logger.info("TraceStore initialized")
+        logger.info("component_initialized", component="trace_store")
 
         # 2.3 MessageRouter - stateless message routing
         # Depends on EventBus, MessageStore, and ConfigService (as AgentInfoProvider)
@@ -137,7 +137,7 @@ class ServerApp:
         )
         await message_router.initialize()
         self._components["message_router"] = message_router
-        logger.info("MessageRouter initialized")
+        logger.info("component_initialized", component="message_router")
 
         # 2.4 AgentRegistry - agent management
         # Depends on EventBus, ConfigService (as AgentInfoProvider), MessageStore
@@ -152,13 +152,13 @@ class ServerApp:
 
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
-        logger.info(f"Loaded {len(agent_registry.get_all())} agents")
+        logger.info("agents_loaded", agent_count=len(agent_registry.get_all()))
 
         # ========== Step 3: Client Gateway Components ==========
         # 3.1 Session Manager - session lifecycle management
         session_manager = SessionManager()
         self._components["session_manager"] = session_manager
-        logger.info("SessionManager created")
+        logger.info("component_initialized", component="session_manager")
 
         # 3.2 Notification Service - event pushing to clients
         notification_service = NotificationService(
@@ -166,7 +166,7 @@ class ServerApp:
             session_manager=session_manager,
         )
         self._components["notification_service"] = notification_service
-        logger.info("NotificationService created")
+        logger.info("component_initialized", component="notification_service")
 
         # 3.3 Participant Directory - participant aggregation
         participant_directory = ParticipantDirectory(
@@ -174,7 +174,7 @@ class ServerApp:
             session_manager=session_manager,
         )
         self._components["participant_directory"] = participant_directory
-        logger.info("ParticipantDirectory created")
+        logger.info("component_initialized", component="participant_directory")
 
         # 3.4 Client Gateway - facade coordinating all components
         self.client_gateway = ClientGateway(
@@ -189,7 +189,7 @@ class ServerApp:
             port=self.ws_port,
         )
         await self.client_gateway.initialize()
-        logger.info("ClientGateway initialized")
+        logger.info("component_initialized", component="client_gateway")
 
         # ========== Step 4: API Layer (DI) ==========
         self.rest = RESTServer(
@@ -197,6 +197,7 @@ class ServerApp:
             agent_registry=agent_registry,  # Direct access for agent operations
             config_manager=config_service,  # For /admin endpoints
             trace_store=trace_store,  # For /traces endpoints
+            logs_dir=paths.logs_dir(),  # For /logs endpoints
             host=self.host,
             port=self.rest_port,
         )
@@ -213,10 +214,12 @@ class ServerApp:
             payload={"agents": len(agent_registry.get_all())},
             source="server",
         ))
-        logger.info("ServerApp initialized successfully")
-        logger.info(f"  Agents: {len(agent_registry.get_all())}")
-        logger.info(f"  REST API: http://{self.host}:{self.rest_port}")
-        logger.info(f"  WebSocket: ws://{self.host}:{self.ws_port}/ws")
+        logger.info(
+            "server_initialized",
+            agent_count=len(agent_registry.get_all()),
+            rest_url=f"http://{self.host}:{self.rest_port}",
+            ws_url=f"ws://{self.host}:{self.ws_port}/ws",
+        )
 
     # ========== Lifecycle Methods ==========
 
@@ -226,7 +229,7 @@ class ServerApp:
         This starts all API servers and waits for a shutdown signal.
         """
         if self._running:
-            logger.warning("Server already running")
+            logger.warning("server_already_running")
             return
 
         self._running = True
@@ -235,19 +238,19 @@ class ServerApp:
         await self.rest.start()
         await self.websocket.start()
 
-        logger.info("=" * 50)
-        logger.info("🚀 Tlon Server is running!")
-        logger.info("=" * 50)
-        logger.info(f"REST API:    http://{self.host}:{self.rest_port}")
-        logger.info(f"WebSocket:   ws://{self.host}:{self.ws_port}/ws")
-        logger.info("")
-        logger.info("Press Ctrl+C to stop")
-        logger.info("=" * 50)
+        agent_registry = self._components.get("agent_registry")
+        logger.info(
+            "server_started",
+            host=self.host,
+            rest_port=self.rest_port,
+            ws_port=self.ws_port,
+            agent_count=len(agent_registry.get_all()) if agent_registry else 0,
+        )
 
         # Wait for shutdown signal
         await self._shutdown_event.wait()
 
-        logger.info("Shutdown signal received...")
+        logger.info("shutdown_signal_received")
 
     async def shutdown(self) -> None:
         """Shutdown the server gracefully.
@@ -265,7 +268,7 @@ class ServerApp:
                 source="server",
             ))
 
-        logger.info("Shutting down Tlon Server...")
+        logger.info("server_stopping")
 
         # Stop API servers
         if self.websocket:
@@ -296,7 +299,7 @@ class ServerApp:
         self._running = False
         self._shutdown_event.set()
 
-        logger.info("Tlon Server stopped")
+        logger.info("server_stopped")
 
     def handle_signal(self, sig: signal.Signals) -> None:
         """Handle shutdown signals.
@@ -304,7 +307,7 @@ class ServerApp:
         Args:
             sig: The signal that was received
         """
-        logger.info(f"Received signal {sig.name}, initiating shutdown...")
+        logger.info("signal_received", signal=sig.name)
         asyncio.create_task(self.shutdown())
 
 
@@ -329,13 +332,16 @@ async def run_server(
     Returns:
         Exit code (0 for success)
     """
-    # Configure logging
-    configure_logging(log_level=log_level, debug=debug)
+    # Configure logging (stdout + daily JSONL file sink under ~/.tlon/shared/logs/)
+    settings = get_settings()
+    configure_logging(
+        log_level=log_level,
+        debug=debug,
+        log_dir=paths.logs_dir(),
+        retention_days=settings.log_retention_days,
+    )
 
-    logger.info("Starting Tlon Server...")
-    logger.info(f"  Host: {host}")
-    logger.info(f"  REST Port: {rest_port}")
-    logger.info(f"  WebSocket Port: {ws_port}")
+    logger.info("server_starting", host=host, rest_port=rest_port, ws_port=ws_port)
 
     # Create and run server
     app = ServerApp(host=host, rest_port=rest_port, ws_port=ws_port)
@@ -350,7 +356,7 @@ async def run_server(
         await app.start()
         return 0
     except Exception as e:
-        logger.error(f"Server error: {e}", exc_info=True)
+        logger.error("server_error", error=str(e), exc_info=True)
         return 1
     finally:
         await app.shutdown()

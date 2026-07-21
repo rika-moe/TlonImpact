@@ -100,7 +100,7 @@ class MemoryManager:
         if self._loaded:
             return
 
-        logger.info(f"Loading memory for agent {self.agent_id}")
+        logger.info("memory_loading", agent_id=self.agent_id)
 
         # Load or create config
         if self.config_file.exists():
@@ -112,9 +112,9 @@ class MemoryManager:
                     # Merge with provided config (provided takes precedence)
                     if not self.config.agent_id:
                         self.config = loaded_config
-                    logger.info(f"Loaded memory config for {self.agent_id}")
+                    logger.info("memory_config_loaded", agent_id=self.agent_id)
             except Exception as e:
-                logger.error(f"Error loading memory config: {e}")
+                logger.error("memory_config_load_failed", error=str(e), exc_info=True)
                 await self._save_config()
         else:
             # Save initial config
@@ -128,7 +128,7 @@ class MemoryManager:
         await self.episodic.load()
 
         self._loaded = True
-        logger.info(f"Memory loaded for {self.agent_id}")
+        logger.info("memory_loaded", agent_id=self.agent_id)
 
     async def _save_config(self) -> None:
         """Save memory config to disk."""
@@ -136,7 +136,7 @@ class MemoryManager:
             async with aiofiles.open(self.config_file, "w", encoding="utf-8") as f:
                 await f.write(json.dumps(self.config.to_dict(), indent=2, ensure_ascii=False))
         except Exception as e:
-            logger.error(f"Error saving memory config: {e}")
+            logger.error("memory_config_save_failed", error=str(e), exc_info=True)
 
     async def save(self) -> None:
         """Explicitly save all memory to disk.
@@ -146,7 +146,7 @@ class MemoryManager:
         """
         await self._save_config()
         # Stores persist automatically on add operations
-        logger.info(f"Memory saved for {self.agent_id}")
+        logger.info("memory_saved", agent_id=self.agent_id)
 
     def set_session_id(self, session_id: str) -> None:
         """Set the current session ID.
@@ -252,7 +252,7 @@ class MemoryManager:
         # Update last interaction time
         self._last_interaction_time = datetime.now()
 
-        logger.debug(f"Stored interaction {interaction_id}")
+        logger.debug("interaction_stored", interaction_id=interaction_id)
 
         # Check if we should generate summary
         await self._check_summary_trigger()
@@ -295,7 +295,7 @@ class MemoryManager:
         """
         # Check if working memory is full
         if await self.working.is_full():
-            logger.info("Working memory full, triggering summary generation")
+            logger.info("working_memory_full")
             await self.generate_summary()
 
     async def check_idle_timeout(self) -> str | None:
@@ -324,7 +324,8 @@ class MemoryManager:
 
         if idle_time >= timeout:
             logger.info(
-                f"Idle timeout reached ({idle_time.total_seconds() / 60:.1f} min), generating summary"
+                "idle_timeout",
+                idle_minutes=round(idle_time.total_seconds() / 60, 1),
             )
             return await self.generate_summary(force=True)
 
@@ -467,20 +468,21 @@ class MemoryManager:
         # ── 1. Snapshot working memory (atomically, inside store lock) ──
         interactions = await self.working.get_all()
         if not interactions:
-            logger.debug("No interactions to summarize")
+            logger.debug("no_interactions_to_summarize")
             return None
 
         if not force and len(interactions) < self.config.working_summary_window:
             logger.debug(
-                f"Not enough interactions to summarize "
-                f"({len(interactions)} < {self.config.working_summary_window})"
+                "insufficient_interactions",
+                interaction_count=len(interactions),
+                window=self.config.working_summary_window,
             )
             return None
 
         snapshot_ids = {i["id"] for i in interactions}
         source_ids = list(snapshot_ids)
         count = len(interactions)
-        logger.info(f"Generating summary from {count} interactions (snapshot mode)...")
+        logger.info("summary_generation_started", interaction_count=count)
 
         # ── 2. LLM call (no locks held, can run long) ──
         summary_id: str | None = None
@@ -515,13 +517,15 @@ class MemoryManager:
                         await self.episodic.add_fact(fact_obj.to_dict())
 
                     logger.info(
-                        f"Generated summary {summary_id} and extracted {len(facts)} facts"
+                        "summary_generated",
+                        summary_id=summary_id,
+                        fact_count=len(facts),
                     )
                 else:
                     summary_id = await self._generate_simple_summary(interactions, source_ids)
 
             except Exception as e:
-                logger.error(f"Error during LLM summarization: {e}")
+                logger.error("llm_summarization_failed", error=str(e), exc_info=True)
                 summary_id = await self._generate_simple_summary(interactions, source_ids)
         else:
             summary_id = await self._generate_simple_summary(interactions, source_ids)
@@ -529,7 +533,9 @@ class MemoryManager:
         # ── 3. Delta-clear: only remove snapshot items ──
         removed = await self.working.remove_by_ids(snapshot_ids)
         logger.info(
-            f"Delta-cleared {removed}/{count} interactions from working memory"
+            "working_memory_delta_cleared",
+            removed_count=removed,
+            total_count=count,
         )
 
         return summary_id
@@ -554,7 +560,7 @@ class MemoryManager:
         )
 
         summary_id = await self.episodic.add_summary(summary.to_dict())
-        logger.info(f"Generated simple summary {summary_id}")
+        logger.info("simple_summary_generated", summary_id=summary_id)
 
         return summary_id
 
@@ -606,7 +612,7 @@ class MemoryManager:
         )
 
         fact_id = await self.episodic.add_fact(fact_obj.to_dict())
-        logger.info(f"Recorded fact {fact_id}: {fact[:50]}...")
+        logger.info("fact_recorded", fact_id=fact_id, content=fact)
 
         return fact_id
 

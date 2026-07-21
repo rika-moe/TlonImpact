@@ -301,7 +301,7 @@ class TlonClient:
             try:
                 handler(event)
             except Exception as e:
-                logger.error(f"User event handler error: {e}")
+                logger.error("user_event_handler_error", error=str(e), exc_info=True)
 
     def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
         """Register a message handler.

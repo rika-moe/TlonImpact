@@ -138,7 +138,7 @@ class AgentRegistry(Component):
         # Active agents (all agents are active after initialize)
         self._agents: dict[str, Agent] = {}
 
-        logger.info("AgentRegistry constructed")
+        logger.info("agent_registry_constructed")
 
     def register(self, agent_id: str) -> None:
         """Register an agent to be started.
@@ -157,7 +157,7 @@ class AgentRegistry(Component):
 
         if agent_id not in self._registered_ids:
             self._registered_ids.append(agent_id)
-            logger.info(f"Registered agent: {agent_id}")
+            logger.info("agent_registered", agent_id=agent_id)
 
     def register_all(self, agent_ids: list[str]) -> None:
         """Register multiple agents.
@@ -175,8 +175,7 @@ class AgentRegistry(Component):
         Agents that fail or time out are logged and skipped — the server
         continues operating with the agents that did start successfully.
         """
-        logger.info("Initializing AgentRegistry...")
-        logger.info(f"Agents to start: {self._registered_ids}")
+        logger.info("agent_registry_initializing", agent_ids=self._registered_ids)
 
         agent_ids = [aid for aid in self._registered_ids if aid not in self._agents]
         if not agent_ids:
@@ -185,12 +184,12 @@ class AgentRegistry(Component):
 
         async def _start_one(agent_id: str) -> tuple[str, Exception | None]:
             try:
-                logger.info(f"Starting agent: {agent_id}")
+                logger.info("agent_starting", agent_id=agent_id)
                 await self._start_agent(agent_id)
-                logger.info(f"Agent {agent_id} started successfully")
+                logger.info("agent_started", agent_id=agent_id)
                 return agent_id, None
             except Exception as e:
-                logger.error(f"Failed to start agent {agent_id}: {e}")
+                logger.error("agent_start_failed", agent_id=agent_id, error=str(e))
                 return agent_id, e
 
         per_agent_timeout = 60
@@ -204,8 +203,8 @@ class AgentRegistry(Component):
             )
         except TimeoutError:
             logger.error(
-                f"Agent startup timed out after {overall_timeout}s. "
-                f"Cancelling remaining tasks..."
+                "agent_startup_timeout",
+                timeout_seconds=overall_timeout,
             )
             for t in tasks:
                 if not t.done():
@@ -218,27 +217,29 @@ class AgentRegistry(Component):
         active_count = len(self._agents)
         total = len(agent_ids)
         logger.info(
-            f"AgentRegistry initialized: {active_count}/{total} agents active"
+            "agent_registry_initialized",
+            active_count=active_count,
+            total=total,
+            active_agents=list(self._agents.keys()),
         )
-        logger.info(f"Active agents: {list(self._agents.keys())}")
 
     async def shutdown(self) -> None:
         """Shutdown all agents and cleanup."""
-        logger.info("Shutting down AgentRegistry...")
+        logger.info("agent_registry_shutdown_started")
 
         # Shutdown all active agents
         for agent_id, agent in list(self._agents.items()):
             try:
                 await agent.shutdown()
-                logger.info(f"Agent {agent_id} shutdown")
+                logger.info("agent_shutdown", agent_id=agent_id)
             except Exception as e:
-                logger.error(f"Error shutting down agent {agent_id}: {e}")
+                logger.error("agent_shutdown_failed", agent_id=agent_id, error=str(e))
 
         self._agents.clear()
         self._registered_ids.clear()
         self._initialized = False
 
-        logger.info("AgentRegistry shutdown complete")
+        logger.info("agent_registry_shutdown_completed")
 
     async def _start_agent(self, agent_id: str) -> Agent | None:
         """Assemble all dependencies and start an agent.
@@ -258,11 +259,11 @@ class AgentRegistry(Component):
 
         config = self._agent_info.get_config(agent_id)
         if not config:
-            logger.error(f"Cannot start unknown agent: {agent_id}")
+            logger.error("unknown_agent", agent_id=agent_id)
             return None
 
         try:
-            logger.info(f"Starting agent: {config.name} ({agent_id})")
+            logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
 
             from tlon.base.settings import get_settings
 
@@ -293,7 +294,7 @@ class AgentRegistry(Component):
                 docker_runtime = DockerRuntime(config.docker, config.id)
                 await docker_runtime.ensure_running()
             except Exception as e:
-                logger.warning(f"Docker unavailable for {config.name}: {e}")
+                logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
 
             # Create ToolExecutor (direct execution, no EventBus)
             tool_executor = ToolExecutor()
@@ -317,7 +318,11 @@ class AgentRegistry(Component):
             tool_executor.register_tool(CompleteTaskTool(task_manager))
             tool_executor.register_tool(RemoveTaskTool(task_manager))
             tool_executor.register_tool(GetCurrentTaskTool(task_manager))
-            logger.debug(f"Registered {len(tool_executor.list_tools())} tools for {config.name}")
+            logger.debug(
+                "tools_registered",
+                agent_name=config.name,
+                tool_count=len(tool_executor.list_tools()),
+            )
 
             # Initialize tools
             await tool_executor.initialize()
@@ -358,11 +363,11 @@ class AgentRegistry(Component):
             )
             await self.event_bus.publish(event)
 
-            logger.info(f"Agent {config.name} started successfully")
+            logger.info("agent_started", agent_id=agent_id, agent_name=config.name)
             return agent
 
         except Exception as e:
-            logger.error(f"Failed to start agent {agent_id}: {e}", exc_info=True)
+            logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
             return None
 
     def get_agent(self, agent_id: str) -> Agent | None:
@@ -440,7 +445,7 @@ class AgentRegistry(Component):
         if is_registered:
             self._registered_ids.remove(agent_id)
 
-        logger.info(f"Unregistered agent: {agent_id}")
+        logger.info("agent_unregistered", agent_id=agent_id)
         return True
 
     def update_config(self, agent_id: str, config: AgentConfig) -> bool:
@@ -463,11 +468,9 @@ class AgentRegistry(Component):
         # If agent is active, we should restart it
         # For now, just log the warning
         if agent_id in self._agents:
-            logger.warning(
-                f"Agent {agent_id} is active, config updated but restart required for changes"
-            )
+            logger.warning("agent_restart_required", agent_id=agent_id)
 
-        logger.info(f"Config update notification for agent: {agent_id}")
+        logger.info("agent_config_updated", agent_id=agent_id)
         return True
 
     def get_agent_status(self, agent_id: str) -> dict | None:

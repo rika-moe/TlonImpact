@@ -155,7 +155,7 @@ class CongressApp(App[None]):
                 self._update_status("连接失败")
 
         except Exception as e:
-            logger.error(f"Connection error: {e}")
+            logger.error("connection_error", error=str(e), exc_info=True)
             self._update_status(f"错误: {e}")
 
     def _sync_state_from_client(self) -> None:
@@ -228,7 +228,7 @@ class CongressApp(App[None]):
 
     def _on_error(self, error: str) -> None:
         """Handle client errors."""
-        logger.error(f"Client error: {error}")
+        logger.error("client_error", error=error)
         self._update_status(f"错误: {error}")
 
     def _update_agents(self, agents_data: list[dict]) -> None:
@@ -311,7 +311,7 @@ class CongressApp(App[None]):
                     input_box.clear()
 
             except Exception as e:
-                logger.error(f"Failed to send message: {e}")
+                logger.error("message_send_failed", error=str(e), exc_info=True)
                 self._show_error(f"发送失败: {e}")
         else:
             self._show_error("未连接到服务器")

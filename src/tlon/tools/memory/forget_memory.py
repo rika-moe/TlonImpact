@@ -71,7 +71,7 @@ class ForgetMemoryTool(Tool):
                 message=result,
             )
         except Exception as e:
-            logger.error(f"Error forgetting memory: {e}")
+            logger.error("memory_forget_failed", query=query, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
                 error=str(e),

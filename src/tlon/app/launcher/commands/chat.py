@@ -36,7 +36,7 @@ async def run_chat(args: Namespace) -> int:
     try:
         from tlon.app.clients.tui.congress.app import CongressApp
     except ImportError as e:
-        logger.error(f"Failed to import Congress TUI: {e}")
+        logger.error("congress_tui_import_failed", error=str(e))
         print("\n❌ Congress TUI not available. Is textual installed?")
         print("   uv add textual")
         return 1
@@ -53,6 +53,6 @@ async def run_chat(args: Namespace) -> int:
         print("\n\n对话已结束...")
         return 130
     except Exception as e:
-        logger.error(f"Congress TUI error: {e}")
+        logger.error("congress_tui_failed", error=str(e), exc_info=True)
         print(f"\n❌ Congress TUI error: {e}")
         return 1

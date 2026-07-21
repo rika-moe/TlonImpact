@@ -33,6 +33,7 @@ system (.env) → agent (yaml)
 |------|------|------|
 | `TLON_TRACE_SAMPLE_RATIO` | 1.0（全采样） | [0, 1] 浮点，切换为 TraceIdRatioBased 采样 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | 无 | OTLP collector 基础 URL；需 `uv sync --extra otlp` 安装可选依赖，未安装则告警跳过 |
+| `TLON_LOG_RETENTION_DAYS` | 7 | server 日志文件 sink（`shared/logs/server-{date}.jsonl`）的按天滚动保留天数 |
 
 ---
 
@@ -43,8 +44,10 @@ system (.env) → agent (yaml)
 ├── shared/
 │   ├── chat_history/
 │   │   └── messages.jsonl
-│   └── traces/
-│       └── trace-{uuid}.jsonl
+│   ├── traces/
+│   │   └── trace-{uuid}.jsonl
+│   └── logs/
+│       └── server-{date}.jsonl
 ├── {agent_id}/
 │   ├── config/
 │   │   ├── agent.yaml
@@ -65,7 +68,7 @@ system (.env) → agent (yaml)
 
 | 目录 | 用途 | 访问者 |
 |------|------|--------|
-| `shared/` | 跨 agent 共享数据（聊天记录、trace） | MessageStore, TraceStore |
+| `shared/` | 跨 agent 共享数据（聊天记录、trace、server 日志） | MessageStore, TraceStore, 日志文件 sink |
 | `{id}/config/` | Agent YAML 配置 | ConfigService, Wizard |
 | `{id}/memory/` | 双层记忆 (working + episodic) | MemoryManager (host 独占) |
 | `{id}/tasks.jsonl` | 任务持久化 | TaskManager (host 独占) |

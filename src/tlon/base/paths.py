@@ -8,8 +8,10 @@ Layout:
     ├── shared/
     │   ├── chat_history/
     │   │   └── messages.jsonl
-    │   └── traces/
-    │       └── trace-{uuid}.jsonl
+    │   ├── traces/
+    │   │   └── trace-{uuid}.jsonl
+    │   └── logs/
+    │       └── server-{date}.jsonl
     ├── {agent_id}/
     │   ├── config/
     │   │   └── agent.yaml
@@ -137,6 +139,11 @@ class TlonPaths:
 
     def traces_dir(self) -> Path:
         d = self.shared_dir() / "traces"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def logs_dir(self) -> Path:
+        d = self.shared_dir() / "logs"
         d.mkdir(parents=True, exist_ok=True)
         return d
 

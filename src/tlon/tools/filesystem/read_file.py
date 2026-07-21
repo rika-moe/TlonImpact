@@ -114,7 +114,7 @@ class ReadFileTool(Tool):
                 error=f"File not found: {file_path}",
             )
         except RuntimeError as e:
-            logger.error(f"readFile failed for {file_path}: {e}")
+            logger.error("file_read_failed", file_path=file_path, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
                 data={},

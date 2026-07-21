@@ -71,7 +71,7 @@ class GenerateSummaryTool(Tool):
                     message="⚠️ 没有足够的内容生成摘要",
                 )
         except Exception as e:
-            logger.error(f"Error generating summary: {e}")
+            logger.error("summary_generation_failed", error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
                 error=str(e),

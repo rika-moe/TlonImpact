@@ -12,6 +12,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from structlog.contextvars import bound_contextvars
+
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.session import AgentSession, SessionState
@@ -76,7 +78,7 @@ class Agent(Component, Device):
         "3. 发现事实互相矛盾时，删除置信度更低的一个\n"
         "4. 如果工作记忆中有 >= 5 条交互且没有近期摘要，建议 consolidate\n"
         "5. 多数情况下不需要操作，noop 是正常的\n\n"
-        "请用 JSON 格式返回：\n"
+        "请用 JSON 格式返回："
         '{"analysis": "对当前记忆状态的简要分析", '
         '"operations": [{"action": "...", ...}]}'
     )
@@ -121,8 +123,8 @@ class Agent(Component, Device):
         self.task_manager = task_manager
         self.tool_executor = tool_executor
 
-        # Per-agent bound logger
-        self._logger = get_logger(f"{__name__}.{config.id}").bind(agent_id=config.id)
+        # Per-agent bound logger (agent_id as a field, logger name stays __name__)
+        self._logger = logger.bind(agent_id=config.id)
 
         # Tool execution timeout
         self._per_tool_timeout = per_tool_timeout
@@ -153,7 +155,8 @@ class Agent(Component, Device):
         self._worker_task: asyncio.Task | None = None
         self._worker_running = False
 
-        logger.info(f"Agent {self.name} ({self.id}) initialized")
+        with bound_contextvars(agent_id=self.id):
+            logger.info("agent_initialized", agent_name=self.name)
 
     def get_state(self) -> str:
         """Get agent state as string."""
@@ -177,58 +180,67 @@ class Agent(Component, Device):
 
     async def initialize(self) -> None:
         """Initialize the agent."""
-        self.state = AgentState.INITIALIZING
-        logger.info(f"Initializing agent: {self.name}")
+        with bound_contextvars(agent_id=self.id):
+            self.state = AgentState.INITIALIZING
+            logger.info("agent_initializing", agent_name=self.name)
 
-        await self.memory.load()
-        self.task_manager.load()
+            await self.memory.load()
+            self.task_manager.load()
 
-        self.subscribe(EventType.MESSAGE_ROUTED, self._on_message_routed)
+            self.subscribe(EventType.MESSAGE_ROUTED, self._on_message_routed)
 
-        self._worker_running = True
-        self._worker_task = asyncio.create_task(self._main_loop())
+            self._worker_running = True
+            self._worker_task = asyncio.create_task(self._main_loop())
 
-        self.state = AgentState.ACTIVE
-        self._initialized = True
-        logger.info(f"Agent {self.name} ready")
+            self.state = AgentState.ACTIVE
+            self._initialized = True
+            logger.info("agent_ready", agent_name=self.name)
 
     async def shutdown(self) -> None:
         """Shutdown the agent."""
-        logger.info(f"Shutting down agent: {self.name}")
+        with bound_contextvars(agent_id=self.id):
+            logger.info("agent_shutdown", agent_name=self.name)
 
-        self._worker_running = False
-        if self._worker_task:
-            self._worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._worker_task
+            self._worker_running = False
+            if self._worker_task:
+                self._worker_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._worker_task
 
-        self.unsubscribe_all()
+            self.unsubscribe_all()
 
-        self.state = AgentState.SHUTDOWN
-        self._initialized = False
-        logger.info(f"Agent {self.name} shutdown complete")
+            self.state = AgentState.SHUTDOWN
+            self._initialized = False
+            logger.info("agent_shutdown_complete", agent_name=self.name)
 
     async def _on_message_routed(self, event: Event) -> None:
-        """Handle routed message events."""
+        """Handle routed message events.
+
+        Runs in the EventBus dispatch context shared by all agents, so the
+        agent_id binding must be scoped (bound_contextvars resets on exit).
+        """
         from tlon.organization.messaging.router import RoutedMessage
 
-        routed: RoutedMessage = event.payload
-        message = routed.original
+        with bound_contextvars(agent_id=self.id):
+            routed: RoutedMessage = event.payload
+            message = routed.original
 
-        if self.id not in routed.target_ids and "@all" not in routed.target_ids:
-            return
+            if self.id not in routed.target_ids and "@all" not in routed.target_ids:
+                return
 
-        if message.sender_id == self.id:
-            return
+            if message.sender_id == self.id:
+                return
 
-        if not self._should_respond(message):
-            return
+            if not self._should_respond(message):
+                return
 
-        carrier = {"trace_id": event.trace_id, "span_id": event.span_id}
-        await self._message_queue.put((message, carrier))
-        logger.debug(
-            f"{self.name} queued message from {message.sender_name} (reason: {routed.routing_reason})"
-        )
+            carrier = {"trace_id": event.trace_id, "span_id": event.span_id}
+            await self._message_queue.put((message, carrier))
+            logger.debug(
+                "message_queued",
+                sender=message.sender_name,
+                routing_reason=routed.routing_reason,
+            )
 
     async def _main_loop(self) -> None:
         """Agent's continuous main loop with multi-session scheduling.
@@ -240,66 +252,70 @@ class Agent(Component, Device):
         3. WAITING sessions -> collect completed background tools
         4. COMPLETED -> cleanup
         """
-        logger.info(f"{self.name} main loop started")
-        sessions: dict[str, AgentSession] = {}
-        session_messages: dict[str, Message] = {}
+        # This loop runs in its own task per agent, so binding agent_id for
+        # its whole lifetime is safe and also covers logs inside session
+        # advances; tasks spawned here (e.g. reflection) inherit the context.
+        with bound_contextvars(agent_id=self.id):
+            logger.info("agent_main_loop_started")
+            sessions: dict[str, AgentSession] = {}
+            session_messages: dict[str, Message] = {}
 
-        while self._worker_running:
-            # ── 0. Proactive memory triggers (no message required) ──
-            await self.memory.check_idle_timeout()
-            await self._check_reflection_trigger()
+            while self._worker_running:
+                # ── 0. Proactive memory triggers (no message required) ──
+                await self.memory.check_idle_timeout()
+                await self._check_reflection_trigger()
 
-            # ── 1. New messages ──
-            try:
-                msg, carrier = self._message_queue.get_nowait()
-                sid = f"{self.id}-{msg.id}"
-                session = AgentSession(sid, msg.content, carrier=carrier)
-                sessions[sid] = session
-                session_messages[sid] = msg
-                logger.info(f"{self.name} new session {sid}: {msg.content[:50]}")
-            except asyncio.QueueEmpty:
-                # No new messages — if no sessions either, block
-                if not sessions:
-                    try:
-                        msg, carrier = await asyncio.wait_for(
-                            self._message_queue.get(), timeout=0.5
-                        )
-                        sid = f"{self.id}-{msg.id}"
-                        sessions[sid] = AgentSession(sid, msg.content, carrier=carrier)
-                        session_messages[sid] = msg
-                    except TimeoutError:
+                # ── 1. New messages ──
+                try:
+                    msg, carrier = self._message_queue.get_nowait()
+                    sid = f"{self.id}-{msg.id}"
+                    session = AgentSession(sid, msg.content, carrier=carrier)
+                    sessions[sid] = session
+                    session_messages[sid] = msg
+                    logger.info("session_started", session_id=sid, content=msg.content)
+                except asyncio.QueueEmpty:
+                    # No new messages — if no sessions either, block
+                    if not sessions:
+                        try:
+                            msg, carrier = await asyncio.wait_for(
+                                self._message_queue.get(), timeout=0.5
+                            )
+                            sid = f"{self.id}-{msg.id}"
+                            sessions[sid] = AgentSession(sid, msg.content, carrier=carrier)
+                            session_messages[sid] = msg
+                        except TimeoutError:
+                            continue
+
+                # ── 2 & 3. Advance sessions ──
+                for sid in list(sessions.keys()):
+                    session = sessions[sid]
+                    if session.id not in session_messages:
                         continue
 
-            # ── 2 & 3. Advance sessions ──
-            for sid in list(sessions.keys()):
-                session = sessions[sid]
-                if session.id not in session_messages:
-                    continue
+                    try:
+                        with self._session_span(session):
+                            if session.state == SessionState.WAITING:
+                                await self._collect_session_results(session)
+                            elif session.state == SessionState.ACTIVE:
+                                msg = session_messages[sid]
+                                await self._step_session(session, msg)
+                    except Exception as e:
+                        logger.error("session_error", session_id=sid, error=str(e), exc_info=True)
+                        session.mark_completed()
 
-                try:
-                    with self._session_span(session):
-                        if session.state == SessionState.WAITING:
-                            await self._collect_session_results(session)
-                        elif session.state == SessionState.ACTIVE:
-                            msg = session_messages[sid]
-                            await self._step_session(session, msg)
-                except Exception as e:
-                    logger.error(f"Session {sid} error: {e}", exc_info=True)
-                    session.mark_completed()
+                    # ── 4. Cleanup ──
+                    if session.is_completed:
+                        await session.cancel_pending()
+                        del sessions[sid]
+                        session_messages.pop(sid, None)
 
-                # ── 4. Cleanup ──
-                if session.is_completed:
-                    await session.cancel_pending()
-                    del sessions[sid]
-                    session_messages.pop(sid, None)
+                # ── 5. Agent state derives from live sessions ──
+                self._derive_state(sessions)
 
-            # ── 5. Agent state derives from live sessions ──
-            self._derive_state(sessions)
+                # Yield control
+                await asyncio.sleep(0.01 if sessions else 0.05)
 
-            # Yield control
-            await asyncio.sleep(0.01 if sessions else 0.05)
-
-        logger.info(f"{self.name} main loop stopped")
+            logger.info("agent_main_loop_stopped")
 
     def _should_respond(self, message: Message) -> bool:
         """Determine if we should respond to this message."""
@@ -307,14 +323,14 @@ class Agent(Component, Device):
             return False
 
         if self._is_mentioned(message):
-            logger.debug(f"{self.name} will respond: mentioned by {message.sender_name}")
+            logger.debug("agent_will_respond", reason="mentioned", sender=message.sender_name)
             return True
 
         if self.config.proactive and message.sender_type == "human" and not message.mentions:
-            logger.info(f"{self.name} will respond: proactive response to {message.sender_name}")
+            logger.info("agent_will_respond", reason="proactive", sender=message.sender_name)
             return True
 
-        logger.debug(f"{self.name} will not respond to message from {message.sender_name}")
+        logger.debug("agent_will_not_respond", sender=message.sender_name)
         return False
 
     def _is_mentioned(self, message: Message) -> bool:
@@ -335,6 +351,7 @@ class Agent(Component, Device):
         carrier = session.carrier or {}
         trace_id = carrier.get("trace_id")
         with contextlib.ExitStack() as stack:
+            stack.enter_context(bound_contextvars(agent_id=self.id))
             if trace_id:
                 stack.enter_context(continue_trace(trace_id, carrier.get("span_id")))
             stack.enter_context(
@@ -356,14 +373,18 @@ class Agent(Component, Device):
         if not session.context:
             context = await self._build_context(message)
             session.context = context
-            self._logger.debug(f"Session {session.id}: context built with {len(context)} messages")
+            self._logger.debug(
+                "session_context_built", session_id=session.id, message_count=len(context)
+            )
 
         max_iterations = 10
         max_errors = 3
 
         # Check iteration limit
         if session.iteration >= max_iterations:
-            self._logger.warning(f"Session {session.id}: max iterations reached")
+            self._logger.warning(
+                "session_max_iterations", session_id=session.id, max_iterations=max_iterations
+            )
             await self._send_message(
                 "思考时间过长，请简化您的问题。",
                 mentions=[message.sender_id] if message.sender_type == "human" else [],
@@ -377,7 +398,9 @@ class Agent(Component, Device):
                 response = await self.think(session.context)
             session.set_last_llm_response(response)
         except Exception as e:
-            self._logger.error(f"Session {session.id}: LLM call failed: {e}", exc_info=True)
+            self._logger.error(
+                "session_llm_error", session_id=session.id, error=str(e), exc_info=True
+            )
             session.record_error()
             session.advance_iteration()
             if session.error_count >= max_errors:
@@ -482,7 +505,7 @@ class Agent(Component, Device):
                 await self._save_interaction_to_memory(
                     final_content, llm_resp, session.all_tool_results
                 )
-            self._logger.info(f"Session {session.id} completed: {final_content[:50]}")
+            self._logger.info("session_completed", session_id=session.id, content=final_content)
             session.mark_completed()
         elif not session.has_pending_tools:
             session.advance_iteration()
@@ -659,7 +682,7 @@ class Agent(Component, Device):
                 parts.append(msg["content"])
             return "\n\n".join(parts)
         except Exception:
-            logger.warning("Failed to build knowledge context from memory blocks")
+            logger.warning("knowledge_context_build_failed", exc_info=True)
             return ""
 
     async def _build_context(self, current_message: Message) -> list[dict[str, Any]]:
@@ -675,9 +698,9 @@ class Agent(Component, Device):
             room_history = await self.message_store.get_history(
                 limit=20, before_id=current_message.id
             )
-            logger.debug(f"Retrieved {len(room_history)} messages from store for context")
+            logger.debug("context_history_retrieved", message_count=len(room_history))
         else:
-            logger.warning("No message store available, context will be limited")
+            logger.warning("message_store_missing")
 
         for msg in room_history:
             if msg.sender_type == "system":
@@ -787,7 +810,7 @@ class Agent(Component, Device):
             await self.memory.add_interaction(msg, llm_response, tool_results)
             self._interaction_count_since_reflection += 1
         except Exception as e:
-            self._logger.error(f"Failed to save to memory: {e}")
+            self._logger.error("memory_save_failed", error=str(e), exc_info=True)
 
     async def _send_message(self, content: str, mentions: list[str] | None = None) -> None:
         """Send a message via EventBus, injecting the current trace context."""
@@ -814,7 +837,7 @@ class Agent(Component, Device):
                     parent_span_id=current.parent_span_id if current else None,
                 )
         except Exception:
-            self._logger.error("Failed to emit MESSAGE_NEW event", exc_info=True)
+            self._logger.error("message_emit_failed", exc_info=True)
 
     async def _check_reflection_trigger(self) -> None:
         """Check if memory reflection should run and trigger if needed."""
@@ -848,7 +871,7 @@ class Agent(Component, Device):
             digest = await self.memory.get_memory_digest()
 
             if digest["working_count"] == 0 and digest["summary_count"] == 0 and digest["fact_count"] == 0:
-                logger.debug(f"{self.name}: no memory to reflect on")
+                logger.debug("reflection_skipped", reason="no_memory")
                 return
 
             prompt = self._build_reflection_prompt(digest)
@@ -865,12 +888,9 @@ class Agent(Component, Device):
             operations = self._parse_reflection_response(response.content)
             await self._apply_reflection_operations(operations)
 
-            logger.info(
-                f"{self.name}: reflection completed, "
-                f"{len(operations)} operations applied"
-            )
+            logger.info("reflection_completed", operation_count=len(operations))
         except Exception as e:
-            logger.warning(f"{self.name}: reflection failed: {e}")
+            logger.warning("reflection_failed", error=str(e))
         finally:
             self._reflection_running = False
 
@@ -940,7 +960,7 @@ class Agent(Component, Device):
             result = json_mod.loads(content)
             return result.get("operations", [])
         except json_mod.JSONDecodeError:
-            logger.warning(f"Failed to parse reflection JSON: {content[:200]}")
+            logger.warning("reflection_parse_failed", content=content)
             return []
 
     async def _apply_reflection_operations(
@@ -959,21 +979,21 @@ class Agent(Component, Device):
                         object=op.get("object", ""),
                         importance=float(op.get("confidence", 0.5)),
                     )
-                    logger.debug(f"Reflection: recorded fact: {op.get('description', '')[:50]}")
+                    logger.debug("reflection_fact_recorded", description=op.get("description", ""))
                 elif action == "delete_fact":
                     query = op.get("description") or op.get("fact_id", "")
                     if query:
                         await self.memory.forget(query=query, confirm=True)
-                        logger.debug(f"Reflection: deleted fact matching: {query[:50]}")
+                        logger.debug("reflection_fact_deleted", query=query)
                 elif action == "consolidate":
                     await self.memory.generate_summary(force=True)
-                    logger.debug("Reflection: triggered consolidation summary")
+                    logger.debug("reflection_consolidation_triggered")
                 elif action == "noop":
                     pass
                 else:
-                    logger.debug(f"Reflection: unknown action: {action}")
+                    logger.debug("reflection_action_unknown", action=action)
             except Exception as e:
-                logger.warning(f"Reflection: failed to apply {action}: {e}")
+                logger.warning("reflection_action_failed", action=action, error=str(e))
 
     @contextlib.asynccontextmanager
     async def _traced_span(self, name: str):

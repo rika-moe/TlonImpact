@@ -243,20 +243,20 @@ class ConfigService(Component, Device, AgentInfoProvider):
         Device.__init__(self, event_bus=event_bus, name="ConfigService")
         self._tlon_home = tlon_home or get_tlon_home()
         self._agents: dict[str, AgentConfig] = {}
-        logger.info("ConfigService constructed")
+        logger.info("config_service_constructed")
 
     async def initialize(self) -> None:
         """Initialize by loading all configurations."""
-        logger.info("Loading initial configuration...")
+        logger.info("config_load_started")
         self._load_all_agents()
         self._initialized = True
-        logger.info(f"Loaded {len(self._agents)} agents")
+        logger.info("agents_loaded", agent_count=len(self._agents))
 
     async def shutdown(self) -> None:
         """Shutdown the configuration service."""
         self.unsubscribe_all()
         self._initialized = False
-        logger.info("ConfigService shutdown")
+        logger.info("config_service_shutdown")
 
     def _load_all_agents(self) -> None:
         """Load all agents by scanning ~/.tlon/*/config/agent.yaml."""
@@ -317,7 +317,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
                 )
                 return True
         except Exception as e:
-            logger.error(f"Failed to reload agent {agent_id}: {e}")
+            logger.error("agent_reload_failed", agent_id=agent_id, error=str(e), exc_info=True)
 
         return False
 
@@ -328,7 +328,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
         """
         _yaml_save(agent, self._tlon_home)
         self._agents[agent.id] = agent
-        logger.info(f"Agent saved: {agent.id}")
+        logger.info("agent_saved", agent_id=agent.id)
 
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> None:
         """Delete an agent.
@@ -343,7 +343,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
             if yaml_file.exists():
                 yaml_file.unlink()
         self._agents.pop(agent_id, None)
-        logger.info(f"Agent deleted: {agent_id}")
+        logger.info("agent_deleted", agent_id=agent_id)
 
 
 __all__ = [

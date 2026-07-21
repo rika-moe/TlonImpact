@@ -115,7 +115,7 @@ class Device:
         sub_id = self._event_bus.subscribe(event_type, handler)
         internal_id = f"{event_type.value}:{len(self._subscriptions)}"
         self._subscriptions[internal_id] = sub_id
-        logger.debug(f"[{self.name}] Subscribed to {event_type.value}")
+        logger.debug("event_subscribed", name=self.name, event_type=event_type.value)
         return internal_id
 
     def unsubscribe(self, internal_id: str) -> bool:
@@ -132,7 +132,7 @@ class Device:
 
         sub_id = self._subscriptions.pop(internal_id)
         self._event_bus.unsubscribe(sub_id)
-        logger.debug(f"[{self.name}] Unsubscribed: {internal_id}")
+        logger.debug("event_unsubscribed", name=self.name, internal_id=internal_id)
         return True
 
     def unsubscribe_all(self) -> None:

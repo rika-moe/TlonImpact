@@ -117,7 +117,7 @@ class Component(ABC):
         self._name = name or self.__class__.__name__
         self._initialized = False
         self._started = False
-        logger.debug(f"{self._name} constructed")
+        logger.debug("component_constructed", name=self._name)
 
     @property
     def name(self) -> str:
@@ -188,7 +188,7 @@ class ComponentRegistry:
             component: Component to register
         """
         self._components.append(component)
-        logger.debug(f"Registered component: {component.name}")
+        logger.debug("component_registered", name=component.name)
 
     async def initialize_all(self) -> None:
         """Initialize all registered components.
@@ -197,10 +197,10 @@ class ComponentRegistry:
         which should follow topological order of the DAG.
         """
         for component in self._components:
-            logger.debug(f"Initializing {component.name}...")
+            logger.debug("component_initializing", name=component.name)
             await component.initialize()
             component._initialized = True
-            logger.info(f"{component.name} initialized")
+            logger.info("component_initialized", name=component.name)
 
     async def shutdown_all(self) -> None:
         """Shutdown all registered components.
@@ -210,13 +210,18 @@ class ComponentRegistry:
         """
         for component in reversed(self._components):
             try:
-                logger.debug(f"Shutting down {component.name}...")
+                logger.debug("component_shutting_down", name=component.name)
                 await component.shutdown()
                 component._started = False
                 component._initialized = False
-                logger.info(f"{component.name} shut down")
+                logger.info("component_shutdown", name=component.name)
             except Exception as e:
-                logger.error(f"Error shutting down {component.name}: {e}")
+                logger.error(
+                    "component_shutdown_failed",
+                    name=component.name,
+                    error=str(e),
+                    exc_info=True,
+                )
 
     def get_all(self) -> list[Component]:
         """Get all registered components."""

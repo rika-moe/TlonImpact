@@ -86,19 +86,23 @@ class EpisodicMemoryStore(MemoryStore):
                             data = json.loads(line)
                             self._summaries_cache.append(data)
                         except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse summary line: {e}")
+                            logger.warning("summary_line_parse_failed", error=str(e))
 
                 # Trim if exceeds max
                 if len(self._summaries_cache) > self.max_summaries:
                     self._summaries_cache = self._summaries_cache[-self.max_summaries :]
                     await self._persist_summaries()
 
-                logger.info(f"Loaded {len(self._summaries_cache)} summaries for {self.agent_id}")
+                logger.info(
+                    "summaries_loaded",
+                    agent_id=self.agent_id,
+                    summary_count=len(self._summaries_cache),
+                )
             except Exception as e:
-                logger.error(f"Error loading summaries: {e}")
+                logger.error("summaries_load_failed", error=str(e), exc_info=True)
                 self._summaries_cache = []
         else:
-            logger.info(f"No existing summaries for {self.agent_id}")
+            logger.info("summaries_not_found", agent_id=self.agent_id)
             self._summaries_cache = []
 
         # Load facts
@@ -114,19 +118,23 @@ class EpisodicMemoryStore(MemoryStore):
                             data = json.loads(line)
                             self._facts_cache.append(data)
                         except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse fact line: {e}")
+                            logger.warning("fact_line_parse_failed", error=str(e))
 
                 # Trim if exceeds max
                 if len(self._facts_cache) > self.max_facts:
                     self._facts_cache = self._facts_cache[-self.max_facts :]
                     await self._persist_facts()
 
-                logger.info(f"Loaded {len(self._facts_cache)} facts for {self.agent_id}")
+                logger.info(
+                    "facts_loaded",
+                    agent_id=self.agent_id,
+                    fact_count=len(self._facts_cache),
+                )
             except Exception as e:
-                logger.error(f"Error loading facts: {e}")
+                logger.error("facts_load_failed", error=str(e), exc_info=True)
                 self._facts_cache = []
         else:
-            logger.info(f"No existing facts for {self.agent_id}")
+            logger.info("facts_not_found", agent_id=self.agent_id)
             self._facts_cache = []
 
         self._loaded = True
@@ -138,7 +146,7 @@ class EpisodicMemoryStore(MemoryStore):
                 for item in self._summaries_cache:
                     await f.write(json.dumps(item, ensure_ascii=False) + "\n")
         except Exception as e:
-            logger.error(f"Error persisting summaries: {e}")
+            logger.error("summaries_persist_failed", error=str(e), exc_info=True)
 
     async def _persist_facts(self) -> None:
         """Write facts to disk atomically (temp file + os.replace)."""
@@ -149,7 +157,7 @@ class EpisodicMemoryStore(MemoryStore):
                     await f.write(json.dumps(item, ensure_ascii=False) + "\n")
             await asyncio.to_thread(os.replace, tmp_file, self.facts_file)
         except Exception as e:
-            logger.error(f"Error persisting facts: {e}")
+            logger.error("facts_persist_failed", error=str(e), exc_info=True)
             with contextlib.suppress(OSError):
                 tmp_file.unlink(missing_ok=True)
 
@@ -173,14 +181,14 @@ class EpisodicMemoryStore(MemoryStore):
         if len(self._summaries_cache) > self.max_summaries:
             removed = self._summaries_cache[: -self.max_summaries]
             self._summaries_cache = self._summaries_cache[-self.max_summaries :]
-            logger.debug(f"Trimmed {len(removed)} old summaries")
+            logger.debug("summaries_trimmed", removed_count=len(removed))
 
         await self._ensure_dir()
         try:
             async with aiofiles.open(self.summaries_file, "a", encoding="utf-8") as f:
                 await f.write(json.dumps(summary, ensure_ascii=False) + "\n")
         except Exception as e:
-            logger.error(f"Error appending summary: {e}")
+            logger.error("summary_append_failed", error=str(e), exc_info=True)
             await self._persist_summaries()
 
         return summary_id
@@ -257,7 +265,11 @@ class EpisodicMemoryStore(MemoryStore):
             ):
                 existing["superseded_by"] = fact_id
                 superseded = True
-                logger.debug(f"Fact superseded: {existing.get('id')} -> {fact_id}")
+                logger.debug(
+                    "fact_superseded",
+                    fact_id=existing.get("id"),
+                    superseded_by=fact_id,
+                )
                 break
 
         self._facts_cache.append(fact)
@@ -280,7 +292,7 @@ class EpisodicMemoryStore(MemoryStore):
             async with aiofiles.open(self.facts_file, "a", encoding="utf-8") as f:
                 await f.write(json.dumps(fact, ensure_ascii=False) + "\n")
         except Exception as e:
-            logger.error(f"Error appending fact: {e}")
+            logger.error("fact_append_failed", error=str(e), exc_info=True)
             await self._persist_facts()
 
         return fact_id
@@ -368,12 +380,12 @@ class EpisodicMemoryStore(MemoryStore):
                 try:
                     self.summaries_file.unlink()
                 except Exception as e:
-                    logger.error(f"Error clearing summaries file: {e}")
+                    logger.error("summaries_file_clear_failed", error=str(e), exc_info=True)
             if self.facts_file.exists():
                 try:
                     self.facts_file.unlink()
                 except Exception as e:
-                    logger.error(f"Error clearing facts file: {e}")
+                    logger.error("facts_file_clear_failed", error=str(e), exc_info=True)
 
     async def clear_summaries(self) -> None:
         """Clear only summaries."""
@@ -383,7 +395,7 @@ class EpisodicMemoryStore(MemoryStore):
                 try:
                     self.summaries_file.unlink()
                 except Exception as e:
-                    logger.error(f"Error clearing summaries file: {e}")
+                    logger.error("summaries_file_clear_failed", error=str(e), exc_info=True)
 
     async def clear_facts(self) -> None:
         """Clear only facts."""
@@ -393,7 +405,7 @@ class EpisodicMemoryStore(MemoryStore):
                 try:
                     self.facts_file.unlink()
                 except Exception as e:
-                    logger.error(f"Error clearing facts file: {e}")
+                    logger.error("facts_file_clear_failed", error=str(e), exc_info=True)
 
     async def count(self) -> int:
         """Get total count of summaries and facts."""

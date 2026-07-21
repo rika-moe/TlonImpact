@@ -89,7 +89,7 @@ class JsonlSpanExporter(SpanExporter):
                     self._write_span(span)
             return SpanExportResult.SUCCESS
         except Exception as e:
-            logger.error(f"Failed to export spans to JSONL: {e}", exc_info=True)
+            logger.error("span_export_failed", error=str(e), exc_info=True)
             return SpanExportResult.FAILURE
 
     def _write_span(self, span: ReadableSpan) -> None:

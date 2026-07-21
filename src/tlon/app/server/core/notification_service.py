@@ -104,14 +104,14 @@ class NotificationService(Component, Device):
         # Internal lock for handler registration
         self._lock = asyncio.Lock()
 
-        logger.info("NotificationService constructed")
+        logger.info("notification_service_constructed")
 
     async def initialize(self) -> None:
         """Start the service by subscribing to all event types."""
         for event_type in EventType:
             self.subscribe(event_type, self._on_event)
         # Device has no async initialize, just log
-        logger.info("NotificationService initialized")
+        logger.info("notification_service_initialized")
         # Mark Component as initialized
         self._initialized = True
 
@@ -124,7 +124,7 @@ class NotificationService(Component, Device):
         self.unsubscribe_all()
         # Mark Component as shut down
         self._initialized = False
-        logger.info("NotificationService shut down")
+        logger.info("notification_service_shutdown")
 
     def register_handler(self, session_id: str, handler: EventHandler) -> None:
         """Register an event handler for a session.
@@ -134,7 +134,7 @@ class NotificationService(Component, Device):
             handler: Callback function for events
         """
         self._handlers[session_id] = handler
-        logger.debug(f"Event handler registered for session: {session_id}")
+        logger.debug("event_handler_registered", session_id=session_id)
 
     def unregister_handler(self, session_id: str) -> None:
         """Unregister an event handler for a session.
@@ -143,7 +143,7 @@ class NotificationService(Component, Device):
             session_id: The session ID
         """
         self._handlers.pop(session_id, None)
-        logger.debug(f"Event handler unregistered for session: {session_id}")
+        logger.debug("event_handler_unregistered", session_id=session_id)
 
     async def push_to_session(self, session_id: str, event: Event) -> bool:
         """Manually push an event to a specific session.
@@ -327,7 +327,7 @@ class NotificationService(Component, Device):
             else:
                 handler(event)
         except Exception as e:
-            logger.error(f"Error in event handler: {e}", exc_info=True)
+            logger.error("event_handler_error", error=str(e), exc_info=True)
 
     def get_handler_count(self) -> int:
         """Get the number of registered handlers.

@@ -147,7 +147,7 @@ class CongressWebSocketClient:
             True if connected and authenticated successfully
         """
         if self.is_connected or self.is_connecting:
-            logger.debug("Already connected or connecting")
+            logger.debug("connect_skipped", reason="already_connected_or_connecting")
             return self.is_connected
 
         self._set_connection_state(ClientConnectionState.CONNECTING)
@@ -159,7 +159,7 @@ class CongressWebSocketClient:
             # Connect
             connected = await self._sdk.connect()
             if not connected:
-                logger.error("Failed to connect to server")
+                logger.error("connect_failed")
                 self._set_connection_state(ClientConnectionState.ERROR)
                 return False
 
@@ -167,7 +167,7 @@ class CongressWebSocketClient:
             self._set_connection_state(ClientConnectionState.AUTHENTICATING)
             authenticated = await self._sdk.authenticate()
             if not authenticated:
-                logger.error("Failed to authenticate")
+                logger.error("authentication_failed")
                 self._set_connection_state(ClientConnectionState.ERROR)
                 return False
 
@@ -175,7 +175,7 @@ class CongressWebSocketClient:
             await self._sdk.set_mode("chat")
 
             self._set_connection_state(ClientConnectionState.AUTHENTICATED)
-            logger.info("Connected and authenticated successfully")
+            logger.info("connected_and_authenticated")
 
             # Load initial data
             await self._load_initial_data()
@@ -183,7 +183,7 @@ class CongressWebSocketClient:
             return True
 
         except Exception as e:
-            logger.error(f"Connection error: {e}")
+            logger.error("connection_error", error=str(e), exc_info=True)
             self._set_connection_state(ClientConnectionState.ERROR)
             return False
 
@@ -196,7 +196,7 @@ class CongressWebSocketClient:
             await self._sdk.disconnect()
 
         self._set_connection_state(ClientConnectionState.DISCONNECTED)
-        logger.info("Disconnected from server")
+        logger.info("disconnected")
 
     def _set_connection_state(self, state: ClientConnectionState) -> None:
         """Set connection state and notify handlers."""
@@ -205,7 +205,9 @@ class CongressWebSocketClient:
         self.state.connection_state = state.value
 
         if old_state != state:
-            logger.debug(f"Connection state changed: {old_state.value} -> {state.value}")
+            logger.debug(
+                "connection_state_changed", old_state=old_state.value, new_state=state.value
+            )
             for handler in self._connection_handlers:
                 try:
                     if asyncio.iscoroutinefunction(handler):
@@ -213,13 +215,13 @@ class CongressWebSocketClient:
                     else:
                         handler(state)
                 except Exception as e:
-                    logger.error(f"Connection handler error: {e}")
+                    logger.error("connection_handler_error", error=str(e), exc_info=True)
 
     # ==================== Reconnection ====================
 
     def _on_sdk_state_change(self, state: ConnectionState) -> None:
         """Handle SDK state changes."""
-        logger.debug(f"SDK state changed: {state.value}")
+        logger.debug("sdk_state_changed", state=state.value)
 
         # Map SDK states to our states
         state_map = {
@@ -242,7 +244,7 @@ class CongressWebSocketClient:
             and self.auto_reconnect
             and self._connection_state == ClientConnectionState.AUTHENTICATED
         ):
-            logger.info("Connection lost, SDK auto-reconnect engaged")
+            logger.info("connection_lost", auto_reconnect=True)
             return
 
         self._set_connection_state(new_state)
@@ -257,12 +259,12 @@ class CongressWebSocketClient:
         if not self._sdk:
             return
 
-        logger.info("Reconnected, restoring session state")
+        logger.info("session_restore_started")
         try:
             await self._sdk.set_mode("chat")
             await self._load_initial_data()
         except Exception as e:
-            logger.warning(f"Failed to restore session after reconnect: {e}")
+            logger.warning("session_restore_failed", error=str(e), exc_info=True)
 
     # ==================== Message Handling ====================
 
@@ -271,7 +273,7 @@ class CongressWebSocketClient:
         event_type = event.get("type", "")
         payload = event.get("payload", {})
 
-        logger.debug(f"Received event: {event_type}")
+        logger.debug("event_received", event_type=event_type)
 
         # Handle different event types
         if event_type == "message.new":
@@ -297,11 +299,11 @@ class CongressWebSocketClient:
             self._handle_history(msg.get("messages", []))
         elif msg_type == "pong":
             # Heartbeat response received
-            logger.debug("Received pong")
+            logger.debug("pong_received")
 
     def _on_sdk_error(self, error_msg: str) -> None:
         """Handle SDK errors."""
-        logger.error(f"SDK error: {error_msg}")
+        logger.error("sdk_error", error=error_msg)
         for handler in self._error_handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -309,7 +311,7 @@ class CongressWebSocketClient:
                 else:
                     handler(error_msg)
             except Exception as e:
-                logger.error(f"Error handler error: {e}")
+                logger.error("error_handler_error", error=str(e), exc_info=True)
 
     def _handle_message_new(self, payload: dict[str, Any]) -> None:
         """Handle new message event."""
@@ -323,7 +325,7 @@ class CongressWebSocketClient:
                 else:
                     handler(message)
             except Exception as e:
-                logger.error(f"Message handler error: {e}")
+                logger.error("message_handler_error", error=str(e), exc_info=True)
 
     def _handle_agent_typing(self, payload: dict[str, Any]) -> None:
         """Handle agent typing event."""
@@ -339,7 +341,7 @@ class CongressWebSocketClient:
                 else:
                     handler(agent_id, is_typing)
             except Exception as e:
-                logger.error(f"Typing handler error: {e}")
+                logger.error("typing_handler_error", error=str(e), exc_info=True)
 
     def _handle_agent_response(self, payload: dict[str, Any]) -> None:
         """Handle agent response event."""
@@ -359,7 +361,7 @@ class CongressWebSocketClient:
                 else:
                     handler(agent_info)
             except Exception as e:
-                logger.error(f"Agent handler error: {e}")
+                logger.error("agent_handler_error", error=str(e), exc_info=True)
 
     def _handle_agent_stopped(self, payload: dict[str, Any]) -> None:
         """Handle agent stopped event."""
@@ -384,7 +386,7 @@ class CongressWebSocketClient:
                 else:
                     handler(message)
             except Exception as e:
-                logger.error(f"Message handler error: {e}")
+                logger.error("message_handler_error", error=str(e), exc_info=True)
 
     def _handle_participants(self, participants: list[dict]) -> None:
         """Handle participants list update."""
@@ -419,7 +421,7 @@ class CongressWebSocketClient:
                 self.state.add_message(message)
 
         except Exception as e:
-            logger.warning(f"Failed to load initial data: {e}")
+            logger.warning("initial_data_load_failed", error=str(e), exc_info=True)
 
     # ==================== Sending Messages ====================
 
@@ -440,7 +442,7 @@ class CongressWebSocketClient:
             True if sent successfully
         """
         if not self.is_connected:
-            logger.error("Cannot send message: not connected")
+            logger.error("send_rejected", reason="not_connected")
             return False
 
         if not self._sdk:
@@ -460,7 +462,7 @@ class CongressWebSocketClient:
             return success
 
         except Exception as e:
-            logger.error(f"Failed to send message: {e}")
+            logger.error("message_send_failed", error=str(e), exc_info=True)
             return False
 
     async def ping(self) -> bool:
@@ -476,7 +478,7 @@ class CongressWebSocketClient:
             # Send ping through SDK
             return await self._sdk.send({"type": "ping"})
         except Exception as e:
-            logger.warning(f"Ping failed: {e}")
+            logger.warning("ping_failed", error=str(e))
             return False
 
     # ==================== Event Handler Registration ====================

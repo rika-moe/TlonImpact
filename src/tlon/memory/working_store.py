@@ -80,7 +80,7 @@ class WorkingMemoryStore(MemoryStore):
         await self._ensure_dir()
 
         if not self.interactions_file.exists():
-            logger.info(f"No existing working memory for {self.agent_id}")
+            logger.info("working_memory_not_found", agent_id=self.agent_id)
             self._cache = []
             self._loaded = True
             return
@@ -96,7 +96,7 @@ class WorkingMemoryStore(MemoryStore):
                         data = json.loads(line)
                         self._cache.append(data)
                     except json.JSONDecodeError as e:
-                        logger.warning(f"Failed to parse interaction line: {e}")
+                        logger.warning("interaction_line_parse_failed", error=str(e))
 
             # Trim if exceeds max
             if len(self._cache) > self.max_items:
@@ -104,10 +104,14 @@ class WorkingMemoryStore(MemoryStore):
                 await self._persist()
 
             self._loaded = True
-            logger.info(f"Loaded {len(self._cache)} interactions for {self.agent_id}")
+            logger.info(
+                "working_memory_loaded",
+                agent_id=self.agent_id,
+                interaction_count=len(self._cache),
+            )
 
         except Exception as e:
-            logger.error(f"Error loading working memory: {e}")
+            logger.error("working_memory_load_failed", error=str(e), exc_info=True)
             self._cache = []
             self._loaded = True
 
@@ -120,7 +124,7 @@ class WorkingMemoryStore(MemoryStore):
                 for item in self._cache:
                     await f.write(json.dumps(item, ensure_ascii=False, cls=_ToolCallEncoder) + "\n")
         except Exception as e:
-            logger.error(f"Error persisting working memory: {e}")
+            logger.error("working_memory_persist_failed", error=str(e), exc_info=True)
 
     async def add(self, item: dict[str, Any]) -> str:
         """Add an interaction.
@@ -147,14 +151,14 @@ class WorkingMemoryStore(MemoryStore):
         if len(self._cache) > self.max_items:
             removed = self._cache[: -self.max_items]
             self._cache = self._cache[-self.max_items :]
-            logger.debug(f"Trimmed {len(removed)} old interactions from working memory")
+            logger.debug("working_memory_trimmed", removed_count=len(removed))
 
         await self._ensure_dir()
         try:
             async with aiofiles.open(self.interactions_file, "a", encoding="utf-8") as f:
                 await f.write(json.dumps(item, ensure_ascii=False, cls=_ToolCallEncoder) + "\n")
         except Exception as e:
-            logger.error(f"Error appending interaction: {e}")
+            logger.error("interaction_append_failed", error=str(e), exc_info=True)
             await self._persist()
 
         return item_id
@@ -207,7 +211,7 @@ class WorkingMemoryStore(MemoryStore):
                 try:
                     self.interactions_file.unlink()
                 except Exception as e:
-                    logger.error(f"Error clearing working memory file: {e}")
+                    logger.error("working_memory_file_clear_failed", error=str(e), exc_info=True)
 
     async def count(self) -> int:
         """Get count of interactions."""
@@ -246,7 +250,7 @@ class WorkingMemoryStore(MemoryStore):
         async with self._lock:
             archived = self._cache.copy()
             await self._clear_locked()
-            logger.info(f"Archived {len(archived)} interactions from working memory")
+            logger.info("working_memory_archived", interaction_count=len(archived))
             return archived
 
     async def _clear_locked(self) -> None:
@@ -256,4 +260,4 @@ class WorkingMemoryStore(MemoryStore):
             try:
                 self.interactions_file.unlink()
             except Exception as e:
-                logger.error(f"Error clearing working memory file: {e}")
+                logger.error("working_memory_file_clear_failed", error=str(e), exc_info=True)

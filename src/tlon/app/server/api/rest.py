@@ -8,7 +8,8 @@ Provides HTTP endpoints for:
 """
 
 import json
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -16,6 +17,87 @@ from aiohttp import web
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Level ordering for minimum-level filtering of log entries
+_LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
+
+
+def _recent_log_files(logs_dir: Path, days: int = 2) -> list[Path]:
+    """Return existing server-{date}.jsonl files for today and yesterday."""
+    files = []
+    for offset in range(days - 1, -1, -1):
+        day = date.today() - timedelta(days=offset)
+        f = logs_dir / f"server-{day:%Y-%m-%d}.jsonl"
+        if f.exists():
+            files.append(f)
+    return files
+
+
+def _read_log_entries(logs_dir: Path) -> list[dict[str, Any]]:
+    """Read structured log entries (JSONL) from today's and yesterday's files."""
+    entries: list[dict[str, Any]] = []
+    for file in _recent_log_files(logs_dir):
+        with file.open(encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    return entries
+
+
+def _filter_log_entries(
+    entries: list[dict[str, Any]],
+    *,
+    agent_id: str | None = None,
+    trace_id: str | None = None,
+    level: str | None = None,
+    before: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Filter log entries by any combination of fields, keeping the last `limit`.
+
+    Args:
+        entries: Log entries in chronological order
+        agent_id: Keep only entries with this agent_id
+        trace_id: Keep only entries with this trace_id
+        level: Minimum level (debug/info/warning/error/critical)
+        before: ISO timestamp; keep only entries logged before it
+        limit: Maximum number of entries to return (from the tail)
+    """
+    min_level = None
+    if level:
+        level = level.lower()
+        if level in _LOG_LEVELS:
+            min_level = _LOG_LEVELS.index(level)
+
+    result = []
+    for entry in entries:
+        if agent_id is not None and entry.get("agent_id") != agent_id:
+            continue
+        if trace_id is not None and entry.get("trace_id") != trace_id:
+            continue
+        if min_level is not None:
+            entry_level = str(entry.get("level", "")).lower()
+            if entry_level not in _LOG_LEVELS or _LOG_LEVELS.index(entry_level) < min_level:
+                continue
+        if before is not None and str(entry.get("timestamp", "")) >= before:
+            continue
+        result.append(entry)
+    return result[-limit:]
+
+
+def _parse_limit(request: web.Request, default: int = 100, maximum: int = 1000) -> int:
+    """Parse the `limit` query parameter with a cap."""
+    try:
+        return min(int(request.query.get("limit", default)), maximum)
+    except ValueError:
+        return default
 
 
 class RESTAPIHandler:
@@ -29,6 +111,8 @@ class RESTAPIHandler:
     - POST /agents/{id}/wake - Wake an agent
     - POST /agents/{id}/stop - Stop an agent
     - GET /sessions - List active sessions
+    - GET /agents/{id}/logs - Agent log entries
+    - GET /logs - All log entries with combined filters
     - GET /events/history - Event history (from persistence)
 
     Example:
@@ -46,6 +130,7 @@ class RESTAPIHandler:
         agent_registry,
         config_manager=None,
         trace_store=None,
+        logs_dir: Path | None = None,
         debug: bool = False,
     ):
         """Initialize the REST API handler.
@@ -55,6 +140,7 @@ class RESTAPIHandler:
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
+            logs_dir: Optional directory with server-{date}.jsonl log files
             debug: Whether to enable debug/test endpoints (never enable in production)
         """
         self.client_gateway = client_gateway
@@ -62,6 +148,7 @@ class RESTAPIHandler:
         self.config_manager = config_manager
         self.debug = debug
         self.trace_store = trace_store
+        self.logs_dir = logs_dir
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application.
@@ -92,6 +179,8 @@ class RESTAPIHandler:
 
         # Agent logs route
         app.router.add_get("/agents/{agent_id}/logs", self.handle_get_agent_logs)
+        # Global logs route (trace -> logs stitching)
+        app.router.add_get("/logs", self.handle_list_logs)
 
         # Test endpoints (only in debug mode — never enable in production)
         if self.debug:
@@ -371,11 +460,11 @@ class RESTAPIHandler:
         """GET /agents/{agent_id}/logs - Get agent logs.
 
         Query Parameters:
-            lines: Number of lines to return (default: 100)
-            level: Minimum log level (debug, info, warning, error)
+            limit: Maximum number of entries (default: 100, max: 1000)
+            before: ISO timestamp; only entries logged before it
 
         Returns:
-            Agent log entries
+            Agent log entries (chronological)
         """
         agent_id = request.match_info["agent_id"]
 
@@ -384,24 +473,57 @@ class RESTAPIHandler:
         if config is None:
             return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
 
-        try:
-            lines = int(request.query.get("lines", 100))
-            lines = min(lines, 10000)  # Cap at 10k lines
-        except ValueError:
-            lines = 100
+        if not self.logs_dir:
+            return self._json_response(
+                {"status": "error", "message": "Log storage not available"}, status=503
+            )
 
-        level = request.query.get("level", "info").lower()
+        logs = _filter_log_entries(
+            _read_log_entries(self.logs_dir),
+            agent_id=agent_id,
+            before=request.query.get("before"),
+            limit=_parse_limit(request),
+        )
 
-        # TODO: Implement actual log retrieval from log files
-        # For now, return placeholder
         return self._json_response(
             {
                 "agent_id": agent_id,
-                "agent_name": config.name,
-                "logs": [],
-                "message": "Agent log retrieval not yet implemented",
-                "lines_requested": lines,
-                "level_filter": level,
+                "logs": logs,
+                "count": len(logs),
+            }
+        )
+
+    async def handle_list_logs(self, request: web.Request) -> web.Response:
+        """GET /logs - Query all server logs with combined filters.
+
+        Query Parameters:
+            trace_id: Only entries within this trace (trace -> logs stitching)
+            level: Minimum level (debug, info, warning, error, critical)
+            agent_id: Only entries from this agent
+            limit: Maximum number of entries (default: 100, max: 1000)
+            before: ISO timestamp; only entries logged before it
+
+        Returns:
+            Log entries (chronological)
+        """
+        if not self.logs_dir:
+            return self._json_response(
+                {"status": "error", "message": "Log storage not available"}, status=503
+            )
+
+        logs = _filter_log_entries(
+            _read_log_entries(self.logs_dir),
+            agent_id=request.query.get("agent_id"),
+            trace_id=request.query.get("trace_id"),
+            level=request.query.get("level"),
+            before=request.query.get("before"),
+            limit=_parse_limit(request),
+        )
+
+        return self._json_response(
+            {
+                "logs": logs,
+                "count": len(logs),
             }
         )
 
@@ -448,6 +570,7 @@ class RESTServer:
         agent_registry,
         config_manager=None,
         trace_store=None,
+        logs_dir: Path | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -459,6 +582,7 @@ class RESTServer:
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
+            logs_dir: Optional directory with server-{date}.jsonl log files
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
@@ -467,7 +591,7 @@ class RESTServer:
         self.host = host
         self.port = port
         self._handler = RESTAPIHandler(
-            client_gateway, agent_registry, config_manager, trace_store, debug
+            client_gateway, agent_registry, config_manager, trace_store, logs_dir, debug
         )
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
@@ -477,7 +601,7 @@ class RESTServer:
     async def start(self) -> None:
         """Start the REST server."""
         if self._running:
-            logger.warning("REST server already running")
+            logger.warning("rest_server_already_running")
             return
 
         self._app = self._handler.create_app()
@@ -488,20 +612,20 @@ class RESTServer:
         await self._site.start()
 
         self._running = True
-        logger.info(f"REST API server started on http://{self.host}:{self.port}")
+        logger.info("rest_api_server_started", host=self.host, port=self.port)
 
     async def stop(self) -> None:
         """Stop the REST server."""
         if not self._running:
             return
 
-        logger.info("Stopping REST API server...")
+        logger.info("rest_api_server_stop")
 
         if self._runner:
             await self._runner.cleanup()
 
         self._running = False
-        logger.info("REST API server stopped")
+        logger.info("rest_api_server_stopped")
 
     def is_running(self) -> bool:
         """Check if the REST server is running.

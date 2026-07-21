@@ -41,10 +41,10 @@ class ToolExecutor:
             tool: The tool to register
         """
         if tool.name in self._tools:
-            logger.warning(f"Tool {tool.name} already registered, overwriting")
+            logger.warning("tool_overwritten", tool_name=tool.name)
 
         self._tools[tool.name] = tool
-        logger.debug(f"Registered tool: {tool.name}")
+        logger.debug("tool_registered", tool_name=tool.name)
 
     def unregister_tool(self, tool_name: str) -> bool:
         """Unregister a tool.
@@ -57,7 +57,7 @@ class ToolExecutor:
         """
         if tool_name in self._tools:
             del self._tools[tool_name]
-            logger.debug(f"Unregistered tool: {tool_name}")
+            logger.debug("tool_unregistered", tool_name=tool_name)
             return True
         return False
 
@@ -138,12 +138,19 @@ class ToolExecutor:
             source="tool_executor",
             attributes={"tool.name": tool_name, "tool.arguments": args_summary},
         ):
+            logger.info("tool_call", tool_name=tool_name, arguments=arguments)
             span = trace.get_current_span()
             result = await self._execute_inner(tool_name, arguments)
             span.set_attribute("tool.success", result.success)
             if not result.success:
                 span.set_attribute("tool.error", result.error)
                 span.set_status(Status(StatusCode.ERROR, result.error))
+            logger.info(
+                "tool_result",
+                tool_name=tool_name,
+                success=result.success,
+                result=result.to_dict() if hasattr(result, "to_dict") else str(result),
+            )
             return result
 
     async def _execute_inner(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
@@ -158,28 +165,24 @@ class ToolExecutor:
         """
         tool = self._tools.get(tool_name)
         if not tool:
-            logger.error(f"Tool not found: {tool_name}")
+            logger.error("tool_not_found", tool_name=tool_name)
             return ToolResult(success=False, data={}, error=f"Tool not found: {tool_name}")
 
         # Validate arguments against JSON Schema before execution
         validation_errors = tool.validate_arguments(arguments)
         if isinstance(validation_errors, list) and len(validation_errors) > 0:
             error_msg = "; ".join(validation_errors)
-            logger.warning(f"Tool {tool_name} argument validation failed: {error_msg}")
+            logger.warning("tool_validation_failed", tool_name=tool_name, error=error_msg)
             return ToolResult(
                 success=False,
                 data={},
                 error=f"Argument validation failed: {error_msg}",
             )
 
-        logger.debug(f"Executing tool: {tool_name} with args: {arguments}")
-
         try:
-            result = await tool.execute(**arguments)
-            logger.debug(f"Tool {tool_name} execution: success={result.success}")
-            return result
+            return await tool.execute(**arguments)
         except Exception as e:
-            logger.error(f"Tool {tool_name} execution failed: {e}", exc_info=True)
+            logger.error("tool_error", tool_name=tool_name, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
                 data={},
@@ -188,17 +191,17 @@ class ToolExecutor:
 
     async def initialize(self) -> None:
         """Initialize all registered tools."""
-        logger.info(f"Initializing ToolExecutor ({len(self._tools)} tools)...")
+        logger.info("tool_executor_initializing", tool_count=len(self._tools))
         for tool in self._tools.values():
             try:
                 await tool.initialize()
             except Exception as e:
-                logger.warning(f"Tool {tool.name} failed to initialize: {e}")
-        logger.info(f"ToolExecutor ready: {len(self._tools)} tools registered")
+                logger.warning("tool_initialize_failed", tool_name=tool.name, error=str(e))
+        logger.info("tool_executor_ready", tool_count=len(self._tools))
 
     async def shutdown(self) -> None:
         """Shutdown all registered tools."""
-        logger.info("Shutting down ToolExecutor...")
+        logger.info("tool_executor_shutdown")
         for tool in self._tools.values():
             await tool.shutdown()
-        logger.info("ToolExecutor shutdown complete")
+        logger.info("tool_executor_shutdown_complete")

@@ -71,6 +71,7 @@
 
 - **事件系统**（`base/events/`）：单进程 async pub/sub `EventBus`。约 25 种 `EventType`，事件带 trace/span id。**事件不持久化**，仅消息和 trace 落盘。未运行时 publish 静默丢弃。
 - **Tracing**（`base/tracing/`）：基于 OpenTelemetry。facade（`trace_context.py` 的 `start_span`/`continue_trace`）传播 trace/span id，事件作 carrier 打通 gateway → router → agent 链路；span 由 `JsonlSpanExporter` 落盘为每 trace 一个 JSONL 文件，`FileTraceStore` 纯读（REST `/traces` 复用）；`llm.request`/`tool.{name}`/`message.send` span 已下沉。structlog processor 注入每条日志。ServerApp 启动时 `init_tracing`，可选 OTLP 导出（`OTEL_EXPORTER_OTLP_ENDPOINT` + `uv sync --extra otlp`）。
+- **Logging**（`base/logger.py`）：structlog + stdlib `ProcessorFormatter`，stdout 与文件 sink 渲染一致。server 进程额外写 `shared/logs/server-{date}.jsonl`（`TimedRotatingFileHandler` 按天滚动，保留 `TLON_LOG_RETENTION_DAYS` 天，默认 7；TUI 命令 silent 模式不落盘）；每条日志带 trace_id/span_id（OTel context）与 agent_id（`contextvars.bound_contextvars`，`_session_span`/`_on_message_routed` 等处按轮绑定）。REST `/agents/{id}/logs` 与 `/logs` 读 JSONL 过滤返回（2026-07-21）。
 - **记忆系统**（`memory/`）：**全部 JSONL + 内存缓存，无 SQLite、无向量库**。
   - Working memory：滚动窗口（默认 10 条）；
   - Episodic memory：summaries + facts，fact 支持 supersede（命中时原子重写 `facts.jsonl` 落盘，PR ；原仅改内存、重启后旧事实复活）；
@@ -145,14 +146,14 @@
 
 ### P2 — 代码质量 / 清理项
 
-> //–/– 已修复（2026-07-20 同批次，行内标 ✅）；//// 待处理（/ 建议立项，// 需先定方向）。
+> ///–/– 已修复（行内标 ✅； 于 2026-07-21 实现日志端点，其余为 2026-07-20 同批次）；/// 待处理（/ 建议立项，/ 需先定方向）。
 
 | # | 问题 | 位置 | 说明 |
 |---|------|------|------|
 | 20 | ✅ 字面 `...` 残留在 initialize() | `src/tlon/app/server/serverapp.py:137` | 重构残留。已删除（2026-07-20） |
 | 21 | ✅ 死代码 | `serverapp.py:234-265`（`_get_initial_agents`/`_create_default_configs`）、`clients/tui/common/utils/state.py`（StateManager 无人引用）、`adapter.py:358`（TelegramAdapter 无调用方） | 已全部删除（2026-07-20）；`ClientType.TELEGRAM` 枚举保留为协议词汇 |
 | 22 | ✅ Operator TUI 未接线 | 原 `src/tlon/app/clients/tui/operator/` | 展示占位/随机数据，不应作为可用功能外露。**已销项**：Python 空壳删除，改用 TypeScript + Ink 实现（`apps/operator/`，真实连接服务器，PR ） |
-| 23 | `/agents/{id}/logs` 假端点 | `src/tlon/app/server/api/rest.py:469-480` | 永远返回空（TODO） |
+| 23 | ✅ `/agents/{id}/logs` 假端点 | `src/tlon/app/server/api/rest.py:469-480` | 永远返回空（TODO）。**已修**：structlog 文件 sink（`shared/logs/server-{date}.jsonl`，按天滚动）+ agent_id contextvars 维度注入，端点改为读 JSONL 过滤返回，另增通用 `GET /logs`（trace_id/level/agent_id/limit/before）支撑 trace → 日志缝合（2026-07-21） |
 | 24 | ✅ `FileMessageStore._id_index` 坏且无效 | `src/tlon/organization/messaging/store.py:186,214,322-326` | load 存行号、append 存计数；`get_by_id` 仍全文件线性扫描；多处 `__import__("json")` 补丁式写法。已删除假索引（get_by_id 显式线性扫描）并改为正常 import（2026-07-20） |
 | 25 | ✅ tool arguments JSON 解析失败静默降级为 `{}` | `src/tlon/base/llm_client.py:200-205` | LLM 拿到空参数结果，难以排查。已在 warning 中补 tool call id / function name（2026-07-20） |
 | 26 | ✅ `APIConnectionError` 重试分支是死代码 | `src/tlon/base/llm_client.py:156-165` | `APIError` 的 except 在前，子类分支永远捕获不到。已调整顺序（2026-07-20）；两分支重试逻辑一致，仅日志文案变化 |
@@ -176,6 +177,7 @@
 | 39 | ✅ trace 传播断点 | `src/tlon/organization/messaging/router.py`（`_on_message_new`） | 未用 `continue_trace` 延续事件已有 trace_id，`start_span` 在无 contextvar 时另起新 trace，消息 → 路由 → Agent 的链路 trace 断裂。P2  修复时发现。**已修**：OTel 重构（2026-07-20）——facade（`trace_context.py`）+ JSONL exporter 落地，gateway → router → agent 传播链打通，`llm.request`/`tool.{name}`/`message.send` span 下沉，ServerApp 装配 `init_tracing`，`FileTraceStore` 变纯读模型 |
 | 40 | 容器 symlink 可绕过路径白名单 | `src/tlon/tools/filesystem/path_guard.py` | 校验在字符串层面，`/workspace` 内指向 `/etc` 的 symlink 可逃逸（ 修复时记录的遗留）。根治方向：容器内 `readlink` 校验或根文件系统只读挂载 |
 | 41 | TaskManager 同步 IO 未 async 化 | `src/tlon/tools/tasks/manager.py` |  部分修复的遗留：IO 已抽为 `_write_lines`/`_read_lines`，但 `save()`/`load()` 仍在事件循环内被同步调用；async 化涉及约 30 处调用点级联 |
+| 42 | Operator Logs 视图（TS 端） | `apps/operator/` |  修复的遗留：日志端点已就绪（`/agents/{id}/logs`、通用 `/logs` 支持 trace_id/level/agent_id 组合过滤），apps/operator 加 Logs 页接上即可，待排期 |
 
 ---
 
@@ -186,6 +188,6 @@
 1. ~~**修 pytest 配置**（）~~ ✅ PR ；
 2. ~~**修 `DockerRuntime.execute` 阻塞**（）~~ ✅ PR ；
 3. ~~**修 `ConfigService` MRO**（）与 facts supersede 落盘（）~~ ✅ PR ；
-4. **清理对外露出的半成品**（、、~~~~）—— 已随 PR  修复；Operator TUI、假端点仍待处理；
+4. **清理对外露出的半成品**（、~~~~、~~~~）—— 已随 PR  修复； 日志端点已实现（2026-07-21）；Operator TUI 已用 TS 重写（PR ）；
 5. ~~**统一 SDK 重连/认证**（、）~~ ✅ PR ；注意 Congress 的第二套重连逻辑仍存在，可后续收敛回 SDK；
 6. 然后才轮到结构性重构：拆 `agent.py` 上帝类（）、补 gateway 抽象（）、解全局单例（、）。

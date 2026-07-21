@@ -46,7 +46,7 @@ class ParticipantDirectory:
         self._agent_registry = agent_registry
         self._session_manager = session_manager
 
-        logger.info("ParticipantDirectory initialized")
+        logger.info("participant_directory_initialized")
 
     def list_all(self) -> list[Participant]:
         """Get all participants (agents + humans).

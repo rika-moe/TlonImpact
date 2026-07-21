@@ -61,7 +61,7 @@ class SessionManager:
         self._counter = 0
         self._lock = asyncio.Lock()
 
-        logger.info("SessionManager initialized")
+        logger.info("session_manager_initialized")
 
     async def create_session(
         self,
@@ -94,7 +94,7 @@ class SessionManager:
 
             self._sessions[session_id] = session
 
-        logger.info(f"Session created: {session_id} ({client_type})")
+        logger.info("session_created", session_id=session_id, client_type=client_type)
         return session
 
     async def close_session(self, session_id: str) -> bool:
@@ -110,7 +110,7 @@ class SessionManager:
             session = self._sessions.pop(session_id, None)
 
         if session:
-            logger.info(f"Session closed: {session_id}")
+            logger.info("session_closed", session_id=session_id)
             return True
 
         return False
@@ -155,7 +155,7 @@ class SessionManager:
         session = self._sessions.get(session_id)
         if session:
             session.mode = mode
-            logger.debug(f"Session {session_id} mode changed to {mode}")
+            logger.debug("session_mode_updated", session_id=session_id, mode=mode)
             return True
         return False
 
@@ -172,6 +172,6 @@ class SessionManager:
         session = self._sessions.get(session_id)
         if session:
             session.filters = filters
-            logger.debug(f"Session {session_id} filters updated: {filters}")
+            logger.debug("session_filters_updated", session_id=session_id, filters=filters)
             return True
         return False

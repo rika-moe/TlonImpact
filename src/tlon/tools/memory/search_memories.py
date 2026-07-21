@@ -71,7 +71,7 @@ class SearchMemoriesTool(Tool):
                 message=results_text,
             )
         except Exception as e:
-            logger.error(f"Error searching memories: {e}")
+            logger.error("memory_search_failed", query=query, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
                 error=str(e),

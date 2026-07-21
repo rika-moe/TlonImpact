@@ -84,7 +84,7 @@ class Summarizer:
             )
 
             if not response.content:
-                logger.warning("LLM returned empty summary")
+                logger.warning("summary_response_empty")
                 return self._generate_fallback_summary(interactions), [], []
 
             # Parse JSON response
@@ -107,12 +107,12 @@ class Summarizer:
                 return summary, key_decisions, action_items
 
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse summary JSON: {e}")
+                logger.warning("summary_json_parse_failed", error=str(e))
                 # Use the raw content as summary
                 return response.content.strip(), [], []
 
         except Exception as e:
-            logger.error(f"Error generating summary with LLM: {e}")
+            logger.error("summary_generation_failed", error=str(e), exc_info=True)
             return self._generate_fallback_summary(interactions), [], []
 
     async def extract_facts(
@@ -218,11 +218,11 @@ class Summarizer:
                 return validated_facts
 
             except (json.JSONDecodeError, ValueError) as e:
-                logger.warning(f"Failed to parse facts JSON: {e}")
+                logger.warning("facts_json_parse_failed", error=str(e))
                 return []
 
         except Exception as e:
-            logger.error(f"Error extracting facts with LLM: {e}")
+            logger.error("facts_extraction_failed", error=str(e), exc_info=True)
             return []
 
     async def process_interactions(

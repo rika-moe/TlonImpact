@@ -237,7 +237,7 @@ class TaskManager:
             self._write_lines(lines)
         except Exception as e:
             # Log error but don't crash
-            logger.warning(f"Failed to save tasks: {e}")
+            logger.warning("task_save_failed", error=str(e))
 
     def _write_lines(self, lines: list[str]) -> None:
         """Write lines to the storage file (blocking IO, isolated for save())."""
@@ -274,7 +274,7 @@ class TaskManager:
 
         except Exception as e:
             # Log error and start fresh
-            logger.warning(f"Failed to load tasks: {e}")
+            logger.warning("task_load_failed", error=str(e))
             self.tasks = {}
             self._counter = 0
 

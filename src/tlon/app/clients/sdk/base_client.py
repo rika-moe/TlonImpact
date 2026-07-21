@@ -206,11 +206,11 @@ class BaseClient:
             # Start receive loop
             self._receive_task = asyncio.create_task(self._receive_loop())
 
-            logger.info(f"Connected to {self.ws_url}")
+            logger.info("connection_established", ws_url=self.ws_url)
             return True
 
         except Exception as e:
-            logger.error(f"Failed to connect: {e}")
+            logger.error("connection_failed", error=str(e), exc_info=True)
             async with self._state_lock:
                 self._state = ConnectionState.ERROR
                 self._notify_state_change(ConnectionState.ERROR)
@@ -238,7 +238,7 @@ class BaseClient:
             self._state = ConnectionState.DISCONNECTED
             self._notify_state_change(ConnectionState.DISCONNECTED)
 
-        logger.info("Disconnected from server")
+        logger.info("disconnected")
 
     async def _cleanup(self) -> None:
         """Clean up resources."""
@@ -289,16 +289,16 @@ class BaseClient:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await self._handle_message(msg.data)
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
-                    logger.info("WebSocket closed by server")
+                    logger.info("websocket_closed")
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error(f"WebSocket error: {self._ws.exception()}")
+                    logger.error("websocket_error", error=str(self._ws.exception()))
                     break
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Receive loop error: {e}")
+            logger.error("receive_loop_error", error=str(e), exc_info=True)
         finally:
             # Connection lost
             await self._on_connection_lost()
@@ -327,7 +327,10 @@ class BaseClient:
                 self.max_reconnect_attempts > 0
                 and self._reconnect_count >= self.max_reconnect_attempts
             ):
-                logger.error(f"Max reconnection attempts ({self.max_reconnect_attempts}) reached")
+                logger.error(
+                    "max_reconnect_attempts_reached",
+                    max_reconnect_attempts=self.max_reconnect_attempts,
+                )
                 async with self._state_lock:
                     self._state = ConnectionState.ERROR
                     self._notify_state_change(ConnectionState.ERROR)
@@ -335,7 +338,9 @@ class BaseClient:
 
             self._reconnect_count += 1
             logger.info(
-                f"Reconnecting in {self.reconnect_delay}s (attempt {self._reconnect_count})..."
+                "reconnect_scheduled",
+                delay=self.reconnect_delay,
+                attempt=self._reconnect_count,
             )
 
             async with self._state_lock:
@@ -353,14 +358,14 @@ class BaseClient:
                         try:
                             await self.authenticate(**self._auth_params)
                         except Exception as e:
-                            logger.error(f"Re-authentication after reconnect failed: {e}")
+                            logger.error("reauthentication_failed", error=str(e), exc_info=True)
                             await self._dispatch_error(f"Re-authentication failed: {e}")
                             continue
-                    logger.info("Reconnected successfully")
+                    logger.info("reconnected")
                     self._notify_reconnect()
                     return
             except Exception as e:
-                logger.warning(f"Reconnection attempt failed: {e}")
+                logger.warning("reconnect_attempt_failed", error=str(e), exc_info=True)
 
     # ==================== Authentication ====================
 
@@ -453,7 +458,9 @@ class BaseClient:
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
                 logger.info(
-                    f"Authenticated as {self.session_id} (protocol: {self.protocol_version})"
+                    "authenticated",
+                    session_id=self.session_id,
+                    protocol_version=self.protocol_version,
                 )
                 return True
 
@@ -539,9 +546,9 @@ class BaseClient:
             await self._dispatch_message(msg)
 
         except json.JSONDecodeError:
-            logger.error(f"Invalid JSON received: {data[:200]}")
+            logger.error("invalid_json_received", data=data)
         except Exception as e:
-            logger.error(f"Error handling message: {e}")
+            logger.error("message_handling_failed", error=str(e), exc_info=True)
 
     async def _dispatch_event(self, event: dict[str, Any]) -> None:
         """Dispatch event to registered handlers."""
@@ -552,7 +559,7 @@ class BaseClient:
                 else:
                     handler(event)
             except Exception as e:
-                logger.error(f"Event handler error: {e}")
+                logger.error("event_handler_error", error=str(e), exc_info=True)
 
     async def _dispatch_message(self, msg: dict[str, Any]) -> None:
         """Dispatch message to registered handlers."""
@@ -563,7 +570,7 @@ class BaseClient:
                 else:
                     handler(msg)
             except Exception as e:
-                logger.error(f"Message handler error: {e}")
+                logger.error("message_handler_error", error=str(e), exc_info=True)
 
     async def _dispatch_error(self, error_msg: str) -> None:
         """Dispatch error to registered handlers."""
@@ -574,7 +581,7 @@ class BaseClient:
                 else:
                     handler(error_msg)
             except Exception as e:
-                logger.error(f"Error handler error: {e}")
+                logger.error("error_handler_error", error=str(e), exc_info=True)
 
     def _notify_state_change(self, state: ConnectionState) -> None:
         """Notify state change handlers."""
@@ -585,7 +592,7 @@ class BaseClient:
                 else:
                     handler(state)
             except Exception as e:
-                logger.error(f"State handler error: {e}")
+                logger.error("state_handler_error", error=str(e), exc_info=True)
 
     def _notify_reconnect(self) -> None:
         """Notify reconnect handlers after a successful auto-reconnect."""
@@ -596,7 +603,7 @@ class BaseClient:
                 else:
                     handler()
             except Exception as e:
-                logger.error(f"Reconnect handler error: {e}")
+                logger.error("reconnect_handler_error", error=str(e), exc_info=True)
 
     # ==================== Sending Messages ====================
 
@@ -610,7 +617,7 @@ class BaseClient:
             True if sent successfully
         """
         if not self.is_authenticated:
-            logger.error("Cannot send: not authenticated")
+            logger.error("send_rejected", reason="not_authenticated")
             return False
 
         # Add msg_id and timestamp if not present
@@ -624,14 +631,14 @@ class BaseClient:
     async def _send_raw(self, data: dict[str, Any]) -> bool:
         """Send raw data to the server (internal use)."""
         if not self._ws or self._ws.closed:
-            logger.error("Cannot send: not connected")
+            logger.error("send_rejected", reason="not_connected")
             return False
 
         try:
             await self._ws.send_str(json.dumps(data, ensure_ascii=False, default=str))
             return True
         except Exception as e:
-            logger.error(f"Failed to send message: {e}")
+            logger.error("message_send_failed", error=str(e), exc_info=True)
             return False
 
     # ==================== Heartbeat ====================
@@ -659,7 +666,7 @@ class BaseClient:
 
                 # Send ping
                 if not await self._send_raw(ping_msg):
-                    logger.warning("Failed to send ping")
+                    logger.warning("ping_send_failed")
                     continue
 
                 # Wait for pong with timeout
@@ -667,13 +674,13 @@ class BaseClient:
                     await asyncio.wait_for(pong_future, timeout=5.0)
                     # TODO: Track latency
                 except TimeoutError:
-                    logger.warning("Pong timeout, connection may be lost")
+                    logger.warning("pong_timeout")
                     # Don't disconnect immediately, let next ping fail
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"Heartbeat error: {e}")
+            logger.debug("heartbeat_error", error=str(e))
 
     # ==================== Handler Registration ====================
 
@@ -762,10 +769,10 @@ class BaseClient:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logger.warning(f"REST GET {path} failed: {resp.status}")
+                    logger.warning("rest_get_failed", path=path, status=resp.status)
                     return None
         except Exception as e:
-            logger.error(f"REST GET {path} error: {e}")
+            logger.error("rest_get_error", path=path, error=str(e), exc_info=True)
             return None
 
     async def rest_post(self, path: str, data: dict) -> dict | None:
@@ -787,8 +794,8 @@ class BaseClient:
                 if resp.status in (200, 201):
                     return await resp.json()
                 else:
-                    logger.warning(f"REST POST {path} failed: {resp.status}")
+                    logger.warning("rest_post_failed", path=path, status=resp.status)
                     return None
         except Exception as e:
-            logger.error(f"REST POST {path} error: {e}")
+            logger.error("rest_post_error", path=path, error=str(e), exc_info=True)
             return None

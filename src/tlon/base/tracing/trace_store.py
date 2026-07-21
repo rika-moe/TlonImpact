@@ -251,7 +251,7 @@ class FileTraceStore(TraceStore):
                         if span:
                             span.end_time = datetime.fromisoformat(event["timestamp"])
                 except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Error parsing trace event: {e}")
+                    logger.warning("trace_event_parse_failed", error=str(e))
                     continue
 
         if trace:

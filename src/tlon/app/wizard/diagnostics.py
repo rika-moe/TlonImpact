@@ -119,12 +119,12 @@ class ConfigDiagnostics:
         """
         self.report = DiagnosticReport()
 
-        logger.info("Running configuration diagnostics...")
+        logger.info("diagnostics_started", tlon_home=str(self.tlon_home))
 
         self._check_directories()
         self.validate_agents()
 
-        logger.info(f"Diagnostics complete: {self.report.get_summary()}")
+        logger.info("diagnostics_completed", summary=self.report.get_summary())
         return self.report
 
     def _check_directories(self) -> None:

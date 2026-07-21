@@ -105,19 +105,19 @@ class MessageRouter(Component, Device):
         # Routing rules cache
         self._proactive_agents: set[str] = set()
 
-        logger.info("MessageRouter constructed")
+        logger.info("message_router_constructed")
 
     async def initialize(self) -> None:
         """Start the router by subscribing to MESSAGE_NEW events."""
         self.subscribe(EventType.MESSAGE_NEW, self._on_message_new)
-        logger.info("MessageRouter initialized")
+        logger.info("message_router_initialized")
         self._initialized = True
 
     async def shutdown(self) -> None:
         """Stop the router."""
         self.unsubscribe_all()
         self._initialized = False
-        logger.info("MessageRouter shut down")
+        logger.info("message_router_shutdown")
 
     async def _on_message_new(self, event: Event) -> None:
         """Handle new message events.
@@ -162,12 +162,17 @@ class MessageRouter(Component, Device):
             # Step 3: Publish routed message with trace context
             if targets:
                 await self._publish_routed(message, targets, ctx)
-                logger.debug(f"Routed message {message.id} to {targets}")
+                logger.debug("message_routed", message_id=message.id, targets=targets)
             else:
-                logger.debug(f"No targets for message {message.id}")
+                logger.debug("message_unrouted", message_id=message.id)
 
         except Exception as e:
-            logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
+            logger.error(
+                "message_routing_failed",
+                message_id=message.id,
+                error=str(e),
+                exc_info=True,
+            )
 
     async def _store_message(self, message: Message) -> None:
         """Store message to persistent store.
@@ -178,7 +183,7 @@ class MessageRouter(Component, Device):
         try:
             await self._message_store.append(message)
         except Exception as e:
-            logger.error(f"Failed to store message {message.id}: {e}")
+            logger.error("message_storage_failed", message_id=message.id, error=str(e))
             # Don't fail routing if storage fails - message flow is more important
 
     def _decide_targets(self, message: Message) -> list[str]:
@@ -226,12 +231,16 @@ class MessageRouter(Component, Device):
             # Explicit mentions - resolve to agent IDs and route
             resolved = self._resolve_mentions_to_ids(message.mentions)
             targets.update(resolved)
-            logger.debug(f"Routing to mentioned agents: {message.mentions} -> {resolved}")
+            logger.debug(
+                "mentioned_agents_resolved",
+                mentions=message.mentions,
+                resolved=sorted(resolved),
+            )
         else:
             # No mentions - route to proactive agents
             proactive = self._get_proactive_agents()
             targets.update(proactive)
-            logger.debug(f"Routing to proactive agents: {proactive}")
+            logger.debug("proactive_agents_selected", agents=sorted(proactive))
 
         return targets
 
@@ -253,7 +262,9 @@ class MessageRouter(Component, Device):
         if message.mentions:
             resolved = self._resolve_mentions_to_ids(message.mentions)
             targets.update(resolved)
-            logger.debug(f"Agent message routing to: @clients + {resolved}")
+            logger.debug(
+                "agent_message_targets_resolved", resolved_mentions=sorted(resolved)
+            )
 
         return targets
 
@@ -339,7 +350,7 @@ class MessageRouter(Component, Device):
             if not found:
                 # Could not resolve, log warning but keep original
                 # (might be a future agent or typo)
-                logger.warning(f"Could not resolve mention '{mention}' to agent ID")
+                logger.warning("mention_resolution_failed", mention=mention)
                 resolved.add(mention)  # Keep as-is, agent will ignore if not matching
 
         return resolved
@@ -419,4 +430,4 @@ class MessageRouter(Component, Device):
             agent_ids: New set of proactive agent IDs
         """
         self._proactive_agents = agent_ids.copy()
-        logger.info(f"Updated proactive agents: {agent_ids}")
+        logger.info("proactive_agents_updated", agent_ids=sorted(agent_ids))

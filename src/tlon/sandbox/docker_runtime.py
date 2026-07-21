@@ -113,14 +113,14 @@ class DockerRuntime:
             )
 
             if self.container.status != "running":
-                logger.info(f"Starting existing container: {self.container_name}")
+                logger.info("container_start", container_name=self.container_name)
                 await asyncio.to_thread(self.container.start)
                 # Wait a moment for container to be ready
                 await asyncio.sleep(1)
 
         except NotFound:
             # Container doesn't exist, create it
-            logger.info(f"Creating new container: {self.container_name}")
+            logger.info("container_creation", container_name=self.container_name)
             await self._create_container()
 
     async def _create_container(self) -> None:
@@ -133,11 +133,11 @@ class DockerRuntime:
 
         try:
             await asyncio.to_thread(self.client.images.get, image)
-            logger.debug(f"Image {image} found locally")
+            logger.debug("image_found", image=image)
         except ImageNotFound:
-            logger.info(f"Pulling image: {image}")
+            logger.info("image_pull", image=image)
             await asyncio.to_thread(self.client.images.pull, image)
-            logger.info(f"Image {image} pulled successfully")
+            logger.info("image_pulled", image=image)
 
         workspace = paths.agent_workspace_dir(self.agent_id)
         volumes = {
@@ -147,7 +147,7 @@ class DockerRuntime:
             }
         }
 
-        logger.info(f"Creating container {self.container_name} from image {image}")
+        logger.info("container_run", container_name=self.container_name, image=image)
 
         self.container = await asyncio.to_thread(
             self.client.containers.run,
@@ -166,7 +166,7 @@ class DockerRuntime:
             tty=True,
         )
 
-        logger.info(f"Container {self.container_name} created")
+        logger.info("container_created", container_name=self.container_name)
 
     async def execute(
         self, command: str, timeout: int = 60, workdir: str | None = None
@@ -204,7 +204,7 @@ class DockerRuntime:
                     timeout=timeout + 5,
                 )
             except TimeoutError:
-                logger.warning(f"Command timed out after {timeout}s: {command[:100]}")
+                logger.warning("command_timeout", timeout=timeout, command=command)
                 return ExecutionResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout} seconds"
                 )
@@ -218,7 +218,7 @@ class DockerRuntime:
 
             # `timeout` kills the command with exit code 124
             if exit_code == 124:
-                logger.warning(f"Command timed out after {timeout}s: {command[:100]}")
+                logger.warning("command_timeout", timeout=timeout, command=command)
                 return ExecutionResult(
                     exit_code=-1,
                     stdout=stdout,
@@ -228,17 +228,17 @@ class DockerRuntime:
             return ExecutionResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
         except Exception as e:
-            logger.error(f"Error executing command: {e}", exc_info=True)
+            logger.error("command_execution_error", error=str(e), exc_info=True)
             return ExecutionResult(exit_code=-1, stdout="", stderr=str(e))
 
     async def stop(self) -> None:
         """Stop the container."""
         if self.container:
             try:
-                logger.info(f"Stopping container: {self.container_name}")
+                logger.info("container_stop", container_name=self.container_name)
                 await asyncio.to_thread(self.container.stop, timeout=10)
             except Exception as e:
-                logger.warning(f"Error stopping container: {e}")
+                logger.warning("container_stop_error", error=str(e))
 
     async def remove(self, force: bool = False) -> None:
         """Remove the container.
@@ -248,11 +248,11 @@ class DockerRuntime:
         """
         if self.container:
             try:
-                logger.info(f"Removing container: {self.container_name}")
+                logger.info("container_removal", container_name=self.container_name)
                 await asyncio.to_thread(self.container.remove, force=force)
                 self.container = None
             except Exception as e:
-                logger.warning(f"Error removing container: {e}")
+                logger.warning("container_removal_error", error=str(e))
 
     def is_running(self) -> bool:
         """Check if container is running.
@@ -286,7 +286,7 @@ class DockerRuntime:
             )
             return logs.decode("utf-8", errors="replace")
         except Exception as e:
-            logger.error(f"Error getting logs: {e}")
+            logger.error("container_logs_error", error=str(e))
             return ""
 
     # ------------------------------------------------------------------
@@ -311,14 +311,14 @@ class DockerRuntime:
         if not self.container:
             await self.ensure_running()
 
-        logger.debug(f"Reading file from container: {path}")
+        logger.debug("file_read", path=path)
 
         result = await self.execute(f"cat {shlex.quote(path)}")
 
         if result.exit_code != 0:
             if "No such file" in result.stderr or "not found" in result.stderr.lower():
                 raise FileNotFoundError(f"File not found in container: {path}")
-            logger.error(f"cat failed for {path}: {result.stderr}")
+            logger.error("file_read_error", path=path, stderr=result.stderr)
             raise RuntimeError(f"cat failed: {result.stderr}")
 
         return result.stdout.encode("utf-8")
@@ -365,10 +365,10 @@ class DockerRuntime:
             self.container.put_archive, parent or "/", tar_stream.getvalue()
         )
         if not ok:
-            logger.error(f"write_file failed for {path}: put_archive returned False")
+            logger.error("file_write_error", path=path)
             raise RuntimeError(f"write_file failed: put_archive returned False for {path}")
 
-        logger.debug(f"Wrote {len(content)} bytes to {path}")
+        logger.debug("file_written", path=path, size=len(content))
         return True
 
     async def file_exists(self, path: str) -> bool:

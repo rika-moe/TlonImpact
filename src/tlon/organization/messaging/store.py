@@ -140,14 +140,14 @@ class FileMessageStore(MessageStore):
         # Lock for thread safety
         self._lock = asyncio.Lock()
 
-        logger.info(f"FileMessageStore initialized: {self._file_path}")
+        logger.info("message_store_initialized", file_path=str(self._file_path))
 
     async def initialize(self) -> None:
         """Initialize by loading existing messages into cache."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
         if not self._file_path.exists():
-            logger.info("No existing message file, starting fresh")
+            logger.info("message_store_fresh_start")
             return
 
         try:
@@ -165,15 +165,21 @@ class FileMessageStore(MessageStore):
                     msg = Message.from_dict(data)
                     messages.append(msg)
                 except Exception as e:
-                    logger.warning(f"Failed to parse message at line {line_num}: {e}")
+                    logger.warning(
+                        "message_parse_failed", line_number=line_num, error=str(e)
+                    )
 
             # Keep only recent messages in cache
             self._cache = messages[-self._cache_size :]
 
-            logger.info(f"Loaded {len(messages)} messages, cached {len(self._cache)}")
+            logger.info(
+                "message_history_loaded",
+                loaded_count=len(messages),
+                cached_count=len(self._cache),
+            )
 
         except Exception as e:
-            logger.error(f"Error loading message history: {e}", exc_info=True)
+            logger.error("message_history_load_failed", error=str(e), exc_info=True)
 
     async def append(self, message: Message) -> None:
         """Append message to file and cache.
@@ -198,7 +204,12 @@ class FileMessageStore(MessageStore):
                     json.dumps(message.to_dict(), ensure_ascii=False) + "\n"
                 )
         except Exception as e:
-            logger.error(f"Failed to persist message: {e}", exc_info=True)
+            logger.error(
+                "message_persist_failed",
+                message_id=message.id,
+                error=str(e),
+                exc_info=True,
+            )
             raise
 
     async def get_history(
@@ -258,7 +269,7 @@ class FileMessageStore(MessageStore):
             return messages
 
         except Exception as e:
-            logger.error(f"Error reading from file: {e}")
+            logger.error("message_file_read_failed", error=str(e))
             return []
 
     def _apply_filter(self, messages: list[Message], filter: MessageFilter) -> list[Message]:

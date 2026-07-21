@@ -52,13 +52,13 @@ class EventBus(Component):
         Begins processing events from the queue.
         """
         if self._running:
-            logger.warning("EventBus already running")
+            logger.warning("event_bus_already_running")
             return
 
         self._running = True
         self._processor_task = asyncio.create_task(self._process_events())
         self._initialized = True
-        logger.info("EventBus started")
+        logger.info("event_bus_started")
 
     async def shutdown(self) -> None:
         """Stop the event processor.
@@ -79,9 +79,9 @@ class EventBus(Component):
             except asyncio.CancelledError:
                 pass  # Expected when task is cancelled
             except TimeoutError:
-                logger.warning("EventBus processor task timeout during shutdown")
+                logger.warning("event_bus_shutdown_timeout")
 
-        logger.info("EventBus stopped")
+        logger.info("event_bus_stopped")
 
     def subscribe(self, event_type: EventType, handler: Callable[[Event], None]) -> str:
         """Subscribe to events of a specific type.
@@ -100,7 +100,9 @@ class EventBus(Component):
             self._subscribers[event_type] = []
 
         self._subscribers[event_type].append((subscription_id, handler))
-        logger.debug(f"Subscribed {subscription_id} to {event_type.value}")
+        logger.debug(
+            "event_subscribed", subscription_id=subscription_id, event_type=event_type.value
+        )
 
         return subscription_id
 
@@ -117,10 +119,14 @@ class EventBus(Component):
             for idx, (sid, _) in enumerate(handlers):
                 if sid == subscription_id:
                     handlers.pop(idx)
-                    logger.debug(f"Unsubscribed {subscription_id} from {event_type.value}")
+                    logger.debug(
+                        "event_unsubscribed",
+                        subscription_id=subscription_id,
+                        event_type=event_type.value,
+                    )
                     return True
 
-        logger.warning(f"Subscription {subscription_id} not found")
+        logger.warning("subscription_not_found", subscription_id=subscription_id)
         return False
 
     async def publish(self, event: Event) -> None:
@@ -133,14 +139,15 @@ class EventBus(Component):
             event: The event to publish
         """
         if not self._running:
-            logger.error(
-                f"[EventBus] Cannot publish event {event.type.value}: EventBus is not running"
-            )
+            logger.error("event_publish_rejected", event_type=event.type.value)
             return
 
         await self._event_queue.put(event)
         logger.info(
-            f"[EventBus] Event queued: {event.type.value} from {event.source} (queue size: {self._event_queue.qsize()})"
+            "event_queued",
+            event_type=event.type.value,
+            source=event.source,
+            queue_size=self._event_queue.qsize(),
         )
 
     async def _process_events(self) -> None:
@@ -149,27 +156,27 @@ class EventBus(Component):
         Continuously processes events from the queue and dispatches
         them to subscribers.
         """
-        logger.info("[EventBus] Event processor started")
+        logger.info("event_processor_started")
         try:
             while self._running:
                 try:
                     # Wait for an event with timeout to allow checking _running
                     event = await asyncio.wait_for(self._event_queue.get(), timeout=0.5)
-                    logger.info(f"[EventBus] Processing event from queue: {event.type.value}")
+                    logger.info("event_processing", event_type=event.type.value)
                     await self._dispatch(event)
                     self._event_queue.task_done()
                 except TimeoutError:
                     continue
                 except asyncio.CancelledError:
                     # Task was cancelled, exit cleanly
-                    logger.info("[EventBus] Event processor cancelled")
+                    logger.info("event_processor_cancelled")
                     break
                 except Exception as e:
-                    logger.error(f"[EventBus] Error in event processing loop: {e}", exc_info=True)
+                    logger.error("event_processing_error", error=str(e), exc_info=True)
         except asyncio.CancelledError:
             # Exit cleanly when cancelled
-            logger.info("[EventBus] Event processor cancelled (outer)")
-        logger.info("[EventBus] Event processor stopped")
+            logger.info("event_processor_cancelled")
+        logger.info("event_processor_stopped")
 
     async def _dispatch(self, event: Event) -> None:
         """Dispatch an event to all subscribers.
@@ -186,30 +193,38 @@ class EventBus(Component):
         handlers = self._subscribers.get(event.type, [])
 
         if not handlers:
-            logger.warning(f"[EventBus] No handlers for event type: {event.type.value}")
+            logger.warning("event_handler_missing", event_type=event.type.value)
             return
 
-        logger.info(f"[EventBus] Dispatching {event.type.value} to {len(handlers)} handlers")
-        handler_names = [sid for sid, _ in handlers]
-        logger.info(f"[EventBus] Handler IDs: {handler_names}")
+        logger.info(
+            "event_dispatching",
+            event_type=event.type.value,
+            handler_count=len(handlers),
+            handler_ids=[sid for sid, _ in handlers],
+        )
 
         for subscription_id, handler in handlers:
             try:
                 handler_name = getattr(handler, "__name__", str(handler))
                 logger.info(
-                    f"[EventBus] Calling handler {subscription_id} ({handler_name}) for {event.type.value}"
+                    "handler_call",
+                    subscription_id=subscription_id,
+                    handler=handler_name,
+                    event_type=event.type.value,
                 )
                 if asyncio.iscoroutinefunction(handler):
                     # Await async handler sequentially (errors are isolated
                     # inside _run_handler so later handlers still run)
                     await self._run_handler(handler, event, subscription_id)
-                    logger.info(f"[EventBus] Completed async handler {subscription_id}")
                 else:
                     # Run sync handler in thread pool
                     await asyncio.get_event_loop().run_in_executor(None, handler, event)
             except Exception as e:
                 logger.error(
-                    f"[EventBus] Error dispatching event to {subscription_id}: {e}", exc_info=True
+                    "event_dispatch_error",
+                    subscription_id=subscription_id,
+                    error=str(e),
+                    exc_info=True,
                 )
 
     async def _run_handler(
@@ -222,15 +237,13 @@ class EventBus(Component):
             event: The event to handle
             subscription_id: For logging purposes
         """
-        handler_name = getattr(handler, "__name__", str(handler))
-        logger.info(
-            f"[EventBus] Running async handler {subscription_id} ({handler_name}) for {event.type.value}"
-        )
         try:
             await handler(event)
-            logger.info(f"[EventBus] Handler {subscription_id} completed successfully")
+            logger.info("handler_completed", subscription_id=subscription_id)
         except Exception as e:
-            logger.error(f"[EventBus] Error in handler {subscription_id}: {e}", exc_info=True)
+            logger.error(
+                "handler_error", subscription_id=subscription_id, error=str(e), exc_info=True
+            )
 
     def get_subscriber_count(self, event_type: EventType | None = None) -> int:
         """Get the number of subscribers.

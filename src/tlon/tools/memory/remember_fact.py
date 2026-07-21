@@ -113,7 +113,7 @@ class RememberFactTool(Tool):
                 message=f"✅ 已记录事实: {fact[:50]}...",
             )
         except Exception as e:
-            logger.error(f"Error remembering fact: {e}")
+            logger.error("fact_remember_failed", content=fact, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
                 error=str(e),

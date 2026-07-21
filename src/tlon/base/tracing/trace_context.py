@@ -118,7 +118,7 @@ def continue_trace(
         if remote_trace_id <= 0:
             raise ValueError("trace_id must be positive")
     except ValueError:
-        logger.warning(f"Invalid trace carrier (trace_id={trace_id!r}), starting detached")
+        logger.warning("invalid_trace_carrier", trace_id=trace_id)
         yield SpanCtx(trace_id=None, span_id=None)
         return
 

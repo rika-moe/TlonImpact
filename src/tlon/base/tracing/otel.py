@@ -49,7 +49,7 @@ def init_tracing(trace_store_dir: Path, otlp_endpoint: str | None = None) -> Tra
     global _initialized
     provider = trace.get_tracer_provider()
     if _initialized:
-        logger.debug("Tracing already initialized, skipping")
+        logger.debug("tracing_already_initialized")
         return provider  # type: ignore[return-value]
 
     sampler = ALWAYS_ON
@@ -59,7 +59,7 @@ def init_tracing(trace_store_dir: Path, otlp_endpoint: str | None = None) -> Tra
             sampler = TraceIdRatioBased(float(ratio_env))
         except ValueError:
             logger.warning(
-                f"Invalid {SAMPLE_RATIO_ENV}={ratio_env!r}, falling back to ALWAYS_ON"
+                "invalid_sample_ratio", env_var=SAMPLE_RATIO_ENV, value=ratio_env
             )
 
     provider = TracerProvider(sampler=sampler)
@@ -70,7 +70,7 @@ def init_tracing(trace_store_dir: Path, otlp_endpoint: str | None = None) -> Tra
 
     trace.set_tracer_provider(provider)
     _initialized = True
-    logger.info(f"Tracing initialized (store: {trace_store_dir})")
+    logger.info("tracing_initialized", trace_store_dir=str(trace_store_dir))
     return provider
 
 
@@ -85,14 +85,15 @@ def _try_add_otlp_exporter(provider: TracerProvider, endpoint: str) -> None:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     except ImportError:
         logger.warning(
-            "OTLP endpoint configured but opentelemetry-exporter-otlp-proto-http "
-            "is not installed; skipping OTLP export (install with `uv sync --extra otlp`)"
+            "otlp_exporter_unavailable",
+            endpoint=endpoint,
+            install_hint="uv sync --extra otlp",
         )
         return
 
     traces_url = f"{endpoint.rstrip('/')}/v1/traces"
     provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter(endpoint=traces_url)))
-    logger.info(f"OTLP exporter enabled (endpoint: {traces_url})")
+    logger.info("otlp_exporter_enabled", endpoint=traces_url)
 
 
 def shutdown_tracing() -> None:
@@ -108,4 +109,4 @@ def shutdown_tracing() -> None:
     if hasattr(provider, "shutdown"):
         provider.shutdown()  # type: ignore[union-attr]
     _initialized = False
-    logger.info("Tracing shut down")
+    logger.info("tracing_shutdown")

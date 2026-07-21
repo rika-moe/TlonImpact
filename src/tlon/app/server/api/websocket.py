@@ -94,7 +94,7 @@ class WebSocketHandler:
             async with self._lock:
                 self._connections[session_id] = ws
 
-            logger.info(f"WebSocket connected: {session_id}")
+            logger.info("websocket_connected", session_id=session_id)
 
             # Send initial data based on mode
             await self._send_initial_data(ws, session)
@@ -104,21 +104,23 @@ class WebSocketHandler:
                 if msg.type == WSMsgType.TEXT:
                     await self._handle_client_message(session_id, msg.data)
                 elif msg.type == WSMsgType.ERROR:
-                    logger.error(f"WebSocket error for {session_id}: {ws.exception()}")
+                    logger.error(
+                        "websocket_error", session_id=session_id, error=str(ws.exception())
+                    )
                 elif msg.type == WSMsgType.CLOSE:
                     break
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"WebSocket error: {e}", exc_info=True)
+            logger.error("websocket_error", session_id=session_id, error=str(e), exc_info=True)
         finally:
             # Cleanup
             if session_id:
                 async with self._lock:
                     self._connections.pop(session_id, None)
                 await self.client_gateway.disconnect_client(session_id)
-                logger.info(f"WebSocket disconnected: {session_id}")
+                logger.info("websocket_disconnected", session_id=session_id)
 
         return ws
 
@@ -214,7 +216,10 @@ class WebSocketHandler:
             )
 
             logger.info(
-                f"Client authenticated: {session.id} ({client_type}) protocol={negotiated_version}"
+                "client_authenticated",
+                session_id=session.id,
+                client_type=client_type,
+                protocol_version=negotiated_version,
             )
             return session, session.id
 
@@ -225,7 +230,7 @@ class WebSocketHandler:
             await self._send_error(ws, "Invalid JSON")
             return None
         except Exception as e:
-            logger.error(f"Authentication error: {e}")
+            logger.error("authentication_error", error=str(e), exc_info=True)
             await self._send_error(ws, f"Authentication failed: {str(e)}")
             return None
 
@@ -264,7 +269,11 @@ class WebSocketHandler:
         if common_versions:
             # Return highest common version (simple string comparison works for semver)
             highest = max(common_versions)
-            logger.debug(f"Negotiated version {highest} from supported versions")
+            logger.debug(
+                "protocol_version_negotiated",
+                protocol_version=highest,
+                supported_versions=client_supported,
+            )
             return (highest, None)
 
         # Check if client version is too old
@@ -310,22 +319,26 @@ class WebSocketHandler:
         except json.JSONDecodeError:
             await self._send_error_to_session(session_id, "Invalid JSON")
         except Exception as e:
-            logger.error(f"Error handling client message: {e}")
+            logger.error("client_message_error", session_id=session_id, error=str(e))
             await self._send_error_to_session(session_id, f"Error: {str(e)}")
 
     async def _handle_send_message(self, session_id: str, msg: dict) -> None:
         """Handle a send message request from client."""
         content = msg.get("content", "").strip()
-        logger.info(f"[WebSocket] Received message from session {session_id}: {content[:50]}...")
+        mentions = msg.get("mentions", [])
+        logger.info(
+            "message_received",
+            session_id=session_id,
+            message_id=msg.get("id"),
+            content=content,
+            mentions=mentions,
+        )
 
         if not content:
             await self._send_error_to_session(session_id, "Message content is empty")
             return
 
-        mentions = msg.get("mentions", [])
-
         # Send message through server
-        logger.debug(f"[WebSocket] Calling server.send_message for session {session_id}")
         await self.client_gateway.send_message(
             content=content,
             sender_id="human",
@@ -333,7 +346,6 @@ class WebSocketHandler:
             sender_type="human",
             mentions=mentions,
         )
-        logger.debug(f"[WebSocket] server.send_message completed for session {session_id}")
 
     async def _handle_mode_change(self, session_id: str, msg: dict) -> None:
         """Handle a mode change request from client."""
@@ -438,9 +450,7 @@ class WebSocketHandler:
             event_data["span_id"] = event.span_id
         if event.parent_span_id:
             event_data["parent_span_id"] = event.parent_span_id
-        logger.debug(
-            f"[WebSocket] Sending event {event.type.value} to client (ws closed: {ws.closed})"
-        )
+        logger.debug("event_sending", event_type=event.type.value, ws_closed=ws.closed)
         await self._send_message(ws, event_data)
 
     async def _send_message(self, ws: web.WebSocketResponse, data: dict) -> None:
@@ -449,7 +459,7 @@ class WebSocketHandler:
             if not ws.closed:
                 await ws.send_str(json.dumps(data, ensure_ascii=False, default=str))
         except Exception as e:
-            logger.debug(f"Error sending WebSocket message: {e}")
+            logger.debug("websocket_send_error", error=str(e))
 
     async def _send_error(self, ws: web.WebSocketResponse, message: str) -> None:
         """Send an error message to a WebSocket client."""
@@ -534,6 +544,7 @@ class WebSocketServer:
             port: Port to listen on
         """
         self.client_gateway = client_gateway
+        self.agent_registry = agent_registry
         self.host = host
         self.port = port
         self._handler = WebSocketHandler(client_gateway, agent_registry)
@@ -545,7 +556,7 @@ class WebSocketServer:
     async def start(self) -> None:
         """Start the WebSocket server."""
         if self._running:
-            logger.warning("WebSocket server already running")
+            logger.warning("websocket_server_already_running")
             return
 
         self._app = web.Application()
@@ -558,14 +569,14 @@ class WebSocketServer:
         await self._site.start()
 
         self._running = True
-        logger.info(f"WebSocket server started on ws://{self.host}:{self.port}/ws")
+        logger.info("websocket_server_started", host=self.host, port=self.port)
 
     async def stop(self) -> None:
         """Stop the WebSocket server."""
         if not self._running:
             return
 
-        logger.info("Stopping WebSocket server...")
+        logger.info("websocket_server_stopping")
 
         # Close all connections
         for session_id in list(self._handler._connections.keys()):
@@ -575,7 +586,7 @@ class WebSocketServer:
             await self._runner.cleanup()
 
         self._running = False
-        logger.info("WebSocket server stopped")
+        logger.info("websocket_server_stopped")
 
     def is_running(self) -> bool:
         """Check if the WebSocket server is running.

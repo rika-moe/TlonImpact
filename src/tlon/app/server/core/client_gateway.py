@@ -133,21 +133,21 @@ class ClientGateway(Component):
         self._running = False
         self._shutdown_event = asyncio.Event()
 
-        logger.info(f"ClientGateway constructed (host={host}, port={port})")
+        logger.info("client_gateway_constructed", host=host, port=port)
 
     async def initialize(self) -> None:
         """Initialize the gateway and its sub-components.
 
         Starts the notification service to begin listening for events.
         """
-        logger.info("Initializing ClientGateway...")
+        logger.info("client_gateway_initializing")
 
         # Initialize notification service
         await self._notifications.initialize()
 
         self._running = True
         self._initialized = True
-        logger.info("ClientGateway initialized successfully")
+        logger.info("client_gateway_initialized")
 
     async def shutdown(self) -> None:
         """Shutdown the gateway gracefully.
@@ -157,7 +157,7 @@ class ClientGateway(Component):
         if not self._running:
             return
 
-        logger.info("Shutting down ClientGateway...")
+        logger.info("client_gateway_shutdown_started")
 
         self._running = False
         self._shutdown_event.set()
@@ -166,7 +166,7 @@ class ClientGateway(Component):
         # Shutdown notification service
         await self._notifications.shutdown()
 
-        logger.info("ClientGateway shutdown complete")
+        logger.info("client_gateway_shutdown_completed")
 
     # ==================== Session Management ====================
 
@@ -198,7 +198,7 @@ class ClientGateway(Component):
         # Register event handler via NotificationService
         self._notifications.register_handler(session.id, event_handler)
 
-        logger.info(f"Client connected: {session.id} ({client_type})")
+        logger.info("client_connected", session_id=session.id, client_type=client_type)
         return session
 
     async def disconnect_client(self, session_id: str) -> bool:
@@ -217,7 +217,7 @@ class ClientGateway(Component):
         result = await self._session_manager.close_session(session_id)
 
         if result:
-            logger.info(f"Client disconnected: {session_id}")
+            logger.info("client_disconnected", session_id=session_id)
 
         return result
 
