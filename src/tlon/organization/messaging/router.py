@@ -28,7 +28,7 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.tracing.trace_context import start_span
+from tlon.base.tracing.trace_context import SpanCtx, continue_trace, start_span
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 
@@ -131,32 +131,43 @@ class MessageRouter(Component, Device):
             event: The MESSAGE_NEW event
         """
         message: Message = event.payload
+        attributes = {"message_id": message.id, "sender": message.sender_id}
 
-        parent_span_id = event.span_id
+        if event.trace_id:
+            with continue_trace(event.trace_id, event.span_id), start_span(
+                "message.routing", source="message_router", attributes=attributes
+            ) as ctx:
+                await self._route_message(message, ctx)
+        else:
+            # No carrier on the event: start a detached span
+            with start_span(
+                "message.routing", source="message_router", attributes=attributes
+            ) as ctx:
+                await self._route_message(message, ctx)
 
-        with start_span(
-            name="message_routing",
-            source="message_router",
-            parent_span_id=parent_span_id,
-            event_type=EventType.MESSAGE_ROUTED.value,
-            payload={"message_id": message.id, "sender": message.sender_id},
-        ) as ctx:
-            try:
-                # Step 1: Persist message (non-blocking, fire-and-forget is ok)
-                await self._store_message(message)
+    async def _route_message(self, message: Message, ctx: SpanCtx) -> None:
+        """Store, route, and publish a message within a tracing span.
 
-                # Step 2: Decide routing targets
-                targets = self._decide_targets(message)
+        Args:
+            message: The message to route
+            ctx: Trace context of the routing span
+        """
+        try:
+            # Step 1: Persist message (non-blocking, fire-and-forget is ok)
+            await self._store_message(message)
 
-                # Step 3: Publish routed message with trace context
-                if targets:
-                    await self._publish_routed(message, targets, ctx)
-                    logger.debug(f"Routed message {message.id} to {targets}")
-                else:
-                    logger.debug(f"No targets for message {message.id}")
+            # Step 2: Decide routing targets
+            targets = self._decide_targets(message)
 
-            except Exception as e:
-                logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
+            # Step 3: Publish routed message with trace context
+            if targets:
+                await self._publish_routed(message, targets, ctx)
+                logger.debug(f"Routed message {message.id} to {targets}")
+            else:
+                logger.debug(f"No targets for message {message.id}")
+
+        except Exception as e:
+            logger.error(f"Error routing message {message.id}: {e}", exc_info=True)
 
     async def _store_message(self, message: Message) -> None:
         """Store message to persistent store.
@@ -333,7 +344,9 @@ class MessageRouter(Component, Device):
 
         return resolved
 
-    async def _publish_routed(self, message: Message, targets: list[str], ctx=None) -> None:
+    async def _publish_routed(
+        self, message: Message, targets: list[str], ctx: SpanCtx | None = None
+    ) -> None:
         """Publish a routed message event.
 
         Args:
@@ -353,7 +366,7 @@ class MessageRouter(Component, Device):
             "payload": routed,
             "source": "message_router",
         }
-        if ctx:
+        if ctx and ctx.trace_id:
             event_kwargs["trace_id"] = ctx.trace_id
             event_kwargs["span_id"] = ctx.span_id
             event_kwargs["parent_span_id"] = ctx.parent_span_id

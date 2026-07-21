@@ -31,6 +31,7 @@ from tlon.base.component import Component
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.tracing.trace_context import start_span
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.participant import Participant
 from tlon.organization.messaging.store import MessageStore
@@ -299,13 +300,21 @@ class ClientGateway(Component):
             mentions=mentions or [],
         )
 
-        await self._event_bus.publish(
-            Event(
-                type=EventType.MESSAGE_NEW,
-                payload=message,
-                source=sender_id,
+        with start_span(
+            "message.received",
+            source="client_gateway",
+            attributes={"message_id": message.id, "sender": sender_id},
+        ) as ctx:
+            await self._event_bus.publish(
+                Event(
+                    type=EventType.MESSAGE_NEW,
+                    payload=message,
+                    source=sender_id,
+                    trace_id=ctx.trace_id,
+                    span_id=ctx.span_id,
+                    parent_span_id=ctx.parent_span_id,
+                )
             )
-        )
 
         return message
 

@@ -4,9 +4,14 @@ Manages tool registration and direct async execution.
 No EventBus involvement - Agent calls execute() directly.
 """
 
+import json
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from tlon.base.logger import get_logger
+from tlon.base.tracing.trace_context import start_span
 from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -126,6 +131,30 @@ class ToolExecutor:
 
         Returns:
             ToolResult with execution outcome
+        """
+        args_summary = json.dumps(arguments, ensure_ascii=False, default=str)[:200]
+        with start_span(
+            f"tool.{tool_name}",
+            source="tool_executor",
+            attributes={"tool.name": tool_name, "tool.arguments": args_summary},
+        ):
+            span = trace.get_current_span()
+            result = await self._execute_inner(tool_name, arguments)
+            span.set_attribute("tool.success", result.success)
+            if not result.success:
+                span.set_attribute("tool.error", result.error)
+                span.set_status(Status(StatusCode.ERROR, result.error))
+            return result
+
+    async def _execute_inner(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+        """Validate arguments and run the tool, converting failures to ToolResult.
+
+        Args:
+            tool_name: Name of the tool to execute
+            arguments: Tool arguments as a dictionary
+
+        Returns:
+            ToolResult with execution outcome (never raises)
         """
         tool = self._tools.get(tool_name)
         if not tool:

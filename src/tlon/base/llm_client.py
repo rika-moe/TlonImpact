@@ -9,9 +9,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import openai
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from tlon.base.config import LLMConfig
 from tlon.base.logger import get_logger
+from tlon.base.tracing.trace_context import start_span
 
 logger = get_logger(__name__)
 
@@ -106,6 +109,55 @@ class LLMClient:
         # Prepare messages
         all_messages = [{"role": "system", "content": system_prompt}] + messages
 
+        # The span covers the whole call, retries included
+        with start_span(
+            "llm.request",
+            source="llm_client",
+            attributes={
+                "llm.model": self.config.model_name,
+                "llm.message_count": len(all_messages),
+            },
+        ):
+            span = trace.get_current_span()
+            try:
+                response = await self._chat_with_retries(
+                    all_messages, tools, temperature, timeout
+                )
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
+
+            if response.usage:
+                prompt_tokens = response.usage.get("prompt_tokens")
+                completion_tokens = response.usage.get("completion_tokens")
+                if prompt_tokens is not None:
+                    span.set_attribute("llm.usage.prompt_tokens", prompt_tokens)
+                if completion_tokens is not None:
+                    span.set_attribute("llm.usage.completion_tokens", completion_tokens)
+            return response
+
+    async def _chat_with_retries(
+        self,
+        all_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        temperature: float | None,
+        timeout: float | None,
+    ) -> LLMResponse:
+        """Send the chat completion request with exponential backoff retry.
+
+        Args:
+            all_messages: System prompt plus conversation messages
+            tools: Optional list of tool definitions
+            temperature: Optional temperature override
+            timeout: Request timeout in seconds
+
+        Returns:
+            LLMResponse with content and/or tool calls
+
+        Raises:
+            Exception: If all retries fail
+        """
         # Prepare request parameters
         params = {
             "model": self.config.model_name,

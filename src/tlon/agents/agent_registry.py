@@ -52,7 +52,6 @@ from tlon.tools.tasks.start_task import StartTaskTool
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
-    from tlon.base.tracing.trace_store import TraceStore
 
 logger = get_logger(__name__)
 
@@ -115,7 +114,6 @@ class AgentRegistry(Component):
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
         message_store: MessageStore | None = None,
-        trace_store: "TraceStore | None" = None,
         paths: "TlonPaths | None" = None,
     ):
         """Initialize the agent registry.
@@ -132,7 +130,6 @@ class AgentRegistry(Component):
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self.message_store = message_store
-        self._trace_store = trace_store
         self._paths = paths  # None means use module singleton
 
         # Registered agent IDs (to be started during initialize)
@@ -346,7 +343,6 @@ class AgentRegistry(Component):
                 tool_executor=tool_executor,
                 team_members=team_members,
                 message_store=self.message_store,
-                trace_store=self._trace_store,
                 per_tool_timeout=per_tool_timeout,
             )
             await agent.initialize()

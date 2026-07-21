@@ -116,7 +116,8 @@ class ServerApp:
         # 1. 基础设施
         event_bus = EventBus()
         config = ConfigService(event_bus)
-        trace_store = TraceStore()
+        init_tracing(paths.traces_dir())   # OTel + JSONL exporter
+        trace_store = FileTraceStore(...)  # 纯读，供 REST /traces
         # 2. 功能模块
         docker = DockerRuntime(config)
         memory = MemoryManager(event_bus)

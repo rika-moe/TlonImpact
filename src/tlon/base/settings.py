@@ -71,6 +71,9 @@ class Settings:
         self.llm_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "3"))
         self.llm_base_delay = float(os.getenv("OPENAI_BASE_DELAY", "1.0"))
 
+        # Observability (OTel): optional OTLP collector, requires the `otlp` extra
+        self.otel_exporter_otlp_endpoint: str | None = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
         self.tlon_home.mkdir(parents=True, exist_ok=True)
 
     def get_agent_data_dir(self, agent_id: str) -> Path:

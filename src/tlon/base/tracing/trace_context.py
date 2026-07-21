@@ -1,227 +1,158 @@
-"""Trace context management for Tlon.
+"""Trace context facade over OpenTelemetry.
 
-Provides context managers and utilities for working with traces
-in a way that automatically propagates trace IDs through the call stack.
+Thin wrappers around the OTel tracer/context APIs:
+
+- ``start_span``: start a span as current (``tlon.source`` attribute set),
+  yielding a lightweight string-based context handle.
+- ``continue_trace``: attach a remote parent context built from a carrier
+  (the ``trace_id`` / ``span_id`` fields carried on events), so spans
+  started inside join the same trace tree.
+- ``get_current_trace``: read the current span context, or None.
+
+Trace/span IDs are formatted as hex strings (32 / 16 chars, no dashes),
+matching the format used by JsonlSpanExporter for file names and records.
 """
 
-import contextvars
-import uuid
+import random
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from opentelemetry import context, trace
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
 from tlon.base.logger import get_logger
+from tlon.base.tracing.jsonl_exporter import SOURCE_ATTRIBUTE, format_span_id, format_trace_id
 
 logger = get_logger(__name__)
 
-# Context variables for trace propagation
-_current_trace_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "current_trace_id", default=None
-)
-_current_span_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "current_span_id", default=None
-)
+TRACER_NAME = "tlon"
 
 
 @dataclass
-class TraceContext:
-    """Context for a trace operation.
+class SpanCtx:
+    """Lightweight handle for an active span context.
 
     Attributes:
-        trace_id: The trace identifier
-        span_id: The current span identifier
-        parent_span_id: The parent span identifier (if any)
+        trace_id: Trace identifier (32-char hex), None if invalid
+        span_id: Current span identifier (16-char hex), None if invalid
+        parent_span_id: Parent span identifier (if any)
     """
 
-    trace_id: str
-    span_id: str
+    trace_id: str | None
+    span_id: str | None
     parent_span_id: str | None = None
 
-    def to_dict(self) -> dict[str, str]:
-        """Convert to dictionary for event creation."""
-        result = {
-            "trace_id": self.trace_id,
-            "span_id": self.span_id,
-        }
-        if self.parent_span_id:
-            result["parent_span_id"] = self.parent_span_id
-        return result
+
+def _get_tracer() -> trace.Tracer:
+    """Get the Tlon tracer from the global provider."""
+    return trace.get_tracer(TRACER_NAME)
 
 
-def get_current_trace() -> TraceContext | None:
-    """Get the current trace context.
-
-    Returns:
-        TraceContext if a trace is active, None otherwise
-    """
-    trace_id = _current_trace_id.get()
-    span_id = _current_span_id.get()
-
-    if trace_id and span_id:
-        return TraceContext(
-            trace_id=trace_id,
-            span_id=span_id,
-        )
-    return None
-
-
-def generate_trace_id() -> str:
-    """Generate a new trace ID.
-
-    Returns:
-        UUID v4 string
-    """
-    return str(uuid.uuid4())
-
-
-def generate_span_id() -> str:
-    """Generate a new span ID.
-
-    Returns:
-        Short UUID string (first 16 chars)
-    """
-    return str(uuid.uuid4())[:16]
-
-
-@contextmanager
-def start_trace(
-    trace_id: str | None = None,
-    name: str = "unnamed",
-    source: str = "system",
-    metadata: dict[str, Any] | None = None,
-) -> Generator[TraceContext, None, None]:
-    """Start a new trace context.
-
-    Args:
-        trace_id: Optional trace ID (generated if not provided)
-        name: Trace name
-        source: Component initiating the trace
-        metadata: Optional metadata
-
-    Yields:
-        TraceContext for the new trace
-
-    Example:
-        >>> with start_trace(name="message_processing", source="agent-001") as ctx:
-        ...     # Do work with trace context
-        ...     await process_message(ctx, message)
-    """
-    new_trace_id = trace_id or generate_trace_id()
-    root_span_id = generate_span_id()
-
-    # Set context variables
-    trace_token = _current_trace_id.set(new_trace_id)
-    span_token = _current_span_id.set(root_span_id)
-
-    ctx = TraceContext(
-        trace_id=new_trace_id,
-        span_id=root_span_id,
+def _ctx_from_span(span: trace.Span) -> SpanCtx:
+    """Build a SpanCtx from a started span (recording or not)."""
+    sc = span.get_span_context()
+    parent = getattr(span, "parent", None)
+    return SpanCtx(
+        trace_id=format_trace_id(sc.trace_id) if sc.trace_id else None,
+        span_id=format_span_id(sc.span_id) if sc.span_id else None,
+        parent_span_id=format_span_id(parent.span_id) if parent and parent.span_id else None,
     )
-
-    logger.debug(f"Started trace {new_trace_id}: {name}")
-
-    try:
-        yield ctx
-    finally:
-        # Restore previous context
-        _current_trace_id.reset(trace_token)
-        _current_span_id.reset(span_token)
-        logger.debug(f"Ended trace {new_trace_id}")
 
 
 @contextmanager
 def start_span(
     name: str,
     source: str,
-    parent_span_id: str | None = None,
-    event_type: str | None = None,
-    payload: dict[str, Any] | None = None,
-) -> Generator[TraceContext, None, None]:
-    """Start a new span within the current trace.
+    attributes: dict[str, Any] | None = None,
+) -> Generator[SpanCtx, None, None]:
+    """Start a new span as the current span.
 
     Args:
-        name: Span name
-        source: Component creating the span
-        parent_span_id: Optional parent span ID (defaults to current span)
-        event_type: Type of event this span represents
-        payload: Additional span data
+        name: Span name (e.g. "message.received", "agent.think")
+        source: Component creating the span (recorded as ``tlon.source``)
+        attributes: Additional span attributes
 
     Yields:
-        TraceContext for the new span
+        SpanCtx for the new span
 
     Example:
-        >>> with start_span(name="llm_request", source="agent-001") as ctx:
-        ...     response = await llm_client.chat(...)
+        >>> with start_span("message.routing", source="message_router") as ctx:
+        ...     await route(ctx, message)
     """
-    current_trace = _current_trace_id.get()
-    current_span = _current_span_id.get()
+    attrs: dict[str, Any] = {SOURCE_ATTRIBUTE: source}
+    if attributes:
+        attrs.update(attributes)
 
-    if not current_trace:
-        # No active trace, create a new one
-        with start_trace(name=name, source=source) as ctx:
-            yield ctx
-        return
-
-    new_span_id = generate_span_id()
-    parent_id = parent_span_id or current_span
-
-    # Set new span as current
-    span_token = _current_span_id.set(new_span_id)
-
-    ctx = TraceContext(
-        trace_id=current_trace,
-        span_id=new_span_id,
-        parent_span_id=parent_id,
-    )
-
-    logger.debug(f"Started span {new_span_id} in trace {current_trace}: {name}")
-
-    try:
-        yield ctx
-    finally:
-        # Restore previous span
-        _current_span_id.reset(span_token)
-        logger.debug(f"Ended span {new_span_id}")
+    with _get_tracer().start_as_current_span(name, attributes=attrs) as span:
+        yield _ctx_from_span(span)
 
 
 @contextmanager
 def continue_trace(
-    trace_id: str, parent_span_id: str | None = None, source: str = "system"
-) -> Generator[TraceContext, None, None]:
-    """Continue an existing trace from another context.
+    trace_id: str, parent_span_id: str | None = None
+) -> Generator[SpanCtx, None, None]:
+    """Continue an existing trace from a carrier (e.g. event fields).
+
+    Builds a remote parent SpanContext and attaches it, so spans started
+    inside this block become children of the remote span and share its
+    trace ID.
 
     Args:
-        trace_id: The trace ID to continue
-        parent_span_id: Optional parent span ID
-        source: Component continuing the trace
+        trace_id: Trace ID from the carrier (32-char hex)
+        parent_span_id: Parent span ID from the carrier (16-char hex);
+            a random stand-in is used when missing
 
     Yields:
-        TraceContext for the continued trace
+        SpanCtx describing the attached remote parent
 
     Example:
-        >>> # In a message handler receiving a trace_id
-        >>> with continue_trace(trace_id, parent_span_id) as ctx:
-        ...     await process_with_trace(ctx, message)
+        >>> with continue_trace(event.trace_id, event.span_id):
+        ...     with start_span("message.routing", source="router") as ctx:
+        ...         await route(ctx, message)
     """
-    new_span_id = generate_span_id()
-
-    # Set context variables
-    trace_token = _current_trace_id.set(trace_id)
-    span_token = _current_span_id.set(new_span_id)
-
-    ctx = TraceContext(
-        trace_id=trace_id,
-        span_id=new_span_id,
-        parent_span_id=parent_span_id,
-    )
-
-    logger.debug(f"Continued trace {trace_id} with span {new_span_id}")
-
     try:
-        yield ctx
+        remote_trace_id = int(trace_id, 16)
+        remote_span_id = int(parent_span_id, 16) if parent_span_id else 0
+        if remote_trace_id <= 0:
+            raise ValueError("trace_id must be positive")
+    except ValueError:
+        logger.warning(f"Invalid trace carrier (trace_id={trace_id!r}), starting detached")
+        yield SpanCtx(trace_id=None, span_id=None)
+        return
+
+    if remote_span_id == 0:
+        remote_span_id = random.getrandbits(64)
+
+    span_context = SpanContext(
+        trace_id=remote_trace_id,
+        span_id=remote_span_id,
+        is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    otel_ctx = trace.set_span_in_context(NonRecordingSpan(span_context))
+    token = context.attach(otel_ctx)
+    try:
+        yield SpanCtx(
+            trace_id=trace_id,
+            span_id=parent_span_id,
+            parent_span_id=None,
+        )
     finally:
-        # Restore previous context
-        _current_trace_id.reset(trace_token)
-        _current_span_id.reset(span_token)
-        logger.debug(f"Ended continued span {new_span_id}")
+        context.detach(token)
+
+
+def get_current_trace() -> SpanCtx | None:
+    """Get the current trace context from the active span.
+
+    Returns:
+        SpanCtx if a valid span is active, None otherwise
+    """
+    sc = trace.get_current_span().get_span_context()
+    if not sc.trace_id or not sc.span_id:
+        return None
+    return SpanCtx(
+        trace_id=format_trace_id(sc.trace_id),
+        span_id=format_span_id(sc.span_id),
+    )

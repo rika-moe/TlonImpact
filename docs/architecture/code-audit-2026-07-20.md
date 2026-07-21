@@ -70,7 +70,7 @@
   ```
 
 - **事件系统**（`base/events/`）：单进程 async pub/sub `EventBus`。约 25 种 `EventType`，事件带 trace/span id。**事件不持久化**，仅消息和 trace 落盘。未运行时 publish 静默丢弃。
-- **Tracing**（`base/tracing/`）：`ContextVar` 传播 trace/span id，structlog processor 注入每条日志；`FileTraceStore` 每 trace 一个 JSONL 文件，写盘走 `to_thread` + `threading.Lock`。
+- **Tracing**（`base/tracing/`）：基于 OpenTelemetry。facade（`trace_context.py` 的 `start_span`/`continue_trace`）传播 trace/span id，事件作 carrier 打通 gateway → router → agent 链路；span 由 `JsonlSpanExporter` 落盘为每 trace 一个 JSONL 文件，`FileTraceStore` 纯读（REST `/traces` 复用）；`llm.request`/`tool.{name}`/`message.send` span 已下沉。structlog processor 注入每条日志。ServerApp 启动时 `init_tracing`，可选 OTLP 导出（`OTEL_EXPORTER_OTLP_ENDPOINT` + `uv sync --extra otlp`）。
 - **记忆系统**（`memory/`）：**全部 JSONL + 内存缓存，无 SQLite、无向量库**。
   - Working memory：滚动窗口（默认 10 条）；
   - Episodic memory：summaries + facts，fact 支持 supersede（命中时原子重写 `facts.jsonl` 落盘，PR ；原仅改内存、重启后旧事实复活）；
@@ -173,7 +173,7 @@
 
 | # | 问题 | 位置 | 说明 |
 |---|------|------|------|
-| 39 | trace 传播断点 | `src/tlon/organization/messaging/router.py`（`_on_message_new`） | 未用 `continue_trace` 延续事件已有 trace_id，`start_span` 在无 contextvar 时另起新 trace，消息 → 路由 → Agent 的链路 trace 断裂。P2  修复时发现 |
+| 39 | ✅ trace 传播断点 | `src/tlon/organization/messaging/router.py`（`_on_message_new`） | 未用 `continue_trace` 延续事件已有 trace_id，`start_span` 在无 contextvar 时另起新 trace，消息 → 路由 → Agent 的链路 trace 断裂。P2  修复时发现。**已修**：OTel 重构（2026-07-20）——facade（`trace_context.py`）+ JSONL exporter 落地，gateway → router → agent 传播链打通，`llm.request`/`tool.{name}`/`message.send` span 下沉，ServerApp 装配 `init_tracing`，`FileTraceStore` 变纯读模型 |
 | 40 | 容器 symlink 可绕过路径白名单 | `src/tlon/tools/filesystem/path_guard.py` | 校验在字符串层面，`/workspace` 内指向 `/etc` 的 symlink 可逃逸（ 修复时记录的遗留）。根治方向：容器内 `readlink` 校验或根文件系统只读挂载 |
 | 41 | TaskManager 同步 IO 未 async 化 | `src/tlon/tools/tasks/manager.py` |  部分修复的遗留：IO 已抽为 `_write_lines`/`_read_lines`，但 `save()`/`load()` 仍在事件循环内被同步调用；async 化涉及约 30 处调用点级联 |
 

@@ -1,16 +1,15 @@
 """Trace storage implementation for Tlon.
 
-Provides storage and retrieval of distributed trace data.
+Read-only query interface over the per-trace JSONL files written by the
+OpenTelemetry JsonlSpanExporter (see ``otel.py`` / ``jsonl_exporter.py``).
 """
 
 import asyncio
 import json
-import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from threading import Lock
 from typing import Any
 
 from tlon.base.logger import get_logger
@@ -150,81 +149,11 @@ class TraceRecord:
 
 
 class TraceStore(ABC):
-    """Abstract base class for trace storage.
+    """Abstract base class for trace storage (read-only).
 
-    Implementations can store traces in files, databases, etc.
+    Spans are written by the OpenTelemetry pipeline; implementations only
+    need to load and list persisted traces.
     """
-
-    @abstractmethod
-    async def start_trace(
-        self, trace_id: str, name: str, source: str, metadata: dict[str, Any] | None = None
-    ) -> TraceRecord:
-        """Start a new trace.
-
-        Args:
-            trace_id: Unique trace identifier
-            name: Trace name
-            source: Component initiating the trace
-            metadata: Optional metadata
-
-        Returns:
-            The created trace record
-        """
-        pass
-
-    @abstractmethod
-    async def end_trace(self, trace_id: str) -> bool:
-        """End a trace.
-
-        Args:
-            trace_id: Trace identifier
-
-        Returns:
-            True if trace was found and ended
-        """
-        pass
-
-    @abstractmethod
-    async def start_span(
-        self,
-        trace_id: str,
-        span_id: str,
-        name: str,
-        source: str,
-        parent_span_id: str | None = None,
-        event_type: str | None = None,
-        payload: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> SpanRecord:
-        """Start a new span within a trace.
-
-        Args:
-            trace_id: Parent trace identifier
-            span_id: Unique span identifier
-            name: Span name
-            source: Component creating the span
-            parent_span_id: Parent span ID for nesting
-            event_type: Type of event
-            payload: Additional data
-            metadata: Additional metadata
-
-        Returns:
-            The created span record
-        """
-        pass
-
-    @abstractmethod
-    async def end_span(self, trace_id: str, span_id: str) -> bool:
-        """End a span.
-
-        Args:
-            trace_id: Trace identifier
-            span_id: Span identifier
-
-        Returns:
-            True if span was found and ended
-        """
-        pass
 
     @abstractmethod
     async def get_trace(self, trace_id: str) -> TraceRecord | None:
@@ -256,10 +185,10 @@ class TraceStore(ABC):
 
 
 class FileTraceStore(TraceStore):
-    """File-based trace storage using JSONL format.
+    """Read-only file-based trace storage using JSONL format.
 
-    Stores each trace as a separate JSONL file named trace-{trace_id}.jsonl.
-    Each line in the file represents an event (span start/end, trace start/end).
+    Each trace lives in a file named trace-{trace_id}.jsonl, written by the
+    OTel JsonlSpanExporter; this class only loads and lists them.
 
     Attributes:
         data_dir: Directory for trace files
@@ -273,167 +202,17 @@ class FileTraceStore(TraceStore):
         """
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._active_traces: dict[str, TraceRecord] = {}
-        self._active_spans: dict[str, SpanRecord] = {}
-        self._file_lock = Lock()
 
     def _get_trace_file(self, trace_id: str) -> Path:
         """Get the file path for a trace."""
         return self.data_dir / f"trace-{trace_id}.jsonl"
-
-    def _append_event_sync(self, trace_id: str, event: dict[str, Any]) -> None:
-        """Append an event to a trace file (called in thread pool)."""
-        file_path = self._get_trace_file(trace_id)
-        line = json.dumps(event, ensure_ascii=False, default=str) + "\n"
-        with self._file_lock, open(file_path, "a", encoding="utf-8") as f:
-            f.write(line)
-
-    async def _append_event(self, trace_id: str, event: dict[str, Any]) -> None:
-        """Append an event to a trace file without blocking the event loop."""
-        await asyncio.to_thread(self._append_event_sync, trace_id, event)
-
-    async def start_trace(
-        self, trace_id: str, name: str, source: str, metadata: dict[str, Any] | None = None
-    ) -> TraceRecord:
-        """Start a new trace."""
-        now = datetime.now()
-        # Create a root span for the trace
-        root_span_id = str(uuid.uuid4())
-
-        trace = TraceRecord(
-            trace_id=trace_id,
-            root_span_id=root_span_id,
-            start_time=now,
-            source=source,
-            name=name,
-            metadata=metadata,
-        )
-
-        self._active_traces[trace_id] = trace
-
-        # Write trace start event
-        await self._append_event(
-            trace_id,
-            {
-                "type": "trace_start",
-                "trace_id": trace_id,
-                "root_span_id": root_span_id,
-                "name": name,
-                "source": source,
-                "timestamp": now.isoformat(),
-                "metadata": metadata,
-            },
-        )
-
-        logger.debug(f"Started trace {trace_id}: {name}")
-        return trace
-
-    async def end_trace(self, trace_id: str) -> bool:
-        """End a trace."""
-        trace = self._active_traces.pop(trace_id, None)
-        if not trace:
-            logger.warning(f"Trace {trace_id} not found for ending")
-            return False
-
-        now = datetime.now()
-        trace.end_time = now
-
-        # Write trace end event
-        await self._append_event(
-            trace_id,
-            {
-                "type": "trace_end",
-                "trace_id": trace_id,
-                "timestamp": now.isoformat(),
-            },
-        )
-
-        logger.debug(f"Ended trace {trace_id}")
-        return True
-
-    async def start_span(
-        self,
-        trace_id: str,
-        span_id: str,
-        name: str,
-        source: str,
-        parent_span_id: str | None = None,
-        event_type: str | None = None,
-        payload: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> SpanRecord:
-        """Start a new span."""
-        now = datetime.now()
-
-        span = SpanRecord(
-            span_id=span_id,
-            trace_id=trace_id,
-            name=name,
-            start_time=now,
-            source=source,
-            parent_span_id=parent_span_id,
-            event_type=event_type,
-            payload=payload,
-            metadata=metadata,
-        )
-
-        self._active_spans[span_id] = span
-
-        # Add to trace if we have it in memory
-        trace = self._active_traces.get(trace_id)
-        if trace:
-            trace.spans.append(span)
-
-        # Write span start event
-        await self._append_event(
-            trace_id,
-            {
-                "type": "span_start",
-                "span_id": span_id,
-                "trace_id": trace_id,
-                "parent_span_id": parent_span_id,
-                "name": name,
-                "source": source,
-                "event_type": event_type,
-                "timestamp": now.isoformat(),
-                "payload": payload,
-                "metadata": metadata,
-            },
-        )
-
-        logger.debug(f"Started span {span_id} in trace {trace_id}: {name}")
-        return span
-
-    async def end_span(self, trace_id: str, span_id: str) -> bool:
-        """End a span."""
-        span = self._active_spans.pop(span_id, None)
-        if not span:
-            logger.warning(f"Span {span_id} not found for ending")
-            return False
-
-        now = datetime.now()
-        span.end_time = now
-
-        # Write span end event
-        await self._append_event(
-            trace_id,
-            {
-                "type": "span_end",
-                "span_id": span_id,
-                "trace_id": trace_id,
-                "timestamp": now.isoformat(),
-            },
-        )
-
-        logger.debug(f"Ended span {span_id} in trace {trace_id}")
-        return True
 
     def _load_trace_from_file(self, file_path: Path) -> TraceRecord | None:
         """Load a trace from a JSONL file (runs in thread pool)."""
         trace = None
         spans: dict[str, SpanRecord] = {}
 
-        with self._file_lock, open(file_path, encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -481,11 +260,6 @@ class FileTraceStore(TraceStore):
 
     async def get_trace(self, trace_id: str) -> TraceRecord | None:
         """Get a trace by loading from file."""
-        # Check if it's an active trace
-        if trace_id in self._active_traces:
-            return self._active_traces[trace_id]
-
-        # Load from file without blocking the event loop
         file_path = self._get_trace_file(trace_id)
         if not file_path.exists():
             return None
@@ -497,22 +271,10 @@ class FileTraceStore(TraceStore):
         """List traces from files."""
         traces = []
 
-        # Include active traces
-        for trace in self._active_traces.values():
-            if before and trace.start_time >= before:
-                continue
-            if source and trace.source != source:
-                continue
-            traces.append(trace)
-
         # Load from files
         for file_path in self.data_dir.glob("trace-*.jsonl"):
             # Extract trace_id from filename
             trace_id = file_path.stem.replace("trace-", "")
-
-            # Skip if already in active traces
-            if trace_id in self._active_traces:
-                continue
 
             trace = await self.get_trace(trace_id)
             if trace:

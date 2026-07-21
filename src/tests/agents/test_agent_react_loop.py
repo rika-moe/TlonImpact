@@ -866,8 +866,8 @@ class TestAgentStateDerivation:
         agent.tool_executor.register_tool(send)
 
         agent._worker_running = True
-        agent._message_queue.put_nowait(_make_message("first"))
-        agent._message_queue.put_nowait(_make_message("second"))
+        agent._message_queue.put_nowait((_make_message("first"), {}))
+        agent._message_queue.put_nowait((_make_message("second"), {}))
 
         task = asyncio.create_task(agent._main_loop())
         try:
@@ -954,7 +954,7 @@ class TestOrphanTaskCleanup:
         agent.tool_executor.register_tool(hang)
 
         agent._worker_running = True
-        agent._message_queue.put_nowait(_make_message())
+        agent._message_queue.put_nowait((_make_message(), {}))
 
         with patch.object(
             agent, "_collect_session_results", new=AsyncMock(side_effect=RuntimeError("boom"))

@@ -8,15 +8,14 @@ import structlog
 
 
 def _add_trace_context(logger: Any, method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-    """Inject trace_id and span_id from ContextVars into log entries."""
-    from tlon.base.tracing.trace_context import _current_span_id, _current_trace_id
+    """Inject trace_id and span_id from the OTel context into log entries."""
+    from opentelemetry import trace
 
-    trace_id = _current_trace_id.get()
-    if trace_id:
-        event_dict["trace_id"] = trace_id
-    span_id = _current_span_id.get()
-    if span_id:
-        event_dict["span_id"] = span_id
+    span_context = trace.get_current_span().get_span_context()
+    if span_context.trace_id:
+        event_dict["trace_id"] = format(span_context.trace_id, "032x")
+    if span_context.span_id:
+        event_dict["span_id"] = format(span_context.span_id, "016x")
     return event_dict
 
 

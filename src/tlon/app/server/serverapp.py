@@ -22,7 +22,8 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.paths import paths
-from tlon.base.settings import get_tlon_home
+from tlon.base.settings import get_settings, get_tlon_home
+from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.messaging.store import FileMessageStore
@@ -95,6 +96,12 @@ class ServerApp:
         """
         logger.info("Initializing Tlon Server with full DI...")
 
+        # ========== Step 0: Tracing (must precede any span creation) ==========
+        init_tracing(
+            paths.traces_dir(),
+            otlp_endpoint=get_settings().otel_exporter_otlp_endpoint,
+        )
+
         # ========== Step 1: Core Infrastructure ==========
         # 1.1 EventBus - event bus for inter-component communication (create first)
         event_bus = EventBus()
@@ -138,7 +145,6 @@ class ServerApp:
             event_bus=event_bus,
             agent_info_provider=config_service,
             message_store=message_store,
-            trace_store=trace_store,
         )
         # Register initial agents (by ID, config is looked up from provider)
         for agent_id in config_service.agents:
@@ -283,6 +289,9 @@ class ServerApp:
         event_bus = self._components.get("event_bus")
         if event_bus:
             await event_bus.shutdown()
+
+        # Flush and shutdown tracing last
+        shutdown_tracing()
 
         self._running = False
         self._shutdown_event.set()

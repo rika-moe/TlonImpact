@@ -27,6 +27,13 @@ system (.env) → agent (yaml)
 | 系统 | `.env` | API Key、日志级别 |
 | Agent | `~/.tlon/{id}/config/agent.yaml` | identity、profile、behavior、LLM 参数、Docker 配置 |
 
+系统层可观测性环境变量（均可选）：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `TLON_TRACE_SAMPLE_RATIO` | 1.0（全采样） | [0, 1] 浮点，切换为 TraceIdRatioBased 采样 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 无 | OTLP collector 基础 URL；需 `uv sync --extra otlp` 安装可选依赖，未安装则告警跳过 |
+
 ---
 
 ## 文件系统布局

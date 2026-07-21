@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
@@ -24,15 +24,12 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
-from tlon.base.tracing.trace_context import get_current_trace
+from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 from tlon.memory.manager import MemoryManager
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.tools.base import ToolResult
 from tlon.tools.tasks.manager import TaskManager
-
-if TYPE_CHECKING:
-    from tlon.base.tracing.trace_store import TraceStore
 
 logger = get_logger(__name__)
 
@@ -94,7 +91,6 @@ class Agent(Component, Device):
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
-        trace_store: "TraceStore | None" = None,
         per_tool_timeout: float = 30.0,
     ):
         """Initialize the agent.
@@ -108,7 +104,6 @@ class Agent(Component, Device):
             tool_executor: Tool registry and executor
             team_members: List of all team member configs
             message_store: Message store for querying history
-            trace_store: Trace store for distributed tracing
             per_tool_timeout: Timeout for each individual tool
         """
         Component.__init__(self, name=config.name)
@@ -125,9 +120,6 @@ class Agent(Component, Device):
         self.memory = memory
         self.task_manager = task_manager
         self.tool_executor = tool_executor
-
-        # Trace store for observability
-        self._trace_store = trace_store
 
         # Per-agent bound logger
         self._logger = get_logger(f"{__name__}.{config.id}").bind(agent_id=config.id)
@@ -154,8 +146,10 @@ class Agent(Component, Device):
         # Agent state
         self.state: AgentState | None = None
 
-        # Message queue for serial processing
-        self._message_queue: asyncio.Queue = asyncio.Queue()
+        # Message queue for serial processing; items are (Message, trace carrier)
+        self._message_queue: asyncio.Queue[tuple[Message, dict[str, str | None]]] = (
+            asyncio.Queue()
+        )
         self._worker_task: asyncio.Task | None = None
         self._worker_running = False
 
@@ -230,7 +224,8 @@ class Agent(Component, Device):
         if not self._should_respond(message):
             return
 
-        await self._message_queue.put(message)
+        carrier = {"trace_id": event.trace_id, "span_id": event.span_id}
+        await self._message_queue.put((message, carrier))
         logger.debug(
             f"{self.name} queued message from {message.sender_name} (reason: {routed.routing_reason})"
         )
@@ -256,9 +251,9 @@ class Agent(Component, Device):
 
             # ── 1. New messages ──
             try:
-                msg = self._message_queue.get_nowait()
+                msg, carrier = self._message_queue.get_nowait()
                 sid = f"{self.id}-{msg.id}"
-                session = AgentSession(sid, msg.content)
+                session = AgentSession(sid, msg.content, carrier=carrier)
                 sessions[sid] = session
                 session_messages[sid] = msg
                 logger.info(f"{self.name} new session {sid}: {msg.content[:50]}")
@@ -266,9 +261,11 @@ class Agent(Component, Device):
                 # No new messages — if no sessions either, block
                 if not sessions:
                     try:
-                        msg = await asyncio.wait_for(self._message_queue.get(), timeout=0.5)
+                        msg, carrier = await asyncio.wait_for(
+                            self._message_queue.get(), timeout=0.5
+                        )
                         sid = f"{self.id}-{msg.id}"
-                        sessions[sid] = AgentSession(sid, msg.content)
+                        sessions[sid] = AgentSession(sid, msg.content, carrier=carrier)
                         session_messages[sid] = msg
                     except TimeoutError:
                         continue
@@ -280,11 +277,12 @@ class Agent(Component, Device):
                     continue
 
                 try:
-                    if session.state == SessionState.WAITING:
-                        await self._collect_session_results(session)
-                    elif session.state == SessionState.ACTIVE:
-                        msg = session_messages[sid]
-                        await self._step_session(session, msg)
+                    with self._session_span(session):
+                        if session.state == SessionState.WAITING:
+                            await self._collect_session_results(session)
+                        elif session.state == SessionState.ACTIVE:
+                            msg = session_messages[sid]
+                            await self._step_session(session, msg)
                 except Exception as e:
                     logger.error(f"Session {sid} error: {e}", exc_info=True)
                     session.mark_completed()
@@ -324,6 +322,29 @@ class Agent(Component, Device):
         if self.id in message.mentions:
             return True
         return self.name in message.mentions
+
+    @contextlib.contextmanager
+    def _session_span(self, session: AgentSession):
+        """Per-round trace context for a session's advance.
+
+        OTel context is contextvar-based, so it does not survive across
+        event-loop turns: each round re-attaches the carrier stored on the
+        session and opens an "agent.session" span around that round's work
+        (think step or tool-result collection).
+        """
+        carrier = session.carrier or {}
+        trace_id = carrier.get("trace_id")
+        with contextlib.ExitStack() as stack:
+            if trace_id:
+                stack.enter_context(continue_trace(trace_id, carrier.get("span_id")))
+            stack.enter_context(
+                start_span(
+                    "agent.session",
+                    source=self.id,
+                    attributes={"session_id": session.id, "state": session.state.value},
+                )
+            )
+            yield
 
     async def _step_session(self, session: AgentSession, message: Message) -> None:
         """Advance a session by one ReAct step: think + dispatch tools.
@@ -505,19 +526,20 @@ class Agent(Component, Device):
         self._derive_state({session.id: session})
         try:
             while not session.is_completed:
-                if session.state == SessionState.WAITING:
-                    # Yield to let background tool tasks start executing
-                    await asyncio.sleep(0)
-                    await self._collect_session_results(session)
-                    if session.has_pending_tools:
-                        # Wait for all pending tasks to complete, then collect
-                        pending = list(session.get_pending_tasks().values())
-                        await asyncio.gather(*pending, return_exceptions=True)
+                with self._session_span(session):
+                    if session.state == SessionState.WAITING:
+                        # Yield to let background tool tasks start executing
+                        await asyncio.sleep(0)
                         await self._collect_session_results(session)
-                elif session.state == SessionState.ACTIVE:
-                    await self._step_session(session, message)
-                else:
-                    break
+                        if session.has_pending_tools:
+                            # Wait for all pending tasks to complete, then collect
+                            pending = list(session.get_pending_tasks().values())
+                            await asyncio.gather(*pending, return_exceptions=True)
+                            await self._collect_session_results(session)
+                    elif session.state == SessionState.ACTIVE:
+                        await self._step_session(session, message)
+                    else:
+                        break
         finally:
             await session.cancel_pending()
             self._derive_state({})
@@ -768,7 +790,7 @@ class Agent(Component, Device):
             self._logger.error(f"Failed to save to memory: {e}")
 
     async def _send_message(self, content: str, mentions: list[str] | None = None) -> None:
-        """Send a message via EventBus."""
+        """Send a message via EventBus, injecting the current trace context."""
         try:
             message = Message.create(
                 sender_id=self.id,
@@ -777,11 +799,20 @@ class Agent(Component, Device):
                 content=content,
                 mentions=mentions or [],
             )
-            await self.emit(
-                EventType.MESSAGE_NEW,
-                payload=message,
+            with start_span(
+                "message.send",
                 source=self.id,
-            )
+                attributes={"message_id": message.id, "mentions": message.mentions},
+            ):
+                current = get_current_trace()
+                await self.emit(
+                    EventType.MESSAGE_NEW,
+                    payload=message,
+                    source=self.id,
+                    trace_id=current.trace_id if current else None,
+                    span_id=current.span_id if current else None,
+                    parent_span_id=current.parent_span_id if current else None,
+                )
         except Exception:
             self._logger.error("Failed to emit MESSAGE_NEW event", exc_info=True)
 
@@ -946,26 +977,13 @@ class Agent(Component, Device):
 
     @contextlib.asynccontextmanager
     async def _traced_span(self, name: str):
-        """Async context manager combining ContextVar span + TraceStore persistence."""
-        from tlon.base.tracing.trace_context import start_span
+        """Thin wrapper over the tracing facade.
 
+        Persistence is handled by the OTel JSONL exporter; this only
+        manages the span lifecycle and yields the span context.
+        """
         with start_span(name=name, source=self.id) as ctx:
-            ts = self._trace_store
-            if ts:
-                is_root = ctx.parent_span_id is None
-                if is_root:
-                    await ts.start_trace(ctx.trace_id, name, self.id)
-                await ts.start_span(
-                    ctx.trace_id, ctx.span_id, name, self.id,
-                    parent_span_id=ctx.parent_span_id,
-                )
-            try:
-                yield ctx
-            finally:
-                if ts:
-                    await ts.end_span(ctx.trace_id, ctx.span_id)
-                    if is_root:
-                        await ts.end_trace(ctx.trace_id)
+            yield ctx
 
     @staticmethod
     def _tool_call_to_dict(tool_call: ToolCall) -> dict[str, Any]:

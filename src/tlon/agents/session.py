@@ -14,13 +14,17 @@ class SessionState(Enum):
 class AgentSession:
     """A single conversation or task that the agent is working on."""
 
-    def __init__(self, session_id: str, trigger_content: str):
+    def __init__(self, session_id: str, trigger_content: str, carrier: dict[str, str | None] | None = None):
         self.id = session_id
         self.context: list[dict] = []
         self.created_at = datetime.now()
         self.last_active_at = datetime.now()
         self.state = SessionState.ACTIVE
         self.trigger_content = trigger_content
+
+        # Trace carrier from the routing event (trace_id/span_id);
+        # re-attached each _main_loop round since OTel context is contextvar-based
+        self.carrier = carrier
 
         # ReAct loop state
         self._iteration = 0
