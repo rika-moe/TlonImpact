@@ -16,6 +16,8 @@
 ```
 agents/
 ├── agent.py               # Agent 薄壳：生命周期、消息队列、think、子系统编排
+├── spec.py                # AgentSpec：行为规约（语义唯一权威）+ behavior.tlon 加载
+├── edn.py                 # EDN 数据字面量解析器（L0，只解析不求值）
 ├── scheduler.py           # SessionScheduler：主循环 + session 生命周期 + 超时清理
 ├── loop_driver.py         # LoopDriver：ReAct 步进 / 工具收割
 ├── trigger.py             # TriggerEvaluator：响应触发判断
@@ -37,6 +39,7 @@ agents/
 | 类 | 职责 | 路径 |
 |----|------|------|
 | `Agent` | 智能体薄壳（编排子系统） | `agents/agent.py` |
+| `AgentSpec` | 行为规约（语义唯一权威） | `agents/spec.py` |
 | `SessionScheduler` | 主循环、多 session 调度 | `agents/scheduler.py` |
 | `LoopDriver` | ReAct step/collect | `agents/loop_driver.py` |
 | `TriggerEvaluator` | 触发判断（mention/proactive） | `agents/trigger.py` |
@@ -45,6 +48,28 @@ agents/
 | `AgentRegistry` | 生命周期管理 | `agents/agent_registry.py` |
 | `LLMClient` | LLM API 调用 | `base/llm_client.py` |
 | `ToolExecutor` | 工具注册执行 | `agents/tool_executor.py` |
+
+---
+
+## 行为规约（AgentSpec + behavior.tlon）
+
+Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../design/dsl-agents.md)）。
+`Agent` 构造时加载 `AgentSpec`（`agent.spec`），子系统全部从 spec 读行为参数：
+
+- 文件路径：`~/.tlon/{agent_id}/config/behavior.tlon`（纯 EDN 数据字面量，L0 只解析不求值，
+  解析器在 `agents/edn.py`；`:version` 必须为 1，未知 key 忽略并告警，缺省字段继承 DefaultSpec）；
+- 加载机制：`AgentSpec.load(agent)` —— 文件存在则解析（解析/校验失败 → warning 日志 +
+  回落 DefaultSpec），否则直接 DefaultSpec；
+- `AgentSpec.default(agent)`（DefaultSpec）从 `AgentConfig` + memory config 精确复刻历史行为，
+  因此无 spec 文件时行为不变；
+- 消费方：TriggerEvaluator（`spec.trigger`）、LoopDriver（`spec.loop`）、
+  ContextBuilder / SystemPromptBuilder（`spec.context`）、ReflectionEngine
+  （`spec.on_complete.reflect`，`enabled` 仍是运行时开关）、
+  `Agent._save_interaction_to_memory`（`spec.on_complete.save_interaction`）。
+
+边界：`AgentConfig.proactive` 同时被消息路由器用作路由预筛（第一道闸，在 spec 之前），
+`spec.trigger.proactive` 是 agent 内第二道闸，DefaultSpec 保证两者一致；
+`session_timeout_seconds` / `message_queue_size` 是构造期 infra，留在 `AgentConfig` 不进 spec。
 
 ---
 

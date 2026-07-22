@@ -19,7 +19,7 @@ class TriggerEvaluator:
     """Evaluates whether an incoming message should trigger a response.
 
     Holds a back-reference to the owning Agent for identity (id/name)
-    and configuration (proactive flag).
+    and the behavior spec (trigger rules).
     """
 
     def __init__(self, agent: "Agent"):
@@ -30,15 +30,13 @@ class TriggerEvaluator:
         if message.sender_id == self._agent.id:
             return False
 
-        if self.is_mentioned(message):
+        trigger = self._agent.spec.trigger
+
+        if trigger.on_mention and self.is_mentioned(message):
             logger.debug("agent_will_respond", reason="mentioned", sender=message.sender_name)
             return True
 
-        if (
-            self._agent.config.proactive
-            and message.sender_type == "human"
-            and not message.mentions
-        ):
+        if trigger.proactive and message.sender_type == "human" and not message.mentions:
             logger.info("agent_will_respond", reason="proactive", sender=message.sender_name)
             return True
 

@@ -51,14 +51,25 @@ class SystemPromptBuilder:
     Reads IDENTITY.md, SOUL.md, RULES.md from the agent's home directory
     and composes them with team profiles and framework protocol rules.
 
+    ``include_persona`` gates the identity/team/behavior (persona file)
+    sections; ``include_protocol`` gates the framework protocol section.
+    Both default to True, which reproduces the historical full prompt.
+
     Usage:
         context = AgentPromptContext(...)
         builder = SystemPromptBuilder(context)
         prompt = builder.build()
     """
 
-    def __init__(self, context: AgentPromptContext):
+    def __init__(
+        self,
+        context: AgentPromptContext,
+        include_persona: bool = True,
+        include_protocol: bool = True,
+    ):
         self.context = context
+        self.include_persona = include_persona
+        self.include_protocol = include_protocol
 
     def _read(self, filename: str) -> str | None:
         p = Path(self.context.agent_home) / "config" / filename
@@ -100,12 +111,15 @@ class SystemPromptBuilder:
         return _PROTOCOL
 
     def build(self) -> str:
-        sections = [
-            self.build_identity(),
-            self.build_team(),
-            self.build_behavior(),
-            self.build_protocol(),
-        ]
+        sections: list[str | None] = []
+        if self.include_persona:
+            sections += [
+                self.build_identity(),
+                self.build_team(),
+                self.build_behavior(),
+            ]
+        if self.include_protocol:
+            sections.append(self.build_protocol())
         return "\n\n".join(filter(None, sections))
 
 

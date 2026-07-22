@@ -12,6 +12,10 @@ trace/memory plumbing, and delegates behavior to subsystems:
 - TriggerEvaluator (trigger.py): should-respond decisions
 - ContextBuilder (context_builder.py): conversation/system-prompt assembly
 - ReflectionEngine (reflection.py): background memory audit
+
+Behavior parameters (trigger rules, context sections, loop limits,
+on-complete actions) come from ``self.spec`` (AgentSpec, spec.py) —
+the agent is an interpreter of that spec, per docs/design/dsl-agents.md.
 """
 
 import asyncio
@@ -29,6 +33,7 @@ from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
 from tlon.agents.session import AgentSession
+from tlon.agents.spec import AgentSpec
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import TriggerEvaluator
 from tlon.base.component import Component
@@ -86,6 +91,7 @@ class Agent(Component, Device):
         team_members: list["AgentConfig"] | None = None,
         message_store: MessageStore | None = None,
         per_tool_timeout: float = 30.0,
+        spec: AgentSpec | None = None,
     ):
         """Initialize the agent.
 
@@ -99,6 +105,8 @@ class Agent(Component, Device):
             team_members: List of all team member configs
             message_store: Message store for querying history
             per_tool_timeout: Timeout for each individual tool
+            spec: Behavior spec; when None, loaded from the agent's
+                behavior.tlon file (falling back to DefaultSpec)
         """
         Component.__init__(self, name=config.name)
         Device.__init__(self, event_bus=event_bus, name=config.name)
@@ -124,6 +132,10 @@ class Agent(Component, Device):
         # Prompt cache — rebuilt when persona file mtimes change
         self._system_prompt_cache: str | None = None
         self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
+
+        # Behavior spec: the single semantic authority the subsystems read
+        # (see docs/design/dsl-agents.md). Loaded before subsystem construction.
+        self.spec = spec if spec is not None else AgentSpec.load(self)
 
         # Behavioral subsystems (constructed with a back-reference to self)
         self._trigger = TriggerEvaluator(self)
@@ -373,7 +385,9 @@ class Agent(Component, Device):
     async def _save_interaction_to_memory(
         self, final_response: str, llm_response: LLMResponse, tool_results: list
     ) -> None:
-        """Save interaction to memory."""
+        """Save interaction to memory (gated by spec.on_complete.save_interaction)."""
+        if not self.spec.on_complete.save_interaction:
+            return
         try:
             msg = Message.create(
                 sender_id=self.id,

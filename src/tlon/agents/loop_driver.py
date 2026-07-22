@@ -45,8 +45,8 @@ class LoopDriver:
                 "session_context_built", session_id=session.id, message_count=len(context)
             )
 
-        max_iterations = agent.config.max_iterations
-        max_errors = agent.config.max_consecutive_errors
+        max_iterations = agent.spec.loop.max_iterations
+        max_errors = agent.spec.loop.max_consecutive_errors
 
         # Check iteration limit
         if session.iteration >= max_iterations:

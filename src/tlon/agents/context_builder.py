@@ -49,19 +49,22 @@ class ContextBuilder:
             return ""
 
     async def build_context(self, current_message: Message) -> list[dict[str, Any]]:
-        """Build conversation context for LLM."""
+        """Build conversation context for LLM (sections gated by spec.context)."""
         context = []
+        context_spec = self._agent.spec.context
 
-        knowledge = await self.build_knowledge_context()
-        if knowledge:
-            context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
+        if context_spec.knowledge:
+            knowledge = await self.build_knowledge_context()
+            if knowledge:
+                context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
 
         room_history: list[Message] = []
         if self._agent.message_store:
-            room_history = await self._agent.message_store.get_history(
-                limit=20, before_id=current_message.id
-            )
-            logger.debug("context_history_retrieved", message_count=len(room_history))
+            if context_spec.room_history > 0:
+                room_history = await self._agent.message_store.get_history(
+                    limit=context_spec.room_history, before_id=current_message.id
+                )
+                logger.debug("context_history_retrieved", message_count=len(room_history))
         else:
             logger.warning("message_store_missing")
 
@@ -157,6 +160,12 @@ class ContextBuilder:
         if agent._system_prompt_cache is None or signature != agent._system_prompt_mtime:
             # Go through the Agent delegate so tests can patch the seam
             context = await agent._build_prompt_context()
-            agent._system_prompt_cache = SystemPromptBuilder(context).build()
+            context_spec = agent.spec.context
+            builder = SystemPromptBuilder(
+                context,
+                include_persona=context_spec.persona,
+                include_protocol=context_spec.protocol,
+            )
+            agent._system_prompt_cache = builder.build()
             agent._system_prompt_mtime = signature
         return agent._system_prompt_cache

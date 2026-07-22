@@ -22,7 +22,8 @@ class ReflectionEngine:
     """Runs background memory reflections for an agent.
 
     Owns the reflection scheduling state (interval, interaction counter,
-    running flag). Reads its tunables from the memory manager's config.
+    running flag). Initial enabled/interval come from the agent's behavior
+    spec (``spec.on_complete.reflect``); ``enabled`` stays a runtime switch.
     """
 
     REFLECTION_SYSTEM_PROMPT = (
@@ -49,11 +50,11 @@ class ReflectionEngine:
     def __init__(self, agent: "Agent"):
         self._agent = agent
 
-        memory_config = agent.memory.config
-        self.enabled: bool = getattr(memory_config, "reflection_enabled", True)
-        self._interval: float = getattr(memory_config, "reflection_interval_minutes", 15) * 60
+        reflect = agent.spec.on_complete.reflect
+        self.enabled: bool = reflect.enabled
+        self._interval: float = reflect.interval_minutes * 60
         self._min_interactions: int = getattr(
-            memory_config, "reflection_min_interactions", 5
+            agent.memory.config, "reflection_min_interactions", 5
         )
         self._last_reflection_time: datetime | None = None
         self._interaction_count_since_reflection = 0

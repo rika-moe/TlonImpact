@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· Prototype 库与动态 Registry 设计已收敛（2026-07-22）
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -63,7 +63,28 @@ Agent 的智能在 LLM 里，能力在工具里；DSL 是胶水层，决定*何�
 
 ## 语言设计（分层落地）
 
-**L0 — EDN 数据字面量（先落地）**：map / vector / keyword / string / number / bool。v1 规约文件是纯数据，只解析不求值；trigger/loop/context 全部为声明式数据。
+**L0 — EDN 数据字面量（已落地，`agents/edn.py`）**：map / vector / keyword / string / number / bool。v1 规约文件是纯数据，只解析不求值；trigger/loop/context 全部为声明式数据。
+
+v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现于 `agents/spec.py`）：
+
+```clojure
+{:version 1                        ; 必填，只接受 1
+ :trigger {:on-mention true        ; 被 @ 必响应
+           :proactive false}       ; DefaultSpec 取自 AgentConfig.proactive
+ :context {:persona true           ; IDENTITY/SOUL/RULES + 团队 SOUL 段
+           :protocol true          ; 框架交互协议段
+           :knowledge true         ; 记忆知识块注入
+           :room-history 20}       ; 房间历史条数，0=关闭
+ :loop {:mode :react               ; v1 仅 :react，其他值报错
+        :max-iterations 10         ; DefaultSpec 取自 AgentConfig.max_iterations
+        :tools :background         ; v1 仅 :background
+        :max-consecutive-errors 3} ; DefaultSpec 取自 AgentConfig.max_consecutive_errors
+ :on-complete {:save-interaction true              ; 会话完成后写入记忆
+               :reflect {:enabled true             ; 反思开关（初始值，运行时仍可切换）
+                         :interval-minutes 15}}}   ; DefaultSpec 取自 memory config
+```
+
+规则：缺省字段继承 DefaultSpec（由 agent 的 config 派生），所以部分文件是纯覆盖；未知 key 忽略并 warning（向前兼容）；类型错误报带字段路径的清晰错误。keyword / symbol / string 是三种不同类型（`:mode :react` ≠ `:mode "react"`）。
 
 **L1 — 受限求值器（后落地）**：
 
@@ -102,6 +123,70 @@ LLM 写的行为必然出 bug，可观测性是必需品：
 - 日志记录 DSL 决策点（trigger 命中/未命中及原因）；
 - 每个 DSL 解释步骤对应一个 span。
 
+## Behavior Prototype 库（设计已收敛，未实现）
+
+预制的行为原型，让人类和 agent 都能以"模板 + 覆盖"的方式创建新 agent。
+
+**Prototype = AgentSpec + 人格文件模板 + 工具白名单**，目录形式：
+
+```
+prototypes/
+├── deep-thinker/          # 深度思考者（:max-iterations 大、knowledge 全开）
+│   ├── behavior.tlon
+│   ├── IDENTITY.md / SOUL.md / RULES.md
+├── fast-responder/        # 快速反应者（迭代少、context 精简）
+├── relay/                 # 消息转发者（极简 context，只路由）
+└── archivist/             # 档案管理者（reflect 频繁、记忆工具全开）
+```
+
+设计决策：
+
+- **继承机制现成**：阶段 2 的 `AgentSpec.load(base=...)` 部分覆盖语义即 prototype 继承——prototype 是 base，实例 `behavior.tlon` 只写差异字段；
+- **拷贝而非引用**：实例化时把 prototype 内容复制为实例自有文件，行为冻结在创建时刻——Tlon 升级改了 prototype，不影响存量 agent；
+- **存放**：包内预制，首次运行拷贝到 `~/.tlon/prototypes/`（与 `default_team.py` 种子机制同构），用户可改可加；
+- **发现**：人类走 `tlon mirror` 创建菜单；agent 走 `list_prototypes` 工具；
+- **已知缺口**：纯转发者不需要 LLM，v1 schema 的 `:loop {:mode :react}` 之外可能需要 `:llm false` 逃生门——推迟到实现 relay prototype 时再加。
+
+## 动态 Agent Registry（设计已收敛，未实现）
+
+Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消息到来按需激活。
+
+### 核心概念：身份与运行时分离
+
+- **Persona（持久）**：`~/.tlon/{id}/` 下的人格文件、记忆、配置，永远存在；
+- **Activation（瞬态）**：主循环、Docker 容器、内存中的 session，按需激活、闲置回收。
+
+类比 Orleans virtual actor：身份永恒，activation 随消息唤醒、闲置钝化。Registry 管理 activation，persona 目录是全集。
+
+### 两种身份（已拍板）
+
+- **居民（resident）**：有名有姓的持久 persona（现有 6 人 team 即居民）。可休眠，唤醒后还是那个有记忆的个体。"0 运行 agent"是资源配置（所有居民设为可休眠），不是架构强制；
+- **临时工（contractor）**：agent 用工具从 prototype 现造，完工即弃，persona 不保留。是否可"转正"为居民——开放问题，实现时再定。
+
+### 唤醒与路由（wake-on-mention）
+
+- Router 查 **persona 全集**（居民目录 + 运行中的临时工），不再只看运行中的 agent；提到沉睡 persona → 先激活再投递；
+- 唤醒竞态：同一人被并发 @，registry 加锁只激活一次；
+- 提到不存在的名字 → 错误提示或转 receptionist。
+
+### 冷启动对策
+
+- 容器懒启动：只有用到 shell 类工具才起 Docker 容器（纯对话不需要）；
+- 温池：保留 0~1 个 receptionist 常驻（顾言蹊式 proactive 协调者），先接住消息、转述、唤醒专家；
+- 唤醒期间 router 先发系统消息"正在唤醒 X…"，客户端体验自然。
+
+### 回收策略
+
+- 显式 `stop_agent` 工具调用，或空闲超时（如 10 分钟无新消息）；
+- **必须 drain**：存在 ACTIVE/WAITING session 时不许停，等 session 完结再回收；
+- 休眠不反思：reflection 是定时烧 token 的，睡着不反思；醒来时如有未巩固交互再补（`min_interactions` 闸门已有雏形）。
+
+### spawn 预算（防组合爆炸）
+
+- 全局并发 activation 上限（如 8）；
+- spawn 深度上限（消息链最多接力造 3 层）与每消息 spawn 配额；
+- 工具权限不可升格：临时工的工具白名单由 prototype 定死，spawner 无法授予 prototype 之外的权限（Tlon 预制 prototype 为可信源；LLM 现写的规约仍走人工批准闸）。
+
 ## 路线图
 
 ### 阶段 1 — 拆分 agent.py（P1 ）✅ 已完成（2026-07-22）
@@ -110,11 +195,11 @@ LLM 写的行为必然出 bug，可观测性是必需品：
 
 完成标准：行为不变，测试全绿 + 真实冒烟通过。**达成情况**：261 个测试全绿（含 6 个新增韧性测试），ruff / 架构检查 / re-export 检查全过；真实冒烟未做（留待阶段 2 前人工验证）。
 
-### 阶段 2 — AgentSpec + EDN 数据文件
+### 阶段 2 — AgentSpec + EDN 数据文件 ✅ 已完成（2026-07-22）
 
 定义 `AgentSpec` dataclass（纯数据字段）；写 `DefaultSpec` 精确复刻当前行为；Agent 改为"读 spec 驱动组件"的解释器；规约文件为纯 EDN 数据字面量（只解析不求值）。
 
-完成标准：现有 agent 配置等价迁移，行为不变，测试全绿。
+完成标准：现有 agent 配置等价迁移，行为不变，测试全绿。**达成情况**：311 个测试全绿（261 既有 + 50 新增：edn 32、spec 18），ruff / 架构检查 / re-export 检查全过。落地偏差：现状 no-tool reminder 无开关，故 v1 schema 不含 `:no-tool-reminder` 字段（reminder 保持无条件触发）；`AgentConfig` 的 proactive/max_iterations/max_consecutive_errors 保留为 DefaultSpec 数据源与路由预筛来源，`session_timeout_seconds`/`message_queue_size` 作为构造期 infra 不进 spec。
 
 ### 阶段 3 — 受限求值器
 
@@ -128,7 +213,22 @@ agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工
 
 完成标准：用户可通过对话让 agent 为自己造一个新 agent 并投入运行。
 
-阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体。
+### 阶段 5 — Behavior Prototype 库
+
+包内预制 prototype（spec + 人格模板 + 工具白名单），首启拷贝至 `~/.tlon/prototypes/`；实例化走"拷贝 + 部分覆盖"；`tlon mirror` 菜单与 `list_prototypes` 工具两条发现路径。依赖阶段 2 的 base 覆盖语义（已完成）。
+
+完成标准：从 `deep-thinker` prototype 创建新 agent，行为继承 + 覆盖生效，测试全绿。
+
+### 阶段 6 — 动态 Agent Registry
+
+分两步：
+
+- **6a 休眠/唤醒**：persona 与 activation 分离；router wake-on-mention（查 persona 全集）；容器懒启动；空闲 drain 回收；休眠不反思。完成后即实现"无沟通时 0 个运行中的 agent"；
+- **6b spawn/stop 工具化**：`spawn_agent` / `stop_agent` / `list_agents` 工具 + spawn 预算（全局上限/深度/配额/权限不升格）。与阶段 4 的 `spawn` 合并落地——规约互触发即"触发某 persona/prototype 的一次解释执行"。
+
+完成标准：人类 @ 沉睡居民可唤醒响应；agent 可从 prototype 造临时工、mention 之、停止之，全程受预算约束。
+
+阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体；阶段 5–6 让系统从"固定班底"走向"自组织的剧团"。
 
 ## 明确不做（v1）
 
