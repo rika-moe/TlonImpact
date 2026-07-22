@@ -5,6 +5,7 @@ Unified configuration management with validation and EventBus integration.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -124,6 +125,12 @@ class AgentConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
     proactive: bool = False
+    # Activation policy: "always" starts at boot and never sleeps;
+    # "lazy" registers without starting, wakes on explicit @mention and
+    # sleeps after `idle_timeout_seconds` of inactivity (scale-to-zero).
+    activation: Literal["always", "lazy"] = "always"
+    # Idle seconds before a lazy agent is drained (only for activation="lazy")
+    idle_timeout_seconds: int = 600
     # Source behavior prototype name when instantiated from one (None = manual)
     prototype: str | None = None
 

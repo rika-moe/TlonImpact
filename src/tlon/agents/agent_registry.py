@@ -1,14 +1,17 @@
 """Agent Registry for managing multiple agents.
 
 This module provides AgentRegistry class that manages:
-- Agent lifecycle (all agents start at system startup)
+- Agent lifecycle (activation-aware: "always" agents start at boot,
+  "lazy" agents register without starting)
+- Wake-on-mention (lazy agents are activated when explicitly @mentioned)
+- Idle drain (lazy agents sleep after idle_timeout_seconds of inactivity)
 - Agent shutdown
 
 Configuration is delegated to AgentInfoProvider (typically ConfigManager).
 
 Architecture:
     AgentRegistry is a Component that depends on:
-    - EventBus (for agent event publishing)
+    - EventBus (for agent event publishing and MESSAGE_ROUTED subscription)
     - AgentInfoProvider (for configuration queries)
     - MessageStore (for agent history access)
 
@@ -16,6 +19,7 @@ Architecture:
 """
 
 import asyncio
+import time
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -28,6 +32,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
+from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
@@ -88,8 +93,12 @@ def _build_llm_config(file_config: LLMConfig | None, settings) -> LLMConfig:
 class AgentRegistry(Component):
     """Registry for managing multiple agents.
 
-    All agents are started at system initialization.
-    No lazy loading support.
+    Activation-aware lifecycle (see docs/design/dsl-agents.md, 阶段 6a):
+    - "always" agents start at initialize() and never sleep (status quo);
+    - "lazy" agents register but do not start at boot. They wake when an
+      explicit @mention routes to them (wake-on-mention) and are drained
+      back to sleep after `idle_timeout_seconds` of inactivity with no
+      live sessions. All-lazy configuration boots with 0 running agents.
 
     Configuration is provided by AgentInfoProvider (typically ConfigManager),
     allowing this class to focus on agent lifecycle management only.
@@ -106,9 +115,12 @@ class AgentRegistry(Component):
         ...     message_store=message_store,
         ... )
         >>> registry.register("dev-001")  # Register by ID
-        >>> await registry.initialize()  # Start all agents
+        >>> await registry.initialize()  # Start "always" agents
         >>> agent = registry.get_agent("dev-001")  # Get running agent
     """
+
+    # Idle monitor check period (seconds)
+    _IDLE_CHECK_INTERVAL_SECONDS = 30
 
     def __init__(
         self,
@@ -133,11 +145,20 @@ class AgentRegistry(Component):
         self.message_store = message_store
         self._paths = paths  # None means use module singleton
 
-        # Registered agent IDs (to be started during initialize)
+        # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
 
-        # Active agents (all agents are active after initialize)
+        # Running agents (activations)
         self._agents: dict[str, Agent] = {}
+
+        # Wake-on-mention state: agents currently being woken, and one
+        # lock per agent serializing wake/drain of the same persona
+        self._waking: set[str] = set()
+        self._wake_locks: dict[str, asyncio.Lock] = {}
+
+        # MESSAGE_ROUTED subscription + idle monitor task
+        self._routed_subscription: str | None = None
+        self._idle_monitor_task: asyncio.Task | None = None
 
         logger.info("agent_registry_constructed")
 
@@ -170,17 +191,48 @@ class AgentRegistry(Component):
             self.register(agent_id)
 
     async def initialize(self) -> None:
-        """Initialize the registry and start all registered agents in parallel.
+        """Initialize the registry and start registered agents in parallel.
 
-        Each agent gets up to `_agent_start_timeout` seconds to start.
-        Agents that fail or time out are logged and skipped — the server
-        continues operating with the agents that did start successfully.
+        Only agents with ``activation == "always"`` are started here;
+        ``activation == "lazy"`` agents stay registered but sleeping until
+        an explicit @mention wakes them. Each agent gets up to 60 seconds
+        to start. Agents that fail or time out are logged and skipped —
+        the server continues operating with the agents that did start.
+
+        Also subscribes to MESSAGE_ROUTED (wake-on-mention) and starts
+        the idle monitor (drain of idle lazy agents).
         """
         logger.info("agent_registry_initializing", agent_ids=self._registered_ids)
 
-        agent_ids = [aid for aid in self._registered_ids if aid not in self._agents]
-        if not agent_ids:
+        # Wake-on-mention subscription (idempotent across re-initialize)
+        if self._routed_subscription is None:
+            self._routed_subscription = self.event_bus.subscribe(
+                EventType.MESSAGE_ROUTED, self._on_message_routed
+            )
+
+        # Idle drain monitor (idempotent across re-initialize)
+        if self._idle_monitor_task is None:
+            self._idle_monitor_task = asyncio.create_task(self._idle_monitor_loop())
+
+        start_ids: list[str] = []
+        lazy_ids: list[str] = []
+        for aid in self._registered_ids:
+            if aid in self._agents:
+                continue
+            config = self._agent_info.get_config(aid)
+            if config and config.activation == "lazy":
+                lazy_ids.append(aid)
+                logger.info("agent_lazy_not_started", agent_id=aid)
+            else:
+                start_ids.append(aid)
+
+        if not start_ids:
             self._initialized = True
+            logger.info(
+                "agent_registry_initialized",
+                active_count=len(self._agents),
+                sleeping_agents=lazy_ids,
+            )
             return
 
         async def _start_one(agent_id: str) -> tuple[str, Exception | None]:
@@ -194,9 +246,9 @@ class AgentRegistry(Component):
                 return agent_id, e
 
         per_agent_timeout = 60
-        overall_timeout = len(agent_ids) * per_agent_timeout
+        overall_timeout = len(start_ids) * per_agent_timeout
 
-        tasks = [asyncio.create_task(_start_one(aid)) for aid in agent_ids]
+        tasks = [asyncio.create_task(_start_one(aid)) for aid in start_ids]
         try:
             await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=False),
@@ -216,17 +268,30 @@ class AgentRegistry(Component):
 
         self._initialized = True
         active_count = len(self._agents)
-        total = len(agent_ids)
+        total = len(start_ids)
         logger.info(
             "agent_registry_initialized",
             active_count=active_count,
             total=total,
             active_agents=list(self._agents.keys()),
+            sleeping_agents=lazy_ids,
         )
 
     async def shutdown(self) -> None:
         """Shutdown all agents and cleanup."""
         logger.info("agent_registry_shutdown_started")
+
+        # Stop the idle monitor first so it cannot drain mid-shutdown
+        if self._idle_monitor_task:
+            self._idle_monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._idle_monitor_task
+            self._idle_monitor_task = None
+
+        # Stop wake-on-mention subscription
+        if self._routed_subscription is not None:
+            self.event_bus.unsubscribe(self._routed_subscription)
+            self._routed_subscription = None
 
         # Shutdown all active agents
         for agent_id, agent in list(self._agents.items()):
@@ -238,6 +303,7 @@ class AgentRegistry(Component):
 
         self._agents.clear()
         self._registered_ids.clear()
+        self._waking.clear()
         self._initialized = False
 
         logger.info("agent_registry_shutdown_completed")
@@ -289,11 +355,14 @@ class AgentRegistry(Component):
                 data_dir=str(agent_home),
             )
 
-            # Create Docker runtime (shared by shell + filesystem tools)
+            # Create Docker runtime (shared by shell + filesystem tools).
+            # The container is NOT started here: DockerRuntime lazily calls
+            # ensure_running() on first execute/read/write, so waking an
+            # agent for pure conversation costs zero containers. A daemon
+            # failure therefore surfaces as a tool error, not a start failure.
             docker_runtime: DockerRuntime | None = None
             try:
                 docker_runtime = DockerRuntime(config.docker, config.id)
-                await docker_runtime.ensure_running()
             except Exception as e:
                 logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
 
@@ -371,6 +440,183 @@ class AgentRegistry(Component):
         except Exception as e:
             logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
             return None
+
+    # ==================== Wake-on-mention ====================
+
+    async def _on_message_routed(self, event: Event) -> None:
+        """Wake sleeping agents targeted by explicit @mentions.
+
+        Runs in the EventBus dispatch context, so it must stay fast: the
+        actual assembly happens in a background task. Only mention-resolved
+        targets wake an agent — proactive broadcast targets never do,
+        otherwise scale-to-zero would be defeated by every general message.
+        """
+        from tlon.organization.messaging.router import RoutedMessage
+
+        if not isinstance(event.payload, RoutedMessage):
+            return
+
+        for agent_id in event.payload.mention_target_ids:
+            if agent_id in self._agents or agent_id in self._waking:
+                continue
+            if not self._agent_info.get_config(agent_id):
+                continue
+            self._waking.add(agent_id)
+            asyncio.create_task(self._wake_and_redeliver(agent_id, event))
+
+    async def _wake_and_redeliver(self, agent_id: str, event: Event) -> None:
+        """Activate a sleeping agent and redeliver the event that woke it.
+
+        Serialized per agent by a lock: concurrent mentions of the same
+        persona trigger exactly one assembly. After ``_start_agent`` the
+        agent is in the run table, so re-publishing the original
+        MESSAGE_ROUTED event (same payload and trace carrier) is picked up
+        by the new agent's own handler and cannot trigger another wake —
+        that is the loop guard.
+        """
+        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
+        try:
+            async with lock:
+                started_at = time.monotonic()
+                logger.info("agent_waking", agent_id=agent_id)
+                await self.event_bus.publish(
+                    Event(
+                        type=EventType.AGENT_WAKING,
+                        payload={"agent_id": agent_id},
+                        source="agent_registry",
+                        trace_id=event.trace_id,
+                        span_id=event.span_id,
+                        parent_span_id=event.parent_span_id,
+                    )
+                )
+
+                # Join the routed message's trace tree so wake cost is
+                # visible as an "agent.wake" span in the same trace.
+                if event.trace_id:
+                    with (
+                        continue_trace(event.trace_id, event.span_id),
+                        start_span(
+                            "agent.wake",
+                            source="agent_registry",
+                            attributes={"agent_id": agent_id},
+                        ),
+                    ):
+                        agent = await self._start_agent(agent_id)
+                else:
+                    with start_span(
+                        "agent.wake",
+                        source="agent_registry",
+                        attributes={"agent_id": agent_id},
+                    ):
+                        agent = await self._start_agent(agent_id)
+
+                wake_duration = time.monotonic() - started_at
+
+                if agent is None:
+                    logger.error("agent_wake_failed", agent_id=agent_id)
+                    await self.event_bus.publish(
+                        Event(
+                            type=EventType.AGENT_WAKE_FAILED,
+                            payload={"agent_id": agent_id},
+                            source="agent_registry",
+                            trace_id=event.trace_id,
+                            span_id=event.span_id,
+                            parent_span_id=event.parent_span_id,
+                        )
+                    )
+                    return
+
+                logger.info(
+                    "agent_woken",
+                    agent_id=agent_id,
+                    wake_duration_seconds=round(wake_duration, 3),
+                )
+                await self.event_bus.publish(
+                    Event(
+                        type=EventType.AGENT_WOKEN,
+                        payload={
+                            "agent_id": agent_id,
+                            "wake_duration_seconds": round(wake_duration, 3),
+                        },
+                        source="agent_registry",
+                        trace_id=event.trace_id,
+                        span_id=event.span_id,
+                        parent_span_id=event.parent_span_id,
+                    )
+                )
+
+                # Redeliver the original event: same RoutedMessage payload
+                # and trace carrier, so the new agent's handler picks it up.
+                await self.event_bus.publish(event)
+        finally:
+            self._waking.discard(agent_id)
+
+    # ==================== Idle drain ====================
+
+    async def _idle_monitor_loop(self) -> None:
+        """Periodically drain idle lazy agents (scale-to-zero).
+
+        Every `_IDLE_CHECK_INTERVAL_SECONDS`, each running lazy agent that
+        has been idle past its configured timeout and has no live sessions
+        is shut down and removed from the run table (its registration is
+        kept, so a later @mention wakes it again).
+        """
+        while True:
+            await asyncio.sleep(self._IDLE_CHECK_INTERVAL_SECONDS)
+            for agent_id in list(self._agents.keys()):
+                try:
+                    await self._reap_if_idle(agent_id)
+                except Exception as e:
+                    logger.error("agent_sleep_check_failed", agent_id=agent_id, error=str(e))
+
+    async def _reap_if_idle(self, agent_id: str) -> None:
+        """Put one lazy agent to sleep if it is idle past its timeout.
+
+        Drain semantics: an agent with any live (ACTIVE/WAITING) session is
+        never stopped. The condition is checked once up front and again
+        under the per-agent lock right before shutdown — a session that
+        started in the race window keeps the agent alive.
+        """
+        config = self._agent_info.get_config(agent_id)
+        if not config or config.activation != "lazy":
+            return
+
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            return
+        if agent.active_session_count > 0 or agent.idle_seconds < config.idle_timeout_seconds:
+            return
+
+        # Serialize with a concurrent wake of the same persona
+        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            agent = self._agents.get(agent_id)
+            if agent is None:
+                return
+            # Drain re-check under the lock
+            if agent.active_session_count > 0:
+                return
+            if agent.idle_seconds < config.idle_timeout_seconds:
+                return
+
+            self._agents.pop(agent_id)
+            idle = int(agent.idle_seconds)
+            try:
+                await agent.shutdown()
+            except Exception as e:
+                # The agent is already out of the run table; a later
+                # @mention assembles a fresh activation.
+                logger.error("agent_sleep_failed", agent_id=agent_id, error=str(e))
+                return
+
+            logger.info("agent_sleeping", agent_id=agent_id, idle_seconds=idle)
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.AGENT_SLEEPING,
+                    payload={"agent_id": agent_id, "idle_seconds": idle},
+                    source="agent_registry",
+                )
+            )
 
     def get_agent(self, agent_id: str) -> Agent | None:
         """Get an active agent by ID.
@@ -490,10 +736,19 @@ class AgentRegistry(Component):
 
         agent = self._agents.get(agent_id)
 
+        if agent:
+            state = agent.get_state()
+        elif agent_id in self._waking:
+            state = "waking"
+        elif config.activation == "lazy":
+            state = "sleeping"
+        else:
+            state = "unknown"
+
         return {
             "id": agent_id,
             "name": config.name,
-            "state": agent.get_state() if agent else "unknown",
+            "state": state,
         }
 
     def get_all_agent_status(self) -> list[dict]:

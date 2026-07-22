@@ -375,8 +375,12 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                         value="memory",
                     ),
                     self.questionary.Choice(
-                        f"🚀 启动模式 - 当前: {'常驻' if agent.proactive else '延迟'}",
+                        f"🚀 主动响应 - 当前: {'是' if agent.proactive else '否'}",
                         value="proactive",
+                    ),
+                    self.questionary.Choice(
+                        f"💤 激活模式 - 当前: {'常驻' if agent.activation == 'always' else '休眠'}",
+                        value="activation",
                     ),
                     self.questionary.Separator(),
                     self.questionary.Choice("✓ 完成", value="done"),
@@ -445,14 +449,32 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 
             elif edit_choice == "proactive":
                 new_proactive = self.questionary.confirm(
-                    "是否设置为常驻启动 (proactive)?\n"
-                    "常驻: 自动启动，响应所有消息\n"
-                    "延迟: 手动唤醒，只响应@消息",
+                    "是否主动响应 (proactive)?\n"
+                    "主动响应: 没有@的普通消息也会响应\n"
+                    "被动响应: 只响应@自己的消息",
                     default=agent.proactive,
                 ).ask()
                 agent.proactive = new_proactive
-                mode_str = "常驻" if agent.proactive else "延迟"
-                self.console.print(f"[green]✓ 启动模式已更新为: {mode_str}[/green]")
+                mode_str = "主动响应" if agent.proactive else "被动响应"
+                self.console.print(f"[green]✓ 响应模式已更新为: {mode_str}[/green]")
+
+            elif edit_choice == "activation":
+                new_activation = self.questionary.select(
+                    "激活模式 (activation):",
+                    choices=[
+                        self.questionary.Choice(
+                            "常驻 (always) - 系统启动即运行，永不休眠", value="always"
+                        ),
+                        self.questionary.Choice(
+                            "休眠 (lazy) - 被@时唤醒，空闲自动休眠", value="lazy"
+                        ),
+                    ],
+                    default=agent.activation,
+                ).ask()
+                if new_activation:
+                    agent.activation = new_activation
+                    mode_str = "常驻" if agent.activation == "always" else "休眠"
+                    self.console.print(f"[green]✓ 激活模式已更新为: {mode_str}[/green]")
 
         success, msg = self.agent_store.save_agent(agent)
         if success:

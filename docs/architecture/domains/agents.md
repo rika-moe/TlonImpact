@@ -27,7 +27,7 @@ agents/
 ├── session.py             # AgentSession：单个会话/任务状态
 ├── prompt_builder.py      # SystemPromptBuilder：纯函数式系统提示组合
 ├── prompt_context.py      # AgentPromptContext 数据对象
-├── agent_registry.py      # Agent 生命周期管理
+├── agent_registry.py      # AgentRegistry：激活感知生命周期（启动分流/唤醒/空闲回收）
 └── tool_executor.py       # 工具执行器
 ```
 
@@ -46,9 +46,41 @@ agents/
 | `TriggerEvaluator` | 触发判断（mention/proactive） | `agents/trigger.py` |
 | `ContextBuilder` | 上下文组装、系统提示缓存 | `agents/context_builder.py` |
 | `ReflectionEngine` | 记忆反思 | `agents/reflection.py` |
-| `AgentRegistry` | 生命周期管理 | `agents/agent_registry.py` |
+| `AgentRegistry` | 生命周期管理（休眠/唤醒/回收） | `agents/agent_registry.py` |
 | `LLMClient` | LLM API 调用 | `base/llm_client.py` |
 | `ToolExecutor` | 工具注册执行 | `agents/tool_executor.py` |
+
+---
+
+## 动态 Registry（休眠/唤醒，阶段 6a）
+
+`AgentRegistry` 管理 activation（瞬态运行时），persona（`~/.tlon/{id}/`）由
+AgentInfoProvider 提供全集，两者分离（见 [../../design/dsl-agents.md](../../design/dsl-agents.md)）：
+
+- **激活模式**（`AgentConfig.activation`）：`"always"`（默认）boot 即启动、永不休眠，
+  行为与旧版一致；`"lazy"` 只注册不启动，被显式 @mention 时唤醒，空闲后回收。
+  全 lazy 配置下 boot 后 0 个运行中 agent；
+- **状态**：`get_agent_status` 对 lazy 未运行返回 `"sleeping"`，唤醒中 `"waking"`，
+  always 未运行保持 `"unknown"`；
+- **Wake-on-mention**：registry 订阅 `MESSAGE_ROUTED`，仅对
+  `RoutedMessage.mention_target_ids`（mention 解析出的 target 子集，proactive 广播
+  不在其中）中"已知配置 + 未运行 + 非 waking"的 agent 触发 `_wake_and_redeliver`：
+  per-agent `asyncio.Lock` 串行化（并发 @ 只装配一次，但每个在沉睡期到达的事件都会
+  重投递）→ 复用 `_start_agent` 装配 → **重发原 MESSAGE_ROUTED 事件对象**（同 payload、
+  同 trace carrier），新 agent 的 handler 自然拾取；唤醒后 agent 已在运行表，重发不会
+  再触发唤醒（防循环）。观测：`AGENT_WAKING` / `AGENT_WOKEN`（含 wake_duration）/
+  `AGENT_WAKE_FAILED` 事件 + 同名 snake_case 日志，唤醒耗时是原消息 trace 树下的
+  `agent.wake` span；
+- **空闲回收（drain）**：30s 周期 monitor；lazy agent 空闲超 `idle_timeout_seconds`
+  （默认 600）且无存活 session → `agent.shutdown()` + 移出运行表（保留注册），
+  发 `AGENT_SLEEPING`。drain 语义：有 ACTIVE/WAITING session 绝不停，且在 per-agent
+  锁下 shutdown 前重查一次。Agent 只读暴露 `active_session_count` / `idle_seconds`
+  （SessionScheduler 提供："活动"= session 创建 / 存活 session 的 `last_active_at` /
+  session 完结；无 session 时从主循环启动算起）。休眠即主循环停止，reflection 自然停烧；
+- **容器懒启动**：`_start_agent` 只构造 `DockerRuntime` 不启动容器；
+  `DockerRuntime.execute` / `read_file` / `write_file` / `file_exists` 在 container
+  为空时先 `ensure_running()`（幂等），daemon 不可用表现为工具报错而非启动失败。
+  纯对话唤醒零容器成本。
 
 ---
 

@@ -20,7 +20,7 @@ Architecture:
     It subscribes to MESSAGE_NEW events and publishes MESSAGE_ROUTED events.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from tlon.base.component import Component
@@ -46,11 +46,16 @@ class RoutedMessage:
         original: The original message
         target_ids: List of target recipient IDs (agents, clients, etc.)
         routing_reason: Why this routing decision was made
+        mention_target_ids: Subset of target_ids that came from explicit
+            @mention resolution (as opposed to proactive broadcast or
+            client display). Used by the registry for wake-on-mention:
+            only mention targets may wake a sleeping agent.
     """
 
     original: Message
     target_ids: list[str]
     routing_reason: str = ""
+    mention_target_ids: list[str] = field(default_factory=list)
 
 
 class MessageRouter(Component, Device):
@@ -157,11 +162,11 @@ class MessageRouter(Component, Device):
             await self._store_message(message)
 
             # Step 2: Decide routing targets
-            targets = self._decide_targets(message)
+            targets, mention_targets = self._decide_targets(message)
 
             # Step 3: Publish routed message with trace context
             if targets:
-                await self._publish_routed(message, targets, ctx)
+                await self._publish_routed(message, targets, ctx, mention_targets)
                 logger.debug("message_routed", message_id=message.id, targets=targets)
             else:
                 logger.debug("message_unrouted", message_id=message.id)
@@ -186,7 +191,7 @@ class MessageRouter(Component, Device):
             logger.error("message_storage_failed", message_id=message.id, error=str(e))
             # Don't fail routing if storage fails - message flow is more important
 
-    def _decide_targets(self, message: Message) -> list[str]:
+    def _decide_targets(self, message: Message) -> tuple[list[str], list[str]]:
         """Decide which recipients should receive this message.
 
         Routing logic:
@@ -203,34 +208,44 @@ class MessageRouter(Component, Device):
             message: The message to route
 
         Returns:
-            List of target recipient IDs
+            Tuple of (all target recipient IDs, mention-resolved target IDs).
+            The second element is the subset that came from explicit
+            @mention resolution; proactive broadcast targets are excluded
+            so the registry only wakes sleeping agents on real mentions.
         """
         targets: set[str] = set()
+        mention_targets: set[str] = set()
 
         if message.sender_type == "human":
-            targets.update(self._route_human_message(message))
+            t, m = self._route_human_message(message)
         elif message.sender_type == "agent":
-            targets.update(self._route_agent_message(message))
+            t, m = self._route_agent_message(message)
         elif message.sender_type == "system":
-            targets.update(self._route_system_message(message))
+            t, m = self._route_system_message(message), set()
+        else:
+            t, m = set(), set()
 
-        return list(targets)
+        targets.update(t)
+        mention_targets.update(m)
+        return list(targets), list(mention_targets)
 
-    def _route_human_message(self, message: Message) -> set[str]:
+    def _route_human_message(self, message: Message) -> tuple[set[str], set[str]]:
         """Route a message from a human user.
 
         Args:
             message: The human message
 
         Returns:
-            Set of target agent IDs
+            Tuple of (target IDs, mention-resolved target IDs)
         """
         targets: set[str] = set()
+        mention_targets: set[str] = set()
 
         if message.mentions:
             # Explicit mentions - resolve to agent IDs and route
             resolved = self._resolve_mentions_to_ids(message.mentions)
             targets.update(resolved)
+            mention_targets.update(resolved)
             logger.debug(
                 "mentioned_agents_resolved",
                 mentions=message.mentions,
@@ -242,18 +257,19 @@ class MessageRouter(Component, Device):
             targets.update(proactive)
             logger.debug("proactive_agents_selected", agents=sorted(proactive))
 
-        return targets
+        return targets, mention_targets
 
-    def _route_agent_message(self, message: Message) -> set[str]:
+    def _route_agent_message(self, message: Message) -> tuple[set[str], set[str]]:
         """Route a message from an agent.
 
         Args:
             message: The agent message
 
         Returns:
-            Set of target IDs (clients + mentioned agents)
+            Tuple of (target IDs incl. clients, mention-resolved target IDs)
         """
         targets: set[str] = set()
+        mention_targets: set[str] = set()
 
         # Agent messages go to clients for display
         targets.add("@clients")
@@ -262,11 +278,12 @@ class MessageRouter(Component, Device):
         if message.mentions:
             resolved = self._resolve_mentions_to_ids(message.mentions)
             targets.update(resolved)
+            mention_targets.update(resolved)
             logger.debug(
                 "agent_message_targets_resolved", resolved_mentions=sorted(resolved)
             )
 
-        return targets
+        return targets, mention_targets
 
     def _route_system_message(self, message: Message) -> set[str]:
         """Route a system message.
@@ -356,7 +373,11 @@ class MessageRouter(Component, Device):
         return resolved
 
     async def _publish_routed(
-        self, message: Message, targets: list[str], ctx: SpanCtx | None = None
+        self,
+        message: Message,
+        targets: list[str],
+        ctx: SpanCtx | None = None,
+        mention_target_ids: list[str] | None = None,
     ) -> None:
         """Publish a routed message event.
 
@@ -364,11 +385,13 @@ class MessageRouter(Component, Device):
             message: The original message
             targets: List of target recipient IDs
             ctx: Optional trace context
+            mention_target_ids: Subset of targets resolved from @mentions
         """
         routed = RoutedMessage(
             original=message,
             target_ids=targets,
             routing_reason=self._get_routing_reason(message, targets),
+            mention_target_ids=mention_target_ids or [],
         )
 
         # Build event with trace context

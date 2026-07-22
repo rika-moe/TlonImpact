@@ -147,7 +147,7 @@ prototypes/
 - **发现**：人类走 `tlon mirror` 创建菜单；agent 走 `list_prototypes` 工具；
 - **已知缺口**：纯转发者不需要 LLM，v1 schema 的 `:loop {:mode :react}` 之外可能需要 `:llm false` 逃生门——推迟到实现 relay prototype 时再加。
 
-## 动态 Agent Registry（设计已收敛，未实现）
+## 动态 Agent Registry（6a 休眠/唤醒已实现，6b 未实现）
 
 Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消息到来按需激活。
 
@@ -186,6 +186,33 @@ Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消�
 - 全局并发 activation 上限（如 8）；
 - spawn 深度上限（消息链最多接力造 3 层）与每消息 spawn 配额；
 - 工具权限不可升格：临时工的工具白名单由 prototype 定死，spawner 无法授予 prototype 之外的权限（Tlon 预制 prototype 为可信源；LLM 现写的规约仍走人工批准闸）。
+
+### 附：操作系统类比（灵感，非规约）
+
+> **注意**：本节只是类比/灵感，用于辅助理解与启发设计，不构成架构规约。词汇不进代码命名（用户可见层继续用博尔赫斯词汇），机制以本文其他章节的正式设计为准。
+
+Tlon 的 prototype/agent 体系与操作系统的"可执行文件/进程"高度同构：
+
+| Tlon | 操作系统 |
+|------|---------|
+| Prototype（behavior.tlon + 人格 + 工具白名单） | 可执行文件（磁盘上的程序） |
+| Activation（主循环 + 容器 + session） | 进程 |
+| AgentRegistry | init/pid 1 + 进程调度器 |
+| Wake-on-mention | systemd socket activation / inetd |
+| 空闲 drain 休眠 | cgroup freezer / swap out |
+| spawn 预算 | `RLIMIT_NPROC` / cgroup |
+| 工具白名单 / 权限不可升格 | capabilities(7) / 禁止 setuid |
+| EventBus | IPC / dbus |
+| REST `/agents` | `ps` / `/proc` |
+| 每 agent 一个 Docker 容器 | 每进程独立 namespace/jail |
+
+类比带来的设计灵感：
+
+- **信任分级 ≈ 代码签名**：Tlon 预制 prototype = 签名二进制（可信，直接执行）；LLM 现写规约 = 未签名二进制（Gatekeeper 模型：校验 + 用户显式批准）；dry-run = 沙箱试运行；
+- **目录布局可参照 FHS**：包内 prototypes ≈ `/usr/bin`（只读、随发行版升级），`~/.tlon/prototypes/` ≈ `/usr/local/bin`（用户安装），agent home ≈ `$HOME`；
+- **6b 可参照进程模型**：spawn/stop ≈ fork/exec + kill，spawner 与临时工是父子关系——进程模型提示必须回答"父进程死了，子进程 reparent 还是一起杀"（spawner 休眠后它造的临时工何去何从）。
+
+类比失效处（同样要记住）：进程死后一无所有，而 agent 醒来带着完整记忆（更像 CRIU 检查点恢复 + 用户账号：persona 是持久数据，activation 只是登录会话）；进程等待输入，agent 有自主循环（更像 daemon + cron）。
 
 ## 路线图
 
@@ -229,10 +256,20 @@ agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工
 
 分两步：
 
-- **6a 休眠/唤醒**：persona 与 activation 分离；router wake-on-mention（查 persona 全集）；容器懒启动；空闲 drain 回收；休眠不反思。完成后即实现"无沟通时 0 个运行中的 agent"；
+- **6a 休眠/唤醒** ✅ 已完成（2026-07-22）：persona 与 activation 分离；router wake-on-mention（查 persona 全集）；容器懒启动；空闲 drain 回收；休眠不反思。完成后即实现"无沟通时 0 个运行中的 agent"；
 - **6b spawn/stop 工具化**：`spawn_agent` / `stop_agent` / `list_agents` 工具 + spawn 预算（全局上限/深度/配额/权限不升格）。与阶段 4 的 `spawn` 合并落地——规约互触发即"触发某 persona/prototype 的一次解释执行"。
 
 完成标准：人类 @ 沉睡居民可唤醒响应；agent 可从 prototype 造临时工、mention 之、停止之，全程受预算约束。
+
+**6a 达成情况**：361 个测试全绿（341 既有 + 20 新增动态 registry 测试），ruff / 架构检查 / re-export 检查全过。落地情况：
+
+- **配置**：`AgentConfig.activation: Literal["always", "lazy"] = "always"` + `idle_timeout_seconds: int = 600`。默认全 always → 行为与之前完全一致（全量启动、永不休眠）；wizard 编辑菜单加"激活模式"项（与 proactive"主动响应"并列，文案区分）；
+- **启动分流**：`registry.initialize()` 只启动 always agent；lazy 注册不启动，全 lazy 时 boot 后 0 运行。`get_agent_status` 对 lazy 未运行返回 `"sleeping"`（waking 中返回 `"waking"`，always 未运行保持 `"unknown"`）；
+- **唤醒路由**：`RoutedMessage` 新增 `mention_target_ids` 字段（router 在路由决策时把 mention 解析出的 target 子集单独标记）；registry 订阅 `MESSAGE_ROUTED`，只对 mention target 唤醒沉睡 agent——**proactive 广播不唤醒**（决策：否则每条普通消息都会唤起全部 lazy agent，scale-to-zero 失效）；
+- **唤醒执行**：`_wake_and_redeliver` 用 per-agent asyncio.Lock 防竞态（并发 @ 同一人只装配一次，但两个事件都会重投递——后到的事件到达时 agent 尚未运行，不投会丢）；复用 `_start_agent` 装配后**重发原事件对象**（同 payload 同 trace carrier），新 agent 的 handler 自然拾取；防循环靠"唤醒后已在运行表"。观测：`agent_waking` / `agent_woken`（含 wake_duration）/ `agent_wake_failed` 日志 + 对应 `AGENT_WAKING/WOKEN/WAKE_FAILED` 事件，唤醒耗时作为 `agent.wake` span 挂在原消息 trace 树下；
+- **空闲回收**：registry 起 30s 周期 monitor，lazy agent 空闲超 `idle_timeout_seconds` 且无存活 session → drain。**drain 语义**：有 ACTIVE/WAITING session 绝不停；条件在 per-agent 锁下 shutdown 前再查一次（竞态窗口内有新 session 则放弃）；休眠即移出运行表保留注册，`agent_sleeping` 日志 + `AGENT_SLEEPING` 事件。Agent 暴露只读 `active_session_count` / `idle_seconds`（scheduler 提供："活动"= session 创建 / 存活 session 的 last_active_at / session 完结，无 session 时从主循环启动算起）。休眠不反思：agent 停了主循环自然停，reflection 随之停；
+- **容器懒启动**：`_start_agent` 不再 `ensure_running()`；DockerRuntime 的 execute/read_file/write_file/file_exists 本就有"container 为空则先 ensure_running"的懒启动路径，工具首次使用时自动起容器，daemon 不可用表现为工具报错而非 agent 启动失败（`docker_unavailable` warning 语义保留给构造失败）。纯对话唤醒零容器成本；
+- **6b 未做**：spawn/stop 工具化、spawn 预算、receptionist 温池、"正在唤醒 X…"系统消息（冷启动体验）留待后续。
 
 阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体；阶段 5–6 让系统从"固定班底"走向"自组织的剧团"。
 

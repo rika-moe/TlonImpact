@@ -31,6 +31,37 @@ class SessionScheduler:
 
     def __init__(self, agent: "Agent"):
         self._agent = agent
+        # Live (non-completed) sessions; run() rebinds this to its working
+        # dict. Read by the registry's idle monitor via the properties below.
+        self._sessions: dict[str, AgentSession] = {}
+        # Floor for last activity: loop start time, bumped on session
+        # creation and session completion (see run()).
+        self._last_activity_at: datetime = datetime.now()
+
+    @property
+    def active_session_count(self) -> int:
+        """Number of live sessions (ACTIVE or WAITING; completed ones are reaped)."""
+        return len(self._sessions)
+
+    @property
+    def last_activity_at(self) -> datetime:
+        """Most recent session activity timestamp.
+
+        "Activity" means: a session was created, a live session's
+        ``last_active_at`` (updated on every state change/step), or a
+        session completed. With no sessions at all, this is the loop start
+        time — so a freshly started agent is considered recently active.
+        """
+        last = self._last_activity_at
+        for session in self._sessions.values():
+            if session.last_active_at > last:
+                last = session.last_active_at
+        return last
+
+    @property
+    def idle_seconds(self) -> float:
+        """Seconds since the last session activity (see last_activity_at)."""
+        return (datetime.now() - self.last_activity_at).total_seconds()
 
     async def run(self) -> None:
         """Agent's continuous main loop with multi-session scheduling.
@@ -50,6 +81,8 @@ class SessionScheduler:
             logger.info("agent_main_loop_started")
             sessions: dict[str, AgentSession] = {}
             session_messages: dict[str, Message] = {}
+            self._sessions = sessions
+            self._last_activity_at = datetime.now()
 
             while agent._worker_running:
                 # ── 0. Proactive memory triggers (no message required) ──
@@ -63,6 +96,7 @@ class SessionScheduler:
                     session = AgentSession(sid, msg.content, carrier=carrier)
                     sessions[sid] = session
                     session_messages[sid] = msg
+                    self._last_activity_at = datetime.now()
                     logger.info("session_started", session_id=sid, content=msg.content)
                 except asyncio.QueueEmpty:
                     # No new messages — if no sessions either, block
@@ -74,6 +108,7 @@ class SessionScheduler:
                             sid = f"{agent.id}-{msg.id}"
                             sessions[sid] = AgentSession(sid, msg.content, carrier=carrier)
                             session_messages[sid] = msg
+                            self._last_activity_at = datetime.now()
                         except TimeoutError:
                             continue
 
@@ -113,6 +148,7 @@ class SessionScheduler:
                         await session.cancel_pending()
                         del sessions[sid]
                         session_messages.pop(sid, None)
+                        self._last_activity_at = datetime.now()
 
                 # ── 5. Agent state derives from live sessions ──
                 agent._derive_state(sessions)

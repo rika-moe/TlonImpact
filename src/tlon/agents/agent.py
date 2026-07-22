@@ -163,6 +163,23 @@ class Agent(Component, Device):
         """Get agent state as string."""
         return self.state.value if self.state else "unknown"
 
+    @property
+    def active_session_count(self) -> int:
+        """Number of live sessions (ACTIVE or WAITING). Read-only; used by
+        the registry's idle monitor for drain decisions."""
+        return self._scheduler.active_session_count
+
+    @property
+    def idle_seconds(self) -> float:
+        """Seconds since the last session activity.
+
+        "Activity" covers session creation, per-step updates of a live
+        session's ``last_active_at``, and session completion; an agent
+        that never had a session counts from main-loop start. Read-only;
+        used by the registry's idle monitor.
+        """
+        return self._scheduler.idle_seconds
+
     def _derive_state(self, sessions: dict[str, AgentSession]) -> None:
         """Recompute agent-level state from live sessions.
 
