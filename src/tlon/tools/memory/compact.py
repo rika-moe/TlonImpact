@@ -1,4 +1,4 @@
-"""Tool for generating summary from working memory."""
+"""Tool for compacting working memory into a long-term summary."""
 
 from typing import TYPE_CHECKING
 
@@ -11,15 +11,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-class GenerateSummaryTool(Tool):
-    """Tool to generate summary from working memory.
+class CompactTool(Tool):
+    """Tool to compact working memory into a long-term summary.
 
-    This tool allows the agent to explicitly trigger summary generation
-    from current working memory interactions.
+    This tool allows the agent to explicitly compact all current working
+    memory interactions into a long-term summary, optionally focusing on
+    specific content via instructions.
 
     Example:
-        >>> tool = GenerateSummaryTool(memory_manager)
-        >>> result = await tool.execute()
+        >>> tool = CompactTool(memory_manager)
+        >>> result = await tool.execute(instructions="保留关于部署方案的决策")
     """
 
     def __init__(self, memory_manager: "MemoryManager"):
@@ -29,14 +30,14 @@ class GenerateSummaryTool(Tool):
             memory_manager: The MemoryManager instance
         """
         super().__init__(
-            name="generateSummary",
-            description="将当前工作记忆中的对话生成为长期摘要",
+            name="compact",
+            description="压缩当前工作记忆为长期摘要，可用 instructions 指定保留重点",
             parameters={
                 "type": "object",
                 "properties": {
-                    "force": {
-                        "type": "boolean",
-                        "description": "是否强制生成，即使交互数量不足",
+                    "instructions": {
+                        "type": "string",
+                        "description": "指定摘要时重点保留的内容，如某个话题或决策",
                     },
                 },
             },
@@ -45,18 +46,21 @@ class GenerateSummaryTool(Tool):
 
     async def execute(
         self,
-        force: bool = True,
+        instructions: str | None = None,
     ) -> ToolResult:
-        """Execute the tool to generate summary.
+        """Execute the tool to compact working memory.
 
         Args:
-            force: If True, generate even if not enough interactions
+            instructions: Optional focus for the summary, e.g. a topic
+                or decision to preserve
 
         Returns:
             ToolResult with the summary ID
         """
         try:
-            summary_id = await self.memory.generate_summary(force=force)
+            summary_id = await self.memory.generate_summary(
+                force=True, instructions=instructions
+            )
 
             if summary_id:
                 return ToolResult(
@@ -74,6 +78,7 @@ class GenerateSummaryTool(Tool):
             logger.error("summary_generation_failed", error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
+                data={},
                 error=str(e),
                 message=f"❌ 生成摘要失败: {e}",
             )

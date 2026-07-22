@@ -34,12 +34,16 @@ class Summarizer:
     async def generate_summary(
         self,
         interactions: list[dict[str, Any]],
+        instructions: str | None = None,
         temperature: float | None = None,
     ) -> tuple[str, list[str], list[str]]:
         """Generate a natural language summary from interactions.
 
         Args:
             interactions: List of interaction dictionaries
+            instructions: Optional focus for the summary, e.g. topics or
+                decisions that must be preserved
+            temperature: Optional temperature override
 
         Returns:
             Tuple of (summary_text, key_decisions, action_items)
@@ -68,6 +72,9 @@ class Summarizer:
     "key_decisions": ["决策1", "决策2"],
     "action_items": ["待办1", "待办2"]
 }"""
+
+        if instructions:
+            system_prompt += f"\n\n请特别保留/关注以下内容：{instructions}"
 
         messages = [
             {"role": "user", "content": f"请为以下对话生成摘要：\n\n{formatted_interactions}"}
@@ -230,6 +237,7 @@ class Summarizer:
         interactions: list[dict[str, Any]],
         session_id: str,
         existing_facts: list[dict[str, Any]] | None = None,
+        instructions: str | None = None,
         temperature: float | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Process interactions to generate summary and extract facts.
@@ -240,6 +248,8 @@ class Summarizer:
             interactions: List of interaction dictionaries
             session_id: Current session ID
             existing_facts: Optional existing facts to avoid duplicates
+            instructions: Optional focus for the summary, e.g. topics or
+                decisions that must be preserved
             temperature: Optional temperature override
 
         Returns:
@@ -250,7 +260,7 @@ class Summarizer:
 
         # Generate summary
         summary_text, key_decisions, action_items = await self.generate_summary(
-            interactions, temperature=temperature
+            interactions, instructions=instructions, temperature=temperature
         )
 
         # Extract facts

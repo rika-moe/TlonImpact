@@ -30,6 +30,8 @@
 Working Memory 满/空闲 → LLM 生成摘要 → 提取关键事实 → 存入 Episodic → 清空 Working
 ```
 
+Agent 也可通过 `compact` 工具主动压缩全部 Working Memory；其可选参数 `instructions` 会注入摘要 prompt，指定需要重点保留的内容（自动触发的摘要不带 instructions）。
+
 ---
 
 ## 文档索引

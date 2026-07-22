@@ -76,7 +76,7 @@
   - Working memory：滚动窗口（默认 10 条）；
   - Episodic memory：summaries + facts，fact 支持 supersede（命中时原子重写 `facts.jsonl` 落盘，PR ；原仅改内存、重启后旧事实复活）；
   - 检索：纯关键词子串匹配，默认实现会拉 1000 条全量过滤；
-  - Summarizer 触发：working memory 满 / 空闲超时（默认 30min）/ LLM 主动调 `generateSummary`；流程为「快照 → LLM 调用（不持锁）→ delta 清理」。
+  - Summarizer 触发：working memory 满 / 空闲超时（默认 30min）/ LLM 主动调 `compact`；流程为「快照 → LLM 调用（不持锁）→ delta 清理」。
 - **消息路由**（`organization/messaging/router.py`）：human 消息有 mention → 路由给被 @ 的 agent，无 mention → 广播给所有 proactive agent；agent 消息 → `@clients` + 被 @ 的 agent。store 失败仅 log 不阻断路由。
 - **DockerRuntime**（`sandbox/docker_runtime.py`）：每 agent 一容器 `tlon-agent-{id}`，`sleep infinity` 常驻，workspace 卷挂载，mem/cpu 限额，network 默认 `host`。客户端连接多级回退（from_env → Colima/Docker Desktop socket）。同一实例注入 shell/文件四个工具。**无 Docker 降级 = 工具可用但永远失败，无本地执行回退**。
 - **Tools 框架**（`tools/base.py`）：`Tool` ABC + `to_openai_definition()` + 参数校验 + 统一 `ToolResult`。无全局注册表，AgentRegistry 手工注册。文件工具有 `allowed_paths` 目录白名单（`path_guard.py`，默认 `/workspace`；2026-07-20 新增，此前无权限模型）；shell 工具不设限。

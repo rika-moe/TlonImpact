@@ -142,7 +142,7 @@ class TestAgentRegistryStartAgent:
             "sendMessage",
             "rememberFact",
             "searchMemories",
-            "generateSummary",
+            "compact",
             "forget",
             "createTask",
             "listTasks",

@@ -176,7 +176,7 @@ class TestKnowledgeContext:
 class TestToolExecutionDoesNotInvalidateCache:
     """Memory-modifying tools no longer invalidate system prompt cache."""
 
-    MEMORY_TOOLS = ["rememberFact", "forget", "generateSummary"]
+    MEMORY_TOOLS = ["rememberFact", "forget", "compact"]
     NEUTRAL_TOOLS = ["executeBash", "listTasks", "startTask", "sendMessage", "searchMemories"]
 
     @pytest.mark.asyncio

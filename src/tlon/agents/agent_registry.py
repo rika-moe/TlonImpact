@@ -35,8 +35,8 @@ from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
+from tlon.tools.memory.compact import CompactTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
-from tlon.tools.memory.generate_summary import GenerateSummaryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.messaging.send_message import SendMessageTool
@@ -311,7 +311,7 @@ class AgentRegistry(Component):
             tool_executor.register_tool(ListPrototypesTool())
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))
-            tool_executor.register_tool(GenerateSummaryTool(memory))
+            tool_executor.register_tool(CompactTool(memory))
             tool_executor.register_tool(ForgetMemoryTool(memory))
             tool_executor.register_tool(CreateTaskTool(task_manager))
             tool_executor.register_tool(ListTasksTool(task_manager))

@@ -258,7 +258,7 @@ class Agent:
 **关键变化**：
 
 - 没有 dirty 机制了
-- `rememberFact`, `forget`, `generateSummary` 不再触发重建
+- `rememberFact`, `forget`, `compact` 不再触发重建
 - 只有配置热重载时才需要清空 cache
 
 ---

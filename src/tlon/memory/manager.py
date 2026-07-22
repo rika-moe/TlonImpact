@@ -449,7 +449,9 @@ class MemoryManager:
 
         return blocks
 
-    async def generate_summary(self, force: bool = False) -> str | None:
+    async def generate_summary(
+        self, force: bool = False, instructions: str | None = None
+    ) -> str | None:
         """Generate a session summary from working memory.
 
         Uses snapshot + delta-clear: snapshots working memory before the
@@ -458,6 +460,8 @@ class MemoryManager:
 
         Args:
             force: If True, generate summary even if not enough interactions
+            instructions: Optional focus for the summary, passed to the
+                summarizer so specific content is preserved
 
         Returns:
             The summary ID if generated, None if no interactions
@@ -493,6 +497,7 @@ class MemoryManager:
                     interactions=interactions,
                     session_id=self._session_id or "unknown",
                     existing_facts=existing_facts,
+                    instructions=instructions,
                 )
 
                 if summary_dict:
