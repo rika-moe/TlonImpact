@@ -123,7 +123,7 @@ LLM 写的行为必然出 bug，可观测性是必需品：
 - 日志记录 DSL 决策点（trigger 命中/未命中及原因）；
 - 每个 DSL 解释步骤对应一个 span。
 
-## Behavior Prototype 库（设计已收敛，未实现）
+## Behavior Prototype 库（✅ 已实现，2026-07-22）
 
 预制的行为原型，让人类和 agent 都能以"模板 + 覆盖"的方式创建新 agent。
 
@@ -213,11 +213,17 @@ agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工
 
 完成标准：用户可通过对话让 agent 为自己造一个新 agent 并投入运行。
 
-### 阶段 5 — Behavior Prototype 库
+### 阶段 5 — Behavior Prototype 库 ✅ 已完成（2026-07-22）
 
-包内预制 prototype（spec + 人格模板 + 工具白名单），首启拷贝至 `~/.tlon/prototypes/`；实例化走"拷贝 + 部分覆盖"；`tlon mirror` 菜单与 `list_prototypes` 工具两条发现路径。依赖阶段 2 的 base 覆盖语义（已完成）。
+包内预制 prototype（spec + 人格模板 + 工具白名单），首启拷贝至 `~/.tlon/prototypes/`；实例化走"拷贝 + 部分覆盖"；`tlon mirror` 菜单与 `listPrototypes` 工具两条发现路径。依赖阶段 2 的 base 覆盖语义（已完成）。
 
-完成标准：从 `deep-thinker` prototype 创建新 agent，行为继承 + 覆盖生效，测试全绿。
+完成标准：从 `deep-thinker` prototype 创建新 agent，行为继承 + 覆盖生效，测试全绿。**达成情况**：331 个测试全绿（311 既有 + 20 新增 prototype 测试），ruff / 架构检查 / re-export 检查全过。落地情况：
+
+- 包内 `tlon/prototypes/` 首批 3 个 prototype（deep-thinker / fast-responder / archivist），每个含 `behavior.tlon`（只写与 DefaultSpec 的差异字段）+ 人格三件套 + `prototype.edn` 元数据（自家 edn.py 解析）；hatchling 默认将包数据打入 wheel，已构建验证；
+- `agents/prototypes.py`：`seed_prototypes()`（幂等，不覆盖用户修改）、`list_prototypes()`（读 `~/.tlon/prototypes/`，用户增改可见）、`instantiate()`（人格文件拷贝 + behavior 在 EDN 数据层深合并 overrides 后落盘 + 走标准 `_yaml_save` 写 agent.yaml；`AgentConfig.prototype` 记录来源）；
+- ServerApp 初始化早段种子；wizard `agent_menu` 加"从 Prototype 创建"入口；`listPrototypes` 工具注册进每个 agent（工具总数 17 → 18）；
+- 实例化不做 registry 热加载，重启 dream 后生效（与 wizard 现有创建行为一致）；
+- **relay 推迟**：纯转发者不需要 LLM，需要 v1 schema 之外的 `:llm false` 逃生门（见上文"已知缺口"），本次只交付 3 个 prototype，relay 随逃生门一并落地。
 
 ### 阶段 6 — 动态 Agent Registry
 

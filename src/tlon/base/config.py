@@ -124,6 +124,8 @@ class AgentConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
     proactive: bool = False
+    # Source behavior prototype name when instantiated from one (None = manual)
+    prototype: str | None = None
 
     # ReAct loop limits
     max_iterations: int = 10

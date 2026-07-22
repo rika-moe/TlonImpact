@@ -1,0 +1,4 @@
+; 深度思考者：与 DefaultSpec 的差异字段（部分覆盖语义）
+{:version 1
+ :loop {:max-iterations 25}
+ :on-complete {:reflect {:interval-minutes 10}}}

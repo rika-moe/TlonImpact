@@ -123,6 +123,16 @@ class TlonPaths:
         """
         return self._home / agent_id / "config" / "behavior.tlon"
 
+    # ===== Behavior prototypes =====
+
+    def prototypes_dir(self) -> Path:
+        """~/.tlon/prototypes/ — behavior prototype library root.
+
+        Read-only resolution: does NOT create the directory, so checking
+        ``exists()`` stays side-effect free.
+        """
+        return self._home / "prototypes"
+
     # ===== Memory =====
 
     def memory_config_file(self, agent_id: str) -> Path:

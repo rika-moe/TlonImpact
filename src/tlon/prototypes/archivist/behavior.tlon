@@ -1,0 +1,4 @@
+; 档案管理者：与 DefaultSpec 的差异字段（部分覆盖语义）
+{:version 1
+ :on-complete {:save-interaction true
+               :reflect {:interval-minutes 5}}}

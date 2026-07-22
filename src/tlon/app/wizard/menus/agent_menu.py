@@ -46,6 +46,7 @@ class AgentMenu:
                     self.questionary.Choice("📋 列出所有 Agent", value="list"),
                     self.questionary.Choice("🔍 查看 Agent 详情", value="view"),
                     self.questionary.Choice("➕ 招聘新人", value="create"),
+                    self.questionary.Choice("🧬 从 Prototype 创建", value="create_prototype"),
                     self.questionary.Choice("✏️  编辑 Agent", value="edit"),
                     self.questionary.Choice("🗑️  删除 Agent", value="delete"),
                     self.questionary.Separator(),
@@ -59,6 +60,8 @@ class AgentMenu:
                 self.view_agent()
             elif choice == "create":
                 self.create_agent()
+            elif choice == "create_prototype":
+                self.create_from_prototype()
             elif choice == "edit":
                 self.edit_agent()
             elif choice == "delete":
@@ -239,6 +242,81 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         else:
             self.console.print(f"[red]✗ {msg}[/red]")
 
+        self.questionary.press_any_key_to_continue("按回车继续...").ask()
+
+    def create_from_prototype(self) -> None:
+        """Create an agent by instantiating a behavior prototype."""
+        from tlon.agents.prototypes import (
+            PrototypeError,
+            instantiate,
+            list_prototypes,
+            seed_prototypes,
+        )
+
+        self.console.print("\n[bold]🧬 从 Prototype 创建[/bold]\n")
+
+        # mirror 是独立进程，server 的种子可能尚未运行；幂等，放心调用
+        seed_prototypes()
+
+        prototypes = list_prototypes()
+        if not prototypes:
+            self.console.print("[yellow]暂无可用 Prototype[/yellow]")
+            self.questionary.press_any_key_to_continue("按回车继续...").ask()
+            return
+
+        choices = [
+            self.questionary.Choice(
+                f"{proto.display_name} ({proto.name}) — {proto.description}",
+                value=proto.name,
+            )
+            for proto in prototypes
+        ]
+        choices.append(self.questionary.Choice("← 返回", value="back"))
+
+        prototype_name = self.questionary.select("选择 Prototype:", choices=choices).ask()
+        if not prototype_name or prototype_name == "back":
+            return
+
+        name = self.questionary.text("姓名:").ask()
+        if not name:
+            self.console.print("[red]姓名不能为空[/red]")
+            return
+
+        default_id = self.agent_store.generate_agent_id(prototype_name)
+        agent_id = self.questionary.text("Agent ID:", default=default_id).ask()
+        if not agent_id:
+            self.console.print("[yellow]已取消[/yellow]")
+            return
+
+        proactive = self.questionary.confirm(
+            "是否设置为常驻启动?\n常驻: 自动启动，响应所有消息\n延迟: 手动唤醒，只响应@消息",
+            default=False,
+        ).ask()
+
+        self.console.print("\n[bold]预览配置[/bold]\n")
+        self.console.print(f"Prototype: {prototype_name}")
+        self.console.print(f"ID: {agent_id}")
+        self.console.print(f"姓名: {name}")
+        self.console.print(f"启动模式: {'常驻' if proactive else '延迟'}")
+
+        if not self.questionary.confirm("确认创建?").ask():
+            self.console.print("[yellow]已取消[/yellow]")
+            return
+
+        try:
+            agent = instantiate(
+                prototype_name,
+                agent_id=agent_id,
+                agent_name=name,
+                proactive=proactive,
+            )
+        except PrototypeError as e:
+            self.console.print(f"[red]✗ 创建失败: {e}[/red]")
+            self.questionary.press_any_key_to_continue("按回车继续...").ask()
+            return
+
+        self.console.print(f"[green]✓ 已从 Prototype '{prototype_name}' 创建 Agent: {agent.name}[/green]")
+        self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def edit_agent(self) -> None:

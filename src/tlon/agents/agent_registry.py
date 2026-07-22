@@ -40,6 +40,7 @@ from tlon.tools.memory.generate_summary import GenerateSummaryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.messaging.send_message import SendMessageTool
+from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
 from tlon.tools.tasks.create_task import CreateTaskTool
@@ -307,6 +308,7 @@ class AgentRegistry(Component):
             tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
             tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
             tool_executor.register_tool(SendMessageTool())
+            tool_executor.register_tool(ListPrototypesTool())
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))
             tool_executor.register_tool(GenerateSummaryTool(memory))
