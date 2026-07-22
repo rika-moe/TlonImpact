@@ -125,6 +125,14 @@ class AgentConfig(BaseModel):
     tool: ToolConfig = Field(default_factory=ToolConfig)
     proactive: bool = False
 
+    # ReAct loop limits
+    max_iterations: int = 10
+    max_consecutive_errors: int = 3
+    # A session idle (ACTIVE or WAITING) longer than this is cancelled
+    session_timeout_seconds: int = 1800
+    # Inbound message queue capacity; overflow drops new messages
+    message_queue_size: int = 100
+
     @field_validator("id")
     @classmethod
     def validate_id(cls, v: str) -> str:

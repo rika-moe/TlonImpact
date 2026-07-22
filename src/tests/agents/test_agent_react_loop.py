@@ -849,7 +849,7 @@ class TestAgentStateDerivation:
             ]
         )
         agent = _make_agent(llm_client=llm)
-        agent._reflection_enabled = False
+        agent._reflection.enabled = False
         agent.state = AgentState.ACTIVE
 
         hang = MagicMock()
@@ -945,7 +945,7 @@ class TestOrphanTaskCleanup:
             ]
         )
         agent = _make_agent(llm_client=llm)
-        agent._reflection_enabled = False
+        agent._reflection.enabled = False
         agent.state = AgentState.ACTIVE
 
         hang = MagicMock()

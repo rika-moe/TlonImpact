@@ -44,7 +44,7 @@ def _make_agent(team_members: list[AgentConfig] | None = None):
 def _use_tmp_paths(monkeypatch, tmp_path) -> TlonPaths:
     """Redirect the paths singleton to a tmp dir (keeps tests hermetic)."""
     test_paths = TlonPaths(home=tmp_path)
-    monkeypatch.setattr("tlon.agents.agent.paths", test_paths)
+    monkeypatch.setattr("tlon.agents.context_builder.paths", test_paths)
     return test_paths
 
 
@@ -55,7 +55,7 @@ class TestPromptCacheBasic:
         agent = _make_agent()
         with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
             mock_ctx.return_value = MagicMock()
-            with patch("tlon.agents.agent.SystemPromptBuilder") as mock_builder_cls:
+            with patch("tlon.agents.context_builder.SystemPromptBuilder") as mock_builder_cls:
                 mock_builder_cls.return_value.build.return_value = "built prompt"
                 result = await agent._get_system_prompt()
 
@@ -123,7 +123,7 @@ class TestPromptCacheInvalidation:
         test_paths.agent_soul_file("a-001").write_text("灵魂", encoding="utf-8")
 
         agent = _make_agent()
-        with patch("tlon.agents.agent.SystemPromptBuilder") as mock_builder_cls:
+        with patch("tlon.agents.context_builder.SystemPromptBuilder") as mock_builder_cls:
             mock_builder_cls.return_value.build.return_value = "prompt"
             await agent._get_system_prompt()
             await agent._get_system_prompt()

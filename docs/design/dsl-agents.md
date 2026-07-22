@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 尚未开始实现
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -104,11 +104,11 @@ LLM 写的行为必然出 bug，可观测性是必需品：
 
 ## 路线图
 
-### 阶段 1 — 拆分 agent.py（P1 ）
+### 阶段 1 — 拆分 agent.py（P1 ）✅ 已完成（2026-07-22）
 
-拆为：`Agent` 薄壳（编排）+ `SessionScheduler`（主循环）+ `LoopDriver`（react 步进/收割）+ `TriggerEvaluator` + `ContextBuilder`（并入 prompt_builder）+ `ReflectionEngine`。顺手补：session 最大轮数/空闲超时、消息队列背压、`error_count` 消费。
+拆为：`Agent` 薄壳（编排）+ `SessionScheduler`（主循环）+ `LoopDriver`（react 步进/收割）+ `TriggerEvaluator` + `ContextBuilder`（独立 `context_builder.py`，与纯函数式 `SystemPromptBuilder` 分工）+ `ReflectionEngine`。顺手补：session 最大轮数/空闲超时、消息队列背压、`error_count` 消费。
 
-完成标准：行为不变，测试全绿 + 真实冒烟通过。
+完成标准：行为不变，测试全绿 + 真实冒烟通过。**达成情况**：261 个测试全绿（含 6 个新增韧性测试），ruff / 架构检查 / re-export 检查全过；真实冒烟未做（留待阶段 2 前人工验证）。
 
 ### 阶段 2 — AgentSpec + EDN 数据文件
 

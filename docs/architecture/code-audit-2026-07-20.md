@@ -128,11 +128,11 @@
 
 ### P1 — 设计缺陷
 
->  /  /  /  /  /  /  已修复（/// 于 PR ，// 于 2026-07-20 同批次修复），行内已标 ✅；其余待处理。
+>  /  /  /  /  /  /  /  已修复（/// 于 PR ，// 于 2026-07-20 同批次修复， 于 2026-07-22 拆分 agent.py），行内已标 ✅；其余待处理。
 
 | # | 问题 | 位置 | 说明 |
 |---|------|------|------|
-| 9 | `agent.py` 上帝类（947 行） | `src/tlon/agents/agent.py` | ReAct 循环 + 路由判断 + prompt 组装 + 记忆写入 + reflection 子系统（:748-905）+ tracing 全在一个类 |
+| 9 | ✅ `agent.py` 上帝类（947 行） | `src/tlon/agents/agent.py` | ReAct 循环 + 路由判断 + prompt 组装 + 记忆写入 + reflection 子系统（:748-905）+ tracing 全在一个类。**已修**（2026-07-22，dsl-agents 路线图阶段 1）：拆为 `agent.py` 薄壳（484 行）+ `scheduler.py`（SessionScheduler 主循环）+ `loop_driver.py`（ReAct 步进/收割）+ `trigger.py`（TriggerEvaluator）+ `context_builder.py`（上下文/系统提示）+ `reflection.py`（ReflectionEngine）；顺手补齐 `max_iterations`/`session_timeout_seconds`/`message_queue_size`/`max_consecutive_errors` 四项配置化 |
 | 10 | Facade 名不副实 | `src/tlon/app/server/serverapp.py:210,218` | REST/WS 绕过 `ClientGateway` 直取 `AgentRegistry`；`client_gateway.py:112` 的 `config_manager: Any` 无类型 |
 | 11 | 抽象漏洞成片 | `base/config.py:148-150`、`memory/manager.py:75`、`working_store.py:77`、`episodic_store.py:65` | `get_data_dir(base_dir)` 等参数被忽略、硬用全局 `paths` 单例，测试隔离只能靠替换单例 |
 | 12 | `paths` 单例 getter 带 `mkdir` 副作用 | `src/tlon/base/paths.py:86-158` | 读操作产生写副作用；`$TLON_HOME` 不存在时静默回退（:63-67） |
