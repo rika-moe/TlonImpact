@@ -44,6 +44,28 @@ class AgentInfoProvider(ABC):
         """Check if an agent is proactive."""
         pass
 
+    # ---- Optional write capabilities (stage 6b spawn/stop) ----
+    # Concrete providers that back a mutable config store (ConfigService)
+    # override these; the defaults report "unsupported" so read-only
+    # providers (tests, static fixtures) keep working unchanged.
+
+    async def reload_agent(self, agent_id: str) -> bool:
+        """Hot-load one agent's config from its YAML file into the cache.
+
+        Returns True when the config was (re)loaded; the default
+        implementation reports the provider as read-only.
+        """
+        return False
+
+    def delete_agent(self, agent_id: str, delete_data: bool = True) -> None:
+        """Remove one agent from the cache and (optionally) delete its home.
+
+        The default implementation reports the provider as read-only.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support delete_agent"
+        )
+
 
 # =============================================================================
 # Agent Configuration
@@ -133,6 +155,14 @@ class AgentConfig(BaseModel):
     idle_timeout_seconds: int = 600
     # Source behavior prototype name when instantiated from one (None = manual)
     prototype: str | None = None
+    # Identity kind: "resident" is a durable named persona (sleeps, keeps its
+    # home directory forever); "contractor" is spawned from a prototype,
+    # disposable — its home directory is deleted on stop/idle-reap.
+    role: Literal["resident", "contractor"] = "resident"
+    # Agent id that spawned this contractor (None for residents)
+    spawned_by: str | None = None
+    # Spawn-chain depth: residents are 0, a contractor is spawner.depth + 1
+    spawn_depth: int = 0
 
     # ReAct loop limits
     max_iterations: int = 10
@@ -320,7 +350,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
 
     async def reload_agent(self, agent_id: str) -> bool:
         """Reload a specific agent from file and emit update event."""
-        filepath = paths.agent_config_file(agent_id)
+        filepath = TlonPaths(home=self._tlon_home).agent_config_file(agent_id)
         if not filepath.exists():
             return False
 

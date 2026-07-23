@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· Prototype 库与动态 Registry 设计已收敛（2026-07-22）
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -147,7 +147,7 @@ prototypes/
 - **发现**：人类走 `tlon mirror` 创建菜单；agent 走 `list_prototypes` 工具；
 - **已知缺口**：纯转发者不需要 LLM，v1 schema 的 `:loop {:mode :react}` 之外可能需要 `:llm false` 逃生门——推迟到实现 relay prototype 时再加。
 
-## 动态 Agent Registry（6a 休眠/唤醒已实现，6b 未实现）
+## 动态 Agent Registry（6a 休眠/唤醒、6b spawn/stop 已实现）
 
 Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消息到来按需激活。
 
@@ -163,6 +163,8 @@ Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消�
 - **居民（resident）**：有名有姓的持久 persona（现有 6 人 team 即居民）。可休眠，唤醒后还是那个有记忆的个体。"0 运行 agent"是资源配置（所有居民设为可休眠），不是架构强制；
 - **临时工（contractor）**：agent 用工具从 prototype 现造，完工即弃，persona 不保留。是否可"转正"为居民——开放问题，实现时再定。
 
+**孤儿策略（6b 拍板：reparent，不连坐）**：spawner 休眠/停止后，它造的临时工**继续独立运行**（类比上相当于挂到 init 下），由各自的 idle timeout 回收——临时工一旦被 mention 就可能与其他人建立会话，连坐杀会误伤无辜对话方。`spawned_by` 是审计记录，不是生命周期锁。
+
 ### 唤醒与路由（wake-on-mention）
 
 - Router 查 **persona 全集**（居民目录 + 运行中的临时工），不再只看运行中的 agent；提到沉睡 persona → 先激活再投递；
@@ -177,15 +179,17 @@ Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消�
 
 ### 回收策略
 
-- 显式 `stop_agent` 工具调用，或空闲超时（如 10 分钟无新消息）；
+- 显式 `stopAgent` 工具调用，或空闲超时（临时工默认 300 秒无新消息）；
 - **必须 drain**：存在 ACTIVE/WAITING session 时不许停，等 session 完结再回收；
+- **完工即弃（6b）**：contractor 被显式停止或被空闲回收时**删除其 home 目录**（`~/.tlon/{id}/`，删除前记日志，且严格限定 role==contractor + 路径在 tlon_home 下）；resident 回收只停进程不删目录；
 - 休眠不反思：reflection 是定时烧 token 的，睡着不反思；醒来时如有未巩固交互再补（`min_interactions` 闸门已有雏形）。
 
-### spawn 预算（防组合爆炸）
+### spawn 预算（防组合爆炸，6b 默认值）
 
-- 全局并发 activation 上限（如 8）；
-- spawn 深度上限（消息链最多接力造 3 层）与每消息 spawn 配额；
-- 工具权限不可升格：临时工的工具白名单由 prototype 定死，spawner 无法授予 prototype 之外的权限（Tlon 预制 prototype 为可信源；LLM 现写的规约仍走人工批准闸）。
+- 全局并发 activation 上限：`max_activations = 8`（含 resident）；
+- spawn 深度上限：`max_spawn_depth = 3`（resident depth=0，contractor = spawner.depth + 1）；
+- 每会话配额：`session_spawn_quota = 2`——同一 (spawner, session) 内 spawn 数上限；session_id 经 structlog contextvars 从 `_session_span` 传入，读不到（如测试直调）时同一 spawner 的裸调用共用一个桶；
+- 工具权限不可升格：只允许从 prototype 库 spawn（Tlon 预制 prototype 为可信源；LLM 现写的规约仍走人工批准闸，是阶段 4 的事），overrides 仅 behavior 字段，tools 不在 spec schema 内故天然无法升格。
 
 ### 附：操作系统类比（灵感，非规约）
 
@@ -257,7 +261,7 @@ agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工
 分两步：
 
 - **6a 休眠/唤醒** ✅ 已完成（2026-07-22）：persona 与 activation 分离；router wake-on-mention（查 persona 全集）；容器懒启动；空闲 drain 回收；休眠不反思。完成后即实现"无沟通时 0 个运行中的 agent"；
-- **6b spawn/stop 工具化**：`spawn_agent` / `stop_agent` / `list_agents` 工具 + spawn 预算（全局上限/深度/配额/权限不升格）。与阶段 4 的 `spawn` 合并落地——规约互触发即"触发某 persona/prototype 的一次解释执行"。
+- **6b spawn/stop 工具化** ✅ 已完成（2026-07-23）：`spawnAgent` / `stopAgent` / `listAgents` 工具 + spawn 预算（全局上限/深度/配额/权限不升格）。与阶段 4 的 `spawn` 合并落地——规约互触发即"触发某 persona/prototype 的一次解释执行"。
 
 完成标准：人类 @ 沉睡居民可唤醒响应；agent 可从 prototype 造临时工、mention 之、停止之，全程受预算约束。
 
@@ -269,7 +273,18 @@ agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工
 - **唤醒执行**：`_wake_and_redeliver` 用 per-agent asyncio.Lock 防竞态（并发 @ 同一人只装配一次，但两个事件都会重投递——后到的事件到达时 agent 尚未运行，不投会丢）；复用 `_start_agent` 装配后**重发原事件对象**（同 payload 同 trace carrier），新 agent 的 handler 自然拾取；防循环靠"唤醒后已在运行表"。观测：`agent_waking` / `agent_woken`（含 wake_duration）/ `agent_wake_failed` 日志 + 对应 `AGENT_WAKING/WOKEN/WAKE_FAILED` 事件，唤醒耗时作为 `agent.wake` span 挂在原消息 trace 树下；
 - **空闲回收**：registry 起 30s 周期 monitor，lazy agent 空闲超 `idle_timeout_seconds` 且无存活 session → drain。**drain 语义**：有 ACTIVE/WAITING session 绝不停；条件在 per-agent 锁下 shutdown 前再查一次（竞态窗口内有新 session 则放弃）；休眠即移出运行表保留注册，`agent_sleeping` 日志 + `AGENT_SLEEPING` 事件。Agent 暴露只读 `active_session_count` / `idle_seconds`（scheduler 提供："活动"= session 创建 / 存活 session 的 last_active_at / session 完结，无 session 时从主循环启动算起）。休眠不反思：agent 停了主循环自然停，reflection 随之停；
 - **容器懒启动**：`_start_agent` 不再 `ensure_running()`；DockerRuntime 的 execute/read_file/write_file/file_exists 本就有"container 为空则先 ensure_running"的懒启动路径，工具首次使用时自动起容器，daemon 不可用表现为工具报错而非 agent 启动失败（`docker_unavailable` warning 语义保留给构造失败）。纯对话唤醒零容器成本；
-- **6b 未做**：spawn/stop 工具化、spawn 预算、receptionist 温池、"正在唤醒 X…"系统消息（冷启动体验）留待后续。
+- **6b 未做项（彼时）**：receptionist 温池、"正在唤醒 X…"系统消息（冷启动体验）留待后续。
+
+**6b 达成情况**：386 个测试全绿（361 既有 + 25 新增 spawn 测试），ruff / 架构检查 / re-export 检查全过。落地情况：
+
+- **身份模型**：`AgentConfig` 新增 `role: Literal["resident", "contractor"]`、`spawned_by`、`spawn_depth`（默认 resident/None/0，存量配置零迁移）；contractor = `activation="lazy"` + `idle_timeout_seconds=300`（registry 构造参数 `contractor_idle_timeout_seconds` 可配）；
+- **registry API**：`spawn_contractor(prototype, name, spawner_id, session_id, overrides)`（预算检查 → 生成 id `c-{prototype}-{8位uuid}` → `instantiate()` 写盘 → 补 contractor 字段重存 → `reload_agent` 使配置对 provider 可见 → `register` + `_start_agent` 立即启动 → `AGENT_SPAWNED` 事件）与 `stop_contractor(agent_id, stopped_by)`（role 校验 + drain + shutdown + 注销 + 删 home + `AGENT_STOPPED`）；拒绝抛 `SpawnRejectedError` / `StopRejectedError`（`agents/spawn_errors.py` 独立模块，避免 registry↔tools 循环导入），`.reason` 机器可读；
+- **预算默认值**：`max_activations=8`（运行中总数，含 resident）、`max_spawn_depth=3`、`session_spawn_quota=2`（同一 (spawner, session)）；账本在 registry 内存（重启清零可接受）；session_id 由 `Agent._session_span` 经 structlog contextvars 绑定，工具执行（后台 task 继承 context）可读，读不到时同一 spawner 共用单一桶；拒绝记 `spawn_rejected` 日志；
+- **孤儿策略 reparent**：spawner 休眠/停止后 contractor 继续独立运行，由各自 idle timeout 回收（见上文"两种身份"）；
+- **完工即弃**：contractor 显式停止或空闲回收（`_reap_if_idle` 分支）时删除 `~/.tlon/{id}/`，删前记 `contractor_home_deleted` 日志；删除严格限定 role==contractor，且 id 过字符集校验 + 解析后路径必须在 tlon_home 直下（防路径注入）；resident 永不删目录；
+- **三个工具**（`tools/agents/`，camelCase，工具总数 18 → 21）：`spawnAgent(prototype, name, overrides?)`（overrides 的 JSON 字符串键递归转 EDN keyword 后合并）、`stopAgent(agent_id)`（drain 拒绝/resident 拒绝均有明确错误）、`listAgents()`（`get_agent_status` 扩展 role/prototype/spawned_by/spawn_depth 字段）；构造时注入 registry 引用与 spawner 自身 id；
+- **ConfigService 顺手修复**：`reload_agent` 原读全局 `paths` 单例，改为按自身 `tlon_home` 解析（隔离 home 下热加载此前是坏的）；`AgentInfoProvider` 增加可选写能力 `reload_agent` / `delete_agent` 默认实现（只读 provider 不受影响）；
+- **6b 仍未做**：receptionist 温池、"正在唤醒 X…"系统消息（冷启动体验）留待后续。
 
 阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体；阶段 5–6 让系统从"固定班底"走向"自组织的剧团"。
 

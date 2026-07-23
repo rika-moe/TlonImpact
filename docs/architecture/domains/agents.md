@@ -19,6 +19,7 @@ agents/
 ├── spec.py                # AgentSpec：行为规约（语义唯一权威）+ behavior.tlon 加载
 ├── edn.py                 # EDN 数据字面量解析器（L0，只解析不求值）
 ├── prototypes.py          # Behavior prototype 库：种子 / 列举 / 实例化
+├── spawn_errors.py        # SpawnRejectedError / StopRejectedError（spawn/stop 拒绝原因）
 ├── scheduler.py           # SessionScheduler：主循环 + session 生命周期 + 超时清理
 ├── loop_driver.py         # LoopDriver：ReAct 步进 / 工具收割
 ├── trigger.py             # TriggerEvaluator：响应触发判断
@@ -81,6 +82,42 @@ AgentInfoProvider 提供全集，两者分离（见 [../../design/dsl-agents.md]
   `DockerRuntime.execute` / `read_file` / `write_file` / `file_exists` 在 container
   为空时先 `ensure_running()`（幂等），daemon 不可用表现为工具报错而非启动失败。
   纯对话唤醒零容器成本。
+
+---
+
+## 动态 Registry（spawn/stop，阶段 6b）
+
+agent 可从 prototype 现造临时工（contractor）并停止之，全程受 spawn 预算约束
+（设计见 [../../design/dsl-agents.md](../../design/dsl-agents.md)）：
+
+- **身份模型**：`AgentConfig.role`（`"resident"` 默认 / `"contractor"`）+
+  `spawned_by` + `spawn_depth`（resident 为 0，contractor = spawner.depth + 1）。
+  contractor 固定 `activation="lazy"` + `idle_timeout_seconds=300`（registry 构造参数
+  `contractor_idle_timeout_seconds`），完工后靠 6a 的空闲 drain 自然回收；
+- **spawn_contractor(prototype, name, spawner_id, session_id, overrides)**：
+  预算检查 → 生成 id（`c-{prototype}-{8位uuid}`，prototype 片段过字符集清洗）→
+  `instantiate()` 写盘 → 补 contractor 字段重存 agent.yaml →
+  `AgentInfoProvider.reload_agent` 使配置对 router/status 可见 → `register` +
+  `_start_agent` **立即启动** → 发 `AGENT_SPAWNED`（含 spawner/prototype/depth）；
+- **stop_contractor(agent_id, stopped_by)**：仅 contractor 可停（resident 拒绝）；
+  drain 语义与 6a 一致（有 ACTIVE/WAITING session 拒绝，per-agent 锁下 shutdown 前
+  重查一次）→ shutdown → 注销 → **删除 home 目录** → 发 `AGENT_STOPPED`。
+  空闲回收路径对 contractor 同样删目录（`_reap_if_idle` 分支，发 `AGENT_STOPPED`
+  而非 `AGENT_SLEEPING`）；resident 回收只停进程不删目录。删除严格限定
+  role==contractor，且 id 过字符集校验 + 解析路径必须在 tlon_home 直下（防路径注入）；
+- **孤儿策略（reparent，不连坐）**：spawner 休眠/停止后其 contractor 继续独立运行，
+  由各自 idle timeout 回收；`spawned_by` 是审计记录不是生命周期锁；
+- **spawn 预算**（registry 构造参数，账本在内存、重启清零）：`max_activations=8`
+  （运行中总数含 resident）、`max_spawn_depth=3`、`session_spawn_quota=2`（同一
+  (spawner, session) 上限；session_id 由 `Agent._session_span` 经 structlog
+  contextvars 绑定，后台工具 task 继承 context 可读，读不到时同一 spawner 共用一桶）。
+  拒绝抛 `SpawnRejectedError`（`.reason` = max_activations/max_spawn_depth/session_quota），
+  记 `spawn_rejected` 日志；权限不可升格——只能从 prototype 库 spawn，overrides 仅
+  behavior 字段（tools 不在 spec schema 内）；
+- **工具**（`tools/agents/`，注入 registry + spawner 自身 id，工具总数 18 → 21）：
+  `spawnAgent(prototype, name, overrides?)`（overrides 的 JSON 字符串键递归转 EDN
+  keyword 合并）、`stopAgent(agent_id)`、`listAgents()`（`get_agent_status` 扩展
+  role/prototype/spawned_by/spawn_depth）。
 
 ---
 

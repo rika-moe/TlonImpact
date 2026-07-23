@@ -36,6 +36,8 @@ class EventType(StrEnum):
     AGENT_WOKEN = "agent.woken"
     AGENT_WAKE_FAILED = "agent.wake_failed"
     AGENT_SLEEPING = "agent.sleeping"
+    # Dynamic registry (spawn) lifecycle events
+    AGENT_SPAWNED = "agent.spawned"
 
     # Agent thinking process (observability)
     AGENT_THINKING_START = "agent.thinking_start"

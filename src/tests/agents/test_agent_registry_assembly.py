@@ -3,7 +3,7 @@
 Verifies that:
 - _build_llm_config() merges file config with settings
 - _build_llm_config() handles None file_config
-- _start_agent() creates Agent with all 18 tools registered
+- _start_agent() creates Agent with all 21 tools registered
 """
 
 import tempfile
@@ -114,8 +114,8 @@ class TestAgentRegistryStartAgent:
         return reg
 
     @pytest.mark.asyncio
-    async def test_start_agent_registers_all_18_tools(self, registry, mock_event_bus):
-        """Agent should be created with all 18 tools registered in ToolExecutor."""
+    async def test_start_agent_registers_all_21_tools(self, registry, mock_event_bus):
+        """Agent should be created with all 21 tools registered in ToolExecutor."""
         with patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls:
             mock_memory = MagicMock()
             mock_memory.load = AsyncMock()
@@ -132,7 +132,7 @@ class TestAgentRegistryStartAgent:
         assert agent is not None
         tools = agent.tool_executor.list_tools()
 
-        # All 18 tools should be registered
+        # All 21 tools should be registered
         expected_tools = {
             "executeBashCommand",
             "checkBashTask",
@@ -152,6 +152,9 @@ class TestAgentRegistryStartAgent:
             "removeTask",
             "getCurrentTask",
             "listPrototypes",
+            "spawnAgent",
+            "stopAgent",
+            "listAgents",
         }
 
         assert set(tools) == expected_tools, f"Missing tools: {expected_tools - set(tools)}"
@@ -197,7 +200,7 @@ class TestAgentRegistryStartAgent:
 
         # ToolExecutor should be created and have tools registered
         assert agent.tool_executor is not None
-        assert len(agent.tool_executor.list_tools()) == 18
+        assert len(agent.tool_executor.list_tools()) == 21
         # Verify executeBash tool has the docker config and agent id
         bash_tool = agent.tool_executor.get_tool("executeBashCommand")
         assert bash_tool is not None

@@ -4,7 +4,10 @@ This module provides AgentRegistry class that manages:
 - Agent lifecycle (activation-aware: "always" agents start at boot,
   "lazy" agents register without starting)
 - Wake-on-mention (lazy agents are activated when explicitly @mentioned)
-- Idle drain (lazy agents sleep after idle_timeout_seconds of inactivity)
+- Idle drain (lazy agents sleep after idle_timeout_seconds of inactivity;
+  idle contractors are discarded entirely, home directory included)
+- Spawn/stop of contractors (stage 6b): prototype instantiation under a
+  spawn budget (global activation cap, spawn depth, per-session quota)
 - Agent shutdown
 
 Configuration is delegated to AgentInfoProvider (typically ConfigManager).
@@ -20,13 +23,16 @@ Architecture:
 
 import asyncio
 import time
+import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from tlon.agents.agent import Agent
+from tlon.agents.prototypes import instantiate
+from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, LLMConfig
+from tlon.base.config import AgentConfig, LLMConfig, _yaml_save
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
@@ -37,6 +43,9 @@ from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.messaging.store import MessageStore
 from tlon.sandbox.docker_runtime import DockerRuntime
+from tlon.tools.agents.list_agents import ListAgentsTool
+from tlon.tools.agents.spawn_agent import SpawnAgentTool
+from tlon.tools.agents.stop_agent import StopAgentTool
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
@@ -60,6 +69,10 @@ if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
+
+# Quota bucket used when no session context is available (e.g. direct calls
+# from tests): all such spawns share one bucket per spawner.
+_UNKNOWN_SESSION = "-"
 
 
 def _build_llm_config(file_config: LLMConfig | None, settings) -> LLMConfig:
@@ -128,6 +141,10 @@ class AgentRegistry(Component):
         agent_info_provider: "AgentInfoProvider",
         message_store: MessageStore | None = None,
         paths: "TlonPaths | None" = None,
+        max_activations: int = 8,
+        max_spawn_depth: int = 3,
+        session_spawn_quota: int = 2,
+        contractor_idle_timeout_seconds: int = 300,
     ):
         """Initialize the agent registry.
 
@@ -138,12 +155,30 @@ class AgentRegistry(Component):
             agent_info_provider: Provider for agent configuration queries
             message_store: Message store for agent history access
             paths: TlonPaths instance (defaults to module singleton)
+            max_activations: spawn budget — cap on running agents total
+                (residents included); spawning beyond it is rejected
+            max_spawn_depth: spawn budget — a contractor's depth is
+                spawner.depth + 1; exceeding this rejects the spawn
+            session_spawn_quota: spawn budget — max spawns per
+                (spawner, session) pair
+            contractor_idle_timeout_seconds: idle drain timeout assigned to
+                spawned contractors (shorter than the resident default —
+                contractors are disposable)
         """
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self.message_store = message_store
         self._paths = paths  # None means use module singleton
+
+        # Spawn budget (stage 6b). The quota ledger lives in memory only —
+        # a restart zeroes it, which is acceptable for an anti-runaway cap.
+        self._max_activations = max_activations
+        self._max_spawn_depth = max_spawn_depth
+        self._session_spawn_quota = session_spawn_quota
+        self._contractor_idle_timeout_seconds = contractor_idle_timeout_seconds
+        # (spawner_id, session_id) -> successful spawn count
+        self._spawn_quota: dict[tuple[str, str], int] = {}
 
         # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
@@ -304,6 +339,7 @@ class AgentRegistry(Component):
         self._agents.clear()
         self._registered_ids.clear()
         self._waking.clear()
+        self._spawn_quota.clear()
         self._initialized = False
 
         logger.info("agent_registry_shutdown_completed")
@@ -378,6 +414,12 @@ class AgentRegistry(Component):
             tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
             tool_executor.register_tool(SendMessageTool())
             tool_executor.register_tool(ListPrototypesTool())
+            # Spawn/stop lifecycle tools (stage 6b): the registry is the
+            # assembler, so it injects itself; spawner_id binds the tool
+            # to the owning agent for budget accounting and audit.
+            tool_executor.register_tool(SpawnAgentTool(registry=self, spawner_id=config.id))
+            tool_executor.register_tool(StopAgentTool(registry=self, spawner_id=config.id))
+            tool_executor.register_tool(ListAgentsTool(registry=self))
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))
             tool_executor.register_tool(CompactTool(memory))
@@ -551,6 +593,271 @@ class AgentRegistry(Component):
         finally:
             self._waking.discard(agent_id)
 
+    # ==================== Spawn / stop (stage 6b) ====================
+
+    async def spawn_contractor(
+        self,
+        prototype: str,
+        name: str,
+        spawner_id: str,
+        session_id: str | None,
+        overrides: dict[Any, Any] | None = None,
+    ) -> AgentConfig:
+        """Spawn a contractor from a prototype and start it immediately.
+
+        Pipeline: budget checks -> id generation -> ``instantiate()`` (writes
+        persona + behavior + agent.yaml to disk) -> contractor fields
+        (role/depth/spawned_by/lazy activation) -> ``reload_agent`` so the
+        config is visible to the provider -> ``register`` + ``_start_agent``
+        -> ``AGENT_SPAWNED`` event.
+
+        Permissions cannot escalate: the only source is the prototype
+        library (trusted, Tlon-prebuilt or user-installed), and ``overrides``
+        merge into behavior fields only — tools are not part of the spec
+        schema, so a spawner cannot grant capabilities beyond the prototype.
+
+        Orphan policy (reparent, not kill): the contractor is registered
+        independently of its spawner; when the spawner sleeps or stops, the
+        contractor keeps running and is reclaimed by its own idle timeout.
+
+        Args:
+            prototype: prototype directory name under ~/.tlon/prototypes/
+            name: display name of the new contractor
+            spawner_id: id of the agent requesting the spawn (audit + depth)
+            session_id: session the spawn belongs to (quota bucket); None
+                buckets all context-less spawns of the spawner together
+            overrides: behavior-only diff deep-merged over the prototype
+
+        Returns:
+            The new contractor's AgentConfig (role="contractor").
+
+        Raises:
+            SpawnRejectedError: a budget cap was hit (see ``.reason``)
+            PrototypeError: prototype missing
+        """
+        # Budget 1: global activation cap (residents included)
+        if len(self._agents) >= self._max_activations:
+            self._reject_spawn(
+                "max_activations",
+                spawner_id=spawner_id,
+                session_id=session_id,
+                prototype=prototype,
+                detail=f"running agents {len(self._agents)} >= cap {self._max_activations}",
+            )
+
+        # Budget 2: spawn-chain depth (residents are depth 0)
+        spawner_config = self._agent_info.get_config(spawner_id)
+        spawner_depth = spawner_config.spawn_depth if spawner_config else 0
+        depth = spawner_depth + 1
+        if depth > self._max_spawn_depth:
+            self._reject_spawn(
+                "max_spawn_depth",
+                spawner_id=spawner_id,
+                session_id=session_id,
+                prototype=prototype,
+                detail=f"depth {depth} > cap {self._max_spawn_depth}",
+            )
+
+        # Budget 3: per-(spawner, session) quota
+        quota_key = (spawner_id, session_id or _UNKNOWN_SESSION)
+        used = self._spawn_quota.get(quota_key, 0)
+        if used >= self._session_spawn_quota:
+            self._reject_spawn(
+                "session_quota",
+                spawner_id=spawner_id,
+                session_id=session_id,
+                prototype=prototype,
+                detail=f"quota {self._session_spawn_quota} per session exhausted",
+            )
+
+        tlon_paths = self._paths or paths
+        # Id is generated here (never caller-supplied): sanitize the
+        # prototype fragment so the id stays within the AgentConfig charset
+        safe_prototype = "".join(c for c in prototype if c.isalnum() or c in "-_")
+        agent_id = f"c-{safe_prototype}-{uuid.uuid4().hex[:8]}"
+
+        # Writes persona + behavior + agent.yaml (copy semantics; behavior
+        # frozen at creation time). PrototypeError propagates to the caller.
+        config = instantiate(
+            prototype, agent_id, name, overrides=overrides, tlon_paths=tlon_paths
+        )
+
+        # Contractor identity: disposable, lazy-activated, short idle fuse.
+        # Re-save so the YAML on disk carries the final config.
+        config.role = "contractor"
+        config.spawned_by = spawner_id
+        config.spawn_depth = depth
+        config.activation = "lazy"
+        config.idle_timeout_seconds = self._contractor_idle_timeout_seconds
+        _yaml_save(config, tlon_paths.tlon_home())
+
+        # Make the config visible to the provider (router, status queries)
+        if not await self._agent_info.reload_agent(agent_id):
+            self._reject_spawn(
+                "config_reload_failed",
+                spawner_id=spawner_id,
+                session_id=session_id,
+                prototype=prototype,
+                detail=f"provider could not load new config for '{agent_id}'",
+            )
+
+        self._spawn_quota[quota_key] = used + 1
+        self.register(agent_id)
+        agent = await self._start_agent(agent_id)
+
+        logger.info(
+            "agent_spawned",
+            agent_id=agent_id,
+            agent_name=name,
+            prototype=prototype,
+            spawner_id=spawner_id,
+            spawn_depth=depth,
+            started=agent is not None,
+        )
+        await self.event_bus.publish(
+            Event(
+                type=EventType.AGENT_SPAWNED,
+                payload={
+                    "agent_id": agent_id,
+                    "name": name,
+                    "prototype": prototype,
+                    "spawner_id": spawner_id,
+                    "spawn_depth": depth,
+                    "started": agent is not None,
+                },
+                source="agent_registry",
+            )
+        )
+        return config
+
+    def _reject_spawn(
+        self,
+        reason: str,
+        *,
+        spawner_id: str,
+        session_id: str | None,
+        prototype: str,
+        detail: str,
+    ) -> NoReturn:
+        """Log and raise a budget rejection (single funnel for audit)."""
+        logger.warning(
+            "spawn_rejected",
+            reason=reason,
+            spawner_id=spawner_id,
+            session_id=session_id,
+            prototype=prototype,
+            detail=detail,
+        )
+        raise SpawnRejectedError(reason, f"spawn rejected ({reason}): {detail}")
+
+    async def stop_contractor(self, agent_id: str, stopped_by: str) -> bool:
+        """Stop a contractor: drain-check, shutdown, delete its home dir.
+
+        Drain semantics mirror the idle reaper: a contractor with any live
+        (ACTIVE/WAITING) session is never stopped. Residents are never
+        stoppable through this path — their home directories live forever.
+
+        Args:
+            agent_id: contractor to stop
+            stopped_by: agent id requesting the stop (audit)
+
+        Returns:
+            True when the contractor was stopped and discarded.
+
+        Raises:
+            StopRejectedError: unknown agent / resident / live sessions
+        """
+        config = self._agent_info.get_config(agent_id)
+        if config is None:
+            raise StopRejectedError("unknown_agent", f"agent '{agent_id}' not found")
+        if config.role != "contractor":
+            raise StopRejectedError(
+                "resident_not_stoppable",
+                f"agent '{agent_id}' is a resident; only contractors can be stopped",
+            )
+
+        agent = self._agents.get(agent_id)
+        if agent is not None and agent.active_session_count > 0:
+            raise StopRejectedError(
+                "active_sessions",
+                f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
+                "wait for them to finish (drain)",
+            )
+
+        # Serialize with a concurrent wake of the same persona
+        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            agent = self._agents.pop(agent_id, None)
+            if agent is not None:
+                # Drain re-check under the lock: a session that started in
+                # the race window keeps the contractor alive
+                if agent.active_session_count > 0:
+                    self._agents[agent_id] = agent
+                    raise StopRejectedError(
+                        "active_sessions",
+                        f"agent '{agent_id}' gained a live session; stop aborted",
+                    )
+                try:
+                    await agent.shutdown()
+                except Exception as e:
+                    # Already out of the run table; discard proceeds so the
+                    # disposable persona does not leak
+                    logger.error("agent_stop_failed", agent_id=agent_id, error=str(e))
+
+            await self._discard_contractor(agent_id, stopped_by=stopped_by)
+
+        logger.info("contractor_stopped", agent_id=agent_id, stopped_by=stopped_by)
+        return True
+
+    async def _discard_contractor(self, agent_id: str, stopped_by: str) -> None:
+        """Remove a stopped contractor: registration, config cache, home dir.
+
+        Only ever called for role=="contractor" agents. The home directory
+        (``~/.tlon/{id}/``) is deleted — contractors are disposable; a
+        resident's directory is never touched by the registry.
+        """
+        if agent_id in self._registered_ids:
+            self._registered_ids.remove(agent_id)
+
+        self._assert_deletable_agent_id(agent_id)
+        try:
+            self._agent_info.delete_agent(agent_id, delete_data=True)
+        except ValueError:
+            # Home directory already gone — cache entry removed regardless
+            logger.warning("contractor_home_missing", agent_id=agent_id)
+        logger.info("contractor_home_deleted", agent_id=agent_id, stopped_by=stopped_by)
+
+        await self.event_bus.publish(
+            Event(
+                type=EventType.AGENT_STOPPED,
+                payload={
+                    "agent_id": agent_id,
+                    "stopped_by": stopped_by,
+                    "role": "contractor",
+                },
+                source="agent_registry",
+            )
+        )
+
+    def _assert_deletable_agent_id(self, agent_id: str) -> None:
+        """Path-injection guard for home-directory deletion.
+
+        Spawned ids are generated as ``c-{prototype}-{8hex}`` and carry no
+        separators, but the guard is enforced anyway: the id must satisfy
+        the AgentConfig charset and resolve strictly inside tlon_home.
+        """
+        if not agent_id.replace("-", "").replace("_", "").isalnum():
+            raise StopRejectedError(
+                "invalid_agent_id", f"agent id '{agent_id}' fails the charset check"
+            )
+        home = (self._paths or paths).tlon_home().resolve()
+        target = (home / agent_id).resolve()
+        if target.parent != home:
+            raise StopRejectedError(
+                "invalid_agent_id",
+                f"agent id '{agent_id}' resolves outside tlon_home",
+            )
+
     # ==================== Idle drain ====================
 
     async def _idle_monitor_loop(self) -> None:
@@ -607,6 +914,13 @@ class AgentRegistry(Component):
                 # The agent is already out of the run table; a later
                 # @mention assembles a fresh activation.
                 logger.error("agent_sleep_failed", agent_id=agent_id, error=str(e))
+                return
+
+            # Contractors are disposable: idle reaping discards the persona
+            # entirely (home dir deleted) instead of putting it to sleep.
+            if config.role == "contractor":
+                logger.info("contractor_idle_reaped", agent_id=agent_id, idle_seconds=idle)
+                await self._discard_contractor(agent_id, stopped_by="idle_drain")
                 return
 
             logger.info("agent_sleeping", agent_id=agent_id, idle_seconds=idle)
@@ -749,6 +1063,10 @@ class AgentRegistry(Component):
             "id": agent_id,
             "name": config.name,
             "state": state,
+            "role": config.role,
+            "prototype": config.prototype,
+            "spawned_by": config.spawned_by,
+            "spawn_depth": config.spawn_depth,
         }
 
     def get_all_agent_status(self) -> list[dict]:
