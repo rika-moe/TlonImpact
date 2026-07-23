@@ -133,6 +133,14 @@ class TlonPaths:
         """
         return self._home / "prototypes"
 
+    def prototypes_staging_dir(self) -> Path:
+        """~/.tlon/prototypes-staging/ — LLM-authored prototypes awaiting approval.
+
+        Read-only resolution: does NOT create the directory, so checking
+        ``exists()`` stays side-effect free.
+        """
+        return self._home / "prototypes-staging"
+
     # ===== Memory =====
 
     def memory_config_file(self, agent_id: str) -> Path:

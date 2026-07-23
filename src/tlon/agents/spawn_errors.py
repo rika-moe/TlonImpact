@@ -10,7 +10,8 @@ class SpawnRejectedError(ValueError):
     """Spawn refused by a budget or precondition check.
 
     ``reason`` is a machine-readable token: "max_activations" /
-    "max_spawn_depth" / "session_quota" / "config_reload_failed".
+    "max_spawn_depth" / "session_quota" / "config_reload_failed" /
+    "untrusted_prototype".
     """
 
     def __init__(self, reason: str, message: str):

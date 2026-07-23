@@ -25,8 +25,9 @@ derived from the agent's config), so a partial file is a pure override.
 Unknown keys are ignored with a warning for forward compatibility.
 """
 
+import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from tlon.agents.edn import EDNParseError, Keyword, loads
@@ -95,13 +96,21 @@ class OnCompleteSpec:
 
 @dataclass(frozen=True)
 class AgentSpec:
-    """Complete behavior spec for one agent (semantics authority)."""
+    """Complete behavior spec for one agent (semantics authority).
+
+    ``source_hash`` is provenance, not semantics: the sha256 short hash (12
+    hex chars) of the behavior file this spec was loaded from, or
+    ``"default"`` when running on DefaultSpec (no file, or a broken file
+    that fell back). It is stamped onto session spans so any trace can be
+    tied back to the exact spec version in effect.
+    """
 
     version: int = SPEC_VERSION
     trigger: TriggerSpec = field(default_factory=TriggerSpec)
     context: ContextSpec = field(default_factory=ContextSpec)
     loop: LoopSpec = field(default_factory=LoopSpec)
     on_complete: OnCompleteSpec = field(default_factory=OnCompleteSpec)
+    source_hash: str = "default"
 
     # ── Factories ──
 
@@ -139,12 +148,14 @@ class AgentSpec:
         if not behavior_file.exists():
             return base
         try:
-            data = loads(behavior_file.read_text(encoding="utf-8"))
-            spec = cls.from_edn(data, base=base)
+            raw = behavior_file.read_text(encoding="utf-8")
+            spec = cls.from_edn(loads(raw), base=base)
         except (EDNParseError, SpecValidationError, OSError) as e:
             logger.warning("agent_spec_load_failed", path=str(behavior_file), error=str(e))
             return base
-        logger.info("agent_spec_loaded", path=str(behavior_file))
+        source_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        spec = replace(spec, source_hash=source_hash)
+        logger.info("agent_spec_loaded", path=str(behavior_file), spec_hash=source_hash)
         return spec
 
     # ── Serialization ──

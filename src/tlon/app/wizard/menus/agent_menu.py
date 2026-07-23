@@ -47,6 +47,7 @@ class AgentMenu:
                     self.questionary.Choice("🔍 查看 Agent 详情", value="view"),
                     self.questionary.Choice("➕ 招聘新人", value="create"),
                     self.questionary.Choice("🧬 从 Prototype 创建", value="create_prototype"),
+                    self.questionary.Choice("🛡️  规约审批", value="review_staging"),
                     self.questionary.Choice("✏️  编辑 Agent", value="edit"),
                     self.questionary.Choice("🗑️  删除 Agent", value="delete"),
                     self.questionary.Separator(),
@@ -62,6 +63,8 @@ class AgentMenu:
                 self.create_agent()
             elif choice == "create_prototype":
                 self.create_from_prototype()
+            elif choice == "review_staging":
+                self.review_staging()
             elif choice == "edit":
                 self.edit_agent()
             elif choice == "delete":
@@ -317,6 +320,81 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 
         self.console.print(f"[green]✓ 已从 Prototype '{prototype_name}' 创建 Agent: {agent.name}[/green]")
         self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
+        self.questionary.press_any_key_to_continue("按回车继续...").ask()
+
+    def review_staging(self) -> None:
+        """Approve or reject LLM-authored prototypes in the staging area."""
+        from tlon.agents.prototypes import (
+            BEHAVIOR_FILE,
+            PERSONA_FILES,
+            PrototypeError,
+            approve_prototype,
+            list_staging_prototypes,
+            reject_prototype,
+        )
+        from tlon.base.paths import paths
+
+        self.console.print("\n[bold]🛡️  规约审批[/bold]\n")
+        self.console.print(
+            "[dim]Agent 创作的规约先进入 staging 区（不可信），批准后才能被 spawn。[/dim]\n"
+        )
+
+        staged = list_staging_prototypes()
+        if not staged:
+            self.console.print("[yellow]staging 区暂无待审批的规约[/yellow]")
+            self.questionary.press_any_key_to_continue("按回车继续...").ask()
+            return
+
+        choices = [
+            self.questionary.Choice(
+                f"{proto.display_name} ({proto.name})"
+                f" — 作者: {proto.author or '未知'} — {proto.description}",
+                value=proto.name,
+            )
+            for proto in staged
+        ]
+        choices.append(self.questionary.Choice("← 返回", value="back"))
+
+        name = self.questionary.select("选择待审批的规约:", choices=choices).ask()
+        if not name or name == "back":
+            return
+
+        # Preview behavior spec and persona files before deciding
+        from rich.panel import Panel
+
+        staging_dir = paths.prototypes_staging_dir() / name
+        behavior = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+        self.console.print(Panel(behavior, title=f"behavior.tlon: {name}"))
+        for filename in PERSONA_FILES:
+            persona_file = staging_dir / filename
+            if persona_file.exists():
+                content = persona_file.read_text(encoding="utf-8")
+                self.console.print(Panel(content, title=filename))
+
+        decision = self.questionary.select(
+            "审批决定:",
+            choices=[
+                self.questionary.Choice("✓ 批准（转为可信，可 spawn）", value="approve"),
+                self.questionary.Choice("✗ 拒绝（删除该规约）", value="reject"),
+                self.questionary.Choice("← 返回", value="back"),
+            ],
+        ).ask()
+
+        try:
+            if decision == "approve":
+                info = approve_prototype(name)
+                self.console.print(
+                    f"[green]✓ 已批准: {info.display_name} ({info.name}) 转为可信[/green]"
+                )
+            elif decision == "reject":
+                if self.questionary.confirm(f"确认删除规约 '{name}'?", default=False).ask():
+                    reject_prototype(name)
+                    self.console.print(f"[green]✓ 已拒绝并删除: {name}[/green]")
+                else:
+                    self.console.print("[yellow]已取消[/yellow]")
+        except PrototypeError as e:
+            self.console.print(f"[red]✗ 操作失败: {e}[/red]")
+
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def edit_agent(self) -> None:

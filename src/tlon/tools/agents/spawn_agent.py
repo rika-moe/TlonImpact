@@ -95,10 +95,14 @@ class SpawnAgentTool(Tool):
                 overrides=_ednify_keys(overrides) if overrides else None,
             )
         except SpawnRejectedError as e:
+            if e.reason == "untrusted_prototype":
+                error = f"untrusted_prototype: {prototype}（需人类在 mirror 中批准）"
+            else:
+                error = f"budget_exceeded: {e.reason}"
             return ToolResult(
                 success=False,
                 data={"reason": e.reason},
-                error=f"budget_exceeded: {e.reason}",
+                error=error,
                 message=str(e),
             )
         except PrototypeError as e:

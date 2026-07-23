@@ -28,7 +28,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from tlon.agents.agent import Agent
-from tlon.agents.prototypes import instantiate
+from tlon.agents.prototypes import get_prototype_info, instantiate
 from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
@@ -46,6 +46,7 @@ from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
+from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
@@ -420,6 +421,9 @@ class AgentRegistry(Component):
             tool_executor.register_tool(SpawnAgentTool(registry=self, spawner_id=config.id))
             tool_executor.register_tool(StopAgentTool(registry=self, spawner_id=config.id))
             tool_executor.register_tool(ListAgentsTool(registry=self))
+            # Spec authoring (stage 4a): writes untrusted prototypes to the
+            # staging area; spawner_id is recorded as the :author for audit.
+            tool_executor.register_tool(WritePrototypeTool(author_id=config.id))
             tool_executor.register_tool(RememberFactTool(memory))
             tool_executor.register_tool(SearchMemoriesTool(memory))
             tool_executor.register_tool(CompactTool(memory))
@@ -471,12 +475,21 @@ class AgentRegistry(Component):
             # Publish agent started event
             event = Event(
                 type=EventType.AGENT_STARTED,
-                payload={"agent_id": agent_id, "name": config.name},
+                payload={
+                    "agent_id": agent_id,
+                    "name": config.name,
+                    "spec_hash": agent.spec.source_hash,
+                },
                 source="agent_registry",
             )
             await self.event_bus.publish(event)
 
-            logger.info("agent_started", agent_id=agent_id, agent_name=config.name)
+            logger.info(
+                "agent_started",
+                agent_id=agent_id,
+                agent_name=config.name,
+                spec_hash=agent.spec.source_hash,
+            )
             return agent
 
         except Exception as e:
@@ -635,6 +648,21 @@ class AgentRegistry(Component):
             SpawnRejectedError: a budget cap was hit (see ``.reason``)
             PrototypeError: prototype missing
         """
+        tlon_paths = self._paths or paths
+
+        # Trust gate (stage 4a): before any budget check, an untrusted
+        # prototype (LLM-authored, awaiting human approval) cannot spawn.
+        # A missing prototype falls through to instantiate's not-found error.
+        info = get_prototype_info(prototype, tlon_paths)
+        if info is not None and not info.trusted:
+            self._reject_spawn(
+                "untrusted_prototype",
+                spawner_id=spawner_id,
+                session_id=session_id,
+                prototype=prototype,
+                detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
+            )
+
         # Budget 1: global activation cap (residents included)
         if len(self._agents) >= self._max_activations:
             self._reject_spawn(
@@ -670,7 +698,6 @@ class AgentRegistry(Component):
                 detail=f"quota {self._session_spawn_quota} per session exhausted",
             )
 
-        tlon_paths = self._paths or paths
         # Id is generated here (never caller-supplied): sanitize the
         # prototype fragment so the id stays within the AgentConfig charset
         safe_prototype = "".join(c for c in prototype if c.isalnum() or c in "-_")

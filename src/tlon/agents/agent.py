@@ -466,7 +466,11 @@ class Agent(Component, Device):
                 start_span(
                     "agent.session",
                     source=self.id,
-                    attributes={"session_id": session.id, "state": session.state.value},
+                    attributes={
+                        "session_id": session.id,
+                        "state": session.state.value,
+                        "spec_hash": self.spec.source_hash,
+                    },
                 )
             )
             yield

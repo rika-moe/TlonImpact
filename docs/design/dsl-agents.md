@@ -232,17 +232,33 @@ Tlon 的 prototype/agent 体系与操作系统的"可执行文件/进程"高度�
 
 完成标准：现有 agent 配置等价迁移，行为不变，测试全绿。**达成情况**：311 个测试全绿（261 既有 + 50 新增：edn 32、spec 18），ruff / 架构检查 / re-export 检查全过。落地偏差：现状 no-tool reminder 无开关，故 v1 schema 不含 `:no-tool-reminder` 字段（reminder 保持无条件触发）；`AgentConfig` 的 proactive/max_iterations/max_consecutive_errors 保留为 DefaultSpec 数据源与路由预筛来源，`session_timeout_seconds`/`message_queue_size` 作为构造期 infra 不进 spec。
 
-### 阶段 3 — 受限求值器
+### 阶段 4a — LLM 写数据规约 + 信任闸 ✅ 已完成（2026-07-23）
 
-白名单特殊形式 + 领域 builtin + fuel 限制 + 数据化 schema 校验；trigger 条件升级为表达式；循环模式开放 stage 机编排。
+> 路线图于 2026-07-23 重排：原阶段 3（求值器）与阶段 4（LLM 生成）按价值密度重切为 4a / 3a / 4b；stage 机循环（原 3b）放弃，移入"明确不做"。
 
-完成标准：同一行为可用纯数据与含表达式的规约各写一遍，解释执行结果一致。
+agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.tlon）+ 人格文件到 staging 区（`~/.tlon/prototypes-staging/`）；**信任分级落地"代码签名"模型**——包内/用户 prototype 可信（`:trusted true`，可直接 spawn），LLM 写的进 staging（不可信，`spawnAgent` 拒绝），人类在 mirror 批准后转正；trace 记录生效规约的版本哈希。
 
-### 阶段 4 — LLM 生成与 spawn 互触发
+完成标准：用户对话让 agent 写一份规约 → mirror 批准 → spawn 运行，端到端走通；规约版本哈希出现在 trace 中。
 
-agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工确认 → 激活）；`spawn` 实现规约互触发 + 全局深度/速率限制；trace 记录规约版本哈希。
+**对原阶段 4 的修正**：dry-run（trace 回放）砍掉——语义不清、实现重、收益虚；静态校验 + spawn 预算 + `stopAgent` 随时可杀已构成足够安全网。
 
-完成标准：用户可通过对话让 agent 为自己造一个新 agent 并投入运行。
+**4a 达成情况**：423 个测试全绿（386 既有 + 37 新增信任闸测试），ruff / 架构检查 / re-export 检查全过。落地情况：
+
+- **信任模型**：`prototype.edn` 新增 `:trusted`（包内 3 个 builtin 补 `true`）；`PrototypeInfo` 加 `trusted`/`author`（缺 `:trusted` 的用户手写 prototype 默认可信——手写即信任，只有 staging 区写 false）；`spawn_contractor` 在预算检查前加信任闸，不可信抛 `SpawnRejectedError(reason="untrusted_prototype")`，`spawnAgent` 翻译为可读错误；`listPrototypes` 输出带 `trusted`；
+- **staging 区**：`~/.tlon/prototypes-staging/`（paths 无副作用解析）；`write_staging_prototype()` 先校验后落盘（EDN 解析 + AgentSpec schema：`:version` 必填、类型、`:loop {:mode}` 限已实现值），失败不写盘；name 字符集 + 双向查重；metadata 写 `:trusted false` + `:author`；`approve_prototype()` 移目录转正（author 保留）、`reject_prototype()` 删目录（防护同 contractor home 删除）；
+- **`writePrototype` 工具**（工具总数 21 → 22）：name/behavior 必填 + display_name/description/identity/soul/rules；成功返回 `pending_approval`，校验失败返回具体错误 + schema 提示；
+- **mirror 审批入口**：wizard 人员管理菜单"规约审批"——列 staging（含作者）→ 预览 behavior.tlon 与人格文件 → 批准/拒绝；
+- **spec 版本哈希**：`AgentSpec.source_hash`（behavior.tlon 内容 sha256 前 12 位；DefaultSpec 为 `"default"`），落进 `agent.session` span attributes（`spec_hash`）、`agent_started` 日志与 `AGENT_STARTED` 事件 payload。
+
+### 阶段 3a — trigger 表达式
+
+受限求值器的窄落地，只做条件判断：白名单特殊形式（`if/when/let/and/or`）+ **纯谓词** builtin（`mentioned?` / `sender-type` / `content-matches?` / `addressed-to-me?` 等），fuel 限制。**builtin 分两类**：纯谓词（可用于 trigger，无副作用）与动作（`spawn`/`emit`，只能出现在 on-complete）——条件判断绝不允许副作用。
+
+完成标准：trigger 可用表达式书写（如只响应"直接 @ 我且内容含问题"），与纯数据写法结果一致；fuel 超限安全报错。
+
+### 阶段 4b — on-complete 动作表达式
+
+依附 3a 的求值器：`on-complete` 支持 `(when ...)` 条件与 `spawn`/`emit` 动作表达式（原阶段 4 spawn 互触发的剩余部分）。
 
 ### 阶段 5 — Behavior Prototype 库 ✅ 已完成（2026-07-22）
 
@@ -294,3 +310,4 @@ agent 获得"编写/改写规约文件"的工具（校验 → dry-run → 人工
 - YAML/JSON 等其他前端
 - 规约内的可变全局状态
 - LLM 生成规约自动激活（必须人工确认）
+- **stage 机循环（原阶段 3b，2026-07-23 放弃）**："LLM 发明全新循环拓扑"是无真实需求支撑的最大工程项；react + 数据旋钮 + ReflectionEngine 已覆盖实践中的行为差异。若未来出现 react 无法表达的真实需求，以**新增枚举循环模式**（Python 实现）回应，而非 stage 机。LoopDriver 已独立成模块，架构上保留回头的可能

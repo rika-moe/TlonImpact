@@ -150,7 +150,8 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
 
 - **目录形式**：`tlon/prototypes/{name}/`（包内数据，随 wheel 分发），每个含
   `behavior.tlon`（只写与 DefaultSpec 的差异字段）、`IDENTITY.md` / `SOUL.md` / `RULES.md`
-  人格模板、`prototype.edn` 元数据（`{:name :display-name :description}`，edn.py 解析）。
+  人格模板、`prototype.edn` 元数据（`{:name :display-name :description :trusted :author}`，
+  edn.py 解析；信任语义见下文"信任闸"）。
   首批 3 个：`deep-thinker`（:max-iterations 25、reflect 10 分钟）、
   `fast-responder`（:max-iterations 3、:knowledge false、:room-history 5）、
   `archivist`（reflect 5 分钟、:save-interaction true）；relay 因需要 `:llm false`
@@ -168,6 +169,40 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
   behavior.tlon；agent.yaml 走与 wizard 相同的 `_yaml_save` 路径，
   `AgentConfig.prototype` 记录来源 prototype；
 - **生效时机**：不做 registry 热加载，重启 dream 后生效（与 wizard 现有创建行为一致）。
+
+---
+
+## 信任闸（staging + 审批，阶段 4a）
+
+信任分级落地"代码签名"模型（设计见 [../../design/dsl-agents.md](../../design/dsl-agents.md)
+阶段 4a 与操作系统类比附录）：包内/用户 prototype = 签名二进制（可信，可直接 spawn）；
+LLM 现写规约 = 未签名二进制（staging + 人类显式批准的 Gatekeeper 模型）。
+
+- **信任标记**：`prototype.edn` 增加 `:trusted true|false`（包内 3 个 builtin 均为 true）。
+  `PrototypeInfo` 增加 `trusted` / `author` 字段；缺 `:trusted` 的用户手写 prototype
+  默认可信（手写即信任），只有 staging 区写出 `false`；
+- **staging 区**：`~/.tlon/prototypes-staging/`（`TlonPaths.prototypes_staging_dir()`，
+  无副作用解析）。`write_staging_prototype(name, behavior_edn, persona, display_name,
+  description, author_id)` **先校验后落盘**——behavior 须过 EDN 解析 + `AgentSpec.from_edn`
+  schema 校验（`:version` 必填、字段类型、`:loop {:mode}` 限已实现值），失败抛
+  `PrototypeError` 且一个字节都不写盘；name 字符集校验（alnum + `-_`，防路径注入）、
+  与可信库和 staging 双向查重；prototype.edn 写入 `:trusted false` + `:author agent_id`；
+- **审批**：`approve_prototype(name)` 把目录移到 `~/.tlon/prototypes/` 并把 metadata
+  改写为 `:trusted true`（`:author` 保留）；`reject_prototype(name)` 删除 staging 目录
+  （防护同 contractor home 删除：字符集 + resolve 必须在 staging 根直下）。
+  人类入口是 wizard 人员管理菜单的"规约审批"（列表含作者与描述 → 预览 behavior.tlon
+  与人格文件 → 批准/拒绝）；
+- **spawn 闸**：`spawn_contractor` 在任何预算检查之前先查信任——prototype 不可信即抛
+  `SpawnRejectedError(reason="untrusted_prototype")`；`spawnAgent` 工具把该拒绝翻译为
+  可读错误（提示需人类在 mirror 批准）。`listPrototypes` 输出带 `trusted` 字段；
+- **`writePrototype` 工具**（`tools/agents/write_prototype.py`，工具总数 21 → 22）：
+  参数 `name` / `behavior`（EDN 字符串，必填）+ `display_name` / `description` /
+  `identity` / `soul` / `rules`；成功返回 `status: pending_approval`，校验失败返回
+  具体错误 + schema 提示（LLM 可修正重试）；`author_id` 绑定装配它的 agent；
+- **规约版本哈希**：`AgentSpec.source_hash`——`AgentSpec.load` 对所读 behavior.tlon
+  内容计算 sha256 短哈希（前 12 位）；无文件或文件损坏走 DefaultSpec 时为 `"default"`。
+  该哈希进入 `agent.session` span attributes（`spec_hash`）、`agent_started` 日志与
+  `AGENT_STARTED` 事件 payload——任何一条 trace 都能查到当时生效的规约版本。
 
 ---
 
