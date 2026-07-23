@@ -8,11 +8,14 @@ Parses a minimal EDN subset into plain Python data — no evaluation:
 - keywords (``:foo-bar``) -> :class:`Keyword`
 - symbols (``react``) -> :class:`Symbol`
 - vectors ``[...]`` -> list
+- lists ``(...)`` -> :class:`Form` (code, not data — evaluated by ``agents/eval.py``)
 - maps ``{...}`` -> dict
 - ``;`` line comments; commas are treated as whitespace
 
 Keyword and Symbol are distinct str subclasses so that ``:mode :react``
 and ``:mode "react"`` stay semantically distinguishable downstream.
+Likewise Form (a list subclass) keeps ``(...)`` (an expression) distinct
+from ``[...]`` (a data vector) for the restricted evaluator.
 
 Parse failures raise :class:`EDNParseError` with line/column information.
 ``dumps`` serializes back to EDN (test roundtrips, future agent-written
@@ -55,6 +58,17 @@ class Symbol(str):
         return f"Symbol({str.__repr__(self)})"
 
 
+class Form(list):
+    """An EDN list form (``(...)``) — an expression, distinct from a vector.
+
+    Vectors (``[...]``) parse to plain lists (data); lists (``(...)``) parse
+    to Form (code for the restricted evaluator in ``agents/eval.py``).
+    """
+
+    def __repr__(self) -> str:
+        return f"Form({list.__repr__(self)})"
+
+
 class EDNParseError(ValueError):
     """EDN parse failure with source position (1-based line/column)."""
 
@@ -82,7 +96,7 @@ def loads(text: str) -> Any:
 def dumps(value: Any) -> str:
     """Serialize Python data back to an EDN literal.
 
-    Supports None/bool/int/float/str/Keyword/Symbol/list/tuple/dict.
+    Supports None/bool/int/float/str/Keyword/Symbol/Form/list/tuple/dict.
     """
     if value is None:
         return "nil"
@@ -98,6 +112,8 @@ def dumps(value: Any) -> str:
         return repr(value)
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, Form):
+        return "(" + " ".join(dumps(item) for item in value) + ")"
     if isinstance(value, (list, tuple)):
         return "[" + " ".join(dumps(item) for item in value) + "]"
     if isinstance(value, dict):
@@ -177,14 +193,14 @@ class _Parser:
             return self.parse_map()
         if ch == "[":
             return self.parse_vector()
+        if ch == "(":
+            return self.parse_form()
         if ch == '"':
             return self.parse_string()
         if ch == ":":
             return self.parse_keyword()
-        if ch in "]}":
+        if ch in ")]}":
             raise self.error(f"unmatched delimiter: {ch!r}")
-        if ch == "(":
-            raise self.error("lists are not supported in L0 (data literals only)")
         if ch.isdigit() or (ch in "+-" and self._peek_next_is_digit()):
             return self.parse_number()
         if ch.isalpha() or ch in _SYMBOL_START_EXTRA or ch in "+-":
@@ -202,6 +218,18 @@ class _Parser:
             if self.at_end:
                 raise self.error("unterminated vector: expected ']'")
             if self.peek() == "]":
+                self.advance()
+                return items
+            items.append(self.parse_value())
+
+    def parse_form(self) -> Form:
+        self.advance()  # consume '('
+        items = Form()
+        while True:
+            self.skip_whitespace()
+            if self.at_end:
+                raise self.error("unterminated list: expected ')'")
+            if self.peek() == ")":
                 self.advance()
                 return items
             items.append(self.parse_value())

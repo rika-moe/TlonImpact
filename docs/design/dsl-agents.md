@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -86,26 +86,28 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 
 规则：缺省字段继承 DefaultSpec（由 agent 的 config 派生），所以部分文件是纯覆盖；未知 key 忽略并 warning（向前兼容）；类型错误报带字段路径的清晰错误。keyword / symbol / string 是三种不同类型（`:mode :react` ≠ `:mode "react"`）。
 
-**L1 — 受限求值器（后落地）**：
+**L1 — 受限求值器（阶段 3a 已落地 trigger 表达式，`agents/eval.py`）**：
 
-- 特殊形式白名单：`if` / `when` / `let` / `and` / `or` / `match`，仅此而已；无 `loop`/`recur`、无 `def`、初期无宏；
-- 领域内置谓词与动作：`mentioned?` / `sender-type` / `tool-allowed?` / `call-tool` / `spawn` / `emit` / `score-memories` 等；
-- **fuel 限制**：求值带步数上限与深度上限；
+- 特殊形式白名单：`if` / `when` / `let` / `and` / `or`，仅此而已（`match` 留待后续）；无 `loop`/`recur`、无 `def`、无宏；
+- 领域内置谓词与动作：`mentioned?` / `addressed-to-me?` / `sender-type` / `content-matches?` / `contains?` / `=` / `not`（3a 已注册，纯谓词）；`call-tool` / `spawn` / `emit` / `score-memories` 等动作留待 4b；
+- **fuel 限制**：求值带步数上限（默认 1000）与深度上限（默认 100）；
 - 数据化 schema 校验（malli 风格，校验器本身也是数据）。
 
-示意（非终稿语法）：
+3a 实测语法（trigger 表达式已可用，`:trigger` 节接受 map 或表达式两形态）：
 
 ```clojure
-;; reviewer.tlon —— 一份 agent 行为规约
-{:trigger (when (and (mentioned? msg)
-                     (= (sender-type msg) "human"))
-            :fire)
- :context {:system-prompt (file "persona/reviewer.md")
-           :memory {:working 10 :episodic {:top-k 5}}}
- :loop {:mode react :max-iterations 10 :tools :background}
- :on-complete [(reflect {:every-n-sessions 5})
-               (when (task-done? result)
-                 (spawn "archiver.tlon" {:msg (summarize result)}))]}
+;; reviewer.tlon —— 一份 agent 行为规约（trigger 节为已实现语法）
+{:version 1
+ :trigger (and (addressed-to-me? msg)              ; 有人 @ 且 @ 的是我（非串扰）
+               (= (sender-type msg) "human")       ; 只响应人类
+               (content-matches? msg "？$"))       ; 且内容以问号结尾
+ :context {:persona true :protocol true :knowledge true :room-history 20}
+ :loop {:mode :react :max-iterations 10 :tools :background}
+ :on-complete {:save-interaction true :reflect {:enabled true :interval-minutes 15}}}
+
+;; 其余特殊形式：if / when / let（顺序绑定）/ and / or（短路）
+;; (when (mentioned? msg) (not (contains? (sender-type msg) "system")))
+;; on-complete 的 spawn/emit 动作表达式属阶段 4b，上方例子不再示意
 ```
 
 ## 安全闸（贯穿始终）
@@ -250,11 +252,19 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 - **mirror 审批入口**：wizard 人员管理菜单"规约审批"——列 staging（含作者）→ 预览 behavior.tlon 与人格文件 → 批准/拒绝；
 - **spec 版本哈希**：`AgentSpec.source_hash`（behavior.tlon 内容 sha256 前 12 位；DefaultSpec 为 `"default"`），落进 `agent.session` span attributes（`spec_hash`）、`agent_started` 日志与 `AGENT_STARTED` 事件 payload。
 
-### 阶段 3a — trigger 表达式
+### 阶段 3a — trigger 表达式 ✅ 已完成（2026-07-23）
 
 受限求值器的窄落地，只做条件判断：白名单特殊形式（`if/when/let/and/or`）+ **纯谓词** builtin（`mentioned?` / `sender-type` / `content-matches?` / `addressed-to-me?` 等），fuel 限制。**builtin 分两类**：纯谓词（可用于 trigger，无副作用）与动作（`spawn`/`emit`，只能出现在 on-complete）——条件判断绝不允许副作用。
 
 完成标准：trigger 可用表达式书写（如只响应"直接 @ 我且内容含问题"），与纯数据写法结果一致；fuel 超限安全报错。
+
+**3a 达成情况**：475 个测试全绿（423 既有 + 52 新增求值器/表达式测试），ruff / 架构检查 / re-export 检查全过。落地情况：
+
+- **EDN list 支持**：`edn.py` 新增 `Form(list)` 类型——`(...)` 解析为 Form（代码），`[...]` 仍为 list（数据），两者类型可区分；嵌套、`dumps` roundtrip 保类型；纯数据语境语义不变；
+- **受限求值器 `agents/eval.py`**：`eval_form(form, env, builtins, fuel=1000, max_depth=100)`。字面量/keyword 自求值，vector 逐项求值，Symbol 查 env；特殊形式仅 `if`（2–3 参）/`when`/`let`（vector 顺序绑定）/`and`/`or`（短路）——无 `def`/`lambda`/`loop`/`recur`/`match`，递归在语言层面无从表达。每步求值耗 1 fuel，耗尽抛 `FuelExhaustedError`；深度超限抛 `EvalDepthError`；错误尽量带形式本身（`dumps`）。`validate_form` 静态检查：形式头白名单 + Symbol 作用域（`msg`/`self` + `let` 绑定）+ `let` 形状，不执行；
+- **builtin 纯度机制**：`Builtin(fn, pure=True)` 注册表；`TRIGGER_BUILTINS` 只注册 7 个纯谓词/函数（`mentioned?` / `addressed-to-me?` / `sender-type` / `content-matches?` / `contains?` / `=` / `not`），`spawn`/`emit` 不注册——trigger 求值无副作用（by construction）。`addressed-to-me?` = mentions 非空且含我，正是"房间串扰"（@ 别人）与广播的区分解。env 的 `msg` 是裸 Message 但表达式无属性/方法访问语法，只能经 builtin 检视；
+- **TriggerSpec 两形态**：`:trigger` 接受 map（数据模式，不变）或 Form（表达式模式）；`TriggerSpec.when: Form | None`。`from_edn` load 时静态校验表达式（未白名单形式/函数、未定义 Symbol 直接 `SpecValidationError`），`writePrototype` schema 校验自动覆盖；`to_dict`/`from_dict` roundtrip 保留 `when`（EDN 字符串形态）；
+- **TriggerEvaluator 接线**：自己消息跳过（不变）→ `when` 非空走表达式（env = `msg`/`self`，真值即响应；`EvalError` 安全默认不响应 + `trigger_eval_failed` warning）→ 否则数据逻辑不变；表达式命中/未命中记 `trigger_expr_result` debug；`when` 与数据字段并存时以 `when` 为准。
 
 ### 阶段 4b — on-complete 动作表达式
 

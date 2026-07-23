@@ -30,7 +30,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from tlon.agents.edn import EDNParseError, Keyword, loads
+from tlon.agents.edn import EDNParseError, Form, Keyword, dumps, loads
+from tlon.agents.eval import TRIGGER_BUILTINS, EvalError, validate_form
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
 
@@ -52,10 +53,17 @@ class SpecValidationError(ValueError):
 
 @dataclass(frozen=True)
 class TriggerSpec:
-    """When the agent fires on an inbound message."""
+    """When the agent fires on an inbound message.
+
+    ``when`` is an optional L1 trigger expression (a parsed EDN Form,
+    statically validated at load time against ``TRIGGER_BUILTINS``). When
+    set, it takes precedence over the data fields below; when ``None``,
+    the declarative data fields apply.
+    """
 
     on_mention: bool = True  # always respond when @-mentioned
     proactive: bool = False  # respond to unaddressed human messages
+    when: "Form | None" = None  # L1 expression mode (phase 3a)
 
 
 @dataclass(frozen=True)
@@ -167,6 +175,7 @@ class AgentSpec:
             "trigger": {
                 "on_mention": self.trigger.on_mention,
                 "proactive": self.trigger.proactive,
+                "when": dumps(self.trigger.when) if self.trigger.when is not None else None,
             },
             "context": {
                 "persona": self.context.persona,
@@ -207,7 +216,7 @@ class AgentSpec:
             )
         return cls(
             version=SPEC_VERSION,
-            trigger=_section(data, "trigger", base.trigger, _trigger_from),
+            trigger=_trigger_section(data, base.trigger),
             context=_section(data, "context", base.context, _context_from),
             loop=_section(data, "loop", base.loop, _loop_from),
             on_complete=_section(data, "on_complete", base.on_complete, _on_complete_from),
@@ -224,7 +233,13 @@ class AgentSpec:
 
 
 def _normalize_data(value: Any) -> Any:
-    """Recursively normalize EDN data: map keys become snake_case strings."""
+    """Recursively normalize EDN data: map keys become snake_case strings.
+
+    Forms (``(...)``) are expressions, not data — they pass through
+    untouched so their keywords/symbols keep their literal names.
+    """
+    if isinstance(value, Form):
+        return value
     if isinstance(value, dict):
         return {_normalize_key(key): _normalize_data(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -317,7 +332,7 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "top": frozenset({"version", "trigger", "context", "loop", "on_complete"}),
-    "trigger": frozenset({"on_mention", "proactive"}),
+    "trigger": frozenset({"on_mention", "proactive", "when"}),
     "context": frozenset({"persona", "protocol", "knowledge", "room_history"}),
     "loop": frozenset({"mode", "max_iterations", "tools", "max_consecutive_errors"}),
     "on_complete": frozenset({"save_interaction", "reflect"}),
@@ -333,7 +348,63 @@ def _trigger_from(data: dict[str, Any], base: TriggerSpec) -> TriggerSpec:
         proactive=_read(
             data, "proactive", base.proactive, path=":trigger/:proactive", kind=bool
         ),
+        when=_when_from(data.get("when"), base.when),
     )
+
+
+def _when_from(value: Any, default: "Form | None") -> "Form | None":
+    """Read an optional trigger expression from the dict path.
+
+    Accepts a parsed Form, an EDN source string (``to_dict`` output), or
+    None. Anything else is a validation error.
+    """
+    if value is None:
+        return default
+    if isinstance(value, Form):
+        return _validate_trigger_expr(value)
+    if isinstance(value, str):
+        try:
+            parsed = loads(value)
+        except EDNParseError as e:
+            raise SpecValidationError(f"invalid :trigger/:when expression: {e}") from e
+        if not isinstance(parsed, Form):
+            raise SpecValidationError(
+                f":trigger/:when must be an expression, got {_type_name(parsed)}: {parsed!r}"
+            )
+        return _validate_trigger_expr(parsed)
+    raise SpecValidationError(
+        f":trigger/:when must be an expression string, got {_type_name(value)}: {value!r}"
+    )
+
+
+def _trigger_section(data: dict[str, Any], base: TriggerSpec) -> TriggerSpec:
+    """Build the trigger section: data map (declarative) or Form (expression)."""
+    raw = data.get("trigger")
+    if raw is None:
+        return base
+    if isinstance(raw, Form):
+        return replace(base, when=_validate_trigger_expr(raw))
+    if not isinstance(raw, dict):
+        raise SpecValidationError(
+            f":trigger must be a map or an expression, got {_type_name(raw)}: {raw!r}"
+        )
+    _warn_unknown_keys(raw, "trigger")
+    return _trigger_from(raw, base)
+
+
+def _validate_trigger_expr(form: Form) -> Form:
+    """Statically validate a trigger expression at load time (no execution).
+
+    Only whitelisted special forms, registered pure builtins, and symbols
+    the trigger environment provides (``msg`` / ``self``, plus ``let``
+    bindings) are accepted — so ``writePrototype`` schema validation
+    rejects bad expressions before they ever reach an agent.
+    """
+    try:
+        validate_form(form, TRIGGER_BUILTINS, scope={"msg", "self"})
+    except EvalError as e:
+        raise SpecValidationError(f"invalid :trigger expression: {e}") from e
+    return form
 
 
 def _context_from(data: dict[str, Any], base: ContextSpec) -> ContextSpec:

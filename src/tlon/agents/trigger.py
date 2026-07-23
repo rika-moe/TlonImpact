@@ -1,11 +1,18 @@
 """Trigger evaluation for Agent.
 
-Decides whether the agent should respond to an incoming routed message
-(mention-based or proactive), extracted from the Agent god class.
+Decides whether the agent should respond to an incoming routed message.
+Two modes per ``TriggerSpec``:
+
+- expression mode (``trigger.when`` set): the L1 expression is evaluated
+  by the restricted evaluator (``agents/eval.py``) with ``msg``/``self``
+  in scope; any evaluation failure safely defaults to not responding;
+- data mode (``when`` is None): declarative mention/proactive rules.
 """
 
 from typing import TYPE_CHECKING
 
+from tlon.agents.edn import Form
+from tlon.agents.eval import TRIGGER_BUILTINS, EvalError, eval_form
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.message import Message
 
@@ -32,6 +39,9 @@ class TriggerEvaluator:
 
         trigger = self._agent.spec.trigger
 
+        if trigger.when is not None:
+            return self._evaluate_expression(trigger.when, message)
+
         if trigger.on_mention and self.is_mentioned(message):
             logger.debug("agent_will_respond", reason="mentioned", sender=message.sender_name)
             return True
@@ -42,6 +52,21 @@ class TriggerEvaluator:
 
         logger.debug("agent_will_not_respond", sender=message.sender_name)
         return False
+
+    def _evaluate_expression(self, form: Form, message: Message) -> bool:
+        """Evaluate the trigger expression; failures default to no response."""
+        env = {
+            "msg": message,
+            "self": {"id": self._agent.id, "name": self._agent.name},
+        }
+        try:
+            result = eval_form(form, env, TRIGGER_BUILTINS)
+        except EvalError as e:
+            logger.warning("trigger_eval_failed", error=str(e), sender=message.sender_name)
+            return False
+        hit = bool(result)
+        logger.debug("trigger_expr_result", result=hit, sender=message.sender_name)
+        return hit
 
     def is_mentioned(self, message: Message) -> bool:
         """Check if this agent is mentioned in the message."""

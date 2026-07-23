@@ -2,7 +2,7 @@
 
 import pytest
 
-from tlon.agents.edn import EDNParseError, Keyword, Symbol, dumps, loads
+from tlon.agents.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 
 
 class TestLiterals:
@@ -128,10 +128,9 @@ class TestParseErrors:
             loads(r'"a\qb"')
         assert "invalid escape" in str(exc_info.value)
 
-    def test_lists_not_supported_in_l0(self):
-        with pytest.raises(EDNParseError) as exc_info:
-            loads("(foo bar)")
-        assert "not supported" in str(exc_info.value)
+    def test_unmatched_close_paren(self):
+        with pytest.raises(EDNParseError):
+            loads(")")
 
     def test_empty_input(self):
         with pytest.raises(EDNParseError):
@@ -185,3 +184,50 @@ class TestDumps:
     def test_unsupported_type(self):
         with pytest.raises(TypeError):
             dumps(object())
+
+
+class TestForms:
+    """Lists ``(...)`` parse to Form (code), distinct from vectors (data)."""
+
+    def test_form_parses(self):
+        value = loads("(foo bar 1)")
+        assert isinstance(value, Form)
+        assert value == [Symbol("foo"), Symbol("bar"), 1]
+
+    def test_empty_form(self):
+        assert loads("()") == Form()
+
+    def test_form_is_not_vector(self):
+        assert isinstance(loads("(a)"), Form)
+        assert not isinstance(loads("[a]"), Form)
+        assert isinstance(loads("[a]"), list)
+
+    def test_nested_forms(self):
+        value = loads('(and (mentioned? msg) [1 (inner {:k (v)})])')
+        assert isinstance(value, Form)
+        assert isinstance(value[1], Form)
+        vector = value[2]
+        assert isinstance(vector, list) and not isinstance(vector, Form)
+        inner = vector[1]
+        assert isinstance(inner, Form)
+        assert isinstance(inner[1][Keyword("k")], Form)
+
+    def test_unterminated_form(self):
+        with pytest.raises(EDNParseError) as exc_info:
+            loads("(foo bar")
+        assert "unterminated list" in str(exc_info.value)
+
+    def test_dumps_form_roundtrip(self):
+        source = '(and (mentioned? msg) (= (sender-type msg) "human"))'
+        value = loads(source)
+        assert dumps(value) == source
+        reparsed = loads(dumps(value))
+        assert isinstance(reparsed, Form)
+        assert isinstance(reparsed[1], Form)
+
+    def test_roundtrip_mixed_form_and_vector(self):
+        value = loads("{:trigger (mentioned? msg) :tags [a b]}")
+        reparsed = loads(dumps(value))
+        assert isinstance(reparsed[Keyword("trigger")], Form)
+        assert isinstance(reparsed[Keyword("tags")], list)
+        assert not isinstance(reparsed[Keyword("tags")], Form)

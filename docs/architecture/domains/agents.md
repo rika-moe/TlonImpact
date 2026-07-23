@@ -17,7 +17,8 @@
 agents/
 ├── agent.py               # Agent 薄壳：生命周期、消息队列、think、子系统编排
 ├── spec.py                # AgentSpec：行为规约（语义唯一权威）+ behavior.tlon 加载
-├── edn.py                 # EDN 数据字面量解析器（L0，只解析不求值）
+├── edn.py                 # EDN 解析器（L0 数据字面量 + Form list 类型，只解析不求值）
+├── eval.py                # L1 受限求值器：白名单特殊形式 + 纯 builtin 注册表 + fuel/深度限制
 ├── prototypes.py          # Behavior prototype 库：种子 / 列举 / 实例化
 ├── spawn_errors.py        # SpawnRejectedError / StopRejectedError（spawn/stop 拒绝原因）
 ├── scheduler.py           # SessionScheduler：主循环 + session 生命周期 + 超时清理
@@ -44,7 +45,8 @@ agents/
 | `AgentSpec` | 行为规约（语义唯一权威） | `agents/spec.py` |
 | `SessionScheduler` | 主循环、多 session 调度 | `agents/scheduler.py` |
 | `LoopDriver` | ReAct step/collect | `agents/loop_driver.py` |
-| `TriggerEvaluator` | 触发判断（mention/proactive） | `agents/trigger.py` |
+| `TriggerEvaluator` | 触发判断（表达式 / mention / proactive） | `agents/trigger.py` |
+| `eval_form` / `validate_form` | L1 受限求值 / 静态校验（图灵不完备，fuel 计量） | `agents/eval.py` |
 | `ContextBuilder` | 上下文组装、系统提示缓存 | `agents/context_builder.py` |
 | `ReflectionEngine` | 记忆反思 | `agents/reflection.py` |
 | `AgentRegistry` | 生命周期管理（休眠/唤醒/回收） | `agents/agent_registry.py` |
@@ -126,8 +128,10 @@ agent 可从 prototype 现造临时工（contractor）并停止之，全程受 s
 Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../design/dsl-agents.md)）。
 `Agent` 构造时加载 `AgentSpec`（`agent.spec`），子系统全部从 spec 读行为参数：
 
-- 文件路径：`~/.tlon/{agent_id}/config/behavior.tlon`（纯 EDN 数据字面量，L0 只解析不求值，
-  解析器在 `agents/edn.py`；`:version` 必须为 1，未知 key 忽略并告警，缺省字段继承 DefaultSpec）；
+- 文件路径：`~/.tlon/{agent_id}/config/behavior.tlon`（EDN 字面量，解析器在
+  `agents/edn.py`；`:trigger` 节可为 map 或 L1 表达式 Form，表达式 load 时静态校验、
+  运行时由 `agents/eval.py` 求值；`:version` 必须为 1，未知 key 忽略并告警，
+  缺省字段继承 DefaultSpec）；
 - 加载机制：`AgentSpec.load(agent)` —— 文件存在则解析（解析/校验失败 → warning 日志 +
   回落 DefaultSpec），否则直接 DefaultSpec；
 - `AgentSpec.default(agent)`（DefaultSpec）从 `AgentConfig` + memory config 精确复刻历史行为，
@@ -140,6 +144,20 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
 边界：`AgentConfig.proactive` 同时被消息路由器用作路由预筛（第一道闸，在 spec 之前），
 `spec.trigger.proactive` 是 agent 内第二道闸，DefaultSpec 保证两者一致；
 `session_timeout_seconds` / `message_queue_size` 是构造期 infra，留在 `AgentConfig` 不进 spec。
+
+### trigger 表达式（L1 受限求值器，`agents/eval.py`）
+
+`:trigger` 节除数据 map 外可写 s-expr 表达式（edn.py 解析为 `Form`，与 vector 的 list
+类型区分）。语义刻意图灵不完备：特殊形式仅 `if` / `when` / `let` / `and` / `or`，
+无 `def` / `lambda` / `loop` / `recur`（递归无从表达）；其余形式头必须命中
+`TRIGGER_BUILTINS` 注册表——7 个纯谓词/函数（`mentioned?` / `addressed-to-me?` /
+`sender-type` / `content-matches?` / `contains?` / `=` / `not`，`Builtin(fn, pure=True)`
+带纯度标记，副作用动作不注册，trigger 求值无副作用 by construction）。求值每步耗
+fuel（默认 1000，耗尽 `FuelExhaustedError`）、深度限 100（`EvalDepthError`）。
+load 时 `validate_form` 静态校验（形式头白名单 + Symbol 作用域 + `let` 形状，不执行），
+`writePrototype` 的 schema 校验因此自动覆盖表达式。运行时 TriggerEvaluator 以
+env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应并记
+`trigger_eval_failed` warning，命中/未命中记 `trigger_expr_result` debug。
 
 ---
 
