@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）· 阶段 4b 已完成（2026-07-23）—— **路线图全部收官**
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -89,7 +89,7 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 **L1 — 受限求值器（阶段 3a 已落地 trigger 表达式，`agents/eval.py`）**：
 
 - 特殊形式白名单：`if` / `when` / `let` / `and` / `or`，仅此而已（`match` 留待后续）；无 `loop`/`recur`、无 `def`、无宏；
-- 领域内置谓词与动作：`mentioned?` / `addressed-to-me?` / `sender-type` / `content-matches?` / `contains?` / `=` / `not`（3a 已注册，纯谓词）；`call-tool` / `spawn` / `emit` / `score-memories` 等动作留待 4b；
+- 领域内置谓词与动作：`mentioned?` / `addressed-to-me?` / `sender-type` / `content-matches?` / `contains?` / `=` / `not`（3a 已注册，纯谓词）；`spawn` / `emit` 动作 4b 已落地（on-complete 专用，求值纯、引擎执行）；`call-tool` / `score-memories` 等留待后续；
 - **fuel 限制**：求值带步数上限（默认 1000）与深度上限（默认 100）；
 - 数据化 schema 校验（malli 风格，校验器本身也是数据）。
 
@@ -107,7 +107,10 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 
 ;; 其余特殊形式：if / when / let（顺序绑定）/ and / or（短路）
 ;; (when (mentioned? msg) (not (contains? (sender-type msg) "system")))
-;; on-complete 的 spawn/emit 动作表达式属阶段 4b，上方例子不再示意
+;; on-complete 动作表达式（4b 已落地）：
+;; :on-complete {:actions [(when (content-matches? result "完成")
+;;                          (spawn "archivist" {:name "归档员"}))
+;;                        (emit "本轮处理完毕" [])]}
 ```
 
 ## 安全闸（贯穿始终）
@@ -266,9 +269,19 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 - **TriggerSpec 两形态**：`:trigger` 接受 map（数据模式，不变）或 Form（表达式模式）；`TriggerSpec.when: Form | None`。`from_edn` load 时静态校验表达式（未白名单形式/函数、未定义 Symbol 直接 `SpecValidationError`），`writePrototype` schema 校验自动覆盖；`to_dict`/`from_dict` roundtrip 保留 `when`（EDN 字符串形态）；
 - **TriggerEvaluator 接线**：自己消息跳过（不变）→ `when` 非空走表达式（env = `msg`/`self`，真值即响应；`EvalError` 安全默认不响应 + `trigger_eval_failed` warning）→ 否则数据逻辑不变；表达式命中/未命中记 `trigger_expr_result` debug；`when` 与数据字段并存时以 `when` 为准。
 
-### 阶段 4b — on-complete 动作表达式
+### 阶段 4b — on-complete 动作表达式 ✅ 已完成（2026-07-23）
 
 依附 3a 的求值器：`on-complete` 支持 `(when ...)` 条件与 `spawn`/`emit` 动作表达式（原阶段 4 spawn 互触发的剩余部分）。
+
+完成标准：`:on-complete {:actions [...]}` 可写动作表达式；求值保持纯（动作变数据，引擎执行）；spawn 走信任闸与预算；单动作失败不影响 session。
+
+**4b 达成情况**：505 个测试全绿（475 既有 + 30 新增 on-complete 测试），ruff / 架构检查 / re-export 检查全过。落地情况：
+
+- **求值纯、动作变数据、引擎执行**：`spawn` / `emit` 注册为 `Builtin(pure=False)`，但求值时不做任何副作用——校验参数后把 `ActionRequest` 收集进 collector（`make_actions_builtins(collector)`；模块级 `ACTIONS_BUILTINS` 为无 collector 的校验用注册表）；求值完成后由 Agent 异步逐条执行。延续"DSL 只描述，引擎执行"铁律，求值器保持同步、可静态校验；
+- **schema**：`OnCompleteSpec.actions: tuple[Form, ...]`（纯数据，frozen 兼容）；`:actions` 必须是 vector of Form，load 时每个 Form 经 `validate_action_form` 静态校验——**两位置纯度**：`when` 条件位只许纯谓词（`TRIGGER_BUILTINS`，条件位出现动作直接拒绝），动作位必须是动作 Form 且参数为纯表达式；顶层只许动作 Form 或单层 `when`（不支持嵌套）；`to_dict`/`from_dict` roundtrip 保留（EDN 字符串形态）；
+- **动作语义**：`(spawn "prototype" {:name "显示名"})`（第二参数可选，`:name` 缺省自动生成）执行时调 `registry.spawn_contractor`——信任闸与预算全部生效（untrusted/超预算 → 拒绝记日志，不炸 session）；spawner_id=当前 agent，session_id 经 structlog contextvars 从 `_session_span` 读取（完成时仍在 span 内，配额自然归因）。`(emit "内容" ["mention-id" ...])`（mentions 可选）调 `agent._send_message`。env：`msg`（触发消息，经 `session.trigger_message` 传递）/ `result`（本轮最终回复字符串）/ `self`；`content-matches?` 扩展为同时接受 Message 或字符串；
+- **执行点与隔离**：session 以 `is_complete` 收尾时，`_save_interaction_to_memory` 之后、`mark_completed()` 之前（LoopDriver 收尾处）由新子系统 `OnCompleteRunner`（`agents/on_complete.py`）执行一次；单动作失败记 `on_complete_action_failed` error 并继续后续动作，求值失败记 `on_complete_eval_failed`，绝不影响 session 生命周期；观测 `on_complete_actions` info（动作数/类型）。Agent 新增可选构造参数 `registry`（`_start_agent` 注入自身；测试直建为 None 时 spawn 动作记日志跳过）；
+- **链式风险**：spawn 出的 contractor 自己的 on-complete 可能再 spawn——由 `max_spawn_depth=3` 硬顶（`OnCompleteRunner` docstring 注明）。
 
 ### 阶段 5 — Behavior Prototype 库 ✅ 已完成（2026-07-22）
 

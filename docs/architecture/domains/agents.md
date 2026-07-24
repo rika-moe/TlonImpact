@@ -24,6 +24,7 @@ agents/
 ├── scheduler.py           # SessionScheduler：主循环 + session 生命周期 + 超时清理
 ├── loop_driver.py         # LoopDriver：ReAct 步进 / 工具收割
 ├── trigger.py             # TriggerEvaluator：响应触发判断
+├── on_complete.py         # OnCompleteRunner：on-complete 动作表达式求值 + 执行（4b）
 ├── context_builder.py     # ContextBuilder：对话上下文 + 系统提示缓存
 ├── reflection.py          # ReflectionEngine：记忆反思子系统
 ├── session.py             # AgentSession：单个会话/任务状态
@@ -46,6 +47,7 @@ agents/
 | `SessionScheduler` | 主循环、多 session 调度 | `agents/scheduler.py` |
 | `LoopDriver` | ReAct step/collect | `agents/loop_driver.py` |
 | `TriggerEvaluator` | 触发判断（表达式 / mention / proactive） | `agents/trigger.py` |
+| `OnCompleteRunner` | on-complete 动作求值 + 执行（纯求值收集，引擎执行） | `agents/on_complete.py` |
 | `eval_form` / `validate_form` | L1 受限求值 / 静态校验（图灵不完备，fuel 计量） | `agents/eval.py` |
 | `ContextBuilder` | 上下文组装、系统提示缓存 | `agents/context_builder.py` |
 | `ReflectionEngine` | 记忆反思 | `agents/reflection.py` |
@@ -139,7 +141,8 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
 - 消费方：TriggerEvaluator（`spec.trigger`）、LoopDriver（`spec.loop`）、
   ContextBuilder / SystemPromptBuilder（`spec.context`）、ReflectionEngine
   （`spec.on_complete.reflect`，`enabled` 仍是运行时开关）、
-  `Agent._save_interaction_to_memory`（`spec.on_complete.save_interaction`）。
+  `Agent._save_interaction_to_memory`（`spec.on_complete.save_interaction`）、
+  OnCompleteRunner（`spec.on_complete.actions`，见下文"on-complete 动作表达式"）。
 
 边界：`AgentConfig.proactive` 同时被消息路由器用作路由预筛（第一道闸，在 spec 之前），
 `spec.trigger.proactive` 是 agent 内第二道闸，DefaultSpec 保证两者一致；
@@ -158,6 +161,35 @@ load 时 `validate_form` 静态校验（形式头白名单 + Symbol 作用域 + 
 `writePrototype` 的 schema 校验因此自动覆盖表达式。运行时 TriggerEvaluator 以
 env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应并记
 `trigger_eval_failed` warning，命中/未命中记 `trigger_expr_result` debug。
+
+### on-complete 动作表达式（阶段 4b，`agents/on_complete.py`）
+
+`:on-complete` 节新增 `:actions`（vector of Form），每个 Form 是一个动作
+（`(spawn "prototype" {:name "显示名"})` / `(emit "内容" ["mention-id" ...])`，
+两动作的第二参数均可选）或 `(when 条件 动作...)`。延续"DSL 只描述，引擎执行"：
+
+- **求值保持纯**：`spawn` / `emit` 注册为 `Builtin(pure=False)`，但求值时不做任何
+  副作用——校验参数后把 `ActionRequest` 数据收集进 collector
+  （`make_actions_builtins(collector)`；`ACTIONS_BUILTINS` 是无 collector 的校验用
+  注册表）。求值完成后由引擎异步逐条执行；
+- **两位置纯度校验**：load 时 `validate_action_form` 静态校验——`when` 条件位只许
+  纯谓词（`TRIGGER_BUILTINS`，动作在条件位直接拒绝），动作位必须是动作 Form 且参数为
+  纯表达式；顶层只许动作 Form 或单层 `when`（不支持嵌套 `when`）；
+- **env**：`msg`（触发消息 Message，经 `session.trigger_message` 传递）、`result`
+  （本轮最终回复字符串）、`self`；`content-matches?` 同时接受 Message 与字符串；
+- **执行点**：session 以 `is_complete` 收尾时，在 `_save_interaction_to_memory` 之后、
+  `session.mark_completed()` 之前（LoopDriver 收尾处，仍在 `_session_span` 内——
+  spawn 的 session 配额因此自然归因）由 `OnCompleteRunner` 执行一次；
+- **动作语义**：`spawn` 调 `registry.spawn_contractor`（spawner_id=当前 agent，
+  session_id 读 structlog contextvars）——**信任闸与 spawn 预算全部生效**
+  （untrusted / 超预算 → 拒绝记日志，不影响 session）；链式 spawn（contractor 自己的
+  on-complete 再 spawn）由 `max_spawn_depth=3` 硬顶。Agent 新增可选构造参数
+  `registry`（由 `_start_agent` 注入自身；测试直建为 None，spawn 动作记日志跳过）。
+  `emit` 调 `agent._send_message`；
+- **异常隔离**：单个动作失败记 `on_complete_action_failed` error（含动作与错误）并继续
+  后续动作；求值失败记 `on_complete_eval_failed`，绝不影响 session 生命周期。观测：
+  `on_complete_actions` info 日志（动作数/类型），spawn 走 registry 现有
+  `agent_spawned` 事件链。
 
 ---
 

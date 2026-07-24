@@ -31,7 +31,12 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from tlon.agents.edn import EDNParseError, Form, Keyword, dumps, loads
-from tlon.agents.eval import TRIGGER_BUILTINS, EvalError, validate_form
+from tlon.agents.eval import (
+    TRIGGER_BUILTINS,
+    EvalError,
+    validate_action_form,
+    validate_form,
+)
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
 
@@ -96,10 +101,18 @@ class ReflectSpec:
 
 @dataclass(frozen=True)
 class OnCompleteSpec:
-    """What happens after a session completes."""
+    """What happens after a session completes.
+
+    ``actions`` holds parsed on-complete action forms (phase 4b): each is
+    a ``(spawn ...)`` / ``(emit ...)`` form or ``(when cond action ...)``,
+    statically validated at load time (:func:`validate_action_form`).
+    Evaluation is pure (actions are collected as data); the engine
+    executes them once when a session completes.
+    """
 
     save_interaction: bool = True
     reflect: ReflectSpec = field(default_factory=ReflectSpec)
+    actions: tuple[Form, ...] = ()  # phase 4b action expressions
 
 
 @dataclass(frozen=True)
@@ -195,6 +208,7 @@ class AgentSpec:
                     "enabled": self.on_complete.reflect.enabled,
                     "interval_minutes": self.on_complete.reflect.interval_minutes,
                 },
+                "actions": [dumps(form) for form in self.on_complete.actions],
             },
         }
 
@@ -335,7 +349,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "trigger": frozenset({"on_mention", "proactive", "when"}),
     "context": frozenset({"persona", "protocol", "knowledge", "room_history"}),
     "loop": frozenset({"mode", "max_iterations", "tools", "max_consecutive_errors"}),
-    "on_complete": frozenset({"save_interaction", "reflect"}),
+    "on_complete": frozenset({"save_interaction", "reflect", "actions"}),
     "reflect": frozenset({"enabled", "interval_minutes"}),
 }
 
@@ -447,7 +461,46 @@ def _on_complete_from(data: dict[str, Any], base: OnCompleteSpec) -> OnCompleteS
             kind=bool,
         ),
         reflect=_section(data, "reflect", base.reflect, _reflect_from),
+        actions=_actions_from(data.get("actions"), base.actions),
     )
+
+
+def _actions_from(value: Any, default: tuple[Form, ...]) -> tuple[Form, ...]:
+    """Read the ``:actions`` vector: each item must be an action form.
+
+    Accepts parsed Forms (``from_edn`` path) or EDN source strings
+    (``to_dict`` roundtrip); every form is statically validated against
+    the two-position purity rules (pure ``when`` condition, action
+    positions) before it ever reaches an agent.
+    """
+    if value is None:
+        return default
+    if isinstance(value, Form) or not isinstance(value, (list, tuple)):
+        raise SpecValidationError(
+            f":on-complete/:actions must be a vector, got {_type_name(value)}: {value!r}"
+        )
+    forms: list[Form] = []
+    for item in value:
+        form = item
+        if type(form) is str:
+            # EDN source string (to_dict roundtrip path)
+            try:
+                form = loads(form)
+            except EDNParseError as e:
+                raise SpecValidationError(
+                    f"invalid :on-complete/:actions expression: {e}"
+                ) from e
+        if not isinstance(form, Form):
+            raise SpecValidationError(
+                f":on-complete/:actions items must be expressions, "
+                f"got {_type_name(item)}: {item!r}"
+            )
+        try:
+            validate_action_form(form, scope={"msg", "result", "self"})
+        except EvalError as e:
+            raise SpecValidationError(f"invalid :on-complete/:actions expression: {e}") from e
+        forms.append(form)
+    return tuple(forms)
 
 
 def _reflect_from(data: dict[str, Any], base: ReflectSpec) -> ReflectSpec:

@@ -39,6 +39,7 @@ class LoopDriver:
 
         # Build context on first call (after LLM error: skip rebuild)
         if not session.context:
+            session.trigger_message = message
             context = await agent._build_context(message)
             session.context = context
             agent._logger.debug(
@@ -181,6 +182,11 @@ class LoopDriver:
                     final_content, llm_resp, session.all_tool_results
                 )
             agent._logger.info("session_completed", session_id=session.id, content=final_content)
+            # On-complete action expressions (phase 4b): evaluated purely,
+            # executed here with full failure isolation — they never affect
+            # the session lifecycle. Runs inside the session span, so the
+            # spawn quota can attribute spawns to this session.
+            await agent._run_on_complete_actions(session, final_content)
             session.mark_completed()
         elif not session.has_pending_tools:
             session.advance_iteration()

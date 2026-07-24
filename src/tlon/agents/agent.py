@@ -12,6 +12,7 @@ trace/memory plumbing, and delegates behavior to subsystems:
 - TriggerEvaluator (trigger.py): should-respond decisions
 - ContextBuilder (context_builder.py): conversation/system-prompt assembly
 - ReflectionEngine (reflection.py): background memory audit
+- OnCompleteRunner (on_complete.py): on-complete action expressions (4b)
 
 Behavior parameters (trigger rules, context sections, loop limits,
 on-complete actions) come from ``self.spec`` (AgentSpec, spec.py) —
@@ -23,12 +24,13 @@ import contextlib
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
 
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.loop_driver import LoopDriver
+from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
@@ -49,6 +51,9 @@ from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.tools.base import ToolResult
 from tlon.tools.tasks.manager import TaskManager
+
+if TYPE_CHECKING:
+    from tlon.agents.agent_registry import AgentRegistry
 
 logger = get_logger(__name__)
 
@@ -92,6 +97,7 @@ class Agent(Component, Device):
         message_store: MessageStore | None = None,
         per_tool_timeout: float = 30.0,
         spec: AgentSpec | None = None,
+        registry: "AgentRegistry | None" = None,
     ):
         """Initialize the agent.
 
@@ -107,6 +113,8 @@ class Agent(Component, Device):
             per_tool_timeout: Timeout for each individual tool
             spec: Behavior spec; when None, loaded from the agent's
                 behavior.tlon file (falling back to DefaultSpec)
+            registry: Agent registry for on-complete ``spawn`` actions;
+                None (tests, standalone construction) disables them
         """
         Component.__init__(self, name=config.name)
         Device.__init__(self, event_bus=event_bus, name=config.name)
@@ -122,6 +130,7 @@ class Agent(Component, Device):
         self.memory = memory
         self.task_manager = task_manager
         self.tool_executor = tool_executor
+        self.registry = registry
 
         # Per-agent bound logger (agent_id as a field, logger name stays __name__)
         self._logger = logger.bind(agent_id=config.id)
@@ -142,6 +151,7 @@ class Agent(Component, Device):
         self._reflection = ReflectionEngine(self)
         self._context_builder = ContextBuilder(self)
         self._loop_driver = LoopDriver(self)
+        self._on_complete = OnCompleteRunner(self)
         self._scheduler = SessionScheduler(self)
 
         # Agent state
@@ -329,6 +339,10 @@ class Agent(Component, Device):
     async def _check_reflection_trigger(self) -> None:
         """Check if memory reflection should run and trigger if needed."""
         await self._reflection.check_trigger()
+
+    async def _run_on_complete_actions(self, session: AgentSession, result: str) -> None:
+        """Evaluate + execute on-complete action expressions (see OnCompleteRunner)."""
+        await self._on_complete.run(session, result)
 
     async def think(self, context: list[dict[str, Any]]) -> LLMResponse:
         """Call LLM to think and generate response."""

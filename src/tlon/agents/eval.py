@@ -16,6 +16,16 @@ non-Turing-complete semantics (design decisions 2/3 in
   side-effecting actions (``spawn`` / ``emit``) are never registered
   here, so trigger evaluation is side-effect free by construction.
 
+On-complete action expressions (phase 4b) keep the same rule: evaluation
+never performs side effects. The action builtins ``spawn`` / ``emit``
+(registered only in :func:`make_actions_builtins`, marked ``pure=False``)
+validate their arguments and record an :class:`ActionRequest` into a
+collector; the engine executes the collected requests asynchronously
+after evaluation completes ("the DSL describes, the engine executes").
+Static validation distinguishes two purity positions
+(:func:`validate_action_form`): a ``when`` condition must be pure, an
+action position must be an action form with pure arguments.
+
 Environment values are opaque to expressions: there is no attribute or
 method access syntax, so a ``Message`` in ``env`` can only be inspected
 through builtins. ``env`` also provides ``self`` (``{"id": ..., "name":
@@ -275,13 +285,22 @@ def _builtin_sender_type(env: dict[str, Any], msg: Message) -> str:
     return msg.sender_type
 
 
-def _builtin_content_matches(env: dict[str, Any], msg: Message, pattern: Any) -> bool:
+def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
+    """Regex-search a Message's content or a plain string (e.g. ``result``)."""
+    if isinstance(target, Message):
+        content = target.content
+    elif type(target) is str:
+        content = target
+    else:
+        raise EvalError(
+            f"content-matches? expects a message or string, got {type(target).__name__}"
+        )
     if not isinstance(pattern, str):
         raise EvalError(
             f"content-matches? pattern must be a string, got {type(pattern).__name__}"
         )
     try:
-        return re.search(pattern, msg.content) is not None
+        return re.search(pattern, content) is not None
     except re.error as e:
         raise EvalError(f"content-matches? invalid regex {pattern!r}: {e}") from e
 
@@ -320,3 +339,126 @@ TRIGGER_BUILTINS: dict[str, Builtin] = {
     "=": Builtin(_builtin_eq, pure=True),
     "not": Builtin(_builtin_not, pure=True),
 }
+
+
+# ── On-complete action builtins (phase 4b) ──
+
+
+@dataclass(frozen=True)
+class ActionRequest:
+    """A side-effecting action recorded during pure evaluation.
+
+    Evaluation of an action builtin performs no side effect; it validates
+    its arguments and appends one of these to a collector. The engine
+    (Agent) executes the collected requests after evaluation completes.
+    """
+
+    kind: str  # "spawn" | "emit"
+    data: dict[str, Any]
+
+
+ACTION_NAMES = frozenset({"spawn", "emit"})
+
+
+def make_actions_builtins(collector: list[ActionRequest] | None) -> dict[str, Builtin]:
+    """Build the on-complete registry: pure predicates + action builtins.
+
+    ``spawn`` / ``emit`` are marked ``pure=False`` and never touch the
+    outside world — they validate arguments and record an
+    :class:`ActionRequest` into ``collector``. ``collector=None`` yields
+    a registry suitable for static validation (requests are discarded);
+    evaluation with it collects nothing.
+    """
+
+    def _record(request: ActionRequest) -> None:
+        if collector is not None:
+            collector.append(request)
+
+    def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> None:
+        if type(prototype) is not str:
+            raise EvalError(
+                f"spawn prototype must be a string, got {type(prototype).__name__}"
+            )
+        name: str | None = None
+        if options is not None:
+            if not isinstance(options, dict):
+                raise EvalError(
+                    f"spawn options must be a map, got {type(options).__name__}"
+                )
+            unknown = set(options) - {"name"}
+            if unknown:
+                raise EvalError(f"spawn options: unknown keys {sorted(unknown)}")
+            raw_name = options.get("name")
+            if raw_name is not None:
+                if type(raw_name) is not str:
+                    raise EvalError(
+                        f"spawn :name must be a string, got {type(raw_name).__name__}"
+                    )
+                name = raw_name
+        _record(ActionRequest(kind="spawn", data={"prototype": prototype, "name": name}))
+
+    def _emit(env: dict[str, Any], content: Any, mentions: Any = None) -> None:
+        if type(content) is not str:
+            raise EvalError(f"emit content must be a string, got {type(content).__name__}")
+        resolved: list[str] = []
+        if mentions is not None:
+            if not isinstance(mentions, (list, tuple)):
+                raise EvalError(
+                    f"emit mentions must be a vector, got {type(mentions).__name__}"
+                )
+            for item in mentions:
+                if not isinstance(item, str):
+                    raise EvalError(
+                        f"emit mention must be a string, got {type(item).__name__}"
+                    )
+                resolved.append(str(item))
+        _record(ActionRequest(kind="emit", data={"content": content, "mentions": resolved}))
+
+    return {
+        **TRIGGER_BUILTINS,
+        "spawn": Builtin(_spawn, pure=False),
+        "emit": Builtin(_emit, pure=False),
+    }
+
+
+#: Validation-only on-complete registry (no collector attached).
+ACTIONS_BUILTINS: dict[str, Builtin] = make_actions_builtins(None)
+
+
+def validate_action_form(form: Any, scope: set[str]) -> None:
+    """Statically validate one on-complete action form (no execution).
+
+    The two purity positions are checked with different registries:
+
+    - top level is either a single action form (``(spawn ...)`` /
+      ``(emit ...)``) or ``(when cond action ...)``;
+    - the ``when`` condition validates against :data:`TRIGGER_BUILTINS`
+      (pure only — actions in the condition are rejected);
+    - each action position must be an action form whose arguments are
+      pure expressions. Nested ``when`` is not supported.
+    """
+    if not isinstance(form, Form) or not form:
+        raise EvalError(
+            f"on-complete action must be an action form or (when ...), got {dumps(form)}"
+        )
+    head = form[0]
+    if isinstance(head, Symbol) and str(head) == "when":
+        if len(form) < 3:
+            raise EvalError("when expects a condition and at least one action")
+        validate_form(form[1], TRIGGER_BUILTINS, set(scope))
+        for action in form[2:]:
+            _validate_action_expr(action, scope)
+        return
+    _validate_action_expr(form, scope)
+
+
+def _validate_action_expr(form: Any, scope: set[str]) -> None:
+    if not isinstance(form, Form) or not form:
+        raise EvalError(f"action must be a (spawn ...)/(emit ...) form, got {dumps(form)}")
+    head = form[0]
+    if not isinstance(head, Symbol) or str(head) not in ACTION_NAMES:
+        raise EvalError(
+            f"unknown action: {dumps(head)} (allowed: {sorted(ACTION_NAMES)})"
+        )
+    for arg in form[1:]:
+        validate_form(arg, TRIGGER_BUILTINS, set(scope))

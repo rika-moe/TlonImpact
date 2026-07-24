@@ -466,6 +466,7 @@ class AgentRegistry(Component):
                 team_members=team_members,
                 message_store=self.message_store,
                 per_tool_timeout=per_tool_timeout,
+                registry=self,
             )
             await agent.initialize()
 
