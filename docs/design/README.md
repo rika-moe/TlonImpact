@@ -23,6 +23,7 @@
 | [memory.md](./memory.md) | 记忆系统设计 | L1 |
 | [messaging.md](./messaging.md) | 消息系统设计 | L1 |
 | [client-server-protocol.md](./client-server-protocol.md) | Client-Server 协议设计 | L1 |
+| [members.md](./members.md) | Member 接口与人类 Adapter 设计 | L1 |
 | [development-process.md](./development-process.md) | 开发流程规范 | L1 |
 | [code-style.md](./code-style.md) | 代码风格规范 | L1 |
 | [debugging.md](./debugging.md) | 调试与故障排除 | L1 |
