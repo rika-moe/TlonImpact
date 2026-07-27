@@ -4,8 +4,8 @@ ClientGateway serves as a Facade (外观模式) providing a unified interface
 to the client-facing subsystems:
 - Session management (via SessionManager)
 - Event notification (via NotificationService)
-- Participant discovery (via ParticipantDirectory)
-- Message operations (via EventBus and MessageStore)
+- Member discovery (via MemberDirectory)
+- Message history (via MessageStore)
 
 This simplifies the API layer (WebSocketHandler, RESTHandler) by providing
 a single entry point while delegating to specialized components internally.
@@ -14,8 +14,8 @@ Architecture:
     ClientGateway is a Component that depends on:
     - SessionManager (session lifecycle)
     - NotificationService (event pushing)
-    - ParticipantDirectory (participant aggregation)
-    - EventBus (for message publishing)
+    - MemberDirectory (member aggregation)
+    - EventBus
     - MessageStore (for history retrieval)
     - ConfigManager (for config reload support)
 
@@ -28,16 +28,15 @@ from pathlib import Path
 from typing import Any
 
 from tlon.base.component import Component
-from tlon.base.events.event import Event, EventType
+from tlon.base.events.event import Event
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.tracing.trace_context import start_span
+from tlon.organization.messaging.member_info import MemberInfo
 from tlon.organization.messaging.message import Message
-from tlon.organization.messaging.participant import Participant
 from tlon.organization.messaging.store import MessageStore
 
+from .member_directory import MemberDirectory
 from .notification_service import NotificationService
-from .participant_directory import ParticipantDirectory
 from .session_manager import ClientSession, SessionManager
 
 logger = get_logger(__name__)
@@ -48,19 +47,20 @@ class ClientGateway(Component):
 
     The Gateway provides a simplified, unified interface for:
     - Client session lifecycle (connect/disconnect)
-    - Message sending and history retrieval
-    - Participant listing and discovery
+    - Message history retrieval (message publishing moved to
+      AdapterManager — see docs/design/members.md)
+    - Member listing and discovery
     - Event subscription for real-time updates
 
     Internally, it coordinates three specialized components:
     - SessionManager: Session lifecycle management
     - NotificationService: Event pushing to clients
-    - ParticipantDirectory: Participant aggregation
+    - MemberDirectory: Member aggregation
 
     Dependencies (constructor injected):
         - session_manager: SessionManager
         - notification_service: NotificationService
-        - participant_directory: ParticipantDirectory
+        - member_directory: MemberDirectory
         - event_bus: EventBus
         - message_store: MessageStore
         - config_manager: ConfigManager
@@ -69,7 +69,7 @@ class ClientGateway(Component):
         >>> gateway = ClientGateway(
         ...     session_manager=session_manager,
         ...     notification_service=notification_service,
-        ...     participant_directory=participant_directory,
+        ...     member_directory=member_directory,
         ...     event_bus=event_bus,
         ...     message_store=message_store,
         ...     config_manager=config_manager,
@@ -79,8 +79,7 @@ class ClientGateway(Component):
         ... )
         >>> await gateway.initialize()
         >>> session = await gateway.connect_client("tui", handler)
-        >>> await gateway.send_message("Hello")
-        >>> participants = gateway.get_all_participants()
+        >>> members = gateway.get_all_members()
     """
 
     def __init__(
@@ -89,7 +88,7 @@ class ClientGateway(Component):
         # Core specialized components (injected via DI)
         session_manager: SessionManager,
         notification_service: NotificationService,
-        participant_directory: ParticipantDirectory,
+        member_directory: MemberDirectory,
         # Additional dependencies
         event_bus: EventBus,
         message_store: MessageStore,
@@ -106,7 +105,7 @@ class ClientGateway(Component):
         Args:
             session_manager: Session lifecycle manager
             notification_service: Event notification service
-            participant_directory: Participant discovery service
+            member_directory: Member discovery service
             event_bus: Event bus for message publishing
             message_store: Message storage
             config_manager: Configuration manager
@@ -119,7 +118,7 @@ class ClientGateway(Component):
         # Store injected dependencies
         self._session_manager = session_manager
         self._notifications = notification_service
-        self._participants = participant_directory
+        self._member_directory = member_directory
         self._event_bus = event_bus
         self._message_store = message_store
         self._config_manager = config_manager
@@ -266,58 +265,6 @@ class ClientGateway(Component):
 
     # ==================== Message Operations ====================
 
-    async def send_message(
-        self,
-        content: str,
-        sender_id: str = "human",
-        sender_name: str = "人类",
-        sender_type: str = "human",
-        content_type: str = "text",
-        mentions: list[str] | None = None,
-    ) -> Message:
-        """Send a message to the chatroom.
-
-        Publishes the message via EventBus. MessageRouter will handle
-        routing, and NotificationService will push to clients.
-
-        Args:
-            content: Message content
-            sender_id: Sender ID
-            sender_name: Sender display name
-            sender_type: Sender type ("human", "agent", "system")
-            content_type: Content type ("text", "system", "code")
-            mentions: List of mentioned agent IDs
-
-        Returns:
-            The created message
-        """
-        message = Message.create(
-            sender_id=sender_id,
-            sender_name=sender_name,
-            sender_type=sender_type,
-            content=content,
-            content_type=content_type,
-            mentions=mentions or [],
-        )
-
-        with start_span(
-            "message.received",
-            source="client_gateway",
-            attributes={"message_id": message.id, "sender": sender_id},
-        ) as ctx:
-            await self._event_bus.publish(
-                Event(
-                    type=EventType.MESSAGE_NEW,
-                    payload=message,
-                    source=sender_id,
-                    trace_id=ctx.trace_id,
-                    span_id=ctx.span_id,
-                    parent_span_id=ctx.parent_span_id,
-                )
-            )
-
-        return message
-
     async def get_history(self, limit: int = 100, before_id: str | None = None) -> list[Message]:
         """Get chat history.
 
@@ -330,34 +277,34 @@ class ClientGateway(Component):
         """
         return await self._message_store.get_history(limit, before_id)
 
-    # ==================== Participant Operations ====================
+    # ==================== Member Operations ====================
 
-    def get_all_participants(self) -> list[Participant]:
-        """Get all participants (agents + humans).
-
-        Returns:
-            List of all participants
-        """
-        return self._participants.list_all()
-
-    def get_participant_names(self) -> list[str]:
-        """Get names of all participants.
+    def get_all_members(self) -> list[MemberInfo]:
+        """Get all members (agents + humans).
 
         Returns:
-            List of participant names
+            List of all members
         """
-        return self._participants.get_participant_names()
+        return self._member_directory.list_all()
 
-    def get_participant(self, participant_id: str) -> Participant | None:
-        """Get a specific participant by ID.
+    def get_member_names(self) -> list[str]:
+        """Get names of all members.
+
+        Returns:
+            List of member names
+        """
+        return self._member_directory.get_member_names()
+
+    def get_member(self, member_id: str) -> MemberInfo | None:
+        """Get a specific member by ID.
 
         Args:
-            participant_id: The participant ID
+            member_id: The member ID
 
         Returns:
-            The participant if found
+            The member if found
         """
-        return self._participants.get_participant(participant_id)
+        return self._member_directory.get_member(member_id)
 
     # ==================== Server State ====================
 

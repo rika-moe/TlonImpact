@@ -71,6 +71,7 @@ class CongressApp(App[None]):
         host: str = "127.0.0.1",
         ws_port: int = 8888,
         rest_port: int = 8080,
+        username: str | None = None,
     ):
         """Initialize CongressApp.
 
@@ -78,11 +79,13 @@ class CongressApp(App[None]):
             host: Server host
             ws_port: WebSocket port
             rest_port: REST API port
+            username: Human username to authenticate as (server default: guest)
         """
         super().__init__()
         self.host = host
         self.ws_port = ws_port
         self.rest_port = rest_port
+        self.username = username
         host_clean = (
             host.replace("ws://", "")
             .replace("wss://", "")
@@ -122,7 +125,7 @@ class CongressApp(App[None]):
     async def on_mount(self) -> None:
         """Called when app is mounted."""
         self.title = "Congress"
-        self.sub_title = "与 Agent 对话"
+        self.sub_title = f"与 Agent 对话 — {self.username}" if self.username else "与 Agent 对话"
 
         # Initialize components
         chat_view = self.query_one(ChatView)
@@ -137,6 +140,7 @@ class CongressApp(App[None]):
             self._client = CongressWebSocketClient(
                 ws_url=self.ws_url,
                 rest_url=self.rest_url,
+                username=self.username,
             )
 
             # Set up event handlers
@@ -487,6 +491,7 @@ async def run_congress(
     host: str = "127.0.0.1",
     ws_port: int = 8888,
     rest_port: int = 8080,
+    username: str | None = None,
 ) -> None:
     """Run the Congress TUI application.
 
@@ -494,8 +499,9 @@ async def run_congress(
         host: Server host
         ws_port: WebSocket port
         rest_port: REST API port
+        username: Human username to authenticate as
     """
-    app = CongressApp(host=host, ws_port=ws_port, rest_port=rest_port)
+    app = CongressApp(host=host, ws_port=ws_port, rest_port=rest_port, username=username)
     await app.run_async()
 
 

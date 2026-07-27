@@ -358,7 +358,7 @@ class RESTAPIHandler:
         Returns:
             List of participants
         """
-        participants = self.client_gateway.get_all_participants()
+        participants = self.client_gateway.get_all_members()
 
         participant_info = []
         for p in participants:

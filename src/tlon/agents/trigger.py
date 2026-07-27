@@ -46,7 +46,7 @@ class TriggerEvaluator:
             logger.debug("agent_will_respond", reason="mentioned", sender=message.sender_name)
             return True
 
-        if trigger.proactive and message.sender_type == "human" and not message.mentions:
+        if trigger.proactive and message.sender_type != "agent" and not message.mentions:
             logger.info("agent_will_respond", reason="proactive", sender=message.sender_name)
             return True
 

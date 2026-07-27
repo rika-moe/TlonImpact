@@ -26,14 +26,15 @@ from tlon.base.paths import paths
 from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon.base.tracing.trace_store import FileTraceStore
+from tlon.organization.messaging.human_adapter import AdapterManager
 from tlon.organization.messaging.router import MessageRouter
 from tlon.organization.messaging.store import FileMessageStore
 
 from .api.rest import RESTServer
 from .api.websocket import WebSocketServer
 from .core.client_gateway import ClientGateway
+from .core.member_directory import MemberDirectory
 from .core.notification_service import NotificationService
-from .core.participant_directory import ParticipantDirectory
 from .core.session_manager import SessionManager
 
 logger = get_logger(__name__)
@@ -133,17 +134,6 @@ class ServerApp:
         self._components["trace_store"] = trace_store
         logger.info("component_initialized", component="trace_store")
 
-        # 2.3 MessageRouter - stateless message routing
-        # Depends on EventBus, MessageStore, and ConfigService (as AgentInfoProvider)
-        message_router = MessageRouter(
-            event_bus=event_bus,
-            message_store=message_store,
-            agent_info_provider=config_service,  # ConfigService implements AgentInfoProvider
-        )
-        await message_router.initialize()
-        self._components["message_router"] = message_router
-        logger.info("component_initialized", component="message_router")
-
         # 2.4 AgentRegistry - agent management
         # Depends on EventBus, ConfigService (as AgentInfoProvider), MessageStore
         agent_registry = AgentRegistry(
@@ -159,6 +149,33 @@ class ServerApp:
         self._components["agent_registry"] = agent_registry
         logger.info("agents_loaded", agent_count=len(agent_registry.get_all()))
 
+        # 2.5 AdapterManager - human adapter lifecycle (one per username)
+        adapter_manager = AdapterManager(event_bus=event_bus)
+        await adapter_manager.initialize()
+        self._components["adapter_manager"] = adapter_manager
+        logger.info("component_initialized", component="adapter_manager")
+
+        # 2.6 Member Directory - member aggregation + mention resolution
+        member_directory = MemberDirectory(
+            agent_registry=agent_registry,
+            adapter_manager=adapter_manager,
+        )
+        self._components["member_directory"] = member_directory
+        logger.info("component_initialized", component="member_directory")
+
+        # 2.7 MessageRouter - stateless message routing
+        # Depends on EventBus, MessageStore, ConfigService (proactive agent set)
+        # and MemberDirectory (mention resolution, proactive fuse)
+        message_router = MessageRouter(
+            event_bus=event_bus,
+            message_store=message_store,
+            agent_info_provider=config_service,  # ConfigService implements AgentInfoProvider
+            member_directory=member_directory,
+        )
+        await message_router.initialize()
+        self._components["message_router"] = message_router
+        logger.info("component_initialized", component="message_router")
+
         # ========== Step 3: Client Gateway Components ==========
         # 3.1 Session Manager - session lifecycle management
         session_manager = SessionManager()
@@ -173,19 +190,11 @@ class ServerApp:
         self._components["notification_service"] = notification_service
         logger.info("component_initialized", component="notification_service")
 
-        # 3.3 Participant Directory - participant aggregation
-        participant_directory = ParticipantDirectory(
-            agent_registry=agent_registry,
-            session_manager=session_manager,
-        )
-        self._components["participant_directory"] = participant_directory
-        logger.info("component_initialized", component="participant_directory")
-
-        # 3.4 Client Gateway - facade coordinating all components
+        # 3.3 Client Gateway - facade coordinating all components
         self.client_gateway = ClientGateway(
             session_manager=session_manager,
             notification_service=notification_service,
-            participant_directory=participant_directory,
+            member_directory=member_directory,
             event_bus=event_bus,
             message_store=message_store,
             config_manager=config_service,
@@ -209,6 +218,7 @@ class ServerApp:
         self.websocket = WebSocketServer(
             self.client_gateway,
             agent_registry=agent_registry,  # Direct access for agent operations
+            adapter_manager=adapter_manager,  # Human identity / speaking
             host=self.host,
             port=self.ws_port,
         )
@@ -293,6 +303,10 @@ class ServerApp:
         message_router = self._components.get("message_router")
         if message_router:
             await message_router.shutdown()
+
+        adapter_manager = self._components.get("adapter_manager")
+        if adapter_manager:
+            await adapter_manager.shutdown()
 
         event_bus = self._components.get("event_bus")
         if event_bus:

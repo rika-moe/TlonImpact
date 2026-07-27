@@ -30,7 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from tlon.agents.edn import EDNParseError, Form, Keyword, dumps, loads
+from tlon.agents.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlon.agents.eval import (
     TRIGGER_BUILTINS,
     EvalError,
@@ -406,6 +406,21 @@ def _trigger_section(data: dict[str, Any], base: TriggerSpec) -> TriggerSpec:
     return _trigger_from(raw, base)
 
 
+def _warn_deprecated_builtins(form: Form) -> None:
+    """Warn once if a validated expression references a deprecated builtin.
+
+    Currently only ``sender-type`` (docs/design/members.md 阶段 C): human/agent
+    identity is no longer spec semantics; loop prevention moved to the
+    router's triggers_proactive fuse. Kept for one version, then removed.
+    """
+    for item in form:
+        if isinstance(item, Symbol) and str(item) == "sender-type":
+            logger.warning("spec_uses_deprecated_builtin", builtin="sender-type")
+            return
+        if isinstance(item, (Form, list)):
+            _warn_deprecated_builtins(item)
+
+
 def _validate_trigger_expr(form: Form) -> Form:
     """Statically validate a trigger expression at load time (no execution).
 
@@ -418,6 +433,7 @@ def _validate_trigger_expr(form: Form) -> Form:
         validate_form(form, TRIGGER_BUILTINS, scope={"msg", "self"})
     except EvalError as e:
         raise SpecValidationError(f"invalid :trigger expression: {e}") from e
+    _warn_deprecated_builtins(form)
     return form
 
 
@@ -499,6 +515,7 @@ def _actions_from(value: Any, default: tuple[Form, ...]) -> tuple[Form, ...]:
             validate_action_form(form, scope={"msg", "result", "self"})
         except EvalError as e:
             raise SpecValidationError(f"invalid :on-complete/:actions expression: {e}") from e
+        _warn_deprecated_builtins(form)
         forms.append(form)
     return tuple(forms)
 

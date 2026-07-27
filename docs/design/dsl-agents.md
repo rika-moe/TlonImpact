@@ -89,7 +89,7 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 **L1 — 受限求值器（阶段 3a 已落地 trigger 表达式，`agents/eval.py`）**：
 
 - 特殊形式白名单：`if` / `when` / `let` / `and` / `or`，仅此而已（`match` 留待后续）；无 `loop`/`recur`、无 `def`、无宏；
-- 领域内置谓词与动作：`mentioned?` / `addressed-to-me?` / `sender-type` / `content-matches?` / `contains?` / `=` / `not`（3a 已注册，纯谓词）；`spawn` / `emit` 动作 4b 已落地（on-complete 专用，求值纯、引擎执行）；`call-tool` / `score-memories` 等留待后续；
+- 领域内置谓词与动作：`mentioned?` / `addressed-to-me?` / ~~`sender-type`~~（已 deprecated：人类/agent 身份标识不再是 spec 语义，防循环由 router 的 `triggers_proactive` 闸门接管，见 [members.md](./members.md)；保留一个版本后移除）/ `content-matches?` / `contains?` / `=` / `not`（3a 已注册，纯谓词）；`spawn` / `emit` 动作 4b 已落地（on-complete 专用，求值纯、引擎执行）；`call-tool` / `score-memories` 等留待后续；
 - **fuel 限制**：求值带步数上限（默认 1000）与深度上限（默认 100）；
 - 数据化 schema 校验（malli 风格，校验器本身也是数据）。
 

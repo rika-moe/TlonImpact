@@ -47,6 +47,7 @@ from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 from tlon.memory.manager import MemoryManager
+from tlon.organization.messaging.member import Member
 from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 from tlon.tools.base import ToolResult
@@ -68,9 +69,10 @@ class AgentState(Enum):
     SHUTDOWN = "shutdown"  # Stopped
 
 
-class Agent(Component, Device):
+class Agent(Member):
     """An intelligent agent that can process messages and execute tools.
 
+    Member: a Congress bus citizen (see docs/design/members.md).
     Device: holds an EventBus reference and publishes observability events.
     All infrastructure dependencies are injected via constructor.
 
@@ -168,6 +170,21 @@ class Agent(Component, Device):
 
         with bound_contextvars(agent_id=self.id):
             logger.info("agent_initialized", agent_name=self.name)
+
+    @property
+    def member_id(self) -> str:
+        """Member identity on the bus (same as the agent ID)."""
+        return self.id
+
+    @property
+    def member_type(self) -> str:
+        """Member type; agents are ReAct members."""
+        return "react"
+
+    @property
+    def triggers_proactive(self) -> bool:
+        """Agent messages never invite proactive responses (loop fuse)."""
+        return False
 
     def get_state(self) -> str:
         """Get agent state as string."""

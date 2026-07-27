@@ -117,6 +117,12 @@ Talk with agents in a terminal-based chat room.""",
         help="Lucid dream mode - enable debug logging",
     )
     chat_parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)  # Hidden alias
+    chat_parser.add_argument(
+        "--username",
+        "-u",
+        default=None,
+        help="Your username in Congress (default: prompt, fallback guest)",
+    )
 
     # ops command - open Operator console (ops TUI)
     ops_parser = subparsers.add_parser(

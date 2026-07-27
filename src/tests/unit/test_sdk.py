@@ -142,6 +142,68 @@ class TestBaseClient:
         assert "trace" in client.server_capabilities
 
     @pytest.mark.asyncio
+    async def test_authenticate_with_username(self, client, mock_session, mock_ws):
+        """Test that username is sent in the auth message and kept for reconnect."""
+        auth_response = {
+            "type": "auth_success",
+            "session_id": "test-session-123",
+            "username": "alice",
+            "protocol_version": "1.0.0",
+            "server_version": "0.2.0",
+            "capabilities": ["trace", "filter"],
+        }
+        sent: list[dict] = []
+
+        async def capture_send(msg):
+            sent.append(msg)
+
+        async def mock_wait_for_auth():
+            client._auth_response = auth_response
+            return auth_response
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await client.connect()
+            with (
+                patch.object(client, "_send_raw", capture_send),
+                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
+            ):
+                result = await client.authenticate("tui", username="alice")
+
+        assert result is True
+        assert sent[0]["username"] == "alice"
+        # Reconnect re-authenticates with the same username
+        assert client._auth_params["username"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_authenticate_without_username_omits_field(self, client, mock_session, mock_ws):
+        """Test that the auth message omits username when not provided."""
+        auth_response = {
+            "type": "auth_success",
+            "session_id": "test-session-123",
+            "protocol_version": "1.0.0",
+            "server_version": "0.2.0",
+            "capabilities": [],
+        }
+        sent: list[dict] = []
+
+        async def capture_send(msg):
+            sent.append(msg)
+
+        async def mock_wait_for_auth():
+            client._auth_response = auth_response
+            return auth_response
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await client.connect()
+            with (
+                patch.object(client, "_send_raw", capture_send),
+                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
+            ):
+                await client.authenticate("tui")
+
+        assert "username" not in sent[0]
+
+    @pytest.mark.asyncio
     async def test_authenticate_not_connected(self, client):
         """Test authentication without connection."""
         with pytest.raises(ConnectionError):

@@ -1,7 +1,7 @@
 # Member 接口与人类 Adapter 设计
 
-> 状态: 📐 设计已确认，待实施
-> 日期: 2026-07-24
+> 状态: ✅ 阶段 A/B/C 已实施
+> 日期: 2026-07-24（阶段 C 完成于 2026-07-27）
 
 ---
 
@@ -138,6 +138,9 @@ auth(username="alice") 成功
 4. **agent @ 人类**：routed target 含 `human:alice` → adapter 订阅
    `MESSAGE_ROUTED` 按 member_id 过滤（与 Agent 同一模式）→ 经
    NotificationService 推给所有 attached session。
+   **v1 决定**：HumanAdapter 暂不订阅 `MESSAGE_ROUTED`——单房间全公开模型下
+   NotificationService 已把所有事件广播给所有 session，adapter 转发会重复
+   投递。定向投递留待私聊/分房间重构时启用。
 5. **LLM 上下文**：context_builder 只写 `alice: 内容`，无类型标签。
 
 ---
@@ -148,7 +151,7 @@ auth(username="alice") 成功
 - **CLI/TUI**：`uv run tlon chat --username alice`；未提供时读
   `~/.tlon/config.toml` 的 `user.username`；再没有则启动时提示输入，
   回车默认 `guest`。
-- **REST**：send message 端点接受 `username` 字段。
+- **REST**：暂无发言端点；`AdapterManager.publish_as` 已预留，需要时再接线。
 - TUI 界面显示自己的用户名；消息列表渲染不变（名字来源改变而已）。
 
 ---
@@ -180,11 +183,14 @@ auth(username="alice") 成功
 - 测试：AdapterManager 生命周期、多用户路由、@ 解析、agent@人类 推送；
   冒烟用两个 SDK client 扮演两个用户。
 
-### 阶段 C — 清理
+### 阶段 C — 清理 ✅（2026-07-27 完成）
 
-- 评估并移除 `@clients` 伪目标（与阶段 B 分开，避免一个 PR 动两条路径）。
-- `gateway.send_message` 的 sender 参数裁剪。
-- DSL `sender-type` builtin deprecate 标注。
+- 移除 `@clients` 伪目标：router 不再为 agent/system 消息附加 `@clients`，
+  无 mentions 且不触发 proactive 的消息无 targets（记 `message_unrouted`）。
+- 删除 `ClientGateway.send_message`（无生产调用方；发言入口已移交
+  AdapterManager，REST 端待接线时走 `publish_as`）。
+- DSL `sender-type` builtin deprecate：保留一个版本，spec 加载校验时发现
+  引用记 `spec_uses_deprecated_builtin` warning。
 - 文档同步（dsl-agents.md、client.md、protocol.md 更新握手协议）。
 
 ### 阶段 D — 不在本次范围

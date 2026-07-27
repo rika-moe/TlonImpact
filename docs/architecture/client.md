@@ -82,10 +82,16 @@ OperatorApp (Textual App)
 chat/ops 启动
   → CongressClient / OperatorClient 创建
   → WebSocket 连接 dream:8888
+  → auth（含 username 人类身份）
   → subscribe(dream.events.*)
   → 用户 ↔ 消息 ↔ dream
   → Ctrl+C / /quit → 断开连接
 ```
+
+用户名来源：`tlon chat --username alice` 命令行参数，未提供时启动交互提示
+（回车默认 `guest`）；SDK 侧为 `authenticate(username=...)`。auth 成功后该
+session 以 `human:<username>` 身份发言（见
+[design/members.md](../design/members.md)）。
 
 ---
 

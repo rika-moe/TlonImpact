@@ -376,6 +376,7 @@ class BaseClient:
         metadata: dict[str, Any] | None = None,
         timeout: float = 10.0,
         filters: dict[str, Any] | None = None,
+        username: str | None = None,
     ) -> bool:
         """Authenticate with the server.
 
@@ -387,6 +388,9 @@ class BaseClient:
             filters: Optional initial event filters declared by the client.
                 The server enforces them for the whole session; later
                 "filter" messages replace them wholesale.
+            username: Optional human username — determines the
+                "human:<username>" identity this session speaks as
+                (server defaults to "guest" when omitted)
 
         Returns:
             True if authenticated successfully
@@ -418,6 +422,8 @@ class BaseClient:
         }
         if filters:
             auth_msg["filters"] = filters
+        if username is not None:
+            auth_msg["username"] = username
 
         # TODO: Add msg_id and timestamp as per protocol spec
         # Waiting for Task 2.1 completion
@@ -430,6 +436,7 @@ class BaseClient:
             "capabilities": capabilities,
             "metadata": metadata,
             "filters": filters,
+            "username": username,
         }
 
         # Create the response event BEFORE sending the auth message, so a

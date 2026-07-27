@@ -28,6 +28,7 @@ Client → Server (auth)
   "protocol_version": "1.0.0",       // 首选版本
   "supported_versions": ["1.0.0"],   // 支持的版本列表
   "capabilities": ["trace", "filter"],
+  "username": "alice",              // 可选：人类身份，缺省 "guest"
   "filters": {                       // 可选：客户端声明的初始事件过滤器
     "exclude_event_types": ["agent.llm_request"]
   },
@@ -44,7 +45,8 @@ Server → Client (auth_success)
   "protocol_version": "1.0.0",       // 实际使用的版本
   "server_version": "0.2.0",
   "server_time": "2026-03-18T12:00:00Z",
-  "capabilities": ["trace", "filter", "history"]
+  "capabilities": ["trace", "filter", "history"],
+  "username": "alice"               // 回传生效的人类身份
 }
 
 或认证失败:
@@ -84,7 +86,7 @@ interface TlonMessage {
 
 | 类型 | 说明 | 关键字段 |
 |------|------|----------|
-| `auth` | 认证请求 | `client_type`, `protocol_version` |
+| `auth` | 认证请求 | `client_type`, `protocol_version`, `username`（可选，缺省 `guest`） |
 | `message` | 发送消息 | `content`, `mentions`, `reply_to` |
 | `mode` | 切换模式 | `mode`: "chat" \| "event" \| "agent" |
 | `filter` | 设置过滤器 | `filters`: `{event_types?, exclude_event_types?, trace_id?, agent?}` |
@@ -94,7 +96,7 @@ interface TlonMessage {
 
 | 类型 | 说明 | 关键字段 |
 |------|------|----------|
-| `auth_success` | 认证成功 | `session_id`, `protocol_version` |
+| `auth_success` | 认证成功 | `session_id`, `protocol_version`, `username` |
 | `auth_failed` | 认证失败 | `error_code`, `message` |
 | `event` | 事件推送 | `event_type`, `payload`, `source` |
 | `pong` | 心跳响应 | `seq`, `latency_ms` |

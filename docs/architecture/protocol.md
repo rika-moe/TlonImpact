@@ -68,6 +68,14 @@ ws://host:8888?protocol_version=1.0.0
 
 Server 根据版本号决定事件格式。旧的 Client 可以用旧的协议版本继续运行。
 
+### 认证（auth）
+
+连接后首条消息为 `auth`，可携带 `username` 字段（可选，缺省 `guest`），
+决定该 session 发言时的人类身份（`human:<username>`，见
+[design/members.md](../design/members.md)）；`auth_success` 响应回传生效的
+`username`（含缺省值）。完整字段见
+[design/client-server-protocol.md](../design/client-server-protocol.md)。
+
 ---
 
 ## Trace 数据格式

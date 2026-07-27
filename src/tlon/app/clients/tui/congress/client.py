@@ -70,6 +70,7 @@ class CongressWebSocketClient:
         ws_url: str = "ws://localhost:8888/ws",
         rest_url: str | None = None,
         auto_reconnect: bool = True,
+        username: str | None = None,
     ):
         """Initialize Congress WebSocket client.
 
@@ -77,10 +78,12 @@ class CongressWebSocketClient:
             ws_url: WebSocket server URL
             rest_url: Optional REST API URL
             auto_reconnect: Whether to auto-reconnect on disconnect
+            username: Human username to authenticate as (server default: guest)
         """
         self.ws_url = ws_url
         self.rest_url = rest_url
         self.auto_reconnect = auto_reconnect
+        self.username = username
 
         # State management
         self.state = CongressState()
@@ -165,7 +168,7 @@ class CongressWebSocketClient:
 
             # Authenticate
             self._set_connection_state(ClientConnectionState.AUTHENTICATING)
-            authenticated = await self._sdk.authenticate()
+            authenticated = await self._sdk.authenticate(username=self.username)
             if not authenticated:
                 logger.error("authentication_failed")
                 self._set_connection_state(ClientConnectionState.ERROR)

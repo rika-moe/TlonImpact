@@ -8,11 +8,35 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from tlon.base.logger import configure_logging, get_logger
+from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME
 
 if TYPE_CHECKING:
     from argparse import Namespace
 
 logger = get_logger(__name__)
+
+
+def _resolve_username(args: Namespace) -> str:
+    """Resolve the Congress username for this session.
+
+    Order: ``--username`` flag > interactive prompt (Enter = guest).
+    (No user-config layer exists in ~/.tlon/config.toml yet — skipped.)
+
+    Args:
+        args: Parsed arguments
+
+    Returns:
+        The username to authenticate as
+    """
+    username = getattr(args, "username", None)
+    if username and username.strip():
+        return username.strip()
+
+    try:
+        entered = input(f"用户名 [{DEFAULT_USERNAME}]: ").strip()
+    except EOFError:
+        entered = ""
+    return entered or DEFAULT_USERNAME
 
 
 async def run_chat(args: Namespace) -> int:
@@ -45,6 +69,7 @@ async def run_chat(args: Namespace) -> int:
         host=args.host,
         ws_port=args.port,
         rest_port=getattr(args, "rest_port", 8080),
+        username=_resolve_username(args),
     )
 
     try:

@@ -7,11 +7,14 @@ Provides real-time bidirectional communication:
 Protocol:
 All messages are JSON with a "type" field:
 - Client → Server:
-  - {"type": "auth", "client_type": "tui", "filters": {...}, ...}
+  - {"type": "auth", "client_type": "tui", "username": "alice", "filters": {...}, ...}
   - {"type": "message", "content": "...", "mentions": [...]}
   - {"type": "mode", "mode": "chat|event|agent"}
   - {"type": "filter", "filters": {...}}
   - {"type": "ping"}
+
+  The auth "username" is optional and defaults to "guest"; it determines
+  the human identity ("human:<username>") the session speaks as.
 
   Filter dimensions (declared by the client, enforced by the server):
   - event_types: include list ("prefix.*" wildcard supported)
@@ -21,7 +24,7 @@ All messages are JSON with a "type" field:
 
 - Server → Client:
   - {"type": "event", "event_type": "...", "payload": {...}}
-  - {"type": "auth_success", "session_id": "..."}
+  - {"type": "auth_success", "session_id": "...", "username": "..."}
   - {"type": "error", "message": "..."}
   - {"type": "pong"}
 """
@@ -34,6 +37,7 @@ from aiohttp import WSMsgType, web
 
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
+from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, AdapterManager
 from tlon.organization.messaging.message import Message
 
 logger = get_logger(__name__)
@@ -45,20 +49,22 @@ class WebSocketHandler:
     Manages client connections and handles bidirectional communication.
 
     Example:
-        >>> ws_handler = WebSocketHandler(client_gateway, agent_registry)
+        >>> ws_handler = WebSocketHandler(client_gateway, agent_registry, adapter_manager)
         >>> app = web.Application()
         >>> app.router.add_get('/ws', ws_handler.handle_websocket)
     """
 
-    def __init__(self, client_gateway, agent_registry):
+    def __init__(self, client_gateway, agent_registry, adapter_manager: AdapterManager):
         """Initialize the WebSocket handler.
 
         Args:
             client_gateway: The ClientGateway instance
             agent_registry: The AgentRegistry instance for agent operations
+            adapter_manager: The AdapterManager for human identity and speaking
         """
         self.client_gateway = client_gateway
         self.agent_registry = agent_registry
+        self.adapter_manager = adapter_manager
         self._connections: dict[str, web.WebSocketResponse] = {}
         self._lock = asyncio.Lock()
 
@@ -119,6 +125,7 @@ class WebSocketHandler:
             if session_id:
                 async with self._lock:
                     self._connections.pop(session_id, None)
+                await self.adapter_manager.detach(session_id)
                 await self.client_gateway.disconnect_client(session_id)
                 logger.info("websocket_disconnected", session_id=session_id)
 
@@ -156,6 +163,14 @@ class WebSocketHandler:
 
             client_type = data.get("client_type", "unknown")
             metadata = data.get("metadata", {})
+
+            # Human identity: optional username, defaults to "guest"
+            username_raw = data.get("username")
+            username = (
+                username_raw.strip()
+                if isinstance(username_raw, str) and username_raw.strip()
+                else DEFAULT_USERNAME
+            )
 
             # Protocol version negotiation
             client_protocol_version = data.get("protocol_version")
@@ -197,9 +212,14 @@ class WebSocketHandler:
                     **metadata,
                     "protocol_version": negotiated_version,
                     "capabilities": capabilities,
+                    "username": username,
                 },
                 filters=filters,
             )
+
+            # Attach the session to the user's human adapter (creates it on
+            # first attach; shared across same-name sessions)
+            await self.adapter_manager.attach(username, session.id)
 
             # Send auth success with negotiated version
             await self._send_message(
@@ -207,6 +227,7 @@ class WebSocketHandler:
                 {
                     "type": "auth_success",
                     "session_id": session.id,
+                    "username": username,
                     "protocol_version": negotiated_version,
                     "server_version": "0.2.0",
                     "server_time": datetime.now().isoformat(),
@@ -219,6 +240,7 @@ class WebSocketHandler:
                 "client_authenticated",
                 session_id=session.id,
                 client_type=client_type,
+                username=username,
                 protocol_version=negotiated_version,
             )
             return session, session.id
@@ -326,9 +348,11 @@ class WebSocketHandler:
         """Handle a send message request from client."""
         content = msg.get("content", "").strip()
         mentions = msg.get("mentions", [])
+        username = self.adapter_manager.username_for(session_id)
         logger.info(
             "message_received",
             session_id=session_id,
+            username=username,
             message_id=msg.get("id"),
             content=content,
             mentions=mentions,
@@ -338,14 +362,13 @@ class WebSocketHandler:
             await self._send_error_to_session(session_id, "Message content is empty")
             return
 
-        # Send message through server
-        await self.client_gateway.send_message(
-            content=content,
-            sender_id="human",
-            sender_name="人类",
-            sender_type="human",
-            mentions=mentions,
-        )
+        # Speak through the user's human adapter (parses @mentions from
+        # content and publishes MESSAGE_NEW as "human:<username>")
+        message = await self.adapter_manager.publish(session_id, content, mentions)
+        if message is None:
+            await self._send_error_to_session(
+                session_id, "No human adapter attached to this session"
+            )
 
     async def _handle_mode_change(self, session_id: str, msg: dict) -> None:
         """Handle a mode change request from client."""
@@ -406,7 +429,7 @@ class WebSocketHandler:
                 },
             )
             # Send participant list
-            participants = self.client_gateway.get_all_participants()
+            participants = self.client_gateway.get_all_members()
             await self._send_message(
                 ws,
                 {
@@ -532,6 +555,7 @@ class WebSocketServer:
         self,
         client_gateway,
         agent_registry,
+        adapter_manager: AdapterManager,
         host: str = "127.0.0.1",
         port: int = 8888,
     ):
@@ -540,14 +564,16 @@ class WebSocketServer:
         Args:
             client_gateway: The ClientGateway instance
             agent_registry: The AgentRegistry instance for agent operations
+            adapter_manager: The AdapterManager for human identity and speaking
             host: Host to bind to
             port: Port to listen on
         """
         self.client_gateway = client_gateway
         self.agent_registry = agent_registry
+        self.adapter_manager = adapter_manager
         self.host = host
         self.port = port
-        self._handler = WebSocketHandler(client_gateway, agent_registry)
+        self._handler = WebSocketHandler(client_gateway, agent_registry, adapter_manager)
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -580,6 +606,7 @@ class WebSocketServer:
 
         # Close all connections
         for session_id in list(self._handler._connections.keys()):
+            await self.adapter_manager.detach(session_id)
             await self.client_gateway.disconnect_client(session_id)
 
         if self._runner:

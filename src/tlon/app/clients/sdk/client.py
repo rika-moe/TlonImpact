@@ -142,7 +142,7 @@ class TlonClient:
         """Disconnect from the server."""
         await self._base.disconnect()
 
-    async def authenticate(self, timeout: float = 10.0) -> bool:
+    async def authenticate(self, username: str | None = None, timeout: float = 10.0) -> bool:
         """Authenticate with the server.
 
         Uses the adapter's client type and capabilities for authentication,
@@ -150,6 +150,9 @@ class TlonClient:
         single filtering point) can enforce them for the whole session.
 
         Args:
+            username: Optional human username — determines the
+                "human:<username>" identity this session speaks as
+                (server defaults to "guest" when omitted)
             timeout: Authentication timeout in seconds
 
         Returns:
@@ -165,6 +168,7 @@ class TlonClient:
             metadata=self._adapter.get_auth_metadata(),
             timeout=timeout,
             filters=self._adapter.get_effective_filters(),
+            username=username,
         )
 
     # ==================== Message Operations ====================

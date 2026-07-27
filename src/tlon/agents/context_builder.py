@@ -87,11 +87,13 @@ class ContextBuilder:
                         }
                     )
             else:
+                # Human (or other non-agent) senders: display name only —
+                # the "human:" id prefix never enters the LLM context
                 context.append(
                     {
                         "role": "user",
                         "content": msg.content,
-                        "name": msg.sender_id,
+                        "name": msg.sender_name,
                     }
                 )
 
@@ -99,7 +101,7 @@ class ContextBuilder:
             {
                 "role": "user",
                 "content": current_message.content,
-                "name": current_message.sender_id
+                "name": current_message.sender_name
                 if current_message.sender_type != "agent"
                 else None,
             }

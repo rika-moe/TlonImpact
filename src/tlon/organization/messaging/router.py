@@ -33,6 +33,7 @@ from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.store import MessageStore
 
 if TYPE_CHECKING:
+    from tlon.app.server.core.member_directory import MemberDirectory
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
@@ -47,8 +48,8 @@ class RoutedMessage:
         target_ids: List of target recipient IDs (agents, clients, etc.)
         routing_reason: Why this routing decision was made
         mention_target_ids: Subset of target_ids that came from explicit
-            @mention resolution (as opposed to proactive broadcast or
-            client display). Used by the registry for wake-on-mention:
+            @mention resolution (as opposed to proactive broadcast).
+            Used by the registry for wake-on-mention:
             only mention targets may wake a sleeping agent.
     """
 
@@ -70,13 +71,16 @@ class MessageRouter(Component, Device):
     Dependencies (constructor injected):
         - event_bus: EventBus for event subscription/publishing
         - message_store: MessageStore for persistence
-        - agent_info_provider: AgentInfoProvider for routing decisions
+        - agent_info_provider: AgentInfoProvider for proactive agent set
+        - member_directory: MemberDirectory for mention resolution and
+          the proactive-broadcast fuse
 
     Example:
         >>> router = MessageRouter(
         ...     event_bus=event_bus,
         ...     message_store=message_store,
         ...     agent_info_provider=config_manager,
+        ...     member_directory=member_directory,
         ... )
         >>> await router.initialize()  # Begins listening for messages
         >>>
@@ -84,7 +88,7 @@ class MessageRouter(Component, Device):
         >>> await event_bus.publish(Event(
         ...     type=EventType.MESSAGE_NEW,
         ...     payload=message,
-        ...     source="human"
+        ...     source="human:alice"
         ... ))
     """
 
@@ -93,6 +97,7 @@ class MessageRouter(Component, Device):
         event_bus: EventBus,
         message_store: MessageStore,
         agent_info_provider: Optional["AgentInfoProvider"] = None,
+        member_directory: Optional["MemberDirectory"] = None,
     ):
         """Initialize the message router.
 
@@ -100,12 +105,15 @@ class MessageRouter(Component, Device):
             event_bus: Event bus for subscribing and publishing
             message_store: Store for persisting messages
             agent_info_provider: Optional provider for agent configuration queries
+            member_directory: Optional directory for mention resolution and
+                proactive-broadcast decisions
         """
         # Initialize both parents
         Component.__init__(self, name="MessageRouter")
         Device.__init__(self, event_bus=event_bus, name="MessageRouter")
         self._message_store = message_store
         self._agent_info = agent_info_provider
+        self._member_directory = member_directory
 
         # Routing rules cache
         self._proactive_agents: set[str] = set()
@@ -194,15 +202,12 @@ class MessageRouter(Component, Device):
     def _decide_targets(self, message: Message) -> tuple[list[str], list[str]]:
         """Decide which recipients should receive this message.
 
-        Routing logic:
-        - Human messages:
-          - If has mentions: route to mentioned agents
-          - If no mentions: route to all proactive agents
-        - Agent messages:
-          - Route to all clients (for display)
-          - Route to agents mentioned in the message
-        - System messages:
-          - Route to all clients
+        Unified routing logic (docs/design/members.md, 阶段 C):
+        - Has mentions: resolve via MemberDirectory (agents and online
+          humans in one table) and route directed
+        - No mentions and the sender triggers proactive (online human
+          adapter): broadcast to all proactive agents
+        - Otherwise: no targets (logged as message_unrouted)
 
         Args:
             message: The message to route
@@ -216,87 +221,48 @@ class MessageRouter(Component, Device):
         targets: set[str] = set()
         mention_targets: set[str] = set()
 
-        if message.sender_type == "human":
-            t, m = self._route_human_message(message)
-        elif message.sender_type == "agent":
-            t, m = self._route_agent_message(message)
-        elif message.sender_type == "system":
-            t, m = self._route_system_message(message), set()
-        else:
-            t, m = set(), set()
-
-        targets.update(t)
-        mention_targets.update(m)
-        return list(targets), list(mention_targets)
-
-    def _route_human_message(self, message: Message) -> tuple[set[str], set[str]]:
-        """Route a message from a human user.
-
-        Args:
-            message: The human message
-
-        Returns:
-            Tuple of (target IDs, mention-resolved target IDs)
-        """
-        targets: set[str] = set()
-        mention_targets: set[str] = set()
-
         if message.mentions:
-            # Explicit mentions - resolve to agent IDs and route
-            resolved = self._resolve_mentions_to_ids(message.mentions)
+            resolved = self._resolve_mentions(message.mentions)
             targets.update(resolved)
             mention_targets.update(resolved)
             logger.debug(
-                "mentioned_agents_resolved",
+                "mentions_resolved",
                 mentions=message.mentions,
                 resolved=sorted(resolved),
             )
-        else:
-            # No mentions - route to proactive agents
+        elif self._triggers_proactive(message.sender_id):
             proactive = self._get_proactive_agents()
             targets.update(proactive)
             logger.debug("proactive_agents_selected", agents=sorted(proactive))
 
-        return targets, mention_targets
+        return list(targets), list(mention_targets)
 
-    def _route_agent_message(self, message: Message) -> tuple[set[str], set[str]]:
-        """Route a message from an agent.
-
-        Args:
-            message: The agent message
-
-        Returns:
-            Tuple of (target IDs incl. clients, mention-resolved target IDs)
-        """
-        targets: set[str] = set()
-        mention_targets: set[str] = set()
-
-        # Agent messages go to clients for display
-        targets.add("@clients")
-
-        # Also route to agents that are mentioned (resolve names to IDs)
-        if message.mentions:
-            resolved = self._resolve_mentions_to_ids(message.mentions)
-            targets.update(resolved)
-            mention_targets.update(resolved)
-            logger.debug(
-                "agent_message_targets_resolved", resolved_mentions=sorted(resolved)
-            )
-
-        return targets, mention_targets
-
-    def _route_system_message(self, message: Message) -> set[str]:
-        """Route a system message.
-
-        System messages go to all clients for display.
+    def _resolve_mentions(self, mentions: list[str]) -> set[str]:
+        """Resolve mentions to member IDs via the MemberDirectory.
 
         Args:
-            message: The system message
+            mentions: List of mentions (names or IDs)
 
         Returns:
-            Set of target IDs
+            Set of resolved member IDs
         """
-        return {"@clients"}
+        if self._member_directory is None:
+            # No directory, assume mentions are already IDs
+            return set(mentions)
+        return self._member_directory.resolve_mentions(mentions)
+
+    def _triggers_proactive(self, sender_id: str) -> bool:
+        """Check whether this sender's undirected message invites proactive agents.
+
+        Args:
+            sender_id: Sender member ID
+
+        Returns:
+            True if the sender triggers proactive broadcast
+        """
+        if self._member_directory is None:
+            return False
+        return self._member_directory.triggers_proactive(sender_id)
 
     def _get_proactive_agents(self) -> set[str]:
         """Get the set of proactive agent IDs.
@@ -329,48 +295,6 @@ class MessageRouter(Component, Device):
             return False
 
         return self._agent_info.is_proactive(agent_id)
-
-    def _resolve_mentions_to_ids(self, mentions: list[str]) -> set[str]:
-        """Resolve mentions (names or IDs) to agent IDs.
-
-        Mentions can be either agent IDs or agent names.
-        This method converts all mentions to agent IDs for routing.
-
-        Args:
-            mentions: List of mentions (names or IDs)
-
-        Returns:
-            Set of resolved agent IDs
-        """
-        if not self._agent_info:
-            # No provider, assume mentions are already IDs
-            return set(mentions)
-
-        resolved: set[str] = set()
-        all_ids = self._agent_info.get_all_ids()
-
-        for mention in mentions:
-            # Check if it's already an ID
-            if mention in all_ids:
-                resolved.add(mention)
-                continue
-
-            # Check if it's a name - look up by name
-            found = False
-            for agent_id in all_ids:
-                config = self._agent_info.get_config(agent_id)
-                if config and config.name == mention:
-                    resolved.add(agent_id)
-                    found = True
-                    break
-
-            if not found:
-                # Could not resolve, log warning but keep original
-                # (might be a future agent or typo)
-                logger.warning("mention_resolution_failed", mention=mention)
-                resolved.add(mention)  # Keep as-is, agent will ignore if not matching
-
-        return resolved
 
     async def _publish_routed(
         self,
@@ -417,15 +341,12 @@ class MessageRouter(Component, Device):
         Returns:
             Description of why this routing occurred
         """
-        if message.sender_type == "human":
-            if message.mentions:
-                return f"explicit_mentions: {message.mentions}"
-            else:
-                return "proactive_broadcast"
-        elif message.sender_type == "agent":
-            return f"agent_response_to: {targets}"
+        if message.mentions:
+            return f"explicit_mentions: {message.mentions}"
+        elif self._triggers_proactive(message.sender_id):
+            return "proactive_broadcast"
         else:
-            return "system_broadcast"
+            return "unrouted"
 
     # ==================== Public API for manual routing ====================
 
