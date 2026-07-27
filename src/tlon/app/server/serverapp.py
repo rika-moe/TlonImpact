@@ -16,6 +16,7 @@ import signal
 from pathlib import Path
 from typing import Any
 
+from tlon.agents.adam import Adam
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.prototypes import seed_prototypes
 from tlon.base.config import ConfigService
@@ -148,6 +149,15 @@ class ServerApp:
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
         logger.info("agents_loaded", agent_count=len(agent_registry.get_all()))
+
+        # 2.4b Adam — built-in lifecycle policy member (PID 1; members.md 阶段 D).
+        # Kernel first, PID 1 second: Adam is initialized after the registry
+        # and issues the boot start requests. It is a bus member, not an
+        # agent — it is not registered in the agent registry or MemberDirectory.
+        adam = Adam(event_bus=event_bus, agent_registry=agent_registry)
+        await adam.initialize()
+        self._components["adam"] = adam
+        logger.info("component_initialized", component="adam")
 
         # 2.5 AdapterManager - human adapter lifecycle (one per username)
         adapter_manager = AdapterManager(event_bus=event_bus)
@@ -296,6 +306,11 @@ class ServerApp:
             await self.client_gateway.shutdown()
 
         # Shutdown core components (reverse order of creation)
+        # Adam (PID 1) stops before the registry (kernel) it drives
+        adam = self._components.get("adam")
+        if adam:
+            await adam.shutdown()
+
         agent_registry = self._components.get("agent_registry")
         if agent_registry:
             await agent_registry.shutdown()

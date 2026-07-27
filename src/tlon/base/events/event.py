@@ -36,6 +36,12 @@ class EventType(StrEnum):
     AGENT_WOKEN = "agent.woken"
     AGENT_WAKE_FAILED = "agent.wake_failed"
     AGENT_SLEEPING = "agent.sleeping"
+    # Policy/mechanism split (members.md 阶段 D): Adam decides, the registry
+    # executes. AGENT_IDLE is the registry's idle-fact report; the requests
+    # are Adam's decisions carried on the bus.
+    AGENT_START_REQUEST = "agent.start_request"
+    AGENT_STOP_REQUEST = "agent.stop_request"
+    AGENT_IDLE = "agent.idle"
     # Dynamic registry (spawn) lifecycle events
     AGENT_SPAWNED = "agent.spawned"
 

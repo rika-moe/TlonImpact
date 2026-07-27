@@ -193,10 +193,59 @@ auth(username="alice") 成功
   引用记 `spec_uses_deprecated_builtin` warning。
 - 文档同步（dsl-agents.md、client.md、protocol.md 更新握手协议）。
 
-### 阶段 D — 不在本次范围
+### 阶段 D — registry 机制化 + 亚当（Adam，PID 1）
 
-- ScriptAgent + wake 逻辑规约化（init/systemd 式伪 agent）。
-- 离线收件箱、私聊/分房间（随房间功能重构再议）。
+设计定稿于 2026-07-27（四点决策：亚当不来自用户 spec、查接口而非事件重建
+run-state、drain 的事实/决策切分、命名"亚当"）。
+
+**动机**：policy/mechanism 分离。registry 此前既是内核（PID 表 + fork/exec）
+又是 init（boot 启动集、wake-on-mention、idle drain 三条策略硬编码其中）。
+Linux 把 socket activation 放在 systemd（一个进程）里，Tlon 却焊死在内核里。
+
+**分层**：
+
+- **registry（内核，纯机制）**：`_start_agent` / `_stop_agent` 装配、运行表、
+  wake lock、budget 执行、空闲事实检测。订阅 `AGENT_START_REQUEST` /
+  `AGENT_STOP_REQUEST` 并执行。删除：MESSAGE_ROUTED 订阅（wake 决策）、
+  boot 启动循环、drain 决策。
+- **亚当（`member_id="adam"`，`member_type="script"`，内置 Member）**：
+  不来自任何用户 spec 文件；由 ServerApp 在 registry 之后初始化
+  （内核先起、PID 1 其次——保持 DAG 构造无环，registry 不持有亚当引用）。
+  查 registry 的只读接口（`is_running` / `get_config` / `get_all`）获知
+  run-state，不自行跟踪事件重建。
+- **agent spawn contractor（fork）**：agent 生 contractor 走 registry 直连
+  （= 进程调 fork 系统调用，不经过 init）；budget 作为 rlimit 式机制留在
+  registry。**只有 boot / wake / drain 三条策略线归亚当**。
+
+**三条策略线**：
+
+1. **boot**：亚当 initialize 后对 `activation=="always"` 的注册 agent 逐一发
+   `AGENT_START_REQUEST{reason="boot"}`。boot 变为异步（经总线），server
+   不再等 agent 全部起来——REST /agents 在 boot 早期可能显示较少 agent。
+2. **wake（socket activation）**：亚当订阅 MESSAGE_ROUTED →
+   `mention_target_ids` 中有沉睡 agent（查接口确认未在运行）→ 发携带原事件
+   引用的 `AGENT_START_REQUEST{reason="wake", trigger_event}` → registry
+   启动入表后**重投递原事件**（循环防护时序不变：agent 已在运行表，
+   重投递由它自己的 handler 接收，不会二次唤醒）。registry 侧幂等
+   （running/waking 跳过），亚当无需去重状态。
+3. **drain**：registry 的 30s monitor 检测到"lazy agent 空闲超时且无 live
+   session" → 发事实事件 `AGENT_IDLE{agent_id, idle_seconds}`（机制不含
+   判断）→ 亚当决策 → `AGENT_STOP_REQUEST{reason="drain"}` → registry
+   在 wake lock 下复查（session/idle 可能已变）后执行 drain
+   （contractor 丢弃 persona，resident 发 AGENT_SLEEPING）。
+
+**事件**：新增 `AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` / `AGENT_IDLE`；
+既有 `AGENT_WAKING` / `AGENT_WOKEN` / `AGENT_WAKE_FAILED` / `AGENT_SLEEPING`
+保留（registry 执行期发布）。亚当的每个决策都是总线上可见的事件，
+trace 里可直接看到"谁决定唤醒谁"。
+
+**监管（v1）**：亚当无 worker task，全部工作发生在 EventBus dispatch 上下文
+（bus 已隔离 handler 异常）；亚当 initialize 失败 = 内核 panic 等价物，
+server 启动失败。运行时重启监管留待需要时再加。
+
+**不在本次范围**：离线收件箱、私聊/分房间（随房间功能重构再议）；
+receptionist（"正在唤醒 X…"系统消息，届时只是再订阅一个事件）；
+waker 的用户可写规约化（证据表明不值得做，从路线图删除）。
 
 ---
 

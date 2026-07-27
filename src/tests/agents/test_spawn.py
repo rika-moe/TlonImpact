@@ -350,7 +350,7 @@ class TestIdleReapContractor:
         home = temp_paths.agent_dir(config.id)
         agent = registry._agents[config.id]
 
-        await registry._reap_if_idle(config.id)
+        await registry._drain_agent(config.id, "drain")
 
         assert config.id not in registry._agents
         assert config.id not in registry._registered_ids
@@ -370,7 +370,7 @@ class TestIdleReapContractor:
         agent = _make_running_agent(active_sessions=0, idle_seconds=9999.0)
         registry._agents[RESIDENT] = agent
 
-        await registry._reap_if_idle(RESIDENT)
+        await registry._drain_agent(RESIDENT, "drain")
 
         assert RESIDENT not in registry._agents
         assert RESIDENT in registry._registered_ids

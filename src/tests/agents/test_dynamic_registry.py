@@ -1,11 +1,15 @@
-"""Tests for the dynamic AgentRegistry (阶段 6a: 休眠/唤醒).
+"""Tests for the dynamic AgentRegistry (阶段 6a/阶段 D: 休眠/唤醒/机制化).
 
 Covers:
-- Boot split: lazy agents register without starting; status "sleeping"
-- Wake-on-mention: routed events wake sleeping agents and are redelivered;
-  proactive broadcast never wakes; concurrent mentions wake exactly once
-- Idle drain: idle lazy agents sleep; live sessions veto the drain;
-  condition re-checked under the per-agent lock
+- Boot split: initialize() is pure mechanism — no agent starts here
+  (the boot policy is Adam's, covered in test_adam.py)
+- Start requests: AGENT_START_REQUEST starts agents idempotently;
+  wake requests publish WAKING/WOKEN and redeliver the trigger event;
+  boot requests publish no wake observability; concurrent requests
+  assemble exactly once
+- Idle facts + drain execution: idle lazy agents are reported as
+  AGENT_IDLE facts (never stopped by the monitor); AGENT_STOP_REQUEST
+  drains with a condition re-check under the per-agent lock
 - Docker lazy start: container not started at agent assembly, started on
   first tool execution
 """
@@ -17,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tlon.agents.agent_registry import AgentRegistry
+from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.base.config import AgentConfig, DockerRuntimeConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.paths import TlonPaths
@@ -48,7 +53,7 @@ class MockAgentInfoProvider:
 def _make_bus() -> MagicMock:
     bus = MagicMock()
     bus.publish = AsyncMock()
-    bus.subscribe = MagicMock(return_value="sub-1")
+    bus.subscribe = MagicMock(side_effect=["sub-start", "sub-stop"])
     bus.unsubscribe = MagicMock()
     return bus
 
@@ -90,6 +95,16 @@ def _routed_event(
     )
 
 
+def _request_event(request: StartRequest | StopRequest) -> Event:
+    """Wrap a lifecycle request in the bus event Adam would publish."""
+    event_type = (
+        EventType.AGENT_START_REQUEST
+        if isinstance(request, StartRequest)
+        else EventType.AGENT_STOP_REQUEST
+    )
+    return Event(type=event_type, payload=request, source="adam")
+
+
 @pytest.fixture
 def temp_paths():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -110,7 +125,7 @@ def _make_registry(
 
 
 class TestBootSplit:
-    """initialize() only starts activation="always" agents."""
+    """initialize() is pure mechanism: no agent starts here (阶段 D)."""
 
     @pytest.mark.asyncio
     async def test_all_lazy_boots_zero_running(self, temp_paths):
@@ -132,7 +147,9 @@ class TestBootSplit:
         await registry.shutdown()
 
     @pytest.mark.asyncio
-    async def test_mixed_boot_starts_only_always(self, temp_paths):
+    async def test_initialize_starts_nothing_even_always(self, temp_paths):
+        """The boot start-set decision moved to Adam: registry initialize
+        only subscribes to requests and starts the idle monitor."""
         configs = {
             "a-001": AgentConfig(id="a-001", name="甲", activation="always"),
             "a-002": AgentConfig(id="a-002", name="乙", activation="lazy"),
@@ -140,18 +157,12 @@ class TestBootSplit:
         registry, _bus = _make_registry(configs, temp_paths)
         registry.register_all(["a-001", "a-002"])
 
-        async def fake_start(agent_id: str):
-            agent = _make_running_agent()
-            registry._agents[agent_id] = agent
-            return agent
-
-        with patch.object(registry, "_start_agent", side_effect=fake_start) as mock_start:
+        with patch.object(registry, "_start_agent", new=AsyncMock()) as mock_start:
             await registry.initialize()
+            mock_start.assert_not_called()
 
-        assert mock_start.await_count == 1
-        mock_start.assert_awaited_with("a-001")
-        assert set(registry._agents.keys()) == {"a-001"}
-        assert registry.get_agent_status("a-001")["state"] == "active"
+        assert registry.get_all_agents() == []
+        assert registry.get_agent_status("a-001")["state"] == "unknown"
         assert registry.get_agent_status("a-002")["state"] == "sleeping"
 
         await registry.shutdown()
@@ -170,11 +181,12 @@ class TestBootSplit:
         assert config.idle_timeout_seconds == 600
 
 
-class TestWakeOnMention:
-    """MESSAGE_ROUTED with mention targets wakes sleeping agents."""
+class TestStartRequestExecution:
+    """AGENT_START_REQUEST starts agents idempotently; wake requests
+    publish WAKING/WOKEN and redeliver the trigger event."""
 
     @pytest.mark.asyncio
-    async def test_mention_wakes_and_redelivers(self, temp_paths):
+    async def test_wake_request_starts_and_redelivers(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
@@ -186,10 +198,13 @@ class TestWakeOnMention:
             registry._agents[agent_id] = woken
             return woken
 
-        event = _routed_event(["a-001"], ["a-001"])
+        trigger = _routed_event(["a-001"], ["a-001"])
+        request_event = _request_event(
+            StartRequest(agent_id="a-001", reason="wake", trigger_event=trigger)
+        )
 
         with patch.object(registry, "_start_agent", side_effect=fake_start) as mock_start:
-            await registry._on_message_routed(event)
+            await registry._on_start_request(request_event)
             await asyncio.sleep(0.05)
 
         mock_start.assert_awaited_once_with("a-001")
@@ -203,36 +218,43 @@ class TestWakeOnMention:
         assert woken_event.payload["agent_id"] == "a-001"
         assert "wake_duration_seconds" in woken_event.payload
         assert woken_event.trace_id == TRACE_ID
-        # The original event object is re-published verbatim (same payload
+        # The trigger event is re-published verbatim (same payload
         # and trace carrier) so the new agent's handler picks it up
-        assert event in published
+        assert trigger in published
 
         await registry.shutdown()
 
     @pytest.mark.asyncio
-    async def test_proactive_broadcast_does_not_wake(self, temp_paths):
-        configs = {
-            "a-001": AgentConfig(id="a-001", name="甲", activation="lazy", proactive=True),
-        }
+    async def test_boot_request_starts_without_wake_events(self, temp_paths):
+        """Boot fulfillment keeps boot's old behavior: logs only, no
+        WAKING/WOKEN observability events, no redelivery."""
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="always")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
         await registry.initialize()
 
-        # Proactive broadcast: agent is a target but not a mention target
-        event = _routed_event(["a-001"], [])
+        async def fake_start(agent_id: str):
+            agent = _make_running_agent()
+            registry._agents[agent_id] = agent
+            return agent
 
-        with patch.object(registry, "_start_agent", new=AsyncMock()) as mock_start:
-            await registry._on_message_routed(event)
+        request_event = _request_event(StartRequest(agent_id="a-001", reason="boot"))
+
+        with patch.object(registry, "_start_agent", side_effect=fake_start) as mock_start:
+            await registry._on_start_request(request_event)
             await asyncio.sleep(0.05)
 
-        mock_start.assert_not_called()
-        assert "a-001" not in registry._agents
-        assert bus.publish.await_count == 0
+        mock_start.assert_awaited_once_with("a-001")
+        assert "a-001" in registry._agents
+        published_types = [call.args[0].type for call in bus.publish.await_args_list]
+        assert EventType.AGENT_WAKING not in published_types
+        assert EventType.AGENT_WOKEN not in published_types
+        assert EventType.AGENT_WAKE_FAILED not in published_types
 
         await registry.shutdown()
 
     @pytest.mark.asyncio
-    async def test_concurrent_mentions_wake_once(self, temp_paths):
+    async def test_concurrent_wake_requests_start_once(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, _bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
@@ -243,15 +265,19 @@ class TestWakeOnMention:
             registry._agents[agent_id] = agent
             return agent
 
-        # Two routed events for the same persona dispatched back-to-back
-        event1 = _routed_event(["a-001"], ["a-001"], content="first")
-        event2 = _routed_event(["a-001"], ["a-001"], content="second")
+        # Two wake requests for the same persona dispatched back-to-back
+        trigger1 = _routed_event(["a-001"], ["a-001"], content="first")
+        trigger2 = _routed_event(["a-001"], ["a-001"], content="second")
 
         with patch.object(registry, "_start_agent", side_effect=fake_start) as mock_start:
             # No yield between the two handler calls: the second must see
             # the agent already waking and skip
-            await registry._on_message_routed(event1)
-            await registry._on_message_routed(event2)
+            await registry._on_start_request(
+                _request_event(StartRequest("a-001", "wake", trigger1))
+            )
+            await registry._on_start_request(
+                _request_event(StartRequest("a-001", "wake", trigger2))
+            )
             await asyncio.sleep(0.05)
 
         mock_start.assert_awaited_once()
@@ -260,10 +286,10 @@ class TestWakeOnMention:
         await registry.shutdown()
 
     @pytest.mark.asyncio
-    async def test_wake_lock_serializes_wake_and_redelivers_both(self, temp_paths):
-        """Two _wake_and_redeliver calls race on the lock: one assembly,
-        both events redelivered (the second event arrived while the agent
-        was down and would otherwise be lost)."""
+    async def test_wake_lock_serializes_and_redelivers_both(self, temp_paths):
+        """Two _fulfill_start_request calls race on the lock: one assembly,
+        both trigger events redelivered (the second event arrived while the
+        agent was down and would otherwise be lost)."""
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
@@ -277,43 +303,51 @@ class TestWakeOnMention:
             registry._agents[agent_id] = agent
             return agent
 
-        event1 = _routed_event(["a-001"], ["a-001"], content="first")
-        event2 = _routed_event(["a-001"], ["a-001"], content="second")
+        trigger1 = _routed_event(["a-001"], ["a-001"], content="first")
+        trigger2 = _routed_event(["a-001"], ["a-001"], content="second")
 
         with patch.object(registry, "_start_agent", side_effect=fake_start):
-            task1 = asyncio.create_task(registry._wake_and_redeliver("a-001", event1))
-            task2 = asyncio.create_task(registry._wake_and_redeliver("a-001", event2))
+            task1 = asyncio.create_task(
+                registry._fulfill_start_request(StartRequest("a-001", "wake", trigger1))
+            )
+            task2 = asyncio.create_task(
+                registry._fulfill_start_request(StartRequest("a-001", "wake", trigger2))
+            )
             await asyncio.sleep(0.05)
             started.set()
             await asyncio.gather(task1, task2)
 
         assert len(registry._agents) == 1
         published = [call.args[0] for call in bus.publish.await_args_list]
-        assert event1 in published
-        assert event2 in published
+        assert trigger1 in published
+        assert trigger2 in published
 
         await registry.shutdown()
 
     @pytest.mark.asyncio
-    async def test_running_agent_is_not_woken(self, temp_paths):
+    async def test_running_agent_is_not_started(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, _bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
         registry._agents["a-001"] = _make_running_agent()
 
-        event = _routed_event(["a-001"], ["a-001"])
+        trigger = _routed_event(["a-001"], ["a-001"])
         with patch.object(registry, "_start_agent", new=AsyncMock()) as mock_start:
-            await registry._on_message_routed(event)
+            await registry._on_start_request(
+                _request_event(StartRequest("a-001", "wake", trigger))
+            )
             await asyncio.sleep(0.05)
 
         mock_start.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_unknown_mention_is_ignored(self, temp_paths):
+    async def test_unknown_agent_request_is_ignored(self, temp_paths):
         registry, _bus = _make_registry({}, temp_paths)
-        event = _routed_event(["ghost"], ["ghost"])
+        trigger = _routed_event(["ghost"], ["ghost"])
         with patch.object(registry, "_start_agent", new=AsyncMock()) as mock_start:
-            await registry._on_message_routed(event)
+            await registry._on_start_request(
+                _request_event(StartRequest("ghost", "wake", trigger))
+            )
             await asyncio.sleep(0.05)
         mock_start.assert_not_called()
 
@@ -324,23 +358,25 @@ class TestWakeOnMention:
         registry.register("a-001")
         await registry.initialize()
 
-        event = _routed_event(["a-001"], ["a-001"])
+        trigger = _routed_event(["a-001"], ["a-001"])
 
         with patch.object(registry, "_start_agent", new=AsyncMock(return_value=None)):
-            await registry._wake_and_redeliver("a-001", event)
+            await registry._fulfill_start_request(StartRequest("a-001", "wake", trigger))
 
         published_types = [call.args[0].type for call in bus.publish.await_args_list]
         assert EventType.AGENT_WAKE_FAILED in published_types
         assert EventType.AGENT_WOKEN not in published_types
         # Failed wake must not redeliver (the agent cannot receive it)
-        assert event not in [call.args[0] for call in bus.publish.await_args_list]
+        assert trigger not in [call.args[0] for call in bus.publish.await_args_list]
         assert "a-001" not in registry._waking
 
         await registry.shutdown()
 
 
-class TestIdleDrain:
-    """Idle lazy agents are drained; live sessions veto the drain."""
+class TestIdleFactAndDrain:
+    """Idle lazy agents are *reported* (AGENT_IDLE fact) by the monitor;
+    stopping them happens only via AGENT_STOP_REQUEST (drain execution).
+    Live sessions veto both."""
 
     def _registry_with_lazy_agent(
         self, temp_paths: TlonPaths, **agent_kwargs
@@ -356,13 +392,66 @@ class TestIdleDrain:
         registry._agents["a-001"] = agent
         return registry, bus, agent
 
+    # ---------- Fact detection (mechanism) ----------
+
     @pytest.mark.asyncio
-    async def test_idle_lazy_agent_sleeps(self, temp_paths):
+    async def test_idle_lazy_agent_is_reported_not_stopped(self, temp_paths):
         registry, bus, agent = self._registry_with_lazy_agent(
             temp_paths, active_sessions=0, idle_seconds=9999.0
         )
 
-        await registry._reap_if_idle("a-001")
+        await registry._report_if_idle("a-001")
+
+        # Fact only: the agent keeps running
+        assert "a-001" in registry._agents
+        agent.shutdown.assert_not_called()
+        published = [call.args[0] for call in bus.publish.await_args_list]
+        idle_events = [e for e in published if e.type == EventType.AGENT_IDLE]
+        assert len(idle_events) == 1
+        assert idle_events[0].payload["agent_id"] == "a-001"
+        assert idle_events[0].payload["idle_seconds"] == 9999
+
+    @pytest.mark.asyncio
+    async def test_live_session_suppresses_idle_fact(self, temp_paths):
+        registry, bus, _agent = self._registry_with_lazy_agent(
+            temp_paths, active_sessions=1, idle_seconds=9999.0
+        )
+
+        await registry._report_if_idle("a-001")
+
+        bus.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_recently_active_agent_is_not_reported(self, temp_paths):
+        registry, bus, _agent = self._registry_with_lazy_agent(
+            temp_paths, active_sessions=0, idle_seconds=10.0
+        )
+
+        await registry._report_if_idle("a-001")
+
+        bus.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_always_agent_is_never_reported(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="always")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        agent = _make_running_agent(active_sessions=0, idle_seconds=99999.0)
+        registry._agents["a-001"] = agent
+
+        await registry._report_if_idle("a-001")
+
+        bus.publish.assert_not_called()
+
+    # ---------- Drain execution (stop request) ----------
+
+    @pytest.mark.asyncio
+    async def test_stop_request_drains_idle_agent(self, temp_paths):
+        registry, bus, agent = self._registry_with_lazy_agent(
+            temp_paths, active_sessions=0, idle_seconds=9999.0
+        )
+
+        await registry._drain_agent("a-001", "drain")
 
         assert "a-001" not in registry._agents
         agent.shutdown.assert_awaited_once()
@@ -370,38 +459,26 @@ class TestIdleDrain:
         assert EventType.AGENT_SLEEPING in published_types
 
     @pytest.mark.asyncio
-    async def test_live_session_vetoes_sleep(self, temp_paths):
+    async def test_live_session_vetoes_drain(self, temp_paths):
         registry, bus, agent = self._registry_with_lazy_agent(
             temp_paths, active_sessions=1, idle_seconds=9999.0
         )
 
-        await registry._reap_if_idle("a-001")
+        await registry._drain_agent("a-001", "drain")
 
         assert "a-001" in registry._agents
         agent.shutdown.assert_not_called()
         bus.publish.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_recently_active_agent_stays(self, temp_paths):
+    async def test_recently_active_agent_survives_drain(self, temp_paths):
+        """The fact motivating the request may be stale: activity since the
+        AGENT_IDLE report vetoes the drain."""
         registry, bus, agent = self._registry_with_lazy_agent(
             temp_paths, active_sessions=0, idle_seconds=10.0
         )
 
-        await registry._reap_if_idle("a-001")
-
-        assert "a-001" in registry._agents
-        agent.shutdown.assert_not_called()
-        bus.publish.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_always_agent_never_sleeps(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="always")}
-        registry, bus = _make_registry(configs, temp_paths)
-        registry.register("a-001")
-        agent = _make_running_agent(active_sessions=0, idle_seconds=99999.0)
-        registry._agents["a-001"] = agent
-
-        await registry._reap_if_idle("a-001")
+        await registry._drain_agent("a-001", "drain")
 
         assert "a-001" in registry._agents
         agent.shutdown.assert_not_called()
@@ -409,7 +486,7 @@ class TestIdleDrain:
 
     @pytest.mark.asyncio
     async def test_drain_rechecks_sessions_under_lock(self, temp_paths):
-        """A session starting in the race window (while the reaper waits on
+        """A session starting in the race window (while the drain waits on
         the per-agent lock) keeps the agent alive."""
         registry, _bus, agent = self._registry_with_lazy_agent(
             temp_paths, active_sessions=0, idle_seconds=9999.0
@@ -417,24 +494,26 @@ class TestIdleDrain:
 
         lock = registry._wake_locks.setdefault("a-001", asyncio.Lock())
         await lock.acquire()
-        reap_task = asyncio.create_task(registry._reap_if_idle("a-001"))
-        await asyncio.sleep(0.05)  # reaper passed first check, waits on lock
+        drain_task = asyncio.create_task(registry._drain_agent("a-001", "drain"))
+        await asyncio.sleep(0.05)  # drain passed first check, waits on lock
 
         agent.active_session_count = 1  # session starts in the race window
         lock.release()
-        await reap_task
+        await drain_task
 
         assert "a-001" in registry._agents
         agent.shutdown.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_monitor_loop_drains_idle_agent(self, temp_paths):
+    async def test_monitor_loop_reports_idle_agent(self, temp_paths):
+        """End-to-end mechanism+policy: the monitor reports the fact; only
+        the stop request (Adam's decision) drains the agent."""
         configs = {
             "a-001": AgentConfig(
                 id="a-001", name="甲", activation="lazy", idle_timeout_seconds=0
             )
         }
-        registry, _bus = _make_registry(configs, temp_paths)
+        registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
         registry._IDLE_CHECK_INTERVAL_SECONDS = 0.05
         await registry.initialize()
@@ -443,6 +522,18 @@ class TestIdleDrain:
         registry._agents["a-001"] = agent
 
         await asyncio.sleep(0.3)
+
+        # Reported, not drained
+        assert "a-001" in registry._agents
+        agent.shutdown.assert_not_called()
+        published_types = [call.args[0].type for call in bus.publish.await_args_list]
+        assert EventType.AGENT_IDLE in published_types
+
+        # The stop request executes the drain
+        await registry._on_stop_request(
+            _request_event(StopRequest(agent_id="a-001", reason="drain"))
+        )
+        await asyncio.sleep(0.05)
 
         assert "a-001" not in registry._agents
         agent.shutdown.assert_awaited_once()
@@ -463,8 +554,10 @@ class TestIdleDrain:
 
         assert monitor.cancelled()
         assert registry._idle_monitor_task is None
-        bus.unsubscribe.assert_called_once_with("sub-1")
-        assert registry._routed_subscription is None
+        assert bus.unsubscribe.call_count == 2
+        bus.unsubscribe.assert_any_call("sub-start")
+        bus.unsubscribe.assert_any_call("sub-stop")
+        assert registry._request_subscriptions == []
 
 
 class TestDockerLazyStart:

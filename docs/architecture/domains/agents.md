@@ -30,7 +30,9 @@ agents/
 ├── session.py             # AgentSession：单个会话/任务状态
 ├── prompt_builder.py      # SystemPromptBuilder：纯函数式系统提示组合
 ├── prompt_context.py      # AgentPromptContext 数据对象
-├── agent_registry.py      # AgentRegistry：激活感知生命周期（启动分流/唤醒/空闲回收）
+├── agent_registry.py      # AgentRegistry：纯机制（装配/运行表/锁/预算/空闲事实检测/执行 START/STOP 请求）
+├── lifecycle.py           # StartRequest / StopRequest：亚当与 registry 之间的请求契约
+├── adam.py                # Adam：内置策略 Member（PID 1）——boot / wake-on-mention / idle drain
 └── tool_executor.py       # 工具执行器
 ```
 
@@ -51,35 +53,49 @@ agents/
 | `eval_form` / `validate_form` | L1 受限求值 / 静态校验（图灵不完备，fuel 计量） | `agents/eval.py` |
 | `ContextBuilder` | 上下文组装、系统提示缓存 | `agents/context_builder.py` |
 | `ReflectionEngine` | 记忆反思 | `agents/reflection.py` |
-| `AgentRegistry` | 生命周期管理（休眠/唤醒/回收） | `agents/agent_registry.py` |
+| `AgentRegistry` | 生命周期机制（装配/运行表/请求执行/空闲事实） | `agents/agent_registry.py` |
+| `Adam` | 生命周期策略（boot/唤醒/drain 决策，内置 Member） | `agents/adam.py` |
 | `LLMClient` | LLM API 调用 | `base/llm_client.py` |
 | `ToolExecutor` | 工具注册执行 | `agents/tool_executor.py` |
 
 ---
 
-## 动态 Registry（休眠/唤醒，阶段 6a）
+## 动态 Registry（休眠/唤醒，阶段 6a + 阶段 D 机制化）
 
 `AgentRegistry` 管理 activation（瞬态运行时），persona（`~/.tlon/{id}/`）由
-AgentInfoProvider 提供全集，两者分离（见 [../../design/dsl-agents.md](../../design/dsl-agents.md)）：
+AgentInfoProvider 提供全集，两者分离（见 [../../design/dsl-agents.md](../../design/dsl-agents.md)）。
+阶段 D 起 registry 收缩为**纯机制**，三条策略线移入内置 Member **亚当**
+（`agents/adam.py`，`member_id="adam"`，不来自用户 spec；设计定稿见
+[../../design/members.md](../../design/members.md) 阶段 D）：
 
 - **激活模式**（`AgentConfig.activation`）：`"always"`（默认）boot 即启动、永不休眠，
   行为与旧版一致；`"lazy"` 只注册不启动，被显式 @mention 时唤醒，空闲后回收。
   全 lazy 配置下 boot 后 0 个运行中 agent；
+- **boot（策略在亚当）**：registry 的 `initialize()` 不再启动任何 agent（只订阅
+  `AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` + 启动 idle monitor）。亚当
+  initialize 后对所有非 lazy 且未运行的注册 agent 发
+  `AGENT_START_REQUEST{reason="boot"}`，registry 幂等执行——boot 因此变异步，
+  server 不再等 agent 全部起来；
 - **状态**：`get_agent_status` 对 lazy 未运行返回 `"sleeping"`，唤醒中 `"waking"`，
   always 未运行保持 `"unknown"`；
-- **Wake-on-mention**：registry 订阅 `MESSAGE_ROUTED`，仅对
+- **Wake-on-mention（亚当决策 + registry 执行）**：亚当订阅 `MESSAGE_ROUTED`，仅对
   `RoutedMessage.mention_target_ids`（mention 解析出的 target 子集，proactive 广播
-  不在其中）中"已知配置 + 未运行 + 非 waking"的 agent 触发 `_wake_and_redeliver`：
-  per-agent `asyncio.Lock` 串行化（并发 @ 只装配一次，但每个在沉睡期到达的事件都会
-  重投递）→ 复用 `_start_agent` 装配 → **重发原 MESSAGE_ROUTED 事件对象**（同 payload、
+  不在其中）中"已知配置 + 未运行"的 agent 发
+  `AGENT_START_REQUEST{reason="wake", trigger_event=原事件}`；亚当无去重状态，
+  registry 侧幂等（running/waking 跳过）。registry 执行（`_fulfill_start_request`）：
+  per-agent `asyncio.Lock` 串行化（并发请求只装配一次，但每个在沉睡期到达的事件都会
+  重投递）→ 复用 `_start_agent` 装配 → **重发 trigger 事件对象**（同 payload、
   同 trace carrier），新 agent 的 handler 自然拾取；唤醒后 agent 已在运行表，重发不会
-  再触发唤醒（防循环）。观测：`AGENT_WAKING` / `AGENT_WOKEN`（含 wake_duration）/
+  再触发请求（防循环）。观测：`AGENT_WAKING` / `AGENT_WOKEN`（含 wake_duration）/
   `AGENT_WAKE_FAILED` 事件 + 同名 snake_case 日志，唤醒耗时是原消息 trace 树下的
-  `agent.wake` span；
-- **空闲回收（drain）**：30s 周期 monitor；lazy agent 空闲超 `idle_timeout_seconds`
-  （默认 600）且无存活 session → `agent.shutdown()` + 移出运行表（保留注册），
-  发 `AGENT_SLEEPING`。drain 语义：有 ACTIVE/WAITING session 绝不停，且在 per-agent
-  锁下 shutdown 前重查一次。Agent 只读暴露 `active_session_count` / `idle_seconds`
+  `agent.wake` span（boot 路径不发这三个事件，与机制化前一致）；
+- **空闲回收（事实/决策/执行三段）**：registry 的 30s monitor 检测"lazy agent
+  空闲超 `idle_timeout_seconds`（默认 600）且无存活 session" → 发**事实事件**
+  `AGENT_IDLE{agent_id, idle_seconds}`（不停机）→ 亚当决策发
+  `AGENT_STOP_REQUEST{reason="drain"}` → registry 执行（`_drain_agent`）：
+  `agent.shutdown()` + 移出运行表（保留注册），发 `AGENT_SLEEPING`。drain 语义：
+  有 ACTIVE/WAITING session 绝不停，且在 per-agent 锁下 shutdown 前重查一次
+  （事实可能已过期）。Agent 只读暴露 `active_session_count` / `idle_seconds`
   （SessionScheduler 提供："活动"= session 创建 / 存活 session 的 `last_active_at` /
   session 完结；无 session 时从主循环启动算起）。休眠即主循环停止，reflection 自然停烧；
 - **容器懒启动**：`_start_agent` 只构造 `DockerRuntime` 不启动容器；
@@ -106,7 +122,7 @@ agent 可从 prototype 现造临时工（contractor）并停止之，全程受 s
 - **stop_contractor(agent_id, stopped_by)**：仅 contractor 可停（resident 拒绝）；
   drain 语义与 6a 一致（有 ACTIVE/WAITING session 拒绝，per-agent 锁下 shutdown 前
   重查一次）→ shutdown → 注销 → **删除 home 目录** → 发 `AGENT_STOPPED`。
-  空闲回收路径对 contractor 同样删目录（`_reap_if_idle` 分支，发 `AGENT_STOPPED`
+  空闲回收路径对 contractor 同样删目录（`_drain_agent` 分支，发 `AGENT_STOPPED`
   而非 `AGENT_SLEEPING`）；resident 回收只停进程不删目录。删除严格限定
   role==contractor，且 id 过字符集校验 + 解析路径必须在 tlon_home 直下（防路径注入）；
 - **孤儿策略（reparent，不连坐）**：spawner 休眠/停止后其 contractor 继续独立运行，
