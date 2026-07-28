@@ -16,6 +16,7 @@ Covers:
 
 import asyncio
 import tempfile
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -369,6 +370,68 @@ class TestStartRequestExecution:
         # Failed wake must not redeliver (the agent cannot receive it)
         assert trigger not in [call.args[0] for call in bus.publish.await_args_list]
         assert "a-001" not in registry._waking
+
+        await registry.shutdown()
+
+
+class TestStartTimeout:
+    """A hung assembly must not wedge the wake lock: _start_agent is
+    wrapped with _START_TIMEOUT_SECONDS (patched short in these tests)."""
+
+    @pytest.mark.asyncio
+    async def test_boot_start_timeout_fails_cleanly(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="always")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        registry._START_TIMEOUT_SECONDS = 0.05
+        await registry.initialize()
+
+        async def hung_start(agent_id: str):
+            await asyncio.sleep(10)
+            return None
+
+        request_event = _request_event(StartRequest(agent_id="a-001", reason="boot"))
+
+        with patch.object(registry, "_start_agent", side_effect=hung_start):
+            started_at = time.monotonic()
+            await registry._on_start_request(request_event)
+            await asyncio.sleep(0.3)
+            elapsed = time.monotonic() - started_at
+
+        assert elapsed < 5  # the guard fired long before hung_start's 10s
+        assert "a-001" not in registry._agents
+        assert "a-001" not in registry._waking  # dedup state released
+
+        await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_wake_start_timeout_publishes_wake_failed(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        registry._START_TIMEOUT_SECONDS = 0.05
+        await registry.initialize()
+
+        async def hung_start(agent_id: str):
+            await asyncio.sleep(10)
+            return None
+
+        trigger = _routed_event(["a-001"], ["a-001"])
+        request_event = _request_event(
+            StartRequest(agent_id="a-001", reason="wake", trigger_event=trigger)
+        )
+
+        with patch.object(registry, "_start_agent", side_effect=hung_start):
+            await registry._on_start_request(request_event)
+            await asyncio.sleep(0.3)
+
+        published = [call.args[0] for call in bus.publish.await_args_list]
+        published_types = [e.type for e in published]
+        assert EventType.AGENT_WAKING in published_types
+        assert EventType.AGENT_WAKE_FAILED in published_types
+        assert EventType.AGENT_WOKEN not in published_types
+        # No redelivery: the agent never came up
+        assert trigger not in published
 
         await registry.shutdown()
 

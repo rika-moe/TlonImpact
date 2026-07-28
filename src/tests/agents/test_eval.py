@@ -169,7 +169,7 @@ class TestFormVsVector:
 
 class TestValidateForm:
     def test_accepts_legit_expression(self):
-        form = loads('(and (mentioned? msg) (= (sender-type msg) "human"))')
+        form = loads('(and (mentioned? msg) (content-matches? msg "hi"))')
         validate_form(form, TRIGGER_BUILTINS, scope={"msg", "self"})
 
     def test_rejects_non_whitelisted_form(self):
@@ -207,16 +207,6 @@ class TestBuiltins:
         )
         assert eval_form(
             loads("(addressed-to-me? msg)"), _env(_msg(mentions=["小特"])), TRIGGER_BUILTINS
-        )
-
-    def test_sender_type(self):
-        assert eval_form(
-            loads('(= (sender-type msg) "human")'), _env(_msg()), TRIGGER_BUILTINS
-        )
-        assert eval_form(
-            loads('(= (sender-type msg) "agent")'),
-            _env(_msg(sender_type="agent", sender_id="a-002")),
-            TRIGGER_BUILTINS,
         )
 
     def test_content_matches(self):
@@ -310,9 +300,15 @@ class TestTriggerEvaluatorExpression:
 class TestSpecTriggerExpression:
     def test_expression_mode_accepted(self):
         spec = AgentSpec.from_edn(
-            loads('{:version 1 :trigger (and (addressed-to-me? msg) (= (sender-type msg) "human"))}')
+            loads('{:version 1 :trigger (and (addressed-to-me? msg) (mentioned? msg))}')
         )
         assert isinstance(spec.trigger.when, Form)
+
+    def test_sender_type_builtin_removed(self):
+        # sender-type was deprecated in 阶段 C and is now removed: specs
+        # referencing it fail validation at load time.
+        with pytest.raises(SpecValidationError, match="sender-type"):
+            AgentSpec.from_edn(loads('{:version 1 :trigger (= (sender-type msg) "human")}'))
 
     def test_data_mode_when_is_none(self):
         spec = AgentSpec.from_edn(loads("{:version 1 :trigger {:on-mention true}}"))

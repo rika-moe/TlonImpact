@@ -146,6 +146,10 @@ class AgentRegistry(Component):
     # Idle monitor check period (seconds)
     _IDLE_CHECK_INTERVAL_SECONDS = 30
 
+    # Per-agent assembly timeout (seconds): a hung start must not wedge
+    # the agent's wake lock forever (restores the old boot-loop guard).
+    _START_TIMEOUT_SECONDS = 60
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -505,11 +509,27 @@ class AgentRegistry(Component):
         finally:
             self._waking.discard(agent_id)
 
+    async def _start_agent_guarded(self, agent_id: str) -> Agent | None:
+        """``_start_agent`` with a timeout: a hung assembly must not wedge
+        the per-agent wake lock forever. Returns None on timeout (same
+        contract as ``_start_agent`` failure)."""
+        try:
+            return await asyncio.wait_for(
+                self._start_agent(agent_id), timeout=self._START_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            logger.error(
+                "agent_start_timeout",
+                agent_id=agent_id,
+                timeout_seconds=self._START_TIMEOUT_SECONDS,
+            )
+            return None
+
     async def _fulfill_boot(self, agent_id: str, reason: str) -> None:
         """Start an agent without wake observability (boot path)."""
         started_at = time.monotonic()
         logger.info("agent_starting", agent_id=agent_id, reason=reason)
-        agent = await self._start_agent(agent_id)
+        agent = await self._start_agent_guarded(agent_id)
         if agent is None:
             logger.error("agent_start_failed", agent_id=agent_id, reason=reason)
             return
@@ -546,14 +566,14 @@ class AgentRegistry(Component):
                     attributes={"agent_id": agent_id},
                 ),
             ):
-                agent = await self._start_agent(agent_id)
+                agent = await self._start_agent_guarded(agent_id)
         else:
             with start_span(
                 "agent.wake",
                 source="agent_registry",
                 attributes={"agent_id": agent_id},
             ):
-                agent = await self._start_agent(agent_id)
+                agent = await self._start_agent_guarded(agent_id)
 
         wake_duration = time.monotonic() - started_at
 

@@ -96,8 +96,9 @@ class Member:
 agent 眼中的世界：Congress 里一群有名字的 Member，仅此而已。
 
 `Message.sender_type` 字段保留于数据模型与 `messages.jsonl`（历史兼容 +
-trace/debug 价值），但**不再驱动路由**。DSL 的 `sender-type` builtin 随之
-deprecate——router 的 `triggers_proactive` 闸门接管其防循环职责。
+trace/debug 价值），但**不再驱动路由**。DSL 的 `sender-type` builtin 先
+deprecate、后于 2026-07 移除——router 的 `triggers_proactive` 闸门接管其
+防循环职责；引用它的 spec 在 load 时校验失败。
 
 ---
 
@@ -190,7 +191,8 @@ auth(username="alice") 成功
 - 删除 `ClientGateway.send_message`（无生产调用方；发言入口已移交
   AdapterManager）。
 - DSL `sender-type` builtin deprecate：保留一个版本，spec 加载校验时发现
-  引用记 `spec_uses_deprecated_builtin` warning。
+  引用记 `spec_uses_deprecated_builtin` warning（**已于 2026-07-28 移除**，
+  引用它的 spec 现在 load 时校验失败）。
 - 文档同步（dsl-agents.md、client.md、protocol.md 更新握手协议）。
 
 ### 阶段 D — registry 机制化 + 亚当（Adam，PID 1）

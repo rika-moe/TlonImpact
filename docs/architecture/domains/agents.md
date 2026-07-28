@@ -169,8 +169,8 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
 `:trigger` 节除数据 map 外可写 s-expr 表达式（edn.py 解析为 `Form`，与 vector 的 list
 类型区分）。语义刻意图灵不完备：特殊形式仅 `if` / `when` / `let` / `and` / `or`，
 无 `def` / `lambda` / `loop` / `recur`（递归无从表达）；其余形式头必须命中
-`TRIGGER_BUILTINS` 注册表——7 个纯谓词/函数（`mentioned?` / `addressed-to-me?` /
-`sender-type` / `content-matches?` / `contains?` / `=` / `not`，`Builtin(fn, pure=True)`
+`TRIGGER_BUILTINS` 注册表——6 个纯谓词/函数（`mentioned?` / `addressed-to-me?` /
+`content-matches?` / `contains?` / `=` / `not`，`Builtin(fn, pure=True)`
 带纯度标记，副作用动作不注册，trigger 求值无副作用 by construction）。求值每步耗
 fuel（默认 1000，耗尽 `FuelExhaustedError`）、深度限 100（`EvalDepthError`）。
 load 时 `validate_form` 静态校验（形式头白名单 + Symbol 作用域 + `let` 形状，不执行），

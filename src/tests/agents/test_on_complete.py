@@ -152,7 +152,7 @@ class TestValidateActionForm:
 
     def test_when_with_pure_condition_ok(self):
         validate_action_form(
-            loads('(when (= (sender-type msg) "human") (emit "done" []) (spawn "a"))'),
+            loads('(when (content-matches? msg "hi") (emit "done" []) (spawn "a"))'),
             scope={"msg", "result", "self"},
         )
 

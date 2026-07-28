@@ -281,15 +281,6 @@ def _builtin_addressed_to_me(env: dict[str, Any], msg: Message) -> bool:
     return bool(msg.mentions) and _builtin_mentioned(env, msg)
 
 
-def _builtin_sender_type(env: dict[str, Any], msg: Message) -> str:
-    """Deprecated: human/agent identity is no longer spec semantics.
-
-    Loop prevention is handled by the router's triggers_proactive fuse
-    (docs/design/members.md). Kept for one version, then removed.
-    """
-    return msg.sender_type
-
-
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
     """Regex-search a Message's content or a plain string (e.g. ``result``)."""
     if isinstance(target, Message):
@@ -338,10 +329,6 @@ def _builtin_not(env: dict[str, Any], value: Any) -> bool:
 TRIGGER_BUILTINS: dict[str, Builtin] = {
     "mentioned?": Builtin(_builtin_mentioned, pure=True),
     "addressed-to-me?": Builtin(_builtin_addressed_to_me, pure=True),
-    # Deprecated (docs/design/members.md 阶段 C): human/agent identity is no
-    # longer spec semantics; loop prevention moved to the router's
-    # triggers_proactive fuse. Kept for one version, then removed.
-    "sender-type": Builtin(_builtin_sender_type, pure=True),
     "content-matches?": Builtin(_builtin_content_matches, pure=True),
     "contains?": Builtin(_builtin_contains, pure=True),
     "=": Builtin(_builtin_eq, pure=True),
