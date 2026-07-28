@@ -108,8 +108,6 @@ class RESTAPIHandler:
     - GET /config - Server configuration
     - GET /history - Message history
     - GET /agents - List all agents
-    - POST /agents/{id}/wake - Wake an agent
-    - POST /agents/{id}/stop - Stop an agent
     - GET /sessions - List active sessions
     - GET /agents/{id}/logs - Agent log entries
     - GET /logs - All log entries with combined filters

@@ -1040,59 +1040,6 @@ class AgentRegistry(Component):
         """
         return self._agent_info.get_config(agent_id)
 
-    def unregister(self, agent_id: str) -> bool:
-        """Unregister and stop an agent.
-
-        Args:
-            agent_id: Agent ID to unregister
-
-        Returns:
-            True if agent was found and removed
-        """
-        # Check if registered or active
-        is_registered = agent_id in self._registered_ids
-        is_active = agent_id in self._agents
-
-        if not is_registered and not is_active:
-            return False
-
-        # Stop if active
-        if is_active:
-            agent = self._agents.pop(agent_id)
-            asyncio.create_task(agent.shutdown())
-
-        # Remove from registered list
-        if is_registered:
-            self._registered_ids.remove(agent_id)
-
-        logger.info("agent_unregistered", agent_id=agent_id)
-        return True
-
-    def update_config(self, agent_id: str, config: AgentConfig) -> bool:
-        """Update an agent's configuration.
-
-        Note: Configuration updates should be done through AgentInfoProvider
-        (e.g., ConfigManager). This method only validates that the agent
-        is registered and logs a warning if the agent is active.
-
-        Args:
-            agent_id: Agent ID to update
-            config: New configuration (for validation only)
-
-        Returns:
-            True if agent is registered
-        """
-        if agent_id not in self._registered_ids and agent_id not in self._agents:
-            return False
-
-        # If agent is active, we should restart it
-        # For now, just log the warning
-        if agent_id in self._agents:
-            logger.warning("agent_restart_required", agent_id=agent_id)
-
-        logger.info("agent_config_updated", agent_id=agent_id)
-        return True
-
     def get_agent_status(self, agent_id: str) -> dict | None:
         """Get status of a specific agent.
 

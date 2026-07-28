@@ -231,20 +231,3 @@ class ConfigDiagnostics:
                     IssueSeverity.WARNING, "agents", "Docker config missing image", file_str
                 )
 
-    def _validate_jinja2_template(self, template: str, file_path: str, category: str) -> None:
-        """Validate Jinja2 template syntax.
-
-        Args:
-            template: Template string to validate
-            file_path: Path for error reporting
-            category: Category for error reporting
-        """
-        try:
-            from jinja2 import Environment
-
-            env = Environment()
-            env.parse(template)
-        except Exception as e:
-            self.report.add(
-                IssueSeverity.ERROR, category, "Invalid Jinja2 template syntax", file_path, str(e)
-            )

@@ -5,7 +5,6 @@ Verifies that:
 - _get_system_prompt() reuses cache while persona files are unchanged
 - _get_system_prompt() rebuilds when a persona file (own or team) changes
 - _build_knowledge_context() injects memory into user prompt
-- Tool execution does not invalidate system prompt cache
 """
 
 import os
@@ -171,29 +170,6 @@ class TestKnowledgeContext:
 
         # Find the knowledge message
         assert any(m["role"] == "user" and "[已知信息]" in m.get("content", "") for m in context)
-
-
-class TestToolExecutionDoesNotInvalidateCache:
-    """Memory-modifying tools no longer invalidate system prompt cache."""
-
-    MEMORY_TOOLS = ["rememberFact", "forget", "compact"]
-    NEUTRAL_TOOLS = ["executeBash", "listTasks", "startTask", "sendMessage", "searchMemories"]
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", MEMORY_TOOLS + NEUTRAL_TOOLS)
-    async def test_no_tool_invalidates_cache(self, tool_name):
-        agent = _make_agent()
-        agent._system_prompt_cache = "cached"
-
-        mock_result = MagicMock()
-        mock_result.success = True
-        agent.tool_executor.execute = AsyncMock(return_value=mock_result)
-
-        # Execute tool directly (same as what _execute_tool_calls does internally)
-        await agent.tool_executor.execute(tool_name, {})
-
-        # Cache should remain unchanged
-        assert agent._system_prompt_cache == "cached"
 
 
 class TestToolExecutionObservability:

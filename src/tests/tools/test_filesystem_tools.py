@@ -27,7 +27,6 @@ class TestReadFileTool:
     def read_tool(self):
         tool = ReadFileTool.__new__(ReadFileTool)
         tool._docker_config = MagicMock(working_dir="/workspace")
-        tool._agent_id = "test-agent"
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
         return tool
@@ -108,7 +107,6 @@ class TestWriteFileTool:
     def write_tool(self):
         tool = WriteFileTool.__new__(WriteFileTool)
         tool._docker_config = MagicMock(working_dir="/workspace")
-        tool._agent_id = "test-agent"
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
         return tool
@@ -169,7 +167,6 @@ class TestEditFileTool:
     def edit_tool(self):
         tool = EditFileTool.__new__(EditFileTool)
         tool._docker_config = MagicMock(working_dir="/workspace")
-        tool._agent_id = "test-agent"
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
         return tool

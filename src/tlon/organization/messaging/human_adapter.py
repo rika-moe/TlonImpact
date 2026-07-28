@@ -305,49 +305,6 @@ class AdapterManager(Component):
             return None
         return await adapter.speak(content, mentions)
 
-    async def publish_as(
-        self, username: str, content: str, mentions: list[str] | None = None
-    ) -> Message:
-        """Publish a message as a user, with or without an attached session.
-
-        Pragmatic path for attachment-less callers (e.g. a REST endpoint):
-        if the user's adapter exists it speaks through it; otherwise the
-        message is published with the same identity format without
-        creating an adapter (no presence is claimed).
-
-        Args:
-            username: Human username to speak as
-            content: Message content
-            mentions: Optional explicit mentions
-
-        Returns:
-            The created message
-        """
-        adapter = self._adapters.get(username)
-        if adapter is not None:
-            return await adapter.speak(content, mentions)
-
-        # No adapter: publish with the same identity format without
-        # creating one (no presence is claimed)
-        message = build_human_message(username, content, mentions)
-        member_id = message.sender_id
-        with start_span(
-            "message.received",
-            source="human_adapter",
-            attributes={"message_id": message.id, "sender": member_id},
-        ) as ctx:
-            await self._event_bus.publish(
-                Event(
-                    type=EventType.MESSAGE_NEW,
-                    payload=message,
-                    source=member_id,
-                    trace_id=ctx.trace_id,
-                    span_id=ctx.span_id,
-                    parent_span_id=ctx.parent_span_id,
-                )
-            )
-        return message
-
     def get_adapter(self, username: str) -> HumanAdapter | None:
         """Get a user's adapter.
 

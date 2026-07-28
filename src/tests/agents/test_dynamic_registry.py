@@ -506,8 +506,8 @@ class TestIdleFactAndDrain:
 
     @pytest.mark.asyncio
     async def test_monitor_loop_reports_idle_agent(self, temp_paths):
-        """End-to-end mechanism+policy: the monitor reports the fact; only
-        the stop request (Adam's decision) drains the agent."""
+        """Mechanism test: the monitor reports idle agents via AGENT_IDLE;
+        only an explicit stop request drains the agent."""
         configs = {
             "a-001": AgentConfig(
                 id="a-001", name="甲", activation="lazy", idle_timeout_seconds=0

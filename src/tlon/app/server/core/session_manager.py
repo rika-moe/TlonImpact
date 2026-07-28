@@ -46,7 +46,7 @@ class SessionManager:
     Does NOT handle:
     - Message routing
     - Event pushing
-    - Participant aggregation
+    - Member aggregation
 
     Example:
         >>> manager = SessionManager()

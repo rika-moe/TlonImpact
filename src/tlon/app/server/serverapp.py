@@ -205,7 +205,6 @@ class ServerApp:
             session_manager=session_manager,
             notification_service=notification_service,
             member_directory=member_directory,
-            event_bus=event_bus,
             message_store=message_store,
             config_manager=config_service,
             data_dir=self.shared_dir,

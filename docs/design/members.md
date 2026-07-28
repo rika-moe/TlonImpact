@@ -151,7 +151,7 @@ auth(username="alice") 成功
 - **CLI/TUI**：`uv run tlon chat --username alice`；未提供时读
   `~/.tlon/config.toml` 的 `user.username`；再没有则启动时提示输入，
   回车默认 `guest`。
-- **REST**：暂无发言端点；`AdapterManager.publish_as` 已预留，需要时再接线。
+- **REST**：暂无发言端点；需要时经 AdapterManager 以人类身份发布。
 - TUI 界面显示自己的用户名；消息列表渲染不变（名字来源改变而已）。
 
 ---
@@ -188,7 +188,7 @@ auth(username="alice") 成功
 - 移除 `@clients` 伪目标：router 不再为 agent/system 消息附加 `@clients`，
   无 mentions 且不触发 proactive 的消息无 targets（记 `message_unrouted`）。
 - 删除 `ClientGateway.send_message`（无生产调用方；发言入口已移交
-  AdapterManager，REST 端待接线时走 `publish_as`）。
+  AdapterManager）。
 - DSL `sender-type` builtin deprecate：保留一个版本，spec 加载校验时发现
   引用记 `spec_uses_deprecated_builtin` warning。
 - 文档同步（dsl-agents.md、client.md、protocol.md 更新握手协议）。

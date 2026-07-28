@@ -60,7 +60,7 @@ agent:
             report = diag.run_all_checks()
 
             # Should have errors
-            assert report.has_errors() or len(report.issues) > 0
+            assert report.has_errors()
 
     def test_missing_required_fields(self):
         """Test diagnostics with missing required fields."""

@@ -46,7 +46,6 @@ MODE_EVENT_PATTERNS: dict[str, tuple[str, ...]] = {
         "agent.stopped",
         "agent.error",
         "system.*",
-        "session.*",
     ),
     "agent": ("agent.*",),
 }

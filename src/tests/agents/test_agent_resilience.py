@@ -1,7 +1,8 @@
 """Tests for Agent resilience configuration.
 
 Covers the four behavior fixes from the agent.py split:
-- AgentConfig.max_iterations replaces the hardcoded ReAct iteration limit
+- AgentConfig.max_iterations feeds DefaultSpec (spec.loop is the runtime
+  authority for the ReAct iteration limit)
 - AgentConfig.session_timeout_seconds abandons stuck sessions
 - AgentConfig.message_queue_size bounds the inbound queue (drop, never block)
 - AgentConfig.max_consecutive_errors abandons a session after N LLM errors

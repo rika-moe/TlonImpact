@@ -5,7 +5,6 @@ Covers:
 - Adapter lifecycle: attach creates, same-name sessions share, last
   detach destroys
 - Speaking: identity format, mention merge, publish via session
-- publish_as without an adapter (attachment-less path)
 - Human resolution helpers (resolve_human / is_human_member)
 """
 
@@ -162,25 +161,6 @@ class TestAdapterManagerPublish:
     async def test_publish_unknown_session_rejected(self, manager: AdapterManager):
         message = await manager.publish("tui-9999", "hello")
         assert message is None
-
-    async def test_publish_as_without_adapter(self, bus: EventBus, manager: AdapterManager):
-        collected = await _collect_messages(bus)
-
-        message = await manager.publish_as("bob", "hi from REST")
-        await _drain(bus)
-
-        assert message.sender_id == "human:bob"
-        assert message.sender_name == "bob"
-        assert collected[-1].id == message.id
-        # No adapter is created (no presence claimed)
-        assert manager.get_adapter("bob") is None
-
-    async def test_publish_as_uses_existing_adapter(self, manager: AdapterManager):
-        adapter = await manager.attach("alice", "tui-0001")
-
-        message = await manager.publish_as("alice", "hi")
-
-        assert message.sender_id == adapter.member_id
 
 
 class TestHumanResolution:

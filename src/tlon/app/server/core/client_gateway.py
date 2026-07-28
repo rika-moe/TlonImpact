@@ -15,7 +15,6 @@ Architecture:
     - SessionManager (session lifecycle)
     - NotificationService (event pushing)
     - MemberDirectory (member aggregation)
-    - EventBus
     - MessageStore (for history retrieval)
     - ConfigManager (for config reload support)
 
@@ -29,7 +28,6 @@ from typing import Any
 
 from tlon.base.component import Component
 from tlon.base.events.event import Event
-from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.member_info import MemberInfo
 from tlon.organization.messaging.message import Message
@@ -61,7 +59,6 @@ class ClientGateway(Component):
         - session_manager: SessionManager
         - notification_service: NotificationService
         - member_directory: MemberDirectory
-        - event_bus: EventBus
         - message_store: MessageStore
         - config_manager: ConfigManager
 
@@ -70,7 +67,6 @@ class ClientGateway(Component):
         ...     session_manager=session_manager,
         ...     notification_service=notification_service,
         ...     member_directory=member_directory,
-        ...     event_bus=event_bus,
         ...     message_store=message_store,
         ...     config_manager=config_manager,
         ...     data_dir=data_dir,
@@ -90,7 +86,6 @@ class ClientGateway(Component):
         notification_service: NotificationService,
         member_directory: MemberDirectory,
         # Additional dependencies
-        event_bus: EventBus,
         message_store: MessageStore,
         config_manager: Any,  # ConfigManager for reload support
         # Configuration
@@ -106,7 +101,6 @@ class ClientGateway(Component):
             session_manager: Session lifecycle manager
             notification_service: Event notification service
             member_directory: Member discovery service
-            event_bus: Event bus for message publishing
             message_store: Message storage
             config_manager: Configuration manager
             data_dir: Directory for persistence
@@ -119,7 +113,6 @@ class ClientGateway(Component):
         self._session_manager = session_manager
         self._notifications = notification_service
         self._member_directory = member_directory
-        self._event_bus = event_bus
         self._message_store = message_store
         self._config_manager = config_manager
 

@@ -1,7 +1,7 @@
 """Tests for Agent constructor injection.
 
 Verifies that Agent:
-- Accepts all infrastructure deps via constructor (no internal construction)
+- Stores all infrastructure deps passed via constructor as-is
 - Inherits Component
 - Exposes correct id/name after construction
 - Holds the injected tool_executor reference
@@ -98,9 +98,9 @@ class TestAgentPromptCache:
         agent = _make_agent()
         assert agent._system_prompt_cache is None
 
-    def test_no_internal_construction(self):
-        """Agent should not construct LLMClient internally."""
-        # If Agent constructed these internally, passing a sentinel would be ignored.
+    def test_infrastructure_deps_preserved(self):
+        """Injected infrastructure deps are stored as-is on the Agent."""
+        # If Agent replaced these internally, passing a sentinel would be ignored.
         # Verifying the injected sentinel is what's stored.
         sentinel_llm = object()
         agent = _make_agent(llm_client=sentinel_llm)
