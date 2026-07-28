@@ -18,8 +18,16 @@ it does not come from any user spec file, is not registered in the agent
 registry, and does not appear in MemberDirectory. It holds no run-state of
 its own — it queries the registry's read-only interfaces
 (``get_agent`` / ``get_config`` / ``get_all``) instead of reconstructing
-state from events. It keeps no dedup state either: the registry executes
-requests idempotently.
+state from events. Lifecycle decisions carry no dedup state either: the
+registry executes requests idempotently.
+
+Receptionist duty: when Adam decides to wake a sleeping agent, it also
+posts a system message ("正在唤醒 X…") so the human is not facing silence
+while assembly runs; a wake failure posts a failure notice. The small
+``_wake_announced`` set dedups these UX announcements only (it never
+gates lifecycle decisions) and is cleared on AGENT_WOKEN /
+AGENT_WAKE_FAILED. System messages are skipped by the LLM context
+builder, so agents never see them.
 
 The dependency is one-directional: Adam holds a registry reference; the
 registry never imports Adam (kernel first, PID 1 second — the DAG stays
@@ -35,6 +43,7 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.member import Member
+from tlon.organization.messaging.message import Message
 from tlon.organization.messaging.router import RoutedMessage
 
 if TYPE_CHECKING:
@@ -63,6 +72,8 @@ class Adam(Member):
         Component.__init__(self, name="Adam")
         Device.__init__(self, event_bus=event_bus, name="Adam")
         self._registry = agent_registry
+        # UX announcement dedup (never gates lifecycle decisions)
+        self._wake_announced: set[str] = set()
 
     @property
     def member_id(self) -> str:
@@ -76,7 +87,7 @@ class Adam(Member):
 
     @property
     def triggers_proactive(self) -> bool:
-        """Adam never speaks, so it never triggers proactive responses."""
+        """Adam speaks only system messages, which never trigger proactive."""
         return False
 
     def get_state(self) -> str:
@@ -92,6 +103,8 @@ class Adam(Member):
         """
         self.subscribe(EventType.MESSAGE_ROUTED, self._on_message_routed)
         self.subscribe(EventType.AGENT_IDLE, self._on_agent_idle)
+        self.subscribe(EventType.AGENT_WOKEN, self._on_agent_woken)
+        self.subscribe(EventType.AGENT_WAKE_FAILED, self._on_agent_wake_failed)
         self._initialized = True
 
         boot_ids: list[str] = []
@@ -126,9 +139,13 @@ class Adam(Member):
         for agent_id in event.payload.mention_target_ids:
             if self._registry.get_agent(agent_id) is not None:
                 continue
-            if self._registry.get_config(agent_id) is None:
+            config = self._registry.get_config(agent_id)
+            if config is None:
                 continue
             await self._publish_start_request(agent_id, "wake", trigger_event=event)
+            if agent_id not in self._wake_announced:
+                self._wake_announced.add(agent_id)
+                await self._announce(f"正在唤醒 {config.name}…", event)
 
     async def _on_agent_idle(self, event: Event) -> None:
         """Turn the registry's idle fact into a drain decision."""
@@ -143,6 +160,45 @@ class Adam(Member):
                 type=EventType.AGENT_STOP_REQUEST,
                 payload=StopRequest(agent_id=agent_id, reason="drain"),
                 source=self.member_id,
+            )
+        )
+
+    async def _on_agent_woken(self, event: Event) -> None:
+        """Clear the announcement dedup once the agent is up."""
+        if isinstance(event.payload, dict):
+            self._wake_announced.discard(event.payload.get("agent_id", ""))
+
+    async def _on_agent_wake_failed(self, event: Event) -> None:
+        """Clear the dedup and post a failure notice."""
+        if not isinstance(event.payload, dict):
+            return
+        agent_id = event.payload.get("agent_id", "")
+        self._wake_announced.discard(agent_id)
+        config = self._registry.get_config(agent_id)
+        name = config.name if config else agent_id
+        await self._announce(f"唤醒 {name} 失败，请稍后再试。", event)
+
+    async def _announce(self, content: str, trigger_event: Event | None) -> None:
+        """Post a system message into the room (receptionist duty).
+
+        System messages are stored and broadcast to clients by the
+        NotificationService, skipped by the LLM context builder, and
+        never trigger proactive responses (Adam is not a human adapter).
+        """
+        message = Message.create(
+            sender_id=self.member_id,
+            sender_name="亚当",
+            sender_type="system",
+            content=content,
+        )
+        await self.publish(
+            Event(
+                type=EventType.MESSAGE_NEW,
+                payload=message,
+                source=self.member_id,
+                trace_id=trigger_event.trace_id if trigger_event else None,
+                span_id=trigger_event.span_id if trigger_event else None,
+                parent_span_id=trigger_event.parent_span_id if trigger_event else None,
             )
         )
 

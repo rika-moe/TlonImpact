@@ -255,6 +255,94 @@ class TestWakePolicy:
         assert _start_requests(bus) == []
 
 
+def _new_messages(bus: MagicMock) -> list[Event]:
+    return [
+        call.args[0]
+        for call in bus.publish.await_args_list
+        if call.args[0].type == EventType.MESSAGE_NEW
+    ]
+
+
+class TestReceptionist:
+    """Wake announcements: system messages so humans don't face silence."""
+
+    @pytest.mark.asyncio
+    async def test_wake_request_posts_announcement(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        adam = Adam(event_bus=bus, agent_registry=registry)
+        await adam.initialize()
+
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+
+        messages = _new_messages(bus)
+        assert len(messages) == 1
+        message = messages[0].payload
+        assert isinstance(message, Message)
+        assert message.sender_id == "adam"
+        assert message.sender_type == "system"
+        assert "甲" in message.content
+        # The announcement joins the trigger's trace tree
+        assert messages[0].trace_id == TRACE_ID
+
+    @pytest.mark.asyncio
+    async def test_announcement_deduped_while_waking(self, temp_paths):
+        """Repeated mentions still request (registry dedupes) but announce once."""
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        adam = Adam(event_bus=bus, agent_registry=registry)
+        await adam.initialize()
+
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+
+        assert len(_start_requests(bus)) == 2
+        assert len(_new_messages(bus)) == 1
+
+    @pytest.mark.asyncio
+    async def test_woken_clears_dedup(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        adam = Adam(event_bus=bus, agent_registry=registry)
+        await adam.initialize()
+
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+        await adam._on_agent_woken(
+            Event(type=EventType.AGENT_WOKEN, payload={"agent_id": "a-001"}, source="r")
+        )
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+
+        assert len(_new_messages(bus)) == 2
+
+    @pytest.mark.asyncio
+    async def test_wake_failed_posts_failure_notice(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
+        registry, bus = _make_registry(configs, temp_paths)
+        registry.register("a-001")
+        adam = Adam(event_bus=bus, agent_registry=registry)
+        await adam.initialize()
+
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+        await adam._on_agent_wake_failed(
+            Event(
+                type=EventType.AGENT_WAKE_FAILED, payload={"agent_id": "a-001"}, source="r"
+            )
+        )
+
+        messages = _new_messages(bus)
+        assert len(messages) == 2
+        failure = messages[1].payload
+        assert failure.sender_type == "system"
+        assert "失败" in failure.content
+        assert "甲" in failure.content
+        # Dedup cleared: a later mention announces again
+        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+        assert len(_new_messages(bus)) == 3
+
+
 class TestDrainPolicy:
     @pytest.mark.asyncio
     async def test_agent_idle_fact_becomes_stop_request(self, temp_paths):
@@ -305,7 +393,7 @@ class TestDrainPolicy:
 
         await adam.shutdown()
 
-        assert bus.unsubscribe.call_count == 2  # MESSAGE_ROUTED + AGENT_IDLE
+        assert bus.unsubscribe.call_count == 4  # ROUTED + IDLE + WOKEN + WAKE_FAILED
         assert adam.get_state() == "offline"
 
 
