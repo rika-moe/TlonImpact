@@ -23,7 +23,14 @@ Layout:
     │   │       ├── summaries.jsonl
     │   │       └── facts.jsonl
     │   ├── tasks.jsonl
-    │   └── workspace/
+    │   ├── workspace/
+    │   └── mail/
+    │       ├── inbox.jsonl
+    │       ├── sent.jsonl
+    │       └── inbox.cursor
+    ├── human-{username}/
+    │   └── mail/
+    │       └── ...
     └── ...
 
 Usage:
@@ -100,6 +107,25 @@ class TlonPaths:
 
     def agent_tasks_file(self, agent_id: str) -> Path:
         return self.agent_dir(agent_id) / "tasks.jsonl"
+
+    def agent_mail_dir(self, agent_id: str) -> Path:
+        d = self._home / agent_id / "mail"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def member_mail_dir(self, member_id: str) -> Path:
+        """Resolve the mailbox directory for any member id.
+
+        Human ids (``human:<username>``) map to ``human-<username>/mail/``
+        — the colon is replaced by a hyphen here, and only here. All other
+        ids are agent ids and reuse the agent home.
+        """
+        if member_id.startswith("human:"):
+            username = member_id[len("human:"):]
+            d = self._home / f"human-{username}" / "mail"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        return self.agent_mail_dir(member_id)
 
     # ===== Agent persona files =====
 
