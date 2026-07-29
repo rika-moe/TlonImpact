@@ -30,7 +30,6 @@ class MemoryConfig:
         context_max_summaries: Summaries to include in context
         context_max_facts: Facts to include in context
         context_max_working: Working interactions in context
-        context_max_chat_history: ChatRoom messages in context
         idle_timeout_minutes: Idle time before auto-summary
     """
 
@@ -49,7 +48,6 @@ class MemoryConfig:
     context_max_summaries: int = 5
     context_max_facts: int = 10
     context_max_working: int = 5
-    context_max_chat_history: int = 20
 
     # Trigger settings
     idle_timeout_minutes: int = 30
@@ -76,7 +74,6 @@ class MemoryConfig:
                 "max_summaries_in_context": self.context_max_summaries,
                 "max_facts_in_context": self.context_max_facts,
                 "max_working_in_context": self.context_max_working,
-                "max_chat_history": self.context_max_chat_history,
             },
             "triggers": {
                 "idle_timeout_minutes": self.idle_timeout_minutes,
@@ -111,7 +108,6 @@ class MemoryConfig:
             config.context_max_summaries = ctx.get("max_summaries_in_context", 5)
             config.context_max_facts = ctx.get("max_facts_in_context", 10)
             config.context_max_working = ctx.get("max_working_in_context", 5)
-            config.context_max_chat_history = ctx.get("max_chat_history", 20)
 
         if "triggers" in data:
             config.idle_timeout_minutes = data["triggers"].get("idle_timeout_minutes", 30)

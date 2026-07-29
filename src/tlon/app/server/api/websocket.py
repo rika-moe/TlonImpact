@@ -38,7 +38,6 @@ from aiohttp import WSMsgType, web
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, AdapterManager
-from tlon.organization.messaging.message import Message
 
 logger = get_logger(__name__)
 
@@ -362,10 +361,15 @@ class WebSocketHandler:
             await self._send_error_to_session(session_id, "Message content is empty")
             return
 
-        # Speak through the user's human adapter (parses @mentions from
-        # content and publishes MESSAGE_NEW as "human:<username>")
-        message = await self.adapter_manager.publish(session_id, content, mentions)
-        if message is None:
+        # Speak through the user's human adapter (R1b bridge: @mentions in
+        # the content are resolved to recipient addresses; a mail with zero
+        # recipients is rejected) and publishes MAIL_NEW as "human:<username>"
+        try:
+            mail = await self.adapter_manager.publish(session_id, content, mentions)
+        except ValueError as e:
+            await self._send_error_to_session(session_id, str(e))
+            return
+        if mail is None:
             await self._send_error_to_session(
                 session_id, "No human adapter attached to this session"
             )
@@ -419,13 +423,13 @@ class WebSocketHandler:
             session: The client session
         """
         if session.mode == "chat":
-            # Send recent history
-            history = await self.client_gateway.get_history(limit=50)
+            # History is retired with the mail model (R1b): the shared room
+            # log is gone and R2 will serve the member's own inbox instead.
             await self._send_message(
                 ws,
                 {
                     "type": "history",
-                    "messages": [msg.to_dict() for msg in history],
+                    "messages": [],
                 },
             )
             # Send participant list
@@ -456,7 +460,13 @@ class WebSocketHandler:
     async def _send_event(self, ws: web.WebSocketResponse, event: Event) -> None:
         """Send an event to a WebSocket client."""
         payload = event.payload
-        if isinstance(payload, Message) or hasattr(payload, "to_dict"):
+        if isinstance(payload, dict):
+            # Mail delivery payloads nest a Mail under "mail"
+            payload = {
+                key: value.to_dict() if hasattr(value, "to_dict") else value
+                for key, value in payload.items()
+            }
+        elif hasattr(payload, "to_dict"):
             payload = payload.to_dict()
 
         event_data = {

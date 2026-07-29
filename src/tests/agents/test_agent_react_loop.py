@@ -1,7 +1,7 @@
 """Tests for Agent ReAct loop (direct execution mode).
 
 Verifies:
-- Successful completion with sendMessage(is_complete=true)
+- Successful completion with sendEmail(is_complete=true)
 - Max iterations limit
 - No-tool-calls retry reminder
 - LLM error recovery
@@ -19,7 +19,7 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 
 
@@ -46,11 +46,10 @@ def _make_agent(**kwargs):
     return Agent(**defaults)
 
 
-def _make_message(content: str = "Hello") -> Message:
-    return Message.create(
-        sender_id="user-001",
-        sender_name="User",
-        sender_type="human",
+def _make_message(content: str = "Hello") -> Mail:
+    return Mail.create(
+        from_address="user-001@tlon.internal",
+        to=["a-001@tlon.internal"],
         content=content,
     )
 
@@ -71,8 +70,8 @@ class MockLLMClient:
 
 
 class TestReActCompletion:
-    async def test_completes_with_send_message(self):
-        """Agent calls sendMessage(is_complete=true) and sends final message."""
+    async def test_completes_with_send_email(self):
+        """Agent calls sendEmail(is_complete=true) and sends final message."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -80,7 +79,7 @@ class TestReActCompletion:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
@@ -90,9 +89,9 @@ class TestReActCompletion:
 
         agent = _make_agent(llm_client=llm)
 
-        # Register a mock sendMessage tool
+        # Register a mock sendEmail tool
         mock_tool = MagicMock()
-        mock_tool.name = "sendMessage"
+        mock_tool.name = "sendEmail"
         mock_tool.execute = AsyncMock(
             return_value=ToolResult(
                 success=True,
@@ -109,7 +108,7 @@ class TestReActCompletion:
         # Should have sent the final message
         assert agent.event_bus.publish.called
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert message_events[0].args[0].payload.content == "Done!"
 
@@ -130,7 +129,7 @@ class TestReActCompletion:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Found it!", "is_complete": True, "mentions": []},
                         )
                     ],
@@ -145,7 +144,7 @@ class TestReActCompletion:
         search_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"results": []}))
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             return_value=ToolResult(
                 success=True, data={"content": "Found it!", "is_complete": True, "mentions": []}
@@ -166,7 +165,7 @@ class TestReActCompletion:
 class TestReActMaxIterations:
     async def test_max_iterations_reached(self):
         """Agent gives up after max iterations."""
-        # LLM never calls sendMessage(is_complete=true), keeps returning other tools
+        # LLM never calls sendEmail(is_complete=true), keeps returning other tools
         responses = [
             LLMResponse(
                 content=None,
@@ -188,7 +187,7 @@ class TestReActMaxIterations:
 
         # Should have sent max iterations message
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert "简化" in message_events[0].args[0].payload.content
 
@@ -204,7 +203,7 @@ class TestReActNoToolCalls:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
@@ -215,7 +214,7 @@ class TestReActNoToolCalls:
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "sendMessage"
+        mock_tool.name = "sendEmail"
         mock_tool.execute = AsyncMock(
             return_value=ToolResult(
                 success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
@@ -242,7 +241,7 @@ class TestReActErrorHandling:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
@@ -253,7 +252,7 @@ class TestReActErrorHandling:
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "sendMessage"
+        mock_tool.name = "sendEmail"
         mock_tool.execute = AsyncMock(
             return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
@@ -276,7 +275,7 @@ class TestReActErrorHandling:
 
         # Should have sent error message
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert "错误" in message_events[0].args[0].payload.content
 
@@ -293,7 +292,7 @@ class TestReActErrorHandling:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
@@ -310,7 +309,7 @@ class TestReActErrorHandling:
         )
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
@@ -336,7 +335,7 @@ class TestReActObservability:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
@@ -347,7 +346,7 @@ class TestReActObservability:
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "sendMessage"
+        mock_tool.name = "sendEmail"
         mock_tool.execute = AsyncMock(
             return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
@@ -380,7 +379,7 @@ class TestReActObservability:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
@@ -395,7 +394,7 @@ class TestReActObservability:
         mock_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"value": 42}))
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
@@ -426,7 +425,7 @@ class TestReActObservability:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
@@ -445,7 +444,7 @@ class TestReActObservability:
         slow_tool.execute = very_slow
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             return_value=ToolResult(success=True, data={"content": "Done!", "is_complete": True})
         )
@@ -469,8 +468,8 @@ class TestReActObservability:
 
 
 class TestReActSendMessage:
-    async def test_send_message_does_not_end_loop(self):
-        """Agent calls sendMessage(is_complete=false), sends it, then continues thinking."""
+    async def test_send_email_does_not_end_loop(self):
+        """Agent calls sendEmail(is_complete=false), sends it, then continues thinking."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -478,7 +477,7 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={
                                 "content": "Working on it...",
                                 "is_complete": False,
@@ -492,7 +491,7 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
@@ -503,7 +502,7 @@ class TestReActSendMessage:
         agent = _make_agent(llm_client=llm)
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             side_effect=[
                 ToolResult(
@@ -512,7 +511,7 @@ class TestReActSendMessage:
                         "content": "Working on it...",
                         "is_complete": False,
                         "mentions": [],
-                        "action": "send_message",
+                        "action": "send_email",
                     },
                 ),
                 ToolResult(
@@ -528,18 +527,18 @@ class TestReActSendMessage:
             msg = _make_message()
             await agent._process_message(msg)
 
-        # Should have made 2 LLM calls (sendMessage(is_complete=false) does not end loop)
+        # Should have made 2 LLM calls (sendEmail(is_complete=false) does not end loop)
         assert llm.call_count == 2
 
         # Should have sent 2 messages: intermediate + final
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 2
         assert message_events[0].args[0].payload.content == "Working on it..."
         assert message_events[1].args[0].payload.content == "Done!"
 
-    async def test_send_message_with_mentions(self):
-        """sendMessage includes mentions in the sent message."""
+    async def test_send_mail_explicit_recipients(self):
+        """sendEmail sends to the explicit `to` addresses."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -547,11 +546,11 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={
-                                "content": "Hey @人类",
+                                "to": ["other@tlon.internal"],
+                                "content": "转发给你",
                                 "is_complete": False,
-                                "mentions": ["人类"],
                             },
                         )
                     ],
@@ -561,8 +560,8 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
-                            arguments={"content": "Done!", "is_complete": True, "mentions": []},
+                            function_name="sendEmail",
+                            arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
                 ),
@@ -572,16 +571,20 @@ class TestReActSendMessage:
         agent = _make_agent(llm_client=llm)
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             side_effect=[
                 ToolResult(
                     success=True,
-                    data={"content": "Hey @人类", "is_complete": False, "mentions": ["人类"]},
+                    data={
+                        "to": ["other@tlon.internal"],
+                        "content": "转发给你",
+                        "is_complete": False,
+                    },
                 ),
                 ToolResult(
                     success=True,
-                    data={"content": "Done!", "is_complete": True, "mentions": []},
+                    data={"content": "Done!", "is_complete": True},
                 ),
             ]
         )
@@ -593,11 +596,11 @@ class TestReActSendMessage:
             await agent._process_message(msg)
 
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
-        assert message_events[0].args[0].payload.mentions == ["人类"]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
+        assert message_events[0].args[0].payload.to == ["other@tlon.internal"]
 
-    async def test_send_message_failure_ignored(self):
-        """Failed sendMessage does not crash the loop."""
+    async def test_reply_headers_inherited_from_trigger_mail(self):
+        """Replies default to the original sender with thread headers."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -605,7 +608,47 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-001",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
+                            arguments={"content": "收到", "is_complete": True},
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        agent = _make_agent(llm_client=llm)
+
+        send_tool = MagicMock()
+        send_tool.name = "sendEmail"
+        send_tool.execute = AsyncMock(
+            return_value=ToolResult(
+                success=True, data={"content": "收到", "is_complete": True}
+            )
+        )
+        agent.tool_executor.register_tool(send_tool)
+
+        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
+            msg = _make_message()
+            await agent._process_message(msg)
+
+        calls = agent.event_bus.publish.await_args_list
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
+        assert len(message_events) == 1
+        reply = message_events[0].args[0].payload
+        assert reply.to == ["user-001@tlon.internal"]
+        assert reply.in_reply_to == msg.id
+        assert reply.thread_id == msg.thread_id
+
+    async def test_send_email_failure_ignored(self):
+        """Failed sendEmail does not crash the loop."""
+        llm = MockLLMClient(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-001",
+                            function_name="sendEmail",
                             arguments={"content": "Hey", "is_complete": False, "mentions": []},
                         )
                     ],
@@ -615,7 +658,7 @@ class TestReActSendMessage:
                     tool_calls=[
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
@@ -626,7 +669,7 @@ class TestReActSendMessage:
         agent = _make_agent(llm_client=llm)
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             side_effect=[
                 ToolResult(success=False, data={}, error="Some error"),
@@ -642,16 +685,16 @@ class TestReActSendMessage:
             msg = _make_message()
             await agent._process_message(msg)
 
-        # Should complete despite failed sendMessage
+        # Should complete despite failed sendEmail
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert message_events[0].args[0].payload.content == "Done!"
 
 
 class TestReActConflictDetection:
     async def test_conflict_send_complete_with_other_tools(self):
-        """sendMessage(is_complete=true) with other tools triggers conflict reminder."""
+        """sendEmail(is_complete=true) with other tools triggers conflict reminder."""
         llm = MockLLMClient(
             [
                 LLMResponse(
@@ -664,7 +707,7 @@ class TestReActConflictDetection:
                         ),
                         ToolCall(
                             id="tc-002",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         ),
                     ],
@@ -674,7 +717,7 @@ class TestReActConflictDetection:
                     tool_calls=[
                         ToolCall(
                             id="tc-003",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True, "mentions": []},
                         )
                     ],
@@ -689,7 +732,7 @@ class TestReActConflictDetection:
         read_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"content": "x"}))
 
         send_tool = MagicMock()
-        send_tool.name = "sendMessage"
+        send_tool.name = "sendEmail"
         send_tool.execute = AsyncMock(
             return_value=ToolResult(
                 success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
@@ -710,7 +753,7 @@ class TestReActConflictDetection:
         send_tool.execute.assert_awaited_once()
 
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert message_events[0].args[0].payload.content == "Done!"
 
@@ -773,7 +816,7 @@ class TestAgentStateDerivation:
                     tool_calls=[
                         ToolCall(
                             id="tc-2",
-                            function_name="sendMessage",
+                            function_name="sendEmail",
                             arguments={"content": "Done!", "is_complete": True},
                         )
                     ],
@@ -788,7 +831,7 @@ class TestAgentStateDerivation:
         hang.name = "hangingTool"
         hang.execute = hanging_tool
         send = MagicMock()
-        send.name = "sendMessage"
+        send.name = "sendEmail"
         send.execute = AsyncMock(
             return_value=ToolResult(
                 success=True, data={"content": "Done!", "is_complete": True, "mentions": []}
@@ -798,8 +841,8 @@ class TestAgentStateDerivation:
         agent.tool_executor.register_tool(send)
 
         agent._worker_running = True
-        agent._message_queue.put_nowait((_make_message("first"), {}))
-        agent._message_queue.put_nowait((_make_message("second"), {}))
+        agent._mail_queue.put_nowait((_make_message("first"), {}))
+        agent._mail_queue.put_nowait((_make_message("second"), {}))
 
         task = asyncio.create_task(agent._main_loop())
         try:
@@ -810,7 +853,7 @@ class TestAgentStateDerivation:
                 message_events = [
                     c
                     for c in agent.event_bus.publish.await_args_list
-                    if c.args[0].type == EventType.MESSAGE_NEW
+                    if c.args[0].type == EventType.MAIL_NEW
                 ]
                 if message_events:
                     break
@@ -886,7 +929,7 @@ class TestOrphanTaskCleanup:
         agent.tool_executor.register_tool(hang)
 
         agent._worker_running = True
-        agent._message_queue.put_nowait((_make_message(), {}))
+        agent._mail_queue.put_nowait((_make_message(), {}))
 
         with patch.object(
             agent, "_collect_session_results", new=AsyncMock(side_effect=RuntimeError("boom"))

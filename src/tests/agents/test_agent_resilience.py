@@ -16,8 +16,7 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
-from tlon.organization.messaging.message import Message
-from tlon.organization.messaging.router import RoutedMessage
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 
 
@@ -40,11 +39,10 @@ def _make_agent(config: AgentConfig | None = None, **kwargs):
     return Agent(**defaults)
 
 
-def _make_message(content: str = "Hello") -> Message:
-    return Message.create(
-        sender_id="user-001",
-        sender_name="User",
-        sender_type="human",
+def _make_message(content: str = "Hello") -> Mail:
+    return Mail.create(
+        from_address="user-001@tlon.internal",
+        to=["a-001@tlon.internal"],
         content=content,
     )
 
@@ -61,7 +59,7 @@ class TestResilienceConfigDefaults:
         agent = _make_agent(
             config=AgentConfig(id="a-001", name="TestAgent", message_queue_size=7)
         )
-        assert agent._message_queue.maxsize == 7
+        assert agent._mail_queue.maxsize == 7
 
 
 class TestConfigurableMaxIterations:
@@ -87,7 +85,7 @@ class TestConfigurableMaxIterations:
         # 2 think steps, then the iteration limit fires
         assert llm.chat.call_count == 2
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert "简化" in message_events[0].args[0].payload.content
 
@@ -104,7 +102,7 @@ class TestConfigurableMaxConsecutiveErrors:
 
         assert llm.chat.call_count == 1
         calls = agent.event_bus.publish.await_args_list
-        message_events = [c for c in calls if c.args[0].type == EventType.MESSAGE_NEW]
+        message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
         assert len(message_events) == 1
         assert "错误" in message_events[0].args[0].payload.content
 
@@ -116,23 +114,22 @@ class TestMessageQueueBackpressure:
         agent = _make_agent(config=config)
 
         def make_event() -> Event:
-            message = Message.create(
-                sender_id="user-001",
-                sender_name="User",
-                sender_type="human",
+            mail = Mail.create(
+                from_address="user-001@tlon.internal",
+                to=["a-001@tlon.internal"],
                 content="hi",
-                mentions=["a-001"],
             )
-            routed = RoutedMessage(
-                original=message, target_ids=["a-001"], routing_reason="mentioned"
+            return Event(
+                type=EventType.MAIL_DELIVERED,
+                payload={"mail": mail, "recipient": "a-001"},
+                source="mail_delivery",
             )
-            return Event(type=EventType.MESSAGE_ROUTED, payload=routed, source="router")
 
-        # 4 messages against a queue of capacity 2; dispatch must not block
+        # 4 mails against a queue of capacity 2; dispatch must not block
         for _ in range(4):
-            await asyncio.wait_for(agent._on_message_routed(make_event()), timeout=1)
+            await asyncio.wait_for(agent._on_mail_delivered(make_event()), timeout=1)
 
-        assert agent._message_queue.qsize() == 2
+        assert agent._mail_queue.qsize() == 2
 
 
 class TestSessionTimeout:
@@ -146,7 +143,7 @@ class TestSessionTimeout:
                 tool_calls=[
                     ToolCall(
                         id="tc-1",
-                        function_name="sendMessage",
+                        function_name="sendEmail",
                         arguments={"content": "Done!", "is_complete": True},
                     )
                 ],
@@ -157,7 +154,7 @@ class TestSessionTimeout:
         agent.state = AgentState.ACTIVE
 
         agent._worker_running = True
-        agent._message_queue.put_nowait((_make_message(), {}))
+        agent._mail_queue.put_nowait((_make_message(), {}))
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             task = asyncio.create_task(agent._main_loop())
@@ -169,7 +166,7 @@ class TestSessionTimeout:
                 message_events = [
                     c
                     for c in agent.event_bus.publish.await_args_list
-                    if c.args[0].type == EventType.MESSAGE_NEW
+                    if c.args[0].type == EventType.MAIL_NEW
                 ]
                 assert not message_events
                 # Session reaped -> agent falls back to idle

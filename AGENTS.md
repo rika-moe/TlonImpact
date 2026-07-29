@@ -55,7 +55,7 @@ uv run pytest
 | **文件系统布局** | **[design/config.md](./docs/design/config.md)** (含 ~/.tlon/ 目录结构) | - |
 | Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md), [async-agent-loop.md](./docs/design/async-agent-loop.md), **[dsl-agents.md](./docs/design/dsl-agents.md)** 🆕 | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/dream.md](./docs/architecture/dream.md) |
-| 消息系统 | [design/messaging.md](./docs/design/messaging.md) | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
+| 消息系统 | **[design/mail.md](./docs/design/mail.md)** 📮 | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
 | **TUI 设计** | **[Congress](./docs/design/tui-congres.md)** · **[Operator](./docs/design/tui-operator.md)** 🆕 | - |
 | 路线图 | - | [roadmap/README.md](./docs/roadmap/README.md) |
 
@@ -68,7 +68,7 @@ uv run pytest
 | 配置系统 | ✅ 已验证 | 100/100 | 稳定 |
 | Agent 系统 | ✅ 已验证 | 95/100 | 异步多 Session、步进调度 |
 | 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
-| 消息系统 | ✅ 已验证 | 100/100 | 稳定 |
+| 消息系统 | ✅ 已验证 | 95/100 | 邮件模型 R1a/R1b 已切换（mail.md），R2 人类侧待做 |
 | Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | TUI (Congress) | ⚠️ 待验证 | 65/100 | 基础功能可用 |

@@ -6,7 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tlon.organization.messaging.message import Message
+    from tlon.organization.mail.mail import Mail
 
 
 class SessionState(Enum):
@@ -26,9 +26,9 @@ class AgentSession:
         self.state = SessionState.ACTIVE
         self.trigger_content = trigger_content
 
-        # The message that opened this session, recorded on the first step;
+        # The mail that opened this session, recorded on the first step;
         # on-complete action expressions read it as ``msg`` (phase 4b).
-        self.trigger_message: Message | None = None
+        self.trigger_message: Mail | None = None
 
         # Trace carrier from the routing event (trace_id/span_id);
         # re-attached each _main_loop round since OTel context is contextvar-based

@@ -1,11 +1,15 @@
 """Unit tests for HumanAdapter and AdapterManager (docs/design/members.md 阶段 B).
 
+R1b mail bridge: speak() parses @mentions from the content, resolves
+them to recipient addresses, and publishes MAIL_NEW; a mail with zero
+resolvable recipients is rejected.
+
 Covers:
 - @mention extraction from message content
 - Adapter lifecycle: attach creates, same-name sessions share, last
   detach destroys
-- Speaking: identity format, mention merge, publish via session
-- Human resolution helpers (resolve_human / is_human_member)
+- Speaking: address resolution, MAIL_NEW publish, zero-recipient error
+- resolve_address (agent id / agent name / online human / full address)
 """
 
 import asyncio
@@ -13,14 +17,35 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.organization.mail.mail import Mail
 from tlon.organization.messaging.human_adapter import (
     AdapterManager,
     HumanAdapter,
     parse_mentions,
 )
-from tlon.organization.messaging.message import Message
+
+
+class MockAgentInfoProvider:
+    """Mock AgentInfoProvider for testing."""
+
+    def __init__(self, configs: dict[str, AgentConfig]):
+        self._configs = configs
+
+    def get_config(self, agent_id: str) -> AgentConfig | None:
+        return self._configs.get(agent_id)
+
+    def get_all_ids(self) -> set[str]:
+        return set(self._configs.keys())
+
+
+@pytest.fixture
+def provider() -> MockAgentInfoProvider:
+    return MockAgentInfoProvider(
+        {"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")}
+    )
 
 
 @pytest.fixture
@@ -33,22 +58,24 @@ async def bus() -> AsyncGenerator[EventBus]:
 
 
 @pytest.fixture
-async def manager(bus: EventBus) -> AsyncGenerator[AdapterManager]:
+async def manager(
+    bus: EventBus, provider: MockAgentInfoProvider
+) -> AsyncGenerator[AdapterManager]:
     """Provide an initialized AdapterManager."""
-    mgr = AdapterManager(event_bus=bus)
+    mgr = AdapterManager(event_bus=bus, agent_info_provider=provider)
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()
 
 
-async def _collect_messages(bus: EventBus) -> list[Message]:
-    """Subscribe to MESSAGE_NEW and return the collecting list."""
-    collected: list[Message] = []
+async def _collect_mail(bus: EventBus) -> list[Mail]:
+    """Subscribe to MAIL_NEW and return the collecting list."""
+    collected: list[Mail] = []
 
     async def handler(event: Event) -> None:
         collected.append(event.payload)
 
-    bus.subscribe(EventType.MESSAGE_NEW, handler)
+    bus.subscribe(EventType.MAIL_NEW, handler)
     return collected
 
 
@@ -74,14 +101,14 @@ class TestHumanAdapterIdentity:
     """Tests for the Member interface of HumanAdapter."""
 
     def test_member_interface(self, bus: EventBus):
-        adapter = HumanAdapter("alice", bus)
+        adapter = HumanAdapter("alice", bus, lambda name: None)
         assert adapter.member_id == "human:alice"
         assert adapter.member_type == "adapter"
-        assert adapter.triggers_proactive is True
+        assert adapter.address == "alice@tlon.internal"
         assert adapter.username == "alice"
 
     def test_state_tracks_sessions(self, bus: EventBus):
-        adapter = HumanAdapter("alice", bus)
+        adapter = HumanAdapter("alice", bus, lambda name: None)
         assert adapter.get_state() == "offline"
         adapter.attach_session("tui-0001")
         assert adapter.get_state() == "online"
@@ -124,62 +151,67 @@ class TestAdapterManagerLifecycle:
 
 
 class TestAdapterManagerPublish:
-    """Tests for speaking through adapters."""
+    """Tests for speaking through adapters (R1b @ bridge)."""
 
     async def test_publish_by_session(self, bus: EventBus, manager: AdapterManager):
-        collected = await _collect_messages(bus)
+        collected = await _collect_mail(bus)
         await manager.attach("alice", "tui-0001")
 
-        message = await manager.publish("tui-0001", "hello")
+        mail = await manager.publish("tui-0001", "@谢云舒 hello")
         await _drain(bus)
 
-        assert message is not None
-        assert message.sender_id == "human:alice"
-        assert message.sender_name == "alice"
-        assert message.sender_type == "human"
-        assert collected[-1].id == message.id
+        assert mail is not None
+        assert mail.from_address == "alice@tlon.internal"
+        assert mail.to == ["xie-yunshu@tlon.internal"]
+        assert mail.content == "@谢云舒 hello"
+        assert collected[-1].id == mail.id
 
-    async def test_publish_parses_at_mentions_from_content(
-        self, bus: EventBus, manager: AdapterManager
-    ):
+    async def test_publish_resolves_explicit_mentions(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001")
 
-        message = await manager.publish("tui-0001", "@谢云舒 聊聊")
+        mail = await manager.publish(
+            "tui-0001", "hi", mentions=["谢云舒", "xie-yunshu@tlon.internal"]
+        )
 
-        assert message is not None
-        # Raw names are kept; name→ID resolution is the router's job
-        assert message.mentions == ["谢云舒"]
+        assert mail is not None
+        # Id and full-address forms dedupe to one recipient
+        assert mail.to == ["xie-yunshu@tlon.internal"]
 
-    async def test_publish_merges_and_dedupes_mentions(self, manager: AdapterManager):
+    async def test_publish_zero_recipients_raises(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001")
 
-        message = await manager.publish("tui-0001", "@李白 hi", mentions=["李白", "other"])
+        with pytest.raises(ValueError, match="收件人"):
+            await manager.publish("tui-0001", "hello, anyone?")
 
-        assert message is not None
-        assert message.mentions == ["李白", "other"]
+    async def test_publish_unresolvable_mentions_raise(self, manager: AdapterManager):
+        await manager.attach("alice", "tui-0001")
+
+        with pytest.raises(ValueError, match="收件人"):
+            await manager.publish("tui-0001", "@不存在的人 hi")
 
     async def test_publish_unknown_session_rejected(self, manager: AdapterManager):
-        message = await manager.publish("tui-9999", "hello")
-        assert message is None
+        mail = await manager.publish("tui-9999", "hello")
+        assert mail is None
 
 
-class TestHumanResolution:
-    """Tests for resolve_human / is_human_member."""
+class TestResolveAddress:
+    """Tests for the mention → address bridge."""
 
-    async def test_resolve_human(self, manager: AdapterManager):
+    async def test_agent_id_and_name(self, manager: AdapterManager):
+        assert manager.resolve_address("xie-yunshu") == "xie-yunshu@tlon.internal"
+        assert manager.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
+
+    async def test_full_address_passthrough(self, manager: AdapterManager):
+        assert (
+            manager.resolve_address("all@tlon.internal") == "all@tlon.internal"
+        )
+
+    async def test_online_human(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001")
 
-        assert manager.resolve_human("alice") == "human:alice"
-        assert manager.resolve_human("human:alice") == "human:alice"
-        assert manager.resolve_human("offline-user") is None
-
-    async def test_is_human_member(self, manager: AdapterManager):
-        await manager.attach("alice", "tui-0001")
-
-        assert manager.is_human_member("human:alice") is True
-        assert manager.is_human_member("xie-yunshu") is False
-        assert manager.is_human_member("human") is False
-        assert manager.is_human_member("human:offline") is False
+        assert manager.resolve_address("alice") == "alice@tlon.internal"
+        assert manager.resolve_address("human:alice") == "alice@tlon.internal"
+        assert manager.resolve_address("offline-user") is None
 
     async def test_username_for(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001")

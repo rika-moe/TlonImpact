@@ -11,7 +11,8 @@ here, one by one:
   exhausted budget -> rejection logged, session unaffected). Chained
   spawning (a spawned contractor's own on-complete spawning again) is
   hard-capped by the registry's ``max_spawn_depth``.
-- ``emit`` delegates to ``agent._send_message``.
+- ``emit`` delegates to ``agent._send_mail``; an emit without explicit
+  recipients replies to the sender of the session's trigger mail.
 
 Isolation: an evaluation failure or a single failing action is logged
 (``on_complete_eval_failed`` / ``on_complete_action_failed``) and never
@@ -29,6 +30,7 @@ from tlon.base.logger import get_logger
 if TYPE_CHECKING:
     from tlon.agents.agent import Agent
     from tlon.agents.session import AgentSession
+    from tlon.organization.mail.mail import Mail
 
 logger = get_logger(__name__)
 
@@ -89,7 +91,7 @@ class OnCompleteRunner:
         )
         for request in collector:
             try:
-                await self._execute(request)
+                await self._execute(request, session.trigger_message)
             except Exception as e:
                 agent._logger.error(
                     "on_complete_action_failed",
@@ -99,12 +101,21 @@ class OnCompleteRunner:
                     exc_info=True,
                 )
 
-    async def _execute(self, request: ActionRequest) -> None:
+    async def _execute(self, request: ActionRequest, session_mail: "Mail | None") -> None:
         if request.kind == "spawn":
             await self._execute_spawn(request.data)
         elif request.kind == "emit":
-            await self._agent._send_message(
-                request.data["content"], request.data["mentions"]
+            agent = self._agent
+            # An emit without explicit recipients replies to the sender of
+            # the mail that opened this session.
+            to = request.data["to"] or (
+                [session_mail.from_address] if session_mail else []
+            )
+            await agent._send_mail(
+                to=to,
+                content=request.data["content"],
+                in_reply_to=session_mail.id if session_mail else None,
+                thread_id=session_mail.thread_id if session_mail else None,
             )
 
     async def _execute_spawn(self, data: dict[str, Any]) -> None:

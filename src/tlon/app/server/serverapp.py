@@ -27,9 +27,8 @@ from tlon.base.paths import paths
 from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon.base.tracing.trace_store import FileTraceStore
+from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.messaging.human_adapter import AdapterManager
-from tlon.organization.messaging.router import MessageRouter
-from tlon.organization.messaging.store import FileMessageStore
 
 from .api.rest import RESTServer
 from .api.websocket import WebSocketServer
@@ -126,21 +125,16 @@ class ServerApp:
 
         # ========== Step 2: Other Core Components ==========
 
-        # 2.2 MessageStore - storage for messages (stateful)
-        message_store = FileMessageStore(
-            data_dir=paths.chat_history_dir(), filename="messages.jsonl"
-        )
         # 2.2b TraceStore - storage for traces (stateful)
         trace_store = FileTraceStore(data_dir=paths.traces_dir())
         self._components["trace_store"] = trace_store
         logger.info("component_initialized", component="trace_store")
 
         # 2.4 AgentRegistry - agent management
-        # Depends on EventBus, ConfigService (as AgentInfoProvider), MessageStore
+        # Depends on EventBus and ConfigService (as AgentInfoProvider)
         agent_registry = AgentRegistry(
             event_bus=event_bus,
             agent_info_provider=config_service,
-            message_store=message_store,
         )
         # Register initial agents (by ID, config is looked up from provider)
         for agent_id in config_service.agents:
@@ -160,12 +154,15 @@ class ServerApp:
         logger.info("component_initialized", component="adam")
 
         # 2.5 AdapterManager - human adapter lifecycle (one per username)
-        adapter_manager = AdapterManager(event_bus=event_bus)
+        adapter_manager = AdapterManager(
+            event_bus=event_bus,
+            agent_info_provider=config_service,
+        )
         await adapter_manager.initialize()
         self._components["adapter_manager"] = adapter_manager
         logger.info("component_initialized", component="adapter_manager")
 
-        # 2.6 Member Directory - member aggregation + mention resolution
+        # 2.6 Member Directory - member aggregation (address book)
         member_directory = MemberDirectory(
             agent_registry=agent_registry,
             adapter_manager=adapter_manager,
@@ -173,18 +170,17 @@ class ServerApp:
         self._components["member_directory"] = member_directory
         logger.info("component_initialized", component="member_directory")
 
-        # 2.7 MessageRouter - stateless message routing
-        # Depends on EventBus, MessageStore, ConfigService (proactive agent set)
-        # and MemberDirectory (mention resolution, proactive fuse)
-        message_router = MessageRouter(
+        # 2.7 MailDelivery - mail persistence + per-recipient delivery
+        # Depends on EventBus, ConfigService (agent set) and AdapterManager
+        # (online humans); the router's successor (docs/design/mail.md)
+        mail_delivery = MailDelivery(
             event_bus=event_bus,
-            message_store=message_store,
-            agent_info_provider=config_service,  # ConfigService implements AgentInfoProvider
-            member_directory=member_directory,
+            agent_info_provider=config_service,
+            adapter_manager=adapter_manager,
         )
-        await message_router.initialize()
-        self._components["message_router"] = message_router
-        logger.info("component_initialized", component="message_router")
+        await mail_delivery.initialize()
+        self._components["mail_delivery"] = mail_delivery
+        logger.info("component_initialized", component="mail_delivery")
 
         # ========== Step 3: Client Gateway Components ==========
         # 3.1 Session Manager - session lifecycle management
@@ -205,7 +201,6 @@ class ServerApp:
             session_manager=session_manager,
             notification_service=notification_service,
             member_directory=member_directory,
-            message_store=message_store,
             config_manager=config_service,
             data_dir=self.shared_dir,
             host=self.host,
@@ -314,9 +309,9 @@ class ServerApp:
         if agent_registry:
             await agent_registry.shutdown()
 
-        message_router = self._components.get("message_router")
-        if message_router:
-            await message_router.shutdown()
+        mail_delivery = self._components.get("mail_delivery")
+        if mail_delivery:
+            await mail_delivery.shutdown()
 
         adapter_manager = self._components.get("adapter_manager")
         if adapter_manager:

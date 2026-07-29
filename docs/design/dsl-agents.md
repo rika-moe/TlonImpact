@@ -69,12 +69,11 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 
 ```clojure
 {:version 1                        ; 必填，只接受 1
- :trigger {:on-mention true        ; 被 @ 必响应
-           :proactive false}       ; DefaultSpec 取自 AgentConfig.proactive
+ :trigger {:on-mention true}      ; To/CC 含我的地址即响应
  :context {:persona true           ; IDENTITY/SOUL/RULES + 团队 SOUL 段
            :protocol true          ; 框架交互协议段
            :knowledge true         ; 记忆知识块注入
-           :room-history 20}       ; 房间历史条数，0=关闭
+           :mail-history 20}       ; 邮箱历史条数（inbox+sent），0=关闭
  :loop {:mode :react               ; v1 仅 :react，其他值报错
         :max-iterations 10         ; DefaultSpec 取自 AgentConfig.max_iterations
         :tools :background         ; v1 仅 :background
@@ -89,7 +88,7 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 **L1 — 受限求值器（阶段 3a 已落地 trigger 表达式，`agents/eval.py`）**：
 
 - 特殊形式白名单：`if` / `when` / `let` / `and` / `or`，仅此而已（`match` 留待后续）；无 `loop`/`recur`、无 `def`、无宏；
-- 领域内置谓词与动作：`mentioned?` / `addressed-to-me?` / `content-matches?` / `contains?` / `=` / `not`（3a 已注册，纯谓词）；`spawn` / `emit` 动作 4b 已落地（on-complete 专用，求值纯、引擎执行）；`call-tool` / `score-memories` 等留待后续（~~`sender-type`~~ 已于 2026-07 移除：人类/agent 身份标识不再是 spec 语义，防循环由 router 的 `triggers_proactive` 闸门接管，见 [members.md](./members.md)）；
+- 领域内置谓词与动作：`addressed-to-me?` / `cc-ed?` / `content-matches?` / `contains?` / `=` / `not`（纯谓词）；`spawn` / `emit` 动作 4b 已落地（on-complete 专用，求值纯、引擎执行）；`call-tool` / `score-memories` 等留待后续（~~`sender-type`~~ 已于 2026-07 移除；~~`mentioned?`~~ 随 R1b 邮件模型退役——"提及"不再是路由依据，proactive 整套同期删除，见 [mail.md](./mail.md)）；
 - **fuel 限制**：求值带步数上限（默认 1000）与深度上限（默认 100）；
 - 数据化 schema 校验（malli 风格，校验器本身也是数据）。
 
@@ -98,14 +97,14 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 ```clojure
 ;; reviewer.tlon —— 一份 agent 行为规约（trigger 节为已实现语法）
 {:version 1
- :trigger (and (addressed-to-me? msg)              ; 有人 @ 且 @ 的是我（非串扰）
+ :trigger (and (addressed-to-me? msg)              ; To 含我的地址
                (content-matches? msg "？$"))       ; 且内容以问号结尾
- :context {:persona true :protocol true :knowledge true :room-history 20}
+ :context {:persona true :protocol true :knowledge true :mail-history 20}
  :loop {:mode :react :max-iterations 10 :tools :background}
  :on-complete {:save-interaction true :reflect {:enabled true :interval-minutes 15}}}
 
 ;; 其余特殊形式：if / when / let（顺序绑定）/ and / or（短路）
-;; (when (mentioned? msg) (not (content-matches? msg "^(忽略|skip)")))
+;; (when (cc-ed? msg) (not (content-matches? msg "^(忽略|skip)")))
 ;; on-complete 动作表达式（4b 已落地）：
 ;; :on-complete {:actions [(when (content-matches? result "完成")
 ;;                          (spawn "archivist" {:name "归档员"}))
@@ -264,7 +263,7 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 
 - **EDN list 支持**：`edn.py` 新增 `Form(list)` 类型——`(...)` 解析为 Form（代码），`[...]` 仍为 list（数据），两者类型可区分；嵌套、`dumps` roundtrip 保类型；纯数据语境语义不变；
 - **受限求值器 `agents/eval.py`**：`eval_form(form, env, builtins, fuel=1000, max_depth=100)`。字面量/keyword 自求值，vector 逐项求值，Symbol 查 env；特殊形式仅 `if`（2–3 参）/`when`/`let`（vector 顺序绑定）/`and`/`or`（短路）——无 `def`/`lambda`/`loop`/`recur`/`match`，递归在语言层面无从表达。每步求值耗 1 fuel，耗尽抛 `FuelExhaustedError`；深度超限抛 `EvalDepthError`；错误尽量带形式本身（`dumps`）。`validate_form` 静态检查：形式头白名单 + Symbol 作用域（`msg`/`self` + `let` 绑定）+ `let` 形状，不执行；
-- **builtin 纯度机制**：`Builtin(fn, pure=True)` 注册表；`TRIGGER_BUILTINS` 只注册 6 个纯谓词/函数（`mentioned?` / `addressed-to-me?` / `content-matches?` / `contains?` / `=` / `not`），`spawn`/`emit` 不注册——trigger 求值无副作用（by construction）。`addressed-to-me?` = mentions 非空且含我，正是"房间串扰"（@ 别人）与广播的区分解。env 的 `msg` 是裸 Message 但表达式无属性/方法访问语法，只能经 builtin 检视；
+- **builtin 纯度机制**：`Builtin(fn, pure=True)` 注册表；`TRIGGER_BUILTINS` 只注册 6 个纯谓词/函数（`addressed-to-me?` / `cc-ed?` / `content-matches?` / `contains?` / `=` / `not`），`spawn`/`emit` 不注册——trigger 求值无副作用（by construction）。R1b 邮件语义：`addressed-to-me?` = To 含我的地址，`cc-ed?` = CC 含我的地址（`mentioned?` 已退役，引用它的旧表达式在 spec 加载时校验失败并回退 DefaultSpec）。env 的 `msg` 是裸 Mail 但表达式无属性/方法访问语法，只能经 builtin 检视；
 - **TriggerSpec 两形态**：`:trigger` 接受 map（数据模式，不变）或 Form（表达式模式）；`TriggerSpec.when: Form | None`。`from_edn` load 时静态校验表达式（未白名单形式/函数、未定义 Symbol 直接 `SpecValidationError`），`writePrototype` schema 校验自动覆盖；`to_dict`/`from_dict` roundtrip 保留 `when`（EDN 字符串形态）；
 - **TriggerEvaluator 接线**：自己消息跳过（不变）→ `when` 非空走表达式（env = `msg`/`self`，真值即响应；`EvalError` 安全默认不响应 + `trigger_eval_failed` warning）→ 否则数据逻辑不变；表达式命中/未命中记 `trigger_expr_result` debug；`when` 与数据字段并存时以 `when` 为准。
 
@@ -278,7 +277,7 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 
 - **求值纯、动作变数据、引擎执行**：`spawn` / `emit` 注册为 `Builtin(pure=False)`，但求值时不做任何副作用——校验参数后把 `ActionRequest` 收集进 collector（`make_actions_builtins(collector)`；模块级 `ACTIONS_BUILTINS` 为无 collector 的校验用注册表）；求值完成后由 Agent 异步逐条执行。延续"DSL 只描述，引擎执行"铁律，求值器保持同步、可静态校验；
 - **schema**：`OnCompleteSpec.actions: tuple[Form, ...]`（纯数据，frozen 兼容）；`:actions` 必须是 vector of Form，load 时每个 Form 经 `validate_action_form` 静态校验——**两位置纯度**：`when` 条件位只许纯谓词（`TRIGGER_BUILTINS`，条件位出现动作直接拒绝），动作位必须是动作 Form 且参数为纯表达式；顶层只许动作 Form 或单层 `when`（不支持嵌套）；`to_dict`/`from_dict` roundtrip 保留（EDN 字符串形态）；
-- **动作语义**：`(spawn "prototype" {:name "显示名"})`（第二参数可选，`:name` 缺省自动生成）执行时调 `registry.spawn_contractor`——信任闸与预算全部生效（untrusted/超预算 → 拒绝记日志，不炸 session）；spawner_id=当前 agent，session_id 经 structlog contextvars 从 `_session_span` 读取（完成时仍在 span 内，配额自然归因）。`(emit "内容" ["mention-id" ...])`（mentions 可选）调 `agent._send_message`。env：`msg`（触发消息，经 `session.trigger_message` 传递）/ `result`（本轮最终回复字符串）/ `self`；`content-matches?` 扩展为同时接受 Message 或字符串；
+- **动作语义**：`(spawn "prototype" {:name "显示名"})`（第二参数可选，`:name` 缺省自动生成）执行时调 `registry.spawn_contractor`——信任闸与预算全部生效（untrusted/超预算 → 拒绝记日志，不炸 session）；spawner_id=当前 agent，session_id 经 structlog contextvars 从 `_session_span` 读取（完成时仍在 span 内，配额自然归因）。`(emit "内容" ["地址" ...])`（收件人可选，缺省回复触发邮件的发件人）调 `agent._send_mail`，回复头（in_reply_to/thread_id）继承触发邮件。env：`msg`（触发邮件 Mail，经 `session.trigger_message` 传递）/ `result`（本轮最终回复字符串）/ `self`；`content-matches?` 扩展为同时接受 Mail 或字符串；
 - **执行点与隔离**：session 以 `is_complete` 收尾时，`_save_interaction_to_memory` 之后、`mark_completed()` 之前（LoopDriver 收尾处）由新子系统 `OnCompleteRunner`（`agents/on_complete.py`）执行一次；单动作失败记 `on_complete_action_failed` error 并继续后续动作，求值失败记 `on_complete_eval_failed`，绝不影响 session 生命周期；观测 `on_complete_actions` info（动作数/类型）。Agent 新增可选构造参数 `registry`（`_start_agent` 注入自身；测试直建为 None 时 spawn 动作记日志跳过）；
 - **链式风险**：spawn 出的 contractor 自己的 on-complete 可能再 spawn——由 `max_spawn_depth=3` 硬顶（`OnCompleteRunner` docstring 注明）。
 

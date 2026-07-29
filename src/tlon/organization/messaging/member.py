@@ -10,8 +10,8 @@ from tlon.base.device import Device
 
 
 class Member(Component, Device):
-    """A bus citizen of Congress: has an identity, receives MESSAGE_ROUTED,
-    publishes MESSAGE_NEW.
+    """A bus citizen of Congress: has an identity, receives MAIL_DELIVERED,
+    publishes MAIL_NEW.
 
     Member makes the implicit "who can speak" contract explicit. Unification
     happens at the Member layer, not the Agent layer: an AdapterAgent (human
@@ -21,7 +21,7 @@ class Member(Component, Device):
     Following project convention, Member defines no ``__init__`` — subclasses
     call ``Component.__init__(self, name=...)`` and
     ``Device.__init__(self, event_bus=..., name=...)`` explicitly (see
-    Agent and MessageRouter).
+    Agent and MailDelivery).
 
     See docs/design/members.md.
     """
@@ -35,15 +35,6 @@ class Member(Component, Device):
     @abstractmethod
     def member_type(self) -> str:
         """Member type: "react" | "adapter" ("script" reserved)."""
-
-    @property
-    @abstractmethod
-    def triggers_proactive(self) -> bool:
-        """Whether this member's undirected messages invite proactive responses.
-
-        This is a system-internal loop-prevention fuse and never enters the
-        LLM context.
-        """
 
     @abstractmethod
     def get_state(self) -> str:

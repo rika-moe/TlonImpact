@@ -29,8 +29,8 @@ async def _drain(bus: EventBus) -> None:
 
 
 def _make_event(seq: int) -> Event:
-    """Create a MESSAGE_NEW event carrying a sequence number."""
-    return Event(type=EventType.MESSAGE_NEW, payload={"seq": seq}, source="test")
+    """Create a MAIL_NEW event carrying a sequence number."""
+    return Event(type=EventType.MAIL_NEW, payload={"seq": seq}, source="test")
 
 
 async def test_async_handlers_run_sequentially_in_publish_order(bus: EventBus) -> None:
@@ -47,7 +47,7 @@ async def test_async_handlers_run_sequentially_in_publish_order(bus: EventBus) -
         running -= 1
         completed.append(event.payload["seq"])
 
-    bus.subscribe(EventType.MESSAGE_NEW, handler)
+    bus.subscribe(EventType.MAIL_NEW, handler)
 
     count = 5
     for seq in range(count):
@@ -68,8 +68,8 @@ async def test_handler_exception_is_isolated(bus: EventBus) -> None:
     async def good_handler(event: Event) -> None:
         good_calls.append(event.payload["seq"])
 
-    bus.subscribe(EventType.MESSAGE_NEW, bad_handler)
-    bus.subscribe(EventType.MESSAGE_NEW, good_handler)
+    bus.subscribe(EventType.MAIL_NEW, bad_handler)
+    bus.subscribe(EventType.MAIL_NEW, good_handler)
 
     for seq in range(3):
         await bus.publish(_make_event(seq))

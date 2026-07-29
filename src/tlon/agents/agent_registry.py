@@ -23,7 +23,6 @@ Architecture:
     AgentRegistry is a Component that depends on:
     - EventBus (for agent event publishing and request subscriptions)
     - AgentInfoProvider (for configuration queries)
-    - MessageStore (for agent history access)
 
     All dependencies are injected via constructor (DAG rule).
 """
@@ -49,7 +48,7 @@ from tlon.base.paths import TlonPaths, paths
 from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.organization.messaging.store import MessageStore
+from tlon.organization.mail.mailbox import Mailbox
 from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
@@ -58,11 +57,11 @@ from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
+from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.memory.compact import CompactTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
-from tlon.tools.messaging.send_message import SendMessageTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
@@ -130,13 +129,11 @@ class AgentRegistry(Component):
     Dependencies (constructor injected):
         - event_bus: EventBus for agent event publishing
         - agent_info_provider: AgentInfoProvider for configuration queries
-        - message_store: MessageStore (optional)
 
     Example:
         >>> registry = AgentRegistry(
         ...     event_bus=event_bus,
         ...     agent_info_provider=config_manager,
-        ...     message_store=message_store,
         ... )
         >>> registry.register("dev-001")  # Register by ID
         >>> await registry.initialize()  # Subscribe + start idle monitor
@@ -154,7 +151,6 @@ class AgentRegistry(Component):
         self,
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
-        message_store: MessageStore | None = None,
         paths: "TlonPaths | None" = None,
         max_activations: int = 8,
         max_spawn_depth: int = 3,
@@ -166,9 +162,8 @@ class AgentRegistry(Component):
         All dependencies are injected via constructor (DAG architecture).
 
         Args:
-            event_bus: Event bus for message routing
+            event_bus: Event bus for mail delivery and lifecycle events
             agent_info_provider: Provider for agent configuration queries
-            message_store: Message store for agent history access
             paths: TlonPaths instance (defaults to module singleton)
             max_activations: spawn budget — cap on running agents total
                 (residents included); spawning beyond it is rejected
@@ -183,7 +178,6 @@ class AgentRegistry(Component):
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
-        self.message_store = message_store
         self._paths = paths  # None means use module singleton
 
         # Spawn budget (stage 6b). The quota ledger lives in memory only —
@@ -354,6 +348,10 @@ class AgentRegistry(Component):
                 data_dir=str(agent_home),
             )
 
+            # The agent's mailbox (inbox/sent/unread cursor); the delivery
+            # component writes into the same directory.
+            mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
+
             # Create Docker runtime (shared by shell + filesystem tools).
             # The container is NOT started here: DockerRuntime lazily calls
             # ensure_running() on first execute/read/write, so waking an
@@ -375,7 +373,7 @@ class AgentRegistry(Component):
             tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
             tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
             tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
-            tool_executor.register_tool(SendMessageTool())
+            tool_executor.register_tool(SendEmailTool())
             tool_executor.register_tool(ListPrototypesTool())
             # Spawn/stop lifecycle tools (stage 6b): the registry is the
             # assembler, so it injects itself; spawner_id binds the tool
@@ -426,7 +424,7 @@ class AgentRegistry(Component):
                 task_manager=task_manager,
                 tool_executor=tool_executor,
                 team_members=team_members,
-                message_store=self.message_store,
+                mailbox=mailbox,
                 per_tool_timeout=per_tool_timeout,
                 registry=self,
             )
@@ -480,30 +478,29 @@ class AgentRegistry(Component):
         if not self._agent_info.get_config(agent_id):
             return
         self._waking.add(agent_id)
-        asyncio.create_task(self._fulfill_start_request(request))
+        asyncio.create_task(self._fulfill_start_request(request, event))
 
-    async def _fulfill_start_request(self, request: StartRequest) -> None:
+    async def _fulfill_start_request(self, request: StartRequest, event: Event) -> None:
         """Assemble one agent under its wake lock, per the request's reason.
 
         Serialized per agent by a lock: concurrent requests for the same
         persona trigger exactly one assembly.
 
         reason="wake": publishes AGENT_WAKING / AGENT_WOKEN /
-        AGENT_WAKE_FAILED joining the trigger event's trace tree, then
-        redelivers the trigger event verbatim (same payload and trace
-        carrier). After ``_start_agent`` the agent is in the run table, so
-        the redelivered MESSAGE_ROUTED is picked up by the new agent's own
-        handler and cannot trigger another wake — that is the loop guard.
+        AGENT_WAKE_FAILED joining the delivering event's trace tree. There
+        is no redelivery: the mail is already in the agent's inbox and the
+        freshly started agent scans its unread mail on boot — the mailbox
+        is the queue (docs/design/mail.md).
 
         reason="boot": starts the agent with log lines only (no
-        observability events, no redelivery) — same as boot always did.
+        observability events) — same as boot always did.
         """
         agent_id = request.agent_id
         lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
         try:
             async with lock:
-                if request.reason == "wake" and request.trigger_event is not None:
-                    await self._fulfill_wake(agent_id, request.trigger_event)
+                if request.reason == "wake":
+                    await self._fulfill_wake(agent_id, event)
                 else:
                     await self._fulfill_boot(agent_id, request.reason)
         finally:
@@ -540,8 +537,8 @@ class AgentRegistry(Component):
             start_duration_seconds=round(time.monotonic() - started_at, 3),
         )
 
-    async def _fulfill_wake(self, agent_id: str, trigger_event: Event) -> None:
-        """Wake a sleeping agent and redeliver the event that woke it."""
+    async def _fulfill_wake(self, agent_id: str, request_event: Event) -> None:
+        """Wake a sleeping agent; its boot scan picks up the waiting mail."""
         started_at = time.monotonic()
         logger.info("agent_waking", agent_id=agent_id)
         await self.event_bus.publish(
@@ -549,17 +546,17 @@ class AgentRegistry(Component):
                 type=EventType.AGENT_WAKING,
                 payload={"agent_id": agent_id},
                 source="agent_registry",
-                trace_id=trigger_event.trace_id,
-                span_id=trigger_event.span_id,
-                parent_span_id=trigger_event.parent_span_id,
+                trace_id=request_event.trace_id,
+                span_id=request_event.span_id,
+                parent_span_id=request_event.parent_span_id,
             )
         )
 
-        # Join the routed message's trace tree so wake cost is
-        # visible as an "agent.wake" span in the same trace.
-        if trigger_event.trace_id:
+        # Join the mail's trace tree so wake cost is visible as an
+        # "agent.wake" span in the same trace.
+        if request_event.trace_id:
             with (
-                continue_trace(trigger_event.trace_id, trigger_event.span_id),
+                continue_trace(request_event.trace_id, request_event.span_id),
                 start_span(
                     "agent.wake",
                     source="agent_registry",
@@ -584,9 +581,9 @@ class AgentRegistry(Component):
                     type=EventType.AGENT_WAKE_FAILED,
                     payload={"agent_id": agent_id},
                     source="agent_registry",
-                    trace_id=trigger_event.trace_id,
-                    span_id=trigger_event.span_id,
-                    parent_span_id=trigger_event.parent_span_id,
+                    trace_id=request_event.trace_id,
+                    span_id=request_event.span_id,
+                    parent_span_id=request_event.parent_span_id,
                 )
             )
             return
@@ -604,15 +601,11 @@ class AgentRegistry(Component):
                     "wake_duration_seconds": round(wake_duration, 3),
                 },
                 source="agent_registry",
-                trace_id=trigger_event.trace_id,
-                span_id=trigger_event.span_id,
-                parent_span_id=trigger_event.parent_span_id,
+                trace_id=request_event.trace_id,
+                span_id=request_event.span_id,
+                parent_span_id=request_event.parent_span_id,
             )
         )
-
-        # Redeliver the original event: same RoutedMessage payload
-        # and trace carrier, so the new agent's handler picks it up.
-        await self.event_bus.publish(trigger_event)
 
     async def _on_stop_request(self, event: Event) -> None:
         """Execute an AGENT_STOP_REQUEST decision (mechanism only).

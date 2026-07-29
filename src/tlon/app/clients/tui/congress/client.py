@@ -6,6 +6,7 @@ with automatic reconnection, heartbeat, and message protocol handling.
 
 import asyncio
 from collections.abc import Callable
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -88,6 +89,8 @@ class CongressWebSocketClient:
         # State management
         self.state = CongressState()
         self._connection_state = ClientConnectionState.DISCONNECTED
+        # Mail ids already rendered (mail.delivered fires once per recipient)
+        self._seen_mail_ids: set[str] = set()
 
         # SDK client
         self._adapter = TerminalAdapter()
@@ -279,12 +282,10 @@ class CongressWebSocketClient:
         logger.debug("event_received", event_type=event_type)
 
         # Handle different event types
-        if event_type == "message.new":
-            self._handle_message_new(payload)
+        if event_type == "mail.delivered":
+            self._handle_mail_delivered(payload)
         elif event_type == "agent.typing":
             self._handle_agent_typing(payload)
-        elif event_type == "agent.response":
-            self._handle_agent_response(payload)
         elif event_type == "agent.started":
             self._handle_agent_started(payload)
         elif event_type == "agent.stopped":
@@ -316,9 +317,52 @@ class CongressWebSocketClient:
             except Exception as e:
                 logger.error("error_handler_error", error=str(e), exc_info=True)
 
-    def _handle_message_new(self, payload: dict[str, Any]) -> None:
-        """Handle new message event."""
-        message = Message.from_dict(payload)
+    def _handle_mail_delivered(self, payload: dict[str, Any]) -> None:
+        """Handle a mail.delivered event (R1b minimal adaptation).
+
+        The server pushes one event per recipient; the TUI renders each
+        mail once, mapping the envelope (From/To/Subject/content) onto the
+        existing message display structure. Recipient-aware views are R2.
+        """
+        mail_data = payload.get("mail", {})
+        mail_id = mail_data.get("id")
+        if mail_id and mail_id in self._seen_mail_ids:
+            return
+        if mail_id:
+            self._seen_mail_ids.add(mail_id)
+
+        from_address = mail_data.get("from_address", "")
+        local = from_address.partition("@")[0]
+        if local == "postmaster":
+            sender_type = MessageType.SYSTEM
+        elif local in self.state.agents:
+            sender_type = MessageType.AGENT
+        else:
+            sender_type = MessageType.USER
+
+        timestamp = mail_data.get("timestamp")
+        if isinstance(timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                timestamp = None
+
+        message = Message(
+            id=mail_id,
+            content=mail_data.get("content", ""),
+            sender_type=sender_type,
+            sender_name=local or "Unknown",
+            sender_id=from_address,
+            timestamp=timestamp,
+            mentions=mail_data.get("to", []),
+            reply_to=mail_data.get("in_reply_to"),
+            metadata={
+                "to": mail_data.get("to", []),
+                "cc": mail_data.get("cc", []),
+                "subject": mail_data.get("subject"),
+                "recipient": payload.get("recipient"),
+            },
+        )
         self.state.add_message(message)
 
         for handler in self._message_handlers:
@@ -345,11 +389,6 @@ class CongressWebSocketClient:
                     handler(agent_id, is_typing)
             except Exception as e:
                 logger.error("typing_handler_error", error=str(e), exc_info=True)
-
-    def _handle_agent_response(self, payload: dict[str, Any]) -> None:
-        """Handle agent response event."""
-        # Agent response is treated as a new message
-        self._handle_message_new(payload)
 
     def _handle_agent_started(self, payload: dict[str, Any]) -> None:
         """Handle agent started event."""

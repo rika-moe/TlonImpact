@@ -17,28 +17,28 @@ from tlon.agents.eval import (
 )
 from tlon.agents.spec import AgentSpec, SpecValidationError, TriggerSpec
 from tlon.agents.trigger import TriggerEvaluator
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 
 
-def _msg(
+def _mail(
     content: str = "hello",
-    mentions: list[str] | None = None,
-    sender_type: str = "human",
-    sender_id: str = "u-1",
-) -> Message:
-    return Message.create(
-        sender_id=sender_id,
-        sender_name="User",
-        sender_type=sender_type,
+    to: list[str] | None = None,
+    cc: list[str] | None = None,
+    from_address: str = "u-1@tlon.internal",
+) -> Mail:
+    return Mail.create(
+        from_address=from_address,
+        to=to or ["someone@tlon.internal"],
+        cc=cc,
         content=content,
-        mentions=mentions or [],
     )
 
 
 _SELF = {"id": "a-001", "name": "小特"}
+_SELF_ADDRESS = "a-001@tlon.internal"
 
 
-def _env(msg: Message) -> dict:
+def _env(msg: Mail) -> dict:
     return {"msg": msg, "self": _SELF}
 
 
@@ -169,7 +169,7 @@ class TestFormVsVector:
 
 class TestValidateForm:
     def test_accepts_legit_expression(self):
-        form = loads('(and (mentioned? msg) (content-matches? msg "hi"))')
+        form = loads('(and (addressed-to-me? msg) (content-matches? msg "hi"))')
         validate_form(form, TRIGGER_BUILTINS, scope={"msg", "self"})
 
     def test_rejects_non_whitelisted_form(self):
@@ -180,46 +180,57 @@ class TestValidateForm:
 
     def test_rejects_undefined_symbol(self):
         with pytest.raises(EvalError, match="undefined symbol: foo"):
-            validate_form(loads("(mentioned? foo)"), TRIGGER_BUILTINS, scope={"msg", "self"})
+            validate_form(loads("(addressed-to-me? foo)"), TRIGGER_BUILTINS, scope={"msg", "self"})
 
     def test_let_extends_scope(self):
-        validate_form(loads("(let [x msg] (mentioned? x))"), TRIGGER_BUILTINS, scope={"msg"})
+        validate_form(loads("(let [x msg] (addressed-to-me? x))"), TRIGGER_BUILTINS, scope={"msg"})
         with pytest.raises(EvalError, match="undefined symbol: y"):
-            validate_form(loads("(let [x 1] (mentioned? y))"), TRIGGER_BUILTINS, scope={"msg"})
+            validate_form(loads("(let [x 1] (addressed-to-me? y))"), TRIGGER_BUILTINS, scope={"msg"})
 
 
 class TestBuiltins:
-    def test_mentioned_by_name_and_id(self):
-        assert eval_form(loads("(mentioned? msg)"), _env(_msg(mentions=["小特"])), TRIGGER_BUILTINS)
-        assert eval_form(loads("(mentioned? msg)"), _env(_msg(mentions=["a-001"])), TRIGGER_BUILTINS)
+    def test_mentioned_builtin_removed(self):
+        # mentioned? retired with the mail model: it fails as unknown function
+        with pytest.raises(EvalError, match="unknown function: mentioned?"):
+            eval_form(loads("(mentioned? msg)"), _env(_mail()), TRIGGER_BUILTINS)
+
+    def test_addressed_to_me(self):
+        # my address in To -> addressed to me
+        assert eval_form(
+            loads("(addressed-to-me? msg)"), _env(_mail(to=[_SELF_ADDRESS])), TRIGGER_BUILTINS
+        )
+        # To holds someone else -> not addressed
         assert not eval_form(
-            loads("(mentioned? msg)"), _env(_msg(mentions=["别人"])), TRIGGER_BUILTINS
+            loads("(addressed-to-me? msg)"), _env(_mail(to=["other@tlon.internal"])), TRIGGER_BUILTINS
+        )
+        # CC alone is not To
+        assert not eval_form(
+            loads("(addressed-to-me? msg)"),
+            _env(_mail(to=["other@tlon.internal"], cc=[_SELF_ADDRESS])),
+            TRIGGER_BUILTINS,
         )
 
-    def test_addressed_to_me_crosstalk(self):
-        # mentions present but not me -> addressed to someone else
-        assert not eval_form(
-            loads("(addressed-to-me? msg)"), _env(_msg(mentions=["别人"])), TRIGGER_BUILTINS
-        )
-        # no mentions at all -> broadcast, not addressed
-        assert not eval_form(
-            loads("(addressed-to-me? msg)"), _env(_msg(mentions=[])), TRIGGER_BUILTINS
-        )
+    def test_cc_ed(self):
         assert eval_form(
-            loads("(addressed-to-me? msg)"), _env(_msg(mentions=["小特"])), TRIGGER_BUILTINS
+            loads("(cc-ed? msg)"),
+            _env(_mail(to=["other@tlon.internal"], cc=[_SELF_ADDRESS])),
+            TRIGGER_BUILTINS,
+        )
+        assert not eval_form(
+            loads("(cc-ed? msg)"), _env(_mail(to=[_SELF_ADDRESS])), TRIGGER_BUILTINS
         )
 
     def test_content_matches(self):
         assert eval_form(
-            loads('(content-matches? msg "。$")'), _env(_msg(content="完。")), TRIGGER_BUILTINS
+            loads('(content-matches? msg "。$")'), _env(_mail(content="完。")), TRIGGER_BUILTINS
         )
         assert not eval_form(
-            loads('(content-matches? msg "。$")'), _env(_msg(content="没完")), TRIGGER_BUILTINS
+            loads('(content-matches? msg "。$")'), _env(_mail(content="没完")), TRIGGER_BUILTINS
         )
 
     def test_content_matches_invalid_regex(self):
         with pytest.raises(EvalError, match="invalid regex"):
-            eval_form(loads('(content-matches? msg "[")'), _env(_msg()), TRIGGER_BUILTINS)
+            eval_form(loads('(content-matches? msg "[")'), _env(_mail()), TRIGGER_BUILTINS)
 
     def test_contains(self):
         assert eval_form(loads('(contains? [1 2 3] 2)'), {}, TRIGGER_BUILTINS)
@@ -247,6 +258,7 @@ class _FakeAgent:
     def __init__(self, trigger: TriggerSpec):
         self.id = _SELF["id"]
         self.name = _SELF["name"]
+        self.address = _SELF_ADDRESS
         self.spec = SimpleNamespace(trigger=trigger)
 
 
@@ -257,58 +269,59 @@ class TestTriggerEvaluatorExpression:
         )
 
     def test_expression_hit(self):
-        evaluator = self._evaluator("(mentioned? msg)")
-        assert evaluator.should_respond(_msg(mentions=["小特"])) is True
+        evaluator = self._evaluator("(addressed-to-me? msg)")
+        assert evaluator.should_respond(_mail(to=[_SELF_ADDRESS])) is True
 
     def test_expression_miss(self):
         evaluator = self._evaluator("(addressed-to-me? msg)")
-        assert evaluator.should_respond(_msg(mentions=["别人"])) is False
+        assert evaluator.should_respond(_mail(to=["other@tlon.internal"])) is False
 
     def test_expression_combined_conditions(self):
         evaluator = self._evaluator(
             '(and (addressed-to-me? msg) (content-matches? msg "？$"))'
         )
-        assert evaluator.should_respond(_msg(content="@小特 你怎么看？", mentions=["小特"])) is True
-        assert evaluator.should_respond(_msg(content="@小特 你好。", mentions=["小特"])) is False
+        assert evaluator.should_respond(_mail(content="你怎么看？", to=[_SELF_ADDRESS])) is True
+        assert evaluator.should_respond(_mail(content="你好。", to=[_SELF_ADDRESS])) is False
 
     def test_eval_failure_safe_default(self):
         evaluator = self._evaluator('(content-matches? msg "[")')
         with patch("tlon.agents.trigger.logger") as mock_logger:
-            assert evaluator.should_respond(_msg(mentions=["小特"])) is False
+            assert evaluator.should_respond(_mail(to=[_SELF_ADDRESS])) is False
         warning_events = [c.args[0] for c in mock_logger.warning.call_args_list]
         assert "trigger_eval_failed" in warning_events
 
     def test_when_takes_precedence_over_data_fields(self):
-        # data fields would fire (mentioned), but the expression says no
-        evaluator = self._evaluator("(= 1 2)", on_mention=True, proactive=True)
-        assert evaluator.should_respond(_msg(mentions=["小特"])) is False
+        # data mode would fire (addressed), but the expression says no
+        evaluator = self._evaluator("(= 1 2)", on_mention=True)
+        assert evaluator.should_respond(_mail(to=[_SELF_ADDRESS])) is False
 
-    def test_own_message_skipped_in_expression_mode(self):
+    def test_own_mail_skipped_in_expression_mode(self):
         evaluator = self._evaluator("(= 1 1)")
-        assert evaluator.should_respond(_msg(sender_id="a-001", sender_type="agent")) is False
+        assert evaluator.should_respond(_mail(from_address=_SELF_ADDRESS)) is False
 
-    def test_data_mode_unchanged(self):
-        agent = _FakeAgent(TriggerSpec(on_mention=True, proactive=False))
+    def test_data_mode_to_or_cc(self):
+        agent = _FakeAgent(TriggerSpec(on_mention=True))
         evaluator = TriggerEvaluator(agent)
-        assert evaluator.should_respond(_msg(mentions=["小特"])) is True
-        assert evaluator.should_respond(_msg(mentions=[])) is False
+        assert evaluator.should_respond(_mail(to=[_SELF_ADDRESS])) is True
+        assert evaluator.should_respond(_mail(cc=[_SELF_ADDRESS])) is True
+        assert evaluator.should_respond(_mail(to=["other@tlon.internal"])) is False
 
-        proactive = TriggerEvaluator(_FakeAgent(TriggerSpec(on_mention=False, proactive=True)))
-        assert proactive.should_respond(_msg(mentions=[])) is True
+        deaf = TriggerEvaluator(_FakeAgent(TriggerSpec(on_mention=False)))
+        assert deaf.should_respond(_mail(to=[_SELF_ADDRESS])) is False
 
 
 class TestSpecTriggerExpression:
     def test_expression_mode_accepted(self):
         spec = AgentSpec.from_edn(
-            loads('{:version 1 :trigger (and (addressed-to-me? msg) (mentioned? msg))}')
+            loads('{:version 1 :trigger (and (addressed-to-me? msg) (cc-ed? msg))}')
         )
         assert isinstance(spec.trigger.when, Form)
 
-    def test_sender_type_builtin_removed(self):
-        # sender-type was deprecated in 阶段 C and is now removed: specs
-        # referencing it fail validation at load time.
-        with pytest.raises(SpecValidationError, match="sender-type"):
-            AgentSpec.from_edn(loads('{:version 1 :trigger (= (sender-type msg) "human")}'))
+    def test_mentioned_builtin_removed(self):
+        # mentioned? retired with the mail model (R1b): specs referencing
+        # it fail validation at load time.
+        with pytest.raises(SpecValidationError, match="mentioned?"):
+            AgentSpec.from_edn(loads('{:version 1 :trigger (mentioned? msg)}'))
 
     def test_data_mode_when_is_none(self):
         spec = AgentSpec.from_edn(loads("{:version 1 :trigger {:on-mention true}}"))
@@ -321,8 +334,8 @@ class TestSpecTriggerExpression:
 
     def test_undefined_symbol_rejected_at_load(self):
         with pytest.raises(SpecValidationError, match="undefined symbol"):
-            AgentSpec.from_edn(loads("{:version 1 :trigger (mentioned? foo)}"))
+            AgentSpec.from_edn(loads("{:version 1 :trigger (addressed-to-me? foo)}"))
 
     def test_dict_roundtrip_preserves_when(self):
-        spec = AgentSpec.from_edn(loads("{:version 1 :trigger (mentioned? msg)}"))
+        spec = AgentSpec.from_edn(loads("{:version 1 :trigger (addressed-to-me? msg)}"))
         assert AgentSpec.from_dict(spec.to_dict()).trigger.when == spec.trigger.when

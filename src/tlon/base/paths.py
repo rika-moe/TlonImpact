@@ -7,7 +7,6 @@ Layout:
     ~/.tlon/
     ├── shared/
     │   ├── chat_history/
-    │   │   └── messages.jsonl
     │   ├── traces/
     │   │   └── trace-{uuid}.jsonl
     │   └── logs/

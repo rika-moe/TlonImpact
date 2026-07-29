@@ -30,7 +30,7 @@ class EventBus(Component):
         >>> def handler(event):
         ...     print(f"Received: {event.type}")
         >>>
-        >>> sub_id = bus.subscribe(EventType.MESSAGE_NEW, handler)
+        >>> sub_id = bus.subscribe(EventType.MAIL_NEW, handler)
         >>> await bus.publish(Event(...))
         >>>
         >>> bus.unsubscribe(sub_id)

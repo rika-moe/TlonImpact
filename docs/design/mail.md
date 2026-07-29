@@ -1,7 +1,34 @@
 # 邮件模型设计（Republic of Letters）
 
-> 状态: 📐 设计已确认，待实施
+> 状态: ✅ R1a（Mail 模型 + Mailbox 存储）/ R1b（管线大切换）已实施（2026-07-28）
 > 日期: 2026-07-28
+
+---
+
+## 实施状态（R1b 落地记录）
+
+R1a/R1b 已完成：`Mail`/`Mailbox`（R1a）、投递器 `MailDelivery`
+（`organization/mail/delivery.py`）、agent 收信（MAIL_DELIVERED 入队 +
+boot 未读扫描 + 每封一 session + 完成 mark_read）、`_send_mail` 回复头
+继承、`sendEmail` 工具、trigger/proactive 退役、context_builder 邮箱
+历史、wake 重投递管道整套删除、receptionist 移除。
+
+**R1b 桥接偏差（R2 时收敛，勿当最终语义）**：
+
+- **@ 解析保留**：WS 协议仍是 content+mentions，`human_adapter.speak`
+  把 `@名字` 解析为收件人地址；零可解析收件人 → 报错给客户端、不发布。
+  R2 由 WS `to` 字段替代（mail.md 删除清单中此项归 R2）。
+- **REST `/history` 返回空列表**（房间历史断代不迁移）；R2 由 `/inbox`
+  替代。WS 初始 `history` 消息同样为空。
+- **推送未按收件人过滤**：NotificationService 继续全量推送
+  （chat 组事件模式 `"message.*"` → `"mail.*"`），TUI 按 mail id 去重；
+  按收件人过滤归 R2。
+- **TUI 最小适配**：渲染 MAIL_DELIVERED（From/To/content 映射到现有
+  显示结构）；收件人输入 UI 归 R2。
+- `AgentConfig.proactive` 字段保留但 deprecated ignored（旧 agent.yaml
+  可继续加载）；spec 旧 key（`:proactive` / `:room-history`）静默忽略；
+  引用 `mentioned?` 的旧 trigger 表达式加载失败 → 回退 DefaultSpec
+  并记 `agent_spec_load_failed` 日志。
 
 ---
 

@@ -242,7 +242,7 @@ class TlonClient:
 
         Args:
             filters: Filter dictionary, e.g.:
-                - {"event_types": ["message.new", "agent.response"]}
+                - {"event_types": ["mail.delivered", "agent.response"]}
                 - {"trace_id": "trace-abc-123"}
                 - {"exclude_event_types": ["agent.llm_request"]}
                 - {"agent": "dev-*"}

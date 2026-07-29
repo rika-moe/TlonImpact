@@ -4,6 +4,7 @@ Verifies that:
 - _build_llm_config() merges file config with settings
 - _build_llm_config() handles None file_config
 - _start_agent() creates Agent with all 22 tools registered
+  and an injected mailbox
 """
 
 import tempfile
@@ -77,10 +78,6 @@ class MockAgentInfoProvider:
     def get_all_ids(self) -> set[str]:
         return set(self._configs.keys())
 
-    def is_proactive(self, agent_id: str) -> bool:
-        config = self.get_config(agent_id)
-        return config.proactive if config else False
-
 
 class TestAgentRegistryStartAgent:
     @pytest.fixture
@@ -92,22 +89,17 @@ class TestAgentRegistryStartAgent:
         return bus
 
     @pytest.fixture
-    def mock_message_store(self):
-        return MagicMock()
-
-    @pytest.fixture
     def temp_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             yield TlonPaths(home=tmpdir)
 
     @pytest.fixture
-    def registry(self, mock_event_bus, mock_message_store, temp_paths):
+    def registry(self, mock_event_bus, temp_paths):
         config = AgentConfig(id="a-001", name="林知遥")
         provider = MockAgentInfoProvider({"a-001": config})
         reg = AgentRegistry(
             event_bus=mock_event_bus,
             agent_info_provider=provider,
-            message_store=mock_message_store,
             paths=temp_paths,
         )
         reg.register("a-001")
@@ -139,7 +131,7 @@ class TestAgentRegistryStartAgent:
             "readFile",
             "writeFile",
             "editFile",
-            "sendMessage",
+            "sendEmail",
             "rememberFact",
             "searchMemories",
             "compact",
@@ -183,6 +175,8 @@ class TestAgentRegistryStartAgent:
         assert agent.task_manager is mock_tm
         assert agent.tool_executor is not None
         assert isinstance(agent.tool_executor, ToolExecutor)
+        # The mailbox is assembled from the agent's home and injected
+        assert agent.mailbox is not None
 
     @pytest.mark.asyncio
     async def test_start_agent_creates_own_tool_executor(self, registry, mock_event_bus):

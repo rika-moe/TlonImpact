@@ -151,19 +151,18 @@ class TestKnowledgeContext:
     @pytest.mark.asyncio
     async def test_build_context_includes_knowledge(self):
         """User prompt should include knowledge as first user message."""
-        from tlon.organization.messaging.message import Message
+        from tlon.organization.mail.mail import Mail
 
         agent = _make_agent()
         block = MagicMock()
         block.to_openai_message.return_value = {"content": "历史记忆内容"}
         agent.memory.build_context_blocks = AsyncMock(return_value=[block])
-        agent.message_store = MagicMock()
-        agent.message_store.get_history = AsyncMock(return_value=[])
+        agent.mailbox = MagicMock()
+        agent.mailbox.recent = AsyncMock(return_value=[])
 
-        msg = Message.create(
-            sender_id="user-001",
-            sender_name="用户",
-            sender_type="human",
+        msg = Mail.create(
+            from_address="user-001@tlon.internal",
+            to=["a-001@tlon.internal"],
             content="你好",
         )
         context = await agent._build_context(msg)
@@ -189,7 +188,7 @@ class TestToolExecutionObservability:
             side_effect=[
                 LLMResponse(
                     content=None,
-                    tool_calls=[ToolCall(id="tc-001", function_name="sendMessage",
+                    tool_calls=[ToolCall(id="tc-001", function_name="sendEmail",
                                          arguments={"content": "Done!", "is_complete": True})],
                 ),
             ]
@@ -199,16 +198,18 @@ class TestToolExecutionObservability:
         async def _mock_execute(name, args):
             return ToolResult(
                 success=True,
-                data={"content": "Done!", "is_complete": True, "mentions": []},
+                data={"content": "Done!", "is_complete": True},
             )
 
         agent.tool_executor = MagicMock()
         agent.tool_executor.get_tool_definitions = MagicMock(return_value=[])
         agent.tool_executor.execute = _mock_execute
 
-        from tlon.organization.messaging.message import Message
+        from tlon.organization.mail.mail import Mail
 
-        msg = Message.create(sender_id="u1", sender_name="U", sender_type="human", content="hi")
+        msg = Mail.create(
+            from_address="u1@tlon.internal", to=["a-001@tlon.internal"], content="hi"
+        )
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             await agent._process_message(msg)
 
@@ -237,7 +238,7 @@ class TestToolExecutionObservability:
                 ),
                 LLMResponse(
                     content=None,
-                    tool_calls=[ToolCall(id="tc-002", function_name="sendMessage",
+                    tool_calls=[ToolCall(id="tc-002", function_name="sendEmail",
                                          arguments={"content": "Done!", "is_complete": True})],
                 ),
             ]
@@ -249,16 +250,18 @@ class TestToolExecutionObservability:
                 raise RuntimeError("boom")
             return ToolResult(
                 success=True,
-                data={"content": "Done!", "is_complete": True, "mentions": []},
+                data={"content": "Done!", "is_complete": True},
             )
 
         agent.tool_executor = MagicMock()
         agent.tool_executor.get_tool_definitions = MagicMock(return_value=[])
         agent.tool_executor.execute = _mock_execute
 
-        from tlon.organization.messaging.message import Message
+        from tlon.organization.mail.mail import Mail
 
-        msg = Message.create(sender_id="u1", sender_name="U", sender_type="human", content="hi")
+        msg = Mail.create(
+            from_address="u1@tlon.internal", to=["a-001@tlon.internal"], content="hi"
+        )
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
             await agent._process_message(msg)
 

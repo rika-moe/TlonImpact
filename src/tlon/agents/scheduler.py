@@ -18,7 +18,7 @@ from structlog.contextvars import bound_contextvars
 
 from tlon.agents.session import AgentSession, SessionState
 from tlon.base.logger import get_logger
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 
 if TYPE_CHECKING:
     from tlon.agents.agent import Agent
@@ -80,34 +80,34 @@ class SessionScheduler:
         with bound_contextvars(agent_id=agent.id):
             logger.info("agent_main_loop_started")
             sessions: dict[str, AgentSession] = {}
-            session_messages: dict[str, Message] = {}
+            session_mails: dict[str, Mail] = {}
             self._sessions = sessions
             self._last_activity_at = datetime.now()
 
             while agent._worker_running:
-                # ── 0. Proactive memory triggers (no message required) ──
+                # ── 0. Proactive memory triggers (no mail required) ──
                 await agent.memory.check_idle_timeout()
                 await agent._check_reflection_trigger()
 
-                # ── 1. New messages ──
+                # ── 1. New mail — one session per mail ──
                 try:
-                    msg, carrier = agent._message_queue.get_nowait()
-                    sid = f"{agent.id}-{msg.id}"
-                    session = AgentSession(sid, msg.content, carrier=carrier)
+                    mail, carrier = agent._mail_queue.get_nowait()
+                    sid = f"{agent.id}-{mail.id}"
+                    session = AgentSession(sid, mail.content, carrier=carrier)
                     sessions[sid] = session
-                    session_messages[sid] = msg
+                    session_mails[sid] = mail
                     self._last_activity_at = datetime.now()
-                    logger.info("session_started", session_id=sid, content=msg.content)
+                    logger.info("session_started", session_id=sid, content=mail.content)
                 except asyncio.QueueEmpty:
-                    # No new messages — if no sessions either, block
+                    # No new mail — if no sessions either, block
                     if not sessions:
                         try:
-                            msg, carrier = await asyncio.wait_for(
-                                agent._message_queue.get(), timeout=0.5
+                            mail, carrier = await asyncio.wait_for(
+                                agent._mail_queue.get(), timeout=0.5
                             )
-                            sid = f"{agent.id}-{msg.id}"
-                            sessions[sid] = AgentSession(sid, msg.content, carrier=carrier)
-                            session_messages[sid] = msg
+                            sid = f"{agent.id}-{mail.id}"
+                            sessions[sid] = AgentSession(sid, mail.content, carrier=carrier)
+                            session_mails[sid] = mail
                             self._last_activity_at = datetime.now()
                         except TimeoutError:
                             continue
@@ -115,7 +115,7 @@ class SessionScheduler:
                 # ── 2 & 3. Advance sessions ──
                 for sid in list(sessions.keys()):
                     session = sessions[sid]
-                    if session.id not in session_messages:
+                    if session.id not in session_mails:
                         continue
 
                     # Stale sessions (stuck ACTIVE/WAITING) are abandoned
@@ -135,19 +135,20 @@ class SessionScheduler:
                                 if session.state == SessionState.WAITING:
                                     await agent._collect_session_results(session)
                                 elif session.state == SessionState.ACTIVE:
-                                    msg = session_messages[sid]
-                                    await agent._step_session(session, msg)
+                                    mail = session_mails[sid]
+                                    await agent._step_session(session, mail)
                         except Exception as e:
                             logger.error(
                                 "session_error", session_id=sid, error=str(e), exc_info=True
                             )
                             session.mark_completed()
 
-                    # ── 4. Cleanup ──
+                    # ── 4. Cleanup: the mail is processed, cursor advances ──
                     if session.is_completed:
                         await session.cancel_pending()
+                        await agent._mark_mail_read(session_mails.get(sid))
                         del sessions[sid]
-                        session_messages.pop(sid, None)
+                        session_mails.pop(sid, None)
                         self._last_activity_at = datetime.now()
 
                 # ── 5. Agent state derives from live sessions ──

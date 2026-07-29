@@ -8,7 +8,7 @@ Key Design: Device and Component are orthogonal concepts.
 - Component = "Managed by ComponentRegistry" (initialize, shutdown, DAG)
 
 A class can be:
-- Only Component: MessageStore (no EventBus interaction)
+- Only Component: FileTraceStore (no EventBus interaction)
 - Only Device: TraceCollector (runtime event handler, not registry-managed)
 - Both: NotificationService (registry-managed + EventBus interaction)
 
@@ -21,7 +21,7 @@ Example:
     # Both Component and Device
     class NotificationService(Component, Device):
         async def initialize(self) -> None:
-            self.subscribe(EventType.MESSAGE_NEW, self._on_message)
+            self.subscribe(EventType.MAIL_NEW, self._on_message)
             await super().initialize()  # Component initialize
 
         async def shutdown(self) -> None:
@@ -110,7 +110,7 @@ class Device:
             Subscription ID for manual unsubscribe
 
         Example:
-            >>> self.subscribe(EventType.MESSAGE_NEW, self._on_message)
+            >>> self.subscribe(EventType.MAIL_NEW, self._on_message)
         """
         sub_id = self._event_bus.subscribe(event_type, handler)
         internal_id = f"{event_type.value}:{len(self._subscriptions)}"

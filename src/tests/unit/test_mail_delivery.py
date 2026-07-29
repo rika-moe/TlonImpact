@@ -1,0 +1,297 @@
+"""Tests for the mail delivery component (organization/mail/delivery.py).
+
+Covers:
+- delivery to valid agent / online-human recipients (inbox + sent files,
+  one MAIL_DELIVERED per recipient)
+- all@tlon.internal expansion (all registered agents + online humans)
+- unknown recipients collected into a postmaster bounce to the sender
+- senders without a mailbox (postmaster) skip the sent copy
+"""
+
+import tempfile
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from tlon.base.config import AgentConfig
+from tlon.base.events.event import Event, EventType
+from tlon.base.paths import TlonPaths
+from tlon.organization.mail.delivery import MailDelivery
+from tlon.organization.mail.mail import (
+    ALL_ADDRESS,
+    POSTMASTER_ADDRESS,
+    Mail,
+    address_for_member,
+)
+from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.messaging.human_adapter import AdapterManager
+
+
+class MockAgentInfoProvider:
+    """Mock AgentInfoProvider for testing."""
+
+    def __init__(self, configs: dict[str, AgentConfig]):
+        self._configs = configs
+
+    def get_config(self, agent_id: str) -> AgentConfig | None:
+        return self._configs.get(agent_id)
+
+    def get_all_ids(self) -> set[str]:
+        return set(self._configs.keys())
+
+
+def _make_bus() -> MagicMock:
+    bus = MagicMock()
+    bus.publish = AsyncMock()
+    bus.subscribe = MagicMock(side_effect=lambda *_args, **_kwargs: "sub-x")
+    bus.unsubscribe = MagicMock()
+    return bus
+
+
+@pytest.fixture
+def temp_paths():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield TlonPaths(home=tmpdir)
+
+
+def _make_delivery(
+    temp_paths: TlonPaths,
+    configs: dict[str, AgentConfig] | None = None,
+    online_humans: list[str] | None = None,
+):
+    bus = _make_bus()
+    provider = MockAgentInfoProvider(configs or {})
+    adapter_manager = AdapterManager(event_bus=bus, agent_info_provider=provider)
+    for username in online_humans or []:
+        adapter_manager._adapters[username] = MagicMock(
+            member_id=f"human:{username}",
+            username=username,
+            address=address_for_member(f"human:{username}"),
+            session_count=1,
+        )
+    delivery = MailDelivery(
+        event_bus=bus,
+        agent_info_provider=provider,
+        adapter_manager=adapter_manager,
+        tlon_paths=temp_paths,
+    )
+    return delivery, bus
+
+
+def _mail_event(mail: Mail) -> Event:
+    return Event(type=EventType.MAIL_NEW, payload=mail, source="test")
+
+
+def _delivered(bus: MagicMock) -> list[Event]:
+    return [
+        call.args[0]
+        for call in bus.publish.await_args_list
+        if call.args[0].type == EventType.MAIL_DELIVERED
+    ]
+
+
+class TestValidDelivery:
+    @pytest.mark.asyncio
+    async def test_agent_recipient_gets_inbox_and_event(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="alice@tlon.internal",
+            to=["a-001@tlon.internal"],
+            content="你好",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        # One MAIL_DELIVERED, targeted at the agent member id
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "a-001"
+        assert events[0].payload["mail"].id == mail.id
+
+        # Inbox persisted
+        inbox = Mailbox(temp_paths.member_mail_dir("a-001"))
+        unread = await inbox.unread()
+        assert [m.id for m in unread] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_sender_sent_copy_for_known_sender(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal"],
+            content="汇报",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        sent = Mailbox(temp_paths.member_mail_dir("a-001"))
+        recent = await sent.recent()
+        assert [m.id for m in recent] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_human_recipient_resolves_to_human_member_id(self, temp_paths):
+        delivery, bus = _make_delivery(temp_paths, online_humans=["alice"])
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["alice@tlon.internal"],
+            content="hi",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "human:alice"
+
+        inbox = Mailbox(temp_paths.member_mail_dir("human:alice"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_cc_recipients_also_get_delivery(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal"],
+            cc=["a-001@tlon.internal"],
+            content="抄送",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        recipients = {e.payload["recipient"] for e in _delivered(bus)}
+        assert recipients == {"a-001", "a-002"}
+
+
+class TestAllExpansion:
+    @pytest.mark.asyncio
+    async def test_all_address_expands_to_every_member(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(
+            temp_paths, configs, online_humans=["alice"]
+        )
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=[ALL_ADDRESS],
+            content="全员通知",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        recipients = {e.payload["recipient"] for e in _delivered(bus)}
+        assert recipients == {"a-001", "a-002", "human:alice"}
+
+        # Every member's inbox got the mail
+        for member_id in ("a-001", "a-002", "human:alice"):
+            inbox = Mailbox(temp_paths.member_mail_dir(member_id))
+            assert [m.id for m in await inbox.unread()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_all_mixed_with_direct_recipient_dedupes(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="alice@tlon.internal",
+            to=[ALL_ADDRESS, "a-001@tlon.internal"],
+            content="去重",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        recipients = [e.payload["recipient"] for e in _delivered(bus)]
+        assert recipients == ["a-001"]
+
+
+class TestBounce:
+    @pytest.mark.asyncio
+    async def test_unknown_recipient_bounces_to_sender(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["ghost@tlon.internal"],
+            content="有人吗",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        # Exactly one MAIL_DELIVERED: the bounce, to the sender
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "a-001"
+        bounce: Mail = events[0].payload["mail"]
+        assert bounce.from_address == POSTMASTER_ADDRESS
+        assert "ghost@tlon.internal" in bounce.content
+        assert bounce.in_reply_to == mail.id
+        assert bounce.thread_id == mail.thread_id
+
+        # Bounce landed in the sender's inbox, original mail did not
+        inbox = Mailbox(temp_paths.member_mail_dir("a-001"))
+        assert [m.id for m in await inbox.unread()] == [bounce.id]
+
+    @pytest.mark.asyncio
+    async def test_mixed_valid_and_unknown_delivers_and_bounces(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal", "ghost@tlon.internal"],
+            content="混合",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        by_recipient = {e.payload["recipient"]: e.payload["mail"] for e in events}
+        assert by_recipient["a-002"].id == mail.id
+        assert by_recipient["a-001"].from_address == POSTMASTER_ADDRESS
+
+    @pytest.mark.asyncio
+    async def test_unknown_sender_gets_no_sent_copy_and_no_bounce(self, temp_paths):
+        delivery, bus = _make_delivery(temp_paths)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="nobody@tlon.internal",
+            to=["ghost@tlon.internal"],
+            content="无处可去",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        assert _delivered(bus) == []
+        assert not (temp_paths.tlon_home() / "nobody").exists()
+
+
+class TestPayloadGuard:
+    @pytest.mark.asyncio
+    async def test_non_mail_payload_is_ignored(self, temp_paths):
+        delivery, bus = _make_delivery(temp_paths)
+        await delivery.initialize()
+
+        await delivery._on_mail_new(
+            Event(type=EventType.MAIL_NEW, payload={"not": "mail"}, source="x")
+        )
+
+        assert _delivered(bus) == []

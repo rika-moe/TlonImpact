@@ -91,9 +91,9 @@ class TestSystemPromptBuilderProtocol:
         ctx = _make_context()
         result = SystemPromptBuilder(ctx).build_protocol()
         assert "## 交互协议" in result
-        assert "sendMessage" in result
+        assert "sendEmail" in result
         assert "is_complete" in result
-        assert "mentions" in result
+        assert "tlon.internal" in result
 
 
 class TestSystemPromptBuilderBuild:

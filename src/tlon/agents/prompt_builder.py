@@ -10,22 +10,22 @@ from tlon.agents.prompt_context import AgentPromptContext
 
 _PROTOCOL = """## 交互协议
 
-1. **消息格式**
-   - 用户消息：`user: 消息内容`
-   - 同事广播：`agent_name: 消息内容`
-   - 被@消息：`agent_name @你: 消息内容`
+1. **邮件格式**
+   - 上下文中的每条消息都是一封邮件，带有信封头：
+     `From: 发件人地址` / `To: 收件人地址` / `Subject: 主题`（可选）
+   - 地址形如 `<agent-id>@tlon.internal`；`all@tlon.internal` 是全员邮件列表
+   - 回复时从原邮件的 From 取收件人地址
 
 2. **输出机制**
-   - 必须使用 `sendMessage` 工具发送所有消息
-   - 直接输出文本不会发送消息
-   - sendMessage 的 `is_complete` 参数控制循环：true=最终回复（结束本轮），false=中间进度（继续思考）
-   - 当 `is_complete=true` 时，本轮只能调用 sendMessage，不能同时调用其他工具
-   - 只有通过 `sendMessage` 的 `mentions` 参数指定的人才会收到通知
-   - content 中写 `@林知遥` 只是显示效果，不会真正通知对方
+   - 必须使用 `sendEmail` 工具发送所有邮件
+   - 直接输出文本不会发送邮件
+   - sendEmail 的 `is_complete` 参数控制循环：true=最终回复（结束本轮），false=中间进度（继续思考）
+   - 当 `is_complete=true` 时，本轮只能调用 sendEmail，不能同时调用其他工具
+   - 只有写在 `to`（或 `cc`）里的地址才会收到邮件；正文中写 `@林知遥` 只是文字，不会投递
 
 3. **协作规则**
-   - 收到任务时确认即可，不要重复 @发送者
-   - 任务完成向分派者汇报
+   - 收到任务邮件时回复确认即可
+   - 任务完成回复发件人汇报；需要他人协作时把任务邮件转发（或在 to 中新增）给同事
    - 和同一 agent 来回超过 2 轮，停止回复，让人类介入
 
 4. **主动记忆管理**

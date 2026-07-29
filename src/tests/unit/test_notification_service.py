@@ -59,8 +59,8 @@ class TestShouldSendToSession:
         """Chat mode: messages, agent lifecycle highlights, system events."""
         session = make_session(mode="chat")
 
-        assert service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
-        assert service._should_send_to_session(session, make_event(EventType.MESSAGE_DELIVERED))
+        assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
+        assert service._should_send_to_session(session, make_event(EventType.MAIL_DELIVERED))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STARTED))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STOPPED))
@@ -83,7 +83,7 @@ class TestShouldSendToSession:
         assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_LLM_REQUEST))
 
-        assert not service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
+        assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
         assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE))
         assert not service._should_send_to_session(session, make_event(EventType.SYSTEM_STARTUP))
 
@@ -112,16 +112,16 @@ class TestShouldSendToSession:
         """trace_id filter also matches a trace_id inside a dict payload."""
         session = make_session(mode="event", filters={"trace_id": "trace-abc"})
 
-        event = make_event(EventType.MESSAGE_NEW, payload={"trace_id": "trace-abc"})
+        event = make_event(EventType.MAIL_NEW, payload={"trace_id": "trace-abc"})
         assert service._should_send_to_session(session, event)
 
     def test_event_types_include_list(self, service):
         """event_types restricts to the listed types."""
         session = make_session(
-            mode="event", filters={"event_types": ["message.new", "agent.response"]}
+            mode="event", filters={"event_types": ["mail.new", "agent.response"]}
         )
 
-        assert service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
+        assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
         assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE))
@@ -131,7 +131,7 @@ class TestShouldSendToSession:
         session = make_session(mode="event", filters={"event_types": ["agent.*"]})
 
         assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
-        assert not service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
+        assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
 
     def test_exclude_event_types(self, service):
         """exclude_event_types drops the listed types."""
@@ -144,7 +144,7 @@ class TestShouldSendToSession:
         assert not service._should_send_to_session(
             session, make_event(EventType.AGENT_LLM_RESPONSE)
         )
-        assert service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
+        assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
 
     def test_agent_source_filter(self, service):
@@ -152,10 +152,10 @@ class TestShouldSendToSession:
         session = make_session(mode="event", filters={"agent": "dev-*"})
 
         assert service._should_send_to_session(
-            session, make_event(EventType.MESSAGE_NEW, source="dev-001")
+            session, make_event(EventType.MAIL_NEW, source="dev-001")
         )
         assert not service._should_send_to_session(
-            session, make_event(EventType.MESSAGE_NEW, source="pm-001")
+            session, make_event(EventType.MAIL_NEW, source="pm-001")
         )
 
     def test_filters_combine_with_mode(self, service):
@@ -164,8 +164,8 @@ class TestShouldSendToSession:
 
         # agent.thinking passes the event_types filter but not chat mode
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
-        # message.new passes chat mode but not the event_types filter
-        assert not service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
+        # mail.new passes chat mode but not the event_types filter
+        assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
 
     def test_filters_combine_with_each_other(self, service):
         """Multiple filter dimensions are ANDed."""
@@ -176,7 +176,7 @@ class TestShouldSendToSession:
 
         assert service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_LLM_REQUEST))
-        assert not service._should_send_to_session(session, make_event(EventType.MESSAGE_NEW))
+        assert not service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
 
 
 class TestSessionManagerFilters:
@@ -207,5 +207,5 @@ class TestSessionManagerFilters:
         manager = SessionManager()
         session = await manager.create_session("tui", filters={"trace_id": "t-1"})
 
-        assert manager.update_session_filters(session.id, {"event_types": ["message.new"]})
-        assert session.filters == {"event_types": ["message.new"]}
+        assert manager.update_session_filters(session.id, {"event_types": ["mail.new"]})
+        assert session.filters == {"event_types": ["mail.new"]}

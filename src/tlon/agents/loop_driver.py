@@ -14,7 +14,7 @@ from tlon.agents.session import AgentSession, SessionState
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.logger import get_logger
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ class LoopDriver:
     def __init__(self, agent: "Agent"):
         self._agent = agent
 
-    async def step_session(self, session: AgentSession, message: Message) -> None:
+    async def step_session(self, session: AgentSession, mail: Mail) -> None:
         """Advance a session by one ReAct step: think + dispatch tools.
 
         The session's state transitions ACTIVE -> WAITING (tools running).
@@ -39,8 +39,8 @@ class LoopDriver:
 
         # Build context on first call (after LLM error: skip rebuild)
         if not session.context:
-            session.trigger_message = message
-            context = await agent._build_context(message)
+            session.trigger_message = mail
+            context = await agent._build_context(mail)
             session.context = context
             agent._logger.debug(
                 "session_context_built", session_id=session.id, message_count=len(context)
@@ -54,9 +54,11 @@ class LoopDriver:
             agent._logger.warning(
                 "session_max_iterations", session_id=session.id, max_iterations=max_iterations
             )
-            await agent._send_message(
-                "思考时间过长，请简化您的问题。",
-                mentions=[message.sender_id] if message.sender_type == "human" else [],
+            await agent._send_mail(
+                to=[mail.from_address],
+                content="思考时间过长，请简化您的问题。",
+                in_reply_to=mail.id,
+                thread_id=mail.thread_id,
             )
             session.mark_completed()
             return
@@ -79,9 +81,11 @@ class LoopDriver:
                     error_count=session.error_count,
                     max_errors=max_errors,
                 )
-                await agent._send_message(
-                    "抱歉，处理消息时出现了错误。",
-                    mentions=[message.sender_id] if message.sender_type == "human" else [],
+                await agent._send_mail(
+                    to=[mail.from_address],
+                    content="抱歉，处理邮件时出现了错误。",
+                    in_reply_to=mail.id,
+                    thread_id=mail.thread_id,
                 )
                 session.mark_completed()
             return
@@ -93,15 +97,15 @@ class LoopDriver:
             return
 
         # Conflict detection
-        send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendMessage"]
-        other_calls = [tc for tc in response.tool_calls if tc.function_name != "sendMessage"]
+        send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendEmail"]
+        other_calls = [tc for tc in response.tool_calls if tc.function_name != "sendEmail"]
         has_complete = any(tc.arguments.get("is_complete") for tc in send_calls)
 
         if has_complete and other_calls:
             session.context.append({
                 "role": "user",
                 "content": (
-                    "冲突：当 sendMessage 的 is_complete 设为 true 时，"
+                    "冲突：当 sendEmail 的 is_complete 设为 true 时，"
                     "不得与其他工具同时调用。\n"
                     "请重新规划。"
                 ),
@@ -125,7 +129,7 @@ class LoopDriver:
     async def collect_session_results(self, session: AgentSession) -> None:
         """Collect completed background tools for a WAITING session.
 
-        Processes results, handles sendMessage, and transitions state
+        Processes results, handles sendEmail, and transitions state
         back to ACTIVE (continue thinking) or COMPLETED (done).
         """
         agent = self._agent
@@ -151,10 +155,23 @@ class LoopDriver:
                     source=agent.id,
                 )
 
-            if tc.function_name == "sendMessage" and result.success:
+            if tc.function_name == "sendEmail" and result.success:
                 content = result.data.get("content", "")
-                mentions = result.data.get("mentions", [])
-                await agent._send_message(content, mentions)
+                trigger_mail = session.trigger_message
+                # Reply semantics: an explicit `to` wins; otherwise the
+                # reply goes back to the sender of the trigger mail, with
+                # thread headers inherited from it.
+                to = result.data.get("to") or (
+                    [trigger_mail.from_address] if trigger_mail else []
+                )
+                await agent._send_mail(
+                    to=to,
+                    cc=result.data.get("cc"),
+                    subject=result.data.get("subject"),
+                    content=content,
+                    in_reply_to=trigger_mail.id if trigger_mail else None,
+                    thread_id=trigger_mail.thread_id if trigger_mail else None,
+                )
                 if result.data.get("is_complete"):
                     is_complete = True
                     final_content = content
@@ -215,8 +232,8 @@ class LoopDriver:
 
     # ── Synchronous message processing (for tests) ──
 
-    async def process_message(self, message: Message) -> None:
-        """Process a single message synchronously via inline step/collect loop.
+    async def process_message(self, mail: Mail) -> None:
+        """Process a single mail synchronously via inline step/collect loop.
 
         Used by tests. Creates a session and drives step_session /
         collect_session_results until completion.
@@ -224,7 +241,7 @@ class LoopDriver:
         agent = self._agent
         session = AgentSession(
             session_id=f"{agent.id}-msg-{uuid.uuid4().hex[:8]}",
-            trigger_content=message.content,
+            trigger_content=mail.content,
         )
 
         agent._derive_state({session.id: session})
@@ -241,11 +258,12 @@ class LoopDriver:
                             await asyncio.gather(*pending, return_exceptions=True)
                             await agent._collect_session_results(session)
                     elif session.state == SessionState.ACTIVE:
-                        await agent._step_session(session, message)
+                        await agent._step_session(session, mail)
                     else:
                         break
         finally:
             await session.cancel_pending()
+            await agent._mark_mail_read(mail)
             agent._derive_state({})
 
     async def _add_no_tool_reminder(
@@ -262,9 +280,9 @@ class LoopDriver:
                     "role": "user",
                     "content": (
                         "注意：你必须调用至少一个工具，禁止直接输出文本。\n"
-                        "请使用 sendMessage 工具发送消息：\n"
-                        "- 最终回复：sendMessage(content='你的回复', is_complete=true)\n"
-                        "- 中间进度：sendMessage(content='进度报告', is_complete=false)，"
+                        "请使用 sendEmail 工具发送邮件：\n"
+                        "- 最终回复：sendEmail(to=['发件人地址'], content='你的回复', is_complete=true)\n"
+                        "- 中间进度：sendEmail(to=['发件人地址'], content='进度报告', is_complete=false)，"
                         "然后继续调用其他工具。"
                     ),
                 }
@@ -275,7 +293,7 @@ class LoopDriver:
                     "role": "user",
                     "content": (
                         "你必须调用至少一个工具。"
-                        "请使用 sendMessage 工具来发送消息，并设置 is_complete 参数：\n"
+                        "请使用 sendEmail 工具发送邮件，并设置 is_complete 参数：\n"
                         "- is_complete=true：最终回复，结束本轮\n"
                         "- is_complete=false：中间进度，继续思考"
                     ),

@@ -88,7 +88,6 @@ async def _make_registry(
     registry = AgentRegistry(
         event_bus=bus,
         agent_info_provider=provider,
-        message_store=MagicMock(),
         paths=tlon_paths,
     )
     for agent_id in configs:

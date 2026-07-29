@@ -26,8 +26,6 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.base.config import AgentConfig, DockerRuntimeConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.paths import TlonPaths
-from tlon.organization.messaging.message import Message
-from tlon.organization.messaging.router import RoutedMessage
 from tlon.sandbox.docker_runtime import DockerRuntime
 
 TRACE_ID = "00000000000000000000000000000001"
@@ -45,10 +43,6 @@ class MockAgentInfoProvider:
 
     def get_all_ids(self) -> set[str]:
         return set(self._configs.keys())
-
-    def is_proactive(self, agent_id: str) -> bool:
-        config = self.get_config(agent_id)
-        return config.proactive if config else False
 
 
 def _make_bus() -> MagicMock:
@@ -69,41 +63,24 @@ def _make_running_agent(active_sessions: int = 0, idle_seconds: float = 0.0) -> 
     return agent
 
 
-def _routed_event(
-    target_ids: list[str],
-    mention_target_ids: list[str],
-    content: str = "hi",
-) -> Event:
-    message = Message.create(
-        sender_id="human",
-        sender_name="用户",
-        sender_type="human",
-        content=content,
-        mentions=mention_target_ids,
-    )
-    routed = RoutedMessage(
-        original=message,
-        target_ids=target_ids,
-        routing_reason="explicit_mentions" if mention_target_ids else "proactive_broadcast",
-        mention_target_ids=mention_target_ids,
-    )
-    return Event(
-        type=EventType.MESSAGE_ROUTED,
-        payload=routed,
-        source="message_router",
-        trace_id=TRACE_ID,
-        span_id=SPAN_ID,
-    )
+def _request_event(request: StartRequest | StopRequest, traced: bool = False) -> Event:
+    """Wrap a lifecycle request in the bus event Adam would publish.
 
-
-def _request_event(request: StartRequest | StopRequest) -> Event:
-    """Wrap a lifecycle request in the bus event Adam would publish."""
+    Wake requests carry the delivering event's trace carrier (Adam copies
+    it over), so fulfillment observability joins the mail's trace tree.
+    """
     event_type = (
         EventType.AGENT_START_REQUEST
         if isinstance(request, StartRequest)
         else EventType.AGENT_STOP_REQUEST
     )
-    return Event(type=event_type, payload=request, source="adam")
+    return Event(
+        type=event_type,
+        payload=request,
+        source="adam",
+        trace_id=TRACE_ID if traced else None,
+        span_id=SPAN_ID if traced else None,
+    )
 
 
 @pytest.fixture
@@ -119,7 +96,6 @@ def _make_registry(
     registry = AgentRegistry(
         event_bus=bus,
         agent_info_provider=MockAgentInfoProvider(configs),
-        message_store=MagicMock(),
         paths=temp_paths,
     )
     return registry, bus
@@ -184,10 +160,10 @@ class TestBootSplit:
 
 class TestStartRequestExecution:
     """AGENT_START_REQUEST starts agents idempotently; wake requests
-    publish WAKING/WOKEN and redeliver the trigger event."""
+    publish WAKING/WOKEN (no redelivery — the mailbox is the queue)."""
 
     @pytest.mark.asyncio
-    async def test_wake_request_starts_and_redelivers(self, temp_paths):
+    async def test_wake_request_starts_and_publishes_woken(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
@@ -199,9 +175,8 @@ class TestStartRequestExecution:
             registry._agents[agent_id] = woken
             return woken
 
-        trigger = _routed_event(["a-001"], ["a-001"])
         request_event = _request_event(
-            StartRequest(agent_id="a-001", reason="wake", trigger_event=trigger)
+            StartRequest(agent_id="a-001", reason="wake"), traced=True
         )
 
         with patch.object(registry, "_start_agent", side_effect=fake_start) as mock_start:
@@ -212,16 +187,13 @@ class TestStartRequestExecution:
 
         published = [call.args[0] for call in bus.publish.await_args_list]
         published_types = [e.type for e in published]
-        # Observability events carry the original trace carrier
+        # Observability events carry the request event's trace carrier
         assert EventType.AGENT_WAKING in published_types
         assert EventType.AGENT_WOKEN in published_types
         woken_event = next(e for e in published if e.type == EventType.AGENT_WOKEN)
         assert woken_event.payload["agent_id"] == "a-001"
         assert "wake_duration_seconds" in woken_event.payload
         assert woken_event.trace_id == TRACE_ID
-        # The trigger event is re-published verbatim (same payload
-        # and trace carrier) so the new agent's handler picks it up
-        assert trigger in published
 
         await registry.shutdown()
 
@@ -267,17 +239,14 @@ class TestStartRequestExecution:
             return agent
 
         # Two wake requests for the same persona dispatched back-to-back
-        trigger1 = _routed_event(["a-001"], ["a-001"], content="first")
-        trigger2 = _routed_event(["a-001"], ["a-001"], content="second")
-
         with patch.object(registry, "_start_agent", side_effect=fake_start) as mock_start:
             # No yield between the two handler calls: the second must see
             # the agent already waking and skip
             await registry._on_start_request(
-                _request_event(StartRequest("a-001", "wake", trigger1))
+                _request_event(StartRequest("a-001", "wake"))
             )
             await registry._on_start_request(
-                _request_event(StartRequest("a-001", "wake", trigger2))
+                _request_event(StartRequest("a-001", "wake"))
             )
             await asyncio.sleep(0.05)
 
@@ -287,10 +256,9 @@ class TestStartRequestExecution:
         await registry.shutdown()
 
     @pytest.mark.asyncio
-    async def test_wake_lock_serializes_and_redelivers_both(self, temp_paths):
-        """Two _fulfill_start_request calls race on the lock: one assembly,
-        both trigger events redelivered (the second event arrived while the
-        agent was down and would otherwise be lost)."""
+    async def test_wake_lock_serializes_concurrent_fulfillments(self, temp_paths):
+        """Two _fulfill_start_request calls race on the lock: exactly one
+        agent in the run table afterwards."""
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
@@ -300,28 +268,26 @@ class TestStartRequestExecution:
 
         async def fake_start(agent_id: str):
             await started.wait()  # Hold the first wake until both racers queued
-            agent = _make_running_agent()
+            agent = registry._agents.get(agent_id) or _make_running_agent()
             registry._agents[agent_id] = agent
             return agent
 
-        trigger1 = _routed_event(["a-001"], ["a-001"], content="first")
-        trigger2 = _routed_event(["a-001"], ["a-001"], content="second")
-
         with patch.object(registry, "_start_agent", side_effect=fake_start):
             task1 = asyncio.create_task(
-                registry._fulfill_start_request(StartRequest("a-001", "wake", trigger1))
+                registry._fulfill_start_request(
+                    StartRequest("a-001", "wake"), _request_event(StartRequest("a-001", "wake"))
+                )
             )
             task2 = asyncio.create_task(
-                registry._fulfill_start_request(StartRequest("a-001", "wake", trigger2))
+                registry._fulfill_start_request(
+                    StartRequest("a-001", "wake"), _request_event(StartRequest("a-001", "wake"))
+                )
             )
             await asyncio.sleep(0.05)
             started.set()
             await asyncio.gather(task1, task2)
 
         assert len(registry._agents) == 1
-        published = [call.args[0] for call in bus.publish.await_args_list]
-        assert trigger1 in published
-        assert trigger2 in published
 
         await registry.shutdown()
 
@@ -332,10 +298,9 @@ class TestStartRequestExecution:
         registry.register("a-001")
         registry._agents["a-001"] = _make_running_agent()
 
-        trigger = _routed_event(["a-001"], ["a-001"])
         with patch.object(registry, "_start_agent", new=AsyncMock()) as mock_start:
             await registry._on_start_request(
-                _request_event(StartRequest("a-001", "wake", trigger))
+                _request_event(StartRequest("a-001", "wake"))
             )
             await asyncio.sleep(0.05)
 
@@ -344,10 +309,9 @@ class TestStartRequestExecution:
     @pytest.mark.asyncio
     async def test_unknown_agent_request_is_ignored(self, temp_paths):
         registry, _bus = _make_registry({}, temp_paths)
-        trigger = _routed_event(["ghost"], ["ghost"])
         with patch.object(registry, "_start_agent", new=AsyncMock()) as mock_start:
             await registry._on_start_request(
-                _request_event(StartRequest("ghost", "wake", trigger))
+                _request_event(StartRequest("ghost", "wake"))
             )
             await asyncio.sleep(0.05)
         mock_start.assert_not_called()
@@ -359,16 +323,14 @@ class TestStartRequestExecution:
         registry.register("a-001")
         await registry.initialize()
 
-        trigger = _routed_event(["a-001"], ["a-001"])
+        request_event = _request_event(StartRequest("a-001", "wake"))
 
         with patch.object(registry, "_start_agent", new=AsyncMock(return_value=None)):
-            await registry._fulfill_start_request(StartRequest("a-001", "wake", trigger))
+            await registry._fulfill_start_request(StartRequest("a-001", "wake"), request_event)
 
         published_types = [call.args[0].type for call in bus.publish.await_args_list]
         assert EventType.AGENT_WAKE_FAILED in published_types
         assert EventType.AGENT_WOKEN not in published_types
-        # Failed wake must not redeliver (the agent cannot receive it)
-        assert trigger not in [call.args[0] for call in bus.publish.await_args_list]
         assert "a-001" not in registry._waking
 
         await registry.shutdown()
@@ -416,22 +378,16 @@ class TestStartTimeout:
             await asyncio.sleep(10)
             return None
 
-        trigger = _routed_event(["a-001"], ["a-001"])
-        request_event = _request_event(
-            StartRequest(agent_id="a-001", reason="wake", trigger_event=trigger)
-        )
+        request_event = _request_event(StartRequest(agent_id="a-001", reason="wake"))
 
         with patch.object(registry, "_start_agent", side_effect=hung_start):
             await registry._on_start_request(request_event)
             await asyncio.sleep(0.3)
 
-        published = [call.args[0] for call in bus.publish.await_args_list]
-        published_types = [e.type for e in published]
+        published_types = [call.args[0].type for call in bus.publish.await_args_list]
         assert EventType.AGENT_WAKING in published_types
         assert EventType.AGENT_WAKE_FAILED in published_types
         assert EventType.AGENT_WOKEN not in published_types
-        # No redelivery: the agent never came up
-        assert trigger not in published
 
         await registry.shutdown()
 

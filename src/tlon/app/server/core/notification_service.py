@@ -40,7 +40,7 @@ EventHandler = Callable[[Event], None]
 # Modes not listed here (e.g. "event") receive all event types.
 MODE_EVENT_PATTERNS: dict[str, tuple[str, ...]] = {
     "chat": (
-        "message.*",
+        "mail.*",
         "agent.response",
         "agent.started",
         "agent.stopped",
@@ -276,7 +276,7 @@ class NotificationService(Component, Device):
         - anything else matches exactly
 
         Args:
-            event_type: The event type string (e.g. "message.new")
+            event_type: The event type string (e.g. "mail.delivered")
             patterns: Iterable of patterns
 
         Returns:

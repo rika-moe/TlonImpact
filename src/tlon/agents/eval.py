@@ -27,7 +27,7 @@ Static validation distinguishes two purity positions
 action position must be an action form with pure arguments.
 
 Environment values are opaque to expressions: there is no attribute or
-method access syntax, so a ``Message`` in ``env`` can only be inspected
+method access syntax, so a ``Mail`` in ``env`` can only be inspected
 through builtins. ``env`` also provides ``self`` (``{"id": ..., "name":
 ...}``) which builtins read to resolve "me".
 """
@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tlon.agents.edn import Form, Symbol, dumps
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail, address_for_member
 
 DEFAULT_FUEL = 1000
 DEFAULT_MAX_DEPTH = 100
@@ -267,29 +267,33 @@ def _self_map(env: dict[str, Any]) -> dict[str, Any]:
     return self_map if isinstance(self_map, dict) else {}
 
 
-def _builtin_mentioned(env: dict[str, Any], msg: Message) -> bool:
-    me = _self_map(env)
-    return me.get("id") in msg.mentions or me.get("name") in msg.mentions
+def _my_address(env: dict[str, Any]) -> str | None:
+    """The evaluating agent's mail address, derived from ``self``."""
+    agent_id = _self_map(env).get("id")
+    return address_for_member(agent_id) if agent_id else None
 
 
-def _builtin_addressed_to_me(env: dict[str, Any], msg: Message) -> bool:
-    """Mentions are present and include me.
+def _builtin_addressed_to_me(env: dict[str, Any], msg: Mail) -> bool:
+    """My address is in the mail's To list."""
+    my_address = _my_address(env)
+    return my_address is not None and my_address in msg.to
 
-    Distinct from proactive broadcast: a message with mentions that do
-    not include me is addressed to someone else (room crosstalk).
-    """
-    return bool(msg.mentions) and _builtin_mentioned(env, msg)
+
+def _builtin_cc_ed(env: dict[str, Any], msg: Mail) -> bool:
+    """My address is in the mail's CC list."""
+    my_address = _my_address(env)
+    return my_address is not None and my_address in msg.cc
 
 
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
-    """Regex-search a Message's content or a plain string (e.g. ``result``)."""
-    if isinstance(target, Message):
+    """Regex-search a Mail's content or a plain string (e.g. ``result``)."""
+    if isinstance(target, Mail):
         content = target.content
     elif type(target) is str:
         content = target
     else:
         raise EvalError(
-            f"content-matches? expects a message or string, got {type(target).__name__}"
+            f"content-matches? expects a mail or string, got {type(target).__name__}"
         )
     if not isinstance(pattern, str):
         raise EvalError(
@@ -327,8 +331,8 @@ def _builtin_not(env: dict[str, Any], value: Any) -> bool:
 
 
 TRIGGER_BUILTINS: dict[str, Builtin] = {
-    "mentioned?": Builtin(_builtin_mentioned, pure=True),
     "addressed-to-me?": Builtin(_builtin_addressed_to_me, pure=True),
+    "cc-ed?": Builtin(_builtin_cc_ed, pure=True),
     "content-matches?": Builtin(_builtin_content_matches, pure=True),
     "contains?": Builtin(_builtin_contains, pure=True),
     "=": Builtin(_builtin_eq, pure=True),
@@ -392,22 +396,22 @@ def make_actions_builtins(collector: list[ActionRequest] | None) -> dict[str, Bu
                 name = raw_name
         _record(ActionRequest(kind="spawn", data={"prototype": prototype, "name": name}))
 
-    def _emit(env: dict[str, Any], content: Any, mentions: Any = None) -> None:
+    def _emit(env: dict[str, Any], content: Any, to: Any = None) -> None:
         if type(content) is not str:
             raise EvalError(f"emit content must be a string, got {type(content).__name__}")
         resolved: list[str] = []
-        if mentions is not None:
-            if not isinstance(mentions, (list, tuple)):
+        if to is not None:
+            if not isinstance(to, (list, tuple)):
                 raise EvalError(
-                    f"emit mentions must be a vector, got {type(mentions).__name__}"
+                    f"emit recipients must be a vector, got {type(to).__name__}"
                 )
-            for item in mentions:
+            for item in to:
                 if not isinstance(item, str):
                     raise EvalError(
-                        f"emit mention must be a string, got {type(item).__name__}"
+                        f"emit recipient must be a string, got {type(item).__name__}"
                     )
                 resolved.append(str(item))
-        _record(ActionRequest(kind="emit", data={"content": content, "mentions": resolved}))
+        _record(ActionRequest(kind="emit", data={"content": content, "to": resolved}))
 
     return {
         **TRIGGER_BUILTINS,

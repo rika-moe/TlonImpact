@@ -29,17 +29,15 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 
 
-def _msg(content: str = "hello", mentions: list[str] | None = None) -> Message:
-    return Message.create(
-        sender_id="u-1",
-        sender_name="User",
-        sender_type="human",
+def _msg(content: str = "hello") -> Mail:
+    return Mail.create(
+        from_address="u-1@tlon.internal",
+        to=["a-001@tlon.internal"],
         content=content,
-        mentions=mentions or [],
     )
 
 
@@ -50,7 +48,7 @@ _ENV = {
 }
 
 
-def _env(msg: Message | None = None, result: str = "本轮处理完毕") -> dict:
+def _env(msg: Mail | None = None, result: str = "本轮处理完毕") -> dict:
     return {**_ENV, "msg": msg if msg is not None else _msg(), "result": result}
 
 
@@ -83,7 +81,7 @@ def _spec_with_actions(*sources: str) -> AgentSpec:
     )
 
 
-def _make_session(message: Message | None = None) -> AgentSession:
+def _make_session(message: Mail | None = None) -> AgentSession:
     session = AgentSession(session_id="sess-1", trigger_content="hello")
     session.trigger_message = message if message is not None else _msg()
     return session
@@ -176,7 +174,7 @@ class TestEvaluationPurity:
         assert result is None
         assert collector == [
             ActionRequest(kind="spawn", data={"prototype": "archivist", "name": "归档员"}),
-            ActionRequest(kind="emit", data={"content": "本轮处理完毕", "mentions": []}),
+            ActionRequest(kind="emit", data={"content": "本轮处理完毕", "to": []}),
         ]
 
     def test_condition_false_collects_nothing(self):
@@ -241,16 +239,36 @@ class TestExecution:
             spec=_spec_with_actions('(when (content-matches? result "不存在") (spawn "a"))'),
             registry=registry,
         )
-        agent._send_message = AsyncMock()
+        agent._send_mail = AsyncMock()
         await OnCompleteRunner(agent).run(_make_session(), "本轮处理完毕")
         registry.spawn_contractor.assert_not_awaited()
-        agent._send_message.assert_not_awaited()
+        agent._send_mail.assert_not_awaited()
 
-    async def test_emit_sends_message(self):
-        agent = _make_agent(spec=_spec_with_actions('(emit "本轮处理完毕" ["u-1"])'))
-        agent._send_message = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "result")
-        agent._send_message.assert_awaited_once_with("本轮处理完毕", ["u-1"])
+    async def test_emit_sends_mail(self):
+        agent = _make_agent(spec=_spec_with_actions('(emit "本轮处理完毕" ["u-1@tlon.internal"])'))
+        agent._send_mail = AsyncMock()
+        session = _make_session()
+        await OnCompleteRunner(agent).run(session, "result")
+        agent._send_mail.assert_awaited_once_with(
+            to=["u-1@tlon.internal"],
+            content="本轮处理完毕",
+            in_reply_to=session.trigger_message.id,
+            thread_id=session.trigger_message.thread_id,
+        )
+
+    async def test_emit_without_recipients_replies_to_sender(self):
+        """An emit with an empty recipient vector replies to the trigger
+        mail's sender (thread headers inherited)."""
+        agent = _make_agent(spec=_spec_with_actions('(emit "收到" [])'))
+        agent._send_mail = AsyncMock()
+        session = _make_session()
+        await OnCompleteRunner(agent).run(session, "result")
+        agent._send_mail.assert_awaited_once_with(
+            to=["u-1@tlon.internal"],
+            content="收到",
+            in_reply_to=session.trigger_message.id,
+            thread_id=session.trigger_message.thread_id,
+        )
 
     async def test_spawn_without_name_generates_default(self):
         registry = MagicMock()
@@ -262,9 +280,9 @@ class TestExecution:
 
     async def test_no_actions_is_noop(self):
         agent = _make_agent(spec=AgentSpec())
-        agent._send_message = AsyncMock()
+        agent._send_mail = AsyncMock()
         await OnCompleteRunner(agent).run(_make_session(), "result")
-        agent._send_message.assert_not_awaited()
+        agent._send_mail.assert_not_awaited()
 
 
 class TestIsolation:
@@ -275,9 +293,15 @@ class TestIsolation:
             spec=_spec_with_actions('(spawn "a")', '(emit "still sent" [])'),
             registry=registry,
         )
-        agent._send_message = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "result")  # no raise
-        agent._send_message.assert_awaited_once_with("still sent", [])
+        agent._send_mail = AsyncMock()
+        session = _make_session()
+        await OnCompleteRunner(agent).run(session, "result")  # no raise
+        agent._send_mail.assert_awaited_once_with(
+            to=["u-1@tlon.internal"],
+            content="still sent",
+            in_reply_to=session.trigger_message.id,
+            thread_id=session.trigger_message.thread_id,
+        )
 
     async def test_eval_failure_only_logged(self):
         # A runtime-only failure (bad regex) in one form does not stop the
@@ -289,15 +313,27 @@ class TestIsolation:
             ),
             registry=MagicMock(),
         )
-        agent._send_message = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "result")  # no raise
-        agent._send_message.assert_awaited_once_with("still sent", [])
+        agent._send_mail = AsyncMock()
+        session = _make_session()
+        await OnCompleteRunner(agent).run(session, "result")  # no raise
+        agent._send_mail.assert_awaited_once_with(
+            to=["u-1@tlon.internal"],
+            content="still sent",
+            in_reply_to=session.trigger_message.id,
+            thread_id=session.trigger_message.thread_id,
+        )
 
     async def test_spawn_without_registry_logged_not_raised(self):
         agent = _make_agent(spec=_spec_with_actions('(spawn "a")', '(emit "ok" [])'))
-        agent._send_message = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "result")  # no raise
-        agent._send_message.assert_awaited_once_with("ok", [])
+        agent._send_mail = AsyncMock()
+        session = _make_session()
+        await OnCompleteRunner(agent).run(session, "result")  # no raise
+        agent._send_mail.assert_awaited_once_with(
+            to=["u-1@tlon.internal"],
+            content="ok",
+            in_reply_to=session.trigger_message.id,
+            thread_id=session.trigger_message.thread_id,
+        )
 
     async def test_untrusted_prototype_rejected_and_logged(self):
         registry = MagicMock()
@@ -308,23 +344,29 @@ class TestIsolation:
             spec=_spec_with_actions('(spawn "staged-proto")', '(emit "ok" [])'),
             registry=registry,
         )
-        agent._send_message = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "result")  # no raise
+        agent._send_mail = AsyncMock()
+        session = _make_session()
+        await OnCompleteRunner(agent).run(session, "result")  # no raise
         registry.spawn_contractor.assert_awaited_once()
-        agent._send_message.assert_awaited_once_with("ok", [])
+        agent._send_mail.assert_awaited_once_with(
+            to=["u-1@tlon.internal"],
+            content="ok",
+            in_reply_to=session.trigger_message.id,
+            thread_id=session.trigger_message.thread_id,
+        )
 
 
 class TestLoopDriverIntegration:
     async def test_session_completion_runs_actions_once(self):
-        """A sendMessage(is_complete=true) round triggers the actions once."""
+        """A sendEmail(is_complete=true) round triggers the actions once."""
         llm = MagicMock()
         llm.chat = AsyncMock(return_value=LLMResponse(
             content=None,
             tool_calls=[
                 ToolCall(
                     id="tc-1",
-                    function_name="sendMessage",
-                    arguments={"content": "Done!", "is_complete": True, "mentions": []},
+                    function_name="sendEmail",
+                    arguments={"content": "Done!", "is_complete": True},
                 )
             ],
         ))
@@ -341,10 +383,10 @@ class TestLoopDriverIntegration:
         )
 
         mock_tool = MagicMock()
-        mock_tool.name = "sendMessage"
+        mock_tool.name = "sendEmail"
         mock_tool.execute = AsyncMock(return_value=ToolResult(
             success=True,
-            data={"content": "Done!", "is_complete": True, "mentions": []},
+            data={"content": "Done!", "is_complete": True},
         ))
         agent.tool_executor.register_tool(mock_tool)
 
@@ -362,7 +404,7 @@ class TestLoopDriverIntegration:
         message_events = [
             call
             for call in agent.event_bus.publish.await_args_list
-            if call.args[0].type == EventType.MESSAGE_NEW
+            if call.args[0].type == EventType.MAIL_NEW
         ]
         assert len(message_events) == 2
         contents = {call.args[0].payload.content for call in message_events}
@@ -375,18 +417,18 @@ class TestLoopDriverIntegration:
             tool_calls=[
                 ToolCall(
                     id="tc-1",
-                    function_name="sendMessage",
-                    arguments={"content": "Done!", "is_complete": True, "mentions": []},
+                    function_name="sendEmail",
+                    arguments={"content": "Done!", "is_complete": True},
                 )
             ],
         ))
         agent = _make_agent(llm_client=llm)
 
         mock_tool = MagicMock()
-        mock_tool.name = "sendMessage"
+        mock_tool.name = "sendEmail"
         mock_tool.execute = AsyncMock(return_value=ToolResult(
             success=True,
-            data={"content": "Done!", "is_complete": True, "mentions": []},
+            data={"content": "Done!", "is_complete": True},
         ))
         agent.tool_executor.register_tool(mock_tool)
 
@@ -395,6 +437,6 @@ class TestLoopDriverIntegration:
         message_events = [
             call
             for call in agent.event_bus.publish.await_args_list
-            if call.args[0].type == EventType.MESSAGE_NEW
+            if call.args[0].type == EventType.MAIL_NEW
         ]
         assert len(message_events) == 1

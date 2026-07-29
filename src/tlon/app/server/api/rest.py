@@ -259,29 +259,19 @@ class RESTAPIHandler:
         return self._json_response(config)
 
     async def handle_history(self, request: web.Request) -> web.Response:
-        """GET /history - Get message history.
+        """GET /history - Message history (retired with the mail model, R1b).
 
-        Query Parameters:
-            limit: Maximum number of messages (default: 100, max: 1000)
-            before: Message ID to get messages before
+        The shared room log (messages.jsonl) is gone; per-member mailboxes
+        replaced it. This endpoint keeps its shape but always returns an
+        empty list — R2 will expose the caller's own inbox at ``/inbox``.
 
         Returns:
-            List of messages
+            An empty message list
         """
-        try:
-            limit = int(request.query.get("limit", 100))
-            limit = min(limit, 1000)  # Cap at 1000
-        except ValueError:
-            limit = 100
-
-        before_id = request.query.get("before")
-
-        messages = await self.client_gateway.get_history(limit, before_id)
-
         return self._json_response(
             {
-                "messages": [msg.to_dict() for msg in messages],
-                "count": len(messages),
+                "messages": [],
+                "count": 0,
             }
         )
 

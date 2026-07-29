@@ -39,11 +39,6 @@ class AgentInfoProvider(ABC):
         """Get all agent IDs."""
         pass
 
-    @abstractmethod
-    def is_proactive(self, agent_id: str) -> bool:
-        """Check if an agent is proactive."""
-        pass
-
     # ---- Optional write capabilities (stage 6b spawn/stop) ----
     # Concrete providers that back a mutable config store (ConfigService)
     # override these; the defaults report "unsupported" so read-only
@@ -146,9 +141,11 @@ class AgentConfig(BaseModel):
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
+    # Deprecated and ignored (R1b mail model): proactive routing is retired;
+    # the field stays so existing agent.yaml files keep loading.
     proactive: bool = False
     # Activation policy: "always" starts at boot and never sleeps;
-    # "lazy" registers without starting, wakes on explicit @mention and
+    # "lazy" registers without starting, wakes on incoming mail and
     # sleeps after `idle_timeout_seconds` of inactivity (scale-to-zero).
     activation: Literal["always", "lazy"] = "always"
     # Idle seconds before a lazy agent is drained (only for activation="lazy")
@@ -335,13 +332,6 @@ class ConfigService(Component, Device, AgentInfoProvider):
     def get_all_ids(self) -> set[str]:
         """Get all agent IDs (AgentInfoProvider interface)."""
         return set(self._agents.keys())
-
-    def is_proactive(self, agent_id: str) -> bool:
-        """Check if an agent is proactive (AgentInfoProvider interface)."""
-        config = self._agents.get(agent_id)
-        if config:
-            return config.proactive
-        return False
 
     # AgentInfoProvider interface alias
     def get_config(self, agent_id: str) -> AgentConfig | None:

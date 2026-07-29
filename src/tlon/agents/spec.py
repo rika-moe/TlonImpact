@@ -7,16 +7,12 @@ serialization frontend that parses into it.
 
 Boundaries:
 
-- ``AgentConfig.proactive`` / ``max_iterations`` / ``max_consecutive_errors``
-  remain as the data source for :meth:`AgentSpec.default` (and as the
+- ``AgentConfig.max_iterations`` / ``max_consecutive_errors`` remain as
+  the data source for :meth:`AgentSpec.default` (and as the
   compatibility path when no spec file exists). ``session_timeout_seconds``
   and ``message_queue_size`` are construction-time infrastructure and stay
-  in ``AgentConfig`` — they never enter the spec.
-- The message router pre-filters proactive routing via
-  ``AgentConfig.proactive`` (router.py) *before* the spec exists in the
-  dispatch path; ``spec.trigger.proactive`` is the second gate inside the
-  agent. ``AgentSpec.default`` derives from the same config field, so the
-  two gates agree and behavior is unchanged.
+  in ``AgentConfig`` — they never enter the spec. ``AgentConfig.proactive``
+  is deprecated and ignored (proactive retired with the mail model, R1b).
 - The no-tool reminder in LoopDriver currently has no on/off switch, so
   v1 has no ``no_tool_reminder`` field — the reminder stays unconditional.
 
@@ -58,16 +54,15 @@ class SpecValidationError(ValueError):
 
 @dataclass(frozen=True)
 class TriggerSpec:
-    """When the agent fires on an inbound message.
+    """When the agent fires on an inbound mail.
 
     ``when`` is an optional L1 trigger expression (a parsed EDN Form,
     statically validated at load time against ``TRIGGER_BUILTINS``). When
-    set, it takes precedence over the data fields below; when ``None``,
-    the declarative data fields apply.
+    set, it takes precedence over the data field below; when ``None``,
+    the declarative rule applies.
     """
 
-    on_mention: bool = True  # always respond when @-mentioned
-    proactive: bool = False  # respond to unaddressed human messages
+    on_mention: bool = True  # respond when my address is in To or CC
     when: "Form | None" = None  # L1 expression mode (phase 3a)
 
 
@@ -78,7 +73,7 @@ class ContextSpec:
     persona: bool = True  # IDENTITY/SOUL/RULES + team SOUL sections
     protocol: bool = True  # framework interaction-protocol section
     knowledge: bool = True  # memory knowledge blocks injection
-    room_history: int = 20  # room history message count; 0 disables
+    mail_history: int = 20  # mailbox history mail count; 0 disables
 
 
 @dataclass(frozen=True)
@@ -141,7 +136,7 @@ class AgentSpec:
         memory_config = getattr(agent.memory, "config", None)
         return cls(
             version=SPEC_VERSION,
-            trigger=TriggerSpec(on_mention=True, proactive=agent.config.proactive),
+            trigger=TriggerSpec(on_mention=True),
             context=ContextSpec(),
             loop=LoopSpec(
                 max_iterations=agent.config.max_iterations,
@@ -187,14 +182,13 @@ class AgentSpec:
             "version": self.version,
             "trigger": {
                 "on_mention": self.trigger.on_mention,
-                "proactive": self.trigger.proactive,
                 "when": dumps(self.trigger.when) if self.trigger.when is not None else None,
             },
             "context": {
                 "persona": self.context.persona,
                 "protocol": self.context.protocol,
                 "knowledge": self.context.knowledge,
-                "room_history": self.context.room_history,
+                "mail_history": self.context.mail_history,
             },
             "loop": {
                 "mode": self.loop.mode,
@@ -346,8 +340,10 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "top": frozenset({"version", "trigger", "context", "loop", "on_complete"}),
+    # Retired keys stay "known" so old spec files are silently ignored
+    # rather than warned about (proactive/room_history died with R1b).
     "trigger": frozenset({"on_mention", "proactive", "when"}),
-    "context": frozenset({"persona", "protocol", "knowledge", "room_history"}),
+    "context": frozenset({"persona", "protocol", "knowledge", "mail_history", "room_history"}),
     "loop": frozenset({"mode", "max_iterations", "tools", "max_consecutive_errors"}),
     "on_complete": frozenset({"save_interaction", "reflect", "actions"}),
     "reflect": frozenset({"enabled", "interval_minutes"}),
@@ -358,9 +354,6 @@ def _trigger_from(data: dict[str, Any], base: TriggerSpec) -> TriggerSpec:
     return TriggerSpec(
         on_mention=_read(
             data, "on_mention", base.on_mention, path=":trigger/:on-mention", kind=bool
-        ),
-        proactive=_read(
-            data, "proactive", base.proactive, path=":trigger/:proactive", kind=bool
         ),
         when=_when_from(data.get("when"), base.when),
     )
@@ -428,8 +421,9 @@ def _context_from(data: dict[str, Any], base: ContextSpec) -> ContextSpec:
         knowledge=_read(
             data, "knowledge", base.knowledge, path=":context/:knowledge", kind=bool
         ),
-        room_history=_read(
-            data, "room_history", base.room_history, path=":context/:room-history", kind=int
+        # The retired :room-history key is silently ignored (no dual-write).
+        mail_history=_read(
+            data, "mail_history", base.mail_history, path=":context/:mail-history", kind=int
         ),
     )
 

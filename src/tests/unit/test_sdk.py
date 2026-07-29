@@ -290,7 +290,7 @@ class TestBaseClient:
         handler = MagicMock()
         client.on_event(handler)
 
-        event = {"type": "message.new", "payload": {"content": "test"}}
+        event = {"type": "mail.delivered", "payload": {"content": "test"}}
 
         await client._dispatch_event(event)
 
@@ -302,7 +302,7 @@ class TestBaseClient:
         async_handler = AsyncMock()
         client.on_event(async_handler)
 
-        event = {"type": "message.new", "payload": {"content": "test"}}
+        event = {"type": "mail.delivered", "payload": {"content": "test"}}
 
         await client._dispatch_event(event)
 
@@ -519,9 +519,9 @@ class TestTerminalAdapter:
 
     def test_effective_filters_with_event_type_filter(self, adapter):
         """User event filters are passed through."""
-        adapter.set_event_filters({"event_types": ["message.new", "agent.response"]})
+        adapter.set_event_filters({"event_types": ["mail.delivered", "agent.response"]})
         assert adapter.get_effective_filters() == {
-            "event_types": ["message.new", "agent.response"]
+            "event_types": ["mail.delivered", "agent.response"]
         }
 
     def test_effective_filters_high_frequency_exclusion(self, adapter):
@@ -544,7 +544,7 @@ class TestTerminalAdapter:
     def test_clear_filters(self, adapter):
         """Test clearing filters."""
         adapter.set_trace_filter("trace-123")
-        adapter.set_event_filters({"event_types": ["message.new"]})
+        adapter.set_event_filters({"event_types": ["mail.delivered"]})
 
         adapter.clear_filters()
 
@@ -651,7 +651,7 @@ class TestTlonClient:
 
         # Simulate receiving a message event
         message_event = {
-            "type": "message.new",
+            "type": "mail.delivered",
             "payload": {"content": "Hello"},
         }
         client._on_event(message_event)

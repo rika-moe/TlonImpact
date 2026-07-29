@@ -5,7 +5,6 @@ to the client-facing subsystems:
 - Session management (via SessionManager)
 - Event notification (via NotificationService)
 - Member discovery (via MemberDirectory)
-- Message history (via MessageStore)
 
 This simplifies the API layer (WebSocketHandler, RESTHandler) by providing
 a single entry point while delegating to specialized components internally.
@@ -15,7 +14,6 @@ Architecture:
     - SessionManager (session lifecycle)
     - NotificationService (event pushing)
     - MemberDirectory (member aggregation)
-    - MessageStore (for history retrieval)
     - ConfigManager (for config reload support)
 
     All dependencies are injected via constructor (DAG rule).
@@ -30,8 +28,6 @@ from tlon.base.component import Component
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.member_info import MemberInfo
-from tlon.organization.messaging.message import Message
-from tlon.organization.messaging.store import MessageStore
 
 from .member_directory import MemberDirectory
 from .notification_service import NotificationService
@@ -45,8 +41,6 @@ class ClientGateway(Component):
 
     The Gateway provides a simplified, unified interface for:
     - Client session lifecycle (connect/disconnect)
-    - Message history retrieval (message publishing moved to
-      AdapterManager — see docs/design/members.md)
     - Member listing and discovery
     - Event subscription for real-time updates
 
@@ -59,7 +53,6 @@ class ClientGateway(Component):
         - session_manager: SessionManager
         - notification_service: NotificationService
         - member_directory: MemberDirectory
-        - message_store: MessageStore
         - config_manager: ConfigManager
 
     Example:
@@ -67,7 +60,6 @@ class ClientGateway(Component):
         ...     session_manager=session_manager,
         ...     notification_service=notification_service,
         ...     member_directory=member_directory,
-        ...     message_store=message_store,
         ...     config_manager=config_manager,
         ...     data_dir=data_dir,
         ...     host=host,
@@ -86,7 +78,6 @@ class ClientGateway(Component):
         notification_service: NotificationService,
         member_directory: MemberDirectory,
         # Additional dependencies
-        message_store: MessageStore,
         config_manager: Any,  # ConfigManager for reload support
         # Configuration
         data_dir: Path,
@@ -101,7 +92,6 @@ class ClientGateway(Component):
             session_manager: Session lifecycle manager
             notification_service: Event notification service
             member_directory: Member discovery service
-            message_store: Message storage
             config_manager: Configuration manager
             data_dir: Directory for persistence
             host: Server host
@@ -113,7 +103,6 @@ class ClientGateway(Component):
         self._session_manager = session_manager
         self._notifications = notification_service
         self._member_directory = member_directory
-        self._message_store = message_store
         self._config_manager = config_manager
 
         # Server configuration
@@ -255,20 +244,6 @@ class ClientGateway(Component):
             True if updated successfully
         """
         return self._session_manager.update_session_filters(session_id, filters)
-
-    # ==================== Message Operations ====================
-
-    async def get_history(self, limit: int = 100, before_id: str | None = None) -> list[Message]:
-        """Get chat history.
-
-        Args:
-            limit: Maximum number of messages
-            before_id: Return messages before this ID
-
-        Returns:
-            List of messages
-        """
-        return await self._message_store.get_history(limit, before_id)
 
     # ==================== Member Operations ====================
 

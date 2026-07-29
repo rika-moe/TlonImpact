@@ -13,13 +13,13 @@ from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 
 FULL_DEFAULT_EDN = """
 {:version 1
- :trigger {:on-mention true :proactive false}
- :context {:persona true :protocol true :knowledge true :room-history 20}
+ :trigger {:on-mention true}
+ :context {:persona true :protocol true :knowledge true :mail-history 20}
  :loop {:mode :react :max-iterations 10 :tools :background :max-consecutive-errors 3}
  :on-complete {:save-interaction true :reflect {:enabled true :interval-minutes 15}}}
 """
@@ -54,14 +54,23 @@ class TestAgentSpecSemantics:
             AgentSpec.from_edn(loads('{:version 1 :loop {:max-iterations "ten"}}'))
 
     def test_bool_field_rejects_int(self):
-        with pytest.raises(SpecValidationError, match=":proactive"):
-            AgentSpec.from_edn(loads("{:version 1 :trigger {:proactive 1}}"))
+        with pytest.raises(SpecValidationError, match=":on-mention"):
+            AgentSpec.from_edn(loads("{:version 1 :trigger {:on-mention 1}}"))
 
     def test_unknown_keys_ignored(self):
         spec = AgentSpec.from_edn(
-            loads('{:version 1 :future-feature [1 2] :trigger {:proactive true :bogus 1}}')
+            loads('{:version 1 :future-feature [1 2] :trigger {:on-mention false :bogus 1}}')
         )
-        assert spec.trigger.proactive is True
+        assert spec.trigger.on_mention is False
+
+    def test_retired_keys_silently_ignored(self):
+        # :proactive and :room-history died with R1b: still accepted as
+        # known keys, but never read (no dual-write).
+        spec = AgentSpec.from_edn(
+            loads('{:version 1 :trigger {:proactive true} :context {:room-history 5}}')
+        )
+        assert not hasattr(spec.trigger, "proactive")
+        assert spec.context.mail_history == 20  # default, not the retired 5
 
     def test_top_level_must_be_map(self):
         with pytest.raises(SpecValidationError, match="top-level map"):
@@ -74,10 +83,10 @@ class TestAgentSpecSemantics:
             AgentSpec.from_edn(loads("{:version 1 :loop {:mode :plan-execute}}"))
 
     def test_partial_spec_inherits_base(self):
-        base = AgentSpec.default(_fake_agent(proactive=True))
+        base = AgentSpec.default(_fake_agent(max_iterations=7))
         spec = AgentSpec.from_edn(loads("{:version 1 :loop {:max-iterations 1}}"), base=base)
         assert spec.loop.max_iterations == 1
-        assert spec.trigger.proactive is True  # inherited from base, not reset
+        assert spec.context.mail_history == 20  # inherited from base, not reset
 
 
 # ── behavior.tlon file loading (Agent integration) ──
@@ -126,11 +135,11 @@ class TestBehaviorFileLoading:
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         _write_behavior(test_paths, "a-001", "{:version 1 :loop {:max-iterations 1}}")
         agent = _make_agent(
-            config=AgentConfig(id="a-001", name="TestAgent", proactive=True, max_iterations=7)
+            config=AgentConfig(id="a-001", name="TestAgent", max_iterations=7)
         )
         assert agent.spec.loop.max_iterations == 1
-        # Unspecified fields inherit DefaultSpec (config-derived), not static defaults
-        assert agent.spec.trigger.proactive is True
+        # Unspecified fields inherit DefaultSpec, not static overrides
+        assert agent.spec.on_complete.save_interaction is True
 
     def test_malformed_file_falls_back_to_default(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
@@ -171,8 +180,10 @@ class TestSpecDrivenBehavior:
         mock_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={}))
         agent.tool_executor.register_tool(mock_tool)
 
-        msg = Message.create(
-            sender_id="user-001", sender_name="User", sender_type="human", content="hi"
+        msg = Mail.create(
+            from_address="user-001@tlon.internal",
+            to=["a-001@tlon.internal"],
+            content="hi",
         )
         await agent._process_message(msg)
 
@@ -180,46 +191,48 @@ class TestSpecDrivenBehavior:
         message_events = [
             c
             for c in agent.event_bus.publish.await_args_list
-            if c.args[0].type == EventType.MESSAGE_NEW
+            if c.args[0].type == EventType.MAIL_NEW
         ]
         assert len(message_events) == 1
         assert "简化" in message_events[0].args[0].payload.content
         # LLM was called exactly once (second step hit the iteration limit)
         assert llm.chat.await_count == 1
 
-    async def test_trigger_proactive_overrides_config(self, tmp_path, monkeypatch):
-        """behavior.tlon {:trigger {:proactive false}} wins over config.proactive."""
+    async def test_trigger_on_mention_gate(self, tmp_path, monkeypatch):
+        """behavior.tlon {:trigger {:on-mention false}} mutes the agent."""
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
-        _write_behavior(test_paths, "a-001", "{:version 1 :trigger {:proactive false}}")
-        agent = _make_agent(config=AgentConfig(id="a-001", name="TestAgent", proactive=True))
+        _write_behavior(test_paths, "a-001", "{:version 1 :trigger {:on-mention false}}")
+        agent = _make_agent(config=AgentConfig(id="a-001", name="TestAgent"))
 
-        human_msg = Message.create(
-            sender_id="user-001", sender_name="User", sender_type="human", content="hello"
+        addressed = Mail.create(
+            from_address="user-001@tlon.internal",
+            to=["a-001@tlon.internal"],
+            content="hello",
         )
-        assert agent._should_respond(human_msg) is False
+        assert agent._should_respond(addressed) is False
 
-        mention_msg = Message.create(
-            sender_id="user-001",
-            sender_name="User",
-            sender_type="human",
-            content="hi @TestAgent",
-            mentions=["TestAgent"],
+        cc_only = Mail.create(
+            from_address="user-001@tlon.internal",
+            to=["other@tlon.internal"],
+            content="hello",
         )
-        assert agent._should_respond(mention_msg) is True
+        assert agent._should_respond(cc_only) is False
 
-    async def test_room_history_limit_from_spec(self, tmp_path, monkeypatch):
+    async def test_mail_history_limit_from_spec(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
-        _write_behavior(test_paths, "a-001", "{:version 1 :context {:room-history 5}}")
+        _write_behavior(test_paths, "a-001", "{:version 1 :context {:mail-history 5}}")
 
-        message_store = AsyncMock()
-        message_store.get_history = AsyncMock(return_value=[])
-        agent = _make_agent(message_store=message_store)
+        mailbox = AsyncMock()
+        mailbox.recent = AsyncMock(return_value=[])
+        agent = _make_agent(mailbox=mailbox)
 
-        msg = Message.create(
-            sender_id="user-001", sender_name="User", sender_type="human", content="hi"
+        msg = Mail.create(
+            from_address="user-001@tlon.internal",
+            to=["a-001@tlon.internal"],
+            content="hi",
         )
         await agent._build_context(msg)
-        message_store.get_history.assert_awaited_once_with(limit=5, before_id=msg.id)
+        mailbox.recent.assert_awaited_once_with(limit=5)
 
     def test_reflect_interval_from_spec(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)

@@ -17,10 +17,9 @@ class EventType(StrEnum):
     Using str Enum for easy JSON serialization/deserialization.
     """
 
-    # Message events
-    MESSAGE_NEW = "message.new"
-    MESSAGE_ROUTED = "message.routed"  # Message after routing decision
-    MESSAGE_DELIVERED = "message.delivered"  # Confirmation of delivery
+    # Mail events (Republic of Letters, see docs/design/mail.md)
+    MAIL_NEW = "mail.new"  # A mail was sent (pre-delivery)
+    MAIL_DELIVERED = "mail.delivered"  # A mail landed in one recipient's inbox
 
     # Agent events
     AGENT_JOIN = "agent.join"

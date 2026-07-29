@@ -3,14 +3,15 @@
 Covers the three policy lines:
 - boot: initialize() issues AGENT_START_REQUEST{reason="boot"} only for
   non-lazy agents that are not already running
-- wake: MESSAGE_ROUTED mention of a sleeping agent issues
-  AGENT_START_REQUEST{reason="wake", trigger_event} with the trigger's
-  trace carrier; running agents, unknown ids and human ids never do
+- wake: MAIL_DELIVERED whose recipient is a sleeping agent issues
+  AGENT_START_REQUEST{reason="wake"} joining the delivering event's trace
+  tree; running agents, unknown ids and human recipients never do. No
+  trigger event is carried — the inbox is the durable queue.
 - drain: AGENT_IDLE facts become AGENT_STOP_REQUEST{reason="drain"}
 
 Plus an end-to-end test over a real EventBus wiring Adam + registry:
-mention → request → fulfillment → trigger redelivery, and the redelivered
-event does not trigger a second request (loop guard).
+mail delivery → request → fulfillment, and a second delivery to the
+now-running agent does not trigger a second request.
 """
 
 import asyncio
@@ -26,8 +27,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
-from tlon.organization.messaging.message import Message
-from tlon.organization.messaging.router import RoutedMessage
+from tlon.organization.mail.mail import Mail
 
 TRACE_ID = "00000000000000000000000000000001"
 SPAN_ID = "0000000000000001"
@@ -44,10 +44,6 @@ class MockAgentInfoProvider:
 
     def get_all_ids(self) -> set[str]:
         return set(self._configs.keys())
-
-    def is_proactive(self, agent_id: str) -> bool:
-        config = self.get_config(agent_id)
-        return config.proactive if config else False
 
 
 def _make_bus() -> MagicMock:
@@ -67,28 +63,16 @@ def _make_running_agent(active_sessions: int = 0, idle_seconds: float = 0.0) -> 
     return agent
 
 
-def _routed_event(
-    target_ids: list[str],
-    mention_target_ids: list[str],
-    content: str = "hi",
-) -> Event:
-    message = Message.create(
-        sender_id="human",
-        sender_name="用户",
-        sender_type="human",
+def _delivered_event(recipient: str, content: str = "hi") -> Event:
+    mail = Mail.create(
+        from_address="alice@tlon.internal",
+        to=[f"{recipient.removeprefix('human:')}@tlon.internal"],
         content=content,
-        mentions=mention_target_ids,
-    )
-    routed = RoutedMessage(
-        original=message,
-        target_ids=target_ids,
-        routing_reason="explicit_mentions" if mention_target_ids else "proactive_broadcast",
-        mention_target_ids=mention_target_ids,
     )
     return Event(
-        type=EventType.MESSAGE_ROUTED,
-        payload=routed,
-        source="message_router",
+        type=EventType.MAIL_DELIVERED,
+        payload={"mail": mail, "recipient": recipient},
+        source="mail_delivery",
         trace_id=TRACE_ID,
         span_id=SPAN_ID,
     )
@@ -107,7 +91,6 @@ def _make_registry(
     registry = AgentRegistry(
         event_bus=bus,
         agent_info_provider=MockAgentInfoProvider(configs),
-        message_store=MagicMock(),
         paths=temp_paths,
     )
     return registry, bus
@@ -128,7 +111,6 @@ class TestAdamIdentity:
 
         assert adam.member_id == "adam"
         assert adam.member_type == "script"
-        assert adam.triggers_proactive is False
         assert adam.get_state() == "offline"
 
 
@@ -153,7 +135,6 @@ class TestBootPolicy:
         assert isinstance(request, StartRequest)
         assert request.agent_id == "a-001"
         assert request.reason == "boot"
-        assert request.trigger_event is None
         assert adam.get_state() == "active"
 
     @pytest.mark.asyncio
@@ -170,15 +151,14 @@ class TestBootPolicy:
 
 class TestWakePolicy:
     @pytest.mark.asyncio
-    async def test_mention_of_sleeping_agent_requests_wake(self, temp_paths):
+    async def test_mail_to_sleeping_agent_requests_wake(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
         adam = Adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        trigger = _routed_event(["a-001"], ["a-001"])
-        await adam._on_message_routed(trigger)
+        await adam._on_mail_delivered(_delivered_event("a-001"))
 
         requests = _start_requests(bus)
         assert len(requests) == 1
@@ -187,14 +167,12 @@ class TestWakePolicy:
         assert isinstance(request, StartRequest)
         assert request.agent_id == "a-001"
         assert request.reason == "wake"
-        # The trigger is carried for redelivery after the start
-        assert request.trigger_event is trigger
-        # The request joins the trigger's trace tree
+        # The request joins the delivering event's trace tree
         assert request_event.trace_id == TRACE_ID
         assert request_event.span_id == SPAN_ID
 
     @pytest.mark.asyncio
-    async def test_mention_of_running_agent_issues_no_request(self, temp_paths):
+    async def test_mail_to_running_agent_issues_no_request(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
@@ -202,145 +180,42 @@ class TestWakePolicy:
         adam = Adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
+        await adam._on_mail_delivered(_delivered_event("a-001"))
 
         assert _start_requests(bus) == []
 
     @pytest.mark.asyncio
-    async def test_mention_of_unknown_id_issues_no_request(self, temp_paths):
+    async def test_mail_to_unknown_id_issues_no_request(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
         adam = Adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_message_routed(_routed_event(["ghost"], ["ghost"]))
+        await adam._on_mail_delivered(_delivered_event("ghost"))
 
         assert _start_requests(bus) == []
 
     @pytest.mark.asyncio
-    async def test_mention_of_human_id_issues_no_request(self, temp_paths):
+    async def test_mail_to_human_issues_no_request(self, temp_paths):
         """Human members (human:<name>) have no agent config — no wake."""
         registry, bus = _make_registry({}, temp_paths)
         adam = Adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_message_routed(_routed_event(["human:alice"], ["human:alice"]))
+        await adam._on_mail_delivered(_delivered_event("human:alice"))
 
         assert _start_requests(bus) == []
 
     @pytest.mark.asyncio
-    async def test_proactive_broadcast_issues_no_request(self, temp_paths):
-        configs = {
-            "a-001": AgentConfig(id="a-001", name="甲", activation="lazy", proactive=True),
-        }
-        registry, bus = _make_registry(configs, temp_paths)
-        registry.register("a-001")
-        adam = Adam(event_bus=bus, agent_registry=registry)
-        await adam.initialize()
-
-        # Proactive broadcast: agent is a target but not a mention target
-        await adam._on_message_routed(_routed_event(["a-001"], []))
-
-        assert _start_requests(bus) == []
-
-    @pytest.mark.asyncio
-    async def test_non_routed_payload_is_ignored(self, temp_paths):
+    async def test_non_delivery_payload_is_ignored(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
         adam = Adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_message_routed(
-            Event(type=EventType.MESSAGE_ROUTED, payload={"not": "routed"}, source="x")
+        await adam._on_mail_delivered(
+            Event(type=EventType.MAIL_DELIVERED, payload={"not": "delivery"}, source="x")
         )
 
         assert _start_requests(bus) == []
-
-
-def _new_messages(bus: MagicMock) -> list[Event]:
-    return [
-        call.args[0]
-        for call in bus.publish.await_args_list
-        if call.args[0].type == EventType.MESSAGE_NEW
-    ]
-
-
-class TestReceptionist:
-    """Wake announcements: system messages so humans don't face silence."""
-
-    @pytest.mark.asyncio
-    async def test_wake_request_posts_announcement(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
-        registry, bus = _make_registry(configs, temp_paths)
-        registry.register("a-001")
-        adam = Adam(event_bus=bus, agent_registry=registry)
-        await adam.initialize()
-
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-
-        messages = _new_messages(bus)
-        assert len(messages) == 1
-        message = messages[0].payload
-        assert isinstance(message, Message)
-        assert message.sender_id == "adam"
-        assert message.sender_type == "system"
-        assert "甲" in message.content
-        # The announcement joins the trigger's trace tree
-        assert messages[0].trace_id == TRACE_ID
-
-    @pytest.mark.asyncio
-    async def test_announcement_deduped_while_waking(self, temp_paths):
-        """Repeated mentions still request (registry dedupes) but announce once."""
-        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
-        registry, bus = _make_registry(configs, temp_paths)
-        registry.register("a-001")
-        adam = Adam(event_bus=bus, agent_registry=registry)
-        await adam.initialize()
-
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-
-        assert len(_start_requests(bus)) == 2
-        assert len(_new_messages(bus)) == 1
-
-    @pytest.mark.asyncio
-    async def test_woken_clears_dedup(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
-        registry, bus = _make_registry(configs, temp_paths)
-        registry.register("a-001")
-        adam = Adam(event_bus=bus, agent_registry=registry)
-        await adam.initialize()
-
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-        await adam._on_agent_woken(
-            Event(type=EventType.AGENT_WOKEN, payload={"agent_id": "a-001"}, source="r")
-        )
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-
-        assert len(_new_messages(bus)) == 2
-
-    @pytest.mark.asyncio
-    async def test_wake_failed_posts_failure_notice(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
-        registry, bus = _make_registry(configs, temp_paths)
-        registry.register("a-001")
-        adam = Adam(event_bus=bus, agent_registry=registry)
-        await adam.initialize()
-
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-        await adam._on_agent_wake_failed(
-            Event(
-                type=EventType.AGENT_WAKE_FAILED, payload={"agent_id": "a-001"}, source="r"
-            )
-        )
-
-        messages = _new_messages(bus)
-        assert len(messages) == 2
-        failure = messages[1].payload
-        assert failure.sender_type == "system"
-        assert "失败" in failure.content
-        assert "甲" in failure.content
-        # Dedup cleared: a later mention announces again
-        await adam._on_message_routed(_routed_event(["a-001"], ["a-001"]))
-        assert len(_new_messages(bus)) == 3
 
 
 class TestDrainPolicy:
@@ -393,7 +268,7 @@ class TestDrainPolicy:
 
         await adam.shutdown()
 
-        assert bus.unsubscribe.call_count == 4  # ROUTED + IDLE + WOKEN + WAKE_FAILED
+        assert bus.unsubscribe.call_count == 2  # MAIL_DELIVERED + AGENT_IDLE
         assert adam.get_state() == "offline"
 
 
@@ -402,7 +277,7 @@ class TestEndToEnd:
     only through request/fact events."""
 
     @pytest.mark.asyncio
-    async def test_mention_wakes_and_redelivers_once(self, temp_paths):
+    async def test_mail_wakes_sleeping_agent_once(self, temp_paths):
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         bus = EventBus()
         await bus.initialize()
@@ -412,8 +287,8 @@ class TestEndToEnd:
         adam = Adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        routed_seen: list[Event] = []
-        bus.subscribe(EventType.MESSAGE_ROUTED, lambda e: routed_seen.append(e))
+        delivered_seen: list[Event] = []
+        bus.subscribe(EventType.MAIL_DELIVERED, lambda e: delivered_seen.append(e))
         requests_seen: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, lambda e: requests_seen.append(e))
 
@@ -422,18 +297,17 @@ class TestEndToEnd:
             registry._agents[agent_id] = agent
             return agent
 
-        trigger = _routed_event(["a-001"], ["a-001"])
         with patch.object(registry, "_start_agent", side_effect=fake_start):
-            await bus.publish(trigger)
+            await bus.publish(_delivered_event("a-001"))
             await asyncio.sleep(0.3)
 
         assert "a-001" in registry._agents
-        # Original delivery + registry redelivery, same event object
-        assert len(routed_seen) == 2
-        assert routed_seen[0] is trigger
-        assert routed_seen[1] is trigger
-        # Loop guard: the redelivered mention saw the agent running and
-        # did not trigger a second request
+        assert len(requests_seen) == 1
+
+        # A second mail to the now-running agent triggers no new request
+        with patch.object(registry, "_start_agent", side_effect=fake_start):
+            await bus.publish(_delivered_event("a-001"))
+            await asyncio.sleep(0.3)
         assert len(requests_seen) == 1
 
         await adam.shutdown()

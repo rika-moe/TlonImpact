@@ -1,7 +1,7 @@
 """Context assembly for Agent.
 
-Builds the LLM conversation context (memory knowledge blocks + room
-history + current message) and the system prompt (persona files with
+Builds the LLM conversation context (memory knowledge blocks + mailbox
+history + current mail) and the system prompt (persona files with
 mtime-keyed caching). Extracted from the Agent god class; complements
 prompt_builder's pure SystemPromptBuilder with the agent-bound
 fetching/caching side.
@@ -14,12 +14,26 @@ from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
-from tlon.organization.messaging.message import Message
+from tlon.organization.mail.mail import Mail
 
 if TYPE_CHECKING:
     from tlon.agents.agent import Agent
 
 logger = get_logger(__name__)
+
+
+def _render_mail(mail: Mail) -> str:
+    """Render one mail in envelope form for the LLM context."""
+    lines = [f"From: {mail.from_address}"]
+    if mail.to:
+        lines.append(f"To: {', '.join(mail.to)}")
+    if mail.cc:
+        lines.append(f"CC: {', '.join(mail.cc)}")
+    if mail.subject:
+        lines.append(f"Subject: {mail.subject}")
+    lines.append("")
+    lines.append(mail.content)
+    return "\n".join(lines)
 
 
 class ContextBuilder:
@@ -48,8 +62,13 @@ class ContextBuilder:
             logger.warning("knowledge_context_build_failed", exc_info=True)
             return ""
 
-    async def build_context(self, current_message: Message) -> list[dict[str, Any]]:
-        """Build conversation context for LLM (sections gated by spec.context)."""
+    async def build_context(self, current_mail: Mail) -> list[dict[str, Any]]:
+        """Build conversation context for LLM (sections gated by spec.context).
+
+        The history is the agent's own correspondence (mailbox inbox +
+        sent), never a shared room log: my own mail maps to the assistant
+        role, everyone else's to the user role.
+        """
         context = []
         context_spec = self._agent.spec.context
 
@@ -58,54 +77,26 @@ class ContextBuilder:
             if knowledge:
                 context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
 
-        room_history: list[Message] = []
-        if self._agent.message_store:
-            if context_spec.room_history > 0:
-                room_history = await self._agent.message_store.get_history(
-                    limit=context_spec.room_history, before_id=current_message.id
-                )
-                logger.debug("context_history_retrieved", message_count=len(room_history))
+        history: list[Mail] = []
+        if self._agent.mailbox is not None:
+            if context_spec.mail_history > 0:
+                history = await self._agent.mailbox.recent(limit=context_spec.mail_history)
+                logger.debug("context_history_retrieved", mail_count=len(history))
         else:
-            logger.warning("message_store_missing")
+            logger.warning("mailbox_missing")
 
-        for msg in room_history:
-            if msg.sender_type == "system":
+        for mail in history:
+            if mail.id == current_mail.id:
                 continue
-            if msg.id == current_message.id:
-                continue
-            if not msg.content:
+            if not mail.content:
                 continue
 
-            if msg.sender_type == "agent":
-                if msg.sender_id == self._agent.id:
-                    context.append({"role": "assistant", "content": msg.content})
-                else:
-                    context.append(
-                        {
-                            "role": "user",
-                            "content": f"[{msg.sender_name}] {msg.content}",
-                        }
-                    )
+            if mail.from_address == self._agent.address:
+                context.append({"role": "assistant", "content": _render_mail(mail)})
             else:
-                # Human (or other non-agent) senders: display name only —
-                # the "human:" id prefix never enters the LLM context
-                context.append(
-                    {
-                        "role": "user",
-                        "content": msg.content,
-                        "name": msg.sender_name,
-                    }
-                )
+                context.append({"role": "user", "content": _render_mail(mail)})
 
-        context.append(
-            {
-                "role": "user",
-                "content": current_message.content,
-                "name": current_message.sender_name
-                if current_message.sender_type != "agent"
-                else None,
-            }
-        )
+        context.append({"role": "user", "content": _render_mail(current_mail)})
 
         return context
 

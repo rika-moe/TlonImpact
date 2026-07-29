@@ -60,21 +60,21 @@ class Component(ABC):
 
         Example:
         --------
-            class MessageRouter(Component):
+            class MailDelivery(Component):
                 def __init__(
                     self,
                     event_bus: EventBus,  # ✅ Constructor injection
-                    message_store: MessageStore,
+                    mailbox: Mailbox,
                 ):
                     super().__init__()
                     self._event_bus = event_bus  # Store as attribute
-                    self._message_store = message_store
+                    self._mailbox = mailbox
                     self._subscription_id: Optional[str] = None
 
                 async def initialize(self) -> None:
                     # ✅ Subscribe in initialize(), not __init__
                     self._subscription_id = self._event_bus.subscribe(
-                        EventType.MESSAGE_NEW, self._on_message
+                        EventType.MAIL_NEW, self._on_mail
                     )
 
                 async def shutdown(self) -> None:

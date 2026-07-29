@@ -14,8 +14,6 @@ See docs/design/members.md (阶段 D).
 
 from dataclasses import dataclass
 
-from tlon.base.events.event import Event
-
 
 @dataclass(frozen=True)
 class StartRequest:
@@ -27,17 +25,12 @@ class StartRequest:
     Attributes:
         agent_id: ID of the agent to start
         reason: Why the start was requested — "boot" (activation=="always"
-            at server startup) or "wake" (an explicit @mention routed to a
-            sleeping agent)
-        trigger_event: For reason="wake", the original MESSAGE_ROUTED event
-            that woke the agent. The registry redelivers it verbatim after
-            the agent enters the run table, and takes its trace carrier for
-            the wake observability span. None for reason="boot".
+            at server startup) or "wake" (mail delivered to a sleeping
+            agent's inbox)
     """
 
     agent_id: str
     reason: str
-    trigger_event: Event | None = None
 
 
 @dataclass(frozen=True)

@@ -74,7 +74,6 @@ async def _make_registry(
     registry = AgentRegistry(
         event_bus=bus,
         agent_info_provider=provider,
-        message_store=MagicMock(),
         paths=temp_paths,
         **budget_kwargs,
     )

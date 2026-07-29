@@ -47,9 +47,9 @@ from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 from tlon.memory.manager import MemoryManager
+from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
-from tlon.organization.messaging.message import Message
-from tlon.organization.messaging.store import MessageStore
 from tlon.tools.base import ToolResult
 from tlon.tools.tasks.manager import TaskManager
 
@@ -96,7 +96,7 @@ class Agent(Member):
         task_manager: TaskManager,
         tool_executor: ToolExecutor,
         team_members: list["AgentConfig"] | None = None,
-        message_store: MessageStore | None = None,
+        mailbox: Mailbox | None = None,
         per_tool_timeout: float = 30.0,
         spec: AgentSpec | None = None,
         registry: "AgentRegistry | None" = None,
@@ -111,7 +111,8 @@ class Agent(Member):
             task_manager: Task manager for task tracking
             tool_executor: Tool registry and executor
             team_members: List of all team member configs
-            message_store: Message store for querying history
+            mailbox: The agent's own mailbox (inbox/sent/unread cursor);
+                injected by the registry, None only in bare test setups
             per_tool_timeout: Timeout for each individual tool
             spec: Behavior spec; when None, loaded from the agent's
                 behavior.tlon file (falling back to DefaultSpec)
@@ -123,7 +124,7 @@ class Agent(Member):
 
         self.config = config
         self.team_members = team_members or []
-        self.message_store = message_store
+        self.mailbox = mailbox
 
         self.id = config.id
 
@@ -159,10 +160,12 @@ class Agent(Member):
         # Agent state
         self.state: AgentState | None = None
 
-        # Message queue for serial processing; items are (Message, trace carrier).
-        # Bounded: a full queue drops new messages rather than blocking the
-        # EventBus dispatch (see _on_message_routed).
-        self._message_queue: asyncio.Queue[tuple[Message, dict[str, str | None]]] = (
+        # Mail queue for serial processing; items are (Mail, trace carrier).
+        # Bounded: a full queue drops new mail rather than blocking the
+        # EventBus dispatch (see _on_mail_delivered). The mailbox itself is
+        # the durable queue — a dropped item stays unread and is re-enqueued
+        # on the next boot scan.
+        self._mail_queue: asyncio.Queue[tuple[Mail, dict[str, str | None]]] = (
             asyncio.Queue(maxsize=config.message_queue_size)
         )
         self._worker_task: asyncio.Task | None = None
@@ -182,9 +185,9 @@ class Agent(Member):
         return "react"
 
     @property
-    def triggers_proactive(self) -> bool:
-        """Agent messages never invite proactive responses (loop fuse)."""
-        return False
+    def address(self) -> str:
+        """The agent's mail address (``<id>@tlon.internal``)."""
+        return address_for_member(self.id)
 
     def get_state(self) -> str:
         """Get agent state as string."""
@@ -232,7 +235,18 @@ class Agent(Member):
             await self.memory.load()
             self.task_manager.load()
 
-            self.subscribe(EventType.MESSAGE_ROUTED, self._on_message_routed)
+            self.subscribe(EventType.MAIL_DELIVERED, self._on_mail_delivered)
+
+            # The mailbox is the durable queue (docs/design/mail.md): mail
+            # that arrived while the agent slept sits unread in the inbox.
+            # Scan it once at boot and enqueue each unread mail — this is
+            # the whole replacement for the old redelivery pipeline.
+            if self.mailbox is not None:
+                try:
+                    for mail in await self.mailbox.unread():
+                        self._enqueue_mail(mail, {"trace_id": None, "span_id": None})
+                except Exception as e:
+                    self._logger.error("mail_unread_scan_failed", error=str(e), exc_info=True)
 
             self._worker_running = True
             self._worker_task = asyncio.create_task(self._main_loop())
@@ -258,45 +272,47 @@ class Agent(Member):
             self._initialized = False
             logger.info("agent_shutdown_complete", agent_name=self.name)
 
-    async def _on_message_routed(self, event: Event) -> None:
-        """Handle routed message events.
+    async def _on_mail_delivered(self, event: Event) -> None:
+        """Handle mail delivered to this agent's inbox.
 
-        Runs in the EventBus dispatch context shared by all agents, so the
-        agent_id binding must be scoped (bound_contextvars resets on exit).
-
-        Backpressure: when the bounded queue is full, the new message is
-        dropped with a warning instead of blocking the EventBus dispatch.
+        The delivery component publishes one MAIL_DELIVERED per recipient;
+        only the copy addressed to this agent is considered. Runs in the
+        EventBus dispatch context shared by all agents, so the agent_id
+        binding must be scoped (bound_contextvars resets on exit).
         """
-        from tlon.organization.messaging.router import RoutedMessage
-
         with bound_contextvars(agent_id=self.id):
-            routed: RoutedMessage = event.payload
-            message = routed.original
-
-            if self.id not in routed.target_ids and "@all" not in routed.target_ids:
+            payload = event.payload
+            if not isinstance(payload, dict) or not isinstance(payload.get("mail"), Mail):
                 return
-
-            if message.sender_id == self.id:
+            if payload.get("recipient") != self.id:
                 return
-
-            if not self._should_respond(message):
-                return
-
+            mail: Mail = payload["mail"]
             carrier = {"trace_id": event.trace_id, "span_id": event.span_id}
-            try:
-                self._message_queue.put_nowait((message, carrier))
-            except asyncio.QueueFull:
-                logger.warning(
-                    "message_dropped",
-                    sender=message.sender_name,
-                    queue_size=self._message_queue.maxsize,
-                )
-                return
-            logger.debug(
-                "message_queued",
-                sender=message.sender_name,
-                routing_reason=routed.routing_reason,
+            self._enqueue_mail(mail, carrier)
+
+    def _enqueue_mail(self, mail: Mail, carrier: dict[str, str | None]) -> None:
+        """Run the trigger gate and enqueue a mail for session processing.
+
+        Backpressure: when the bounded queue is full, the mail is dropped
+        with a warning instead of blocking the EventBus dispatch. It stays
+        unread in the mailbox and is picked up again by the boot scan.
+        """
+        if mail.from_address == self.address:
+            return
+
+        if not self._should_respond(mail):
+            return
+
+        try:
+            self._mail_queue.put_nowait((mail, carrier))
+        except asyncio.QueueFull:
+            logger.warning(
+                "mail_dropped",
+                sender=mail.from_address,
+                queue_size=self._mail_queue.maxsize,
             )
+            return
+        logger.debug("mail_queued", sender=mail.from_address, mail_id=mail.id)
 
     # ── Subsystem delegates (thin seams kept for tests and orchestration) ──
 
@@ -304,17 +320,17 @@ class Agent(Member):
         """Run the session scheduling loop (see SessionScheduler)."""
         await self._scheduler.run()
 
-    def _should_respond(self, message: Message) -> bool:
-        """Determine if we should respond to this message."""
-        return self._trigger.should_respond(message)
+    def _should_respond(self, mail: Mail) -> bool:
+        """Determine if we should respond to this mail."""
+        return self._trigger.should_respond(mail)
 
-    def _is_mentioned(self, message: Message) -> bool:
-        """Check if this agent is mentioned in the message."""
-        return self._trigger.is_mentioned(message)
+    def _is_addressed(self, mail: Mail) -> bool:
+        """Check if this agent's address is in the mail's To or CC."""
+        return self._trigger.is_addressed(mail)
 
-    async def _step_session(self, session: AgentSession, message: Message) -> None:
+    async def _step_session(self, session: AgentSession, mail: Mail) -> None:
         """Advance a session by one ReAct step (see LoopDriver)."""
-        await self._loop_driver.step_session(session, message)
+        await self._loop_driver.step_session(session, mail)
 
     async def _collect_session_results(self, session: AgentSession) -> None:
         """Collect completed background tools for a WAITING session."""
@@ -324,17 +340,31 @@ class Agent(Member):
         """Execute one tool with timeout (see LoopDriver)."""
         return await self._loop_driver.execute_one_tool(tc)
 
-    async def _process_message(self, message: Message) -> None:
-        """Process a single message synchronously (used by tests)."""
-        await self._loop_driver.process_message(message)
+    async def _process_message(self, mail: Mail) -> None:
+        """Process a single mail synchronously (used by tests)."""
+        await self._loop_driver.process_message(mail)
+
+    async def _mark_mail_read(self, mail: Mail | None) -> None:
+        """Advance the inbox cursor once a mail's session has completed.
+
+        Called by the scheduler on every session completion (success,
+        error or timeout alike — the mail has been processed). Never
+        raises: a cursor failure must not break session cleanup.
+        """
+        if mail is None or self.mailbox is None:
+            return
+        try:
+            await self.mailbox.mark_read(mail.id)
+        except Exception as e:
+            self._logger.error("mail_mark_read_failed", mail_id=mail.id, error=str(e))
 
     async def _build_knowledge_context(self) -> str:
         """Build knowledge text from memory blocks."""
         return await self._context_builder.build_knowledge_context()
 
-    async def _build_context(self, current_message: Message) -> list[dict[str, Any]]:
+    async def _build_context(self, current_mail: Mail) -> list[dict[str, Any]]:
         """Build conversation context for LLM."""
-        return await self._context_builder.build_context(current_message)
+        return await self._context_builder.build_context(current_mail)
 
     async def _build_prompt_context(self) -> AgentPromptContext:
         """Build AgentPromptContext for the system prompt."""
@@ -437,43 +467,58 @@ class Agent(Member):
         if not self.spec.on_complete.save_interaction:
             return
         try:
-            msg = Message.create(
-                sender_id=self.id,
-                sender_name=self.name,
-                sender_type="agent",
-                content=final_response,
-            )
+            msg = {
+                "sender_id": self.id,
+                "sender_name": self.name,
+                "sender_type": "agent",
+                "content": final_response,
+            }
             await self.memory.add_interaction(msg, llm_response, tool_results)
             self._reflection.note_interaction()
         except Exception as e:
             self._logger.error("memory_save_failed", error=str(e), exc_info=True)
 
-    async def _send_message(self, content: str, mentions: list[str] | None = None) -> None:
-        """Send a message via EventBus, injecting the current trace context."""
+    async def _send_mail(
+        self,
+        to: list[str],
+        content: str,
+        cc: list[str] | None = None,
+        subject: str | None = None,
+        in_reply_to: str | None = None,
+        thread_id: str | None = None,
+    ) -> None:
+        """Send a mail via EventBus, injecting the current trace context.
+
+        Reply headers (``in_reply_to`` / ``thread_id``) are passed
+        explicitly by the caller, which derives them from the session's
+        trigger mail; both default to a fresh thread.
+        """
         try:
-            message = Message.create(
-                sender_id=self.id,
-                sender_name=self.name,
-                sender_type="agent",
+            mail = Mail.create(
+                from_address=self.address,
+                to=to,
+                cc=cc,
+                subject=subject,
                 content=content,
-                mentions=mentions or [],
+                in_reply_to=in_reply_to,
+                thread_id=thread_id,
             )
             with start_span(
-                "message.send",
+                "mail.send",
                 source=self.id,
-                attributes={"message_id": message.id, "mentions": message.mentions},
+                attributes={"mail_id": mail.id, "to": mail.to},
             ):
                 current = get_current_trace()
                 await self.emit(
-                    EventType.MESSAGE_NEW,
-                    payload=message,
+                    EventType.MAIL_NEW,
+                    payload=mail,
                     source=self.id,
                     trace_id=current.trace_id if current else None,
                     span_id=current.span_id if current else None,
                     parent_span_id=current.parent_span_id if current else None,
                 )
         except Exception:
-            self._logger.error("message_emit_failed", exc_info=True)
+            self._logger.error("mail_emit_failed", exc_info=True)
 
     @contextlib.contextmanager
     def _session_span(self, session: AgentSession):

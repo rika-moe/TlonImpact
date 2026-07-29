@@ -48,7 +48,7 @@ agents/
 | `AgentSpec` | 行为规约（语义唯一权威） | `agents/spec.py` |
 | `SessionScheduler` | 主循环、多 session 调度 | `agents/scheduler.py` |
 | `LoopDriver` | ReAct step/collect | `agents/loop_driver.py` |
-| `TriggerEvaluator` | 触发判断（表达式 / mention / proactive） | `agents/trigger.py` |
+| `TriggerEvaluator` | 触发判断（表达式 / To·CC 地址数据模式） | `agents/trigger.py` |
 | `OnCompleteRunner` | on-complete 动作求值 + 执行（纯求值收集，引擎执行） | `agents/on_complete.py` |
 | `eval_form` / `validate_form` | L1 受限求值 / 静态校验（图灵不完备，fuel 计量） | `agents/eval.py` |
 | `ContextBuilder` | 上下文组装、系统提示缓存 | `agents/context_builder.py` |
@@ -78,16 +78,15 @@ AgentInfoProvider 提供全集，两者分离（见 [../../design/dsl-agents.md]
   server 不再等 agent 全部起来；
 - **状态**：`get_agent_status` 对 lazy 未运行返回 `"sleeping"`，唤醒中 `"waking"`，
   always 未运行保持 `"unknown"`；
-- **Wake-on-mention（亚当决策 + registry 执行）**：亚当订阅 `MESSAGE_ROUTED`，仅对
-  `RoutedMessage.mention_target_ids`（mention 解析出的 target 子集，proactive 广播
-  不在其中）中"已知配置 + 未运行"的 agent 发
-  `AGENT_START_REQUEST{reason="wake", trigger_event=原事件}`；亚当无去重状态，
-  registry 侧幂等（running/waking 跳过）。registry 执行（`_fulfill_start_request`）：
-  per-agent `asyncio.Lock` 串行化（并发请求只装配一次，但每个在沉睡期到达的事件都会
-  重投递）→ 复用 `_start_agent` 装配 → **重发 trigger 事件对象**（同 payload、
-  同 trace carrier），新 agent 的 handler 自然拾取；唤醒后 agent 已在运行表，重发不会
-  再触发请求（防循环）。观测：`AGENT_WAKING` / `AGENT_WOKEN`（含 wake_duration）/
-  `AGENT_WAKE_FAILED` 事件 + 同名 snake_case 日志，唤醒耗时是原消息 trace 树下的
+- **Wake-on-mail（亚当决策 + registry 执行，R1b）**：亚当订阅 `MAIL_DELIVERED`，
+  仅对"已知配置 + 未运行"的收件 agent 发 `AGENT_START_REQUEST{reason="wake"}`；
+  亚当无去重状态，registry 侧幂等（running/waking 跳过）。邮件已在收件箱持久等待，
+  **不再携带 trigger_event、不做重投递**——registry 执行
+  （`_fulfill_start_request`）：per-agent `asyncio.Lock` 串行化（并发请求只装配一次）
+  → 复用 `_start_agent` 装配，新 agent boot 时扫 `mailbox.unread()` 逐封入队
+  （邮箱即队列，邮件模型见 [../../design/mail.md](../../design/mail.md)）。
+  观测：`AGENT_WAKING` / `AGENT_WOKEN`（含 wake_duration）/
+  `AGENT_WAKE_FAILED` 事件 + 同名 snake_case 日志，唤醒耗时是投递事件 trace 树下的
   `agent.wake` span（boot 路径不发这三个事件，与机制化前一致）；
 - **空闲回收（事实/决策/执行三段）**：registry 的 30s monitor 检测"lazy agent
   空闲超 `idle_timeout_seconds`（默认 600）且无存活 session" → 发**事实事件**
@@ -160,8 +159,9 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
   `Agent._save_interaction_to_memory`（`spec.on_complete.save_interaction`）、
   OnCompleteRunner（`spec.on_complete.actions`，见下文"on-complete 动作表达式"）。
 
-边界：`AgentConfig.proactive` 同时被消息路由器用作路由预筛（第一道闸，在 spec 之前），
-`spec.trigger.proactive` 是 agent 内第二道闸，DefaultSpec 保证两者一致；
+边界（R1b）：proactive 已随邮件模型整套退役——`AgentConfig.proactive` 字段保留但
+deprecated ignored（旧 agent.yaml 继续可加载），spec 侧无对应字段，旧 key
+（`:proactive` / `:room-history`）加载时静默忽略；
 `session_timeout_seconds` / `message_queue_size` 是构造期 infra，留在 `AgentConfig` 不进 spec。
 
 ### trigger 表达式（L1 受限求值器，`agents/eval.py`）
@@ -169,8 +169,8 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
 `:trigger` 节除数据 map 外可写 s-expr 表达式（edn.py 解析为 `Form`，与 vector 的 list
 类型区分）。语义刻意图灵不完备：特殊形式仅 `if` / `when` / `let` / `and` / `or`，
 无 `def` / `lambda` / `loop` / `recur`（递归无从表达）；其余形式头必须命中
-`TRIGGER_BUILTINS` 注册表——6 个纯谓词/函数（`mentioned?` / `addressed-to-me?` /
-`content-matches?` / `contains?` / `=` / `not`，`Builtin(fn, pure=True)`
+`TRIGGER_BUILTINS` 注册表——6 个纯谓词/函数（`addressed-to-me?`（To 含我）/
+`cc-ed?`（CC 含我）/`content-matches?` / `contains?` / `=` / `not`，`Builtin(fn, pure=True)`
 带纯度标记，副作用动作不注册，trigger 求值无副作用 by construction）。求值每步耗
 fuel（默认 1000，耗尽 `FuelExhaustedError`）、深度限 100（`EvalDepthError`）。
 load 时 `validate_form` 静态校验（形式头白名单 + Symbol 作用域 + `let` 形状，不执行），
@@ -181,8 +181,9 @@ env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应�
 ### on-complete 动作表达式（阶段 4b，`agents/on_complete.py`）
 
 `:on-complete` 节新增 `:actions`（vector of Form），每个 Form 是一个动作
-（`(spawn "prototype" {:name "显示名"})` / `(emit "内容" ["mention-id" ...])`，
-两动作的第二参数均可选）或 `(when 条件 动作...)`。延续"DSL 只描述，引擎执行"：
+（`(spawn "prototype" {:name "显示名"})` / `(emit "内容" ["地址" ...])`，
+两动作的第二参数均可选，emit 缺省收件人时回复触发邮件的发件人）或
+`(when 条件 动作...)`。延续"DSL 只描述，引擎执行"：
 
 - **求值保持纯**：`spawn` / `emit` 注册为 `Builtin(pure=False)`，但求值时不做任何
   副作用——校验参数后把 `ActionRequest` 数据收集进 collector
@@ -191,8 +192,8 @@ env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应�
 - **两位置纯度校验**：load 时 `validate_action_form` 静态校验——`when` 条件位只许
   纯谓词（`TRIGGER_BUILTINS`，动作在条件位直接拒绝），动作位必须是动作 Form 且参数为
   纯表达式；顶层只许动作 Form 或单层 `when`（不支持嵌套 `when`）；
-- **env**：`msg`（触发消息 Message，经 `session.trigger_message` 传递）、`result`
-  （本轮最终回复字符串）、`self`；`content-matches?` 同时接受 Message 与字符串；
+- **env**：`msg`（触发邮件 Mail，经 `session.trigger_message` 传递）、`result`
+  （本轮最终回复字符串）、`self`；`content-matches?` 同时接受 Mail 与字符串；
 - **执行点**：session 以 `is_complete` 收尾时，在 `_save_interaction_to_memory` 之后、
   `session.mark_completed()` 之前（LoopDriver 收尾处，仍在 `_session_span` 内——
   spawn 的 session 配额因此自然归因）由 `OnCompleteRunner` 执行一次；
@@ -201,7 +202,7 @@ env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应�
   （untrusted / 超预算 → 拒绝记日志，不影响 session）；链式 spawn（contractor 自己的
   on-complete 再 spawn）由 `max_spawn_depth=3` 硬顶。Agent 新增可选构造参数
   `registry`（由 `_start_agent` 注入自身；测试直建为 None，spawn 动作记日志跳过）。
-  `emit` 调 `agent._send_message`；
+  `emit` 调 `agent._send_mail`（回复头继承触发邮件）；
 - **异常隔离**：单个动作失败记 `on_complete_action_failed` error（含动作与错误）并继续
   后续动作；求值失败记 `on_complete_eval_failed`，绝不影响 session 生命周期。观测：
   `on_complete_actions` info 日志（动作数/类型），spawn 走 registry 现有
@@ -275,9 +276,11 @@ LLM 现写规约 = 未签名二进制（staging + 人类显式批准的 Gatekeep
 ## Agent 核心流程
 
 ```
-接收消息 → TriggerEvaluator.should_respond? → 入队（有界，满则丢弃）
-→ SessionScheduler 主循环：建 session → LoopDriver 步进（Think → 并发派发工具 → 收割）
-→ 发送响应 → 保存记忆 → ReflectionEngine 定期反思
+MAIL_DELIVERED（收件人=我）→ TriggerEvaluator.should_respond? → 入队（有界，满则丢弃；
+邮箱仍是持久队列，boot 时扫 mailbox.unread() 补投）
+→ SessionScheduler 主循环：每封邮件一个 session → LoopDriver 步进（Think → 并发派发工具 → 收割）
+→ sendEmail 回复（in_reply_to/thread_id 继承触发邮件）→ session 完成 → mailbox.mark_read
+→ 保存记忆 → ReflectionEngine 定期反思
 ```
 
 **Tool 执行**: Agent 直接调用 `tool_executor.execute()`（模块内聚合），非 EventBus RPC。
@@ -290,8 +293,9 @@ LLM 现写规约 = 未签名二进制（staging + 人类显式批准的 Gatekeep
 
 ## 响应判断逻辑
 
-1. 检查 @mention
-2. 检查 Agent 的 proactive 配置
+1. 自己的邮件永不响应（防自循环）
+2. `trigger.when` 表达式命中（优先级最高）
+3. 数据模式：To 或 CC 含我的地址（`trigger.on_mention` 闸门）
 
 ---
 

@@ -10,8 +10,8 @@ logger = get_logger(__name__)
 
 _BEHAVIOR_HINT = (
     "behavior 必须是 v1 schema 的 EDN map：:version 1 必填；可选 :trigger "
-    "{:on-mention bool :proactive bool}、:context {:persona :protocol :knowledge "
-    "bool :room-history int}、:loop {:mode :react :max-iterations int :tools "
+    "{:on-mention bool}、:context {:persona :protocol :knowledge "
+    "bool :mail-history int}、:loop {:mode :react :max-iterations int :tools "
     ":background :max-consecutive-errors int}、:on-complete {:save-interaction "
     "bool :reflect {:enabled bool :interval-minutes int}}"
 )

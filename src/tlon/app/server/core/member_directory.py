@@ -1,12 +1,11 @@
 """Member Directory for Tlon Server.
 
 Aggregates and provides information about all members in the system:
-- Agents (from AgentRegistry, including sleeping ones — wake-on-mention
-  depends on them being resolvable here)
+- Agents (from AgentRegistry, including sleeping ones)
 - Humans (from AdapterManager — one online adapter per username)
 
-Also owns mention resolution (agents and humans in one table) and the
-proactive-broadcast fuse (triggers_proactive), both used by MessageRouter.
+This is the address book (通讯录用): member listing and lookup only.
+Mention→address resolution lives in AdapterManager (the R1b @ bridge).
 """
 
 from tlon.agents.agent_registry import AgentRegistry
@@ -24,9 +23,6 @@ class MemberDirectory:
     - Aggregate agents from AgentRegistry
     - Aggregate online humans from AdapterManager
     - Provide member lookup
-    - Resolve @mentions to member IDs (agents + online humans, one table)
-    - Decide whether a sender's undirected message triggers proactive
-      broadcast (only online human adapters do)
 
     Note: This performs real-time aggregation on each call.
     If performance becomes an issue, consider adding caching.
@@ -132,67 +128,6 @@ class MemberDirectory:
             List of member display names
         """
         return [m.name for m in self.list_all()]
-
-    def resolve_mentions(self, mentions: list[str]) -> set[str]:
-        """Resolve mentions (names or IDs) to member IDs.
-
-        Agents and online humans are resolved in one table:
-        - agent ID direct hit, then agent config name lookup
-        - online human username or "human:<username>" form
-        - anything unresolved is kept as-is (warning logged; might be a
-          typo or an offline member — the recipient will ignore it)
-
-        Args:
-            mentions: List of mentions (names or IDs)
-
-        Returns:
-            Set of resolved member IDs
-        """
-        resolved: set[str] = set()
-
-        for mention in mentions:
-            member_id = self._resolve_agent(mention)
-            if member_id is None:
-                member_id = self._adapter_manager.resolve_human(mention)
-            if member_id is None:
-                logger.warning("mention_resolution_failed", mention=mention)
-                member_id = mention  # Keep as-is
-            resolved.add(member_id)
-
-        return resolved
-
-    def triggers_proactive(self, sender_id: str) -> bool:
-        """Whether this sender's undirected messages invite proactive responses.
-
-        Only online human adapters do; agents and unknown senders never
-        trigger proactive broadcast (loop-prevention fuse).
-
-        Args:
-            sender_id: Sender member ID
-
-        Returns:
-            True if the sender is an online human member
-        """
-        return self._adapter_manager.is_human_member(sender_id)
-
-    def _resolve_agent(self, mention: str) -> str | None:
-        """Resolve a mention to an agent ID (ID direct hit or name lookup).
-
-        Args:
-            mention: Mention to resolve
-
-        Returns:
-            The agent ID, or None if no agent matches
-        """
-        if self._agent_registry.get_config(mention) is not None:
-            return mention
-
-        for agent_id in self._agent_registry.get_all():
-            config = self._agent_registry.get_config(agent_id)
-            if config and config.name == mention:
-                return agent_id
-
-        return None
 
     def _list_agents(self) -> list[MemberInfo]:
         """Internal: List all agent members.

@@ -141,7 +141,7 @@ def test_result_field_non_ascii_preserved(tmp_path: Path) -> None:
     configure_logging(log_level="INFO", log_dir=tmp_path)
     result = {"success": True, "data": {"content": "回复：你好，世界 🌍"}}
 
-    get_logger("test.tool").info("tool_result", tool_name="sendMessage", success=True, result=result)
+    get_logger("test.tool").info("tool_result", tool_name="sendEmail", success=True, result=result)
 
     entries = _read_jsonl(tmp_path)
     assert entries[0]["result"] == result

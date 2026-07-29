@@ -222,7 +222,7 @@ class TestEndToEndSpecInheritance:
 
         assert spec.loop.max_iterations == 3
         assert spec.context.knowledge is False
-        assert spec.context.room_history == 5
+        assert spec.context.mail_history == 5
 
     def test_archivist_instance_spec(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
