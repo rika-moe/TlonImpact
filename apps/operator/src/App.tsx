@@ -6,6 +6,7 @@ import { Header } from "./components/Header.js";
 import { AgentsView } from "./views/AgentsView.js";
 import { ConfigView } from "./views/ConfigView.js";
 import { EventsView } from "./views/EventsView.js";
+import { MailView } from "./views/MailView.js";
 import { TracesView } from "./views/TracesView.js";
 import { VIEWS, type ConnectionStatus, type ViewName } from "./types.js";
 
@@ -13,17 +14,24 @@ export default function App({
   host,
   wsPort,
   restPort,
+  username,
 }: {
   host: string;
   wsPort: number;
   restPort: number;
+  username: string;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
-  const [view, setView] = useState<ViewName>("agents");
+  const [view, setView] = useState<ViewName>("mail");
   const [status, setStatus] = useState<ConnectionStatus>({ state: "connecting", attempt: 0 });
+  // While a mail form captures text input, global view-switch keys are off.
+  const [mailEditing, setMailEditing] = useState(false);
 
-  const ws = useMemo(() => new WsClient({ host, port: wsPort, clientType: "tui" }), [host, wsPort]);
+  const ws = useMemo(
+    () => new WsClient({ host, port: wsPort, clientType: "tui", username }),
+    [host, wsPort, username],
+  );
   const rest = useMemo(() => new RestClient(host, restPort), [host, restPort]);
 
   useEffect(() => {
@@ -44,7 +52,12 @@ export default function App({
   }, [ws]);
 
   useInput((input, key) => {
-    if (input === "q" || (key.ctrl && input === "c")) {
+    if (key.ctrl && input === "c") {
+      exit();
+      return;
+    }
+    if (mailEditing) return; // a mail form owns the keyboard
+    if (input === "q") {
       exit();
       return;
     }
@@ -63,15 +76,23 @@ export default function App({
 
   return (
     <Box flexDirection="column" height={rows}>
-      <Header activeView={view} status={status} server={`${host}:${wsPort}/${restPort}`} />
+      <Header
+        activeView={view}
+        status={status}
+        server={`${host}:${wsPort}/${restPort}`}
+        username={username}
+      />
       <Box flexGrow={1} flexDirection="column" marginTop={1}>
+        {view === "mail" ? (
+          <MailView ws={ws} rest={rest} username={username} onEditingChange={setMailEditing} />
+        ) : null}
         {view === "agents" ? <AgentsView rest={rest} ws={ws} /> : null}
         {view === "events" ? <EventsView ws={ws} /> : null}
         {view === "traces" ? <TracesView rest={rest} /> : null}
         {view === "config" ? <ConfigView rest={rest} /> : null}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>1-4 / tab / ←→ switch view · ↑↓ select · enter detail · r refresh · q quit</Text>
+        <Text dimColor>1-5 / tab / ←→ switch view · q quit</Text>
       </Box>
     </Box>
   );

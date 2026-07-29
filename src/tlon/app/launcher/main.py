@@ -3,13 +3,11 @@
 Provides commands (Borgesian metaphor):
 - tlon dream    : Maintain the dream (start server) - from "The Circular Ruins"
 - tlon mirror   : Create in the mirror (configure agents) - from "The Mirror and the Mask"
-- tlon chat     : Enter Congress (chat with agents)
 - tlon ops      : Open Operator console (monitor and manage)
 
 Usage:
     $ tlon dream            # Start server on default ports
     $ tlon dream --lucid    # Debug mode (lucid dream)
-    $ tlon chat             # Connect chat TUI
     $ tlon ops              # Connect operator TUI
     $ tlon mirror           # Run configuration wizard
 """
@@ -21,7 +19,6 @@ import asyncio
 import sys
 from typing import TYPE_CHECKING
 
-from tlon.app.launcher.commands.chat import run_chat
 from tlon.app.launcher.commands.dream import run_dream
 from tlon.app.launcher.commands.mirror import run_mirror
 from tlon.app.launcher.commands.ops import run_ops
@@ -46,7 +43,6 @@ def create_parser() -> argparse.ArgumentParser:
 Commands:
   %(prog)s dream            Maintain the dream (start server)
   %(prog)s dream --lucid    Lucid dream mode (debug)
-  %(prog)s chat             Enter Congress (chat TUI)
   %(prog)s ops              Open Operator console (ops TUI)
   %(prog)s mirror           Create in the mirror (configure agents)
 
@@ -94,36 +90,6 @@ The server is the dream that sustains the Tlon universe.""",
         "--debug", action="store_true", help=argparse.SUPPRESS
     )  # Hidden alias
 
-    # chat command - enter Congress (chat TUI)
-    chat_parser = subparsers.add_parser(
-        "chat",
-        help="Enter Congress (chat with agents)",
-        description="""Connect to the Tlon server through the Congress chat interface.
-
-Talk with agents in a terminal-based chat room.""",
-    )
-    chat_parser.add_argument("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
-    chat_parser.add_argument(
-        "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
-    )
-    chat_parser.add_argument(
-        "--rest-port", "-r", type=int, default=8080, help="Server REST API port (default: 8080)"
-    )
-    chat_parser.add_argument(
-        "--lucid",
-        "-l",
-        dest="debug",
-        action="store_true",
-        help="Lucid dream mode - enable debug logging",
-    )
-    chat_parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)  # Hidden alias
-    chat_parser.add_argument(
-        "--username",
-        "-u",
-        default=None,
-        help="Your username in Congress (default: prompt, fallback guest)",
-    )
-
     # ops command - open Operator console (ops TUI)
     ops_parser = subparsers.add_parser(
         "ops",
@@ -153,7 +119,7 @@ Professional operations console for monitoring and managing agents.""",
         "intrude",
         aliases=["tui"],  # Backward compatibility
         help="Intrude into reality (legacy alias for 'ops')",
-        description="""Legacy command - use 'tlon ops' or 'tlon chat' instead.
+        description="""Legacy command - use 'tlon ops' instead.
 
 Defaults to the Operator console for backward compatibility.""",
     )
@@ -229,10 +195,6 @@ async def main_async(args: Namespace | None = None) -> int:
     if cmd in ("dream", "server"):
         return await run_dream(args)
 
-    # chat (Congress TUI)
-    elif cmd == "chat":
-        return await run_chat(args)
-
     # ops / intrude / tui (Operator TUI)
     elif cmd in ("ops", "intrude", "tui"):
         return await run_ops(args)
@@ -248,14 +210,12 @@ async def main_async(args: Namespace | None = None) -> int:
 
 Commands:
   dream       维持梦境（启动 Server）
-  chat        进入议会（聊天界面）
-  ops         打开运维控制台
+  ops         打开运维控制台（含邮件视图）
   mirror      镜中造物（配置 Agent）
 
 Usage:
   tlon dream                    # 启动服务
   tlon dream --lucid            # Debug 模式
-  tlon chat                     # 聊天界面
   tlon ops                      # 运维控制台
   tlon mirror                   # 配置向导
 

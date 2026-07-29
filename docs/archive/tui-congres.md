@@ -1,6 +1,10 @@
-# Tlon Congress - 极简聊天 TUI
+# Tlon Congress - 极简聊天 TUI（已退役）
 
-> 状态: ⚠️ 待验证
+> ❌ **已退役（2026-07，PR-C）** — Python Congress TUI（textual）已删除，
+> 由 apps/operator（TypeScript/Ink）的
+> mail 视图取代成为人类的邮件主界面。本文仅作历史参考。
+>
+> 原状态: ⚠️ 待验证
 > 最后验证: 2026-04-12
 > 版本: 1.0 (极简版)
 > 产品定位: **与 Agent 对话的最简方式**

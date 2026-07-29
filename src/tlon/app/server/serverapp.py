@@ -216,6 +216,7 @@ class ServerApp:
             config_manager=config_service,  # For /admin endpoints
             trace_store=trace_store,  # For /traces endpoints
             logs_dir=paths.logs_dir(),  # For /logs endpoints
+            paths=paths,  # For /inbox mailbox resolution
             host=self.host,
             port=self.rest_port,
         )

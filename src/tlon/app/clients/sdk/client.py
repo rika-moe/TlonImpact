@@ -35,14 +35,14 @@ class TlonClient:
         >>> # Using async context manager (recommended)
         >>> async with TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter()) as client:
         ...     await client.authenticate()
-        ...     await client.send_message("Hello!")
+        ...     await client.send_message("Hello!", to=["agent-1"])
         ...     # Events are filtered by the server per the adapter's declarations
         ...
         >>> # Or manual management
         >>> client = TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter())
         >>> await client.connect()
         >>> await client.authenticate()
-        >>> await client.send_message("Hello!")
+        >>> await client.send_message("Hello!", to=["agent-1"])
         >>> await client.disconnect()
 
     Args:
@@ -176,14 +176,20 @@ class TlonClient:
     async def send_message(
         self,
         content: str,
-        mentions: list[str] | None = None,
+        to: list[str],
+        cc: list[str] | None = None,
+        subject: str | None = None,
         reply_to: str | None = None,
     ) -> bool:
-        """Send a chat message.
+        """Send a mail message (R2 protocol).
 
         Args:
             content: Message content
-            mentions: Optional list of agent IDs to mention
+            to: Recipients (names, ids or full addresses); explicit
+                addressing is the only entry point since PR-C removed
+                the ``mentions`` alias and the ``@名字`` content bridge
+            cc: Optional carbon-copy recipients
+            subject: Optional mail subject
             reply_to: Optional message ID to reply to
 
         Returns:
@@ -192,8 +198,12 @@ class TlonClient:
         msg = {
             "type": "message",
             "content": content,
-            "mentions": mentions or [],
+            "to": to,
         }
+        if cc:
+            msg["cc"] = cc
+        if subject:
+            msg["subject"] = subject
         if reply_to:
             msg["reply_to"] = reply_to
 
@@ -356,23 +366,6 @@ class TlonClient:
         return self._base.on_reconnect(handler)
 
     # ==================== REST API ====================
-
-    async def get_history(self, limit: int = 100, before_id: str | None = None) -> list[dict]:
-        """Get message history.
-
-        Args:
-            limit: Maximum number of messages
-            before_id: Return messages before this ID
-
-        Returns:
-            List of messages
-        """
-        params = {"limit": limit}
-        if before_id:
-            params["before_id"] = before_id
-
-        result = await self._base.rest_get("/history", params)
-        return result.get("messages", []) if result else []
 
     async def get_agents(self) -> list[dict]:
         """Get all agents.

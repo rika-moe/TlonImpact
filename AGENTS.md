@@ -28,9 +28,9 @@ uv sync
 cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY
 
-# 运行（服务端 + TUI）
+# 运行（服务端 + Operator TUI）
 uv run tlon server    # 终端 1
-uv run tlon tui       # 终端 2
+uv run tlon ops       # 终端 2（Operator TUI，含 mail 视图——人类邮件主界面）
 
 # 单元测试
 uv run pytest
@@ -46,7 +46,7 @@ uv run pytest
 |------|----------|----------|
 | 概述 | [design/README.md](./docs/design/README.md) | [architecture/README.md](./docs/architecture/README.md) |
 | **dream 进程（Server）** | - | **[dream.md](./docs/architecture/dream.md)** ⭐ |
-| **chat + ops 进程（TUI）** | - | **[client.md](./docs/architecture/client.md)** |
+| **ops 进程（TUI）** | - | **[client.md](./docs/architecture/client.md)** |
 | **mirror 进程（Wizard）** | - | **[mirror.md](./docs/architecture/mirror.md)** |
 | **通信协议** | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | **[protocol.md](./docs/architecture/protocol.md)** |
 | 用户指南 | [user/README.md](./docs/user/README.md) | - |
@@ -56,7 +56,7 @@ uv run pytest
 | Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md), [async-agent-loop.md](./docs/design/async-agent-loop.md), **[dsl-agents.md](./docs/design/dsl-agents.md)** 🆕 | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
 | 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/dream.md](./docs/architecture/dream.md) |
 | 消息系统 | **[design/mail.md](./docs/design/mail.md)** 📮 | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
-| **TUI 设计** | **[Congress](./docs/design/tui-congres.md)** · **[Operator](./docs/design/tui-operator.md)** 🆕 | - |
+| **TUI 设计** | **[Operator](./docs/design/tui-operator.md)** · [~~Congress~~（已退役）](./docs/archive/tui-congres.md) | - |
 | 路线图 | - | [roadmap/README.md](./docs/roadmap/README.md) |
 
 ---
@@ -68,11 +68,11 @@ uv run pytest
 | 配置系统 | ✅ 已验证 | 100/100 | 稳定 |
 | Agent 系统 | ✅ 已验证 | 95/100 | 异步多 Session、步进调度 |
 | 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
-| 消息系统 | ✅ 已验证 | 95/100 | 邮件模型 R1a/R1b 已切换（mail.md），R2 人类侧待做 |
+| 消息系统 | ✅ 已验证 | 95/100 | 邮件模型 R2 已切换（mail.md），PR-A/B/C 全部落地 |
 | Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
-| TUI (Congress) | ⚠️ 待验证 | 65/100 | 基础功能可用 |
-| TUI (Operator) | ⚠️ 待验证 | 80/100 | TypeScript/Ink 实现（apps/operator），真实连接服务端 |
+| ~~TUI (Congress)~~ | ❌ 已退役 | - | 2026-07 退役（PR-C），由 Operator mail 视图取代 |
+| TUI (Operator) | ⚠️ 待验证 | 80/100 | TypeScript/Ink 实现（apps/operator），真实连接服务端，mail 视图已落地 |
 | Sandbox | ✅ 已验证 | 95/100 | 共享 DockerRuntime, macOS 支持 |
 
 -- 

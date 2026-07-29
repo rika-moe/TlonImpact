@@ -45,7 +45,7 @@ Server → Client (auth_success)
   "protocol_version": "1.0.0",       // 实际使用的版本
   "server_version": "0.2.0",
   "server_time": "2026-03-18T12:00:00Z",
-  "capabilities": ["trace", "filter", "history"],
+  "capabilities": ["trace", "filter"],
   "username": "alice"               // 回传生效的人类身份
 }
 
@@ -87,7 +87,7 @@ interface TlonMessage {
 | 类型 | 说明 | 关键字段 |
 |------|------|----------|
 | `auth` | 认证请求 | `client_type`, `protocol_version`, `username`（可选，缺省 `guest`） |
-| `message` | 发送消息 | `content`, `mentions`, `reply_to` |
+| `message` | 发送消息 | `content`, `to`, `cc`, `subject`, `in_reply_to`, `thread_id` |
 | `mode` | 切换模式 | `mode`: "chat" \| "event" \| "agent" |
 | `filter` | 设置过滤器 | `filters`: `{event_types?, exclude_event_types?, trace_id?, agent?}` |
 | `ping` | 心跳 | `seq`: 序列号 |
@@ -106,7 +106,11 @@ interface TlonMessage {
 
 ## 详细消息格式
 
-### 聊天消息 (Client → Server)
+### 邮件消息 (Client → Server)
+
+邮件模型（R2，`docs/design/mail.md`）：发信即发邮件。`to`/`cc` 每项
+可为 agent id、显示名或完整地址（`x@tlon.internal`），服务端解析去重；
+零可解析收件人 → 返回 `error` 消息、不发布。
 
 ```json
 {
@@ -115,10 +119,25 @@ interface TlonMessage {
   "timestamp": "2026-03-18T12:00:00Z",
   "trace_id": "trace-abc-456",
   "content": "请帮我审查这段代码",
-  "mentions": ["dev-001", "pm-001"],
-  "reply_to": "msg-uuid-111"
+  "to": ["dev-001", "顾言溪"],
+  "cc": ["pm-001"],
+  "subject": "代码审查请求"
 }
 ```
+
+- `to` / `cc`：可选列表（非 list → 报错）；至少一路解析出收件人
+- `subject`：可选
+- `in_reply_to` / `thread_id`：可选字符串（非 str → 报错），回复头；
+  `in_reply_to` 指向上游邮件 id，`thread_id` 继承线程根邮件 id，
+  缺省时新邮件自成线程根
+- `mentions`：**已移除（PR-C）**——原 `to` 的 deprecated 别名；正文内
+  `@名字` 解析（R1b 桥）同批拆除。旧客户端仍发送 `mentions` 时服务端
+  静默忽略（帧格式校验保持宽松）
+- REST `/history` 占位端点与 WS 初始空 `history` 推送亦已随 PR-C 移除；
+  拉取邮件走 `/inbox`
+- 人类无已读 cursor（v1 决策）；拉取邮件走 REST `GET /inbox?username=x&limit=N`
+  （username 缺省 `guest`，limit 缺省 50 上限 200），返回
+  `{"mails": [...], "count": N}`（inbox + sent 合并，按时间序）
 
 ### 事件消息 (Server → Client)
 
@@ -163,13 +182,12 @@ interface TlonMessage {
 
 ## 事件类型规范
 
-### 消息事件
+### 邮件事件
 
 | 事件类型 | 方向 | payload | 说明 |
 |----------|------|---------|------|
-| `message.new` | S→C | `{id, content, sender, mentions}` | 新消息 |
-| `message.delivered` | S→C | `{message_id, delivered_at}` | 消息已送达 |
-| `message.edit` | S→C | `{id, new_content, edited_at}` | 消息编辑 |
+| `mail.new` | S→C | Mail 对象 | 新邮件发出（投递前） |
+| `mail.delivered` | S→C | `{mail, recipient}` | 邮件落入某收件人邮箱（chat 模式按收件人过滤） |
 
 ### Agent 生命周期
 
@@ -214,8 +232,12 @@ interface TlonMessage {
 
 过滤管线（各步骤为 AND 关系）：
 
+0. **邮件可见性**（R2）：`mail.delivered` 只推送给收件人本人——chat 模式
+   session 要求 payload `recipient` == `human:<session username>`（缺省
+   `guest`）；event / agent 模式不过滤（operator 是运维控制台，需看到
+   全部邮件流量）
 1. **模式语义**（`mode` 消息切换）：
-   - `chat`: `message.*`、`agent.response/started/stopped/error`、`system.*`、`session.*`
+   - `chat`: `mail.*`、`agent.response/started/stopped/error`、`system.*`
    - `agent`: 仅 `agent.*`
    - `event`: 全部事件
 2. **会话过滤器**（`session.filters`，均可选）：

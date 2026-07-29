@@ -23,7 +23,7 @@
 | 文档 | 目的 | 深度 |
 |------|------|------|
 | 本页 | Operator 运维控制台设计 | L1 |
-| [Congress](./tui-congres.md) | 极简聊天 TUI | L1 |
+| [~~Congress~~（已退役）](../archive/tui-congres.md) | 极简聊天 TUI（2026-07 退役，由本 Operator 的 mail 视图取代） | L1 |
 
 ## 验证清单
 

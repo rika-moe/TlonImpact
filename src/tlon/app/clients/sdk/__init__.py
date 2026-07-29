@@ -8,7 +8,7 @@ Usage:
     >>>
     >>> async with TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter()) as client:
     ...     await client.authenticate()
-    ...     await client.send_message("Hello!")
+    ...     await client.send_message("Hello!", to=["agent-1"])
 
 Architecture:
     - BaseClient: Abstract interface for WebSocket connection management

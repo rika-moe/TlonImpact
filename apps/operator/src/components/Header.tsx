@@ -34,10 +34,12 @@ export function Header({
   activeView,
   status,
   server,
+  username,
 }: {
   activeView: ViewName;
   status: ConnectionStatus;
   server: string;
+  username?: string;
 }) {
   return (
     <Box justifyContent="space-between">
@@ -52,6 +54,7 @@ export function Header({
         ))}
       </Box>
       <Box gap={1}>
+        {username ? <Text dimColor>{username}@tlon.internal</Text> : null}
         <Text dimColor>{server}</Text>
         <Text color={statusColor(status.state)}>● {statusLabel(status)}</Text>
       </Box>

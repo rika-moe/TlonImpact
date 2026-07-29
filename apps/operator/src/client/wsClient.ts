@@ -51,6 +51,18 @@ export interface WsClientOptions {
   clientType?: string;
   capabilities?: string[];
   filters?: Record<string, unknown>;
+  /** Human username for auth (server defaults to "guest" when omitted). */
+  username?: string;
+}
+
+/** A mail send request (see `sendMail`). */
+export interface SendMailMessage {
+  to: string[];
+  cc?: string[];
+  subject?: string;
+  content: string;
+  in_reply_to?: string;
+  thread_id?: string;
 }
 
 export class WsClient extends EventEmitter {
@@ -71,8 +83,9 @@ export class WsClient extends EventEmitter {
       type: "auth",
       client_type: options.clientType ?? "tui",
       protocol_version: PROTOCOL_VERSION,
-      capabilities: options.capabilities ?? ["trace", "filter", "history"],
+      capabilities: options.capabilities ?? ["trace", "filter"],
       filters: options.filters ?? {},
+      ...(options.username !== undefined ? { username: options.username } : {}),
     };
   }
 
@@ -132,6 +145,24 @@ export class WsClient extends EventEmitter {
   /** Switch server-side session mode ("chat" | "event" | "agent"). */
   setMode(mode: "chat" | "event" | "agent"): boolean {
     return this.send({ type: "mode", mode });
+  }
+
+  /**
+   * Send a mail (`{"type": "message", ...}`). Recipients in `to`/`cc` may be
+   * display names, member ids or full addresses — the server resolves them.
+   * Send failures arrive asynchronously as a "server_error" event.
+   */
+  sendMail(msg: SendMailMessage): boolean {
+    const frame: Record<string, unknown> = {
+      type: "message",
+      content: msg.content,
+      to: msg.to,
+    };
+    if (msg.cc && msg.cc.length > 0) frame["cc"] = msg.cc;
+    if (msg.subject) frame["subject"] = msg.subject;
+    if (msg.in_reply_to) frame["in_reply_to"] = msg.in_reply_to;
+    if (msg.thread_id) frame["thread_id"] = msg.thread_id;
+    return this.send(frame);
   }
 
   dispose(): void {

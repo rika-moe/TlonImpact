@@ -149,9 +149,9 @@ auth(username="alice") 成功
 ## 客户端用户名功能
 
 - **SDK**：`TlonClient.authenticate(username: str | None = None)`。
-- **CLI/TUI**：`uv run tlon chat --username alice`；未提供时读
-  `~/.tlon/config.toml` 的 `user.username`；再没有则启动时提示输入，
-  回车默认 `guest`。
+- **CLI/TUI**：原 `uv run tlon chat --username alice`（Python Congress
+  TUI）已于 PR-C 退役（2026-07）；现由 Operator（apps/operator）在
+  auth 时携带 username。
 - **REST**：暂无发言端点；需要时经 AdapterManager 以人类身份发布。
 - TUI 界面显示自己的用户名；消息列表渲染不变（名字来源改变而已）。
 

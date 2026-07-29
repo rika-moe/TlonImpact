@@ -3,6 +3,7 @@
 The NotificationService is the single filtering point for events pushed to
 clients. These tests cover:
 - Mode semantics (chat / event / agent)
+- Mail privacy: chat-mode mail.delivered filtered by recipient (R2)
 - Session filters: event_types, exclude_event_types, trace_id, agent
 - Session creation with initial filters (SessionManager)
 """
@@ -19,6 +20,7 @@ def make_session(
     mode: str = "chat",
     filters: dict | None = None,
     client_type: str = "tui",
+    metadata: dict | None = None,
 ) -> ClientSession:
     """Create a ClientSession for filtering tests."""
     return ClientSession(
@@ -27,6 +29,7 @@ def make_session(
         connected_at="2026-01-01T00:00:00",
         mode=mode,
         filters=filters or {},
+        metadata=metadata or {},
     )
 
 
@@ -57,10 +60,13 @@ class TestShouldSendToSession:
 
     def test_chat_mode_allows_chat_event_set(self, service):
         """Chat mode: messages, agent lifecycle highlights, system events."""
-        session = make_session(mode="chat")
+        session = make_session(mode="chat", metadata={"username": "alice"})
 
         assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
-        assert service._should_send_to_session(session, make_event(EventType.MAIL_DELIVERED))
+        assert service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:alice"}),
+        )
         assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STARTED))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STOPPED))
@@ -93,6 +99,63 @@ class TestShouldSendToSession:
 
         for event_type in EventType:
             assert service._should_send_to_session(session, make_event(event_type))
+
+    # ==================== Mail privacy (R2) ====================
+
+    def test_chat_mode_mail_delivered_filtered_by_recipient(self, service):
+        """Chat mode: mail.delivered only reaches the addressed human."""
+        session = make_session(mode="chat", metadata={"username": "alice"})
+
+        assert service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:alice"}),
+        )
+        # Another human's mail is not this session's business
+        assert not service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:other"}),
+        )
+        # Agent mail is not pushed to chat sessions at all
+        assert not service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "gu-yanxi"}),
+        )
+
+    def test_chat_mode_mail_delivered_defaults_to_guest(self, service):
+        """A session without username metadata speaks as guest."""
+        session = make_session(mode="chat")
+
+        assert service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:guest"}),
+        )
+        assert not service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:alice"}),
+        )
+
+    def test_event_mode_mail_delivered_not_filtered(self, service):
+        """Event mode (operator console) sees all mail traffic."""
+        session = make_session(mode="event", metadata={"username": "alice"})
+
+        assert service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:other"}),
+        )
+        assert service._should_send_to_session(
+            session,
+            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "gu-yanxi"}),
+        )
+
+    def test_non_mail_events_unaffected_by_recipient_rule(self, service):
+        """The recipient rule applies to mail.delivered only."""
+        session = make_session(mode="chat", metadata={"username": "alice"})
+
+        # mail.new has no recipient and passes as before
+        assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
+        assert service._should_send_to_session(
+            session, make_event(EventType.AGENT_RESPONSE)
+        )
 
     # ==================== Session filters ====================
 

@@ -603,7 +603,7 @@ class TestTlonClient:
         client._base = AsyncMock()
         client._base.send = AsyncMock(return_value=True)
 
-        result = await client.send_message("Hello", mentions=["agent-1"])
+        result = await client.send_message("Hello", to=["agent-1"])
 
         assert result is True
         # Should call _base.send with the message dict
@@ -611,7 +611,7 @@ class TestTlonClient:
         call_args = client._base.send.call_args[0][0]
         assert call_args["type"] == "message"
         assert call_args["content"] == "Hello"
-        assert call_args["mentions"] == ["agent-1"]
+        assert call_args["to"] == ["agent-1"]
 
     @pytest.mark.asyncio
     async def test_set_trace_filter(self, client):
@@ -707,7 +707,6 @@ class TestTlonClient:
         client._base.rest_get = AsyncMock(
             side_effect=[
                 {"agents": [{"id": "agent-1"}]},
-                {"messages": [{"content": "test"}]},
                 {"trace_id": "t-1"},
             ]
         )
@@ -715,9 +714,6 @@ class TestTlonClient:
         agents = await client.get_agents()
         assert len(agents) == 1
         assert agents[0]["id"] == "agent-1"
-
-        history = await client.get_history(limit=10)
-        assert len(history) == 1
 
         trace = await client.get_trace("t-1")
         assert trace["trace_id"] == "t-1"

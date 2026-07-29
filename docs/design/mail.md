@@ -1,11 +1,48 @@
 # 邮件模型设计（Republic of Letters）
 
-> 状态: ✅ R1a（Mail 模型 + Mailbox 存储）/ R1b（管线大切换）已实施（2026-07-28）
+> 状态: ✅ R1a（Mail 模型 + Mailbox 存储）/ R1b（管线大切换）/ R2 PR-A（服务端协议）/ PR-B（operator mail 视图）/ PR-C（拆桥 + Congress 退役）已实施（2026-07-29）
 > 日期: 2026-07-28
 
 ---
 
-## 实施状态（R1b 落地记录）
+## 实施状态（R2 PR-A 落地记录）
+
+R2 PR-A（服务端协议，2026-07-29）已完成：
+
+- **WS 发信协议**：`message` 消息支持显式 `to` / `cc` / `subject`。
+  `HumanAdapter.speak` / `AdapterManager.publish` 签名扩展；收件人由
+  三路合并去重——`to`（每项过地址解析：名字 / id / 全地址）+
+  `mentions`（deprecated 别名）+ 正文 `@名字` 解析（R1b 桥）。
+  `cc` 同样解析。零可解析收件人仍 `ValueError`，文案引导用 `to`
+  指定收件人。`to` / `cc` 非 list → 服务端报错给客户端。
+- **REST `/inbox`**：`GET /inbox?username=x&limit=N`（username 缺省
+  `guest`，limit 缺省 50 上限 200）返回 `human:<username>` 邮箱的
+  `recent()`（inbox + sent 合并）——`{"mails": [...], "count": N}`；
+  username 为空或含路径分隔符 → 400。
+- **NotificationService 收件人过滤**：chat 模式 session 只收到
+  `recipient == human:<session username>`（缺省 guest）的
+  `mail.delivered`；event / agent 模式不过滤——operator 是运维控制台，
+  必须看到全部邮件流量。其余事件类型不受影响。
+
+**过渡期桥（PR-C 已全部拆除 ✅）**：
+
+- ~~**`mentions` 保留为 `to` 的 deprecated 别名**~~——已随 PR-C 移除；
+  旧客户端仍发送 `mentions` 时服务端静默忽略。
+- ~~**正文 `@` 解析保留**（R1b 桥）~~——已随 PR-C 移除；显式 `to`/`cc`
+  是唯一收件人入口。
+- ~~**REST `/history` 仍返回空列表**~~——已随 PR-C 移除（连同 WS 初始
+  空 `history` 推送）；拉邮件用 `/inbox`。
+- **人类无已读 cursor**（v1 决策）：`/inbox` 不做已读标记。
+
+**R2 分期**：
+
+- **PR-B** ✅：operator 增加 mail 视图，作为人类主界面。
+- **PR-C** ✅：拆桥——`mentions` 别名、`@` 解析、`/history` 已移除，
+  Python Congress TUI 已退役（`tlon chat` 命令删除，textual 依赖移除）。
+
+---
+
+## R1b 落地记录
 
 R1a/R1b 已完成：`Mail`/`Mailbox`（R1a）、投递器 `MailDelivery`
 （`organization/mail/delivery.py`）、agent 收信（MAIL_DELIVERED 入队 +
@@ -13,22 +50,14 @@ boot 未读扫描 + 每封一 session + 完成 mark_read）、`_send_mail` 回�
 继承、`sendEmail` 工具、trigger/proactive 退役、context_builder 邮箱
 历史、wake 重投递管道整套删除、receptionist 移除。
 
-**R1b 桥接偏差（R2 时收敛，勿当最终语义）**：
+R1b 桥接偏差中已被 R2 PR-A 收敛的项：**推送按收件人过滤**（原全量
+推送，现 chat 模式按收件人过滤）。其余桥已全部随 PR-C 拆除（见上方
+清单）。
 
-- **@ 解析保留**：WS 协议仍是 content+mentions，`human_adapter.speak`
-  把 `@名字` 解析为收件人地址；零可解析收件人 → 报错给客户端、不发布。
-  R2 由 WS `to` 字段替代（mail.md 删除清单中此项归 R2）。
-- **REST `/history` 返回空列表**（房间历史断代不迁移）；R2 由 `/inbox`
-  替代。WS 初始 `history` 消息同样为空。
-- **推送未按收件人过滤**：NotificationService 继续全量推送
-  （chat 组事件模式 `"message.*"` → `"mail.*"`），TUI 按 mail id 去重；
-  按收件人过滤归 R2。
-- **TUI 最小适配**：渲染 MAIL_DELIVERED（From/To/content 映射到现有
-  显示结构）；收件人输入 UI 归 R2。
-- `AgentConfig.proactive` 字段保留但 deprecated ignored（旧 agent.yaml
-  可继续加载）；spec 旧 key（`:proactive` / `:room-history`）静默忽略；
-  引用 `mentioned?` 的旧 trigger 表达式加载失败 → 回退 DefaultSpec
-  并记 `agent_spec_load_failed` 日志。
+R1b 其它遗留：`AgentConfig.proactive` 字段保留但 deprecated ignored
+（旧 agent.yaml 可继续加载）；spec 旧 key（`:proactive` /
+`:room-history`）静默忽略；引用 `mentioned?` 的旧 trigger 表达式加载
+失败 → 回退 DefaultSpec 并记 `agent_spec_load_failed` 日志。
 
 ---
 
@@ -132,11 +161,15 @@ LLM 上下文里不再有"别人的对话"——只有自己的通信。
 
 ## 人类侧
 
-- 人类邮箱持久等待：离线时邮件留在邮箱，TUI 连接后拉取 inbox。
-- NotificationService 从"广播一切"改为**按收件人过滤**推送。
-- WS 协议：发消息加 `to`（必填）/`cc`/`subject` 字段；拉历史改为拉 inbox。
-- TUI 最小适配：展示 agents（供填收件人）、显示每封信的收发件人。
-  UI 重做（React+Ink）以后单独立项。
+- 人类邮箱持久等待：离线时邮件留在邮箱，连接后走 REST `/inbox` 拉取。
+- NotificationService 从"广播一切"改为**按收件人过滤**推送：chat 模式
+  session 只收自己的 `mail.delivered`；event 模式（operator 运维控制台）
+  豁免，可见全部邮件流量。
+- WS 协议：发消息带 `to`/`cc`/`subject` 字段（`mentions` 别名与正文
+  `@` 解析桥已于 PR-C 移除）；拉历史改为 REST `/inbox`。
+- 人类**无已读 cursor**（v1 决策）：人类邮件不做已读追踪。
+- operator（React+Ink）的 mail 视图是人类主界面（PR-B）；Python
+  Congress TUI 已于 PR-C 退役。
 
 ## 系统邮件
 
@@ -164,8 +197,12 @@ Member / 亚当的 policy-mechanism 分层**不受影响**。
 - **R1（服务端核心）**：Mail 模型 + mailbox 存储（含 cursor）+ 投递器 +
   agent 收信处理（唤醒扫描 + 每封一 session）+ sendEmail 工具 +
   trigger/proactive 退役 + context_builder 邮箱历史 + 删 trigger_event 管道
-- **R2（人类侧）**：人类邮箱、NotificationService 按收件人过滤、WS 协议
-  `to` 字段、TUI 最小适配
+- **R2（人类侧）**：
+  - **PR-A（服务端协议）** ✅：WS `to`/`cc`/`subject`、REST `/inbox`、
+    NotificationService 按收件人过滤（chat 模式）
+  - **PR-B** ✅：operator mail 视图（人类主界面）
+  - **PR-C** ✅：拆桥——`mentions` 别名、`@` 解析、`/history` 已移除，
+    Python Congress TUI 已退役
 - **R3（打磨）**：forward、退信、all@ 细节、线程呈现
 
 R1 内部可再拆 PR。

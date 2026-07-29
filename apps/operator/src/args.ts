@@ -4,16 +4,18 @@ export interface CliOptions {
   host: string;
   wsPort: number;
   restPort: number;
+  username: string;
 }
 
 const HELP = `Tlon Operator - operations console TUI
 
-Usage: operator [--host HOST] [--port PORT] [--rest-port PORT]
+Usage: operator [--host HOST] [--port PORT] [--rest-port PORT] [--username NAME]
 
 Options:
   --host        Server host        (default: 127.0.0.1, env TLON_HOST)
   --port        WebSocket port     (default: 8888,      env TLON_PORT)
   --rest-port   REST API port      (default: 8080,      env TLON_REST_PORT)
+  --username    Mail identity      (default: guest,     env TLON_USERNAME)
   --help        Show this help
 `;
 
@@ -23,6 +25,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     host: env["TLON_HOST"] ?? "127.0.0.1",
     wsPort: parsePort(env["TLON_PORT"], 8888),
     restPort: parsePort(env["TLON_REST_PORT"], 8080),
+    username: env["TLON_USERNAME"] ?? "guest",
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -39,6 +42,10 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       case "-r":
         options.restPort = parsePort(requireValue(argv, (i += 1), arg), options.restPort);
         break;
+      case "--username":
+      case "-u":
+        options.username = requireValue(argv, (i += 1), arg);
+        break;
       case "--help":
         process.stdout.write(HELP);
         process.exit(0);
@@ -50,6 +57,8 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
           options.wsPort = parsePort(arg.slice("--port=".length), options.wsPort);
         } else if (arg?.startsWith("--rest-port=")) {
           options.restPort = parsePort(arg.slice("--rest-port=".length), options.restPort);
+        } else if (arg?.startsWith("--username=")) {
+          options.username = arg.slice("--username=".length);
         } else {
           process.stderr.write(`Unknown argument: ${String(arg)}\n\n${HELP}`);
           process.exit(2);

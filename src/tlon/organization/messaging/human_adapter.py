@@ -5,22 +5,20 @@ client sessions are its attachments. It carries identity, lifecycle and the
 ability to speak (publish MAIL_NEW) — nothing of the LLM / memory /
 Docker machinery of a ReactAgent.
 
-R1b bridge (docs/design/mail.md): the WS protocol still carries only
-content+mentions, so ``speak`` keeps the legacy ``@名字`` parsing and
-resolves those names into recipient addresses. A mail with zero
-resolvable recipients is rejected (proactive is dead — an unaddressed
-mail is illegal). The @ bridge itself is replaced by explicit recipient
-fields in R2.
+R2 protocol (docs/design/mail.md): ``speak`` accepts explicit ``to`` /
+``cc`` / ``subject`` fields; explicit addressing is the only entry point
+(the R1b ``mentions`` alias and the legacy ``@名字`` content-parsing
+bridge were removed in PR-C). A mail with zero resolvable recipients is
+rejected (proactive is dead — an unaddressed mail is illegal).
 
 Note (v1): HumanAdapter does NOT subscribe to MAIL_DELIVERED. The
-NotificationService already broadcasts all events to all sessions, so
-adapter-side forwarding would double-deliver. Per-recipient filtering is
-deferred to R2.
+NotificationService pushes mail events to sessions and filters them
+per recipient (chat mode), so adapter-side forwarding would
+double-deliver.
 
 See docs/design/members.md (阶段 B).
 """
 
-import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -44,23 +42,8 @@ DEFAULT_USERNAME = "guest"
 # Prefix of the internal human member-id namespace ("human:<username>").
 HUMAN_ID_PREFIX = "human:"
 
-# Matches "@名字" — the run of non-whitespace characters after '@'.
-_MENTION_PATTERN = re.compile(r"@(\S+)")
-
-# Resolves a mention (name, id or full address) to a mail address.
+# Resolves a recipient (name, id or full address) to a mail address.
 AddressResolver = Callable[[str], str | None]
-
-
-def parse_mentions(content: str) -> list[str]:
-    """Extract raw @mention names from message content (R1b bridge).
-
-    Args:
-        content: Message content
-
-    Returns:
-        List of mentioned names (order of appearance, duplicates kept)
-    """
-    return _MENTION_PATTERN.findall(content)
 
 
 class HumanAdapter(Member):
@@ -79,7 +62,7 @@ class HumanAdapter(Member):
         Args:
             username: Human username (also the display name)
             event_bus: Event bus for publishing mail
-            address_resolver: Mention name -> mail address resolution
+            address_resolver: Recipient name -> mail address resolution
                 (injected by the AdapterManager)
         """
         Component.__init__(self, name=f"HumanAdapter:{username}")
@@ -144,45 +127,55 @@ class HumanAdapter(Member):
         self._initialized = False
         logger.info("human_adapter_shutdown", username=self._username)
 
-    async def speak(self, content: str, mentions: list[str] | None = None) -> Mail:
+    async def speak(
+        self,
+        content: str,
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        subject: str | None = None,
+        in_reply_to: str | None = None,
+        thread_id: str | None = None,
+    ) -> Mail:
         """Speak into Congress: publish the human's mail as MAIL_NEW.
 
-        R1b bridge: @mentions inside the content are extracted, merged
-        with the explicit mentions and resolved to recipient addresses.
-        Unresolvable mentions are dropped with a warning; a mail with zero
-        resolvable recipients is rejected outright — with proactive gone,
-        an unaddressed mail is illegal.
+        Recipients come exclusively from the explicit ``to`` / ``cc``
+        fields (R2 protocol; the R1b ``mentions`` alias and the legacy
+        ``@名字`` bridge were removed in PR-C). Unresolvable recipients
+        are dropped with a warning; a mail with zero resolvable
+        recipients is rejected outright — with proactive gone, an
+        unaddressed mail is illegal.
 
         Args:
             content: Message content
-            mentions: Optional explicit mentions (raw names, ids or
-                full addresses)
+            to: Explicit recipients (raw names, ids or full addresses)
+            cc: Carbon-copy recipients (same resolution as ``to``)
+            subject: Optional mail subject
+            in_reply_to: Id of the mail being replied to (optional)
+            thread_id: Thread root id inherited from the upstream mail
+                (optional; defaults to this mail's own id)
 
         Returns:
             The created mail
 
         Raises:
-            ValueError: If no mention resolves to a recipient address
+            ValueError: If no recipient resolves to a mail address
         """
-        raw = list(dict.fromkeys([*parse_mentions(content), *(mentions or [])]))
-        to: list[str] = []
-        for name in raw:
-            address = self._address_resolver(name)
-            if address is None:
-                logger.warning("mention_unresolved", username=self._username, mention=name)
-                continue
-            if address not in to:
-                to.append(address)
+        resolved_to = self._resolve_recipients(to or [])
+        resolved_cc = self._resolve_recipients(cc or [])
 
-        if not to:
+        if not resolved_to and not resolved_cc:
             raise ValueError(
-                "没有可送达的收件人：请用 @名字 指定至少一个收件人"
+                "没有可送达的收件人：请在 to 中指定至少一个收件人"
             )
 
         mail = Mail.create(
             from_address=self.address,
-            to=to,
+            to=resolved_to,
+            cc=resolved_cc,
+            subject=subject,
             content=content,
+            in_reply_to=in_reply_to,
+            thread_id=thread_id,
         )
 
         with start_span(
@@ -206,8 +199,31 @@ class HumanAdapter(Member):
             username=self._username,
             mail_id=mail.id,
             to=mail.to,
+            cc=mail.cc,
         )
         return mail
+
+    def _resolve_recipients(self, raw: list[str]) -> list[str]:
+        """Resolve raw recipients (names, ids or full addresses) to mail
+        addresses, dropping unresolvable ones and deduplicating.
+
+        Args:
+            raw: Raw recipient strings in priority order
+
+        Returns:
+            Resolved mail addresses (deduplicated, order preserved)
+        """
+        resolved: list[str] = []
+        for name in raw:
+            address = self._address_resolver(name)
+            if address is None:
+                logger.warning(
+                    "recipient_unresolved", username=self._username, recipient=name
+                )
+                continue
+            if address not in resolved:
+                resolved.append(address)
+        return resolved
 
 
 class AdapterManager(Component):
@@ -224,7 +240,7 @@ class AdapterManager(Component):
         Args:
             event_bus: Event bus adapters publish on
             agent_info_provider: Provider for agent config queries
-                (mention → address resolution for the R1b @ bridge)
+                (recipient name → address resolution)
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
@@ -303,28 +319,47 @@ class AdapterManager(Component):
             logger.info("human_adapter_removed", username=username)
 
     async def publish(
-        self, session_id: str, content: str, mentions: list[str] | None = None
+        self,
+        session_id: str,
+        content: str,
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        subject: str | None = None,
+        in_reply_to: str | None = None,
+        thread_id: str | None = None,
     ) -> Mail | None:
         """Publish a mail from the user owning this session.
 
         Args:
             session_id: Sender's session ID
             content: Message content
-            mentions: Optional explicit mentions
+            to: Explicit recipients (raw names, ids or full addresses)
+            cc: Carbon-copy recipients
+            subject: Optional mail subject
+            in_reply_to: Id of the mail being replied to (optional)
+            thread_id: Thread root id inherited from the upstream mail
+                (optional)
 
         Returns:
             The created mail, or None if no adapter is attached to
             this session (rejected, logged as warning)
 
         Raises:
-            ValueError: If no mention resolves to a recipient address
+            ValueError: If no recipient resolves to a mail address
         """
         username = self._sessions.get(session_id)
         adapter = self._adapters.get(username) if username else None
         if adapter is None:
             logger.warning("publish_rejected_no_adapter", session_id=session_id)
             return None
-        return await adapter.speak(content, mentions)
+        return await adapter.speak(
+            content,
+            to=to,
+            cc=cc,
+            subject=subject,
+            in_reply_to=in_reply_to,
+            thread_id=thread_id,
+        )
 
     def get_adapter(self, username: str) -> HumanAdapter | None:
         """Get a user's adapter.
@@ -345,20 +380,20 @@ class AdapterManager(Component):
         """
         return [self._adapters[name] for name in sorted(self._adapters)]
 
-    def resolve_address(self, mention: str) -> str | None:
-        """Resolve a mention to a mail address (R1b @ bridge).
+    def resolve_address(self, recipient: str) -> str | None:
+        """Resolve a recipient to a mail address.
 
         Accepts a full mail address (passed through), an agent id, an
         agent display name, an online human's username, or the
         "human:<username>" form.
 
         Args:
-            mention: Mention to resolve
+            recipient: Recipient to resolve
 
         Returns:
             The member's mail address, or None if unresolvable
         """
-        name = mention.lstrip("@")
+        name = recipient.lstrip("@")
         if is_mail_address(name):
             return name
 

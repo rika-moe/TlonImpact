@@ -8,7 +8,7 @@ Protocol:
 All messages are JSON with a "type" field:
 - Client → Server:
   - {"type": "auth", "client_type": "tui", "username": "alice", "filters": {...}, ...}
-  - {"type": "message", "content": "...", "mentions": [...]}
+  - {"type": "message", "content": "...", "to": [...], "cc": [...], "subject": "..."}
   - {"type": "mode", "mode": "chat|event|agent"}
   - {"type": "filter", "filters": {...}}
   - {"type": "ping"}
@@ -230,7 +230,7 @@ class WebSocketHandler:
                     "protocol_version": negotiated_version,
                     "server_version": "0.2.0",
                     "server_time": datetime.now().isoformat(),
-                    "capabilities": ["trace", "filter", "history"],
+                    "capabilities": ["trace", "filter"],
                     "timestamp": session.connected_at,
                 },
             )
@@ -344,9 +344,17 @@ class WebSocketHandler:
             await self._send_error_to_session(session_id, f"Error: {str(e)}")
 
     async def _handle_send_message(self, session_id: str, msg: dict) -> None:
-        """Handle a send message request from client."""
+        """Handle a send message request from client.
+
+        The frame format stays lenient: unknown keys (e.g. the R1b
+        ``mentions`` alias, removed in PR-C) are silently ignored.
+        """
         content = msg.get("content", "").strip()
-        mentions = msg.get("mentions", [])
+        to = msg.get("to")
+        cc = msg.get("cc")
+        subject = msg.get("subject")
+        in_reply_to = msg.get("in_reply_to")
+        thread_id = msg.get("thread_id")
         username = self.adapter_manager.username_for(session_id)
         logger.info(
             "message_received",
@@ -354,18 +362,44 @@ class WebSocketHandler:
             username=username,
             message_id=msg.get("id"),
             content=content,
-            mentions=mentions,
+            to=to,
+            cc=cc,
         )
 
         if not content:
             await self._send_error_to_session(session_id, "Message content is empty")
             return
 
-        # Speak through the user's human adapter (R1b bridge: @mentions in
-        # the content are resolved to recipient addresses; a mail with zero
-        # recipients is rejected) and publishes MAIL_NEW as "human:<username>"
+        if to is not None and not isinstance(to, list):
+            await self._send_error_to_session(session_id, "Field 'to' must be a list")
+            return
+        if cc is not None and not isinstance(cc, list):
+            await self._send_error_to_session(session_id, "Field 'cc' must be a list")
+            return
+        if in_reply_to is not None and not isinstance(in_reply_to, str):
+            await self._send_error_to_session(
+                session_id, "Field 'in_reply_to' must be a string"
+            )
+            return
+        if thread_id is not None and not isinstance(thread_id, str):
+            await self._send_error_to_session(
+                session_id, "Field 'thread_id' must be a string"
+            )
+            return
+
+        # Speak through the user's human adapter: explicit to/cc (R2
+        # protocol); a mail with zero recipients is rejected.
+        # Publishes MAIL_NEW as "human:<username>".
         try:
-            mail = await self.adapter_manager.publish(session_id, content, mentions)
+            mail = await self.adapter_manager.publish(
+                session_id,
+                content,
+                to=to,
+                cc=cc,
+                subject=subject,
+                in_reply_to=in_reply_to,
+                thread_id=thread_id,
+            )
         except ValueError as e:
             await self._send_error_to_session(session_id, str(e))
             return
@@ -423,15 +457,6 @@ class WebSocketHandler:
             session: The client session
         """
         if session.mode == "chat":
-            # History is retired with the mail model (R1b): the shared room
-            # log is gone and R2 will serve the member's own inbox instead.
-            await self._send_message(
-                ws,
-                {
-                    "type": "history",
-                    "messages": [],
-                },
-            )
             # Send participant list
             participants = self.client_gateway.get_all_members()
             await self._send_message(

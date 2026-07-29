@@ -2,7 +2,7 @@
 
 Provides HTTP endpoints for:
 - Configuration queries
-- Message history retrieval
+- Mail inbox retrieval
 - Agent management
 - Session information
 """
@@ -15,6 +15,9 @@ from typing import Any
 from aiohttp import web
 
 from tlon.base.logger import get_logger
+from tlon.base.paths import TlonPaths
+from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, HUMAN_ID_PREFIX
 
 logger = get_logger(__name__)
 
@@ -106,7 +109,7 @@ class RESTAPIHandler:
     Routes:
     - GET /health - Health check
     - GET /config - Server configuration
-    - GET /history - Message history
+    - GET /inbox - Member inbox (mail model)
     - GET /agents - List all agents
     - GET /sessions - List active sessions
     - GET /agents/{id}/logs - Agent log entries
@@ -129,6 +132,7 @@ class RESTAPIHandler:
         config_manager=None,
         trace_store=None,
         logs_dir: Path | None = None,
+        paths: TlonPaths | None = None,
         debug: bool = False,
     ):
         """Initialize the REST API handler.
@@ -139,6 +143,7 @@ class RESTAPIHandler:
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
             logs_dir: Optional directory with server-{date}.jsonl log files
+            paths: Optional TlonPaths for mailbox resolution (/inbox)
             debug: Whether to enable debug/test endpoints (never enable in production)
         """
         self.client_gateway = client_gateway
@@ -147,6 +152,7 @@ class RESTAPIHandler:
         self.debug = debug
         self.trace_store = trace_store
         self.logs_dir = logs_dir
+        self.paths = paths
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application.
@@ -159,7 +165,7 @@ class RESTAPIHandler:
         # Add API routes first
         app.router.add_get("/health", self.handle_health)
         app.router.add_get("/config", self.handle_config)
-        app.router.add_get("/history", self.handle_history)
+        app.router.add_get("/inbox", self.handle_inbox)
         app.router.add_get("/agents", self.handle_list_agents)
         app.router.add_get("/agents/{agent_id}", self.handle_get_agent)
         # Wake/stop endpoints removed - all agents start at system startup
@@ -258,20 +264,43 @@ class RESTAPIHandler:
         }
         return self._json_response(config)
 
-    async def handle_history(self, request: web.Request) -> web.Response:
-        """GET /history - Message history (retired with the mail model, R1b).
+    async def handle_inbox(self, request: web.Request) -> web.Response:
+        """GET /inbox - The human member's own mail (mail model, R2).
 
-        The shared room log (messages.jsonl) is gone; per-member mailboxes
-        replaced it. This endpoint keeps its shape but always returns an
-        empty list — R2 will expose the caller's own inbox at ``/inbox``.
+        Query Parameters:
+            username: Human username (default: "guest"); the inbox of
+                "human:<username>" is served
+            limit: Maximum number of mails (default: 50, max: 200)
 
         Returns:
-            An empty message list
+            The member's recent mail (inbox + sent merged, chronological)
+            or 400 if the username is invalid
         """
+        if not self.paths:
+            return self._json_response(
+                {"status": "error", "message": "Mail storage not available"}, status=503
+            )
+
+        username_raw = request.query.get("username")
+        if username_raw is None:
+            username = DEFAULT_USERNAME
+        else:
+            username = username_raw.strip()
+            # The username becomes a directory name — reject empty and
+            # anything carrying a path separator (traversal guard)
+            if not username or "/" in username or "\\" in username:
+                return self._json_response(
+                    {"error": f"Invalid username: {username_raw!r}"}, status=400
+                )
+
+        limit = _parse_limit(request, default=50, maximum=200)
+        mailbox = Mailbox(self.paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}"))
+        mails = await mailbox.recent(limit)
+
         return self._json_response(
             {
-                "messages": [],
-                "count": 0,
+                "mails": [mail.to_dict() for mail in mails],
+                "count": len(mails),
             }
         )
 
@@ -559,6 +588,7 @@ class RESTServer:
         config_manager=None,
         trace_store=None,
         logs_dir: Path | None = None,
+        paths: TlonPaths | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -571,6 +601,7 @@ class RESTServer:
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
             logs_dir: Optional directory with server-{date}.jsonl log files
+            paths: Optional TlonPaths for mailbox resolution (/inbox)
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
@@ -579,7 +610,7 @@ class RESTServer:
         self.host = host
         self.port = port
         self._handler = RESTAPIHandler(
-            client_gateway, agent_registry, config_manager, trace_store, logs_dir, debug
+            client_gateway, agent_registry, config_manager, trace_store, logs_dir, paths, debug
         )
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None

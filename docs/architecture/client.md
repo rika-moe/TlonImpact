@@ -1,11 +1,16 @@
-# client 进程：Congress + Operator TUI
+# client 进程：Operator TUI
 
-> 命令：`tlon chat`（`CongressApp`） / `tlon ops`（`OperatorApp`）
-> chat 和 ops 是 Textual 构建的终端 UI，通过 WebSocket 连接到 dream 进程。
+> 命令：`tlon ops`（`OperatorApp`，TypeScript/Ink，apps/operator）
+> 通过 WebSocket 连接到 dream 进程。
+>
+> ❌ **Python Congress TUI（`tlon chat`）已退役（2026-07，PR-C）**——人类的
+> 邮件主界面是 Operator 的 mail 视图（WS `to`/`cc`/`subject` + REST `/inbox`）。
+> 下方 CongressApp 章节仅作历史参考；原 Python OperatorApp 也已迁移到
+> apps/operator（TS/Ink），对应章节同为历史记录。
 
 ---
 
-## CongressApp（`tlon chat`）
+## CongressApp（`tlon chat`，已退役）
 
 **架构**: 单栏聊天界面
 
@@ -150,5 +155,5 @@ InputBox 输入 @
 
 - [protocol.md](./protocol.md) — WebSocket 事件格式
 - [dream.md](./dream.md) — 服务端架构
-- [docs/design/tui-congres.md](../design/tui-congres.md) — Congress 设计文档
+- [docs/archive/tui-congres.md](../archive/tui-congres.md) — Congress 设计文档（已退役）
 - [docs/design/tui-operator.md](../design/tui-operator.md) — Operator 设计文档

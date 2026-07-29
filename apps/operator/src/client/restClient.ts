@@ -7,9 +7,13 @@
  * - GET /agents, GET /agents/{id}
  * - GET /traces, GET /traces/{id}
  * - GET /admin/config/agents
+ * - GET /inbox?username=x&limit=N
+ * - GET /participants
  *
  * Uses the Node >= 22 global fetch.
  */
+
+import type { MailItem, ParticipantInfo } from "../types.js";
 
 export class RestError extends Error {
   constructor(
@@ -70,5 +74,19 @@ export class RestClient {
   async listAgentConfigs(): Promise<Record<string, unknown>[]> {
     const data = await this.get<{ agents?: Record<string, unknown>[] }>("/admin/config/agents");
     return data.agents ?? [];
+  }
+
+  /** The member's own mail (inbox + sent merged, chronological). */
+  async getInbox(username: string, limit = 100): Promise<MailItem[]> {
+    const data = await this.get<{ mails?: MailItem[] }>(
+      `/inbox?username=${encodeURIComponent(username)}&limit=${limit}`,
+    );
+    return data.mails ?? [];
+  }
+
+  /** The member address book (agents + online humans). */
+  async listParticipants(): Promise<ParticipantInfo[]> {
+    const data = await this.get<{ participants?: ParticipantInfo[] }>("/participants");
+    return data.participants ?? [];
   }
 }
