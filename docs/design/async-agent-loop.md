@@ -17,7 +17,6 @@
 |------|------|------|
 | [agents.md](./agents.md) | Agent 系统总体设计 | L2 |
 | [memory.md](./memory.md) | 记忆系统 | L1 |
-| [../architecture/dream.md](../architecture/dream.md) | dream 进程架构 | L2 |
 | [../architecture/domains/agents.md](../architecture/domains/agents.md) | Agent 层架构详细 | L3 |
 
 ---

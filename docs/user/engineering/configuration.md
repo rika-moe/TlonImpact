@@ -187,7 +187,7 @@ uv run tlon ops \
 ### 文件格式
 
 记忆与邮箱文件均为 JSONL（每行一条 JSON 记录）。
-记忆格式详情见 [dream.md](../../architecture/dream.md)。
+记忆格式详情见 [memory.md](../../design/memory.md)。
 
 ---
 

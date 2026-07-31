@@ -74,7 +74,6 @@ uv run tlon ops --username 你的名字   # 终端 2：打开 Operator（默认 
 | **跑起来** | [快速开始](docs/user/engineering/quickstart.md) |
 | **配置 Agent** | [配置说明](docs/user/engineering/configuration.md) |
 | **读懂架构** | [架构文档](docs/architecture/README.md) |
-| **路线图** | [里程碑](docs/roadmap/README.md) |
 
 ---
 

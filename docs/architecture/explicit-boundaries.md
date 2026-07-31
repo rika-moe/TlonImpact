@@ -180,7 +180,7 @@ class ServerApp:
 ### Level 1: 文档化 (最弱但必要)
 
 ```markdown
-<!-- docs/architecture/dream.md -->
+<!-- docs/architecture/explicit-boundaries.md -->
 ## 规则：构造函数注入唯一
 
 所有组件依赖必须通过构造函数注入。
@@ -264,11 +264,8 @@ def check_setter_injection(tree: ast.AST, file: Path):
 
 ```
 docs/architecture/
-├── dream.md              # 架构原则文档
-├── explicit-boundaries.md # 本文件
-├── client.md
-├── protocol.md
-├── mirror.md
+├── explicit-boundaries.md # 本文件（架构原则文档）
+├── domains/
 └── README.md
 ```
 
@@ -330,7 +327,7 @@ IDE: 🚨 警告 - 架构检查失败
 CI: ❌ 构建失败 - SETTER_INJECTION 违反
 
 新成员查看:
-  - 文档: docs/architecture/dream.md
+  - 文档: docs/architecture/explicit-boundaries.md
   - 代码: class MessageRouter(Component):
   - 工具: python scripts/check_architecture.py
   
@@ -389,7 +386,7 @@ def switch_event_bus(self, bus): pass
 ```
 
 **我们的实现**:
-1. ✅ 文档: `docs/architecture/dream.md`, `docs/architecture/client.md`, `docs/architecture/protocol.md`
+1. ✅ 文档: `docs/architecture/explicit-boundaries.md`
 2. ✅ 代码: `class Component(ABC)`
 3. ✅ 工具: `scripts/check_architecture.py`
 

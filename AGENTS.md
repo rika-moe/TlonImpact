@@ -45,19 +45,16 @@ uv run pytest
 | 领域 | 设计文档 | 架构文档 |
 |------|----------|----------|
 | 概述 | [design/README.md](./docs/design/README.md) | [architecture/README.md](./docs/architecture/README.md) |
-| **dream 进程（Server）** | - | **[dream.md](./docs/architecture/dream.md)** ⭐ |
-| **ops 进程（TUI）** | - | **[client.md](./docs/architecture/client.md)** |
-| **mirror 进程（Wizard）** | - | **[mirror.md](./docs/architecture/mirror.md)** |
-| **通信协议** | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | **[protocol.md](./docs/architecture/protocol.md)** |
+| **通信协议** | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | - |
 | 用户指南 | [user/README.md](./docs/user/README.md) | - |
 | 架构边界 | - | [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
 | 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
 | **文件系统布局** | **[design/config.md](./docs/design/config.md)** (含 ~/.tlon/ 目录结构) | - |
 | Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md), [async-agent-loop.md](./docs/design/async-agent-loop.md), **[dsl-agents.md](./docs/design/dsl-agents.md)** 🆕 | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
-| 记忆系统 | [design/memory.md](./docs/design/memory.md) | [architecture/dream.md](./docs/architecture/dream.md) |
-| 消息系统 | **[design/mail.md](./docs/design/mail.md)** 📮 | [architecture/domains/organization.md](./docs/architecture/domains/organization.md) |
-| **TUI 设计** | **[Operator](./docs/design/tui-operator.md)** · [~~Congress~~（已退役）](./docs/archive/tui-congres.md) | - |
-| 路线图 | - | [roadmap/README.md](./docs/roadmap/README.md) |
+| 记忆系统 | [design/memory.md](./docs/design/memory.md) | - |
+| 消息系统 | **[design/mail.md](./docs/design/mail.md)** 📮 | - |
+| Member 与亚当 | **[design/members.md](./docs/design/members.md)** | - |
+| **TUI 设计** | **[Operator](./docs/design/tui-operator.md)**（Congress 已退役） | - |
 
 ---
 
@@ -89,9 +86,8 @@ uv run pytest
 
 | 类型 | 文档 |
 |------|------|
-| 开发规范 | [开发流程](./docs/design/development-process.md), [代码风格](./docs/design/code-style.md), [故障排除](./docs/design/debugging.md) |
-| 架构 | [dream 进程](./docs/architecture/dream.md), [客户端架构](./docs/architecture/client.md), [通信协议](./docs/architecture/protocol.md), [显式边界](./docs/architecture/explicit-boundaries.md), [mirror 进程](./docs/architecture/mirror.md) |
-| 路线图 | [Roadmap](./docs/roadmap/README.md), [已归档](./docs/roadmap/completed/) |
+| 开发规范 | [开发流程](./docs/design/development-process.md), [代码风格](./docs/design/code-style.md) |
+| 架构 | [显式边界](./docs/architecture/explicit-boundaries.md), [agents 域](./docs/architecture/domains/agents.md), [base 域](./docs/architecture/domains/base.md) |
 | 速查 | [导入路径速查](./docs/reference/imports.md) |
 
 ---

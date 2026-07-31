@@ -33,7 +33,7 @@
 
 | 文档 | 目的 | 深度 |
 |------|------|------|
-| [architecture/dream.md](../architecture/dream.md) | 模块架构详解 | L2 |
+| [explicit-boundaries.md](../architecture/explicit-boundaries.md) | 架构边界规则 | L2 |
 | [code-style.md](./code-style.md) | 代码规范 | L1 |
 
 ---

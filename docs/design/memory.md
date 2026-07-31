@@ -34,14 +34,6 @@ Agent 也可通过 `compact` 工具主动压缩全部 Working Memory；其可选
 
 ---
 
-## 文档索引
-
-| 文档 | 目的 | 深度 |
-|------|------|------|
-| [architecture/dream.md](../architecture/dream.md) | 模块架构（含 MemoryModule） | L2 |
-
----
-
 ## 验证清单
 
 - [x] 双层架构与代码一致
