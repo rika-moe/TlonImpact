@@ -614,6 +614,21 @@ class TestTlonClient:
         assert call_args["to"] == ["agent-1"]
 
     @pytest.mark.asyncio
+    async def test_send_message_reply_headers(self, client):
+        """reply_to/thread_id map to the server's in_reply_to/thread_id frame fields."""
+        client._base = AsyncMock()
+        client._base.send = AsyncMock(return_value=True)
+
+        await client.send_message(
+            "Got it", to=["agent-1"], reply_to="mail-1", thread_id="thread-1"
+        )
+
+        call_args = client._base.send.call_args[0][0]
+        assert call_args["in_reply_to"] == "mail-1"
+        assert call_args["thread_id"] == "thread-1"
+        assert "reply_to" not in call_args
+
+    @pytest.mark.asyncio
     async def test_set_trace_filter(self, client):
         """Test set_trace_filter method."""
         client._base = AsyncMock()

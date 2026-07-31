@@ -100,6 +100,12 @@ Professional operations console for monitoring and managing agents.""",
     )
     ops_parser.add_argument("--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)")
     ops_parser.add_argument(
+        "--username",
+        "-u",
+        default=None,
+        help="Your mail identity (default: guest, env TLON_USERNAME)",
+    )
+    ops_parser.add_argument(
         "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
     )
     ops_parser.add_argument(

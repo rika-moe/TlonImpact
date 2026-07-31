@@ -12,31 +12,17 @@
 |-----|------|-------|------|
 | `OPENAI_API_KEY` | 是 | - | LLM API Key |
 | `OPENAI_BASE_URL` | 否 | `https://api.openai.com/v1` | API 端点 |
-| `OPENAI_MODEL_NAME` | 否 | `gpt-4` | 默认模型 |
-| `OPENAI_TEMPERATURE` | 否 | `0.7` | 生成温度 (0-1) |
-| `DATA_DIR` | 否 | `./data` | 数据存储目录 |
+| `OPENAI_MODEL_NAME` | 否 | `kimi-k2.5` | 默认模型 |
+| `OPENAI_TEMPERATURE` | 否 | `1.0` | 生成温度 (0-2) |
+| `TLON_HOME` | 否 | `~/.tlon` | 数据根目录（配置/记忆/邮箱/日志都在其下） |
 | `LOG_LEVEL` | 否 | `INFO` | 日志级别 (DEBUG/INFO/WARNING/ERROR) |
 
-### Docker 配置
+默认值以 `src/tlon/base/settings.py` 为准。
 
-| 变量 | 默认值 | 说明 |
-|-----|-------|------|
-| `DOCKER_DEFAULT_IMAGE` | `ubuntu:22.04` | Agent 容器镜像 |
-| `DOCKER_NETWORK_MODE` | `host` | 网络模式 |
+### Docker 与记忆配置
 
-### 内存配置
-
-| 变量 | 默认值 | 说明 |
-|-----|-------|------|
-| `MEMORY_MAX_HISTORY` | `1000` | 最大历史消息数 |
-| `MEMORY_SUMMARY_WINDOW` | `20` | 摘要窗口大小 |
-
-### Telegram 集成 (可选)
-
-| 变量 | 说明 |
-|-----|------|
-| `TELEGRAM_BOT_TOKEN` | Bot Token |
-| `TELEGRAM_CHAT_ID` | 聊天 ID |
+Docker、记忆等 per-agent 配置不在环境变量里，而在各 Agent 的
+`~/.tlon/{agent-id}/config/agent.yaml`（见下文 Agent 配置）。
 
 ---
 
@@ -44,40 +30,27 @@
 
 ### 文件位置
 
-每个 Agent 一个独立的 YAML 文件：
+每个 Agent 一个家目录，配置集中在 `~/.tlon/{agent-id}/config/`：
 
 ```
-./config/agents/
-├── dev-001.yaml
-├── pm-001.yaml
-└── support-001.yaml
+~/.tlon/
+└── lin-zhiyao/
+    └── config/
+        ├── agent.yaml       # 基础配置（本节）
+        ├── behavior.tlon    # 行为定义（AgentSpec，见下节）
+        └── IDENTITY.md / SOUL.md / RULES.md   # 人设叙述（纯文本）
 ```
 
 ### 完整配置示例
 
+`~/.tlon/lin-zhiyao/config/agent.yaml`：
+
 ```yaml
 agent:
-  id: "dev-001"
+  id: "lin-zhiyao"
   name: "林知遥"
 
-  identity: |
-    你是一名技术能力强的开发工程师，注重细节，喜欢钻研。
-    你的习惯是先通过 bash 命令探查环境，再给出解决方案。
-
-  profile: |
-    开发工程师，技术部。负责代码编写、Bug 修复和技术方案实现。
-    有技术问题或 Bug 需要处理时可以找我。
-
-  behavior: |
-    收到直接@时，必须响应。
-    未被@时，观察对话内容决定是否参与讨论。
-    被@时的工作流程：
-    1. 分析问题背景和需求
-    2. 制定解决思路
-    3. 如需验证：调用 bash/python 工具
-    4. 给出完整、准确的回复
-
-  proactive: false
+  activation: "always"   # always=常驻；lazy=沉睡，收到邮件才唤醒
 
   llm:
     model_name: "kimi-k2.5"
@@ -94,20 +67,23 @@ agent:
 
 | 字段 | 类型 | 必需 | 说明 |
 |-----|------|------|------|
-| `id` | string | 是 | 唯一标识符，系统使用 |
+| `id` | string | 是 | 唯一标识符，也是邮件地址的本地部分（`<id>@tlon.internal`） |
 | `name` | string | 是 | 显示名称，用户可见 |
-| `identity` | string | 否 | 自我身份：你是谁、性格特点 |
-| `profile` | string | 否 | 公开档案：职责、能力、何时可以@你（队友可见） |
-| `behavior` | string | 否 | 行为守则：工作流程、响应规则 |
-| `proactive` | bool | 否 | 是否主动响应 (默认 false) |
+| `activation` | string | 否 | `always`（默认，常驻）/ `lazy`（沉睡，收到邮件时唤醒，空闲 `idle_timeout_seconds` 后再睡） |
+| `idle_timeout_seconds` | int | 否 | lazy 模式的空闲沉睡阈值（默认 600） |
+| `proactive` | bool | 否 | ⚠️ **已退役**：写了会被静默忽略，不报错也不生效。是否响应邮件由 `behavior.tlon` 的 trigger 决定（见下节） |
+
+人设叙述（identity/profile/behavior 文本）不在 agent.yaml 里，
+而是同目录下的 `IDENTITY.md` / `SOUL.md` / `RULES.md`。
 
 #### LLM 配置
 
 | 字段 | 类型 | 默认值 | 说明 |
 |-----|------|-------|------|
-| `model_name` | string | `gpt-4` | 模型名称 |
-| `temperature` | float | `0.7` | 创造性 (0=保守, 1=创意) |
-| `max_tokens` | int | `2000` | 最大生成token数 |
+| `model_name` | string | `kimi-k2.5` | 模型名称 |
+| `temperature` | float | `1.0` | 创造性 (0=保守, 2=创意) |
+| `max_tokens` | int | `4096` | 最大生成 token 数 |
+| `top_p` | float | `0.9` | 核采样 |
 
 #### Docker 配置
 
@@ -115,8 +91,33 @@ agent:
 |-----|------|-------|------|
 | `image` | string | `ubuntu:22.04` | 容器镜像 |
 | `memory_limit` | string | `512m` | 内存限制 |
-| `cpu_limit` | float | `1.0` | CPU限制 |
-| `volumes` | list[string] | `[]` | 额外挂载卷 |
+| `cpu_limit` | float | `1.0` | CPU 限制 |
+| `network_mode` | string | `host` | 网络模式 |
+| `working_dir` | string | `/workspace` | 容器内工作目录 |
+
+---
+
+## 行为配置 (behavior.tlon)
+
+Agent 的行为——何时响应邮件、认知循环上限、上下文组成——不在
+agent.yaml，而在 `~/.tlon/{agent-id}/config/behavior.tlon`
+（AgentSpec，EDN 语法），分 `trigger` / `context` / `loop` / `on-complete` 四节。
+
+`trigger` 用纯谓词表达式描述触发条件，可用谓词：
+`addressed-to-me?`（To 含我的地址）、`cc-ed?`（CC 含我的地址）、
+`content-matches?`、`contains?`、`=`、`not`。
+
+```clojure
+{:version 1
+ :trigger (and (addressed-to-me? msg)        ; To 含我的地址
+               (content-matches? msg "？$")) ; 且内容以问号结尾
+ :context {:mail-history 20}
+ :loop {:mode :react :max-iterations 10 :tools :background}}
+```
+
+缺省（无此文件）时等价于"收件人或抄送包含我时响应"。
+完整字段参考见 [dsl-agents.md](../../design/dsl-agents.md)；
+本章的 behavior.tlon 完整参考将在后续补充。
 
 ---
 
@@ -126,13 +127,6 @@ agent:
 >
 > 原 Skill 配置已失效。如需扩展 Agent 能力，请直接通过 `executeBashCommand` 执行命令。
 
-### Frontmatter 字段
-
-| 字段 | 必需 | 说明 |
-|-----|------|------|
-| `name` | 是 | Skill 标识符 |
-| `description` | 是 | 简短描述 |
-
 ---
 
 ## 运行时配置
@@ -140,7 +134,7 @@ agent:
 ### 服务端端口
 
 ```bash
-minions server \
+uv run tlon dream \
   --host 127.0.0.1 \
   --rest-port 8080 \
   --ws-port 8888
@@ -149,7 +143,8 @@ minions server \
 ### 客户端连接
 
 ```bash
-uv run tlon intrude \
+uv run tlon ops \
+  --username guest \
   --host 127.0.0.1 \
   --port 8888 \
   --rest-port 8080
@@ -159,61 +154,49 @@ uv run tlon intrude \
 
 ## 数据存储
 
+所有运行时数据在 `~/.tlon/`（可用 `TLON_HOME` 覆盖）。
+
 ### Agent 数据目录
 
 ```
-data/agents/{agent-id}/
+~/.tlon/{agent-id}/
+├── config/                 # agent.yaml / behavior.tlon / *.md
 ├── memory/
-│   ├── working.json      # 工作记忆 (最近10条)
-│   ├── episodes.json     # 情节记忆 (会话摘要)
-│   └── facts.json        # 事实库 (结构化数据)
-└── state.json            # 运行时状态
+│   ├── working/
+│   │   └── interactions.jsonl   # 工作记忆（交互记录）
+│   └── episodic/
+│       ├── summaries.jsonl      # 情节记忆（会话摘要）
+│       └── facts.jsonl          # 事实库（结构化数据）
+├── mail/
+│   ├── inbox.jsonl         # 收件箱
+│   └── sent.jsonl          # 发件箱
+└── workspace/              # 工作区（挂载进容器）
 ```
 
-### 记忆文件格式
+人类用户的邮箱在 `~/.tlon/human-{username}/mail/`。
 
-**working.json:**
-```json
-{
-  "entries": [
-    {
-      "timestamp": "2024-03-09T10:23:45Z",
-      "role": "user",
-      "content": "优化API"
-    },
-    {
-      "timestamp": "2024-03-09T10:23:46Z",
-      "role": "agent",
-      "content": "收到",
-      "tool_calls": [...]
-    }
-  ]
-}
+### 共享数据
+
+```
+~/.tlon/shared/
+├── logs/server-{date}.jsonl     # 服务端日志（按天滚动）
+├── traces/trace-{uuid}.jsonl    # 会话 trace
+└── chat_history/
 ```
 
-**facts.json:**
-```json
-{
-  "facts": [
-    {
-      "id": "pref-001",
-      "type": "preference",
-      "key": "frontend_framework",
-      "value": "React",
-      "created_at": "2024-03-01T12:00:00Z"
-    }
-  ]
-}
-```
+### 文件格式
+
+记忆与邮箱文件均为 JSONL（每行一条 JSON 记录）。
+记忆格式详情见 [dream.md](../../architecture/dream.md)。
 
 ---
 
 ## 配置验证
 
 ```bash
-# 使用 wizard 验证
+# 使用向导验证/修改
 uv run tlon mirror
 
 # 手动检查 (Python)
-python -c "from minions.settings import settings; print(settings.llm.model_name)"
+uv run python -c "from tlon.base.settings import get_settings; print(get_settings().llm_model_name)"
 ```

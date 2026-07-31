@@ -1,6 +1,6 @@
 # 命令参考
 
-> CLI、TUI、API 完整命令清单。
+> CLI、Operator 控制台、REST、WebSocket、SDK 完整清单。
 
 ---
 
@@ -23,7 +23,7 @@ uv run tlon [选项] <命令>
 
 ### tlon dream
 
-启动服务端。
+启动服务端（REST + WebSocket）。
 
 ```bash
 uv run tlon dream [选项]
@@ -32,7 +32,7 @@ uv run tlon dream [选项]
   --host HOST         绑定地址 (默认: 127.0.0.1)
   --rest-port PORT    REST API 端口 (默认: 8080)
   --ws-port PORT      WebSocket 端口 (默认: 8888)
-  --debug             调试模式
+  --lucid, -l         清醒梦模式（调试日志）
 
 示例:
   uv run tlon dream
@@ -40,22 +40,30 @@ uv run tlon dream [选项]
   uv run tlon dream --host 0.0.0.0  # 允许远程连接
 ```
 
-### tlon intrude
+### tlon ops
 
-启动 TUI 客户端。
+打开 Operator 控制台——人类的邮件主界面兼运维监控台（TypeScript/Ink）。
 
 ```bash
-uv run tlon intrude [选项]
+uv run tlon ops [选项]
 
 选项:
-  --host HOST         服务端地址 (默认: 127.0.0.1)
-  --port PORT         WebSocket 端口 (默认: 8888)
-  --rest-port PORT    REST API 端口 (默认: 8080)
+  --host HOST           服务端地址 (默认: 127.0.0.1)
+  --username, -u NAME   邮件身份 (默认: guest，可用环境变量 TLON_USERNAME)
+  --port, -p PORT       WebSocket 端口 (默认: 8888)
+  --rest-port, -r PORT  REST API 端口 (默认: 8080)
+  --lucid, -l           清醒梦模式（调试日志）
 
 示例:
-  uv run tlon intrude
-  uv run tlon intrude --host 192.168.1.100 --port 8888
+  uv run tlon ops --username alice
+  uv run tlon ops --host 192.168.1.100 --port 8888
 ```
+
+`--username` 决定你的邮件地址 `<username>@tlon.internal`；同名会话共享同一身份和邮箱。
+
+### tlon intrude / tlon tui
+
+`ops` 的旧别名，保留仅为向后兼容。功能与 `tlon ops` 完全一致，参数相同。新文档和脚本请一律使用 `ops`。
 
 ### tlon mirror
 
@@ -74,90 +82,51 @@ uv run tlon mirror
 
 ## 命令别名
 
-Tlon 同时支持文学化命令名称（等效别名）：
-
 | 文学名称 | 工程别名 | 说明 |
 |---------|---------|------|
 | `uv run tlon dream` | `uv run tlon server` | 维持梦境（启动服务） |
-| `uv run tlon intrude` | `uv run tlon tui` | 入侵现实（连接界面） |
+| `uv run tlon ops` | `uv run tlon intrude` / `uv run tlon tui` | 入侵现实（Operator 控制台） |
 | `uv run tlon mirror` | `uv run tlon wizard` | 镜中造物（配置向导） |
 
 ---
 
-## TUI 命令
+## Operator 控制台（TUI）
 
-在 TUI 界面中输入。以 `/` 开头的是命令，其他是消息。
+`tlon ops` 启动后是一个五视图控制台。所有交互都是**写信/读信 + 监控**，没有 `/` 命令。
 
-### 消息输入
+### 全局按键
 
-```
-> 你好                          # 发送消息给客服
-> @林知遥 写个函数               # @提及特定 Agent
-> @林知遥 @林知遥 讨论方案       # 同时@多个
-```
+| 按键 | 操作 |
+|------|------|
+| `1` – `5` | 切换到 mail / agents / events / traces / config 视图 |
+| `tab` / `→` | 下一个视图 |
+| `←` | 上一个视图 |
+| `q` / `Ctrl+C` | 退出 |
 
-### 模式切换
+写信或回复表单激活时，全局按键挂起，表单独占键盘。
 
-| 命令 | 说明 |
-|-----|------|
-| `/mode chat` | 切换到聊天模式 (默认) |
-| `/mode event` | 切换到事件监控模式 |
-| `/mode agent` | 切换到 Agent 管理模式 |
+### mail 视图（默认）
 
-### Agent 管理
+左栏线程列表（按 `thread_id` 聚合，最新在前），右栏选中线程的会话流。
 
-| 命令 | 说明 | 示例 |
-|-----|------|------|
-| `/wake <name>` | 唤醒 Agent | `/wake 林知遥` |
-| `/sleep <name>` | 休眠 Agent | `/sleep 林知遥` |
-| `/list` | 列出所有 Agent | - |
-| `/status <name>` | 查看 Agent 状态 | `/status 林知遥` |
+| 按键 | 操作 |
+|------|------|
+| `↑` / `↓` | 选择线程 |
+| `c` | 写信：To / Cc / Subject / Content 四字段，回车逐字段，Content 上回车提交，`esc` 取消 |
+| `r` | 回复选中线程：自动填收件人、`Re:` 主题，继承线程（`in_reply_to` / `thread_id`） |
 
-### 记忆操作
+To/Cc 支持逗号分隔多个收件人；每项可以是完整地址（`lin-zhiyao@tlon.internal`）、agent id（`lin-zhiyao`）或显示名（`林知遥`）。邮件必须至少有一个可解析收件人，否则服务端拒绝。特殊地址 `all@tlon.internal` 展开为全部 agent + 在线人类；错误地址会收到 `postmaster@tlon.internal` 退信。
 
-| 命令 | 说明 |
-|-----|------|
-| `/history [n]` | 显示最近 n 条记忆 (默认 10) |
-| `/facts` | 显示已知事实 |
-| `/summary` | 手动触发会话摘要 |
-| `/forget <agent>` | 清除某 Agent 记忆 |
+### agents / events / traces / config 视图
 
-### 其他命令
+| 视图 | 按键 | 用途 |
+|------|------|------|
+| agents | `↑↓` 选择 · `enter` 详情 · `r` 刷新 | agent 列表与状态，单个 agent 详情 |
+| events | `↑↓` 滚动 · `p` 暂停 · `c` 清空 | 实时事件流（最近 500 条），选中事件查看 JSON |
+| traces | `↑↓` 选择 · `enter` 详情 · `r` 刷新 | 调用链列表，完整 trace 与 span 树 |
+| config | `r` 刷新 | 只读查看服务端与 agent 配置 |
 
-| 命令 | 说明 |
-|-----|------|
-| `/help` | 显示帮助 |
-| `/quit` 或 `/q` | 退出 TUI |
-| `/clear` | 清屏 |
-
----
-
-## TUI 快捷键
-
-### 全局
-
-| 快捷键 | 说明 |
-|-------|------|
-| `Ctrl+C` | 退出程序 |
-| `Ctrl+L` | 清屏 |
-| `Tab` | 切换焦点 |
-| `↑/↓` | 浏览历史 |
-
-### 输入框
-
-| 快捷键 | 说明 |
-|-------|------|
-| `Enter` | 发送消息/执行命令 |
-| `Ctrl+A` | 光标移到行首 |
-| `Ctrl+E` | 光标移到行尾 |
-| `Ctrl+U` | 清空输入 |
-
-### 事件模式
-
-| 快捷键 | 说明 |
-|-------|------|
-| `f` | 过滤事件类型 |
-| `c` | 清除事件列表 |
+控制台认证后自动切到 `event` 会话模式，因此能看到**全部**事件（包括他人之间的邮件投递）；mail 视图在客户端侧只呈现与你自己有关的邮件。模式语义见下文 WebSocket API。
 
 ---
 
@@ -166,259 +135,402 @@ Tlon 同时支持文学化命令名称（等效别名）：
 ### 基础信息
 
 ```
-Base URL: http://localhost:8080/api
+Base URL: http://localhost:8080
 Content-Type: application/json
+CORS: Access-Control-Allow-Origin: *
 ```
 
-### Agents
-
-#### 列出所有 Agents
-
-```bash
-GET /api/agents
-
-响应:
-{
-  "agents": [
-    {
-      "id": "dev-001",
-      "name": "林知遥",
-      "role": {           // 内联角色信息
-        "title": "开发工程师",
-        "department": "技术部"
-      },
-      "status": "online",  // online, offline, sleeping
-      "proactive": false
-    }
-  ]
-}
-```
-
-#### 获取 Agent 详情
-
-```bash
-GET /api/agents/{id}
-
-响应:
-{
-  "id": "dev-001",
-  "name": "林知遥",
-  "config": { ... },
-  "state": {
-    "status": "online",
-    "last_active": "2024-03-09T10:23:45Z"
-  },
-  "memory_stats": {
-    "working_entries": 5,
-    "episodes": 12,
-    "facts": 8
-  }
-}
-```
-
-#### 唤醒 Agent
-
-```bash
-POST /api/agents/{id}/wake
-
-响应:
-{ "status": "awakened", "container_id": "abc123" }
-```
-
-#### 休眠 Agent
-
-```bash
-POST /api/agents/{id}/sleep
-
-响应:
-{ "status": "sleeping" }
-```
-
-### Chatroom
-
-#### 获取消息历史
-
-```bash
-GET /api/chatroom/messages?limit=50&before=timestamp
-
-参数:
-  limit:    返回消息数量 (默认 50)
-  before:   获取此时间戳之前的消息
-
-响应:
-{
-  "messages": [
-    {
-      "id": "msg-001",
-      "timestamp": "2024-03-09T10:23:45Z",
-      "sender": "user",
-      "content": "优化API",
-      "mentions": ["dev-001"]
-    },
-    {
-      "id": "msg-002",
-      "timestamp": "2024-03-09T10:23:46Z",
-      "sender": "dev-001",
-      "content": "收到，正在分析..."
-    }
-  ]
-}
-```
-
-#### 发送消息
-
-```bash
-POST /api/chatroom/messages
-Content-Type: application/json
-
-请求体:
-{
-  "content": "@林知遥 优化这个函数",
-  "mentions": ["dev-001"]
-}
-
-响应:
-{ "id": "msg-003", "timestamp": "2024-03-09T10:24:00Z" }
-```
-
-### ~~Skills~~ ❌ 已移除
-
-> Skill API 已于 2026-03-17 移除。原以下接口不再可用：
-> - `GET /api/skills`
-> - `POST /api/skills/{name}/activate`
-> - `POST /api/skills/{name}/deactivate`
-
-如需扩展 Agent 能力，请直接通过 `executeBashCommand` 工具执行命令。
-
-响应:
-{ "status": "activated" }
-```
-
-#### 停用 Skill
-
-```bash
-POST /api/skills/{name}/deactivate
-
-响应:
-{ "status": "deactivated" }
-```
+注意：端点挂在根路径下（`/agents`），没有 `/api` 前缀。
 
 ### 系统
 
 #### 健康检查
 
 ```bash
-GET /api/health
-
-响应:
-{ "status": "ok", "version": "0.1.0" }
-```
-
-#### 系统状态
-
-```bash
-GET /api/status
+GET /health
 
 响应:
 {
-  "version": "0.1.0",
-  "uptime": 3600,
-  "agents": {
-    "total": 5,
-    "online": 2
-  },
-  "resources": {
-    "memory": "1.2GB",
-    "containers": 2
+  "status": "healthy",
+  "running": true,
+  "timestamp": "2026-07-30T10:23:45.123456",
+  "version": "0.2.0"
+}
+```
+
+#### 服务端配置
+
+```bash
+GET /config
+
+响应:
+{
+  "server": { "host": "127.0.0.1", "port": 8888 },
+  "agents": { "count": 6 },
+  "sessions": { "active": 1 }
+}
+```
+
+### 邮件
+
+#### 拉取人类收件箱
+
+```bash
+GET /inbox?username=alice&limit=50
+
+参数:
+  username: 人类用户名 (默认 guest)；返回 "human:<username>" 的邮箱
+  limit:    最大返回数 (默认 50，上限 200)
+
+响应:
+{
+  "mails": [
+    {
+      "id": "3f2a...",
+      "from_address": "gu-yanxi@tlon.internal",
+      "to": ["alice@tlon.internal"],
+      "cc": [],
+      "subject": "Re: 你好",
+      "content": "收到，顾言蹊在线...",
+      "in_reply_to": "9c1b...",
+      "thread_id": "9c1b...",
+      "forward_of": null,
+      "timestamp": "2026-07-30T10:23:46.789012+00:00"
+    }
+  ],
+  "count": 1
+}
+```
+
+返回该成员 inbox + sent 合并、按时间序的邮件。username 为空或含路径分隔符返回 400。
+
+### Agents
+
+#### 列出所有 Agents
+
+```bash
+GET /agents
+
+响应:
+{
+  "agents": [
+    { "id": "lin-zhiyao", "name": "林知遥", "state": "running", ... }
+  ],
+  "count": 6
+}
+```
+
+#### 获取 Agent 详情
+
+```bash
+GET /agents/{id}
+
+响应:
+{
+  "id": "lin-zhiyao",
+  "name": "林知遥",
+  "state": "running",
+  "config": {
+    "profile": "开发工程师，技术部。负责代码编写..."
   }
 }
 ```
+
+agent 不存在返回 404 `{"error": "Agent 'xxx' not found"}`。
+
+> 唤醒/休眠端点已移除：所有 agent 随服务端启动，空闲自动沉睡，收到邮件自动唤醒，无需手动管理。
+
+### 参与者与会话
+
+```bash
+GET /participants
+
+响应:
+{
+  "participants": [
+    { "id": "lin-zhiyao", "name": "林知遥", "type": "agent", "metadata": {...} },
+    { "id": "human:alice", "name": "alice", "type": "human", "metadata": {...} }
+  ],
+  "count": 7
+}
+```
+
+```bash
+GET /sessions
+
+响应:
+{
+  "sessions": [
+    {
+      "id": "sess-uuid",
+      "client_type": "tui",
+      "connected_at": "2026-07-30T10:20:00",
+      "mode": "event",
+      "filters": {...}
+    }
+  ],
+  "count": 1
+}
+```
+
+### 日志与 Trace
+
+#### 全局日志
+
+```bash
+GET /logs?agent_id=lin-zhiyao&level=warning&trace_id=abc&limit=100&before=<ISO时间>
+
+参数（均可选，组合为 AND）:
+  agent_id / trace_id / level (debug|info|warning|error|critical，最低级别) / before / limit (默认 100，上限 1000)
+
+响应: { "logs": [ ...结构化日志条目... ], "count": N }
+```
+
+读取当天和昨天的 `shared/logs/server-{date}.jsonl`。
+
+#### 单个 Agent 日志
+
+```bash
+GET /agents/{id}/logs?limit=100&before=<ISO时间>
+
+响应: { "agent_id": "lin-zhiyao", "logs": [...], "count": N }
+```
+
+#### Trace
+
+```bash
+GET /traces?limit=100&source=mail_delivery   # 列表（limit 上限 1000）
+GET /traces/{trace_id}                        # 完整 trace + span 树
+
+响应 (详情):
+{ "trace": {...}, "span_tree": {...} }
+```
+
+### 管理
+
+#### 当前 Agent 配置（热加载）
+
+```bash
+GET /admin/config/agents
+
+响应:
+{
+  "status": "success",
+  "agents": [ { "id": "lin-zhiyao", "name": "林知遥", "identity": "你是林知遥..." } ],
+  "count": 6
+}
+```
+
+仅在服务端装配了 config manager 时可用，否则 503。
+
+### 已移除的端点
+
+以下端点已随邮件模型切换（R2/PR-C）和 Skill 系统移除而删除：
+
+- `GET /history`、`GET|POST /api/chatroom/*` — 邮件历史走 `GET /inbox`，发信走 WebSocket `message` 帧或 SDK
+- `POST /agents/{id}/wake|sleep` — 生命周期全自动
+- `GET|POST /api/skills/*` — Skill 系统已于 2026-03-17 移除
+- `GET /api/status` — 由 `/health` + `/config` 取代
 
 ---
 
 ## WebSocket API
 
-### 连接
+### 连接与认证
 
-```javascript
-// 客户端连接
-const ws = new WebSocket('ws://localhost:8888');
-
-ws.onopen = () => {
-  // 订阅聊天室
-  ws.send(JSON.stringify({
-    type: 'subscribe',
-    channel: 'chatroom'
-  }));
-};
-
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log(data);
-};
-```
-
-### 消息格式
-
-#### 客户端 → 服务端
+端点 `ws://localhost:8888/ws`。连接后**第一帧必须是 auth**（10 秒超时），认证失败连接以 4001 关闭。
 
 ```json
-// 发送聊天消息
+// Client → Server: auth
 {
-  "type": "chat",
-  "content": "@林知遥 写代码",
-  "mentions": ["dev-001"]
+  "type": "auth",
+  "client_type": "tui",
+  "username": "alice",
+  "protocol_version": "1.0.0",
+  "supported_versions": ["1.0.0"],
+  "capabilities": ["trace", "filter"],
+  "filters": { "exclude_event_types": ["agent.llm_request"] },
+  "metadata": { "client_version": "0.2.0" }
 }
 
-// 订阅频道
+// Server → Client: 成功
 {
-  "type": "subscribe",
-  "channel": "chatroom"
+  "type": "auth_success",
+  "session_id": "sess-uuid",
+  "username": "alice",
+  "protocol_version": "1.0.0",
+  "server_version": "0.2.0",
+  "server_time": "2026-07-30T10:20:00.000000",
+  "capabilities": ["trace", "filter"],
+  "timestamp": "2026-07-30T10:20:00.000000"
 }
 
-// 执行命令
+// Server → Client: 版本不兼容
 {
-  "type": "command",
-  "command": "/wake",
-  "args": ["林知遥"]
+  "type": "auth_failed",
+  "error_code": "VERSION_MISMATCH",
+  "message": "Protocol version 0.9.0 is no longer supported...",
+  "supported_versions": ["1.0.0"]
 }
 ```
 
-#### 服务端 → 客户端
+- `username` 可选，缺省 `guest`；它决定本会话以哪个 `human:<username>` 身份发信、收信。
+- `protocol_version` 缺省按 1.0.0 处理；客户端版本更高时降级到服务端版本。
+- `filters` 声明初始事件过滤器（可选），之后可用 `filter` 帧整体替换。
+
+### Client → Server 帧
+
+#### 发送邮件
 
 ```json
-// 新消息通知
 {
   "type": "message",
-  "data": {
-    "id": "msg-004",
-    "timestamp": "2024-03-09T10:25:00Z",
-    "sender": "dev-001",
-    "content": "代码已生成"
-  }
-}
-
-// Agent 状态变更
-{
-  "type": "agent_status",
-  "data": {
-    "agent_id": "dev-001",
-    "status": "thinking",
-    "activity": "generating code"
-  }
-}
-
-// 事件通知
-{
-  "type": "event",
-  "data": {
-    "timestamp": "2024-03-09T10:25:01Z",
-    "type": "TOOL_CALL",
-    "agent": "dev-001",
-    "details": { "tool": "execute_bash", "args": [...] }
-  }
+  "content": "请帮我审查这段代码",
+  "to": ["lin-zhiyao@tlon.internal"],
+  "cc": ["shen-qingyan"],
+  "subject": "代码审查请求",
+  "in_reply_to": "上游邮件id（回复时）",
+  "thread_id": "线程根邮件id（回复时）"
 }
 ```
+
+- `content` 必填（空 → 错误帧 `Message content is empty`）。
+- `to` / `cc` 可选但均为 list；每项可以是完整地址、agent id 或显示名，服务端解析去重。**零可解析收件人 → 错误帧，不发布**（"没有可送达的收件人：请在 to 中指定至少一个收件人"）。
+- `subject` / `in_reply_to` / `thread_id` 可选字符串；不带 `thread_id` 的新邮件自成线程根。
+- 无法解析的收件人地址触发 `postmaster@tlon.internal` 退信到发件人邮箱。
+- 未知字段静默忽略（例如旧客户端残留的 `mentions` 别名——已于 PR-C 移除）。
+
+#### 切换模式
+
+```json
+{ "type": "mode", "mode": "chat" }
+
+// 响应: { "type": "mode_changed", "mode": "chat" }
+```
+
+`mode` 取 `chat` / `event` / `agent`，语义见下表。切换后服务端按新模式补发初始数据（chat → `participants` 帧，agent → `agents` 帧）。
+
+#### 更新过滤器
+
+```json
+{ "type": "filter", "filters": { "trace_id": "trace-abc-123" } }
+
+// 响应: { "type": "filters_updated", "filters": {...} }
+```
+
+#### 心跳
+
+```json
+{ "type": "ping" }
+// 响应: { "type": "pong" }
+```
+
+### Server → Client 帧
+
+#### 事件
+
+```json
+{
+  "type": "event",
+  "event_type": "mail.delivered",
+  "payload": {
+    "mail": {
+      "id": "3f2a...",
+      "from_address": "gu-yanxi@tlon.internal",
+      "to": ["alice@tlon.internal"],
+      "cc": [],
+      "subject": "Re: 你好",
+      "content": "...",
+      "in_reply_to": "9c1b...",
+      "thread_id": "9c1b...",
+      "forward_of": null,
+      "timestamp": "2026-07-30T10:23:46.789012+00:00"
+    },
+    "recipient": "human:alice"
+  },
+  "source": "mail_delivery",
+  "timestamp": "2026-07-30T10:23:46.790000",
+  "trace_id": "trace-abc-456",
+  "span_id": "span-001",
+  "parent_span_id": "span-000"
+}
+```
+
+- 每个收件人一份 `mail.delivered` 事件（`recipient` 标识落在谁的邮箱）；新邮件投递前另有 `mail.new`（payload 为 Mail 本体）。
+- trace 字段（`trace_id` / `span_id` / `parent_span_id`）仅在事件携带时出现。
+- 其余事件类型（`agent.started/stopped/error/state_changed`、`agent.thinking_*`、`agent.llm_*`、`tool.execute_*`、`system.*`、`session.*`）见 [协议设计](../../design/client-server-protocol.md)。
+
+#### 初始数据 / 状态 / 错误
+
+```json
+{ "type": "participants", "participants": [ {"id","name","type"} ] }
+{ "type": "agents", "agents": [ ... ] }
+{ "type": "mode_changed", "mode": "event" }
+{ "type": "filters_updated", "filters": {...} }
+{ "type": "error", "message": "Field 'to' must be a list" }
+{ "type": "pong" }
+```
+
+### 模式语义与事件过滤
+
+过滤**只在服务端执行**（客户端只是声明）。管线依次：
+
+0. **邮件可见性**：`mail.delivered` 在 chat 模式下只推给收件人本人（payload `recipient` == `human:<session username>`）；event / agent 模式不过滤——运维控制台因此能看到全部邮件流量。
+1. **模式语义**：
+   - `chat`：`mail.*`、`agent.response/started/stopped/error`、`system.*`
+   - `agent`：仅 `agent.*`
+   - `event`：全部事件
+2. **会话过滤器**（均可选，AND 关系）：
+   - `event_types`：包含列表（`prefix.*` 通配）
+   - `exclude_event_types`：排除列表（`prefix.*` 通配）
+   - `trace_id`：仅推送该 trace 的事件
+   - `agent`：按事件来源匹配（`*` 通配）
+
+---
+
+## Python SDK
+
+`TlonClient` 封装了连接、认证、协议协商与事件分发：
+
+```python
+import asyncio
+from tlon.app.clients.sdk.client import TlonClient
+
+async def main() -> None:
+    async with TlonClient("ws://localhost:8888/ws") as client:
+        await client.authenticate(username="alice")
+
+        # 发信：to 为必填列表，接受地址 / agent id / 显示名
+        await client.send_message(
+            "帮我审查这段代码",
+            to=["lin-zhiyao@tlon.internal"],
+            cc=["shen-qingyan"],
+            subject="代码审查请求",
+        )
+
+        # 收事件（服务端已按模式和过滤器筛过）
+        @client.on_event
+        def handle(event: dict) -> None:
+            if event["event_type"] == "mail.delivered":
+                mail = event["payload"]["mail"]
+                print(f"{mail['from_address']}: {mail['content']}")
+
+        await asyncio.sleep(60)
+
+asyncio.run(main())
+```
+
+常用方法：
+
+| 方法 | 说明 |
+|------|------|
+| `connect()` / `disconnect()` | 连接管理（支持自动重连，重连后自动重新认证） |
+| `authenticate(username=...)` | 认证，`username` 缺省服务端按 `guest` 处理 |
+| `send_message(content, to, cc=None, subject=None, reply_to=None)` | 发送邮件（R2 协议） |
+| `set_mode("chat"\|"event"\|"agent")` | 切换模式（同时重同步过滤器） |
+| `set_filters({...})` / `set_trace_filter(trace_id)` | 更新会话过滤器 |
+| `on_event` / `on_message` / `on_error` / `on_state_change` / `on_reconnect` | 注册回调 |
+| `get_agents()` / `get_agent(id)` / `get_traces()` / `get_trace(id)` / `get_agent_logs(id)` | REST 便捷封装 |
 
 ---
 
@@ -429,25 +541,20 @@ ws.onmessage = (event) => {
 | 码 | 说明 |
 |---|------|
 | 200 | 成功 |
-| 400 | 请求参数错误 |
-| 404 | 资源不存在 |
-| 500 | 服务器内部错误 |
-| 503 | 服务不可用 (Agent 未启动) |
+| 400 | 请求参数错误（如非法 username、非法 JSON） |
+| 404 | 资源不存在（agent / trace） |
+| 503 | 存储或组件不可用（mail storage / trace store / config manager） |
 
 ### 错误响应格式
 
-```json
-{
-  "error": {
-    "code": "AGENT_NOT_FOUND",
-    "message": "Agent dev-999 does not exist"
-  }
-}
+REST 错误为扁平结构：
 
-{
-  "error": {
-    "code": "CONTAINER_ERROR",
-    "message": "Failed to start Docker container"
-  }
-}
+```json
+{ "error": "Agent 'dev-999' not found" }
+```
+
+WebSocket 错误为 `error` 帧：
+
+```json
+{ "type": "error", "message": "没有可送达的收件人：请在 to 中指定至少一个收件人" }
 ```

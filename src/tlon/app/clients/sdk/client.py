@@ -180,6 +180,7 @@ class TlonClient:
         cc: list[str] | None = None,
         subject: str | None = None,
         reply_to: str | None = None,
+        thread_id: str | None = None,
     ) -> bool:
         """Send a mail message (R2 protocol).
 
@@ -191,6 +192,9 @@ class TlonClient:
             cc: Optional carbon-copy recipients
             subject: Optional mail subject
             reply_to: Optional message ID to reply to
+            thread_id: Optional thread ID (inherit from the upstream
+                mail when replying; otherwise the reply starts a new
+                thread)
 
         Returns:
             True if sent successfully
@@ -205,7 +209,9 @@ class TlonClient:
         if subject:
             msg["subject"] = subject
         if reply_to:
-            msg["reply_to"] = reply_to
+            msg["in_reply_to"] = reply_to
+        if thread_id:
+            msg["thread_id"] = thread_id
 
         return await self._base.send(msg)
 

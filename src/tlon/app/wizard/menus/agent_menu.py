@@ -544,7 +544,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                             "常驻 (always) - 系统启动即运行，永不休眠", value="always"
                         ),
                         self.questionary.Choice(
-                            "休眠 (lazy) - 被@时唤醒，空闲自动休眠", value="lazy"
+                            "休眠 (lazy) - 被来信唤醒，空闲自动休眠", value="lazy"
                         ),
                     ],
                     default=agent.activation,

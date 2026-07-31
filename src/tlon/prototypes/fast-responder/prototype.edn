@@ -1,4 +1,4 @@
 {:name :fast-responder
  :display-name "快速反应者"
- :description "简洁快速的响应型 Agent：极少思考迭代、精简上下文（不注入知识、只看最近 5 条房间历史）。适合简单问答、快速确认与轻量任务。"
+ :description "简洁快速的响应型 Agent：极少思考迭代、精简上下文（不注入知识、只看最近 5 封邮件）。适合简单问答、快速确认与轻量任务。"
  :trusted true}

@@ -84,6 +84,9 @@ async def run_ops(args: Namespace) -> int:
         "--rest-port",
         str(args.rest_port),
     ]
+    username = getattr(args, "username", None)
+    if username:
+        command += ["--username", username]
 
     logger.info("operator_tui_launched", command=command)
 

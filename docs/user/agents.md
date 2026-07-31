@@ -38,7 +38,7 @@ uv run tlon mirror
         我会用 React 为你构建优雅的界面。
         请多指教。"
        
-       林知遥已进入代表大会。
+       林知遥已加入团队，邮箱已就绪。
        
 [系统] Agent 林知遥 已创建并唤醒。
                Docker 容器：运行中
@@ -67,19 +67,22 @@ uv run tlon mirror
 - **性格**：行为风格（严谨、灵活、温和、直接）
 - **LLM 配置**：使用哪个模型、温度参数等
 
-> ⏳ 模板创建（`--from-template`）和技能标签系统尚未实现。Agent 能力通过 Bash 工具和内置记忆工具扩展。
+> 🧬 除了从零创造，mirror 还提供「从 Prototype 创建」：Prototype 是预置的行为原型（内置 archivist、deep-thinker、fast-responder 三个，首次启动时复制到 `~/.tlon/prototypes/`），实例化后直接得到一个带完整人格与行为规约的 Agent。Agent 自身也可以用 `writePrototype` 工具起草新原型，草案进入 `~/.tlon/prototypes-staging/`，由你在 mirror 的「规约审批」菜单中审定后才能使用。
 
 ### 2. 唤醒与休眠
 
-Agent 默认随系统启动。通过 @ 即可触发响应：
+Agent 的激活策略由配置项 `activation` 决定：
+
+- **`always`（默认）**：随服务端启动，一直在线。
+- **`lazy`**：启动时只注册、不运行，处于沉睡状态。给它的邮箱（`<agent-id>@tlon.internal`）来信时被自动唤醒（有数秒延迟）；空闲超过 `idle_timeout_seconds`（默认 600 秒）后自动休眠，释放资源。
+
+唤醒与休眠由系统内置的生命周期策略（Adam）自动管理，无需手动干预。沉睡期间寄到的邮件会保留在邮箱里，醒来后统一扫读未读。
 
 ```
-> @林知遥 帮忙写个组件
+> 写信给 林知遥（lin-zhiyao@tlon.internal）：帮忙写个组件
 
 [林知遥] 好的，我来看看...
 ```
-
-长时间不 @ 的 Agent 会自动进入低资源状态（记忆保留，Docker 容器可能停止），下次 @ 时自动恢复。
 
 ### 3. 重塑（Reconfigure）
 
@@ -98,49 +101,61 @@ Agent 默认随系统启动。通过 @ 即可触发响应：
 
 ## Agent 配置详解
 
-### 基础信息
+每个 Agent 的家目录是 `~/.tlon/{agent-id}/`，其中 `config/` 下有三类配置：
+
+| 文件 | 内容 |
+|------|------|
+| `agent.yaml` | 运行参数（模型、容器、激活策略等） |
+| `behavior.tlon` | 行为规约（触发、上下文、循环、完成动作），EDN 格式 |
+| `IDENTITY.md` / `SOUL.md` / `RULES.md` | 人格叙事：身份、性格、行为规则 |
+
+### agent.yaml
 
 ```yaml
-agents:
-  - id: "dev-002"           # 系统标识（唯一）
-    name: "林知遥"             # 显示名称
-    role:                        # 角色信息
-      title: "开发工程师"
-    personality: |           # 性格描述（影响回复风格）
-      温柔但坚定，注重细节。
-      喜欢简洁优雅的代码。
-      遇到不确定的需求会主动询问。
+agent:
+  id: "lin-zhiyao"          # 系统标识（唯一，即邮箱地址的本地部分）
+  name: "林知遥"             # 显示名称
+  llm:                       # 大脑配置
+    model_name: "kimi-k2.5"
+    temperature: 1.0         # 0–2，越低越严谨
+    max_tokens: 4096
+  docker:                    # 沙箱容器配置
+    image: "ubuntu:22.04"
+    memory_limit: "512m"
+    cpu_limit: 1.0
+  memory:                    # 记忆配置
+    max_history: 10          # 工作记忆保留的交互条数
+  activation: "lazy"         # always=常驻在线；lazy=沉睡，被来信唤醒
+  idle_timeout_seconds: 600  # lazy 模式下空闲多久后自动休眠
 ```
 
-### 行为规则
+完整字段（`tool`、`session_timeout_seconds`、`message_queue_size` 等）及默认值见源码 `src/tlon/base/config.py` 的 `AgentConfig` 定义。
 
-```yaml
-    proactive: false         # 是否主动响应（客服=true，其他=false）
-    rules:                   # 特殊行为规则
-      - "只被@时响应"
-      - "可以执行 bash 命令"
-      - "优先使用 TypeScript"
+> ⚠️ 旧版字段 `proactive` 已退役：保留在配置文件中不会报错，但会被静默忽略。邮件模型下，Agent 是否响应由收件人（To/CC）与 `behavior.tlon` 的触发规约决定。
+
+### behavior.tlon
+
+行为规约是 EDN 格式的数据文件，分四节。所有字段都可省略——缺省字段回退到内置默认规约，写错的文件也不会阻止 Agent 启动（同样回退默认）：
+
+```clojure
+{:version 1
+ :trigger {:on-mention true}          ; 收件人（To/CC）包含我时响应
+ :context {:mail-history 20}          ; 注入上下文的邮箱历史邮件数，0 关闭
+ :loop {:max-iterations 10            ; ReAct 循环上限
+        :max-consecutive-errors 3}
+ :on-complete {:save-interaction true
+               :reflect {:enabled true :interval-minutes 15}}}
 ```
 
-### 能力配置
+`:trigger` 也可以写成表达式模式，用纯谓词精细控制响应条件：
 
-```yaml
-    llm:                     # 大脑配置
-      model_name: "gpt-4"
-      temperature: 0.7       # 0=严谨，1=创意
-      max_tokens: 2000
+```clojure
+{:version 1
+ :trigger (and (addressed-to-me? msg)
+               (content-matches? msg "紧急|线上"))}
 ```
 
-### 环境配置
-
-```yaml
-    docker:                  # 容器配置
-      image: "ubuntu:22.04"
-      memory_limit: "1g"
-      cpu_limit: "1.0"
-      volumes:               # 额外挂载
-        - "./frontend:/workspace"
-```
+可用谓词：`addressed-to-me?`（我在 To）、`cc-ed?`（我在 CC）、`content-matches?`（正文正则匹配）、`contains?`（包含判断）、`=`、`not`，可配合 `and` / `or` / `if` / `let` 组合。完整设计见 [dsl-agents.md](../design/dsl-agents.md)。
 
 ---
 
@@ -188,15 +203,12 @@ agents:
 
 ### 性格定义
 
-不用写太长，抓住关键特征：
+性格写在 `~/.tlon/{agent-id}/config/SOUL.md`（行为规则写在 `RULES.md`）。不用写太长，抓住关键特征：
 
-```yaml
-personality: |
-  内向但可靠。
-  喜欢先思考再发言。
-  代码风格严谨，注释详尽。
-```
-
+```markdown
+内向但可靠。
+喜欢先思考再发言。
+代码风格严谨，注释详尽。
 ```
 
 ---

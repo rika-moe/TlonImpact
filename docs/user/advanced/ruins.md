@@ -4,23 +4,26 @@
 
 > ⚠️ **愿景文档 · Vision Document**
 >
-> 本章描述**尚未实现**。环形废墟（递归 Agent 创造）是 Tlon 的设计方向，当前代码中无任何实现。
+> 本章描述的未来**尚未完整落地**。环形废墟（递归 Agent 创造）目前只有雏形：
+> Agent 可以用 `writePrototype` 起草行为原型、用 `spawnAgent` 从原型创建一次性
+> contractor（回收时删除家目录），但配额、审查、递归树管理均未实现。
 > 文中的命令、配置项、安全限制均为设计草案。
 
 ---
 
 ## 当前状态
 
-环形废墟**尚未进入开发**。没有代码，没有 CLI 命令，没有配置项。
+环形废墟**尚未完整进入开发**——雏形已存在（prototype → contractor），但没有专门的 CLI 命令、配额和审查机制。
 
 **今天你可以做的**：
 
 | 功能 | 实现状态 | 入口 |
 |------|---------|------|
 | 手动创建 Agent | ✅ | `uv run tlon mirror`（第六章） |
-| 在代表大会中协作 | ✅ | Congress TUI（第二章） |
-| Git 分支管理 | ✅ | Agent 对话（第七章） |
-| Agent 递归创造 | ❌ | 本章为愿景 |
+| 与团队邮件协作 | ✅ | Operator 控制台 mail 视图（`uv run tlon ops`） |
+| Git 分支管理 | ✅ | 写信给 Agent（第七章） |
+| 从原型创建一次性 Agent | 🌱 雏形 | `spawnAgent` 工具 / mirror「从 Prototype 创建」 |
+| Agent 递归创造（完整版） | ❌ | 本章为愿景 |
 
 何时进入开发取决于 M7 之后的路线图规划。
 
@@ -33,7 +36,7 @@
 ### 你构想一个需求
 
 ```
-> @沈清晏 我们需要一个专门做数据清洗的 Agent
+> 写信给 沈清晏：我们需要一个专门做数据清洗的 Agent
 
 [沈清晏] 我可以在镜中凝聚一个新的轮廓。
          CSV 为主，需要 pandas，性格细心严谨——对吗？
@@ -44,7 +47,7 @@
         
         [镜子] "我是数据员小洁。"
         
-        小洁已进入代表大会。
+        小洁已加入团队。
 ```
 
 你不再需要手动打开 `tlon mirror`——团队成员自动扩展。
@@ -127,4 +130,4 @@ tlon ruins prune 林知遥 --children  # 销毁分支及所有子 Agent
 
 ## 🔧 相关参考
 
-环形废墟尚无工程实现。当前可用的 Agent 管理方式 → [命令参考](../engineering/commands.md) · [系统架构](../engineering/architecture.md)
+环形废墟仅有雏形（`spawnAgent` / `writePrototype`）。当前可用的 Agent 管理方式 → [命令参考](../engineering/commands.md) · [系统架构](../engineering/architecture.md)

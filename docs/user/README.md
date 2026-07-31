@@ -30,13 +30,13 @@
 ## 各章一览
 
 - **第一章 → [进入特隆](getting-started.md)**：安装、启动、验证
-- **第二章 → [第一次对话](first-conversation.md)**：@mentions、三种对话模式
-- **第三章 → [代表大会](advanced/congress.md)**：TUI 界面、快捷键、Operator 控制台
+- **第二章 → [第一封信](first-conversation.md)**：写信、邮箱、线程、退信
+- **第三章 → [代表大会](advanced/congress.md)**：Operator 控制台与邮件模型
 - **第四章 → [莎士比亚的记忆](memory.md)**：两层记忆、自动归档、主动管理
 - ~~第五章：巴别图书馆~~ — 已移除
 - **第六章 → [镜子](agents.md)**：创建、配置、管理 Agent
 - **第七章 → [花园](garden.md)**：Git 分支的诗意实践
-- **第八章 → [环形废墟](advanced/ruins.md)** ⚠️ 愿景：Agent 递归创造（未实现）
+- **第八章 → [环形废墟](advanced/ruins.md)** ⚠️ 愿景：Agent 递归创造（spawn 雏形已落地）
 
 ---
 
