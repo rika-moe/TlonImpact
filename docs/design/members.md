@@ -136,12 +136,13 @@ auth(username="alice") 成功
    - 有 mentions → 经 MemberDirectory 解析（agent 与人类**同表**）→ 定向；
    - 无 mentions 且 `sender.triggers_proactive` → proactive agents 广播；
    - `_route_human_message` / `_route_agent_message` 分岔删除。
-4. **agent @ 人类**：routed target 含 `human:alice` → adapter 订阅
-   `MESSAGE_ROUTED` 按 member_id 过滤（与 Agent 同一模式）→ 经
-   NotificationService 推给所有 attached session。
-   **v1 决定**：HumanAdapter 暂不订阅 `MESSAGE_ROUTED`——单房间全公开模型下
-   NotificationService 已把所有事件广播给所有 session，adapter 转发会重复
-   投递。定向投递留待私聊/分房间重构时启用。
+4. **发信给人类**：投递器向 `human:alice` 邮箱投递 → `MAIL_DELIVERED`
+   （recipient=`human:alice`）→ adapter 订阅 `MAIL_DELIVERED` 按 member_id
+   过滤（与 Agent 同一模式）→ 向所有 attached session 的 sink 扇出。
+   ~~**v1 决定**：HumanAdapter 暂不订阅路由事件——NotificationService 广播
+   已够，adapter 转发会重复投递。~~（已废弃：邮件模型 R2 单轨化后，
+   NotificationService 不再向 chat session 投递 `mail.delivered`，
+   adapter 扇出是人类收信的唯一通道。）
 5. **LLM 上下文**：context_builder 只写 `alice: 内容`，无类型标签。
 
 ---
@@ -183,6 +184,15 @@ auth(username="alice") 成功
 - MemberDirectory 列举在线人类（删除 `session_count > 0` 塞伪条目的逻辑）。
 - 测试：AdapterManager 生命周期、多用户路由、@ 解析、agent@人类 推送；
   冒烟用两个 SDK client 扮演两个用户。
+
+**单轨投递（2026-08，邮件模型 R2 收口）**：
+
+- `HumanAdapter` 订阅 `MAIL_DELIVERED`，过滤 `recipient == self.member_id`，
+  向所有 attached session 的 sink 扇出（sink 即 auth 时注册的 WS 事件回调，
+  `AdapterManager.attach(username, session_id, sink)` 透传）。
+- NotificationService 的影子通道关闭：chat 模式 session 永不经该服务收到
+  `mail.delivered`（event / agent 模式的 operator 控制台不受影响）。
+- 至此"每个 Member 一个邮箱、投递经 Member"对人类同样成立。
 
 ### 阶段 C — 清理 ✅（2026-07-27 完成）
 

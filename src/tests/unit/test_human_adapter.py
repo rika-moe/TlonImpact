@@ -11,11 +11,13 @@ Covers:
   detach destroys
 - Speaking: to/cc/subject, recipient resolution, MAIL_NEW publish,
   zero-recipient error
+- Mail delivery: MAIL_DELIVERED fan-out to attached session sinks
+  (single-track delivery, docs/design/members.md 阶段 B)
 - resolve_address (agent id / agent name / online human / full address)
 """
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
 import pytest
 
@@ -85,6 +87,38 @@ async def _drain(bus: EventBus) -> None:
     await asyncio.wait_for(bus._event_queue.join(), timeout=5.0)
 
 
+def _noop_sink(event: Event) -> None:
+    """No-op session sink for tests that do not care about delivery."""
+
+
+def _collecting_sink(collected: list[Event]) -> Callable[[Event], None]:
+    """Create a session sink that appends pushed events to a list."""
+
+    def sink(event: Event) -> None:
+        collected.append(event)
+
+    return sink
+
+
+async def _deliver_mail(bus: EventBus, mail: Mail, recipient: str) -> None:
+    """Publish a MAIL_DELIVERED event and wait for dispatch."""
+    await bus.publish(
+        Event(
+            type=EventType.MAIL_DELIVERED,
+            payload={"mail": mail, "recipient": recipient},
+            source="mail-delivery",
+        )
+    )
+    await _drain(bus)
+
+
+def _make_mail(to: list[str]) -> Mail:
+    """Create a minimal mail for delivery tests."""
+    return Mail.create(
+        from_address="xie-yunshu@tlon.internal", to=to, content="hi"
+    )
+
+
 class TestHumanAdapterIdentity:
     """Tests for the Member interface of HumanAdapter."""
 
@@ -98,7 +132,7 @@ class TestHumanAdapterIdentity:
     def test_state_tracks_sessions(self, bus: EventBus):
         adapter = HumanAdapter("alice", bus, lambda name: None)
         assert adapter.get_state() == "offline"
-        adapter.attach_session("tui-0001")
+        adapter.attach_session("tui-0001", _noop_sink)
         assert adapter.get_state() == "online"
         adapter.detach_session("tui-0001")
         assert adapter.get_state() == "offline"
@@ -108,21 +142,21 @@ class TestAdapterManagerLifecycle:
     """Tests for attach/detach refcount semantics."""
 
     async def test_attach_creates_adapter(self, manager: AdapterManager):
-        adapter = await manager.attach("alice", "tui-0001")
+        adapter = await manager.attach("alice", "tui-0001", _noop_sink)
         assert adapter.member_id == "human:alice"
         assert adapter.is_initialized
         assert manager.get_adapter("alice") is adapter
         assert [a.username for a in manager.list_online()] == ["alice"]
 
     async def test_same_username_shares_adapter(self, manager: AdapterManager):
-        first = await manager.attach("alice", "tui-0001")
-        second = await manager.attach("alice", "tui-0002")
+        first = await manager.attach("alice", "tui-0001", _noop_sink)
+        second = await manager.attach("alice", "tui-0002", _noop_sink)
         assert first is second
         assert second.session_count == 2
 
     async def test_last_detach_destroys_adapter(self, manager: AdapterManager):
-        await manager.attach("alice", "tui-0001")
-        await manager.attach("alice", "tui-0002")
+        await manager.attach("alice", "tui-0001", _noop_sink)
+        await manager.attach("alice", "tui-0002", _noop_sink)
 
         await manager.detach("tui-0001")
         adapter = manager.get_adapter("alice")
@@ -143,7 +177,7 @@ class TestAdapterManagerPublish:
 
     async def test_publish_by_session(self, bus: EventBus, manager: AdapterManager):
         collected = await _collect_mail(bus)
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         mail = await manager.publish("tui-0001", "hello", to=["谢云舒"])
         await _drain(bus)
@@ -156,7 +190,7 @@ class TestAdapterManagerPublish:
 
     async def test_publish_explicit_to(self, manager: AdapterManager):
         """R2: explicit to resolves names, ids and full addresses."""
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         mail = await manager.publish(
             "tui-0001", "hi", to=["谢云舒", "xie-yunshu@tlon.internal"]
@@ -168,8 +202,8 @@ class TestAdapterManagerPublish:
 
     async def test_publish_cc_and_subject(self, manager: AdapterManager):
         """R2: cc resolves like to; subject is passed through."""
-        await manager.attach("alice", "tui-0001")
-        await manager.attach("friend", "tui-0002")
+        await manager.attach("alice", "tui-0001", _noop_sink)
+        await manager.attach("friend", "tui-0002", _noop_sink)
 
         mail = await manager.publish(
             "tui-0001",
@@ -186,8 +220,8 @@ class TestAdapterManagerPublish:
 
     async def test_publish_reply_headers(self, manager: AdapterManager):
         """R2: in_reply_to / thread_id pass through to the created mail."""
-        await manager.attach("alice", "tui-0001")
-        await manager.attach("friend", "tui-0002")
+        await manager.attach("alice", "tui-0001", _noop_sink)
+        await manager.attach("friend", "tui-0002", _noop_sink)
 
         original = await manager.publish("tui-0002", "hello", to=["alice"])
         assert original is not None
@@ -209,7 +243,7 @@ class TestAdapterManagerPublish:
         self, manager: AdapterManager
     ):
         """Without reply headers the thread root is the mail's own id."""
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         mail = await manager.publish("tui-0001", "hi", to=["xie-yunshu"])
 
@@ -221,8 +255,8 @@ class TestAdapterManagerPublish:
         self, manager: AdapterManager
     ):
         """R2: to and cc resolve independently and both count."""
-        await manager.attach("alice", "tui-0001")
-        await manager.attach("friend", "tui-0002")
+        await manager.attach("alice", "tui-0001", _noop_sink)
+        await manager.attach("friend", "tui-0002", _noop_sink)
 
         mail = await manager.publish(
             "tui-0001",
@@ -237,7 +271,7 @@ class TestAdapterManagerPublish:
 
     async def test_publish_cc_only_is_addressed(self, manager: AdapterManager):
         """A cc-only mail counts as addressed."""
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         mail = await manager.publish("tui-0001", "fyi", cc=["xie-yunshu"])
 
@@ -246,13 +280,13 @@ class TestAdapterManagerPublish:
         assert mail.cc == ["xie-yunshu@tlon.internal"]
 
     async def test_publish_zero_recipients_raises(self, manager: AdapterManager):
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         with pytest.raises(ValueError, match="收件人"):
             await manager.publish("tui-0001", "hello, anyone?")
 
     async def test_publish_unresolvable_recipients_raise(self, manager: AdapterManager):
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         with pytest.raises(ValueError, match="收件人"):
             await manager.publish("tui-0001", "hi", to=["不存在的人"])
@@ -278,14 +312,96 @@ class TestResolveAddress:
         )
 
     async def test_online_human(self, manager: AdapterManager):
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         assert manager.resolve_address("alice") == "alice@tlon.internal"
         assert manager.resolve_address("human:alice") == "alice@tlon.internal"
         assert manager.resolve_address("offline-user") is None
 
     async def test_username_for(self, manager: AdapterManager):
-        await manager.attach("alice", "tui-0001")
+        await manager.attach("alice", "tui-0001", _noop_sink)
 
         assert manager.username_for("tui-0001") == "alice"
         assert manager.username_for("tui-9999") is None
+
+
+class TestHumanMailDelivery:
+    """Tests for single-track mail delivery through the adapter.
+
+    The HumanAdapter subscribes to MAIL_DELIVERED and fans out copies
+    addressed to its own member id ("human:<username>") to its attached
+    session sinks; the NotificationService no longer pushes mail to chat
+    sessions.
+    """
+
+    async def test_delivered_mail_fans_out_to_all_sessions(
+        self, bus: EventBus, manager: AdapterManager
+    ):
+        """Both sessions of the same username receive the delivered mail."""
+        first: list[Event] = []
+        second: list[Event] = []
+        await manager.attach("alice", "tui-0001", _collecting_sink(first))
+        await manager.attach("alice", "tui-0002", _collecting_sink(second))
+
+        mail = _make_mail(to=["alice@tlon.internal"])
+        await _deliver_mail(bus, mail, "human:alice")
+
+        assert [e.payload["mail"].id for e in first] == [mail.id]
+        assert [e.payload["mail"].id for e in second] == [mail.id]
+
+    async def test_mail_for_other_recipient_ignored(
+        self, bus: EventBus, manager: AdapterManager
+    ):
+        """A copy addressed to another member is not pushed."""
+        collected: list[Event] = []
+        await manager.attach("alice", "tui-0001", _collecting_sink(collected))
+
+        mail = _make_mail(to=["friend@tlon.internal"])
+        await _deliver_mail(bus, mail, "human:friend")
+
+        assert collected == []
+
+    async def test_no_sessions_is_silent(self, bus: EventBus):
+        """An adapter without sessions swallows its mail without error."""
+        adapter = HumanAdapter("alice", bus, lambda name: None)
+        await adapter.initialize()
+
+        mail = _make_mail(to=["alice@tlon.internal"])
+        await _deliver_mail(bus, mail, "human:alice")  # must not raise
+
+        await adapter.shutdown()
+
+    async def test_sink_error_isolated(
+        self, bus: EventBus, manager: AdapterManager
+    ):
+        """A failing sink does not prevent delivery to the other sinks."""
+        collected: list[Event] = []
+
+        def broken_sink(event: Event) -> None:
+            raise RuntimeError("ws gone")
+
+        await manager.attach("alice", "tui-0001", broken_sink)
+        await manager.attach("alice", "tui-0002", _collecting_sink(collected))
+
+        mail = _make_mail(to=["alice@tlon.internal"])
+        await _deliver_mail(bus, mail, "human:alice")
+
+        assert [e.payload["mail"].id for e in collected] == [mail.id]
+
+    async def test_missing_recipient_ignored(
+        self, bus: EventBus, manager: AdapterManager
+    ):
+        """A malformed payload (no recipient) is ignored."""
+        collected: list[Event] = []
+        await manager.attach("alice", "tui-0001", _collecting_sink(collected))
+
+        await bus.publish(
+            Event(
+                type=EventType.MAIL_DELIVERED,
+                payload={"not": "delivery"},
+                source="mail-delivery",
+            )
+        )
+        await _drain(bus)
+
+        assert collected == []

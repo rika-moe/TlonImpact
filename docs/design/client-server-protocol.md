@@ -187,7 +187,7 @@ interface TlonMessage {
 | 事件类型 | 方向 | payload | 说明 |
 |----------|------|---------|------|
 | `mail.new` | S→C | Mail 对象 | 新邮件发出（投递前） |
-| `mail.delivered` | S→C | `{mail, recipient}` | 邮件落入某收件人邮箱（chat 模式按收件人过滤） |
+| `mail.delivered` | S→C | `{mail, recipient}` | 邮件落入某收件人邮箱（chat 模式经 HumanAdapter 投递，不经 NotificationService） |
 
 ### Agent 生命周期
 
@@ -226,16 +226,16 @@ interface TlonMessage {
 
 ---
 
-## 事件过滤（服务端单一过滤点）
+## 事件过滤（服务端过滤点）
 
 事件过滤**只在服务端执行**（`NotificationService`）。客户端（SDK Adapter）只**声明**过滤器，通过 `auth` 消息的 `filters` 字段（初始过滤器，如 client type 的默认排除集）或 `filter` 消息（运行时更新，整体替换）上报，本地不再做二次匹配。
 
 过滤管线（各步骤为 AND 关系）：
 
-0. **邮件可见性**（R2）：`mail.delivered` 只推送给收件人本人——chat 模式
-   session 要求 payload `recipient` == `human:<session username>`（缺省
-   `guest`）；event / agent 模式不过滤（operator 是运维控制台，需看到
-   全部邮件流量）
+0. **人类邮件单轨投递**（R2）：`mail.delivered` 不经 NotificationService
+   推给 chat 模式 session——人类收信走 HumanAdapter（订阅 MAIL_DELIVERED，
+   按 `recipient` == 自己的 member id 过滤后向 attached sessions 扇出）；
+   event / agent 模式不受影响（operator 是运维控制台，需看到全部邮件流量）
 1. **模式语义**（`mode` 消息切换）：
    - `chat`: `mail.*`、`agent.response/started/stopped/error`、`system.*`
    - `agent`: 仅 `agent.*`

@@ -99,8 +99,8 @@ WebSocket 会话有三种模式（`{"type":"mode","mode":...}` 切换），模�
 
 | 模式 | 推送的事件 |
 |------|-----------|
-| `chat` | `mail.*`、agent 响应与生命周期、`system.*`；且 `mail.delivered` **只推给收件人本人**（payload 的 recipient 必须等于本会话的人类身份） |
-| `event` | 全部事件类型，**不做邮件收件人过滤** |
+| `chat` | `mail.*`、agent 响应与生命周期、`system.*`；其中 `mail.delivered` 由 HumanAdapter 按收件人投递（只到达收件人本人的会话），不经 NotificationService |
+| `event` | 全部事件类型，**能看到全部邮件流量** |
 | `agent` | 仅 `agent.*` |
 
 Operator 控制台在认证成功后自动切换到 **`event` 模式**——它是运维控制台，设计上就要看到全部邮件流量和全部内部事件（LLM 请求、工具执行等）。这意味着：

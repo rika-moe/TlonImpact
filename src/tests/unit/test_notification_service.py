@@ -1,9 +1,10 @@
 """Unit tests for server-side event filtering (NotificationService).
 
-The NotificationService is the single filtering point for events pushed to
+The NotificationService is the push point for system/agent events to
 clients. These tests cover:
 - Mode semantics (chat / event / agent)
-- Mail privacy: chat-mode mail.delivered filtered by recipient (R2)
+- Single-track mail delivery: chat-mode mail.delivered is never pushed
+  (R2) — human mail delivery goes through the HumanAdapter
 - Session filters: event_types, exclude_event_types, trace_id, agent
 - Session creation with initial filters (SessionManager)
 """
@@ -63,10 +64,6 @@ class TestShouldSendToSession:
         session = make_session(mode="chat", metadata={"username": "alice"})
 
         assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
-        assert service._should_send_to_session(
-            session,
-            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:alice"}),
-        )
         assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STARTED))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STOPPED))
@@ -100,38 +97,29 @@ class TestShouldSendToSession:
         for event_type in EventType:
             assert service._should_send_to_session(session, make_event(event_type))
 
-    # ==================== Mail privacy (R2) ====================
+    # ==================== Mail delivery single-track (R2) ====================
 
-    def test_chat_mode_mail_delivered_filtered_by_recipient(self, service):
-        """Chat mode: mail.delivered only reaches the addressed human."""
+    def test_chat_mode_mail_delivered_never_pushed(self, service):
+        """Chat mode: mail.delivered never goes through this service.
+
+        Human mail delivery is single-track through the HumanAdapter
+        (member layer), so the NotificationService blocks mail.delivered
+        for chat sessions regardless of the recipient.
+        """
         session = make_session(mode="chat", metadata={"username": "alice"})
 
-        assert service._should_send_to_session(
+        # Even mail addressed to this session's own human is blocked here
+        assert not service._should_send_to_session(
             session,
             make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:alice"}),
         )
-        # Another human's mail is not this session's business
         assert not service._should_send_to_session(
             session,
             make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:other"}),
         )
-        # Agent mail is not pushed to chat sessions at all
         assert not service._should_send_to_session(
             session,
             make_event(EventType.MAIL_DELIVERED, payload={"recipient": "gu-yanxi"}),
-        )
-
-    def test_chat_mode_mail_delivered_defaults_to_guest(self, service):
-        """A session without username metadata speaks as guest."""
-        session = make_session(mode="chat")
-
-        assert service._should_send_to_session(
-            session,
-            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:guest"}),
-        )
-        assert not service._should_send_to_session(
-            session,
-            make_event(EventType.MAIL_DELIVERED, payload={"recipient": "human:alice"}),
         )
 
     def test_event_mode_mail_delivered_not_filtered(self, service):
@@ -147,8 +135,8 @@ class TestShouldSendToSession:
             make_event(EventType.MAIL_DELIVERED, payload={"recipient": "gu-yanxi"}),
         )
 
-    def test_non_mail_events_unaffected_by_recipient_rule(self, service):
-        """The recipient rule applies to mail.delivered only."""
+    def test_non_mail_events_unaffected_by_delivery_rule(self, service):
+        """The mail.delivered block applies to that event type only."""
         session = make_session(mode="chat", metadata={"username": "alice"})
 
         # mail.new has no recipient and passes as before

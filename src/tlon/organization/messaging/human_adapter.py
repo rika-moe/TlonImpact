@@ -11,14 +11,16 @@ R2 protocol (docs/design/mail.md): ``speak`` accepts explicit ``to`` /
 bridge were removed in PR-C). A mail with zero resolvable recipients is
 rejected (proactive is dead — an unaddressed mail is illegal).
 
-Note (v1): HumanAdapter does NOT subscribe to MAIL_DELIVERED. The
-NotificationService pushes mail events to sessions and filters them
-per recipient (chat mode), so adapter-side forwarding would
-double-deliver.
+Delivery is single-track: like every Member, the adapter subscribes to
+MAIL_DELIVERED and fans out copies addressed to its own member id to its
+attached sessions. The NotificationService does NOT push mail to chat
+sessions — human mail delivery goes through this adapter, so "one
+mailbox per Member, delivery via Member" holds for humans too.
 
 See docs/design/members.md (阶段 B).
 """
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -45,6 +47,10 @@ HUMAN_ID_PREFIX = "human:"
 # Resolves a recipient (name, id or full address) to a mail address.
 AddressResolver = Callable[[str], str | None]
 
+# Push callback for an attached session (sync or async, like the
+# NotificationService event handlers).
+EventHandler = Callable[[Event], None]
+
 
 class HumanAdapter(Member):
     """Member representing one human user; sessions are its attachments.
@@ -69,7 +75,7 @@ class HumanAdapter(Member):
         Device.__init__(self, event_bus=event_bus, name=f"HumanAdapter:{username}")
         self._username = username
         self._address_resolver = address_resolver
-        self._session_ids: set[str] = set()
+        self._sinks: dict[str, EventHandler] = {}  # session_id -> push callback
 
     @property
     def username(self) -> str:
@@ -94,19 +100,20 @@ class HumanAdapter(Member):
     @property
     def session_count(self) -> int:
         """Number of currently attached sessions."""
-        return len(self._session_ids)
+        return len(self._sinks)
 
     def get_state(self) -> str:
         """Get adapter state: "online" with sessions, "offline" without."""
-        return "online" if self._session_ids else "offline"
+        return "online" if self._sinks else "offline"
 
-    def attach_session(self, session_id: str) -> None:
+    def attach_session(self, session_id: str, sink: EventHandler) -> None:
         """Attach a client session (refcount +1).
 
         Args:
             session_id: Session to attach
+            sink: Push callback for mail delivered to this human
         """
-        self._session_ids.add(session_id)
+        self._sinks[session_id] = sink
 
     def detach_session(self, session_id: str) -> None:
         """Detach a client session (refcount -1).
@@ -114,10 +121,11 @@ class HumanAdapter(Member):
         Args:
             session_id: Session to detach
         """
-        self._session_ids.discard(session_id)
+        self._sinks.pop(session_id, None)
 
     async def initialize(self) -> None:
-        """Initialize the adapter (v1: no bus subscriptions)."""
+        """Initialize the adapter and subscribe to mail delivery."""
+        self.subscribe(EventType.MAIL_DELIVERED, self._on_mail_delivered)
         self._initialized = True
         logger.info("human_adapter_initialized", username=self._username)
 
@@ -126,6 +134,52 @@ class HumanAdapter(Member):
         self.unsubscribe_all()
         self._initialized = False
         logger.info("human_adapter_shutdown", username=self._username)
+
+    async def _on_mail_delivered(self, event: Event) -> None:
+        """Handle mail delivered to this human's inbox.
+
+        The delivery component publishes one MAIL_DELIVERED per recipient;
+        only the copy addressed to this member is fanned out to the
+        attached sessions.
+
+        Args:
+            event: The MAIL_DELIVERED event (dict payload)
+        """
+        payload = event.payload
+        if not isinstance(payload, dict):
+            return
+        if payload.get("recipient") != self.member_id:
+            return
+
+        mail = payload.get("mail")
+        for sink in list(self._sinks.values()):
+            await self._safe_call(sink, event)
+
+        logger.debug(
+            "human_mail_pushed",
+            username=self._username,
+            mail_id=mail.id if isinstance(mail, Mail) else None,
+            session_count=len(self._sinks),
+        )
+
+    async def _safe_call(self, sink: EventHandler, event: Event) -> None:
+        """Safely call a session sink with error handling.
+
+        A failing sink is logged and does not affect the other sinks.
+
+        Args:
+            sink: The session push callback
+            event: The event to pass
+        """
+        try:
+            if asyncio.iscoroutinefunction(sink):
+                await sink(event)
+            else:
+                sink(event)
+        except Exception as e:
+            logger.error(
+                "human_mail_sink_error", username=self._username, error=str(e)
+            )
 
     async def speak(
         self,
@@ -262,12 +316,15 @@ class AdapterManager(Component):
         self._initialized = False
         logger.info("adapter_manager_shutdown")
 
-    async def attach(self, username: str, session_id: str) -> HumanAdapter:
+    async def attach(
+        self, username: str, session_id: str, sink: EventHandler
+    ) -> HumanAdapter:
         """Attach a session to the user's adapter, creating it if needed.
 
         Args:
             username: Human username
             session_id: Session to attach
+            sink: Push callback for mail delivered to this human
 
         Returns:
             The user's adapter (shared across same-name sessions)
@@ -281,7 +338,7 @@ class AdapterManager(Component):
                 "human_adapter_created", username=username, member_id=adapter.member_id
             )
 
-        adapter.attach_session(session_id)
+        adapter.attach_session(session_id, sink)
         self._sessions[session_id] = username
         logger.info(
             "human_session_attached",

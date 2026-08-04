@@ -475,7 +475,7 @@ GET /admin/config/agents
 
 过滤**只在服务端执行**（客户端只是声明）。管线依次：
 
-0. **邮件可见性**：`mail.delivered` 在 chat 模式下只推给收件人本人（payload `recipient` == `human:<session username>`）；event / agent 模式不过滤——运维控制台因此能看到全部邮件流量。
+0. **人类邮件单轨投递**：`mail.delivered` 在 chat 模式下不经 NotificationService 推送——人类收信走 HumanAdapter（按 `recipient` == 自己的人类身份过滤后向本会话扇出）；event / agent 模式不受影响——运维控制台因此能看到全部邮件流量。
 1. **模式语义**：
    - `chat`：`mail.*`、`agent.response/started/stopped/error`、`system.*`
    - `agent`：仅 `agent.*`

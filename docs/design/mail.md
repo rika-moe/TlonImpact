@@ -19,10 +19,12 @@ R2 PR-A（服务端协议，2026-07-29）已完成：
   `guest`，limit 缺省 50 上限 200）返回 `human:<username>` 邮箱的
   `recent()`（inbox + sent 合并）——`{"mails": [...], "count": N}`；
   username 为空或含路径分隔符 → 400。
-- **NotificationService 收件人过滤**：chat 模式 session 只收到
-  `recipient == human:<session username>`（缺省 guest）的
-  `mail.delivered`；event / agent 模式不过滤——operator 是运维控制台，
-  必须看到全部邮件流量。其余事件类型不受影响。
+- **人类投递单轨化**：chat 模式 session 的 `mail.delivered` 由
+  HumanAdapter 投递（订阅 MAIL_DELIVERED，把 `recipient ==
+  human:<username>` 的副本扇出到自己所有 attached session），
+  NotificationService 不再向 chat session 投递邮件——"每个 Member 一个
+  邮箱、投递经 Member"对人类同样成立。event / agent 模式不受影响——
+  operator 是运维控制台，必须看到全部邮件流量。其余事件类型不受影响。
 
 **过渡期桥（PR-C 已全部拆除 ✅）**：
 
@@ -51,8 +53,9 @@ boot 未读扫描 + 每封一 session + 完成 mark_read）、`_send_mail` 回�
 历史、wake 重投递管道整套删除、receptionist 移除。
 
 R1b 桥接偏差中已被 R2 PR-A 收敛的项：**推送按收件人过滤**（原全量
-推送，现 chat 模式按收件人过滤）。其余桥已全部随 PR-C 拆除（见上方
-清单）。
+推送，PR-A 起 chat 模式按收件人过滤；后于单轨化重构移交
+HumanAdapter——NotificationService 不再向 chat session 投递
+`mail.delivered`）。其余桥已全部随 PR-C 拆除（见上方清单）。
 
 R1b 其它遗留：`AgentConfig.proactive` 字段保留但 deprecated ignored
 （旧 agent.yaml 可继续加载）；spec 旧 key（`:proactive` /
@@ -162,9 +165,10 @@ LLM 上下文里不再有"别人的对话"——只有自己的通信。
 ## 人类侧
 
 - 人类邮箱持久等待：离线时邮件留在邮箱，连接后走 REST `/inbox` 拉取。
-- NotificationService 从"广播一切"改为**按收件人过滤**推送：chat 模式
-  session 只收自己的 `mail.delivered`；event 模式（operator 运维控制台）
-  豁免，可见全部邮件流量。
+- 人类投递走 Member 抽象（单轨）：HumanAdapter 订阅 `MAIL_DELIVERED`，
+  按 recipient 过滤后向 attached sessions 扇出；NotificationService 不向
+  chat 模式 session 投递 `mail.delivered`（event 模式的 operator 运维
+  控制台不受影响，仍可见全部邮件流量）。
 - WS 协议：发消息带 `to`/`cc`/`subject` 字段（`mentions` 别名与正文
   `@` 解析桥已于 PR-C 移除）；拉历史改为 REST `/inbox`。
 - 人类**无已读 cursor**（v1 决策）：人类邮件不做已读追踪。
@@ -199,7 +203,8 @@ Member / 亚当的 policy-mechanism 分层**不受影响**。
   trigger/proactive 退役 + context_builder 邮箱历史 + 删 trigger_event 管道
 - **R2（人类侧）**：
   - **PR-A（服务端协议）** ✅：WS `to`/`cc`/`subject`、REST `/inbox`、
-    NotificationService 按收件人过滤（chat 模式）
+    NotificationService 按收件人过滤（chat 模式；后于单轨化重构移交
+    HumanAdapter）
   - **PR-B** ✅：operator mail 视图（人类主界面）
   - **PR-C** ✅：拆桥——`mentions` 别名、`@` 解析、`/history` 已移除，
     Python Congress TUI 已退役

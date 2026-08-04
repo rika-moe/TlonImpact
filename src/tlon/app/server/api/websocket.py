@@ -217,8 +217,11 @@ class WebSocketHandler:
             )
 
             # Attach the session to the user's human adapter (creates it on
-            # first attach; shared across same-name sessions)
-            await self.adapter_manager.attach(username, session.id)
+            # first attach; shared across same-name sessions). The same
+            # event handler serves as the mail delivery sink: human mail
+            # reaches the session through the adapter, not the
+            # NotificationService.
+            await self.adapter_manager.attach(username, session.id, event_handler)
 
             # Send auth success with negotiated version
             await self._send_message(

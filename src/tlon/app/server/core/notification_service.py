@@ -3,9 +3,14 @@
 Responsible for pushing events to connected client sessions.
 Decouples event routing from session management.
 
-This service is the SINGLE filtering point for events pushed to clients:
+This service is the push point for system/agent events to clients:
 - Mode semantics ("chat" / "event" / "agent") are applied here
 - Session filters (event_types, exclude_event_types, trace_id, agent) are applied here
+
+Human mail delivery is NOT handled here: a chat-mode session receives its
+mail through its HumanAdapter (member layer), which subscribes to
+MAIL_DELIVERED and fans out copies addressed to its own member id.
+Event/agent modes (operator consoles) still see all mail traffic here.
 
 Clients (SDK adapters) only DECLARE their desired filters and send them to the
 server (via the auth or filter messages); they never re-filter events locally.
@@ -27,7 +32,6 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, HUMAN_ID_PREFIX
 
 from .session_manager import ClientSession, SessionManager
 
@@ -202,10 +206,11 @@ class NotificationService(Component, Device):
         """Check if an event should be sent to a session.
 
         Filtering pipeline (all steps are ANDed):
-        0. Mail privacy (mail model R2): a chat-mode session only receives
-           ``mail.delivered`` events addressed to its own human identity
-           ("human:<username>"). Event/agent modes are exempt — operator
-           consoles are ops tools that must see all mail traffic.
+        0. Mail delivery single-track (mail model R2): a chat-mode session
+           never receives ``mail.delivered`` through this service — human
+           mail delivery goes through the HumanAdapter (member layer).
+           Event/agent modes are exempt — operator consoles are ops tools
+           that must see all mail traffic.
         1. Mode semantics: the session mode ("chat" / "agent") restricts the
            event type set; "event" mode imposes no restriction.
         2. Session filters (session.filters), all optional:
@@ -221,16 +226,9 @@ class NotificationService(Component, Device):
         Returns:
             True if should send
         """
-        # 0. Mail privacy for chat sessions
+        # 0. Chat sessions get their mail from the HumanAdapter, not here
         if event.type == EventType.MAIL_DELIVERED and session.mode == "chat":
-            username = session.metadata.get("username") or DEFAULT_USERNAME
-            recipient = (
-                event.payload.get("recipient")
-                if isinstance(event.payload, dict)
-                else None
-            )
-            if recipient != f"{HUMAN_ID_PREFIX}{username}":
-                return False
+            return False
 
         event_type = event.type.value if isinstance(event.type, EventType) else str(event.type)
 
