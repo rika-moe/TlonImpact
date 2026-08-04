@@ -52,9 +52,9 @@ class MemoryConfig:
     # Trigger settings
     idle_timeout_minutes: int = 30
 
-    # Reflection settings (agent self-driven memory audit)
-    reflection_enabled: bool = True
-    reflection_interval_minutes: int = 15
+    # Reflection settings (agent self-driven memory audit). The on/off
+    # switch and interval live in the behavior spec
+    # (:on-complete/:reflect); only the interaction threshold stays here.
     reflection_min_interactions: int = 5
 
     def to_dict(self) -> dict[str, Any]:
@@ -79,8 +79,6 @@ class MemoryConfig:
                 "idle_timeout_minutes": self.idle_timeout_minutes,
             },
             "reflection": {
-                "enabled": self.reflection_enabled,
-                "interval_minutes": self.reflection_interval_minutes,
                 "min_interactions": self.reflection_min_interactions,
             },
         }
@@ -113,8 +111,6 @@ class MemoryConfig:
             config.idle_timeout_minutes = data["triggers"].get("idle_timeout_minutes", 30)
 
         if "reflection" in data:
-            config.reflection_enabled = data["reflection"].get("enabled", True)
-            config.reflection_interval_minutes = data["reflection"].get("interval_minutes", 15)
             config.reflection_min_interactions = data["reflection"].get("min_interactions", 5)
 
         return config

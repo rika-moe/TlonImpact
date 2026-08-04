@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）· 阶段 4b 已完成（2026-07-23）—— **路线图全部收官**
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）· 阶段 4b 已完成（2026-07-23）· 阶段 7a 已完成（2026-07-31）· 阶段 7b 已完成（2026-07-31）· 阶段 7c 已完成（2026-07-31）· total spec 迁移已完成（2026-07-31）—— 1–6 收官，7a 起循环进入解释执行，7b 起上下文构建进入表达式化，7c 起 stage 家族扩展为 think/act/plan/critique/revise 并支持 stage 条件；total 迁移后所有 agent 由完整 behavior 文件描述，无 DefaultSpec、无 partial merge
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -36,7 +36,7 @@
         :until (or (no-more-tools?) (max-iterations 10))}}
 ```
 
-每个 stage 是 Python 实现、可测试的语义单元。
+每个 stage 是 Python 实现、可测试的语义单元。（阶段 7a 已以受限形式落地：白名单 stage 向量 + until 表达式，见路线图；阶段 7c 已落地 sketch 的主体形态——`(plan {:max-steps N})` / `(critique)` / `(revise {:if ...})` 三个新 stage 与 per-stage `:if` 条件。与 sketch 的差异：`act` 无 `:parallel`（并发模型属引擎，不进 DSL）、`critique` 无 `:llm` 参数（评审就用本 agent 的 LLM，无需旋钮）、`:until` 谓词集合是 `iteration-limit-reached?` / `error-limit-reached?` 而非 sketch 的 `(no-more-tools?)` / `(max-iterations 10)`。）
 
 ### 3. 图灵不完备（刻意）
 
@@ -61,6 +61,18 @@ Agent 的智能在 LLM 里，能力在工具里；DSL 是胶水层，决定*何�
 
 规约可声明 `on-complete` 时触发另一份规约文件的解释执行。必须有**全局深度/速率限制**防消息风暴。
 
+### 6. spec 是 total 的（2026-07-31 拍板，破坏性）
+
+**behavior 文件即 agent 行为的全部**：四节（`:trigger` / `:context` / `:loop` / `:on-complete`）与节内必填字段一个都不能少。文件缺失、解析失败、不完整——**拒绝启动该 agent**（registry 记 `agent_start_failed`，其余 agent 与服务端不受影响）。
+
+- 无 DefaultSpec 派生、无 base、无 partial merge、无 spawn overrides——加载路径上不存在任何"缺省继承"；
+- prototype 同样是完整文件，实例化是纯拷贝（overrides 与 `_deep_merge` 已删除）；
+- `AgentConfig.max_iterations` / `max_consecutive_errors` 与 memory config 的 reflect 字段已删除，行为权威只在 behavior 文件；
+- `:loop` 的 `:mode` / `:tools` 死字段随 7a 的 stages 一并移除；
+- 破坏性变更，无历史兼容（项目未发布）。早期阶段达成情况中关于 DefaultSpec / partial merge / overrides 的描述均以此节为准。
+
+`standard_behavior_edn()`（`agents/spec.py`）导出 canonical 完整文件文本，wizard 创建 agent 时落盘——"完整"由工具生成，不由人手写保证。
+
 ## 语言设计（分层落地）
 
 **L0 — EDN 数据字面量（已落地，`agents/edn.py`）**：map / vector / keyword / string / number / bool。v1 规约文件是纯数据，只解析不求值；trigger/loop/context 全部为声明式数据。
@@ -69,21 +81,22 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 
 ```clojure
 {:version 1                        ; 必填，只接受 1
- :trigger {:on-mention true}      ; To/CC 含我的地址即响应
- :context {:persona true           ; IDENTITY/SOUL/RULES + 团队 SOUL 段
-           :protocol true          ; 框架交互协议段
-           :knowledge true         ; 记忆知识块注入
-           :mail-history 20}       ; 邮箱历史条数（inbox+sent），0=关闭
- :loop {:mode :react               ; v1 仅 :react，其他值报错
-        :max-iterations 10         ; DefaultSpec 取自 AgentConfig.max_iterations
-        :tools :background         ; v1 仅 :background
-        :max-consecutive-errors 3} ; DefaultSpec 取自 AgentConfig.max_consecutive_errors
- :on-complete {:save-interaction true              ; 会话完成后写入记忆
-               :reflect {:enabled true             ; 反思开关（初始值，运行时仍可切换）
-                         :interval-minutes 15}}}   ; DefaultSpec 取自 memory config
+ :trigger {:on-mention true}      ; 必填；To/CC 含我的地址即响应。另可选 :when 表达式
+ :context {:sections [(persona)        ; 必填（7b）；section 向量，按序拼装
+                      (protocol)       ;   persona/protocol 喂 system prompt
+                      (knowledge)      ;   knowledge/mail-history 按序喂对话上下文
+                      (mail-history 20)]}  ; 邮箱历史条数（inbox+sent），0=关闭
+ :loop {:stages [(think) (act)]    ; 必填（7a）；stage 向量，此为 react 标准程序
+        :until (or (iteration-limit-reached?)   ; 必填（7a）；终止表达式
+                   (error-limit-reached?))
+        :max-iterations 10         ; 必填；引擎硬顶，until 无法越过
+        :max-consecutive-errors 3} ; 必填
+ :on-complete {:save-interaction true              ; 必填；会话完成后写入记忆
+               :reflect {:enabled true             ; 必填；反思开关
+                         :interval-minutes 15}}}   ; 必填
 ```
 
-规则：缺省字段继承 DefaultSpec（由 agent 的 config 派生），所以部分文件是纯覆盖；未知 key 忽略并 warning（向前兼容）；类型错误报带字段路径的清晰错误。keyword / symbol / string 是三种不同类型（`:mode :react` ≠ `:mode "react"`）。
+规则（total 语义，决策 6）：四节与节内必填字段缺一不可，缺失/不完整/解析失败 → 拒绝启动；无 base、无 partial merge、无旧键展开（7b 的 `:persona` 等旧键已随迁移成为未知键，warning 忽略）；类型错误报带字段路径的清晰错误。keyword / symbol / string 是三种不同类型。`:stages` 每项形如 `(name)` 或 `(name {opts})`，name 白名单 `{think, act, plan, critique, revise}`（7c）；`:until` 加载时经 `LOOP_BUILTINS` 纯谓词注册表静态校验，不执行。`:sections` 每项形如 `(persona)` / `(protocol)` / `(knowledge)` / `(mail-history N)`（N 为非负 int，恰好一个参数），name 白名单、不可重复；当前邮件永远由引擎追加在最后，不在 DSL 内。
 
 **L1 — 受限求值器（阶段 3a 已落地 trigger 表达式，`agents/eval.py`）**：
 
@@ -95,12 +108,14 @@ v1 落地的真实 schema（`~/.tlon/{agent_id}/config/behavior.tlon`，实现�
 3a 实测语法（trigger 表达式已可用，`:trigger` 节接受 map 或表达式两形态）：
 
 ```clojure
-;; reviewer.tlon —— 一份 agent 行为规约（trigger 节为已实现语法）
+;; reviewer.tlon —— 一份 agent 行为规约（total：四节齐全，字段完整）
 {:version 1
  :trigger (and (addressed-to-me? msg)              ; To 含我的地址
                (content-matches? msg "？$"))       ; 且内容以问号结尾
- :context {:persona true :protocol true :knowledge true :mail-history 20}
- :loop {:mode :react :max-iterations 10 :tools :background}
+ :context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+ :loop {:stages [(think) (act)]
+        :until (or (iteration-limit-reached?) (error-limit-reached?))
+        :max-iterations 10 :max-consecutive-errors 3}
  :on-complete {:save-interaction true :reflect {:enabled true :interval-minutes 15}}}
 
 ;; 其余特殊形式：if / when / let（顺序绑定）/ and / or（短路）
@@ -134,7 +149,7 @@ LLM 写的行为必然出 bug，可观测性是必需品：
 
 ```
 prototypes/
-├── deep-thinker/          # 深度思考者（:max-iterations 大、knowledge 全开）
+├── deep-thinker/          # 深度思考者（:max-iterations 大、显式 stage 程序：think/act/critique + 条件 revise，阶段 7c）
 │   ├── behavior.tlon
 │   ├── IDENTITY.md / SOUL.md / RULES.md
 ├── fast-responder/        # 快速反应者（迭代少、context 精简）
@@ -144,11 +159,12 @@ prototypes/
 
 设计决策：
 
-- **继承机制现成**：阶段 2 的 `AgentSpec.load(base=...)` 部分覆盖语义即 prototype 继承——prototype 是 base，实例 `behavior.tlon` 只写差异字段；
+- ~~**继承机制现成**~~（total 迁移后废止）：实例文件必须是完整文件，prototype 不再充当 merge base——继承关系只剩"拷贝时刻的来源记录"（`AgentConfig.prototype`）；
 - **拷贝而非引用**：实例化时把 prototype 内容复制为实例自有文件，行为冻结在创建时刻——Tlon 升级改了 prototype，不影响存量 agent；
 - **存放**：包内预制，首次运行拷贝到 `~/.tlon/prototypes/`（与 `default_team.py` 种子机制同构），用户可改可加；
 - **发现**：人类走 `tlon mirror` 创建菜单；agent 走 `list_prototypes` 工具；
-- **已知缺口**：纯转发者不需要 LLM，v1 schema 的 `:loop {:mode :react}` 之外可能需要 `:llm false` 逃生门——推迟到实现 relay prototype 时再加。
+- **已知缺口**：纯转发者不需要 LLM，stage 白名单之外可能需要 `:llm false` 逃生门——推迟到实现 relay prototype 时再加；
+- **显式程序狗粮**（阶段 7c）：deep-thinker 的 `:loop` 从"只调 `:max-iterations` 旋钮"改为显式 stage 程序 `[(think) (act) (critique) (revise {:if (critique-failed?)})]`——每轮 think/act 后评审最新输出，FAIL 时把反馈喂回上下文让下一轮修正；fast-responder / archivist 保持不动（默认程序即 react），验证新旧形态在同一引擎上共存。
 
 ## 动态 Agent Registry（6a 休眠/唤醒、6b spawn/stop 已实现）
 
@@ -192,7 +208,7 @@ Scale-to-zero 的多 agent 系统：无沟通时 0 个运行中的 agent，消�
 - 全局并发 activation 上限：`max_activations = 8`（含 resident）；
 - spawn 深度上限：`max_spawn_depth = 3`（resident depth=0，contractor = spawner.depth + 1）；
 - 每会话配额：`session_spawn_quota = 2`——同一 (spawner, session) 内 spawn 数上限；session_id 经 structlog contextvars 从 `_session_span` 传入，读不到（如测试直调）时同一 spawner 的裸调用共用一个桶；
-- 工具权限不可升格：只允许从 prototype 库 spawn（Tlon 预制 prototype 为可信源；LLM 现写的规约仍走人工批准闸，是阶段 4 的事），overrides 仅 behavior 字段，tools 不在 spec schema 内故天然无法升格。
+- 工具权限不可升格：只允许从 prototype 库 spawn（Tlon 预制 prototype 为可信源；LLM 现写的规约仍走人工批准闸，是阶段 4 的事），行为文件逐字拷贝（total 迁移后 overrides 已删除），tools 不在 spec schema 内故天然无法升格。
 
 ### 附：操作系统类比（灵感，非规约）
 
@@ -323,6 +339,53 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 - **ConfigService 顺手修复**：`reload_agent` 原读全局 `paths` 单例，改为按自身 `tlon_home` 解析（隔离 home 下热加载此前是坏的）；`AgentInfoProvider` 增加可选写能力 `reload_agent` / `delete_agent` 默认实现（只读 provider 不受影响）；
 - **6b 仍未做**：receptionist 温池、"正在唤醒 X…"系统消息（冷启动体验）留待后续。
 
+### 阶段 7a — 循环解释器 ✅ 已完成（2026-07-31）
+
+把 LoopSpec 从纯旋钮扩展为"stage 向量 + until 表达式"，LoopDriver 从硬编码 react 流程变为解释执行 spec 的 StageRunner。这是 2026-07-23 放弃的 stage 机以**受限形式**的回归：stage 是白名单枚举、Python 实现、可测试的语义单元，DSL 仍不获得发明迭代原语的自由——循环由引擎执行，DSL 只描述。
+
+- **schema**：`:loop` 新增 `:stages`（vector of Form，每项 `(name)` 或 `(name {opts-map})`，name ∈ `{think, act}`；opts key 必须是 keyword，v1 两个 stage 均不接受 opts）与 `:until`（Form 或 EDN 源字符串，同 `:trigger/:when` 双形态）。缺省即 react 标准程序：`REACT_STAGES = [(think) (act)]`、`REACT_UNTIL = (or (iteration-limit-reached?) (error-limit-reached?))`（`agents/spec.py` 模块级常量）；`:mode :react` 保留且仍只接受 react，`:stages` 存在时优先于 mode 的隐含语义（v1 无冲突）。`to_dict`/`from_dict` roundtrip 以 EDN 字符串序列化（同 `TriggerSpec.when`）；
+- **静态校验**（load 时，`SpecValidationError`）：未知 stage、非 Form 项、非 keyword opts key、v1 给 opts、空 stages 向量均拒绝；`:until` 经 `validate_form` + `LOOP_BUILTINS` + 空 scope 校验（同 `_validate_trigger_expr` 模式，表达式不取符号——循环状态经 env 传给 builtin）；
+- **LOOP_BUILTINS**（`agents/eval.py`，全部 pure）：`iteration-limit-reached?` / `error-limit-reached?`（读 env 的 `state`/`limits` 段）+ 复用 `not` / `=`；env 缺键或类型不对安全默认为 False，不抛异常；
+- **语义**：act 粒度 = "执行本轮全部 tool calls"，不是单个 tool call；act 是一个 Python 语义单元，跨 step/collect 两侧（dispatch 在 step 侧，收割在 collect 侧），符合 step/collect asyncio 模型。until 只在 pre-think 评估；完成（sendEmail is_complete）是 act 的事件驱动结果，不是循环边界条件，不纳入 until；**引擎硬顶 `max_iterations` 无条件生效**，无论 until 怎么写（infra 上限，"循环由引擎执行"的兜底）；until 求值失败记 `loop_until_eval_failed` warning 并回退引擎默认判断（iteration/error 上限的直接 Python 检查），保证永远停机；stages 只写 `(think)` 是合法程序——think 照跑、工具永不 dispatch，引擎在每轮末尾补推进 iteration，直至 until/硬顶终结（"他们的程序他们的选择"，不额外防护）；
+- **think 失败路径变化**：record_error + advance_iteration 后直接返回，不再原地发错误邮件——下一次 step 时 until 的 `error-limit-reached?` 为真，走统一终结路径发信。外部可观测行为一致（文案相同、LLM 调用次数相同），只是晚一个调度 tick；
+- **观测**：stage 执行 `loop_stage_start` debug；until 结果 `loop_until_evaluated` debug；终结 `loop_until_reached` info（带 reason = iteration_limit / error_limit）；既有 `session_max_iterations` / `session_max_errors` warning 保留。
+
+**达成情况**：628 个测试全绿（598 既有 + 30 新增：spec 15、eval 8、loop driver 7），ruff / 架构检查 / re-export 检查全过。落地偏差：`:stages []`（空向量）在设计文本中未明确，实现按"永不推进的死循环"拒绝（SpecValidationError）；stages 缺 act 时引擎在每轮末尾补推进 iteration（否则硬顶永远不触发，与"直到 until/硬顶终结"的语义矛盾），默认 think+act 程序行为不变（act 各路径自行推进，不双重推进）。
+
+### 阶段 7b — 上下文构建表达式化 ✅ 已完成（2026-07-31）
+
+把 ContextSpec 从 4 个布尔/计数旋钮改为 sections 向量，ContextBuilder 从硬编码拼装变为按向量顺序解释执行。与 7a 同一铁律：DSL 只描述，引擎执行——section 是白名单枚举（`persona` / `protocol` / `knowledge` / `mail-history`）、Python 实现、可测试的语义单元。
+
+- **schema**：`ContextSpec` 的 `persona` / `protocol` / `knowledge` / `mail_history` 四个字段全部移除，替换为单一 `sections: tuple[Form, ...]`，缺省即标准程序 `DEFAULT_SECTIONS = [(persona) (protocol) (knowledge) (mail-history 20)]`（`agents/spec.py` 模块级常量，与 7a 前默认行为逐字节等价）。`to_dict`/`from_dict` roundtrip 以 EDN 字符串序列化（同 `LoopSpec.stages`）；
+- **静态校验**（load 时，`SpecValidationError`）：未知 section、重复 section、非 Form 项、非 symbol 头均拒绝；`(persona)`/`(protocol)`/`(knowledge)` 不接受参数；`(mail-history N)` 恰好一个非负 int 参数；空向量合法（无 knowledge、无历史，只剩当前邮件——"他们的程序他们的选择"）；
+- **旧键兼容展开**：`:context` 节里的旧键 `persona`/`protocol`/`knowledge`（bool）与 `mail-history`（int）仍接受，语义 = 对 base.sections 向量做编辑——false 移除该 section、true 无操作、`:mail-history N` 原位替换计数（向量中无该 section 则追加，0 = 移除）；`:sections` 存在时优先，旧键全部忽略并 warning（`agent_spec_legacy_keys_ignored`）。prototype 库的 behavior.tlon（fast-responder 用 `:knowledge false :mail-history 5`）零改动，正好作为旧键展开的狗粮验证；
+- **语义**：`build_context` 按向量顺序解释对话类 section——`(knowledge)` 追加 knowledge 消息，`(mail-history N)` 取邮箱历史追加（N≤0 跳过）；`persona`/`protocol` 在对话构建中跳过，改由 `get_system_prompt` 经 `has_section` 派生 `include_persona`/`include_protocol` 喂 SystemPromptBuilder。**当前邮件永远由引擎追加在最后**，不在 DSL 内（引擎职责，同 7a 的 max_iterations 硬顶）；
+- **影响面**：读旧字段的点全部清扫（context_builder 三处 + 两个测试文件）；REST/wizard 无直接消费旧字段的代码（spec 对外序列化只经 `to_dict`）。
+
+**达成情况**：658 个测试全绿（628 既有适配 + 30 新增：sections 解析/校验/roundtrip 17、旧键展开 8、builder 解释执行 5），ruff / 架构检查 / re-export 检查全过。无落地偏差。
+
+### 阶段 7c — 新 stage 类型（plan/critique/revise + stage 条件）✅ 已完成（2026-07-31）
+
+把 stage 家族从 `{think, act}` 扩展为 `{think, act, plan, critique, revise}`，并给所有 stage 加上 per-stage `:if` 条件——决策 2 v2 sketch 的主体形态落地。stage 仍是白名单枚举、Python 实现、可测试的语义单元；新增能力全部走"新增 stage 枚举 + 新增纯谓词"，不开放自由拓扑。
+
+- **循环 scratchpad**：`AgentSession.loop_scratch: dict[str, Any]`——per-session 的 stage 间暂存（plan 文本、critique 裁决），引擎所有，DSL 只能经谓词读取；
+- **STAGE_COND_BUILTINS**（`agents/eval.py`，全部 pure，env 缺键安全返回 False）：`critique-failed?` / `critique-passed?`（读 scratch 的 critique 裁决）、`plan-exists?`（scratch 的 plan 是非空字符串）、`first-iteration?`（`state.iteration == 0`），复用 `not` / `=`；
+- **schema**：所有 stage 接受可选 `:if`（表达式，load 时经 `validate_form` + `STAGE_COND_BUILTINS` + 空 scope 静态校验，同 until 模式）；`plan` 额外接受 `:max-steps`（正 int，缺省 5）；未知 opts key 拒绝（7a 的"think/act 不接受 opts"限制随之解除为"只接受 `:if`"）；
+- **stage 语义**：
+
+  | stage | 语义 | 产出 |
+  |-------|------|------|
+  | `plan` | 一次规划 LLM 调用（context + 中文规划指令，`agent.plan` span） | 文本写 `scratch["plan"]`，并以 user 消息 `[执行计划]` 追加进 context |
+  | `critique` | 一次评审 LLM 调用（`agent.critique` span）；首行 PASS → passed，FAIL → failed 且余下文本为 feedback，无法解析 → passed（宽容默认，不阻塞主流程） | `scratch["critique"] = {"passed": bool, "feedback": str}` |
+  | `revise` | 无 LLM 调用；把 critique feedback 以 user 消息 `[评审反馈]` 追加进 context，下一轮 think 自然修正；无 feedback 时无操作 | 仅 context 追加 |
+
+  三者都不消费也不产出本轮 LLMResponse（response 链透传）；
+- **失败软跳过**：plan/critique 的 LLM 失败记 warning（`loop_stage_failed`）并跳过——不写 scratch、不 `record_error`（辅助 stage 降级，不炸 session）；`:if` 求值 `EvalError` 同样 warning + 跳过（`loop_stage_condition_failed`，安全默认不执行）；条件为 False 跳过记 `loop_stage_skipped` debug（reason=condition）；
+- **策略写在程序里**：plan/critique 是否每轮都跑由程序的 `:if` 控制（如 `(plan {:if (first-iteration?)})` 只规划一次），引擎不内置任何"只跑一次"式的隐式策略；
+- **狗粮**：deep-thinker prototype 改为显式程序 `[(think) (act) (critique) (revise {:if (critique-failed?)})]`（max-iterations 25 等旋钮保留）；fast-responder / archivist 不动，默认程序即 react，正好验证兼容性。
+
+**达成情况**：691 个测试全绿（658 既有适配 + 33 新增：spec 10、eval 9、loop driver 13、prototype 1），ruff / 架构检查 / re-export 检查全过。落地偏差：无删除既有测试；两处既有 spec 测试按新语义更新断言（`test_unknown_stage_rejected` 的未知 stage 从 `(plan)` 改为 `(dance)`——plan 已转正；`test_stage_opts_rejected_in_v1` 更名 `test_stage_unknown_opts_key_rejected`，断言从"no opts"改为"unknown opts key"）。
+
 阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体；阶段 5–6 让系统从"固定班底"走向"自组织的剧团"。
 
 ## 明确不做（v1）
@@ -331,4 +394,4 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 - YAML/JSON 等其他前端
 - 规约内的可变全局状态
 - LLM 生成规约自动激活（必须人工确认）
-- **stage 机循环（原阶段 3b，2026-07-23 放弃）**："LLM 发明全新循环拓扑"是无真实需求支撑的最大工程项；react + 数据旋钮 + ReflectionEngine 已覆盖实践中的行为差异。若未来出现 react 无法表达的真实需求，以**新增枚举循环模式**（Python 实现）回应，而非 stage 机。LoopDriver 已独立成模块，架构上保留回头的可能
+- **完整 stage 机循环（原阶段 3b）**：已以**受限 stage 向量**形式回归（阶段 7a，2026-07-31；stage 家族 7c 扩为 `think`/`act`/`plan`/`critique`/`revise` 并支持 `:if` 条件）——stage 是白名单枚举、Python 实现、可测试的语义单元，`:until` 是纯谓词表达式。"LLM 发明全新循环拓扑"的完整 stage 机仍不做：若未来出现 react 无法表达的真实需求，以**新增 stage 枚举**（Python 实现）回应，而非开放自由拓扑——7c 的 plan/critique/revise 正是这条路径的第一次兑现

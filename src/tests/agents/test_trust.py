@@ -3,15 +3,15 @@
 Covers:
 - trust metadata: builtin/user prototypes trusted, staging untrusted,
   missing ``:trusted`` defaults to trusted
-- write_staging_prototype: validate-before-write (EDN syntax / schema /
-  loop mode), name conflicts, path-injection charset
+- write_staging_prototype: validate-before-write (EDN syntax / total
+  schema), name conflicts, path-injection charset
 - approve/reject: promotion flips ``:trusted true`` (author kept),
   rejection deletes, guards on both
 - spawn trust gate: untrusted prototype refused with reason
   "untrusted_prototype" before any budget check; spawnAgent error readable
 - writePrototype tool: schema, pending_approval result, readable errors
-- spec provenance: source_hash = sha256-12 of the behavior file, "default"
-  for DefaultSpec, stamped on the agent.session span
+- spec provenance: source_hash = sha256-12 of the behavior file, stamped on
+  the agent.session span; a missing/invalid behavior file refuses boot
 """
 
 import contextlib
@@ -41,16 +41,13 @@ from tlon.agents.prototypes import (
     write_staging_prototype,
 )
 from tlon.agents.spawn_errors import SpawnRejectedError
-from tlon.agents.spec import AgentSpec
+from tlon.agents.spec import AgentSpec, SpecValidationError, standard_behavior_edn
 from tlon.base.config import AgentConfig, ConfigService
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
 
-VALID_BEHAVIOR = """{:version 1
- :trigger {:proactive true}
- :loop {:max-iterations 5}}
-"""
+VALID_BEHAVIOR = standard_behavior_edn()
 
 RESIDENT = "resident-1"
 
@@ -65,8 +62,7 @@ def _use_tmp_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TlonPaths:
 
 def _fake_agent(agent_id: str) -> SimpleNamespace:
     config = AgentConfig(id=agent_id, name="TestAgent")
-    memory_config = SimpleNamespace(reflection_enabled=True, reflection_interval_minutes=15)
-    return SimpleNamespace(config=config, memory=SimpleNamespace(config=memory_config))
+    return SimpleNamespace(config=config)
 
 
 def _make_bus() -> MagicMock:
@@ -169,16 +165,9 @@ class TestWriteStaging:
         assert not (test_paths.prototypes_staging_dir() / "noversion").exists()
 
     def test_bad_field_type_rejected(self, tmp_path, monkeypatch):
+        bad = VALID_BEHAVIOR.replace(":max-iterations 10", ':max-iterations "five"')
         with pytest.raises(PrototypeError, match="max-iterations"):
-            write_staging_prototype(
-                "badtype", '{:version 1 :loop {:max-iterations "five"}}', author_id="a"
-            )
-
-    def test_unknown_loop_mode_rejected(self, tmp_path, monkeypatch):
-        with pytest.raises(PrototypeError, match=":mode"):
-            write_staging_prototype(
-                "badmode", "{:version 1 :loop {:mode :stage}}", author_id="a"
-            )
+            write_staging_prototype("badtype", bad, author_id="a")
 
     def test_name_conflict_with_trusted_library(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
@@ -422,17 +411,17 @@ class TestSpecSourceHash:
         assert spec.source_hash == expected
         assert len(spec.source_hash) == 12
 
-    def test_no_behavior_file_marks_default(self, tmp_path, monkeypatch):
+    def test_missing_behavior_file_refuses_boot(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
-        spec = AgentSpec.load(_fake_agent("ghost-001"))
-        assert spec.source_hash == "default"
+        with pytest.raises(SpecValidationError, match="refused to boot"):
+            AgentSpec.load(_fake_agent("ghost-001"))
 
-    def test_broken_file_falls_back_to_default_hash(self, tmp_path, monkeypatch):
+    def test_incomplete_spec_file_raises(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         config_dir = test_paths.agent_config_dir("h-002")
-        (config_dir / "behavior.tlon").write_text("{:version 1", encoding="utf-8")
-        spec = AgentSpec.load(_fake_agent("h-002"))
-        assert spec.source_hash == "default"
+        (config_dir / "behavior.tlon").write_text("{:version 1}\n", encoding="utf-8")
+        with pytest.raises(SpecValidationError):
+            AgentSpec.load(_fake_agent("h-002"))
 
     def test_hash_changes_with_content(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
@@ -440,7 +429,8 @@ class TestSpecSourceHash:
         behavior_file.write_text(VALID_BEHAVIOR, encoding="utf-8")
         first = AgentSpec.load(_fake_agent("h-003")).source_hash
         behavior_file.write_text(
-            VALID_BEHAVIOR.replace("max-iterations 5", "max-iterations 6"), encoding="utf-8"
+            VALID_BEHAVIOR.replace(":max-iterations 10", ":max-iterations 11"),
+            encoding="utf-8",
         )
         second = AgentSpec.load(_fake_agent("h-003")).source_hash
         assert first != second

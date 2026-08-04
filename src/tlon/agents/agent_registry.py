@@ -31,7 +31,7 @@ import asyncio
 import time
 import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from tlon.agents.agent import Agent
 from tlon.agents.lifecycle import StartRequest, StopRequest
@@ -626,7 +626,6 @@ class AgentRegistry(Component):
         name: str,
         spawner_id: str,
         session_id: str | None,
-        overrides: dict[Any, Any] | None = None,
     ) -> AgentConfig:
         """Spawn a contractor from a prototype and start it immediately.
 
@@ -637,9 +636,10 @@ class AgentRegistry(Component):
         -> ``AGENT_SPAWNED`` event.
 
         Permissions cannot escalate: the only source is the prototype
-        library (trusted, Tlon-prebuilt or user-installed), and ``overrides``
-        merge into behavior fields only — tools are not part of the spec
-        schema, so a spawner cannot grant capabilities beyond the prototype.
+        library (trusted, Tlon-prebuilt or user-installed), and the
+        behavior file is copied verbatim — a spec is total, so there is
+        nothing to override and a spawner cannot grant capabilities beyond
+        the prototype.
 
         Orphan policy (reparent, not kill): the contractor is registered
         independently of its spawner; when the spawner sleeps or stops, the
@@ -651,7 +651,6 @@ class AgentRegistry(Component):
             spawner_id: id of the agent requesting the spawn (audit + depth)
             session_id: session the spawn belongs to (quota bucket); None
                 buckets all context-less spawns of the spawner together
-            overrides: behavior-only diff deep-merged over the prototype
 
         Returns:
             The new contractor's AgentConfig (role="contractor").
@@ -717,9 +716,7 @@ class AgentRegistry(Component):
 
         # Writes persona + behavior + agent.yaml (copy semantics; behavior
         # frozen at creation time). PrototypeError propagates to the caller.
-        config = instantiate(
-            prototype, agent_id, name, overrides=overrides, tlon_paths=tlon_paths
-        )
+        config = instantiate(prototype, agent_id, name, tlon_paths=tlon_paths)
 
         # Contractor identity: disposable, lazy-activated, short idle fuse.
         # Re-save so the YAML on disk carries the final config.

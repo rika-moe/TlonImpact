@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tlon.organization.mail.mail import Mail
@@ -39,6 +39,11 @@ class AgentSession:
         self._error_count = 0
         self._last_llm_response = None
         self._all_tool_results: list = []
+
+        # Per-session scratchpad shared between loop stages (phase 7c):
+        # plan text, critique verdicts, etc. Owned by the engine; the DSL
+        # can only read it through stage-condition predicates.
+        self.loop_scratch: dict[str, Any] = {}
 
         # Background tool execution tracking
         self._pending_tasks: dict[str, asyncio.Task] = {}

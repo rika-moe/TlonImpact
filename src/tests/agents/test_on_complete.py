@@ -6,6 +6,7 @@ collected as data, never executed by the evaluator), execution semantics
 and the LoopDriver completion integration.
 """
 
+import dataclasses
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,7 +25,7 @@ from tlon.agents.eval import (
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession
 from tlon.agents.spawn_errors import SpawnRejectedError
-from tlon.agents.spec import AgentSpec, OnCompleteSpec, SpecValidationError
+from tlon.agents.spec import AgentSpec, SpecValidationError, standard_behavior_edn
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
@@ -73,11 +74,30 @@ def _make_agent(**kwargs) -> Agent:
     return Agent(**defaults)
 
 
+def _standard_spec() -> AgentSpec:
+    """The canonical complete spec (standard ReAct program, no actions)."""
+    return AgentSpec.from_edn(loads(standard_behavior_edn()))
+
+
 def _spec_with_actions(*sources: str) -> AgentSpec:
-    return AgentSpec(
-        on_complete=OnCompleteSpec(
-            actions=tuple(loads(source) for source in sources)  # type: ignore[misc]
-        )
+    """The standard spec with on-complete actions injected."""
+    spec = _standard_spec()
+    return dataclasses.replace(
+        spec,
+        on_complete=dataclasses.replace(
+            spec.on_complete, actions=tuple(loads(source) for source in sources)
+        ),
+    )
+
+
+def _edn_with_actions(actions: str) -> str:
+    """The standard behavior EDN with an :actions vector in :on-complete."""
+    return standard_behavior_edn().replace(
+        ':on-complete {:save-interaction true'
+        ' :reflect {:enabled true :interval-minutes 15}}',
+        ':on-complete {:save-interaction true'
+        ' :reflect {:enabled true :interval-minutes 15}'
+        f' :actions {actions}}}',
     )
 
 
@@ -89,56 +109,54 @@ def _make_session(message: Mail | None = None) -> AgentSession:
 
 class TestActionsSchema:
     def test_actions_parse(self):
-        spec = AgentSpec.from_edn(loads(
-            '{:version 1 :on-complete {:actions [(emit "done" [])'
-            ' (when (content-matches? result "完成") (spawn "archivist" {:name "归档员"}))]}}'
-        ))
+        spec = AgentSpec.from_edn(loads(_edn_with_actions(
+            '[(emit "done" [])'
+            ' (when (content-matches? result "完成") (spawn "archivist" {:name "归档员"}))]'
+        )))
         assert len(spec.on_complete.actions) == 2
         assert all(isinstance(form, Form) for form in spec.on_complete.actions)
 
     def test_actions_default_empty(self):
-        spec = AgentSpec.from_edn(loads("{:version 1}"))
+        spec = _standard_spec()
         assert spec.on_complete.actions == ()
 
     def test_actions_must_be_vector(self):
         with pytest.raises(SpecValidationError, match=":actions must be a vector"):
-            AgentSpec.from_edn(loads('{:version 1 :on-complete {:actions (emit "x" [])}}'))
+            AgentSpec.from_edn(loads(_edn_with_actions('(emit "x" [])')))
 
     def test_actions_item_must_be_form(self):
         with pytest.raises(SpecValidationError, match="must be expressions"):
-            AgentSpec.from_edn(loads("{:version 1 :on-complete {:actions [42]}}"))
+            AgentSpec.from_edn(loads(_edn_with_actions('[42]')))
 
     def test_unknown_action_rejected(self):
         with pytest.raises(SpecValidationError, match="unknown action"):
-            AgentSpec.from_edn(loads('{:version 1 :on-complete {:actions [(delete "x")]}}'))
+            AgentSpec.from_edn(loads(_edn_with_actions('[(delete "x")]')))
 
     def test_action_in_condition_position_rejected(self):
         with pytest.raises(SpecValidationError, match="unknown function or special form"):
-            AgentSpec.from_edn(loads(
-                '{:version 1 :on-complete {:actions [(when (spawn "a") (emit "x" []))]}}'
-            ))
+            AgentSpec.from_edn(loads(_edn_with_actions('[(when (spawn "a") (emit "x" []))]')))
 
     def test_non_action_top_level_rejected(self):
         with pytest.raises(SpecValidationError, match="unknown action"):
-            AgentSpec.from_edn(loads(
-                '{:version 1 :on-complete {:actions [(content-matches? result "x")]}}'
-            ))
+            AgentSpec.from_edn(loads(_edn_with_actions(
+                '[(content-matches? result "x")]'
+            )))
 
     def test_undefined_symbol_rejected(self):
         with pytest.raises(SpecValidationError, match="undefined symbol"):
-            AgentSpec.from_edn(loads('{:version 1 :on-complete {:actions [(emit unknown [])]}}'))
+            AgentSpec.from_edn(loads(_edn_with_actions('[(emit unknown [])]')))
 
     def test_nested_when_rejected(self):
         with pytest.raises(SpecValidationError, match="unknown action"):
-            AgentSpec.from_edn(loads(
-                '{:version 1 :on-complete {:actions [(when true (when true (emit "x" [])))]}}'
-            ))
+            AgentSpec.from_edn(loads(_edn_with_actions(
+                '[(when true (when true (emit "x" [])))]'
+            )))
 
     def test_to_dict_from_dict_roundtrip(self):
-        spec = AgentSpec.from_edn(loads(
-            '{:version 1 :on-complete {:actions [(emit "done" [])'
-            ' (when (content-matches? result "完成") (spawn "archivist" {:name "归档员"}))]}}'
-        ))
+        spec = AgentSpec.from_edn(loads(_edn_with_actions(
+            '[(emit "done" [])'
+            ' (when (content-matches? result "完成") (spawn "archivist" {:name "归档员"}))]'
+        )))
         restored = AgentSpec.from_dict(spec.to_dict())
         assert restored.on_complete.actions == spec.on_complete.actions
 
@@ -279,7 +297,7 @@ class TestExecution:
         assert kwargs["name"].startswith("archivist-")
 
     async def test_no_actions_is_noop(self):
-        agent = _make_agent(spec=AgentSpec())
+        agent = _make_agent(spec=_standard_spec())
         agent._send_mail = AsyncMock()
         await OnCompleteRunner(agent).run(_make_session(), "result")
         agent._send_mail.assert_not_awaited()
@@ -410,7 +428,7 @@ class TestLoopDriverIntegration:
         contents = {call.args[0].payload.content for call in message_events}
         assert contents == {"Done!", "本轮处理完毕"}
 
-    async def test_default_spec_runs_no_actions(self):
+    async def test_spec_without_actions_runs_no_actions(self):
         llm = MagicMock()
         llm.chat = AsyncMock(return_value=LLMResponse(
             content=None,
@@ -422,7 +440,7 @@ class TestLoopDriverIntegration:
                 )
             ],
         ))
-        agent = _make_agent(llm_client=llm)
+        agent = _make_agent(llm_client=llm, spec=_standard_spec())
 
         mock_tool = MagicMock()
         mock_tool.name = "sendEmail"

@@ -234,6 +234,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 
         success, msg = self.agent_store.save_agent(agent)
         if success:
+            self.agent_store.write_behavior_file(agent_id)
             if identity:
                 self.agent_store.write_persona_file(agent_id, "IDENTITY.md", identity)
             if soul:

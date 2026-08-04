@@ -1,17 +1,20 @@
 """Tests for Agent resilience configuration.
 
-Covers the four behavior fixes from the agent.py split:
-- AgentConfig.max_iterations feeds DefaultSpec (spec.loop is the runtime
-  authority for the ReAct iteration limit)
+Covers the behavior fixes from the agent.py split:
+- spec.loop.max_iterations is the runtime authority for the ReAct
+  iteration limit (injected via the behavior spec, total schema)
 - AgentConfig.session_timeout_seconds abandons stuck sessions
 - AgentConfig.message_queue_size bounds the inbound queue (drop, never block)
-- AgentConfig.max_consecutive_errors abandons a session after N LLM errors
+- spec.loop.max_consecutive_errors abandons a session after N LLM errors
 """
 
 import asyncio
+import dataclasses
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from tlon.agents.agent import Agent, AgentState
+from tlon.agents.edn import loads
+from tlon.agents.spec import AgentSpec, standard_behavior_edn
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -20,8 +23,14 @@ from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 
 
+def _make_spec(**loop_overrides) -> AgentSpec:
+    """The canonical complete spec with LoopSpec fields overridden."""
+    spec = AgentSpec.from_edn(loads(standard_behavior_edn()))
+    return dataclasses.replace(spec, loop=dataclasses.replace(spec.loop, **loop_overrides))
+
+
 def _make_agent(config: AgentConfig | None = None, **kwargs):
-    """Build an Agent with all deps as mocks."""
+    """Build an Agent with all deps as mocks and the standard spec."""
     event_bus = MagicMock()
     event_bus.publish = AsyncMock()
     event_bus.subscribe = MagicMock(return_value="sub-id")
@@ -34,6 +43,7 @@ def _make_agent(config: AgentConfig | None = None, **kwargs):
         "memory": AsyncMock(),
         "task_manager": MagicMock(),
         "tool_executor": ToolExecutor(),
+        "spec": _make_spec(),
     }
     defaults.update(kwargs)
     return Agent(**defaults)
@@ -50,10 +60,13 @@ def _make_message(content: str = "Hello") -> Mail:
 class TestResilienceConfigDefaults:
     def test_defaults(self):
         config = AgentConfig(id="a-001", name="TestAgent")
-        assert config.max_iterations == 10
-        assert config.max_consecutive_errors == 3
         assert config.session_timeout_seconds == 1800
         assert config.message_queue_size == 100
+        # Loop limits moved to the behavior spec (total schema); the
+        # canonical template carries the standard defaults
+        spec = _make_spec()
+        assert spec.loop.max_iterations == 10
+        assert spec.loop.max_consecutive_errors == 3
 
     def test_message_queue_bounded_by_config(self):
         agent = _make_agent(
@@ -64,8 +77,7 @@ class TestResilienceConfigDefaults:
 
 class TestConfigurableMaxIterations:
     async def test_max_iterations_from_config(self):
-        """A low max_iterations makes the loop give up sooner."""
-        config = AgentConfig(id="a-001", name="TestAgent", max_iterations=2)
+        """A low spec.loop.max_iterations makes the loop give up sooner."""
         llm = MagicMock()
         llm.chat = AsyncMock(
             return_value=LLMResponse(
@@ -73,7 +85,7 @@ class TestConfigurableMaxIterations:
                 tool_calls=[ToolCall(id="tc-1", function_name="testTool", arguments={})],
             )
         )
-        agent = _make_agent(config=config, llm_client=llm)
+        agent = _make_agent(llm_client=llm, spec=_make_spec(max_iterations=2))
 
         mock_tool = MagicMock()
         mock_tool.name = "testTool"
@@ -93,10 +105,9 @@ class TestConfigurableMaxIterations:
 class TestConfigurableMaxConsecutiveErrors:
     async def test_gives_up_after_configured_errors(self):
         """max_consecutive_errors=1 abandons the session on the first LLM error."""
-        config = AgentConfig(id="a-001", name="TestAgent", max_consecutive_errors=1)
         llm = MagicMock()
         llm.chat = AsyncMock(side_effect=Exception("Persistent failure"))
-        agent = _make_agent(config=config, llm_client=llm)
+        agent = _make_agent(llm_client=llm, spec=_make_spec(max_consecutive_errors=1))
 
         await agent._process_message(_make_message())
 

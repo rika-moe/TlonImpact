@@ -115,3 +115,20 @@ class TestAgentStore:
             )
             assert not valid
             assert len(errors) > 0
+
+    def test_write_behavior_file(self):
+        """Written behavior.tlon parses as a complete, valid AgentSpec."""
+        from tlon.agents.edn import loads
+        from tlon.agents.spec import AgentSpec
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
+            store.save_agent(AgentConfig(id="behaved", name="Behaved Agent"))
+
+            store.write_behavior_file("behaved")
+
+            behavior_file = TlonPaths(home=Path(tmpdir)).agent_behavior_file("behaved")
+            assert behavior_file.exists()
+            spec = AgentSpec.from_edn(loads(behavior_file.read_text(encoding="utf-8")))
+            assert spec.version == 1
+            assert spec.trigger.on_mention is True

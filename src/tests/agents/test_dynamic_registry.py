@@ -23,6 +23,7 @@ import pytest
 
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.lifecycle import StartRequest, StopRequest
+from tlon.agents.spec import standard_behavior_edn
 from tlon.base.config import AgentConfig, DockerRuntimeConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.paths import TlonPaths
@@ -588,7 +589,14 @@ class TestDockerLazyStart:
         registry, _bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
 
+        # Total behavior spec: agent assembly loads behavior.tlon from disk;
+        # AgentSpec.load consults the module-level paths singleton
+        behavior_file = temp_paths.agent_behavior_file("a-001")
+        behavior_file.parent.mkdir(parents=True, exist_ok=True)
+        behavior_file.write_text(standard_behavior_edn(), encoding="utf-8")
+
         with (
+            patch("tlon.agents.spec.paths", temp_paths),
             patch("tlon.agents.agent_registry.DockerRuntime") as mock_docker_cls,
             patch("tlon.agents.agent_registry.MemoryManager") as mock_memory_cls,
             patch("tlon.agents.agent_registry.TaskManager") as mock_tm_cls,

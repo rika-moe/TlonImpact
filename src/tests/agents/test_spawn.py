@@ -2,7 +2,7 @@
 
 Covers:
 - spawn success path: config visible, started immediately, identity fields
-  (role/depth/spawned_by), AGENT_SPAWNED event, behavior overrides merged
+  (role/depth/spawned_by), AGENT_SPAWNED event
 - budget rejections: max_activations / max_spawn_depth / session quota,
   with quota isolated per session
 - stop: contractor stopped and home dir deleted; live sessions veto;
@@ -21,14 +21,13 @@ import pytest
 from structlog.contextvars import bound_contextvars
 
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.agents.edn import Keyword, loads
 from tlon.agents.prototypes import PrototypeError, seed_prototypes
 from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
 from tlon.base.config import AgentConfig, ConfigService
 from tlon.base.events.event import EventType
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.list_agents import ListAgentsTool
-from tlon.tools.agents.spawn_agent import SpawnAgentTool, _ednify_keys
+from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
 
 RESIDENT = "resident-1"
@@ -154,26 +153,6 @@ class TestSpawnSuccess:
         assert first.spawn_depth == 1
         assert second.spawn_depth == 2
         assert second.spawned_by == first.id
-
-    async def test_spawn_merges_behavior_overrides(self, temp_paths):
-        registry, _bus, _provider = await _make_registry(temp_paths)
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(registry, "_start_agent", _patch_start(registry))
-            config = await registry.spawn_contractor(
-                prototype=PROTOTYPE,
-                name="临时工甲",
-                spawner_id=RESIDENT,
-                session_id=None,
-                overrides={Keyword("loop"): {Keyword("max-iterations"): 3}},
-            )
-
-        behavior = loads(
-            (temp_paths.agent_config_dir(config.id) / "behavior.tlon").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert behavior[Keyword("loop")][Keyword("max-iterations")] == 3
 
     async def test_spawn_unknown_prototype_raises(self, temp_paths):
         registry, _bus, _provider = await _make_registry(temp_paths)
@@ -464,13 +443,6 @@ class TestTools:
         assert contractor["prototype"] == PROTOTYPE
         assert contractor["spawned_by"] == RESIDENT
         assert contractor["state"] == "active"
-
-    def test_ednify_keys_converts_nested_string_keys(self):
-        data = {"loop": {"max-iterations": 5}, "plain": [1, {"a": 2}]}
-        result = _ednify_keys(data)
-        assert result[Keyword("loop")][Keyword("max-iterations")] == 5
-        assert result[Keyword("plain")][1][Keyword("a")] == 2
-        assert all(isinstance(k, Keyword) for k in result)
 
 
 class TestQuotaResetOnShutdown:

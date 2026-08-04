@@ -14,7 +14,11 @@ non-Turing-complete semantics (design decisions 2/3 in
 - builtins carry a purity marker. The trigger registry
   (:data:`TRIGGER_BUILTINS`) registers pure predicates/functions only —
   side-effecting actions (``spawn`` / ``emit``) are never registered
-  here, so trigger evaluation is side-effect free by construction.
+  here, so trigger evaluation is side-effect free by construction. The
+  loop registry (:data:`LOOP_BUILTINS`, phase 7a) likewise registers
+  pure termination predicates only, and the stage-condition registry
+  (:data:`STAGE_COND_BUILTINS`, phase 7c) registers pure stage-gating
+  predicates over loop state and the session scratchpad.
 
 On-complete action expressions (phase 4b) keep the same rule: evaluation
 never performs side effects. The action builtins ``spawn`` / ``emit``
@@ -335,6 +339,96 @@ TRIGGER_BUILTINS: dict[str, Builtin] = {
     "cc-ed?": Builtin(_builtin_cc_ed, pure=True),
     "content-matches?": Builtin(_builtin_content_matches, pure=True),
     "contains?": Builtin(_builtin_contains, pure=True),
+    "=": Builtin(_builtin_eq, pure=True),
+    "not": Builtin(_builtin_not, pure=True),
+}
+
+
+# ── Loop until builtins (phase 7a, pure predicates only) ──
+
+
+def _loop_state_int(env: dict[str, Any], section: str, key: str) -> int | None:
+    """Read an int from ``env[section][key]``; None when absent or not an int."""
+    section_map = env.get(section)
+    if not isinstance(section_map, dict):
+        return None
+    value = section_map.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _builtin_iteration_limit_reached(env: dict[str, Any]) -> bool:
+    """``state.iteration`` has reached ``limits.max_iterations``."""
+    iteration = _loop_state_int(env, "state", "iteration")
+    max_iterations = _loop_state_int(env, "limits", "max_iterations")
+    if iteration is None or max_iterations is None:
+        return False
+    return iteration >= max_iterations
+
+
+def _builtin_error_limit_reached(env: dict[str, Any]) -> bool:
+    """``state.error_count`` has reached ``limits.max_consecutive_errors``."""
+    error_count = _loop_state_int(env, "state", "error_count")
+    max_errors = _loop_state_int(env, "limits", "max_consecutive_errors")
+    if error_count is None or max_errors is None:
+        return False
+    return error_count >= max_errors
+
+
+#: Loop termination predicates (phase 7a). Pure only; evaluation is
+#: side-effect free by construction. The environment provides ``self``,
+#: ``state`` (iteration / error_count) and ``limits`` (max_iterations /
+#: max_consecutive_errors); missing keys safely yield False, never raise.
+LOOP_BUILTINS: dict[str, Builtin] = {
+    "iteration-limit-reached?": Builtin(_builtin_iteration_limit_reached, pure=True),
+    "error-limit-reached?": Builtin(_builtin_error_limit_reached, pure=True),
+    "=": Builtin(_builtin_eq, pure=True),
+    "not": Builtin(_builtin_not, pure=True),
+}
+
+
+# ── Stage condition builtins (phase 7c, pure predicates only) ──
+
+
+def _scratch_map(env: dict[str, Any]) -> dict[str, Any]:
+    """The ``scratch`` section of the env; empty map when absent or mistyped."""
+    scratch = env.get("scratch")
+    return scratch if isinstance(scratch, dict) else {}
+
+
+def _builtin_critique_failed(env: dict[str, Any]) -> bool:
+    """A critique verdict exists in scratch and did not pass."""
+    critique = _scratch_map(env).get("critique")
+    return isinstance(critique, dict) and critique.get("passed") is False
+
+
+def _builtin_critique_passed(env: dict[str, Any]) -> bool:
+    """A critique verdict exists in scratch and passed."""
+    critique = _scratch_map(env).get("critique")
+    return isinstance(critique, dict) and critique.get("passed") is True
+
+
+def _builtin_plan_exists(env: dict[str, Any]) -> bool:
+    """Scratch holds a non-empty plan string."""
+    plan = _scratch_map(env).get("plan")
+    return isinstance(plan, str) and plan != ""
+
+
+def _builtin_first_iteration(env: dict[str, Any]) -> bool:
+    """``state.iteration`` is 0 (the loop's first round)."""
+    return _loop_state_int(env, "state", "iteration") == 0
+
+
+#: Stage ``:if`` condition predicates (phase 7c). Pure only; evaluation is
+#: side-effect free by construction. The environment provides ``state``
+#: (iteration / error_count) and ``scratch`` (the session's loop
+#: scratchpad); missing keys safely yield False, never raise.
+STAGE_COND_BUILTINS: dict[str, Builtin] = {
+    "critique-failed?": Builtin(_builtin_critique_failed, pure=True),
+    "critique-passed?": Builtin(_builtin_critique_passed, pure=True),
+    "plan-exists?": Builtin(_builtin_plan_exists, pure=True),
+    "first-iteration?": Builtin(_builtin_first_iteration, pure=True),
     "=": Builtin(_builtin_eq, pure=True),
     "not": Builtin(_builtin_not, pure=True),
 }

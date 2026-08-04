@@ -1,4 +1,10 @@
-; 快速反应者：与 DefaultSpec 的差异字段（部分覆盖语义）
+; 快速反应者：低迭代上限、短邮件历史（total spec——文件即全部行为）
 {:version 1
- :context {:knowledge false :mail-history 5}
- :loop {:max-iterations 3}}
+ :trigger {:on-mention true}
+ :context {:sections [(persona) (protocol) (mail-history 5)]}
+ :loop {:stages [(think) (act)]
+        :until (or (iteration-limit-reached?) (error-limit-reached?))
+        :max-iterations 3
+        :max-consecutive-errors 3}
+ :on-complete {:save-interaction true
+               :reflect {:enabled true :interval-minutes 15}}}

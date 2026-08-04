@@ -7,6 +7,8 @@ import pytest
 
 from tlon.agents.edn import Form, Keyword, loads
 from tlon.agents.eval import (
+    LOOP_BUILTINS,
+    STAGE_COND_BUILTINS,
     TRIGGER_BUILTINS,
     Builtin,
     EvalDepthError,
@@ -15,7 +17,12 @@ from tlon.agents.eval import (
     eval_form,
     validate_form,
 )
-from tlon.agents.spec import AgentSpec, SpecValidationError, TriggerSpec
+from tlon.agents.spec import (
+    AgentSpec,
+    SpecValidationError,
+    TriggerSpec,
+    standard_behavior_edn,
+)
 from tlon.agents.trigger import TriggerEvaluator
 from tlon.organization.mail.mail import Mail
 
@@ -264,6 +271,7 @@ class _FakeAgent:
 
 class TestTriggerEvaluatorExpression:
     def _evaluator(self, source: str, **trigger_kwargs) -> TriggerEvaluator:
+        trigger_kwargs.setdefault("on_mention", True)
         return TriggerEvaluator(
             _FakeAgent(TriggerSpec(when=loads(source), **trigger_kwargs))
         )
@@ -311,31 +319,182 @@ class TestTriggerEvaluatorExpression:
 
 
 class TestSpecTriggerExpression:
+    def _spec_with_trigger(self, trigger_source: str) -> AgentSpec:
+        """Build a complete spec whose :trigger section is ``trigger_source``."""
+        data = loads(standard_behavior_edn())
+        data[Keyword("trigger")] = loads(trigger_source)
+        return AgentSpec.from_edn(data)
+
     def test_expression_mode_accepted(self):
-        spec = AgentSpec.from_edn(
-            loads('{:version 1 :trigger (and (addressed-to-me? msg) (cc-ed? msg))}')
-        )
+        spec = self._spec_with_trigger("(and (addressed-to-me? msg) (cc-ed? msg))")
         assert isinstance(spec.trigger.when, Form)
 
     def test_mentioned_builtin_removed(self):
         # mentioned? retired with the mail model (R1b): specs referencing
         # it fail validation at load time.
         with pytest.raises(SpecValidationError, match="mentioned?"):
-            AgentSpec.from_edn(loads('{:version 1 :trigger (mentioned? msg)}'))
+            self._spec_with_trigger("(mentioned? msg)")
 
     def test_data_mode_when_is_none(self):
-        spec = AgentSpec.from_edn(loads("{:version 1 :trigger {:on-mention true}}"))
+        spec = self._spec_with_trigger("{:on-mention true}")
         assert spec.trigger.when is None
         assert spec.trigger.on_mention is True
 
     def test_non_whitelisted_expression_rejected_at_load(self):
         with pytest.raises(SpecValidationError, match="invalid :trigger expression"):
-            AgentSpec.from_edn(loads('{:version 1 :trigger (spawn "x.tlon")}'))
+            self._spec_with_trigger('(spawn "x.tlon")')
 
     def test_undefined_symbol_rejected_at_load(self):
         with pytest.raises(SpecValidationError, match="undefined symbol"):
-            AgentSpec.from_edn(loads("{:version 1 :trigger (addressed-to-me? foo)}"))
+            self._spec_with_trigger("(addressed-to-me? foo)")
 
     def test_dict_roundtrip_preserves_when(self):
-        spec = AgentSpec.from_edn(loads("{:version 1 :trigger (addressed-to-me? msg)}"))
+        spec = self._spec_with_trigger("(addressed-to-me? msg)")
         assert AgentSpec.from_dict(spec.to_dict()).trigger.when == spec.trigger.when
+
+
+# ── Loop until builtins (phase 7a) ──
+
+
+def _loop_env(
+    iteration: int = 0,
+    error_count: int = 0,
+    max_iterations: int = 10,
+    max_consecutive_errors: int = 3,
+) -> dict:
+    return {
+        "self": _SELF,
+        "state": {"iteration": iteration, "error_count": error_count},
+        "limits": {
+            "max_iterations": max_iterations,
+            "max_consecutive_errors": max_consecutive_errors,
+        },
+    }
+
+
+class TestLoopBuiltins:
+    def test_iteration_limit_reached(self):
+        form = loads("(iteration-limit-reached?)")
+        assert eval_form(form, _loop_env(iteration=10), LOOP_BUILTINS) is True
+        assert eval_form(form, _loop_env(iteration=9), LOOP_BUILTINS) is False
+
+    def test_error_limit_reached(self):
+        form = loads("(error-limit-reached?)")
+        assert eval_form(form, _loop_env(error_count=3), LOOP_BUILTINS) is True
+        assert eval_form(form, _loop_env(error_count=2), LOOP_BUILTINS) is False
+
+    def test_default_until_expression(self):
+        until = loads("(or (iteration-limit-reached?) (error-limit-reached?))")
+        assert eval_form(until, _loop_env(), LOOP_BUILTINS) is False
+        assert eval_form(until, _loop_env(iteration=10), LOOP_BUILTINS) is True
+        assert eval_form(until, _loop_env(error_count=3), LOOP_BUILTINS) is True
+
+    def test_not_and_eq_available(self):
+        env = _loop_env(iteration=10)
+        assert eval_form(loads("(not (iteration-limit-reached?))"), env, LOOP_BUILTINS) is False
+        assert eval_form(loads("(= 1 1)"), env, LOOP_BUILTINS) is True
+
+    def test_missing_env_keys_safe_default_false(self):
+        form = loads("(iteration-limit-reached?)")
+        assert eval_form(form, {}, LOOP_BUILTINS) is False
+        assert eval_form(form, {"state": {}}, LOOP_BUILTINS) is False
+        assert eval_form(loads("(error-limit-reached?)"), {"limits": None}, LOOP_BUILTINS) is False
+
+    def test_non_int_env_values_safe_default_false(self):
+        env = {"state": {"iteration": "10"}, "limits": {"max_iterations": True}}
+        assert eval_form(loads("(iteration-limit-reached?)"), env, LOOP_BUILTINS) is False
+
+    def test_all_loop_builtins_pure(self):
+        assert all(builtin.pure for builtin in LOOP_BUILTINS.values())
+
+    def test_validate_accepts_default_until(self):
+        validate_form(
+            loads("(or (iteration-limit-reached?) (error-limit-reached?))"),
+            LOOP_BUILTINS,
+            scope=set(),
+        )
+
+    def test_validate_rejects_unknown_function_and_symbols(self):
+        with pytest.raises(EvalError, match="unknown function"):
+            validate_form(loads("(while true)"), LOOP_BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="undefined symbol"):
+            validate_form(loads("(iteration-limit-reached? foo)"), LOOP_BUILTINS, scope=set())
+
+
+# ── Stage condition builtins (phase 7c) ──
+
+
+def _stage_cond_env(iteration: int = 0, error_count: int = 0, scratch: dict | None = None) -> dict:
+    return {
+        "state": {"iteration": iteration, "error_count": error_count},
+        "scratch": scratch if scratch is not None else {},
+    }
+
+
+class TestStageCondBuiltins:
+    def test_critique_failed(self):
+        form = loads("(critique-failed?)")
+        assert eval_form(form, _stage_cond_env(), STAGE_COND_BUILTINS) is False
+        failed = {"critique": {"passed": False, "feedback": "fix"}}
+        passed = {"critique": {"passed": True, "feedback": ""}}
+        assert eval_form(form, _stage_cond_env(scratch=failed), STAGE_COND_BUILTINS) is True
+        assert eval_form(form, _stage_cond_env(scratch=passed), STAGE_COND_BUILTINS) is False
+
+    def test_critique_passed(self):
+        form = loads("(critique-passed?)")
+        assert eval_form(form, _stage_cond_env(), STAGE_COND_BUILTINS) is False
+        failed = {"critique": {"passed": False, "feedback": "fix"}}
+        passed = {"critique": {"passed": True, "feedback": ""}}
+        assert eval_form(form, _stage_cond_env(scratch=passed), STAGE_COND_BUILTINS) is True
+        assert eval_form(form, _stage_cond_env(scratch=failed), STAGE_COND_BUILTINS) is False
+
+    def test_plan_exists(self):
+        form = loads("(plan-exists?)")
+        assert eval_form(form, _stage_cond_env(), STAGE_COND_BUILTINS) is False
+        assert (
+            eval_form(form, _stage_cond_env(scratch={"plan": ""}), STAGE_COND_BUILTINS) is False
+        )
+        assert (
+            eval_form(form, _stage_cond_env(scratch={"plan": "1. step"}), STAGE_COND_BUILTINS)
+            is True
+        )
+        # non-string values never count as a plan
+        assert (
+            eval_form(form, _stage_cond_env(scratch={"plan": ["step"]}), STAGE_COND_BUILTINS)
+            is False
+        )
+
+    def test_first_iteration(self):
+        form = loads("(first-iteration?)")
+        assert eval_form(form, _stage_cond_env(iteration=0), STAGE_COND_BUILTINS) is True
+        assert eval_form(form, _stage_cond_env(iteration=1), STAGE_COND_BUILTINS) is False
+
+    def test_missing_env_keys_safe_default_false(self):
+        for source in (
+            "(critique-failed?)",
+            "(critique-passed?)",
+            "(plan-exists?)",
+            "(first-iteration?)",
+        ):
+            assert eval_form(loads(source), {}, STAGE_COND_BUILTINS) is False
+            assert eval_form(loads(source), {"scratch": None}, STAGE_COND_BUILTINS) is False
+
+    def test_malformed_scratch_values_safe_default_false(self):
+        env = _stage_cond_env(scratch={"critique": "broken", "plan": 42})
+        assert eval_form(loads("(critique-failed?)"), env, STAGE_COND_BUILTINS) is False
+        assert eval_form(loads("(critique-passed?)"), env, STAGE_COND_BUILTINS) is False
+        assert eval_form(loads("(plan-exists?)"), env, STAGE_COND_BUILTINS) is False
+
+    def test_not_and_eq_available(self):
+        env = _stage_cond_env(scratch={"plan": "1. step"})
+        assert eval_form(loads("(not (plan-exists?))"), env, STAGE_COND_BUILTINS) is False
+        assert eval_form(loads("(= 1 1)"), env, STAGE_COND_BUILTINS) is True
+
+    def test_all_stage_cond_builtins_pure(self):
+        assert all(builtin.pure for builtin in STAGE_COND_BUILTINS.values())
+
+    def test_validate_rejects_unknown_function_and_symbols(self):
+        with pytest.raises(EvalError, match="unknown function"):
+            validate_form(loads("(iteration-limit-reached?)"), STAGE_COND_BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="undefined symbol"):
+            validate_form(loads("(plan-exists? foo)"), STAGE_COND_BUILTINS, scope=set())

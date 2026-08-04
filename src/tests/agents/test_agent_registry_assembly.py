@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tlon.agents.agent_registry import AgentRegistry, _build_llm_config
+from tlon.agents.spec import standard_behavior_edn
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.paths import TlonPaths
@@ -97,13 +98,20 @@ class TestAgentRegistryStartAgent:
     def registry(self, mock_event_bus, temp_paths):
         config = AgentConfig(id="a-001", name="林知遥")
         provider = MockAgentInfoProvider({"a-001": config})
+        # The spec loader resolves behavior.tlon through the module-level
+        # ``tlon.agents.spec.paths``; point it at the temp home and write a
+        # complete behavior file (a total spec refuses to boot without one).
+        behavior_file = temp_paths.agent_behavior_file("a-001")
+        behavior_file.parent.mkdir(parents=True, exist_ok=True)
+        behavior_file.write_text(standard_behavior_edn(), encoding="utf-8")
         reg = AgentRegistry(
             event_bus=mock_event_bus,
             agent_info_provider=provider,
             paths=temp_paths,
         )
         reg.register("a-001")
-        return reg
+        with patch("tlon.agents.spec.paths", temp_paths):
+            yield reg
 
     @pytest.mark.asyncio
     async def test_start_agent_registers_all_22_tools(self, registry, mock_event_bus):

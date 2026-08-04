@@ -56,6 +56,18 @@ class AgentStore:
         except Exception as e:
             return False, f"Failed to save agent: {e}"
 
+    def write_behavior_file(self, agent_id: str) -> None:
+        """Write the canonical complete behavior.tlon for a newly created agent.
+
+        The behavior spec is total — a missing file refuses the agent's
+        boot — so every wizard-created agent gets the standard ReAct
+        program spelled out in full alongside its agent.yaml.
+        """
+        from tlon.agents.spec import standard_behavior_edn
+
+        filepath = self._paths.agent_behavior_file(agent_id)
+        filepath.write_text(standard_behavior_edn(), encoding="utf-8")
+
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> tuple[bool, str]:
         try:
             _yaml_delete(agent_id, self._paths.tlon_home())

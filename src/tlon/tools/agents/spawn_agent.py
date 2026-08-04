@@ -1,10 +1,9 @@
 """Spawn a contractor agent from a behavior prototype."""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from structlog.contextvars import get_contextvars
 
-from tlon.agents.edn import Keyword
 from tlon.agents.prototypes import PrototypeError
 from tlon.agents.spawn_errors import SpawnRejectedError
 from tlon.base.logger import get_logger
@@ -14,19 +13,6 @@ if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
 
 logger = get_logger(__name__)
-
-
-def _ednify_keys(data: Any) -> Any:
-    """Recursively convert plain string map keys to EDN keywords.
-
-    Tool arguments arrive as JSON, so override keys are plain strings; the
-    prototype merge and the behavior file expect EDN keyword keys.
-    """
-    if isinstance(data, dict):
-        return {Keyword(str(k)): _ednify_keys(v) for k, v in data.items()}
-    if isinstance(data, list):
-        return [_ednify_keys(item) for item in data]
-    return data
 
 
 class SpawnAgentTool(Tool):
@@ -39,8 +25,9 @@ class SpawnAgentTool(Tool):
 
     Permissions cannot escalate: the prototype library is the only source
     (Tlon-prebuilt prototypes are the trusted source; LLM-authored specs
-    stay behind the manual-approval gate of stage 4), and ``overrides``
-    covers behavior fields only — tools are not part of the spec schema.
+    stay behind the manual-approval gate of stage 4), and the behavior
+    file is copied verbatim — a spec is total, so nothing can be
+    overridden at spawn time.
     """
 
     def __init__(self, registry: "AgentRegistry", spawner_id: str) -> None:
@@ -50,7 +37,7 @@ class SpawnAgentTool(Tool):
                 "从 behavior prototype 派生一个临时工 Agent（contractor）并立即启动。"
                 "临时工完成委托任务后会被自动回收（空闲超时即弃）。"
                 "受 spawn 预算约束：全局运行数上限、spawn 深度、每会话配额。"
-                "overrides 仅覆盖行为字段（如 loop.max-iterations），无法授予新工具。"
+                "behavior 文件原样拷贝（spec 是 total 的，无 overrides），无法授予新工具。"
             ),
             parameters={
                 "type": "object",
@@ -63,13 +50,6 @@ class SpawnAgentTool(Tool):
                         "type": "string",
                         "description": "新 Agent 的显示名（他人 @ 此名即可与之对话）",
                     },
-                    "overrides": {
-                        "type": "object",
-                        "description": (
-                            "可选的行为覆盖（EDN 结构的 JSON 表示），"
-                            '如 {"loop": {"max-iterations": 5}}'
-                        ),
-                    },
                 },
                 "required": ["prototype", "name"],
             },
@@ -81,7 +61,6 @@ class SpawnAgentTool(Tool):
         self,
         prototype: str,
         name: str,
-        overrides: dict[str, Any] | None = None,
     ) -> ToolResult:
         # Session context is bound by the agent's session span via structlog
         # contextvars; direct calls (tests) fall back to a single bucket.
@@ -92,7 +71,6 @@ class SpawnAgentTool(Tool):
                 name=name,
                 spawner_id=self._spawner_id,
                 session_id=str(session_id) if session_id else None,
-                overrides=_ednify_keys(overrides) if overrides else None,
             )
         except SpawnRejectedError as e:
             if e.reason == "untrusted_prototype":

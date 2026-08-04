@@ -3,7 +3,7 @@
 A prototype is a directory of pure data:
 
 - ``prototype.edn`` — metadata ``{:name :display-name :description :trusted :author}``
-- ``behavior.tlon`` — partial AgentSpec override (stage 2 semantics)
+- ``behavior.tlon`` — a complete (total) AgentSpec file
 - ``IDENTITY.md`` / ``SOUL.md`` / ``RULES.md`` — persona templates
 
 Built-in prototypes ship inside the package (``tlon/prototypes/``) and are
@@ -18,9 +18,10 @@ spawnable). LLM-authored prototypes are written to the staging area
 spawned after a human approves them in the mirror, which moves them into
 the trusted library.
 
-Instantiation **copies** rather than references: persona files are copied
-and the behavior file is deep-merged with overrides at the EDN data layer,
-so an agent's behavior is frozen at creation time.
+Instantiation **copies** rather than references: persona files and the
+behavior file are copied verbatim, so an agent's behavior is frozen at
+creation time. There are no overrides — a spec is total, and the
+prototype's file is the whole behavior.
 """
 
 import shutil
@@ -127,25 +128,21 @@ def instantiate(
     prototype_name: str,
     agent_id: str,
     agent_name: str,
-    overrides: dict[Any, Any] | None = None,
     proactive: bool = False,
     tlon_paths: TlonPaths | None = None,
 ) -> AgentConfig:
-    """Create an agent from a prototype: copy + partial override.
+    """Create an agent from a prototype: copy, no merging.
 
-    Persona files are copied verbatim; the prototype ``behavior.tlon`` is
-    parsed and deep-merged with ``overrides`` at the EDN data layer
-    (keyword keys preserved), then written as the instance's own behavior
-    file. ``agent.yaml`` is written through the same save path as the
-    wizard. The new agent takes effect after a server restart — no
+    Persona files are copied verbatim; the prototype ``behavior.tlon`` (a
+    complete, total spec) is copied verbatim as the instance's own
+    behavior file. ``agent.yaml`` is written through the same save path as
+    the wizard. The new agent takes effect after a server restart — no
     registry hot-reload at this stage.
 
     Args:
         prototype_name: prototype directory name under ~/.tlon/prototypes/
         agent_id: new agent id (must not already exist)
         agent_name: display name of the new agent
-        overrides: parsed-EDN-shaped diff deep-merged over the prototype
-            behavior data, e.g. ``{Keyword("loop"): {Keyword("max-iterations"): 5}}``
         proactive: whether the agent responds to unaddressed messages
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
@@ -164,19 +161,14 @@ def instantiate(
     if _yaml_exists(agent_id, p.tlon_home()):
         raise PrototypeError(f"agent '{agent_id}' already exists")
 
-    # Persona templates: copy, not reference (frozen at creation time)
+    # Persona templates and behavior: copy, not reference (frozen at
+    # creation time; a spec is total, so there is nothing to merge)
     config_dir = p.agent_config_dir(agent_id)
-    for filename in PERSONA_FILES:
+    for filename in (*PERSONA_FILES, BEHAVIOR_FILE):
         source = proto_dir / filename
         if source.exists():
             content = source.read_text(encoding="utf-8")
             (config_dir / filename).write_text(content, encoding="utf-8")
-
-    # Behavior: deep-merge overrides at the EDN data layer
-    behavior_data = loads((proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8"))
-    if overrides:
-        behavior_data = _deep_merge(behavior_data, overrides)
-    (config_dir / BEHAVIOR_FILE).write_text(dumps(behavior_data) + "\n", encoding="utf-8")
 
     # agent.yaml via the same save path as the wizard
     agent = AgentConfig(
@@ -216,16 +208,6 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
         return PrototypeInfo(name=name, display_name=name, description="")
 
 
-def _deep_merge(base: Any, override: Any) -> Any:
-    """Recursively merge EDN data: maps merge per-key, anything else replaces."""
-    if isinstance(base, dict) and isinstance(override, dict):
-        merged = dict(base)
-        for key, value in override.items():
-            merged[key] = _deep_merge(merged[key], value) if key in merged else value
-        return merged
-    return override
-
-
 # ==================== Staging area (stage 4a trust gate) ====================
 
 
@@ -241,8 +223,8 @@ def write_staging_prototype(
     """Write an LLM-authored prototype to the staging area (untrusted).
 
     Validation happens **before** anything touches disk: the behavior text
-    must parse as EDN and pass the ``AgentSpec`` schema (``:version``
-    required, field types, ``:loop {:mode}`` limited to implemented values).
+    must parse as EDN and pass the total ``AgentSpec`` schema (every
+    section and required field present, field types checked).
     The metadata is written with ``:trusted false`` and ``:author`` recording
     the authoring agent, so ``spawnAgent`` refuses it until a human approves
     it in the mirror.

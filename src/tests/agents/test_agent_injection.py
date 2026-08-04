@@ -10,6 +10,8 @@ Verifies that Agent:
 from unittest.mock import MagicMock
 
 from tlon.agents.agent import Agent
+from tlon.agents.edn import loads
+from tlon.agents.spec import AgentSpec, standard_behavior_edn
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 
@@ -25,6 +27,9 @@ def _make_agent(**kwargs):
         "memory": MagicMock(),
         "task_manager": MagicMock(),
         "tool_executor": MagicMock(),
+        # Constructor injection tests bypass the behavior file: inject a
+        # complete standard spec so Agent never hits AgentSpec.load.
+        "spec": AgentSpec.from_edn(loads(standard_behavior_edn())),
     }
     defaults.update(kwargs)
     return Agent(**defaults)

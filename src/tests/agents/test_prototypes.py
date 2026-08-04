@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from tlon.agents import prototypes as prototypes_mod
-from tlon.agents.edn import Keyword, loads
+from tlon.agents.edn import Keyword, dumps, loads
 from tlon.agents.prototypes import (
     PrototypeError,
     PrototypeInfo,
@@ -32,9 +32,7 @@ def _use_tmp_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TlonPaths:
 
 
 def _fake_agent(agent_id: str) -> SimpleNamespace:
-    config = AgentConfig(id=agent_id, name="TestAgent")
-    memory_config = SimpleNamespace(reflection_enabled=True, reflection_interval_minutes=15)
-    return SimpleNamespace(config=config, memory=SimpleNamespace(config=memory_config))
+    return SimpleNamespace(config=AgentConfig(id=agent_id, name="TestAgent"))
 
 
 class TestPackageResources:
@@ -56,6 +54,26 @@ class TestPackageResources:
             raw = (package_root / name / "behavior.tlon").read_text(encoding="utf-8")
             spec = AgentSpec.from_edn(loads(raw))
             assert spec.version == 1
+
+    def test_builtin_behavior_specs_totality(self):
+        """Total spec: every builtin behavior.tlon must satisfy the full schema
+        (no defaults filled in), and carry the designed loop parameters."""
+        package_root = resources.files(prototypes_mod.PROTOTYPE_PACKAGE)
+        specs = {
+            name: AgentSpec.from_edn(
+                loads((package_root / name / "behavior.tlon").read_text(encoding="utf-8"))
+            )
+            for name in BUILTIN_NAMES
+        }
+        assert [dumps(form) for form in specs["deep-thinker"].loop.stages] == [
+            "(think)",
+            "(act)",
+            "(critique)",
+            "(revise {:if (critique-failed?)})",
+        ]
+        assert specs["deep-thinker"].loop.max_iterations == 25
+        assert specs["fast-responder"].loop.max_iterations == 3
+        assert specs["archivist"].loop.max_iterations == 10
 
     def test_builtin_metadata_files_parse(self):
         package_root = resources.files(prototypes_mod.PROTOTYPE_PACKAGE)
@@ -152,23 +170,26 @@ class TestInstantiate:
         assert agent.prototype == "deep-thinker"
         assert reloaded.name == "深思"
 
-    def test_overrides_deep_merge_preserves_other_fields(self, tmp_path, monkeypatch):
+    def test_behavior_file_copied_verbatim_and_yaml_written(self, tmp_path, monkeypatch):
+        """Instantiate without overrides: behavior.tlon is copied byte-for-byte
+        from the prototype, and agent.yaml is written through the save path."""
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         seed_prototypes()
 
-        instantiate(
-            "deep-thinker",
-            agent_id="dt-002",
-            agent_name="深思",
-            overrides={Keyword("loop"): {Keyword("max-iterations"): 5}},
-        )
+        instantiate("archivist", agent_id="ar-001", agent_name="归档")
 
-        behavior_file = test_paths.agent_config_dir("dt-002") / "behavior.tlon"
-        data = loads(behavior_file.read_text(encoding="utf-8"))
-        assert data[Keyword("loop")][Keyword("max-iterations")] == 5
-        # Fields not overridden stay from the prototype
-        assert data[Keyword("on-complete")][Keyword("reflect")][Keyword("interval-minutes")] == 10
-        assert data[Keyword("version")] == 1
+        config_dir = test_paths.agent_config_dir("ar-001")
+        copied = (config_dir / "behavior.tlon").read_text(encoding="utf-8")
+        original = (test_paths.prototypes_dir() / "archivist" / "behavior.tlon").read_text(
+            encoding="utf-8"
+        )
+        assert copied == original
+
+        reloaded = _yaml_load_file(test_paths.agent_config_file("ar-001"))
+        assert reloaded is not None
+        assert reloaded.id == "ar-001"
+        assert reloaded.name == "归档"
+        assert reloaded.prototype == "archivist"
 
     def test_missing_prototype_raises(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
@@ -193,25 +214,26 @@ class TestInstantiate:
 
 
 class TestEndToEndSpecInheritance:
-    """Stage 5 completion criterion: instantiate from deep-thinker, behavior
-    inheritance + override must be visible through AgentSpec.load."""
+    """Stage 5 completion criterion: instantiate from a prototype, and the
+    total behavior spec must be visible through AgentSpec.load."""
 
-    def test_deep_thinker_instance_spec(self, tmp_path, monkeypatch):
+    def test_deep_thinker_explicit_stage_program(self, tmp_path, monkeypatch):
+        """Phase 7c: deep-thinker runs an explicit stage program
+        (think/act/critique + conditional revise), not the default react pair."""
         _use_tmp_paths(monkeypatch, tmp_path)
         seed_prototypes()
-        instantiate("deep-thinker", agent_id="dt-010", agent_name="深思")
+        instantiate("deep-thinker", agent_id="dt-012", agent_name="深思")
 
-        spec = AgentSpec.load(_fake_agent("dt-010"))
-        base = AgentSpec.default(_fake_agent("dt-010"))
+        spec = AgentSpec.load(_fake_agent("dt-012"))
 
-        # Prototype overrides applied
+        assert [dumps(form) for form in spec.loop.stages] == [
+            "(think)",
+            "(act)",
+            "(critique)",
+            "(revise {:if (critique-failed?)})",
+        ]
+        assert dumps(spec.loop.until) == "(or (iteration-limit-reached?) (error-limit-reached?))"
         assert spec.loop.max_iterations == 25
-        assert spec.on_complete.reflect.interval_minutes == 10
-        # Everything else inherited from DefaultSpec
-        assert spec.context == base.context
-        assert spec.trigger == base.trigger
-        assert spec.on_complete.save_interaction == base.on_complete.save_interaction
-        assert spec.loop.max_consecutive_errors == base.loop.max_consecutive_errors
 
     def test_fast_responder_instance_spec(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
@@ -221,8 +243,12 @@ class TestEndToEndSpecInheritance:
         spec = AgentSpec.load(_fake_agent("fr-010"))
 
         assert spec.loop.max_iterations == 3
-        assert spec.context.knowledge is False
-        assert spec.context.mail_history == 5
+        # Explicit section vector: no (knowledge), short mail history.
+        assert spec.context.sections == (
+            loads("(persona)"),
+            loads("(protocol)"),
+            loads("(mail-history 5)"),
+        )
 
     def test_archivist_instance_spec(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
@@ -233,21 +259,6 @@ class TestEndToEndSpecInheritance:
 
         assert spec.on_complete.save_interaction is True
         assert spec.on_complete.reflect.interval_minutes == 5
-
-    def test_instantiated_override_flows_into_spec(self, tmp_path, monkeypatch):
-        _use_tmp_paths(monkeypatch, tmp_path)
-        seed_prototypes()
-        instantiate(
-            "deep-thinker",
-            agent_id="dt-011",
-            agent_name="深思",
-            overrides={Keyword("loop"): {Keyword("max-iterations"): 7}},
-        )
-
-        spec = AgentSpec.load(_fake_agent("dt-011"))
-
-        assert spec.loop.max_iterations == 7
-        assert spec.on_complete.reflect.interval_minutes == 10
 
 
 class TestListPrototypesTool:

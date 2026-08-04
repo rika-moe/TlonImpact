@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tlon.agents.agent import Agent
+from tlon.agents.edn import loads
+from tlon.agents.spec import AgentSpec, standard_behavior_edn
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -37,6 +39,7 @@ def _make_agent(mailbox: Mailbox | None = None, **kwargs) -> Agent:
         "task_manager": MagicMock(),
         "tool_executor": ToolExecutor(),
         "mailbox": mailbox,
+        "spec": AgentSpec.from_edn(loads(standard_behavior_edn())),
     }
     defaults.update(kwargs)
     return Agent(**defaults)

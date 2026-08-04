@@ -115,7 +115,8 @@ class Agent(Member):
                 injected by the registry, None only in bare test setups
             per_tool_timeout: Timeout for each individual tool
             spec: Behavior spec; when None, loaded from the agent's
-                behavior.tlon file (falling back to DefaultSpec)
+                behavior.tlon file (missing/invalid file raises — the
+                agent refuses to boot)
             registry: Agent registry for on-complete ``spawn`` actions;
                 None (tests, standalone construction) disables them
         """

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
+from tlon.agents.spec import has_section
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
 from tlon.organization.mail.mail import Mail
@@ -63,42 +64,52 @@ class ContextBuilder:
             return ""
 
     async def build_context(self, current_mail: Mail) -> list[dict[str, Any]]:
-        """Build conversation context for LLM (sections gated by spec.context).
+        """Build conversation context for LLM (sections interpreted in order).
+
+        The ``:context`` section vector (phase 7b) is a program: each
+        conversational section appends its messages in vector order.
+        ``persona``/``protocol`` feed the system prompt instead and are
+        skipped here. The current mail is always appended last — the
+        engine owns this; the DSL only describes what comes before it.
+        """
+        context: list[dict[str, Any]] = []
+        for form in self._agent.spec.context.sections:
+            name = str(form[0])
+            if name == "knowledge":
+                knowledge = await self.build_knowledge_context()
+                if knowledge:
+                    context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
+            elif name == "mail-history":
+                context.extend(await self._build_mail_history(form[1], current_mail))
+
+        context.append({"role": "user", "content": _render_mail(current_mail)})
+        return context
+
+    async def _build_mail_history(
+        self, count: int, current_mail: Mail
+    ) -> list[dict[str, Any]]:
+        """Render up to ``count`` mailbox history mails as context messages.
 
         The history is the agent's own correspondence (mailbox inbox +
-        sent), never a shared room log: my own mail maps to the assistant
-        role, everyone else's to the user role.
+        sent), never a shared room log: my own mail maps to the
+        assistant role, everyone else's to the user role.
         """
-        context = []
-        context_spec = self._agent.spec.context
-
-        if context_spec.knowledge:
-            knowledge = await self.build_knowledge_context()
-            if knowledge:
-                context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
-
-        history: list[Mail] = []
-        if self._agent.mailbox is not None:
-            if context_spec.mail_history > 0:
-                history = await self._agent.mailbox.recent(limit=context_spec.mail_history)
-                logger.debug("context_history_retrieved", mail_count=len(history))
-        else:
+        if self._agent.mailbox is None:
             logger.warning("mailbox_missing")
-
+            return []
+        if count <= 0:
+            return []
+        history = await self._agent.mailbox.recent(limit=count)
+        logger.debug("context_history_retrieved", mail_count=len(history))
+        messages: list[dict[str, Any]] = []
         for mail in history:
             if mail.id == current_mail.id:
                 continue
             if not mail.content:
                 continue
-
-            if mail.from_address == self._agent.address:
-                context.append({"role": "assistant", "content": _render_mail(mail)})
-            else:
-                context.append({"role": "user", "content": _render_mail(mail)})
-
-        context.append({"role": "user", "content": _render_mail(current_mail)})
-
-        return context
+            role = "assistant" if mail.from_address == self._agent.address else "user"
+            messages.append({"role": role, "content": _render_mail(mail)})
+        return messages
 
     async def build_prompt_context(self) -> AgentPromptContext:
         """Build AgentPromptContext by pre-fetching team SOUL.md files."""
@@ -156,8 +167,8 @@ class ContextBuilder:
             context_spec = agent.spec.context
             builder = SystemPromptBuilder(
                 context,
-                include_persona=context_spec.persona,
-                include_protocol=context_spec.protocol,
+                include_persona=has_section(context_spec.sections, "persona"),
+                include_protocol=has_section(context_spec.sections, "protocol"),
             )
             agent._system_prompt_cache = builder.build()
             agent._system_prompt_mtime = signature

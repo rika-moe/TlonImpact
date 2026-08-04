@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tlon.agents.agent import Agent
+from tlon.agents.edn import loads
+from tlon.agents.spec import AgentSpec, standard_behavior_edn
 from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
 
@@ -37,6 +39,7 @@ def _make_agent(team_members: list[AgentConfig] | None = None):
         task_manager=MagicMock(),
         tool_executor=tool_executor,
         team_members=team_members,
+        spec=AgentSpec.from_edn(loads(standard_behavior_edn())),
     )
 
 

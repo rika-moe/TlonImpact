@@ -359,6 +359,8 @@ class QuickstartWizard:
             data = entry.get("data", {})
             success, msg = self.agent_store.save_agent(agent)
             if success:
+                # Write the canonical total behavior spec
+                self.agent_store.write_behavior_file(agent.id)
                 # Write narrative .md files
                 config_dir = Path(self.agent_store._paths.agent_config_dir(agent.id))
                 for field, filename in [

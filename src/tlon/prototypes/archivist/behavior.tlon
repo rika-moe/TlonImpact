@@ -1,4 +1,10 @@
-; 档案管理者：与 DefaultSpec 的差异字段（部分覆盖语义）
+; 档案管理者：标准 ReAct 程序，高频记忆反思（total spec——文件即全部行为）
 {:version 1
+ :trigger {:on-mention true}
+ :context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+ :loop {:stages [(think) (act)]
+        :until (or (iteration-limit-reached?) (error-limit-reached?))
+        :max-iterations 10
+        :max-consecutive-errors 3}
  :on-complete {:save-interaction true
-               :reflect {:interval-minutes 5}}}
+               :reflect {:enabled true :interval-minutes 5}}}

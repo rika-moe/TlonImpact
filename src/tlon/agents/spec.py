@@ -5,29 +5,44 @@ not code. ``AgentSpec`` is a typed, pure-data dataclass tree; the EDN
 behavior file (``~/.tlon/{agent_id}/config/behavior.tlon``) is only a
 serialization frontend that parses into it.
 
+The spec is **total**: the behavior file is the whole behavior. A file
+must declare every section (``:version``, ``:trigger``, ``:context``,
+``:loop``, ``:on-complete``) and every required field inside them — there
+is no partial merge, no base spec, and no ``DefaultSpec`` derivation from
+``AgentConfig``. A missing, unparseable, or incomplete behavior file
+refuses the agent's boot (:meth:`AgentSpec.load` raises); the registry
+logs the failure and keeps the server and other agents running.
+
 Boundaries:
 
-- ``AgentConfig.max_iterations`` / ``max_consecutive_errors`` remain as
-  the data source for :meth:`AgentSpec.default` (and as the
-  compatibility path when no spec file exists). ``session_timeout_seconds``
-  and ``message_queue_size`` are construction-time infrastructure and stay
-  in ``AgentConfig`` — they never enter the spec. ``AgentConfig.proactive``
-  is deprecated and ignored (proactive retired with the mail model, R1b).
+- ``AgentConfig`` keeps construction-time infrastructure only
+  (``session_timeout_seconds``, ``message_queue_size``) — those never
+  enter the spec. ``AgentConfig.proactive`` is deprecated and ignored
+  (proactive retired with the mail model, R1b).
 - The no-tool reminder in LoopDriver currently has no on/off switch, so
   v1 has no ``no_tool_reminder`` field — the reminder stays unconditional.
+- ``LoopSpec.stages`` / ``until`` (phase 7a) turn the loop into an
+  interpreted program: a whitelisted stage vector plus a pure
+  termination expression. The engine still owns iteration — including an
+  unconditional ``max_iterations`` hard ceiling — per "the DSL never
+  executes iteration".
+- ``ContextSpec.sections`` (phase 7b) does the same for context
+  assembly: a whitelisted section vector the engine interprets in
+  order. Legacy boolean/count keys (``:persona`` / ``:protocol`` /
+  ``:knowledge`` / ``:mail-history``) are retired — ``:sections`` is
+  required and legacy keys warn as unknown keys.
 
-Missing keys in a spec file fall back to a base spec (``DefaultSpec``
-derived from the agent's config), so a partial file is a pure override.
 Unknown keys are ignored with a warning for forward compatibility.
 """
 
 import hashlib
-from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from tlon.agents.edn import EDNParseError, Form, Keyword, dumps, loads
+from tlon.agents.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlon.agents.eval import (
+    LOOP_BUILTINS,
+    STAGE_COND_BUILTINS,
     TRIGGER_BUILTINS,
     EvalError,
     validate_action_form,
@@ -44,12 +59,37 @@ logger = get_logger(__name__)
 SPEC_VERSION = 1
 BEHAVIOR_FILE_NAME = "behavior.tlon"
 
-_LOOP_MODES = ("react",)
-_TOOL_MODES = ("background",)
+#: Stage names the engine implements (phases 7a/7c). Each stage is a
+#: Python-implemented, testable semantic unit; ``act`` means "execute
+#: this round's tool calls — all of them", not a single tool call.
+STAGE_NAMES = frozenset({"think", "act", "plan", "critique", "revise"})
+
+#: The standard ReAct program: the canonical stage vector and until
+#: expression, used by the wizard template and tests. These are building
+#: blocks for authoring a spec file, never implicit defaults — every
+#: behavior file must spell its program out in full.
+REACT_STAGES: tuple[Form, ...] = (loads("(think)"), loads("(act)"))
+REACT_UNTIL: Form = loads("(or (iteration-limit-reached?) (error-limit-reached?))")
+
+#: Section names the engine implements (phase 7b). ``persona`` and
+#: ``protocol`` feed the system prompt; ``knowledge`` and
+#: ``mail-history`` feed the conversation context, in vector order.
+SECTION_NAMES = frozenset({"persona", "protocol", "knowledge", "mail-history"})
+
+#: The standard context assembly program (phase 7b): full persona and
+#: protocol in the system prompt, then knowledge, then 20 mails of
+#: history in the conversation. Building block for authoring a spec
+#: file (wizard template, tests), never an implicit default.
+DEFAULT_SECTIONS: tuple[Form, ...] = (
+    loads("(persona)"),
+    loads("(protocol)"),
+    loads("(knowledge)"),
+    loads("(mail-history 20)"),
+)
 
 
 class SpecValidationError(ValueError):
-    """An EDN spec parsed successfully but failed semantic validation."""
+    """A behavior spec failed EDN-level semantic validation."""
 
 
 @dataclass(frozen=True)
@@ -62,36 +102,56 @@ class TriggerSpec:
     the declarative rule applies.
     """
 
-    on_mention: bool = True  # respond when my address is in To or CC
+    on_mention: bool  # respond when my address is in To or CC
     when: "Form | None" = None  # L1 expression mode (phase 3a)
 
 
 @dataclass(frozen=True)
 class ContextSpec:
-    """What goes into the LLM context and system prompt."""
+    """What goes into the LLM context and system prompt (phase 7b).
 
-    persona: bool = True  # IDENTITY/SOUL/RULES + team SOUL sections
-    protocol: bool = True  # framework interaction-protocol section
-    knowledge: bool = True  # memory knowledge blocks injection
-    mail_history: int = 20  # mailbox history mail count; 0 disables
+    ``sections`` is the section vector: each form is ``(persona)``,
+    ``(protocol)``, ``(knowledge)``, or ``(mail-history N)`` with a
+    non-negative int count, statically validated at load time against
+    :data:`SECTION_NAMES`. The engine interprets the vector in order;
+    the current mail is always appended last by the engine, outside
+    the DSL.
+    """
+
+    sections: tuple[Form, ...]
+
+
+def has_section(sections: tuple[Form, ...], name: str) -> bool:
+    """Whether the section vector contains a section named ``name``."""
+    return any(str(form[0]) == name for form in sections)
 
 
 @dataclass(frozen=True)
 class LoopSpec:
-    """Shape and limits of the cognitive loop (engine-executed)."""
+    """Shape and limits of the cognitive loop (engine-executed).
 
-    mode: str = "react"  # v1 only :react
-    max_iterations: int = 10
-    tools: str = "background"  # v1 only :background
-    max_consecutive_errors: int = 3
+    ``stages`` is the stage vector (phases 7a/7c): each form is ``(name)``
+    or ``(name {opts})`` with ``name`` in :data:`STAGE_NAMES`, statically
+    validated at load time. Every stage accepts an optional ``:if``
+    condition expression (evaluated per round against loop state and the
+    session scratchpad); ``plan`` additionally accepts ``:max-steps``.
+    ``until`` is the loop termination expression,
+    validated against ``LOOP_BUILTINS``. The engine interprets them —
+    the DSL describes, the engine executes.
+    """
+
+    max_iterations: int
+    max_consecutive_errors: int
+    stages: tuple[Form, ...]
+    until: Form
 
 
 @dataclass(frozen=True)
 class ReflectSpec:
     """Periodic background memory audit."""
 
-    enabled: bool = True
-    interval_minutes: int = 15
+    enabled: bool
+    interval_minutes: int
 
 
 @dataclass(frozen=True)
@@ -105,8 +165,8 @@ class OnCompleteSpec:
     executes them once when a session completes.
     """
 
-    save_interaction: bool = True
-    reflect: ReflectSpec = field(default_factory=ReflectSpec)
+    save_interaction: bool
+    reflect: ReflectSpec
     actions: tuple[Form, ...] = ()  # phase 4b action expressions
 
 
@@ -115,60 +175,57 @@ class AgentSpec:
     """Complete behavior spec for one agent (semantics authority).
 
     ``source_hash`` is provenance, not semantics: the sha256 short hash (12
-    hex chars) of the behavior file this spec was loaded from, or
-    ``"default"`` when running on DefaultSpec (no file, or a broken file
-    that fell back). It is stamped onto session spans so any trace can be
-    tied back to the exact spec version in effect.
+    hex chars) of the behavior file this spec was loaded from. It is
+    stamped onto session spans so any trace can be tied back to the exact
+    spec version in effect. Specs built directly (validation-only paths,
+    tests) carry the empty string — only :meth:`load` stamps a real hash.
     """
 
-    version: int = SPEC_VERSION
-    trigger: TriggerSpec = field(default_factory=TriggerSpec)
-    context: ContextSpec = field(default_factory=ContextSpec)
-    loop: LoopSpec = field(default_factory=LoopSpec)
-    on_complete: OnCompleteSpec = field(default_factory=OnCompleteSpec)
-    source_hash: str = "default"
+    version: int
+    trigger: TriggerSpec
+    context: ContextSpec
+    loop: LoopSpec
+    on_complete: OnCompleteSpec
+    source_hash: str
 
     # ── Factories ──
 
     @classmethod
-    def default(cls, agent: "Agent") -> "AgentSpec":
-        """Replicate current behavior exactly from agent + memory config."""
-        memory_config = getattr(agent.memory, "config", None)
-        return cls(
-            version=SPEC_VERSION,
-            trigger=TriggerSpec(on_mention=True),
-            context=ContextSpec(),
-            loop=LoopSpec(
-                max_iterations=agent.config.max_iterations,
-                max_consecutive_errors=agent.config.max_consecutive_errors,
-            ),
-            on_complete=OnCompleteSpec(
-                save_interaction=True,
-                reflect=ReflectSpec(
-                    enabled=getattr(memory_config, "reflection_enabled", True),
-                    interval_minutes=getattr(memory_config, "reflection_interval_minutes", 15),
-                ),
-            ),
-        )
-
-    @classmethod
     def load(cls, agent: "Agent") -> "AgentSpec":
-        """Load the spec for an agent: behavior file, else DefaultSpec.
+        """Load the agent's spec from its behavior file — total semantics.
 
-        ``~/.tlon/{agent_id}/config/behavior.tlon`` is parsed when it
-        exists; parse/validation failures log a warning and fall back to
-        DefaultSpec so a broken file never prevents the agent from booting.
+        ``~/.tlon/{agent_id}/config/behavior.tlon`` must exist, parse as
+        EDN, and validate as a complete spec. Any failure raises: the
+        agent refuses to boot (the registry logs and isolates the
+        failure; the server and other agents are unaffected).
+
+        Raises:
+            SpecValidationError: file missing, unreadable, or failed
+                schema validation
+            EDNParseError: file is not valid EDN
         """
-        base = cls.default(agent)
         behavior_file = paths.agent_behavior_file(agent.config.id)
         if not behavior_file.exists():
-            return base
+            logger.error(
+                "agent_spec_invalid",
+                agent_id=agent.config.id,
+                path=str(behavior_file),
+                reason="behavior file missing",
+            )
+            raise SpecValidationError(
+                f"behavior file missing, agent refused to boot: {behavior_file}"
+            )
         try:
             raw = behavior_file.read_text(encoding="utf-8")
-            spec = cls.from_edn(loads(raw), base=base)
+            spec = cls.from_edn(loads(raw))
         except (EDNParseError, SpecValidationError, OSError) as e:
-            logger.warning("agent_spec_load_failed", path=str(behavior_file), error=str(e))
-            return base
+            logger.error(
+                "agent_spec_invalid",
+                agent_id=agent.config.id,
+                path=str(behavior_file),
+                reason=str(e),
+            )
+            raise
         source_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
         spec = replace(spec, source_hash=source_hash)
         logger.info("agent_spec_loaded", path=str(behavior_file), spec_hash=source_hash)
@@ -185,16 +242,13 @@ class AgentSpec:
                 "when": dumps(self.trigger.when) if self.trigger.when is not None else None,
             },
             "context": {
-                "persona": self.context.persona,
-                "protocol": self.context.protocol,
-                "knowledge": self.context.knowledge,
-                "mail_history": self.context.mail_history,
+                "sections": [dumps(form) for form in self.context.sections],
             },
             "loop": {
-                "mode": self.loop.mode,
                 "max_iterations": self.loop.max_iterations,
-                "tools": self.loop.tools,
                 "max_consecutive_errors": self.loop.max_consecutive_errors,
+                "stages": [dumps(form) for form in self.loop.stages],
+                "until": dumps(self.loop.until),
             },
             "on_complete": {
                 "save_interaction": self.on_complete.save_interaction,
@@ -207,37 +261,70 @@ class AgentSpec:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], base: "AgentSpec | None" = None) -> "AgentSpec":
-        """Build a spec from a dict (snake_case keys), merging over ``base``.
+    def from_dict(cls, data: dict[str, Any]) -> "AgentSpec":
+        """Build a spec from a dict (snake_case keys) — total validation.
 
-        Missing keys inherit from ``base`` (or the built-in defaults when
-        no base is given). Unknown keys are ignored with a warning.
+        Every section and every required field must be present; a missing
+        one is a validation error, not a default. Unknown keys are ignored
+        with a warning.
         """
-        base = base or cls()
         _warn_unknown_keys(data, "top")
-        if "version" not in data:
-            raise SpecValidationError("missing required :version (only version 1 is supported)")
-        version = _read(data, "version", base.version, path=":version", kind=int)
+        version = _read(data, "version", path=":version", kind=int)
         if version != SPEC_VERSION:
             raise SpecValidationError(
                 f"unsupported :version {version!r}; only version {SPEC_VERSION} is supported"
             )
+        for section in ("trigger", "context", "loop", "on_complete"):
+            if section not in data:
+                raise SpecValidationError(
+                    f"missing required :{section.replace('_', '-')} section "
+                    "(a behavior spec is total: no partial files, no defaults)"
+                )
         return cls(
             version=SPEC_VERSION,
-            trigger=_trigger_section(data, base.trigger),
-            context=_section(data, "context", base.context, _context_from),
-            loop=_section(data, "loop", base.loop, _loop_from),
-            on_complete=_section(data, "on_complete", base.on_complete, _on_complete_from),
+            trigger=_trigger_section(data),
+            context=_context_section(data),
+            loop=_loop_section(data),
+            on_complete=_on_complete_section(data),
+            source_hash="",
         )
 
     @classmethod
-    def from_edn(cls, data: Any, base: "AgentSpec | None" = None) -> "AgentSpec":
+    def from_edn(cls, data: Any) -> "AgentSpec":
         """Build a spec from a parsed EDN map (kebab-case keyword keys)."""
         if not isinstance(data, dict):
             raise SpecValidationError(
                 f"spec file must contain a top-level map, got {_type_name(data)}"
             )
-        return cls.from_dict(_normalize_data(data), base=base)
+        return cls.from_dict(_normalize_data(data))
+
+
+def standard_behavior_edn() -> str:
+    """The canonical complete behavior file (standard ReAct program).
+
+    Used by the wizard when creating an agent: the file spells out every
+    section in full (:func:`from_edn` accepts it), built from
+    :data:`REACT_STAGES` / :data:`REACT_UNTIL` / :data:`DEFAULT_SECTIONS`.
+    """
+    data: dict[Any, Any] = {
+        Keyword("version"): SPEC_VERSION,
+        Keyword("trigger"): {Keyword("on-mention"): True},
+        Keyword("context"): {Keyword("sections"): list(DEFAULT_SECTIONS)},
+        Keyword("loop"): {
+            Keyword("stages"): list(REACT_STAGES),
+            Keyword("until"): REACT_UNTIL,
+            Keyword("max-iterations"): 10,
+            Keyword("max-consecutive-errors"): 3,
+        },
+        Keyword("on-complete"): {
+            Keyword("save-interaction"): True,
+            Keyword("reflect"): {
+                Keyword("enabled"): True,
+                Keyword("interval-minutes"): 15,
+            },
+        },
+    }
+    return dumps(data) + "\n"
 
 
 def _normalize_data(value: Any) -> Any:
@@ -281,11 +368,16 @@ def _type_name(value: Any) -> str:
     return type(value).__name__
 
 
-def _read(data: dict[str, Any], key: str, default: Any, path: str, kind: type) -> Any:
-    """Read a scalar field, validating its type when present."""
+def _require(data: dict[str, Any], key: str, path: str) -> Any:
+    """Read a required key or fail validation (total semantics)."""
     if key not in data:
-        return default
-    value = data[key]
+        raise SpecValidationError(f"missing required {path}")
+    return data[key]
+
+
+def _read(data: dict[str, Any], key: str, path: str, kind: type) -> Any:
+    """Read a required scalar field, validating its type."""
+    value = _require(data, key, path)
     if kind is bool:
         if not isinstance(value, bool):
             raise SpecValidationError(
@@ -298,37 +390,16 @@ def _read(data: dict[str, Any], key: str, default: Any, path: str, kind: type) -
     return value
 
 
-def _read_enum(data: dict[str, Any], key: str, default: str, path: str, allowed: tuple[str, ...]) -> str:
-    if key not in data:
-        return default
-    value = data[key]
-    if not isinstance(value, (Keyword, str)):
+def _require_section(data: dict[str, Any], key: str) -> dict[str, Any]:
+    """Read a required subsection map, warning on unknown keys."""
+    raw = data[key]  # presence guaranteed by from_dict / caller
+    if not isinstance(raw, dict) or isinstance(raw, Form):
+        kebab = key.replace("_", "-")
         raise SpecValidationError(
-            f"{path} must be a keyword, got {_type_name(value)}: {value!r}"
-        )
-    name = str(value)
-    if name not in allowed:
-        raise SpecValidationError(
-            f"{path} must be one of {list(allowed)}, got {name!r}"
-        )
-    return name
-
-
-def _section(
-    data: dict[str, Any],
-    key: str,
-    base: Any,
-    builder: "Callable[[dict[str, Any], Any], Any]",
-) -> Any:
-    raw = data.get(key)
-    if raw is None:
-        return base
-    if not isinstance(raw, dict):
-        raise SpecValidationError(
-            f":{key.replace('_', '-')} must be a map, got {_type_name(raw)}: {raw!r}"
+            f":{kebab} must be a map, got {_type_name(raw)}: {raw!r}"
         )
     _warn_unknown_keys(raw, key)
-    return builder(raw, base)
+    return raw
 
 
 def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
@@ -340,33 +411,34 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "top": frozenset({"version", "trigger", "context", "loop", "on_complete"}),
-    # Retired keys stay "known" so old spec files are silently ignored
-    # rather than warned about (proactive/room_history died with R1b).
+    # The retired proactive key stays "known" so old spec files are
+    # silently ignored rather than warned about (proactive died with R1b).
     "trigger": frozenset({"on_mention", "proactive", "when"}),
-    "context": frozenset({"persona", "protocol", "knowledge", "mail_history", "room_history"}),
-    "loop": frozenset({"mode", "max_iterations", "tools", "max_consecutive_errors"}),
+    # Legacy boolean/count keys (persona/protocol/knowledge/mail-history)
+    # are retired with the total-spec migration: they now warn as unknown
+    # keys — :sections is required and is the only context input.
+    "context": frozenset({"sections"}),
+    "loop": frozenset({"max_iterations", "max_consecutive_errors", "stages", "until"}),
     "on_complete": frozenset({"save_interaction", "reflect", "actions"}),
     "reflect": frozenset({"enabled", "interval_minutes"}),
 }
 
 
-def _trigger_from(data: dict[str, Any], base: TriggerSpec) -> TriggerSpec:
+def _trigger_from(data: dict[str, Any]) -> TriggerSpec:
     return TriggerSpec(
-        on_mention=_read(
-            data, "on_mention", base.on_mention, path=":trigger/:on-mention", kind=bool
-        ),
-        when=_when_from(data.get("when"), base.when),
+        on_mention=_read(data, "on_mention", path=":trigger/:on-mention", kind=bool),
+        when=_when_from(data.get("when")),
     )
 
 
-def _when_from(value: Any, default: "Form | None") -> "Form | None":
+def _when_from(value: Any) -> "Form | None":
     """Read an optional trigger expression from the dict path.
 
     Accepts a parsed Form, an EDN source string (``to_dict`` output), or
     None. Anything else is a validation error.
     """
     if value is None:
-        return default
+        return None
     if isinstance(value, Form):
         return _validate_trigger_expr(value)
     if isinstance(value, str):
@@ -384,19 +456,22 @@ def _when_from(value: Any, default: "Form | None") -> "Form | None":
     )
 
 
-def _trigger_section(data: dict[str, Any], base: TriggerSpec) -> TriggerSpec:
-    """Build the trigger section: data map (declarative) or Form (expression)."""
-    raw = data.get("trigger")
-    if raw is None:
-        return base
+def _trigger_section(data: dict[str, Any]) -> TriggerSpec:
+    """Build the trigger section: data map (declarative) or Form (expression).
+
+    In expression mode the ``when`` expression takes precedence over the
+    declarative rule entirely, so ``on_mention`` is pinned to True (the
+    inbound-mail trigger is the expression alone).
+    """
+    raw = data["trigger"]  # presence guaranteed by from_dict
     if isinstance(raw, Form):
-        return replace(base, when=_validate_trigger_expr(raw))
+        return TriggerSpec(on_mention=True, when=_validate_trigger_expr(raw))
     if not isinstance(raw, dict):
         raise SpecValidationError(
             f":trigger must be a map or an expression, got {_type_name(raw)}: {raw!r}"
         )
     _warn_unknown_keys(raw, "trigger")
-    return _trigger_from(raw, base)
+    return _trigger_from(raw)
 
 
 def _validate_trigger_expr(form: Form) -> Form:
@@ -414,53 +489,240 @@ def _validate_trigger_expr(form: Form) -> Form:
     return form
 
 
-def _context_from(data: dict[str, Any], base: ContextSpec) -> ContextSpec:
+def _context_section(data: dict[str, Any]) -> ContextSpec:
+    """Build the context section: ``:sections`` vector, required."""
+    raw = _require_section(data, "context")
     return ContextSpec(
-        persona=_read(data, "persona", base.persona, path=":context/:persona", kind=bool),
-        protocol=_read(data, "protocol", base.protocol, path=":context/:protocol", kind=bool),
-        knowledge=_read(
-            data, "knowledge", base.knowledge, path=":context/:knowledge", kind=bool
-        ),
-        # The retired :room-history key is silently ignored (no dual-write).
-        mail_history=_read(
-            data, "mail_history", base.mail_history, path=":context/:mail-history", kind=int
-        ),
+        sections=_sections_from(_require(raw, "sections", ":context/:sections"))
     )
 
 
-def _loop_from(data: dict[str, Any], base: LoopSpec) -> LoopSpec:
+def _sections_from(value: Any) -> tuple[Form, ...]:
+    """Read the ``:sections`` vector: each item must be a section form.
+
+    Accepts parsed Forms (``from_edn`` path) or EDN source strings
+    (``to_dict`` roundtrip); every form is validated against
+    :data:`SECTION_NAMES` before it ever reaches an agent.
+    """
+    if isinstance(value, Form) or not isinstance(value, (list, tuple)):
+        raise SpecValidationError(
+            f":context/:sections must be a vector, got {_type_name(value)}: {value!r}"
+        )
+    forms: list[Form] = []
+    seen: set[str] = set()
+    for item in value:
+        form = item
+        if type(form) is str:
+            # EDN source string (to_dict roundtrip path)
+            try:
+                form = loads(form)
+            except EDNParseError as e:
+                raise SpecValidationError(
+                    f"invalid :context/:sections expression: {e}"
+                ) from e
+        valid = _validate_section_form(form, item)
+        name = str(valid[0])
+        if name in seen:
+            raise SpecValidationError(f"duplicate section {name!r} in :context/:sections")
+        seen.add(name)
+        forms.append(valid)
+    return tuple(forms)
+
+
+def _validate_section_form(form: Any, original: Any) -> Form:
+    """Validate one section form: ``(name)`` or ``(mail-history N)``, whitelisted."""
+    if not isinstance(form, Form) or not form:
+        raise SpecValidationError(
+            f":context/:sections items must be section forms like (persona), "
+            f"got {_type_name(original)}: {original!r}"
+        )
+    head = form[0]
+    if not isinstance(head, Symbol):
+        raise SpecValidationError(
+            f":context/:sections form head must be a symbol, got {dumps(head)}"
+        )
+    name = str(head)
+    if name not in SECTION_NAMES:
+        raise SpecValidationError(
+            f"unknown section {name!r} in :context/:sections (allowed: {sorted(SECTION_NAMES)})"
+        )
+    if name == "mail-history":
+        if len(form) != 2:
+            raise SpecValidationError(
+                f"section 'mail-history' takes exactly one count argument, got {dumps(form)}"
+            )
+        count = form[1]
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise SpecValidationError(
+                f"section 'mail-history' count must be a non-negative int, got {dumps(count)}"
+            )
+    elif len(form) != 1:
+        raise SpecValidationError(f"section {name!r} takes no arguments, got {dumps(form)}")
+    return form
+
+
+def _loop_section(data: dict[str, Any]) -> LoopSpec:
+    raw = _require_section(data, "loop")
     return LoopSpec(
-        mode=_read_enum(data, "mode", base.mode, path=":loop/:mode", allowed=_LOOP_MODES),
-        max_iterations=_read(
-            data, "max_iterations", base.max_iterations, path=":loop/:max-iterations", kind=int
-        ),
-        tools=_read_enum(data, "tools", base.tools, path=":loop/:tools", allowed=_TOOL_MODES),
+        max_iterations=_read(raw, "max_iterations", path=":loop/:max-iterations", kind=int),
         max_consecutive_errors=_read(
-            data,
-            "max_consecutive_errors",
-            base.max_consecutive_errors,
-            path=":loop/:max-consecutive-errors",
-            kind=int,
+            raw, "max_consecutive_errors", path=":loop/:max-consecutive-errors", kind=int
         ),
+        stages=_stages_from(_require(raw, "stages", ":loop/:stages")),
+        until=_until_from(_require(raw, "until", ":loop/:until")),
     )
 
 
-def _on_complete_from(data: dict[str, Any], base: OnCompleteSpec) -> OnCompleteSpec:
+def _stages_from(value: Any) -> tuple[Form, ...]:
+    """Read the ``:stages`` vector: each item must be a stage form.
+
+    Accepts parsed Forms (``from_edn`` path) or EDN source strings
+    (``to_dict`` roundtrip); every form is validated against
+    :data:`STAGE_NAMES` before it ever reaches an agent.
+    """
+    if isinstance(value, Form) or not isinstance(value, (list, tuple)):
+        raise SpecValidationError(
+            f":loop/:stages must be a vector, got {_type_name(value)}: {value!r}"
+        )
+    if not value:
+        raise SpecValidationError(
+            ":loop/:stages must not be empty (no stage would ever advance the loop)"
+        )
+    forms: list[Form] = []
+    for item in value:
+        form = item
+        if type(form) is str:
+            # EDN source string (to_dict roundtrip path)
+            try:
+                form = loads(form)
+            except EDNParseError as e:
+                raise SpecValidationError(
+                    f"invalid :loop/:stages expression: {e}"
+                ) from e
+        forms.append(_validate_stage_form(form, item))
+    return tuple(forms)
+
+
+def _validate_stage_form(form: Any, original: Any) -> Form:
+    """Validate one stage form: ``(name)`` or ``(name {opts})``, name whitelisted."""
+    if not isinstance(form, Form) or not form:
+        raise SpecValidationError(
+            f":loop/:stages items must be stage forms like (think), "
+            f"got {_type_name(original)}: {original!r}"
+        )
+    head = form[0]
+    if not isinstance(head, Symbol):
+        raise SpecValidationError(
+            f":loop/:stages form head must be a symbol, got {dumps(head)}"
+        )
+    name = str(head)
+    if name not in STAGE_NAMES:
+        raise SpecValidationError(
+            f"unknown stage {name!r} in :loop/:stages (allowed: {sorted(STAGE_NAMES)})"
+        )
+    if len(form) > 2:
+        raise SpecValidationError(
+            f"stage {name!r} takes at most one opts map, got {dumps(form)}"
+        )
+    if len(form) == 2:
+        opts = form[1]
+        if isinstance(opts, Form) or not isinstance(opts, dict):
+            raise SpecValidationError(
+                f"stage {name!r} opts must be a map, got {dumps(opts)}"
+            )
+        _validate_stage_opts(name, opts, form)
+    return form
+
+
+def _validate_stage_opts(name: str, opts: dict[Any, Any], form: Form) -> None:
+    """Validate one stage's opts map (phase 7c).
+
+    Every stage accepts an optional ``:if`` condition expression,
+    statically validated against :data:`STAGE_COND_BUILTINS` with an
+    empty scope (loop state reaches builtins through env, same pattern
+    as the until expression). ``plan`` additionally accepts
+    ``:max-steps`` (positive int; the runtime default is 5). Unknown
+    keys are rejected.
+    """
+    allowed = {"if", "max-steps"} if name == "plan" else {"if"}
+    for key, value in opts.items():
+        if not isinstance(key, Keyword):
+            raise SpecValidationError(
+                f"stage {name!r} opts keys must be keywords, got {_type_name(key)}: {key!r}"
+            )
+        if str(key) not in allowed:
+            raise SpecValidationError(
+                f"stage {name!r}: unknown opts key :{key} in {dumps(form)}"
+            )
+        if str(key) == "if":
+            try:
+                validate_form(value, STAGE_COND_BUILTINS, scope=set())
+            except EvalError as e:
+                raise SpecValidationError(f"stage {name!r} :if: {e}") from e
+        elif not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise SpecValidationError(
+                f"stage 'plan' :max-steps must be a positive int, got {dumps(value)}"
+            )
+
+
+def _until_from(value: Any) -> Form:
+    """Read the loop termination expression from the dict path.
+
+    Accepts a parsed Form or an EDN source string (``to_dict`` output),
+    mirroring ``:trigger/:when``. Anything else is a validation error.
+    """
+    if isinstance(value, Form):
+        return _validate_until_expr(value)
+    if isinstance(value, str):
+        try:
+            parsed = loads(value)
+        except EDNParseError as e:
+            raise SpecValidationError(f"invalid :loop/:until expression: {e}") from e
+        if not isinstance(parsed, Form):
+            raise SpecValidationError(
+                f":loop/:until must be an expression, got {_type_name(parsed)}: {parsed!r}"
+            )
+        return _validate_until_expr(parsed)
+    raise SpecValidationError(
+        f":loop/:until must be an expression, got {_type_name(value)}: {value!r}"
+    )
+
+
+def _validate_until_expr(form: Form) -> Form:
+    """Statically validate an until expression at load time (no execution).
+
+    Only whitelisted special forms and the pure ``LOOP_BUILTINS``
+    predicates are accepted; the expression takes no symbols (loop state
+    reaches builtins through ``env``, same pattern as
+    :func:`_validate_trigger_expr`).
+    """
+    try:
+        validate_form(form, LOOP_BUILTINS, scope=set())
+    except EvalError as e:
+        raise SpecValidationError(f"invalid :loop/:until expression: {e}") from e
+    return form
+
+
+def _on_complete_section(data: dict[str, Any]) -> OnCompleteSpec:
+    raw = _require_section(data, "on_complete")
+    reflect_raw = _require(raw, "reflect", ":on-complete/:reflect")
+    if not isinstance(reflect_raw, dict) or isinstance(reflect_raw, Form):
+        raise SpecValidationError(
+            f":on-complete/:reflect must be a map, "
+            f"got {_type_name(reflect_raw)}: {reflect_raw!r}"
+        )
+    _warn_unknown_keys(reflect_raw, "reflect")
     return OnCompleteSpec(
         save_interaction=_read(
-            data,
-            "save_interaction",
-            base.save_interaction,
-            path=":on-complete/:save-interaction",
-            kind=bool,
+            raw, "save_interaction", path=":on-complete/:save-interaction", kind=bool
         ),
-        reflect=_section(data, "reflect", base.reflect, _reflect_from),
-        actions=_actions_from(data.get("actions"), base.actions),
+        reflect=_reflect_from(reflect_raw),
+        actions=_actions_from(raw.get("actions")),
     )
 
 
-def _actions_from(value: Any, default: tuple[Form, ...]) -> tuple[Form, ...]:
-    """Read the ``:actions`` vector: each item must be an action form.
+def _actions_from(value: Any) -> tuple[Form, ...]:
+    """Read the optional ``:actions`` vector: each item must be an action form.
 
     Accepts parsed Forms (``from_edn`` path) or EDN source strings
     (``to_dict`` roundtrip); every form is statically validated against
@@ -468,7 +730,7 @@ def _actions_from(value: Any, default: tuple[Form, ...]) -> tuple[Form, ...]:
     positions) before it ever reaches an agent.
     """
     if value is None:
-        return default
+        return ()
     if isinstance(value, Form) or not isinstance(value, (list, tuple)):
         raise SpecValidationError(
             f":on-complete/:actions must be a vector, got {_type_name(value)}: {value!r}"
@@ -497,15 +759,12 @@ def _actions_from(value: Any, default: tuple[Form, ...]) -> tuple[Form, ...]:
     return tuple(forms)
 
 
-def _reflect_from(data: dict[str, Any], base: ReflectSpec) -> ReflectSpec:
+def _reflect_from(data: dict[str, Any]) -> ReflectSpec:
     return ReflectSpec(
-        enabled=_read(
-            data, "enabled", base.enabled, path=":on-complete/:reflect/:enabled", kind=bool
-        ),
+        enabled=_read(data, "enabled", path=":on-complete/:reflect/:enabled", kind=bool),
         interval_minutes=_read(
             data,
             "interval_minutes",
-            base.interval_minutes,
             path=":on-complete/:reflect/:interval-minutes",
             kind=int,
         ),

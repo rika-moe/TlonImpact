@@ -1,4 +1,11 @@
-; 深度思考者：与 DefaultSpec 的差异字段（部分覆盖语义）
+; 深度思考者：多轮评审的思考程序（total spec——文件即全部行为）
+; 阶段 7c：显式 stage 程序——think/act 之后评审本轮输出，FAIL 时把反馈喂回上下文
 {:version 1
- :loop {:max-iterations 25}
- :on-complete {:reflect {:interval-minutes 10}}}
+ :trigger {:on-mention true}
+ :context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+ :loop {:stages [(think) (act) (critique) (revise {:if (critique-failed?)})]
+        :until (or (iteration-limit-reached?) (error-limit-reached?))
+        :max-iterations 25
+        :max-consecutive-errors 3}
+ :on-complete {:save-interaction true
+               :reflect {:enabled true :interval-minutes 10}}}

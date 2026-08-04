@@ -161,9 +161,7 @@ class AgentConfig(BaseModel):
     # Spawn-chain depth: residents are 0, a contractor is spawner.depth + 1
     spawn_depth: int = 0
 
-    # ReAct loop limits
-    max_iterations: int = 10
-    max_consecutive_errors: int = 3
+    # ReAct loop limits live in the behavior spec (behavior.tlon), not here.
     # A session idle (ACTIVE or WAITING) longer than this is cancelled
     session_timeout_seconds: int = 1800
     # Inbound message queue capacity; overflow drops new messages
