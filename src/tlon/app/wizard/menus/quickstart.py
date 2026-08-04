@@ -11,6 +11,7 @@ from tlon.base.config import DockerRuntimeConfig, LLMConfig
 from tlon.base.default_team import STANDARD_TEAM_DICTS, make_agent_config
 
 from ..agent_store import AgentStore
+from ..server_notify import notify_server_agent_created
 from ..validators import APIValidator, EnvironmentChecker
 
 if TYPE_CHECKING:
@@ -354,6 +355,7 @@ class QuickstartWizard:
         self._create_env_file(api_config)
 
         # Create agents
+        created_ids: list[str] = []
         for entry in team_config["agents"]:
             agent = entry["config"]
             data = entry.get("data", {})
@@ -371,9 +373,15 @@ class QuickstartWizard:
                     content = data.get(field, "")
                     if content:
                         (config_dir / filename).write_text(content.strip() + "\n")
+                created_ids.append(agent.id)
                 self.console.print(f"[green]✓ 创建 Agent: {agent.name}[/green]")
             else:
                 self.console.print(f"[red]✗ 创建 Agent 失败: {msg}[/red]")
+
+        # Best-effort hot adoption by a running server; silently skipped
+        # when no server is up (restart fallback applies)
+        for agent_id in created_ids:
+            notify_server_agent_created(agent_id)
 
         # Create shared data directories
         self._create_data_directories()

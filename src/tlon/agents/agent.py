@@ -47,7 +47,7 @@ from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 from tlon.memory.manager import MemoryManager
-from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
 from tlon.tools.base import ToolResult
@@ -184,11 +184,6 @@ class Agent(Member):
     def member_type(self) -> str:
         """Member type; agents are ReAct members."""
         return "react"
-
-    @property
-    def address(self) -> str:
-        """The agent's mail address (``<id>@tlon.internal``)."""
-        return address_for_member(self.id)
 
     def get_state(self) -> str:
         """Get agent state as string."""

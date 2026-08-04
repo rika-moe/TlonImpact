@@ -7,6 +7,7 @@ from abc import abstractmethod
 
 from tlon.base.component import Component
 from tlon.base.device import Device
+from tlon.organization.mail.mail import address_for_member
 
 
 class Member(Component, Device):
@@ -35,6 +36,11 @@ class Member(Component, Device):
     @abstractmethod
     def member_type(self) -> str:
         """Member type: "react" | "adapter" ("script" reserved)."""
+
+    @property
+    def address(self) -> str:
+        """The member's mail address, derived from ``member_id``."""
+        return address_for_member(self.member_id)
 
     @abstractmethod
     def get_state(self) -> str:

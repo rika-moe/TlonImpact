@@ -618,6 +618,42 @@ class AgentRegistry(Component):
             return
         asyncio.create_task(self._drain_agent(request.agent_id, request.reason))
 
+    # ==================== Hot adoption (out-of-process creation) ====================
+
+    async def adopt_agent(self, agent_id: str) -> str:
+        """Adopt an agent created out-of-process (wizard/mirror), no restart.
+
+        External tools write ``agent.yaml`` directly; this makes the running
+        server pick the new agent up: the provider reloads the config, the
+        agent is registered, and non-lazy agents are started immediately
+        (same assembly path as boot/spawn). A lazy agent is registered only
+        and wakes on its first mail, same as at boot.
+
+        Args:
+            agent_id: id of the agent to adopt
+
+        Returns:
+            One of "already-known" (running or registered — no-op; a known
+            agent's config is never reloaded here), "config-not-found" (no
+            agent.yaml on disk), "registered-lazy", "started", "start-failed"
+            (``agent_start_failed`` already logged by ``_start_agent``).
+        """
+        if agent_id in self._agents or agent_id in self._registered_ids:
+            result = "already-known"
+        elif not await self._agent_info.reload_agent(agent_id):
+            result = "config-not-found"
+        else:
+            self.register(agent_id)
+            config = self._agent_info.get_config(agent_id)
+            if config is not None and config.activation == "lazy":
+                result = "registered-lazy"
+            else:
+                agent = await self._start_agent(agent_id)
+                result = "started" if agent is not None else "start-failed"
+
+        logger.info("agent_adopted", agent_id=agent_id, result=result)
+        return result
+
     # ==================== Spawn / stop (stage 6b) ====================
 
     async def spawn_contractor(

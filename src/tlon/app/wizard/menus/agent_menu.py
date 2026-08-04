@@ -7,6 +7,7 @@ Supports IDENTITY.md / SOUL.md / RULES.md file-based persona editing.
 from typing import TYPE_CHECKING
 
 from ..agent_store import AgentStore
+from ..server_notify import notify_server_agent_created
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -242,7 +243,10 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             if rules:
                 self.agent_store.write_persona_file(agent_id, "RULES.md", rules)
             self.console.print(f"[green]✓ {msg}[/green]")
-            self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
+            if notify_server_agent_created(agent_id):
+                self.console.print("[dim]已通知 server 热生效，无需重启[/dim]")
+            else:
+                self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
         else:
             self.console.print(f"[red]✗ {msg}[/red]")
 
@@ -320,7 +324,10 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             return
 
         self.console.print(f"[green]✓ 已从 Prototype '{prototype_name}' 创建 Agent: {agent.name}[/green]")
-        self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
+        if notify_server_agent_created(agent_id):
+            self.console.print("[dim]已通知 server 热生效，无需重启[/dim]")
+        else:
+            self.console.print("[dim]提示: 重启 server 后新 Agent 生效[/dim]")
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
     def review_staging(self) -> None:

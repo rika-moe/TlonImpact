@@ -306,7 +306,7 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 - 包内 `tlon/prototypes/` 首批 3 个 prototype（deep-thinker / fast-responder / archivist），每个含 `behavior.tlon`（只写与 DefaultSpec 的差异字段）+ 人格三件套 + `prototype.edn` 元数据（自家 edn.py 解析）；hatchling 默认将包数据打入 wheel，已构建验证；
 - `agents/prototypes.py`：`seed_prototypes()`（幂等，不覆盖用户修改）、`list_prototypes()`（读 `~/.tlon/prototypes/`，用户增改可见）、`instantiate()`（人格文件拷贝 + behavior 在 EDN 数据层深合并 overrides 后落盘 + 走标准 `_yaml_save` 写 agent.yaml；`AgentConfig.prototype` 记录来源）；
 - ServerApp 初始化早段种子；wizard `agent_menu` 加"从 Prototype 创建"入口；`listPrototypes` 工具注册进每个 agent（工具总数 17 → 18）；
-- 实例化不做 registry 热加载，重启 dream 后生效（与 wizard 现有创建行为一致）；
+- ~~实例化不做 registry 热加载，重启 dream 后生效~~ **已升级（P3 热生效）**：wizard/mirror 创建或实例化后 best-effort 通知运行中的服务端（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`：reload 配置 → register → 非 lazy 立即启动），新 agent 无需重启即可用；服务端未运行时静默跳过，重启后生效作为兜底；
 - **relay 推迟**：纯转发者不需要 LLM，需要 v1 schema 之外的 `:llm false` 逃生门（见上文"已知缺口"），本次只交付 3 个 prototype，relay 随逃生门一并落地。
 
 ### 阶段 6 — 动态 Agent Registry

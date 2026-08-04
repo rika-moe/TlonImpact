@@ -235,7 +235,9 @@ env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应�
   与 overrides 深合并（map 按键递归合并，其余替换，keyword 类型保留）再写为实例自有
   behavior.tlon；agent.yaml 走与 wizard 相同的 `_yaml_save` 路径，
   `AgentConfig.prototype` 记录来源 prototype；
-- **生效时机**：不做 registry 热加载，重启 dream 后生效（与 wizard 现有创建行为一致）。
+- **生效时机**：热生效（P3）——wizard/mirror 创建后 best-effort 通知运行中的服务端
+  （`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`），
+  新 agent 无需重启即可用；服务端未运行时静默跳过，重启后生效作为兜底。
 
 ---
 

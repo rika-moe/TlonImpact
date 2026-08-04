@@ -175,6 +175,10 @@ class RESTAPIHandler:
         # Admin routes for hot-reload (only if config_manager is available)
         if self.config_manager:
             app.router.add_get("/admin/config/agents", self.handle_list_agent_configs)
+            app.router.add_post(
+                "/admin/config/agents/{agent_id}/reload",
+                self.handle_reload_agent,
+            )
 
         # Trace routes (only if trace_store is available)
         if self.trace_store:
@@ -416,6 +420,30 @@ class RESTAPIHandler:
             )
 
         return self._json_response({"status": "success", "agents": agents, "count": len(agents)})
+
+    async def handle_reload_agent(self, request: web.Request) -> web.Response:
+        """POST /admin/config/agents/{agent_id}/reload - Hot-adopt a new agent.
+
+        Entry point for out-of-process creation (wizard/mirror write
+        agent.yaml directly): the registry reloads the config, registers
+        the agent, and starts it unless it is lazy-activated.
+
+        Returns:
+            200 with {"status", "agent_id", "result"} (result is one of
+            "already-known", "config-not-found", "registered-lazy",
+            "started", "start-failed"), or 503 if the registry is
+            unavailable
+        """
+        if not self.agent_registry:
+            return self._json_response(
+                {"status": "error", "message": "Agent registry not available"}, status=503
+            )
+
+        agent_id = request.match_info["agent_id"]
+        result = await self.agent_registry.adopt_agent(agent_id)
+        return self._json_response(
+            {"status": "success", "agent_id": agent_id, "result": result}
+        )
 
     async def handle_list_traces(self, request: web.Request) -> web.Response:
         """GET /traces - List traces with optional filtering.

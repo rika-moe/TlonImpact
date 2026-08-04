@@ -136,8 +136,11 @@ def instantiate(
     Persona files are copied verbatim; the prototype ``behavior.tlon`` (a
     complete, total spec) is copied verbatim as the instance's own
     behavior file. ``agent.yaml`` is written through the same save path as
-    the wizard. The new agent takes effect after a server restart — no
-    registry hot-reload at this stage.
+    the wizard. The new agent takes effect without a restart: the caller
+    (wizard / registry spawn) hot-adopts it — the wizard notifies the
+    running server (POST ``/admin/config/agents/{id}/reload`` →
+    ``AgentRegistry.adopt_agent``); when no server is running, it takes
+    effect after the next server restart.
 
     Args:
         prototype_name: prototype directory name under ~/.tlon/prototypes/

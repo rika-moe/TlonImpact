@@ -93,11 +93,6 @@ class HumanAdapter(Member):
         return "adapter"
 
     @property
-    def address(self) -> str:
-        """The human's mail address ("<username>@tlon.internal")."""
-        return address_for_member(self.member_id)
-
-    @property
     def session_count(self) -> int:
         """Number of currently attached sessions."""
         return len(self._sinks)
