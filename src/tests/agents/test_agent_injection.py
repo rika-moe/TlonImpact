@@ -101,7 +101,7 @@ class TestAgentInjectedDeps:
 class TestAgentPromptCache:
     def test_prompt_cache_initially_none(self):
         agent = _make_agent()
-        assert agent._system_prompt_cache is None
+        assert agent._context_builder._system_prompt_cache is None
 
     def test_infrastructure_deps_preserved(self):
         """Injected infrastructure deps are stored as-is on the Agent."""

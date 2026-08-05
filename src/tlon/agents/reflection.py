@@ -8,12 +8,12 @@ facts, trigger consolidation). Extracted from the Agent god class.
 import asyncio
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from tlon.agents.spec import AgentSpec
+from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
-
-if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
+from tlon.memory.manager import MemoryManager
 
 logger = get_logger(__name__)
 
@@ -24,6 +24,9 @@ class ReflectionEngine:
     Owns the reflection scheduling state (interval, interaction counter,
     running flag). Initial enabled/interval come from the agent's behavior
     spec (``spec.on_complete.reflect``); ``enabled`` stays a runtime switch.
+
+    P4: the engine receives its services (memory, LLM client) and the
+    behavior spec directly — no back-reference to the Agent.
     """
 
     REFLECTION_SYSTEM_PROMPT = (
@@ -47,14 +50,15 @@ class ReflectionEngine:
         '"operations": [{"action": "...", ...}]}'
     )
 
-    def __init__(self, agent: "Agent"):
-        self._agent = agent
+    def __init__(self, memory: MemoryManager, llm_client: LLMClient, spec: AgentSpec):
+        self._memory = memory
+        self._llm_client = llm_client
 
-        reflect = agent.spec.on_complete.reflect
+        reflect = spec.on_complete.reflect
         self.enabled: bool = reflect.enabled
         self._interval: float = reflect.interval_minutes * 60
         self._min_interactions: int = getattr(
-            agent.memory.config, "reflection_min_interactions", 5
+            memory.config, "reflection_min_interactions", 5
         )
         self._last_reflection_time: datetime | None = None
         self._interaction_count_since_reflection = 0
@@ -93,14 +97,14 @@ class ReflectionEngine:
         Runs in a background task to avoid blocking the main loop.
         """
         try:
-            digest = await self._agent.memory.get_memory_digest()
+            digest = await self._memory.get_memory_digest()
 
             if digest["working_count"] == 0 and digest["summary_count"] == 0 and digest["fact_count"] == 0:
                 logger.debug("reflection_skipped", reason="no_memory")
                 return
 
             prompt = self._build_prompt(digest)
-            response = await self._agent.llm_client.chat(
+            response = await self._llm_client.chat(
                 system_prompt=self.REFLECTION_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
@@ -192,7 +196,7 @@ class ReflectionEngine:
             action = op.get("action", "")
             try:
                 if action == "record_fact":
-                    await self._agent.memory.remember_fact(
+                    await self._memory.remember_fact(
                         fact=op.get("description", ""),
                         fact_type=op.get("fact_type", "GENERAL"),
                         subject=op.get("subject", "用户"),
@@ -204,10 +208,10 @@ class ReflectionEngine:
                 elif action == "delete_fact":
                     query = op.get("description") or op.get("fact_id", "")
                     if query:
-                        await self._agent.memory.forget(query=query, confirm=True)
+                        await self._memory.forget(query=query, confirm=True)
                         logger.debug("reflection_fact_deleted", query=query)
                 elif action == "consolidate":
-                    await self._agent.memory.generate_summary(force=True)
+                    await self._memory.generate_summary(force=True)
                     logger.debug("reflection_consolidation_triggered")
                 elif action == "noop":
                     pass

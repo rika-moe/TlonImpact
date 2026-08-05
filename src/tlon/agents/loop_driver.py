@@ -2,8 +2,9 @@
 
 Steps sessions through the think -> act -> observe cycle and collects
 background tool results. Extracted from the Agent god class; collaborates
-with the owning Agent through its thin delegates (think, context building,
-message sending, memory writes, tracing helpers).
+with the owning Agent through the narrow
+:class:`~tlon.agents.host.LoopDriverHost` protocol (P4); the tool
+executor and per-tool timeout are injected directly as services.
 
 Phase 7a turns the loop into an interpreted program: ``LoopSpec.stages``
 is a vector of whitelisted stage forms, executed in order by the stage
@@ -27,18 +28,17 @@ policy, and policy lives in the program (e.g. ``(plan {:if
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from tlon.agents.eval import LOOP_BUILTINS, STAGE_COND_BUILTINS, EvalError, eval_form
+from tlon.agents.host import LoopDriverHost
 from tlon.agents.session import AgentSession, SessionState
+from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
-
-if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
 
 logger = get_logger(__name__)
 
@@ -46,8 +46,12 @@ logger = get_logger(__name__)
 class LoopDriver:
     """Drives the ReAct step/collect cycle for agent sessions."""
 
-    def __init__(self, agent: "Agent"):
-        self._agent = agent
+    def __init__(
+        self, host: LoopDriverHost, tool_executor: ToolExecutor, per_tool_timeout: float
+    ):
+        self._host = host
+        self._tool_executor = tool_executor
+        self._per_tool_timeout = per_tool_timeout
         # Stage registry (phases 7a/7c), step side. The collect half of
         # ``act`` is collect_session_results — one semantic unit split by
         # the step/collect asyncio model. Handlers take
@@ -72,28 +76,28 @@ class LoopDriver:
         The session's state transitions ACTIVE -> WAITING (tools running).
         When tools complete, collect_session_results transitions back to ACTIVE.
         """
-        agent = self._agent
+        host = self._host
 
         # Build context on first call (after LLM error: skip rebuild)
         if not session.context:
             session.trigger_message = mail
-            context = await agent._build_context(mail)
+            context = await host._build_context(mail)
             session.context = context
-            agent._logger.debug(
+            host._logger.debug(
                 "session_context_built", session_id=session.id, message_count=len(context)
             )
 
-        spec = agent.spec.loop
+        spec = host.spec.loop
 
         # Engine hard ceiling: max_iterations is an infrastructure cap,
         # enforced no matter what the until expression says.
         if session.iteration >= spec.max_iterations:
-            agent._logger.warning(
+            host._logger.warning(
                 "session_max_iterations",
                 session_id=session.id,
                 max_iterations=spec.max_iterations,
             )
-            await agent._send_mail(
+            await host._send_mail(
                 to=[mail.from_address],
                 content="思考时间过长，请简化您的问题。",
                 in_reply_to=mail.id,
@@ -116,14 +120,14 @@ class LoopDriver:
             name = str(stage_form[0])
             handler = self._step_stages.get(name)
             if handler is None:  # load-time validation prevents this
-                agent._logger.warning(
+                host._logger.warning(
                     "loop_unknown_stage", session_id=session.id, stage=name
                 )
                 continue
             opts: dict[str, Any] = stage_form[1] if len(stage_form) > 1 else {}
             if not self._stage_condition_met(session, name, opts):
                 continue
-            agent._logger.debug("loop_stage_start", session_id=session.id, stage=name)
+            host._logger.debug("loop_stage_start", session_id=session.id, stage=name)
             response = await handler(session, response, opts)
             if response is None and name == "think":
                 # think failed: error recorded; until terminates the loop
@@ -142,10 +146,10 @@ class LoopDriver:
         An evaluation failure falls back to the engine default check
         (iteration / error limits) so the loop always halts.
         """
-        agent = self._agent
-        spec = agent.spec.loop
+        host = self._host
+        spec = host.spec.loop
         env = {
-            "self": {"id": agent.id, "name": agent.config.name},
+            "self": {"id": host.id, "name": host.config.name},
             "state": {"iteration": session.iteration, "error_count": session.error_count},
             "limits": {
                 "max_iterations": spec.max_iterations,
@@ -155,7 +159,7 @@ class LoopDriver:
         try:
             result = eval_form(spec.until, env, LOOP_BUILTINS)
         except EvalError as e:
-            agent._logger.warning(
+            host._logger.warning(
                 "loop_until_eval_failed", session_id=session.id, error=str(e)
             )
             return (
@@ -163,7 +167,7 @@ class LoopDriver:
                 or session.error_count >= spec.max_consecutive_errors
             )
         reached = bool(result)
-        agent._logger.debug("loop_until_evaluated", session_id=session.id, reached=reached)
+        host._logger.debug("loop_until_evaluated", session_id=session.id, reached=reached)
         return reached
 
     async def _terminate_loop(self, session: AgentSession, mail: Mail) -> None:
@@ -172,12 +176,12 @@ class LoopDriver:
         The finishing action is chosen by state: error limit -> the error
         mail; anything else -> the iteration-limit mail.
         """
-        agent = self._agent
-        spec = agent.spec.loop
+        host = self._host
+        spec = host.spec.loop
         if session.error_count >= spec.max_consecutive_errors:
             reason = "error_limit"
             content = "抱歉，处理邮件时出现了错误。"
-            agent._logger.warning(
+            host._logger.warning(
                 "session_max_errors",
                 session_id=session.id,
                 error_count=session.error_count,
@@ -186,8 +190,8 @@ class LoopDriver:
         else:
             reason = "iteration_limit"
             content = "思考时间过长，请简化您的问题。"
-        agent._logger.info("loop_until_reached", session_id=session.id, reason=reason)
-        await agent._send_mail(
+        host._logger.info("loop_until_reached", session_id=session.id, reason=reason)
+        await host._send_mail(
             to=[mail.from_address],
             content=content,
             in_reply_to=mail.id,
@@ -210,7 +214,7 @@ class LoopDriver:
         condition = opts.get("if")
         if condition is None:
             return True
-        agent = self._agent
+        host = self._host
         env = {
             "state": {"iteration": session.iteration, "error_count": session.error_count},
             "scratch": session.loop_scratch,
@@ -218,7 +222,7 @@ class LoopDriver:
         try:
             result = eval_form(condition, env, STAGE_COND_BUILTINS)
         except EvalError as e:
-            agent._logger.warning(
+            host._logger.warning(
                 "loop_stage_condition_failed",
                 session_id=session.id,
                 stage=name,
@@ -226,7 +230,7 @@ class LoopDriver:
             )
             return False
         if not result:
-            agent._logger.debug(
+            host._logger.debug(
                 "loop_stage_skipped", session_id=session.id, stage=name, reason="condition"
             )
             return False
@@ -244,13 +248,13 @@ class LoopDriver:
         no mail is sent here — the until expression terminates the loop
         through the unified path on a later step.
         """
-        agent = self._agent
+        host = self._host
         try:
-            async with agent._traced_span("agent.think"):
-                response = await agent.think(session.context)
+            async with host._traced_span("agent.think"):
+                response = await host.think(session.context)
             session.set_last_llm_response(response)
         except Exception as e:
-            agent._logger.error(
+            host._logger.error(
                 "session_llm_error", session_id=session.id, error=str(e), exc_info=True
             )
             session.record_error()
@@ -269,9 +273,9 @@ class LoopDriver:
         Covers the no-tool reminder, the sendEmail conflict check, and
         background dispatch; the harvest half is collect_session_results.
         """
-        agent = self._agent
+        host = self._host
         if response is None:
-            agent._logger.debug(
+            host._logger.debug(
                 "loop_stage_skipped", session_id=session.id, stage="act", reason="no_response"
             )
             return None
@@ -303,10 +307,10 @@ class LoopDriver:
         tasks = {}
         for tc in response.tool_calls:
             tasks[tc.id] = asyncio.create_task(self.execute_one_tool(tc))
-            await agent.emit(
+            await host.emit(
                 EventType.TOOL_EXECUTE_START,
-                payload={"agent_id": agent.id, "tool_name": tc.function_name, "arguments": tc.arguments},
-                source=agent.id,
+                payload={"agent_id": host.id, "tool_name": tc.function_name, "arguments": tc.arguments},
+                source=host.id,
             )
 
         session.dispatch_tools(response.tool_calls, tasks)
@@ -327,11 +331,11 @@ class LoopDriver:
         (auxiliary stages degrade, they never blow up the session). Does
         not consume or produce the round's response.
         """
-        agent = self._agent
+        host = self._host
         max_steps = (opts or {}).get("max-steps", 5)
         try:
-            async with agent._traced_span("agent.plan"):
-                plan_response = await agent.think(
+            async with host._traced_span("agent.plan"):
+                plan_response = await host.think(
                     session.context
                     + [
                         {
@@ -345,7 +349,7 @@ class LoopDriver:
                     ]
                 )
         except Exception as e:
-            agent._logger.warning(
+            host._logger.warning(
                 "loop_stage_failed", session_id=session.id, stage="plan", error=str(e)
             )
             return response
@@ -368,10 +372,10 @@ class LoopDriver:
         verdict lands in the loop scratchpad. Fails soft like plan; does
         not consume or produce the round's response.
         """
-        agent = self._agent
+        host = self._host
         try:
-            async with agent._traced_span("agent.critique"):
-                verdict_response = await agent.think(
+            async with host._traced_span("agent.critique"):
+                verdict_response = await host.think(
                     session.context
                     + [
                         {
@@ -385,7 +389,7 @@ class LoopDriver:
                     ]
                 )
         except Exception as e:
-            agent._logger.warning(
+            host._logger.warning(
                 "loop_stage_failed", session_id=session.id, stage="critique", error=str(e)
             )
             return response
@@ -430,7 +434,7 @@ class LoopDriver:
         Completion is event-driven by act (``is_complete``), not a loop
         boundary condition, so it stays outside the until expression.
         """
-        agent = self._agent
+        host = self._host
         completed = session.collect_completed()
         if not completed:
             return  # still waiting
@@ -441,16 +445,16 @@ class LoopDriver:
         for tc, result in completed:
             session.add_tool_result(tc, result)
 
-            await agent.emit(
+            await host.emit(
                 EventType.TOOL_EXECUTE_END,
-                payload={"agent_id": agent.id, "tool_name": tc.function_name, "success": result.success},
-                source=agent.id,
+                payload={"agent_id": host.id, "tool_name": tc.function_name, "success": result.success},
+                source=host.id,
             )
             if not result.success and result.error:
-                await agent.emit(
+                await host.emit(
                     EventType.TOOL_ERROR,
-                    payload={"agent_id": agent.id, "tool_name": tc.function_name, "error": result.error},
-                    source=agent.id,
+                    payload={"agent_id": host.id, "tool_name": tc.function_name, "error": result.error},
+                    source=host.id,
                 )
 
             if tc.function_name == "sendEmail" and result.success:
@@ -462,7 +466,7 @@ class LoopDriver:
                 to = result.data.get("to") or (
                     [trigger_mail.from_address] if trigger_mail else []
                 )
-                await agent._send_mail(
+                await host._send_mail(
                     to=to,
                     cc=result.data.get("cc"),
                     subject=result.data.get("subject"),
@@ -478,7 +482,7 @@ class LoopDriver:
             assistant_msg = {
                 "role": "assistant",
                 "content": None,
-                "tool_calls": [agent._tool_call_to_dict(tc)],
+                "tool_calls": [host._tool_call_to_dict(tc)],
             }
             llm_resp = session.last_llm_response
             if llm_resp and llm_resp.reasoning_content:
@@ -487,21 +491,21 @@ class LoopDriver:
             session.context.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": agent._tool_result_to_string(result),
+                "content": host._tool_result_to_string(result),
             })
 
         if is_complete:
             llm_resp = session.last_llm_response
             if llm_resp:
-                await agent._save_interaction_to_memory(
+                await host._save_interaction_to_memory(
                     final_content, llm_resp, session.all_tool_results
                 )
-            agent._logger.info("session_completed", session_id=session.id, content=final_content)
+            host._logger.info("session_completed", session_id=session.id, content=final_content)
             # On-complete action expressions (phase 4b): evaluated purely,
             # executed here with full failure isolation — they never affect
             # the session lifecycle. Runs inside the session span, so the
             # spawn quota can attribute spawns to this session.
-            await agent._run_on_complete_actions(session, final_content)
+            await host._run_on_complete_actions(session, final_content)
             session.mark_completed()
         elif not session.has_pending_tools:
             session.advance_iteration()
@@ -513,10 +517,10 @@ class LoopDriver:
         Catches all exceptions and returns ToolResult(success=False).
         Designed to run via asyncio.create_task in step_session.
         """
-        timeout = self._agent._per_tool_timeout
+        timeout = self._per_tool_timeout
         try:
             return tc, await asyncio.wait_for(
-                self._agent.tool_executor.execute(tc.function_name, tc.arguments),
+                self._tool_executor.execute(tc.function_name, tc.arguments),
                 timeout=timeout,
             )
         except TimeoutError:
@@ -536,33 +540,33 @@ class LoopDriver:
         Used by tests. Creates a session and drives step_session /
         collect_session_results until completion.
         """
-        agent = self._agent
+        host = self._host
         session = AgentSession(
-            session_id=f"{agent.id}-msg-{uuid.uuid4().hex[:8]}",
+            session_id=f"{host.id}-msg-{uuid.uuid4().hex[:8]}",
             trigger_content=mail.content,
         )
 
-        agent._derive_state({session.id: session})
+        host._derive_state({session.id: session})
         try:
             while not session.is_completed:
-                with agent._session_span(session):
+                with host._session_span(session):
                     if session.state == SessionState.WAITING:
                         # Yield to let background tool tasks start executing
                         await asyncio.sleep(0)
-                        await agent._collect_session_results(session)
+                        await self.collect_session_results(session)
                         if session.has_pending_tools:
                             # Wait for all pending tasks to complete, then collect
                             pending = list(session.get_pending_tasks().values())
                             await asyncio.gather(*pending, return_exceptions=True)
-                            await agent._collect_session_results(session)
+                            await self.collect_session_results(session)
                     elif session.state == SessionState.ACTIVE:
-                        await agent._step_session(session, mail)
+                        await self.step_session(session, mail)
                     else:
                         break
         finally:
             await session.cancel_pending()
-            await agent._mark_mail_read(mail)
-            agent._derive_state({})
+            await host._mark_mail_read(mail)
+            host._derive_state({})
 
     async def _add_no_tool_reminder(
         self, context: list[dict[str, Any]], response: LLMResponse

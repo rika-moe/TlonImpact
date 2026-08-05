@@ -16,6 +16,7 @@
 ```
 agents/
 ├── agent.py               # Agent 薄壳：生命周期、消息队列、think、子系统编排
+├── host.py                # 子系统宿主 Protocol：LoopDriverHost / OnCompleteHost / SchedulerHost（P4）
 ├── spec.py                # AgentSpec：行为规约（语义唯一权威）+ behavior.tlon 加载
 ├── edn.py                 # EDN 解析器（L0 数据字面量 + Form list 类型，只解析不求值）
 ├── eval.py                # L1 受限求值器：白名单特殊形式 + 纯 builtin 注册表 + fuel/深度限制
@@ -57,6 +58,30 @@ agents/
 | `Adam` | 生命周期策略（boot/唤醒/drain 决策，内置 Member） | `agents/adam.py` |
 | `LLMClient` | LLM API 调用 | `base/llm_client.py` |
 | `ToolExecutor` | 工具注册执行 | `agents/tool_executor.py` |
+
+---
+
+## 子系统解耦（P4，2026-08）
+
+子系统构造不再收整个 Agent 的回指，按实际消费面分两路（契约集中在
+`agents/host.py`，每个 Protocol 成员带语义 docstring）：
+
+- **B — 服务/数据直注（零回指）**：`TriggerEvaluator` 收不可变 `AgentIdentity`
+  （id/name/address）+ spec；`ReflectionEngine` 收 memory + llm_client + spec；
+  `ContextBuilder` 收 config/team_members/mailbox/memory/spec/address，并自带
+  系统提示缓存（`_system_prompt_cache`/`_mtime` 从 Agent 迁入，缓存本就只被
+  `get_system_prompt` 使用）；
+- **A — 窄 Protocol（真正共享的编排委托面）**：`LoopDriverHost` /
+  `OnCompleteHost` / `SchedulerHost`，一个子系统一个 Protocol（接口隔离），
+  Agent 结构化满足（无继承、无注册）。其中纯服务仍直注：LoopDriver 的
+  tool_executor/per_tool_timeout、OnCompleteRunner 的 registry、SessionScheduler
+  的 LoopDriver。
+
+Agent↔子系统的自我回环委托随之消除：`agent._step_session` /
+`agent._collect_session_results`（Scheduler 改为直调注入的 LoopDriver）、
+`agent._build_prompt_context`（ContextBuilder 内部直调）等已从 Agent 删除；
+`_mail_queue`/`_worker_running`/`_worker_task` 状态仍留在 Agent（由生命周期
+写入、SchedulerHost 只读消费，diff 最小）。
 
 ---
 

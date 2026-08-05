@@ -11,12 +11,16 @@ here, one by one:
   exhausted budget -> rejection logged, session unaffected). Chained
   spawning (a spawned contractor's own on-complete spawning again) is
   hard-capped by the registry's ``max_spawn_depth``.
-- ``emit`` delegates to ``agent._send_mail``; an emit without explicit
+- ``emit`` delegates to ``host._send_mail``; an emit without explicit
   recipients replies to the sender of the session's trigger mail.
 
 Isolation: an evaluation failure or a single failing action is logged
 (``on_complete_eval_failed`` / ``on_complete_action_failed``) and never
 interrupts the remaining actions or the session lifecycle.
+
+P4: the runner collaborates with its host through the narrow
+:class:`~tlon.agents.host.OnCompleteHost` protocol and receives the
+spawn registry as a directly injected service.
 """
 
 import uuid
@@ -25,10 +29,11 @@ from typing import TYPE_CHECKING, Any
 from structlog.contextvars import get_contextvars
 
 from tlon.agents.eval import ActionRequest, EvalError, eval_form, make_actions_builtins
+from tlon.agents.host import OnCompleteHost
 from tlon.base.logger import get_logger
 
 if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
+    from tlon.agents.agent_registry import AgentRegistry
     from tlon.agents.session import AgentSession
     from tlon.organization.mail.mail import Mail
 
@@ -38,12 +43,14 @@ logger = get_logger(__name__)
 class OnCompleteRunner:
     """Evaluates and executes the spec's on-complete action expressions.
 
-    Holds a back-reference to the owning Agent for identity, the behavior
-    spec, message sending, and the registry (spawn delegation).
+    Reaches the owning Agent only through the narrow ``OnCompleteHost``
+    protocol (identity, spec, logging, mail sending); the registry (spawn
+    delegation) is injected directly.
     """
 
-    def __init__(self, agent: "Agent"):
-        self._agent = agent
+    def __init__(self, host: OnCompleteHost, registry: "AgentRegistry | None"):
+        self._host = host
+        self._registry = registry
 
     async def run(self, session: "AgentSession", result: str) -> None:
         """Evaluate the spec's action forms and execute collected actions.
@@ -53,15 +60,15 @@ class OnCompleteRunner:
         session span, so contextvars carry the session id for spawn quota
         attribution). Never raises.
         """
-        agent = self._agent
-        forms = agent.spec.on_complete.actions
+        host = self._host
+        forms = host.spec.on_complete.actions
         if not forms:
             return
 
         env: dict[str, Any] = {
             "msg": session.trigger_message,
             "result": result,
-            "self": {"id": agent.id, "name": agent.name},
+            "self": {"id": host.id, "name": host.name},
         }
 
         collector: list[ActionRequest] = []
@@ -70,11 +77,11 @@ class OnCompleteRunner:
             try:
                 eval_form(form, env, builtins)
             except EvalError as e:
-                agent._logger.error(
+                host._logger.error(
                     "on_complete_eval_failed", session_id=session.id, error=str(e)
                 )
             except Exception as e:
-                agent._logger.error(
+                host._logger.error(
                     "on_complete_eval_failed",
                     session_id=session.id,
                     error=str(e),
@@ -83,7 +90,7 @@ class OnCompleteRunner:
 
         if not collector:
             return
-        agent._logger.info(
+        host._logger.info(
             "on_complete_actions",
             session_id=session.id,
             action_count=len(collector),
@@ -93,7 +100,7 @@ class OnCompleteRunner:
             try:
                 await self._execute(request, session.trigger_message)
             except Exception as e:
-                agent._logger.error(
+                host._logger.error(
                     "on_complete_action_failed",
                     session_id=session.id,
                     action=request.kind,
@@ -105,13 +112,12 @@ class OnCompleteRunner:
         if request.kind == "spawn":
             await self._execute_spawn(request.data)
         elif request.kind == "emit":
-            agent = self._agent
             # An emit without explicit recipients replies to the sender of
             # the mail that opened this session.
             to = request.data["to"] or (
                 [session_mail.from_address] if session_mail else []
             )
-            await agent._send_mail(
+            await self._host._send_mail(
                 to=to,
                 content=request.data["content"],
                 in_reply_to=session_mail.id if session_mail else None,
@@ -119,8 +125,7 @@ class OnCompleteRunner:
             )
 
     async def _execute_spawn(self, data: dict[str, Any]) -> None:
-        agent = self._agent
-        registry = agent.registry
+        registry = self._registry
         if registry is None:
             raise RuntimeError("spawn action unavailable: agent has no registry")
         prototype = data["prototype"]
@@ -131,6 +136,6 @@ class OnCompleteRunner:
         await registry.spawn_contractor(
             prototype=prototype,
             name=name,
-            spawner_id=agent.id,
+            spawner_id=self._host.id,
             session_id=str(session_id) if session_id else None,
         )

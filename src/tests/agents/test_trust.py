@@ -60,11 +60,6 @@ def _use_tmp_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TlonPaths:
     return test_paths
 
 
-def _fake_agent(agent_id: str) -> SimpleNamespace:
-    config = AgentConfig(id=agent_id, name="TestAgent")
-    return SimpleNamespace(config=config)
-
-
 def _make_bus() -> MagicMock:
     bus = MagicMock()
     bus.publish = AsyncMock()
@@ -405,7 +400,7 @@ class TestSpecSourceHash:
         behavior_file = config_dir / "behavior.tlon"
         behavior_file.write_text(VALID_BEHAVIOR, encoding="utf-8")
 
-        spec = AgentSpec.load(_fake_agent("h-001"))
+        spec = AgentSpec.load("h-001")
 
         expected = hashlib.sha256(VALID_BEHAVIOR.encode("utf-8")).hexdigest()[:12]
         assert spec.source_hash == expected
@@ -414,25 +409,25 @@ class TestSpecSourceHash:
     def test_missing_behavior_file_refuses_boot(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
         with pytest.raises(SpecValidationError, match="refused to boot"):
-            AgentSpec.load(_fake_agent("ghost-001"))
+            AgentSpec.load("ghost-001")
 
     def test_incomplete_spec_file_raises(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         config_dir = test_paths.agent_config_dir("h-002")
         (config_dir / "behavior.tlon").write_text("{:version 1}\n", encoding="utf-8")
         with pytest.raises(SpecValidationError):
-            AgentSpec.load(_fake_agent("h-002"))
+            AgentSpec.load("h-002")
 
     def test_hash_changes_with_content(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         behavior_file = test_paths.agent_config_dir("h-003") / "behavior.tlon"
         behavior_file.write_text(VALID_BEHAVIOR, encoding="utf-8")
-        first = AgentSpec.load(_fake_agent("h-003")).source_hash
+        first = AgentSpec.load("h-003").source_hash
         behavior_file.write_text(
             VALID_BEHAVIOR.replace(":max-iterations 10", ":max-iterations 11"),
             encoding="utf-8",
         )
-        second = AgentSpec.load(_fake_agent("h-003")).source_hash
+        second = AgentSpec.load("h-003").source_hash
         assert first != second
 
     def test_session_span_carries_spec_hash(self, monkeypatch):

@@ -646,7 +646,9 @@ class TestContextBuilderSections:
 
     async def _system_prompt_flags(self, agent: Agent) -> dict[str, bool]:
         with (
-            patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx,
+            patch.object(
+                agent._context_builder, "build_prompt_context", new_callable=AsyncMock
+            ) as mock_ctx,
             patch("tlon.agents.context_builder.SystemPromptBuilder") as mock_builder_cls,
         ):
             mock_ctx.return_value = MagicMock()

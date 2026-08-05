@@ -8,37 +8,49 @@ per ``TriggerSpec``:
   in scope; any evaluation failure safely defaults to not responding;
 - data mode (``when`` is None): the declarative rule — the agent's own
   address in To or CC means the mail is processed.
+
+P4: the evaluator takes an immutable identity snapshot and the behavior
+spec — plain data, no back-reference to the Agent.
 """
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 from tlon.agents.edn import Form
 from tlon.agents.eval import TRIGGER_BUILTINS, EvalError, eval_form
+from tlon.agents.spec import AgentSpec
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 
-if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
-
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class AgentIdentity:
+    """Immutable identity snapshot of an agent, for trigger evaluation."""
+
+    id: str
+    name: str
+    address: str
 
 
 class TriggerEvaluator:
     """Evaluates whether an incoming mail should trigger a response.
 
-    Holds a back-reference to the owning Agent for identity (address)
-    and the behavior spec (trigger rules).
+    Holds only plain data: the agent's identity (address for the data
+    rule, id/name for the expression env) and the behavior spec (trigger
+    rules).
     """
 
-    def __init__(self, agent: "Agent"):
-        self._agent = agent
+    def __init__(self, identity: AgentIdentity, spec: AgentSpec):
+        self._identity = identity
+        self._spec = spec
 
     def should_respond(self, mail: Mail) -> bool:
         """Determine if we should respond to this mail."""
-        if mail.from_address == self._agent.address:
+        if mail.from_address == self._identity.address:
             return False
 
-        trigger = self._agent.spec.trigger
+        trigger = self._spec.trigger
 
         if trigger.when is not None:
             return self._evaluate_expression(trigger.when, mail)
@@ -54,7 +66,7 @@ class TriggerEvaluator:
         """Evaluate the trigger expression; failures default to no response."""
         env = {
             "msg": mail,
-            "self": {"id": self._agent.id, "name": self._agent.name},
+            "self": {"id": self._identity.id, "name": self._identity.name},
         }
         try:
             result = eval_form(form, env, TRIGGER_BUILTINS)
@@ -67,5 +79,5 @@ class TriggerEvaluator:
 
     def is_addressed(self, mail: Mail) -> bool:
         """Check if this agent's address is in the mail's To or CC."""
-        address = self._agent.address
+        address = self._identity.address
         return address in mail.to or address in mail.cc

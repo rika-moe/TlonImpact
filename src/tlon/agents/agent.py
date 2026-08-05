@@ -19,11 +19,9 @@ on-complete actions) come from ``self.spec`` (AgentSpec, spec.py) —
 the agent is an interpreter of that spec, per docs/design/dsl-agents.md.
 """
 
-import asyncio
 import contextlib
 import json
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
@@ -31,13 +29,12 @@ from structlog.contextvars import bound_contextvars
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.on_complete import OnCompleteRunner
-from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
 from tlon.agents.session import AgentSession
 from tlon.agents.spec import AgentSpec
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.agents.trigger import TriggerEvaluator
+from tlon.agents.trigger import AgentIdentity, TriggerEvaluator
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 from tlon.base.device import Device
@@ -139,38 +136,27 @@ class Agent(Member):
         # Per-agent bound logger (agent_id as a field, logger name stays __name__)
         self._logger = logger.bind(agent_id=config.id)
 
-        # Tool execution timeout
-        self._per_tool_timeout = per_tool_timeout
-
-        # Prompt cache — rebuilt when persona file mtimes change
-        self._system_prompt_cache: str | None = None
-        self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
-
         # Behavior spec: the single semantic authority the subsystems read
         # (see docs/design/dsl-agents.md). Loaded before subsystem construction.
-        self.spec = spec if spec is not None else AgentSpec.load(self)
+        self.spec = spec if spec is not None else AgentSpec.load(config.id)
 
-        # Behavioral subsystems (constructed with a back-reference to self)
-        self._trigger = TriggerEvaluator(self)
-        self._reflection = ReflectionEngine(self)
-        self._context_builder = ContextBuilder(self)
-        self._loop_driver = LoopDriver(self)
-        self._on_complete = OnCompleteRunner(self)
-        self._scheduler = SessionScheduler(self)
+        # Behavioral subsystems (P4): assembled with capabilities, not a
+        # back-reference to self — plain data and injected services where
+        # possible, the narrow host protocols (agents/host.py) where the
+        # shared orchestration surface is genuinely needed.
+        self._trigger = TriggerEvaluator(
+            AgentIdentity(id=self.id, name=self.name, address=self.address), self.spec
+        )
+        self._reflection = ReflectionEngine(memory, llm_client, self.spec)
+        self._context_builder = ContextBuilder(
+            config, self.team_members, mailbox, memory, self.spec, self.address
+        )
+        self._loop_driver = LoopDriver(self, tool_executor, per_tool_timeout)
+        self._on_complete = OnCompleteRunner(self, registry)
+        self._scheduler = SessionScheduler(self, self._loop_driver)
 
         # Agent state
         self.state: AgentState | None = None
-
-        # Mail queue for serial processing; items are (Mail, trace carrier).
-        # Bounded: a full queue drops new mail rather than blocking the
-        # EventBus dispatch (see _on_mail_delivered). The mailbox itself is
-        # the durable queue — a dropped item stays unread and is re-enqueued
-        # on the next boot scan.
-        self._mail_queue: asyncio.Queue[tuple[Mail, dict[str, str | None]]] = (
-            asyncio.Queue(maxsize=config.message_queue_size)
-        )
-        self._worker_task: asyncio.Task | None = None
-        self._worker_running = False
 
         with bound_contextvars(agent_id=self.id):
             logger.info("agent_initialized", agent_name=self.name)
@@ -244,8 +230,7 @@ class Agent(Member):
                 except Exception as e:
                     self._logger.error("mail_unread_scan_failed", error=str(e), exc_info=True)
 
-            self._worker_running = True
-            self._worker_task = asyncio.create_task(self._main_loop())
+            self._scheduler.start()
 
             self.state = AgentState.ACTIVE
             self._initialized = True
@@ -256,11 +241,7 @@ class Agent(Member):
         with bound_contextvars(agent_id=self.id):
             logger.info("agent_shutdown", agent_name=self.name)
 
-            self._worker_running = False
-            if self._worker_task:
-                self._worker_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._worker_task
+            await self._scheduler.stop()
 
             self.unsubscribe_all()
 
@@ -299,42 +280,20 @@ class Agent(Member):
         if not self._should_respond(mail):
             return
 
-        try:
-            self._mail_queue.put_nowait((mail, carrier))
-        except asyncio.QueueFull:
+        if not self._scheduler.enqueue(mail, carrier):
             logger.warning(
                 "mail_dropped",
                 sender=mail.from_address,
-                queue_size=self._mail_queue.maxsize,
+                queue_size=self._scheduler._mail_queue.maxsize,
             )
             return
         logger.debug("mail_queued", sender=mail.from_address, mail_id=mail.id)
 
     # ── Subsystem delegates (thin seams kept for tests and orchestration) ──
 
-    async def _main_loop(self) -> None:
-        """Run the session scheduling loop (see SessionScheduler)."""
-        await self._scheduler.run()
-
     def _should_respond(self, mail: Mail) -> bool:
         """Determine if we should respond to this mail."""
         return self._trigger.should_respond(mail)
-
-    def _is_addressed(self, mail: Mail) -> bool:
-        """Check if this agent's address is in the mail's To or CC."""
-        return self._trigger.is_addressed(mail)
-
-    async def _step_session(self, session: AgentSession, mail: Mail) -> None:
-        """Advance a session by one ReAct step (see LoopDriver)."""
-        await self._loop_driver.step_session(session, mail)
-
-    async def _collect_session_results(self, session: AgentSession) -> None:
-        """Collect completed background tools for a WAITING session."""
-        await self._loop_driver.collect_session_results(session)
-
-    async def _execute_one_tool(self, tc: ToolCall) -> tuple[ToolCall, ToolResult]:
-        """Execute one tool with timeout (see LoopDriver)."""
-        return await self._loop_driver.execute_one_tool(tc)
 
     async def _process_message(self, mail: Mail) -> None:
         """Process a single mail synchronously (used by tests)."""
@@ -361,19 +320,6 @@ class Agent(Member):
     async def _build_context(self, current_mail: Mail) -> list[dict[str, Any]]:
         """Build conversation context for LLM."""
         return await self._context_builder.build_context(current_mail)
-
-    async def _build_prompt_context(self) -> AgentPromptContext:
-        """Build AgentPromptContext for the system prompt."""
-        return await self._context_builder.build_prompt_context()
-
-    def _persona_files(self) -> list[Path]:
-        """Persona files that feed the system prompt."""
-        return self._context_builder.persona_files()
-
-    @staticmethod
-    def _persona_mtime_signature(files: list[Path]) -> tuple[tuple[str, float | None], ...]:
-        """Snapshot persona file mtimes; missing files map to None."""
-        return ContextBuilder.persona_mtime_signature(files)
 
     async def _get_system_prompt(self) -> str:
         """Get system prompt, rebuilding the cache when persona files change."""

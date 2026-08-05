@@ -850,11 +850,11 @@ class TestAgentStateDerivation:
         agent.tool_executor.register_tool(hang)
         agent.tool_executor.register_tool(send)
 
-        agent._worker_running = True
-        agent._mail_queue.put_nowait((_make_message("first"), {}))
-        agent._mail_queue.put_nowait((_make_message("second"), {}))
+        agent._scheduler._worker_running = True
+        agent._scheduler._mail_queue.put_nowait((_make_message("first"), {}))
+        agent._scheduler._mail_queue.put_nowait((_make_message("second"), {}))
 
-        task = asyncio.create_task(agent._main_loop())
+        task = asyncio.create_task(agent._scheduler.run())
         try:
             await asyncio.wait_for(started.wait(), timeout=2)
             # Wait until session 2's final message has been sent
@@ -874,7 +874,7 @@ class TestAgentStateDerivation:
             # Session 1 is still alive -> state must NOT fall back to ACTIVE
             assert agent.state == AgentState.THINKING
         finally:
-            agent._worker_running = False
+            agent._scheduler._worker_running = False
             release.set()
             await asyncio.wait_for(task, timeout=2)
 
@@ -938,19 +938,21 @@ class TestOrphanTaskCleanup:
         hang.execute = hanging_tool
         agent.tool_executor.register_tool(hang)
 
-        agent._worker_running = True
-        agent._mail_queue.put_nowait((_make_message(), {}))
+        agent._scheduler._worker_running = True
+        agent._scheduler._mail_queue.put_nowait((_make_message(), {}))
 
         with patch.object(
-            agent, "_collect_session_results", new=AsyncMock(side_effect=RuntimeError("boom"))
+            agent._loop_driver,
+            "collect_session_results",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
         ):
-            task = asyncio.create_task(agent._main_loop())
+            task = asyncio.create_task(agent._scheduler.run())
             try:
                 await asyncio.wait_for(started.wait(), timeout=2)
                 # Session errors on collect -> cleanup must cancel the orphan
                 await asyncio.wait_for(cancelled.wait(), timeout=2)
             finally:
-                agent._worker_running = False
+                agent._scheduler._worker_running = False
                 await asyncio.wait_for(task, timeout=2)
 
         assert cancelled.is_set()

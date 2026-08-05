@@ -5,20 +5,24 @@ history + current mail) and the system prompt (persona files with
 mtime-keyed caching). Extracted from the Agent god class; complements
 prompt_builder's pure SystemPromptBuilder with the agent-bound
 fetching/caching side.
+
+P4: the builder receives its dependencies (config, team members,
+mailbox, memory, spec, address) explicitly and owns the system prompt
+cache — no back-reference to the Agent.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
-from tlon.agents.spec import has_section
+from tlon.agents.spec import AgentSpec, has_section
+from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
+from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
-
-if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
+from tlon.organization.mail.mailbox import Mailbox
 
 logger = get_logger(__name__)
 
@@ -40,18 +44,34 @@ def _render_mail(mail: Mail) -> str:
 class ContextBuilder:
     """Builds conversation context and the cached system prompt for an agent.
 
-    The system prompt cache itself lives on the Agent
-    (``_system_prompt_cache`` / ``_system_prompt_mtime``) and is keyed on
-    the mtime signature of all persona files.
+    Owns the system prompt cache (``_system_prompt_cache`` /
+    ``_system_prompt_mtime``), keyed on the mtime signature of all
+    persona files.
     """
 
-    def __init__(self, agent: "Agent"):
-        self._agent = agent
+    def __init__(
+        self,
+        config: AgentConfig,
+        team_members: list[AgentConfig],
+        mailbox: Mailbox | None,
+        memory: MemoryManager,
+        spec: AgentSpec,
+        address: str,
+    ):
+        self._config = config
+        self._team_members = team_members
+        self._mailbox = mailbox
+        self._memory = memory
+        self._spec = spec
+        self._address = address
+        # Prompt cache — rebuilt when persona file mtimes change
+        self._system_prompt_cache: str | None = None
+        self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
 
     async def build_knowledge_context(self) -> str:
         """Build knowledge text from memory blocks for user prompt injection."""
         try:
-            blocks = await self._agent.memory.build_context_blocks()
+            blocks = await self._memory.build_context_blocks()
             if not blocks:
                 return ""
             parts = []
@@ -73,7 +93,7 @@ class ContextBuilder:
         engine owns this; the DSL only describes what comes before it.
         """
         context: list[dict[str, Any]] = []
-        for form in self._agent.spec.context.sections:
+        for form in self._spec.context.sections:
             name = str(form[0])
             if name == "knowledge":
                 knowledge = await self.build_knowledge_context()
@@ -94,12 +114,12 @@ class ContextBuilder:
         sent), never a shared room log: my own mail maps to the
         assistant role, everyone else's to the user role.
         """
-        if self._agent.mailbox is None:
+        if self._mailbox is None:
             logger.warning("mailbox_missing")
             return []
         if count <= 0:
             return []
-        history = await self._agent.mailbox.recent(limit=count)
+        history = await self._mailbox.recent(limit=count)
         logger.debug("context_history_retrieved", mail_count=len(history))
         messages: list[dict[str, Any]] = []
         for mail in history:
@@ -107,37 +127,37 @@ class ContextBuilder:
                 continue
             if not mail.content:
                 continue
-            role = "assistant" if mail.from_address == self._agent.address else "user"
+            role = "assistant" if mail.from_address == self._address else "user"
             messages.append({"role": role, "content": _render_mail(mail)})
         return messages
 
     async def build_prompt_context(self) -> AgentPromptContext:
         """Build AgentPromptContext by pre-fetching team SOUL.md files."""
         team_profiles: list[tuple[str, str]] = []
-        for m in self._agent.team_members:
-            if m.id == self._agent.config.id:
+        for m in self._team_members:
+            if m.id == self._config.id:
                 continue
             soul_file = paths.agent_soul_file(m.id)
             profile = soul_file.read_text(encoding="utf-8").strip() if soul_file.exists() else m.name
             team_profiles.append((m.name, profile))
 
         return AgentPromptContext(
-            agent_name=self._agent.config.name,
-            agent_home=str(paths.agent_dir(self._agent.config.id)),
+            agent_name=self._config.name,
+            agent_home=str(paths.agent_dir(self._config.id)),
             team_profiles=team_profiles,
         )
 
     def persona_files(self) -> list[Path]:
         """Persona files that feed the system prompt (self + team SOUL files)."""
         files = [
-            paths.agent_identity_file(self._agent.config.id),
-            paths.agent_soul_file(self._agent.config.id),
-            paths.agent_rules_file(self._agent.config.id),
+            paths.agent_identity_file(self._config.id),
+            paths.agent_soul_file(self._config.id),
+            paths.agent_rules_file(self._config.id),
         ]
         files.extend(
             paths.agent_soul_file(m.id)
-            for m in self._agent.team_members
-            if m.id != self._agent.config.id
+            for m in self._team_members
+            if m.id != self._config.id
         )
         return files
 
@@ -159,17 +179,15 @@ class ContextBuilder:
         (own IDENTITY/SOUL/RULES plus team SOUL files), so editing any of
         them takes effect without restarting the process.
         """
-        agent = self._agent
         signature = self.persona_mtime_signature(self.persona_files())
-        if agent._system_prompt_cache is None or signature != agent._system_prompt_mtime:
-            # Go through the Agent delegate so tests can patch the seam
-            context = await agent._build_prompt_context()
-            context_spec = agent.spec.context
+        if self._system_prompt_cache is None or signature != self._system_prompt_mtime:
+            context = await self.build_prompt_context()
+            context_spec = self._spec.context
             builder = SystemPromptBuilder(
                 context,
                 include_persona=has_section(context_spec.sections, "persona"),
                 include_protocol=has_section(context_spec.sections, "protocol"),
             )
-            agent._system_prompt_cache = builder.build()
-            agent._system_prompt_mtime = signature
-        return agent._system_prompt_cache
+            self._system_prompt_cache = builder.build()
+            self._system_prompt_mtime = signature
+        return self._system_prompt_cache

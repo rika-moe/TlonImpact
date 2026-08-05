@@ -72,7 +72,7 @@ class TestResilienceConfigDefaults:
         agent = _make_agent(
             config=AgentConfig(id="a-001", name="TestAgent", message_queue_size=7)
         )
-        assert agent._mail_queue.maxsize == 7
+        assert agent._scheduler._mail_queue.maxsize == 7
 
 
 class TestConfigurableMaxIterations:
@@ -140,7 +140,7 @@ class TestMessageQueueBackpressure:
         for _ in range(4):
             await asyncio.wait_for(agent._on_mail_delivered(make_event()), timeout=1)
 
-        assert agent._mail_queue.qsize() == 2
+        assert agent._scheduler._mail_queue.qsize() == 2
 
 
 class TestSessionTimeout:
@@ -164,11 +164,11 @@ class TestSessionTimeout:
         agent._reflection.enabled = False
         agent.state = AgentState.ACTIVE
 
-        agent._worker_running = True
-        agent._mail_queue.put_nowait((_make_message(), {}))
+        agent._scheduler._worker_running = True
+        agent._scheduler._mail_queue.put_nowait((_make_message(), {}))
 
         with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            task = asyncio.create_task(agent._main_loop())
+            task = asyncio.create_task(agent._scheduler.run())
             try:
                 # Give the loop a few passes to reap the timed-out session
                 await asyncio.sleep(0.3)
@@ -183,5 +183,5 @@ class TestSessionTimeout:
                 # Session reaped -> agent falls back to idle
                 assert agent.state == AgentState.ACTIVE
             finally:
-                agent._worker_running = False
+                agent._scheduler._worker_running = False
                 await asyncio.wait_for(task, timeout=2)

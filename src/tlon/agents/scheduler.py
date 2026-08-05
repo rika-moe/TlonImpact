@@ -8,20 +8,27 @@ Extracted from the Agent god class.
 The whole loop task runs inside bound_contextvars(agent_id=...) so all
 logs emitted from session advances carry the agent binding; tasks spawned
 from here (e.g. reflection) inherit the context.
+
+P4: the scheduler collaborates with the Agent through the narrow
+:class:`~tlon.agents.host.SchedulerHost` protocol (trace/memory delegates)
+and advances sessions via the directly injected LoopDriver — no
+back-reference to the whole Agent. The mail queue and the worker
+lifecycle (``_worker_running`` / ``_worker_task``) are owned here (R2):
+the scheduler drives them, so they live here — they no longer appear in
+the host protocol, which declares contracts, not shared mutable state.
 """
 
 import asyncio
+import contextlib
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from structlog.contextvars import bound_contextvars
 
+from tlon.agents.host import SchedulerHost
+from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.session import AgentSession, SessionState
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
-
-if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
 
 logger = get_logger(__name__)
 
@@ -29,14 +36,50 @@ logger = get_logger(__name__)
 class SessionScheduler:
     """Multi-session scheduling loop for one agent."""
 
-    def __init__(self, agent: "Agent"):
-        self._agent = agent
+    def __init__(self, host: SchedulerHost, loop_driver: LoopDriver):
+        self._host = host
+        self._loop_driver = loop_driver
         # Live (non-completed) sessions; run() rebinds this to its working
         # dict. Read by the registry's idle monitor via the properties below.
         self._sessions: dict[str, AgentSession] = {}
         # Floor for last activity: loop start time, bumped on session
         # creation and session completion (see run()).
         self._last_activity_at: datetime = datetime.now()
+        # Inbound mail queue (bounded: a full queue drops new mail rather
+        # than blocking the EventBus dispatch — see Agent._enqueue_mail)
+        # and the worker lifecycle, both owned here (R2).
+        self._mail_queue: asyncio.Queue[tuple[Mail, dict[str, str | None]]] = (
+            asyncio.Queue(maxsize=host.config.message_queue_size)
+        )
+        self._worker_running = False
+        self._worker_task: asyncio.Task | None = None
+
+    def enqueue(self, mail: Mail, carrier: dict[str, str | None]) -> bool:
+        """Enqueue a mail for session processing.
+
+        Returns:
+            True when queued; False when the bounded queue is full (the
+            caller logs the drop — the mail stays unread in the mailbox
+            and is picked up again by the next boot scan)
+        """
+        try:
+            self._mail_queue.put_nowait((mail, carrier))
+        except asyncio.QueueFull:
+            return False
+        return True
+
+    def start(self) -> None:
+        """Start the main-loop worker task."""
+        self._worker_running = True
+        self._worker_task = asyncio.create_task(self.run())
+
+    async def stop(self) -> None:
+        """Stop the main-loop worker task."""
+        self._worker_running = False
+        if self._worker_task:
+            self._worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._worker_task
 
     @property
     def active_session_count(self) -> int:
@@ -73,26 +116,26 @@ class SessionScheduler:
         3. WAITING sessions -> collect completed background tools
         4. COMPLETED -> cleanup
         """
-        agent = self._agent
+        host = self._host
         # This loop runs in its own task per agent, so binding agent_id for
         # its whole lifetime is safe and also covers logs inside session
         # advances; tasks spawned here (e.g. reflection) inherit the context.
-        with bound_contextvars(agent_id=agent.id):
+        with bound_contextvars(agent_id=host.id):
             logger.info("agent_main_loop_started")
             sessions: dict[str, AgentSession] = {}
             session_mails: dict[str, Mail] = {}
             self._sessions = sessions
             self._last_activity_at = datetime.now()
 
-            while agent._worker_running:
+            while self._worker_running:
                 # ── 0. Proactive memory triggers (no mail required) ──
-                await agent.memory.check_idle_timeout()
-                await agent._check_reflection_trigger()
+                await host.memory.check_idle_timeout()
+                await host._check_reflection_trigger()
 
                 # ── 1. New mail — one session per mail ──
                 try:
-                    mail, carrier = agent._mail_queue.get_nowait()
-                    sid = f"{agent.id}-{mail.id}"
+                    mail, carrier = self._mail_queue.get_nowait()
+                    sid = f"{host.id}-{mail.id}"
                     session = AgentSession(sid, mail.content, carrier=carrier)
                     sessions[sid] = session
                     session_mails[sid] = mail
@@ -103,9 +146,9 @@ class SessionScheduler:
                     if not sessions:
                         try:
                             mail, carrier = await asyncio.wait_for(
-                                agent._mail_queue.get(), timeout=0.5
+                                self._mail_queue.get(), timeout=0.5
                             )
-                            sid = f"{agent.id}-{mail.id}"
+                            sid = f"{host.id}-{mail.id}"
                             sessions[sid] = AgentSession(sid, mail.content, carrier=carrier)
                             session_mails[sid] = mail
                             self._last_activity_at = datetime.now()
@@ -131,12 +174,12 @@ class SessionScheduler:
                         session.mark_completed()
                     else:
                         try:
-                            with agent._session_span(session):
+                            with host._session_span(session):
                                 if session.state == SessionState.WAITING:
-                                    await agent._collect_session_results(session)
+                                    await self._loop_driver.collect_session_results(session)
                                 elif session.state == SessionState.ACTIVE:
                                     mail = session_mails[sid]
-                                    await agent._step_session(session, mail)
+                                    await self._loop_driver.step_session(session, mail)
                         except Exception as e:
                             logger.error(
                                 "session_error", session_id=sid, error=str(e), exc_info=True
@@ -146,13 +189,13 @@ class SessionScheduler:
                     # ── 4. Cleanup: the mail is processed, cursor advances ──
                     if session.is_completed:
                         await session.cancel_pending()
-                        await agent._mark_mail_read(session_mails.get(sid))
+                        await host._mark_mail_read(session_mails.get(sid))
                         del sessions[sid]
                         session_mails.pop(sid, None)
                         self._last_activity_at = datetime.now()
 
                 # ── 5. Agent state derives from live sessions ──
-                agent._derive_state(sessions)
+                host._derive_state(sessions)
 
                 # Yield control
                 await asyncio.sleep(0.01 if sessions else 0.05)
@@ -161,6 +204,6 @@ class SessionScheduler:
 
     def _is_session_timed_out(self, session: AgentSession) -> bool:
         """A session idle beyond the configured timeout is considered stuck."""
-        timeout = self._agent.config.session_timeout_seconds
+        timeout = self._host.config.session_timeout_seconds
         idle = (datetime.now() - session.last_active_at).total_seconds()
         return idle > timeout

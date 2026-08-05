@@ -19,7 +19,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
 
 
-def _make_agent(team_members: list[AgentConfig] | None = None):
+def _make_agent(team_members: list[AgentConfig] | None = None, **kwargs):
     config = AgentConfig(id="a-001", name="林知遥")
     tool_executor = MagicMock()
     tool_executor.get_tool_definitions.return_value = []
@@ -31,16 +31,18 @@ def _make_agent(team_members: list[AgentConfig] | None = None):
     event_bus = MagicMock()
     event_bus.publish = AsyncMock()
 
-    return Agent(
-        config=config,
-        event_bus=event_bus,
-        llm_client=MagicMock(),
-        memory=memory,
-        task_manager=MagicMock(),
-        tool_executor=tool_executor,
-        team_members=team_members,
-        spec=AgentSpec.from_edn(loads(standard_behavior_edn())),
-    )
+    defaults = {
+        "config": config,
+        "event_bus": event_bus,
+        "llm_client": MagicMock(),
+        "memory": memory,
+        "task_manager": MagicMock(),
+        "tool_executor": tool_executor,
+        "team_members": team_members,
+        "spec": AgentSpec.from_edn(loads(standard_behavior_edn())),
+    }
+    defaults.update(kwargs)
+    return Agent(**defaults)
 
 
 def _use_tmp_paths(monkeypatch, tmp_path) -> TlonPaths:
@@ -55,23 +57,25 @@ class TestPromptCacheBasic:
     async def test_first_call_builds_prompt(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
         agent = _make_agent()
-        with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
+        builder = agent._context_builder
+        with patch.object(builder, "build_prompt_context", new_callable=AsyncMock) as mock_ctx:
             mock_ctx.return_value = MagicMock()
             with patch("tlon.agents.context_builder.SystemPromptBuilder") as mock_builder_cls:
                 mock_builder_cls.return_value.build.return_value = "built prompt"
                 result = await agent._get_system_prompt()
 
         assert result == "built prompt"
-        assert agent._system_prompt_cache == "built prompt"
+        assert builder._system_prompt_cache == "built prompt"
 
     @pytest.mark.asyncio
     async def test_second_call_uses_cache(self, tmp_path, monkeypatch):
         _use_tmp_paths(monkeypatch, tmp_path)
         agent = _make_agent()
-        agent._system_prompt_cache = "cached prompt"
-        agent._system_prompt_mtime = agent._persona_mtime_signature(agent._persona_files())
+        builder = agent._context_builder
+        builder._system_prompt_cache = "cached prompt"
+        builder._system_prompt_mtime = builder.persona_mtime_signature(builder.persona_files())
 
-        with patch.object(agent, "_build_prompt_context", new_callable=AsyncMock) as mock_ctx:
+        with patch.object(builder, "build_prompt_context", new_callable=AsyncMock) as mock_ctx:
             result = await agent._get_system_prompt()
             mock_ctx.assert_not_called()
 
@@ -182,9 +186,6 @@ class TestToolExecutionObservability:
         from tlon.base.llm_client import LLMResponse, ToolCall
         from tlon.tools.base import ToolResult
 
-        agent = _make_agent()
-        agent._system_prompt_cache = "prompt"
-
         # LLM returns tool call + completion
         llm_client = MagicMock()
         llm_client.chat = AsyncMock(
@@ -196,7 +197,6 @@ class TestToolExecutionObservability:
                 ),
             ]
         )
-        agent.llm_client = llm_client
 
         async def _mock_execute(name, args):
             return ToolResult(
@@ -204,9 +204,12 @@ class TestToolExecutionObservability:
                 data={"content": "Done!", "is_complete": True},
             )
 
-        agent.tool_executor = MagicMock()
-        agent.tool_executor.get_tool_definitions = MagicMock(return_value=[])
-        agent.tool_executor.execute = _mock_execute
+        tool_executor = MagicMock()
+        tool_executor.get_tool_definitions = MagicMock(return_value=[])
+        tool_executor.execute = _mock_execute
+
+        agent = _make_agent(llm_client=llm_client, tool_executor=tool_executor)
+        agent._context_builder._system_prompt_cache = "prompt"
 
         from tlon.organization.mail.mail import Mail
 
@@ -229,9 +232,6 @@ class TestToolExecutionObservability:
         from tlon.base.llm_client import LLMResponse, ToolCall
         from tlon.tools.base import ToolResult
 
-        agent = _make_agent()
-        agent._system_prompt_cache = "prompt"
-
         llm_client = MagicMock()
         llm_client.chat = AsyncMock(
             side_effect=[
@@ -246,7 +246,6 @@ class TestToolExecutionObservability:
                 ),
             ]
         )
-        agent.llm_client = llm_client
 
         async def _mock_execute(name, args):
             if name == "executeBash":
@@ -256,9 +255,12 @@ class TestToolExecutionObservability:
                 data={"content": "Done!", "is_complete": True},
             )
 
-        agent.tool_executor = MagicMock()
-        agent.tool_executor.get_tool_definitions = MagicMock(return_value=[])
-        agent.tool_executor.execute = _mock_execute
+        tool_executor = MagicMock()
+        tool_executor.get_tool_definitions = MagicMock(return_value=[])
+        tool_executor.execute = _mock_execute
+
+        agent = _make_agent(llm_client=llm_client, tool_executor=tool_executor)
+        agent._context_builder._system_prompt_cache = "prompt"
 
         from tlon.organization.mail.mail import Mail
 

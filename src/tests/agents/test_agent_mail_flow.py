@@ -69,25 +69,25 @@ class TestMailDeliveredEnqueue:
     async def test_mail_for_me_is_enqueued(self):
         agent = _make_agent()
         await agent._on_mail_delivered(_delivered(_mail(), "a-001"))
-        assert agent._mail_queue.qsize() == 1
+        assert agent._scheduler._mail_queue.qsize() == 1
 
     async def test_mail_for_someone_else_is_ignored(self):
         agent = _make_agent()
         await agent._on_mail_delivered(_delivered(_mail(), "a-002"))
-        assert agent._mail_queue.qsize() == 0
+        assert agent._scheduler._mail_queue.qsize() == 0
 
     async def test_own_mail_is_ignored(self):
         agent = _make_agent()
         mail = _mail(from_address="a-001@tlon.internal")
         await agent._on_mail_delivered(_delivered(mail, "a-001"))
-        assert agent._mail_queue.qsize() == 0
+        assert agent._scheduler._mail_queue.qsize() == 0
 
     async def test_mail_not_addressed_to_me_is_dropped_by_trigger(self):
         """A mail in my inbox where I'm neither To nor CC is not processed."""
         agent = _make_agent()
         mail = _mail(to=["other@tlon.internal"])
         await agent._on_mail_delivered(_delivered(mail, "a-001"))
-        assert agent._mail_queue.qsize() == 0
+        assert agent._scheduler._mail_queue.qsize() == 0
 
     async def test_cc_mail_is_enqueued(self):
         agent = _make_agent()
@@ -98,14 +98,14 @@ class TestMailDeliveredEnqueue:
             content="抄送",
         )
         await agent._on_mail_delivered(_delivered(mail, "a-001"))
-        assert agent._mail_queue.qsize() == 1
+        assert agent._scheduler._mail_queue.qsize() == 1
 
     async def test_bad_payload_is_ignored(self):
         agent = _make_agent()
         await agent._on_mail_delivered(
             Event(type=EventType.MAIL_DELIVERED, payload={"not": "mail"}, source="x")
         )
-        assert agent._mail_queue.qsize() == 0
+        assert agent._scheduler._mail_queue.qsize() == 0
 
 
 class TestBootUnreadScan:
@@ -127,8 +127,8 @@ class TestBootUnreadScan:
         agent = _make_agent(mailbox=mailbox)
         await agent.initialize()
         try:
-            assert agent._mail_queue.qsize() == 2
-            queued = [agent._mail_queue.get_nowait()[0] for _ in range(2)]
+            assert agent._scheduler._mail_queue.qsize() == 2
+            queued = [agent._scheduler._mail_queue.get_nowait()[0] for _ in range(2)]
             assert {m.id for m in queued} == {first.id, second.id}
         finally:
             await agent.shutdown()
@@ -137,7 +137,7 @@ class TestBootUnreadScan:
         agent = _make_agent(mailbox=None)
         await agent.initialize()
         try:
-            assert agent._mail_queue.qsize() == 0
+            assert agent._scheduler._mail_queue.qsize() == 0
         finally:
             await agent.shutdown()
 

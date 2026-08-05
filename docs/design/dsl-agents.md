@@ -388,6 +388,16 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 
 阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体；阶段 5–6 让系统从"固定班底"走向"自组织的剧团"。
 
+## 未来方向（登记，非规约）
+
+### 方案 C — stage 的 effects-as-data
+
+P4（2026-08，`agents/host.py` 的窄 Protocol + 服务分解）只是**过渡形态**：它把子系统对 Agent 的隐式回指收窄为显式契约，但 LoopDriver 等子系统仍直接调用宿主的副作用委托（`_send_mail` / `_save_interaction_to_memory` / 工具 dispatch）。
+
+方案 C 把 stage 演进为**纯转换** `Session × Services → StageOutcome`：要发的信、要写的记忆、要 dispatch 的工具全部是 stage **返回的数据**，由引擎统一执行。这与 on-complete 的 ActionRequest 设计同构（阶段 4b：表达式纯求值收集 ActionRequest，引擎再逐条执行），是"DSL 只描述，引擎执行"铁律向子系统层的下沉——stage 不再伸手拿宿主能力，而是声明意图、引擎代办。
+
+**触发时机**：stage 家族继续长大（每个新 stage 都要往 host Protocol 里加委托面时），或引入用户自定义 stage 时。届时 Protocol 委托面自然消亡，宿主只剩"执行 StageOutcome"一个职责。
+
 ## 明确不做（v1）
 
 - 递归、`while`、`loop`/`recur`、宏

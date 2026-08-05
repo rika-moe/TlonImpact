@@ -23,7 +23,7 @@ from tlon.agents.spec import (
     TriggerSpec,
     standard_behavior_edn,
 )
-from tlon.agents.trigger import TriggerEvaluator
+from tlon.agents.trigger import AgentIdentity, TriggerEvaluator
 from tlon.organization.mail.mail import Mail
 
 
@@ -259,22 +259,16 @@ class TestBuiltins:
         assert eval_form(loads("(not 1)"), {}, TRIGGER_BUILTINS) is False
 
 
-class _FakeAgent:
-    """Duck-typed Agent stand-in for TriggerEvaluator."""
-
-    def __init__(self, trigger: TriggerSpec):
-        self.id = _SELF["id"]
-        self.name = _SELF["name"]
-        self.address = _SELF_ADDRESS
-        self.spec = SimpleNamespace(trigger=trigger)
+def _evaluator_for(trigger: TriggerSpec) -> TriggerEvaluator:
+    """Build a TriggerEvaluator from plain data (P4: no Agent needed)."""
+    identity = AgentIdentity(id=_SELF["id"], name=_SELF["name"], address=_SELF_ADDRESS)
+    return TriggerEvaluator(identity, SimpleNamespace(trigger=trigger))
 
 
 class TestTriggerEvaluatorExpression:
     def _evaluator(self, source: str, **trigger_kwargs) -> TriggerEvaluator:
         trigger_kwargs.setdefault("on_mention", True)
-        return TriggerEvaluator(
-            _FakeAgent(TriggerSpec(when=loads(source), **trigger_kwargs))
-        )
+        return _evaluator_for(TriggerSpec(when=loads(source), **trigger_kwargs))
 
     def test_expression_hit(self):
         evaluator = self._evaluator("(addressed-to-me? msg)")
@@ -308,13 +302,12 @@ class TestTriggerEvaluatorExpression:
         assert evaluator.should_respond(_mail(from_address=_SELF_ADDRESS)) is False
 
     def test_data_mode_to_or_cc(self):
-        agent = _FakeAgent(TriggerSpec(on_mention=True))
-        evaluator = TriggerEvaluator(agent)
+        evaluator = _evaluator_for(TriggerSpec(on_mention=True))
         assert evaluator.should_respond(_mail(to=[_SELF_ADDRESS])) is True
         assert evaluator.should_respond(_mail(cc=[_SELF_ADDRESS])) is True
         assert evaluator.should_respond(_mail(to=["other@tlon.internal"])) is False
 
-        deaf = TriggerEvaluator(_FakeAgent(TriggerSpec(on_mention=False)))
+        deaf = _evaluator_for(TriggerSpec(on_mention=False))
         assert deaf.should_respond(_mail(to=[_SELF_ADDRESS])) is False
 
 

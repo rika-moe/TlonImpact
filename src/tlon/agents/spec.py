@@ -52,7 +52,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import paths
 
 if TYPE_CHECKING:
-    from tlon.agents.agent import Agent
+    pass
 
 logger = get_logger(__name__)
 
@@ -191,24 +191,27 @@ class AgentSpec:
     # ── Factories ──
 
     @classmethod
-    def load(cls, agent: "Agent") -> "AgentSpec":
-        """Load the agent's spec from its behavior file — total semantics.
+    def load(cls, agent_id: str) -> "AgentSpec":
+        """Load an agent's spec from its behavior file — total semantics.
 
         ``~/.tlon/{agent_id}/config/behavior.tlon`` must exist, parse as
         EDN, and validate as a complete spec. Any failure raises: the
         agent refuses to boot (the registry logs and isolates the
         failure; the server and other agents are unaffected).
 
+        Args:
+            agent_id: id of the agent whose behavior file to load
+
         Raises:
             SpecValidationError: file missing, unreadable, or failed
                 schema validation
             EDNParseError: file is not valid EDN
         """
-        behavior_file = paths.agent_behavior_file(agent.config.id)
+        behavior_file = paths.agent_behavior_file(agent_id)
         if not behavior_file.exists():
             logger.error(
                 "agent_spec_invalid",
-                agent_id=agent.config.id,
+                agent_id=agent_id,
                 path=str(behavior_file),
                 reason="behavior file missing",
             )
@@ -221,7 +224,7 @@ class AgentSpec:
         except (EDNParseError, SpecValidationError, OSError) as e:
             logger.error(
                 "agent_spec_invalid",
-                agent_id=agent.config.id,
+                agent_id=agent_id,
                 path=str(behavior_file),
                 reason=str(e),
             )

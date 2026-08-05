@@ -1,7 +1,6 @@
 """Tests for the behavior prototype library (tlon.agents.prototypes)."""
 
 from importlib import resources
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +14,7 @@ from tlon.agents.prototypes import (
     seed_prototypes,
 )
 from tlon.agents.spec import AgentSpec
-from tlon.base.config import AgentConfig, _yaml_load_file
+from tlon.base.config import _yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 
@@ -29,10 +28,6 @@ def _use_tmp_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TlonPaths:
     monkeypatch.setattr("tlon.agents.prototypes.paths", test_paths)
     monkeypatch.setattr("tlon.agents.spec.paths", test_paths)
     return test_paths
-
-
-def _fake_agent(agent_id: str) -> SimpleNamespace:
-    return SimpleNamespace(config=AgentConfig(id=agent_id, name="TestAgent"))
 
 
 class TestPackageResources:
@@ -224,7 +219,7 @@ class TestEndToEndSpecInheritance:
         seed_prototypes()
         instantiate("deep-thinker", agent_id="dt-012", agent_name="深思")
 
-        spec = AgentSpec.load(_fake_agent("dt-012"))
+        spec = AgentSpec.load("dt-012")
 
         assert [dumps(form) for form in spec.loop.stages] == [
             "(think)",
@@ -240,7 +235,7 @@ class TestEndToEndSpecInheritance:
         seed_prototypes()
         instantiate("fast-responder", agent_id="fr-010", agent_name="快手")
 
-        spec = AgentSpec.load(_fake_agent("fr-010"))
+        spec = AgentSpec.load("fr-010")
 
         assert spec.loop.max_iterations == 3
         # Explicit section vector: no (knowledge), short mail history.
@@ -255,7 +250,7 @@ class TestEndToEndSpecInheritance:
         seed_prototypes()
         instantiate("archivist", agent_id="ar-010", agent_name="归档")
 
-        spec = AgentSpec.load(_fake_agent("ar-010"))
+        spec = AgentSpec.load("ar-010")
 
         assert spec.on_complete.save_interaction is True
         assert spec.on_complete.reflect.interval_minutes == 5

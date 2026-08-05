@@ -30,8 +30,24 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
+
+
+class _FakeHost:
+    """Minimal OnCompleteHost fake: only the declared protocol surface.
+
+    Demonstrates the P4 pattern — a subsystem test needs no Agent, just
+    a small object satisfying the narrow host protocol (agents/host.py).
+    """
+
+    def __init__(self, spec: AgentSpec):
+        self.id = "a-001"
+        self.name = "小特"
+        self.spec = spec
+        self._logger = get_logger("test.on_complete")
+        self._send_mail = AsyncMock()
 
 
 def _msg(content: str = "hello") -> Mail:
@@ -235,14 +251,11 @@ class TestExecution:
     async def test_condition_true_spawns(self):
         registry = MagicMock()
         registry.spawn_contractor = AsyncMock()
-        agent = _make_agent(
-            spec=_spec_with_actions(
-                '(when (content-matches? result "完毕") (spawn "archivist" {:name "归档员"}))'
-            ),
-            registry=registry,
-        )
+        host = _FakeHost(_spec_with_actions(
+            '(when (content-matches? result "完毕") (spawn "archivist" {:name "归档员"}))'
+        ))
         with bound_contextvars(session_id="sess-1"):
-            await OnCompleteRunner(agent).run(_make_session(), "本轮处理完毕")
+            await OnCompleteRunner(host, registry).run(_make_session(), "本轮处理完毕")
         registry.spawn_contractor.assert_awaited_once_with(
             prototype="archivist",
             name="归档员",
@@ -253,21 +266,18 @@ class TestExecution:
     async def test_condition_false_no_calls(self):
         registry = MagicMock()
         registry.spawn_contractor = AsyncMock()
-        agent = _make_agent(
-            spec=_spec_with_actions('(when (content-matches? result "不存在") (spawn "a"))'),
-            registry=registry,
+        host = _FakeHost(
+            _spec_with_actions('(when (content-matches? result "不存在") (spawn "a"))')
         )
-        agent._send_mail = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "本轮处理完毕")
+        await OnCompleteRunner(host, registry).run(_make_session(), "本轮处理完毕")
         registry.spawn_contractor.assert_not_awaited()
-        agent._send_mail.assert_not_awaited()
+        host._send_mail.assert_not_awaited()
 
     async def test_emit_sends_mail(self):
-        agent = _make_agent(spec=_spec_with_actions('(emit "本轮处理完毕" ["u-1@tlon.internal"])'))
-        agent._send_mail = AsyncMock()
+        host = _FakeHost(_spec_with_actions('(emit "本轮处理完毕" ["u-1@tlon.internal"])'))
         session = _make_session()
-        await OnCompleteRunner(agent).run(session, "result")
-        agent._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host, None).run(session, "result")
+        host._send_mail.assert_awaited_once_with(
             to=["u-1@tlon.internal"],
             content="本轮处理完毕",
             in_reply_to=session.trigger_message.id,
@@ -277,11 +287,10 @@ class TestExecution:
     async def test_emit_without_recipients_replies_to_sender(self):
         """An emit with an empty recipient vector replies to the trigger
         mail's sender (thread headers inherited)."""
-        agent = _make_agent(spec=_spec_with_actions('(emit "收到" [])'))
-        agent._send_mail = AsyncMock()
+        host = _FakeHost(_spec_with_actions('(emit "收到" [])'))
         session = _make_session()
-        await OnCompleteRunner(agent).run(session, "result")
-        agent._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host, None).run(session, "result")
+        host._send_mail.assert_awaited_once_with(
             to=["u-1@tlon.internal"],
             content="收到",
             in_reply_to=session.trigger_message.id,
@@ -291,30 +300,25 @@ class TestExecution:
     async def test_spawn_without_name_generates_default(self):
         registry = MagicMock()
         registry.spawn_contractor = AsyncMock()
-        agent = _make_agent(spec=_spec_with_actions('(spawn "archivist")'), registry=registry)
-        await OnCompleteRunner(agent).run(_make_session(), "result")
+        host = _FakeHost(_spec_with_actions('(spawn "archivist")'))
+        await OnCompleteRunner(host, registry).run(_make_session(), "result")
         kwargs = registry.spawn_contractor.await_args.kwargs
         assert kwargs["name"].startswith("archivist-")
 
     async def test_no_actions_is_noop(self):
-        agent = _make_agent(spec=_standard_spec())
-        agent._send_mail = AsyncMock()
-        await OnCompleteRunner(agent).run(_make_session(), "result")
-        agent._send_mail.assert_not_awaited()
+        host = _FakeHost(_standard_spec())
+        await OnCompleteRunner(host, None).run(_make_session(), "result")
+        host._send_mail.assert_not_awaited()
 
 
 class TestIsolation:
     async def test_failing_action_does_not_block_others(self):
         registry = MagicMock()
         registry.spawn_contractor = AsyncMock(side_effect=RuntimeError("boom"))
-        agent = _make_agent(
-            spec=_spec_with_actions('(spawn "a")', '(emit "still sent" [])'),
-            registry=registry,
-        )
-        agent._send_mail = AsyncMock()
+        host = _FakeHost(_spec_with_actions('(spawn "a")', '(emit "still sent" [])'))
         session = _make_session()
-        await OnCompleteRunner(agent).run(session, "result")  # no raise
-        agent._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host, registry).run(session, "result")  # no raise
+        host._send_mail.assert_awaited_once_with(
             to=["u-1@tlon.internal"],
             content="still sent",
             in_reply_to=session.trigger_message.id,
@@ -324,17 +328,13 @@ class TestIsolation:
     async def test_eval_failure_only_logged(self):
         # A runtime-only failure (bad regex) in one form does not stop the
         # next form's actions from being collected and executed.
-        agent = _make_agent(
-            spec=_spec_with_actions(
-                '(when (content-matches? result "(") (spawn "a"))',
-                '(emit "still sent" [])',
-            ),
-            registry=MagicMock(),
-        )
-        agent._send_mail = AsyncMock()
+        host = _FakeHost(_spec_with_actions(
+            '(when (content-matches? result "(") (spawn "a"))',
+            '(emit "still sent" [])',
+        ))
         session = _make_session()
-        await OnCompleteRunner(agent).run(session, "result")  # no raise
-        agent._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host, MagicMock()).run(session, "result")  # no raise
+        host._send_mail.assert_awaited_once_with(
             to=["u-1@tlon.internal"],
             content="still sent",
             in_reply_to=session.trigger_message.id,
@@ -342,11 +342,10 @@ class TestIsolation:
         )
 
     async def test_spawn_without_registry_logged_not_raised(self):
-        agent = _make_agent(spec=_spec_with_actions('(spawn "a")', '(emit "ok" [])'))
-        agent._send_mail = AsyncMock()
+        host = _FakeHost(_spec_with_actions('(spawn "a")', '(emit "ok" [])'))
         session = _make_session()
-        await OnCompleteRunner(agent).run(session, "result")  # no raise
-        agent._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host, None).run(session, "result")  # no raise
+        host._send_mail.assert_awaited_once_with(
             to=["u-1@tlon.internal"],
             content="ok",
             in_reply_to=session.trigger_message.id,
@@ -358,15 +357,11 @@ class TestIsolation:
         registry.spawn_contractor = AsyncMock(
             side_effect=SpawnRejectedError("untrusted_prototype", "staged, awaiting approval")
         )
-        agent = _make_agent(
-            spec=_spec_with_actions('(spawn "staged-proto")', '(emit "ok" [])'),
-            registry=registry,
-        )
-        agent._send_mail = AsyncMock()
+        host = _FakeHost(_spec_with_actions('(spawn "staged-proto")', '(emit "ok" [])'))
         session = _make_session()
-        await OnCompleteRunner(agent).run(session, "result")  # no raise
+        await OnCompleteRunner(host, registry).run(session, "result")  # no raise
         registry.spawn_contractor.assert_awaited_once()
-        agent._send_mail.assert_awaited_once_with(
+        host._send_mail.assert_awaited_once_with(
             to=["u-1@tlon.internal"],
             content="ok",
             in_reply_to=session.trigger_message.id,
