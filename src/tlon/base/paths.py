@@ -148,6 +148,13 @@ class TlonPaths:
         """
         return self._home / agent_id / "config" / "behavior.tlon"
 
+    def agent_script_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/config/script.tlon (ScriptSpec file).
+
+        Read-only resolution, same contract as ``agent_behavior_file``.
+        """
+        return self._home / agent_id / "config" / "script.tlon"
+
     # ===== Behavior prototypes =====
 
     def prototypes_dir(self) -> Path:

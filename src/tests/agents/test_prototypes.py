@@ -9,17 +9,22 @@ from tlon.agents.edn import Keyword, dumps, loads
 from tlon.agents.prototypes import (
     PrototypeError,
     PrototypeInfo,
+    get_prototype_info,
     instantiate,
     list_prototypes,
     seed_prototypes,
 )
 from tlon.agents.spec import AgentSpec
 from tlon.base.config import _yaml_load_file
+from tlon.base.events.event import EventType
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 
-BUILTIN_NAMES = {"deep-thinker", "fast-responder", "archivist"}
+BUILTIN_NAMES = {"deep-thinker", "fast-responder", "archivist", "relay"}
+REACT_BUILTINS = {"deep-thinker", "fast-responder", "archivist"}
+SCRIPT_BUILTINS = {"relay"}
 PROTOTYPE_FILES = {"prototype.edn", "behavior.tlon", "IDENTITY.md", "SOUL.md", "RULES.md"}
+SCRIPT_PROTOTYPE_FILES = {"prototype.edn", "script.tlon"}
 
 
 def _use_tmp_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TlonPaths:
@@ -27,6 +32,7 @@ def _use_tmp_paths(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TlonPaths:
     test_paths = TlonPaths(home=tmp_path)
     monkeypatch.setattr("tlon.agents.prototypes.paths", test_paths)
     monkeypatch.setattr("tlon.agents.spec.paths", test_paths)
+    monkeypatch.setattr("tlon.agents.script_spec.paths", test_paths)
     return test_paths
 
 
@@ -39,15 +45,28 @@ class TestPackageResources:
             if entry.is_dir() and not entry.name.startswith(("_", "."))
         }
         assert dirs == BUILTIN_NAMES
-        for name in BUILTIN_NAMES:
+        for name in REACT_BUILTINS:
             files = {entry.name for entry in (package_root / name).iterdir()}
             assert files == PROTOTYPE_FILES
+        for name in SCRIPT_BUILTINS:
+            files = {entry.name for entry in (package_root / name).iterdir()}
+            assert files == SCRIPT_PROTOTYPE_FILES
 
     def test_builtin_behavior_files_parse_and_validate(self):
         package_root = resources.files(prototypes_mod.PROTOTYPE_PACKAGE)
-        for name in BUILTIN_NAMES:
+        for name in REACT_BUILTINS:
             raw = (package_root / name / "behavior.tlon").read_text(encoding="utf-8")
             spec = AgentSpec.from_edn(loads(raw))
+            assert spec.version == 1
+
+    def test_builtin_script_files_parse_and_validate(self):
+        """P5b: the relay prototype's script.tlon is a total ScriptSpec."""
+        from tlon.agents.script_spec import ScriptSpec
+
+        package_root = resources.files(prototypes_mod.PROTOTYPE_PACKAGE)
+        for name in SCRIPT_BUILTINS:
+            raw = (package_root / name / "script.tlon").read_text(encoding="utf-8")
+            spec = ScriptSpec.from_edn(loads(raw))
             assert spec.version == 1
 
     def test_builtin_behavior_specs_totality(self):
@@ -58,7 +77,7 @@ class TestPackageResources:
             name: AgentSpec.from_edn(
                 loads((package_root / name / "behavior.tlon").read_text(encoding="utf-8"))
             )
-            for name in BUILTIN_NAMES
+            for name in REACT_BUILTINS
         }
         assert [dumps(form) for form in specs["deep-thinker"].loop.stages] == [
             "(think)",
@@ -79,15 +98,29 @@ class TestPackageResources:
             assert data[Keyword("display-name")]
             assert data[Keyword("description")]
 
+    def test_relay_metadata_declares_script_runtime(self):
+        """P5b: relay is the first script prototype — trusted, :runtime :script."""
+        package_root = resources.files(prototypes_mod.PROTOTYPE_PACKAGE)
+        raw = (package_root / "relay" / "prototype.edn").read_text(encoding="utf-8")
+        data = loads(raw)
+        assert data[Keyword("trusted")] is True
+        assert str(data[Keyword("runtime")]) == "script"
+
 
 class TestSeedPrototypes:
     def test_seed_copies_builtin_prototypes(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         copied = seed_prototypes()
-        assert copied == len(BUILTIN_NAMES) * len(PROTOTYPE_FILES)
-        for name in BUILTIN_NAMES:
+        expected = len(REACT_BUILTINS) * len(PROTOTYPE_FILES) + len(SCRIPT_BUILTINS) * len(
+            SCRIPT_PROTOTYPE_FILES
+        )
+        assert copied == expected
+        for name in REACT_BUILTINS:
             proto_dir = test_paths.prototypes_dir() / name
             assert {f.name for f in proto_dir.iterdir()} == PROTOTYPE_FILES
+        for name in SCRIPT_BUILTINS:
+            proto_dir = test_paths.prototypes_dir() / name
+            assert {f.name for f in proto_dir.iterdir()} == SCRIPT_PROTOTYPE_FILES
 
     def test_seed_is_idempotent_and_preserves_user_edits(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
@@ -109,6 +142,31 @@ class TestListPrototypes:
         assert set(infos) == BUILTIN_NAMES
         assert infos["deep-thinker"].display_name == "深度思考者"
         assert infos["deep-thinker"].description
+
+    def test_runtime_metadata_per_prototype(self, tmp_path, monkeypatch):
+        """P5b: :runtime defaults to react; relay declares script."""
+        _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+        infos = {info.name: info for info in list_prototypes()}
+        assert infos["relay"].runtime == "script"
+        assert infos["relay"].trusted is True
+        for name in REACT_BUILTINS:
+            assert infos[name].runtime == "react"
+
+    def test_script_only_directory_qualifies(self, tmp_path, monkeypatch):
+        """P5b: a directory qualifies with script.tlon alone (no behavior)."""
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        proto_dir = test_paths.prototypes_dir() / "my-relay"
+        proto_dir.mkdir(parents=True)
+        (proto_dir / "script.tlon").write_text(
+            '{:version 1 :rules [{:name "r" :on :mail-delivered '
+            ':actions [(forward {:to ["a@tlon.internal"]})]}]}\n',
+            encoding="utf-8",
+        )
+
+        infos = {info.name: info for info in list_prototypes()}
+        assert "my-relay" in infos
+        assert get_prototype_info("my-relay") is not None
 
     def test_user_added_prototype_is_visible(self, tmp_path, monkeypatch):
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
@@ -207,6 +265,41 @@ class TestInstantiate:
         assert reloaded is not None
         assert reloaded.proactive is True
 
+    def test_script_prototype_instantiation(self, tmp_path, monkeypatch):
+        """P5b: instantiating a script prototype copies script.tlon verbatim
+        and writes agent.yaml with runtime="script" (no behavior file)."""
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        agent = instantiate("relay", agent_id="rl-001", agent_name="转发")
+
+        config_dir = test_paths.agent_config_dir("rl-001")
+        copied = (config_dir / "script.tlon").read_text(encoding="utf-8")
+        original = (test_paths.prototypes_dir() / "relay" / "script.tlon").read_text(
+            encoding="utf-8"
+        )
+        assert copied == original
+        assert not (config_dir / "behavior.tlon").exists()
+
+        reloaded = _yaml_load_file(test_paths.agent_config_file("rl-001"))
+        assert reloaded is not None
+        assert reloaded.runtime == "script"
+        assert reloaded.prototype == "relay"
+        assert agent.runtime == "script"
+
+    def test_script_runtime_without_script_file_raises(self, tmp_path, monkeypatch):
+        """Metadata declaring :runtime :script without a script.tlon is an error."""
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        proto_dir = test_paths.prototypes_dir() / "broken-script"
+        proto_dir.mkdir(parents=True)
+        (proto_dir / "behavior.tlon").write_text("{:version 1}\n", encoding="utf-8")
+        (proto_dir / "prototype.edn").write_text(
+            "{:name :broken-script :runtime :script}\n", encoding="utf-8"
+        )
+
+        with pytest.raises(PrototypeError, match="no script.tlon"):
+            instantiate("broken-script", agent_id="bs-001", agent_name="坏")
+
 
 class TestEndToEndSpecInheritance:
     """Stage 5 completion criterion: instantiate from a prototype, and the
@@ -254,6 +347,20 @@ class TestEndToEndSpecInheritance:
 
         assert spec.on_complete.save_interaction is True
         assert spec.on_complete.reflect.interval_minutes == 5
+
+    def test_relay_instance_script_spec(self, tmp_path, monkeypatch):
+        """P5b: a relay instance's script.tlon loads through ScriptSpec.load."""
+        from tlon.agents.script_spec import ScriptSpec
+
+        _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+        instantiate("relay", agent_id="rl-010", agent_name="转发")
+
+        spec = ScriptSpec.load("rl-010")
+
+        assert spec.version == 1
+        assert [rule.name for rule in spec.rules] == ["relay"]
+        assert spec.rules[0].on is EventType.MAIL_DELIVERED
 
 
 class TestListPrototypesTool:

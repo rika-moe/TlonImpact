@@ -2,9 +2,16 @@
 
 A prototype is a directory of pure data:
 
-- ``prototype.edn`` — metadata ``{:name :display-name :description :trusted :author}``
-- ``behavior.tlon`` — a complete (total) AgentSpec file
+- ``prototype.edn`` — metadata ``{:name :display-name :description :trusted :author :runtime}``
+- ``behavior.tlon`` — a complete (total) AgentSpec file (react runtime)
+- ``script.tlon`` — a complete (total) ScriptSpec file (script runtime, P5b)
 - ``IDENTITY.md`` / ``SOUL.md`` / ``RULES.md`` — persona templates
+  (react only; a script member has no LLM and no system prompt)
+
+The optional ``:runtime`` metadata keyword (``:react`` default /
+``:script``) declares which file the directory carries; a directory
+qualifies as a prototype when either ``behavior.tlon`` or
+``script.tlon`` exists.
 
 Built-in prototypes ship inside the package (``tlon/prototypes/``) and are
 seeded to ``~/.tlon/prototypes/`` on startup; seeding never overwrites
@@ -19,9 +26,9 @@ spawned after a human approves them in the mirror, which moves them into
 the trusted library.
 
 Instantiation **copies** rather than references: persona files and the
-behavior file are copied verbatim, so an agent's behavior is frozen at
-creation time. There are no overrides — a spec is total, and the
-prototype's file is the whole behavior.
+behavior/script file are copied verbatim, so an agent's behavior is
+frozen at creation time. There are no overrides — a spec is total, and
+the prototype's file is the whole behavior.
 """
 
 import shutil
@@ -41,6 +48,7 @@ logger = get_logger(__name__)
 PROTOTYPE_PACKAGE = "tlon.prototypes"
 METADATA_FILE = "prototype.edn"
 BEHAVIOR_FILE = "behavior.tlon"
+SCRIPT_FILE = "script.tlon"
 PERSONA_FILES = ("IDENTITY.md", "SOUL.md", "RULES.md")
 
 
@@ -54,6 +62,8 @@ class PrototypeInfo:
 
     ``trusted`` defaults to True for user-installed prototypes (handwritten
     implies trusted); only the staging area writes ``:trusted false``.
+    ``runtime`` is ``"react"`` (behavior.tlon) or ``"script"``
+    (script.tlon, P5b) and defaults to ``"react"``.
     """
 
     name: str
@@ -61,6 +71,7 @@ class PrototypeInfo:
     description: str
     trusted: bool = True
     author: str | None = None
+    runtime: str = "react"
 
 
 def seed_prototypes(tlon_paths: TlonPaths | None = None) -> int:
@@ -96,8 +107,9 @@ def seed_prototypes(tlon_paths: TlonPaths | None = None) -> int:
 def list_prototypes(tlon_paths: TlonPaths | None = None) -> list[PrototypeInfo]:
     """List prototypes from ``~/.tlon/prototypes/`` (not the package).
 
-    A directory qualifies when it contains a ``behavior.tlon``; metadata
-    is read from ``prototype.edn`` when present, with a name-only fallback.
+    A directory qualifies when it contains a ``behavior.tlon`` or a
+    ``script.tlon``; metadata is read from ``prototype.edn`` when
+    present, with a name-only fallback.
     """
     return _list_from((tlon_paths or paths).prototypes_dir())
 
@@ -108,10 +120,15 @@ def _list_from(root: Path) -> list[PrototypeInfo]:
         return []
     result = []
     for proto_dir in sorted(root.iterdir()):
-        if not proto_dir.is_dir() or not (proto_dir / BEHAVIOR_FILE).exists():
+        if not proto_dir.is_dir() or not _is_prototype_dir(proto_dir):
             continue
         result.append(_read_metadata(proto_dir))
     return result
+
+
+def _is_prototype_dir(proto_dir: Path) -> bool:
+    """A directory qualifies with either spec file: behavior or script."""
+    return (proto_dir / BEHAVIOR_FILE).exists() or (proto_dir / SCRIPT_FILE).exists()
 
 
 def get_prototype_info(
@@ -119,7 +136,7 @@ def get_prototype_info(
 ) -> PrototypeInfo | None:
     """Metadata of a trusted-library prototype, or None when absent."""
     proto_dir = (tlon_paths or paths).prototypes_dir() / name
-    if not (proto_dir / BEHAVIOR_FILE).exists():
+    if not _is_prototype_dir(proto_dir):
         return None
     return _read_metadata(proto_dir)
 
@@ -133,10 +150,12 @@ def instantiate(
 ) -> AgentConfig:
     """Create an agent from a prototype: copy, no merging.
 
-    Persona files are copied verbatim; the prototype ``behavior.tlon`` (a
-    complete, total spec) is copied verbatim as the instance's own
-    behavior file. ``agent.yaml`` is written through the same save path as
-    the wizard. The new agent takes effect without a restart: the caller
+    Persona files are copied verbatim; the prototype ``behavior.tlon``
+    (react runtime) or ``script.tlon`` (script runtime, per the
+    ``:runtime`` metadata keyword) — a complete, total spec — is copied
+    verbatim as the instance's own spec file. ``agent.yaml`` is written
+    through the same save path as the wizard. The new agent takes effect
+    without a restart: the caller
     (wizard / registry spawn) hot-adopts it — the wizard notifies the
     running server (POST ``/admin/config/agents/{id}/reload`` →
     ``AgentRegistry.adopt_agent``); when no server is running, it takes
@@ -157,12 +176,16 @@ def instantiate(
     """
     p = tlon_paths or paths
     proto_dir = p.prototypes_dir() / prototype_name
-    if not (proto_dir / BEHAVIOR_FILE).exists():
+    if not _is_prototype_dir(proto_dir):
         raise PrototypeError(
             f"prototype '{prototype_name}' not found under {p.prototypes_dir()}"
         )
     if _yaml_exists(agent_id, p.tlon_home()):
         raise PrototypeError(f"agent '{agent_id}' already exists")
+
+    runtime = _read_metadata(proto_dir).runtime
+    if runtime == "script":
+        return _instantiate_script(p, proto_dir, prototype_name, agent_id, agent_name)
 
     # Persona templates and behavior: copy, not reference (frozen at
     # creation time; a spec is total, so there is nothing to merge)
@@ -190,6 +213,51 @@ def instantiate(
     return agent
 
 
+def _instantiate_script(
+    p: TlonPaths,
+    proto_dir: Path,
+    prototype_name: str,
+    agent_id: str,
+    agent_name: str,
+) -> AgentConfig:
+    """Instantiate a script prototype: copy script.tlon, yaml runtime="script".
+
+    Persona files are optional (a script member has no LLM and no system
+    prompt); they are copied verbatim when present, same freeze semantics
+    as the react path.
+    """
+    script_file = proto_dir / SCRIPT_FILE
+    if not script_file.exists():
+        raise PrototypeError(
+            f"script prototype '{prototype_name}' has no {SCRIPT_FILE}"
+        )
+    config_dir = p.agent_config_dir(agent_id)
+    (config_dir / SCRIPT_FILE).write_text(
+        script_file.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    for filename in PERSONA_FILES:
+        source = proto_dir / filename
+        if source.exists():
+            (config_dir / filename).write_text(
+                source.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+    agent = AgentConfig(
+        id=agent_id,
+        name=agent_name,
+        runtime="script",
+        prototype=prototype_name,
+    )
+    _yaml_save(agent, p.tlon_home())
+    logger.info(
+        "prototype_instantiated",
+        prototype=prototype_name,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        runtime="script",
+    )
+    return agent
+
+
 def _read_metadata(proto_dir: Any) -> PrototypeInfo:
     """Read ``prototype.edn`` metadata, falling back to the directory name."""
     name = proto_dir.name
@@ -199,12 +267,21 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
     try:
         data = loads(metadata_file.read_text(encoding="utf-8"))
         author = data.get("author")
+        runtime = str(data.get("runtime") or "react")
+        if runtime not in ("react", "script"):
+            logger.warning(
+                "prototype_metadata_invalid",
+                path=str(metadata_file),
+                error=f"unknown :runtime {runtime!r}, falling back to :react",
+            )
+            runtime = "react"
         return PrototypeInfo(
             name=str(data.get("name") or name),
             display_name=str(data.get("display-name") or data.get("display_name") or name),
             description=str(data.get("description") or ""),
             trusted=bool(data.get("trusted", True)),
             author=str(author) if author else None,
+            runtime=runtime,
         )
     except Exception as e:
         logger.warning("prototype_metadata_invalid", path=str(metadata_file), error=str(e))

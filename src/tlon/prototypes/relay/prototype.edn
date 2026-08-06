@@ -1,0 +1,5 @@
+{:name :relay
+ :display-name "转发者"
+ :description "纯转发者：把收到的邮件原样转发给固定地址，不调用 LLM。script runtime 的第一个 prototype——实例化后编辑实例的 script.tlon，把 :to 里的目标地址改成你的。"
+ :trusted true
+ :runtime :script}

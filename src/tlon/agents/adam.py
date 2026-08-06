@@ -2,11 +2,18 @@
 
 Policy/mechanism split (docs/design/members.md, 阶段 D): the AgentRegistry
 is pure mechanism (assembly, run table, locks, budget, idle-fact
-detection); Adam is the policy. All three lifecycle policy lines live here:
+detection); Adam is the policy. Since P5a the policy is *data*, not code:
+Adam is the first configuration instance of the generic ScriptMember
+runtime (``agents/script_member.py``) — a built-in ScriptSpec
+(``agents/script_spec.py``, the ``ADAM_SPEC`` text below) plus registry
+query closures injected into the script evaluator. All three lifecycle
+policy lines live in the spec:
 
 1. boot — after initialize(), every registered agent with
    ``activation != "lazy"`` that is not running gets an
-   AGENT_START_REQUEST{reason="boot"}.
+   AGENT_START_REQUEST{reason="boot"}. The ``start-all`` action expands
+   the candidate set in Python — the DSL never executes iteration,
+   iteration is a builtin.
 2. wake (socket activation) — MAIL_DELIVERED whose recipient is a
    sleeping agent gets AGENT_START_REQUEST{reason="wake"}. The mail is
    already durably in the agent's inbox, so no trigger event is carried:
@@ -16,158 +23,97 @@ detection); Adam is the policy. All three lifecycle policy lines live here:
 
 Adam is a built-in Member (``member_id="adam"``, ``member_type="script"``):
 it does not come from any user spec file, is not registered in the agent
-registry, and does not appear in MemberDirectory. It holds no run-state of
-its own — it queries the registry's read-only interfaces
-(``get_agent`` / ``get_config`` / ``get_all``) instead of reconstructing
-state from events. Lifecycle decisions carry no dedup state either: the
-registry executes requests idempotently.
+registry, and does not appear in MemberDirectory. It holds no run-state
+of its own — the injected query closures read the registry's read-only
+interfaces (``get_agent`` / ``get_config`` / ``get_all``) instead of
+reconstructing state from events. Lifecycle decisions carry no dedup
+state either: the registry executes requests idempotently.
 
 The dependency is one-directional: Adam holds a registry reference; the
 registry never imports Adam (kernel first, PID 1 second — the DAG stays
 acyclic).
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from tlon.agents.lifecycle import StartRequest, StopRequest
-from tlon.base.component import Component
-from tlon.base.device import Device
-from tlon.base.events.event import Event, EventType
+from tlon.agents.edn import loads
+from tlon.agents.eval import make_script_builtins
+from tlon.agents.script_member import ScriptMember
+from tlon.agents.script_spec import ScriptSpec
 from tlon.base.events.event_bus import EventBus
-from tlon.base.logger import get_logger
-from tlon.organization.messaging.member import Member
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
 
-logger = get_logger(__name__)
+#: Adam's policy, as data. Parsed once per assembly by
+#: :func:`make_adam`; behavior is exactly the pre-P5a hand-written Adam's.
+ADAM_SPEC_EDN = """\
+{:version 1
+ :rules [{:name "boot"
+          :on :boot
+          :actions [(start-all {:reason "boot"})]}
+         {:name "wake"
+          :on :mail-delivered
+          :when (sleeping? (get event :recipient))
+          :actions [(start {:agent (get event :recipient) :reason "wake"})]}
+         {:name "drain"
+          :on :agent-idle
+          :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}]}
+"""
 
 
-class Adam(Member):
-    """Built-in lifecycle policy member: boot, wake-on-mail, idle drain.
+class _AdamRegistryQueries:
+    """Adam's host queries: the registry's read-only interfaces as closures.
 
-    All work happens in the EventBus dispatch context (v1: no worker task;
-    the bus already isolates handler exceptions). Adam's decisions are
-    request events on the bus; execution — including all run-state
-    re-validation — is the registry's job.
+    sleeping = registered (config known) but not running — the exact
+    wake-gate semantics of the pre-P5a hand-written Adam. Non-string
+    input (a missing payload key yields None) safely reads as False.
     """
 
-    def __init__(self, event_bus: EventBus, agent_registry: "AgentRegistry"):
-        """Initialize Adam.
+    def __init__(self, registry: "AgentRegistry"):
+        self._registry = registry
 
-        Args:
-            event_bus: Event bus for subscriptions and request publishing
-            agent_registry: The registry to query (read-only interfaces)
-                and to address with start/stop requests
-        """
-        Component.__init__(self, name="Adam")
-        Device.__init__(self, event_bus=event_bus, name="Adam")
-        self._registry = agent_registry
+    def is_sleeping(self, agent_id: Any) -> bool:
+        """Registered (config known) but not running."""
+        if not isinstance(agent_id, str) or not agent_id:
+            return False
+        return (
+            self._registry.get_agent(agent_id) is None
+            and self._registry.get_config(agent_id) is not None
+        )
 
-    @property
-    def member_id(self) -> str:
-        """Member identity on the bus ("adam")."""
-        return "adam"
+    def is_running(self, agent_id: Any) -> bool:
+        """Currently in the run table."""
+        return isinstance(agent_id, str) and self._registry.get_agent(agent_id) is not None
 
-    @property
-    def member_type(self) -> str:
-        """Member type; Adam is a built-in script member."""
-        return "script"
+    def is_lazy(self, agent_id: Any) -> bool:
+        """Registered with ``activation == "lazy"``."""
+        if not isinstance(agent_id, str):
+            return False
+        config = self._registry.get_config(agent_id)
+        return config is not None and config.activation == "lazy"
 
-    def get_state(self) -> str:
-        """Get member state: "active" once initialized, else "offline"."""
-        return "active" if self._initialized else "offline"
-
-    async def initialize(self) -> None:
-        """Subscribe to the bus, then issue boot start requests.
-
-        Boot is asynchronous by design: requests are published and
-        initialize() returns without waiting for the agents to come up —
-        the registry executes them in background tasks.
-        """
-        self.subscribe(EventType.MAIL_DELIVERED, self._on_mail_delivered)
-        self.subscribe(EventType.AGENT_IDLE, self._on_agent_idle)
-        self._initialized = True
-
-        boot_ids: list[str] = []
+    def start_all_candidates(self) -> list[str]:
+        """The boot set: registered, non-lazy, not already running."""
+        candidates: list[str] = []
         for agent_id in self._registry.get_all():
             config = self._registry.get_config(agent_id)
             if config is None or config.activation == "lazy":
                 continue
             if self._registry.get_agent(agent_id) is not None:
                 continue
-            boot_ids.append(agent_id)
-            await self._publish_start_request(agent_id, "boot")
+            candidates.append(agent_id)
+        return candidates
 
-        logger.info("adam_initialized", boot_requested=boot_ids)
 
-    async def shutdown(self) -> None:
-        """Shutdown Adam and release bus subscriptions."""
-        self.unsubscribe_all()
-        self._initialized = False
-        logger.info("adam_shutdown")
+def make_adam(event_bus: EventBus, agent_registry: "AgentRegistry") -> ScriptMember:
+    """Assemble Adam: the built-in spec plus registry query closures.
 
-    async def _on_mail_delivered(self, event: Event) -> None:
-        """Request a wake when mail lands in a sleeping agent's inbox.
-
-        Runs in the dispatch context and stays cheap: registry queries
-        plus one publish per sleeping recipient. The mail itself needs no
-        forwarding — the inbox is the durable queue.
-        """
-        payload = event.payload
-        if not isinstance(payload, dict):
-            return
-        agent_id = payload.get("recipient")
-        if not agent_id:
-            return
-        if self._registry.get_agent(agent_id) is not None:
-            return
-        if self._registry.get_config(agent_id) is None:
-            return
-        await self._publish_start_request(agent_id, "wake", source_event=event)
-
-    async def _on_agent_idle(self, event: Event) -> None:
-        """Turn the registry's idle fact into a drain decision."""
-        if not isinstance(event.payload, dict):
-            return
-        agent_id = event.payload.get("agent_id")
-        if not agent_id:
-            return
-        logger.info("adam_drain_requested", agent_id=agent_id, reason="drain")
-        await self.publish(
-            Event(
-                type=EventType.AGENT_STOP_REQUEST,
-                payload=StopRequest(agent_id=agent_id, reason="drain"),
-                source=self.member_id,
-            )
-        )
-
-    async def _publish_start_request(
-        self, agent_id: str, reason: str, source_event: Event | None = None
-    ) -> None:
-        """Publish one AGENT_START_REQUEST decision.
-
-        For wake requests the event carries the delivering event's trace
-        carrier so the wake joins the mail's trace tree; the registry
-        takes the carrier from the request event for its own spans.
-
-        Args:
-            agent_id: Agent to start
-            reason: "boot" or "wake"
-            source_event: Originating MAIL_DELIVERED event (wake only)
-        """
-        logger.info(
-            "adam_wake_requested" if reason == "wake" else "adam_boot_requested",
-            agent_id=agent_id,
-            reason=reason,
-        )
-        await self.publish(
-            Event(
-                type=EventType.AGENT_START_REQUEST,
-                payload=StartRequest(agent_id=agent_id, reason=reason),
-                source=self.member_id,
-                trace_id=source_event.trace_id if source_event else None,
-                span_id=source_event.span_id if source_event else None,
-                parent_span_id=source_event.parent_span_id if source_event else None,
-            )
-        )
+    Args:
+        event_bus: Event bus for subscriptions and request publishing
+        agent_registry: The registry to query (read-only interfaces) and
+            to address with start/stop requests
+    """
+    builtins = make_script_builtins(_AdamRegistryQueries(agent_registry))
+    spec = ScriptSpec.from_edn(loads(ADAM_SPEC_EDN), builtins=builtins)
+    return ScriptMember(member_id="adam", event_bus=event_bus, spec=spec, builtins=builtins)

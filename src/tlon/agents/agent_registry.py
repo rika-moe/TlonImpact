@@ -31,11 +31,14 @@ import asyncio
 import time
 import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from tlon.agents.agent import Agent
+from tlon.agents.eval import make_script_builtins
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.prototypes import get_prototype_info, instantiate
+from tlon.agents.script_member import ScriptMember
+from tlon.agents.script_spec import ScriptSpec
 from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
@@ -109,6 +112,51 @@ def _build_llm_config(file_config: LLMConfig | None, settings) -> LLMConfig:
         max_retries=settings.llm_max_retries,
         base_delay=settings.llm_base_delay,
     )
+
+
+class _ScriptRegistryQueries:
+    """Host queries for registry-spawned script members (P5b).
+
+    Same read-only registry interfaces Adam's queries wrap
+    (``agents/adam.py``) — duplicated here rather than shared because the
+    registry never imports Adam (kernel first, PID 1 second; the DAG
+    stays acyclic). Non-string input safely reads as False.
+    """
+
+    def __init__(self, registry: "AgentRegistry"):
+        self._registry = registry
+
+    def is_sleeping(self, agent_id: Any) -> bool:
+        """Registered (config known) but not running."""
+        if not isinstance(agent_id, str) or not agent_id:
+            return False
+        return (
+            self._registry.get_agent(agent_id) is None
+            and self._registry.get_config(agent_id) is not None
+        )
+
+    def is_running(self, agent_id: Any) -> bool:
+        """Currently in the run table."""
+        return isinstance(agent_id, str) and self._registry.get_agent(agent_id) is not None
+
+    def is_lazy(self, agent_id: Any) -> bool:
+        """Registered with ``activation == "lazy"``."""
+        if not isinstance(agent_id, str):
+            return False
+        config = self._registry.get_config(agent_id)
+        return config is not None and config.activation == "lazy"
+
+    def start_all_candidates(self) -> list[str]:
+        """The boot set: registered, non-lazy, not already running."""
+        candidates: list[str] = []
+        for agent_id in self._registry.get_all():
+            config = self._registry.get_config(agent_id)
+            if config is None or config.activation == "lazy":
+                continue
+            if self._registry.get_agent(agent_id) is not None:
+                continue
+            candidates.append(agent_id)
+        return candidates
 
 
 class AgentRegistry(Component):
@@ -192,8 +240,10 @@ class AgentRegistry(Component):
         # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
 
-        # Running agents (activations)
-        self._agents: dict[str, Agent] = {}
+        # Running agents (activations): react Agents and script members
+        # share the run table — both expose shutdown / get_state /
+        # active_session_count / idle_seconds
+        self._agents: dict[str, Agent | ScriptMember] = {}
 
         # Request execution state: agents currently being started, and one
         # lock per agent serializing start/drain of the same persona
@@ -301,17 +351,19 @@ class AgentRegistry(Component):
 
         logger.info("agent_registry_shutdown_completed")
 
-    async def _start_agent(self, agent_id: str) -> Agent | None:
+    async def _start_agent(self, agent_id: str) -> Agent | ScriptMember | None:
         """Assemble all dependencies and start an agent.
 
         This is the sole assembler for Agent and its infrastructure.
         All deps are constructed here and injected via Agent's constructor.
+        ``runtime="script"`` configs divert to the script-member assembly
+        (``_start_script_member``); everything else takes the react path.
 
         Args:
             agent_id: ID of the agent to start
 
         Returns:
-            The started Agent instance, or None if not found
+            The started Agent/ScriptMember instance, or None if not found
         """
         if agent_id in self._agents:
             # Already active
@@ -321,6 +373,9 @@ class AgentRegistry(Component):
         if not config:
             logger.error("unknown_agent", agent_id=agent_id)
             return None
+
+        if config.runtime == "script":
+            return await self._start_script_member(config)
 
         try:
             logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
@@ -457,6 +512,52 @@ class AgentRegistry(Component):
             logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
             return None
 
+    async def _start_script_member(self, config: AgentConfig) -> ScriptMember | None:
+        """Assemble and start a script-runtime member (P5b: policy as data).
+
+        The spec file (``~/.tlon/{id}/config/script.tlon``) is total —
+        missing or invalid refuses the start through the same
+        ``agent_start_failed`` path as the react assembly. No LLM client,
+        memory, task manager, Docker runtime, or tools are built: a
+        script member is deterministic bus I/O only.
+        """
+        agent_id = config.id
+        try:
+            logger.info(
+                "agent_starting", agent_id=agent_id, agent_name=config.name, runtime="script"
+            )
+            spec = ScriptSpec.load(agent_id)
+            builtins = make_script_builtins(_ScriptRegistryQueries(self))
+            mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
+            member = ScriptMember(
+                member_id=config.id,
+                event_bus=self.event_bus,
+                spec=spec,
+                builtins=builtins,
+                mailbox=mailbox,
+            )
+            await member.initialize()
+            self._agents[agent_id] = member
+
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.AGENT_STARTED,
+                    payload={
+                        "agent_id": agent_id,
+                        "name": config.name,
+                        "runtime": "script",
+                    },
+                    source="agent_registry",
+                )
+            )
+            logger.info(
+                "agent_started", agent_id=agent_id, agent_name=config.name, runtime="script"
+            )
+            return member
+        except Exception as e:
+            logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
+            return None
+
     # ==================== Lifecycle request execution ====================
 
     async def _on_start_request(self, event: Event) -> None:
@@ -506,7 +607,7 @@ class AgentRegistry(Component):
         finally:
             self._waking.discard(agent_id)
 
-    async def _start_agent_guarded(self, agent_id: str) -> Agent | None:
+    async def _start_agent_guarded(self, agent_id: str) -> Agent | ScriptMember | None:
         """``_start_agent`` with a timeout: a hung assembly must not wedge
         the per-agent wake lock forever. Returns None on timeout (same
         contract as ``_start_agent`` failure)."""
@@ -1036,22 +1137,22 @@ class AgentRegistry(Component):
                 )
             )
 
-    def get_agent(self, agent_id: str) -> Agent | None:
+    def get_agent(self, agent_id: str) -> Agent | ScriptMember | None:
         """Get an active agent by ID.
 
         Args:
             agent_id: Agent ID
 
         Returns:
-            The Agent instance if active, None otherwise
+            The Agent/ScriptMember instance if active, None otherwise
         """
         return self._agents.get(agent_id)
 
-    def get_all_agents(self) -> list[Agent]:
+    def get_all_agents(self) -> list[Agent | ScriptMember]:
         """Get all currently active agents.
 
         Returns:
-            List of active Agent instances
+            List of active Agent/ScriptMember instances
         """
         return list(self._agents.values())
 

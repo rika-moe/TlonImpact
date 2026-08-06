@@ -1,6 +1,6 @@
 # DSL 书写 Agent
 
-> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）· 阶段 4b 已完成（2026-07-23）· 阶段 7a 已完成（2026-07-31）· 阶段 7b 已完成（2026-07-31）· 阶段 7c 已完成（2026-07-31）· total spec 迁移已完成（2026-07-31）—— 1–6 收官，7a 起循环进入解释执行，7b 起上下文构建进入表达式化，7c 起 stage 家族扩展为 think/act/plan/critique/revise 并支持 stage 条件；total 迁移后所有 agent 由完整 behavior 文件描述，无 DefaultSpec、无 partial merge
+> 状态：设计定稿（2026-07-22 讨论收敛）· 阶段 1 已完成（2026-07-22）· 阶段 2 已完成（2026-07-22）· 阶段 5 已完成（2026-07-22）· 阶段 6a 已完成（2026-07-22）· 阶段 6b 已完成（2026-07-23）· 阶段 3a 已完成（2026-07-23）· 阶段 4b 已完成（2026-07-23）· 阶段 7a 已完成（2026-07-31）· 阶段 7b 已完成（2026-07-31）· 阶段 7c 已完成（2026-07-31）· total spec 迁移已完成（2026-07-31）· P5a ScriptMember 骨架已完成（2026-08-05）· P5b relay + spawn 路径 runtime 感知已完成（2026-08-05）—— 1–6 收官，7a 起循环进入解释执行，7b 起上下文构建进入表达式化，7c 起 stage 家族扩展为 think/act/plan/critique/revise 并支持 stage 条件；total 迁移后所有 agent 由完整 behavior 文件描述，无 DefaultSpec、无 partial merge；P5a 起 script 成员策略即数据（亚当为第一个配置实例），P5b 起 script 成员可经 prototype/spawn 创建（relay 落地，`:llm false` 逃生门以 script member 形态兑现）
 >
 > 关联：本设计是审计报告 P1 （拆分 agent.py）的目标架构；路线图阶段 1 即 。
 
@@ -153,7 +153,7 @@ prototypes/
 │   ├── behavior.tlon
 │   ├── IDENTITY.md / SOUL.md / RULES.md
 ├── fast-responder/        # 快速反应者（迭代少、context 精简）
-├── relay/                 # 消息转发者（极简 context，只路由）
+├── relay/                 # 消息转发者（script runtime：script.tlon + :runtime :script，无 LLM，P5b 落地）
 └── archivist/             # 档案管理者（reflect 频繁、记忆工具全开）
 ```
 
@@ -163,7 +163,7 @@ prototypes/
 - **拷贝而非引用**：实例化时把 prototype 内容复制为实例自有文件，行为冻结在创建时刻——Tlon 升级改了 prototype，不影响存量 agent；
 - **存放**：包内预制，首次运行拷贝到 `~/.tlon/prototypes/`（与 `default_team.py` 种子机制同构），用户可改可加；
 - **发现**：人类走 `tlon mirror` 创建菜单；agent 走 `list_prototypes` 工具；
-- **已知缺口**：纯转发者不需要 LLM，stage 白名单之外可能需要 `:llm false` 逃生门——推迟到实现 relay prototype 时再加；
+- **已知缺口（已关闭，P5b）**：纯转发者不需要 LLM——原登记的"`:llm false` 逃生门"未以 behavior schema 扩展落地，而是以 **script member** 形态兑现：relay 是 `:runtime :script` 的 prototype（目录含 `script.tlon` 而非 `behavior.tlon`，无人格三件套），实例化为 `AgentConfig.runtime="script"` 的成员，registry 装配 ScriptMember 而非 ReAct Agent（见阶段 P5b）；
 - **显式程序狗粮**（阶段 7c）：deep-thinker 的 `:loop` 从"只调 `:max-iterations` 旋钮"改为显式 stage 程序 `[(think) (act) (critique) (revise {:if (critique-failed?)})]`——每轮 think/act 后评审最新输出，FAIL 时把反馈喂回上下文让下一轮修正；fast-responder / archivist 保持不动（默认程序即 react），验证新旧形态在同一引擎上共存。
 
 ## 动态 Agent Registry（6a 休眠/唤醒、6b spawn/stop 已实现）
@@ -307,7 +307,7 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 - `agents/prototypes.py`：`seed_prototypes()`（幂等，不覆盖用户修改）、`list_prototypes()`（读 `~/.tlon/prototypes/`，用户增改可见）、`instantiate()`（人格文件拷贝 + behavior 在 EDN 数据层深合并 overrides 后落盘 + 走标准 `_yaml_save` 写 agent.yaml；`AgentConfig.prototype` 记录来源）；
 - ServerApp 初始化早段种子；wizard `agent_menu` 加"从 Prototype 创建"入口；`listPrototypes` 工具注册进每个 agent（工具总数 17 → 18）；
 - ~~实例化不做 registry 热加载，重启 dream 后生效~~ **已升级（P3 热生效）**：wizard/mirror 创建或实例化后 best-effort 通知运行中的服务端（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`：reload 配置 → register → 非 lazy 立即启动），新 agent 无需重启即可用；服务端未运行时静默跳过，重启后生效作为兜底；
-- **relay 推迟**：纯转发者不需要 LLM，需要 v1 schema 之外的 `:llm false` 逃生门（见上文"已知缺口"），本次只交付 3 个 prototype，relay 随逃生门一并落地。
+- **relay 推迟（已落地，P5b）**：纯转发者不需要 LLM，当时推迟等待 `:llm false` 逃生门（见上文"已知缺口"）；逃生门最终以 script member 形态兑现，relay 于阶段 P5b 作为第一个 script prototype 落地。
 
 ### 阶段 6 — 动态 Agent Registry
 
@@ -387,6 +387,35 @@ agent 获得 `writePrototype` 工具：写纯数据规约（v1 schema behavior.t
 **达成情况**：691 个测试全绿（658 既有适配 + 33 新增：spec 10、eval 9、loop driver 13、prototype 1），ruff / 架构检查 / re-export 检查全过。落地偏差：无删除既有测试；两处既有 spec 测试按新语义更新断言（`test_unknown_stage_rejected` 的未知 stage 从 `(plan)` 改为 `(dance)`——plan 已转正；`test_stage_opts_rejected_in_v1` 更名 `test_stage_unknown_opts_key_rejected`，断言从"no opts"改为"unknown opts key"）。
 
 阶段 1–2 是纯架构收益，即使"LLM 写 DSL"最终不好用也不亏；阶段 3–4 是愿景本体；阶段 5–6 让系统从"固定班底"走向"自组织的剧团"。
+
+### 阶段 P5a — ScriptMember 骨架 ✅ 已完成（2026-08-05）
+
+Member 的 script 类型从"手写的独一份"（亚当）泛化为**通用运行时 + 策略数据**：
+
+- **ScriptSpec**（`agents/script_spec.py`，纯数据 + EDN 前端，total 校验）：`{:version 1 :rules [...]}`——每条规则 `{:name :on :when? :actions}`，`:on` 是事件类型 keyword 或 `:boot`（initialize 后执行一次）；
+- **ScriptMember**（`agents/script_member.py`）：按规则订阅事件 → `:when` 纯谓词求值（env = `event`/`self`）→ 动作求值收集 ActionRequest → 引擎执行（发布 AGENT_START_REQUEST/AGENT_STOP_REQUEST），trace carrier 从触发事件透传；求值异常隔离到单条规则；
+- **与 on-complete 同构**：动作延续 4b 的"求值纯、动作变数据、引擎执行"；查 registry 的宿主谓词（`sleeping?` 等）以闭包注入（参照 `make_actions_builtins` 工厂模式）；迭代由动作内置函数封装（`(start-all ...)` 内部遍历注册表——DSL 永不执行迭代的铁律不变）；
+- **亚当翻译**：`Adam` 类删除，`make_adam()` 工厂返回挂内置 `ADAM_SPEC_EDN` 的 ScriptMember——boot/wake/drain 三条策略线从 190 行 Python 变成三条数据规则，行为不变（既有亚当测试全绿）。
+
+**达成情况**：793 个测试全绿（723 既有 + 70 新增：script_spec、script builtins、script_member、亚当等价性），ruff / 架构检查 / re-export 检查全过。**后续（P5b，已完成）**：spawn 路径延伸 runtime 感知（react/script）、relay prototype（纯转发者，`:llm false` 的落地形态即 script member）——见下节。
+
+### 阶段 P5b — relay prototype + spawn 路径 runtime 感知 ✅ 已完成（2026-08-05）
+
+script 类型成员从"只有内置亚当"走向"可经 prototype/spawn 创建"，relay（纯转发者，不调 LLM）成为第一个 script prototype：
+
+- **`AgentConfig.runtime`**（`base/config.py`）：`Literal["react", "script"]`，缺省 `react`——存量 agent.yaml 零迁移；
+- **prototype 声明 runtime**：`prototype.edn` 新增可选 `:runtime` keyword（`:react` 缺省 / `:script`），`PrototypeInfo.runtime` 承载；script prototype 目录放 `script.tlon`（ScriptSpec）而非 `behavior.tlon`，人格三件套可缺（script 无 LLM、无 system prompt）；目录合格判定扩展为两种形态任一（behavior.tlon 或 script.tlon）；`instantiate()` 按 runtime 分流——script 路径拷贝 script.tlon + 写 `runtime="script"` 的 agent.yaml，react 路径不变；
+- **relay prototype**（包内 `tlon/prototypes/relay/`，`:trusted true :runtime :script`）：一条规则——`:on :mail-delivered` → `(forward {:to ["gu-yanxi@tlon.internal"]})`。目标地址是字面量（v1 不做参数化模板，用户拷贝实例后改地址即可）；
+- **forward 动作**（`agents/eval.py` 新增动作内置函数，与 start/stop 同类）：求值只产出 `ActionRequest(kind="forward")`，ScriptMember 原生执行——取触发事件 payload 里的 mail，创建新 Mail（from=自身地址、to/cc/subject 来自动作参数、content 原文、`forward_of=原邮件 id`），发布 MAIL_NEW，trace carrier 透传同 start/stop；
+- **ScriptMember 邮件语义**（与 Agent 侧对齐）：自发邮件（`mail.from_address == 自身 address`）忽略；registry 装配的实例注入 mailbox（亚当内置实例为 None），initialize 时补扫 `mailbox.unread()`（沉睡期间到达的邮件，agent 侧对应物是 boot unread scan），处理完一封（实时或补扫）后 `mark_read`，失败仅记日志；
+- **idle 语义**：`active_session_count` 恒 0；`idle_seconds` 从最近一次规则动作执行起算（无动作时从 initialize 起算）——registry 的 idle drain 对 script contractor 自然生效；
+- **registry runtime 感知**：`_start_agent` 按 `config.runtime` 分流——script 路径 `ScriptSpec.load(agent_id)`（total 语义：缺失/无效拒绝启动，走既有 `agent_start_failed` 路径）→ 构造 ScriptMember（注入宿主谓词闭包 + mailbox）→ initialize → 入运行表；adopt / spawn / wake / drain / stop / 状态查询对 script 实例一视同仁（运行表、预算、角色、完工即弃全部复用）。
+
+**落地约束**：`ScriptSpec.load` 以无宿主注册表校验——script 实例的 spec 可用纯访问器与动作形式，不可用宿主谓词（`sleeping?` 等是亚当的词汇表）。
+
+**范围外（明确不做）**：writePrototype 写 script spec（staging 校验暂只支持 react behavior）；wizard/mirror 的 script prototype 审批界面差异；script spec 的参数化模板（relay 目标地址字面量化）。
+
+**达成情况**：844 个测试全绿（793 既有 + 51 新增：test_agent_config 3、test_prototypes 7、test_eval forward 12、test_script_member 15、test_script_spec load 4、test_script_runtime 10），ruff / 架构检查 / re-export 检查全过。既有 prototype 测试按 relay 入库适配（react/script 两类内置目录分列断言），无删除既有测试。
 
 ## 未来方向（登记，非规约）
 

@@ -1,0 +1,4 @@
+{:version 1
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["gu-yanxi@tlon.internal"]})]}]}

@@ -50,14 +50,16 @@ ReactAgent 是思考着的进程，AdapterAgent 是用户的 shell 进程。
 ```
 Member（ABC，继承 Component + Device）
 ├── member_id: str            # "xie-yunshu" / "human:alice"
-├── member_type: str          # "react" | "adapter"（"script" 预留）
+├── member_type: str          # "react" | "adapter" | "script"
 ├── triggers_proactive: bool  # 见下文「无标识与防循环」
 ├── initialize() / shutdown() # 继承自 Component
 └── get_state() -> str
 
 ReactAgent   —— 现有 Agent，声明符合 Member（纯重构）
 AdapterAgent —— 人类用户身份的在场化身，session 是其 attachment
-ScriptAgent  —— 确定性 daemon（唤醒者、relay），本阶段不实现，仅预留 member_type
+ScriptAgent  —— 确定性 daemon（唤醒者、relay）；P5a 落地为通用 ScriptMember
+               运行时（亚当为内置实例），P5b 起可经 prototype/spawn 创建
+               （relay 为第一个 script prototype）
 ```
 
 统一发生在 **Member 层而非 Agent 层**：AdapterAgent 不经过 LLM / 记忆 / Docker
@@ -254,6 +256,27 @@ trace 里可直接看到"谁决定唤醒谁"。
 **监管（v1）**：亚当无 worker task，全部工作发生在 EventBus dispatch 上下文
 （bus 已隔离 handler 异常）；亚当 initialize 失败 = 内核 panic 等价物，
 server 启动失败。运行时重启监管留待需要时再加。
+
+> **P5a 更新（2026-08，策略即数据）**：亚当已重写为通用 `ScriptMember`
+> （`agents/script_member.py`）的第一个配置实例——三条策略线从 Python
+> 代码变成内置 `ADAM_SPEC_EDN`（`agents/adam.py`）的三条数据规则，
+> 经 `ScriptSpec`（`agents/script_spec.py`）解析、通用运行时解释执行：
+> `:boot` 规则 `(start-all ...)`、`:mail-delivered` 规则
+> `(when (sleeping? (get event :recipient)) (start ...))`、`:agent-idle`
+> 规则 `(stop ...)`。查 registry 只读接口改为宿主谓词闭包注入
+> （`sleeping?` 等），动作延续"求值纯、动作变数据、引擎执行"（与
+> on-complete 4b 同构），trace carrier 透传不变。上文第 237-242 行的
+> wake 描述（MESSAGE_ROUTED + trigger_event + 重投递）更早已被邮件模型
+> 取代（wake 订阅 MAIL_DELIVERED，收件箱即持久队列），以代码为准。
+>
+> **P5b 更新（2026-08，script 成员可 spawn）**：relay 是第二个 script
+> 成员形态（亚当之后）——`AgentConfig.runtime="script"` 的 agent 经
+> prototype 实例化（relay prototype 只含 `script.tlon`，无人格三件套）、
+> registry 的 `_start_agent` 按 runtime 分流装配 ScriptMember（注入宿主
+> 谓词闭包与 mailbox），运行表/预算/唤醒/idle drain/完工即弃全部复用。
+> 邮件语义与 Agent 侧对齐：自发邮件忽略、initialize 补扫未读、处理后
+> `mark_read`；`active_session_count` 恒 0，`idle_seconds` 从最近一次
+> 规则动作起算。详见 dsl-agents.md 阶段 P5b。
 
 **不在本次范围**：离线收件箱、私聊/分房间（随房间功能重构再议）；
 receptionist（"正在唤醒 X…"系统消息，届时只是再订阅一个事件）；

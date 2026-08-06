@@ -8,6 +8,9 @@ non-Turing-complete semantics (design decisions 2/3 in
   ``and`` / ``or`` — no ``def``, no ``lambda``, no ``loop``/``recur``,
   no recursion (there is no way to name a function), no ``match`` (3b+);
 - every other form head must name a registered :class:`Builtin`;
+- maps are data: keys stay literal (keywords in practice), values are
+  evaluated — so action option maps may embed expressions, e.g.
+  ``{:agent (get event :recipient)}``;
 - evaluation is metered: each evaluation step consumes one unit of
   *fuel* (:class:`FuelExhaustedError` when it runs out) and form nesting
   is capped (:class:`EvalDepthError`), so evaluation always terminates;
@@ -30,6 +33,18 @@ Static validation distinguishes two purity positions
 (:func:`validate_action_form`): a ``when`` condition must be pure, an
 action position must be an action form with pure arguments.
 
+Script member policy rules (phase P5a) follow the same rule:
+:data:`SCRIPT_BUILTINS` registers pure accessors/predicates only
+(``get`` / ``contains?`` / ``=`` / ``not``); the lifecycle action
+builtins ``start`` / ``stop`` / ``start-all`` / ``forward`` (returned by
+:func:`make_script_builtins`, marked ``pure=False``) perform no side
+effects — they validate arguments and *return* :class:`ActionRequest`
+data for the engine (ScriptMember) to execute. Host predicates that read
+registry state (``sleeping?`` / ``running?`` / ``lazy?``) are never
+registered module-level; the caller closure-injects them via
+:func:`make_script_builtins` (same factory pattern as
+:func:`make_actions_builtins`).
+
 Environment values are opaque to expressions: there is no attribute or
 method access syntax, so a ``Mail`` in ``env`` can only be inspected
 through builtins. ``env`` also provides ``self`` (``{"id": ..., "name":
@@ -39,7 +54,7 @@ through builtins. ``env`` also provides ``self`` (``{"id": ..., "name":
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from tlon.agents.edn import Form, Symbol, dumps
 from tlon.organization.mail.mail import Mail, address_for_member
@@ -134,7 +149,10 @@ class _Evaluator:
             return env[name]
         if isinstance(value, list):
             return [self.eval(item, env, depth + 1) for item in value]
-        # nil / bool / number / string / Keyword / map: self-evaluating
+        if isinstance(value, dict):
+            # map keys stay literal (keywords in practice); values evaluate
+            return {key: self.eval(item, env, depth + 1) for key, item in value.items()}
+        # nil / bool / number / string / Keyword: self-evaluating
         return value
 
     def _eval_form(self, form: Form, env: dict[str, Any], depth: int) -> Any:
@@ -240,6 +258,10 @@ def _validate(value: Any, builtins: dict[str, Builtin], scope: set[str]) -> None
         return
     if isinstance(value, list):
         for item in value:
+            _validate(item, builtins, scope)
+    if isinstance(value, dict):
+        # map keys stay literal; values must be valid expressions
+        for item in value.values():
             _validate(item, builtins, scope)
 
 
@@ -442,11 +464,13 @@ class ActionRequest:
     """A side-effecting action recorded during pure evaluation.
 
     Evaluation of an action builtin performs no side effect; it validates
-    its arguments and appends one of these to a collector. The engine
-    (Agent) executes the collected requests after evaluation completes.
+    its arguments and either appends one of these to a collector
+    (on-complete, phase 4b) or returns it as the action form's value
+    (script rules, phase P5a). The engine (Agent / ScriptMember) executes
+    the collected requests after evaluation completes.
     """
 
-    kind: str  # "spawn" | "emit"
+    kind: str  # "spawn" | "emit" | "start" | "stop"
     data: dict[str, Any]
 
 
@@ -555,3 +579,186 @@ def _validate_action_expr(form: Any, scope: set[str]) -> None:
         )
     for arg in form[1:]:
         validate_form(arg, TRIGGER_BUILTINS, set(scope))
+
+
+# ── Script member builtins (phase P5a) ──
+
+
+def _builtin_get(env: dict[str, Any], target: Any, key: Any, default: Any = None) -> Any:
+    """Read ``key`` from a dict payload; missing keys yield ``default``.
+
+    Non-dict targets also yield the default: script rules run on
+    arbitrary bus events and must never raise on malformed payloads.
+    """
+    if not isinstance(target, dict):
+        return default
+    return target.get(key, default)
+
+
+#: Script member pure accessors/predicates (phase P5a). Pure only;
+#: evaluation is side-effect free by construction. The environment
+#: provides ``event`` (the triggering event's payload) and ``self``.
+SCRIPT_BUILTINS: dict[str, Builtin] = {
+    "get": Builtin(_builtin_get, pure=True),
+    "contains?": Builtin(_builtin_contains, pure=True),
+    "=": Builtin(_builtin_eq, pure=True),
+    "not": Builtin(_builtin_not, pure=True),
+}
+
+
+class ScriptHostQueries(Protocol):
+    """Host read-only queries closure-injected into the script registry.
+
+    Implementations live outside this module (e.g. the Adam factory wraps
+    the AgentRegistry's read-only interfaces); the module-level registry
+    stays free of host state. Query arguments may be anything an
+    expression yields (including None for a missing payload key), so
+    implementations must tolerate non-string input.
+    """
+
+    def is_sleeping(self, agent_id: Any) -> bool:
+        """Registered (config known) but not running."""
+        ...
+
+    def is_running(self, agent_id: Any) -> bool:
+        """Currently in the run table."""
+        ...
+
+    def is_lazy(self, agent_id: Any) -> bool:
+        """Registered with ``activation == "lazy"``."""
+        ...
+
+    def start_all_candidates(self) -> list[str]:
+        """The boot set: registered, non-lazy, not already running."""
+        ...
+
+
+#: Lifecycle action names a script rule may use (phase P5a; P5b adds ``forward``).
+SCRIPT_ACTION_NAMES = frozenset({"start", "stop", "start-all", "forward"})
+
+
+def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[str, str]:
+    """Validate a script action's options map; return the normalized fields.
+
+    ``:reason`` is always a required non-empty string; ``:agent`` is
+    required for ``start`` / ``stop`` and rejected for ``start-all``.
+    """
+    if not isinstance(options, dict):
+        raise EvalError(
+            f"{name} expects an options map, got {type(options).__name__}"
+        )
+    fields = {str(key): value for key, value in options.items()}
+    unknown = set(fields) - {"agent", "reason"}
+    if unknown:
+        raise EvalError(f"{name} options: unknown keys {sorted(unknown)}")
+    reason = fields.get("reason")
+    if type(reason) is not str or not reason:
+        raise EvalError(f"{name} :reason must be a non-empty string, got {reason!r}")
+    out = {"reason": reason}
+    agent = fields.get("agent")
+    if require_agent:
+        if type(agent) is not str or not agent:
+            raise EvalError(f"{name} :agent must be a non-empty string, got {agent!r}")
+        out["agent_id"] = agent
+    elif agent is not None:
+        raise EvalError(f"{name} takes no :agent option")
+    return out
+
+
+def _script_forward_fields(options: Any) -> dict[str, Any]:
+    """Validate a ``forward`` action's options map; return the normalized fields.
+
+    ``:to`` is a required non-empty vector of address strings; ``:cc`` is
+    an optional address vector; ``:subject`` is an optional string. The
+    forwarded mail's content comes from the triggering event at execution
+    time — the action data only carries routing.
+    """
+    if not isinstance(options, dict):
+        raise EvalError(
+            f"forward expects an options map, got {type(options).__name__}"
+        )
+    fields = {str(key): value for key, value in options.items()}
+    unknown = set(fields) - {"to", "cc", "subject"}
+    if unknown:
+        raise EvalError(f"forward options: unknown keys {sorted(unknown)}")
+
+    def _addresses(name: str, value: Any) -> list[str]:
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(type(address) is str and address for address in value)
+        ):
+            raise EvalError(
+                f"forward :{name} must be a non-empty vector of address "
+                f"strings, got {value!r}"
+            )
+        return list(value)
+
+    to = _addresses("to", fields.get("to"))
+    cc_value = fields.get("cc")
+    cc = _addresses("cc", cc_value) if cc_value is not None else []
+    subject = fields.get("subject")
+    if subject is not None and type(subject) is not str:
+        raise EvalError(f"forward :subject must be a string, got {subject!r}")
+    return {"to": to, "cc": cc, "subject": subject}
+
+
+def make_script_builtins(host: ScriptHostQueries | None = None) -> dict[str, Builtin]:
+    """Build the script-member registry: pure accessors + host predicates
+    + lifecycle action builtins (phase P5a).
+
+    Host predicates (``sleeping?`` / ``running?`` / ``lazy?``) are
+    closure-injected via ``host`` — they read registry state, so they are
+    never registered module-level. ``start`` / ``stop`` / ``start-all`` /
+    ``forward`` are marked ``pure=False`` and perform no side effects:
+    they validate their options map and *return* :class:`ActionRequest`
+    data for the engine (ScriptMember) to collect and execute.
+    ``start-all`` expands through ``host.start_all_candidates()`` — the
+    DSL never executes iteration, iteration is a builtin. Action
+    arguments may be pure expressions referencing ``event`` (e.g.
+    ``(get event :recipient)``); option-map values are evaluated before
+    the builtin sees them.
+    """
+
+    def _start(env: dict[str, Any], options: Any) -> ActionRequest:
+        fields = _script_action_fields("start", options, require_agent=True)
+        return ActionRequest(
+            kind="start",
+            data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
+        )
+
+    def _stop(env: dict[str, Any], options: Any) -> ActionRequest:
+        fields = _script_action_fields("stop", options, require_agent=True)
+        return ActionRequest(
+            kind="stop",
+            data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
+        )
+
+    def _start_all(env: dict[str, Any], options: Any) -> list[ActionRequest]:
+        fields = _script_action_fields("start-all", options, require_agent=False)
+        if host is None:
+            raise EvalError("start-all unavailable: no host queries injected")
+        return [
+            ActionRequest(kind="start", data={"agent_id": agent_id, "reason": fields["reason"]})
+            for agent_id in host.start_all_candidates()
+        ]
+
+    def _forward(env: dict[str, Any], options: Any) -> ActionRequest:
+        fields = _script_forward_fields(options)
+        return ActionRequest(
+            kind="forward",
+            data={"to": fields["to"], "cc": fields["cc"], "subject": fields["subject"]},
+        )
+
+    builtins: dict[str, Builtin] = {
+        **SCRIPT_BUILTINS,
+        "start": Builtin(_start, pure=False),
+        "stop": Builtin(_stop, pure=False),
+        "start-all": Builtin(_start_all, pure=False),
+        "forward": Builtin(_forward, pure=False),
+    }
+    if host is not None:
+        builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=True)
+        builtins["running?"] = Builtin(lambda env, aid: host.is_running(aid), pure=True)
+        builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=True)
+    return builtins

@@ -8,13 +8,17 @@ import pytest
 from tlon.agents.edn import Form, Keyword, loads
 from tlon.agents.eval import (
     LOOP_BUILTINS,
+    SCRIPT_ACTION_NAMES,
+    SCRIPT_BUILTINS,
     STAGE_COND_BUILTINS,
     TRIGGER_BUILTINS,
+    ActionRequest,
     Builtin,
     EvalDepthError,
     EvalError,
     FuelExhaustedError,
     eval_form,
+    make_script_builtins,
     validate_form,
 )
 from tlon.agents.spec import (
@@ -491,3 +495,217 @@ class TestStageCondBuiltins:
             validate_form(loads("(iteration-limit-reached?)"), STAGE_COND_BUILTINS, scope=set())
         with pytest.raises(EvalError, match="undefined symbol"):
             validate_form(loads("(plan-exists? foo)"), STAGE_COND_BUILTINS, scope=set())
+
+
+# ── Script member builtins (phase P5a) ──
+
+
+class _FakeScriptHost:
+    """ScriptHostQueries test double: fixed candidates, argument-echoing
+    predicates."""
+
+    def __init__(self, sleeping: set[str] | None = None, candidates: list[str] | None = None):
+        self._sleeping = sleeping or set()
+        self._candidates = candidates or []
+
+    def is_sleeping(self, agent_id):
+        return agent_id in self._sleeping
+
+    def is_running(self, agent_id):
+        return isinstance(agent_id, str) and agent_id not in self._sleeping
+
+    def is_lazy(self, agent_id):
+        return False
+
+    def start_all_candidates(self) -> list[str]:
+        return list(self._candidates)
+
+
+class TestMapValueEvaluation:
+    """P5a: maps are data — keys stay literal, values evaluate."""
+
+    def test_map_values_evaluate(self):
+        result = eval_form(
+            loads('{:agent (get event :recipient) :reason "wake"}'),
+            {"event": {"recipient": "a-001"}},
+            SCRIPT_BUILTINS,
+        )
+        assert result == {Keyword("agent"): "a-001", Keyword("reason"): "wake"}
+
+    def test_map_values_validate(self):
+        with pytest.raises(EvalError, match="unknown function"):
+            validate_form(loads("{:k (no-such-fn)}"), SCRIPT_BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="undefined symbol"):
+            validate_form(loads("{:k foo}"), SCRIPT_BUILTINS, scope=set())
+
+
+class TestScriptGetAccessor:
+    def test_get_reads_dict_payload(self):
+        env = {"event": {"recipient": "a-001", "mail": "ignored"}}
+        assert eval_form(loads("(get event :recipient)"), env, SCRIPT_BUILTINS) == "a-001"
+
+    def test_get_missing_key_yields_none(self):
+        assert eval_form(loads("(get event :missing)"), {"event": {}}, SCRIPT_BUILTINS) is None
+
+    def test_get_default_argument(self):
+        assert (
+            eval_form(loads('(get event :missing "fallback")'), {"event": {}}, SCRIPT_BUILTINS)
+            == "fallback"
+        )
+
+    def test_get_non_dict_target_yields_default(self):
+        """Malformed payloads never raise — script rules see arbitrary events."""
+        assert eval_form(loads("(get event :recipient)"), {"event": "garbage"}, SCRIPT_BUILTINS) is None
+        assert eval_form(loads("(get event :recipient)"), {"event": None}, SCRIPT_BUILTINS) is None
+
+
+class TestScriptHostPredicates:
+    def test_host_predicates_not_in_module_registry(self):
+        assert "sleeping?" not in SCRIPT_BUILTINS
+        assert "running?" not in SCRIPT_BUILTINS
+        assert "lazy?" not in SCRIPT_BUILTINS
+        hostless = make_script_builtins(None)
+        assert "sleeping?" not in hostless
+        with pytest.raises(EvalError, match="unknown function"):
+            validate_form(loads("(sleeping? event)"), hostless, scope={"event"})
+
+    def test_host_predicates_closure_injected(self):
+        host = _FakeScriptHost(sleeping={"a-001"})
+        builtins = make_script_builtins(host)
+        env = {"event": {"recipient": "a-001"}}
+        assert eval_form(loads("(sleeping? (get event :recipient))"), env, builtins) is True
+        assert eval_form(loads("(running? (get event :recipient))"), env, builtins) is False
+        assert eval_form(loads("(lazy? (get event :recipient))"), env, builtins) is False
+
+    def test_host_predicates_are_pure(self):
+        builtins = make_script_builtins(_FakeScriptHost())
+        assert builtins["sleeping?"].pure
+        assert builtins["running?"].pure
+        assert builtins["lazy?"].pure
+
+
+class TestScriptActions:
+    def test_actions_are_not_pure(self):
+        builtins = make_script_builtins(_FakeScriptHost())
+        assert not builtins["start"].pure
+        assert not builtins["stop"].pure
+        assert not builtins["start-all"].pure
+
+    def test_start_returns_action_request_with_evaluated_args(self):
+        builtins = make_script_builtins(_FakeScriptHost())
+        env = {"event": {"recipient": "a-001"}}
+        result = eval_form(
+            loads('(start {:agent (get event :recipient) :reason "wake"})'), env, builtins
+        )
+        assert result == ActionRequest(
+            kind="start", data={"agent_id": "a-001", "reason": "wake"}
+        )
+
+    def test_stop_returns_action_request(self):
+        builtins = make_script_builtins(_FakeScriptHost())
+        result = eval_form(
+            loads('(stop {:agent "a-001" :reason "drain"})'), {"event": {}}, builtins
+        )
+        assert result == ActionRequest(
+            kind="stop", data={"agent_id": "a-001", "reason": "drain"}
+        )
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            '(start {:reason "wake"})',  # missing :agent
+            '(start {:agent "" :reason "wake"})',  # empty :agent
+            '(start {:agent nil :reason "wake"})',  # nil :agent
+            '(start {:agent :kw :reason "wake"})',  # keyword :agent
+            '(stop {:agent "a-001"})',  # missing :reason
+            '(stop {:agent "a-001" :reason ""})',  # empty :reason
+            '(start {:agent "a" :reason "r" :extra 1})',  # unknown option key
+            "(start)",  # no options at all
+            '(start-all {:reason "boot" :agent "a"})',  # start-all takes no :agent
+        ],
+    )
+    def test_action_option_errors(self, source: str):
+        builtins = make_script_builtins(_FakeScriptHost())
+        with pytest.raises(EvalError):
+            eval_form(loads(source), {"event": {}}, builtins)
+
+    def test_start_all_expands_host_candidates(self):
+        host = _FakeScriptHost(candidates=["a-001", "a-002"])
+        builtins = make_script_builtins(host)
+        result = eval_form(
+            loads('(start-all {:reason "boot"})'), {"event": None}, builtins
+        )
+        assert result == [
+            ActionRequest(kind="start", data={"agent_id": "a-001", "reason": "boot"}),
+            ActionRequest(kind="start", data={"agent_id": "a-002", "reason": "boot"}),
+        ]
+
+    def test_start_all_without_host_raises(self):
+        builtins = make_script_builtins(None)
+        with pytest.raises(EvalError, match="start-all unavailable"):
+            eval_form(loads('(start-all {:reason "boot"})'), {"event": None}, builtins)
+
+    def test_action_evaluation_has_no_side_effects(self):
+        """Evaluation is pure: requests are data, nothing is published."""
+        host = _FakeScriptHost(candidates=["a-001"])
+        builtins = make_script_builtins(host)
+        env = {"event": {"recipient": "a-001"}}
+        eval_form(loads('(start {:agent (get event :recipient) :reason "wake"})'), env, builtins)
+        eval_form(loads('(start-all {:reason "boot"})'), env, builtins)
+        assert host.start_all_candidates() == ["a-001"]  # read-only queries only
+
+
+class TestScriptForwardAction:
+    """P5b: the forward action (relay prototype's verb)."""
+
+    def test_forward_is_a_script_action_and_not_pure(self):
+        assert "forward" in SCRIPT_ACTION_NAMES
+        builtins = make_script_builtins(_FakeScriptHost())
+        assert not builtins["forward"].pure
+
+    def test_forward_returns_action_request(self):
+        builtins = make_script_builtins(_FakeScriptHost())
+        result = eval_form(
+            loads('(forward {:to ["gu-yanxi@tlon.internal"]})'), {"event": {}}, builtins
+        )
+        assert result == ActionRequest(
+            kind="forward",
+            data={"to": ["gu-yanxi@tlon.internal"], "cc": [], "subject": None},
+        )
+
+    def test_forward_full_options_and_evaluated_args(self):
+        builtins = make_script_builtins(_FakeScriptHost())
+        env = {"event": {"boss": "gu-yanxi@tlon.internal"}}
+        result = eval_form(
+            loads('(forward {:to [(get event :boss)] :cc ["a@tlon.internal"] '
+                  ':subject "周报"})'),
+            env,
+            builtins,
+        )
+        assert result == ActionRequest(
+            kind="forward",
+            data={
+                "to": ["gu-yanxi@tlon.internal"],
+                "cc": ["a@tlon.internal"],
+                "subject": "周报",
+            },
+        )
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "(forward)",  # no options at all
+            '(forward {:to []})',  # empty :to
+            '(forward {:cc ["a@tlon.internal"]})',  # missing :to
+            '(forward {:to "a@tlon.internal"})',  # :to not a vector
+            '(forward {:to [""]})',  # empty address
+            '(forward {:to [:kw]})',  # non-string address
+            '(forward {:to ["a@tlon.internal"] :cc "b@tlon.internal"})',  # :cc not a vector
+            '(forward {:to ["a@tlon.internal"] :subject 42})',  # non-string subject
+            '(forward {:to ["a@tlon.internal"] :reason "x"})',  # unknown option key
+        ],
+    )
+    def test_forward_option_errors(self, source: str):
+        builtins = make_script_builtins(_FakeScriptHost())
+        with pytest.raises(EvalError):
+            eval_form(loads(source), {"event": {}}, builtins)

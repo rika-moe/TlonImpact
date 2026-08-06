@@ -1,6 +1,8 @@
 """Tests for Adam — the built-in lifecycle policy member (阶段 D).
 
-Covers the three policy lines:
+Since P5a Adam is a ScriptMember assembled from the built-in ADAM_SPEC
+(policy as data); these tests pin the runtime behavior to the pre-P5a
+hand-written Adam's, word for word. Covers the three policy lines:
 - boot: initialize() issues AGENT_START_REQUEST{reason="boot"} only for
   non-lazy agents that are not already running
 - wake: MAIL_DELIVERED whose recipient is a sleeping agent issues
@@ -20,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tlon.agents.adam import Adam
+from tlon.agents.adam import make_adam
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.base.config import AgentConfig
@@ -107,7 +109,7 @@ def _start_requests(bus: MagicMock) -> list[Event]:
 class TestAdamIdentity:
     def test_member_identity(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
 
         assert adam.member_id == "adam"
         assert adam.member_type == "script"
@@ -126,7 +128,7 @@ class TestBootPolicy:
         registry.register_all(["a-001", "a-002", "a-003"])
         registry._agents["a-003"] = _make_running_agent()  # already running
 
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
         requests = _start_requests(bus)
@@ -143,7 +145,7 @@ class TestBootPolicy:
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
 
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
         assert _start_requests(bus) == []
@@ -155,10 +157,10 @@ class TestWakePolicy:
         configs = {"a-001": AgentConfig(id="a-001", name="甲", activation="lazy")}
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_mail_delivered(_delivered_event("a-001"))
+        await adam._on_event(_delivered_event("a-001"))
 
         requests = _start_requests(bus)
         assert len(requests) == 1
@@ -177,20 +179,20 @@ class TestWakePolicy:
         registry, bus = _make_registry(configs, temp_paths)
         registry.register("a-001")
         registry._agents["a-001"] = _make_running_agent()
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_mail_delivered(_delivered_event("a-001"))
+        await adam._on_event(_delivered_event("a-001"))
 
         assert _start_requests(bus) == []
 
     @pytest.mark.asyncio
     async def test_mail_to_unknown_id_issues_no_request(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_mail_delivered(_delivered_event("ghost"))
+        await adam._on_event(_delivered_event("ghost"))
 
         assert _start_requests(bus) == []
 
@@ -198,20 +200,20 @@ class TestWakePolicy:
     async def test_mail_to_human_issues_no_request(self, temp_paths):
         """Human members (human:<name>) have no agent config — no wake."""
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_mail_delivered(_delivered_event("human:alice"))
+        await adam._on_event(_delivered_event("human:alice"))
 
         assert _start_requests(bus) == []
 
     @pytest.mark.asyncio
     async def test_non_delivery_payload_is_ignored(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_mail_delivered(
+        await adam._on_event(
             Event(type=EventType.MAIL_DELIVERED, payload={"not": "delivery"}, source="x")
         )
 
@@ -222,10 +224,10 @@ class TestDrainPolicy:
     @pytest.mark.asyncio
     async def test_agent_idle_fact_becomes_stop_request(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_agent_idle(
+        await adam._on_event(
             Event(
                 type=EventType.AGENT_IDLE,
                 payload={"agent_id": "a-001", "idle_seconds": 9999},
@@ -247,13 +249,13 @@ class TestDrainPolicy:
     @pytest.mark.asyncio
     async def test_malformed_idle_event_is_ignored(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
-        await adam._on_agent_idle(
+        await adam._on_event(
             Event(type=EventType.AGENT_IDLE, payload="garbage", source="agent_registry")
         )
-        await adam._on_agent_idle(
+        await adam._on_event(
             Event(type=EventType.AGENT_IDLE, payload={}, source="agent_registry")
         )
 
@@ -262,7 +264,7 @@ class TestDrainPolicy:
     @pytest.mark.asyncio
     async def test_shutdown_unsubscribes(self, temp_paths):
         registry, bus = _make_registry({}, temp_paths)
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
         assert adam.get_state() == "active"
 
@@ -284,7 +286,7 @@ class TestEndToEnd:
         registry, _ = _make_registry(configs, temp_paths, bus=bus)
         registry.register("a-001")
         await registry.initialize()
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
         delivered_seen: list[Event] = []
@@ -326,7 +328,7 @@ class TestEndToEnd:
         registry, _ = _make_registry(configs, temp_paths, bus=bus)
         registry.register("a-001")
         await registry.initialize()
-        adam = Adam(event_bus=bus, agent_registry=registry)
+        adam = make_adam(event_bus=bus, agent_registry=registry)
         await adam.initialize()
 
         agent = _make_running_agent(active_sessions=0, idle_seconds=9999.0)
