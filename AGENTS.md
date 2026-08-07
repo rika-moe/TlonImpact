@@ -67,6 +67,7 @@ uv run pytest
 | 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
 | 消息系统 | ✅ 已验证 | 95/100 | 邮件模型 R2 已切换（mail.md），PR-A/B/C 全部落地 |
 | Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
+| Metrics 支柱 | ✅ 已验证 | 95/100 | MetricsService 事件消费 + GET /metrics + operator metrics 视图；真实冒烟通过 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | ~~TUI (Congress)~~ | ❌ 已退役 | - | 2026-07 退役（PR-C），由 Operator mail 视图取代 |
 | TUI (Operator) | ⚠️ 待验证 | 80/100 | TypeScript/Ink 实现（apps/operator），真实连接服务端，mail 视图已落地 |

@@ -115,6 +115,7 @@ class RESTAPIHandler:
     - GET /agents/{id}/logs - Agent log entries
     - GET /logs - All log entries with combined filters
     - GET /events/history - Event history (from persistence)
+    - GET /metrics - In-process metrics snapshot
 
     Example:
         >>> handler = RESTAPIHandler(server, agent_registry)
@@ -131,6 +132,7 @@ class RESTAPIHandler:
         agent_registry,
         config_manager=None,
         trace_store=None,
+        metrics_service=None,
         logs_dir: Path | None = None,
         paths: TlonPaths | None = None,
         debug: bool = False,
@@ -142,6 +144,7 @@ class RESTAPIHandler:
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
+            metrics_service: Optional MetricsService for the /metrics snapshot
             logs_dir: Optional directory with server-{date}.jsonl log files
             paths: Optional TlonPaths for mailbox resolution (/inbox)
             debug: Whether to enable debug/test endpoints (never enable in production)
@@ -151,6 +154,7 @@ class RESTAPIHandler:
         self.config_manager = config_manager
         self.debug = debug
         self.trace_store = trace_store
+        self.metrics_service = metrics_service
         self.logs_dir = logs_dir
         self.paths = paths
 
@@ -184,6 +188,9 @@ class RESTAPIHandler:
         if self.trace_store:
             app.router.add_get("/traces", self.handle_list_traces)
             app.router.add_get("/traces/{trace_id}", self.handle_get_trace)
+
+        # Metrics route (503 when the metrics service is unavailable)
+        app.router.add_get("/metrics", self.handle_metrics)
 
         # Agent logs route
         app.router.add_get("/agents/{agent_id}/logs", self.handle_get_agent_logs)
@@ -501,6 +508,20 @@ class RESTAPIHandler:
             }
         )
 
+    async def handle_metrics(self, request: web.Request) -> web.Response:
+        """GET /metrics - Current in-process metrics snapshot.
+
+        Returns:
+            200 with the MetricsService snapshot, or 503 if the metrics
+            service is unavailable
+        """
+        if not self.metrics_service:
+            return self._json_response(
+                {"status": "error", "message": "Metrics service not available"}, status=503
+            )
+
+        return self._json_response(self.metrics_service.snapshot())
+
     async def handle_get_agent_logs(self, request: web.Request) -> web.Response:
         """GET /agents/{agent_id}/logs - Get agent logs.
 
@@ -615,6 +636,7 @@ class RESTServer:
         agent_registry,
         config_manager=None,
         trace_store=None,
+        metrics_service=None,
         logs_dir: Path | None = None,
         paths: TlonPaths | None = None,
         host: str = "127.0.0.1",
@@ -628,6 +650,7 @@ class RESTServer:
             agent_registry: The AgentRegistry instance for agent operations
             config_manager: Optional ConfigManager for hot-reload support
             trace_store: Optional TraceStore for trace operations
+            metrics_service: Optional MetricsService for the /metrics endpoint
             logs_dir: Optional directory with server-{date}.jsonl log files
             paths: Optional TlonPaths for mailbox resolution (/inbox)
             host: Host to bind to
@@ -638,7 +661,14 @@ class RESTServer:
         self.host = host
         self.port = port
         self._handler = RESTAPIHandler(
-            client_gateway, agent_registry, config_manager, trace_store, logs_dir, paths, debug
+            client_gateway,
+            agent_registry,
+            config_manager,
+            trace_store,
+            metrics_service,
+            logs_dir,
+            paths,
+            debug,
         )
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None

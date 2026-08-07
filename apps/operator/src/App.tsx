@@ -7,6 +7,7 @@ import { AgentsView } from "./views/AgentsView.js";
 import { ConfigView } from "./views/ConfigView.js";
 import { EventsView } from "./views/EventsView.js";
 import { MailView } from "./views/MailView.js";
+import { MetricsView } from "./views/MetricsView.js";
 import { TracesView } from "./views/TracesView.js";
 import { VIEWS, type ConnectionStatus, type ViewName } from "./types.js";
 
@@ -90,9 +91,10 @@ export default function App({
         {view === "events" ? <EventsView ws={ws} /> : null}
         {view === "traces" ? <TracesView rest={rest} /> : null}
         {view === "config" ? <ConfigView rest={rest} /> : null}
+        {view === "metrics" ? <MetricsView rest={rest} /> : null}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>1-5 / tab / ←→ switch view · q quit</Text>
+        <Text dimColor>1-6 / tab / ←→ switch view · q quit</Text>
       </Box>
     </Box>
   );

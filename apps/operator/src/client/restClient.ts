@@ -9,10 +9,12 @@
  * - GET /admin/config/agents
  * - GET /inbox?username=x&limit=N
  * - GET /participants
+ * - GET /metrics
  *
  * Uses the Node >= 22 global fetch.
  */
 
+import type { MetricsSnapshot } from "../metrics/snapshot.js";
 import type { MailItem, ParticipantInfo } from "../types.js";
 
 export class RestError extends Error {
@@ -88,5 +90,10 @@ export class RestClient {
   async listParticipants(): Promise<ParticipantInfo[]> {
     const data = await this.get<{ participants?: ParticipantInfo[] }>("/participants");
     return data.participants ?? [];
+  }
+
+  /** In-process metrics snapshot (MetricsService.snapshot()). */
+  async getMetrics(): Promise<MetricsSnapshot> {
+    return this.get("/metrics");
   }
 }

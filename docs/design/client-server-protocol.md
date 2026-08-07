@@ -182,6 +182,8 @@ interface TlonMessage {
 
 ## 事件类型规范
 
+> 这些事件同时是 metrics 支柱的数据源：服务端的 MetricsService 订阅 EventBus，把 mail/agent/llm/tool 事件聚合成指标，经 `GET /metrics` 暴露（见 docs/architecture/domains/base.md 的 Metrics 支柱小节）。
+
 ### 邮件事件
 
 | 事件类型 | 方向 | payload | 说明 |

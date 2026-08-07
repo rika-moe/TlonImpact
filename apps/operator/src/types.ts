@@ -1,8 +1,8 @@
 /** Shared types for the Operator TUI. */
 
-export type ViewName = "mail" | "agents" | "events" | "traces" | "config";
+export type ViewName = "mail" | "agents" | "events" | "traces" | "config" | "metrics";
 
-export const VIEWS: readonly ViewName[] = ["mail", "agents", "events", "traces", "config"];
+export const VIEWS: readonly ViewName[] = ["mail", "agents", "events", "traces", "config", "metrics"];
 
 export const VIEW_TITLES: Record<ViewName, string> = {
   mail: "Mail",
@@ -10,6 +10,7 @@ export const VIEW_TITLES: Record<ViewName, string> = {
   events: "Events",
   traces: "Traces",
   config: "Config",
+  metrics: "Metrics",
 };
 
 export type ConnectionState =

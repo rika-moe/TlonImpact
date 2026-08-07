@@ -23,6 +23,7 @@ from tlon.base.config import ConfigService
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
+from tlon.base.metrics import MetricsService, init_metrics, shutdown_metrics
 from tlon.base.paths import paths
 from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
@@ -103,6 +104,8 @@ class ServerApp:
             paths.traces_dir(),
             otlp_endpoint=get_settings().otel_exporter_otlp_endpoint,
         )
+        # Metrics pillar: process-wide MeterProvider + in-memory reader
+        init_metrics()
 
         # ========== Step 1: Core Infrastructure ==========
         # 1.0 Seed built-in behavior prototypes (idempotent; before any agent starts)
@@ -122,6 +125,12 @@ class ServerApp:
         )
         await config_service.initialize()
         self._components["config_service"] = config_service
+
+        # 1.3 MetricsService - metrics pillar (pure event consumer, needs EventBus)
+        metrics_service = MetricsService(event_bus=event_bus)
+        await metrics_service.initialize()
+        self._components["metrics_service"] = metrics_service
+        logger.info("component_initialized", component="metrics_service")
 
         # ========== Step 2: Other Core Components ==========
 
@@ -217,6 +226,7 @@ class ServerApp:
             agent_registry=agent_registry,  # Direct access for agent operations
             config_manager=config_service,  # For /admin endpoints
             trace_store=trace_store,  # For /traces endpoints
+            metrics_service=metrics_service,  # For /metrics endpoint
             logs_dir=paths.logs_dir(),  # For /logs endpoints
             paths=paths,  # For /inbox mailbox resolution
             host=self.host,
@@ -316,6 +326,10 @@ class ServerApp:
         if mail_delivery:
             await mail_delivery.shutdown()
 
+        metrics_service = self._components.get("metrics_service")
+        if metrics_service:
+            await metrics_service.shutdown()
+
         adapter_manager = self._components.get("adapter_manager")
         if adapter_manager:
             await adapter_manager.shutdown()
@@ -324,8 +338,9 @@ class ServerApp:
         if event_bus:
             await event_bus.shutdown()
 
-        # Flush and shutdown tracing last
+        # Flush and shutdown tracing/metrics last
         shutdown_tracing()
+        shutdown_metrics()
 
         self._running = False
         self._shutdown_event.set()

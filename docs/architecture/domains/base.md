@@ -7,7 +7,7 @@
 
 ## 职责
 
-提供基础设施服务：配置管理、组件生命周期、事件系统、日志、链路追踪、全局设置
+提供基础设施服务：配置管理、组件生命周期、事件系统、日志、链路追踪、指标（metrics）、全局设置
 
 ---
 
@@ -18,6 +18,7 @@ base/
 ├── component.py           # Component 基类, ComponentRegistry
 ├── device.py              # Device 基类 (EventBus 交互能力)
 ├── config.py              # 配置模型 (AgentConfig, LLMConfig, DockerRuntimeConfig) + ConfigService
+├── metrics.py             # Metrics 支柱 (init_metrics + MetricsService)
 ├── events/                # 事件系统
 │   ├── event.py           # Event、EventType 定义
 │   └── event_bus.py       # EventBus 实现
@@ -39,6 +40,7 @@ base/
 | `ConfigService` | 配置加载、缓存、保存、EventBus 通知 | `base/config.py` |
 | `EventBus` | 异步事件总线 | `base/events/event_bus.py` |
 | `Event` | 事件数据模型（含 trace_id/span_id） | `base/events/event.py` |
+| `MetricsService` | 事件→指标映射（纯事件消费者） | `base/metrics.py` |
 | `settings` | 全局配置实例 | `base/settings.py` |
 
 ---
@@ -77,6 +79,31 @@ class AgentConfig(BaseModel):
 ```
 
 **注意**: `RoleConfig` 已完全移除，角色信息合并入 `identity`/`profile`/`behavior` 叙事文本。
+
+---
+
+## Metrics 支柱
+
+可观测性三支柱的最后一块（traces / logs / metrics），落在 `base/metrics.py`。
+
+**选型**：复用项目已有的 OpenTelemetry SDK（`opentelemetry-sdk` 已是依赖，trace 在用）——不引新依赖、不手搓。`init_metrics()`（幂等，参照 `tracing/otel.py` 的 `init_tracing`）构建进程级 `MeterProvider` + `InMemoryMetricReader`：进程内快照经 `GET /metrics` 给 operator；将来接 OTLP metric exporter 无需改业务代码。
+
+**架构：metrics 作为事件消费者**。业务代码零埋点——`MetricsService(Component, Device)` 订阅 EventBus，把既有事件映射为指标，全部埋点集中在这一个组件里。事件处理异常被 try/except 包裹（记 warning），绝不影响 bus dispatch。
+
+事件→指标映射：
+
+| 事件 | 指标 | 属性 |
+|------|------|------|
+| `MAIL_NEW` | `tlon.mail.sent` (counter) | `agent=source` |
+| `MAIL_NEW` 且 from=postmaster | `tlon.mail.bounced` (counter) | 无 |
+| `MAIL_DELIVERED` | `tlon.mail.delivered` (counter) | `kind=agent\|human` |
+| `AGENT_STARTED` / `WOKEN` / `SLEEPING` / `STOPPED` | `tlon.agent.started` / `woken` / `sleeping` / `stopped` (counter) | `agent_id` |
+| `AGENT_LLM_RESPONSE` | `tlon.llm.calls` (counter) + `tlon.llm.duration_ms` (histogram) | `agent_id` |
+| `TOOL_EXECUTE_END` / `TOOL_ERROR` | `tlon.tool.executions` / `tlon.tool.errors` (counter) | `tool_name` |
+
+**Cardinality 纪律**：attribute 只允许低基数值（agent id、tool 名、recipient 种类、事件 source），严禁 mail_id / session_id / trace_id 入 attribute。recipient 只记 `kind`（`human:` 前缀判断），不记全名。
+
+**snapshot() 结构**：`{"metrics": {name: {"type": "counter"|"histogram"|"gauge", "description", "unit", "points": [...]}}}`——counter/gauge 点带 `{attributes, value}`，histogram 点带 `{attributes, count, sum, min, max}`。REST `GET /metrics` 直接返回该 JSON；service 不可用时 503。
 
 ---
 
