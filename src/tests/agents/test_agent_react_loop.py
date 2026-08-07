@@ -19,7 +19,12 @@ from tlon.agents.agent import Agent, AgentState
 from tlon.agents.edn import loads
 from tlon.agents.session import AgentSession
 from tlon.agents.spec import AgentSpec, standard_behavior_edn
+from tlon.agents.stages.critique import critique_stage
+from tlon.agents.stages.plan import plan_stage
+from tlon.agents.stages.revise import revise_stage
+from tlon.agents.stages.services import StageServices
 from tlon.agents.tool_executor import ToolExecutor
+from tlon.agents.trigger import AgentIdentity
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
@@ -110,10 +115,8 @@ class TestReActCompletion:
         )
         agent.tool_executor.register_tool(mock_tool)
 
-        # Patch _save_interaction_to_memory to avoid memory calls
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         # Should have sent the final message
         assert agent.event_bus.publish.called
@@ -164,9 +167,8 @@ class TestReActCompletion:
         agent.tool_executor.register_tool(search_tool)
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         assert llm.call_count == 2
         search_tool.execute.assert_awaited_once_with(query="test")
@@ -232,9 +234,8 @@ class TestReActNoToolCalls:
         )
         agent.tool_executor.register_tool(mock_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         assert llm.call_count == 2
 
@@ -268,9 +269,8 @@ class TestReActErrorHandling:
         )
         agent.tool_executor.register_tool(mock_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         assert llm.chat.call_count == 2
 
@@ -327,9 +327,8 @@ class TestReActErrorHandling:
         agent.tool_executor.register_tool(failing_tool)
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         failing_tool.execute.assert_awaited_once()
         send_tool.execute.assert_awaited_once()
@@ -362,9 +361,8 @@ class TestReActObservability:
         )
         agent.tool_executor.register_tool(mock_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         calls = agent.event_bus.publish.await_args_list
         event_types = [c.args[0].type for c in calls]
@@ -412,9 +410,8 @@ class TestReActObservability:
         agent.tool_executor.register_tool(mock_tool)
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         calls = agent.event_bus.publish.await_args_list
         event_types = [c.args[0].type for c in calls]
@@ -462,9 +459,8 @@ class TestReActObservability:
         agent.tool_executor.register_tool(slow_tool)
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         calls = agent.event_bus.publish.await_args_list
         tool_end_events = [
@@ -533,9 +529,8 @@ class TestReActSendMessage:
 
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         # Should have made 2 LLM calls (sendEmail(is_complete=false) does not end loop)
         assert llm.call_count == 2
@@ -601,9 +596,8 @@ class TestReActSendMessage:
 
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         calls = agent.event_bus.publish.await_args_list
         message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
@@ -637,9 +631,8 @@ class TestReActSendMessage:
         )
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         calls = agent.event_bus.publish.await_args_list
         message_events = [c for c in calls if c.args[0].type == EventType.MAIL_NEW]
@@ -691,9 +684,8 @@ class TestReActSendMessage:
 
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         # Should complete despite failed sendEmail
         calls = agent.event_bus.publish.await_args_list
@@ -752,9 +744,8 @@ class TestReActConflictDetection:
         agent.tool_executor.register_tool(read_tool)
         agent.tool_executor.register_tool(send_tool)
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            msg = _make_message()
-            await agent._process_message(msg)
+        msg = _make_message()
+        await agent._process_message(msg)
 
         # First response should be rejected (conflict), second accepted
         assert llm.call_count == 2
@@ -769,7 +760,7 @@ class TestReActConflictDetection:
 
 
 class TestAgentStateDerivation:
-    """Agent-level state is derived from live sessions, not assigned per step."""
+    """Agent-level state derives from live sessions on read (state property)."""
 
     async def test_state_derived_from_live_sessions(self):
         """One session ending must not reset state to idle while another lives."""
@@ -780,27 +771,26 @@ class TestAgentStateDerivation:
         s2 = AgentSession("s2", "task B")
 
         # Both sessions alive -> THINKING
-        agent._derive_state({"s1": s1, "s2": s2})
+        agent._scheduler._sessions = {"s1": s1, "s2": s2}
         assert agent.state == AgentState.THINKING
 
         # s2 completes and is cleaned up, s1 still active -> stays THINKING
         s2.mark_completed()
-        agent._derive_state({"s1": s1})
+        agent._scheduler._sessions = {"s1": s1}
         assert agent.state == AgentState.THINKING
 
         # No live sessions -> ACTIVE (idle)
-        agent._derive_state({})
+        agent._scheduler._sessions = {}
         assert agent.state == AgentState.ACTIVE
 
     async def test_derive_state_leaves_lifecycle_states_untouched(self):
         """INITIALIZING/ERROR/SHUTDOWN/None are not overwritten by derivation."""
         agent = _make_agent()
         agent.state = AgentState.SHUTDOWN
-        agent._derive_state({"s1": AgentSession("s1", "x")})
+        agent._scheduler._sessions = {"s1": AgentSession("s1", "x")}
         assert agent.state == AgentState.SHUTDOWN
 
         agent.state = None
-        agent._derive_state({})
         assert agent.state is None
 
     async def test_main_loop_state_not_reset_while_other_session_alive(self):
@@ -1033,7 +1023,7 @@ class TestStageRunnerUntil:
         llm = MagicMock()
         llm.chat = AsyncMock(side_effect=Exception("Persistent failure"))
         agent = _make_agent(llm_client=llm, spec=spec)
-        agent._logger = MagicMock()
+        agent._stage_services.logger = MagicMock()
 
         await agent._process_message(_make_message())
 
@@ -1041,7 +1031,7 @@ class TestStageRunnerUntil:
         message_events = _mail_events(agent)
         assert len(message_events) == 1
         assert "错误" in message_events[0].args[0].payload.content
-        warning_events = [c.args[0] for c in agent._logger.warning.call_args_list]
+        warning_events = [c.args[0] for c in agent._stage_services.logger.warning.call_args_list]
         assert "loop_until_eval_failed" in warning_events
 
 
@@ -1134,8 +1124,7 @@ class TestDefaultProgramEquivalence:
         agent.tool_executor.register_tool(send_tool)
 
         msg = _make_message()
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            await agent._process_message(msg)
+        await agent._process_message(msg)
 
         assert llm.call_count == 2
         search_tool.execute.assert_awaited_once_with(query="q")
@@ -1163,6 +1152,10 @@ class TestDefaultProgramEquivalence:
 
 
 # ── Phase 7c: plan / critique / revise stages + :if conditions ──
+#
+# C1: the auxiliary stages are pure — tests call them directly with a
+# StageServices and assert the declared StageOutcome data; the engine's
+# application of outcomes is covered in test_stage_outcome.py.
 
 
 def _make_session(context: list[dict] | None = None) -> AgentSession:
@@ -1179,139 +1172,144 @@ def _chat_mock(content: str):
     return llm
 
 
+def _make_stage_services(llm, *, logger=None) -> StageServices:
+    """StageServices over a mock LLM; context builder and publish are mocks."""
+    context_builder = MagicMock()
+    context_builder.get_system_prompt = AsyncMock(return_value="system prompt")
+    return StageServices(
+        identity=AgentIdentity(id="a-001", name="TestAgent", address="a-001@tlon.internal"),
+        spec=_standard_spec(),
+        llm_client=llm,
+        context_builder=context_builder,
+        publish=AsyncMock(),
+        tool_definitions=lambda: [],
+        logger=logger if logger is not None else MagicMock(),
+    )
+
+
 class TestPlanStage:
-    async def test_plan_writes_scratch_and_appends_context(self):
-        """plan: one LLM call; text lands in scratch and in context."""
-        spec = _make_spec("{:stages [(plan {:max-steps 3})]}")
+    async def test_plan_declares_scratch_and_context(self):
+        """plan: one LLM call; text is declared for scratch and context."""
         llm = _chat_mock("1. 读邮件\n2. 回复")
-        agent = _make_agent(llm_client=llm, spec=spec)
+        svc = _make_stage_services(llm)
         session = _make_session()
 
-        with patch.object(agent, "_traced_span", wraps=agent._traced_span) as span:
-            await agent._loop_driver.step_session(session, _make_message())
+        with patch.object(svc, "traced_span", wraps=svc.traced_span) as span:
+            outcome = await plan_stage(svc, session, None, {"max-steps": 3})
 
-        assert session.loop_scratch["plan"] == "1. 读邮件\n2. 回复"
-        assert session.context[-1] == {
-            "role": "user",
-            "content": "[执行计划]\n\n1. 读邮件\n2. 回复",
-        }
+        assert outcome.scratch_updates == {"plan": "1. 读邮件\n2. 回复"}
+        assert outcome.context_appends == [
+            {"role": "user", "content": "[执行计划]\n\n1. 读邮件\n2. 回复"}
+        ]
         span.assert_any_call("agent.plan")
+        # The stage declares; the engine applies — the session is untouched
+        assert "plan" not in session.loop_scratch
         # The instruction carries the max-steps knob
         messages = llm.chat.await_args.kwargs["messages"]
         assert "不超过 3 步" in messages[-1]["content"]
 
-    async def test_plan_default_max_steps_is_five(self):
-        spec = _make_spec("{:stages [(plan)]}")
-        llm = _chat_mock("1. step")
-        agent = _make_agent(llm_client=llm, spec=spec)
+    async def test_plan_passes_response_through(self):
+        """plan does not consume or produce the round's response."""
+        svc = _make_stage_services(_chat_mock("1. step"))
+        sentinel = LLMResponse(content="chained")
 
-        await agent._loop_driver.step_session(_make_session(), _make_message())
+        outcome = await plan_stage(svc, _make_session(), sentinel)
+
+        assert outcome.response is sentinel
+
+    async def test_plan_default_max_steps_is_five(self):
+        llm = _chat_mock("1. step")
+        svc = _make_stage_services(llm)
+
+        await plan_stage(svc, _make_session(), None)
 
         messages = llm.chat.await_args.kwargs["messages"]
         assert "不超过 5 步" in messages[-1]["content"]
 
     async def test_plan_failure_soft_skips(self):
-        """LLM failure: warning, no scratch write, no recorded error."""
-        spec = _make_spec("{:stages [(plan)]}")
+        """LLM failure: warning, empty outcome — no scratch, no error declared."""
+        logger = MagicMock()
         llm = MagicMock()
         llm.chat = AsyncMock(side_effect=Exception("boom"))
-        agent = _make_agent(llm_client=llm, spec=spec)
-        agent._logger = MagicMock()
-        session = _make_session()
+        svc = _make_stage_services(llm, logger=logger)
 
-        await agent._loop_driver.step_session(session, _make_message())
+        outcome = await plan_stage(svc, _make_session(), None)
 
-        assert "plan" not in session.loop_scratch
-        assert session.error_count == 0
-        warning_events = [c.args[0] for c in agent._logger.warning.call_args_list]
+        assert outcome.scratch_updates == {}
+        assert outcome.context_appends == []
+        assert outcome.record_error is False
+        warning_events = [c.args[0] for c in logger.warning.call_args_list]
         assert "loop_stage_failed" in warning_events
 
 
 class TestCritiqueStage:
     async def test_critique_pass(self):
-        spec = _make_spec("{:stages [(critique)]}")
-        llm = _chat_mock("PASS\n整体不错")
-        agent = _make_agent(llm_client=llm, spec=spec)
-        session = _make_session()
+        svc = _make_stage_services(_chat_mock("PASS\n整体不错"))
 
-        with patch.object(agent, "_traced_span", wraps=agent._traced_span) as span:
-            await agent._loop_driver.step_session(session, _make_message())
+        with patch.object(svc, "traced_span", wraps=svc.traced_span) as span:
+            outcome = await critique_stage(svc, _make_session(), None)
 
-        assert session.loop_scratch["critique"] == {"passed": True, "feedback": ""}
+        assert outcome.scratch_updates == {"critique": {"passed": True, "feedback": ""}}
         span.assert_any_call("agent.critique")
 
     async def test_critique_fail_with_feedback(self):
-        spec = _make_spec("{:stages [(critique)]}")
-        llm = _chat_mock("FAIL\n缺少具体引用\n语气太硬")
-        agent = _make_agent(llm_client=llm, spec=spec)
-        session = _make_session()
+        svc = _make_stage_services(_chat_mock("FAIL\n缺少具体引用\n语气太硬"))
 
-        await agent._loop_driver.step_session(session, _make_message())
+        outcome = await critique_stage(svc, _make_session(), None)
 
-        assert session.loop_scratch["critique"] == {
-            "passed": False,
-            "feedback": "缺少具体引用\n语气太硬",
+        assert outcome.scratch_updates == {
+            "critique": {"passed": False, "feedback": "缺少具体引用\n语气太硬"}
         }
 
     async def test_critique_unparseable_defaults_to_pass(self):
         """Lenient default: an unparseable verdict never blocks the flow."""
-        spec = _make_spec("{:stages [(critique)]}")
-        llm = _chat_mock("我觉得还行")
-        agent = _make_agent(llm_client=llm, spec=spec)
-        session = _make_session()
+        svc = _make_stage_services(_chat_mock("我觉得还行"))
 
-        await agent._loop_driver.step_session(session, _make_message())
+        outcome = await critique_stage(svc, _make_session(), None)
 
-        assert session.loop_scratch["critique"] == {"passed": True, "feedback": ""}
+        assert outcome.scratch_updates == {"critique": {"passed": True, "feedback": ""}}
 
     async def test_critique_failure_soft_skips(self):
-        spec = _make_spec("{:stages [(critique)]}")
+        logger = MagicMock()
         llm = MagicMock()
         llm.chat = AsyncMock(side_effect=Exception("boom"))
-        agent = _make_agent(llm_client=llm, spec=spec)
-        agent._logger = MagicMock()
-        session = _make_session()
+        svc = _make_stage_services(llm, logger=logger)
 
-        await agent._loop_driver.step_session(session, _make_message())
+        outcome = await critique_stage(svc, _make_session(), None)
 
-        assert "critique" not in session.loop_scratch
-        assert session.error_count == 0
-        warning_events = [c.args[0] for c in agent._logger.warning.call_args_list]
+        assert outcome.scratch_updates == {}
+        assert outcome.record_error is False
+        warning_events = [c.args[0] for c in logger.warning.call_args_list]
         assert "loop_stage_failed" in warning_events
 
 
 class TestReviseStage:
-    async def test_revise_appends_feedback(self):
+    async def test_revise_declares_feedback_append(self):
         """revise feeds critique feedback back into context; no LLM call."""
-        spec = _make_spec("{:stages [(revise)]}")
         llm = _chat_mock("unused")
-        agent = _make_agent(llm_client=llm, spec=spec)
+        svc = _make_stage_services(llm)
         session = _make_session()
         session.loop_scratch["critique"] = {"passed": False, "feedback": "补充引用"}
 
-        await agent._loop_driver.step_session(session, _make_message())
+        outcome = await revise_stage(svc, session, None)
 
         llm.chat.assert_not_called()
-        assert session.context[-1] == {
-            "role": "user",
-            "content": "[评审反馈]\n\n补充引用\n请据此修正。",
-        }
+        assert outcome.context_appends == [
+            {"role": "user", "content": "[评审反馈]\n\n补充引用\n请据此修正。"}
+        ]
 
     async def test_revise_without_feedback_is_noop(self):
-        spec = _make_spec("{:stages [(revise)]}")
-        agent = _make_agent(llm_client=_chat_mock("unused"), spec=spec)
-        context = [{"role": "user", "content": "邮件"}]
+        svc = _make_stage_services(_chat_mock("unused"))
 
         # Passed critique: no feedback, nothing appended
-        session = _make_session(context=list(context))
+        session = _make_session()
         session.loop_scratch["critique"] = {"passed": True, "feedback": ""}
-        await agent._loop_driver.step_session(session, _make_message())
-        assert session.context == context
+        outcome = await revise_stage(svc, session, None)
+        assert outcome.context_appends == []
 
         # No critique at all: nothing appended
-        session = _make_session(context=list(context))
-        await agent._loop_driver.step_session(session, _make_message())
-        assert session.context == context
+        outcome = await revise_stage(svc, _make_session(), None)
+        assert outcome.context_appends == []
 
 
 class TestStageConditions:
@@ -1319,12 +1317,12 @@ class TestStageConditions:
         spec = _make_spec("{:stages [(critique {:if (plan-exists?)})]}")
         llm = _chat_mock("PASS")
         agent = _make_agent(llm_client=llm, spec=spec)
-        agent._logger = MagicMock()
+        agent._stage_services.logger = MagicMock()
 
         await agent._loop_driver.step_session(_make_session(), _make_message())
 
         llm.chat.assert_not_called()
-        debug_calls = agent._logger.debug.call_args_list
+        debug_calls = agent._stage_services.logger.debug.call_args_list
         skipped = [c for c in debug_calls if c.args[0] == "loop_stage_skipped"]
         assert skipped
         assert skipped[0].kwargs == {"session_id": "s-7c", "stage": "critique", "reason": "condition"}
@@ -1347,12 +1345,12 @@ class TestStageConditions:
         spec = _make_spec("{:stages [(think {:if (not 1 2)})]}")
         llm = _chat_mock("unused")
         agent = _make_agent(llm_client=llm, spec=spec)
-        agent._logger = MagicMock()
+        agent._stage_services.logger = MagicMock()
 
         await agent._loop_driver.step_session(_make_session(), _make_message())
 
         llm.chat.assert_not_called()
-        warning_events = [c.args[0] for c in agent._logger.warning.call_args_list]
+        warning_events = [c.args[0] for c in agent._stage_services.logger.warning.call_args_list]
         assert "loop_stage_condition_failed" in warning_events
 
     async def test_first_iteration_plan_runs_once(self):

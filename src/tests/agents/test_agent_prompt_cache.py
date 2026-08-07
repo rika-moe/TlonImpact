@@ -27,6 +27,7 @@ def _make_agent(team_members: list[AgentConfig] | None = None, **kwargs):
     memory = MagicMock()
     memory.build_context_blocks = AsyncMock(return_value=[])
     memory.check_idle_timeout = AsyncMock()
+    memory.add_interaction = AsyncMock()
 
     event_bus = MagicMock()
     event_bus.publish = AsyncMock()
@@ -216,8 +217,7 @@ class TestToolExecutionObservability:
         msg = Mail.create(
             from_address="u1@tlon.internal", to=["a-001@tlon.internal"], content="hi"
         )
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            await agent._process_message(msg)
+        await agent._process_message(msg)
 
         published_types = [
             call.args[0].type for call in agent.event_bus.publish.await_args_list
@@ -267,8 +267,7 @@ class TestToolExecutionObservability:
         msg = Mail.create(
             from_address="u1@tlon.internal", to=["a-001@tlon.internal"], content="hi"
         )
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            await agent._process_message(msg)
+        await agent._process_message(msg)
 
         published_types = [
             call.args[0].type for call in agent.event_bus.publish.await_args_list

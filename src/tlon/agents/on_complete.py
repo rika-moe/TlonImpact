@@ -11,30 +11,35 @@ here, one by one:
   exhausted budget -> rejection logged, session unaffected). Chained
   spawning (a spawned contractor's own on-complete spawning again) is
   hard-capped by the registry's ``max_spawn_depth``.
-- ``emit`` delegates to ``host._send_mail``; an emit without explicit
-  recipients replies to the sender of the session's trigger mail.
+- ``emit`` delegates to the injected mail sender; an emit without
+  explicit recipients replies to the sender of the session's trigger
+  mail.
 
 Isolation: an evaluation failure or a single failing action is logged
 (``on_complete_eval_failed`` / ``on_complete_action_failed``) and never
 interrupts the remaining actions or the session lifecycle.
 
-P4: the runner collaborates with its host through the narrow
-:class:`~tlon.agents.host.OnCompleteHost` protocol and receives the
-spawn registry as a directly injected service.
+P4/C2: the runner is assembled from capabilities — identity, spec,
+logger and a mail sender (the EffectExecutor) — plus the directly
+injected spawn registry. No host back-reference.
 """
 
 import uuid
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from structlog.contextvars import get_contextvars
 
 from tlon.agents.eval import ActionRequest, EvalError, eval_form, make_actions_builtins
-from tlon.agents.host import OnCompleteHost
+from tlon.agents.stages.outcome import MailEffect
+from tlon.agents.trigger import AgentIdentity
 from tlon.base.logger import get_logger
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
+    from tlon.agents.executor import EffectExecutor
     from tlon.agents.session import AgentSession
+    from tlon.agents.spec import AgentSpec
     from tlon.organization.mail.mail import Mail
 
 logger = get_logger(__name__)
@@ -43,13 +48,23 @@ logger = get_logger(__name__)
 class OnCompleteRunner:
     """Evaluates and executes the spec's on-complete action expressions.
 
-    Reaches the owning Agent only through the narrow ``OnCompleteHost``
-    protocol (identity, spec, logging, mail sending); the registry (spawn
-    delegation) is injected directly.
+    Assembled from capabilities (identity / spec / logger / mail sender);
+    the registry (spawn delegation) is injected directly. No reference to
+    the owning Agent.
     """
 
-    def __init__(self, host: OnCompleteHost, registry: "AgentRegistry | None"):
-        self._host = host
+    def __init__(
+        self,
+        identity: AgentIdentity,
+        spec: "AgentSpec",
+        logger: "structlog.stdlib.BoundLogger",
+        mail_sender: "EffectExecutor",
+        registry: "AgentRegistry | None",
+    ):
+        self._identity = identity
+        self._spec = spec
+        self._logger = logger
+        self._mail_sender = mail_sender
         self._registry = registry
 
     async def run(self, session: "AgentSession", result: str) -> None:
@@ -60,15 +75,14 @@ class OnCompleteRunner:
         session span, so contextvars carry the session id for spawn quota
         attribution). Never raises.
         """
-        host = self._host
-        forms = host.spec.on_complete.actions
+        forms = self._spec.on_complete.actions
         if not forms:
             return
 
         env: dict[str, Any] = {
             "msg": session.trigger_message,
             "result": result,
-            "self": {"id": host.id, "name": host.name},
+            "self": {"id": self._identity.id, "name": self._identity.name},
         }
 
         collector: list[ActionRequest] = []
@@ -77,11 +91,11 @@ class OnCompleteRunner:
             try:
                 eval_form(form, env, builtins)
             except EvalError as e:
-                host._logger.error(
+                self._logger.error(
                     "on_complete_eval_failed", session_id=session.id, error=str(e)
                 )
             except Exception as e:
-                host._logger.error(
+                self._logger.error(
                     "on_complete_eval_failed",
                     session_id=session.id,
                     error=str(e),
@@ -90,7 +104,7 @@ class OnCompleteRunner:
 
         if not collector:
             return
-        host._logger.info(
+        self._logger.info(
             "on_complete_actions",
             session_id=session.id,
             action_count=len(collector),
@@ -100,7 +114,7 @@ class OnCompleteRunner:
             try:
                 await self._execute(request, session.trigger_message)
             except Exception as e:
-                host._logger.error(
+                self._logger.error(
                     "on_complete_action_failed",
                     session_id=session.id,
                     action=request.kind,
@@ -117,11 +131,13 @@ class OnCompleteRunner:
             to = request.data["to"] or (
                 [session_mail.from_address] if session_mail else []
             )
-            await self._host._send_mail(
-                to=to,
-                content=request.data["content"],
-                in_reply_to=session_mail.id if session_mail else None,
-                thread_id=session_mail.thread_id if session_mail else None,
+            await self._mail_sender.send_mail(
+                MailEffect(
+                    to=to,
+                    content=request.data["content"],
+                    in_reply_to=session_mail.id if session_mail else None,
+                    thread_id=session_mail.thread_id if session_mail else None,
+                )
             )
 
     async def _execute_spawn(self, data: dict[str, Any]) -> None:
@@ -130,12 +146,12 @@ class OnCompleteRunner:
             raise RuntimeError("spawn action unavailable: agent has no registry")
         prototype = data["prototype"]
         name = data["name"] or f"{prototype}-{uuid.uuid4().hex[:4]}"
-        # Bound by Agent._session_span via structlog contextvars; a missing
+        # Bound by the session span via structlog contextvars; a missing
         # binding buckets context-less spawns of this spawner together.
         session_id = get_contextvars().get("session_id")
         await registry.spawn_contractor(
             prototype=prototype,
             name=name,
-            spawner_id=self._host.id,
+            spawner_id=self._identity.id,
             session_id=str(session_id) if session_id else None,
         )

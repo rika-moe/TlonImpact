@@ -25,7 +25,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tlon.agents import prototypes as prototypes_mod
-from tlon.agents.agent import Agent
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.edn import Keyword, loads
 from tlon.agents.prototypes import (
@@ -42,6 +41,7 @@ from tlon.agents.prototypes import (
 )
 from tlon.agents.spawn_errors import SpawnRejectedError
 from tlon.agents.spec import AgentSpec, SpecValidationError, standard_behavior_edn
+from tlon.agents.stages.services import StageServices
 from tlon.base.config import AgentConfig, ConfigService
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
@@ -439,15 +439,15 @@ class TestSpecSourceHash:
             recorded["attributes"] = attributes
             yield MagicMock()
 
-        monkeypatch.setattr("tlon.agents.agent.start_span", fake_span)
+        monkeypatch.setattr("tlon.agents.stages.services.start_span", fake_span)
         session = SimpleNamespace(
             id="s-1", state=SimpleNamespace(value="active"), carrier={}
         )
-        fake_agent = SimpleNamespace(
-            id="a-1", spec=SimpleNamespace(source_hash="abc123def456")
+        fake_services = SimpleNamespace(
+            identity=SimpleNamespace(id="a-1"), spec=SimpleNamespace(source_hash="abc123def456")
         )
 
-        with Agent._session_span(fake_agent, session):
+        with StageServices.session_span(fake_services, session):
             pass
 
         assert recorded["name"] == "agent.session"

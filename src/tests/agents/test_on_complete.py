@@ -26,7 +26,9 @@ from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession
 from tlon.agents.spawn_errors import SpawnRejectedError
 from tlon.agents.spec import AgentSpec, SpecValidationError, standard_behavior_edn
+from tlon.agents.stages.outcome import MailEffect
 from tlon.agents.tool_executor import ToolExecutor
+from tlon.agents.trigger import AgentIdentity
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
@@ -36,18 +38,17 @@ from tlon.tools.base import ToolResult
 
 
 class _FakeHost:
-    """Minimal OnCompleteHost fake: only the declared protocol surface.
+    """Capability bundle for the OnCompleteRunner (C2 follow-up).
 
     Demonstrates the P4 pattern — a subsystem test needs no Agent, just
-    a small object satisfying the narrow host protocol (agents/host.py).
+    identity data, a spec, a logger and a mail-sender stand-in.
     """
 
     def __init__(self, spec: AgentSpec):
-        self.id = "a-001"
-        self.name = "小特"
+        self.identity = AgentIdentity(id="a-001", name="小特", address="a-001@tlon.internal")
         self.spec = spec
         self._logger = get_logger("test.on_complete")
-        self._send_mail = AsyncMock()
+        self.send_mail = AsyncMock()
 
 
 def _msg(content: str = "hello") -> Mail:
@@ -255,7 +256,7 @@ class TestExecution:
             '(when (content-matches? result "完毕") (spawn "archivist" {:name "归档员"}))'
         ))
         with bound_contextvars(session_id="sess-1"):
-            await OnCompleteRunner(host, registry).run(_make_session(), "本轮处理完毕")
+            await OnCompleteRunner(host.identity, host.spec, host._logger, host, registry).run(_make_session(), "本轮处理完毕")
         registry.spawn_contractor.assert_awaited_once_with(
             prototype="archivist",
             name="归档员",
@@ -269,19 +270,21 @@ class TestExecution:
         host = _FakeHost(
             _spec_with_actions('(when (content-matches? result "不存在") (spawn "a"))')
         )
-        await OnCompleteRunner(host, registry).run(_make_session(), "本轮处理完毕")
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, registry).run(_make_session(), "本轮处理完毕")
         registry.spawn_contractor.assert_not_awaited()
-        host._send_mail.assert_not_awaited()
+        host.send_mail.assert_not_awaited()
 
     async def test_emit_sends_mail(self):
         host = _FakeHost(_spec_with_actions('(emit "本轮处理完毕" ["u-1@tlon.internal"])'))
         session = _make_session()
-        await OnCompleteRunner(host, None).run(session, "result")
-        host._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, None).run(session, "result")
+        host.send_mail.assert_awaited_once_with(
+        MailEffect(
             to=["u-1@tlon.internal"],
             content="本轮处理完毕",
             in_reply_to=session.trigger_message.id,
             thread_id=session.trigger_message.thread_id,
+        )
         )
 
     async def test_emit_without_recipients_replies_to_sender(self):
@@ -289,26 +292,28 @@ class TestExecution:
         mail's sender (thread headers inherited)."""
         host = _FakeHost(_spec_with_actions('(emit "收到" [])'))
         session = _make_session()
-        await OnCompleteRunner(host, None).run(session, "result")
-        host._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, None).run(session, "result")
+        host.send_mail.assert_awaited_once_with(
+        MailEffect(
             to=["u-1@tlon.internal"],
             content="收到",
             in_reply_to=session.trigger_message.id,
             thread_id=session.trigger_message.thread_id,
+        )
         )
 
     async def test_spawn_without_name_generates_default(self):
         registry = MagicMock()
         registry.spawn_contractor = AsyncMock()
         host = _FakeHost(_spec_with_actions('(spawn "archivist")'))
-        await OnCompleteRunner(host, registry).run(_make_session(), "result")
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, registry).run(_make_session(), "result")
         kwargs = registry.spawn_contractor.await_args.kwargs
         assert kwargs["name"].startswith("archivist-")
 
     async def test_no_actions_is_noop(self):
         host = _FakeHost(_standard_spec())
-        await OnCompleteRunner(host, None).run(_make_session(), "result")
-        host._send_mail.assert_not_awaited()
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, None).run(_make_session(), "result")
+        host.send_mail.assert_not_awaited()
 
 
 class TestIsolation:
@@ -317,12 +322,14 @@ class TestIsolation:
         registry.spawn_contractor = AsyncMock(side_effect=RuntimeError("boom"))
         host = _FakeHost(_spec_with_actions('(spawn "a")', '(emit "still sent" [])'))
         session = _make_session()
-        await OnCompleteRunner(host, registry).run(session, "result")  # no raise
-        host._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, registry).run(session, "result")  # no raise
+        host.send_mail.assert_awaited_once_with(
+        MailEffect(
             to=["u-1@tlon.internal"],
             content="still sent",
             in_reply_to=session.trigger_message.id,
             thread_id=session.trigger_message.thread_id,
+        )
         )
 
     async def test_eval_failure_only_logged(self):
@@ -333,23 +340,27 @@ class TestIsolation:
             '(emit "still sent" [])',
         ))
         session = _make_session()
-        await OnCompleteRunner(host, MagicMock()).run(session, "result")  # no raise
-        host._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, MagicMock()).run(session, "result")  # no raise
+        host.send_mail.assert_awaited_once_with(
+        MailEffect(
             to=["u-1@tlon.internal"],
             content="still sent",
             in_reply_to=session.trigger_message.id,
             thread_id=session.trigger_message.thread_id,
         )
+        )
 
     async def test_spawn_without_registry_logged_not_raised(self):
         host = _FakeHost(_spec_with_actions('(spawn "a")', '(emit "ok" [])'))
         session = _make_session()
-        await OnCompleteRunner(host, None).run(session, "result")  # no raise
-        host._send_mail.assert_awaited_once_with(
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, None).run(session, "result")  # no raise
+        host.send_mail.assert_awaited_once_with(
+        MailEffect(
             to=["u-1@tlon.internal"],
             content="ok",
             in_reply_to=session.trigger_message.id,
             thread_id=session.trigger_message.thread_id,
+        )
         )
 
     async def test_untrusted_prototype_rejected_and_logged(self):
@@ -359,13 +370,15 @@ class TestIsolation:
         )
         host = _FakeHost(_spec_with_actions('(spawn "staged-proto")', '(emit "ok" [])'))
         session = _make_session()
-        await OnCompleteRunner(host, registry).run(session, "result")  # no raise
+        await OnCompleteRunner(host.identity, host.spec, host._logger, host, registry).run(session, "result")  # no raise
         registry.spawn_contractor.assert_awaited_once()
-        host._send_mail.assert_awaited_once_with(
+        host.send_mail.assert_awaited_once_with(
+        MailEffect(
             to=["u-1@tlon.internal"],
             content="ok",
             in_reply_to=session.trigger_message.id,
             thread_id=session.trigger_message.thread_id,
+        )
         )
 
 

@@ -2,8 +2,9 @@
 
 Owns the agent's continuous main loop: drains the message queue into
 sessions, advances each session (ReAct step or tool-result collection),
-reaps completed/stale sessions, and derives the agent-level state.
-Extracted from the Agent god class.
+and reaps completed/stale sessions. The agent-level state derives on
+read (Agent.state property), never by callback from here. Extracted from
+the Agent god class.
 
 The whole loop task runs inside bound_contextvars(agent_id=...) so all
 logs emitted from session advances carry the agent binding; tasks spawned
@@ -194,8 +195,8 @@ class SessionScheduler:
                         session_mails.pop(sid, None)
                         self._last_activity_at = datetime.now()
 
-                # ── 5. Agent state derives from live sessions ──
-                host._derive_state(sessions)
+                # Agent state derives on read (Agent.state property) — the
+                # scheduler never calls back into the Agent.
 
                 # Yield control
                 await asyncio.sleep(0.01 if sessions else 0.05)

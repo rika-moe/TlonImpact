@@ -417,17 +417,46 @@ script 类型成员从"只有内置亚当"走向"可经 prototype/spawn 创建"�
 
 **达成情况**：844 个测试全绿（793 既有 + 51 新增：test_agent_config 3、test_prototypes 7、test_eval forward 12、test_script_member 15、test_script_spec load 4、test_script_runtime 10），ruff / 架构检查 / re-export 检查全过。既有 prototype 测试按 relay 入库适配（react/script 两类内置目录分列断言），无删除既有测试。
 
+### 方案 C · C1 — StageOutcome 基础设施 + think/plan/critique/revise 纯化 ✅ 已完成（2026-08-06）
+
+P4（2026-08，`agents/host.py` 的窄 Protocol + 服务分解）只是**过渡形态**：它把子系统对 Agent 的隐式回指收窄为显式契约，但 LoopDriver 等子系统仍直接调用宿主的副作用委托（`_send_mail` / `_save_interaction_to_memory` / 工具 dispatch）。方案 C 把 stage 演进为**纯转换** `Session × Services → StageOutcome`：系统状态变更全部是 stage **返回的数据**，由引擎统一执行。这与 on-complete 的 ActionRequest 设计同构（阶段 4b：表达式纯求值收集 ActionRequest，引擎再逐条执行），是"DSL 只描述，引擎执行"铁律向子系统层的下沉——stage 不再伸手拿宿主能力，而是声明意图、引擎代办。最终目标：断开 Agent ⇄ LoopDriver 运行时环。
+
+**边界原则**（stage 的外部接触三分）：
+
+- **LLM 调用 = 只读外部查询** → 走注入服务，不算副作用，不进 Outcome；
+- **系统状态变更 = 数据** → context 追加、scratch 写入、iteration/error 计数、（C2 的）发信/写记忆/工具 dispatch/完成信号，全部经 StageOutcome 返回，引擎执行；
+- **日志/trace/事件 = 可观测性** → 走注入服务（不算系统状态变更）。
+
+**C1 落地**：
+
+- **`StageOutcome`**（`agents/stages/outcome.py`，可变 dataclass——容器字段由 stage 增量构建，冻壳不冻容器买不到真不可变）：`response`（response 链透传，非 None 时更新链上值）、`context_appends`、`scratch_updates`、`advance_iteration`、`record_error`（四轻 stage 本步只碰这五个），以及 C2 字段 `mails`（`MailEffect`）/`tool_dispatches`/`save_interaction`/`run_on_complete`/`complete`（本步一并定义以免 churn，默认全空）；
+- **`StageServices`**（`agents/stages/services.py`，引擎侧构造注入）：`think(context, *, span)`——吸收原 `Agent.think` 全部语义（system prompt、tool 定义、AGENT_THINKING_START/AGENT_LLM_REQUEST/AGENT_LLM_RESPONSE/AGENT_THINKING_END 四事件 payload 逐字节保持、span 包裹、耗时统计），`traced_span(name)`、`logger`、`identity`、`spec`；全部从 Agent 的既有注入依赖装配（llm_client、context_builder、publish 闭包、tool 定义提供者），**不需要 Agent 本体**；
+- **四 stage 纯化**：签名改为 `(svc, session, response, opts) -> StageOutcome`——think 成功回 `Outcome(response=...)`（`session.set_last_llm_response` 是 session 自身状态，stage 内合法）、失败回 `Outcome(record_error, advance_iteration)`；plan/critique 的 LLM 失败仍软跳过（warning + 空 Outcome），指令文案逐字保持；revise 无 LLM 调用；
+- **解释器双路径**（`loop_driver.py`）：注册表分流——Outcome stage 调用后由驱动器 `_apply_outcome` 统一应用（context extend、scratch update、计数器，顺序与现状等价；think 失败以 `outcome.response is None` 判定早退，语义与旧 None 链完全一致）；`act` 保持 host 旧路径（dispatch/collect/发信/完成语义留 C2）；
+- **host 瘦身**：`LoopDriverHost` 移除 `think` 与 `_traced_span`（仅四个已纯化 stage 使用）；`Agent.think`/`Agent._traced_span` 删除（全仓 grep 确认无其余调用方），LLM 语义由 `StageServices.think` 继承；`Agent._get_system_prompt` 委托保留（测试直接消费）。
+
+**达成情况**：852 个测试全绿（844 既有适配 + 8 新增：test_stage_outcome.py 7——think 直调 2、_apply_outcome 2、step_session 集成 3，TestPlanStage 补 response 透传 1），ruff / 架构检查 / re-export 检查全过。TestPlanStage/TestCritiqueStage/TestReviseStage 改造为直调 stage 断言 Outcome 数据（方案 C 的承诺：stage 可脱离宿主单测），行为断言（span 名、指令文案、软跳过、response 透传）不放松；无删除既有测试。
+
+### 方案 C · C2 — act 纯化 + 断开 Agent ⇄ LoopDriver 运行时环 ✅ 已完成（2026-08-06）
+
+C2 把最后一个不纯的 stage（act）迁入 Outcome 模型，方案 C 收口。至此"DSL 只描述，引擎执行"在三个层级自相似：
+
+| 层级 | 描述（数据） | 执行（引擎） |
+|------|--------------|--------------|
+| 行为 | behavior.tlon（AgentSpec，loop 程序 = stage 向量 + until 表达式） | LoopDriver 解释执行（硬顶 max_iterations） |
+| 动作 | `ActionRequest`（on-complete 表达式纯求值收集 spawn/emit） | OnCompleteRunner 逐条执行（4b） |
+| 步骤 | `StageOutcome`（stage 纯转换声明状态变更） | LoopDriver `_apply_outcome` + EffectExecutor |
+
+**C2 落地**：
+
+- **act 纯化**（`agents/stages/act.py`）：`act_stage_step(svc, session, response, opts) -> StageOutcome`——无 tool calls 回 `Outcome(context_appends=[assistant 消息+提醒 或 纯提醒], advance_iteration)`（提醒文案逐字节保持，`_add_no_tool_reminder` 变为纯数据产出 `_no_tool_reminder_appends`）；sendEmail(is_complete)+其他工具冲突回冲突提示；否则只回 `Outcome(tool_dispatches=[ToolCall...])`——**act 只声明 dispatch 什么，并发是引擎的**：逐工具 TOOL_EXECUTE_START + `asyncio.create_task` 后台执行 + `session.dispatch_tools` + `mark_waiting` 全在 `_apply_outcome`。`act_stage_collect(svc, session) -> StageOutcome`——收割（`session.collect_completed` 直调）、TOOL_EXECUTE_END/TOOL_ERROR 事件经 services 发布（可观测性）、sendEmail 回复语义（显式 `to` 优先、否则回触发邮件发件人、回复头继承——逐字保持）进 `mails`，assistant+tool 消息进 `context_appends`，is_complete → `save_interaction` + `run_on_complete` + `complete`；session 状态方法（add_tool_result/advance_iteration/mark_active）是 stage 合法输入状态直调，mark_completed 由引擎按 `complete` 标志执行。引擎应用顺序（collect 路径）：context_appends → mails → save_interaction → run_on_complete → complete——与现有时序等价（save → on_complete → mark_completed 在 session span 内，spawn 配额归因不变）；
+- **`EffectExecutor`**（`agents/executor.py`，引擎侧执行 Outcome 外部效果）：`send_mail(MailEffect)`（吸收原 `Agent._send_mail` 全部语义：Mail.create + "mail.send" span + MAIL_NEW 事件 + trace 注入 + 异常记 `mail_emit_failed`）、`save_interaction`（吸收 `_save_interaction_to_memory`：spec 闸门 + memory.add_interaction + reflection.note_interaction + `memory_save_failed`）、`mark_mail_read`（mailbox 注入，永不抛）、`publish`（引擎侧 TOOL_EXECUTE_START 发布闭包）——全部从 Agent 注入依赖装配，**不持 Agent 引用**；
+- **断环**：LoopDriver 最终签名 `(identity, spec, services: StageServices, executor: EffectExecutor, tool_executor, per_tool_timeout, on_complete: OnCompleteRunner, derive_state: Callable)`——不再收 host/Agent；context 首建走 `StageServices.build_context`（复用 C1 注入的 context_builder），`_session_span` 逻辑（bound_contextvars + continue_trace + "agent.session" span 含 spec_hash）移入 `StageServices.session_span`，`_terminate_loop`/超限邮件走 `executor.send_mail`，状态派生以闭包注入（Agent 的状态派生是 Agent 的职责，闭包是能力不是环）。**LoopDriver 宿主协议从 `agents/host.py` 删除，代码面 grep 清零**；Agent 侧 `_save_interaction_to_memory`/`_run_on_complete_actions`/`_tool_call_to_dict`/`_tool_result_to_string` 删除（后者两个纯序列化函数迁入 act.py），`_send_mail`/`_mark_mail_read`/`_session_span` 保留为 OnCompleteRunner/Scheduler 宿主面的薄委托（实现已下沉，无重复逻辑），`_build_context` 保留（测试直接消费）；
+- **边界原则**（同 C1，act 亦遵守）：LLM=查询走服务；系统状态变更=Outcome 数据；可观测性（日志/事件/span）=服务；session 方法是 stage 合法输入状态。
+
+**达成情况**：864 个测试全绿（852 既有适配 + 12 新增：act step 直调 5、act collect 直调 5、collect 应用顺序 1、纯 fake 断环集成 1——不经 Agent 构造 LoopDriver 跑通 think→act→complete 全程），ruff / 架构检查 / re-export 检查全过；无删除既有测试（3 个截获 `agent._logger` 的循环日志测试改截 `StageServices.logger`，13 处 `_save_interaction_to_memory` patch 随委托删除而摘除——memory 本为 mock，隔离语义不变）。
+
 ## 未来方向（登记，非规约）
-
-### 方案 C — stage 的 effects-as-data
-
-P4（2026-08，`agents/host.py` 的窄 Protocol + 服务分解）只是**过渡形态**：它把子系统对 Agent 的隐式回指收窄为显式契约，但 LoopDriver 等子系统仍直接调用宿主的副作用委托（`_send_mail` / `_save_interaction_to_memory` / 工具 dispatch）。
-
-方案 C 把 stage 演进为**纯转换** `Session × Services → StageOutcome`：要发的信、要写的记忆、要 dispatch 的工具全部是 stage **返回的数据**，由引擎统一执行。这与 on-complete 的 ActionRequest 设计同构（阶段 4b：表达式纯求值收集 ActionRequest，引擎再逐条执行），是"DSL 只描述，引擎执行"铁律向子系统层的下沉——stage 不再伸手拿宿主能力，而是声明意图、引擎代办。
-
-**触发时机**：stage 家族继续长大（每个新 stage 都要往 host Protocol 里加委托面时），或引入用户自定义 stage 时。届时 Protocol 委托面自然消亡，宿主只剩"执行 StageOutcome"一个职责。
-
-## 明确不做（v1）
 
 - 递归、`while`、`loop`/`recur`、宏
 - YAML/JSON 等其他前端

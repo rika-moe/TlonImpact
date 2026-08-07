@@ -1,0 +1,72 @@
+"""StageOutcome — a stage's declared intent, executed by the engine (C1).
+
+Stages are pure transformations ``Session x Services -> StageOutcome``:
+every system-state change a stage wants (context appends, scratch
+writes, iteration/error counters, and — from C2 — mails, tool
+dispatches, interaction saves, the completion signal) is returned as
+data; the LoopDriver applies it. Read-only external queries (the LLM
+call) and observability (logs/events/traces) go through the injected
+:mod:`tlon.agents.stages.services` instead — they are not state changes
+and never appear here.
+
+The dataclasses are mutable: the containers (lists/dicts) are built up
+incrementally by the stages that fill them, and freezing the shell
+while the containers stay mutable would buy no real immutability.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from tlon.base.llm_client import LLMResponse, ToolCall
+
+
+@dataclass
+class MailEffect:
+    """One mail to send (C2 — declared by a stage, sent by the engine)."""
+
+    to: list[str]
+    content: str
+    cc: list[str] | None = None
+    subject: str | None = None
+    in_reply_to: str | None = None
+    thread_id: str | None = None
+
+
+@dataclass
+class StageOutcome:
+    """Everything a stage wants changed, as data.
+
+    Defaults are all empty/False so a stage only declares what it
+    actually changes; the engine's application of an all-default
+    outcome is a no-op.
+    """
+
+    response: LLMResponse | None = None
+    """This round's LLM response; non-None updates the response chain."""
+
+    context_appends: list[dict[str, Any]] = field(default_factory=list)
+    """Messages to append to ``session.context``."""
+
+    scratch_updates: dict[str, Any] = field(default_factory=dict)
+    """Entries to write into ``session.loop_scratch``."""
+
+    advance_iteration: bool = False
+    """Advance the session's iteration counter."""
+
+    record_error: bool = False
+    """Record one error against the session."""
+
+    mails: list[MailEffect] = field(default_factory=list)
+    """Mails to send (C2)."""
+
+    tool_dispatches: list[ToolCall] = field(default_factory=list)
+    """Tool calls to dispatch as background tasks (C2)."""
+
+    save_interaction: str | None = None
+    """Final reply to persist to memory (C2)."""
+
+    run_on_complete: bool = False
+    """Run the spec's on-complete action expressions (C2)."""
+
+    complete: bool = False
+    """Mark the session completed (C2)."""

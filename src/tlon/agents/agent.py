@@ -20,19 +20,20 @@ the agent is an interpreter of that spec, per docs/design/dsl-agents.md.
 """
 
 import contextlib
-import json
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
 
 from tlon.agents.context_builder import ContextBuilder
+from tlon.agents.executor import EffectExecutor
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
 from tlon.agents.session import AgentSession
 from tlon.agents.spec import AgentSpec
+from tlon.agents.stages.services import StageServices, make_event_publisher
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity, TriggerEvaluator
 from tlon.base.component import Component
@@ -40,14 +41,12 @@ from tlon.base.config import AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall
+from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
-from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
-from tlon.tools.base import ToolResult
 from tlon.tools.tasks.manager import TaskManager
 
 if TYPE_CHECKING:
@@ -140,23 +139,54 @@ class Agent(Member):
         # (see docs/design/dsl-agents.md). Loaded before subsystem construction.
         self.spec = spec if spec is not None else AgentSpec.load(config.id)
 
-        # Behavioral subsystems (P4): assembled with capabilities, not a
-        # back-reference to self — plain data and injected services where
-        # possible, the narrow host protocols (agents/host.py) where the
-        # shared orchestration surface is genuinely needed.
-        self._trigger = TriggerEvaluator(
-            AgentIdentity(id=self.id, name=self.name, address=self.address), self.spec
-        )
+        # Behavioral subsystems (P4/C2): assembled from capabilities — the
+        # injected services above, plain data, and closures over the event
+        # bus — never a reference to self.
+        identity = AgentIdentity(id=self.id, name=self.name, address=self.address)
+        publisher = make_event_publisher(event_bus, self.name)
+        self._trigger = TriggerEvaluator(identity, self.spec)
         self._reflection = ReflectionEngine(memory, llm_client, self.spec)
         self._context_builder = ContextBuilder(
             config, self.team_members, mailbox, memory, self.spec, self.address
         )
-        self._loop_driver = LoopDriver(self, tool_executor, per_tool_timeout)
-        self._on_complete = OnCompleteRunner(self, registry)
+        # Stage services (C1) and effect executor (C2): the query/
+        # observability bundle the pure stages use and the engine-side
+        # executor of stage-declared effects — both assembled from the
+        # injected dependencies above, no back-reference to self.
+        self._stage_services = StageServices(
+            identity=identity,
+            spec=self.spec,
+            llm_client=llm_client,
+            context_builder=self._context_builder,
+            publish=publisher,
+            tool_definitions=tool_executor.get_tool_definitions,
+            logger=self._logger,
+        )
+        self._effect_executor = EffectExecutor(
+            identity=identity,
+            spec=self.spec,
+            memory=memory,
+            reflection=self._reflection,
+            mailbox=mailbox,
+            publish=publisher,
+            logger=self._logger,
+        )
+        self._on_complete = OnCompleteRunner(
+            identity, self.spec, self._logger, self._effect_executor, registry
+        )
+        self._loop_driver = LoopDriver(
+            identity=identity,
+            spec=self.spec,
+            services=self._stage_services,
+            executor=self._effect_executor,
+            tool_executor=tool_executor,
+            per_tool_timeout=per_tool_timeout,
+            on_complete=self._on_complete,
+        )
         self._scheduler = SessionScheduler(self, self._loop_driver)
 
-        # Agent state
-        self.state: AgentState | None = None
+        # Agent state (backing field; see the state property)
+        self._state: AgentState | None = None
 
         with bound_contextvars(agent_id=self.id):
             logger.info("agent_initialized", agent_name=self.name)
@@ -170,6 +200,26 @@ class Agent(Member):
     def member_type(self) -> str:
         """Member type; agents are ReAct members."""
         return "react"
+
+    @property
+    def state(self) -> "AgentState | None":
+        """Agent state; ACTIVE/THINKING derive from live sessions on read.
+
+        State derivation is read-time (R2 follow-up): the engine never
+        calls back into the Agent to write it — ACTIVE vs THINKING is
+        computed from the scheduler's live session set whenever the state
+        is read. Lifecycle states (INITIALIZING/ERROR/SHUTDOWN) are stored
+        verbatim and never derived.
+        """
+        if self._state in (AgentState.ACTIVE, AgentState.THINKING):
+            if self._scheduler.active_session_count > 0:
+                return AgentState.THINKING
+            return AgentState.ACTIVE
+        return self._state
+
+    @state.setter
+    def state(self, value: "AgentState | None") -> None:
+        self._state = value
 
     def get_state(self) -> str:
         """Get agent state as string."""
@@ -191,22 +241,6 @@ class Agent(Member):
         used by the registry's idle monitor.
         """
         return self._scheduler.idle_seconds
-
-    def _derive_state(self, sessions: dict[str, AgentSession]) -> None:
-        """Recompute agent-level state from live sessions.
-
-        With multi-session scheduling, per-step assignment would let one
-        session's lifecycle overwrite another's. Instead the state is
-        derived: THINKING while any session is still alive, ACTIVE (idle)
-        when none remain. Lifecycle states (INITIALIZING/ERROR/SHUTDOWN)
-        are left untouched.
-        """
-        if self.state not in (AgentState.ACTIVE, AgentState.THINKING):
-            return
-        if any(not s.is_completed for s in sessions.values()):
-            self.state = AgentState.THINKING
-        else:
-            self.state = AgentState.ACTIVE
 
     async def initialize(self) -> None:
         """Initialize the agent."""
@@ -303,15 +337,11 @@ class Agent(Member):
         """Advance the inbox cursor once a mail's session has completed.
 
         Called by the scheduler on every session completion (success,
-        error or timeout alike — the mail has been processed). Never
-        raises: a cursor failure must not break session cleanup.
+        error or timeout alike — the mail has been processed). The
+        implementation lives in the EffectExecutor; this delegate
+        remains for the SessionScheduler's host surface.
         """
-        if mail is None or self.mailbox is None:
-            return
-        try:
-            await self.mailbox.mark_read(mail.id)
-        except Exception as e:
-            self._logger.error("mail_mark_read_failed", mail_id=mail.id, error=str(e))
+        await self._effect_executor.mark_mail_read(mail)
 
     async def _build_knowledge_context(self) -> str:
         """Build knowledge text from memory blocks."""
@@ -329,195 +359,12 @@ class Agent(Member):
         """Check if memory reflection should run and trigger if needed."""
         await self._reflection.check_trigger()
 
-    async def _run_on_complete_actions(self, session: AgentSession, result: str) -> None:
-        """Evaluate + execute on-complete action expressions (see OnCompleteRunner)."""
-        await self._on_complete.run(session, result)
-
-    async def think(self, context: list[dict[str, Any]]) -> LLMResponse:
-        """Call LLM to think and generate response."""
-        system_prompt = await self._get_system_prompt()
-        tools = self.tool_executor.get_tool_definitions()
-
-        current_trace = get_current_trace()
-
-        await self.emit(
-            EventType.AGENT_THINKING_START,
-            payload={"agent_id": self.id, "agent_name": self.name, "context_length": len(context)},
-            source=self.id,
-            trace_id=current_trace.trace_id if current_trace else None,
-            span_id=current_trace.span_id if current_trace else None,
-            parent_span_id=current_trace.parent_span_id if current_trace else None,
-        )
-
-        await self.emit(
-            EventType.AGENT_LLM_REQUEST,
-            payload={
-                "agent_id": self.id,
-                "model": self.llm_client.config.model_name
-                if hasattr(self.llm_client, "config")
-                else "unknown",
-                "messages_count": len(context),
-                "tools_count": len(tools) if tools else 0,
-            },
-            source=self.id,
-            trace_id=current_trace.trace_id if current_trace else None,
-            span_id=current_trace.span_id if current_trace else None,
-        )
-
-        import time
-
-        start_time = time.time()
-        response = await self.llm_client.chat(
-            system_prompt=system_prompt,
-            messages=context,
-            tools=tools if tools else None,
-        )
-        duration_ms = int((time.time() - start_time) * 1000)
-
-        await self.emit(
-            EventType.AGENT_LLM_RESPONSE,
-            payload={
-                "agent_id": self.id,
-                "model": self.llm_client.config.model_name
-                if hasattr(self.llm_client, "config")
-                else "unknown",
-                "duration_ms": duration_ms,
-                "finish_reason": response.finish_reason,
-                "has_tool_calls": bool(response.tool_calls),
-                "tool_call_count": len(response.tool_calls) if response.tool_calls else 0,
-            },
-            source=self.id,
-            trace_id=current_trace.trace_id if current_trace else None,
-            span_id=current_trace.span_id if current_trace else None,
-        )
-
-        await self.emit(
-            EventType.AGENT_THINKING_END,
-            payload={"agent_id": self.id, "agent_name": self.name, "duration_ms": duration_ms},
-            source=self.id,
-            trace_id=current_trace.trace_id if current_trace else None,
-            span_id=current_trace.span_id if current_trace else None,
-            parent_span_id=current_trace.parent_span_id if current_trace else None,
-        )
-
-        return response
-
-    async def _save_interaction_to_memory(
-        self, final_response: str, llm_response: LLMResponse, tool_results: list
-    ) -> None:
-        """Save interaction to memory (gated by spec.on_complete.save_interaction)."""
-        if not self.spec.on_complete.save_interaction:
-            return
-        try:
-            msg = {
-                "sender_id": self.id,
-                "sender_name": self.name,
-                "sender_type": "agent",
-                "content": final_response,
-            }
-            await self.memory.add_interaction(msg, llm_response, tool_results)
-            self._reflection.note_interaction()
-        except Exception as e:
-            self._logger.error("memory_save_failed", error=str(e), exc_info=True)
-
-    async def _send_mail(
-        self,
-        to: list[str],
-        content: str,
-        cc: list[str] | None = None,
-        subject: str | None = None,
-        in_reply_to: str | None = None,
-        thread_id: str | None = None,
-    ) -> None:
-        """Send a mail via EventBus, injecting the current trace context.
-
-        Reply headers (``in_reply_to`` / ``thread_id``) are passed
-        explicitly by the caller, which derives them from the session's
-        trigger mail; both default to a fresh thread.
-        """
-        try:
-            mail = Mail.create(
-                from_address=self.address,
-                to=to,
-                cc=cc,
-                subject=subject,
-                content=content,
-                in_reply_to=in_reply_to,
-                thread_id=thread_id,
-            )
-            with start_span(
-                "mail.send",
-                source=self.id,
-                attributes={"mail_id": mail.id, "to": mail.to},
-            ):
-                current = get_current_trace()
-                await self.emit(
-                    EventType.MAIL_NEW,
-                    payload=mail,
-                    source=self.id,
-                    trace_id=current.trace_id if current else None,
-                    span_id=current.span_id if current else None,
-                    parent_span_id=current.parent_span_id if current else None,
-                )
-        except Exception:
-            self._logger.error("mail_emit_failed", exc_info=True)
-
     @contextlib.contextmanager
     def _session_span(self, session: AgentSession):
         """Per-round trace context for a session's advance.
 
-        OTel context is contextvar-based, so it does not survive across
-        event-loop turns: each round re-attaches the carrier stored on the
-        session and opens an "agent.session" span around that round's work
-        (think step or tool-result collection).
+        The implementation lives in StageServices.session_span; this
+        delegate remains for the SessionScheduler's host surface.
         """
-        carrier = session.carrier or {}
-        trace_id = carrier.get("trace_id")
-        with contextlib.ExitStack() as stack:
-            # session_id is also bound so tools executing within this round
-            # (background tasks inherit contextvars) can attribute their
-            # work to the session — e.g. spawnAgent's per-session quota.
-            stack.enter_context(bound_contextvars(agent_id=self.id, session_id=session.id))
-            if trace_id:
-                stack.enter_context(continue_trace(trace_id, carrier.get("span_id")))
-            stack.enter_context(
-                start_span(
-                    "agent.session",
-                    source=self.id,
-                    attributes={
-                        "session_id": session.id,
-                        "state": session.state.value,
-                        "spec_hash": self.spec.source_hash,
-                    },
-                )
-            )
+        with self._stage_services.session_span(session):
             yield
-
-    @contextlib.asynccontextmanager
-    async def _traced_span(self, name: str):
-        """Thin wrapper over the tracing facade.
-
-        Persistence is handled by the OTel JSONL exporter; this only
-        manages the span lifecycle and yields the span context.
-        """
-        with start_span(name=name, source=self.id) as ctx:
-            yield ctx
-
-    @staticmethod
-    def _tool_call_to_dict(tool_call: ToolCall) -> dict[str, Any]:
-        """Convert ToolCall to dict for context."""
-        return {
-            "id": tool_call.id,
-            "type": "function",
-            "function": {
-                "name": tool_call.function_name,
-                "arguments": json.dumps(tool_call.arguments),
-            },
-        }
-
-    @staticmethod
-    def _tool_result_to_string(result: ToolResult) -> str:
-        """Convert tool result to string for context."""
-        if hasattr(result, "to_dict"):
-            return json.dumps(result.to_dict())
-        return str(result)

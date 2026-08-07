@@ -10,7 +10,7 @@ Covers the behavior fixes from the agent.py split:
 
 import asyncio
 import dataclasses
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from tlon.agents.agent import Agent, AgentState
 from tlon.agents.edn import loads
@@ -167,21 +167,20 @@ class TestSessionTimeout:
         agent._scheduler._worker_running = True
         agent._scheduler._mail_queue.put_nowait((_make_message(), {}))
 
-        with patch.object(agent, "_save_interaction_to_memory", new=AsyncMock()):
-            task = asyncio.create_task(agent._scheduler.run())
-            try:
-                # Give the loop a few passes to reap the timed-out session
-                await asyncio.sleep(0.3)
-                # Session timed out before ever stepping: no LLM call, no reply
-                llm.chat.assert_not_called()
-                message_events = [
-                    c
-                    for c in agent.event_bus.publish.await_args_list
-                    if c.args[0].type == EventType.MAIL_NEW
-                ]
-                assert not message_events
-                # Session reaped -> agent falls back to idle
-                assert agent.state == AgentState.ACTIVE
-            finally:
-                agent._scheduler._worker_running = False
-                await asyncio.wait_for(task, timeout=2)
+        task = asyncio.create_task(agent._scheduler.run())
+        try:
+            # Give the loop a few passes to reap the timed-out session
+            await asyncio.sleep(0.3)
+            # Session timed out before ever stepping: no LLM call, no reply
+            llm.chat.assert_not_called()
+            message_events = [
+                c
+                for c in agent.event_bus.publish.await_args_list
+                if c.args[0].type == EventType.MAIL_NEW
+            ]
+            assert not message_events
+            # Session reaped -> agent falls back to idle
+            assert agent.state == AgentState.ACTIVE
+        finally:
+            agent._scheduler._worker_running = False
+            await asyncio.wait_for(task, timeout=2)

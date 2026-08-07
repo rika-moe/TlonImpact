@@ -15,15 +15,17 @@
 
 ```
 agents/
-├── agent.py               # Agent 薄壳：生命周期、消息队列、think、子系统编排
-├── host.py                # 子系统宿主 Protocol：LoopDriverHost / OnCompleteHost / SchedulerHost（P4）
+├── agent.py               # Agent 薄壳：生命周期、消息队列、子系统编排
+├── host.py                # 子系统宿主 Protocol：OnCompleteHost / SchedulerHost（P4；LoopDriver 的协议自 C2 删除）
+├── stages/                # stage 实现：think/act/plan/critique/revise + StageOutcome/StageServices（C1/C2 全部纯化）
 ├── spec.py                # AgentSpec：行为规约（语义唯一权威）+ behavior.tlon 加载
 ├── edn.py                 # EDN 解析器（L0 数据字面量 + Form list 类型，只解析不求值）
 ├── eval.py                # L1 受限求值器：白名单特殊形式 + 纯 builtin 注册表 + fuel/深度限制
 ├── prototypes.py          # Behavior prototype 库：种子 / 列举 / 实例化
 ├── spawn_errors.py        # SpawnRejectedError / StopRejectedError（spawn/stop 拒绝原因）
 ├── scheduler.py           # SessionScheduler：主循环 + session 生命周期 + 超时清理
-├── loop_driver.py         # LoopDriver：ReAct 步进 / 工具收割
+├── loop_driver.py         # LoopDriver：ReAct 步进 / 工具收割 / StageOutcome 应用（能力注入，无宿主回指）
+├── executor.py            # EffectExecutor：引擎侧执行 StageOutcome 的外部效果（发信/写记忆/已读游标，C2）
 ├── trigger.py             # TriggerEvaluator：响应触发判断
 ├── on_complete.py         # OnCompleteRunner：on-complete 动作表达式求值 + 执行（4b）
 ├── context_builder.py     # ContextBuilder：对话上下文 + 系统提示缓存
@@ -48,7 +50,8 @@ agents/
 | `Agent` | 智能体薄壳（编排子系统） | `agents/agent.py` |
 | `AgentSpec` | 行为规约（语义唯一权威） | `agents/spec.py` |
 | `SessionScheduler` | 主循环、多 session 调度 | `agents/scheduler.py` |
-| `LoopDriver` | ReAct step/collect | `agents/loop_driver.py` |
+| `LoopDriver` | ReAct step/collect + StageOutcome 应用（能力注入，无宿主回指） | `agents/loop_driver.py` |
+| `EffectExecutor` | 引擎侧效果执行（发信 / 写记忆 / 已读游标 / 工具 dispatch 事件） | `agents/executor.py` |
 | `TriggerEvaluator` | 触发判断（表达式 / To·CC 地址数据模式） | `agents/trigger.py` |
 | `OnCompleteRunner` | on-complete 动作求值 + 执行（纯求值收集，引擎执行） | `agents/on_complete.py` |
 | `eval_form` / `validate_form` | L1 受限求值 / 静态校验（图灵不完备，fuel 计量） | `agents/eval.py` |
@@ -61,7 +64,7 @@ agents/
 
 ---
 
-## 子系统解耦（P4，2026-08）
+## 子系统解耦（P4 + 方案 C，2026-08）
 
 子系统构造不再收整个 Agent 的回指，按实际消费面分两路（契约集中在
 `agents/host.py`，每个 Protocol 成员带语义 docstring）：
@@ -71,11 +74,20 @@ agents/
   `ContextBuilder` 收 config/team_members/mailbox/memory/spec/address，并自带
   系统提示缓存（`_system_prompt_cache`/`_mtime` 从 Agent 迁入，缓存本就只被
   `get_system_prompt` 使用）；
-- **A — 窄 Protocol（真正共享的编排委托面）**：`LoopDriverHost` /
-  `OnCompleteHost` / `SchedulerHost`，一个子系统一个 Protocol（接口隔离），
-  Agent 结构化满足（无继承、无注册）。其中纯服务仍直注：LoopDriver 的
-  tool_executor/per_tool_timeout、OnCompleteRunner 的 registry、SessionScheduler
-  的 LoopDriver。
+- **C — 能力注入（LoopDriver，方案 C 的 C2）**：stage 全部纯化为
+  `Session × Services → StageOutcome`（见
+  [../../design/dsl-agents.md](../../design/dsl-agents.md) 方案 C），LoopDriver
+  最终签名为 `(identity, spec, services: StageServices, executor: EffectExecutor,
+  tool_executor, per_tool_timeout, on_complete, derive_state)`——查询/可观测性走
+  `StageServices`（含 LLM 调用、context 首建、session span），stage 声明的外部
+  效果（发信/写记忆/已读游标）由 `EffectExecutor` 执行，状态派生以闭包注入；
+  运行时环已断，host.py 中 LoopDriver 的宿主协议随之删除（全仓清零）；
+- **A — 窄 Protocol（真正共享的编排委托面）**：`OnCompleteHost` /
+  `SchedulerHost`，一个子系统一个 Protocol（接口隔离），Agent 结构化满足
+  （无继承、无注册）。其中纯服务仍直注：OnCompleteRunner 的 registry、
+  SessionScheduler 的 LoopDriver；`Agent._send_mail` / `_mark_mail_read` /
+  `_session_span` 是这两个协议面上的薄委托，实现已下沉到
+  EffectExecutor / StageServices（无重复逻辑）。
 
 Agent↔子系统的自我回环委托随之消除：`agent._step_session` /
 `agent._collect_session_results`（Scheduler 改为直调注入的 LoopDriver）、
@@ -153,7 +165,7 @@ agent 可从 prototype 现造临时工（contractor）并停止之，全程受 s
   由各自 idle timeout 回收；`spawned_by` 是审计记录不是生命周期锁；
 - **spawn 预算**（registry 构造参数，账本在内存、重启清零）：`max_activations=8`
   （运行中总数含 resident）、`max_spawn_depth=3`、`session_spawn_quota=2`（同一
-  (spawner, session) 上限；session_id 由 `Agent._session_span` 经 structlog
+  (spawner, session) 上限；session_id 由 `StageServices.session_span` 经 structlog
   contextvars 绑定，后台工具 task 继承 context 可读，读不到时同一 spawner 共用一桶）。
   拒绝抛 `SpawnRejectedError`（`.reason` = max_activations/max_spawn_depth/session_quota），
   记 `spawn_rejected` 日志；权限不可升格——只能从 prototype 库 spawn，overrides 仅
@@ -181,7 +193,7 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
 - 消费方：TriggerEvaluator（`spec.trigger`）、LoopDriver（`spec.loop`）、
   ContextBuilder / SystemPromptBuilder（`spec.context`）、ReflectionEngine
   （`spec.on_complete.reflect`，`enabled` 仍是运行时开关）、
-  `Agent._save_interaction_to_memory`（`spec.on_complete.save_interaction`）、
+  `EffectExecutor.save_interaction`（`spec.on_complete.save_interaction`）、
   OnCompleteRunner（`spec.on_complete.actions`，见下文"on-complete 动作表达式"）。
 
 边界（R1b）：proactive 已随邮件模型整套退役——`AgentConfig.proactive` 字段保留但
@@ -219,8 +231,8 @@ env=`{msg, self}` 求值，真值即响应；`EvalError` 安全默认不响应�
   纯表达式；顶层只许动作 Form 或单层 `when`（不支持嵌套 `when`）；
 - **env**：`msg`（触发邮件 Mail，经 `session.trigger_message` 传递）、`result`
   （本轮最终回复字符串）、`self`；`content-matches?` 同时接受 Mail 与字符串；
-- **执行点**：session 以 `is_complete` 收尾时，在 `_save_interaction_to_memory` 之后、
-  `session.mark_completed()` 之前（LoopDriver 收尾处，仍在 `_session_span` 内——
+- **执行点**：session 以 `is_complete` 收尾时，在 interaction 保存之后、
+  `session.mark_completed()` 之前（LoopDriver 按 Outcome 收尾，仍在 session span 内——
   spawn 的 session 配额因此自然归因）由 `OnCompleteRunner` 执行一次；
 - **动作语义**：`spawn` 调 `registry.spawn_contractor`（spawner_id=当前 agent，
   session_id 读 structlog contextvars）——**信任闸与 spawn 预算全部生效**
