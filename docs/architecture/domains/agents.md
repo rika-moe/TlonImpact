@@ -16,7 +16,6 @@
 ```
 agents/
 ├── agent.py               # Agent 薄壳：生命周期、消息队列、子系统编排
-├── host.py                # 子系统宿主 Protocol：OnCompleteHost / SchedulerHost（P4；LoopDriver 的协议自 C2 删除）
 ├── stages/                # stage 实现：think/act/plan/critique/revise + StageOutcome/StageServices（C1/C2 全部纯化）
 ├── spec.py                # AgentSpec：行为规约（语义唯一权威）+ behavior.tlon 加载
 ├── edn.py                 # EDN 解析器（L0 数据字面量 + Form list 类型，只解析不求值）
@@ -66,34 +65,31 @@ agents/
 
 ## 子系统解耦（P4 + 方案 C，2026-08）
 
-子系统构造不再收整个 Agent 的回指，按实际消费面分两路（契约集中在
-`agents/host.py`，每个 Protocol 成员带语义 docstring）：
+**所有子系统均为能力注入，没有任何子系统持有 Agent 引用**——host
+Protocol 文件（agents/host.py）已随最后一个消费者（SessionScheduler）
+改为能力注入而删除：
 
-- **B — 服务/数据直注（零回指）**：`TriggerEvaluator` 收不可变 `AgentIdentity`
+- **服务/数据直注**：`TriggerEvaluator` 收不可变 `AgentIdentity`
   （id/name/address）+ spec；`ReflectionEngine` 收 memory + llm_client + spec；
   `ContextBuilder` 收 config/team_members/mailbox/memory/spec/address，并自带
-  系统提示缓存（`_system_prompt_cache`/`_mtime` 从 Agent 迁入，缓存本就只被
-  `get_system_prompt` 使用）；
-- **C — 能力注入（LoopDriver，方案 C 的 C2）**：stage 全部纯化为
+  系统提示缓存（`_system_prompt_cache`/`_mtime` 从 Agent 迁入）；
+  `OnCompleteRunner` 收 identity/spec/logger/mail_sender（EffectExecutor）/
+  registry；
+- **能力注入（LoopDriver，方案 C 的 C2）**：stage 全部纯化为
   `Session × Services → StageOutcome`（见
   [../../design/dsl-agents.md](../../design/dsl-agents.md) 方案 C），LoopDriver
-  最终签名为 `(identity, spec, services: StageServices, executor: EffectExecutor,
-  tool_executor, per_tool_timeout, on_complete, derive_state)`——查询/可观测性走
+  签名为 `(identity, spec, services: StageServices, executor: EffectExecutor,
+  tool_executor, per_tool_timeout, on_complete)`——查询/可观测性走
   `StageServices`（含 LLM 调用、context 首建、session span），stage 声明的外部
-  效果（发信/写记忆/已读游标）由 `EffectExecutor` 执行，状态派生以闭包注入；
-  运行时环已断，host.py 中 LoopDriver 的宿主协议随之删除（全仓清零）；
-- **A — 窄 Protocol（真正共享的编排委托面）**：`OnCompleteHost` /
-  `SchedulerHost`，一个子系统一个 Protocol（接口隔离），Agent 结构化满足
-  （无继承、无注册）。其中纯服务仍直注：OnCompleteRunner 的 registry、
-  SessionScheduler 的 LoopDriver；`Agent._send_mail` / `_mark_mail_read` /
-  `_session_span` 是这两个协议面上的薄委托，实现已下沉到
-  EffectExecutor / StageServices（无重复逻辑）。
+  效果（发信/写记忆/已读游标）由 `EffectExecutor` 执行；
+- **SessionScheduler**：收 `(config, memory, session_span, mark_mail_read,
+  check_reflection, loop_driver)`——六个委托分别来自 AgentConfig、
+  MemoryManager、StageServices、EffectExecutor、ReflectionEngine 与直注的
+  LoopDriver；邮件队列与 worker 生命周期由 scheduler 自持（R2）；
+  **agent 状态读时派生**（`Agent.state` property 由 scheduler 存活会话集合
+  算出 ACTIVE/THINKING），引擎不再回调 Agent 写状态。
 
-Agent↔子系统的自我回环委托随之消除：`agent._step_session` /
-`agent._collect_session_results`（Scheduler 改为直调注入的 LoopDriver）、
-`agent._build_prompt_context`（ContextBuilder 内部直调）等已从 Agent 删除；
-`_mail_queue`/`_worker_running`/`_worker_task` 状态仍留在 Agent（由生命周期
-写入、SchedulerHost 只读消费，diff 最小）。
+Agent 的对象图由此彻底无环：无任何子系统/服务持有 Agent 引用。
 
 ---
 

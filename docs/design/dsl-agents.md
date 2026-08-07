@@ -456,7 +456,9 @@ C2 把最后一个不纯的 stage（act）迁入 Outcome 模型，方案 C 收�
 
 **达成情况**：864 个测试全绿（852 既有适配 + 12 新增：act step 直调 5、act collect 直调 5、collect 应用顺序 1、纯 fake 断环集成 1——不经 Agent 构造 LoopDriver 跑通 think→act→complete 全程），ruff / 架构检查 / re-export 检查全过；无删除既有测试（3 个截获 `agent._logger` 的循环日志测试改截 `StageServices.logger`，13 处 `_save_interaction_to_memory` patch 随委托删除而摘除——memory 本为 mock，隔离语义不变）。
 
-## 未来方向（登记，非规约）
+**断环收尾（2026-08-07）**：三条残留路径全部修复——`make_event_publisher` 从 event_bus 直构（publish 闭包不再持有 Agent）；OnCompleteRunner 改吃能力（identity/spec/logger/mail_sender/registry），`OnCompleteHost` 删除；状态派生反转为读时计算（`Agent.state` property 由 scheduler 存活会话集合算出 ACTIVE/THINKING，引擎零回调）。SessionScheduler 同步改为能力注入（config/memory/session_span/mark_mail_read/check_reflection/loop_driver），`SchedulerHost` 与 `agents/host.py` 随之删除——**Agent 对象图彻底无环，无任何子系统持有其引用**。死委托 `Agent._send_mail` 删除。
+
+## 明确不做（v1）
 
 - 递归、`while`、`loop`/`recur`、宏
 - YAML/JSON 等其他前端

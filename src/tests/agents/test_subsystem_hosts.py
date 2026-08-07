@@ -4,9 +4,9 @@ Subsystems no longer take a back-reference to the whole Agent:
 
 - B side (service/data injection): ReflectionEngine is constructed with
   memory + llm_client + spec — plain mocks suffice, no Agent at all.
-- A side (narrow host protocol): SessionScheduler runs against a tiny
-  hand-written SchedulerHost fake implementing only the declared
-  protocol surface (agents/host.py), with the LoopDriver injected.
+- A side (capability injection): SessionScheduler runs on injected
+  delegates (config/memory/span/mail/reflection closures), with the
+  LoopDriver injected — no host protocol at all.
 
 See also: test_on_complete.py's _FakeHost (OnCompleteHost) and
 test_eval.py's data-only TriggerEvaluator construction.
@@ -71,36 +71,22 @@ class TestReflectionEngineServices:
         assert engine._last_reflection_time is not None
 
 
-class _FakeSchedulerHost:
-    """Minimal SchedulerHost fake: only the declared protocol surface."""
-
-    def __init__(self):
-        self.id = "a-001"
-        self.config = AgentConfig(id="a-001", name="fake")
-        self.memory = AsyncMock()
-        self.derived: list[int] = []
-        self.marked_read: list[str | None] = []
-        self.reflection_checks = 0
-
-    @contextlib.contextmanager
-    def _session_span(self, session: AgentSession):
-        yield
-
-    async def _mark_mail_read(self, mail: Mail | None) -> None:
-        self.marked_read.append(mail.id if mail else None)
-
-    def _derive_state(self, sessions: dict) -> None:
-        self.derived.append(len(sessions))
-
-    async def _check_reflection_trigger(self) -> None:
-        self.reflection_checks += 1
-
-
-class TestSchedulerHostFake:
-    """A side: the scheduler drives a small fake host + injected driver."""
+class TestSchedulerCapabilities:
+    """The scheduler runs on injected delegates alone — no host object."""
 
     async def test_one_mail_stepped_and_marked_read(self):
-        host = _FakeSchedulerHost()
+        marked_read: list[str | None] = []
+
+        @contextlib.contextmanager
+        def session_span(session: AgentSession):
+            yield
+
+        async def mark_mail_read(mail: Mail | None) -> None:
+            marked_read.append(mail.id if mail else None)
+
+        async def check_reflection() -> None:
+            pass
+
         driver = MagicMock()
 
         async def complete(session: AgentSession, mail: Mail) -> None:
@@ -109,7 +95,14 @@ class TestSchedulerHostFake:
         driver.step_session = AsyncMock(side_effect=complete)
         driver.collect_session_results = AsyncMock()
 
-        scheduler = SessionScheduler(host, driver)
+        scheduler = SessionScheduler(
+            AgentConfig(id="a-001", name="fake"),
+            AsyncMock(),
+            session_span,
+            mark_mail_read,
+            check_reflection,
+            driver,
+        )
         mail = Mail.create(
             from_address="u-1@tlon.internal", to=["a-001@tlon.internal"], content="hi"
         )
@@ -119,14 +112,14 @@ class TestSchedulerHostFake:
         task = asyncio.create_task(scheduler.run())
         try:
             for _ in range(200):
-                if host.marked_read:
+                if marked_read:
                     break
                 await asyncio.sleep(0.01)
             driver.step_session.assert_awaited_once()
             session, stepped_mail = driver.step_session.await_args.args
             assert stepped_mail is mail
             assert session.id == f"a-001-{mail.id}"
-            assert host.marked_read == [mail.id]
+            assert marked_read == [mail.id]
         finally:
             scheduler._worker_running = False
             await asyncio.wait_for(task, timeout=2)

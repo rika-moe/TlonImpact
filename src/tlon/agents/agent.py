@@ -183,7 +183,14 @@ class Agent(Member):
             per_tool_timeout=per_tool_timeout,
             on_complete=self._on_complete,
         )
-        self._scheduler = SessionScheduler(self, self._loop_driver)
+        self._scheduler = SessionScheduler(
+            config,
+            memory,
+            self._stage_services.session_span,
+            self._effect_executor.mark_mail_read,
+            self._reflection.check_trigger,
+            self._loop_driver,
+        )
 
         # Agent state (backing field; see the state property)
         self._state: AgentState | None = None

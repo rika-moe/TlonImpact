@@ -156,6 +156,26 @@ class StageServices:
         """Publish an observability event (source: this agent)."""
         await self._publish(event_type, payload=payload, source=self.identity.id)
 
+    async def _emit_with_trace(self, event_type: EventType, payload: dict[str, Any]) -> None:
+        """Publish an observability event with the current trace injected."""
+        current_trace = get_current_trace()
+        await self._publish(
+            event_type,
+            payload=payload,
+            source=self.identity.id,
+            trace_id=current_trace.trace_id if current_trace else None,
+            span_id=current_trace.span_id if current_trace else None,
+            parent_span_id=current_trace.parent_span_id if current_trace else None,
+        )
+
+    def _model_name(self) -> str:
+        """The LLM model name for observability payloads."""
+        return (
+            self._llm_client.config.model_name
+            if hasattr(self._llm_client, "config")
+            else "unknown"
+        )
+
     async def think(self, context: list[dict[str, Any]], *, span: str) -> LLMResponse:
         """Call the LLM once — a read-only external query, not an effect.
 
@@ -168,34 +188,22 @@ class StageServices:
             system_prompt = await self._context_builder.get_system_prompt()
             tools = self._tool_definitions()
 
-            current_trace = get_current_trace()
-
-            await self._publish(
+            await self._emit_with_trace(
                 EventType.AGENT_THINKING_START,
-                payload={
+                {
                     "agent_id": self.identity.id,
                     "agent_name": self.identity.name,
                     "context_length": len(context),
                 },
-                source=self.identity.id,
-                trace_id=current_trace.trace_id if current_trace else None,
-                span_id=current_trace.span_id if current_trace else None,
-                parent_span_id=current_trace.parent_span_id if current_trace else None,
             )
-
-            await self._publish(
+            await self._emit_with_trace(
                 EventType.AGENT_LLM_REQUEST,
-                payload={
+                {
                     "agent_id": self.identity.id,
-                    "model": self._llm_client.config.model_name
-                    if hasattr(self._llm_client, "config")
-                    else "unknown",
+                    "model": self._model_name(),
                     "messages_count": len(context),
                     "tools_count": len(tools) if tools else 0,
                 },
-                source=self.identity.id,
-                trace_id=current_trace.trace_id if current_trace else None,
-                span_id=current_trace.span_id if current_trace else None,
             )
 
             start_time = time.time()
@@ -206,34 +214,24 @@ class StageServices:
             )
             duration_ms = int((time.time() - start_time) * 1000)
 
-            await self._publish(
+            await self._emit_with_trace(
                 EventType.AGENT_LLM_RESPONSE,
-                payload={
+                {
                     "agent_id": self.identity.id,
-                    "model": self._llm_client.config.model_name
-                    if hasattr(self._llm_client, "config")
-                    else "unknown",
+                    "model": self._model_name(),
                     "duration_ms": duration_ms,
                     "finish_reason": response.finish_reason,
                     "has_tool_calls": bool(response.tool_calls),
                     "tool_call_count": len(response.tool_calls) if response.tool_calls else 0,
                 },
-                source=self.identity.id,
-                trace_id=current_trace.trace_id if current_trace else None,
-                span_id=current_trace.span_id if current_trace else None,
             )
-
-            await self._publish(
+            await self._emit_with_trace(
                 EventType.AGENT_THINKING_END,
-                payload={
+                {
                     "agent_id": self.identity.id,
                     "agent_name": self.identity.name,
                     "duration_ms": duration_ms,
                 },
-                source=self.identity.id,
-                trace_id=current_trace.trace_id if current_trace else None,
-                span_id=current_trace.span_id if current_trace else None,
-                parent_span_id=current_trace.parent_span_id if current_trace else None,
             )
 
             return response
