@@ -413,7 +413,7 @@ script 类型成员从"只有内置亚当"走向"可经 prototype/spawn 创建"�
 
 **落地约束**：`ScriptSpec.load` 以无宿主注册表校验——script 实例的 spec 可用纯访问器与动作形式，不可用宿主谓词（`sleeping?` 等是亚当的词汇表）。
 
-**范围外（明确不做）**：writePrototype 写 script spec（staging 校验暂只支持 react behavior）；wizard/mirror 的 script prototype 审批界面差异；script spec 的参数化模板（relay 目标地址字面量化）。
+**范围外（本阶段未做，已登记后续项）**：writePrototype 写 script spec、mirror 的 script prototype 审批界面、script spec 参数化模板——均见"后续登记项"。
 
 **达成情况**：844 个测试全绿（793 既有 + 51 新增：test_agent_config 3、test_prototypes 7、test_eval forward 12、test_script_member 15、test_script_spec load 4、test_script_runtime 10），ruff / 架构检查 / re-export 检查全过。既有 prototype 测试按 relay 入库适配（react/script 两类内置目录分列断言），无删除既有测试。
 
@@ -457,6 +457,30 @@ C2 把最后一个不纯的 stage（act）迁入 Outcome 模型，方案 C 收�
 **达成情况**：864 个测试全绿（852 既有适配 + 12 新增：act step 直调 5、act collect 直调 5、collect 应用顺序 1、纯 fake 断环集成 1——不经 Agent 构造 LoopDriver 跑通 think→act→complete 全程），ruff / 架构检查 / re-export 检查全过；无删除既有测试（3 个截获 `agent._logger` 的循环日志测试改截 `StageServices.logger`，13 处 `_save_interaction_to_memory` patch 随委托删除而摘除——memory 本为 mock，隔离语义不变）。
 
 **断环收尾（2026-08-07）**：三条残留路径全部修复——`make_event_publisher` 从 event_bus 直构（publish 闭包不再持有 Agent）；OnCompleteRunner 改吃能力（identity/spec/logger/mail_sender/registry），`OnCompleteHost` 删除；状态派生反转为读时计算（`Agent.state` property 由 scheduler 存活会话集合算出 ACTIVE/THINKING，引擎零回调）。SessionScheduler 同步改为能力注入（config/memory/session_span/mark_mail_read/check_reflection/loop_driver），`SchedulerHost` 与 `agents/host.py` 随之删除——**Agent 对象图彻底无环，无任何子系统持有其引用**。死委托 `Agent._send_mail` 删除。
+
+## 后续登记项
+
+已完成阶段遗留的、已明确方向但未排期的延伸工作。登记即承诺方向，不承诺时间。
+
+### 阶段 7d — 居民 behavior 个性化（狗粮）
+
+total spec 迁移时 6 个居民拿到的是同一份 canonical behavior.tlon（标准 ReAct 程序），DSL 的 trigger 表达式 / stages / until / sections 能力在真实 agent 身上一处未用。7d 给每个居民写个性化 behavior 文件：协调者用显式 trigger 表达式（如 addressed-to-me? + 内容过滤），开发者加大 mail-history、配 critique/revise stage，档案型居民调短 reflect 间隔。价值：DSL ergonomic 的真实验证（谓词够不够、写法顺不顺只有真写才知道）、六个现成参考样例、居民间第一次产生"程序级"行为差异。改动面在 ~/.tlon 与 default_team 种子，规模小。
+
+### writePrototype 支持 script spec（P5b 延伸）
+
+`writePrototype` 目前只校验/写入 react 的 AgentSpec；扩展为也接受 script spec（ScriptSpec schema 校验，同样走 staging 信任闸 → mirror 批准 → spawn）。LLM 可写的成员形态补全最后一种：确定性 daemon（如"含'紧急'的邮件自动转发"）——运行时零 token、无 LLM 判断层、行为完全可静态审查，是信任闸模型下最易批准的形态。范围：工具加 spec 类型参数、staging 校验分流（AgentSpec/ScriptSpec 双 schema）、mirror 预览适配。
+
+### mirror 的 script prototype 审批界面（P5b 延伸）
+
+mirror 规约审批界面目前按 react behavior 展示；script prototype 的预览/批准需要区分呈现（script.tlon 无四节结构）。
+
+### script spec 参数化模板（P5b 延伸）
+
+relay 的转发目标地址当前是字面量；prototype 实例化时参数化（如 spawn 时传入 `:to`）需要 script spec 支持模板变量。
+
+### mypy 豁免基线消化
+
+pyproject.toml 中 60 个脏模块的 mypy 豁免清单（2026-08-07 建立），逐个修复逐个移除，目标清零。
 
 ## 明确不做（v1）
 
