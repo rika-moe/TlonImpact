@@ -66,7 +66,7 @@ class AgentStore:
         from tlon.agents.spec import standard_behavior_edn
 
         filepath = self._paths.agent_behavior_file(agent_id)
-        filepath.write_text(standard_behavior_edn(), encoding="utf-8")
+        filepath.write_text(standard_behavior_edn(agent_id), encoding="utf-8")
 
     def delete_agent(self, agent_id: str, delete_data: bool = True) -> tuple[bool, str]:
         try:

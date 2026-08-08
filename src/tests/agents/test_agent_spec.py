@@ -8,9 +8,11 @@ import pytest
 from tlon.agents.agent import Agent
 from tlon.agents.edn import EDNParseError, Keyword, dumps, loads
 from tlon.agents.spec import (
+    _RESIDENT_IDS,
     DEFAULT_SECTIONS,
     REACT_STAGES,
     REACT_UNTIL,
+    SPEC_VERSION,
     AgentSpec,
     SpecValidationError,
     standard_behavior_edn,
@@ -675,3 +677,89 @@ class TestContextBuilderSections:
         agent = _make_agent()
         flags = await self._system_prompt_flags(agent)
         assert flags == {"include_persona": False, "include_protocol": False}
+
+
+class TestResidentBehaviors:
+    """Stage 7d dogfood: each resident gets a personalized behavior.tlon.
+
+    `standard_behavior_edn(agent_id)` returns a role-tuned DSL program for
+    the six residents and the canonical ReAct program for everyone else.
+    These tests lock in both the personality of each resident and the
+    invariant that non-residents / the no-arg call are byte-unchanged.
+    """
+
+    def test_each_resident_gets_distinct_behavior(self):
+        texts = {aid: standard_behavior_edn(aid) for aid in _RESIDENT_IDS}
+        assert len(texts) == 6
+        assert len(set(texts.values())) == 6  # every resident is distinct
+
+    def test_resident_behaviors_parse_as_valid_specs(self):
+        for aid in _RESIDENT_IDS:
+            spec = AgentSpec.from_edn(loads(standard_behavior_edn(aid)))
+            assert spec.version == SPEC_VERSION
+            assert spec.loop.max_iterations > 0
+            assert spec.on_complete.save_interaction is True
+            assert spec.on_complete.reflect.enabled is True
+
+    def test_unknown_agent_falls_back_to_canonical(self):
+        assert standard_behavior_edn("some-other-agent") == standard_behavior_edn()
+        assert standard_behavior_edn("ghost") == standard_behavior_edn()
+
+    def test_standard_behavior_unchanged(self):
+        # the no-arg call is byte-identical to the pre-dogfood canonical
+        assert standard_behavior_edn() == standard_behavior_edn(None)
+
+    def test_lin_zhiyao_uses_critique_revise(self):
+        # 开发工程师：think→plan→act→critique→revise（revise 仅在批判失败时）
+        spec = AgentSpec.from_edn(loads(standard_behavior_edn("lin-zhiyao")))
+        assert [dumps(f) for f in spec.loop.stages] == [
+            "(think)",
+            "(plan)",
+            "(act)",
+            "(critique)",
+            "(revise {:if (critique-failed?)})",
+        ]
+        assert spec.loop.max_iterations == 20
+        assert spec.loop.max_consecutive_errors == 3
+
+    def test_jiang_yubai_omits_persona(self):
+        # 运维工程师：无 persona（系统操作不需要性格），精简两段式
+        spec = AgentSpec.from_edn(loads(standard_behavior_edn("jiang-yubai")))
+        heads = [dumps(f) for f in spec.context.sections]
+        assert "(persona)" not in heads
+        assert [dumps(f) for f in spec.loop.stages] == ["(think)", "(act)"]
+        assert spec.loop.max_iterations == 5
+
+    def test_shen_qingyan_plans_first(self):
+        # 项目经理：协调规划型，think→plan→act
+        spec = AgentSpec.from_edn(loads(standard_behavior_edn("shen-qingyan")))
+        assert [dumps(f) for f in spec.loop.stages] == ["(think)", "(plan)", "(act)"]
+        assert spec.loop.max_iterations == 8
+
+    def test_gu_yanxi_uses_trigger_expression(self):
+        # 客服专员：表达式触发（点名 或 内容含"紧急"），极低迭代
+        spec = AgentSpec.from_edn(loads(standard_behavior_edn("gu-yanxi")))
+        assert spec.trigger.when is not None
+        trigger_text = dumps(spec.trigger.when)
+        assert "content-matches?" in trigger_text
+        assert "addressed-to-me?" in trigger_text
+        assert spec.loop.max_iterations == 3
+
+    def test_su_wanqing_reflects_frequently(self):
+        # 产品经理：高频反思（5 分钟），保持需求敏感
+        spec = AgentSpec.from_edn(loads(standard_behavior_edn("su-wanqing")))
+        assert spec.on_complete.reflect.interval_minutes == 5
+        assert [dumps(f) for f in spec.loop.stages] == ["(think)", "(act)", "(critique)"]
+        assert spec.loop.max_iterations == 12
+
+    def test_xie_yunshu_knowledge_first(self):
+        # 数据分析师：knowledge 前置（数据词典优先于 persona）
+        spec = AgentSpec.from_edn(loads(standard_behavior_edn("xie-yunshu")))
+        assert [dumps(f) for f in spec.context.sections] == [
+            "(knowledge)",
+            "(persona)",
+            "(protocol)",
+            "(mail-history 25)",
+        ]
+        assert spec.loop.max_iterations == 15
+        assert spec.on_complete.reflect.interval_minutes == 30

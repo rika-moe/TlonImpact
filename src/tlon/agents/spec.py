@@ -37,7 +37,7 @@ Unknown keys are ignored with a warning for forward compatibility.
 
 import hashlib
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from tlon.agents.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlon.agents.eval import (
@@ -302,13 +302,23 @@ class AgentSpec:
         return cls.from_dict(_normalize_data(data))
 
 
-def standard_behavior_edn() -> str:
+def standard_behavior_edn(agent_id: str | None = None) -> str:
     """The canonical complete behavior file (standard ReAct program).
 
     Used by the wizard when creating an agent: the file spells out every
     section in full (:func:`from_edn` accepts it), built from
     :data:`REACT_STAGES` / :data:`REACT_UNTIL` / :data:`DEFAULT_SECTIONS`.
+
+    When ``agent_id`` matches a known resident, a personalized behavior is
+    returned instead — this is the stage 7d dogfood path: exercise DSL
+    features (trigger expressions, stage variety, section ordering,
+    ``:if`` conditions, reflect tuning) on real agents.
     """
+    if agent_id is not None:
+        resident = _resident_behavior_edn(agent_id)
+        if resident is not None:
+            return resident
+
     data: dict[Any, Any] = {
         Keyword("version"): SPEC_VERSION,
         Keyword("trigger"): {Keyword("on-mention"): True},
@@ -328,6 +338,162 @@ def standard_behavior_edn() -> str:
         },
     }
     return dumps(data) + "\n"
+
+
+# ── Resident behavior dogfood (stage 7d) ──
+
+#: Known resident agent ids whose behavior.tlon gets a personalized DSL
+#: program instead of the canonical ReAct default.
+_RESIDENT_IDS = frozenset({
+    "lin-zhiyao", "jiang-yubai", "shen-qingyan",
+    "gu-yanxi", "su-wanqing", "xie-yunshu",
+})
+
+
+def _mk_spec(
+    *,
+    stages: str,
+    max_iterations: int,
+    sections: str,
+    mail_history: int,
+    reflect_minutes: int = 15,
+    trigger_expr: str | None = None,
+    max_consecutive_errors: int = 3,
+) -> str:
+    """Build a resident behavior EDN string from a compact specification.
+
+    ``stages`` is a space-separated list of stage keywords (e.g.
+    ``"think plan act critique revise"``). ``sections`` is a
+    space-separated ordered list of section keywords (e.g.
+    ``"persona protocol knowledge"``). ``trigger_expr``, when set, is a
+    raw EDN expression form placed in the ``:when`` slot of the trigger
+    map (expression-mode trigger).
+    """
+    stage_map = {
+        "think": "(think)",
+        "act": "(act)",
+        "plan": "(plan)",
+        "critique": "(critique)",
+        "revise": '(revise {:if (critique-failed?)})',
+    }
+    section_map = {
+        "persona": "(persona)",
+        "protocol": "(protocol)",
+        "knowledge": "(knowledge)",
+        "mail-history": f"(mail-history {mail_history})",
+    }
+
+    stage_forms = [stage_map[s] for s in stages.split()]
+    section_forms = [section_map[s] for s in sections.split()]
+
+    trigger: Any
+    if trigger_expr is not None:
+        trigger = {
+            Keyword("on-mention"): True,
+            Keyword("when"): loads(trigger_expr),
+        }
+    else:
+        trigger = {Keyword("on-mention"): True}
+
+    data: dict[Any, Any] = {
+        Keyword("version"): SPEC_VERSION,
+        Keyword("trigger"): trigger,
+        Keyword("context"): {
+            Keyword("sections"): [loads(f) for f in section_forms],
+        },
+        Keyword("loop"): {
+            Keyword("stages"): [loads(f) for f in stage_forms],
+            Keyword("until"): REACT_UNTIL,
+            Keyword("max-iterations"): max_iterations,
+            Keyword("max-consecutive-errors"): max_consecutive_errors,
+        },
+        Keyword("on-complete"): {
+            Keyword("save-interaction"): True,
+            Keyword("reflect"): {
+                Keyword("enabled"): True,
+                Keyword("interval-minutes"): reflect_minutes,
+            },
+        },
+    }
+    return dumps(data) + "\n"
+
+
+class _ResidentSpec(TypedDict):
+    """The compact per-resident behavior knobs fed to :func:`_mk_spec`."""
+
+    stages: str
+    max_iterations: int
+    sections: str
+    mail_history: int
+    reflect_minutes: NotRequired[int]
+    trigger_expr: NotRequired[str]
+
+
+def _resident_behavior_edn(agent_id: str) -> str | None:
+    """Return a personalized behavior EDN for a known resident, or None.
+
+    Each resident gets a behavior tuned to their role — DSL dogfood:
+    trigger expressions, stage variety, section ordering, ``:if``
+    conditions, and reflect tuning on real agents.
+    """
+    residents: dict[str, _ResidentSpec] = {
+        # ── 林知遥：开发工程师 ──
+        # 深度分析型：先规划后执行，自我审查，不通过则修正
+        "lin-zhiyao": {
+            "stages": "think plan act critique revise",
+            "max_iterations": 20,
+            "sections": "persona protocol knowledge mail-history",
+            "mail_history": 30,
+        },
+        # ── 江予白：运维工程师 ──
+        # 谨慎简洁型：去掉 persona（系统操作不需要性格），快速决策
+        "jiang-yubai": {
+            "stages": "think act",
+            "max_iterations": 5,
+            "sections": "protocol knowledge mail-history",
+            "mail_history": 10,
+        },
+        # ── 沈清晏：项目经理 ──
+        # 协调规划型：首轮先出计划再执行，适度迭代
+        "shen-qingyan": {
+            "stages": "think plan act",
+            "max_iterations": 8,
+            "sections": "persona protocol mail-history",
+            "mail_history": 15,
+        },
+        # ── 顾言蹊：客服专员 ──
+        # 快速分流型：极低迭代，表达式触发——点名或内容含"紧急"立即响应
+        "gu-yanxi": {
+            "stages": "think act",
+            "max_iterations": 3,
+            "sections": "persona protocol knowledge mail-history",
+            "mail_history": 20,
+            "trigger_expr": '(or (addressed-to-me? msg) (content-matches? msg "紧急"))',
+        },
+        # ── 苏晚晴：产品经理 ──
+        # 需求审查型：执行后自我 critique，高频反思保持敏感
+        "su-wanqing": {
+            "stages": "think act critique",
+            "max_iterations": 12,
+            "sections": "persona protocol knowledge mail-history",
+            "mail_history": 20,
+            "reflect_minutes": 5,
+        },
+        # ── 谢云舒：数据分析师 ──
+        # 方法驱动型：knowledge 前置（数据词典优先），plan→act→critique
+        "xie-yunshu": {
+            "stages": "think plan act critique",
+            "max_iterations": 15,
+            "sections": "knowledge persona protocol mail-history",
+            "mail_history": 25,
+            "reflect_minutes": 30,
+        },
+    }
+    spec = residents.get(agent_id)
+    if spec is None:
+        return None
+    comment = f"; 居民 {agent_id} — 个性化 behavior（阶段 7d 狗粮）\n"
+    return comment + _mk_spec(**spec)
 
 
 def _normalize_data(value: Any) -> Any:

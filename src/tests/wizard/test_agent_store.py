@@ -132,3 +132,34 @@ class TestAgentStore:
             spec = AgentSpec.from_edn(loads(behavior_file.read_text(encoding="utf-8")))
             assert spec.version == 1
             assert spec.trigger.on_mention is True
+
+    def test_write_behavior_file_resident_personalized(self):
+        """A known resident gets its personalized behavior, not the canonical."""
+        from tlon.agents.edn import loads
+        from tlon.agents.spec import AgentSpec, standard_behavior_edn
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
+            store.save_agent(AgentConfig(id="lin-zhiyao", name="林知遥"))
+
+            store.write_behavior_file("lin-zhiyao")
+
+            behavior_file = TlonPaths(home=Path(tmpdir)).agent_behavior_file("lin-zhiyao")
+            text = behavior_file.read_text(encoding="utf-8")
+            assert text != standard_behavior_edn()  # personalized, not canonical
+            spec = AgentSpec.from_edn(loads(text))
+            # 开发工程师的深度迭代：max-iterations 20
+            assert spec.loop.max_iterations == 20
+
+    def test_write_behavior_file_non_resident_canonical(self):
+        """A non-resident agent still gets the canonical ReAct behavior."""
+        from tlon.agents.spec import standard_behavior_edn
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = _make_store(tmpdir)
+            store.save_agent(AgentConfig(id="plain-001", name="Plain Agent"))
+
+            store.write_behavior_file("plain-001")
+
+            behavior_file = TlonPaths(home=Path(tmpdir)).agent_behavior_file("plain-001")
+            assert behavior_file.read_text(encoding="utf-8") == standard_behavior_edn()
