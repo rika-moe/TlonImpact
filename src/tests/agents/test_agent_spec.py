@@ -731,9 +731,13 @@ class TestResidentBehaviors:
         assert spec.loop.max_iterations == 5
 
     def test_shen_qingyan_plans_first(self):
-        # 项目经理：协调规划型，think→plan→act
+        # 项目经理：协调规划型，think→plan→act，plan 仅首轮（first-iteration? 狗粮）
         spec = AgentSpec.from_edn(loads(standard_behavior_edn("shen-qingyan")))
-        assert [dumps(f) for f in spec.loop.stages] == ["(think)", "(plan)", "(act)"]
+        assert [dumps(f) for f in spec.loop.stages] == [
+            "(think)",
+            "(plan {:if (first-iteration?)})",
+            "(act)",
+        ]
         assert spec.loop.max_iterations == 8
 
     def test_gu_yanxi_uses_trigger_expression(self):

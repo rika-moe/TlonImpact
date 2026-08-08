@@ -358,6 +358,7 @@ def _mk_spec(
     mail_history: int,
     reflect_minutes: int = 15,
     trigger_expr: str | None = None,
+    plan_on_first_iteration: bool = False,
     max_consecutive_errors: int = 3,
 ) -> str:
     """Build a resident behavior EDN string from a compact specification.
@@ -367,12 +368,18 @@ def _mk_spec(
     space-separated ordered list of section keywords (e.g.
     ``"persona protocol knowledge"``). ``trigger_expr``, when set, is a
     raw EDN expression form placed in the ``:when`` slot of the trigger
-    map (expression-mode trigger).
+    map (expression-mode trigger). ``plan_on_first_iteration`` gates the
+    ``plan`` stage behind ``:if (first-iteration?)`` (plan once, then
+    execute — dogfood for the ``first-iteration?`` stage condition).
     """
     stage_map = {
         "think": "(think)",
         "act": "(act)",
-        "plan": "(plan)",
+        "plan": (
+            "(plan {:if (first-iteration?)})"
+            if plan_on_first_iteration
+            else "(plan)"
+        ),
         "critique": "(critique)",
         "revise": '(revise {:if (critique-failed?)})',
     }
@@ -427,6 +434,7 @@ class _ResidentSpec(TypedDict):
     mail_history: int
     reflect_minutes: NotRequired[int]
     trigger_expr: NotRequired[str]
+    plan_on_first_iteration: NotRequired[bool]
 
 
 def _resident_behavior_edn(agent_id: str) -> str | None:
@@ -454,12 +462,13 @@ def _resident_behavior_edn(agent_id: str) -> str | None:
             "mail_history": 10,
         },
         # ── 沈清晏：项目经理 ──
-        # 协调规划型：首轮先出计划再执行，适度迭代
+        # 协调规划型：仅首轮出计划（first-iteration? 条件），之后直接执行
         "shen-qingyan": {
             "stages": "think plan act",
             "max_iterations": 8,
             "sections": "persona protocol mail-history",
             "mail_history": 15,
+            "plan_on_first_iteration": True,
         },
         # ── 顾言蹊：客服专员 ──
         # 快速分流型：极低迭代，表达式触发——点名或内容含"紧急"立即响应

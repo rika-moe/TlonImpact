@@ -413,7 +413,7 @@ script 类型成员从"只有内置亚当"走向"可经 prototype/spawn 创建"�
 
 **落地约束**：`ScriptSpec.load` 以无宿主注册表校验——script 实例的 spec 可用纯访问器与动作形式，不可用宿主谓词（`sleeping?` 等是亚当的词汇表）。
 
-**范围外（本阶段未做，已登记后续项）**：writePrototype 写 script spec、mirror 的 script prototype 审批界面、script spec 参数化模板——均见"后续登记项"。
+**范围外（本阶段未做）**：writePrototype 写 script spec、mirror 的 script prototype 审批界面、script spec 参数化模板——均已随后续  落地（详见路线图「阶段 7d」下方登记项清零说明）。
 
 **达成情况**：844 个测试全绿（793 既有 + 51 新增：test_agent_config 3、test_prototypes 7、test_eval forward 12、test_script_member 15、test_script_spec load 4、test_script_runtime 10），ruff / 架构检查 / re-export 检查全过。既有 prototype 测试按 relay 入库适配（react/script 两类内置目录分列断言），无删除既有测试。
 
@@ -458,29 +458,60 @@ C2 把最后一个不纯的 stage（act）迁入 Outcome 模型，方案 C 收�
 
 **断环收尾（2026-08-07）**：三条残留路径全部修复——`make_event_publisher` 从 event_bus 直构（publish 闭包不再持有 Agent）；OnCompleteRunner 改吃能力（identity/spec/logger/mail_sender/registry），`OnCompleteHost` 删除；状态派生反转为读时计算（`Agent.state` property 由 scheduler 存活会话集合算出 ACTIVE/THINKING，引擎零回调）。SessionScheduler 同步改为能力注入（config/memory/session_span/mark_mail_read/check_reflection/loop_driver），`SchedulerHost` 与 `agents/host.py` 随之删除——**Agent 对象图彻底无环，无任何子系统持有其引用**。死委托 `Agent._send_mail` 删除。
 
+### 阶段 7d — 居民 behavior 个性化（狗粮）✅ 已完成（2026-08-08）
+
+total spec 迁移时 6 个居民拿到的是同一份 canonical behavior.tlon（标准 ReAct 程序），DSL 的 trigger 表达式 / stages / until / sections 能力在真实 agent 身上一处未用。7d 给每个居民写个性化 behavior 文件——**DSL 狗粮**：在给外部 LLM 用 `writePrototype` 之前，先让真实 agent 用上这些能力，检验 ergonomic 与覆盖度（谓词够不够、写法顺不顺，只有真写才知道）。
+
+**落地**：
+
+- `standard_behavior_edn(agent_id=None)`：命中 6 个已知居民 id 返回个性化 EDN，否则 fallback canonical（`None` 路径字节不变，存量行为零变化）；`AgentStore.write_behavior_file` 传入 `agent_id`，新创建居民自动拿到个性化行为，已存在居民文件不受影响；
+- `_resident_behavior_edn()` / `_mk_spec()` / `_ResidentSpec`（TypedDict）——紧凑 knobs→EDN 构建器，6 份行为以 `dumps()` 构建（与 canonical 同源）。
+
+**6 位居民行为设计**：
+
+| 居民 | 角色 | 核心差异 |
+|------|------|---------|
+| 林知遥 | 开发工程师 | think→plan→act→critique→revise, iter=20, history=30 |
+| 江予白 | 运维工程师 | think→act, iter=5, 无 persona（系统操作不需要性格） |
+| 沈清晏 | 项目经理 | think→plan→act, iter=8, plan 仅首轮 |
+| 顾言蹊 | 客服专员 | think→act, iter=3, 表达式触发 |
+| 苏晚晴 | 产品经理 | think→act→critique, iter=12, reflect 5min |
+| 谢云舒 | 数据分析师 | think→plan→act→critique, iter=15, knowledge 前置（数据词典优先） |
+
+**DSL 能力覆盖（狗粮达成）**：
+
+| DSL 能力 | 使用居民 | 备注 |
+|----------|---------|------|
+| `:trigger :when` 表达式 | 顾言蹊 | `(or (addressed-to-me? msg) (content-matches? msg "紧急"))`——`content-matches?` + `or` 首次狗粮 |
+| `:sections` 排序变化 | 江予白、谢云舒 | 无 persona / knowledge 前置 |
+| `(plan)` stage | 林知遥、沈清晏、谢云舒 | 首次狗粮 |
+| `(plan {:if (first-iteration?)})` | 沈清晏 | `first-iteration?` 首次狗粮 |
+| `(critique)` stage | 林知遥、苏晚晴、谢云舒 | 扩展 deep-thinker |
+| `(revise {:if (critique-failed?)})` | 林知遥 | `critique-failed?` 首次狗粮 |
+| `max_iterations` 变化 | 全部 | 3/5/8/12/15/20 |
+| `mail-history N` 变化 | 全部 | 10/15/20/25/30 |
+| `reflect.interval` 变化 | 苏晚晴、谢云舒 | 5min / 30min |
+
+**狗粮反馈**：
+
+- **表达式触发完全取代 data 规则（语义陷阱）**：`:when` 非空时 `on_mention` 不参与（阶段 3a 已记"when 优先"，7d 验证了行为后果）——顾言蹊首版 `(content-matches? msg "紧急")` 会让客服对**所有普通点名邮件静默**，必须 `(or (addressed-to-me? msg) (content-matches? msg "紧急"))` 才能既保持点名响应又过滤内容。写作 DSL 触发时需记住：表达式模式是"完全重写"，不是"附加过滤"；
+- **无新增 builtin 需求（正向）**：计划的 8 类能力全部成功表达，谓词 / `:if` / sections 排序写法顺，没有发现缺失的谓词或别扭的语法——DSL 表达能力够用，`first-iteration?`/`critique-failed?`/`content-matches?` 在真实行为中自然涌现。
+
+**达成情况**：916 个测试全绿（+12 新增：TestResidentBehaviors 10 + agent_store 集成 2），mypy 136 文件 / ruff / 架构检查全过。
+
 ## 后续登记项
 
 已完成阶段遗留的、已明确方向但未排期的延伸工作。登记即承诺方向，不承诺时间。
 
-### 阶段 7d — 居民 behavior 个性化（狗粮）
-
-total spec 迁移时 6 个居民拿到的是同一份 canonical behavior.tlon（标准 ReAct 程序），DSL 的 trigger 表达式 / stages / until / sections 能力在真实 agent 身上一处未用。7d 给每个居民写个性化 behavior 文件：协调者用显式 trigger 表达式（如 addressed-to-me? + 内容过滤），开发者加大 mail-history、配 critique/revise stage，档案型居民调短 reflect 间隔。价值：DSL ergonomic 的真实验证（谓词够不够、写法顺不顺只有真写才知道）、六个现成参考样例、居民间第一次产生"程序级"行为差异。改动面在 ~/.tlon 与 default_team 种子，规模小。
-
-### writePrototype 支持 script spec（P5b 延伸）
-
-`writePrototype` 目前只校验/写入 react 的 AgentSpec；扩展为也接受 script spec（ScriptSpec schema 校验，同样走 staging 信任闸 → mirror 批准 → spawn）。LLM 可写的成员形态补全最后一种：确定性 daemon（如"含'紧急'的邮件自动转发"）——运行时零 token、无 LLM 判断层、行为完全可静态审查，是信任闸模型下最易批准的形态。范围：工具加 spec 类型参数、staging 校验分流（AgentSpec/ScriptSpec 双 schema）、mirror 预览适配。
-
-### mirror 的 script prototype 审批界面（P5b 延伸）
-
-mirror 规约审批界面目前按 react behavior 展示；script prototype 的预览/批准需要区分呈现（script.tlon 无四节结构）。
-
-### script spec 参数化模板（P5b 延伸）
-
-relay 的转发目标地址当前是字面量；prototype 实例化时参数化（如 spawn 时传入 `:to`）需要 script spec 支持模板变量。
-
-### mypy 豁免基线消化
-
-pyproject.toml 中 60 个脏模块的 mypy 豁免清单（2026-08-07 建立），逐个修复逐个移除，目标清零。
+> **2026-08-08：登记项全部清零。** 五条在  登记的条目已随后续 PR 全部完成，详见路线图对应阶段：
+>
+> | 登记项 | 完成 |
+> |--------|------|
+> | 阶段 7d 居民 behavior 个性化（狗粮） | （见路线图「阶段 7d」） |
+> | writePrototype 支持 script spec（P5b 延伸） |  |
+> | mirror 的 script prototype 审批界面（P5b 延伸） |  |
+> | script spec 参数化模板（P5b 延伸） |  |
+> | mypy 豁免基线消化 |  |
 
 ## 明确不做（v1）
 
