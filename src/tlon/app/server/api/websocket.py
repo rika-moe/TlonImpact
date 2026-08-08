@@ -35,6 +35,9 @@ from datetime import datetime
 
 from aiohttp import WSMsgType, web
 
+from tlon.agents.agent_registry import AgentRegistry
+from tlon.app.server.core.client_gateway import ClientGateway
+from tlon.app.server.core.session_manager import ClientSession
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, AdapterManager
@@ -53,7 +56,12 @@ class WebSocketHandler:
         >>> app.router.add_get('/ws', ws_handler.handle_websocket)
     """
 
-    def __init__(self, client_gateway, agent_registry, adapter_manager: AdapterManager):
+    def __init__(
+        self,
+        client_gateway: ClientGateway,
+        agent_registry: AgentRegistry,
+        adapter_manager: AdapterManager,
+    ):
         """Initialize the WebSocket handler.
 
         Args:
@@ -284,6 +292,10 @@ class WebSocketHandler:
         if client_supported and not client_preferred:
             client_preferred = client_supported[0]
 
+        # From here on, client_preferred is guaranteed non-None (the empty
+        # and single-sided cases above already returned / assigned a value).
+        assert client_preferred is not None
+
         # Check if client's preferred version is supported
         if client_preferred in self.SUPPORTED_VERSIONS:
             return (client_preferred, None)
@@ -452,7 +464,7 @@ class WebSocketHandler:
         else:
             await self._send_error_to_session(session_id, "Failed to update filters")
 
-    async def _send_initial_data(self, ws: web.WebSocketResponse, session) -> None:
+    async def _send_initial_data(self, ws: web.WebSocketResponse, session: ClientSession) -> None:
         """Send initial data to a client based on their mode.
 
         Args:
@@ -591,8 +603,8 @@ class WebSocketServer:
 
     def __init__(
         self,
-        client_gateway,
-        agent_registry,
+        client_gateway: ClientGateway,
+        agent_registry: AgentRegistry,
         adapter_manager: AdapterManager,
         host: str = "127.0.0.1",
         port: int = 8888,

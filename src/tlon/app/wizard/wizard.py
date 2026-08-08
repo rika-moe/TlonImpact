@@ -30,7 +30,7 @@ class Wizard:
     - System settings
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the wizard."""
         self.tlon_home = paths.tlon_home()
         self.console = Console()

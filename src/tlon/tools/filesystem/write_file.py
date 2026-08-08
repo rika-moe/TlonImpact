@@ -1,6 +1,6 @@
 """Write file tool — operates inside the sandbox container."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_container_path
@@ -64,7 +64,7 @@ class WriteFileTool(Tool):
         self._docker_runtime = docker_runtime
         self._allowed_paths = allowed_paths or list(DEFAULT_ALLOWED_PATHS)
 
-    async def execute(self, file_path: str, content: str) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Write content to a file in the sandbox container.
 
         Args:
@@ -74,6 +74,9 @@ class WriteFileTool(Tool):
         Returns:
             ToolResult with write status.
         """
+        file_path: str = kwargs["file_path"]
+        content: str = kwargs["content"]
+
         if self._docker_runtime is None:
             return ToolResult(
                 success=False,

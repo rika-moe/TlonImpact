@@ -27,5 +27,8 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src/
 
+      - name: Type check (mypy, full src/tlon)
+        run: uv run mypy src/tlon/
+
       - name: Run unit tests
         run: uv run pytest src/tests/ --ignore=src/tests/integration -v --tb=short

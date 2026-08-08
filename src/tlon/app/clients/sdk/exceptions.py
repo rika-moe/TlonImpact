@@ -4,7 +4,7 @@
 class TlonClientError(Exception):
     """Base exception for all Tlon client errors."""
 
-    def __init__(self, message: str, error_code: str = None):
+    def __init__(self, message: str, error_code: str | None = None):
         super().__init__(message)
         self.message = message
         self.error_code = error_code
@@ -25,7 +25,9 @@ class ConnectionError(TlonClientError):
 class AuthenticationError(TlonClientError):
     """Raised when authentication fails."""
 
-    def __init__(self, message: str = "Authentication failed", supported_versions: list = None):
+    def __init__(
+        self, message: str = "Authentication failed", supported_versions: list | None = None
+    ):
         super().__init__(message, error_code="AUTH_FAILED")
         self.supported_versions = supported_versions
 
@@ -33,7 +35,9 @@ class AuthenticationError(TlonClientError):
 class ProtocolError(TlonClientError):
     """Raised when protocol version mismatch occurs."""
 
-    def __init__(self, message: str = "Protocol version mismatch", server_versions: list = None):
+    def __init__(
+        self, message: str = "Protocol version mismatch", server_versions: list | None = None
+    ):
         super().__init__(message, error_code="VERSION_MISMATCH")
         self.server_versions = server_versions
 

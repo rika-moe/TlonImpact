@@ -20,6 +20,7 @@ the agent is an interpreter of that spec, per docs/design/dsl-agents.md.
 """
 
 import contextlib
+from collections.abc import Iterator
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -367,7 +368,7 @@ class Agent(Member):
         await self._reflection.check_trigger()
 
     @contextlib.contextmanager
-    def _session_span(self, session: AgentSession):
+    def _session_span(self, session: AgentSession) -> Iterator[None]:
         """Per-round trace context for a session's advance.
 
         The implementation lives in StageServices.session_span; this

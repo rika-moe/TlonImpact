@@ -62,7 +62,7 @@ class AgentSession:
         return self._error_count
 
     @property
-    def last_llm_response(self):
+    def last_llm_response(self) -> Any:
         return self._last_llm_response
 
     @property
@@ -86,10 +86,10 @@ class AgentSession:
     def record_error(self) -> None:
         self._error_count += 1
 
-    def set_last_llm_response(self, response) -> None:
+    def set_last_llm_response(self, response: Any) -> None:
         self._last_llm_response = response
 
-    def add_tool_result(self, tool_call, result) -> None:
+    def add_tool_result(self, tool_call: Any, result: Any) -> None:
         self._all_tool_results.append({"tool_call": tool_call, "result": result})
 
     def dispatch_tools(self, tool_calls: list, tasks: dict[str, asyncio.Task]) -> None:
@@ -126,7 +126,8 @@ class AgentSession:
                 result = raw[1] if isinstance(raw, tuple) and len(raw) == 2 else raw
                 completed.append((tc, result))
             else:
-                still_pending[tc.id] = task
+                if task:
+                    still_pending[tc.id] = task
 
         self._pending_tasks = still_pending
         self._pending_tool_calls = [tc for tc in self._pending_tool_calls if not (self._pending_tasks.get(tc.id) and self._pending_tasks[tc.id].done())]

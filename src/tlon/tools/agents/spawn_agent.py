@@ -1,6 +1,6 @@
 """Spawn a contractor agent from a behavior prototype."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import get_contextvars
 
@@ -57,11 +57,10 @@ class SpawnAgentTool(Tool):
         self._registry = registry
         self._spawner_id = spawner_id
 
-    async def execute(
-        self,
-        prototype: str,
-        name: str,
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        prototype: str = kwargs["prototype"]
+        name: str = kwargs["name"]
+
         # Session context is bound by the agent's session span via structlog
         # contextvars; direct calls (tests) fall back to a single bucket.
         session_id = get_contextvars().get("session_id")

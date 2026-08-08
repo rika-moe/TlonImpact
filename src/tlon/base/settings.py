@@ -55,7 +55,7 @@ class Settings:
     Business configuration (Docker, Memory, Tool timeouts) lives in AgentConfig.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # App settings
         self.app_name = os.getenv("APP_NAME", "Tlon")
         self.log_level = os.getenv("LOG_LEVEL", "INFO")

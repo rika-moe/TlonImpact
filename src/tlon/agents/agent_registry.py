@@ -48,6 +48,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
+from tlon.base.settings import Settings
 from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
@@ -86,7 +87,7 @@ logger = get_logger(__name__)
 _UNKNOWN_SESSION = "-"
 
 
-def _build_llm_config(file_config: LLMConfig | None, settings) -> LLMConfig:
+def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMConfig:
     """Merge LLM config from YAML file with runtime settings.
 
     File config provides model parameters (model_name, temperature, etc.)
@@ -462,9 +463,9 @@ class AgentRegistry(Component):
             # Prepare team members config (all other agents)
             all_ids = self._agent_info.get_all_ids()
             team_members = [
-                self._agent_info.get_config(aid)
+                cfg
                 for aid in all_ids
-                if aid != agent_id and self._agent_info.get_config(aid)
+                if aid != agent_id and (cfg := self._agent_info.get_config(aid)) is not None
             ]
 
             # Read tool timeout from agent config
@@ -1227,4 +1228,8 @@ class AgentRegistry(Component):
         Returns:
             List of agent status dictionaries
         """
-        return [self.get_agent_status(agent_id) for agent_id in self._agent_info.get_all_ids()]
+        return [
+            status
+            for agent_id in self._agent_info.get_all_ids()
+            if (status := self.get_agent_status(agent_id)) is not None
+        ]

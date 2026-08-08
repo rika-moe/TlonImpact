@@ -9,7 +9,7 @@ import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..validators import APIValidator, InputValidator
 
@@ -40,7 +40,7 @@ class SettingsMenu:
         try:
             import questionary
 
-            self.questionary = questionary
+            self.questionary: Any = questionary
         except ImportError:
             self.questionary = None
 

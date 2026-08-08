@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiofiles
 
@@ -161,7 +161,7 @@ class WorkingMemoryStore(MemoryStore):
             logger.error("interaction_append_failed", error=str(e), exc_info=True)
             await self._persist()
 
-        return item_id
+        return cast(str, item_id)
 
     async def get(self, item_id: str) -> dict[str, Any] | None:
         """Get an interaction by ID."""

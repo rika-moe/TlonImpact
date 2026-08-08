@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -117,7 +117,7 @@ def configure_logging(
     )
 
 
-def get_logger(name: str = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """Get a structured logger instance.
 
     Args:
@@ -126,4 +126,4 @@ def get_logger(name: str = None) -> structlog.stdlib.BoundLogger:
     Returns:
         A configured structlog logger
     """
-    return structlog.get_logger(name)
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))

@@ -14,6 +14,8 @@ from typing import Any
 
 from aiohttp import web
 
+from tlon.agents.agent_registry import AgentRegistry
+from tlon.app.server.core.client_gateway import ClientGateway
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mailbox import Mailbox
@@ -128,11 +130,11 @@ class RESTAPIHandler:
 
     def __init__(
         self,
-        client_gateway,
-        agent_registry,
-        config_manager=None,
-        trace_store=None,
-        metrics_service=None,
+        client_gateway: ClientGateway,
+        agent_registry: AgentRegistry,
+        config_manager: Any | None = None,
+        trace_store: Any | None = None,
+        metrics_service: Any | None = None,
         logs_dir: Path | None = None,
         paths: TlonPaths | None = None,
         debug: bool = False,
@@ -349,12 +351,13 @@ class RESTAPIHandler:
             "name": config.name,
             "state": state,
             "config": {
-                "profile": config.profile,
+                "role": config.role,
+                "prototype": config.prototype,
             },
         }
         return self._json_response(status)
 
-    async def handle_list_sessions(self, request: web.Request):
+    async def handle_list_sessions(self, request: web.Request) -> web.Response:
         """GET /sessions - List active client sessions.
 
         Returns:
@@ -632,11 +635,11 @@ class RESTServer:
 
     def __init__(
         self,
-        client_gateway,
-        agent_registry,
-        config_manager=None,
-        trace_store=None,
-        metrics_service=None,
+        client_gateway: ClientGateway,
+        agent_registry: AgentRegistry,
+        config_manager: Any | None = None,
+        trace_store: Any | None = None,
+        metrics_service: Any | None = None,
         logs_dir: Path | None = None,
         paths: TlonPaths | None = None,
         host: str = "127.0.0.1",

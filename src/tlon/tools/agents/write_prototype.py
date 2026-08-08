@@ -71,16 +71,15 @@ class WritePrototypeTool(Tool):
         )
         self._author_id = author_id
 
-    async def execute(
-        self,
-        name: str,
-        behavior: str,
-        display_name: str = "",
-        description: str = "",
-        identity: str = "",
-        soul: str = "",
-        rules: str = "",
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        name: str = kwargs["name"]
+        behavior: str = kwargs["behavior"]
+        display_name: str = kwargs.get("display_name", "")
+        description: str = kwargs.get("description", "")
+        identity: str = kwargs.get("identity", "")
+        soul: str = kwargs.get("soul", "")
+        rules: str = kwargs.get("rules", "")
+
         persona = {"IDENTITY.md": identity, "SOUL.md": soul, "RULES.md": rules}
         try:
             info = write_staging_prototype(

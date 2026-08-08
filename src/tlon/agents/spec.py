@@ -396,7 +396,7 @@ def _read(data: dict[str, Any], key: str, path: str, kind: type) -> Any:
 def _require_section(data: dict[str, Any], key: str) -> dict[str, Any]:
     """Read a required subsection map, warning on unknown keys."""
     raw = data[key]  # presence guaranteed by from_dict / caller
-    if not isinstance(raw, dict) or isinstance(raw, Form):
+    if not isinstance(raw, dict):
         kebab = key.replace("_", "-")
         raise SpecValidationError(
             f":{kebab} must be a map, got {_type_name(raw)}: {raw!r}"
@@ -709,7 +709,7 @@ def _validate_until_expr(form: Form) -> Form:
 def _on_complete_section(data: dict[str, Any]) -> OnCompleteSpec:
     raw = _require_section(data, "on_complete")
     reflect_raw = _require(raw, "reflect", ":on-complete/:reflect")
-    if not isinstance(reflect_raw, dict) or isinstance(reflect_raw, Form):
+    if not isinstance(reflect_raw, dict):
         raise SpecValidationError(
             f":on-complete/:reflect must be a map, "
             f"got {_type_name(reflect_raw)}: {reflect_raw!r}"

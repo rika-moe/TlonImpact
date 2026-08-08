@@ -1,6 +1,6 @@
 """List Tasks tool."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 
@@ -42,7 +42,7 @@ class ListTasksTool(Tool):
         )
         self.task_manager = task_manager
 
-    async def execute(self, filter: str = "all") -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """List tasks.
 
         Args:
@@ -51,6 +51,8 @@ class ListTasksTool(Tool):
         Returns:
             ToolResult with task list
         """
+        filter: str = kwargs.get("filter", "all")
+
         try:
             status_filter = None if filter == "all" else filter
             tasks = self.task_manager.list_tasks(status_filter)

@@ -20,17 +20,15 @@ Architecture:
 """
 
 import asyncio
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from tlon.base.component import Component
-from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon.organization.messaging.member_info import MemberInfo
 
 from .member_directory import MemberDirectory
-from .notification_service import NotificationService
+from .notification_service import EventHandler, NotificationService
 from .session_manager import ClientSession, SessionManager
 
 logger = get_logger(__name__)
@@ -154,7 +152,7 @@ class ClientGateway(Component):
     async def connect_client(
         self,
         client_type: str,
-        event_handler: Callable[[Event], None],
+        event_handler: EventHandler,
         metadata: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
     ) -> ClientSession:

@@ -1,6 +1,6 @@
 """Stop a contractor agent (drain semantics, residents refused)."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.agents.spawn_errors import StopRejectedError
 from tlon.tools.base import Tool, ToolResult
@@ -40,7 +40,9 @@ class StopAgentTool(Tool):
         self._registry = registry
         self._spawner_id = spawner_id
 
-    async def execute(self, agent_id: str) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        agent_id: str = kwargs["agent_id"]
+
         try:
             await self._registry.stop_contractor(
                 agent_id=agent_id, stopped_by=self._spawner_id

@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Callable
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 
@@ -412,7 +412,7 @@ class BaseClient:
             self._notify_state_change(ConnectionState.AUTHENTICATING)
 
         # Build auth message
-        auth_msg = {
+        auth_msg: dict[str, Any] = {
             "type": "auth",
             "client_type": client_type,
             "protocol_version": self.PREFERRED_VERSION,
@@ -657,7 +657,7 @@ class BaseClient:
                 await asyncio.sleep(30)  # 30 second interval
 
                 if not self.is_authenticated:
-                    break
+                    break  # type: ignore[unreachable]  # 属性由事件循环/其他协程变更
 
                 self._ping_seq += 1
                 loop = asyncio.get_running_loop()
@@ -774,7 +774,7 @@ class BaseClient:
             url = f"{self.rest_url}{path}"
             async with self._session.get(url, params=params) as resp:
                 if resp.status == 200:
-                    return await resp.json()
+                    return cast(dict[Any, Any], await resp.json())
                 else:
                     logger.warning("rest_get_failed", path=path, status=resp.status)
                     return None
@@ -799,7 +799,7 @@ class BaseClient:
             url = f"{self.rest_url}{path}"
             async with self._session.post(url, json=data) as resp:
                 if resp.status in (200, 201):
-                    return await resp.json()
+                    return cast(dict[Any, Any], await resp.json())
                 else:
                     logger.warning("rest_post_failed", path=path, status=resp.status)
                     return None

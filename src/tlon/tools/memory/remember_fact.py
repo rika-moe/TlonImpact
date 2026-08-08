@@ -1,6 +1,6 @@
 """Tool for recording facts to memory."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
@@ -75,15 +75,7 @@ class RememberFactTool(Tool):
         )
         self.memory = memory_manager
 
-    async def execute(
-        self,
-        fact: str,
-        fact_type: str = "GENERAL",
-        subject: str = "用户",
-        predicate: str = "提到",
-        object: str = "",
-        importance: float = 0.5,
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool to remember a fact.
 
         Args:
@@ -97,6 +89,13 @@ class RememberFactTool(Tool):
         Returns:
             ToolResult with the fact ID
         """
+        fact: str = kwargs["fact"]
+        fact_type: str = kwargs.get("fact_type", "GENERAL")
+        subject: str = kwargs.get("subject", "用户")
+        predicate: str = kwargs.get("predicate", "提到")
+        object: str = kwargs.get("object", "")
+        importance: float = kwargs.get("importance", 0.5)
+
         try:
             fact_id = await self.memory.remember_fact(
                 fact=fact,
@@ -116,6 +115,7 @@ class RememberFactTool(Tool):
             logger.error("fact_remember_failed", content=fact, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
+                data={},
                 error=str(e),
                 message=f"❌ 记录事实失败: {e}",
             )

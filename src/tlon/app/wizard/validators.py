@@ -16,11 +16,11 @@ logger = get_logger(__name__)
 class EnvironmentChecker:
     """Check system environment for Tlon requirements."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the environment checker."""
-        self.results = []
-        self.warnings = []
-        self.errors = []
+        self.results: list[tuple[str, str, bool]] = []
+        self.warnings: list[str] = []
+        self.errors: list[str] = []
 
     def check_all(self) -> tuple[bool, list, list]:
         """Run all environment checks.

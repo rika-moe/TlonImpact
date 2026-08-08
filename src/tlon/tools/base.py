@@ -77,7 +77,7 @@ class Tool(ABC):
         }
 
     @abstractmethod
-    async def execute(self, **kwargs) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool.
 
         Args:
@@ -145,7 +145,7 @@ class Tool(ABC):
                 continue
             expected_type = props[field].get("type")
             if expected_type and value is not None:
-                type_map = {
+                type_map: dict[str, type | tuple[type, ...]] = {
                     "string": str,
                     "integer": int,
                     "number": (int, float),

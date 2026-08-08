@@ -1,6 +1,6 @@
 """Tool for compacting working memory into a long-term summary."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
@@ -44,10 +44,7 @@ class CompactTool(Tool):
         )
         self.memory = memory_manager
 
-    async def execute(
-        self,
-        instructions: str | None = None,
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool to compact working memory.
 
         Args:
@@ -57,6 +54,8 @@ class CompactTool(Tool):
         Returns:
             ToolResult with the summary ID
         """
+        instructions: str | None = kwargs.get("instructions")
+
         try:
             summary_id = await self.memory.generate_summary(
                 force=True, instructions=instructions

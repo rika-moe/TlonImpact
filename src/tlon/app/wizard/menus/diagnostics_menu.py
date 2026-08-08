@@ -4,9 +4,9 @@ Interactive menu for running diagnostics and viewing
 configuration health reports.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..diagnostics import ConfigDiagnostics, IssueSeverity
+from ..diagnostics import ConfigDiagnostics, DiagnosticReport, IssueSeverity
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -32,7 +32,7 @@ class DiagnosticsMenu:
         try:
             import questionary
 
-            self.questionary = questionary
+            self.questionary: Any = questionary
         except ImportError:
             self.questionary = None
 
@@ -94,7 +94,7 @@ class DiagnosticsMenu:
 
         self.questionary.press_any_key_to_continue("\n按回车继续...").ask()
 
-    def _display_issues(self, report) -> None:
+    def _display_issues(self, report: DiagnosticReport) -> None:
         """Display issues from report.
 
         Args:
@@ -102,9 +102,9 @@ class DiagnosticsMenu:
         """
 
         # Group issues by category
-        errors_by_cat = {}
-        warnings_by_cat = {}
-        infos_by_cat = {}
+        errors_by_cat: dict[str, list[Any]] = {}
+        warnings_by_cat: dict[str, list[Any]] = {}
+        infos_by_cat: dict[str, list[Any]] = {}
 
         for issue in report.issues:
             if issue.severity == IssueSeverity.ERROR:

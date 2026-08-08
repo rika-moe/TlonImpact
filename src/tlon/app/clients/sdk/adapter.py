@@ -160,7 +160,7 @@ class TerminalAdapter(ClientAdapter):
         "agent.thinking_chunk",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(ClientType.TUI)
         self._mode = "chat"  # chat | event | agent
         self._exclude_high_frequency = False

@@ -1,6 +1,6 @@
 """Start Task tool."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 
@@ -41,7 +41,7 @@ class StartTaskTool(Tool):
         )
         self.task_manager = task_manager
 
-    async def execute(self, task_id: str) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Start a task.
 
         Args:
@@ -50,13 +50,15 @@ class StartTaskTool(Tool):
         Returns:
             ToolResult with started task info
         """
+        task_id: str = kwargs["task_id"]
+
         try:
             started_task, paused_task = self.task_manager.start_task(task_id)
 
             if not started_task:
                 return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
 
-            data = {
+            data: dict[str, Any] = {
                 "task_id": started_task.id,
                 "title": started_task.title,
                 "status": started_task.status.value,

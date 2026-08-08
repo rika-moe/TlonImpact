@@ -8,7 +8,7 @@ facts, trigger consolidation). Extracted from the Agent god class.
 import asyncio
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from tlon.agents.spec import AgentSpec
 from tlon.base.llm_client import LLMClient
@@ -185,7 +185,7 @@ class ReflectionEngine:
 
         try:
             result = json.loads(content)
-            return result.get("operations", [])
+            return cast(list[dict[str, Any]], result.get("operations", []))
         except json.JSONDecodeError:
             logger.warning("reflection_parse_failed", content=content)
             return []

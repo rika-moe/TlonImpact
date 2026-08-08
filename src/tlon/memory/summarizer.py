@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
@@ -239,7 +239,7 @@ class Summarizer:
         existing_facts: list[dict[str, Any]] | None = None,
         instructions: str | None = None,
         temperature: float | None = None,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         """Process interactions to generate summary and extract facts.
 
         This is the main entry point that calls both generation methods.
@@ -332,7 +332,7 @@ class Summarizer:
             if end > start:
                 content = content[start:end].strip()
 
-        return json.loads(content)
+        return cast(dict[str, Any], json.loads(content))
 
     @staticmethod
     def _generate_fallback_summary(interactions: list[dict[str, Any]]) -> str:

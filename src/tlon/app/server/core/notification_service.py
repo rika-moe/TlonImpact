@@ -24,7 +24,7 @@ Architecture:
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from tlon.base.component import Component
@@ -38,7 +38,7 @@ from .session_manager import ClientSession, SessionManager
 logger = get_logger(__name__)
 
 
-EventHandler = Callable[[Event], None]
+EventHandler = Callable[[Event], None | Awaitable[None]]
 
 # Mode-based event type rules — the single source of truth for mode semantics.
 # Patterns ending with ".*" match by prefix; other patterns match exactly.

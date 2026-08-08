@@ -1,6 +1,6 @@
 """List all agents with their runtime state and identity."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 
@@ -32,7 +32,7 @@ class ListAgentsTool(Tool):
         )
         self._registry = registry
 
-    async def execute(self) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         agents = [
             status
             for status in self._registry.get_all_agent_status()

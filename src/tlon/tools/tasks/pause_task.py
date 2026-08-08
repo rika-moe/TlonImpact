@@ -1,6 +1,6 @@
 """Pause Task tool."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 
@@ -50,7 +50,7 @@ class PauseTaskTool(Tool):
         )
         self.task_manager = task_manager
 
-    async def execute(self, task_id: str, reason: str = "") -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Pause a task.
 
         Args:
@@ -60,6 +60,9 @@ class PauseTaskTool(Tool):
         Returns:
             ToolResult with paused task info
         """
+        task_id: str = kwargs["task_id"]
+        reason: str = kwargs.get("reason", "")
+
         try:
             task = self.task_manager.get_task(task_id)
 

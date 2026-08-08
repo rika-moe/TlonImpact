@@ -342,8 +342,8 @@ def _builtin_contains(env: dict[str, Any], coll: Any, item: Any) -> bool:
 def _value_equal(a: Any, b: Any) -> bool:
     # Keyword/Symbol/string stay distinct types (``:a`` ≠ ``"a"``).
     if isinstance(a, str) or isinstance(b, str):
-        return type(a) is type(b) and a == b
-    return a == b
+        return bool(type(a) is type(b) and a == b)
+    return bool(a == b)
 
 
 def _builtin_eq(env: dict[str, Any], *args: Any) -> bool:

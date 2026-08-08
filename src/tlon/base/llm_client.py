@@ -180,7 +180,7 @@ class LLMClient:
             Exception: If all retries fail
         """
         # Prepare request parameters
-        params = {
+        params: dict[str, Any] = {
             "model": self.config.model_name,
             "messages": all_messages,
             "temperature": temperature if temperature is not None else self.config.temperature,

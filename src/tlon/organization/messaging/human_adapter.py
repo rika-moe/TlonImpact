@@ -21,7 +21,7 @@ See docs/design/members.md (阶段 B).
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from tlon.base.component import Component
@@ -49,7 +49,7 @@ AddressResolver = Callable[[str], str | None]
 
 # Push callback for an attached session (sync or async, like the
 # NotificationService event handlers).
-EventHandler = Callable[[Event], None]
+EventHandler = Callable[[Event], None | Awaitable[None]]
 
 
 class HumanAdapter(Member):

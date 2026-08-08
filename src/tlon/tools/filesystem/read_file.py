@@ -1,6 +1,6 @@
 """Read file tool — operates inside the sandbox container."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
@@ -75,7 +75,7 @@ class ReadFileTool(Tool):
         self._docker_runtime = docker_runtime
         self._allowed_paths = allowed_paths or list(DEFAULT_ALLOWED_PATHS)
 
-    async def execute(self, file_path: str, offset: int = 1, limit: int = 100) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Read a file from the sandbox container.
 
         Args:
@@ -86,6 +86,10 @@ class ReadFileTool(Tool):
         Returns:
             ToolResult with file content and metadata.
         """
+        file_path: str = kwargs["file_path"]
+        offset: int = kwargs.get("offset", 1)
+        limit: int = kwargs.get("limit", 100)
+
         if self._docker_runtime is None:
             return ToolResult(
                 success=False,

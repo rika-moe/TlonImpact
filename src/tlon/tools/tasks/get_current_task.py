@@ -1,6 +1,6 @@
 """Get Current Task tool."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 
@@ -33,7 +33,7 @@ class GetCurrentTaskTool(Tool):
         )
         self.task_manager = task_manager
 
-    async def execute(self) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Get current task.
 
         Returns:

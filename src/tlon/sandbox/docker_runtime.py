@@ -17,6 +17,7 @@ from pathlib import Path
 
 import docker
 from docker.errors import ImageNotFound, NotFound
+from docker.models.containers import Container
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
@@ -63,7 +64,7 @@ class DockerRuntime:
         self.agent_id = agent_id
         self.container_name = f"tlon-agent-{agent_id}"
         self.client = self._create_client()
-        self.container: docker.models.containers.Container | None = None
+        self.container: Container | None = None
 
     def _create_client(self) -> docker.DockerClient:
         """Create a Docker client, trying multiple connection methods.
@@ -108,13 +109,12 @@ class DockerRuntime:
         """
         try:
             # Try to get existing container (blocking docker SDK call → thread)
-            self.container = await asyncio.to_thread(
-                self.client.containers.get, self.container_name
-            )
+            container = await asyncio.to_thread(self.client.containers.get, self.container_name)
+            self.container = container
 
-            if self.container.status != "running":
+            if container.status != "running":
                 logger.info("container_start", container_name=self.container_name)
-                await asyncio.to_thread(self.container.start)
+                await asyncio.to_thread(container.start)
                 # Wait a moment for container to be ready
                 await asyncio.sleep(1)
 
@@ -209,12 +209,21 @@ class DockerRuntime:
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout} seconds"
                 )
 
-            exit_code, output = exec_result.exit_code, exec_result.output
+            exit_code: int = exec_result.exit_code if exec_result.exit_code is not None else -1
+            output = exec_result.output
 
             # Parse output (demux returns tuple of (stdout_bytes, stderr_bytes))
             stdout_bytes, stderr_bytes = output if output else (b"", b"")
-            stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-            stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+            stdout = (
+                stdout_bytes.decode("utf-8", errors="replace")
+                if isinstance(stdout_bytes, bytes)
+                else ""
+            )
+            stderr = (
+                stderr_bytes.decode("utf-8", errors="replace")
+                if isinstance(stderr_bytes, bytes)
+                else ""
+            )
 
             # `timeout` kills the command with exit code 124
             if exit_code == 124:

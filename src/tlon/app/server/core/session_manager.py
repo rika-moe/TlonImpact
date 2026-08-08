@@ -55,7 +55,7 @@ class SessionManager:
         >>> await manager.close_session(session.id)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the session manager."""
         self._sessions: dict[str, ClientSession] = {}
         self._counter = 0

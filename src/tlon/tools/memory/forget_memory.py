@@ -1,6 +1,6 @@
 """Tool for forgetting/deleting memories."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
@@ -48,11 +48,7 @@ class ForgetMemoryTool(Tool):
         )
         self.memory = memory_manager
 
-    async def execute(
-        self,
-        query: str,
-        confirm: bool = False,
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool to forget memories.
 
         Args:
@@ -62,6 +58,9 @@ class ForgetMemoryTool(Tool):
         Returns:
             ToolResult with result message
         """
+        query: str = kwargs["query"]
+        confirm: bool = kwargs.get("confirm", False)
+
         try:
             result = await self.memory.forget(query, confirm)
 
@@ -74,6 +73,7 @@ class ForgetMemoryTool(Tool):
             logger.error("memory_forget_failed", query=query, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
+                data={},
                 error=str(e),
                 message=f"❌ 删除记忆失败: {e}",
             )

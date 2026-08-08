@@ -1,5 +1,7 @@
 """List behavior prototypes tool."""
 
+from typing import Any
+
 from tlon.agents.prototypes import list_prototypes
 from tlon.tools.base import Tool, ToolResult
 
@@ -25,7 +27,7 @@ class ListPrototypesTool(Tool):
             },
         )
 
-    async def execute(self) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         prototypes = list_prototypes()
         data = [
             {

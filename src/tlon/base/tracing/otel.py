@@ -20,7 +20,7 @@ from pathlib import Path
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.sampling import ALWAYS_ON, TraceIdRatioBased
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON, Sampler, TraceIdRatioBased
 
 from tlon.base.logger import get_logger
 from tlon.base.tracing.jsonl_exporter import JsonlSpanExporter
@@ -52,7 +52,7 @@ def init_tracing(trace_store_dir: Path, otlp_endpoint: str | None = None) -> Tra
         logger.debug("tracing_already_initialized")
         return provider  # type: ignore[return-value]
 
-    sampler = ALWAYS_ON
+    sampler: Sampler = ALWAYS_ON
     ratio_env = os.environ.get(SAMPLE_RATIO_ENV)
     if ratio_env is not None:
         try:
@@ -107,6 +107,6 @@ def shutdown_tracing() -> None:
         return
     provider = trace.get_tracer_provider()
     if hasattr(provider, "shutdown"):
-        provider.shutdown()  # type: ignore[union-attr]
+        provider.shutdown()
     _initialized = False
     logger.info("tracing_shutdown")

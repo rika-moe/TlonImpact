@@ -1,6 +1,6 @@
 """Tool for searching memories."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
@@ -48,11 +48,7 @@ class SearchMemoriesTool(Tool):
         )
         self.memory = memory_manager
 
-    async def execute(
-        self,
-        query: str,
-        limit: int = 5,
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute the tool to search memories.
 
         Args:
@@ -62,6 +58,9 @@ class SearchMemoriesTool(Tool):
         Returns:
             ToolResult with search results
         """
+        query: str = kwargs["query"]
+        limit: int = kwargs.get("limit", 5)
+
         try:
             results_text = await self.memory.search_memories(query, limit)
 
@@ -74,6 +73,7 @@ class SearchMemoriesTool(Tool):
             logger.error("memory_search_failed", query=query, error=str(e), exc_info=True)
             return ToolResult(
                 success=False,
+                data={},
                 error=str(e),
                 message=f"❌ 搜索记忆失败: {e}",
             )

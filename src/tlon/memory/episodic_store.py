@@ -5,7 +5,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiofiles
 
@@ -191,7 +191,7 @@ class EpisodicMemoryStore(MemoryStore):
             logger.error("summary_append_failed", error=str(e), exc_info=True)
             await self._persist_summaries()
 
-        return summary_id
+        return cast(str, summary_id)
 
     async def get_summary(self, summary_id: str) -> dict[str, Any] | None:
         """Get a summary by ID."""
@@ -287,7 +287,7 @@ class EpisodicMemoryStore(MemoryStore):
             # The superseded_by marker mutated an existing line, so a plain
             # append would lose it on restart; rewrite the whole file instead.
             await self._persist_facts()
-            return fact_id
+            return cast(str, fact_id)
         try:
             async with aiofiles.open(self.facts_file, "a", encoding="utf-8") as f:
                 await f.write(json.dumps(fact, ensure_ascii=False) + "\n")
@@ -295,7 +295,7 @@ class EpisodicMemoryStore(MemoryStore):
             logger.error("fact_append_failed", error=str(e), exc_info=True)
             await self._persist_facts()
 
-        return fact_id
+        return cast(str, fact_id)
 
     async def get_fact(self, fact_id: str) -> dict[str, Any] | None:
         """Get a fact by ID."""

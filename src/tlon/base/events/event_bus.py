@@ -4,13 +4,16 @@ Central event routing system using async publish-subscribe pattern.
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from tlon.base.component import Component
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 订阅者可注册同步或异步处理器；异步处理器在事件循环内 await，同步处理器在线程池运行
+EventHandler = Callable[[Event], None | Awaitable[None]]
 
 
 class EventBus(Component):
@@ -37,7 +40,7 @@ class EventBus(Component):
         >>> await bus.shutdown()
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the event bus."""
         super().__init__(name="EventBus")
         self._subscribers: dict[EventType, list[tuple]] = {}
@@ -83,7 +86,7 @@ class EventBus(Component):
 
         logger.info("event_bus_stopped")
 
-    def subscribe(self, event_type: EventType, handler: Callable[[Event], None]) -> str:
+    def subscribe(self, event_type: EventType, handler: EventHandler) -> str:
         """Subscribe to events of a specific type.
 
         Args:
@@ -227,9 +230,7 @@ class EventBus(Component):
                     exc_info=True,
                 )
 
-    async def _run_handler(
-        self, handler: Callable[[Event], None], event: Event, subscription_id: str
-    ) -> None:
+    async def _run_handler(self, handler: EventHandler, event: Event, subscription_id: str) -> None:
         """Run an async handler with error handling.
 
         Args:
@@ -238,7 +239,9 @@ class EventBus(Component):
             subscription_id: For logging purposes
         """
         try:
-            await handler(event)
+            result = handler(event)
+            if result is not None:
+                await result
             logger.info("handler_completed", subscription_id=subscription_id)
         except Exception as e:
             logger.error(

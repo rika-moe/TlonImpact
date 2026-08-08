@@ -1,6 +1,6 @@
 """Create Task tool."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 
@@ -49,7 +49,7 @@ class CreateTaskTool(Tool):
         )
         self.task_manager = task_manager
 
-    async def execute(self, title: str, description: str = "") -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Create a new task.
 
         Args:
@@ -59,6 +59,9 @@ class CreateTaskTool(Tool):
         Returns:
             ToolResult with created task info
         """
+        title: str = kwargs["title"]
+        description: str = kwargs.get("description", "")
+
         try:
             task = self.task_manager.create_task(title, description)
 

@@ -12,6 +12,7 @@ Usage:
 """
 
 import asyncio
+import functools
 import signal
 from pathlib import Path
 from typing import Any
@@ -266,8 +267,10 @@ class ServerApp:
 
         self._running = True
 
-        # Start API servers
+        # Start API servers (created in initialize(); safe to start here)
+        assert self.rest is not None
         await self.rest.start()
+        assert self.websocket is not None
         await self.websocket.start()
 
         agent_registry = self._components.get("agent_registry")
@@ -395,7 +398,7 @@ async def run_server(
     # Setup signal handlers
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: app.handle_signal(s))
+        loop.add_signal_handler(sig, functools.partial(app.handle_signal, sig))
 
     try:
         await app.initialize()

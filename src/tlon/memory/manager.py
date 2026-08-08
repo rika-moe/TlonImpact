@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiofiles
 
@@ -85,7 +85,7 @@ class MemoryManager:
 
         # Initialize summarizer if LLM config provided
         if llm_config:
-            self.summarizer = Summarizer(llm_config)
+            self.summarizer: Summarizer | None = Summarizer(llm_config)
         else:
             self.summarizer = None
 
@@ -264,7 +264,7 @@ class MemoryManager:
         if obj is None:
             return {}
         if hasattr(obj, "to_dict"):
-            return obj.to_dict()
+            return cast(dict[str, Any], obj.to_dict())
         if hasattr(obj, "__dict__"):
             return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
         if isinstance(obj, dict):
@@ -276,7 +276,7 @@ class MemoryManager:
         if response is None:
             return None
         if hasattr(response, "to_dict"):
-            return response.to_dict()
+            return cast(dict[str, Any], response.to_dict())
         if isinstance(response, dict):
             return response
         if hasattr(response, "content"):
@@ -357,13 +357,14 @@ class MemoryManager:
         summaries = await self.episodic.get_recent_summaries(self.config.context_max_summaries)
         if summaries:
             summary_lines = []
-            source_ids = []
+            summary_ids: list[str] = []
             for s in summaries:
                 text = s.get("summary_text", "")
                 timestamp = s.get("timestamp", "")[:10]  # Just date
                 if text:
                     summary_lines.append(f"- [{timestamp}] {text}")
-                    source_ids.append(s.get("id"))
+                    if (sid := s.get("id")) is not None:
+                        summary_ids.append(sid)
 
             if summary_lines:
                 blocks.append(
@@ -371,7 +372,7 @@ class MemoryManager:
                         block_type="episodic_summaries",
                         priority=1,
                         content="\n".join(summary_lines),
-                        source_ids=source_ids,
+                        source_ids=summary_ids,
                     )
                 )
 
@@ -379,7 +380,7 @@ class MemoryManager:
         facts = await self.episodic.get_recent_facts(self.config.context_max_facts)
         if facts:
             fact_lines = []
-            source_ids = []
+            fact_ids: list[str] = []
             for f in facts:
                 desc = f.get("description", "")
                 if not desc:
@@ -387,7 +388,8 @@ class MemoryManager:
                     desc = f"{f.get('subject', '')} {f.get('predicate', '')} {f.get('object', '')}"
                 if desc.strip():
                     fact_lines.append(f"- {desc.strip()}")
-                    source_ids.append(f.get("id"))
+                    if (fid := f.get("id")) is not None:
+                        fact_ids.append(fid)
 
             if fact_lines:
                 blocks.append(
@@ -395,7 +397,7 @@ class MemoryManager:
                         block_type="key_facts",
                         priority=2,
                         content="\n".join(fact_lines),
-                        source_ids=source_ids,
+                        source_ids=fact_ids,
                     )
                 )
 
@@ -403,7 +405,7 @@ class MemoryManager:
         interactions = await self.working.get_recent(self.config.context_max_working)
         if interactions:
             interaction_lines = []
-            source_ids = []
+            interaction_ids: list[str] = []
             for i, inter in enumerate(interactions, 1):
                 msg = inter.get("message", {})
                 resp = inter.get("response", {})
@@ -432,7 +434,8 @@ class MemoryManager:
                     lines.append(f"   [Agent] {resp_content[:200]}")  # Truncate
 
                 interaction_lines.append("\n".join(lines))
-                source_ids.append(inter.get("id"))
+                if (iid := inter.get("id")) is not None:
+                    interaction_ids.append(iid)
 
             if interaction_lines:
                 blocks.append(
@@ -440,7 +443,7 @@ class MemoryManager:
                         block_type="recent_working",
                         priority=3,
                         content="\n\n".join(interaction_lines),
-                        source_ids=source_ids,
+                        source_ids=interaction_ids,
                     )
                 )
 
@@ -719,11 +722,11 @@ class MemoryManager:
         # Delete mode
         deleted_count = 0
         for s in summary_matches:
-            if await self.episodic.delete_summary(s.get("id")):
+            if (sid := s.get("id")) is not None and await self.episodic.delete_summary(sid):
                 deleted_count += 1
 
         for f in fact_matches:
-            if await self.episodic.delete_fact(f.get("id")):
+            if (fid := f.get("id")) is not None and await self.episodic.delete_fact(fid):
                 deleted_count += 1
 
         return f"已删除 {deleted_count} 条记忆。"

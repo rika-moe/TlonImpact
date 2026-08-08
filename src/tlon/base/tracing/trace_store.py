@@ -47,7 +47,7 @@ class SpanRecord:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert span to dictionary."""
-        result = {
+        result: dict[str, Any] = {
             "span_id": self.span_id,
             "trace_id": self.trace_id,
             "name": self.name,
@@ -110,7 +110,7 @@ class TraceRecord:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert trace to dictionary."""
-        result = {
+        result: dict[str, Any] = {
             "trace_id": self.trace_id,
             "root_span_id": self.root_span_id,
             "name": self.name,
@@ -247,9 +247,9 @@ class FileTraceStore(TraceStore):
                         )
                         spans[span.span_id] = span
                     elif event_type == "span_end":
-                        span = spans.get(event["span_id"])
-                        if span:
-                            span.end_time = datetime.fromisoformat(event["timestamp"])
+                        existing_span = spans.get(event["span_id"])
+                        if existing_span:
+                            existing_span.end_time = datetime.fromisoformat(event["timestamp"])
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning("trace_event_parse_failed", error=str(e))
                     continue

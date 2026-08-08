@@ -5,7 +5,7 @@ with standard or custom team configurations.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.config import DockerRuntimeConfig, LLMConfig
 from tlon.base.default_team import STANDARD_TEAM_DICTS, make_agent_config
@@ -41,7 +41,7 @@ class QuickstartWizard:
         try:
             import questionary
 
-            self.questionary = questionary
+            self.questionary: Any = questionary
         except ImportError:
             self.questionary = None
 
@@ -106,7 +106,7 @@ class QuickstartWizard:
         self.questionary.press_any_key_to_continue("\n按回车继续...").ask()
         return True
 
-    def _step2_api_config(self) -> dict:
+    def _step2_api_config(self) -> dict[Any, Any] | None:
         """Step 2: API configuration.
 
         Returns:
@@ -189,7 +189,7 @@ class QuickstartWizard:
             "temperature": temp,
         }
 
-    def _step3_team_config(self, default_model: str) -> dict:
+    def _step3_team_config(self, default_model: str) -> dict[Any, Any] | None:
         """Step 3: Team configuration.
 
         Args:
@@ -216,7 +216,7 @@ class QuickstartWizard:
         else:
             return self._configure_custom_team(default_model)
 
-    def _configure_standard_team(self, default_model: str) -> dict:
+    def _configure_standard_team(self, default_model: str) -> dict[Any, Any] | None:
         """Configure standard team.
 
         Args:
@@ -254,7 +254,7 @@ class QuickstartWizard:
             "agents": agents,
         }
 
-    def _configure_custom_team(self, default_model: str) -> dict:
+    def _configure_custom_team(self, default_model: str) -> dict[Any, Any] | None:
         """Configure custom team.
 
         Args:
@@ -340,7 +340,7 @@ class QuickstartWizard:
             self.console.print(f"  ~/.tlon/{a.id}/config/agent.yaml")
             self.console.print(f"  ~/.tlon/{a.id}/config/IDENTITY.md, SOUL.md, RULES.md")
 
-        return self.questionary.confirm("确认创建以上配置?").ask()
+        return bool(self.questionary.confirm("确认创建以上配置?").ask())
 
     def _create_configuration(self, api_config: dict, team_config: dict) -> None:
         """Create all configuration files.

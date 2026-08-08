@@ -5,6 +5,7 @@ to provide a simple, unified interface for all client types.
 """
 
 from collections.abc import Callable
+from types import TracebackType
 from typing import Any
 
 from tlon.base.logger import get_logger
@@ -439,7 +440,12 @@ class TlonClient:
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Async context manager exit.
 
         Disconnects from the server automatically.

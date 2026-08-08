@@ -2,10 +2,11 @@
 
 import asyncio
 import uuid
+from typing import Any
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
-from tlon.sandbox.docker_runtime import DockerRuntime
+from tlon.sandbox.docker_runtime import DockerRuntime, ExecutionResult
 from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -53,7 +54,7 @@ class ExecuteBashTool(Tool):
         self._docker_config = docker_config
         self._docker_runtime = docker_runtime
 
-    async def execute(self, command: str, background: bool = False, timeout: int = 60) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute a bash command.
 
         Args:
@@ -64,6 +65,10 @@ class ExecuteBashTool(Tool):
         Returns:
             ToolResult with stdout, stderr, and exit code
         """
+        command: str = kwargs["command"]
+        background: bool = kwargs.get("background", False)
+        timeout: int = kwargs.get("timeout", 60)
+
         if self._docker_runtime is None:
             return ToolResult(
                 success=False,
@@ -101,8 +106,11 @@ class ExecuteBashTool(Tool):
 
         task_id = f"bg-{uuid.uuid4().hex[:12]}"
 
-        async def _run():
-            return await self._docker_runtime.execute(command, timeout=timeout)
+        docker_runtime = self._docker_runtime
+        assert docker_runtime is not None
+
+        async def _run() -> ExecutionResult:
+            return await docker_runtime.execute(command, timeout=timeout)
 
         task = asyncio.create_task(_run())
         task.add_done_callback(lambda _: _background_tasks.pop(task_id, None))
@@ -122,7 +130,7 @@ class ExecuteBashTool(Tool):
 class CheckBashTaskTool(Tool):
     """Tool to check the status of a background bash task."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             name="checkBashTask",
             description="检查后台 bash 任务的执行状态。通过 executeBashCommand 的 background=true 启动的任务，用此工具查询结果。",
@@ -138,7 +146,7 @@ class CheckBashTaskTool(Tool):
             },
         )
 
-    async def execute(self, task_id: str) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Check the status of a background task.
 
         Args:
@@ -147,6 +155,8 @@ class CheckBashTaskTool(Tool):
         Returns:
             ToolResult with task status and result if completed
         """
+        task_id: str = kwargs["task_id"]
+
         task = _background_tasks.get(task_id)
         if task is None:
             return ToolResult(

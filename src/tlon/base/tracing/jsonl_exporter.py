@@ -15,6 +15,7 @@ threading lock.
 """
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
@@ -74,7 +75,7 @@ class JsonlSpanExporter(SpanExporter):
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(text)
 
-    def export(self, spans: list[ReadableSpan]) -> SpanExportResult:
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         """Write ended spans to their trace files.
 
         Args:
@@ -95,6 +96,8 @@ class JsonlSpanExporter(SpanExporter):
     def _write_span(self, span: ReadableSpan) -> None:
         """Write a single ended span (called under the file lock)."""
         span_context = span.get_span_context()
+        if span_context is None:
+            return
         trace_id = format_trace_id(span_context.trace_id)
         span_id = format_span_id(span_context.span_id)
 

@@ -1,5 +1,7 @@
 """Send email tool."""
 
+from typing import Any
+
 from tlon.tools.base import Tool, ToolResult
 
 
@@ -30,7 +32,7 @@ class SendEmailTool(Tool):
         ... )
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the tool."""
         super().__init__(
             name="sendEmail",
@@ -77,15 +79,7 @@ class SendEmailTool(Tool):
             },
         )
 
-    async def execute(
-        self,
-        to: list[str],
-        content: str,
-        is_complete: bool,
-        cc: list[str] | None = None,
-        subject: str | None = None,
-        in_reply_to: str | None = None,
-    ) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Send a mail.
 
         The actual delivery is handled by the Agent's processing loop
@@ -102,6 +96,13 @@ class SendEmailTool(Tool):
         Returns:
             ToolResult containing the mail data.
         """
+        to: list[str] = kwargs["to"]
+        content: str = kwargs["content"]
+        is_complete: bool = kwargs["is_complete"]
+        cc: list[str] | None = kwargs.get("cc")
+        subject: str | None = kwargs.get("subject")
+        in_reply_to: str | None = kwargs.get("in_reply_to")
+
         return ToolResult(
             success=True,
             data={

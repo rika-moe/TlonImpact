@@ -4,7 +4,7 @@ Interactive menu for managing Agent configurations with CRUD operations.
 Supports IDENTITY.md / SOUL.md / RULES.md file-based persona editing.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..agent_store import AgentStore
 from ..server_notify import notify_server_agent_created
@@ -27,7 +27,7 @@ class AgentMenu:
         try:
             import questionary
 
-            self.questionary = questionary
+            self.questionary: Any = questionary
         except ImportError:
             self.questionary = None
 

@@ -103,7 +103,7 @@ class ScriptSpec:
         """
         if builtins is None:
             builtins = make_script_builtins(None)
-        if not isinstance(data, dict) or isinstance(data, Form):
+        if not isinstance(data, dict):
             raise ScriptSpecValidationError(
                 f"script spec must be a top-level map, got {_type_name(data)}"
             )
@@ -192,7 +192,7 @@ def _rules_from(value: Any, builtins: dict[str, Builtin]) -> tuple[ScriptRule, .
 
 def _rule_from(item: Any, builtins: dict[str, Builtin]) -> ScriptRule:
     """Build one rule from its map — every required field must be present."""
-    if not isinstance(item, dict) or isinstance(item, Form):
+    if not isinstance(item, dict):
         raise ScriptSpecValidationError(
             f":rules items must be maps, got {_type_name(item)}: {item!r}"
         )

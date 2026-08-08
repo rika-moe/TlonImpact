@@ -1,6 +1,6 @@
 """Edit file tool — operates inside the sandbox container."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.tools.base import Tool, ToolResult
 from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_container_path
@@ -75,7 +75,7 @@ class EditFileTool(Tool):
         self._docker_runtime = docker_runtime
         self._allowed_paths = allowed_paths or list(DEFAULT_ALLOWED_PATHS)
 
-    async def execute(self, file_path: str, old_string: str, new_string: str) -> ToolResult:
+    async def execute(self, **kwargs: Any) -> ToolResult:
         """Edit a file by replacing old_string with new_string in the sandbox.
 
         Args:
@@ -86,6 +86,10 @@ class EditFileTool(Tool):
         Returns:
             ToolResult with edit status.
         """
+        file_path: str = kwargs["file_path"]
+        old_string: str = kwargs["old_string"]
+        new_string: str = kwargs["new_string"]
+
         if self._docker_runtime is None:
             return ToolResult(
                 success=False,
