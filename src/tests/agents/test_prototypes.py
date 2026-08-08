@@ -7,12 +7,16 @@ import pytest
 from tlon.agents import prototypes as prototypes_mod
 from tlon.agents.edn import Keyword, dumps, loads
 from tlon.agents.prototypes import (
+    BEHAVIOR_FILE,
+    SCRIPT_FILE,
     PrototypeError,
     PrototypeInfo,
+    approve_prototype,
     get_prototype_info,
     instantiate,
     list_prototypes,
     seed_prototypes,
+    write_staging_prototype,
 )
 from tlon.agents.spec import AgentSpec
 from tlon.base.config import _yaml_load_file
@@ -60,14 +64,18 @@ class TestPackageResources:
             assert spec.version == 1
 
     def test_builtin_script_files_parse_and_validate(self):
-        """P5b: the relay prototype's script.tlon is a total ScriptSpec."""
+        """P5b: the relay prototype's script.tlon is a total ScriptSpec
+        (parameterized template loaded via loads())."""
         from tlon.agents.script_spec import ScriptSpec
 
         package_root = resources.files(prototypes_mod.PROTOTYPE_PACKAGE)
         for name in SCRIPT_BUILTINS:
             raw = (package_root / name / "script.tlon").read_text(encoding="utf-8")
-            spec = ScriptSpec.from_edn(loads(raw))
+            spec = ScriptSpec.loads(raw)
             assert spec.version == 1
+            # relay is now parameterized
+            assert spec.has_parameters()
+            assert {p.name for p in spec.parameters} == {"to"}
 
     def test_builtin_behavior_specs_totality(self):
         """Total spec: every builtin behavior.tlon must satisfy the full schema
@@ -266,19 +274,21 @@ class TestInstantiate:
         assert reloaded.proactive is True
 
     def test_script_prototype_instantiation(self, tmp_path, monkeypatch):
-        """P5b: instantiating a script prototype copies script.tlon verbatim
-        and writes agent.yaml with runtime="script" (no behavior file)."""
+        """P5b: instantiating a parameterized script prototype renders params
+        into the instance's script.tlon and writes agent.yaml with
+        runtime="script"."""
         test_paths = _use_tmp_paths(monkeypatch, tmp_path)
         seed_prototypes()
 
-        agent = instantiate("relay", agent_id="rl-001", agent_name="转发")
+        params = {"to": ["gu-yanxi@tlon.internal", "xie-yunshu@tlon.internal"]}
+        agent = instantiate("relay", agent_id="rl-001", agent_name="转发", params=params)
 
         config_dir = test_paths.agent_config_dir("rl-001")
         copied = (config_dir / "script.tlon").read_text(encoding="utf-8")
-        original = (test_paths.prototypes_dir() / "relay" / "script.tlon").read_text(
-            encoding="utf-8"
-        )
-        assert copied == original
+        # Rendered text has the addresses, not ${to}
+        assert "gu-yanxi@tlon.internal" in copied
+        assert "xie-yunshu@tlon.internal" in copied
+        assert "${to}" not in copied
         assert not (config_dir / "behavior.tlon").exists()
 
         reloaded = _yaml_load_file(test_paths.agent_config_file("rl-001"))
@@ -349,18 +359,161 @@ class TestEndToEndSpecInheritance:
         assert spec.on_complete.reflect.interval_minutes == 5
 
     def test_relay_instance_script_spec(self, tmp_path, monkeypatch):
-        """P5b: a relay instance's script.tlon loads through ScriptSpec.load."""
+        """P5b: a relay instance's script.tlon loads through ScriptSpec.load
+        after parameter rendering — the rendered file has no template vars."""
         from tlon.agents.script_spec import ScriptSpec
 
         _use_tmp_paths(monkeypatch, tmp_path)
         seed_prototypes()
-        instantiate("relay", agent_id="rl-010", agent_name="转发")
+        instantiate(
+            "relay",
+            agent_id="rl-010",
+            agent_name="转发",
+            params={"to": ["alice@tlon.internal"]},
+        )
 
         spec = ScriptSpec.load("rl-010")
 
         assert spec.version == 1
         assert [rule.name for rule in spec.rules] == ["relay"]
         assert spec.rules[0].on is EventType.MAIL_DELIVERED
+        # Rendered instance has no template parameters
+        assert not spec.has_parameters()
+
+
+class TestWriteStagingPrototypeScript:
+    """P5b: write_staging_prototype(spec_type="script") — the writePrototype
+    path for script members."""
+
+    def test_writes_script_file_and_metadata(self, tmp_path, monkeypatch):
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        script_text = (
+            '{:version 1 :rules [{:name "r" :on :mail-delivered '
+            ':actions [(forward {:to ["a@tlon.internal"]})]}]}\n'
+        )
+        write_staging_prototype(
+            behavior_edn=script_text,
+            name="my-script",
+            persona=None,
+            spec_type="script",
+        )
+
+        staging_dir = test_paths.prototypes_staging_dir() / "my-script"
+        assert staging_dir.is_dir()
+        assert (staging_dir / SCRIPT_FILE).exists()
+        assert not (staging_dir / BEHAVIOR_FILE).exists()
+        # Metadata written
+        assert (staging_dir / "prototype.edn").exists()
+        meta = loads((staging_dir / "prototype.edn").read_text(encoding="utf-8"))
+        assert str(meta[Keyword("runtime")]) == "script"
+
+    def test_rejects_invalid_script_spec(self, tmp_path, monkeypatch):
+        _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        with pytest.raises(PrototypeError, match="script spec validation"):
+            write_staging_prototype(
+                behavior_edn="{:version 1}",  # missing :rules
+                name="bad-script",
+                persona=None,
+                spec_type="script",
+            )
+
+    def test_staging_prototype_rejects_duplicate_name(self, tmp_path, monkeypatch):
+        _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        script_text = (
+            '{:version 1 :rules [{:name "r" :on :mail-delivered '
+            ':actions [(forward {:to ["a@tlon.internal"]})]}]}\n'
+        )
+        write_staging_prototype(
+            behavior_edn=script_text,
+            name="my-script-2",
+            persona=None,
+            spec_type="script",
+        )
+        # Second write with same name → rejected
+        with pytest.raises(PrototypeError, match="already exists in the staging"):
+            write_staging_prototype(
+                behavior_edn=script_text,
+                name="my-script-2",
+                persona=None,
+                spec_type="script",
+            )
+
+
+class TestApprovePrototypeScript:
+    """P5b: approve_prototype() handles script-only staging prototypes."""
+
+    def test_approves_script_only_prototype(self, tmp_path, monkeypatch):
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        script_text = (
+            '{:version 1 :rules [{:name "r" :on :mail-delivered '
+            ':actions [(forward {:to ["a@tlon.internal"]})]}]}\n'
+        )
+        write_staging_prototype(
+            behavior_edn=script_text,
+            name="my-script",
+            persona=None,
+            spec_type="script",
+        )
+
+        # Should not raise
+        approve_prototype("my-script")
+
+        # Now exists in trusted library
+        target = test_paths.prototypes_dir() / "my-script"
+        assert target.is_dir()
+        assert (target / SCRIPT_FILE).exists()
+        assert not (target / BEHAVIOR_FILE).exists()
+        # Staging cleaned
+        assert not (test_paths.prototypes_staging_dir() / "my-script").exists()
+
+
+class TestInstantiateParams:
+    """P5b: instantiate() with params for parameterized script templates."""
+
+    def test_missing_required_param_raises(self, tmp_path, monkeypatch):
+        _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        with pytest.raises(PrototypeError, match="params must be provided"):
+            instantiate("relay", agent_id="rl-bad", agent_name="坏转发")
+
+    def test_unknown_param_key_raises(self, tmp_path, monkeypatch):
+        _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        with pytest.raises(PrototypeError, match="Unknown"):
+            instantiate(
+                "relay",
+                agent_id="rl-bad",
+                agent_name="坏转发",
+                params={"to": ["a@x.com"], "extra": "bad"},
+            )
+
+    def test_render_fully_substitutes_placeholders(self, tmp_path, monkeypatch):
+        test_paths = _use_tmp_paths(monkeypatch, tmp_path)
+        seed_prototypes()
+
+        agent = instantiate(
+            "relay",
+            agent_id="rl-filled",
+            agent_name="转发",
+            params={"to": ["alice@tlon.internal", "bob@tlon.internal"]},
+        )
+
+        config_dir = test_paths.agent_config_dir("rl-filled")
+        content = (config_dir / SCRIPT_FILE).read_text(encoding="utf-8")
+        assert "${to}" not in content
+        assert "alice@tlon.internal" in content
+        assert "bob@tlon.internal" in content
+        assert agent.prototype == "relay"
 
 
 class TestListPrototypesTool:

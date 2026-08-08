@@ -50,6 +50,14 @@ class SpawnAgentTool(Tool):
                         "type": "string",
                         "description": "新 Agent 的显示名（他人 @ 此名即可与之对话）",
                     },
+                    "params": {
+                        "type": "object",
+                        "description": (
+                            "模板参数（仅当 prototype 声明了 :parameters 时需要）。"
+                            "key 为参数名，value 为参数值——:string 参数传字符串，"
+                            ":string-list 参数传字符串数组"
+                        ),
+                    },
                 },
                 "required": ["prototype", "name"],
             },
@@ -60,6 +68,7 @@ class SpawnAgentTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         prototype: str = kwargs["prototype"]
         name: str = kwargs["name"]
+        params: dict[str, Any] | None = kwargs.get("params")
 
         # Session context is bound by the agent's session span via structlog
         # contextvars; direct calls (tests) fall back to a single bucket.
@@ -70,6 +79,7 @@ class SpawnAgentTool(Tool):
                 name=name,
                 spawner_id=self._spawner_id,
                 session_id=str(session_id) if session_id else None,
+                params=params,
             )
         except SpawnRejectedError as e:
             if e.reason == "untrusted_prototype":

@@ -154,6 +154,47 @@ class TestSpawnSuccess:
         assert second.spawn_depth == 2
         assert second.spawned_by == first.id
 
+    async def test_spawn_with_params_renders_script_template(self, temp_paths):
+        """P5b: spawn_contractor with params → rendered script.tlon has
+        substituted values, not template placeholders."""
+        registry, _bus, _provider = await _make_registry(temp_paths)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(registry, "_start_agent", _patch_start(registry))
+            config = await registry.spawn_contractor(
+                prototype="relay",
+                name="转发",
+                spawner_id=RESIDENT,
+                session_id="s-1",
+                params={"to": ["alice@tlon.internal", "bob@tlon.internal"]},
+            )
+
+        # Verify rendered script.tlon on disk
+        script_file = temp_paths.agent_config_dir(config.id) / "script.tlon"
+        assert script_file.exists()
+        content = script_file.read_text(encoding="utf-8")
+        assert "${to}" not in content
+        assert "alice@tlon.internal" in content
+        assert "bob@tlon.internal" in content
+
+        # Verify agent.yaml runtime
+        assert config.prototype == "relay"
+        assert config.runtime == "script"
+
+    async def test_spawn_script_without_required_params_raises(self, temp_paths):
+        """P5b: missing required params for parameterized template → error."""
+        registry, _bus, _provider = await _make_registry(temp_paths)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(registry, "_start_agent", _patch_start(registry))
+            with pytest.raises(PrototypeError, match="params must be provided"):
+                await registry.spawn_contractor(
+                    prototype="relay",
+                    name="坏转发",
+                    spawner_id=RESIDENT,
+                    session_id="s-1",
+                )
+
     async def test_spawn_unknown_prototype_raises(self, temp_paths):
         registry, _bus, _provider = await _make_registry(temp_paths)
         with pytest.raises(PrototypeError):

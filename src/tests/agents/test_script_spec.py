@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from tlon.agents.edn import EDNParseError, loads
+from tlon.agents.edn import EDNParseError, Form, loads
 from tlon.agents.eval import make_script_builtins
 from tlon.agents.script_spec import (
     ScriptSpec,
@@ -247,3 +247,190 @@ class TestLoad:
         self._write(test_paths, "rl-003", "{:version 1}")  # missing :rules
         with pytest.raises(ScriptSpecValidationError):
             ScriptSpec.load("rl-003")
+
+
+# ==================== Template parameters (parameterized prototypes) ====================
+
+TEMPLATE_RELAY = """\
+{:version 1
+ :parameters {:to {:type :string-list :required true}}
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ${to}})]}]}
+"""
+
+TEMPLATE_NO_PARAMS = """\
+{:version 1
+ :rules [{:name "ping"
+          :on :mail-delivered
+          :actions [(forward {:to ["a@tlon.internal"]})]}]}
+"""
+
+TEMPLATE_OPTIONAL = """\
+{:version 1
+ :parameters {:reason_text {:type :string :required false}}
+ :rules [{:name "greet"
+          :on :boot
+          :actions [(start {:agent "fixed" :reason ${reason_text}})]}]}
+"""
+
+TEMPLATE_UNUSED = """\
+{:version 1
+ :parameters {:reason_text {:type :string}}
+ :rules [{:name "greet"
+          :on :boot
+          :actions [(start {:agent "fixed" :reason "test"})]}]}
+"""
+
+
+class TestTemplateLoads:
+    """loads() with :parameters / ${var} template support."""
+
+    def test_non_template_direct_parse(self):
+        """No :parameters → parsed directly, has_parameters() is False."""
+        spec = ScriptSpec.loads(TEMPLATE_NO_PARAMS)
+        assert not spec.has_parameters()
+        assert spec.parameters == ()
+
+    def test_template_detects_parameters(self):
+        """Template is parsed and has_parameters() is True."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        assert spec.has_parameters()
+        assert len(spec.parameters) == 1
+        assert spec.parameters[0].name == "to"
+        assert spec.parameters[0].type == "string-list"
+        assert spec.parameters[0].required is True
+
+    def test_template_rules_validated(self):
+        """Template rules are validated after placeholder substitution."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        assert spec.version == 1
+        assert [r.name for r in spec.rules] == ["relay"]
+        assert spec.rules[0].on is EventType.MAIL_DELIVERED
+
+    def test_undeclared_placeholder_rejected(self):
+        """${var} not declared in :parameters → error."""
+        bad = """\
+{:version 1
+ :parameters {:to {:type :string-list}}
+ :rules [{:name "r" :on :boot :actions [(forward {:to ${unknown}})]}]}
+"""
+        with pytest.raises(ScriptSpecValidationError, match="not declared"):
+            ScriptSpec.loads(bad)
+
+    def test_unused_parameter_silently_ignored(self):
+        """:parameters without ${var} → fast path, parameters ignored.
+        This is a valid state — no template vars means the spec is
+        concrete, and :parameters is treated as benign extra metadata."""
+        spec = ScriptSpec.loads(TEMPLATE_UNUSED)
+        assert not spec.has_parameters()
+        assert spec.parameters == ()
+
+    def test_empty_parameters_rejected(self):
+        """Empty :parameters map with ${var} → error. Needs ${var}
+        to force the template path."""
+        bad = """\
+{:version 1
+ :parameters {}
+ :rules [{:name "r" :on :boot :actions [(start {:agent ${x} :reason "test"})]}]}
+"""
+        with pytest.raises(ScriptSpecValidationError, match=":parameters must not be empty"):
+            ScriptSpec.loads(bad)
+
+    def test_placeholders_without_parameters_rejected(self):
+        """${var} found but no :parameters section declared."""
+        bad = """\
+{:version 1
+ :rules [{:name "r" :on :boot :actions [(start {:agent ${msg} :reason "test"})]}]}
+"""
+        with pytest.raises(ScriptSpecValidationError, match="no :parameters"):
+            ScriptSpec.loads(bad)
+
+    def test_optional_parameter_parse(self):
+        """Optional parameter (required: false)."""
+        spec = ScriptSpec.loads(TEMPLATE_OPTIONAL)
+        assert len(spec.parameters) == 1
+        assert spec.parameters[0].name == "reason_text"
+        assert spec.parameters[0].required is False
+
+    def test_invalid_param_type_rejected(self):
+        """Unknown parameter type — caught in _parse_parameters before action
+        validation."""
+        bad = """\
+{:version 1
+ :parameters {:x {:type :integer}}
+ :rules [{:name "r" :on :boot :actions [(start {:agent ${x} :reason "test"})]}]}
+"""
+        with pytest.raises(ScriptSpecValidationError, match=":type must be one of"):
+            ScriptSpec.loads(bad)
+
+
+class TestTemplateRender:
+    """ScriptSpec.render() — parameter substitution."""
+
+    def test_render_basic(self):
+        """Render substitutes ${var} with EDN values."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        result = spec.render({"to": ["alice@tlon.internal"]})
+        assert "${to}" not in result
+        assert "alice@tlon.internal" in result
+        # Result is valid EDN
+        parsed = loads(result)
+        assert isinstance(parsed, dict)
+
+    def test_render_multiple_addresses(self):
+        """string-list renders as EDN vector."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        result = spec.render({"to": ["a@x.com", "b@x.com"]})
+        parsed = loads(result)
+        # Navigate to the :to value
+        rule = parsed["rules"][0]
+        assert isinstance(rule, dict)
+        # The action is: (forward {:to [...]})
+        action = rule["actions"][0]
+        assert isinstance(action, Form)
+        # Second element is the opts map {:to [...]}
+        opts = action[1]
+        assert isinstance(opts, dict)
+        to_key = [k for k in opts if str(k) == "to"][0]
+        assert opts[to_key] == ["a@x.com", "b@x.com"]
+
+    def test_render_missing_required(self):
+        """Missing required param → error."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        with pytest.raises(ScriptSpecValidationError, match="Missing required"):
+            spec.render({})
+
+    def test_render_unknown_key(self):
+        """Unknown key in params → error."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        with pytest.raises(ScriptSpecValidationError, match="Unknown"):
+            spec.render({"to": ["a@x.com"], "extra": "bad"})
+
+    def test_render_wrong_type_string(self):
+        """string param gets a list → error."""
+        spec = ScriptSpec.loads(TEMPLATE_OPTIONAL)
+        with pytest.raises(ScriptSpecValidationError, match="expected string"):
+            spec.render({"reason_text": ["not", "a", "string"]})
+
+    def test_render_wrong_type_string_list(self):
+        """string-list param gets a string → error."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        with pytest.raises(ScriptSpecValidationError, match="expected list of strings"):
+            spec.render({"to": "not-a-list"})
+
+    def test_render_non_template_raises(self):
+        """Calling render() on a non-template spec raises."""
+        spec = ScriptSpec.loads(TEMPLATE_NO_PARAMS)
+        with pytest.raises(ScriptSpecValidationError, match="not loaded from"):
+            spec.render({"x": "y"})
+
+    def test_render_shaped_result_is_valid_spec(self):
+        """Rendered output is a valid, loadable ScriptSpec (no template vars)."""
+        spec = ScriptSpec.loads(TEMPLATE_RELAY)
+        rendered = spec.render({"to": ["alice@tlon.internal"]})
+        # The rendered text should be loadable as a non-template spec
+        reloaded = ScriptSpec.loads(rendered)
+        assert not reloaded.has_parameters()
+        assert reloaded.version == 1
+        assert [r.name for r in reloaded.rules] == ["relay"]

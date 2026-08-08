@@ -30,9 +30,24 @@ The spec is **total** (same style as ``AgentSpec``): missing sections or
 type errors raise :class:`ScriptSpecValidationError` — there are no
 defaults. Unknown keys are ignored with a warning for forward
 compatibility.
+
+Template parameters (parameterized prototypes): an optional
+``:parameters`` section declares variables that the spec accepts at
+instantiation time. Each variable is a ``${name}`` placeholder in the
+source text. The text is not valid EDN before substitution — ``loads()``
+replaces ``${name}`` with type-safe placeholders for validation, then
+``render(params)`` substitutes the real values when an instance is
+created. Syntax: ``${var}``, with ``$$`` as the literal ``$`` escape.
+
+    {:version 1
+     :parameters {:to {:type :string-list :required true}}
+     :rules [{:name "relay"
+              :on :mail-delivered
+              :actions [(forward {:to ${to}})]}]}
 """
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from tlon.agents.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
@@ -53,10 +68,28 @@ SCRIPT_SPEC_VERSION = 1
 SCRIPT_FILE_NAME = "script.tlon"
 
 _RULE_KEYS = frozenset({"name", "on", "when", "actions"})
+_PARAM_KEYS = frozenset({"type", "required"})
+_PARAM_TYPES = frozenset({"string", "string-list"})
+_TEMPLATE_RE = re.compile(r'\$\{(\w+)\}')
 
 
 class ScriptSpecValidationError(ValueError):
     """A script spec failed EDN-level semantic validation."""
+
+
+@dataclass(frozen=True)
+class ParameterSpec:
+    """One template parameter declaration.
+
+    ``name`` is the variable name (referenced as ``${name}`` in the spec
+    text). ``type`` is ``"string"`` or ``"string-list"`` — the EDN type
+    the parameter value will be serialized to. ``required`` (default True)
+    controls whether a value must be passed at instantiation.
+    """
+
+    name: str
+    type: str  # "string" | "string-list"
+    required: bool = True
 
 
 @dataclass(frozen=True)
@@ -83,6 +116,165 @@ class ScriptSpec:
 
     version: int
     rules: tuple[ScriptRule, ...]
+    parameters: tuple[ParameterSpec, ...] = ()
+    _template_text: str | None = field(default=None, init=False, compare=False, repr=False)
+
+    def has_parameters(self) -> bool:
+        """Whether this spec was loaded from a parameterized template."""
+        return self._template_text is not None
+
+    def render(self, params: dict[str, Any]) -> str:
+        """Substitute template parameters, returning valid EDN text.
+
+        Every declared parameter must be provided; extra keys are
+        rejected. Values are serialized to EDN via :func:`dumps` and
+        replaced into the template text.
+
+        Args:
+            params: ``{name: value}`` — string values for ``:string``
+                parameters, list-of-string for ``:string-list``.
+
+        Returns:
+            Valid EDN text ready to write as ``script.tlon``.
+
+        Raises:
+            ScriptSpecValidationError: missing required, unknown key,
+                wrong type, or spec was not loaded from a template.
+        """
+        if self._template_text is None:
+            raise ScriptSpecValidationError(
+                "Cannot render: spec was not loaded from a parameterized template"
+            )
+        param_map = {p.name: p for p in self.parameters}
+        required = {p.name for p in self.parameters if p.required}
+
+        given = set(params.keys())
+        missing = required - given
+        if missing:
+            raise ScriptSpecValidationError(
+                f"Missing required parameters: {sorted(missing)}"
+            )
+        extra = given - set(param_map)
+        if extra:
+            raise ScriptSpecValidationError(
+                f"Unknown parameters: {sorted(extra)}"
+            )
+
+        # Type-check and collect replacements
+        replacements: dict[str, str] = {}
+        for name, value in params.items():
+            p = param_map[name]
+            if p.type == "string":
+                if not isinstance(value, str):
+                    raise ScriptSpecValidationError(
+                        f"Parameter {name!r}: expected string, "
+                        f"got {_type_name(value)}"
+                    )
+                replacements[name] = dumps(value)
+            elif p.type == "string-list":
+                if not isinstance(value, (list, tuple)) or not all(
+                    isinstance(v, str) for v in value
+                ):
+                    raise ScriptSpecValidationError(
+                        f"Parameter {name!r}: expected list of strings"
+                    )
+                replacements[name] = dumps(list(value))
+            else:
+                raise ScriptSpecValidationError(
+                    f"Unknown parameter type {p.type!r}"
+                )
+
+        # Substitute: replace ${name} with the serialized value
+        def _replacer(m: re.Match[str]) -> str:
+            name = m.group(1)
+            return replacements.get(name, m.group(0))
+
+        return _TEMPLATE_RE.sub(_replacer, self._template_text)
+
+    @classmethod
+    def loads(
+        cls, text: str, builtins: dict[str, Builtin] | None = None
+    ) -> "ScriptSpec":
+        """Parse and validate script spec EDN text, with template support.
+
+        When the text contains ``:parameters``, ``${var}`` placeholders
+        are replaced with type-safe stand-in values before EDN parsing
+        and validation. The original text is preserved so
+        :meth:`render` can substitute real values later.
+
+        When there are no ``:parameters`` the text is parsed directly
+        (backward compatible with non-parameterized specs).
+
+        Args:
+            text: Raw EDN text (may contain ``${var}`` placeholders).
+            builtins: Evaluation registry (defaults to host-less).
+
+        Returns:
+            A spec ready for use; call :meth:`render` on it when
+            concrete parameter values are available.
+
+        Raises:
+            ScriptSpecValidationError: schema or template validation failure.
+            EDNParseError: text is not valid EDN (after placeholder
+                substitution).
+        """
+        if builtins is None:
+            builtins = make_script_builtins(None)
+
+        # Quick check: no placeholders → direct parse (fast path)
+        placeholders = set(_TEMPLATE_RE.findall(text))
+        if not placeholders:
+            return cls.from_edn(loads(text), builtins)
+
+        # ---- Template path ----
+        # Phase 1: replace every ${var} with nil, parse to extract :parameters
+        phase1_text = _TEMPLATE_RE.sub("nil", text)
+        try:
+            phase1_data = loads(phase1_text)
+        except EDNParseError as e:
+            raise ScriptSpecValidationError(
+                f"template spec parse failed (with placeholder substitution): {e}"
+            ) from e
+
+        if not isinstance(phase1_data, dict):
+            raise ScriptSpecValidationError(
+                f"script spec must be a top-level map, got {_type_name(phase1_data)}"
+            )
+        params_key = _find_key(phase1_data, "parameters")
+        if params_key is None:
+            raise ScriptSpecValidationError(
+                f"template placeholders {sorted(placeholders)} found "
+                f"but no :parameters section declared"
+            )
+        raw_params = phase1_data[params_key]
+        param_specs = _parse_parameters(raw_params, placeholders)
+
+        # Phase 2: replace ${var} with type-appropriate placeholders for
+        # full validation (the "shape" must validate even without real values)
+        def _standin(name: str) -> str:
+            for p in param_specs:
+                if p.name == name:
+                    return '[""]' if p.type == "string-list" else '""'
+            return "nil"  # unreachable: _parse_parameters validates this
+
+        phase2_text = text
+        for name in placeholders:
+
+            def _phase2_replacer(m: re.Match[str], *, _name: str = name) -> str:
+                return _standin(_name) if m.group(1) == _name else m.group(0)
+
+            phase2_text = _TEMPLATE_RE.sub(_phase2_replacer, phase2_text)
+
+        try:
+            spec = cls.from_edn(loads(phase2_text), builtins)
+        except (EDNParseError, ScriptSpecValidationError) as e:
+            raise ScriptSpecValidationError(
+                f"template spec validation failed: {e}"
+            ) from e
+
+        object.__setattr__(spec, "_template_text", text)
+        object.__setattr__(spec, "parameters", param_specs)
+        return spec
 
     @classmethod
     def from_edn(
@@ -158,7 +350,7 @@ class ScriptSpec:
             )
         try:
             raw = script_file.read_text(encoding="utf-8")
-            spec = cls.from_edn(loads(raw))
+            spec = cls.loads(raw)
         except (EDNParseError, ScriptSpecValidationError, OSError) as e:
             logger.error(
                 "script_spec_invalid",
@@ -318,3 +510,81 @@ def _type_name(value: Any) -> str:
     if isinstance(value, float):
         return "float"
     return type(value).__name__
+
+
+def _find_key(data: dict[Any, Any], target: str) -> Any:
+    """Find a key in the map matching ``target`` as string or Keyword."""
+    for key in data:
+        if str(key) == target:
+            return key
+    return None
+
+
+_VALID_PARAM_TYPES = frozenset({"string", "string-list"})
+
+
+def _parse_parameters(
+    value: Any, placeholders: set[str]
+) -> tuple[ParameterSpec, ...]:
+    """Parse and validate the ``:parameters`` map from a template spec.
+
+    Every ``:parameters`` key must name a placeholder found in the text;
+    every placeholder in the text must be declared in ``:parameters``.
+    """
+    if not isinstance(value, dict):
+        raise ScriptSpecValidationError(
+            f":parameters must be a map, got {_type_name(value)}"
+        )
+    if not value:
+        raise ScriptSpecValidationError(":parameters must not be empty")
+
+    specs: list[ParameterSpec] = []
+    declared: set[str] = set()
+    for key, pval in value.items():
+        if not isinstance(key, (Keyword, str)):
+            raise ScriptSpecValidationError(
+                f":parameters key must be a keyword or string, "
+                f"got {_type_name(key)}: {key!r}"
+            )
+        name = str(key)
+        if name in declared:
+            raise ScriptSpecValidationError(
+                f"duplicate parameter name {name!r} in :parameters"
+            )
+        declared.add(name)
+        if not isinstance(pval, dict):
+            raise ScriptSpecValidationError(
+                f"parameter {name!r}: value must be a map, "
+                f"got {_type_name(pval)}"
+            )
+        pfields = {str(k): v for k, v in pval.items()}
+        for pk in pfields:
+            if pk not in _PARAM_KEYS:
+                logger.warning(
+                    "script_spec_unknown_key",
+                    section="parameters",
+                    key=pk,
+                )
+        ptype_str = str(pfields.get("type") or "string")
+        if ptype_str not in _VALID_PARAM_TYPES:
+            raise ScriptSpecValidationError(
+                f"parameter {name!r}: :type must be one of "
+                f"{sorted(_VALID_PARAM_TYPES)}, got {ptype_str!r}"
+            )
+        required = bool(pfields.get("required", True))
+        specs.append(ParameterSpec(name=name, type=ptype_str, required=required))
+
+    if not placeholders.issubset(declared):
+        undeclared = placeholders - declared
+        raise ScriptSpecValidationError(
+            f"template placeholders not declared in :parameters: "
+            f"{sorted(undeclared)}"
+        )
+    if not declared.issubset(placeholders):
+        unused = declared - placeholders
+        raise ScriptSpecValidationError(
+            f":parameters declares variables not used in template: "
+            f"{sorted(unused)}"
+        )
+
+    return tuple(specs)

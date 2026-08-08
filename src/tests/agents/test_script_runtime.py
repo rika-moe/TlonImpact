@@ -122,7 +122,11 @@ class TestScriptAssembly:
 class TestScriptLifecycle:
     async def test_adopt_script_agent(self, temp_paths):
         registry, _, _ = await _make_registry(temp_paths)
-        instantiate("relay", "rl-010", "转发", tlon_paths=temp_paths)
+        instantiate(
+            "relay", "rl-010", "转发",
+            tlon_paths=temp_paths,
+            params={"to": ["a@tlon.internal"]},
+        )
 
         result = await registry.adopt_agent("rl-010")
 
@@ -164,7 +168,10 @@ class TestScriptLifecycle:
         registry, _, provider = await _make_registry(
             temp_paths, contractor_idle_timeout_seconds=300
         )
-        config = await registry.spawn_contractor("relay", "转发", spawner_id="root", session_id=None)
+        config = await registry.spawn_contractor(
+            "relay", "转发", spawner_id="root", session_id=None,
+            params={"to": ["a@tlon.internal"]},
+        )
         agent_id = config.id
         assert isinstance(registry.get_agent(agent_id), ScriptMember)
 
@@ -179,7 +186,10 @@ class TestScriptLifecycle:
         registry, bus, provider = await _make_registry(
             temp_paths, contractor_idle_timeout_seconds=0
         )
-        config = await registry.spawn_contractor("relay", "转发", spawner_id="root", session_id=None)
+        config = await registry.spawn_contractor(
+            "relay", "转发", spawner_id="root", session_id=None,
+            params={"to": ["a@tlon.internal"]},
+        )
         agent_id = config.id
         assert registry.get_agent(agent_id) is not None
 
@@ -200,7 +210,8 @@ class TestRelaySpawnEndToEnd:
 
         registry, bus, _ = await _make_registry(temp_paths)
         config = await registry.spawn_contractor(
-            "relay", "转发", spawner_id="root", session_id=None
+            "relay", "转发", spawner_id="root", session_id=None,
+            params={"to": ["gu-yanxi@tlon.internal"]},
         )
 
         assert config.runtime == "script"

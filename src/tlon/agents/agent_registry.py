@@ -764,6 +764,7 @@ class AgentRegistry(Component):
         name: str,
         spawner_id: str,
         session_id: str | None,
+        params: dict[str, Any] | None = None,
     ) -> AgentConfig:
         """Spawn a contractor from a prototype and start it immediately.
 
@@ -854,7 +855,9 @@ class AgentRegistry(Component):
 
         # Writes persona + behavior + agent.yaml (copy semantics; behavior
         # frozen at creation time). PrototypeError propagates to the caller.
-        config = instantiate(prototype, agent_id, name, tlon_paths=tlon_paths)
+        config = instantiate(
+            prototype, agent_id, name, params=params, tlon_paths=tlon_paths
+        )
 
         # Contractor identity: disposable, lazy-activated, short idle fuse.
         # Re-save so the YAML on disk carries the final config.

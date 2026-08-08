@@ -38,6 +38,10 @@ from pathlib import Path
 from typing import Any
 
 from tlon.agents.edn import EDNParseError, Keyword, dumps, loads
+from tlon.agents.script_spec import (
+    ScriptSpec,
+    ScriptSpecValidationError,
+)
 from tlon.agents.spec import AgentSpec, SpecValidationError
 from tlon.base.config import AgentConfig, _yaml_exists, _yaml_save
 from tlon.base.logger import get_logger
@@ -146,6 +150,7 @@ def instantiate(
     agent_id: str,
     agent_name: str,
     proactive: bool = False,
+    params: dict[str, Any] | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> AgentConfig:
     """Create an agent from a prototype: copy, no merging.
@@ -153,9 +158,14 @@ def instantiate(
     Persona files are copied verbatim; the prototype ``behavior.tlon``
     (react runtime) or ``script.tlon`` (script runtime, per the
     ``:runtime`` metadata keyword) — a complete, total spec — is copied
-    verbatim as the instance's own spec file. ``agent.yaml`` is written
-    through the same save path as the wizard. The new agent takes effect
-    without a restart: the caller
+    verbatim as the instance's own spec file.
+
+    When the prototype's spec declares ``:parameters`` (parameterized
+    template), ``params`` must provide concrete values; the spec is
+    rendered with those values before writing to disk.
+
+    ``agent.yaml`` is written through the same save path as the wizard.
+    The new agent takes effect without a restart: the caller
     (wizard / registry spawn) hot-adopts it — the wizard notifies the
     running server (POST ``/admin/config/agents/{id}/reload`` →
     ``AgentRegistry.adopt_agent``); when no server is running, it takes
@@ -166,13 +176,16 @@ def instantiate(
         agent_id: new agent id (must not already exist)
         agent_name: display name of the new agent
         proactive: whether the agent responds to unaddressed messages
+        params: template parameter values (required when the prototype
+            declares ``:parameters``; ignored for react prototypes)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
         The saved AgentConfig (with ``prototype`` recording the source).
 
     Raises:
-        PrototypeError: prototype missing or agent id already taken.
+        PrototypeError: prototype missing, agent id already taken, or
+            required params missing / invalid.
     """
     p = tlon_paths or paths
     proto_dir = p.prototypes_dir() / prototype_name
@@ -185,7 +198,13 @@ def instantiate(
 
     runtime = _read_metadata(proto_dir).runtime
     if runtime == "script":
-        return _instantiate_script(p, proto_dir, prototype_name, agent_id, agent_name)
+        return _instantiate_script(
+            p, proto_dir, prototype_name, agent_id, agent_name, params=params
+        )
+
+    # React path: params are not supported yet (reserved extension point)
+    if params:
+        raise PrototypeError("react prototypes do not accept template parameters")
 
     # Persona templates and behavior: copy, not reference (frozen at
     # creation time; a spec is total, so there is nothing to merge)
@@ -219,12 +238,18 @@ def _instantiate_script(
     prototype_name: str,
     agent_id: str,
     agent_name: str,
+    params: dict[str, Any] | None = None,
 ) -> AgentConfig:
     """Instantiate a script prototype: copy script.tlon, yaml runtime="script".
 
     Persona files are optional (a script member has no LLM and no system
     prompt); they are copied verbatim when present, same freeze semantics
     as the react path.
+
+    When the prototype spec declares ``:parameters`` (a parameterized
+    template), ``params`` must be provided and the spec text is rendered
+    with those values before writing to disk. Otherwise the file is
+    copied verbatim.
     """
     script_file = proto_dir / SCRIPT_FILE
     if not script_file.exists():
@@ -232,9 +257,27 @@ def _instantiate_script(
             f"script prototype '{prototype_name}' has no {SCRIPT_FILE}"
         )
     config_dir = p.agent_config_dir(agent_id)
-    (config_dir / SCRIPT_FILE).write_text(
-        script_file.read_text(encoding="utf-8"), encoding="utf-8"
-    )
+
+    raw_text = script_file.read_text(encoding="utf-8")
+    spec = ScriptSpec.loads(raw_text)
+
+    if spec.has_parameters():
+        if params is None:
+            raise PrototypeError(
+                f"script prototype '{prototype_name}' declares "
+                f":parameters {[p.name for p in spec.parameters]!r} — "
+                f"params must be provided at instantiation"
+            )
+        try:
+            rendered = spec.render(params)
+        except ScriptSpecValidationError as e:
+            raise PrototypeError(
+                f"script prototype '{prototype_name}' parameter error: {e}"
+            ) from e
+        (config_dir / SCRIPT_FILE).write_text(rendered, encoding="utf-8")
+    else:
+        (config_dir / SCRIPT_FILE).write_text(raw_text, encoding="utf-8")
+
     for filename in PERSONA_FILES:
         source = proto_dir / filename
         if source.exists():
@@ -298,13 +341,24 @@ def write_staging_prototype(
     display_name: str = "",
     description: str = "",
     author_id: str = "",
+    spec_type: str = "react",
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
 
-    Validation happens **before** anything touches disk: the behavior text
-    must parse as EDN and pass the total ``AgentSpec`` schema (every
-    section and required field present, field types checked).
+    Validation happens **before** anything touches disk.
+
+    React path (``spec_type="react"``, default): the behavior text must
+    parse as EDN and pass the total ``AgentSpec`` schema (every section
+    and required field present, field types checked). Persona files
+    (IDENTITY.md / SOUL.md / RULES.md) are written alongside.
+
+    Script path (``spec_type="script"``): the behavior text is treated as
+    a ``ScriptSpec`` template (may contain ``${var}`` placeholders when
+    ``:parameters`` is declared). Persona files are ignored (a script
+    member has no LLM and no system prompt). ``script.tlon`` is written
+    with ``:runtime :script`` in the metadata.
+
     The metadata is written with ``:trusted false`` and ``:author`` recording
     the authoring agent, so ``spawnAgent`` refuses it until a human approves
     it in the mirror.
@@ -312,64 +366,96 @@ def write_staging_prototype(
     Args:
         name: prototype directory name (charset-checked, must be unique
             across both the trusted library and the staging area)
-        behavior_edn: raw EDN text of the behavior spec
+        behavior_edn: raw EDN text of the behavior spec (react) or script
+            spec (script)
         persona: optional ``{filename: content}`` for IDENTITY.md / SOUL.md /
-            RULES.md (only these keys are accepted)
+            RULES.md (only these keys are accepted; ignored for script)
         display_name: human-facing name (falls back to ``name``)
         description: human-facing description
         author_id: id of the agent that authored the spec (audit)
+        spec_type: ``"react"`` (AgentSpec) or ``"script"`` (ScriptSpec)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
         Metadata of the staged prototype (``trusted=False``).
 
     Raises:
-        PrototypeError: invalid name, name conflict, or behavior spec failed
+        PrototypeError: invalid name, name conflict, or spec failed
             EDN parsing / schema validation (nothing is written in any case)
     """
+    if spec_type not in ("react", "script"):
+        raise PrototypeError(
+            f"spec_type must be 'react' or 'script', got {spec_type!r}"
+        )
     p = tlon_paths or paths
     _validate_name(name)
-    if (p.prototypes_dir() / name / BEHAVIOR_FILE).exists():
+
+    is_script = spec_type == "script"
+    spec_file = SCRIPT_FILE if is_script else BEHAVIOR_FILE
+
+    if (p.prototypes_dir() / name / spec_file).exists():
         raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
     staging_dir = p.prototypes_staging_dir() / name
     if staging_dir.exists():
         raise PrototypeError(f"prototype '{name}' already exists in the staging area")
 
     # Validate first: a broken spec must never reach disk
-    try:
-        behavior_data = loads(behavior_edn)
-    except EDNParseError as e:
-        raise PrototypeError(f"behavior EDN parse failed: {e}") from e
-    try:
-        AgentSpec.from_edn(behavior_data)
-    except SpecValidationError as e:
-        raise PrototypeError(f"behavior spec validation failed: {e}") from e
+    if is_script:
+        try:
+            script_text = behavior_edn
+            if not script_text.endswith("\n"):
+                script_text = script_text + "\n"
+            ScriptSpec.loads(script_text)
+        except ScriptSpecValidationError as e:
+            raise PrototypeError(f"script spec validation failed: {e}") from e
+        except EDNParseError as e:
+            raise PrototypeError(f"script EDN parse failed: {e}") from e
+    else:
+        try:
+            behavior_data = loads(behavior_edn)
+        except EDNParseError as e:
+            raise PrototypeError(f"behavior EDN parse failed: {e}") from e
+        try:
+            AgentSpec.from_edn(behavior_data)
+        except SpecValidationError as e:
+            raise PrototypeError(f"behavior spec validation failed: {e}") from e
 
     persona = persona or {}
-    for filename in persona:
-        if filename not in PERSONA_FILES:
-            raise PrototypeError(
-                f"persona file must be one of {list(PERSONA_FILES)}, got {filename!r}"
-            )
+    if not is_script:
+        for filename in persona:
+            if filename not in PERSONA_FILES:
+                raise PrototypeError(
+                    f"persona file must be one of {list(PERSONA_FILES)}, got {filename!r}"
+                )
 
     staging_dir.mkdir(parents=True)
-    (staging_dir / BEHAVIOR_FILE).write_text(
-        behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n",
-        encoding="utf-8",
-    )
-    for filename, content in persona.items():
-        if content:
-            (staging_dir / filename).write_text(content, encoding="utf-8")
-    metadata = {
+
+    # Write spec file
+    spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
+    (staging_dir / spec_file).write_text(spec_text, encoding="utf-8")
+
+    if not is_script:
+        for filename, content in persona.items():
+            if content:
+                (staging_dir / filename).write_text(content, encoding="utf-8")
+
+    metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
         Keyword("display-name"): display_name or name,
         Keyword("description"): description,
         Keyword("trusted"): False,
         Keyword("author"): author_id,
     }
+    if is_script:
+        metadata[Keyword("runtime")] = Keyword("script")
     (staging_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
 
-    logger.info("staging_prototype_written", name=name, author_id=author_id)
+    logger.info(
+        "staging_prototype_written",
+        name=name,
+        author_id=author_id,
+        spec_type=spec_type,
+    )
     return _read_metadata(staging_dir)
 
 
@@ -391,7 +477,7 @@ def approve_prototype(name: str, tlon_paths: TlonPaths | None = None) -> Prototy
     p = tlon_paths or paths
     _validate_name(name)
     staging_dir = p.prototypes_staging_dir() / name
-    if not (staging_dir / BEHAVIOR_FILE).exists():
+    if not _is_prototype_dir(staging_dir):
         raise PrototypeError(f"no staged prototype named '{name}'")
     target_dir = p.prototypes_dir() / name
     if target_dir.exists():

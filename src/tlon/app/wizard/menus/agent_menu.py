@@ -335,6 +335,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         from tlon.agents.prototypes import (
             BEHAVIOR_FILE,
             PERSONA_FILES,
+            SCRIPT_FILE,
             PrototypeError,
             approve_prototype,
             list_staging_prototypes,
@@ -356,7 +357,8 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         choices = [
             self.questionary.Choice(
                 f"{proto.display_name} ({proto.name})"
-                f" — 作者: {proto.author or '未知'} — {proto.description}",
+                f" — 作者: {proto.author or '未知'}"
+                f" — [{proto.runtime}] {proto.description}",
                 value=proto.name,
             )
             for proto in staged
@@ -367,17 +369,26 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         if not name or name == "back":
             return
 
-        # Preview behavior spec and persona files before deciding
+        # Preview behavior/script spec and persona files before deciding
         from rich.panel import Panel
 
         staging_dir = paths.prototypes_staging_dir() / name
-        behavior = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
-        self.console.print(Panel(behavior, title=f"behavior.tlon: {name}"))
-        for filename in PERSONA_FILES:
-            persona_file = staging_dir / filename
-            if persona_file.exists():
-                content = persona_file.read_text(encoding="utf-8")
-                self.console.print(Panel(content, title=filename))
+        staging_proto = next((p for p in staged if p.name == name), None)
+        is_script = staging_proto is not None and staging_proto.runtime == "script"
+
+        if is_script:
+            script_file = staging_dir / SCRIPT_FILE
+            if script_file.exists():
+                content = script_file.read_text(encoding="utf-8")
+                self.console.print(Panel(content, title=f"script.tlon: {name}"))
+        else:
+            behavior = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+            self.console.print(Panel(behavior, title=f"behavior.tlon: {name}"))
+            for filename in PERSONA_FILES:
+                persona_file = staging_dir / filename
+                if persona_file.exists():
+                    content = persona_file.read_text(encoding="utf-8")
+                    self.console.print(Panel(content, title=filename))
 
         decision = self.questionary.select(
             "审批决定:",
