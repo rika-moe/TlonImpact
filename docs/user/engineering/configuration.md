@@ -37,7 +37,7 @@ Docker、记忆等 per-agent 配置不在环境变量里，而在各 Agent 的
 └── lin-zhiyao/
     └── config/
         ├── agent.yaml       # 基础配置（本节）
-        ├── behavior.tlon    # 行为定义（AgentSpec，见下节）
+        ├── behavior.tlon    # 行为定义（MemberSpec，见下节）
         └── IDENTITY.md / SOUL.md / RULES.md   # 人设叙述（纯文本）
 ```
 
@@ -50,7 +50,7 @@ agent:
   id: "lin-zhiyao"
   name: "林知遥"
 
-  activation: "always"   # always=常驻；lazy=沉睡，收到邮件才唤醒
+  # activation 已废弃：启动集合由 behavior.tlon 的 :on :boot 规则决定
 
   llm:
     model_name: "kimi-k2.5"
@@ -69,8 +69,8 @@ agent:
 |-----|------|------|------|
 | `id` | string | 是 | 唯一标识符，也是邮件地址的本地部分（`<id>@tlon.internal`） |
 | `name` | string | 是 | 显示名称，用户可见 |
-| `activation` | string | 否 | `always`（默认，常驻）/ `lazy`（沉睡，收到邮件时唤醒，空闲 `idle_timeout_seconds` 后再睡） |
-| `idle_timeout_seconds` | int | 否 | lazy 模式的空闲沉睡阈值（默认 600） |
+| `activation` | string | 否 | ⚠️ **已废弃**：写了会被静默忽略，不报错也不生效。启动集合由 `behavior.tlon` 的 `:on :boot` 规则决定（见下节） |
+| `idle_timeout_seconds` | int | 否 | 空闲沉睡阈值（默认 600），仅对 lazy 成员生效 |
 | `proactive` | bool | 否 | ⚠️ **已退役**：写了会被静默忽略，不报错也不生效。是否响应邮件由 `behavior.tlon` 的 trigger 决定（见下节） |
 
 人设叙述（identity/profile/behavior 文本）不在 agent.yaml 里，
@@ -101,23 +101,31 @@ agent:
 
 Agent 的行为——何时响应邮件、认知循环上限、上下文组成——不在
 agent.yaml，而在 `~/.tlon/{agent-id}/config/behavior.tlon`
-（AgentSpec，EDN 语法），分 `trigger` / `context` / `loop` / `on-complete` 四节。
+（统一 MemberSpec，EDN 语法），一份规约解释执行即一个成员的运行。
+规约是**全部**（total）：文件即行为的全部，缺失或解析失败拒绝该成员启动。
 
-`trigger` 用纯谓词表达式描述触发条件，可用谓词：
-`addressed-to-me?`（To 含我的地址）、`cc-ed?`（CC 含我的地址）、
-`content-matches?`、`contains?`、`=`、`not`。
+规约由**规则（rules）**组成：每条规则 = `:on`（订阅的事件）+ `:when`
+（命中后的过滤，纯谓词）+ 可选 `:loop`（认知会话）+ `:actions`（动作）。
+含 `:on :boot` 规则的成员开机即启动；无 `:loop` 的规则是确定性规则
+（命中直接执行动作，零 LLM）。
 
 ```clojure
 {:version 1
- :trigger (and (addressed-to-me? msg)        ; To 含我的地址
-               (content-matches? msg "？$")) ; 且内容以问号结尾
- :context {:mail-history 20}
- :loop {:mode :react :max-iterations 10 :tools :background}}
+ :rules [{:name "respond"                    ; 认知规则：走 LLM 会话
+          :on :mail-delivered
+          :when (and (addressed-to-me? msg)  ; To 含我的地址
+                     (content-matches? msg "？$"))  ; 且内容以问号结尾
+          :loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+                 :stages [(think) (act)]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :max-iterations 10
+                 :max-consecutive-errors 3}
+          :actions [(emit "本轮处理完毕" [])]}]}
 ```
 
-缺省（无此文件）时等价于"收件人或抄送包含我时响应"。
-完整字段参考见 [dsl-agents.md](../../design/dsl-agents.md)；
-本章的 behavior.tlon 完整参考将在后续补充。
+可用谓词：`addressed-to-me?`（To 含我的地址）、`cc-ed?`（CC 含我的地址）、
+`content-matches?`、`contains?`、`=`、`not`。
+完整设计见 [dsl-agents.md](../../design/dsl-agents.md)。
 
 ---
 

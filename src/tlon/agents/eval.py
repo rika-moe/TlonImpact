@@ -5,8 +5,18 @@ non-Turing-complete semantics (design decisions 2/3 in
 ``docs/design/dsl-agents.md``):
 
 - special forms are a closed whitelist: ``if`` / ``when`` / ``let`` /
-  ``and`` / ``or`` — no ``def``, no ``lambda``, no ``loop``/``recur``,
-  no recursion (there is no way to name a function), no ``match`` (3b+);
+  ``and`` / ``or`` / ``while`` / ``recur`` / ``map`` / ``filter`` /
+  ``reduce`` — no ``def``, no ``lambda``, no ``match`` (3b+);
+  recursion is impossible (there is no way to name a function);
+- ``while`` / ``recur`` (phase D) are the Clojure-style bounded loop
+  pair: state flows through the binding vector, ``recur`` rebinds and
+  jumps back to the loop head, and is only legal in a ``while`` body's
+  tail position (``if`` branches, trailing ``when``/``let`` bodies, and
+  the final ``and``/``or`` argument inherit tail position). ``map`` /
+  ``filter`` / ``reduce`` iterate a vector with an explicitly bound
+  element variable (no lambda). Every iteration is still metered — each
+  step consumes one fuel unit — so Turing-completeness is bought back
+  with a guaranteed termination bound;
 - every other form head must name a registered :class:`Builtin`;
 - maps are data: keys stay literal (keywords in practice), values are
   evaluated — so action option maps may embed expressions, e.g.
@@ -23,27 +33,22 @@ non-Turing-complete semantics (design decisions 2/3 in
   (:data:`STAGE_COND_BUILTINS`, phase 7c) registers pure stage-gating
   predicates over loop state and the session scratchpad.
 
-On-complete action expressions (phase 4b) keep the same rule: evaluation
-never performs side effects. The action builtins ``spawn`` / ``emit``
-(registered only in :func:`make_actions_builtins`, marked ``pure=False``)
-validate their arguments and record an :class:`ActionRequest` into a
-collector; the engine executes the collected requests asynchronously
-after evaluation completes ("the DSL describes, the engine executes").
-Static validation distinguishes two purity positions
-(:func:`validate_action_form`): a ``when`` condition must be pure, an
-action position must be an action form with pure arguments.
-
-Script member policy rules (phase P5a) follow the same rule:
-:data:`SCRIPT_BUILTINS` registers pure accessors/predicates only
-(``get`` / ``contains?`` / ``=`` / ``not``); the lifecycle action
-builtins ``start`` / ``stop`` / ``start-all`` / ``forward`` (returned by
-:func:`make_script_builtins`, marked ``pure=False``) perform no side
-effects — they validate arguments and *return* :class:`ActionRequest`
-data for the engine (ScriptMember) to execute. Host predicates that read
-registry state (``sleeping?`` / ``running?`` / ``lazy?``) are never
-registered module-level; the caller closure-injects them via
-:func:`make_script_builtins` (same factory pattern as
-:func:`make_actions_builtins`).
+Action expressions — on-complete (phase 4b) and script rules (phase P5a)
+alike — keep the same rule: evaluation never performs side effects. All
+action builtins (``spawn`` / ``emit`` / ``start`` / ``stop`` /
+``start-all`` / ``forward``), registered by :func:`make_member_builtins`
+(phase C) with ``pure=False``, validate their arguments and produce an
+:class:`ActionRequest`; the engine executes the requests after
+evaluation completes ("the DSL describes, the engine executes"). Whether
+a request is appended to a collector (on-complete, where ``when`` bodies
+may hold several actions) or returned as the action form's value
+(deterministic rules) is set by the factory — see
+:func:`make_member_builtins`. Static validation distinguishes two purity
+positions (:func:`validate_member_action`): a ``when`` condition must be
+pure, an action position must be an action form with pure arguments.
+Host predicates that read registry state (``sleeping?`` / ``running?`` /
+``lazy?``) are never registered module-level; the caller closure-injects
+them via :func:`make_member_builtins`.
 
 Environment values are opaque to expressions: there is no attribute or
 method access syntax, so a ``Mail`` in ``env`` can only be inspected
@@ -60,9 +65,13 @@ from tlon.agents.edn import Form, Symbol, dumps
 from tlon.organization.mail.mail import Mail, address_for_member
 
 DEFAULT_FUEL = 1000
+DEFAULT_WHEN_FUEL = 200
 DEFAULT_MAX_DEPTH = 100
+MAX_FUEL = 10000
 
-SPECIAL_FORMS = frozenset({"if", "when", "let", "and", "or"})
+SPECIAL_FORMS = frozenset(
+    {"if", "when", "let", "and", "or", "while", "recur", "map", "filter", "reduce"}
+)
 
 
 class EvalError(Exception):
@@ -90,6 +99,33 @@ class Builtin:
     pure: bool = True
 
 
+class _Recur(Exception):  # noqa: N818 — a control-flow signal, not an error
+    """Internal control-flow signal: a while body requested another iteration.
+
+    Raised by the ``recur`` special form with the rebound environment;
+    caught by the innermost enclosing ``while`` to jump back to its loop
+    head. Never escapes to a caller — ``eval_form`` converts a leaked
+    signal into an :class:`EvalError`.
+    """
+
+    def __init__(self, env: dict[str, Any]):
+        self.env = env
+        super().__init__("recur")
+
+
+@dataclass(frozen=True)
+class _WhileCtx:
+    """Nearest enclosing ``while`` context threaded through static validation.
+
+    ``arity`` is the loop's binding count (the ``recur`` argument count it
+    accepts); ``tail`` marks whether the current position is a tail
+    position of that loop (where ``recur`` is legal).
+    """
+
+    arity: int
+    tail: bool
+
+
 def eval_form(
     form: Any,
     env: dict[str, Any],
@@ -110,7 +146,12 @@ def eval_form(
         EvalError: on any evaluation failure (unknown symbol/form,
             builtin error, fuel exhaustion, depth overflow).
     """
-    return _Evaluator(builtins, fuel, max_depth).eval(form, dict(env), 0)
+    try:
+        return _Evaluator(builtins, fuel, max_depth).eval(form, dict(env), 0)
+    except _Recur as e:
+        # Defensive: a hand-built (unvalidated) form can never let _Recur
+        # escape a while; if one does, report it as a plain eval error.
+        raise EvalError("recur outside while") from e
 
 
 def validate_form(form: Any, builtins: dict[str, Builtin], scope: set[str]) -> None:
@@ -131,6 +172,8 @@ class _Evaluator:
         self._builtins = builtins
         self._fuel = fuel
         self._max_depth = max_depth
+        # Frame per enclosing while: the binding names its recur rebinds.
+        self._loop_stack: list[list[str]] = []
 
     def eval(self, value: Any, env: dict[str, Any], depth: int) -> Any:
         if depth > self._max_depth:
@@ -208,19 +251,87 @@ class _Evaluator:
                 if result:
                     return result
             return result
+        if name == "while":
+            if len(args) < 2:
+                raise EvalError("while expects a binding vector and a test")
+            names = _binding_names(args[0], "while")
+            local = self._eval_bindings(args[0], env, depth)
+            test, body = args[1], args[2:]
+            self._loop_stack.append(names)
+            try:
+                while True:
+                    try:
+                        if not self.eval(test, local, depth + 1):
+                            return None
+                        last: Any = None
+                        for form in body:
+                            last = self.eval(form, local, depth + 1)
+                        return last
+                    except _Recur as r:
+                        # Rebinding with the recurred values, loop again.
+                        local = r.env
+            finally:
+                self._loop_stack.pop()
+        if name == "recur":
+            if not self._loop_stack:
+                raise EvalError("recur outside while")
+            names = self._loop_stack[-1]
+            if len(args) != len(names):
+                raise EvalError(
+                    f"recur expects {len(names)} arguments, got {len(args)}"
+                )
+            # All recur arguments evaluate in the old env, then rebind
+            # simultaneously (Clojure semantics).
+            new_vals = [self.eval(arg, env, depth + 1) for arg in args]
+            new_local = dict(env)
+            for nm, val in zip(names, new_vals, strict=True):
+                new_local[nm] = val
+            raise _Recur(new_local)
+        if name in ("map", "filter"):
+            if len(args) != 3:
+                raise EvalError(f"{name} expects a binding, a body, and a collection")
+            binder = args[0]
+            if not isinstance(binder, Symbol):
+                raise EvalError(f"{name} binding must be a symbol, got {dumps(binder)}")
+            coll = self.eval(args[2], env, depth + 1)
+            if isinstance(coll, Form) or not isinstance(coll, list):
+                raise EvalError(f"{name} expects a vector collection, got {dumps(coll)}")
+            body = args[1]
+            out: list[Any] = []
+            for item in coll:
+                item_env = dict(env)
+                item_env[str(binder)] = item
+                value = self.eval(body, item_env, depth + 1)
+                if name == "map":
+                    out.append(value)
+                elif value:
+                    out.append(item)
+            return out
+        if name == "reduce":
+            if len(args) != 5:
+                raise EvalError(
+                    "reduce expects accumulator, element, body, init, and collection"
+                )
+            acc_name, x_name = args[0], args[1]
+            if not isinstance(acc_name, Symbol) or not isinstance(x_name, Symbol):
+                raise EvalError("reduce bindings must be symbols")
+            acc = self.eval(args[3], env, depth + 1)
+            coll = self.eval(args[4], env, depth + 1)
+            if isinstance(coll, Form) or not isinstance(coll, list):
+                raise EvalError(f"reduce expects a vector collection, got {dumps(coll)}")
+            for item in coll:
+                item_env = dict(env)
+                item_env[str(acc_name)] = acc
+                item_env[str(x_name)] = item
+                acc = self.eval(args[2], item_env, depth + 1)
+            return acc
         raise EvalError(f"unknown special form: {name}")
 
     def _eval_bindings(self, bindings: Any, env: dict[str, Any], depth: int) -> dict[str, Any]:
-        if isinstance(bindings, Form) or not isinstance(bindings, list):
-            raise EvalError(f"let bindings must be a vector, got {dumps(bindings)}")
-        if len(bindings) % 2 != 0:
-            raise EvalError("let bindings must contain an even number of forms")
+        names = _binding_names(bindings, "let")
         local = dict(env)
-        for i in range(0, len(bindings), 2):
-            name = bindings[i]
-            if not isinstance(name, Symbol):
-                raise EvalError(f"let binding name must be a symbol, got {dumps(name)}")
-            local[str(name)] = self.eval(bindings[i + 1], local, depth + 1)
+        for name, init in zip(names, bindings[1::2], strict=True):
+            local[name] = self.eval(init, local, depth + 1)
         return local
 
     def _eval_body(self, body: list[Any], env: dict[str, Any], depth: int) -> Any:
@@ -230,7 +341,45 @@ class _Evaluator:
         return result
 
 
-def _validate(value: Any, builtins: dict[str, Builtin], scope: set[str]) -> None:
+def _non_tail(loop: _WhileCtx | None) -> _WhileCtx | None:
+    """The same loop, but the current position is not a tail position."""
+    return _WhileCtx(loop.arity, False) if loop is not None else None
+
+
+def _validate_seq(
+    forms: list[Any], builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
+) -> None:
+    """Validate a body: only its final form may carry the loop's tail slot."""
+    n = len(forms)
+    for i, form in enumerate(forms):
+        sub = loop if (loop is not None and i == n - 1) else _non_tail(loop)
+        _validate(form, builtins, scope, sub)
+
+
+def _binding_names(bindings: Any, what: str) -> list[str]:
+    """Extract the names from a ``[name init ...]`` binding vector.
+
+    ``what`` names the construct in error messages ("let" / "while").
+    """
+    if isinstance(bindings, Form) or not isinstance(bindings, list):
+        raise EvalError(f"{what} bindings must be a vector, got {dumps(bindings)}")
+    if len(bindings) % 2 != 0:
+        raise EvalError(f"{what} bindings must contain an even number of forms")
+    names: list[str] = []
+    for i in range(0, len(bindings), 2):
+        name = bindings[i]
+        if not isinstance(name, Symbol):
+            raise EvalError(f"{what} binding name must be a symbol, got {dumps(name)}")
+        names.append(str(name))
+    return names
+
+
+def _validate(
+    value: Any,
+    builtins: dict[str, Builtin],
+    scope: set[str],
+    loop: _WhileCtx | None = None,
+) -> None:
     if isinstance(value, Form):
         if not value:
             raise EvalError("empty form () is not a valid expression")
@@ -239,18 +388,47 @@ def _validate(value: Any, builtins: dict[str, Builtin], scope: set[str]) -> None
             raise EvalError(f"form head must be a symbol, got {dumps(head)}")
         name = str(head)
         if name == "let":
-            _validate_let(value, builtins, scope)
+            _validate_let(value, builtins, scope, loop)
             return
-        if name in SPECIAL_FORMS:
-            for arg in value[1:]:
-                _validate(arg, builtins, scope)
+        if name == "while":
+            _validate_while(value, builtins, scope, loop)
+            return
+        if name == "recur":
+            _validate_recur(value, builtins, scope, loop)
+            return
+        if name in ("map", "filter"):
+            _validate_map_like(value, builtins, scope, loop)
+            return
+        if name == "reduce":
+            _validate_reduce(value, builtins, scope, loop)
+            return
+        if name == "if":
+            if len(value) < 3 or len(value) > 4:
+                raise EvalError(f"if expects 2 or 3 arguments, got {len(value) - 1}")
+            # test is not a tail position; then/else inherit it.
+            _validate(value[1], builtins, scope, _non_tail(loop))
+            _validate(value[2], builtins, scope, loop)
+            if len(value) == 4:
+                _validate(value[3], builtins, scope, loop)
+            return
+        if name == "when":
+            if len(value) < 2:
+                raise EvalError("when expects a test form")
+            _validate(value[1], builtins, scope, _non_tail(loop))
+            _validate_seq(value[2:], builtins, scope, loop)
+            return
+        if name in ("and", "or"):
+            # Only the final argument may carry the loop's tail slot.
+            _validate_seq(value[1:], builtins, scope, loop)
             return
         if name not in builtins:
             raise EvalError(
                 f"unknown function or special form: {name} (in form {dumps(value)})"
             )
+        # Builtin arguments are never tail positions (no recursion into
+        # builtins, so a recur there would not be a loop tail).
         for arg in value[1:]:
-            _validate(arg, builtins, scope)
+            _validate(arg, builtins, scope, _non_tail(loop))
         return
     if isinstance(value, Symbol):
         if str(value) not in scope:
@@ -258,31 +436,91 @@ def _validate(value: Any, builtins: dict[str, Builtin], scope: set[str]) -> None
         return
     if isinstance(value, list):
         for item in value:
-            _validate(item, builtins, scope)
+            _validate(item, builtins, scope, _non_tail(loop))
     if isinstance(value, dict):
         # map keys stay literal; values must be valid expressions
         for item in value.values():
-            _validate(item, builtins, scope)
+            _validate(item, builtins, scope, _non_tail(loop))
 
 
-def _validate_let(form: Form, builtins: dict[str, Builtin], scope: set[str]) -> None:
+def _validate_let(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None = None
+) -> None:
     args = form[1:]
     if len(args) < 2:
         raise EvalError("let expects a binding vector and at least one body form")
-    bindings = args[0]
-    if isinstance(bindings, Form) or not isinstance(bindings, list):
-        raise EvalError(f"let bindings must be a vector, got {dumps(bindings)}")
-    if len(bindings) % 2 != 0:
-        raise EvalError("let bindings must contain an even number of forms")
+    names = _binding_names(args[0], "let")
     local = set(scope)
-    for i in range(0, len(bindings), 2):
-        name = bindings[i]
-        if not isinstance(name, Symbol):
-            raise EvalError(f"let binding name must be a symbol, got {dumps(name)}")
-        _validate(bindings[i + 1], builtins, local)
-        local.add(str(name))
-    for body_form in args[1:]:
-        _validate(body_form, builtins, local)
+    for name, init in zip(names, args[0][1::2], strict=True):
+        _validate(init, builtins, local, _non_tail(loop))
+        local.add(name)
+    # The final body form may be a loop tail (Clojure let).
+    _validate_seq(args[1:], builtins, local, loop)
+
+
+def _validate_while(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
+) -> None:
+    args = form[1:]
+    if len(args) < 2:
+        raise EvalError("while expects a binding vector and a test")
+    names = _binding_names(args[0], "while")
+    local = set(scope)
+    for name, init in zip(names, args[0][1::2], strict=True):
+        _validate(init, builtins, local, _non_tail(loop))
+        local.add(name)
+    # The test is not a tail position; recur is rejected inside it.
+    _validate(args[1], builtins, local, _non_tail(loop))
+    arity = len(names)
+    for body_form in args[2:]:
+        # Every direct body form is a tail position of this while.
+        _validate(body_form, builtins, local, _WhileCtx(arity, True))
+
+
+def _validate_recur(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
+) -> None:
+    if loop is None:
+        raise EvalError("recur outside while")
+    if not loop.tail:
+        raise EvalError("recur must be in tail position of while")
+    if len(form) - 1 != loop.arity:
+        raise EvalError(f"recur expects {loop.arity} arguments, got {len(form) - 1}")
+    for arg in form[1:]:
+        _validate(arg, builtins, scope, _non_tail(loop))
+
+
+def _validate_map_like(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
+) -> None:
+    name = str(form[0])
+    args = form[1:]
+    if len(args) != 3:
+        raise EvalError(f"{name} expects a binding, a body, and a collection")
+    binder = args[0]
+    if not isinstance(binder, Symbol):
+        raise EvalError(f"{name} binding must be a symbol, got {dumps(binder)}")
+    local = set(scope)
+    local.add(str(binder))
+    _validate(args[1], builtins, local, _non_tail(loop))
+    _validate(args[2], builtins, scope, _non_tail(loop))
+
+
+def _validate_reduce(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
+) -> None:
+    args = form[1:]
+    if len(args) != 5:
+        raise EvalError("reduce expects accumulator, element, body, init, and collection")
+    acc, x = args[0], args[1]
+    if not isinstance(acc, Symbol) or not isinstance(x, Symbol):
+        raise EvalError("reduce bindings must be symbols")
+    local = set(scope)
+    local.add(str(acc))
+    local.add(str(x))
+    _validate(args[2], builtins, local, _non_tail(loop))
+    _validate(args[3], builtins, scope, _non_tail(loop))
+    _validate(args[4], builtins, scope, _non_tail(loop))
 
 
 # ── Trigger builtins (pure predicates/functions only) ──
@@ -299,20 +537,30 @@ def _my_address(env: dict[str, Any]) -> str | None:
     return address_for_member(agent_id) if agent_id else None
 
 
-def _builtin_addressed_to_me(env: dict[str, Any], msg: Mail) -> bool:
-    """My address is in the mail's To list."""
+def _builtin_addressed_to_me(env: dict[str, Any], msg: Mail | None) -> bool:
+    """My address is in the mail's To list.
+
+    None-safe: the unified member env binds ``msg`` to None for non-mail
+    events (phase C), and a non-mail payload is never addressed to me.
+    """
     my_address = _my_address(env)
-    return my_address is not None and my_address in msg.to
+    return my_address is not None and isinstance(msg, Mail) and my_address in msg.to
 
 
-def _builtin_cc_ed(env: dict[str, Any], msg: Mail) -> bool:
-    """My address is in the mail's CC list."""
+def _builtin_cc_ed(env: dict[str, Any], msg: Mail | None) -> bool:
+    """My address is in the mail's CC list (None-safe, see addressed-to-me?)."""
     my_address = _my_address(env)
-    return my_address is not None and my_address in msg.cc
+    return my_address is not None and isinstance(msg, Mail) and my_address in msg.cc
 
 
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
-    """Regex-search a Mail's content or a plain string (e.g. ``result``)."""
+    """Regex-search a Mail's content or a plain string (e.g. ``result``).
+
+    ``target=None`` (a non-mail event's ``msg``) safely yields False;
+    any other non-Mail non-string target is a spec bug and raises.
+    """
+    if target is None:
+        return False
     if isinstance(target, Mail):
         content = target.content
     elif type(target) is str:
@@ -456,7 +704,7 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 }
 
 
-# ── On-complete action builtins (phase 4b) ──
+# ── Member action names (phase C unified vocabulary) ──
 
 
 @dataclass(frozen=True)
@@ -466,80 +714,15 @@ class ActionRequest:
     Evaluation of an action builtin performs no side effect; it validates
     its arguments and either appends one of these to a collector
     (on-complete, phase 4b) or returns it as the action form's value
-    (script rules, phase P5a). The engine (Agent / ScriptMember) executes
-    the collected requests after evaluation completes.
+    (script rules, phase P5a). The engine executes the produced requests
+    after evaluation completes.
     """
 
-    kind: str  # "spawn" | "emit" | "start" | "stop"
+    kind: str  # "spawn" | "emit" | "start" | "stop" | "forward"
     data: dict[str, Any]
 
 
 ACTION_NAMES = frozenset({"spawn", "emit"})
-
-
-def make_actions_builtins(collector: list[ActionRequest] | None) -> dict[str, Builtin]:
-    """Build the on-complete registry: pure predicates + action builtins.
-
-    ``spawn`` / ``emit`` are marked ``pure=False`` and never touch the
-    outside world — they validate arguments and record an
-    :class:`ActionRequest` into ``collector``. ``collector=None`` yields
-    a registry suitable for static validation (requests are discarded);
-    evaluation with it collects nothing.
-    """
-
-    def _record(request: ActionRequest) -> None:
-        if collector is not None:
-            collector.append(request)
-
-    def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> None:
-        if type(prototype) is not str:
-            raise EvalError(
-                f"spawn prototype must be a string, got {type(prototype).__name__}"
-            )
-        name: str | None = None
-        if options is not None:
-            if not isinstance(options, dict):
-                raise EvalError(
-                    f"spawn options must be a map, got {type(options).__name__}"
-                )
-            unknown = set(options) - {"name"}
-            if unknown:
-                raise EvalError(f"spawn options: unknown keys {sorted(unknown)}")
-            raw_name = options.get("name")
-            if raw_name is not None:
-                if type(raw_name) is not str:
-                    raise EvalError(
-                        f"spawn :name must be a string, got {type(raw_name).__name__}"
-                    )
-                name = raw_name
-        _record(ActionRequest(kind="spawn", data={"prototype": prototype, "name": name}))
-
-    def _emit(env: dict[str, Any], content: Any, to: Any = None) -> None:
-        if type(content) is not str:
-            raise EvalError(f"emit content must be a string, got {type(content).__name__}")
-        resolved: list[str] = []
-        if to is not None:
-            if not isinstance(to, (list, tuple)):
-                raise EvalError(
-                    f"emit recipients must be a vector, got {type(to).__name__}"
-                )
-            for item in to:
-                if not isinstance(item, str):
-                    raise EvalError(
-                        f"emit recipient must be a string, got {type(item).__name__}"
-                    )
-                resolved.append(str(item))
-        _record(ActionRequest(kind="emit", data={"content": content, "to": resolved}))
-
-    return {
-        **TRIGGER_BUILTINS,
-        "spawn": Builtin(_spawn, pure=False),
-        "emit": Builtin(_emit, pure=False),
-    }
-
-
-#: Validation-only on-complete registry (no collector attached).
-ACTIONS_BUILTINS: dict[str, Builtin] = make_actions_builtins(None)
 
 
 def validate_action_form(form: Any, scope: set[str]) -> None:
@@ -606,6 +789,73 @@ SCRIPT_BUILTINS: dict[str, Builtin] = {
 }
 
 
+# ── Arithmetic builtins (phase D: bounded loops need numbers) ──
+
+
+def _num(x: Any) -> int | float:
+    """Coerce to a number; bool and non-numbers are rejected."""
+    if not isinstance(x, (int, float)) or isinstance(x, bool):
+        raise EvalError(f"expected a number, got {type(x).__name__}")
+    return x
+
+
+def _builtin_add(env: dict[str, Any], *args: Any) -> int | float:
+    total: int | float = 0
+    for arg in args:
+        total += _num(arg)
+    return total
+
+
+def _builtin_mul(env: dict[str, Any], *args: Any) -> int | float:
+    total: int | float = 1
+    for arg in args:
+        total *= _num(arg)
+    return total
+
+
+def _builtin_sub(env: dict[str, Any], a: Any, b: Any | None = None) -> int | float:
+    return -_num(a) if b is None else _num(a) - _num(b)
+
+
+def _builtin_inc(env: dict[str, Any], a: Any) -> int | float:
+    return _num(a) + 1
+
+
+def _builtin_dec(env: dict[str, Any], a: Any) -> int | float:
+    return _num(a) - 1
+
+
+def _builtin_lt(env: dict[str, Any], a: Any, b: Any) -> bool:
+    return _num(a) < _num(b)
+
+
+def _builtin_gt(env: dict[str, Any], a: Any, b: Any) -> bool:
+    return _num(a) > _num(b)
+
+
+def _builtin_le(env: dict[str, Any], a: Any, b: Any) -> bool:
+    return _num(a) <= _num(b)
+
+
+def _builtin_ge(env: dict[str, Any], a: Any, b: Any) -> bool:
+    return _num(a) >= _num(b)
+
+
+#: Phase D arithmetic vocabulary for fuel-bounded loops and data
+#: transformation. Pure only; merged into the member registry.
+ARITHMETIC_BUILTINS: dict[str, Builtin] = {
+    "+": Builtin(_builtin_add, pure=True),
+    "-": Builtin(_builtin_sub, pure=True),
+    "*": Builtin(_builtin_mul, pure=True),
+    "inc": Builtin(_builtin_inc, pure=True),
+    "dec": Builtin(_builtin_dec, pure=True),
+    "<": Builtin(_builtin_lt, pure=True),
+    ">": Builtin(_builtin_gt, pure=True),
+    "<=": Builtin(_builtin_le, pure=True),
+    ">=": Builtin(_builtin_ge, pure=True),
+}
+
+
 class ScriptHostQueries(Protocol):
     """Host read-only queries closure-injected into the script registry.
 
@@ -625,16 +875,21 @@ class ScriptHostQueries(Protocol):
         ...
 
     def is_lazy(self, agent_id: Any) -> bool:
-        """Registered with ``activation == "lazy"``."""
+        """A member that can sleep / be drained: contractor, or its spec has
+        no ``:on :boot`` rule (or the spec is unreadable). Phase E."""
         ...
 
     def start_all_candidates(self) -> list[str]:
-        """The boot set: registered, non-lazy, not already running."""
+        """The boot set: members whose spec declares ``:on :boot``. Phase E."""
         ...
 
 
 #: Lifecycle action names a script rule may use (phase P5a; P5b adds ``forward``).
 SCRIPT_ACTION_NAMES = frozenset({"start", "stop", "start-all", "forward"})
+
+#: The unified action vocabulary (phase C): every rule kind — cognitive or
+#: deterministic — may use any of these five actions in its ``:actions``.
+MEMBER_ACTION_NAMES = frozenset(ACTION_NAMES | SCRIPT_ACTION_NAMES)
 
 
 def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[str, str]:
@@ -703,22 +958,89 @@ def _script_forward_fields(options: Any) -> dict[str, Any]:
     return {"to": to, "cc": cc, "subject": subject}
 
 
-def make_script_builtins(host: ScriptHostQueries | None = None) -> dict[str, Builtin]:
-    """Build the script-member registry: pure accessors + host predicates
-    + lifecycle action builtins (phase P5a).
+def make_member_builtins(
+    host: ScriptHostQueries | None = None,
+    collector: list[ActionRequest] | None = None,
+) -> dict[str, Builtin]:
+    """Build the unified member registry (phase C).
 
-    Host predicates (``sleeping?`` / ``running?`` / ``lazy?``) are
-    closure-injected via ``host`` — they read registry state, so they are
-    never registered module-level. ``start`` / ``stop`` / ``start-all`` /
-    ``forward`` are marked ``pure=False`` and perform no side effects:
-    they validate their options map and *return* :class:`ActionRequest`
-    data for the engine (ScriptMember) to collect and execute.
-    ``start-all`` expands through ``host.start_all_candidates()`` — the
-    DSL never executes iteration, iteration is a builtin. Action
-    arguments may be pure expressions referencing ``event`` (e.g.
-    ``(get event :recipient)``); option-map values are evaluated before
-    the builtin sees them.
+    Replaces the three legacy registries (``make_actions_builtins`` /
+    ``make_script_builtins`` and the module-level pure sets) with one:
+    the pure predicates/accessors of the trigger and script vocabularies
+    are merged, and all five action builtins (``spawn`` / ``emit`` /
+    ``start`` / ``stop`` / ``start-all`` / ``forward``) validate their
+    arguments and produce :class:`ActionRequest` data without side
+    effects.
+
+    How a request reaches the engine depends on the rule kind:
+
+    - deterministic rules collect the *return value* of each action form
+      (``collector=None``) — ``(spawn ...)`` evaluates to its request,
+      ``(start-all ...)`` to a list of requests;
+    - on-complete bodies append every request into ``collector`` when one
+      is attached, so ``(when cond (spawn ...) (emit ...))`` records all
+      body actions even though ``when`` evaluates to its last body value.
+
+    ``_record`` does both when a collector is given — appends *and*
+    returns — so the two paths share one implementation.
+
+    Host predicates (``sleeping?`` / ``running?`` / ``lazy?``) and the
+    ``start-all`` candidate set are closure-injected via ``host`` — they
+    read registry state, so they are never registered module-level.
+    ``start-all`` without a host raises at evaluation time. Action
+    arguments may be pure expressions referencing ``event`` / ``msg`` /
+    ``result`` (e.g. ``(get event :recipient)``); option-map values are
+    evaluated before the builtin sees them.
     """
+
+    def _record(request: ActionRequest) -> ActionRequest:
+        if collector is not None:
+            collector.append(request)
+        return request
+
+    def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> ActionRequest:
+        if type(prototype) is not str:
+            raise EvalError(
+                f"spawn prototype must be a string, got {type(prototype).__name__}"
+            )
+        name: str | None = None
+        if options is not None:
+            if not isinstance(options, dict):
+                raise EvalError(
+                    f"spawn options must be a map, got {type(options).__name__}"
+                )
+            unknown = set(options) - {"name"}
+            if unknown:
+                raise EvalError(f"spawn options: unknown keys {sorted(unknown)}")
+            raw_name = options.get("name")
+            if raw_name is not None:
+                if type(raw_name) is not str:
+                    raise EvalError(
+                        f"spawn :name must be a string, got {type(raw_name).__name__}"
+                    )
+                name = raw_name
+        return _record(
+            ActionRequest(kind="spawn", data={"prototype": prototype, "name": name})
+        )
+
+    def _emit(env: dict[str, Any], content: Any, to: Any = None) -> ActionRequest:
+        if type(content) is not str:
+            raise EvalError(f"emit content must be a string, got {type(content).__name__}")
+        resolved: list[str] = []
+        if to is not None:
+            if not isinstance(to, (list, tuple)):
+                raise EvalError(
+                    f"emit recipients must be a vector, got {type(to).__name__}"
+                )
+            for item in to:
+                if not isinstance(item, str):
+                    raise EvalError(
+                        f"emit recipient must be a string, got {type(item).__name__}"
+                    )
+                resolved.append(str(item))
+        return _record(
+            ActionRequest(kind="emit", data={"content": content, "to": resolved})
+        )
 
     def _start(env: dict[str, Any], options: Any) -> ActionRequest:
         fields = _script_action_fields("start", options, require_agent=True)
@@ -751,7 +1073,11 @@ def make_script_builtins(host: ScriptHostQueries | None = None) -> dict[str, Bui
         )
 
     builtins: dict[str, Builtin] = {
+        **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
+        **ARITHMETIC_BUILTINS,
+        "spawn": Builtin(_spawn, pure=False),
+        "emit": Builtin(_emit, pure=False),
         "start": Builtin(_start, pure=False),
         "stop": Builtin(_stop, pure=False),
         "start-all": Builtin(_start_all, pure=False),
@@ -762,3 +1088,97 @@ def make_script_builtins(host: ScriptHostQueries | None = None) -> dict[str, Bui
         builtins["running?"] = Builtin(lambda env, aid: host.is_running(aid), pure=True)
         builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=True)
     return builtins
+
+
+def validate_member_action(
+    form: Any, *, pure: dict[str, Builtin], scope: set[str]
+) -> None:
+    """Statically validate one member action form (phase C unified gate).
+
+    The action position of any rule — cognitive or deterministic — is
+    either a single action form (``(spawn ...)`` / ``(emit ...)`` /
+    ``(start ...)`` / ``(stop ...)`` / ``(start-all ...)`` /
+    ``(forward ...)``), a ``(when cond action ...)`` wrapper, or a phase D
+    loop form (``while`` / ``map``) whose action-bearing positions hold
+    action forms. The purity invariant is unchanged (dsl-agents.md phase D):
+    conditions, tests, binding initializers and action arguments are pure
+    expressions validated against ``pure`` (the pure subset of the member
+    registry) under ``scope``; only the action-carrying positions may name
+    an action.
+    """
+    if not isinstance(form, Form) or not form:
+        raise EvalError(
+            f"member action must be an action form or (when ...), got {dumps(form)}"
+        )
+    _validate_member_action_expr(form, pure, set(scope))
+
+
+def _validate_member_action_expr(
+    form: Any, pure: dict[str, Builtin], scope: set[str]
+) -> None:
+    """Validate one member action expression (a single action or a wrapper).
+
+    ``when`` wraps action forms under a pure condition; phase D ``while`` /
+    ``map`` loop over action forms. Every other head must be an action name
+    whose arguments are pure expressions.
+    """
+    if not isinstance(form, Form) or not form:
+        raise EvalError(f"action must be an action form, got {dumps(form)}")
+    head = form[0]
+    if not isinstance(head, Symbol):
+        raise EvalError(f"action head must be a symbol, got {dumps(head)}")
+    name = str(head)
+    if name in MEMBER_ACTION_NAMES:
+        for arg in form[1:]:
+            validate_form(arg, pure, set(scope))
+        return
+    if name == "when":
+        if len(form) < 3:
+            raise EvalError("when expects a condition and at least one action")
+        validate_form(form[1], pure, set(scope))
+        for action in form[2:]:
+            _validate_member_action_expr(action, pure, scope)
+        return
+    if name == "while":
+        if len(form) < 3:
+            raise EvalError("while expects a binding vector and a test")
+        names = _binding_names(form[1], "while")
+        local = set(scope)
+        for binding, init in zip(names, form[1][1::2], strict=True):
+            validate_form(init, pure, set(local))
+            local.add(binding)
+        validate_form(form[2], pure, set(local))
+        for body in form[3:]:
+            _validate_loop_body_action(body, pure, local)
+        return
+    if name == "map":
+        if len(form) != 4:
+            raise EvalError("map expects a binding, a body, and a collection")
+        binder = form[1]
+        if not isinstance(binder, Symbol):
+            raise EvalError(f"map binding must be a symbol, got {dumps(binder)}")
+        local = set(scope)
+        local.add(str(binder))
+        _validate_member_action_expr(form[2], pure, local)
+        validate_form(form[3], pure, set(scope))
+        return
+    raise EvalError(
+        f"unknown action: {dumps(head)} "
+        f"(allowed: {sorted(MEMBER_ACTION_NAMES)}, when, while, map)"
+    )
+
+
+def _validate_loop_body_action(
+    form: Any, pure: dict[str, Builtin], scope: set[str]
+) -> None:
+    """A ``while`` body position: an action expression or the loop's ``recur``."""
+    if (
+        isinstance(form, Form)
+        and form
+        and isinstance(form[0], Symbol)
+        and str(form[0]) == "recur"
+    ):
+        for arg in form[1:]:
+            validate_form(arg, pure, set(scope))
+        return
+    _validate_member_action_expr(form, pure, scope)

@@ -156,10 +156,10 @@ class ServerApp:
 
         # 2.4b Adam — built-in lifecycle policy member (PID 1; members.md 阶段 D).
         # Kernel first, PID 1 second: Adam is initialized after the registry
-        # and issues the boot start requests. Since P5a it is a ScriptMember
-        # assembled from the built-in ADAM_SPEC (policy as data). It is a bus
-        # member, not an agent — it is not registered in the agent registry
-        # or MemberDirectory.
+        # and issues the boot start requests. It is a MemberRuntime assembled
+        # from the built-in ADAM_SPEC (policy as data; phase C unified runtime).
+        # It is a bus member, not an agent — it is not registered in the agent
+        # registry or MemberDirectory.
         adam = make_adam(event_bus=event_bus, agent_registry=agent_registry)
         await adam.initialize()
         self._components["adam"] = adam

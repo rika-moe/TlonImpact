@@ -33,11 +33,17 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
-from tlon.agents.eval import LOOP_BUILTINS, STAGE_COND_BUILTINS, EvalError, eval_form
+from tlon.agents.eval import (
+    DEFAULT_FUEL,
+    LOOP_BUILTINS,
+    STAGE_COND_BUILTINS,
+    EvalError,
+    eval_form,
+)
 from tlon.agents.executor import EffectExecutor
+from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession, SessionState
-from tlon.agents.spec import AgentSpec
 from tlon.agents.stages.act import act_stage_collect, act_stage_step
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.outcome import MailEffect, StageOutcome
@@ -61,7 +67,7 @@ class LoopDriver:
     def __init__(
         self,
         identity: AgentIdentity,
-        spec: AgentSpec,
+        rule: MemberRule,
         services: StageServices,
         executor: EffectExecutor,
         tool_executor: ToolExecutor,
@@ -69,7 +75,15 @@ class LoopDriver:
         on_complete: OnCompleteRunner,
     ):
         self._identity = identity
-        self._spec = spec
+        # A loop driver serves a cognitive agent — its rule carries a loop.
+        assert rule.loop is not None, "LoopDriver requires a cognitive rule"
+        self._rule = rule
+        self._loop: MemberLoop = rule.loop
+        # Phase D: the loop's self-declared :fuel caps the DSL evaluation of
+        # its :until / stage conditions (None = engine default). The loop's
+        # control flow (max_iterations, stage whitelist, until timing) is
+        # untouched.
+        self._loop_fuel = self._loop.fuel if self._loop.fuel is not None else DEFAULT_FUEL
         self._services = services
         self._executor = executor
         self._tool_executor = tool_executor
@@ -111,15 +125,15 @@ class LoopDriver:
                 "session_context_built", session_id=session.id, message_count=len(context)
             )
 
-        spec = self._spec.loop
+        loop = self._loop
 
         # Engine hard ceiling: max_iterations is an infrastructure cap,
         # enforced no matter what the until expression says.
-        if session.iteration >= spec.max_iterations:
+        if session.iteration >= loop.max_iterations:
             log.warning(
                 "session_max_iterations",
                 session_id=session.id,
-                max_iterations=spec.max_iterations,
+                max_iterations=loop.max_iterations,
             )
             await self._executor.send_mail(
                 MailEffect(
@@ -142,7 +156,7 @@ class LoopDriver:
         # stages pass it through untouched).
         response: LLMResponse | None = None
         start_iteration = session.iteration
-        for stage_form in spec.stages:
+        for stage_form in loop.stages:
             name = str(stage_form[0])
             opts: dict[str, Any] = stage_form[1] if len(stage_form) > 1 else {}
             handler = self._stages.get(name)
@@ -226,21 +240,21 @@ class LoopDriver:
         (iteration / error limits) so the loop always halts.
         """
         log = self._services.logger
-        spec = self._spec.loop
+        loop = self._loop
         env = {
             "self": {"id": self._identity.id, "name": self._identity.name},
             "state": {"iteration": session.iteration, "error_count": session.error_count},
             "limits": {
-                "max_iterations": spec.max_iterations,
-                "max_consecutive_errors": spec.max_consecutive_errors,
+                "max_iterations": loop.max_iterations,
+                "max_consecutive_errors": loop.max_consecutive_errors,
             },
         }
         try:
-            result = eval_form(spec.until, env, LOOP_BUILTINS)
+            result = eval_form(loop.until, env, LOOP_BUILTINS, fuel=self._loop_fuel)
         except EvalError as e:
             log.warning("loop_until_eval_failed", session_id=session.id, error=str(e))
-            return session.iteration >= spec.max_iterations or (
-                session.error_count >= spec.max_consecutive_errors
+            return session.iteration >= loop.max_iterations or (
+                session.error_count >= loop.max_consecutive_errors
             )
         reached = bool(result)
         log.debug("loop_until_evaluated", session_id=session.id, reached=reached)
@@ -253,15 +267,15 @@ class LoopDriver:
         mail; anything else -> the iteration-limit mail.
         """
         log = self._services.logger
-        spec = self._spec.loop
-        if session.error_count >= spec.max_consecutive_errors:
+        loop = self._loop
+        if session.error_count >= loop.max_consecutive_errors:
             reason = "error_limit"
             content = "抱歉，处理邮件时出现了错误。"
             log.warning(
                 "session_max_errors",
                 session_id=session.id,
                 error_count=session.error_count,
-                max_errors=spec.max_consecutive_errors,
+                max_errors=loop.max_consecutive_errors,
             )
         else:
             reason = "iteration_limit"
@@ -294,7 +308,9 @@ class LoopDriver:
             "scratch": session.loop_scratch,
         }
         try:
-            result = eval_form(condition, env, STAGE_COND_BUILTINS)
+            result = eval_form(
+                condition, env, STAGE_COND_BUILTINS, fuel=self._loop_fuel
+            )
         except EvalError as e:
             log.warning(
                 "loop_stage_condition_failed",

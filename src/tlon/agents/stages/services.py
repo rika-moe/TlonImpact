@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars
 
-from tlon.agents.spec import AgentSpec
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -79,7 +78,7 @@ class StageServices:
     def __init__(
         self,
         identity: AgentIdentity,
-        spec: AgentSpec,
+        source_hash: str | None,
         llm_client: LLMClient,
         context_builder: "ContextBuilder",
         publish: EventPublisher,
@@ -90,7 +89,8 @@ class StageServices:
 
         Args:
             identity: Agent identity snapshot (id/name/address)
-            spec: Behavior spec the loop program is read from
+            source_hash: Provenance hash of the member's behavior file,
+                carried on the span attributes for observability
             llm_client: LLM client for inference
             context_builder: System-prompt provider (cached)
             publish: Event-bus publish closure (Device.emit)
@@ -98,7 +98,7 @@ class StageServices:
             logger: Per-agent bound logger (agent_id already bound)
         """
         self.identity = identity
-        self.spec = spec
+        self._source_hash = source_hash
         self.logger = logger
         self._llm_client = llm_client
         self._context_builder = context_builder
@@ -142,7 +142,7 @@ class StageServices:
                     attributes={
                         "session_id": session.id,
                         "state": session.state.value,
-                        "spec_hash": self.spec.source_hash,
+                        "spec_hash": self._source_hash or "",
                     },
                 )
             )

@@ -196,10 +196,11 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
 
         memory = self.questionary.text("内存限制 [512m]:", default="512m").ask()
 
-        proactive = self.questionary.confirm(
-            "是否设置为常驻启动?\n常驻: 自动启动，响应所有消息\n延迟: 手动唤醒，只响应@消息",
-            default=False,
-        ).ask()
+        # 启动模式不再是配置项（阶段 E）：启动集合由 behavior.tlon 的
+        # :on :boot 规则派生——含该规则的成员开机即启动，不含的按需唤醒。
+        self.console.print(
+            "[dim]启动: 由 behavior.tlon 的 :on :boot 规则决定（含该规则 → 开机启动；否则延迟、按需唤醒）[/dim]"
+        )
 
         # Generate ID
         existing_ids = list(self.agent_store.load_all_agents().keys())
@@ -210,7 +211,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.console.print("\n[bold]预览配置[/bold]\n")
         self.console.print(f"ID: {agent_id}")
         self.console.print(f"姓名: {name}")
-        self.console.print(f"启动模式: {'常驻' if proactive else '延迟'}")
         self.console.print(f"模型: {model}")
         if identity:
             self.console.print("[dim]IDENTITY.md: 已填写[/dim]")
@@ -230,7 +230,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             name=name,
             llm=LLMConfig(model_name=model, temperature=temperature),
             docker=DockerRuntimeConfig(image="ubuntu:22.04", memory_limit=memory or "512m"),
-            proactive=proactive,
         )
 
         success, msg = self.agent_store.save_agent(agent)
@@ -256,6 +255,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         """Create an agent by instantiating a behavior prototype."""
         from tlon.agents.prototypes import (
             PrototypeError,
+            get_prototype_info,
             instantiate,
             list_prototypes,
             seed_prototypes,
@@ -296,16 +296,36 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             self.console.print("[yellow]已取消[/yellow]")
             return
 
-        proactive = self.questionary.confirm(
-            "是否设置为常驻启动?\n常驻: 自动启动，响应所有消息\n延迟: 手动唤醒，只响应@消息",
-            default=False,
-        ).ask()
+        # 参数化原型（阶段 F）：声明了 :parameters 的原型（如 relay）需要
+        # 实例化时提供参数值；行为模板渲染后写盘。
+        params: dict[str, Any] = {}
+        info = get_prototype_info(prototype_name)
+        if info and info.has_parameters:
+            self.console.print("\n[bold]该原型需要模板参数[/bold]\n")
+            for p in info.parameters:
+                while True:
+                    if p.type == "string":
+                        value = self.questionary.text(f"{p.name} ({p.type}):").ask()
+                    else:  # string-list
+                        raw = self.questionary.text(f"{p.name} (逗号分隔列表):").ask()
+                        value = [s.strip() for s in (raw or "").split(",") if s.strip()]
+                    if value or not p.required:
+                        params[p.name] = value
+                        break
+                    self.console.print("[red]✗ 必填参数不能为空[/red]")
+
+        # 启动模式不再是配置项（阶段 E）：启动集合由 behavior.tlon 的
+        # :on :boot 规则派生——含该规则的成员开机即启动，不含的按需唤醒。
+        self.console.print(
+            "[dim]启动: 由 behavior.tlon 的 :on :boot 规则决定（含该规则 → 开机启动；否则延迟、按需唤醒）[/dim]"
+        )
 
         self.console.print("\n[bold]预览配置[/bold]\n")
         self.console.print(f"Prototype: {prototype_name}")
         self.console.print(f"ID: {agent_id}")
         self.console.print(f"姓名: {name}")
-        self.console.print(f"启动模式: {'常驻' if proactive else '延迟'}")
+        if params:
+            self.console.print(f"参数: {params}")
 
         if not self.questionary.confirm("确认创建?").ask():
             self.console.print("[yellow]已取消[/yellow]")
@@ -316,7 +336,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                 prototype_name,
                 agent_id=agent_id,
                 agent_name=name,
-                proactive=proactive,
+                params=params,
             )
         except PrototypeError as e:
             self.console.print(f"[red]✗ 创建失败: {e}[/red]")
@@ -335,7 +355,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         from tlon.agents.prototypes import (
             BEHAVIOR_FILE,
             PERSONA_FILES,
-            SCRIPT_FILE,
             PrototypeError,
             approve_prototype,
             list_staging_prototypes,
@@ -369,21 +388,16 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         if not name or name == "back":
             return
 
-        # Preview behavior/script spec and persona files before deciding
+        # Preview the unified behavior spec and persona files before deciding
         from rich.panel import Panel
 
         staging_dir = paths.prototypes_staging_dir() / name
         staging_proto = next((p for p in staged if p.name == name), None)
         is_script = staging_proto is not None and staging_proto.runtime == "script"
 
-        if is_script:
-            script_file = staging_dir / SCRIPT_FILE
-            if script_file.exists():
-                content = script_file.read_text(encoding="utf-8")
-                self.console.print(Panel(content, title=f"script.tlon: {name}"))
-        else:
-            behavior = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
-            self.console.print(Panel(behavior, title=f"behavior.tlon: {name}"))
+        behavior = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+        self.console.print(Panel(behavior, title=f"behavior.tlon: {name}"))
+        if not is_script:
             for filename in PERSONA_FILES:
                 persona_file = staging_dir / filename
                 if persona_file.exists():
@@ -475,10 +489,8 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                         f"🚀 主动响应 - 当前: {'是' if agent.proactive else '否'}",
                         value="proactive",
                     ),
-                    self.questionary.Choice(
-                        f"💤 激活模式 - 当前: {'常驻' if agent.activation == 'always' else '休眠'}",
-                        value="activation",
-                    ),
+                    # 激活模式编辑已移除（阶段 E）：启动集合由 behavior.tlon
+                    # 的 :on :boot 规则派生，activation 字段已废弃。
                     self.questionary.Separator(),
                     self.questionary.Choice("✓ 完成", value="done"),
                 ],
@@ -554,24 +566,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                 agent.proactive = new_proactive
                 mode_str = "主动响应" if agent.proactive else "被动响应"
                 self.console.print(f"[green]✓ 响应模式已更新为: {mode_str}[/green]")
-
-            elif edit_choice == "activation":
-                new_activation = self.questionary.select(
-                    "激活模式 (activation):",
-                    choices=[
-                        self.questionary.Choice(
-                            "常驻 (always) - 系统启动即运行，永不休眠", value="always"
-                        ),
-                        self.questionary.Choice(
-                            "休眠 (lazy) - 被来信唤醒，空闲自动休眠", value="lazy"
-                        ),
-                    ],
-                    default=agent.activation,
-                ).ask()
-                if new_activation:
-                    agent.activation = new_activation
-                    mode_str = "常驻" if agent.activation == "always" else "休眠"
-                    self.console.print(f"[green]✓ 激活模式已更新为: {mode_str}[/green]")
 
         success, msg = self.agent_store.save_agent(agent)
         if success:

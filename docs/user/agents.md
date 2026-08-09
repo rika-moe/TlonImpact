@@ -67,16 +67,16 @@ uv run tlon mirror
 - **性格**：行为风格（严谨、灵活、温和、直接）
 - **LLM 配置**：使用哪个模型、温度参数等
 
-> 🧬 除了从零创造，mirror 还提供「从 Prototype 创建」：Prototype 是预置的行为原型（内置 archivist、deep-thinker、fast-responder 三个，首次启动时复制到 `~/.tlon/prototypes/`），实例化后直接得到一个带完整人格与行为规约的 Agent。Agent 自身也可以用 `writePrototype` 工具起草新原型，草案进入 `~/.tlon/prototypes-staging/`，由你在 mirror 的「规约审批」菜单中审定后才能使用。
+> 🧬 除了从零创造，mirror 还提供「从 Prototype 创建」：Prototype 是预置的行为原型（内置 archivist、deep-thinker、fast-responder 三个认知原型 + relay 纯转发原型，首次启动时复制到 `~/.tlon/prototypes/`），实例化后直接得到一个带完整人格与行为规约的 Agent。Agent 自身也可以用 `writePrototype` 工具起草新原型，草案进入 `~/.tlon/prototypes-staging/`，由你在 mirror 的「规约审批」菜单中审定后才能使用。
 
 ### 2. 唤醒与休眠
 
-Agent 的激活策略由配置项 `activation` 决定：
+Agent 的启动与休眠由它的行为规约（`behavior.tlon`）的 `:on` 规则决定，无需手动配置：
 
-- **`always`（默认）**：随服务端启动，一直在线。
-- **`lazy`**：启动时只注册、不运行，处于沉睡状态。给它的邮箱（`<agent-id>@tlon.internal`）来信时被自动唤醒（有数秒延迟）；空闲超过 `idle_timeout_seconds`（默认 600 秒）后自动休眠，释放资源。
+- 规约含 **`:on :boot`** 规则的成员：随服务端启动，开机即在线。
+- 不含该规则（或由 prototype 临时创建的 contractor）的成员：启动时只注册、不运行，处于沉睡状态。给它的邮箱（`<agent-id>@tlon.internal`）来信时被自动唤醒（有数秒延迟）；空闲超过 `idle_timeout_seconds`（默认 600 秒）后自动休眠，释放资源。
 
-唤醒与休眠由系统内置的生命周期策略（Adam）自动管理，无需手动干预。沉睡期间寄到的邮件会保留在邮箱里，醒来后统一扫读未读。
+唤醒与休眠由系统自动管理——来信唤醒由注册表按收件人规约的 `:on :mail-delivered` 声明执行，空闲休眠由内置生命周期策略（Adam）决策。沉睡期间寄到的邮件会保留在邮箱里，醒来后统一扫读未读。
 
 ```
 > 写信给 林知遥（lin-zhiyao@tlon.internal）：帮忙写个组件
@@ -125,8 +125,8 @@ agent:
     cpu_limit: 1.0
   memory:                    # 记忆配置
     max_history: 10          # 工作记忆保留的交互条数
-  activation: "lazy"         # always=常驻在线；lazy=沉睡，被来信唤醒
-  idle_timeout_seconds: 600  # lazy 模式下空闲多久后自动休眠
+  # 启动与休眠由 behavior.tlon 的 :on 规则决定（activation 已废弃，无需配置）
+  idle_timeout_seconds: 600  # 沉睡成员空闲多久后自动休眠
 ```
 
 完整字段（`tool`、`session_timeout_seconds`、`message_queue_size` 等）及默认值见源码 `src/tlon/base/config.py` 的 `AgentConfig` 定义。
@@ -135,27 +135,41 @@ agent:
 
 ### behavior.tlon
 
-行为规约是 EDN 格式的数据文件，分四节。所有字段都可省略——缺省字段回退到内置默认规约，写错的文件也不会阻止 Agent 启动（同样回退默认）：
+行为规约是 EDN 格式的数据文件，统一为**规则（rules）形态**，一份规约解释执行即一个成员的运行。规约是**全部**（total）：文件即行为的全部，缺失或解析失败会拒绝该成员启动（不回退默认）。每条规则 = `:on`（订阅的事件）+ `:when`（命中后的过滤，纯谓词）+ 可选 `:loop`（认知会话）+ `:actions`（动作）：
 
 ```clojure
 {:version 1
- :trigger {:on-mention true}          ; 收件人（To/CC）包含我时响应
- :context {:mail-history 20}          ; 注入上下文的邮箱历史邮件数，0 关闭
- :loop {:max-iterations 10            ; ReAct 循环上限
-        :max-consecutive-errors 3}
- :on-complete {:save-interaction true
-               :reflect {:enabled true :interval-minutes 15}}}
+ :rules [{:name "respond"                ; 认知规则：走 LLM 会话
+          :on :mail-delivered
+          :when (or (addressed-to-me? msg) (cc-ed? msg))
+          :loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+                 :stages [(think) (act)]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :max-iterations 10
+                 :max-consecutive-errors 3
+                 :save-interaction true
+                 :reflect {:enabled true :interval-minutes 15}}
+          :actions [(emit "本轮处理完毕" [])]}]}
 ```
 
-`:trigger` 也可以写成表达式模式，用纯谓词精细控制响应条件：
+无 `:loop` 的规则是**确定性规则**：命中后直接执行 `:actions`（`emit` / `forward` / `start` / `stop` / `spawn`），零 LLM。一份规约可**混排**一条认知规则 + 若干确定性规则（cost routing：便宜路径挡在前面，`:when` 排除它已处理的，例如退订 deflection）：
 
 ```clojure
 {:version 1
- :trigger (and (addressed-to-me? msg)
-               (content-matches? msg "紧急|线上"))}
+ :rules [{:name "auto-optout"            ; 确定性规则：含"退订"立即回复，零 LLM
+          :on :mail-delivered
+          :when (content-matches? msg "退订")
+          :actions [(emit "已为您处理退订" [])]}
+         {:name "respond"                ; 认知规则：其余全部走 LLM 会话
+          :on :mail-delivered
+          :when (and (addressed-to-me? msg)
+                     (not (content-matches? msg "退订")))}
+         {:name "boot"                   ; 含 :on :boot 规则 → 开机即启动
+          :on :boot
+          :actions []}]}
 ```
 
-可用谓词：`addressed-to-me?`（我在 To）、`cc-ed?`（我在 CC）、`content-matches?`（正文正则匹配）、`contains?`（包含判断）、`=`、`not`，可配合 `and` / `or` / `if` / `let` 组合。完整设计见 [dsl-agents.md](../design/dsl-agents.md)。
+可用谓词：`addressed-to-me?`（我在 To）、`cc-ed?`（我在 CC）、`content-matches?`（正文正则匹配）、`contains?`（包含判断）、`=`、`not`，可配合 `and` / `or` / `if` / `let` / `while` 组合。完整设计见 [dsl-agents.md](../design/dsl-agents.md)。
 
 ---
 

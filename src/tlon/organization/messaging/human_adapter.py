@@ -3,7 +3,7 @@
 A HumanAdapter is the on-bus presence of a human user (one per username);
 client sessions are its attachments. It carries identity, lifecycle and the
 ability to speak (publish MAIL_NEW) — nothing of the LLM / memory /
-Docker machinery of a ReactAgent.
+Docker machinery of a cognitive member (MemberRuntime).
 
 R2 protocol (docs/design/mail.md): ``speak`` accepts explicit ``to`` /
 ``cc`` / ``subject`` fields; explicit addressing is the only entry point

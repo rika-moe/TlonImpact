@@ -55,11 +55,10 @@ Member（ABC，继承 Component + Device）
 ├── initialize() / shutdown() # 继承自 Component
 └── get_state() -> str
 
-ReactAgent   —— 现有 Agent，声明符合 Member（纯重构）
-AdapterAgent —— 人类用户身份的在场化身，session 是其 attachment
-ScriptAgent  —— 确定性 daemon（唤醒者、relay）；P5a 落地为通用 ScriptMember
-               运行时（亚当为内置实例），P5b 起可经 prototype/spawn 创建
-               （relay 为第一个 script prototype）
+MemberRuntime —— 统一解释器（阶段 C 合并 ReactAgent 与 ScriptMember；`member_type`
+               由 spec 派生：有 loop 规则 → "react"，纯确定性 → "script"）。亚当、
+               relay 与居民都是它的实例。
+AdapterAgent  —— 人类用户身份的在场化身，session 是其 attachment
 ```
 
 统一发生在 **Member 层而非 Agent 层**：AdapterAgent 不经过 LLM / 记忆 / Docker
@@ -268,6 +267,8 @@ server 启动失败。运行时重启监管留待需要时再加。
 > on-complete 4b 同构），trace carrier 透传不变。上文第 237-242 行的
 > wake 描述（MESSAGE_ROUTED + trigger_event + 重投递）更早已被邮件模型
 > 取代（wake 订阅 MAIL_DELIVERED，收件箱即持久队列），以代码为准。
+> 本段为阶段 C 前的历史快照（`ScriptMember` / `script_member.py` /
+> `ScriptSpec` 均已删除），以 P5c 段与 docs/design/dsl-agents.md 为准。
 >
 > **P5b 更新（2026-08，script 成员可 spawn）**：relay 是第二个 script
 > 成员形态（亚当之后）——`AgentConfig.runtime="script"` 的 agent 经
@@ -277,6 +278,31 @@ server 启动失败。运行时重启监管留待需要时再加。
 > 邮件语义与 Agent 侧对齐：自发邮件忽略、initialize 补扫未读、处理后
 > `mark_read`；`active_session_count` 恒 0，`idle_seconds` 从最近一次
 > 规则动作起算。详见 dsl-agents.md 阶段 P5b。
+> 本段为阶段 C 前的历史快照（`runtime` 已派生、`script.tlon` 已删除），
+> 以 P5c 段与 docs/design/dsl-agents.md 为准。
+>
+> **P5c 更新（2026-08，阶段 C 统一运行时）**：`ScriptMember` 与
+> `ReactAgent` 已删除，合并为单一 `MemberRuntime`（`agents/member_runtime.py`）；
+> `ScriptSpec` / `script_spec.py` / `script.tlon` / `AgentConfig.runtime`
+> 全部移除。全成员（亚当、relay、居民）走同一条规则解释路径（`:on` +
+> `:when` + 可选 `:loop` + `:actions`），`member_type` 从 spec 派生
+> （有 loop 规则 → "react"，否则 "script"）。上文 P5a/P5b 中
+> ScriptSpec/ScriptMember 的表述为阶段 C 前的历史快照，以本段与
+> docs/design/dsl-agents.md 为准。
+>
+> **P5d 更新（2026-08-09，阶段 E 唤醒/启动派生）**：生命周期从配置字段
+> 改为 spec 派生，spec 成为唯一权威——
+> - **启动集合**：注册成员中 spec 含 `:on :boot` 规则且未运行者
+>   （`AgentRegistry.boot_candidates()`）；`activation` 字段废弃，读点全部
+>   移除，保留字段只为旧 agent.yaml 能加载。
+> - **lazy**：`role=="contractor"`（恒 lazy，可回收）或 spec 无 `:on :boot`
+>   规则、或 spec 不可装载（`AgentRegistry.is_lazy()`）。
+> - **wake-on-mail**：从亚当的 wake 规则移入注册表，成为 spec 派生的
+>   mechanized policy——注册表订阅 `MAIL_DELIVERED`，仅当收件人沉睡且其
+>   spec 声明 `:on :mail-delivered` 时发布 `AGENT_START_REQUEST{reason="wake"}`
+>   （透传投递事件 trace 三元组）。亚当 `ADAM_SPEC_EDN` 只余 boot + drain
+>   两条策略线。
+> - 居民与原型 behavior.tlon 全部迁移为 rules 形态并补发 `:on :boot` 规则。
 
 **不在本次范围**：离线收件箱、私聊/分房间（随房间功能重构再议）；
 receptionist（"正在唤醒 X…"系统消息，届时只是再订阅一个事件）；

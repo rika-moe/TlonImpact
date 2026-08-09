@@ -6,7 +6,8 @@ applies the session-local fields itself and delegates the external
 effects here:
 
 - mails (``MailEffect`` -> Mail.create + MAIL_NEW event, trace-injected)
-- the completed-interaction memory save (spec-gated)
+- the completed-interaction memory save (gated by the loop's
+  save-interaction flag)
 - the inbox cursor advance (mark-read)
 
 The engine-side event-publish closure for tool dispatch observability
@@ -18,7 +19,7 @@ dependencies — the executor never holds a reference to the Agent.
 
 from typing import TYPE_CHECKING
 
-from tlon.agents.spec import AgentSpec
+from tlon.agents.member_spec import MemberRule
 from tlon.agents.stages.outcome import MailEffect
 from tlon.agents.stages.services import EventPublisher
 from tlon.agents.trigger import AgentIdentity
@@ -41,7 +42,7 @@ class EffectExecutor:
     def __init__(
         self,
         identity: AgentIdentity,
-        spec: AgentSpec,
+        rule: MemberRule,
         memory: MemoryManager,
         reflection: "ReflectionEngine",
         mailbox: Mailbox | None,
@@ -52,7 +53,8 @@ class EffectExecutor:
 
         Args:
             identity: Agent identity snapshot (id/name/address)
-            spec: Behavior spec (the save-interaction gate is read here)
+            rule: The cognitive rule (the save-interaction gate is read
+                here, from its loop)
             memory: Memory manager for the interaction save
             reflection: Reflection engine (interaction counter)
             mailbox: The agent's own mailbox (inbox cursor); None in
@@ -61,7 +63,7 @@ class EffectExecutor:
             logger: Per-agent bound logger (agent_id already bound)
         """
         self.identity = identity
-        self.spec = spec
+        self.rule = rule
         self.publish = publish
         self._memory = memory
         self._reflection = reflection
@@ -106,8 +108,9 @@ class EffectExecutor:
     async def save_interaction(
         self, final_response: str, llm_response: LLMResponse, tool_results: list
     ) -> None:
-        """Persist a completed interaction (gated by spec.on_complete.save_interaction)."""
-        if not self.spec.on_complete.save_interaction:
+        """Persist a completed interaction (gated by the loop's save_interaction)."""
+        assert self.rule.loop is not None, "EffectExecutor requires a cognitive rule"
+        if not self.rule.loop.save_interaction:
             return
         try:
             msg = {

@@ -124,7 +124,7 @@ curl "http://localhost:8080/inbox?username=<你的用户名>"
 
 **3. 对方在沉睡吗？**
 
-`activation=lazy` 的 Agent 被来信唤醒需要数秒。查状态（`sleeping` / `waking` / `active`）：
+lazy Agent（behavior.tlon 无 `:on :boot` 规则）被来信唤醒需要数秒。查状态（`sleeping` / `waking` / `active`）：
 
 ```bash
 curl http://localhost:8080/agents
@@ -174,8 +174,10 @@ uv run tlon dream
 ; ~/.tlon/{id}/config/behavior.tlon
 ; 只在自己是主要收件人（To）且内容匹配时才响应
 {:version 1
- :trigger (and (addressed-to-me? msg)
-               (not (content-matches? msg "^自动回复")))}
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :when (and (addressed-to-me? msg)
+                     (not (content-matches? msg "^自动回复")))}]}
 ```
 
 同时检查 `~/.tlon/{id}/config/RULES.md`，可以加入约束，例如「收到 Agent 的确认类邮件后不再回信」「完成任务汇报后结束线程」。

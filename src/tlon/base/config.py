@@ -144,16 +144,13 @@ class AgentConfig(BaseModel):
     # Deprecated and ignored (R1b mail model): proactive routing is retired;
     # the field stays so existing agent.yaml files keep loading.
     proactive: bool = False
-    # Runtime kind: "react" assembles the full LLM ReAct agent;
-    # "script" starts a deterministic ScriptMember driven by
-    # config/script.tlon (no LLM, no sessions). Defaults to "react" so
-    # existing agent.yaml files need no migration.
-    runtime: Literal["react", "script"] = "react"
-    # Activation policy: "always" starts at boot and never sleeps;
-    # "lazy" registers without starting, wakes on incoming mail and
-    # sleeps after `idle_timeout_seconds` of inactivity (scale-to-zero).
+    # Deprecated and ignored (phase E): the boot set and the lazy set are
+    # derived from the behavior spec's `:on` rules — a member with an
+    # `:on :boot` rule starts at boot; without one (or a contractor role)
+    # it is lazy. The field stays so existing agent.yaml files keep
+    # loading.
     activation: Literal["always", "lazy"] = "always"
-    # Idle seconds before a lazy agent is drained (only for activation="lazy")
+    # Idle seconds before a lazy member is drained.
     idle_timeout_seconds: int = 600
     # Source behavior prototype name when instantiated from one (None = manual)
     prototype: str | None = None

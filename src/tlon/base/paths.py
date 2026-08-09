@@ -141,19 +141,14 @@ class TlonPaths:
         return self.agent_config_dir(agent_id) / "RULES.md"
 
     def agent_behavior_file(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/config/behavior.tlon (AgentSpec file).
+        """~/.tlon/{agent_id}/config/behavior.tlon (unified rules-form spec).
 
         Read-only resolution: unlike the persona helpers this does NOT
         create directories, so checking ``exists()`` stays side-effect free.
+        Every member — cognitive or deterministic — carries exactly this
+        one file (phase C unified the format; ``script.tlon`` is gone).
         """
         return self._home / agent_id / "config" / "behavior.tlon"
-
-    def agent_script_file(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/config/script.tlon (ScriptSpec file).
-
-        Read-only resolution, same contract as ``agent_behavior_file``.
-        """
-        return self._home / agent_id / "config" / "script.tlon"
 
     # ===== Behavior prototypes =====
 

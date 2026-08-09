@@ -60,12 +60,12 @@
 │  配置 (~/.tlon/{id}/config/)        │
 │      │                              │
 │      ▼                              │
-│  ┌──────────┐  activation=lazy      │
-│  │ sleeping │ ◄───────────┐         │
-│  │ (仅注册) │             │         │
-│  └────┬─────┘             │         │
-│       │ 来信唤醒          │ 空闲超时 │
-│       │ (Adam, 数秒)     │ (drain)  │
+│  ┌──────────┐  无 :on :boot 规则   │
+│  │ sleeping │ ◄───────────┐        │
+│  │ (仅注册) │             │        │
+│  └────┬─────┘             │        │
+│       │ 来信唤醒          │ 空闲超时│
+│       │ (registry, 数秒) │ (drain) │
 │       ▼                   │         │
 │  ┌──────────┐             │         │
 │  │  active  │─────────────┘         │
@@ -80,7 +80,7 @@
 └─────────────────────────────────────┘
 ```
 
-**状态机**（`AgentState`，见 `src/tlon/agents/agent.py`）：
+**状态机**（`AgentState`，由 `MemberRuntime` 报告）：
 
 - `initializing`：启动中（加载记忆、初始化邮箱）
 - `active`：运行中，等待邮件
@@ -90,11 +90,12 @@
 
 此外注册表（AgentRegistry）会报告两个派生状态：`sleeping`（lazy agent 已注册未启动）和 `waking`（唤醒进行中）。
 
-**Adam：三条生命周期策略线**（`src/tlon/agents/adam.py`）：
+**生命周期：spec 派生 + Adam 两条决策线**（`src/tlon/agents/adam.py`）：
 
-1. **boot**——服务端启动时拉起所有 `activation=always` 的 Agent；lazy agent 只注册不启动。
-2. **wake（来信唤醒）**——邮件投递到 sleeping agent 的邮箱时，Adam 发出启动请求；邮件保留在邮箱里，Agent 醒来后扫读未读。
-3. **drain（空闲休眠）**——lazy agent 空闲超过 `idle_timeout_seconds`（默认 600 秒）后被自动停止，释放资源。
+- 启动集合与 lazy 集合由每个 Agent 的 `behavior.tlon` 的 `:on` 规则派生——含 `:on :boot` 规则的成员开机即启动，不含的（或 contractor）延迟、按需唤醒。`activation` 配置已废弃。
+1. **boot**——服务端启动时，Adam 对 spec 声明 `:on :boot` 且未运行的注册成员发启动请求。
+2. **wake（来信唤醒）**——邮件投递到 sleeping agent 的邮箱时，注册表（registry）按收件人 spec 的 `:on :mail-delivered` 声明发出启动请求；邮件保留在邮箱里，Agent 醒来后扫读未读。
+3. **drain（空闲休眠）**——lazy 成员空闲超过 `idle_timeout_seconds`（默认 600 秒）后被自动停止，释放资源。
 
 一次性 Agent（`role=contractor`，由 `spawnAgent` 从 prototype 创建）被回收时会连同家目录一起删除；常驻 Agent（`role=resident`）的家目录永久保留。
 
@@ -121,7 +122,7 @@ Tlon 没有聊天室总线。成员之间通过**邮件**通信：每封信有�
 │      │                                              │
 │      ▼                                              │
 │   3. 逐收件人发布 MAIL_DELIVERED                     │
-│      （Adam 据此唤醒沉睡的 Agent）                    │
+│      （registry 据此唤醒沉睡的 Agent）                │
 │      │                                              │
 │      ▼                                              │
 │   4. 地址不存在 → postmaster@tlon.internal 退信       │
@@ -214,7 +215,7 @@ Tlon 没有聊天室总线。成员之间通过**邮件**通信：每封信有�
 2. 会话空闲超时（默认 30 分钟）
 3. Agent 主动调用 `compact` 工具（你可以写信要求它归档）
 
-另有定期的记忆反思（reflection）：`behavior.tlon` 的 `:on-complete/:reflect` 控制，默认每 15 分钟一次。
+另有定期的记忆反思（reflection）：`behavior.tlon` 认知规则的 `:loop/:reflect` 控制，默认每 15 分钟一次。
 
 ---
 
@@ -272,7 +273,7 @@ Tlon 没有聊天室总线。成员之间通过**邮件**通信：每封信有�
 │
 ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 4. Adam 唤醒（仅当收件人在沉睡）                          │
+│ 4. registry 唤醒（仅当收件人沉睡且其 spec 声明来信订阅）  │
 │    - MAIL_DELIVERED → 启动请求 (reason=wake)             │
 │    - 数秒后 Agent 启动，扫读邮箱未读                      │
 └─────────────────────────────────────────────────────────┘
@@ -298,7 +299,7 @@ Tlon 没有聊天室总线。成员之间通过**邮件**通信：每封信有�
 ┌─────────────────────────────────────────────────────────┐
 │ 7. 会话完成                                             │
 │    - 交互存入 Working Memory                            │
-│    - lazy agent 空闲超时后由 Adam drain 休眠              │
+│    - lazy 成员空闲超时后由 Adam drain 休眠                │
 └─────────────────────────────────────────────────────────┘
 │
 ▼
@@ -320,12 +321,12 @@ Tlon/
 │   │   ├── wizard/            # mirror 配置向导
 │   │   └── clients/           # 客户端共用代码
 │   ├── agents/                # Agent 核心
-│   │   ├── agent.py           # Agent 类与状态机
+│   │   ├── member_runtime.py  # 统一解释器（规则分发/认知装配/唤醒扫读）
+│   │   ├── member_spec.py     # MemberSpec（behavior.tlon 语义）
 │   │   ├── agent_registry.py  # 注册表（内核）
-│   │   ├── adam.py            # 生命周期策略（boot/wake/drain）
+│   │   ├── adam.py            # 生命周期策略（boot/drain；wake 归 registry）
 │   │   ├── scheduler.py       # 会话调度
 │   │   ├── loop_driver.py     # ReAct 循环
-│   │   ├── spec.py            # AgentSpec（behavior.tlon 语义）
 │   │   ├── edn.py / eval.py   # DSL 解析与求值
 │   │   └── prototypes.py      # 行为原型库
 │   ├── base/                  # 基础设施
@@ -354,7 +355,7 @@ Tlon/
 ├── {agent-id}/                # 每个 Agent 的家目录
 │   ├── config/
 │   │   ├── agent.yaml         # 运行参数
-│   │   ├── behavior.tlon      # 行为规约 (AgentSpec)
+│   │   ├── behavior.tlon      # 行为规约 (MemberSpec，统一 rules 形态)
 │   │   └── IDENTITY.md / SOUL.md / RULES.md   # 人格文件
 │   ├── memory/
 │   │   ├── working/interactions.jsonl

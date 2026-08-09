@@ -7,16 +7,16 @@ prompt_builder's pure SystemPromptBuilder with the agent-bound
 fetching/caching side.
 
 P4: the builder receives its dependencies (config, team members,
-mailbox, memory, spec, address) explicitly and owns the system prompt
+mailbox, memory, rule, address) explicitly and owns the system prompt
 cache — no back-reference to the Agent.
 """
 
 from pathlib import Path
 from typing import Any
 
+from tlon.agents.member_spec import MemberRule, has_section
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
-from tlon.agents.spec import AgentSpec, has_section
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import paths
@@ -55,14 +55,17 @@ class ContextBuilder:
         team_members: list[AgentConfig],
         mailbox: Mailbox | None,
         memory: MemoryManager,
-        spec: AgentSpec,
+        rule: MemberRule,
         address: str,
     ):
         self._config = config
         self._team_members = team_members
         self._mailbox = mailbox
         self._memory = memory
-        self._spec = spec
+        # A context builder serves a cognitive agent — its rule carries a loop.
+        assert rule.loop is not None, "ContextBuilder requires a cognitive rule"
+        self._rule = rule
+        self._loop = rule.loop
         self._address = address
         # Prompt cache — rebuilt when persona file mtimes change
         self._system_prompt_cache: str | None = None
@@ -93,7 +96,7 @@ class ContextBuilder:
         engine owns this; the DSL only describes what comes before it.
         """
         context: list[dict[str, Any]] = []
-        for form in self._spec.context.sections:
+        for form in self._loop.context_sections:
             name = str(form[0])
             if name == "knowledge":
                 knowledge = await self.build_knowledge_context()
@@ -182,11 +185,10 @@ class ContextBuilder:
         signature = self.persona_mtime_signature(self.persona_files())
         if self._system_prompt_cache is None or signature != self._system_prompt_mtime:
             context = await self.build_prompt_context()
-            context_spec = self._spec.context
             builder = SystemPromptBuilder(
                 context,
-                include_persona=has_section(context_spec.sections, "persona"),
-                include_protocol=has_section(context_spec.sections, "protocol"),
+                include_persona=has_section(self._loop.context_sections, "persona"),
+                include_protocol=has_section(self._loop.context_sections, "protocol"),
             )
             self._system_prompt_cache = builder.build()
             self._system_prompt_mtime = signature

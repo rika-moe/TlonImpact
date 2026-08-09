@@ -160,7 +160,7 @@ curl "http://localhost:8080/inbox?username=guest&limit=20"
 ├── {agent-id}/                      # 每个 Agent 一个家目录
 │   ├── config/
 │   │   ├── agent.yaml               # id/name/llm/docker 等基础配置
-│   │   ├── behavior.tlon            # 行为定义 (AgentSpec, EDN 语法)
+│   │   ├── behavior.tlon            # 行为定义 (MemberSpec, EDN 语法)
 │   │   └── IDENTITY.md / SOUL.md / RULES.md
 │   ├── memory/
 │   │   ├── working/interactions.jsonl

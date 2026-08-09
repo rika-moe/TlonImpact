@@ -24,9 +24,10 @@ class StartRequest:
 
     Attributes:
         agent_id: ID of the agent to start
-        reason: Why the start was requested — "boot" (activation=="always"
-            at server startup) or "wake" (mail delivered to a sleeping
-            agent's inbox)
+        reason: Why the start was requested — "boot" (the member's spec
+            declares ``:on :boot``, so it belongs to the startup set) or
+            "wake" (mail delivered to a sleeping member whose spec
+            subscribes to ``:on :mail-delivered``, issued by the registry)
     """
 
     agent_id: str

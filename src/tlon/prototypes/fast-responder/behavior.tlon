@@ -1,10 +1,15 @@
 ; 快速反应者：低迭代上限、短邮件历史（total spec——文件即全部行为）
 {:version 1
- :trigger {:on-mention true}
- :context {:sections [(persona) (protocol) (mail-history 5)]}
- :loop {:stages [(think) (act)]
-        :until (or (iteration-limit-reached?) (error-limit-reached?))
-        :max-iterations 3
-        :max-consecutive-errors 3}
- :on-complete {:save-interaction true
-               :reflect {:enabled true :interval-minutes 15}}}
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :when (or (addressed-to-me? msg) (cc-ed? msg))
+          :loop {:context {:sections [(persona) (protocol) (mail-history 5)]}
+                 :stages [(think) (act)]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :max-iterations 3
+                 :max-consecutive-errors 3
+                 :save-interaction true
+                 :reflect {:enabled true :interval-minutes 15}}
+         {:name "boot"
+          :on :boot
+          :actions []}]}

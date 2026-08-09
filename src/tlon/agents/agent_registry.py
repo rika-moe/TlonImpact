@@ -7,15 +7,21 @@ policy/mechanism split):
   AGENT_STOP_REQUEST and fulfills them idempotently (wake locks,
   ``_waking`` dedup, run-state re-validation)
 - Idle *fact* detection: the monitor publishes AGENT_IDLE for lazy agents
-  idle past their timeout with no live sessions — deciding what to do
-  with that fact is not the registry's job
+  (no ``:on :boot`` rule, or contractors) idle past their timeout with no
+  live sessions — deciding what to do with that fact is not the
+  registry's job
 - Spawn/stop of contractors (stage 6b): prototype instantiation under a
   spawn budget (global activation cap, spawn depth, per-session quota);
   agent-spawned contractors connect to the registry directly (= fork)
 
 Policy — which agents should run — lives in Adam (tlon.agents.adam), the
-built-in init member: boot set, wake-on-mention, and idle drain are its
-three decision lines. The registry never imports Adam.
+built-in init member: boot set and idle drain are its two decision lines.
+Wake-on-mail is not a policy line any more (phase E): the registry
+*derives* it from each member's spec — a sleeping recipient whose spec
+declares ``:on :mail-delivered`` is woken. Lifecycle membership is
+spec-declared: the boot set and the lazy set come from each member's
+``:on`` rules (the spec is the single authority). The registry never
+imports Adam.
 
 Configuration is delegated to AgentInfoProvider (typically ConfigManager).
 
@@ -33,12 +39,12 @@ import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from tlon.agents.agent import Agent
-from tlon.agents.eval import make_script_builtins
+from tlon.agents.eval import make_member_builtins
 from tlon.agents.lifecycle import StartRequest, StopRequest
+from tlon.agents.loader import load_member_spec
+from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
+from tlon.agents.member_spec import MemberSpec
 from tlon.agents.prototypes import get_prototype_info, instantiate
-from tlon.agents.script_member import ScriptMember
-from tlon.agents.script_spec import ScriptSpec
 from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
@@ -141,23 +147,14 @@ class _ScriptRegistryQueries:
         return isinstance(agent_id, str) and self._registry.get_agent(agent_id) is not None
 
     def is_lazy(self, agent_id: Any) -> bool:
-        """Registered with ``activation == "lazy"``."""
+        """A member that can sleep / be drained (phase E: spec-derived)."""
         if not isinstance(agent_id, str):
             return False
-        config = self._registry.get_config(agent_id)
-        return config is not None and config.activation == "lazy"
+        return self._registry.is_lazy(agent_id)
 
     def start_all_candidates(self) -> list[str]:
-        """The boot set: registered, non-lazy, not already running."""
-        candidates: list[str] = []
-        for agent_id in self._registry.get_all():
-            config = self._registry.get_config(agent_id)
-            if config is None or config.activation == "lazy":
-                continue
-            if self._registry.get_agent(agent_id) is not None:
-                continue
-            candidates.append(agent_id)
-        return candidates
+        """The boot set: members whose spec declares ``:on :boot`` (phase E)."""
+        return self._registry.boot_candidates()
 
 
 class AgentRegistry(Component):
@@ -241,10 +238,10 @@ class AgentRegistry(Component):
         # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
 
-        # Running agents (activations): react Agents and script members
-        # share the run table — both expose shutdown / get_state /
-        # active_session_count / idle_seconds
-        self._agents: dict[str, Agent | ScriptMember] = {}
+        # Running agents (activations): one unified member runtime (react
+        # or deterministic by the derived member_type) — all expose
+        # shutdown / get_state / active_session_count / idle_seconds
+        self._agents: dict[str, MemberRuntime] = {}
 
         # Request execution state: agents currently being started, and one
         # lock per agent serializing start/drain of the same persona
@@ -254,6 +251,19 @@ class AgentRegistry(Component):
         # Lifecycle request subscriptions + idle monitor task
         self._request_subscriptions: list[str] = []
         self._idle_monitor_task: asyncio.Task | None = None
+
+        # Spec-derived lifecycle profile cache (phase E): per registered
+        # member, the loaded MemberSpec or None (unreadable). The boot set,
+        # the lazy set, and wake eligibility all derive from here — the
+        # spec is the single lifecycle authority. None is cached too so a
+        # broken spec is read once, not on every boot/status/wake query;
+        # adopt/reload invalidates the entry to retry.
+        self._profiles: dict[str, MemberSpec | None] = {}
+
+        # Host builtins validated against — shared by the profile loader and
+        # ``_start_agent`` so a member's spec passes the same gate whether
+        # loaded for derivation or for assembly.
+        self._host_builtins = make_member_builtins(_ScriptRegistryQueries(self))
 
         logger.info("agent_registry_constructed")
 
@@ -285,14 +295,75 @@ class AgentRegistry(Component):
         for agent_id in agent_ids:
             self.register(agent_id)
 
+    # ==================== Spec-derived lifecycle (phase E) ====================
+
+    def _spec_profile(self, agent_id: str) -> MemberSpec | None:
+        """Load (and cache) a member's validated spec, or None if unreadable.
+
+        The profile is the source of boot-set, lazy-set, and wake
+        eligibility. It is validated against the same host builtins as
+        ``_start_agent`` so a spec that uses host predicates (``sleeping?``
+        etc.) derives consistently. A failed load is cached as None with a
+        single warning — the entry is invalidated by adopt/reload so a fixed
+        file is retried.
+        """
+        cached = self._profiles.get(agent_id)
+        if cached is not None:
+            return cached
+        if agent_id in self._profiles:
+            return None  # cached failure
+        try:
+            spec = load_member_spec(agent_id, builtins=self._host_builtins)
+        except (FileNotFoundError, ValueError, OSError) as e:
+            logger.warning("member_spec_unreadable", agent_id=agent_id, error=str(e))
+            self._profiles[agent_id] = None
+            return None
+        self._profiles[agent_id] = spec
+        return spec
+
+    def boot_candidates(self) -> list[str]:
+        """The boot set (phase E): registered members whose spec declares
+        ``:on :boot``, not already running.
+
+        A member whose spec cannot be loaded has no boot rule to declare and
+        is excluded — the spec is the single lifecycle authority.
+        """
+        candidates: list[str] = []
+        for agent_id in self._registered_ids:
+            spec = self._spec_profile(agent_id)
+            if spec is None or not any(rule.on is None for rule in spec.rules):
+                continue
+            if self._agents.get(agent_id) is not None:
+                continue
+            candidates.append(agent_id)
+        return candidates
+
+    def is_lazy(self, agent_id: str) -> bool:
+        """A member that can sleep / be drained (phase E: spec-derived).
+
+        Contractors are always lazy (disposable, idle-reaped). Otherwise a
+        member is lazy iff its spec has no ``:on :boot`` rule — or its spec
+        cannot be loaded, in which case it is inert (registered only).
+        """
+        config = self._agent_info.get_config(agent_id)
+        if config is not None and config.role == "contractor":
+            return True
+        spec = self._spec_profile(agent_id)
+        if spec is None:
+            return True
+        return not any(rule.on is None for rule in spec.rules)
+
     async def initialize(self) -> None:
         """Initialize the registry: subscribe to requests, start the monitor.
 
-        Pure mechanism: no agent is started here. Which agents should run
-        is Adam's policy — it issues AGENT_START_REQUEST events after its
-        own initialize (boot is asynchronous over the bus). Agents that
-        fail to start are logged by the request fulfillment path — the
-        server continues operating with the agents that did start.
+        Pure mechanism: no agent is started here. Wake-on-mail is now a
+        mechanized policy — the registry derives wake eligibility from each
+        member's spec (``:on :mail-delivered``) and issues its own
+        AGENT_START_REQUEST{reason="wake"}; boot remains Adam's policy (it
+        issues AGENT_START_REQUEST after its own initialize, asynchronous
+        over the bus). Agents that fail to start are logged by the request
+        fulfillment path — the server continues operating with the agents
+        that did start.
         """
         logger.info("agent_registry_initializing", agent_ids=self._registered_ids)
 
@@ -306,6 +377,11 @@ class AgentRegistry(Component):
             self._request_subscriptions.append(
                 self.event_bus.subscribe(
                     EventType.AGENT_STOP_REQUEST, self._on_stop_request
+                )
+            )
+            self._request_subscriptions.append(
+                self.event_bus.subscribe(
+                    EventType.MAIL_DELIVERED, self._on_mail_delivered
                 )
             )
 
@@ -348,23 +424,25 @@ class AgentRegistry(Component):
         self._registered_ids.clear()
         self._waking.clear()
         self._spawn_quota.clear()
+        self._profiles.clear()  # phase E: spec-derived lifecycle profiles
         self._initialized = False
 
         logger.info("agent_registry_shutdown_completed")
 
-    async def _start_agent(self, agent_id: str) -> Agent | ScriptMember | None:
-        """Assemble all dependencies and start an agent.
+    async def _start_agent(self, agent_id: str) -> MemberRuntime | None:
+        """Assemble and start one agent (phase C: no runtime fork).
 
-        This is the sole assembler for Agent and its infrastructure.
-        All deps are constructed here and injected via Agent's constructor.
-        ``runtime="script"`` configs divert to the script-member assembly
-        (``_start_script_member``); everything else takes the react path.
+        This is the sole assembler for members and their infrastructure.
+        The behavior spec is total and derives the member type: a spec with
+        a cognitive rule gets cognitive capabilities attached
+        (``_assemble_cognitive``), a deterministic spec builds none — both
+        become the same MemberRuntime.
 
         Args:
             agent_id: ID of the agent to start
 
         Returns:
-            The started Agent/ScriptMember instance, or None if not found
+            The started MemberRuntime instance, or None if not found
         """
         if agent_id in self._agents:
             # Already active
@@ -375,191 +453,211 @@ class AgentRegistry(Component):
             logger.error("unknown_agent", agent_id=agent_id)
             return None
 
-        if config.runtime == "script":
-            return await self._start_script_member(config)
-
         try:
             logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
 
-            from tlon.base.settings import get_settings
-
-            # Build infrastructure dependencies
-            llm_config = _build_llm_config(config.llm, get_settings())
-            llm_client = LLMClient(llm_config)
-
-            agent_home = (self._paths or paths).agent_dir(config.id)
-            memory_config = (
-                config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
-            )
-            memory_config.agent_id = config.id
-            memory = MemoryManager(
-                agent_id=config.id,
-                config=memory_config,
-                data_dir=agent_home,
-                llm_config=llm_config,
-            )
-
-            task_manager = TaskManager(
-                agent_id=config.id,
-                data_dir=str(agent_home),
-            )
-
-            # The agent's mailbox (inbox/sent/unread cursor); the delivery
-            # component writes into the same directory.
+            # Unified assembly (phase C): the spec is total and derives the
+            # member type — a cognitive rule gets the cognitive engine
+            # attached, a deterministic spec builds no LLM/memory/tool
+            # infrastructure at all. Host builtins gate validation too
+            # (D6.6: host predicates open to registry members).
+            builtins = self._host_builtins
+            spec = load_member_spec(agent_id, builtins=builtins)
+            self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
-
-            # Create Docker runtime (shared by shell + filesystem tools).
-            # The container is NOT started here: DockerRuntime lazily calls
-            # ensure_running() on first execute/read/write, so waking an
-            # agent for pure conversation costs zero containers. A daemon
-            # failure therefore surfaces as a tool error, not a start failure.
-            docker_runtime: DockerRuntime | None = None
-            try:
-                docker_runtime = DockerRuntime(config.docker, config.id)
-            except Exception as e:
-                logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
-
-            # Create ToolExecutor (direct execution, no EventBus)
-            tool_executor = ToolExecutor()
-
-            # Register tools
-            tool_executor.register_tool(ExecuteBashTool(config.docker, docker_runtime))
-            tool_executor.register_tool(CheckBashTaskTool())
-            allowed_paths = config.tool.allowed_paths
-            tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
-            tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
-            tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
-            tool_executor.register_tool(SendEmailTool())
-            tool_executor.register_tool(ListPrototypesTool())
-            # Spawn/stop lifecycle tools (stage 6b): the registry is the
-            # assembler, so it injects itself; spawner_id binds the tool
-            # to the owning agent for budget accounting and audit.
-            tool_executor.register_tool(SpawnAgentTool(registry=self, spawner_id=config.id))
-            tool_executor.register_tool(StopAgentTool(registry=self, spawner_id=config.id))
-            tool_executor.register_tool(ListAgentsTool(registry=self))
-            # Spec authoring (stage 4a): writes untrusted prototypes to the
-            # staging area; spawner_id is recorded as the :author for audit.
-            tool_executor.register_tool(WritePrototypeTool(author_id=config.id))
-            tool_executor.register_tool(RememberFactTool(memory))
-            tool_executor.register_tool(SearchMemoriesTool(memory))
-            tool_executor.register_tool(CompactTool(memory))
-            tool_executor.register_tool(ForgetMemoryTool(memory))
-            tool_executor.register_tool(CreateTaskTool(task_manager))
-            tool_executor.register_tool(ListTasksTool(task_manager))
-            tool_executor.register_tool(StartTaskTool(task_manager))
-            tool_executor.register_tool(PauseTaskTool(task_manager))
-            tool_executor.register_tool(CompleteTaskTool(task_manager))
-            tool_executor.register_tool(RemoveTaskTool(task_manager))
-            tool_executor.register_tool(GetCurrentTaskTool(task_manager))
-            logger.debug(
-                "tools_registered",
-                agent_name=config.name,
-                tool_count=len(tool_executor.list_tools()),
+            cognitive = (
+                await self._assemble_cognitive(config, mailbox)
+                if any(rule.loop is not None for rule in spec.rules)
+                else None
             )
 
-            # Initialize tools
-            await tool_executor.initialize()
-
-            # Prepare team members config (all other agents)
-            all_ids = self._agent_info.get_all_ids()
-            team_members = [
-                cfg
-                for aid in all_ids
-                if aid != agent_id and (cfg := self._agent_info.get_config(aid)) is not None
-            ]
-
-            # Read tool timeout from agent config
-            per_tool_timeout = config.tool.per_timeout
-
-            # Create and initialize agent with all deps injected
-            agent = Agent(
-                config=config,
-                event_bus=self.event_bus,
-                llm_client=llm_client,
-                memory=memory,
-                task_manager=task_manager,
-                tool_executor=tool_executor,
-                team_members=team_members,
-                mailbox=mailbox,
-                per_tool_timeout=per_tool_timeout,
-                registry=self,
-            )
-            await agent.initialize()
-
-            # Track active agent
-            self._agents[agent_id] = agent
-
-            # Publish agent started event
-            event = Event(
-                type=EventType.AGENT_STARTED,
-                payload={
-                    "agent_id": agent_id,
-                    "name": config.name,
-                    "spec_hash": agent.spec.source_hash,
-                },
-                source="agent_registry",
-            )
-            await self.event_bus.publish(event)
-
-            logger.info(
-                "agent_started",
-                agent_id=agent_id,
-                agent_name=config.name,
-                spec_hash=agent.spec.source_hash,
-            )
-            return agent
-
-        except Exception as e:
-            logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
-            return None
-
-    async def _start_script_member(self, config: AgentConfig) -> ScriptMember | None:
-        """Assemble and start a script-runtime member (P5b: policy as data).
-
-        The spec file (``~/.tlon/{id}/config/script.tlon``) is total —
-        missing or invalid refuses the start through the same
-        ``agent_start_failed`` path as the react assembly. No LLM client,
-        memory, task manager, Docker runtime, or tools are built: a
-        script member is deterministic bus I/O only.
-        """
-        agent_id = config.id
-        try:
-            logger.info(
-                "agent_starting", agent_id=agent_id, agent_name=config.name, runtime="script"
-            )
-            spec = ScriptSpec.load(agent_id)
-            builtins = make_script_builtins(_ScriptRegistryQueries(self))
-            mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
-            member = ScriptMember(
+            member = MemberRuntime(
                 member_id=config.id,
+                name=config.name,
                 event_bus=self.event_bus,
                 spec=spec,
                 builtins=builtins,
                 mailbox=mailbox,
+                cognitive=cognitive,
+                registry=self,
             )
             await member.initialize()
+
+            # Track active agent
             self._agents[agent_id] = member
 
+            # Publish agent started event (runtime derived from the spec)
             await self.event_bus.publish(
                 Event(
                     type=EventType.AGENT_STARTED,
                     payload={
                         "agent_id": agent_id,
                         "name": config.name,
-                        "runtime": "script",
+                        "runtime": member.member_type,
+                        "spec_hash": spec.source_hash,
                     },
                     source="agent_registry",
                 )
             )
+
             logger.info(
-                "agent_started", agent_id=agent_id, agent_name=config.name, runtime="script"
+                "agent_started",
+                agent_id=agent_id,
+                agent_name=config.name,
+                spec_hash=spec.source_hash,
+                runtime=member.member_type,
             )
             return member
+
         except Exception as e:
             logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
             return None
 
+    async def _assemble_cognitive(
+        self, config: AgentConfig, mailbox: Mailbox
+    ) -> CognitiveCapabilities:
+        """Assemble the cognitive capabilities for a member with a loop rule.
+
+        Everything the cognitive engine needs beyond the deterministic
+        core: LLM client, memory, task manager, Docker runtime, tools, and
+        the team roster. Deterministic members build none of this
+        (D1: cognitive=None). The container is NOT started here:
+        DockerRuntime lazily calls ensure_running() on first
+        execute/read/write, so waking an agent for pure conversation costs
+        zero containers — a daemon failure surfaces as a tool error, not a
+        start failure.
+        """
+        from tlon.base.settings import get_settings
+
+        # Build infrastructure dependencies
+        llm_config = _build_llm_config(config.llm, get_settings())
+        llm_client = LLMClient(llm_config)
+
+        agent_home = (self._paths or paths).agent_dir(config.id)
+        memory_config = (
+            config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
+        )
+        memory_config.agent_id = config.id
+        memory = MemoryManager(
+            agent_id=config.id,
+            config=memory_config,
+            data_dir=agent_home,
+            llm_config=llm_config,
+        )
+
+        task_manager = TaskManager(
+            agent_id=config.id,
+            data_dir=str(agent_home),
+        )
+
+        # Create Docker runtime (shared by shell + filesystem tools).
+        docker_runtime: DockerRuntime | None = None
+        try:
+            docker_runtime = DockerRuntime(config.docker, config.id)
+        except Exception as e:
+            logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
+
+        # Create ToolExecutor (direct execution, no EventBus)
+        tool_executor = ToolExecutor()
+
+        # Register tools
+        tool_executor.register_tool(ExecuteBashTool(config.docker, docker_runtime))
+        tool_executor.register_tool(CheckBashTaskTool())
+        allowed_paths = config.tool.allowed_paths
+        tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
+        tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
+        tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
+        tool_executor.register_tool(SendEmailTool())
+        tool_executor.register_tool(ListPrototypesTool())
+        # Spawn/stop lifecycle tools (stage 6b): the registry is the
+        # assembler, so it injects itself; spawner_id binds the tool
+        # to the owning agent for budget accounting and audit.
+        tool_executor.register_tool(SpawnAgentTool(registry=self, spawner_id=config.id))
+        tool_executor.register_tool(StopAgentTool(registry=self, spawner_id=config.id))
+        tool_executor.register_tool(ListAgentsTool(registry=self))
+        # Spec authoring (stage 4a): writes untrusted prototypes to the
+        # staging area; spawner_id is recorded as the :author for audit.
+        tool_executor.register_tool(WritePrototypeTool(author_id=config.id))
+        tool_executor.register_tool(RememberFactTool(memory))
+        tool_executor.register_tool(SearchMemoriesTool(memory))
+        tool_executor.register_tool(CompactTool(memory))
+        tool_executor.register_tool(ForgetMemoryTool(memory))
+        tool_executor.register_tool(CreateTaskTool(task_manager))
+        tool_executor.register_tool(ListTasksTool(task_manager))
+        tool_executor.register_tool(StartTaskTool(task_manager))
+        tool_executor.register_tool(PauseTaskTool(task_manager))
+        tool_executor.register_tool(CompleteTaskTool(task_manager))
+        tool_executor.register_tool(RemoveTaskTool(task_manager))
+        tool_executor.register_tool(GetCurrentTaskTool(task_manager))
+        logger.debug(
+            "tools_registered",
+            agent_name=config.name,
+            tool_count=len(tool_executor.list_tools()),
+        )
+
+        # Initialize tools
+        await tool_executor.initialize()
+
+        # Prepare team members config (all other agents)
+        all_ids = self._agent_info.get_all_ids()
+        team_members = [
+            cfg
+            for aid in all_ids
+            if aid != config.id
+            and (cfg := self._agent_info.get_config(aid)) is not None
+        ]
+
+        # Read tool timeout from agent config
+        per_tool_timeout = config.tool.per_timeout
+
+        return CognitiveCapabilities(
+            config=config,
+            llm_client=llm_client,
+            memory=memory,
+            task_manager=task_manager,
+            tool_executor=tool_executor,
+            team_members=team_members,
+            per_tool_timeout=per_tool_timeout,
+            registry=self,
+        )
+
     # ==================== Lifecycle request execution ====================
+
+    async def _on_mail_delivered(self, event: Event) -> None:
+        """Wake-on-mail (phase E): issue a wake for a sleeping subscriber.
+
+        Mechanized policy — the spec is the single lifecycle authority:
+        a MAIL_DELIVERED whose recipient is registered, not running/waking,
+        and whose spec declares ``:on :mail-delivered`` gets an
+        AGENT_START_REQUEST{reason="wake"} that joins the delivery's trace
+        tree (``_fulfill_wake`` continues the same trace). The mail is
+        already durably in the member's inbox, so no trigger event is
+        carried — the woken member scans unread mail on boot
+        (docs/design/mail.md). Previously this was Adam's wake rule; the
+        decision now lives here so lifecycle policy is spec-derived.
+        """
+        recipient = event.payload.get("recipient")
+        if not isinstance(recipient, str):
+            return
+        if self._agents.get(recipient) is not None or recipient in self._waking:
+            return  # already running or waking — no request needed
+        if self._agent_info.get_config(recipient) is None:
+            return  # unknown member
+        spec = self._spec_profile(recipient)
+        if spec is None or not any(
+            rule.on is EventType.MAIL_DELIVERED for rule in spec.rules
+        ):
+            return  # spec does not subscribe to mail delivery
+        await self.event_bus.publish(
+            Event(
+                type=EventType.AGENT_START_REQUEST,
+                payload=StartRequest(agent_id=recipient, reason="wake"),
+                source="agent_registry",
+                trace_id=event.trace_id,
+                span_id=event.span_id,
+                parent_span_id=event.parent_span_id,
+            )
+        )
 
     async def _on_start_request(self, event: Event) -> None:
         """Execute an AGENT_START_REQUEST decision (mechanism only).
@@ -608,7 +706,7 @@ class AgentRegistry(Component):
         finally:
             self._waking.discard(agent_id)
 
-    async def _start_agent_guarded(self, agent_id: str) -> Agent | ScriptMember | None:
+    async def _start_agent_guarded(self, agent_id: str) -> MemberRuntime | None:
         """``_start_agent`` with a timeout: a hung assembly must not wedge
         the per-agent wake lock forever. Returns None on timeout (same
         contract as ``_start_agent`` failure)."""
@@ -746,8 +844,9 @@ class AgentRegistry(Component):
             result = "config-not-found"
         else:
             self.register(agent_id)
+            self._profiles.pop(agent_id, None)  # spec may have changed (phase E)
             config = self._agent_info.get_config(agent_id)
-            if config is not None and config.activation == "lazy":
+            if config is not None and self.is_lazy(agent_id):
                 result = "registered-lazy"
             else:
                 agent = await self._start_agent(agent_id)
@@ -770,9 +869,9 @@ class AgentRegistry(Component):
 
         Pipeline: budget checks -> id generation -> ``instantiate()`` (writes
         persona + behavior + agent.yaml to disk) -> contractor fields
-        (role/depth/spawned_by/lazy activation) -> ``reload_agent`` so the
-        config is visible to the provider -> ``register`` + ``_start_agent``
-        -> ``AGENT_SPAWNED`` event.
+        (role/depth/spawned_by; laziness is role-derived, phase E) ->
+        ``reload_agent`` so the config is visible to the provider ->
+        ``register`` + ``_start_agent`` -> ``AGENT_SPAWNED`` event.
 
         Permissions cannot escalate: the only source is the prototype
         library (trusted, Tlon-prebuilt or user-installed), and the
@@ -859,12 +958,12 @@ class AgentRegistry(Component):
             prototype, agent_id, name, params=params, tlon_paths=tlon_paths
         )
 
-        # Contractor identity: disposable, lazy-activated, short idle fuse.
-        # Re-save so the YAML on disk carries the final config.
+        # Contractor identity: disposable, always lazy (role-derived in
+        # phase E — no activation field), short idle fuse. Re-save so the
+        # YAML on disk carries the final config.
         config.role = "contractor"
         config.spawned_by = spawner_id
         config.spawn_depth = depth
-        config.activation = "lazy"
         config.idle_timeout_seconds = self._contractor_idle_timeout_seconds
         _yaml_save(config, tlon_paths.tlon_home())
 
@@ -995,6 +1094,7 @@ class AgentRegistry(Component):
         """
         if agent_id in self._registered_ids:
             self._registered_ids.remove(agent_id)
+        self._profiles.pop(agent_id, None)  # phase E: spec profile cache
 
         self._assert_deletable_agent_id(agent_id)
         try:
@@ -1061,7 +1161,7 @@ class AgentRegistry(Component):
         live (ACTIVE/WAITING) session is never reported idle.
         """
         config = self._agent_info.get_config(agent_id)
-        if not config or config.activation != "lazy":
+        if not config or not self.is_lazy(agent_id):
             return
 
         agent = self._agents.get(agent_id)
@@ -1089,7 +1189,7 @@ class AgentRegistry(Component):
         keeps the agent alive.
         """
         config = self._agent_info.get_config(agent_id)
-        if not config or config.activation != "lazy":
+        if not config or not self.is_lazy(agent_id):
             return
 
         agent = self._agents.get(agent_id)
@@ -1141,22 +1241,22 @@ class AgentRegistry(Component):
                 )
             )
 
-    def get_agent(self, agent_id: str) -> Agent | ScriptMember | None:
+    def get_agent(self, agent_id: str) -> MemberRuntime | None:
         """Get an active agent by ID.
 
         Args:
             agent_id: Agent ID
 
         Returns:
-            The Agent/ScriptMember instance if active, None otherwise
+            The MemberRuntime instance if active, None otherwise
         """
         return self._agents.get(agent_id)
 
-    def get_all_agents(self) -> list[Agent | ScriptMember]:
+    def get_all_agents(self) -> list[MemberRuntime]:
         """Get all currently active agents.
 
         Returns:
-            List of active Agent/ScriptMember instances
+            List of active MemberRuntime instances
         """
         return list(self._agents.values())
 
@@ -1210,7 +1310,7 @@ class AgentRegistry(Component):
             state = agent.get_state()
         elif agent_id in self._waking:
             state = "waking"
-        elif config.activation == "lazy":
+        elif self.is_lazy(agent_id):
             state = "sleeping"
         else:
             state = "unknown"

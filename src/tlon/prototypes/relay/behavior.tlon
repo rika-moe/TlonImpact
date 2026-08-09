@@ -2,4 +2,7 @@
  :parameters {:to {:type :string-list :required true}}
  :rules [{:name "relay"
           :on :mail-delivered
-          :actions [(forward {:to ${to}})]}]}
+          :actions [(forward {:to ${to}})]}
+         {:name "boot"
+          :on :boot
+          :actions []}]}

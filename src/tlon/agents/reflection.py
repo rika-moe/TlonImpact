@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from typing import Any, cast
 
-from tlon.agents.spec import AgentSpec
+from tlon.agents.member_spec import MemberRule
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.memory.manager import MemoryManager
@@ -22,11 +22,12 @@ class ReflectionEngine:
     """Runs background memory reflections for an agent.
 
     Owns the reflection scheduling state (interval, interaction counter,
-    running flag). Initial enabled/interval come from the agent's behavior
-    spec (``spec.on_complete.reflect``); ``enabled`` stays a runtime switch.
+    running flag). Initial enabled/interval come from the cognitive rule's
+    loop (``rule.loop.reflect``, projected from the legacy ``:on-complete``
+    section); ``enabled`` stays a runtime switch.
 
     P4: the engine receives its services (memory, LLM client) and the
-    behavior spec directly — no back-reference to the Agent.
+    cognitive rule directly — no back-reference to the Agent.
     """
 
     REFLECTION_SYSTEM_PROMPT = (
@@ -50,11 +51,13 @@ class ReflectionEngine:
         '"operations": [{"action": "...", ...}]}'
     )
 
-    def __init__(self, memory: MemoryManager, llm_client: LLMClient, spec: AgentSpec):
+    def __init__(self, memory: MemoryManager, llm_client: LLMClient, rule: MemberRule):
         self._memory = memory
         self._llm_client = llm_client
 
-        reflect = spec.on_complete.reflect
+        # Reflection settings live on the cognitive rule's loop.
+        assert rule.loop is not None, "ReflectionEngine requires a cognitive rule"
+        reflect = rule.loop.reflect
         self.enabled: bool = reflect.enabled
         self._interval: float = reflect.interval_minutes * 60
         self._min_interactions: int = getattr(

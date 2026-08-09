@@ -140,9 +140,9 @@ sendEmail → 校验收件人 → 展开 `all@tlon.internal` → 写入每个收
 
 ## 收信处理
 
-- **沉睡 agent**：邮件到达 → 亚当发 wake 请求（**不再携带 trigger_event**，
-  重投递管道整套删除）→ registry 启动 agent → agent 扫 inbox cursor 之后
-  的未读邮件。
+- **沉睡 agent**：邮件到达 → registry 发 wake 请求（按收件人 spec 的
+  `:on :mail-delivered` 派生；**不再携带 trigger_event**，重投递管道整套
+  删除）→ registry 启动 agent → agent 扫 inbox cursor 之后的未读邮件。
 - **运行中 agent**：`MAIL_DELIVERED`（按收件人定向）→ 入队 → 正常 session。
 - **每封邮件一个 session**：通知事件带 mail id；session 处理该邮件，完成即
   推进 cursor。每封信独立成败、独立 trace；积压 N 封则 N 个 session

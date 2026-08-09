@@ -1,81 +1,76 @@
-"""On-complete action execution for Agent (DSL phase 4b).
+"""On-complete action execution for the unified MemberRuntime (DSL 4b).
 
-When a session completes with a final reply, the action forms declared in
-``spec.on_complete.actions`` are evaluated once — purely: ``spawn`` /
-``emit`` builtins record :class:`ActionRequest` data into a collector
-(see ``agents/eval.py``) — and the collected requests are then executed
-here, one by one:
+When a cognitive session completes with a final reply, the action forms
+declared on the cognitive rule (``rule.actions``) are evaluated once —
+purely: ``spawn`` / ``emit`` builtins record :class:`ActionRequest` data
+into a collector (see ``agents/eval.py``) — and the collected requests are
+then executed by the runtime's unified action executor, one by one. All
+five action kinds are accepted (D6.2: the react rule's completion actions
+no longer restrict to spawn/emit).
 
-- ``spawn`` delegates to ``AgentRegistry.spawn_contractor`` with the
-  full trust gate and spawn budget in force (untrusted prototype or
-  exhausted budget -> rejection logged, session unaffected). Chained
-  spawning (a spawned contractor's own on-complete spawning again) is
-  hard-capped by the registry's ``max_spawn_depth``.
-- ``emit`` delegates to the injected mail sender; an emit without
-  explicit recipients replies to the sender of the session's trigger
-  mail.
-
-Isolation: an evaluation failure or a single failing action is logged
-(``on_complete_eval_failed`` / ``on_complete_action_failed``) and never
-interrupts the remaining actions or the session lifecycle.
-
-P4/C2: the runner is assembled from capabilities — identity, spec,
-logger and a mail sender (the EffectExecutor) — plus the directly
-injected spawn registry. No host back-reference.
+The runner is assembled from capabilities — identity, rule, logger and an
+``execute_action`` delegate (the MemberRuntime's unified executor) — with
+no host back-reference. Isolation: an evaluation failure or a single
+failing action is logged and never interrupts the remaining actions or the
+session lifecycle.
 """
 
-import uuid
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from structlog.contextvars import get_contextvars
 
-from tlon.agents.eval import ActionRequest, EvalError, eval_form, make_actions_builtins
-from tlon.agents.stages.outcome import MailEffect
+from tlon.agents.eval import (
+    DEFAULT_FUEL,
+    ActionRequest,
+    EvalError,
+    FuelExhaustedError,
+    eval_form,
+    make_member_builtins,
+)
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.logger import get_logger
+from tlon.organization.mail.mail import Mail
 
 if TYPE_CHECKING:
-    from tlon.agents.agent_registry import AgentRegistry
-    from tlon.agents.executor import EffectExecutor
+    from tlon.agents.member_spec import MemberRule
     from tlon.agents.session import AgentSession
-    from tlon.agents.spec import AgentSpec
-    from tlon.organization.mail.mail import Mail
 
 logger = get_logger(__name__)
 
+#: The unified action-executor contract: run one collected request,
+#: with the session's trigger mail (for emit reply-to / forward source).
+ExecuteAction = Callable[[ActionRequest, Mail | None], Awaitable[None]]
+
 
 class OnCompleteRunner:
-    """Evaluates and executes the spec's on-complete action expressions.
+    """Evaluates and executes the cognitive rule's completion actions.
 
-    Assembled from capabilities (identity / spec / logger / mail sender);
-    the registry (spawn delegation) is injected directly. No reference to
-    the owning Agent.
+    Assembled from capabilities (identity / rule / logger / the runtime's
+    unified action executor); no reference to the owning MemberRuntime.
     """
 
     def __init__(
         self,
         identity: AgentIdentity,
-        spec: "AgentSpec",
+        rule: "MemberRule",
         logger: "structlog.stdlib.BoundLogger",
-        mail_sender: "EffectExecutor",
-        registry: "AgentRegistry | None",
+        execute_action: ExecuteAction,
     ):
         self._identity = identity
-        self._spec = spec
+        self._rule = rule
         self._logger = logger
-        self._mail_sender = mail_sender
-        self._registry = registry
+        self._execute_action = execute_action
 
     async def run(self, session: "AgentSession", result: str) -> None:
-        """Evaluate the spec's action forms and execute collected actions.
+        """Evaluate the rule's action forms and execute collected actions.
 
         Called once per session completion, after the interaction is saved
         and before the session is marked completed (still inside the
         session span, so contextvars carry the session id for spawn quota
         attribution). Never raises.
         """
-        forms = self._spec.on_complete.actions
+        forms = self._rule.actions
         if not forms:
             return
 
@@ -86,10 +81,18 @@ class OnCompleteRunner:
         }
 
         collector: list[ActionRequest] = []
-        builtins = make_actions_builtins(collector)
+        builtins = make_member_builtins(collector=collector)
+        # The rule's :fuel caps the completion actions' evaluation (phase D);
+        # the cognitive gate and completion are temporally separated, so each
+        # phase is capped at the same declared budget.
+        action_fuel = self._rule.fuel if self._rule.fuel is not None else DEFAULT_FUEL
         for form in forms:
             try:
-                eval_form(form, env, builtins)
+                eval_form(form, env, builtins, fuel=action_fuel)
+            except FuelExhaustedError as e:
+                self._logger.error(
+                    "on_complete_fuel_exhausted", session_id=session.id, error=str(e)
+                )
             except EvalError as e:
                 self._logger.error(
                     "on_complete_eval_failed", session_id=session.id, error=str(e)
@@ -112,7 +115,7 @@ class OnCompleteRunner:
         )
         for request in collector:
             try:
-                await self._execute(request, session.trigger_message)
+                await self._execute_action(request, session.trigger_message)
             except Exception as e:
                 self._logger.error(
                     "on_complete_action_failed",
@@ -121,37 +124,3 @@ class OnCompleteRunner:
                     error=str(e),
                     exc_info=True,
                 )
-
-    async def _execute(self, request: ActionRequest, session_mail: "Mail | None") -> None:
-        if request.kind == "spawn":
-            await self._execute_spawn(request.data)
-        elif request.kind == "emit":
-            # An emit without explicit recipients replies to the sender of
-            # the mail that opened this session.
-            to = request.data["to"] or (
-                [session_mail.from_address] if session_mail else []
-            )
-            await self._mail_sender.send_mail(
-                MailEffect(
-                    to=to,
-                    content=request.data["content"],
-                    in_reply_to=session_mail.id if session_mail else None,
-                    thread_id=session_mail.thread_id if session_mail else None,
-                )
-            )
-
-    async def _execute_spawn(self, data: dict[str, Any]) -> None:
-        registry = self._registry
-        if registry is None:
-            raise RuntimeError("spawn action unavailable: agent has no registry")
-        prototype = data["prototype"]
-        name = data["name"] or f"{prototype}-{uuid.uuid4().hex[:4]}"
-        # Bound by the session span via structlog contextvars; a missing
-        # binding buckets context-less spawns of this spawner together.
-        session_id = get_contextvars().get("session_id")
-        await registry.spawn_contractor(
-            prototype=prototype,
-            name=name,
-            spawner_id=self._identity.id,
-            session_id=str(session_id) if session_id else None,
-        )

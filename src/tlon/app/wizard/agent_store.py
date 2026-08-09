@@ -63,7 +63,7 @@ class AgentStore:
         boot — so every wizard-created agent gets the standard ReAct
         program spelled out in full alongside its agent.yaml.
         """
-        from tlon.agents.spec import standard_behavior_edn
+        from tlon.agents.behavior_templates import standard_behavior_edn
 
         filepath = self._paths.agent_behavior_file(agent_id)
         filepath.write_text(standard_behavior_edn(agent_id), encoding="utf-8")
