@@ -24,7 +24,7 @@ a second ``MAIL_DELIVERED`` — the component remembers recently handled
 """
 
 from collections import OrderedDict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.base.component import Component
 from tlon.base.device import Device
@@ -257,7 +257,7 @@ class MailDelivery(Component, Device):
         self, mail: Mail, member_id: str, ctx: SpanCtx | None = None
     ) -> None:
         """Publish one MAIL_DELIVERED event for one recipient."""
-        event_kwargs: dict = {
+        event_kwargs: dict[str, Any] = {
             "type": EventType.MAIL_DELIVERED,
             "payload": {"mail": mail, "recipient": member_id},
             "source": "mail_delivery",

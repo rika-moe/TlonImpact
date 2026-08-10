@@ -3,7 +3,7 @@
 Thin wrapper around base/config.py YAML CRUD functions.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -80,7 +80,7 @@ class AgentStore:
     def agent_exists(self, agent_id: str) -> bool:
         return _yaml_exists(agent_id, self._paths.tlon_home())
 
-    def validate_agent_data(self, data: dict) -> tuple[bool, list[str]]:
+    def validate_agent_data(self, data: dict[str, Any]) -> tuple[bool, list[str]]:
         """Validate agent data against the AgentConfig model.
 
         Args:

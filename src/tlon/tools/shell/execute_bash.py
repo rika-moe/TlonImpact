@@ -11,7 +11,7 @@ from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 
-_background_tasks: dict[str, asyncio.Task] = {}
+_background_tasks: dict[str, asyncio.Task[ExecutionResult]] = {}
 _MAX_BACKGROUND_TASKS = 20
 
 

@@ -299,7 +299,7 @@ class SettingsMenu:
 
         self.questionary.press_any_key_to_continue("按回车继续...").ask()
 
-    def _load_env_config(self) -> dict:
+    def _load_env_config(self) -> dict[str, Any]:
         """Load configuration from .env file.
 
         Returns:
@@ -327,7 +327,7 @@ class SettingsMenu:
 
         return config
 
-    def _save_env_config(self, config: dict) -> None:
+    def _save_env_config(self, config: dict[str, Any]) -> None:
         """Save configuration to .env file.
 
         Reads existing .env, updates only the relevant keys,

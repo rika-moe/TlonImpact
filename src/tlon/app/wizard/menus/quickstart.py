@@ -308,7 +308,7 @@ class QuickstartWizard:
             "agents": agents,
         }
 
-    def _step4_confirm(self, api_config: dict, team_config: dict) -> bool:
+    def _step4_confirm(self, api_config: dict[str, Any], team_config: dict[str, Any]) -> bool:
         """Step 4: Confirm and create.
 
         Args:
@@ -342,7 +342,7 @@ class QuickstartWizard:
 
         return bool(self.questionary.confirm("确认创建以上配置?").ask())
 
-    def _create_configuration(self, api_config: dict, team_config: dict) -> None:
+    def _create_configuration(self, api_config: dict[str, Any], team_config: dict[str, Any]) -> None:
         """Create all configuration files.
 
         Args:
@@ -395,7 +395,7 @@ class QuickstartWizard:
 
         self.questionary.press_any_key_to_continue("\n按回车返回主菜单...").ask()
 
-    def _create_env_file(self, api_config: dict) -> None:
+    def _create_env_file(self, api_config: dict[str, Any]) -> None:
         """Create .env file.
 
         Args:

@@ -43,10 +43,10 @@ class EventBus(Component):
     def __init__(self) -> None:
         """Initialize the event bus."""
         super().__init__(name="EventBus")
-        self._subscribers: dict[EventType, list[tuple]] = {}
+        self._subscribers: dict[EventType, list[tuple[str, EventHandler]]] = {}
         self._event_queue: asyncio.Queue[Event] = asyncio.Queue()
         self._running = False
-        self._processor_task: asyncio.Task | None = None
+        self._processor_task: asyncio.Task[None] | None = None
         self._subscription_counter = 0
 
     async def initialize(self) -> None:

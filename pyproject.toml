@@ -86,19 +86,20 @@ convention = "google"
 
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
+strict = true
+# decorators 并非全部带类型（questionary/rich 等），strict 的默认
+# disallow_untyped_decorators 会大面积误报，显式放宽
 disallow_untyped_decorators = false
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
 warn_unreachable = true
-strict_equality = true
 show_error_codes = true
+
+# 测试代码：fake/stub 与 fixture 大量无注解且有意 mock 掉真实类型，
+# 全量 strict 修不动也不值得修；只放宽定义级旗标，仍保留 body 检查
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -136,4 +137,119 @@ dev = [
     "types-docker>=7.2.0",
     # otlp 可选导出器装进 dev，让 mypy 能静态解析 otel.py 的延迟导入
     "opentelemetry-exporter-otlp-proto-http>=1.30",
+    # 依赖方向契约检查（lint-imports）
+    "import-linter>=2.5",
+]
+
+[tool.importlinter]
+root_package = "tlon"
+
+# base 是最底层：不依赖任何上层域
+[[tool.importlinter.contracts]]
+name = "base 不依赖任何上层域"
+type = "forbidden"
+source_modules = "tlon.base"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.memory",
+    "tlon.app",
+    "tlon.tools",
+    "tlon.sandbox",
+    "tlon.prototypes",
+]
+
+# memory 只依赖 base
+[[tool.importlinter.contracts]]
+name = "memory 不依赖 agents/organization/app/tools/sandbox/prototypes"
+type = "forbidden"
+source_modules = "tlon.memory"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.app",
+    "tlon.tools",
+    "tlon.sandbox",
+    "tlon.prototypes",
+]
+
+# organization(mail/messaging) 只依赖 base
+[[tool.importlinter.contracts]]
+name = "organization 不依赖 agents/memory/app/tools/sandbox/prototypes"
+type = "forbidden"
+source_modules = "tlon.organization"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.memory",
+    "tlon.app",
+    "tlon.tools",
+    "tlon.sandbox",
+    "tlon.prototypes",
+]
+
+# sandbox 只依赖 base
+[[tool.importlinter.contracts]]
+name = "sandbox 不依赖 agents/organization/memory/app/tools/prototypes"
+type = "forbidden"
+source_modules = "tlon.sandbox"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.memory",
+    "tlon.app",
+    "tlon.tools",
+    "tlon.prototypes",
+]
+
+# tools 依赖 base/sandbox（tools.memory.* 对 tlon.memory 仅 TYPE_CHECKING
+# 类型引用，暂不放进去）；不得反向依赖 agents/app/prototypes。
+# 已知违规（issue ：tools.agents.* / tools.prototypes.* 需要 AgentRegistry
+# 与原型写能力）逐条豁免如下，待  重构后移除。
+[[tool.importlinter.contracts]]
+name = "tools 不依赖 agents/app/prototypes（ 豁免除外）"
+type = "forbidden"
+source_modules = "tlon.tools"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.app",
+    "tlon.prototypes",
+]
+ignore_imports = [
+    # issue 
+    "tlon.tools.agents.list_agents -> tlon.agents.agent_registry",
+    "tlon.tools.agents.write_prototype -> tlon.agents.prototypes",
+    "tlon.tools.agents.spawn_agent -> tlon.agents.prototypes",
+    "tlon.tools.agents.spawn_agent -> tlon.agents.spawn_errors",
+    "tlon.tools.agents.spawn_agent -> tlon.agents.agent_registry",
+    "tlon.tools.agents.stop_agent -> tlon.agents.spawn_errors",
+    "tlon.tools.agents.stop_agent -> tlon.agents.agent_registry",
+    "tlon.tools.prototypes.list_prototypes -> tlon.agents.prototypes",
+]
+
+# agents 是领域层：可依赖 base/memory/organization/tools/sandbox，
+# 不得依赖组装层 app 与 prototypes
+[[tool.importlinter.contracts]]
+name = "agents 不依赖 app/prototypes"
+type = "forbidden"
+source_modules = "tlon.agents"
+forbidden_modules = [
+    "tlon.app",
+    "tlon.prototypes",
+]
+
+# SDK 是给外部客户端用的纯协议层：只依赖 tlon.base
+[[tool.importlinter.contracts]]
+name = "app.clients.sdk 只依赖 tlon.base"
+type = "forbidden"
+source_modules = "tlon.app.clients.sdk"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.memory",
+    "tlon.sandbox",
+    "tlon.tools",
+    "tlon.prototypes",
+    "tlon.app.server",
+    "tlon.app.wizard",
+    "tlon.app.launcher",
 ]

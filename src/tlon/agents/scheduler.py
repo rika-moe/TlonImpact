@@ -74,7 +74,7 @@ class SessionScheduler:
             asyncio.Queue(maxsize=config.message_queue_size)
         )
         self._worker_running = False
-        self._worker_task: asyncio.Task | None = None
+        self._worker_task: asyncio.Task[None] | None = None
 
     def enqueue(self, mail: Mail, carrier: dict[str, str | None]) -> bool:
         """Enqueue a mail for session processing.

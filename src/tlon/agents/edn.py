@@ -58,7 +58,7 @@ class Symbol(str):
         return f"Symbol({str.__repr__(self)})"
 
 
-class Form(list):
+class Form(list[Any]):
     """An EDN list form (``(...)``) — an expression, distinct from a vector.
 
     Vectors (``[...]``) parse to plain lists (data); lists (``(...)``) parse

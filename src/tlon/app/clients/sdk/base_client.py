@@ -109,9 +109,9 @@ class BaseClient:
         self._reconnect_handlers: list[Callable[[], Any]] = []
 
         # Tasks
-        self._receive_task: asyncio.Task | None = None
-        self._heartbeat_task: asyncio.Task | None = None
-        self._reconnect_task: asyncio.Task | None = None
+        self._receive_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._reconnect_task: asyncio.Task[None] | None = None
         self._reconnect_count = 0
 
         # Event used to notify concurrent connect() callers
@@ -128,7 +128,7 @@ class BaseClient:
 
         # Message sequence for ping/pong
         self._ping_seq = 0
-        self._pending_pongs: dict[int, asyncio.Future] = {}
+        self._pending_pongs: dict[int, asyncio.Future[dict[str, Any]]] = {}
 
     def _derive_rest_url(self, ws_url: str) -> str:
         """Derive REST URL from WebSocket URL.
@@ -668,7 +668,7 @@ class BaseClient:
                 }
 
                 # Create future for pong response
-                pong_future: asyncio.Future = loop.create_future()
+                pong_future: asyncio.Future[dict[str, Any]] = loop.create_future()
                 self._pending_pongs[self._ping_seq] = pong_future
 
                 # Send ping
@@ -691,7 +691,7 @@ class BaseClient:
 
     # ==================== Handler Registration ====================
 
-    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
+    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
         """Register an event handler.
 
         Args:
@@ -703,7 +703,7 @@ class BaseClient:
         self._event_handlers.append(handler)
         return handler
 
-    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
+    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
         """Register a message handler.
 
         Args:
@@ -715,7 +715,7 @@ class BaseClient:
         self._message_handlers.append(handler)
         return handler
 
-    def on_error(self, handler: Callable[[str], None]) -> Callable:
+    def on_error(self, handler: Callable[[str], None]) -> Callable[[str], None]:
         """Register an error handler.
 
         Args:
@@ -727,7 +727,7 @@ class BaseClient:
         self._error_handlers.append(handler)
         return handler
 
-    def on_state_change(self, handler: Callable[[ConnectionState], None]) -> Callable:
+    def on_state_change(self, handler: Callable[[ConnectionState], None]) -> Callable[[ConnectionState], None]:
         """Register a state change handler.
 
         Args:
@@ -739,7 +739,7 @@ class BaseClient:
         self._state_handlers.append(handler)
         return handler
 
-    def on_reconnect(self, handler: Callable[[], Any]) -> Callable:
+    def on_reconnect(self, handler: Callable[[], Any]) -> Callable[[], Any]:
         """Register a reconnect handler.
 
         The handler is called after a successful auto-reconnect (including
@@ -757,7 +757,7 @@ class BaseClient:
 
     # ==================== REST API ====================
 
-    async def rest_get(self, path: str, params: dict | None = None) -> dict | None:
+    async def rest_get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Make a GET request to the REST API.
 
         Args:
@@ -782,7 +782,7 @@ class BaseClient:
             logger.error("rest_get_error", path=path, error=str(e), exc_info=True)
             return None
 
-    async def rest_post(self, path: str, data: dict) -> dict | None:
+    async def rest_post(self, path: str, data: dict[str, Any]) -> dict[str, Any] | None:
         """Make a POST request to the REST API.
 
         Args:

@@ -32,6 +32,7 @@ All messages are JSON with a "type" field:
 import asyncio
 import json
 from datetime import datetime
+from typing import Any
 
 from aiohttp import WSMsgType, web
 
@@ -143,7 +144,7 @@ class WebSocketHandler:
     SUPPORTED_VERSIONS = ["1.0.0"]
     MIN_SUPPORTED_VERSION = "1.0.0"
 
-    async def _authenticate(self, ws: web.WebSocketResponse) -> tuple | None:
+    async def _authenticate(self, ws: web.WebSocketResponse) -> tuple[ClientSession, str] | None:
         """Authenticate a new WebSocket connection with protocol version negotiation.
 
         Waits for an auth message from the client and negotiates protocol version.
@@ -268,7 +269,7 @@ class WebSocketHandler:
 
     def _negotiate_protocol_version(
         self, client_preferred: str | None, client_supported: list[str]
-    ) -> tuple:
+    ) -> tuple[str | None, str | None]:
         """Negotiate protocol version between client and server.
 
         Args:
@@ -358,7 +359,7 @@ class WebSocketHandler:
             logger.error("client_message_error", session_id=session_id, error=str(e))
             await self._send_error_to_session(session_id, f"Error: {str(e)}")
 
-    async def _handle_send_message(self, session_id: str, msg: dict) -> None:
+    async def _handle_send_message(self, session_id: str, msg: dict[str, Any]) -> None:
         """Handle a send message request from client.
 
         The frame format stays lenient: unknown keys (e.g. the R1b
@@ -423,7 +424,7 @@ class WebSocketHandler:
                 session_id, "No human adapter attached to this session"
             )
 
-    async def _handle_mode_change(self, session_id: str, msg: dict) -> None:
+    async def _handle_mode_change(self, session_id: str, msg: dict[str, Any]) -> None:
         """Handle a mode change request from client."""
         mode = msg.get("mode")
         if mode not in ("chat", "event", "agent"):
@@ -448,7 +449,7 @@ class WebSocketHandler:
         else:
             await self._send_error_to_session(session_id, "Failed to change mode")
 
-    async def _handle_filter_change(self, session_id: str, msg: dict) -> None:
+    async def _handle_filter_change(self, session_id: str, msg: dict[str, Any]) -> None:
         """Handle a filter change request from client."""
         filters = msg.get("filters", {})
 
@@ -526,7 +527,7 @@ class WebSocketHandler:
         logger.debug("event_sending", event_type=event.type.value, ws_closed=ws.closed)
         await self._send_message(ws, event_data)
 
-    async def _send_message(self, ws: web.WebSocketResponse, data: dict) -> None:
+    async def _send_message(self, ws: web.WebSocketResponse, data: dict[str, Any]) -> None:
         """Send a message to a WebSocket client."""
         try:
             if not ws.closed:
@@ -544,7 +545,7 @@ class WebSocketHandler:
             },
         )
 
-    async def _send_message_to_session(self, session_id: str, data: dict) -> None:
+    async def _send_message_to_session(self, session_id: str, data: dict[str, Any]) -> None:
         """Send a message to a specific session."""
         async with self._lock:
             ws = self._connections.get(session_id)
@@ -566,7 +567,7 @@ class WebSocketHandler:
         """Send a pong response to a ping."""
         await self._send_message_to_session(session_id, {"type": "pong"})
 
-    async def broadcast(self, data: dict, exclude_session: str | None = None) -> None:
+    async def broadcast(self, data: dict[str, Any], exclude_session: str | None = None) -> None:
         """Broadcast a message to all connected clients.
 
         Args:

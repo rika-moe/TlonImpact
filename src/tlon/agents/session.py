@@ -20,7 +20,7 @@ class AgentSession:
 
     def __init__(self, session_id: str, trigger_content: str, carrier: dict[str, str | None] | None = None):
         self.id = session_id
-        self.context: list[dict] = []
+        self.context: list[dict[str, Any]] = []
         self.created_at = datetime.now()
         self.last_active_at = datetime.now()
         self.state = SessionState.ACTIVE
@@ -38,7 +38,7 @@ class AgentSession:
         self._iteration = 0
         self._error_count = 0
         self._last_llm_response = None
-        self._all_tool_results: list = []
+        self._all_tool_results: list[dict[str, Any]] = []
 
         # Per-session scratchpad shared between loop stages (phase 7c):
         # plan text, critique verdicts, etc. Owned by the engine; the DSL
@@ -46,8 +46,8 @@ class AgentSession:
         self.loop_scratch: dict[str, Any] = {}
 
         # Background tool execution tracking
-        self._pending_tasks: dict[str, asyncio.Task] = {}
-        self._pending_tool_calls: list = []
+        self._pending_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._pending_tool_calls: list[Any] = []
 
     @property
     def is_completed(self) -> bool:
@@ -66,7 +66,7 @@ class AgentSession:
         return self._last_llm_response
 
     @property
-    def all_tool_results(self) -> list:
+    def all_tool_results(self) -> list[dict[str, Any]]:
         return self._all_tool_results
 
     def mark_waiting(self) -> None:
@@ -92,7 +92,7 @@ class AgentSession:
     def add_tool_result(self, tool_call: Any, result: Any) -> None:
         self._all_tool_results.append({"tool_call": tool_call, "result": result})
 
-    def dispatch_tools(self, tool_calls: list, tasks: dict[str, asyncio.Task]) -> None:
+    def dispatch_tools(self, tool_calls: list[Any], tasks: dict[str, asyncio.Task[Any]]) -> None:
         """Record dispatched tool tasks."""
         self._pending_tasks = tasks
         self._pending_tool_calls = tool_calls
@@ -103,7 +103,7 @@ class AgentSession:
         Called when the session ends (normal completion or error) so no
         orphaned tasks keep running after the session is gone.
         """
-        pending: list[asyncio.Task] = [
+        pending: list[asyncio.Task[Any]] = [
             t for t in self._pending_tasks.values() if t is not None and not t.done()
         ]
         for task in pending:
@@ -113,7 +113,7 @@ class AgentSession:
         self._pending_tasks = {}
         self._pending_tool_calls = []
 
-    def collect_completed(self) -> list:
+    def collect_completed(self) -> list[tuple[Any, Any]]:
         """Return list of (tool_call, result) for completed tasks."""
         completed = []
         still_pending = {}
@@ -137,6 +137,6 @@ class AgentSession:
     def has_pending_tools(self) -> bool:
         return len(self._pending_tasks) > 0
 
-    def get_pending_tasks(self) -> dict[str, "asyncio.Task"]:
+    def get_pending_tasks(self) -> dict[str, asyncio.Task[Any]]:
         """Return current pending tool tasks (for test synchronization)."""
         return dict(self._pending_tasks)

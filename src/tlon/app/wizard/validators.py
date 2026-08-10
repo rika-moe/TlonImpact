@@ -22,7 +22,7 @@ class EnvironmentChecker:
         self.warnings: list[str] = []
         self.errors: list[str] = []
 
-    def check_all(self) -> tuple[bool, list, list]:
+    def check_all(self) -> tuple[bool, list[str], list[str]]:
         """Run all environment checks.
 
         Returns:

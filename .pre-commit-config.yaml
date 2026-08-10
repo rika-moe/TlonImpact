@@ -14,9 +14,20 @@ repos:
         language: system
         files: ^src/.*__init__\.py$
         pass_filenames: false
+      - id: check-architecture
+        name: Check DAG Component Architecture compliance
+        entry: python3 scripts/check_architecture.py --ci
+        language: system
+        files: ^src/.*\.py$
+        pass_filenames: false
       - id: mypy
-        name: mypy (src/tlon, ratchet baseline in pyproject.toml)
+        name: mypy (src/tlon, strict in pyproject.toml)
         entry: uv run mypy src/tlon/
+        language: system
+        pass_filenames: false
+      - id: lint-imports
+        name: lint-imports (dependency contracts in pyproject.toml)
+        entry: uv run lint-imports
         language: system
         pass_filenames: false
 

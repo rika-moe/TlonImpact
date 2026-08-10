@@ -7,9 +7,11 @@ Narrative fields (identity, profile, behavior) are stored as
 ~/.tlon/{id}/IDENTITY.md, SOUL.md, RULES.md respectively.
 """
 
+from typing import Any
+
 from tlon.base.config import AgentConfig
 
-_STANDARD_TEAM_DATA: list[dict] = [
+_STANDARD_TEAM_DATA: list[dict[str, str]] = [
     {
         "id": "lin-zhiyao",
         "name": "林知遥",
@@ -54,10 +56,10 @@ _STANDARD_TEAM_DATA: list[dict] = [
     },
 ]
 
-STANDARD_TEAM_DICTS: list[dict] = _STANDARD_TEAM_DATA
+STANDARD_TEAM_DICTS: list[dict[str, str]] = _STANDARD_TEAM_DATA
 
 
-def make_agent_config(data: dict) -> AgentConfig:
+def make_agent_config(data: dict[str, Any]) -> AgentConfig:
     """Convert a team data dict to an AgentConfig (without narrative fields)."""
     return AgentConfig(
         id=data["id"],

@@ -17,7 +17,7 @@ Everything is assembled from the Agent's existing injected
 dependencies — the executor never holds a reference to the Agent.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tlon.agents.member_spec import MemberRule
 from tlon.agents.stages.outcome import MailEffect
@@ -106,7 +106,7 @@ class EffectExecutor:
             self._logger.error("mail_emit_failed", exc_info=True)
 
     async def save_interaction(
-        self, final_response: str, llm_response: LLMResponse, tool_results: list
+        self, final_response: str, llm_response: LLMResponse, tool_results: list[Any]
     ) -> None:
         """Persist a completed interaction (gated by the loop's save_interaction)."""
         assert self.rule.loop is not None, "EffectExecutor requires a cognitive rule"

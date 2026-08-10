@@ -300,7 +300,7 @@ class TlonClient:
 
     # ==================== Event Handling ====================
 
-    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
+    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
         """Register an event handler.
 
         Events are pre-filtered by the server (the single filtering point)
@@ -324,7 +324,7 @@ class TlonClient:
             except Exception as e:
                 logger.error("user_event_handler_error", error=str(e), exc_info=True)
 
-    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable:
+    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
         """Register a message handler.
 
         Args:
@@ -335,7 +335,7 @@ class TlonClient:
         """
         return self._base.on_message(handler)
 
-    def on_error(self, handler: Callable[[str], None]) -> Callable:
+    def on_error(self, handler: Callable[[str], None]) -> Callable[[str], None]:
         """Register an error handler.
 
         Args:
@@ -346,7 +346,7 @@ class TlonClient:
         """
         return self._base.on_error(handler)
 
-    def on_state_change(self, handler: Callable[[ConnectionState], None]) -> Callable:
+    def on_state_change(self, handler: Callable[[ConnectionState], None]) -> Callable[[ConnectionState], None]:
         """Register a state change handler.
 
         Args:
@@ -357,7 +357,7 @@ class TlonClient:
         """
         return self._base.on_state_change(handler)
 
-    def on_reconnect(self, handler: Callable[[], None]) -> Callable:
+    def on_reconnect(self, handler: Callable[[], None]) -> Callable[[], None]:
         """Register a reconnect handler.
 
         Called after a successful auto-reconnect (and re-authentication),
@@ -374,7 +374,7 @@ class TlonClient:
 
     # ==================== REST API ====================
 
-    async def get_agents(self) -> list[dict]:
+    async def get_agents(self) -> list[dict[str, Any]]:
         """Get all agents.
 
         Returns:
@@ -383,7 +383,7 @@ class TlonClient:
         result = await self._base.rest_get("/agents")
         return result.get("agents", []) if result else []
 
-    async def get_agent(self, agent_id: str) -> dict | None:
+    async def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         """Get a specific agent.
 
         Args:
@@ -395,7 +395,7 @@ class TlonClient:
         result = await self._base.rest_get(f"/agents/{agent_id}")
         return result
 
-    async def get_trace(self, trace_id: str) -> dict | None:
+    async def get_trace(self, trace_id: str) -> dict[str, Any] | None:
         """Get trace information.
 
         Args:
@@ -406,7 +406,7 @@ class TlonClient:
         """
         return await self._base.rest_get(f"/traces/{trace_id}")
 
-    async def get_traces(self, limit: int = 100) -> list[dict]:
+    async def get_traces(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get list of traces.
 
         Args:

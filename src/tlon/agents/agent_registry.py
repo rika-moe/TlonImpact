@@ -250,7 +250,7 @@ class AgentRegistry(Component):
 
         # Lifecycle request subscriptions + idle monitor task
         self._request_subscriptions: list[str] = []
-        self._idle_monitor_task: asyncio.Task | None = None
+        self._idle_monitor_task: asyncio.Task[None] | None = None
 
         # Spec-derived lifecycle profile cache (phase E): per registered
         # member, the loaded MemberSpec or None (unreadable). The boot set,
@@ -1291,7 +1291,7 @@ class AgentRegistry(Component):
         """
         return self._agent_info.get_config(agent_id)
 
-    def get_agent_status(self, agent_id: str) -> dict | None:
+    def get_agent_status(self, agent_id: str) -> dict[str, Any] | None:
         """Get status of a specific agent.
 
         Args:
@@ -1325,7 +1325,7 @@ class AgentRegistry(Component):
             "spawn_depth": config.spawn_depth,
         }
 
-    def get_all_agent_status(self) -> list[dict]:
+    def get_all_agent_status(self) -> list[dict[str, Any]]:
         """Get status of all registered agents.
 
         Returns:

@@ -27,8 +27,17 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src/
 
-      - name: Type check (mypy, full src/tlon)
+      - name: Type check (mypy, full src/tlon, strict)
         run: uv run mypy src/tlon/
+
+      - name: Import contracts (lint-imports)
+        run: uv run lint-imports
+
+      - name: Architecture check (DAG compliance)
+        run: uv run python scripts/check_architecture.py --ci
+
+      - name: No re-export check
+        run: uv run python scripts/check_no_reexport.py --ci
 
       - name: Run unit tests
         run: uv run pytest src/tests/ --ignore=src/tests/integration -v --tb=short

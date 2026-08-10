@@ -92,8 +92,8 @@ uv run pytest
 - 大任务拆阶段，每阶段独立提交或独立 PR；行为不变先行，能力扩张随后
 
 ### 执行
-- 大活派 subagent：brief 给精确的文件:行号、已核实的现状事实、已定稿决策、测试要求、验证命令；超时/中断用 resume 续跑；完成后必须自己复核（四件套 + 审 diff + 真实冒烟），不盲信汇报
-- 验证四件套：`uv run pytest src/tests/ -q`、`uv run ruff check src/`、`uv run python scripts/check_architecture.py`、`uv run python scripts/check_no_reexport.py`，全绿才算完
+- 大活派 subagent：brief 给精确的文件:行号、已核实的现状事实、已定稿决策、测试要求、验证命令；超时/中断用 resume 续跑；完成后必须自己复核（六件套 + 审 diff + 真实冒烟），不盲信汇报
+- 验证六件套：`uv run pytest src/tests/ -q`、`uv run ruff check src/`、`uv run python scripts/check_architecture.py`、`uv run python scripts/check_no_reexport.py`、`uv run mypy src/tlon`、`uv run lint-imports`，全绿才算完
 - 真实冒烟：起 dream + SDK 发邮件 + 查 `~/.tlon` 收件箱验证；完事清理冒烟痕迹、释放 8080/8888 端口
 
 ### 质量准则
@@ -102,7 +102,7 @@ uv run pytest
 - 诚实优先：review 给证据说话；发现用户指令有问题时摆数据提出，由用户定夺
 
 ### 沟通
-- 汇报带实质：改动清单、测试数、四件套结果、与计划的偏差及原因
+- 汇报带实质：改动清单、测试数、六件套结果、与计划的偏差及原因
 - 未完成/未验证的不说成完成；过程事故（subagent 超时、替换误伤等）如实记录
 
 ---
