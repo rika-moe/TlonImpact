@@ -106,7 +106,7 @@ Agent 的启动与休眠由它的行为规约（`behavior.tlon`）的 `:on` 规�
 | 文件 | 内容 |
 |------|------|
 | `agent.yaml` | 运行参数（模型、容器、激活策略等） |
-| `behavior.tlon` | 行为规约（触发、上下文、循环、完成动作），EDN 格式 |
+| `behavior.tlon` | 行为规约（rules 形态：`:on` / `:when` / `:loop` / `:actions`），EDN 格式 |
 | `IDENTITY.md` / `SOUL.md` / `RULES.md` | 人格叙事：身份、性格、行为规则 |
 
 ### agent.yaml

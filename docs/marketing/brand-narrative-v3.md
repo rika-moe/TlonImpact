@@ -136,21 +136,28 @@ policy/mechanism 分层（docs/design/members.md 阶段 D）。
 
 在特隆，语言不仅描述现实，语言**构造**现实。
 
-Tlon 的每个 agent 由一份 `behavior.tlon` 定义——一份刻意
-图灵不完备的迷你 Lisp 规约：
+Tlon 的每个 agent 由一份 `behavior.tlon` 定义——一份迷你
+Lisp 规约（EDN）。它允许循环、图灵完备，但每步求值都燃烧
+fuel：停机不靠阉割语言，靠预算必然耗尽：
 
 ```clojure
 {:version 1
- :trigger (and (addressed-to-me? msg)
-               (content-matches? msg "？$"))
- :context {:persona true :mail-history 20}
- :loop {:mode :react :max-iterations 10}
- :on-complete {:save-interaction true}}
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :when (addressed-to-me? msg)
+          :loop {:stages [(think) (act)]
+                 :until (iteration-limit-reached?)
+                 :max-iterations 10
+                 :save-interaction true}}
+         {:name "boot"
+          :on :boot
+          :actions []}]}
 ```
 
-四节：何时响应（trigger）、看见什么（context）、如何思考
-（loop）、做完之后（on-complete）。白名单求值器、fuel 限制、
-纯度校验——规约只能描述，执行永远属于引擎。
+规则即全部行为：何时响应（:on / :when）、看见什么
+（:loop/:context）、如何思考（:stages / :until）、做完之后
+（:actions）。白名单求值器、fuel 硬顶、纯度校验——规约只能
+描述，执行永远属于引擎。
 
 关键的分形在于：**这份 DSL 可以由 LLM 书写**。一个 agent 可以
 为不同的情况设计不同的行为规约——行为成了可以生成、可以
@@ -215,7 +222,7 @@ traces 视图，是共和国的档案馆。
 | **临时工 / contractor** | 一次性 agent，回收时删 home | AgentConfig.role="contractor" |
 | **原型 / prototype** | 可造生命的规约基因库 | ~/.tlon/prototypes/ |
 | **亚当 / Adam** | 内置 init 进程（boot/wake/drain） | src/tlon/agents/adam.py |
-| **behavior.tlon** | 行为规约（DSL） | src/tlon/agents/spec.py |
+| **behavior.tlon** | 行为规约（DSL） | src/tlon/agents/member_spec.py |
 | **Shakespeare** | 两层记忆系统 | src/tlon/memory/ |
 | **Mirror / 镜** | 配置向导 | `uv run tlon mirror` |
 | **Garden / 花园** | Git 工作流 | 分支即小径 |

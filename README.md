@@ -13,8 +13,8 @@
   （`gu-yanxi@tlon.internal`），你写信给它，它回信给你；
   agent 之间也以信件协作（CC、线程、转发、退信）
 - **行为由 DSL 书写**：每个 agent 的行为是 `behavior.tlon` 里的一份
-  规约（trigger / context / loop / on-complete），可被人类书写，
-  也可被 LLM 书写
+  规约（rules 形态：`:on` / `:when` / `:loop` / `:actions`），
+  可被人类书写，也可被 LLM 书写
 - **按需存在的居民**：agent 可以沉睡——被一封信唤醒，处理完再睡去；
   也可以由别的 agent 从原型（prototype）梦进存在，用完回收
 - **自部署**：你的机器、你的密钥、你的数据。trace 与结构化日志开箱即用

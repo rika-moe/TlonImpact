@@ -1,13 +1,17 @@
 """Restricted evaluator for the agent behavior DSL (L1, phase 3a).
 
-Evaluates parsed EDN Forms (``agents/edn.py``) under a deliberately
-non-Turing-complete semantics (design decisions 2/3 in
-``docs/design/dsl-agents.md``):
+Evaluates parsed EDN Forms (``agents/edn.py``) under a fuel-bounded
+semantics (design decision 3 in ``docs/design/dsl-agents.md``, revised
+in phase D — the original "deliberately non-Turing-complete" stance was
+superseded once bounded loops entered the language):
 
 - special forms are a closed whitelist: ``if`` / ``when`` / ``let`` /
   ``and`` / ``or`` / ``while`` / ``recur`` / ``map`` / ``filter`` /
-  ``reduce`` — no ``def``, no ``lambda``, no ``match`` (3b+);
-  recursion is impossible (there is no way to name a function);
+  ``reduce`` — no ``def``, no ``lambda``/``fn``, no macros, no mutable
+  global state. Recursion is impossible (there is no way to name a
+  function), but ``while``/``recur`` express general iteration, so the
+  language is Turing-complete modulo the fuel budget — fuel, not the
+  absence of loops, is the termination guarantee;
 - ``while`` / ``recur`` (phase D) are the Clojure-style bounded loop
   pair: state flows through the binding vector, ``recur`` rebinds and
   jumps back to the loop head, and is only legal in a ``while`` body's
@@ -15,8 +19,7 @@ non-Turing-complete semantics (design decisions 2/3 in
   the final ``and``/``or`` argument inherit tail position). ``map`` /
   ``filter`` / ``reduce`` iterate a vector with an explicitly bound
   element variable (no lambda). Every iteration is still metered — each
-  step consumes one fuel unit — so Turing-completeness is bought back
-  with a guaranteed termination bound;
+  step consumes one fuel unit — so every loop is bounded by fuel;
 - every other form head must name a registered :class:`Builtin`;
 - maps are data: keys stay literal (keywords in practice), values are
   evaluated — so action option maps may embed expressions, e.g.
