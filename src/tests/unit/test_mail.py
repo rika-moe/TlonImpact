@@ -144,6 +144,26 @@ class TestPaths:
         assert mail_dir == tmp_path / "human-alice" / "mail"
         assert mail_dir.is_dir()
 
+    def test_member_mail_dir_existing_never_creates(self, tmp_path: Path):
+        paths = TlonPaths(home=tmp_path)
+        assert paths.member_mail_dir_existing("human:alice") is None
+        assert not (tmp_path / "human-alice").exists()
+
+        paths.member_mail_dir("human:alice")  # creates
+        assert (
+            paths.member_mail_dir_existing("human:alice")
+            == tmp_path / "human-alice" / "mail"
+        )
+
+    def test_known_human_ids_lists_only_mailboxed_humans(self, tmp_path: Path):
+        paths = TlonPaths(home=tmp_path)
+        assert paths.known_human_ids() == []
+
+        paths.member_mail_dir("human:alice")
+        paths.member_mail_dir("human:alice")
+        (tmp_path / "human-ghost").mkdir()  # dir without mail/ is not known
+        assert paths.known_human_ids() == ["human:alice", "human:alice"]
+
 
 class TestMailbox:
     async def test_append_and_unread(self, tmp_path: Path):
@@ -155,6 +175,15 @@ class TestMailbox:
 
         unread = await mailbox.unread()
         assert [m.id for m in unread] == [first.id, second.id]
+
+    def test_instances_over_same_directory_share_a_lock(self, tmp_path: Path):
+        """Delivery cache, REST /inbox and agent runtimes each construct
+        their own Mailbox — writers must still be serialized."""
+        first = Mailbox(tmp_path / "a")
+        second = Mailbox(tmp_path / "a")
+        other = Mailbox(tmp_path / "b")
+        assert first._lock is second._lock
+        assert first._lock is not other._lock
 
     async def test_sent_mail_is_not_unread(self, tmp_path: Path):
         mailbox = Mailbox(tmp_path)

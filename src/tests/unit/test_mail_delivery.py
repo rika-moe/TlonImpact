@@ -61,7 +61,9 @@ def _make_delivery(
 ):
     bus = _make_bus()
     provider = MockAgentInfoProvider(configs or {})
-    adapter_manager = AdapterManager(event_bus=bus, agent_info_provider=provider)
+    adapter_manager = AdapterManager(
+        event_bus=bus, agent_info_provider=provider, tlon_paths=temp_paths
+    )
     for username in online_humans or []:
         adapter_manager._adapters[username] = MagicMock(
             member_id=f"human:{username}",
@@ -282,6 +284,123 @@ class TestBounce:
 
         assert _delivered(bus) == []
         assert not (temp_paths.tlon_home() / "nobody").exists()
+
+
+class TestOfflineHumans:
+    """Mail to a known-but-offline human waits in their inbox (mail.md 人类侧).
+
+    A human is "known" once their persistent mailbox exists; only an
+    address with no mailbox at all counts as unknown and bounces.
+    """
+
+    @pytest.mark.asyncio
+    async def test_offline_known_human_receives_mail_no_bounce(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)  # nobody online
+        await delivery.initialize()
+        # The human has a persistent mailbox (connected at least once)
+        temp_paths.member_mail_dir("human:alice")
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["alice@tlon.internal"],
+            content="离线也等你",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        # Delivered to the human's inbox — exactly one event, no bounce
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "human:alice"
+        assert events[0].payload["mail"].id == mail.id
+
+        inbox = Mailbox(temp_paths.member_mail_dir("human:alice"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_never_seen_human_still_bounces(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["ghost@tlon.internal"],
+            content="有人吗",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        assert len(events) == 1  # only the bounce, to the sender
+        assert events[0].payload["recipient"] == "a-001"
+        assert events[0].payload["mail"].from_address == POSTMASTER_ADDRESS
+
+    @pytest.mark.asyncio
+    async def test_all_includes_offline_known_human(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)  # nobody online
+        await delivery.initialize()
+        temp_paths.member_mail_dir("human:alice")  # known, offline
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=[ALL_ADDRESS],
+            content="全员通知",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        recipients = {e.payload["recipient"] for e in _delivered(bus)}
+        assert recipients == {"a-001", "human:alice"}
+
+        inbox = Mailbox(temp_paths.member_mail_dir("human:alice"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+
+
+class TestIdempotentDelivery:
+    """A republished MAIL_NEW must not duplicate inbox/sent copies or events."""
+
+    @pytest.mark.asyncio
+    async def test_republished_mail_is_delivered_once(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal"],
+            content="只到一次",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+        await delivery._on_mail_new(_mail_event(mail))  # replay
+
+        assert len(_delivered(bus)) == 1
+        inbox = Mailbox(temp_paths.member_mail_dir("a-002"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+        sent = Mailbox(temp_paths.member_mail_dir("a-001"))
+        assert [m.id for m in await sent.recent()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_republished_unknown_recipient_bounces_once(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["ghost@tlon.internal"],
+            content="有人吗",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+        await delivery._on_mail_new(_mail_event(mail))  # replay
+
+        assert len(_delivered(bus)) == 1  # one bounce only
+        inbox = Mailbox(temp_paths.member_mail_dir("a-001"))
+        unread = await inbox.unread()
+        assert len(unread) == 1
+        assert unread[0].from_address == POSTMASTER_ADDRESS
 
 
 class TestPayloadGuard:

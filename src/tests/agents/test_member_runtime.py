@@ -490,7 +490,11 @@ class TestMarkReadSemantics:
         )
         await mailbox.append_inbox(plain)
         await bus.publish(_deliver(plain, member.member_id))
-        await _wait_for(lambda: mailbox.unread())  # processed → read
+
+        async def _no_unread() -> bool:
+            return not await mailbox.unread()
+
+        await _wait_for(_no_unread)  # processed → read
         assert delivered == []  # gate failed: no forward
         assert await mailbox.unread() == []
 
@@ -523,9 +527,14 @@ class TestMarkReadSemantics:
         own = Mail.create(from_address=member.address, content="echo", to=["sink@tlon.internal"])
         await mailbox.append_inbox(own)
         await bus.publish(_deliver(own, member.member_id))
-        await asyncio.sleep(0.1)
+
+        async def _no_unread() -> bool:
+            return not await mailbox.unread()
+
+        await _wait_for(_no_unread)
         assert delivered == []  # own mail never processed
-        assert [m.id for m in await mailbox.unread()] == [own.id]  # nor marked read
+        # …but marked read immediately (an all@ self-copy must not linger)
+        assert await mailbox.unread() == []
 
         await member.shutdown()
 

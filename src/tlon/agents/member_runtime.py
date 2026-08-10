@@ -312,8 +312,10 @@ class MemberRuntime(Member):
         A cognitive rule on MAIL_DELIVERED gates and enqueues a session (the
         read is deferred to session completion); deterministic rules
         evaluate and execute their actions inline. Mail sent by the member
-        itself is ignored (own-mail guard). A delivered mail not enqueued
-        for a cognitive session is marked read after processing (D6.1).
+        itself is ignored (own-mail guard) and marked read immediately —
+        an ``all@`` self-copy must not linger as unread until the next
+        boot scan. A delivered mail not enqueued for a cognitive session
+        is marked read after processing (D6.1).
         """
         mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
         is_own_mail = (
@@ -322,6 +324,7 @@ class MemberRuntime(Member):
             and mail.from_address == self.address
         )
         if is_own_mail:
+            await self._mark_read(mail)
             return
         delivered_to_me = (
             event.type is EventType.MAIL_DELIVERED

@@ -3,9 +3,10 @@
 The MailDelivery component subscribes to MAIL_NEW and, for each mail:
 
 1. expands ``all@tlon.internal`` into every registered agent plus every
-   online human;
+   known human (online, or offline with a persistent mailbox);
 2. resolves each recipient address to a member (agents via the config
-   provider, humans via the online adapters);
+   provider, humans via the online adapters or their persistent
+   mailbox);
 3. writes the mail to the sender's ``sent.jsonl`` and to every valid
    recipient's ``inbox.jsonl`` (mailboxes are resolved via
    ``paths.member_mail_dir`` and cached on demand);
@@ -15,8 +16,14 @@ The MailDelivery component subscribes to MAIL_NEW and, for each mail:
 Recipients that resolve to nobody are collected and answered with a
 bounce mail from ``postmaster@tlon.internal`` to the sender — the error
 lands in the sender's inbox, so an LLM can correct the address itself.
+
+Delivery is idempotent within the process: a republished ``MAIL_NEW``
+(for the same mail id) does not write a second inbox/sent copy or emit
+a second ``MAIL_DELIVERED`` — the component remembers recently handled
+``(mail_id, member)`` pairs in a bounded in-memory set.
 """
 
+from collections import OrderedDict
 from typing import TYPE_CHECKING
 
 from tlon.base.component import Component
@@ -41,13 +48,17 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+#: Bound on the in-memory idempotency set (oldest entries evicted).
+_SEEN_CAP = 4096
+
 
 class MailDelivery(Component, Device):
     """Delivers mail from the bus into per-member mailboxes.
 
     Stateless apart from the on-demand Mailbox cache: all routing
     information comes from the injected AgentInfoProvider (registered
-    agents, including sleeping ones) and AdapterManager (online humans).
+    agents, including sleeping ones), the AdapterManager (online
+    humans), and the persistent mailbox layout (known humans).
 
     Dependencies (constructor injected):
         - event_bus: EventBus for subscription/publishing
@@ -83,6 +94,8 @@ class MailDelivery(Component, Device):
         self._paths = tlon_paths or paths
         # member_id -> Mailbox, created lazily on first delivery
         self._mailboxes: dict[str, Mailbox] = {}
+        # Recently handled "mail_id|member" keys (in-process idempotency)
+        self._seen: OrderedDict[str, None] = OrderedDict()
 
         logger.info("mail_delivery_constructed")
 
@@ -123,7 +136,7 @@ class MailDelivery(Component, Device):
             sender_id = self._resolve_address(mail.from_address)
 
             # Sender's own copy (postmaster/system senders have no mailbox)
-            if sender_id is not None:
+            if sender_id is not None and not self._seen_before(f"{mail.id}|sent|{sender_id}"):
                 await self._mailbox_for(sender_id).append_sent(mail)
 
             unknown: list[str] = []
@@ -133,6 +146,8 @@ class MailDelivery(Component, Device):
                 if member_id is None:
                     unknown.append(address)
                     continue
+                if self._seen_before(f"{mail.id}|inbox|{member_id}"):
+                    continue  # republished MAIL_NEW: already delivered
                 await self._mailbox_for(member_id).append_inbox(mail)
                 delivered.append(member_id)
                 await self._publish_delivered(mail, member_id, ctx)
@@ -145,7 +160,8 @@ class MailDelivery(Component, Device):
             )
 
             if unknown and sender_id is not None:
-                await self._bounce(mail, unknown, sender_id, ctx)
+                if not self._seen_before(f"{mail.id}|bounce|{sender_id}"):
+                    await self._bounce(mail, unknown, sender_id, ctx)
             elif unknown:
                 logger.warning(
                     "mail_bounce_dropped",
@@ -173,7 +189,12 @@ class MailDelivery(Component, Device):
         return list(dict.fromkeys(addresses))
 
     def _expand_all(self) -> list[str]:
-        """all@tlon.internal: all registered agents + all online humans."""
+        """all@tlon.internal: all registered agents + all known humans.
+
+        Known humans = online adapters ∪ humans with a persistent
+        mailbox (docs/design/mail.md: "有邮箱的人类") — offline humans
+        are included; their copy waits in their inbox.
+        """
         addresses = [
             address_for_member(agent_id)
             for agent_id in sorted(self._agent_info.get_all_ids())
@@ -182,22 +203,30 @@ class MailDelivery(Component, Device):
             address_for_member(adapter.member_id)
             for adapter in self._adapter_manager.list_online()
         )
+        addresses.extend(
+            address_for_member(human_id) for human_id in self._paths.known_human_ids()
+        )
         return addresses
 
     def _resolve_address(self, address: str) -> str | None:
         """Resolve a mail address to a member id, or None if unknown.
 
         Agents (registered, sleeping included) win over humans on a
-        colliding local part; humans must be online (their mailbox is
-        created with the adapter).
+        colliding local part. A human resolves when they are online
+        (adapter present) OR when they have a persistent mailbox —
+        mail to a known-but-offline human waits in their inbox
+        (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).
         """
         local = member_id_for_address(address)
         if local is None:
             return None
         if self._agent_info.get_config(local) is not None:
             return local
+        human_id = f"{HUMAN_ID_PREFIX}{local}"
         if self._adapter_manager.get_adapter(local) is not None:
-            return f"{HUMAN_ID_PREFIX}{local}"
+            return human_id
+        if self._paths.member_mail_dir_existing(human_id) is not None:
+            return human_id
         return None
 
     def _mailbox_for(self, member_id: str) -> Mailbox:
@@ -207,6 +236,22 @@ class MailDelivery(Component, Device):
             mailbox = Mailbox(self._paths.member_mail_dir(member_id))
             self._mailboxes[member_id] = mailbox
         return mailbox
+
+    def _seen_before(self, key: str) -> bool:
+        """Record a delivery key; True when it was already handled.
+
+        In-process idempotency for republished ``MAIL_NEW`` events:
+        the first delivery of a (mail, member) pair wins, replays are
+        skipped. The set is bounded (``_SEEN_CAP``, oldest evicted) —
+        a restart or an evicted key simply falls back to redelivery,
+        which the append-only mailbox tolerates.
+        """
+        if key in self._seen:
+            return True
+        self._seen[key] = None
+        if len(self._seen) > _SEEN_CAP:
+            self._seen.popitem(last=False)
+        return False
 
     async def _publish_delivered(
         self, mail: Mail, member_id: str, ctx: SpanCtx | None = None

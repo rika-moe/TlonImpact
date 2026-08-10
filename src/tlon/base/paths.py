@@ -126,6 +126,35 @@ class TlonPaths:
             return d
         return self.agent_mail_dir(member_id)
 
+    def member_mail_dir_existing(self, member_id: str) -> Path | None:
+        """Like :meth:`member_mail_dir` but never creates anything.
+
+        Returns the mailbox directory when it already exists on disk,
+        ``None`` otherwise. Used for existence checks (e.g. "is this a
+        known human") where calling ``member_mail_dir`` would create the
+        directory and defeat the check.
+        """
+        if member_id.startswith("human:"):
+            username = member_id[len("human:"):]
+            d = self._home / f"human-{username}" / "mail"
+        else:
+            d = self._home / member_id / "mail"
+        return d if d.is_dir() else None
+
+    def known_human_ids(self) -> list[str]:
+        """List human member ids that have a persistent mailbox directory.
+
+        A human becomes "known" once their mailbox exists (created on
+        first session attach, first delivery, or first ``/inbox`` read).
+        Mail to a known-but-offline human waits in their inbox
+        (docs/design/mail.md 人类侧).
+        """
+        ids: list[str] = []
+        for child in sorted(self._home.glob("human-*")):
+            if child.is_dir() and (child / "mail").is_dir():
+                ids.append(f"human:{child.name[len('human-'):]}")
+        return ids
+
     # ===== Agent persona files =====
 
     def agent_identity_file(self, agent_id: str) -> Path:

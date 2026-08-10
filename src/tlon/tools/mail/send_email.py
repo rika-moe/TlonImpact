@@ -114,5 +114,9 @@ class SendEmailTool(Tool):
                 "in_reply_to": in_reply_to,
                 "action": "send_email",
             },
-            message=f"✉️ {content[:50]}..." if len(content) > 50 else f"✉️ {content}",
+            message=(
+                "✉️ 邮件已受理，进入投递队列。投递是异步的：若收件人地址不存在，"
+                "稍后会收到 postmaster 退信——以退信为唯一的失败信号，"
+                "不要在本轮向用户承诺「已送达」。"
+            ),
         )

@@ -13,6 +13,12 @@ order. A missing cursor file means everything is unread.
 
 The mailbox directory is resolved by the caller (via
 ``tlon.base.paths``); Mailbox itself knows nothing about layout policy.
+
+Multiple Mailbox instances over the same directory (the delivery
+component's cache, the REST ``/inbox`` handler, an agent's runtime)
+share one asyncio lock per directory, so concurrent writers are
+serialized process-wide even though each caller constructs its own
+instance.
 """
 
 import asyncio
@@ -26,11 +32,17 @@ from tlon.organization.mail.mail import Mail
 
 logger = get_logger(__name__)
 
+#: Directory-keyed locks shared by every Mailbox instance over the same
+#: directory. Bounded by the member count; entries are never removed
+#: (a member's directory lives as long as the member).
+_LOCKS: dict[Path, asyncio.Lock] = {}
+
 
 class Mailbox:
     """File-based mailbox for a single member.
 
-    Thread-safe (asyncio) using a lock around file mutations.
+    Thread-safe (asyncio): file mutations hold a lock shared by all
+    instances rooted at the same directory.
     """
 
     def __init__(self, mail_dir: Path):
@@ -44,7 +56,7 @@ class Mailbox:
         self._inbox_path = mail_dir / "inbox.jsonl"
         self._sent_path = mail_dir / "sent.jsonl"
         self._cursor_path = mail_dir / "inbox.cursor"
-        self._lock = asyncio.Lock()
+        self._lock = _LOCKS.setdefault(mail_dir, asyncio.Lock())
 
         self._dir.mkdir(parents=True, exist_ok=True)
 

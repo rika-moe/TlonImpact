@@ -29,6 +29,7 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.paths import TlonPaths, paths
 from tlon.base.tracing.trace_context import start_span
 from tlon.organization.mail.mail import Mail, address_for_member, is_mail_address
 from tlon.organization.messaging.member import Member
@@ -283,19 +284,27 @@ class AdapterManager(Component):
     ServerApp component with initialize/shutdown.
     """
 
-    def __init__(self, event_bus: EventBus, agent_info_provider: "AgentInfoProvider"):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        agent_info_provider: "AgentInfoProvider",
+        tlon_paths: TlonPaths | None = None,
+    ):
         """Initialize the adapter manager.
 
         Args:
             event_bus: Event bus adapters publish on
             agent_info_provider: Provider for agent config queries
                 (recipient name → address resolution)
+            tlon_paths: Path resolver (tests); None uses the singleton
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
         self._agent_info = agent_info_provider
+        self._paths = tlon_paths or paths
         self._adapters: dict[str, HumanAdapter] = {}  # username -> adapter
         self._sessions: dict[str, str] = {}  # session_id -> username
+        self._lock = asyncio.Lock()  # serializes attach/detach
 
     async def initialize(self) -> None:
         """Initialize the manager (adapters are created lazily on attach)."""
@@ -316,6 +325,12 @@ class AdapterManager(Component):
     ) -> HumanAdapter:
         """Attach a session to the user's adapter, creating it if needed.
 
+        Serialized by a lock: two concurrent first-attaches for the same
+        username must not create (and leak) two adapters. First attach
+        also creates the human's persistent mailbox — having connected
+        once makes the human "known", so mail addressed to them is held
+        in their inbox while they are offline (docs/design/mail.md).
+
         Args:
             username: Human username
             session_id: Session to attach
@@ -324,24 +339,28 @@ class AdapterManager(Component):
         Returns:
             The user's adapter (shared across same-name sessions)
         """
-        adapter = self._adapters.get(username)
-        if adapter is None:
-            adapter = HumanAdapter(username, self._event_bus, self.resolve_address)
-            await adapter.initialize()
-            self._adapters[username] = adapter
-            logger.info(
-                "human_adapter_created", username=username, member_id=adapter.member_id
-            )
+        async with self._lock:
+            adapter = self._adapters.get(username)
+            if adapter is None:
+                adapter = HumanAdapter(username, self._event_bus, self.resolve_address)
+                await adapter.initialize()
+                self._adapters[username] = adapter
+                self._paths.member_mail_dir(adapter.member_id)
+                logger.info(
+                    "human_adapter_created",
+                    username=username,
+                    member_id=adapter.member_id,
+                )
 
-        adapter.attach_session(session_id, sink)
-        self._sessions[session_id] = username
-        logger.info(
-            "human_session_attached",
-            username=username,
-            session_id=session_id,
-            session_count=adapter.session_count,
-        )
-        return adapter
+            adapter.attach_session(session_id, sink)
+            self._sessions[session_id] = username
+            logger.info(
+                "human_session_attached",
+                username=username,
+                session_id=session_id,
+                session_count=adapter.session_count,
+            )
+            return adapter
 
     async def detach(self, session_id: str) -> None:
         """Detach a session; shutdown the adapter when its last session leaves.
@@ -349,26 +368,27 @@ class AdapterManager(Component):
         Args:
             session_id: Session to detach
         """
-        username = self._sessions.pop(session_id, None)
-        if username is None:
-            return
+        async with self._lock:
+            username = self._sessions.pop(session_id, None)
+            if username is None:
+                return
 
-        adapter = self._adapters.get(username)
-        if adapter is None:
-            return
+            adapter = self._adapters.get(username)
+            if adapter is None:
+                return
 
-        adapter.detach_session(session_id)
-        logger.info(
-            "human_session_detached",
-            username=username,
-            session_id=session_id,
-            session_count=adapter.session_count,
-        )
+            adapter.detach_session(session_id)
+            logger.info(
+                "human_session_detached",
+                username=username,
+                session_id=session_id,
+                session_count=adapter.session_count,
+            )
 
-        if adapter.session_count == 0:
-            await adapter.shutdown()
-            del self._adapters[username]
-            logger.info("human_adapter_removed", username=username)
+            if adapter.session_count == 0:
+                await adapter.shutdown()
+                del self._adapters[username]
+                logger.info("human_adapter_removed", username=username)
 
     async def publish(
         self,

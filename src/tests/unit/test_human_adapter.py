@@ -24,6 +24,7 @@ import pytest
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.messaging.human_adapter import (
     AdapterManager,
@@ -62,10 +63,14 @@ async def bus() -> AsyncGenerator[EventBus]:
 
 @pytest.fixture
 async def manager(
-    bus: EventBus, provider: MockAgentInfoProvider
+    bus: EventBus, provider: MockAgentInfoProvider, tmp_path
 ) -> AsyncGenerator[AdapterManager]:
-    """Provide an initialized AdapterManager."""
-    mgr = AdapterManager(event_bus=bus, agent_info_provider=provider)
+    """Provide an initialized AdapterManager (isolated tlon home)."""
+    mgr = AdapterManager(
+        event_bus=bus,
+        agent_info_provider=provider,
+        tlon_paths=TlonPaths(home=tmp_path),
+    )
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()
@@ -170,6 +175,25 @@ class TestAdapterManagerLifecycle:
     async def test_detach_unknown_session_is_noop(self, manager: AdapterManager):
         await manager.detach("tui-9999")  # must not raise
         assert manager.list_online() == []
+
+    async def test_attach_creates_persistent_mailbox(
+        self, manager: AdapterManager, tmp_path
+    ):
+        """First attach creates the human's mailbox — connecting once makes
+        the human "known", so offline mail waits in their inbox."""
+        await manager.attach("alice", "tui-0001", _noop_sink)
+        assert (tmp_path / "human-alice" / "mail").is_dir()
+
+    async def test_concurrent_first_attach_shares_one_adapter(
+        self, manager: AdapterManager
+    ):
+        """The attach lock prevents two adapters for one username."""
+        first, second = await asyncio.gather(
+            manager.attach("alice", "tui-0001", _noop_sink),
+            manager.attach("alice", "tui-0002", _noop_sink),
+        )
+        assert first is second
+        assert first.session_count == 2
 
 
 class TestAdapterManagerPublish:
