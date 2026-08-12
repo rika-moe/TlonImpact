@@ -171,7 +171,7 @@ Content : 为什么选 PostgreSQL 而不是 MySQL？
 
 ## 🔧 工程参考
 
-命令速查、REST/WebSocket 协议 → [命令参考](engineering/commands.md) · [系统架构](engineering/architecture.md)
+命令速查、REST/SSE 协议 → [命令参考](engineering/commands.md) · [系统架构](engineering/architecture.md)
 
 ---
 

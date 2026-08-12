@@ -79,8 +79,6 @@ async def run_ops(args: Namespace) -> int:
     command += [
         "--host",
         args.host,
-        "--port",
-        str(args.port),
         "--rest-port",
         str(args.rest_port),
     ]

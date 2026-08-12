@@ -1,7 +1,7 @@
 """Event system protocol.
 
 This module defines the Event types used across all Tlon components.
-It is designed to be serialization-friendly for WebSocket transmission.
+It is designed to be serialization-friendly for wire transmission (SSE).
 """
 
 import uuid

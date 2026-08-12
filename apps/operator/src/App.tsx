@@ -1,7 +1,7 @@
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import React, { useEffect, useMemo, useState } from "react";
 import { RestClient } from "./client/restClient.js";
-import { WsClient } from "./client/wsClient.js";
+import { SseClient } from "./client/sseClient.js";
 import { Header } from "./components/Header.js";
 import { AgentsView } from "./views/AgentsView.js";
 import { ConfigView } from "./views/ConfigView.js";
@@ -13,12 +13,10 @@ import { VIEWS, type ConnectionStatus, type ViewName } from "./types.js";
 
 export default function App({
   host,
-  wsPort,
   restPort,
   username,
 }: {
   host: string;
-  wsPort: number;
   restPort: number;
   username: string;
 }) {
@@ -29,28 +27,28 @@ export default function App({
   // While a mail form captures text input, global view-switch keys are off.
   const [mailEditing, setMailEditing] = useState(false);
 
-  const ws = useMemo(
-    () => new WsClient({ host, port: wsPort, clientType: "tui", username }),
-    [host, wsPort, username],
+  const sse = useMemo(
+    () => new SseClient({ host, port: restPort, clientType: "tui", username }),
+    [host, restPort, username],
   );
   const rest = useMemo(() => new RestClient(host, restPort), [host, restPort]);
 
   useEffect(() => {
     const onStatus = (next: ConnectionStatus) => setStatus(next);
-    const onAuthenticated = () => {
+    const onSession = () => {
       // Operator is a monitoring console: switch to "event" mode so the
       // server pushes all event types (see notification_service.py).
-      ws.setMode("event");
+      void sse.setMode("event");
     };
-    ws.on("status", onStatus);
-    ws.on("authenticated", onAuthenticated);
-    ws.connect();
+    sse.on("status", onStatus);
+    sse.on("session", onSession);
+    sse.connect();
     return () => {
-      ws.off("status", onStatus);
-      ws.off("authenticated", onAuthenticated);
-      ws.dispose();
+      sse.off("status", onStatus);
+      sse.off("session", onSession);
+      sse.dispose();
     };
-  }, [ws]);
+  }, [sse]);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -80,15 +78,15 @@ export default function App({
       <Header
         activeView={view}
         status={status}
-        server={`${host}:${wsPort}/${restPort}`}
+        server={`${host}:${restPort}`}
         username={username}
       />
       <Box flexGrow={1} flexDirection="column" marginTop={1}>
         {view === "mail" ? (
-          <MailView ws={ws} rest={rest} username={username} onEditingChange={setMailEditing} />
+          <MailView sse={sse} rest={rest} username={username} onEditingChange={setMailEditing} />
         ) : null}
-        {view === "agents" ? <AgentsView rest={rest} ws={ws} /> : null}
-        {view === "events" ? <EventsView ws={ws} /> : null}
+        {view === "agents" ? <AgentsView rest={rest} sse={sse} /> : null}
+        {view === "events" ? <EventsView sse={sse} /> : null}
         {view === "traces" ? <TracesView rest={rest} /> : null}
         {view === "config" ? <ConfigView rest={rest} /> : null}
         {view === "metrics" ? <MetricsView rest={rest} /> : null}

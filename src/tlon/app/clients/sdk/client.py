@@ -1,7 +1,8 @@
 """Tlon Client - Unified entry point for SDK.
 
-Combines BaseClient (connection management) with ClientAdapter (client-type behavior)
-to provide a simple, unified interface for all client types.
+Combines BaseClient (REST + SSE transport, protocol v2) with ClientAdapter
+(client-type behavior) to provide a simple, unified interface for all
+client types.
 """
 
 from collections.abc import Callable
@@ -19,14 +20,14 @@ logger = get_logger(__name__)
 class TlonClient:
     """Unified client for Tlon Server.
 
-    TlonClient combines BaseClient (WebSocket connection management) with
-    ClientAdapter (client-type-specific behavior) to provide a simple interface
-    for connecting to the Tlon Server.
+    TlonClient combines BaseClient (REST + SSE transport) with
+    ClientAdapter (client-type-specific behavior) to provide a simple
+    interface for connecting to the Tlon Server.
 
     Features:
     - Automatic connection management (connect, reconnect, disconnect)
-    - Protocol version negotiation
     - Server-side event filtering (declared by the adapter)
+    - Session snapshot (participants/agents) from POST /sessions
     - REST API access
     - Async context manager support
 
@@ -34,37 +35,36 @@ class TlonClient:
         >>> from tlon.app.clients.sdk import TlonClient, TerminalAdapter
         >>>
         >>> # Using async context manager (recommended)
-        >>> async with TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter()) as client:
-        ...     await client.authenticate()
+        >>> async with TlonClient("http://localhost:8080", adapter=TerminalAdapter()) as client:
+        ...     await client.authenticate(username="alice")
         ...     await client.send_message("Hello!", to=["agent-1"])
         ...     # Events are filtered by the server per the adapter's declarations
         ...
         >>> # Or manual management
-        >>> client = TlonClient("ws://localhost:8888/ws", adapter=TerminalAdapter())
+        >>> client = TlonClient("http://localhost:8080", adapter=TerminalAdapter())
         >>> await client.connect()
         >>> await client.authenticate()
         >>> await client.send_message("Hello!", to=["agent-1"])
         >>> await client.disconnect()
 
     Args:
-        ws_url: WebSocket server URL (e.g., "ws://localhost:8888/ws")
+        base_url: REST API base URL (e.g., "http://localhost:8080")
         adapter: Client adapter (defaults to TerminalAdapter)
-        rest_url: Optional REST API URL (auto-derived if not provided)
-        auto_reconnect: Whether to auto-reconnect on disconnect
-        reconnect_delay: Delay between reconnection attempts (seconds)
+        auto_reconnect: Whether to auto-reconnect on stream loss
+        reconnect_delay: Base delay between reconnection attempts (seconds,
+            grows exponentially)
         max_reconnect_attempts: Maximum reconnection attempts (0 = unlimited)
 
     Attributes:
         state: Current connection state
-        session_id: Server-assigned session ID (after auth)
-        protocol_version: Negotiated protocol version
+        session_id: Server-assigned session ID (after authenticate)
+        protocol_version: Protocol version in use ("2.0.0")
     """
 
     def __init__(
         self,
-        ws_url: str,
+        base_url: str = "http://localhost:8080",
         adapter: ClientAdapter | None = None,
-        rest_url: str | None = None,
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
         max_reconnect_attempts: int = 10,
@@ -72,17 +72,15 @@ class TlonClient:
         """Initialize the Tlon client.
 
         Args:
-            ws_url: WebSocket server URL
+            base_url: REST API base URL
             adapter: Client adapter (defaults to TerminalAdapter)
-            rest_url: Optional REST API URL
             auto_reconnect: Whether to auto-reconnect
-            reconnect_delay: Reconnection delay in seconds
+            reconnect_delay: Base reconnection delay in seconds
             max_reconnect_attempts: Maximum reconnection attempts (0 = unlimited)
         """
         self._adapter = adapter or TerminalAdapter()
         self._base = BaseClient(
-            ws_url=ws_url,
-            rest_url=rest_url,
+            base_url=base_url,
             auto_reconnect=auto_reconnect,
             reconnect_delay=reconnect_delay,
             max_reconnect_attempts=max_reconnect_attempts,
@@ -108,7 +106,7 @@ class TlonClient:
 
     @property
     def is_authenticated(self) -> bool:
-        """Check if authenticated with server."""
+        """Check if a session is established with the server."""
         return self._base.is_authenticated
 
     @property
@@ -118,7 +116,7 @@ class TlonClient:
 
     @property
     def protocol_version(self) -> str | None:
-        """Get negotiated protocol version."""
+        """Get the protocol version in use."""
         return self._base.protocol_version
 
     @property
@@ -144,9 +142,9 @@ class TlonClient:
         await self._base.disconnect()
 
     async def authenticate(self, username: str | None = None, timeout: float = 10.0) -> bool:
-        """Authenticate with the server.
+        """Establish a session with the server (POST /sessions).
 
-        Uses the adapter's client type and capabilities for authentication,
+        Uses the adapter's client type and mode for the session request,
         and declares the adapter's effective filters so the server (the
         single filtering point) can enforce them for the whole session.
 
@@ -154,14 +152,14 @@ class TlonClient:
             username: Optional human username — determines the
                 "human:<username>" identity this session speaks as
                 (server defaults to "guest" when omitted)
-            timeout: Authentication timeout in seconds
+            timeout: Session establishment timeout in seconds
 
         Returns:
-            True if authenticated successfully
+            True if the session was established successfully
 
         Raises:
             ConnectionError: If not connected
-            AuthenticationError: If authentication fails
+            AuthenticationError: If the session request fails
         """
         return await self._base.authenticate(
             client_type=self._adapter.client_type,
@@ -170,6 +168,7 @@ class TlonClient:
             timeout=timeout,
             filters=self._adapter.get_effective_filters(),
             username=username,
+            mode=getattr(self._adapter, "mode", "chat"),
         )
 
     # ==================== Message Operations ====================
@@ -183,7 +182,7 @@ class TlonClient:
         reply_to: str | None = None,
         thread_id: str | None = None,
     ) -> bool:
-        """Send a mail message (R2 protocol).
+        """Send a mail message (POST /messages, protocol v2).
 
         Args:
             content: Message content
@@ -198,13 +197,14 @@ class TlonClient:
                 thread)
 
         Returns:
-            True if sent successfully
+            True if accepted by the server (202 + mail_id)
         """
-        msg = {
-            "type": "message",
+        msg: dict[str, Any] = {
             "content": content,
             "to": to,
         }
+        if self._base.username:
+            msg["username"] = self._base.username
         if cc:
             msg["cc"] = cc
         if subject:
@@ -214,15 +214,15 @@ class TlonClient:
         if thread_id:
             msg["thread_id"] = thread_id
 
-        return await self._base.send(msg)
+        return await self._base.rest_post("/messages", msg) is not None
 
     async def set_mode(self, mode: str) -> bool:
-        """Set the operation mode (for TUI clients).
+        """Set the operation mode (PATCH /sessions/{id}).
 
         Mode semantics are enforced server-side; the adapter only tracks the
         mode locally. The adapter's effective filters (which may depend on the
-        mode, e.g. high-frequency exclusion in event mode) are re-synced to
-        the server.
+        mode, e.g. high-frequency exclusion in event mode) are re-synced in
+        the same request.
 
         Args:
             mode: Mode ("chat", "event", "agent")
@@ -234,25 +234,13 @@ class TlonClient:
         if hasattr(self._adapter, "set_mode"):
             self._adapter.set_mode(mode)
 
-        mode_sent = await self._base.send(
-            {
-                "type": "mode",
-                "mode": mode,
-            }
+        return await self._base.update_session(
+            mode=mode,
+            filters=self._adapter.get_effective_filters(),
         )
-
-        # Re-sync effective filters (they may depend on the mode)
-        filters_sent = await self._base.send(
-            {
-                "type": "filter",
-                "filters": self._adapter.get_effective_filters(),
-            }
-        )
-
-        return mode_sent and filters_sent
 
     async def set_filters(self, filters: dict[str, Any]) -> bool:
-        """Set event filters.
+        """Set event filters (PATCH /sessions/{id}).
 
         The filters are merged with the adapter's client-type defaults and
         sent to the server, which is the single filtering point.
@@ -270,11 +258,8 @@ class TlonClient:
         # Update adapter filters
         self._adapter.set_event_filters(filters)
 
-        return await self._base.send(
-            {
-                "type": "filter",
-                "filters": self._adapter.get_effective_filters(),
-            }
+        return await self._base.update_session(
+            filters=self._adapter.get_effective_filters(),
         )
 
     async def set_trace_filter(self, trace_id: str | None) -> bool:
@@ -291,11 +276,8 @@ class TlonClient:
         """
         self._adapter.set_trace_filter(trace_id)
 
-        return await self._base.send(
-            {
-                "type": "filter",
-                "filters": self._adapter.get_effective_filters(),
-            }
+        return await self._base.update_session(
+            filters=self._adapter.get_effective_filters(),
         )
 
     # ==================== Event Handling ====================
@@ -360,7 +342,8 @@ class TlonClient:
     def on_reconnect(self, handler: Callable[[], None]) -> Callable[[], None]:
         """Register a reconnect handler.
 
-        Called after a successful auto-reconnect (and re-authentication),
+        Called after a successful auto-reconnect (the session has been
+        re-established via POST /sessions and the SSE stream reopened),
         so clients can restore session state (mode, history, etc.). Not
         called for the initial connect.
 

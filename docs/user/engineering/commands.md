@@ -1,6 +1,6 @@
 # 命令参考
 
-> CLI、Operator 控制台、REST、WebSocket、SDK 完整清单。
+> CLI、Operator 控制台、REST + SSE、SDK 完整清单。
 
 ---
 
@@ -23,20 +23,19 @@ uv run tlon [选项] <命令>
 
 ### tlon dream
 
-启动服务端（REST + WebSocket）。
+启动服务端（HTTP 单端口：REST + SSE）。
 
 ```bash
 uv run tlon dream [选项]
 
 选项:
   --host HOST         绑定地址 (默认: 127.0.0.1)
-  --rest-port PORT    REST API 端口 (默认: 8080)
-  --ws-port PORT      WebSocket 端口 (默认: 8888)
+  --rest-port PORT    HTTP API 端口 (默认: 8080)
   --lucid, -l         清醒梦模式（调试日志）
 
 示例:
   uv run tlon dream
-  uv run tlon dream --rest-port 9000 --ws-port 9001
+  uv run tlon dream --rest-port 9000
   uv run tlon dream --host 0.0.0.0  # 允许远程连接
 ```
 
@@ -50,13 +49,12 @@ uv run tlon ops [选项]
 选项:
   --host HOST           服务端地址 (默认: 127.0.0.1)
   --username, -u NAME   邮件身份 (默认: guest，可用环境变量 TLON_USERNAME)
-  --port, -p PORT       WebSocket 端口 (默认: 8888)
-  --rest-port, -r PORT  REST API 端口 (默认: 8080)
+  --rest-port, -r PORT  HTTP API 端口 (默认: 8080)
   --lucid, -l           清醒梦模式（调试日志）
 
 示例:
   uv run tlon ops --username alice
-  uv run tlon ops --host 192.168.1.100 --port 8888
+  uv run tlon ops --host 192.168.1.100 --rest-port 8080
 ```
 
 `--username` 决定你的邮件地址 `<username>@tlon.internal`；同名会话共享同一身份和邮箱。
@@ -126,7 +124,7 @@ To/Cc 支持逗号分隔多个收件人；每项可以是完整地址（`lin-zhi
 | traces | `↑↓` 选择 · `enter` 详情 · `r` 刷新 | 调用链列表，完整 trace 与 span 树 |
 | config | `r` 刷新 | 只读查看服务端与 agent 配置 |
 
-控制台认证后自动切到 `event` 会话模式，因此能看到**全部**事件（包括他人之间的邮件投递）；mail 视图在客户端侧只呈现与你自己有关的邮件。模式语义见下文 WebSocket API。
+控制台认证后自动切到 `event` 会话模式，因此能看到**全部**事件（包括他人之间的邮件投递）；mail 视图在客户端侧只呈现与你自己有关的邮件。模式语义见下文「会话与事件流（SSE）」。
 
 ---
 
@@ -165,7 +163,7 @@ GET /config
 
 响应:
 {
-  "server": { "host": "127.0.0.1", "port": 8888 },
+  "server": { "host": "127.0.0.1", "port": 8080 },
   "agents": { "count": 6 },
   "sessions": { "active": 1 }
 }
@@ -327,107 +325,68 @@ GET /admin/config/agents
 
 以下端点已随邮件模型切换（R2/PR-C）和 Skill 系统移除而删除：
 
-- `GET /history`、`GET|POST /api/chatroom/*` — 邮件历史走 `GET /inbox`，发信走 WebSocket `message` 帧或 SDK
+- `GET /history`、`GET|POST /api/chatroom/*` — 邮件历史走 `GET /inbox`，发信走 `POST /messages` 或 SDK
 - `POST /agents/{id}/wake|sleep` — 生命周期全自动
 - `GET|POST /api/skills/*` — Skill 系统已于 2026-03-17 移除
 - `GET /api/status` — 由 `/health` + `/config` 取代
 
 ---
 
-## WebSocket API
+## 会话与事件流（SSE）
 
-### 连接与认证
+协议 v2（HTTP + SSE，单端口 8080）：会话建立与发信走 REST，服务端推送走 SSE。完整设计见 [协议设计](../../design/client-server-protocol.md)。
 
-端点 `ws://localhost:8888/ws`。连接后**第一帧必须是 auth**（10 秒超时），认证失败连接以 4001 关闭。
+### 建立会话
 
-```json
-// Client → Server: auth
+```bash
+POST /sessions
+
+# Request
 {
-  "type": "auth",
+  "username": "alice",            // 可选，缺省 "guest"
+  "client_type": "tui",            // 必填
+  "mode": "chat",                  // 可选，chat | event | agent
+  "filters": { "exclude_event_types": ["agent.llm_request"] },  // 可选
+  "protocol_version": "2.0.0"      // 必填，仅接受 "2.0.0"
+}
+
+# 201 Created
+{
+  "session_id": "tui-0001",
+  "username": "alice",
   "client_type": "tui",
-  "username": "alice",
-  "protocol_version": "1.0.0",
-  "supported_versions": ["1.0.0"],
-  "capabilities": ["trace", "filter"],
-  "filters": { "exclude_event_types": ["agent.llm_request"] },
-  "metadata": { "client_version": "0.2.0" }
-}
-
-// Server → Client: 成功
-{
-  "type": "auth_success",
-  "session_id": "sess-uuid",
-  "username": "alice",
-  "protocol_version": "1.0.0",
-  "server_version": "0.2.0",
-  "server_time": "2026-07-30T10:20:00.000000",
-  "capabilities": ["trace", "filter"],
-  "timestamp": "2026-07-30T10:20:00.000000"
-}
-
-// Server → Client: 版本不兼容
-{
-  "type": "auth_failed",
-  "error_code": "VERSION_MISMATCH",
-  "message": "Protocol version 0.9.0 is no longer supported...",
-  "supported_versions": ["1.0.0"]
+  "mode": "chat",
+  "filters": {...},
+  "connected_at": "2026-08-12T10:20:00",
+  "participants": [ {"id","name","type"} ],
+  "agents": [ ... ]
 }
 ```
 
-- `username` 可选，缺省 `guest`；它决定本会话以哪个 `human:<username>` 身份发信、收信。
-- `protocol_version` 缺省按 1.0.0 处理；客户端版本更高时降级到服务端版本。
-- `filters` 声明初始事件过滤器（可选），之后可用 `filter` 帧整体替换。
+- `username` 决定本会话以哪个 `human:<username>` 身份收信（presence）。
+- 响应携带 participants/agents 快照，客户端无需等待推送帧。
+- 校验失败返回 4xx `{"error", "reason"}`（`invalid_json` / `invalid_username` /
+  `invalid_client_type` / `invalid_mode` / `invalid_filters` /
+  `unsupported_protocol_version`）。
 
-### Client → Server 帧
+### 更新与断开会话
 
-#### 发送邮件
-
-```json
-{
-  "type": "message",
-  "content": "请帮我审查这段代码",
-  "to": ["lin-zhiyao@tlon.internal"],
-  "cc": ["shen-qingyan"],
-  "subject": "代码审查请求",
-  "in_reply_to": "上游邮件id（回复时）",
-  "thread_id": "线程根邮件id（回复时）"
-}
+```bash
+PATCH /sessions/{id}    # body: {"mode": "event", "filters": {...}}，响应即最新会话状态
+DELETE /sessions/{id}   # 幂等断开；该 session 的活动 SSE 流随之收尾
 ```
 
-- `content` 必填（空 → 错误帧 `Message content is empty`）。
-- `to` / `cc` 可选但均为 list；每项可以是完整地址、agent id 或显示名，服务端解析去重。**零可解析收件人 → 错误帧，不发布**（"没有可送达的收件人：请在 to 中指定至少一个收件人"）。
-- `subject` / `in_reply_to` / `thread_id` 可选字符串；不带 `thread_id` 的新邮件自成线程根。
-- 无法解析的收件人地址触发 `postmaster@tlon.internal` 退信到发件人邮箱。
-- 未知字段静默忽略（例如旧客户端残留的 `mentions` 别名——已于 PR-C 移除）。
+### 事件流
 
-#### 切换模式
-
-```json
-{ "type": "mode", "mode": "chat" }
-
-// 响应: { "type": "mode_changed", "mode": "chat" }
+```bash
+GET /events?session_id=tui-0001    # 或 X-Session-Id header
 ```
 
-`mode` 取 `chat` / `event` / `agent`，语义见下表。切换后服务端按新模式补发初始数据（chat → `participants` 帧，agent → `agents` 帧）。
+- `Content-Type: text/event-stream`；每个事件一个 `data:` 行，每 25s 一行 `: ping` 注释心跳。
+- 连接建立即注册 event handler + HumanAdapter attach（presence + 邮件扇出）；断连即 detach + 关闭 session——**SSE 断开即离线**，重连需重新 `POST /sessions`。
+- session 无效返回 404；该 session 已有活动流返回 409（`reason: "stream_active"`）。
 
-#### 更新过滤器
-
-```json
-{ "type": "filter", "filters": { "trace_id": "trace-abc-123" } }
-
-// 响应: { "type": "filters_updated", "filters": {...} }
-```
-
-#### 心跳
-
-```json
-{ "type": "ping" }
-// 响应: { "type": "pong" }
-```
-
-### Server → Client 帧
-
-#### 事件
+事件帧格式：
 
 ```json
 {
@@ -460,16 +419,34 @@ GET /admin/config/agents
 - trace 字段（`trace_id` / `span_id` / `parent_span_id`）仅在事件携带时出现。
 - 其余事件类型（`agent.started/stopped/error/state_changed`、`agent.thinking_*`、`agent.llm_*`、`tool.execute_*`、`system.*`、`session.*`）见 [协议设计](../../design/client-server-protocol.md)。
 
-#### 初始数据 / 状态 / 错误
+### 发送邮件
 
-```json
-{ "type": "participants", "participants": [ {"id","name","type"} ] }
-{ "type": "agents", "agents": [ ... ] }
-{ "type": "mode_changed", "mode": "event" }
-{ "type": "filters_updated", "filters": {...} }
-{ "type": "error", "message": "Field 'to' must be a list" }
-{ "type": "pong" }
+```bash
+POST /messages
+
+# Request
+{
+  "username": "alice",            // 可选，缺省 "guest"
+  "content": "请帮我审查这段代码",   // 必填，非空
+  "to": ["lin-zhiyao@tlon.internal"],
+  "cc": ["shen-qingyan"],
+  "subject": "代码审查请求",
+  "in_reply_to": "上游邮件id（回复时）",
+  "thread_id": "线程根邮件id（回复时）"
+}
+
+# 202 Accepted
+{ "mail_id": "eec20b75..." }
+
+# 4xx
+{ "error": "没有可送达的收件人：请在 to 中指定至少一个收件人", "reason": "recipient_unresolved" }
 ```
+
+- `to` / `cc` 每项可以是完整地址、agent id 或显示名，服务端解析去重。**零可解析收件人 → 4xx，不发布**。
+- 不带 `thread_id` 的新邮件自成线程根。
+- 无法解析的收件人地址触发 `postmaster@tlon.internal` 退信到发件人邮箱。
+- `reason`：`invalid_json` / `invalid_username` / `empty_content` / `invalid_to` /
+  `invalid_cc` / `invalid_in_reply_to` / `invalid_thread_id` / `recipient_unresolved`。
 
 ### 模式语义与事件过滤
 
@@ -490,14 +467,14 @@ GET /admin/config/agents
 
 ## Python SDK
 
-`TlonClient` 封装了连接、认证、协议协商与事件分发：
+`TlonClient` 封装了会话建立（`POST /sessions`）、SSE 事件订阅（`GET /events`，断线指数退避自动重连）与事件分发（协议 v2，REST + SSE，单端口 8080）：
 
 ```python
 import asyncio
 from tlon.app.clients.sdk.client import TlonClient
 
 async def main() -> None:
-    async with TlonClient("ws://localhost:8888/ws") as client:
+    async with TlonClient("http://localhost:8080") as client:
         await client.authenticate(username="alice")
 
         # 发信：to 为必填列表，接受地址 / agent id / 显示名
@@ -511,7 +488,7 @@ async def main() -> None:
         # 收事件（服务端已按模式和过滤器筛过）
         @client.on_event
         def handle(event: dict) -> None:
-            if event["event_type"] == "mail.delivered":
+            if event["type"] == "mail.delivered":
                 mail = event["payload"]["mail"]
                 print(f"{mail['from_address']}: {mail['content']}")
 
@@ -524,10 +501,10 @@ asyncio.run(main())
 
 | 方法 | 说明 |
 |------|------|
-| `connect()` / `disconnect()` | 连接管理（支持自动重连，重连后自动重新认证） |
-| `authenticate(username=...)` | 认证，`username` 缺省服务端按 `guest` 处理 |
-| `send_message(content, to, cc=None, subject=None, reply_to=None)` | 发送邮件（R2 协议） |
-| `set_mode("chat"\|"event"\|"agent")` | 切换模式（同时重同步过滤器） |
+| `connect()` / `disconnect()` | 连接管理（支持自动重连，重连即重新 `POST /sessions` 拿新会话与快照） |
+| `authenticate(username=...)` | 建立会话（`POST /sessions`），`username` 缺省服务端按 `guest` 处理 |
+| `send_message(content, to, cc=None, subject=None, reply_to=None)` | 发送邮件（`POST /messages`，R2 协议，202 回执） |
+| `set_mode("chat"\|"event"\|"agent")` | 切换模式（`PATCH /sessions/{id}`，同时重同步过滤器） |
 | `set_filters({...})` / `set_trace_filter(trace_id)` | 更新会话过滤器 |
 | `on_event` / `on_message` / `on_error` / `on_state_change` / `on_reconnect` | 注册回调 |
 | `get_agents()` / `get_agent(id)` / `get_traces()` / `get_trace(id)` / `get_agent_logs(id)` | REST 便捷封装 |
@@ -541,20 +518,18 @@ asyncio.run(main())
 | 码 | 说明 |
 |---|------|
 | 200 | 成功 |
-| 400 | 请求参数错误（如非法 username、非法 JSON） |
-| 404 | 资源不存在（agent / trace） |
+| 201 | 会话建立（`POST /sessions`） |
+| 202 | 发信受理（`POST /messages`，附 `mail_id`） |
+| 400 | 请求参数错误（附语义化 `reason`，如非法 username、`recipient_unresolved`） |
+| 404 | 资源不存在（agent / trace / session） |
+| 409 | 冲突（session 已有活动 SSE 流，`reason: "stream_active"`） |
 | 503 | 存储或组件不可用（mail storage / trace store / config manager） |
 
 ### 错误响应格式
 
-REST 错误为扁平结构：
+REST 错误为扁平结构，写操作附带语义化 `reason`：
 
 ```json
 { "error": "Agent 'dev-999' not found" }
-```
-
-WebSocket 错误为 `error` 帧：
-
-```json
-{ "type": "error", "message": "没有可送达的收件人：请在 to 中指定至少一个收件人" }
+{ "error": "没有可送达的收件人：请在 to 中指定至少一个收件人", "reason": "recipient_unresolved" }
 ```

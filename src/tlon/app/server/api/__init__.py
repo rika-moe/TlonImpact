@@ -1,4 +1,4 @@
 """Tlon Server API package.
 
-Provides REST and WebSocket APIs.
+Provides the HTTP API (REST endpoints + SSE event stream).
 """

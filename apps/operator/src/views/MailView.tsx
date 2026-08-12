@@ -6,7 +6,8 @@
  *   in chronological order.
  * - Live `mail.delivered` events are merged in (deduplicated by mail
  *   id — the server emits one event per recipient). Own sends are not
- *   delivered back, so they are appended optimistically on submit.
+ *   delivered back, so they are appended on the POST /messages ack
+ *   (the response carries the real mail id).
  * - Compose (c) walks four fields To/Cc/Subject/Content with enter;
  *   enter on Content submits, esc cancels. Reply (r) prefills To and
  *   Subject from the latest incoming mail of the selected thread and
@@ -16,7 +17,7 @@
 import { Box, Text, useInput } from "ink";
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { RestClient } from "../client/restClient.js";
-import type { WsClient } from "../client/wsClient.js";
+import type { SseClient } from "../client/sseClient.js";
 import { ScrollList, useListHeight } from "../components/ScrollList.js";
 import { groupByThread, involvesMe, localPart, mergeMails } from "../mail/threads.js";
 import type { MailItem, ParticipantInfo, ServerEvent } from "../types.js";
@@ -31,9 +32,6 @@ const FIELD_LABELS: Record<FieldName, string> = {
   subject: "Subject",
   content: "Content",
 };
-
-/** Window to catch a server error frame before closing the form (ms). */
-const SUBMIT_ACK_MS = 400;
 
 type Form = Record<FieldName, string>;
 
@@ -56,12 +54,12 @@ function splitList(value: string): string[] {
 }
 
 export function MailView({
-  ws,
+  sse,
   rest,
   username,
   onEditingChange,
 }: {
-  ws: WsClient;
+  sse: SseClient;
   rest: RestClient;
   username: string;
   /** Reports whether a text form is capturing input (gates global keys). */
@@ -80,8 +78,6 @@ export function MailView({
   const height = useListHeight();
 
   const replyRef = useRef<{ in_reply_to?: string; thread_id?: string }>({});
-  const sendingRef = useRef(false);
-  const ackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Initial inbox + address book load.
   useEffect(() => {
@@ -105,7 +101,7 @@ export function MailView({
     };
   }, [rest, username]);
 
-  // Live delivery events + server error frames.
+  // Live delivery events.
   useEffect(() => {
     const onEvent = (ev: ServerEvent) => {
       if (ev.eventType !== "mail.delivered") return;
@@ -115,26 +111,11 @@ export function MailView({
       if (!involvesMe(mail, myAddress)) return;
       setMails((prev) => mergeMails(prev, [mail]));
     };
-    const onServerError = (msg: Record<string, unknown>) => {
-      const text = String(msg["message"] ?? "unknown error");
-      if (sendingRef.current) {
-        // A send just failed: keep the form open with its fields intact.
-        if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
-        ackTimerRef.current = null;
-        sendingRef.current = false;
-        setSending(false);
-        setFormError(text);
-      } else {
-        setNotice(text);
-      }
-    };
-    ws.on("event", onEvent);
-    ws.on("server_error", onServerError);
+    sse.on("event", onEvent);
     return () => {
-      ws.off("event", onEvent);
-      ws.off("server_error", onServerError);
+      sse.off("event", onEvent);
     };
-  }, [ws, myAddress]);
+  }, [sse, myAddress]);
 
   // Gate global app keys while a form is capturing input.
   useEffect(() => {
@@ -188,16 +169,13 @@ export function MailView({
   };
 
   const closeForm = () => {
-    if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
-    ackTimerRef.current = null;
-    sendingRef.current = false;
     setSending(false);
     setForm(EMPTY_FORM);
     setFormError(null);
     setMode("browse");
   };
 
-  const submit = () => {
+  const submit = async () => {
     const to = splitList(form.to);
     if (to.length === 0) {
       setFormError("To 不能为空（逗号分隔，支持名字 / id / 地址）");
@@ -212,37 +190,31 @@ export function MailView({
     const subject = form.subject.trim() || undefined;
     const reply = { ...replyRef.current };
 
-    const ok = ws.sendMail({ to, cc, subject, content, ...reply });
-    if (!ok) {
-      setFormError("发送失败：WebSocket 未连接");
-      return;
-    }
-
-    // No ack frame exists for mails: hold the form briefly so a fast
-    // server error lands in the form, then append optimistically.
-    sendingRef.current = true;
+    // POST /messages gives a synchronous ack: on success the mail is
+    // appended with its real id; on failure the form stays open with its
+    // fields intact and the server's error lands back in it.
     setSending(true);
     setFormError(null);
-    ackTimerRef.current = setTimeout(() => {
-      ackTimerRef.current = null;
-      sendingRef.current = false;
-      const id = `local-${crypto.randomUUID()}`;
-      const optimistic: MailItem = {
-        id,
+    try {
+      const mailId = await rest.sendMail(username, { to, cc, subject, content, ...reply });
+      const sent: MailItem = {
+        id: mailId,
         from_address: myAddress,
         to,
         cc,
         subject: subject ?? null,
         content,
         in_reply_to: reply.in_reply_to ?? null,
-        thread_id: reply.thread_id ?? id,
+        thread_id: reply.thread_id ?? mailId,
         forward_of: null,
         timestamp: new Date().toISOString(),
       };
-      setMails((prev) => mergeMails(prev, [optimistic]));
-      setSending(false);
+      setMails((prev) => mergeMails(prev, [sent]));
       closeForm();
-    }, SUBMIT_ACK_MS);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err));
+      setSending(false);
+    }
   };
 
   useInput((input, key) => {
@@ -254,7 +226,7 @@ export function MailView({
       return;
     }
 
-    if (sending) return; // brief ack window; ignore keys
+    if (sending) return; // awaiting the send ack; ignore keys
 
     if (key.escape) {
       closeForm();
@@ -263,7 +235,7 @@ export function MailView({
     if (key.return) {
       const active = FIELDS[field] as FieldName;
       if (active === "content") {
-        submit();
+        void submit();
       } else {
         setField((prev) => Math.min(FIELDS.length - 1, prev + 1));
       }

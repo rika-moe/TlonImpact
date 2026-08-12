@@ -340,18 +340,7 @@ class AdapterManager(Component):
             The user's adapter (shared across same-name sessions)
         """
         async with self._lock:
-            adapter = self._adapters.get(username)
-            if adapter is None:
-                adapter = HumanAdapter(username, self._event_bus, self.resolve_address)
-                await adapter.initialize()
-                self._adapters[username] = adapter
-                self._paths.member_mail_dir(adapter.member_id)
-                logger.info(
-                    "human_adapter_created",
-                    username=username,
-                    member_id=adapter.member_id,
-                )
-
+            adapter = await self._get_or_create_adapter(username)
             adapter.attach_session(session_id, sink)
             self._sessions[session_id] = username
             logger.info(
@@ -361,6 +350,27 @@ class AdapterManager(Component):
                 session_count=adapter.session_count,
             )
             return adapter
+
+    async def _get_or_create_adapter(self, username: str) -> HumanAdapter:
+        """Get or create the user's adapter; caller must hold ``self._lock``.
+
+        First creation also creates the human's persistent mailbox —
+        having spoken/connected once makes the human "known", so mail
+        addressed to them is held in their inbox while they are offline
+        (docs/design/mail.md).
+        """
+        adapter = self._adapters.get(username)
+        if adapter is None:
+            adapter = HumanAdapter(username, self._event_bus, self.resolve_address)
+            await adapter.initialize()
+            self._adapters[username] = adapter
+            self._paths.member_mail_dir(adapter.member_id)
+            logger.info(
+                "human_adapter_created",
+                username=username,
+                member_id=adapter.member_id,
+            )
+        return adapter
 
     async def detach(self, session_id: str) -> None:
         """Detach a session; shutdown the adapter when its last session leaves.
@@ -432,6 +442,70 @@ class AdapterManager(Component):
             in_reply_to=in_reply_to,
             thread_id=thread_id,
         )
+
+    async def publish_as(
+        self,
+        username: str,
+        content: str,
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        subject: str | None = None,
+        in_reply_to: str | None = None,
+        thread_id: str | None = None,
+    ) -> Mail:
+        """Publish a mail as ``human:<username>`` without a client session.
+
+        REST entry point (POST /messages, protocol v2 PR-1): the sender's
+        identity comes from the request body rather than an attached
+        session. If the human has no live adapter, a transient one is
+        created — first contact also creates the persistent mailbox, same
+        semantics as the first session attach — and torn down again once
+        the mail is out.
+
+        Args:
+            username: Human username (sender identity)
+            content: Message content
+            to: Explicit recipients (raw names, ids or full addresses)
+            cc: Carbon-copy recipients
+            subject: Optional mail subject
+            in_reply_to: Id of the mail being replied to (optional)
+            thread_id: Thread root id inherited from the upstream mail
+                (optional)
+
+        Returns:
+            The created mail
+
+        Raises:
+            ValueError: If no recipient resolves to a mail address
+        """
+        async with self._lock:
+            existing = self._adapters.get(username)
+            transient = existing is None
+            adapter = (
+                existing
+                if existing is not None
+                else await self._get_or_create_adapter(username)
+            )
+
+        try:
+            return await adapter.speak(
+                content,
+                to=to,
+                cc=cc,
+                subject=subject,
+                in_reply_to=in_reply_to,
+                thread_id=thread_id,
+            )
+        finally:
+            if transient:
+                async with self._lock:
+                    # A session may have attached concurrently; only tear
+                    # down the adapter if it is still session-less.
+                    if adapter.session_count == 0:
+                        await adapter.shutdown()
+                        if self._adapters.get(username) is adapter:
+                            del self._adapters[username]
+                        logger.info("human_adapter_removed", username=username)
 
     def get_adapter(self, username: str) -> HumanAdapter | None:
         """Get a user's adapter.

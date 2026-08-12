@@ -33,7 +33,6 @@ from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.messaging.human_adapter import AdapterManager
 
 from .api.rest import RESTServer
-from .api.websocket import WebSocketServer
 from .core.client_gateway import ClientGateway
 from .core.member_directory import MemberDirectory
 from .core.notification_service import NotificationService
@@ -51,7 +50,7 @@ class ServerApp:
     - Coordinating graceful shutdown
 
     Example:
-        >>> app = ServerApp(host="0.0.0.0", rest_port=8080, ws_port=8888)
+        >>> app = ServerApp(host="0.0.0.0", rest_port=8080)
         >>> await app.initialize()  # DI assembly
         >>> await app.start()       # Start serving
         >>> await app.shutdown()    # Cleanup
@@ -61,7 +60,6 @@ class ServerApp:
         self,
         host: str = "127.0.0.1",
         rest_port: int = 8080,
-        ws_port: int = 8888,
         data_dir: Path | None = None,
         config_dir: Path | None = None,
     ):
@@ -69,14 +67,12 @@ class ServerApp:
 
         Args:
             host: Host to bind servers to
-            rest_port: Port for REST API
-            ws_port: Port for WebSocket API
+            rest_port: Port for the HTTP API (REST + SSE)
             data_dir: Directory for persistence
             config_dir: Directory containing agent configs
         """
         self.host = host
         self.rest_port = rest_port
-        self.ws_port = ws_port
         self.tlon_home = get_tlon_home()
         self.shared_dir = paths.shared_dir()
 
@@ -86,7 +82,6 @@ class ServerApp:
         # Subsystem references (for convenient access)
         self.client_gateway: ClientGateway | None = None
         self.rest: RESTServer | None = None
-        self.websocket: WebSocketServer | None = None
 
         # State
         self._shutdown_event = asyncio.Event()
@@ -216,7 +211,7 @@ class ServerApp:
             config_manager=config_service,
             data_dir=self.shared_dir,
             host=self.host,
-            port=self.ws_port,
+            port=self.rest_port,
         )
         await self.client_gateway.initialize()
         logger.info("component_initialized", component="client_gateway")
@@ -230,15 +225,9 @@ class ServerApp:
             metrics_service=metrics_service,  # For /metrics endpoint
             logs_dir=paths.logs_dir(),  # For /logs endpoints
             paths=paths,  # For /inbox mailbox resolution
+            adapter_manager=adapter_manager,  # For POST /messages
             host=self.host,
             port=self.rest_port,
-        )
-        self.websocket = WebSocketServer(
-            self.client_gateway,
-            agent_registry=agent_registry,  # Direct access for agent operations
-            adapter_manager=adapter_manager,  # Human identity / speaking
-            host=self.host,
-            port=self.ws_port,
         )
 
         self._running = False
@@ -250,8 +239,7 @@ class ServerApp:
         logger.info(
             "server_initialized",
             agent_count=len(agent_registry.get_all()),
-            rest_url=f"http://{self.host}:{self.rest_port}",
-            ws_url=f"ws://{self.host}:{self.ws_port}/ws",
+            url=f"http://{self.host}:{self.rest_port}",
         )
 
     # ========== Lifecycle Methods ==========
@@ -267,18 +255,15 @@ class ServerApp:
 
         self._running = True
 
-        # Start API servers (created in initialize(); safe to start here)
+        # Start API server (created in initialize(); safe to start here)
         assert self.rest is not None
         await self.rest.start()
-        assert self.websocket is not None
-        await self.websocket.start()
 
         agent_registry = self._components.get("agent_registry")
         logger.info(
             "server_started",
             host=self.host,
             rest_port=self.rest_port,
-            ws_port=self.ws_port,
             agent_count=len(agent_registry.get_all()) if agent_registry else 0,
         )
 
@@ -305,9 +290,7 @@ class ServerApp:
 
         logger.info("server_stopping")
 
-        # Stop API servers
-        if self.websocket:
-            await self.websocket.stop()
+        # Stop API server
         if self.rest:
             await self.rest.stop()
 
@@ -363,7 +346,6 @@ class ServerApp:
 async def run_server(
     host: str = "127.0.0.1",
     rest_port: int = 8080,
-    ws_port: int = 8888,
     log_level: str = "INFO",
     debug: bool = False,
 ) -> int:
@@ -373,8 +355,7 @@ async def run_server(
 
     Args:
         host: Host to bind to
-        rest_port: Port for REST API
-        ws_port: Port for WebSocket API
+        rest_port: Port for the HTTP API (REST + SSE)
         log_level: Logging level
         debug: Enable debug mode
 
@@ -390,10 +371,10 @@ async def run_server(
         retention_days=settings.log_retention_days,
     )
 
-    logger.info("server_starting", host=host, rest_port=rest_port, ws_port=ws_port)
+    logger.info("server_starting", host=host, rest_port=rest_port)
 
     # Create and run server
-    app = ServerApp(host=host, rest_port=rest_port, ws_port=ws_port)
+    app = ServerApp(host=host, rest_port=rest_port)
 
     # Setup signal handlers
     loop = asyncio.get_event_loop()

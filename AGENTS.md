@@ -45,7 +45,8 @@ uv run pytest
 | 领域 | 设计文档 | 架构文档 |
 |------|----------|----------|
 | 概述 | [design/README.md](./docs/design/README.md) | [architecture/README.md](./docs/architecture/README.md) |
-| **通信协议** | [design/client-server-protocol.md](./docs/design/client-server-protocol.md) | - |
+| **通信协议** | [design/client-server-protocol.md](./docs/design/client-server-protocol.md)（v2：HTTP+SSE 单端口 8080） | - |
+| HTTP+SSE 迁移 | [design/http-sse-protocol.md](./docs/design/http-sse-protocol.md)（已落地，WS 已退役） | - |
 | 用户指南 | [user/README.md](./docs/user/README.md) | - |
 | 架构边界 | - | [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
 | 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
@@ -66,7 +67,7 @@ uv run pytest
 | Agent 系统 | ✅ 已验证 | 95/100 | 异步多 Session、步进调度 |
 | 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
 | 消息系统 | ✅ 已验证 | 95/100 | 邮件模型 R2 已切换（mail.md），PR-A/B/C 全部落地 |
-| Client-Server | ✅ 已验证 | 95/100 | Trace 系统、Event 扩展已完成 |
+| Client-Server | ✅ 已验证 | 95/100 | HTTP+SSE 单端口定型（v2，WS 已退役）；Trace 系统、Event 扩展已完成 |
 | Metrics 支柱 | ✅ 已验证 | 95/100 | MetricsService 事件消费 + GET /metrics + operator metrics 视图；真实冒烟通过 |
 | ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
 | ~~TUI (Congress)~~ | ❌ 已退役 | - | 2026-07 退役（PR-C），由 Operator mail 视图取代 |
@@ -94,7 +95,7 @@ uv run pytest
 ### 执行
 - 大活派 subagent：brief 给精确的文件:行号、已核实的现状事实、已定稿决策、测试要求、验证命令；超时/中断用 resume 续跑；完成后必须自己复核（六件套 + 审 diff + 真实冒烟），不盲信汇报
 - 验证六件套：`uv run pytest src/tests/ -q`、`uv run ruff check src/`、`uv run python scripts/check_architecture.py`、`uv run python scripts/check_no_reexport.py`、`uv run mypy src/tlon`、`uv run lint-imports`，全绿才算完
-- 真实冒烟：起 dream + SDK 发邮件 + 查 `~/.tlon` 收件箱验证；完事清理冒烟痕迹、释放 8080/8888 端口
+- 真实冒烟：起 dream + SDK 发邮件 + 查 `~/.tlon` 收件箱验证；完事清理冒烟痕迹、释放 8080 端口
 
 ### 质量准则
 - 既有测试无需保障通过率， 没通过的单元测试可以直接删除明

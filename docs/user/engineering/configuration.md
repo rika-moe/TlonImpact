@@ -144,8 +144,7 @@ agent.yaml，而在 `~/.tlon/{agent-id}/config/behavior.tlon`
 ```bash
 uv run tlon dream \
   --host 127.0.0.1 \
-  --rest-port 8080 \
-  --ws-port 8888
+  --rest-port 8080
 ```
 
 ### 客户端连接
@@ -154,7 +153,6 @@ uv run tlon dream \
 uv run tlon ops \
   --username guest \
   --host 127.0.0.1 \
-  --port 8888 \
   --rest-port 8080
 ```
 

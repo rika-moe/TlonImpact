@@ -15,11 +15,11 @@
 │  │   apps/operator)      │  │   直接读写 ~/.tlon/)         │  │
 │  └──────────┬───────────┘  └──────────────────────────────┘  │
 └─────────────┼────────────────────────────────────────────────┘
-              │  WebSocket :8888 / REST :8080
+              │  HTTP :8080（REST + SSE）
 ┌─────────────┼────────────────────────────────────────────────┐
 │              服务端（uv run tlon dream，Python/aiohttp）       │
 │  ┌──────────────────────────────────────────────────────┐    │
-│  │         REST API / WebSocket Server (aiohttp)        │    │
+│  │         HTTP API Server：REST + SSE (aiohttp)          │    │
 │  └──────────────────────────┬───────────────────────────┘    │
 │                             │                                │
 │  ┌──────────────────────────┼───────────────────────────┐    │
@@ -252,8 +252,8 @@ Tlon 没有聊天室总线。成员之间通过**邮件**通信：每封信有�
 │
 ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 1. Operator → WebSocket                                  │
-│    {"type": "message", "to": [...], "content": "..."}    │
+│ 1. Operator → REST                                       │
+│    POST /messages {"to": [...], "content": "..."}        │
 └─────────────────────────────────────────────────────────┘
 │
 ▼
@@ -317,7 +317,7 @@ Tlon/
 ├── src/tlon/                  # Python 服务端与核心
 │   ├── app/                   # 进程入口
 │   │   ├── launcher/          # tlon 命令入口 (tlon=tlon.app.launcher.main:main)
-│   │   ├── server/            # dream 服务端 (REST/WebSocket, api/ 与 core/)
+│   │   ├── server/            # dream 服务端 (HTTP: REST + SSE, api/ 与 core/)
 │   │   ├── wizard/            # mirror 配置向导
 │   │   └── clients/           # 客户端共用代码
 │   ├── agents/                # Agent 核心
@@ -380,7 +380,7 @@ Tlon/
 |-----|------|------|
 | 运行时 | Python 3.11+ | 服务端与核心 |
 | 异步 | asyncio | 并发处理 |
-| Web | aiohttp | REST :8080 / WebSocket :8888 |
+| Web | aiohttp | HTTP :8080（REST + SSE） |
 | LLM | openai | API 客户端 |
 | 容器 | docker (docker-py) | Agent 沙箱 |
 | 配置 | pydantic, PyYAML, python-dotenv | agent.yaml 校验与加载 |

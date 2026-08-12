@@ -1,182 +1,173 @@
 # Client-Server 协议设计
 
 > 状态: ✅ 已验证
-> 最后验证: 2026-03-24
-> 协议版本: 1.0.0
+> 最后验证: 2026-08-12
+> 协议版本: 2.0.0（HTTP + SSE，单端口 8080）
+> 取代: v1.0.0 WebSocket 协议（已退役，见文末"历史版本"）
 
 ---
 
 ## 核心理念
 
-1. **协议版本化**: WebSocket 握手时协商协议版本，支持向后兼容
-2. **统一消息格式**: 所有消息基于 JSON，包含 `type`, `msg_id`, `timestamp`, `trace_id`
-3. **事件驱动**: Server → Client 通过 `event` 类型消息推送所有状态变更
-4. **全链路追踪**: 每条消息携带 `trace_id`，可追踪完整调用链
+1. **单端口 HTTP 协议族**: 请求-响应走 REST，服务端推送走 SSE（Server-Sent Events），同一端口（默认 8080）
+2. **同步回执**: 发信等写操作返回明确的成功/失败响应（消解 v1 WS 发信无 ack 的缺陷，issue ）
+3. **事件驱动**: Server → Client 通过 SSE 事件流推送所有状态变更
+4. **全链路追踪**: 事件帧携带 `trace_id` / `span_id`，可追踪完整调用链
 5. **Client 差异化**: 通过 `client_type` 识别终端类型，应用不同的事件过滤策略
+6. **服务端唯一过滤点**: 事件过滤只在服务端执行（NotificationService），客户端只声明不过滤
 
 ---
 
-## 协议版本协商
+## 端点清单
 
-### 认证流程
-
-```
-Client → Server (auth)
-{
-  "type": "auth",
-  "client_type": "tui",              // "tui" | "web" | "telegram"
-  "protocol_version": "1.0.0",       // 首选版本
-  "supported_versions": ["1.0.0"],   // 支持的版本列表
-  "capabilities": ["trace", "filter"],
-  "username": "alice",              // 可选：人类身份，缺省 "guest"
-  "filters": {                       // 可选：客户端声明的初始事件过滤器
-    "exclude_event_types": ["agent.llm_request"]
-  },
-  "metadata": {
-    "client_version": "0.2.0",
-    "platform": "macOS"
-  }
-}
-
-Server → Client (auth_success)
-{
-  "type": "auth_success",
-  "session_id": "sess-uuid",
-  "protocol_version": "1.0.0",       // 实际使用的版本
-  "server_version": "0.2.0",
-  "server_time": "2026-03-18T12:00:00Z",
-  "capabilities": ["trace", "filter"],
-  "username": "alice"               // 回传生效的人类身份
-}
-
-或认证失败:
-{
-  "type": "auth_failed",
-  "error_code": "VERSION_MISMATCH",
-  "message": "Protocol version 1.0.0 not supported",
-  "supported_versions": ["1.1.0"]
-}
-```
-
-### 版本策略
-
-| 场景 | 处理 |
-|------|------|
-| Client 版本 = Server 支持版本 | 正常使用该版本 |
-| Client 版本 < Server 最低版本 | 返回错误，要求升级 Client |
-| Client 版本 > Server 版本 | 降级到 Server 支持的最高版本 |
-| 版本不兼容 | 返回 `VERSION_MISMATCH` 错误 |
+| 端点 | 方法 | 职责 |
+|------|------|------|
+| `/sessions` | POST | 建立会话：声明 `username` / `client_type` / `mode` / `filters` / `protocol_version`；返回 `session_id` + participants/agents 快照 |
+| `/sessions/{id}` | PATCH | 更新 mode / filters |
+| `/sessions/{id}` | DELETE | 显式断开（幂等） |
+| `/events` | GET (SSE) | 事件流，`session_id` 走 query 参数或 `X-Session-Id` header |
+| `/messages` | POST | 发信（同步回执：202 + `mail_id` 或 4xx + `{"error","reason"}`） |
+| `/health` `/config` `/inbox` `/agents` `/agents/{id}` `/sessions`(GET) `/participants` `/traces` `/traces/{id}` `/metrics` `/agents/{id}/logs` `/logs` `/events/history` | GET | 只读查询（语义不变） |
+| `/admin/config/agents` `/admin/config/agents/{id}/reload` | GET / POST | 配置热加载（语义不变） |
 
 ---
 
-## 消息类型
+## 会话生命周期
 
-### 基础结构
-
-```typescript
-interface TlonMessage {
-  type: string;           // 消息类型
-  msg_id?: string;        // 消息唯一 ID（UUID v4）
-  timestamp: string;      // ISO8601 格式
-  trace_id?: string;      // 追踪 ID（UUID v4）
-}
+```
+POST /sessions  ──→  201 + session_id + 快照
+       │
+GET /events (SSE) ──→ 注册 event handler + HumanAdapter attach（presence）
+       │
+PATCH /sessions/{id}（可选，切 mode / filters）
+       │
+DELETE /sessions/{id} 或 SSE 断连 ──→ detach + handler 注销 + session 关闭
 ```
 
-### Client → Server
-
-| 类型 | 说明 | 关键字段 |
-|------|------|----------|
-| `auth` | 认证请求 | `client_type`, `protocol_version`, `username`（可选，缺省 `guest`） |
-| `message` | 发送消息 | `content`, `to`, `cc`, `subject`, `in_reply_to`, `thread_id` |
-| `mode` | 切换模式 | `mode`: "chat" \| "event" \| "agent" |
-| `filter` | 设置过滤器 | `filters`: `{event_types?, exclude_event_types?, trace_id?, agent?}` |
-| `ping` | 心跳 | `seq`: 序列号 |
-
-### Server → Client
-
-| 类型 | 说明 | 关键字段 |
-|------|------|----------|
-| `auth_success` | 认证成功 | `session_id`, `protocol_version`, `username` |
-| `auth_failed` | 认证失败 | `error_code`, `message` |
-| `event` | 事件推送 | `event_type`, `payload`, `source` |
-| `pong` | 心跳响应 | `seq`, `latency_ms` |
-| `error` | 错误通知 | `code`, `message`, `details` |
+- **SSE 断开即离线**：断连（客户端断开、心跳写失败、DELETE）必然触发
+  adapter detach + event handler 注销 + session 关闭。
+- **重连**：客户端重新 `POST /sessions` 拿新 session_id 与快照；重连窗口内
+  事件丢失（与 v1 WS 重连行为一致，不劣化）。事件 replay
+  （`Last-Event-ID` + 环形缓冲）列为未来扩展。
+- **心跳**：SSE 注释行（`: ping\n\n`）每 25s 一行。
+- **认证**：身份声明模型（username 自选，无凭证），与 v1 一致；真实认证
+  由  独立决策。
 
 ---
 
-## 详细消息格式
+## 会话端点详述
 
-### 邮件消息 (Client → Server)
-
-邮件模型（R2，`docs/design/mail.md`）：发信即发邮件。`to`/`cc` 每项
-可为 agent id、显示名或完整地址（`x@tlon.internal`），服务端解析去重；
-零可解析收件人 → 返回 `error` 消息、不发布。
+### `POST /sessions` — 建立会话
 
 ```json
+// Request
 {
-  "type": "message",
-  "msg_id": "msg-uuid-123",
-  "timestamp": "2026-03-18T12:00:00Z",
-  "trace_id": "trace-abc-456",
-  "content": "请帮我审查这段代码",
-  "to": ["dev-001", "顾言溪"],
-  "cc": ["pm-001"],
-  "subject": "代码审查请求"
+  "username": "alice",            // 可选，缺省 "guest"
+  "client_type": "tui",            // 必填，非空字符串
+  "mode": "chat",                  // 可选，chat | event | agent
+  "filters": {},                   // 可选，初始事件过滤器
+  "protocol_version": "2.0.0"      // 必填，仅接受 "2.0.0"
 }
+
+// 201 Created
+{
+  "session_id": "tui-0001",
+  "username": "alice",
+  "client_type": "tui",
+  "mode": "chat",
+  "filters": {},
+  "connected_at": "2026-08-12T...",
+  "participants": [{"id": "dev-001", "name": "...", "type": "agent"}],
+  "agents": [{ "id": "dev-001", "state": "running", ... }]
+}
+
+// 4xx
+{"error": "...", "reason": "unsupported_protocol_version",
+ "supported_versions": ["2.0.0"]}
 ```
 
-- `to` / `cc`：可选列表（非 list → 报错）；至少一路解析出收件人
-- `subject`：可选
-- `in_reply_to` / `thread_id`：可选字符串（非 str → 报错），回复头；
-  `in_reply_to` 指向上游邮件 id，`thread_id` 继承线程根邮件 id，
-  缺省时新邮件自成线程根
-- `mentions`：**已移除（PR-C）**——原 `to` 的 deprecated 别名；正文内
-  `@名字` 解析（R1b 桥）同批拆除。旧客户端仍发送 `mentions` 时服务端
-  静默忽略（帧格式校验保持宽松）
-- REST `/history` 占位端点与 WS 初始空 `history` 推送亦已随 PR-C 移除；
-  拉取邮件走 `/inbox`
-- 人类无已读 cursor（v1 决策）；拉取邮件走 REST `GET /inbox?username=x&limit=N`
-  （username 缺省 `guest`，limit 缺省 50 上限 200），返回
-  `{"mails": [...], "count": N}`（inbox + sent 合并，按时间序）
+`reason`：`invalid_json` / `invalid_username` / `invalid_client_type` /
+`invalid_mode` / `invalid_filters` / `unsupported_protocol_version`。
 
-### 事件消息 (Server → Client)
+过滤器维度（客户端声明、服务端执行）：
+- `event_types`: 包含列表（支持 `prefix.*` 通配）
+- `exclude_event_types`: 排除列表（支持 `prefix.*` 通配）
+- `trace_id`: 仅推送携带该 trace 的事件
+- `agent`: 按事件来源匹配（支持 `*` 通配，如 `dev-*`）
+
+### `PATCH /sessions/{id}` — 更新 mode / filters
+
+请求体 `{"mode": "...", "filters": {...}}`（均可选）。返回更新后的会话
+状态（`session_id`/`username`/`client_type`/`mode`/`filters`/
+`connected_at`）；session 不存在返回 404。不推确认帧、不重发快照，
+响应体即最新状态。
+
+### `DELETE /sessions/{id}` — 断开
+
+幂等（不存在或已断开都返回 200）。触发完整清理：adapter detach +
+event handler 注销 + session 关闭；该 session 的活动 SSE 流随之收尾。
+
+### `GET /events`（SSE）— 事件流
+
+`session_id` 走 query 参数或 `X-Session-Id` header；session 无效返回
+404，已有活动流返回 409（`reason: "stream_active"`）。连接建立即完成
+event handler 注册 + HumanAdapter attach（presence + 邮件扇出）。
+
+每个事件一个 `data:` 行，帧格式：
 
 ```json
 {
   "type": "event",
-  "msg_id": "evt-uuid-789",
-  "timestamp": "2026-03-18T12:00:01Z",
   "event_type": "agent.thinking_start",
+  "payload": { ... },
+  "source": "dev-001",
+  "timestamp": "2026-08-12T12:00:01Z",
   "trace_id": "trace-abc-456",
   "span_id": "span-thinking-001",
-  "parent_span_id": "span-message-001",
-  "source": "dev-001",
-  "payload": {
-    "message_id": "msg-uuid-123",
-    "context_summary": "用户询问代码审查...",
-    "memory_recall_count": 5
-  }
+  "parent_span_id": "span-message-001"
 }
 ```
 
-### 心跳消息
+每 25s 一行 `: ping` 注释心跳。
+
+---
+
+## 发信：`POST /messages`
+
+邮件模型（R2，`docs/design/mail.md`）：发信即发邮件。发信人身份由
+请求体的 `username` 声明（`human:<username>`），该人类尚未 attach 时
+会瞬时创建适配器——首次接触同样建持久邮箱，语义与首次 session
+attach 一致。
 
 ```json
-// Ping (Client → Server)
+// Request
 {
-  "type": "ping",
-  "seq": 42,
-  "timestamp": "2026-03-18T12:00:30Z"
+  "username": "alice",              // 可选，缺省 "guest"
+  "content": "请帮我审查这段代码",     // 必填，非空
+  "to": ["dev-001", "顾言溪"],        // 名字 / id / 完整地址，服务端解析去重
+  "cc": ["pm-001"],                  // 可选
+  "subject": "代码审查请求",           // 可选
+  "in_reply_to": "mail-uuid",        // 可选，回复头
+  "thread_id": "thread-uuid"         // 可选，线程根 id
 }
 
-// Pong (Server → Client)
-{
-  "type": "pong",
-  "seq": 42,
-  "server_time": "2026-03-18T12:00:30.050Z",
-  "latency_ms": 50
-}
+// 202 Accepted
+{"mail_id": "eec20b75ff5a48bf82595acef21de517"}
+
+// 4xx（字段校验失败 / 收件人不可解析等）
+{"error": "人类可读的错误信息", "reason": "recipient_unresolved"}
 ```
+
+- `to` / `cc`：每项可为 agent id、显示名或完整地址
+  （`x@tlon.internal`），服务端解析去重；至少一路解析出收件人
+- `in_reply_to` 指向上游邮件 id，`thread_id` 继承线程根邮件 id，
+  缺省时新邮件自成线程根
+- `reason` 为语义化字符串：`invalid_json` / `invalid_username` /
+  `empty_content` / `invalid_to` / `invalid_cc` / `invalid_in_reply_to` /
+  `invalid_thread_id` / `recipient_unresolved`（一封零收件人的邮件是非法的）
+- 拉取邮件走 REST `GET /inbox?username=x&limit=N`（username 缺省
+  `guest`，limit 缺省 50 上限 200），返回 `{"mails": [...], "count": N}`
+  （inbox + sent 合并，按时间序）
 
 ---
 
@@ -230,7 +221,10 @@ interface TlonMessage {
 
 ## 事件过滤（服务端过滤点）
 
-事件过滤**只在服务端执行**（`NotificationService`）。客户端（SDK Adapter）只**声明**过滤器，通过 `auth` 消息的 `filters` 字段（初始过滤器，如 client type 的默认排除集）或 `filter` 消息（运行时更新，整体替换）上报，本地不再做二次匹配。
+事件过滤**只在服务端执行**（`NotificationService`）。客户端（SDK Adapter /
+TUI）只**声明**过滤器：通过 `POST /sessions` 的 `filters` 字段（初始
+过滤器，如 client type 的默认排除集）或 `PATCH /sessions/{id}`（运行时
+更新，整体替换）上报，本地不再做二次匹配。
 
 过滤管线（各步骤为 AND 关系）：
 
@@ -238,7 +232,7 @@ interface TlonMessage {
    推给 chat 模式 session——人类收信走 HumanAdapter（订阅 MAIL_DELIVERED，
    按 `recipient` == 自己的 member id 过滤后向 attached sessions 扇出）；
    event / agent 模式不受影响（operator 是运维控制台，需看到全部邮件流量）
-1. **模式语义**（`mode` 消息切换）：
+1. **模式语义**（`POST /sessions` 的 `mode` 或 PATCH 切换）：
    - `chat`: `mail.*`、`agent.response/started/stopped/error`、`system.*`
    - `agent`: 仅 `agent.*`
    - `event`: 全部事件
@@ -252,49 +246,55 @@ interface TlonMessage {
 
 ## Client 类型差异
 
-### Terminal (TUI)
+### Terminal (Operator TUI)
 
-- **连接方式**: WebSocket (Stateful)
+- **连接方式**: REST + SSE（单端口，sdk/客户端同协议）
 - **事件接收**: 全量事件
 - **特殊功能**: Event 模式、Agent 模式、命令行交互
 
 ### Web Client
 
-- **连接方式**: WebSocket (Stateful) + REST API
+- **连接方式**: REST + SSE
 - **事件接收**: 过滤部分高频事件（如 `agent.llm_request`）
 - **特殊功能**: Trace 可视化、历史消息分页
 
 ### Telegram Bot
 
-- **连接方式**: Webhook/轮询 → Server WebSocket
-- **事件接收**: 仅 `message.*` 相关事件
+- **连接方式**: Webhook/轮询 → Server REST + SSE
+- **事件接收**: 仅 `mail.*` 相关事件
 - **特殊功能**: 命令支持（`/status`, `/agents`）
 
 ---
 
-## 错误码
+## 错误处理
 
-| 错误码 | 说明 | 处理建议 |
-|--------|------|----------|
-| `AUTH_FAILED` | 认证失败 | 检查 client_type 和版本 |
-| `VERSION_MISMATCH` | 版本不匹配 | 升级 Client 或 Server |
-| `INVALID_MESSAGE` | 消息格式错误 | 检查 JSON 格式 |
-| `RATE_LIMITED` | 请求过于频繁 | 降低发送频率 |
-| `SESSION_EXPIRED` | 会话过期 | 重新连接 |
-| `INTERNAL_ERROR` | 服务器内部错误 | 稍后重试 |
+v2 废弃 v1 的应用层错误码表，统一为 HTTP 语义：
 
----
-
-## 验证清单
-
-- [ ] 协议版本协商机制实现
-- [ ] 所有消息包含 msg_id 和 timestamp
-- [ ] Event 类型扩展（thinking_start, llm_request, tool_execute_start 等）
-- [ ] Client 类型识别和事件过滤
-- [ ] 心跳机制（ping/pong 带 latency）
-- [ ] 错误码规范实现
-- [ ] 向后兼容测试（旧 Client 可连接）
+| 形态 | 说明 |
+|------|------|
+| 2xx + 响应体 | 成功（`POST /messages` 为 202 + `mail_id`） |
+| 4xx + `{"error", "reason"}` | 客户端错误；`reason` 为语义化字符串（见各端点） |
+| 404 | 资源不存在（session / agent / trace） |
+| 409 | 冲突（session 已有活动 SSE 流，`reason: "stream_active"`） |
+| 503 | 依赖不可用（mail storage / metrics / config manager） |
 
 ---
 
-*设计完成时间: 2026-03-18*
+## 历史版本
+
+### ~~v1.0.0：WebSocket 协议（已退役，2026-08-12）~~
+
+~~双端口形态：REST :8080（只读查询）+ WebSocket :8888/ws（auth 握手与
+协议版本协商、`message` 发信帧、`mode`/`filter` 帧、`ping`/`pong` 心跳、
+`event` 推送帧、`participants`/`agents` 主动推送帧）。~~
+
+~~退役原因：发信无 ack 是 WS 单向帧模型的结构性缺陷（issue ）；
+两套协议、两个端口维护成本高。迁移设计与分阶段落地记录见
+[http-sse-protocol.md](./http-sse-protocol.md)（PR-1 ~ PR-4）。~~
+
+v1 帧格式与版本协商机制的完整文档见 git 历史（本文件 2026-08-12 之前
+的版本）。
+
+---
+
+*v1 设计完成: 2026-03-18；v2 落地: 2026-08-12（PR-1 ~ PR-4）*

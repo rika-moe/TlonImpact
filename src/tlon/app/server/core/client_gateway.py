@@ -6,7 +6,7 @@ to the client-facing subsystems:
 - Event notification (via NotificationService)
 - Member discovery (via MemberDirectory)
 
-This simplifies the API layer (WebSocketHandler, RESTHandler) by providing
+This simplifies the API layer (REST + SSE handlers) by providing
 a single entry point while delegating to specialized components internally.
 
 Architecture:
@@ -64,7 +64,7 @@ class ClientGateway(Component):
         ...     port=port,
         ... )
         >>> await gateway.initialize()
-        >>> session = await gateway.connect_client("tui", handler)
+        >>> session = await gateway.open_session("tui")
         >>> members = gateway.get_all_members()
     """
 
@@ -149,36 +149,41 @@ class ClientGateway(Component):
 
     # ==================== Session Management ====================
 
-    async def connect_client(
+    async def open_session(
         self,
         client_type: str,
-        event_handler: EventHandler,
         metadata: dict[str, Any] | None = None,
         filters: dict[str, Any] | None = None,
     ) -> ClientSession:
-        """Connect a new client session.
+        """Create a client session without an event handler.
 
-        Creates a session and registers the event handler for real-time updates.
+        REST/SSE path (protocol v2): the session is established by
+        ``POST /sessions``; the event handler is registered later, when
+        the client opens its event stream (``GET /events``), via
+        :meth:`set_event_handler`.
 
         Args:
             client_type: Type of client ("tui", "web", "telegram")
-            event_handler: Callback for events
             metadata: Optional client metadata
             filters: Optional initial event filters declared by the client
 
         Returns:
             The created client session
         """
-        # Create session via SessionManager
         session = await self._session_manager.create_session(
             client_type=client_type, metadata=metadata, filters=filters
         )
-
-        # Register event handler via NotificationService
-        self._notifications.register_handler(session.id, event_handler)
-
         logger.info("client_connected", session_id=session.id, client_type=client_type)
         return session
+
+    def set_event_handler(self, session_id: str, handler: EventHandler) -> None:
+        """(Re)register the event handler for an existing session.
+
+        Args:
+            session_id: The session ID
+            handler: Callback for events
+        """
+        self._notifications.register_handler(session_id, handler)
 
     async def disconnect_client(self, session_id: str) -> bool:
         """Disconnect a client session.

@@ -8,6 +8,7 @@
  * - GET /traces, GET /traces/{id}
  * - GET /admin/config/agents
  * - GET /inbox?username=x&limit=N
+ * - POST /messages
  * - GET /participants
  * - GET /metrics
  *
@@ -24,6 +25,28 @@ export class RestError extends Error {
   ) {
     super(message);
     this.name = "RestError";
+  }
+}
+
+/** A mail send request (see `sendMail`). */
+export interface SendMailMessage {
+  to: string[];
+  cc?: string[];
+  subject?: string;
+  content: string;
+  in_reply_to?: string;
+  thread_id?: string;
+}
+
+/** POST /messages rejection: carries the server's semantic reason code. */
+export class MailSendError extends Error {
+  constructor(
+    message: string,
+    readonly reason?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "MailSendError";
   }
 }
 
@@ -84,6 +107,41 @@ export class RestClient {
       `/inbox?username=${encodeURIComponent(username)}&limit=${limit}`,
     );
     return data.mails ?? [];
+  }
+
+  /**
+   * Send a mail as the given human user (POST /messages). Recipients in
+   * `to`/`cc` may be display names, member ids or full addresses — the
+   * server resolves them. Resolves with the new mail id; rejects with a
+   * MailSendError carrying the server's semantic reason on 4xx.
+   */
+  async sendMail(username: string, msg: SendMailMessage): Promise<string> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, ...msg }),
+      });
+    } catch (err) {
+      throw new MailSendError(`REST request failed: /messages (${String(err)})`);
+    }
+    const data = (await response.json().catch(() => ({}))) as {
+      mail_id?: string;
+      error?: string;
+      reason?: string;
+    };
+    if (!response.ok) {
+      throw new MailSendError(
+        data.error ?? `REST /messages returned ${String(response.status)}`,
+        data.reason,
+        response.status,
+      );
+    }
+    if (typeof data.mail_id !== "string") {
+      throw new MailSendError("REST /messages: response missing mail_id");
+    }
+    return data.mail_id;
   }
 
   /** The member address book (agents + online humans). */

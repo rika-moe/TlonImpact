@@ -1,4 +1,4 @@
 """Tlon Server package.
 
-Provides Server-Client architecture with REST API and WebSocket support.
+Provides Server-Client architecture over a single HTTP port (REST + SSE).
 """

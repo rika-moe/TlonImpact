@@ -30,15 +30,14 @@ Tlon 内部没有聊天室，只有邮件系统。五条规则概括全部行为
 ```bash
 uv run tlon ops                          # 以 guest 身份连接本机服务端
 uv run tlon ops --username alice        # 指定邮件身份（推荐）
-uv run tlon ops --host 192.168.1.100 --port 8888 --rest-port 8080
+uv run tlon ops --host 192.168.1.100 --rest-port 8080
 ```
 
 | 选项 | 说明 | 默认 |
 |------|------|------|
 | `--username, -u` | 邮件身份，决定你的地址 `<username>@tlon.internal` | `guest`（可用环境变量 `TLON_USERNAME`） |
 | `--host` | 服务端地址 | `127.0.0.1` |
-| `--port, -p` | WebSocket 端口 | `8888` |
-| `--rest-port, -r` | REST 端口 | `8080` |
+| `--rest-port, -r` | HTTP API 端口（REST + SSE） | `8080` |
 
 顶栏显示当前视图、连接状态（connecting / connected / reconnecting / disconnected）、服务端地址和你的 username。断线会自动重连并重新认证。
 
@@ -61,7 +60,7 @@ uv run tlon ops --host 192.168.1.100 --port 8888 --rest-port 8080
 
 - 邮件按 `thread_id` 聚合为线程，左栏按**最新一封邮件的时间**倒序排列，每项显示参与者、主题（或正文前 24 字符）和邮件数。
 - 右栏按时间正序显示线程内全部邮件：每封依次是 `发件人 → 收件人（含 (cc) 标记）· 时间`、`Subject:` 行、正文。
-- 数据来源有两路，按邮件 id 去重合并：启动时从 REST `GET /inbox?username=...` 拉取（inbox + sent 合并），之后实时并入 WebSocket 的 `mail.delivered` 事件。服务端**每个收件人发出一份投递事件**，去重保证了不会出现重复条目。
+- 数据来源有两路，按邮件 id 去重合并：启动时从 REST `GET /inbox?username=...` 拉取（inbox + sent 合并），之后实时并入 SSE 事件流的 `mail.delivered` 事件。服务端**每个收件人发出一份投递事件**，去重保证了不会出现重复条目。
 - 视图只显示**与你有关**的邮件（你是发件人或收件人之一）——这是客户端侧的呈现过滤。
 
 ### 写信（`c`）与回复（`r`）
@@ -70,13 +69,14 @@ uv run tlon ops --host 192.168.1.100 --port 8888 --rest-port 8080
 - `r` 回复选中的线程：自动取该线程**最新一封来信**，预填 To（来信发件人）、`Re:` 前缀主题，并携带 `in_reply_to` / `thread_id` 头部——回复自动继承线程。光标直接落在 Content。若线程里没有别人的来信，提示「该线程没有可回复的邮件」。
 - 表单校验：To 为空、Content 为空都会被拦下并提示。
 
-### 乐观追加与错误帧
+### 发送回执与错误提示
 
-邮件协议没有"发送成功"的确认帧。控制台的处理方式：
+发信走 REST `POST /messages`，有同步回执：
 
-1. 提交后表单停留约 400ms（显示 `sending…`）。若服务端立刻返回错误帧（比如"没有可送达的收件人"），错误直接显示在表单内，**字段内容保留**，你可以改正后重发。
-2. 400ms 内无错误，邮件被**乐观追加**到本地列表（发件人是你自己的邮件不会再以投递事件回推，所以必须本地补一条）。
-3. 之后到达的服务端错误（与本会话相关的）以提示条形式显示在视图标题行。
+1. 提交后表单显示 `sending…`，等待服务端响应。
+2. 服务端返回 4xx（比如"没有可送达的收件人"）时，错误直接显示在表单内，**字段内容保留**，你可以改正后重发。
+3. 202 回执（含 `mail_id`）后邮件追加到本地列表（发件人是你自己的邮件不会再以投递事件回推，所以必须本地补一条）。
+4. 之后到达的、与本会话相关的服务端事件以提示条形式显示在视图标题行。
 
 ---
 
@@ -95,7 +95,7 @@ uv run tlon ops --host 192.168.1.100 --port 8888 --rest-port 8080
 
 ## 会话模式与可见性：为什么控制台能看到所有邮件
 
-WebSocket 会话有三种模式（`{"type":"mode","mode":...}` 切换），模式决定服务端推送哪些事件：
+会话有三种模式（`POST /sessions` 声明初始模式，`PATCH /sessions/{id}` 切换），模式决定服务端推送哪些事件：
 
 | 模式 | 推送的事件 |
 |------|-----------|
@@ -109,7 +109,7 @@ Operator 控制台在认证成功后自动切换到 **`event` 模式**——它�
 - mail 视图不受影响：它客户端侧只呈现与你有关的邮件，数据口径仍是你的邮箱。
 - 如果你用 SDK 写一个普通终端客户端（`chat` 模式），它就只收到写给自己的信。
 
-模式之上还可叠加会话过滤器（`event_types` / `exclude_event_types` / `trace_id` / `agent`，支持 `prefix.*` 通配），过滤只在服务端执行。详见 [命令参考 · WebSocket API](../engineering/commands.md)。
+模式之上还可叠加会话过滤器（`event_types` / `exclude_event_types` / `trace_id` / `agent`，支持 `prefix.*` 通配），过滤只在服务端执行。详见 [命令参考 · 会话与事件流（SSE）](../engineering/commands.md)。
 
 ---
 
@@ -139,7 +139,7 @@ uv run tlon ops --username alice --host 192.168.1.100
 
 ## 🔧 工程参考
 
-REST 端点、WebSocket 帧格式、SDK → [命令参考](../engineering/commands.md) · [系统架构](../engineering/architecture.md)
+REST 端点、SSE 事件流、SDK → [命令参考](../engineering/commands.md) · [系统架构](../engineering/architecture.md)
 
 ---
 

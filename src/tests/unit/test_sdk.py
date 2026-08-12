@@ -1,17 +1,28 @@
-"""Unit tests for Tlon SDK.
+"""Unit tests for Tlon SDK (protocol v2: REST + SSE).
+
+The server side is simulated with an in-process aiohttp TestServer that
+implements the v2 contract: POST /sessions, GET /events (SSE),
+PATCH/DELETE /sessions/{id}, POST /messages.
 
 Tests cover:
-- BaseClient connection/disconnection/authentication
+- Session establishment (request body, snapshot, version negotiation)
+- SSE event reception (frame mapping, heartbeat comments ignored)
+- Auto-reconnect (re-POST /sessions + stream reopen + on_reconnect)
+- Session updates (set_mode / set_filters via PATCH)
+- Send receipt (POST /messages 202 / 4xx)
+- Disconnect cleanup (DELETE /sessions/{id} + stream abort)
 - Adapter filter declaration logic (get_effective_filters) — the actual
   event matching is server-side and tested in test_notification_service.py
-- Protocol version handling
 """
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import Callable
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 
 from tlon.app.clients.sdk.adapter import TerminalAdapter
 from tlon.app.clients.sdk.base_client import BaseClient, ConnectionState
@@ -23,461 +34,365 @@ from tlon.app.clients.sdk.exceptions import (
 )
 
 
-class TestBaseClient:
-    """Tests for BaseClient class."""
+async def wait_for(condition: Callable[[], bool], timeout: float = 2.0) -> None:
+    """Poll until condition() is true or fail after timeout."""
+    for _ in range(int(timeout / 0.01)):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not met within timeout")
 
-    @pytest.fixture
-    def client(self):
-        """Create a BaseClient instance for testing."""
-        return BaseClient(
-            ws_url="ws://localhost:8888/ws",
-            rest_url="http://localhost:8080",
-            auto_reconnect=False,
+
+def make_test_app() -> web.Application:
+    """In-process v2 server: sessions + SSE + messages endpoints."""
+    app = web.Application()
+    app["sessions"] = {}
+    app["sse_queues"] = {}
+    app["requests"] = []  # captured (method, path, body)
+    app["session_counter"] = 0
+
+    async def create_session(request: web.Request) -> web.Response:
+        body = await request.json()
+        app["requests"].append(("POST", "/sessions", body))
+        if body.get("protocol_version") != "2.0.0":
+            return web.json_response(
+                {
+                    "error": "Unsupported protocol version",
+                    "reason": "unsupported_protocol_version",
+                    "supported_versions": ["2.0.0"],
+                },
+                status=400,
+            )
+        if body.get("mode", "chat") not in ("chat", "event", "agent"):
+            return web.json_response(
+                {"error": "Invalid mode", "reason": "invalid_mode"}, status=400
+            )
+        app["session_counter"] += 1
+        session_id = f"{body.get('client_type', 'unknown')}-{app['session_counter']}"
+        session = {
+            "session_id": session_id,
+            "username": body.get("username", "guest"),
+            "client_type": body.get("client_type", "unknown"),
+            "mode": body.get("mode", "chat"),
+            "filters": body.get("filters") or {},
+            "connected_at": "2026-08-12T00:00:00Z",
+        }
+        app["sessions"][session_id] = session
+        return web.json_response(
+            {
+                **session,
+                "participants": [{"id": "human:guest", "name": "guest", "type": "human"}],
+                "agents": [{"id": "dev-001", "state": "idle"}],
+            },
+            status=201,
         )
 
-    @pytest.fixture
-    def mock_ws(self):
-        """Create a mock WebSocket response."""
-        ws = AsyncMock()
-        ws.closed = True  # Start as closed to prevent infinite receive loop
-        ws.close = AsyncMock()
-        return ws
+    async def update_session(request: web.Request) -> web.Response:
+        session_id = request.match_info["session_id"]
+        session = app["sessions"].get(session_id)
+        if session is None:
+            return web.json_response({"error": "not found"}, status=404)
+        body = await request.json()
+        app["requests"].append(("PATCH", f"/sessions/{session_id}", body))
+        if "mode" in body:
+            session["mode"] = body["mode"]
+        if "filters" in body:
+            session["filters"] = body["filters"]
+        return web.json_response(session)
+
+    async def delete_session(request: web.Request) -> web.Response:
+        session_id = request.match_info["session_id"]
+        app["requests"].append(("DELETE", f"/sessions/{session_id}", None))
+        queue = app["sse_queues"].get(session_id)
+        if queue is not None:
+            queue.put_nowait(None)
+        app["sessions"].pop(session_id, None)
+        return web.json_response({"session_id": session_id, "status": "disconnected"})
+
+    async def events(request: web.Request) -> web.StreamResponse:
+        session_id = request.query.get("session_id")
+        if session_id not in app["sessions"]:
+            return web.json_response({"error": "not found"}, status=404)
+        if session_id in app["sse_queues"]:
+            return web.json_response(
+                {"error": "stream active", "reason": "stream_active"}, status=409
+            )
+        queue: asyncio.Queue = asyncio.Queue()
+        app["sse_queues"][session_id] = queue
+        resp = web.StreamResponse(
+            status=200, headers={"Content-Type": "text/event-stream"}
+        )
+        await resp.prepare(request)
+        try:
+            while True:
+                frame = await queue.get()
+                if frame is None:
+                    break
+                await resp.write(frame.encode("utf-8"))
+        finally:
+            app["sse_queues"].pop(session_id, None)
+        return resp
+
+    async def send_message(request: web.Request) -> web.Response:
+        body = await request.json()
+        app["requests"].append(("POST", "/messages", body))
+        if "FAIL" in body.get("content", ""):
+            return web.json_response(
+                {"error": "Recipient not found", "reason": "recipient_unresolved"},
+                status=400,
+            )
+        return web.json_response({"mail_id": "mail-1"}, status=202)
+
+    app.router.add_post("/sessions", create_session)
+    app.router.add_patch("/sessions/{session_id}", update_session)
+    app.router.add_delete("/sessions/{session_id}", delete_session)
+    app.router.add_get("/events", events)
+    app.router.add_post("/messages", send_message)
+    return app
+
+
+@pytest.fixture
+async def server():
+    """Start the in-process test server."""
+    test_server = TestServer(make_test_app())
+    await test_server.start_server()
+    yield test_server
+    await test_server.close()
+
+
+@pytest.fixture
+def base_url(server):
+    return str(server.make_url(""))
+
+
+class TestBaseClient:
+    """Tests for BaseClient against the in-process v2 server."""
 
     @pytest.fixture
-    def mock_session(self, mock_ws):
-        """Create a mock aiohttp ClientSession."""
-        session = AsyncMock()
-        session.ws_connect = AsyncMock(return_value=mock_ws)
-        session.close = AsyncMock()
-        return session
+    async def client(self, base_url):
+        client = BaseClient(base_url=base_url, auto_reconnect=False)
+        yield client
+        await client.disconnect()
 
-    def test_init(self, client):
+    def test_init(self, base_url):
         """Test BaseClient initialization."""
-        assert client.ws_url == "ws://localhost:8888/ws"
-        assert client.rest_url == "http://localhost:8080"
+        client = BaseClient(base_url=base_url)
+        assert client.base_url == base_url.rstrip("/")
         assert client.state == ConnectionState.DISCONNECTED
         assert not client.is_connected
         assert not client.is_authenticated
         assert client.session_id is None
 
-    def test_derive_rest_url(self, client):
-        """Test REST URL derivation from WebSocket URL."""
-        # Test ws:// to http://
-        assert client._derive_rest_url("ws://localhost:8888/ws") == "http://localhost:8888"
-        # Test wss:// to https://
-        assert client._derive_rest_url("wss://example.com/ws") == "https://example.com"
-        # Test with port
-        assert client._derive_rest_url("ws://host:9999/ws") == "http://host:9999"
-
-    @pytest.mark.asyncio
-    async def test_connect_success(self, client, mock_session, mock_ws):
-        """Test successful connection."""
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            result = await client.connect()
-
-        assert result is True
+    async def test_connect(self, client):
+        """connect() creates the HTTP session without establishing a session."""
+        assert await client.connect() is True
         assert client.state == ConnectionState.CONNECTED
         assert client.is_connected
-        mock_session.ws_connect.assert_called_once_with("ws://localhost:8888/ws")
+        assert client.session_id is None
 
-    @pytest.mark.asyncio
-    async def test_connect_already_connected(self, client, mock_session, mock_ws):
-        """Test connect when already connected."""
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            result = await client.connect()
-
-        assert result is True
-        # Should not create new connection
-        mock_session.ws_connect.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_connect_failure(self, client):
-        """Test connection failure."""
-        with patch("aiohttp.ClientSession") as mock:
-            mock.return_value.ws_connect = AsyncMock(side_effect=Exception("Connection refused"))
-            mock.return_value.close = AsyncMock()
-
-            with pytest.raises(ConnectionError):
-                await client.connect()
-
-        assert client.state == ConnectionState.ERROR
-
-    @pytest.mark.asyncio
-    async def test_disconnect(self, client, mock_session, mock_ws):
-        """Test disconnection."""
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            await client.disconnect()
-
-        assert client.state == ConnectionState.DISCONNECTED
-        assert not client.is_connected
-        mock_ws.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_authenticate_success(self, client, mock_session, mock_ws):
-        """Test successful authentication."""
-        auth_response = {
-            "type": "auth_success",
-            "session_id": "test-session-123",
-            "protocol_version": "1.0.0",
-            "server_version": "0.2.0",
-            "capabilities": ["trace", "filter"],
-        }
-
-        # Mock the auth response waiting
-        async def mock_wait_for_auth():
-            client._auth_response = auth_response
-            return auth_response
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
-                result = await client.authenticate("tui", capabilities=["trace"])
+    async def test_authenticate_establishes_session(self, client, server):
+        """authenticate() POSTs /sessions and stores the returned snapshot."""
+        await client.connect()
+        result = await client.authenticate(
+            "tui", username="alice", filters={"event_types": ["mail.*"]}, mode="event"
+        )
 
         assert result is True
         assert client.is_authenticated
-        assert client.session_id == "test-session-123"
-        assert client.protocol_version == "1.0.0"
-        assert "trace" in client.server_capabilities
+        assert client.session_id == "tui-1"
+        assert client.protocol_version == "2.0.0"
+        assert client.username == "alice"
+        assert client.mode == "event"
+        assert client.participants == [{"id": "human:guest", "name": "guest", "type": "human"}]
+        assert client.agents == [{"id": "dev-001", "state": "idle"}]
 
-    @pytest.mark.asyncio
-    async def test_authenticate_with_username(self, client, mock_session, mock_ws):
-        """Test that username is sent in the auth message and kept for reconnect."""
-        auth_response = {
-            "type": "auth_success",
-            "session_id": "test-session-123",
+        # The request body follows the v2 contract
+        method, path, body = server.app["requests"][0]
+        assert (method, path) == ("POST", "/sessions")
+        assert body == {
+            "client_type": "tui",
+            "mode": "event",
+            "protocol_version": "2.0.0",
             "username": "alice",
-            "protocol_version": "1.0.0",
-            "server_version": "0.2.0",
-            "capabilities": ["trace", "filter"],
+            "filters": {"event_types": ["mail.*"]},
         }
-        sent: list[dict] = []
 
-        async def capture_send(msg):
-            sent.append(msg)
+        # The SSE stream was opened for the new session
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
 
-        async def mock_wait_for_auth():
-            client._auth_response = auth_response
-            return auth_response
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            with (
-                patch.object(client, "_send_raw", capture_send),
-                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
-            ):
-                result = await client.authenticate("tui", username="alice")
-
-        assert result is True
-        assert sent[0]["username"] == "alice"
-        # Reconnect re-authenticates with the same username
-        assert client._auth_params["username"] == "alice"
-
-    @pytest.mark.asyncio
-    async def test_authenticate_without_username_omits_field(self, client, mock_session, mock_ws):
-        """Test that the auth message omits username when not provided."""
-        auth_response = {
-            "type": "auth_success",
-            "session_id": "test-session-123",
-            "protocol_version": "1.0.0",
-            "server_version": "0.2.0",
-            "capabilities": [],
-        }
-        sent: list[dict] = []
-
-        async def capture_send(msg):
-            sent.append(msg)
-
-        async def mock_wait_for_auth():
-            client._auth_response = auth_response
-            return auth_response
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            with (
-                patch.object(client, "_send_raw", capture_send),
-                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
-            ):
-                await client.authenticate("tui")
-
-        assert "username" not in sent[0]
-
-    @pytest.mark.asyncio
     async def test_authenticate_not_connected(self, client):
-        """Test authentication without connection."""
+        """Authentication without connect() raises ConnectionError."""
         with pytest.raises(ConnectionError):
             await client.authenticate("tui")
 
-    @pytest.mark.asyncio
-    async def test_authenticate_version_mismatch(self, client, mock_session, mock_ws):
-        """Test authentication with version mismatch."""
-        auth_response = {
-            "type": "auth_failed",
-            "error_code": "VERSION_MISMATCH",
-            "message": "Protocol version 1.0.0 not supported",
-            "supported_versions": ["1.1.0"],
+    async def test_authenticate_version_mismatch(self, client, monkeypatch):
+        """A rejected protocol version raises ProtocolError."""
+        monkeypatch.setattr(BaseClient, "PROTOCOL_VERSION", "9.9.9")
+        await client.connect()
+        with pytest.raises(ProtocolError) as exc_info:
+            await client.authenticate("tui")
+
+        assert "2.0.0" in exc_info.value.server_versions
+        assert not client.is_authenticated
+
+    async def test_authenticate_invalid_field(self, client):
+        """A 4xx without a version reason raises AuthenticationError."""
+        await client.connect()
+        with pytest.raises(AuthenticationError):
+            await client.authenticate("tui", mode="bogus")
+
+    async def test_event_received(self, client, server):
+        """SSE event frames are mapped and dispatched to event handlers."""
+        events: list[dict] = []
+        client.on_event(events.append)
+
+        await client.connect()
+        await client.authenticate("tui")
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+
+        frame = {
+            "type": "event",
+            "event_type": "mail.delivered",
+            "payload": {"content": "hello"},
+            "source": "dev-001",
+            "timestamp": 123.0,
+            "trace_id": "trace-1",
         }
+        server.app["sse_queues"]["tui-1"].put_nowait(f"data: {json.dumps(frame)}\n\n")
 
-        async def mock_wait_for_auth():
-            client._auth_response = auth_response
-            return auth_response
+        await wait_for(lambda: len(events) == 1)
+        assert events[0]["type"] == "mail.delivered"
+        assert events[0]["payload"] == {"content": "hello"}
+        assert events[0]["source"] == "dev-001"
+        assert events[0]["trace_id"] == "trace-1"
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            with (
-                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
-                pytest.raises(ProtocolError) as exc_info,
-            ):
-                await client.authenticate("tui")
+    async def test_heartbeat_comment_ignored(self, client, server):
+        """': ping' SSE comment lines are ignored."""
+        events: list[dict] = []
+        client.on_event(events.append)
 
-        assert exc_info.value.error_code == "VERSION_MISMATCH"
-        assert "1.1.0" in exc_info.value.server_versions
+        await client.connect()
+        await client.authenticate("tui")
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
 
-    @pytest.mark.asyncio
-    async def test_authenticate_timeout(self, client, mock_session, mock_ws):
-        """Test authentication timeout."""
+        queue = server.app["sse_queues"]["tui-1"]
+        queue.put_nowait(": ping\n\n")
+        frame = {"type": "event", "event_type": "agent.thinking", "payload": {}}
+        queue.put_nowait(f"data: {json.dumps(frame)}\n\n")
 
-        async def mock_wait_for_auth():
-            await asyncio.sleep(100)  # Simulate timeout
+        await wait_for(lambda: len(events) == 1)
+        assert events[0]["type"] == "agent.thinking"
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            with (
-                patch.object(client, "_wait_for_auth_response", mock_wait_for_auth),
-                pytest.raises(AuthenticationError) as exc_info,
-            ):
-                await client.authenticate("tui", timeout=0.1)
+    async def test_update_session(self, client, server):
+        """update_session() PATCHes mode/filters and syncs local state."""
+        await client.connect()
+        await client.authenticate("tui")
 
-        assert "timeout" in str(exc_info.value).lower()
-
-    @pytest.mark.asyncio
-    async def test_send_message(self, client):
-        """Test sending a message."""
-        # Mock the internal state without going through connect
-        client._session = AsyncMock()
-        client._ws = AsyncMock()
-        client._ws.closed = False
-        client._ws.send_str = AsyncMock()
-        client._state = ConnectionState.AUTHENTICATED
-
-        result = await client.send({"type": "message", "content": "Hello"})
+        result = await client.update_session(mode="event", filters={"trace_id": "t-1"})
 
         assert result is True
-        client._ws.send_str.assert_called_once()
-        # Verify JSON was sent
-        sent_data = json.loads(client._ws.send_str.call_args[0][0])
-        assert sent_data["type"] == "message"
-        assert sent_data["content"] == "Hello"
-        assert "msg_id" in sent_data
-        assert "timestamp" in sent_data
+        assert client.mode == "event"
+        assert client.filters == {"trace_id": "t-1"}
+        patch_req = [r for r in server.app["requests"] if r[0] == "PATCH"][0]
+        assert patch_req[1] == "/sessions/tui-1"
+        assert patch_req[2] == {"mode": "event", "filters": {"trace_id": "t-1"}}
 
-    @pytest.mark.asyncio
-    async def test_send_not_authenticated(self, client):
-        """Test sending without authentication."""
-        # Mock connected but not authenticated
-        client._session = AsyncMock()
-        client._ws = AsyncMock()
-        client._state = ConnectionState.CONNECTED  # Not AUTHENTICATED
+    async def test_update_session_not_authenticated(self, client):
+        """update_session() without a session is rejected locally."""
+        await client.connect()
+        assert await client.update_session(mode="event") is False
 
-        result = await client.send({"type": "message", "content": "Hello"})
+    async def test_disconnect_deletes_session(self, client, server):
+        """disconnect() DELETEs the session and aborts the SSE stream."""
+        await client.connect()
+        await client.authenticate("tui")
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
 
-        assert result is False
+        await client.disconnect()
 
-    @pytest.mark.asyncio
-    async def test_event_handler(self, client, mock_session, mock_ws):
-        """Test event handler registration and dispatch."""
-        handler = MagicMock()
-        client.on_event(handler)
+        assert client.state == ConnectionState.DISCONNECTED
+        assert client.session_id is None
+        delete_req = [r for r in server.app["requests"] if r[0] == "DELETE"]
+        assert delete_req and delete_req[0][1] == "/sessions/tui-1"
+        # The server-side stream was wound down
+        await wait_for(lambda: "tui-1" not in server.app["sse_queues"])
 
-        event = {"type": "mail.delivered", "payload": {"content": "test"}}
+    async def test_state_change_handler(self, client):
+        """State change handlers observe the connect transitions."""
+        states: list[ConnectionState] = []
+        client.on_state_change(states.append)
 
-        await client._dispatch_event(event)
+        await client.connect()
 
-        handler.assert_called_once_with(event)
+        assert ConnectionState.CONNECTED in states
 
-    @pytest.mark.asyncio
-    async def test_async_event_handler(self, client, mock_session, mock_ws):
-        """Test async event handler."""
-        async_handler = AsyncMock()
-        client.on_event(async_handler)
 
-        event = {"type": "mail.delivered", "payload": {"content": "test"}}
+class TestReconnect:
+    """Auto-reconnect: re-POST /sessions + reopen the SSE stream."""
 
-        await client._dispatch_event(event)
-
-        # Async handler should be called
-        async_handler.assert_called_once_with(event)
-
-    @pytest.mark.asyncio
-    async def test_state_change_handler(self, client, mock_session, mock_ws):
-        """Test state change handler."""
-        handler = MagicMock()
-        client.on_state_change(handler)
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-
-        # Handler should have been called with CONNECTED state
-        handler.assert_called()
-        assert any(call.args[0] == ConnectionState.CONNECTED for call in handler.call_args_list)
-
-    @pytest.mark.asyncio
-    async def test_authenticate_response_arriving_before_wait(self, client, mock_session, mock_ws):
-        """Regression: an auth response arriving before the wait starts must not be lost.
-
-        The auth event must be created before the auth message is sent,
-        otherwise a fast response is dropped and authentication times out.
-        """
-        auth_response = {
-            "type": "auth_success",
-            "session_id": "early-session",
-            "protocol_version": "1.0.0",
-            "server_version": "0.2.0",
-            "capabilities": ["trace"],
-        }
-
-        async def fake_send_raw(data):
-            # Simulate the server responding during the send itself,
-            # i.e. before authenticate() starts waiting for the response.
-            if data.get("type") == "auth":
-                await client._handle_message(json.dumps(auth_response))
-            return True
-
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            await client.connect()
-            with patch.object(client, "_send_raw", fake_send_raw):
-                result = await client.authenticate("tui", capabilities=["trace"], timeout=1.0)
-
-        assert result is True
-        assert client.is_authenticated
-        assert client.session_id == "early-session"
-
-    @pytest.mark.asyncio
-    async def test_reconnect_reauthenticates(self):
-        """Regression: auto-reconnect must re-authenticate so send() works again."""
-        import aiohttp
-
+    async def test_reconnect_reestablishes_session(self, base_url, server):
         client = BaseClient(
-            ws_url="ws://localhost:8888/ws",
-            rest_url="http://localhost:8080",
-            auto_reconnect=True,
-            reconnect_delay=0.01,
+            base_url=base_url, auto_reconnect=True, reconnect_delay=0.01
         )
-
-        # Each (re)connection gets a fresh mock ws whose receive() blocks on a
-        # queue, so we control exactly when the connection drops.
-        queue: asyncio.Queue = asyncio.Queue()
-
-        def make_ws():
-            ws = AsyncMock()
-            ws.closed = False
-            ws.receive = AsyncMock(side_effect=queue.get)
-            ws.send_str = AsyncMock()
-            ws.close = AsyncMock()
-            return ws
-
-        session = AsyncMock()
-        session.ws_connect = AsyncMock(side_effect=lambda url: make_ws())
-        session.close = AsyncMock()
-
-        auth_response = {
-            "type": "auth_success",
-            "session_id": "reconnect-session",
-            "protocol_version": "1.0.0",
-            "server_version": "0.2.0",
-            "capabilities": ["trace"],
-        }
-
-        async def mock_wait_for_auth():
-            return auth_response
-
+        on_reconnect = MagicMock()
+        client.on_reconnect(on_reconnect)
         try:
-            with patch("aiohttp.ClientSession", return_value=session):
-                await client.connect()
-                with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
-                    await client.authenticate("tui", capabilities=["trace"])
-                    assert client.is_authenticated
+            await client.connect()
+            await client.authenticate("tui", username="alice", mode="event")
+            await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+            on_reconnect.assert_not_called()
 
-                    # Simulate the server closing the connection
-                    queue.put_nowait(MagicMock(type=aiohttp.WSMsgType.CLOSED))
+            # Simulate the server dropping the stream
+            server.app["sse_queues"]["tui-1"].put_nowait(None)
 
-                    # Wait for auto-reconnect + re-authentication to complete
-                    for _ in range(200):
-                        await asyncio.sleep(0.01)
-                        if client.is_authenticated:
-                            break
+            # The client re-POSTs /sessions (same params) and reopens SSE
+            await wait_for(lambda: client.session_id == "tui-2")
+            await wait_for(lambda: "tui-2" in server.app["sse_queues"])
+            assert client.is_authenticated
+            on_reconnect.assert_called_once_with()
 
-                    assert client.is_authenticated
-                    assert session.ws_connect.call_count == 2
-
-                    # send() must work on the reconnected session
-                    result = await client.send({"type": "message", "content": "hi"})
-                    assert result is True
+            posts = [r for r in server.app["requests"] if r[1] == "/sessions"]
+            assert len(posts) == 2
+            assert posts[1][2]["username"] == "alice"
+            assert posts[1][2]["mode"] == "event"
         finally:
             await client.disconnect()
 
-    @pytest.mark.asyncio
-    async def test_reconnect_notifies_on_reconnect(self):
-        """on_reconnect handlers fire after auto-reconnect + re-authentication."""
-        import aiohttp
-
+    async def test_events_flow_after_reconnect(self, base_url, server):
+        """The reopened stream delivers events to the same handlers."""
         client = BaseClient(
-            ws_url="ws://localhost:8888/ws",
-            rest_url="http://localhost:8080",
-            auto_reconnect=True,
-            reconnect_delay=0.01,
+            base_url=base_url, auto_reconnect=True, reconnect_delay=0.01
         )
-
-        queue: asyncio.Queue = asyncio.Queue()
-
-        def make_ws():
-            ws = AsyncMock()
-            ws.closed = False
-            ws.receive = AsyncMock(side_effect=queue.get)
-            ws.send_str = AsyncMock()
-            ws.close = AsyncMock()
-            return ws
-
-        session = AsyncMock()
-        session.ws_connect = AsyncMock(side_effect=lambda url: make_ws())
-        session.close = AsyncMock()
-
-        auth_response = {
-            "type": "auth_success",
-            "session_id": "reconnect-session",
-            "protocol_version": "1.0.0",
-            "server_version": "0.2.0",
-            "capabilities": ["trace"],
-        }
-
-        async def mock_wait_for_auth():
-            return auth_response
-
-        on_reconnect = MagicMock()
-        client.on_reconnect(on_reconnect)
-
+        events: list[dict] = []
+        client.on_event(events.append)
         try:
-            with patch("aiohttp.ClientSession", return_value=session):
-                await client.connect()
-                with patch.object(client, "_wait_for_auth_response", mock_wait_for_auth):
-                    await client.authenticate("tui", capabilities=["trace"])
-                    assert client.is_authenticated
+            await client.connect()
+            await client.authenticate("tui")
+            await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+            server.app["sse_queues"]["tui-1"].put_nowait(None)
+            await wait_for(lambda: "tui-2" in server.app["sse_queues"])
 
-                    # Initial connect must not trigger the reconnect handlers
-                    on_reconnect.assert_not_called()
+            frame = {"type": "event", "event_type": "mail.delivered", "payload": {}}
+            server.app["sse_queues"]["tui-2"].put_nowait(
+                f"data: {json.dumps(frame)}\n\n"
+            )
+            await wait_for(lambda: len(events) == 1)
+        finally:
+            await client.disconnect()
 
-                    # Simulate the server closing the connection
-                    queue.put_nowait(MagicMock(type=aiohttp.WSMsgType.CLOSED))
+    async def test_no_reconnect_when_disabled(self, base_url, server):
+        """Without auto_reconnect, a dropped stream stays disconnected."""
+        client = BaseClient(base_url=base_url, auto_reconnect=False)
+        try:
+            await client.connect()
+            await client.authenticate("tui")
+            await wait_for(lambda: "tui-1" in server.app["sse_queues"])
 
-                    # Wait for auto-reconnect + re-authentication to complete
-                    for _ in range(200):
-                        await asyncio.sleep(0.01)
-                        if client.is_authenticated:
-                            break
+            server.app["sse_queues"]["tui-1"].put_nowait(None)
 
-                    assert client.is_authenticated
-                    on_reconnect.assert_called_once_with()
+            await wait_for(lambda: client.state == ConnectionState.DISCONNECTED)
+            await asyncio.sleep(0.05)
+            assert server.app["session_counter"] == 1
         finally:
             await client.disconnect()
 
@@ -564,17 +479,13 @@ class TestTlonClient:
     """Tests for TlonClient class."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, base_url):
         """Create a TlonClient instance."""
-        return TlonClient(
-            ws_url="ws://localhost:8888/ws",
-            adapter=TerminalAdapter(),
-        )
+        return TlonClient(base_url=base_url, adapter=TerminalAdapter())
 
-    def test_init(self, client):
+    def test_init(self, client, base_url):
         """Test TlonClient initialization."""
-        # ws_url is stored in _base
-        assert client._base.ws_url == "ws://localhost:8888/ws"
+        assert client._base.base_url == base_url.rstrip("/")
         assert isinstance(client.adapter, TerminalAdapter)
 
     def test_properties(self, client):
@@ -584,71 +495,87 @@ class TestTlonClient:
         assert not client.is_authenticated
         assert client.session_id is None
 
-    @pytest.mark.asyncio
     async def test_context_manager(self, client):
         """Test async context manager."""
-        with (
-            patch.object(client, "connect", AsyncMock(return_value=True)) as mock_connect,
-            patch.object(client, "disconnect", AsyncMock()) as mock_disconnect,
-        ):
-            async with client as c:
-                assert c is client
+        client.connect = AsyncMock(return_value=True)
+        client.disconnect = AsyncMock()
 
-            mock_connect.assert_called_once()
-            mock_disconnect.assert_called_once()
+        async with client as c:
+            assert c is client
 
-    @pytest.mark.asyncio
-    async def test_send_message(self, client):
-        """Test send_message method."""
+        client.connect.assert_called_once()
+        client.disconnect.assert_called_once()
+
+    async def test_authenticate_declares_adapter_filters(self, client):
+        """authenticate() passes client_type/mode/filters to the session request."""
         client._base = AsyncMock()
-        client._base.send = AsyncMock(return_value=True)
+        client._base.authenticate = AsyncMock(return_value=True)
+
+        result = await client.authenticate(username="alice")
+
+        assert result is True
+        call_kwargs = client._base.authenticate.call_args.kwargs
+        assert call_kwargs["client_type"] == "tui"
+        assert call_kwargs["mode"] == "chat"
+        assert call_kwargs["username"] == "alice"
+        assert call_kwargs["filters"] == client.adapter.get_effective_filters()
+
+    async def test_send_message(self, client):
+        """send_message posts to /messages with the session's username."""
+        client._base = AsyncMock()
+        client._base.username = "alice"
+        client._base.rest_post = AsyncMock(return_value={"mail_id": "mail-1"})
 
         result = await client.send_message("Hello", to=["agent-1"])
 
         assert result is True
-        # Should call _base.send with the message dict
-        client._base.send.assert_called_once()
-        call_args = client._base.send.call_args[0][0]
-        assert call_args["type"] == "message"
-        assert call_args["content"] == "Hello"
-        assert call_args["to"] == ["agent-1"]
+        client._base.rest_post.assert_called_once()
+        path, body = client._base.rest_post.call_args[0]
+        assert path == "/messages"
+        assert body["content"] == "Hello"
+        assert body["to"] == ["agent-1"]
+        assert body["username"] == "alice"
 
-    @pytest.mark.asyncio
     async def test_send_message_reply_headers(self, client):
-        """reply_to/thread_id map to the server's in_reply_to/thread_id frame fields."""
+        """reply_to/thread_id map to the server's in_reply_to/thread_id fields."""
         client._base = AsyncMock()
-        client._base.send = AsyncMock(return_value=True)
+        client._base.username = None
+        client._base.rest_post = AsyncMock(return_value={"mail_id": "mail-2"})
 
         await client.send_message(
             "Got it", to=["agent-1"], reply_to="mail-1", thread_id="thread-1"
         )
 
-        call_args = client._base.send.call_args[0][0]
-        assert call_args["in_reply_to"] == "mail-1"
-        assert call_args["thread_id"] == "thread-1"
-        assert "reply_to" not in call_args
+        body = client._base.rest_post.call_args[0][1]
+        assert body["in_reply_to"] == "mail-1"
+        assert body["thread_id"] == "thread-1"
+        assert "reply_to" not in body
+        assert "username" not in body
 
-    @pytest.mark.asyncio
+    async def test_send_message_rejected(self, client):
+        """A 4xx receipt (rest_post -> None) makes send_message return False."""
+        client._base = AsyncMock()
+        client._base.username = None
+        client._base.rest_post = AsyncMock(return_value=None)
+
+        assert await client.send_message("Hi", to=["ghost"]) is False
+
     async def test_set_trace_filter(self, client):
         """Test set_trace_filter method."""
         client._base = AsyncMock()
-        client._base.send = AsyncMock(return_value=True)
+        client._base.update_session = AsyncMock(return_value=True)
 
         result = await client.set_trace_filter("trace-123")
 
         assert result is True
         assert client.adapter._trace_filter == "trace-123"
-        # Should send filter message to server
-        client._base.send.assert_called_once()
-        call_args = client._base.send.call_args[0][0]
-        assert call_args["type"] == "filter"
-        assert call_args["filters"]["trace_id"] == "trace-123"
+        client._base.update_session.assert_called_once()
+        assert client._base.update_session.call_args.kwargs["filters"]["trace_id"] == "trace-123"
 
-    @pytest.mark.asyncio
     async def test_set_trace_filter_clear(self, client):
         """Test clearing trace filter."""
         client._base = AsyncMock()
-        client._base.send = AsyncMock(return_value=True)
+        client._base.update_session = AsyncMock(return_value=True)
 
         # First set a filter
         await client.set_trace_filter("trace-123")
@@ -658,7 +585,20 @@ class TestTlonClient:
         assert result is True
         assert client.adapter._trace_filter is None
 
-    @pytest.mark.asyncio
+    async def test_set_mode_syncs_mode_and_filters(self, client):
+        """set_mode sends the mode and re-synced filters in one PATCH."""
+        client._base = AsyncMock()
+        client._base.update_session = AsyncMock(return_value=True)
+
+        result = await client.set_mode("event")
+
+        assert result is True
+        assert client.adapter.mode == "event"
+        client._base.update_session.assert_called_once()
+        call_kwargs = client._base.update_session.call_args.kwargs
+        assert call_kwargs["mode"] == "event"
+        assert call_kwargs["filters"] == client.adapter.get_effective_filters()
+
     async def test_on_event_dispatches_without_local_filtering(self, client):
         """Events are filtered server-side; _on_event dispatches everything."""
         handler = MagicMock()
@@ -682,40 +622,6 @@ class TestTlonClient:
         client._on_event(agent_event)
         handler.assert_called_once_with(agent_event)
 
-    @pytest.mark.asyncio
-    async def test_authenticate_declares_adapter_filters(self, client):
-        """authenticate() passes the adapter's effective filters to the server."""
-        client._base = AsyncMock()
-        client._base.authenticate = AsyncMock(return_value=True)
-
-        result = await client.authenticate()
-
-        assert result is True
-        call_kwargs = client._base.authenticate.call_args.kwargs
-        assert call_kwargs["client_type"] == "tui"
-        assert call_kwargs["filters"] == client.adapter.get_effective_filters()
-
-    @pytest.mark.asyncio
-    async def test_set_mode_syncs_mode_and_filters(self, client):
-        """set_mode sends both the mode and the re-synced effective filters."""
-        client._base = AsyncMock()
-        client._base.send = AsyncMock(return_value=True)
-
-        result = await client.set_mode("event")
-
-        assert result is True
-        assert client.adapter.mode == "event"
-        assert client._base.send.call_count == 2
-
-        mode_msg = client._base.send.call_args_list[0][0][0]
-        assert mode_msg["type"] == "mode"
-        assert mode_msg["mode"] == "event"
-
-        filter_msg = client._base.send.call_args_list[1][0][0]
-        assert filter_msg["type"] == "filter"
-        assert filter_msg["filters"] == client.adapter.get_effective_filters()
-
-    @pytest.mark.asyncio
     async def test_rest_api_methods(self, client):
         """Test REST API wrapper methods."""
         client._base = AsyncMock()
@@ -732,3 +638,44 @@ class TestTlonClient:
 
         trace = await client.get_trace("t-1")
         assert trace["trace_id"] == "t-1"
+
+
+class TestTlonClientIntegration:
+    """TlonClient against the in-process v2 server (end-to-end transport)."""
+
+    async def test_full_flow(self, base_url, server):
+        """connect → authenticate → event → send → set_mode → disconnect."""
+        events: list[dict] = []
+        async with TlonClient(base_url=base_url, auto_reconnect=False) as client:
+            assert await client.authenticate(username="alice") is True
+            assert client.session_id == "tui-1"
+            client.on_event(events.append)
+            await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+
+            # Event reception
+            frame = {
+                "type": "event",
+                "event_type": "mail.delivered",
+                "payload": {"content": "hi"},
+            }
+            server.app["sse_queues"]["tui-1"].put_nowait(
+                f"data: {json.dumps(frame)}\n\n"
+            )
+            await wait_for(lambda: len(events) == 1)
+            assert events[0]["type"] == "mail.delivered"
+
+            # Send receipt (202 + mail_id)
+            assert await client.send_message("Hello", to=["dev-001"]) is True
+            msg_req = [r for r in server.app["requests"] if r[1] == "/messages"][0]
+            assert msg_req[2]["username"] == "alice"
+
+            # Send rejection (4xx) -> False
+            assert await client.send_message("FAIL now", to=["ghost"]) is False
+
+            # set_mode via PATCH
+            assert await client.set_mode("event") is True
+            patch_req = [r for r in server.app["requests"] if r[0] == "PATCH"][0]
+            assert patch_req[2]["mode"] == "event"
+
+        # Context-manager exit deleted the session
+        assert any(r[0] == "DELETE" for r in server.app["requests"])

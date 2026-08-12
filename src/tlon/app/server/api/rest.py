@@ -5,8 +5,10 @@ Provides HTTP endpoints for:
 - Mail inbox retrieval
 - Agent management
 - Session information
+- Client sessions + SSE event stream (protocol v2)
 """
 
+import asyncio
 import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -16,15 +18,75 @@ from aiohttp import web
 
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.app.server.core.client_gateway import ClientGateway
+from tlon.app.server.core.session_manager import ClientSession
+from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, HUMAN_ID_PREFIX
+from tlon.organization.messaging.human_adapter import (
+    DEFAULT_USERNAME,
+    HUMAN_ID_PREFIX,
+    AdapterManager,
+)
+
+from .send_mail import SendMailError, parse_send_mail_fields
 
 logger = get_logger(__name__)
 
 # Level ordering for minimum-level filtering of log entries
 _LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
+
+# Protocol v2 (HTTP + SSE): the only version POST /sessions accepts.
+SESSION_PROTOCOL_VERSION = "2.0.0"
+
+# Valid session modes.
+SESSION_MODES = ("chat", "event", "agent")
+
+# SSE heartbeat: a ": ping" comment line every this many seconds.
+SSE_HEARTBEAT_SECONDS = 25.0
+
+
+def _validate_username(username_raw: Any) -> str | None:
+    """Normalize a human username; None when invalid.
+
+    The username becomes a directory name — reject empty and anything
+    carrying a path separator (traversal guard).
+    """
+    if not isinstance(username_raw, str):
+        return None
+    username = username_raw.strip()
+    if not username or "/" in username or "\\" in username:
+        return None
+    return username
+
+
+def _event_frame(event: Event) -> dict[str, Any]:
+    """Serialize an event into the wire frame sent over the SSE stream."""
+    payload = event.payload
+    if isinstance(payload, dict):
+        # Mail delivery payloads nest a Mail under "mail"
+        payload = {
+            key: value.to_dict() if hasattr(value, "to_dict") else value
+            for key, value in payload.items()
+        }
+    elif hasattr(payload, "to_dict"):
+        payload = payload.to_dict()
+
+    frame: dict[str, Any] = {
+        "type": "event",
+        "event_type": event.type.value,
+        "payload": payload,
+        "source": event.source,
+        "timestamp": event.timestamp,
+    }
+    # Include tracing fields so clients can observe server-side trace filtering
+    if event.trace_id:
+        frame["trace_id"] = event.trace_id
+    if event.span_id:
+        frame["span_id"] = event.span_id
+    if event.parent_span_id:
+        frame["parent_span_id"] = event.parent_span_id
+    return frame
 
 
 def _recent_log_files(logs_dir: Path, days: int = 2) -> list[Path]:
@@ -112,6 +174,11 @@ class RESTAPIHandler:
     - GET /health - Health check
     - GET /config - Server configuration
     - GET /inbox - Member inbox (mail model)
+    - POST /messages - Send a mail as a human member (protocol v2, PR-1)
+    - POST /sessions - Establish a client session (protocol v2, PR-2)
+    - PATCH /sessions/{id} - Update session mode/filters (protocol v2, PR-2)
+    - DELETE /sessions/{id} - Disconnect a session (protocol v2, PR-2)
+    - GET /events - SSE event stream for a session (protocol v2, PR-2)
     - GET /agents - List all agents
     - GET /sessions - List active sessions
     - GET /agents/{id}/logs - Agent log entries
@@ -137,6 +204,7 @@ class RESTAPIHandler:
         metrics_service: Any | None = None,
         logs_dir: Path | None = None,
         paths: TlonPaths | None = None,
+        adapter_manager: AdapterManager | None = None,
         debug: bool = False,
     ):
         """Initialize the REST API handler.
@@ -149,6 +217,7 @@ class RESTAPIHandler:
             metrics_service: Optional MetricsService for the /metrics snapshot
             logs_dir: Optional directory with server-{date}.jsonl log files
             paths: Optional TlonPaths for mailbox resolution (/inbox)
+            adapter_manager: Optional AdapterManager for sending mail (/messages)
             debug: Whether to enable debug/test endpoints (never enable in production)
         """
         self.client_gateway = client_gateway
@@ -159,6 +228,10 @@ class RESTAPIHandler:
         self.metrics_service = metrics_service
         self.logs_dir = logs_dir
         self.paths = paths
+        self.adapter_manager = adapter_manager
+        # Active SSE streams: session_id -> frame queue (None sentinel ends
+        # the stream; see handle_events / handle_delete_session)
+        self._sse_queues: dict[str, asyncio.Queue[str | None]] = {}
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application.
@@ -172,10 +245,15 @@ class RESTAPIHandler:
         app.router.add_get("/health", self.handle_health)
         app.router.add_get("/config", self.handle_config)
         app.router.add_get("/inbox", self.handle_inbox)
+        app.router.add_post("/messages", self.handle_send_message)
         app.router.add_get("/agents", self.handle_list_agents)
         app.router.add_get("/agents/{agent_id}", self.handle_get_agent)
         # Wake/stop endpoints removed - all agents start at system startup
         app.router.add_get("/sessions", self.handle_list_sessions)
+        app.router.add_post("/sessions", self.handle_create_session)
+        app.router.add_patch("/sessions/{session_id}", self.handle_update_session)
+        app.router.add_delete("/sessions/{session_id}", self.handle_delete_session)
+        app.router.add_get("/events", self.handle_events)
         app.router.add_get("/participants", self.handle_list_participants)
 
         # Admin routes for hot-reload (only if config_manager is available)
@@ -225,7 +303,7 @@ class RESTAPIHandler:
             content_type="application/json",
             headers={
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             },
         )
@@ -236,7 +314,7 @@ class RESTAPIHandler:
             status=200,
             headers={
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type",
             },
         )
@@ -317,6 +395,92 @@ class RESTAPIHandler:
             }
         )
 
+    async def handle_send_message(self, request: web.Request) -> web.Response:
+        """POST /messages - Send a mail as a human member (protocol v2, PR-1).
+
+        The sender's identity comes from the body's ``username``. If the
+        human has no live adapter, a transient one is created — first
+        contact also creates the persistent mailbox, same semantics as
+        the first session attach.
+
+        Request Body:
+            username: Human username (default: "guest")
+            content: Mail content (required, non-empty)
+            to: Recipients (names, ids or full addresses)
+            cc: Carbon-copy recipients (optional)
+            subject: Optional subject
+            in_reply_to: Id of the mail being replied to (optional)
+            thread_id: Thread root id inherited from the upstream mail
+                (optional)
+
+        Returns:
+            202 Accepted with {"mail_id": ...}, or 4xx with
+            {"error", "reason"} (e.g. "recipient_unresolved",
+            "empty_content", "invalid_to")
+        """
+        if not self.adapter_manager:
+            return self._json_response(
+                {"status": "error", "message": "Messaging not available"}, status=503
+            )
+
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return self._json_response(
+                {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
+            )
+        if not isinstance(body, dict):
+            return self._json_response(
+                {"error": "Request body must be a JSON object", "reason": "invalid_json"},
+                status=400,
+            )
+
+        username_raw = body.get("username", DEFAULT_USERNAME)
+        if not isinstance(username_raw, str):
+            return self._json_response(
+                {"error": "Field 'username' must be a string", "reason": "invalid_username"},
+                status=400,
+            )
+        username = username_raw.strip()
+        # The username becomes a directory name — reject empty and
+        # anything carrying a path separator (traversal guard)
+        if not username or "/" in username or "\\" in username:
+            return self._json_response(
+                {"error": f"Invalid username: {username_raw!r}", "reason": "invalid_username"},
+                status=400,
+            )
+
+        parsed = parse_send_mail_fields(body)
+        if isinstance(parsed, SendMailError):
+            return self._json_response(
+                {"error": parsed.message, "reason": parsed.reason}, status=400
+            )
+
+        logger.info(
+            "rest_message_received",
+            username=username,
+            content=parsed.content,
+            to=parsed.to,
+            cc=parsed.cc,
+        )
+
+        try:
+            mail = await self.adapter_manager.publish_as(
+                username,
+                parsed.content,
+                to=parsed.to,
+                cc=parsed.cc,
+                subject=parsed.subject,
+                in_reply_to=parsed.in_reply_to,
+                thread_id=parsed.thread_id,
+            )
+        except ValueError as e:
+            return self._json_response(
+                {"error": str(e), "reason": "recipient_unresolved"}, status=400
+            )
+
+        return self._json_response({"mail_id": mail.id}, status=202)
+
     async def handle_list_agents(self, request: web.Request) -> web.Response:
         """GET /agents - List all agents.
 
@@ -382,6 +546,311 @@ class RESTAPIHandler:
                 "count": len(session_info),
             }
         )
+
+    # ==================== Protocol v2: sessions + SSE ====================
+
+    @staticmethod
+    def _session_state(session: ClientSession) -> dict[str, Any]:
+        """Serialize a session's current state for v2 responses."""
+        return {
+            "session_id": session.id,
+            "username": session.metadata.get("username", DEFAULT_USERNAME),
+            "client_type": session.client_type,
+            "mode": session.mode,
+            "filters": session.filters,
+            "connected_at": session.connected_at,
+        }
+
+    async def handle_create_session(self, request: web.Request) -> web.Response:
+        """POST /sessions - Establish a client session (protocol v2, PR-2).
+
+        The client declares its identity, mode and filters up front; the
+        response carries the session id plus the participants/agents
+        snapshots. The event handler is registered only when the client
+        opens its SSE stream (GET /events).
+
+        Request Body:
+            username: Human username (default: "guest")
+            client_type: Client type ("tui", "web", ...)
+            mode: Initial mode ("chat" | "event" | "agent", default "chat")
+            filters: Optional initial event filters
+            protocol_version: Must be "2.0.0"
+
+        Returns:
+            201 with {session_id, username, client_type, mode, filters,
+            connected_at, participants, agents}, or 4xx with
+            {"error", "reason"} ("invalid_json", "invalid_username",
+            "invalid_client_type", "invalid_mode", "invalid_filters",
+            "unsupported_protocol_version")
+        """
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return self._json_response(
+                {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
+            )
+        if not isinstance(body, dict):
+            return self._json_response(
+                {"error": "Request body must be a JSON object", "reason": "invalid_json"},
+                status=400,
+            )
+
+        protocol_version = body.get("protocol_version")
+        if protocol_version != SESSION_PROTOCOL_VERSION:
+            return self._json_response(
+                {
+                    "error": f"Unsupported protocol version: {protocol_version!r}",
+                    "reason": "unsupported_protocol_version",
+                    "supported_versions": [SESSION_PROTOCOL_VERSION],
+                },
+                status=400,
+            )
+
+        username = _validate_username(body.get("username", DEFAULT_USERNAME))
+        if username is None:
+            return self._json_response(
+                {"error": f"Invalid username: {body.get('username')!r}", "reason": "invalid_username"},
+                status=400,
+            )
+
+        client_type = body.get("client_type", "unknown")
+        if not isinstance(client_type, str) or not client_type.strip():
+            return self._json_response(
+                {"error": "Field 'client_type' must be a non-empty string",
+                 "reason": "invalid_client_type"},
+                status=400,
+            )
+
+        mode = body.get("mode", "chat")
+        if mode not in SESSION_MODES:
+            return self._json_response(
+                {"error": f"Invalid mode: {mode!r}", "reason": "invalid_mode"}, status=400
+            )
+
+        filters = body.get("filters")
+        if filters is not None and not isinstance(filters, dict):
+            return self._json_response(
+                {"error": "Field 'filters' must be an object", "reason": "invalid_filters"},
+                status=400,
+            )
+
+        session = await self.client_gateway.open_session(
+            client_type=client_type.strip(),
+            metadata={
+                "username": username,
+                "protocol_version": SESSION_PROTOCOL_VERSION,
+            },
+            filters=filters,
+        )
+        if mode != session.mode:
+            await self.client_gateway.update_session_mode(session.id, mode)
+            refreshed = self.client_gateway.get_session(session.id)
+            if refreshed is not None:
+                session = refreshed
+
+        # Snapshots for the client's initial state
+        participants = [
+            {"id": p.id, "name": p.name, "type": p.type}
+            for p in self.client_gateway.get_all_members()
+        ]
+        agents = self.agent_registry.get_all_agent_status()
+
+        logger.info(
+            "rest_session_created",
+            session_id=session.id,
+            username=username,
+            client_type=client_type,
+            mode=session.mode,
+        )
+        return self._json_response(
+            {
+                **self._session_state(session),
+                "participants": participants,
+                "agents": agents,
+            },
+            status=201,
+        )
+
+    async def handle_update_session(self, request: web.Request) -> web.Response:
+        """PATCH /sessions/{id} - Update session mode and/or filters (v2, PR-2).
+
+        The response body carries the updated session state; no
+        confirmation frame or fresh snapshot is pushed on the stream.
+
+        Request Body:
+            mode: New mode ("chat" | "event" | "agent"), optional
+            filters: New filters object, optional
+
+        Returns:
+            200 with the updated session state, 404 if the session does
+            not exist, or 4xx with {"error", "reason"} on bad input
+        """
+        session_id = request.match_info["session_id"]
+        session = self.client_gateway.get_session(session_id)
+        if session is None:
+            return self._json_response(
+                {"error": f"Session '{session_id}' not found"}, status=404
+            )
+
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return self._json_response(
+                {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
+            )
+        if not isinstance(body, dict):
+            return self._json_response(
+                {"error": "Request body must be a JSON object", "reason": "invalid_json"},
+                status=400,
+            )
+
+        if "mode" in body:
+            mode = body["mode"]
+            if mode not in SESSION_MODES:
+                return self._json_response(
+                    {"error": f"Invalid mode: {mode!r}", "reason": "invalid_mode"},
+                    status=400,
+                )
+            await self.client_gateway.update_session_mode(session_id, mode)
+
+        if "filters" in body:
+            filters = body["filters"]
+            if not isinstance(filters, dict):
+                return self._json_response(
+                    {"error": "Field 'filters' must be an object", "reason": "invalid_filters"},
+                    status=400,
+                )
+            await self.client_gateway.update_session_filters(session_id, filters)
+
+        session = self.client_gateway.get_session(session_id)
+        assert session is not None  # updated above, cannot vanish here
+        logger.info("rest_session_updated", session_id=session_id, mode=session.mode)
+        return self._json_response(self._session_state(session))
+
+    async def handle_delete_session(self, request: web.Request) -> web.Response:
+        """DELETE /sessions/{id} - Disconnect a session (v2, PR-2).
+
+        Idempotent: deleting a missing or already-disconnected session
+        returns the same 200. Triggers the full session cleanup (adapter
+        detach + handler unregistration + session close); an active SSE
+        stream for the session is wound down — its own cleanup path
+        repeats these steps harmlessly.
+
+        Returns:
+            200 with {"session_id", "status": "disconnected"}
+        """
+        session_id = request.match_info["session_id"]
+
+        queue = self._sse_queues.get(session_id)
+        if queue is not None:
+            queue.put_nowait(None)
+
+        if self.adapter_manager:
+            await self.adapter_manager.detach(session_id)
+        await self.client_gateway.disconnect_client(session_id)
+
+        logger.info("rest_session_deleted", session_id=session_id)
+        return self._json_response({"session_id": session_id, "status": "disconnected"})
+
+    async def handle_events(self, request: web.Request) -> web.StreamResponse:
+        """GET /events - SSE event stream for a session (protocol v2, PR-2).
+
+        The session_id arrives as a query parameter or the
+        ``X-Session-Id`` header. Opening the stream registers the
+        session's event handler (the filtering pipeline — mode semantics
+        and session filters — lives unchanged in NotificationService)
+        and attaches the session to its HumanAdapter (human presence +
+        mail fan-out). Closing the stream (client disconnect, failed
+        heartbeat write, or DELETE /sessions/{id}) reliably detaches and
+        closes the session: SSE disconnect means offline, and clients
+        re-POST /sessions to reconnect.
+
+        Event frames are JSON
+        ({"type": "event", "event_type", "payload", ...}), one per SSE
+        ``data:`` line; a ": ping" comment line is sent every
+        SSE_HEARTBEAT_SECONDS as the heartbeat.
+
+        Returns:
+            200 text/event-stream, 404 if the session does not exist,
+            or 409 if the session already has an active stream
+        """
+        session_id = request.query.get("session_id") or request.headers.get("X-Session-Id")
+        session = self.client_gateway.get_session(session_id) if session_id else None
+        if session is None:
+            return self._json_response(
+                {"error": f"Session '{session_id}' not found"}, status=404
+            )
+        if session.id in self._sse_queues:
+            return self._json_response(
+                {
+                    "error": f"Session '{session.id}' already has an active event stream",
+                    "reason": "stream_active",
+                },
+                status=409,
+            )
+
+        # Register the queue before the first await so a concurrent
+        # duplicate stream hits the 409 above instead of racing us.
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._sse_queues[session.id] = queue
+
+        async def event_handler(event: Event) -> None:
+            frame = json.dumps(_event_frame(event), ensure_ascii=False, default=str)
+            await queue.put(f"data: {frame}\n\n")
+
+        # Wire the session up before prepare() so a client that sees the
+        # 200 headers is guaranteed to have its event handler registered
+        # and its human adapter attached (same handler doubles as the
+        # mail delivery sink: human mail reaches the session through the
+        # adapter, not the NotificationService — single-track delivery).
+        self.client_gateway.set_event_handler(session.id, event_handler)
+        username = session.metadata.get("username", DEFAULT_USERNAME)
+        if self.adapter_manager:
+            await self.adapter_manager.attach(username, session.id, event_handler)
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+        try:
+            await response.prepare(request)
+        except Exception:
+            self._sse_queues.pop(session.id, None)
+            if self.adapter_manager:
+                await self.adapter_manager.detach(session.id)
+            await self.client_gateway.disconnect_client(session.id)
+            raise
+
+        logger.info("sse_connected", session_id=session.id, username=username)
+        try:
+            while True:
+                try:
+                    frame = await asyncio.wait_for(
+                        queue.get(), timeout=SSE_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    frame = ": ping\n\n"
+                if frame is None:
+                    break
+                # A failed write (heartbeat included) means the client is gone
+                await response.write(frame.encode("utf-8"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug("sse_write_error", session_id=session.id, error=str(e))
+        finally:
+            self._sse_queues.pop(session.id, None)
+            if self.adapter_manager:
+                await self.adapter_manager.detach(session.id)
+            await self.client_gateway.disconnect_client(session.id)
+            logger.info("sse_disconnected", session_id=session.id)
+
+        return response
 
     async def handle_list_participants(self, request: web.Request) -> web.Response:
         """GET /participants - List chat room participants.
@@ -642,6 +1111,7 @@ class RESTServer:
         metrics_service: Any | None = None,
         logs_dir: Path | None = None,
         paths: TlonPaths | None = None,
+        adapter_manager: AdapterManager | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -656,6 +1126,7 @@ class RESTServer:
             metrics_service: Optional MetricsService for the /metrics endpoint
             logs_dir: Optional directory with server-{date}.jsonl log files
             paths: Optional TlonPaths for mailbox resolution (/inbox)
+            adapter_manager: Optional AdapterManager for sending mail (/messages)
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
@@ -671,6 +1142,7 @@ class RESTServer:
             metrics_service,
             logs_dir,
             paths,
+            adapter_manager,
             debug,
         )
         self._app: web.Application | None = None

@@ -32,7 +32,6 @@ async def run_dream(args: Namespace) -> int:
     return await run_server(
         host=args.host,
         rest_port=args.rest_port,
-        ws_port=args.ws_port,
         log_level=log_level,
         debug=is_lucid,
     )

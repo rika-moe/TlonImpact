@@ -52,7 +52,7 @@ uv run tlon mirror
 
 ## 启动
 
-终端 1 - 启动服务端（REST :8080 / WebSocket :8888）:
+终端 1 - 启动服务端（HTTP :8080，REST + SSE）:
 ```bash
 uv run tlon dream
 ```
@@ -71,10 +71,10 @@ uv run tlon ops --username 你的名字
 
 ```bash
 # 服务端
-uv run tlon dream --rest-port 8080 --ws-port 8888
+uv run tlon dream --rest-port 8080
 
 # 客户端
-uv run tlon ops --username 你的名字 --port 8888 --rest-port 8080
+uv run tlon ops --username 你的名字 --rest-port 8080
 ```
 
 ---

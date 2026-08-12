@@ -70,7 +70,7 @@ uv run tlon mirror
 两个终端：
 
 ```bash
-# 终端 1：启动服务端（REST :8080 / WebSocket :8888）
+# 终端 1：启动服务端（HTTP :8080，REST + SSE）
 uv run tlon dream
 
 # 终端 2：打开 Operator 控制台

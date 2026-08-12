@@ -1,14 +1,22 @@
-"""Base Client for Tlon SDK.
+"""Base Client for Tlon SDK (protocol v2: REST + SSE).
 
-Provides the core WebSocket connection management and protocol handling.
+Thin client over the HTTP+SSE protocol (docs/design/http-sse-protocol.md):
+
+- Connect = create the HTTP session; a session is established with
+  ``POST /sessions`` (returns session_id + participants/agents snapshot).
+- Event subscription = ``GET /events`` SSE stream (``data:`` frames,
+  ``: ping`` heartbeat comments ignored); on loss the client reconnects
+  with exponential backoff — a reconnect re-POSTs ``/sessions`` for a
+  fresh session_id and snapshot.
+- ``set_mode`` / ``set_filters`` go through ``PATCH /sessions/{id}``;
+  disconnect goes through ``DELETE /sessions/{id}`` + aborting the stream.
+
 This is an internal class used by TlonClient, not intended for direct use.
 """
 
 import asyncio
 import contextlib
 import json
-import time
-import uuid
 from collections.abc import Callable
 from enum import Enum
 from typing import Any, cast
@@ -35,41 +43,40 @@ class ConnectionState(Enum):
 
 
 class BaseClient:
-    """Base WebSocket client for Tlon Server.
+    """Base REST + SSE client for Tlon Server (protocol v2).
 
-    Handles low-level WebSocket operations:
-    - Connection management (connect, disconnect, reconnect)
-    - Protocol version negotiation
-    - Authentication
-    - Message sending/receiving
-    - Heartbeat/ping-pong
+    Handles low-level transport operations:
+    - Session lifecycle (POST/PATCH/DELETE /sessions)
+    - SSE event stream with automatic reconnect (exponential backoff)
     - Event dispatching
 
     This class is used internally by TlonClient. Users should use
     TlonClient instead of this class directly.
 
     Attributes:
-        ws_url: WebSocket server URL
-        rest_url: REST API URL
+        base_url: REST API base URL (single port, e.g. "http://localhost:8080")
         state: Current connection state
-        session_id: Server-assigned session ID (after auth)
-        protocol_version: Negotiated protocol version
+        session_id: Server-assigned session ID (after authenticate)
+        protocol_version: Protocol version in use ("2.0.0")
+        participants: Member snapshot from the session response
+        agents: Agent snapshot from the session response
 
     Example:
-        >>> client = BaseClient("ws://localhost:8888/ws")
+        >>> client = BaseClient("http://localhost:8080")
         >>> await client.connect()
-        >>> await client.authenticate("tui", capabilities=["trace", "filter"])
-        >>> await client.send_message({"type": "message", "content": "Hello"})
+        >>> await client.authenticate("tui", username="alice")
+        >>> await client.rest_post("/messages", {"content": "Hello", "to": ["dev-001"]})
     """
 
-    # Protocol versions supported by this client
-    SUPPORTED_VERSIONS = ["1.0.0"]
-    PREFERRED_VERSION = "1.0.0"
+    # The only protocol version POST /sessions accepts.
+    PROTOCOL_VERSION = "2.0.0"
+
+    # Upper bound for the exponential reconnect backoff (seconds).
+    MAX_RECONNECT_DELAY = 60.0
 
     def __init__(
         self,
-        ws_url: str,
-        rest_url: str | None = None,
+        base_url: str = "http://localhost:8080",
         auto_reconnect: bool = True,
         reconnect_delay: float = 5.0,
         max_reconnect_attempts: int = 10,
@@ -77,14 +84,13 @@ class BaseClient:
         """Initialize the base client.
 
         Args:
-            ws_url: WebSocket server URL (e.g., "ws://localhost:8888/ws")
-            rest_url: Optional REST API URL (defaults to ws_url with http:// and /ws removed)
-            auto_reconnect: Whether to automatically reconnect on disconnect
-            reconnect_delay: Delay between reconnection attempts in seconds
+            base_url: REST API base URL (e.g., "http://localhost:8080")
+            auto_reconnect: Whether to automatically reconnect on stream loss
+            reconnect_delay: Base delay between reconnection attempts in
+                seconds (grows exponentially up to MAX_RECONNECT_DELAY)
             max_reconnect_attempts: Maximum number of reconnection attempts (0 = unlimited)
         """
-        self.ws_url = ws_url
-        self.rest_url = rest_url or self._derive_rest_url(ws_url)
+        self.base_url = base_url.rstrip("/")
         self.auto_reconnect = auto_reconnect
         self.reconnect_delay = reconnect_delay
         self.max_reconnect_attempts = max_reconnect_attempts
@@ -92,14 +98,17 @@ class BaseClient:
         # Connection state
         self._state = ConnectionState.DISCONNECTED
         self._state_lock = asyncio.Lock()
-        self._session: aiohttp.ClientSession | None = None
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._http: aiohttp.ClientSession | None = None
+        self._closing = False
 
-        # Protocol state
+        # Protocol state (populated from the POST /sessions response)
         self.session_id: str | None = None
         self.protocol_version: str | None = None
-        self.server_version: str | None = None
-        self.server_capabilities: set[str] = set()
+        self.username: str | None = None
+        self.mode: str = "chat"
+        self.filters: dict[str, Any] = {}
+        self.participants: list[dict[str, Any]] = []
+        self.agents: list[dict[str, Any]] = []
 
         # Event handling
         self._event_handlers: list[Callable[[dict[str, Any]], None]] = []
@@ -109,42 +118,13 @@ class BaseClient:
         self._reconnect_handlers: list[Callable[[], Any]] = []
 
         # Tasks
-        self._receive_task: asyncio.Task[None] | None = None
-        self._heartbeat_task: asyncio.Task[None] | None = None
+        self._sse_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._reconnect_count = 0
 
-        # Event used to notify concurrent connect() callers
-        self._connecting_event: asyncio.Event | None = None
-
-        # Auth response coordination. The event is created by authenticate()
-        # BEFORE the auth message is sent, so an early response is never lost.
-        self._auth_response: dict[str, Any] | None = None
-        self._auth_event: asyncio.Event | None = None
-
         # Params of the last authenticate() call, used by _reconnect() to
-        # re-authenticate automatically after a reconnect.
+        # re-establish the session automatically after a reconnect.
         self._auth_params: dict[str, Any] | None = None
-
-        # Message sequence for ping/pong
-        self._ping_seq = 0
-        self._pending_pongs: dict[int, asyncio.Future[dict[str, Any]]] = {}
-
-    def _derive_rest_url(self, ws_url: str) -> str:
-        """Derive REST URL from WebSocket URL.
-
-        Args:
-            ws_url: WebSocket URL
-
-        Returns:
-            Derived REST URL
-        """
-        # ws://localhost:8888/ws -> http://localhost:8888
-        # wss://example.com/ws -> https://example.com
-        rest = ws_url.replace("ws://", "http://").replace("wss://", "https://")
-        if "/ws" in rest:
-            rest = rest.replace("/ws", "")
-        return rest
 
     # ==================== Properties ====================
 
@@ -160,53 +140,39 @@ class BaseClient:
 
     @property
     def is_authenticated(self) -> bool:
-        """Check if authenticated with server."""
+        """Check if a session is established with the server."""
         return self._state == ConnectionState.AUTHENTICATED
 
     # ==================== Connection Management ====================
 
     async def connect(self) -> bool:
-        """Connect to the WebSocket server.
+        """Connect to the server (create the HTTP session).
+
+        No session is established yet — that happens in authenticate()
+        via POST /sessions.
 
         Returns:
             True if connected successfully
 
         Raises:
-            ConnectionError: If connection fails
+            ConnectionError: If the HTTP session cannot be created
         """
         async with self._state_lock:
             if self._state in (ConnectionState.CONNECTED, ConnectionState.AUTHENTICATED):
                 return True
-            if self._state == ConnectionState.CONNECTING:
-                # Another coroutine is already connecting — wait for it to finish
-                event = self._connecting_event
-            else:
-                # We are the one connecting — set up the event
-                self._connecting_event = asyncio.Event()
-                event = None
-                self._state = ConnectionState.CONNECTING
-                self._notify_state_change(ConnectionState.CONNECTING)
-
-        if event is not None:
-            await event.wait()
-            return self._state in (ConnectionState.CONNECTED, ConnectionState.AUTHENTICATED)
+            self._state = ConnectionState.CONNECTING
+            self._notify_state_change(ConnectionState.CONNECTING)
 
         try:
-            self._session = aiohttp.ClientSession()
-            self._ws = await self._session.ws_connect(self.ws_url)
+            self._closing = False
+            self._http = aiohttp.ClientSession()
 
             async with self._state_lock:
                 self._state = ConnectionState.CONNECTED
                 self._notify_state_change(ConnectionState.CONNECTED)
                 self._reconnect_count = 0
-                if self._connecting_event:
-                    self._connecting_event.set()
-                    self._connecting_event = None
 
-            # Start receive loop
-            self._receive_task = asyncio.create_task(self._receive_loop())
-
-            logger.info("connection_established", ws_url=self.ws_url)
+            logger.info("connection_established", base_url=self.base_url)
             return True
 
         except Exception as e:
@@ -214,16 +180,18 @@ class BaseClient:
             async with self._state_lock:
                 self._state = ConnectionState.ERROR
                 self._notify_state_change(ConnectionState.ERROR)
-                if self._connecting_event:
-                    self._connecting_event.set()
-                    self._connecting_event = None
             await self._cleanup()
             raise ConnectionError(f"Failed to connect: {e}") from e
 
     async def disconnect(self) -> None:
-        """Disconnect from the server gracefully."""
-        # Disable auto-reconnect
+        """Disconnect from the server gracefully.
+
+        Aborts the SSE stream and deletes the server-side session
+        (DELETE /sessions/{id}, best-effort).
+        """
+        # Disable auto-reconnect and mark intentional teardown
         self.auto_reconnect = False
+        self._closing = True
 
         # Cancel reconnect if in progress
         if self._reconnect_task:
@@ -231,6 +199,17 @@ class BaseClient:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reconnect_task
             self._reconnect_task = None
+
+        # Tell the server the session is gone (best-effort, idempotent)
+        if self._http and self.session_id:
+            try:
+                async with self._http.delete(
+                    f"{self.base_url}/sessions/{self.session_id}",
+                    timeout=aiohttp.ClientTimeout(total=5.0),
+                ):
+                    pass
+            except Exception as e:
+                logger.debug("session_delete_failed", error=str(e))
 
         await self._cleanup()
 
@@ -242,87 +221,51 @@ class BaseClient:
 
     async def _cleanup(self) -> None:
         """Clean up resources."""
-        # Stop heartbeat
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
+        # Stop the SSE stream
+        if self._sse_task:
+            self._sse_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._heartbeat_task
-            self._heartbeat_task = None
+                await self._sse_task
+            self._sse_task = None
 
-        # Stop receive loop
-        if self._receive_task:
-            self._receive_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._receive_task
-            self._receive_task = None
-
-        # Close WebSocket
-        if self._ws:
+        # Close the HTTP session
+        if self._http:
             with contextlib.suppress(Exception):
-                await self._ws.close()
-            self._ws = None
+                await self._http.close()
+            self._http = None
 
-        # Close session
-        if self._session:
-            with contextlib.suppress(Exception):
-                await self._session.close()
-            self._session = None
-
-        # Clear pending pongs
-        for future in self._pending_pongs.values():
-            if not future.done():
-                future.cancel()
-        self._pending_pongs.clear()
-
-        # Reset state
+        # Reset protocol state
         self.session_id = None
         self.protocol_version = None
-        self.server_version = None
-        self.server_capabilities.clear()
-
-    async def _receive_loop(self) -> None:
-        """Main receive loop for WebSocket messages."""
-        try:
-            while self._ws and not self._ws.closed:
-                msg = await self._ws.receive()
-
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    await self._handle_message(msg.data)
-                elif msg.type == aiohttp.WSMsgType.CLOSED:
-                    logger.info("websocket_closed")
-                    break
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error("websocket_error", error=str(self._ws.exception()))
-                    break
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error("receive_loop_error", error=str(e), exc_info=True)
-        finally:
-            # Connection lost
-            await self._on_connection_lost()
+        self.username = None
+        self.mode = "chat"
+        self.filters = {}
+        self.participants = []
+        self.agents = []
 
     async def _on_connection_lost(self) -> None:
-        """Handle connection loss."""
+        """Handle SSE stream loss."""
+        if self._closing:
+            return
         was_authenticated = self.is_authenticated
 
         async with self._state_lock:
             self._state = ConnectionState.DISCONNECTED
             self._notify_state_change(ConnectionState.DISCONNECTED)
 
-        # _cleanup cancels _receive_task, but we are called from within it (finally block).
-        # Clear the reference first so _cleanup skips cancelling the current task.
-        self._receive_task = None
+        # _cleanup cancels _sse_task, but we are called from within it
+        # (finally block). Clear the reference first so _cleanup skips
+        # cancelling the current task.
+        self._sse_task = None
         await self._cleanup()
 
         # Trigger auto-reconnect if enabled
-        if self.auto_reconnect and was_authenticated:
+        if self.auto_reconnect and was_authenticated and not self._closing:
             self._reconnect_task = asyncio.create_task(self._reconnect())
 
     async def _reconnect(self) -> None:
-        """Attempt to reconnect to the server."""
-        while self.auto_reconnect:
+        """Reconnect with exponential backoff: re-POST /sessions + reopen SSE."""
+        while self.auto_reconnect and not self._closing:
             if (
                 self.max_reconnect_attempts > 0
                 and self._reconnect_count >= self.max_reconnect_attempts
@@ -337,9 +280,13 @@ class BaseClient:
                 break
 
             self._reconnect_count += 1
+            delay = min(
+                self.reconnect_delay * (2 ** (self._reconnect_count - 1)),
+                self.MAX_RECONNECT_DELAY,
+            )
             logger.info(
                 "reconnect_scheduled",
-                delay=self.reconnect_delay,
+                delay=delay,
                 attempt=self._reconnect_count,
             )
 
@@ -347,27 +294,30 @@ class BaseClient:
                 self._state = ConnectionState.RECONNECTING
                 self._notify_state_change(ConnectionState.RECONNECTING)
 
-            await asyncio.sleep(self.reconnect_delay)
+            await asyncio.sleep(delay)
 
+            if self._closing:
+                break  # type: ignore[unreachable]  # 属性由事件循环/其他协程变更
             try:
-                if await self.connect():
-                    # Re-authenticate using the params from the original
-                    # authenticate() call, otherwise the reconnected session
-                    # is unusable (send() requires authentication).
-                    if self._auth_params is not None:
-                        try:
-                            await self.authenticate(**self._auth_params)
-                        except Exception as e:
-                            logger.error("reauthentication_failed", error=str(e), exc_info=True)
-                            await self._dispatch_error(f"Re-authentication failed: {e}")
-                            continue
-                    logger.info("reconnected")
-                    self._notify_reconnect()
-                    return
+                # _on_connection_lost closed the HTTP session; recreate it
+                if self._http is None:
+                    self._http = aiohttp.ClientSession()
+                await self._open_session(**(self._auth_params or {}))
             except Exception as e:
-                logger.warning("reconnect_attempt_failed", error=str(e), exc_info=True)
+                logger.warning("reconnect_attempt_failed", error=str(e))
+                continue
 
-    # ==================== Authentication ====================
+            async with self._state_lock:
+                self._state = ConnectionState.AUTHENTICATED
+                self._notify_state_change(ConnectionState.AUTHENTICATED)
+                self._reconnect_count = 0
+            self._sse_task = asyncio.create_task(self._sse_loop())
+
+            logger.info("reconnected", session_id=self.session_id)
+            self._notify_reconnect()
+            return
+
+    # ==================== Session Establishment ====================
 
     async def authenticate(
         self,
@@ -377,28 +327,35 @@ class BaseClient:
         timeout: float = 10.0,
         filters: dict[str, Any] | None = None,
         username: str | None = None,
+        mode: str = "chat",
     ) -> bool:
-        """Authenticate with the server.
+        """Establish a session with the server (POST /sessions).
+
+        Maps to the v2 session request: ``username`` / ``client_type`` /
+        ``mode`` / ``filters`` / ``protocol_version``. ``capabilities`` and
+        ``metadata`` are accepted for API compatibility but are not part of
+        the v2 session contract and are not sent.
 
         Args:
             client_type: Type of client ("tui", "web", "telegram")
-            capabilities: List of supported capabilities
-            metadata: Optional client metadata
-            timeout: Authentication timeout in seconds
+            capabilities: Unused in protocol v2 (kept for compatibility)
+            metadata: Unused in protocol v2 (kept for compatibility)
+            timeout: Session establishment timeout in seconds
             filters: Optional initial event filters declared by the client.
                 The server enforces them for the whole session; later
-                "filter" messages replace them wholesale.
+                update_session() calls replace them wholesale.
             username: Optional human username — determines the
                 "human:<username>" identity this session speaks as
                 (server defaults to "guest" when omitted)
+            mode: Initial mode ("chat" | "event" | "agent")
 
         Returns:
-            True if authenticated successfully
+            True if the session was established successfully
 
         Raises:
             ConnectionError: If not connected
-            AuthenticationError: If authentication fails
-            ProtocolError: If protocol version mismatch
+            AuthenticationError: If the session request fails
+            ProtocolError: If the protocol version is rejected
         """
         if not self.is_connected:
             raise ConnectionError("Must connect before authenticating")
@@ -411,125 +368,193 @@ class BaseClient:
             self._state = ConnectionState.AUTHENTICATING
             self._notify_state_change(ConnectionState.AUTHENTICATING)
 
-        # Build auth message
-        auth_msg: dict[str, Any] = {
-            "type": "auth",
-            "client_type": client_type,
-            "protocol_version": self.PREFERRED_VERSION,
-            "supported_versions": self.SUPPORTED_VERSIONS,
-            "capabilities": capabilities or [],
-            "metadata": metadata or {},
-        }
-        if filters:
-            auth_msg["filters"] = filters
-        if username is not None:
-            auth_msg["username"] = username
-
-        # TODO: Add msg_id and timestamp as per protocol spec
-        # Waiting for Task 2.1 completion
-        auth_msg["msg_id"] = str(uuid.uuid4())
-        auth_msg["timestamp"] = time.time()
-
-        # Remember auth params so _reconnect() can re-authenticate automatically
+        # Remember params so _reconnect() can re-establish the session
         self._auth_params = {
             "client_type": client_type,
-            "capabilities": capabilities,
-            "metadata": metadata,
+            "timeout": timeout,
             "filters": filters,
             "username": username,
+            "mode": mode,
         }
 
-        # Create the response event BEFORE sending the auth message, so a
-        # response arriving before we start waiting is not dropped.
-        self._auth_response = None
-        self._auth_event = asyncio.Event()
+        try:
+            await self._open_session(
+                client_type=client_type,
+                timeout=timeout,
+                filters=filters,
+                username=username,
+                mode=mode,
+            )
+        except Exception:
+            async with self._state_lock:
+                self._state = ConnectionState.CONNECTED
+                self._notify_state_change(ConnectionState.CONNECTED)
+            raise
+
+        async with self._state_lock:
+            self._state = ConnectionState.AUTHENTICATED
+            self._notify_state_change(ConnectionState.AUTHENTICATED)
+            self._reconnect_count = 0
+
+        # Open the SSE event stream
+        self._sse_task = asyncio.create_task(self._sse_loop())
+
+        logger.info(
+            "authenticated",
+            session_id=self.session_id,
+            protocol_version=self.protocol_version,
+        )
+        return True
+
+    async def _open_session(
+        self,
+        client_type: str,
+        timeout: float = 10.0,
+        filters: dict[str, Any] | None = None,
+        username: str | None = None,
+        mode: str = "chat",
+    ) -> None:
+        """POST /sessions and store the returned session state + snapshot."""
+        if not self._http:
+            raise ConnectionError("Must connect before authenticating")
+
+        body: dict[str, Any] = {
+            "client_type": client_type,
+            "mode": mode,
+            "protocol_version": self.PROTOCOL_VERSION,
+        }
+        if username is not None:
+            body["username"] = username
+        if filters:
+            body["filters"] = filters
 
         try:
-            # Send auth message
-            await self._send_raw(auth_msg)
+            async with self._http.post(
+                f"{self.base_url}/sessions",
+                json=body,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                data = cast(dict[str, Any], await resp.json())
+                if resp.status == 201:
+                    self.session_id = cast(str, data["session_id"])
+                    self.protocol_version = self.PROTOCOL_VERSION
+                    self.username = cast(str | None, data.get("username"))
+                    self.mode = cast(str, data.get("mode", mode))
+                    self.filters = cast(dict[str, Any], data.get("filters") or {})
+                    self.participants = cast(list[dict[str, Any]], data.get("participants") or [])
+                    self.agents = cast(list[dict[str, Any]], data.get("agents") or [])
+                    return
 
-            # Wait for auth response
-            response = await asyncio.wait_for(self._wait_for_auth_response(), timeout=timeout)
-
-            if response.get("type") == "auth_success":
-                self.session_id = response.get("session_id")
-                self.protocol_version = response.get("protocol_version")
-                self.server_version = response.get("server_version")
-                self.server_capabilities = set(response.get("capabilities", []))
-
-                async with self._state_lock:
-                    self._state = ConnectionState.AUTHENTICATED
-                    self._notify_state_change(ConnectionState.AUTHENTICATED)
-
-                # Start heartbeat
-                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-
-                logger.info(
-                    "authenticated",
-                    session_id=self.session_id,
-                    protocol_version=self.protocol_version,
-                )
-                return True
-
-            elif response.get("type") == "auth_failed":
-                error_code = response.get("error_code", "UNKNOWN")
-                message = response.get("message", "Authentication failed")
-
-                if error_code == "VERSION_MISMATCH":
+                reason = data.get("reason", "")
+                message = data.get("error", "Session request failed")
+                if reason == "unsupported_protocol_version":
                     raise ProtocolError(
-                        message=message, server_versions=response.get("supported_versions", [])
+                        message=message,
+                        server_versions=data.get("supported_versions", []),
                     )
-                else:
-                    raise AuthenticationError(
-                        message=message, supported_versions=response.get("supported_versions")
-                    )
-            else:
-                raise AuthenticationError(f"Unexpected response: {response.get('type')}")
-
+                raise AuthenticationError(message)
         except TimeoutError as e:
             raise AuthenticationError("Authentication timeout") from e
 
-    async def _wait_for_auth_response(self) -> dict[str, Any]:
-        """Wait for and return the auth response.
+    # ==================== Session Updates ====================
 
-        This is called by authenticate() to wait for the server's response.
-        The event is created by authenticate() before the auth message is
-        sent, so a response that arrived earlier is still caught here.
-        """
-        event = self._auth_event
-        if event is None:
-            raise ProtocolError("authenticate() must create the auth event before waiting")
-        await event.wait()
-        return self._auth_response or {}
+    async def update_session(
+        self,
+        mode: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> bool:
+        """Update the session's mode and/or filters (PATCH /sessions/{id}).
 
-    # ==================== Message Handling ====================
-
-    async def _handle_message(self, data: str) -> None:
-        """Handle an incoming WebSocket message.
+        The response body carries the latest session state (no mode_changed
+        frame is pushed, unlike the retired WS protocol); local mode/filters
+        are synced from it.
 
         Args:
-            data: JSON message data
+            mode: New mode ("chat" | "event" | "agent"), optional
+            filters: New filters object (replaces the session's filters), optional
+
+        Returns:
+            True if the server accepted the update
+        """
+        if not self.is_authenticated or not self._http or not self.session_id:
+            logger.error("session_update_rejected", reason="not_authenticated")
+            return False
+
+        body: dict[str, Any] = {}
+        if mode is not None:
+            body["mode"] = mode
+        if filters is not None:
+            body["filters"] = filters
+
+        try:
+            async with self._http.patch(
+                f"{self.base_url}/sessions/{self.session_id}", json=body
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning("session_update_failed", status=resp.status)
+                    return False
+                data = cast(dict[str, Any], await resp.json())
+                self.mode = cast(str, data.get("mode", self.mode))
+                self.filters = cast(dict[str, Any], data.get("filters") or {})
+                return True
+        except Exception as e:
+            logger.error("session_update_error", error=str(e), exc_info=True)
+            return False
+
+    # ==================== SSE Event Stream ====================
+
+    async def _sse_loop(self) -> None:
+        """Run the SSE stream; on exit, handle the connection loss."""
+        try:
+            await self._stream_events()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error("sse_loop_error", error=str(e), exc_info=True)
+        finally:
+            await self._on_connection_lost()
+
+    async def _stream_events(self) -> None:
+        """Read and dispatch SSE frames from GET /events until the stream ends."""
+        if not self._http or not self.session_id:
+            return
+
+        # No total timeout: the stream is long-lived (server heartbeats
+        # every 25s keep it alive).
+        async with self._http.get(
+            f"{self.base_url}/events",
+            params={"session_id": self.session_id},
+            timeout=aiohttp.ClientTimeout(total=None),
+        ) as resp:
+            if resp.status != 200:
+                raise ConnectionError(f"SSE stream rejected: status {resp.status}")
+
+            data_lines: list[str] = []
+            async for raw_line in resp.content:
+                line = raw_line.decode("utf-8").rstrip("\r\n")
+                if not line:
+                    # Blank line: end of frame — dispatch accumulated data
+                    if data_lines:
+                        await self._handle_frame("\n".join(data_lines))
+                        data_lines = []
+                elif line.startswith(":"):
+                    # Heartbeat comment (": ping") — ignore
+                    continue
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+
+    async def _handle_frame(self, data: str) -> None:
+        """Handle one SSE data payload (a JSON event frame).
+
+        Args:
+            data: JSON frame data
         """
         try:
             msg = json.loads(data)
             msg_type = msg.get("type")
 
-            # Handle auth response
-            if msg_type in ("auth_success", "auth_failed"):
-                self._auth_response = msg
-                if self._auth_event is not None:
-                    self._auth_event.set()
-                return
-
-            # Handle pong
-            if msg_type == "pong":
-                seq = msg.get("seq")
-                if seq in self._pending_pongs:
-                    self._pending_pongs[seq].set_result(msg)
-                    del self._pending_pongs[seq]
-                return
-
-            # Handle events
+            # Handle events: map the wire frame to the dispatch shape
+            # (same mapping the retired WS client used)
             if msg_type == "event":
                 event = {
                     "type": msg.get("event_type"),
@@ -555,7 +580,7 @@ class BaseClient:
         except json.JSONDecodeError:
             logger.error("invalid_json_received", data=data)
         except Exception as e:
-            logger.error("message_handling_failed", error=str(e), exc_info=True)
+            logger.error("frame_handling_failed", error=str(e), exc_info=True)
 
     async def _dispatch_event(self, event: dict[str, Any]) -> None:
         """Dispatch event to registered handlers."""
@@ -612,83 +637,6 @@ class BaseClient:
             except Exception as e:
                 logger.error("reconnect_handler_error", error=str(e), exc_info=True)
 
-    # ==================== Sending Messages ====================
-
-    async def send(self, data: dict[str, Any]) -> bool:
-        """Send a message to the server.
-
-        Args:
-            data: Message data to send
-
-        Returns:
-            True if sent successfully
-        """
-        if not self.is_authenticated:
-            logger.error("send_rejected", reason="not_authenticated")
-            return False
-
-        # Add msg_id and timestamp if not present
-        if "msg_id" not in data:
-            data["msg_id"] = str(uuid.uuid4())
-        if "timestamp" not in data:
-            data["timestamp"] = time.time()
-
-        return await self._send_raw(data)
-
-    async def _send_raw(self, data: dict[str, Any]) -> bool:
-        """Send raw data to the server (internal use)."""
-        if not self._ws or self._ws.closed:
-            logger.error("send_rejected", reason="not_connected")
-            return False
-
-        try:
-            await self._ws.send_str(json.dumps(data, ensure_ascii=False, default=str))
-            return True
-        except Exception as e:
-            logger.error("message_send_failed", error=str(e), exc_info=True)
-            return False
-
-    # ==================== Heartbeat ====================
-
-    async def _heartbeat_loop(self) -> None:
-        """Send periodic ping messages."""
-        try:
-            while self.is_authenticated:
-                await asyncio.sleep(30)  # 30 second interval
-
-                if not self.is_authenticated:
-                    break  # type: ignore[unreachable]  # 属性由事件循环/其他协程变更
-
-                self._ping_seq += 1
-                loop = asyncio.get_running_loop()
-                ping_msg = {
-                    "type": "ping",
-                    "seq": self._ping_seq,
-                    "timestamp": time.time(),
-                }
-
-                # Create future for pong response
-                pong_future: asyncio.Future[dict[str, Any]] = loop.create_future()
-                self._pending_pongs[self._ping_seq] = pong_future
-
-                # Send ping
-                if not await self._send_raw(ping_msg):
-                    logger.warning("ping_send_failed")
-                    continue
-
-                # Wait for pong with timeout
-                try:
-                    await asyncio.wait_for(pong_future, timeout=5.0)
-                    # TODO: Track latency
-                except TimeoutError:
-                    logger.warning("pong_timeout")
-                    # Don't disconnect immediately, let next ping fail
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.debug("heartbeat_error", error=str(e))
-
     # ==================== Handler Registration ====================
 
     def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
@@ -742,8 +690,9 @@ class BaseClient:
     def on_reconnect(self, handler: Callable[[], Any]) -> Callable[[], Any]:
         """Register a reconnect handler.
 
-        The handler is called after a successful auto-reconnect (including
-        re-authentication), so clients can restore session state. It is not
+        The handler is called after a successful auto-reconnect (the
+        session has been re-established via POST /sessions and the SSE
+        stream reopened), so clients can restore session state. It is not
         called for the initial connect.
 
         Args:
@@ -767,12 +716,12 @@ class BaseClient:
         Returns:
             Response JSON or None if failed
         """
-        if not self._session:
+        if not self._http:
             return None
 
         try:
-            url = f"{self.rest_url}{path}"
-            async with self._session.get(url, params=params) as resp:
+            url = f"{self.base_url}{path}"
+            async with self._http.get(url, params=params) as resp:
                 if resp.status == 200:
                     return cast(dict[Any, Any], await resp.json())
                 else:
@@ -792,13 +741,13 @@ class BaseClient:
         Returns:
             Response JSON or None if failed
         """
-        if not self._session:
+        if not self._http:
             return None
 
         try:
-            url = f"{self.rest_url}{path}"
-            async with self._session.post(url, json=data) as resp:
-                if resp.status in (200, 201):
+            url = f"{self.base_url}{path}"
+            async with self._http.post(url, json=data) as resp:
+                if resp.status in (200, 201, 202):
                     return cast(dict[Any, Any], await resp.json())
                 else:
                     logger.warning("rest_post_failed", path=path, status=resp.status)

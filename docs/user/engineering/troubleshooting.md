@@ -57,7 +57,7 @@ echo "OPENAI_API_KEY=sk-your-key" > .env
 #### 现象: `Connection refused`
 
 ```
-Error: Cannot connect to server at 127.0.0.1:8888
+Error: Cannot connect to server at 127.0.0.1:8080
 ```
 
 **原因**: 服务端未启动或端口错误
@@ -68,8 +68,7 @@ Error: Cannot connect to server at 127.0.0.1:8888
 ps aux | grep "tlon dream"
 
 # 检查端口监听
-lsof -i :8080  # REST API
-lsof -i :8888  # WebSocket
+lsof -i :8080  # HTTP API (REST + SSE)
 
 # 重新启动服务端
 uv run tlon dream
@@ -372,7 +371,7 @@ curl http://localhost:8080/participants
 curl http://localhost:8080/agents
 ```
 
-发邮件则需要通过 WebSocket（`{"type": "message", "to": [...], "content": "..."}`），即 Operator 客户端——服务端没有提供发信的 REST 端点。
+发邮件走 `POST /messages`（同步回执，202 + `mail_id`），Operator 客户端与 SDK 均走该端点。
 
 ---
 

@@ -1,7 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import type { RestClient } from "../client/restClient.js";
-import type { WsClient } from "../client/wsClient.js";
+import type { SseClient } from "../client/sseClient.js";
 import type { ServerEvent } from "../types.js";
 import { JsonDetail, ScrollList, useListHeight } from "../components/ScrollList.js";
 
@@ -21,7 +21,7 @@ function stateColor(agent: AgentRecord): string {
   return "yellow";
 }
 
-export function AgentsView({ rest, ws }: { rest: RestClient; ws: WsClient }) {
+export function AgentsView({ rest, sse }: { rest: RestClient; sse: SseClient }) {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [selected, setSelected] = useState(0);
   const [detail, setDetail] = useState<unknown>(null);
@@ -54,13 +54,13 @@ export function AgentsView({ rest, ws }: { rest: RestClient; ws: WsClient }) {
     const onEvent = (ev: ServerEvent) => {
       if (ev.eventType.startsWith("agent")) void load();
     };
-    ws.on("agents", onAgents);
-    ws.on("event", onEvent);
+    sse.on("agents", onAgents);
+    sse.on("event", onEvent);
     return () => {
-      ws.off("agents", onAgents);
-      ws.off("event", onEvent);
+      sse.off("agents", onAgents);
+      sse.off("event", onEvent);
     };
-  }, [ws, load]);
+  }, [sse, load]);
 
   useInput((input, key) => {
     if (key.upArrow) {

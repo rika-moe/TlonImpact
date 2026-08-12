@@ -65,7 +65,7 @@ Legacy Aliases (for backward compatibility):
         "dream",
         aliases=["server"],  # Backward compatibility
         help="Maintain the dream (start server daemon)",
-        description="""Start the Tlon server with REST and WebSocket APIs.
+        description="""Start the Tlon server with the HTTP API (REST + SSE).
 
 From "The Circular Ruins": The dreamer creates reality through dreams.
 The server is the dream that sustains the Tlon universe.""",
@@ -74,10 +74,7 @@ The server is the dream that sustains the Tlon universe.""",
         "--host", default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)"
     )
     dream_parser.add_argument(
-        "--rest-port", type=int, default=8080, help="Port for REST API (default: 8080)"
-    )
-    dream_parser.add_argument(
-        "--ws-port", type=int, default=8888, help="Port for WebSocket (default: 8888)"
+        "--rest-port", type=int, default=8080, help="Port for the HTTP API (default: 8080)"
     )
     dream_parser.add_argument(
         "--lucid",
@@ -106,10 +103,7 @@ Professional operations console for monitoring and managing agents.""",
         help="Your mail identity (default: guest, env TLON_USERNAME)",
     )
     ops_parser.add_argument(
-        "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
-    )
-    ops_parser.add_argument(
-        "--rest-port", "-r", type=int, default=8080, help="Server REST API port (default: 8080)"
+        "--rest-port", "-r", type=int, default=8080, help="Server HTTP API port (default: 8080)"
     )
     ops_parser.add_argument(
         "--lucid",
@@ -133,10 +127,7 @@ Defaults to the Operator console for backward compatibility.""",
         "--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)"
     )
     intrude_parser.add_argument(
-        "--port", "-p", type=int, default=8888, help="Server WebSocket port (default: 8888)"
-    )
-    intrude_parser.add_argument(
-        "--rest-port", "-r", type=int, default=8080, help="Server REST API port (default: 8080)"
+        "--rest-port", "-r", type=int, default=8080, help="Server HTTP API port (default: 8080)"
     )
     intrude_parser.add_argument(
         "--lucid",

@@ -23,7 +23,7 @@ launcher (main.py)
     │   │
     │   │  进程：常驻后台
     │   │  职责：承载 Agent、邮件投递、工具执行、记忆存储
-    │   │  通信：REST :8080 + WebSocket :8888
+    │   │  通信：HTTP :8080（REST + SSE）
     │   │  代码：src/tlon/app/server/
     │   │  组件：EventBus + DAG 组件树
     │   │
@@ -31,7 +31,7 @@ launcher (main.py)
     │   │
     │   │  进程：交互式 TUI，连接到 dream
     │   │  职责：邮件（mail 视图，人类主界面）、运维监控、事件查看、配置查看
-    │   │  通信：WebSocket + REST → dream
+    │   │  通信：REST + SSE → dream
     │   │  代码：apps/operator/（由 ops 命令经 node 启动）
     │   │  组件：多视图 Ink 应用
     │   │
@@ -49,15 +49,14 @@ launcher (main.py)
 ## 进程间通信
 
 ```
-dream ──WebSocket :8888──→ ops
-        └─REST :8080─────→ ops
-mirror ──读写文件────────→ ~/.tlon/{id}/config/agent.yaml
+dream ──HTTP :8080 (REST + SSE)──→ ops
+mirror ──读写文件────────────────→ ~/.tlon/{id}/config/agent.yaml
 ```
 
 | 方式 | 端口 | 用途 |
 |------|------|------|
-| WebSocket | 8888 | 实时双向通信、事件推送、收发邮件 |
-| REST API | 8080 | 邮箱查询、健康检查、配置读取 |
+| REST API | 8080 | 查询、发信（POST /messages）、会话管理（sessions 端点） |
+| SSE | 8080 | 事件推送（GET /events，含心跳） |
 | 文件系统 | — | Wizard 读写 Agent 配置 |
 
 ---

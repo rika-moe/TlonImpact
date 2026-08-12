@@ -1,6 +1,6 @@
 import { Box, Text, useInput } from "ink";
 import React, { useEffect, useState } from "react";
-import type { WsClient } from "../client/wsClient.js";
+import type { SseClient } from "../client/sseClient.js";
 import type { ServerEvent } from "../types.js";
 import { JsonDetail, ScrollList, useListHeight } from "../components/ScrollList.js";
 
@@ -14,7 +14,7 @@ function formatTime(ev: ServerEvent): string {
   }
 }
 
-export function EventsView({ ws }: { ws: WsClient }) {
+export function EventsView({ sse }: { sse: SseClient }) {
   const [events, setEvents] = useState<ServerEvent[]>([]);
   const [selected, setSelected] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -26,11 +26,11 @@ export function EventsView({ ws }: { ws: WsClient }) {
         prev.length >= MAX_EVENTS ? [...prev.slice(prev.length - MAX_EVENTS + 1), ev] : [...prev, ev],
       );
     };
-    ws.on("event", onEvent);
+    sse.on("event", onEvent);
     return () => {
-      ws.off("event", onEvent);
+      sse.off("event", onEvent);
     };
-  }, [ws]);
+  }, [sse]);
 
   // Keep the selection following the newest event unless paused.
   useEffect(() => {
