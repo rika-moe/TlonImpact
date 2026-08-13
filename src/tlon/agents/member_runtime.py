@@ -293,11 +293,13 @@ class MemberRuntime(Member):
 
     async def shutdown(self) -> None:
         """Shutdown the member: stop the cognitive loop, release
-        subscriptions."""
+        subscriptions, shut down tools (cancelling background bash tasks)."""
         with bound_contextvars(agent_id=self._member_id):
             if self._scheduler is not None:
                 await self._scheduler.stop()
             self.unsubscribe_all()
+            if self._cognitive is not None:
+                await self._cognitive.tool_executor.shutdown()
             if self._scheduler is not None:
                 self._state = MemberState.SHUTDOWN
             self._initialized = False

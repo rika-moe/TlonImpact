@@ -11,7 +11,7 @@
 from tlon.base.config import AgentConfig, LLMConfig, DockerRuntimeConfig, ConfigService
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.component import Component, ComponentRegistry
+from tlon.base.component import Component
 from tlon.base.device import Device
 from tlon.base.logger import get_logger
 from tlon.base.llm_client import LLMClient, LLMResponse, ToolCall

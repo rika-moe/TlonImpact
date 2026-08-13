@@ -35,6 +35,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.tools.base import Tool
 
 # ── Specs ──────────────────────────────────────────────────────────────
 
@@ -647,6 +648,44 @@ class TestCognitiveRouting:
         await member._on_event(_deliver(incoming, member.member_id))
         await asyncio.sleep(0.1)
         assert emitted == []  # the :actions (emit) wait for the session to complete
+
+
+class _RecordingTool(Tool):
+    """Duck-simple tool recording whether shutdown() was invoked."""
+
+    def __init__(self) -> None:
+        super().__init__(name="recorder", description="", parameters={"type": "object"})
+        self.shutdown_called = False
+
+    async def execute(self, **kwargs: Any) -> Any:
+        raise AssertionError("never executed")
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
+
+
+class TestToolShutdownWiring:
+    async def test_member_shutdown_shuts_down_tool_executor(self, bus, mail_dir):
+        """MemberRuntime.shutdown must cascade into tool_executor.shutdown so
+        tools (e.g. ExecuteBashTool) can cancel their background tasks."""
+        mailbox = Mailbox(mail_dir)
+        config = AgentConfig(id="thinker-x", name="thinker-x", llm=LLMConfig(model_name="test"))
+        tool_executor = ToolExecutor()
+        recorder = _RecordingTool()
+        tool_executor.register_tool(recorder)
+        caps = CognitiveCapabilities(
+            config=config,
+            llm_client=_StubLLM(),
+            memory=_MemoryStub(),
+            task_manager=_TaskStub(),
+            tool_executor=tool_executor,
+            team_members=[],
+        )
+        member = _make_member("thinker-x", COGNITIVE_EDN, bus, mailbox=mailbox, cognitive=caps)
+
+        await member.shutdown()
+
+        assert recorder.shutdown_called
 
 
 # ── Phase F: mixed member (deflection / cost routing) ──────────────────

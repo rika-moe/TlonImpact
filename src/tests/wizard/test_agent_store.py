@@ -65,7 +65,7 @@ class TestAgentStore:
             assert not store.agent_exists("nonexistent")
 
     def test_delete_agent(self):
-        """Test deleting an agent."""
+        """Deleting an agent removes its entire home directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _make_store(tmpdir)
 
@@ -78,6 +78,9 @@ class TestAgentStore:
 
             success, msg = store.delete_agent("deletable")
             assert success
+            assert not (Path(tmpdir) / "deletable").exists()
+            # NOTE: agent_exists() recreates the config dir as a side effect
+            # (agent_config_file mkdirs), so it must run after the rmtree check.
             assert not store.agent_exists("deletable")
 
     def test_generate_agent_id(self):

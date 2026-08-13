@@ -170,7 +170,6 @@ def instantiate(
     prototype_name: str,
     agent_id: str,
     agent_name: str,
-    proactive: bool = False,
     params: dict[str, Any] | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> AgentConfig:
@@ -196,7 +195,6 @@ def instantiate(
         prototype_name: prototype directory name under ~/.tlon/prototypes/
         agent_id: new agent id (must not already exist)
         agent_name: display name of the new agent
-        proactive: whether the agent responds to unaddressed messages
         params: template parameter values (required when the prototype
             declares ``:parameters``; must be empty otherwise)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
@@ -257,7 +255,6 @@ def instantiate(
     agent = AgentConfig(
         id=agent_id,
         name=agent_name,
-        proactive=proactive,
         prototype=prototype_name,
     )
     _yaml_save(agent, p.tlon_home())

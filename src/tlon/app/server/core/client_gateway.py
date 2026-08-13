@@ -51,14 +51,12 @@ class ClientGateway(Component):
         - session_manager: SessionManager
         - notification_service: NotificationService
         - member_directory: MemberDirectory
-        - config_manager: ConfigManager
 
     Example:
         >>> gateway = ClientGateway(
         ...     session_manager=session_manager,
         ...     notification_service=notification_service,
         ...     member_directory=member_directory,
-        ...     config_manager=config_manager,
         ...     data_dir=data_dir,
         ...     host=host,
         ...     port=port,
@@ -75,8 +73,6 @@ class ClientGateway(Component):
         session_manager: SessionManager,
         notification_service: NotificationService,
         member_directory: MemberDirectory,
-        # Additional dependencies
-        config_manager: Any,  # ConfigManager for reload support
         # Configuration
         data_dir: Path,
         host: str,
@@ -90,7 +86,6 @@ class ClientGateway(Component):
             session_manager: Session lifecycle manager
             notification_service: Event notification service
             member_directory: Member discovery service
-            config_manager: Configuration manager
             data_dir: Directory for persistence
             host: Server host
             port: Server port
@@ -101,7 +96,6 @@ class ClientGateway(Component):
         self._session_manager = session_manager
         self._notifications = notification_service
         self._member_directory = member_directory
-        self._config_manager = config_manager
 
         # Server configuration
         self.host = host

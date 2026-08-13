@@ -5,12 +5,12 @@ It manages subscriptions and provides a clean API for publishing events.
 
 Key Design: Device and Component are orthogonal concepts.
 - Device = "Can talk to EventBus" (subscribe, emit, publish)
-- Component = "Managed by ComponentRegistry" (initialize, shutdown, DAG)
+- Component = "Lifecycle-managed by ServerApp" (initialize, shutdown, DAG)
 
 A class can be:
 - Only Component: FileTraceStore (no EventBus interaction)
-- Only Device: TraceCollector (runtime event handler, not registry-managed)
-- Both: NotificationService (registry-managed + EventBus interaction)
+- Only Device: TraceCollector (runtime event handler, no managed lifecycle)
+- Both: NotificationService (managed lifecycle + EventBus interaction)
 
 Example:
     # Only Device (runtime use)
@@ -50,7 +50,7 @@ class Device:
     """Base class for objects that interact with EventBus.
 
     Device is NOT a Component. It knows nothing about DAG architecture
-    or ComponentRegistry. It only cares about EventBus operations.
+    or lifecycle management. It only cares about EventBus operations.
 
     Responsibilities:
     - Subscribe/unsubscribe to events

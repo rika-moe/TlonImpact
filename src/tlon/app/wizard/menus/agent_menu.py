@@ -89,7 +89,7 @@ class AgentMenu:
         table.add_column("模型", style="magenta")
 
         for _agent_id, agent in sorted(agents.items()):
-            mode = "常驻" if agent.proactive else "延迟"
+            mode = self.agent_store.startup_mode(agent.id)
             model = agent.llm.model_name if agent.llm else "default"
             table.add_row(agent.id, agent.name, mode, model)
 
@@ -127,11 +127,12 @@ class AgentMenu:
         identity = store.read_persona_file(agent_id, "IDENTITY.md")
         soul = store.read_persona_file(agent_id, "SOUL.md")
         rules = store.read_persona_file(agent_id, "RULES.md")
+        mode = store.startup_mode(agent.id)
 
         content = f"""[bold]基本信息[/bold]
 ID: {agent.id}
 姓名: {agent.name}
-启动模式: {"常驻" if agent.proactive else "延迟"}
+启动模式: {mode}
 
 [bold]身份 (IDENTITY.md)[/bold]
 {_truncate(identity) if identity else "[dim](未设置)[/dim]"}
@@ -179,7 +180,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         self.console.print("[dim]你的工作流程、响应规则、协作习惯和禁止事项。[/dim]\n")
         rules = self.questionary.text("行为守则:", default="").ask() or ""
 
-        # Step 5: LLM + Docker + Proactive
+        # Step 5: LLM + Docker
         self.console.print("\n[bold]步骤 5/5: 运行时配置[/bold]\n")
 
         models = [
@@ -485,10 +486,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                         f"💾 内存 - 当前: {agent.docker.memory_limit if agent.docker else 'default'}",
                         value="memory",
                     ),
-                    self.questionary.Choice(
-                        f"🚀 主动响应 - 当前: {'是' if agent.proactive else '否'}",
-                        value="proactive",
-                    ),
                     # 激活模式编辑已移除（阶段 E）：启动集合由 behavior.tlon
                     # 的 :on :boot 规则派生，activation 字段已废弃。
                     self.questionary.Separator(),
@@ -555,17 +552,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
                     else:
                         agent.docker.memory_limit = new_mem
                     self.console.print("[green]✓ 内存限制已更新[/green]")
-
-            elif edit_choice == "proactive":
-                new_proactive = self.questionary.confirm(
-                    "是否主动响应 (proactive)?\n"
-                    "主动响应: 没有@的普通消息也会响应\n"
-                    "被动响应: 只响应@自己的消息",
-                    default=agent.proactive,
-                ).ask()
-                agent.proactive = new_proactive
-                mode_str = "主动响应" if agent.proactive else "被动响应"
-                self.console.print(f"[green]✓ 响应模式已更新为: {mode_str}[/green]")
 
         success, msg = self.agent_store.save_agent(agent)
         if success:

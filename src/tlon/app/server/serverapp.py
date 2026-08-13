@@ -208,7 +208,6 @@ class ServerApp:
             session_manager=session_manager,
             notification_service=notification_service,
             member_directory=member_directory,
-            config_manager=config_service,
             data_dir=self.shared_dir,
             host=self.host,
             port=self.rest_port,

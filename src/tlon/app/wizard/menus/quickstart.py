@@ -7,10 +7,11 @@ with standard or custom team configurations.
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tlon.agents.behavior_templates import standard_behavior_edn
 from tlon.base.config import DockerRuntimeConfig, LLMConfig
 from tlon.base.default_team import STANDARD_TEAM_DICTS, make_agent_config
 
-from ..agent_store import AgentStore
+from ..agent_store import AgentStore, startup_mode_from_behavior
 from ..server_notify import notify_server_agent_created
 from ..validators import APIValidator, EnvironmentChecker
 
@@ -234,7 +235,7 @@ class QuickstartWizard:
         table.add_column("启动模式", style="blue")
 
         for member in STANDARD_TEAM_DICTS:
-            mode = "常驻" if member["proactive"] else "延迟"
+            mode = startup_mode_from_behavior(standard_behavior_edn(member["id"]))
             table.add_row(member["name"], mode)
 
         self.console.print(table)

@@ -1,7 +1,9 @@
 """Working Memory store implementation using JSONL files."""
 
 import asyncio
+import contextlib
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -116,15 +118,19 @@ class WorkingMemoryStore(MemoryStore):
             self._loaded = True
 
     async def _persist(self) -> None:
-        """Write cache to disk."""
+        """Write cache to disk atomically (temp file + os.replace)."""
         await self._ensure_dir()
 
+        tmp_file = self.interactions_file.with_name(self.interactions_file.name + ".tmp")
         try:
-            async with aiofiles.open(self.interactions_file, "w", encoding="utf-8") as f:
+            async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
                 for item in self._cache:
                     await f.write(json.dumps(item, ensure_ascii=False, cls=_ToolCallEncoder) + "\n")
+            await asyncio.to_thread(os.replace, tmp_file, self.interactions_file)
         except Exception as e:
             logger.error("working_memory_persist_failed", error=str(e), exc_info=True)
+            with contextlib.suppress(OSError):
+                tmp_file.unlink(missing_ok=True)
 
     async def add(self, item: dict[str, Any]) -> str:
         """Add an interaction.

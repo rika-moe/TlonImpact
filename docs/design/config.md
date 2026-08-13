@@ -27,6 +27,8 @@ system (.env) → agent (yaml)
 | 系统 | `.env` | API Key、日志级别 |
 | Agent | `~/.tlon/{id}/config/agent.yaml` | identity、profile、behavior、LLM 参数、Docker 配置 |
 
+`.env` 加载语义：只加载仓库根目录的 `.env`（与运行时 cwd 无关），且真实环境变量永远优先——`.env` 仅补齐环境中未设置的变量（`override=False`）。
+
 系统层可观测性环境变量（均可选）：
 
 | 变量 | 默认 | 说明 |

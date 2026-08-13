@@ -71,7 +71,7 @@ agent:
 | `name` | string | 是 | 显示名称，用户可见 |
 | `activation` | string | 否 | ⚠️ **已废弃**：写了会被静默忽略，不报错也不生效。启动集合由 `behavior.tlon` 的 `:on :boot` 规则决定（见下节） |
 | `idle_timeout_seconds` | int | 否 | 空闲沉睡阈值（默认 600），仅对 lazy 成员生效 |
-| `proactive` | bool | 否 | ⚠️ **已退役**：写了会被静默忽略，不报错也不生效。是否响应邮件由 `behavior.tlon` 的 trigger 决定（见下节） |
+| `proactive` | bool | 否 | ⚠️ **已删除**（2026-08）：配置里残留该键会被静默忽略，不报错也不生效。是否响应邮件由收件人（To/CC）与 `behavior.tlon` 的规约决定（见下节） |
 
 人设叙述（identity/profile/behavior 文本）不在 agent.yaml 里，
 而是同目录下的 `IDENTITY.md` / `SOUL.md` / `RULES.md`。

@@ -561,8 +561,10 @@ class AgentRegistry(Component):
         tool_executor = ToolExecutor()
 
         # Register tools
-        tool_executor.register_tool(ExecuteBashTool(config.docker, docker_runtime))
-        tool_executor.register_tool(CheckBashTaskTool())
+        execute_bash_tool = ExecuteBashTool(config.docker, docker_runtime)
+        tool_executor.register_tool(execute_bash_tool)
+        # checkBashTask shares this agent's task table: no cross-agent visibility.
+        tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
         allowed_paths = config.tool.allowed_paths
         tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
         tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
@@ -1098,7 +1100,7 @@ class AgentRegistry(Component):
 
         self._assert_deletable_agent_id(agent_id)
         try:
-            self._agent_info.delete_agent(agent_id, delete_data=True)
+            self._agent_info.delete_agent(agent_id)
         except ValueError:
             # Home directory already gone — cache entry removed regardless
             logger.warning("contractor_home_missing", agent_id=agent_id)

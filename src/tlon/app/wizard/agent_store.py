@@ -23,6 +23,22 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def startup_mode_from_behavior(behavior_edn: str) -> str:
+    """Derive the startup mode label from a behavior spec's EDN text.
+
+    A ``:on :boot`` rule (parsed as ``rule.on is None``) makes the member
+    resident (常驻); anything else — or an unparseable spec — is lazy (延迟).
+    """
+    from tlon.agents.edn import loads
+    from tlon.agents.member_spec import MemberSpec
+
+    try:
+        spec = MemberSpec.from_edn(loads(behavior_edn))
+    except Exception:
+        return "延迟"
+    return "常驻" if any(rule.on is None for rule in spec.rules) else "延迟"
+
+
 class AgentStore:
     """Store for managing Agent configurations.
 
@@ -68,7 +84,20 @@ class AgentStore:
         filepath = self._paths.agent_behavior_file(agent_id)
         filepath.write_text(standard_behavior_edn(agent_id), encoding="utf-8")
 
-    def delete_agent(self, agent_id: str, delete_data: bool = True) -> tuple[bool, str]:
+    def startup_mode(self, agent_id: str) -> str:
+        """Startup mode label (常驻/延迟) derived from the on-disk behavior spec.
+
+        Falls back to 延迟 when the behavior file is missing or unreadable.
+        """
+        filepath = self._paths.agent_behavior_file(agent_id)
+        try:
+            text = filepath.read_text(encoding="utf-8")
+        except OSError:
+            return "延迟"
+        return startup_mode_from_behavior(text)
+
+    def delete_agent(self, agent_id: str) -> tuple[bool, str]:
+        """Delete an agent: removes the entire ~/.tlon/{agent_id}/ directory."""
         try:
             _yaml_delete(agent_id, self._paths.tlon_home())
             return True, f"Agent '{agent_id}' deleted"

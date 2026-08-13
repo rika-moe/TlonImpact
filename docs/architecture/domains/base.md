@@ -15,7 +15,7 @@
 
 ```
 base/
-├── component.py           # Component 基类, ComponentRegistry
+├── component.py           # Component 基类
 ├── device.py              # Device 基类 (EventBus 交互能力)
 ├── config.py              # 配置模型 (AgentConfig, LLMConfig, DockerRuntimeConfig) + ConfigService
 ├── metrics.py             # Metrics 支柱 (init_metrics + MetricsService)
@@ -75,7 +75,6 @@ class AgentConfig(BaseModel):
     llm: LLMConfig
     docker: DockerRuntimeConfig
     memory: Any = None
-    proactive: bool = False
 ```
 
 **注意**: `RoleConfig` 已完全移除，角色信息合并入 `identity`/`profile`/`behavior` 叙事文本。

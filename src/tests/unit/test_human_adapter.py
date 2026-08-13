@@ -13,7 +13,8 @@ Covers:
   zero-recipient error
 - Mail delivery: MAIL_DELIVERED fan-out to attached session sinks
   (single-track delivery, docs/design/members.md 阶段 B)
-- resolve_address (agent id / agent name / online human / full address)
+- resolve_address (agent id / agent name / online or known-offline
+  human / full address)
 """
 
 import asyncio
@@ -303,6 +304,20 @@ class TestAdapterManagerPublish:
         assert mail.to == []
         assert mail.cc == ["xie-yunshu@tlon.internal"]
 
+    async def test_publish_to_offline_known_human(
+        self, manager: AdapterManager, tmp_path
+    ):
+        """A mail to a known-but-offline human (persistent mailbox, no
+        adapter) is addressed, not dropped — the copy waits in their
+        inbox on the delivery side (docs/design/mail.md)."""
+        await manager.attach("alice", "tui-0001", _noop_sink)
+        TlonPaths(home=tmp_path).member_mail_dir("human:friend")
+
+        mail = await manager.publish("tui-0001", "hi", to=["friend"])
+
+        assert mail is not None
+        assert mail.to == ["friend@tlon.internal"]
+
     async def test_publish_zero_recipients_raises(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001", _noop_sink)
 
@@ -341,6 +356,24 @@ class TestResolveAddress:
         assert manager.resolve_address("alice") == "alice@tlon.internal"
         assert manager.resolve_address("human:alice") == "alice@tlon.internal"
         assert manager.resolve_address("offline-user") is None
+
+    async def test_offline_human_with_mailbox(
+        self, manager: AdapterManager, tmp_path
+    ):
+        """A known-but-offline human (persistent mailbox, no adapter)
+        resolves — same rule as MailDelivery, the mail waits in their
+        inbox (docs/design/mail.md)."""
+        TlonPaths(home=tmp_path).member_mail_dir("human:friend")
+
+        assert manager.resolve_address("friend") == "friend@tlon.internal"
+        assert manager.resolve_address("human:friend") == "friend@tlon.internal"
+
+    async def test_offline_human_without_mailbox_unresolved(
+        self, manager: AdapterManager
+    ):
+        """An offline human with no persistent mailbox stays unknown."""
+        assert manager.resolve_address("ghost") is None
+        assert manager.resolve_address("human:ghost") is None
 
     async def test_username_for(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001", _noop_sink)

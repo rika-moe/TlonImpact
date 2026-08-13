@@ -131,7 +131,7 @@ agent:
 
 完整字段（`tool`、`session_timeout_seconds`、`message_queue_size` 等）及默认值见源码 `src/tlon/base/config.py` 的 `AgentConfig` 定义。
 
-> ⚠️ 旧版字段 `proactive` 已退役：保留在配置文件中不会报错，但会被静默忽略。邮件模型下，Agent 是否响应由收件人（To/CC）与 `behavior.tlon` 的触发规约决定。
+> ⚠️ 旧版字段 `proactive` 已删除（2026-08）：配置文件里残留该键不会报错，但会被静默忽略。邮件模型下，Agent 是否响应由收件人（To/CC）与 `behavior.tlon` 的触发规约决定。
 
 ### behavior.tlon
 

@@ -11,7 +11,6 @@ from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
 
-_background_tasks: dict[str, asyncio.Task[ExecutionResult]] = {}
 _MAX_BACKGROUND_TASKS = 20
 
 
@@ -53,6 +52,24 @@ class ExecuteBashTool(Tool):
         )
         self._docker_config = docker_config
         self._docker_runtime = docker_runtime
+        # Per-instance background task table: each agent owns its quota and
+        # task handles, so concurrent agents never share or starve it.
+        self._background_tasks: dict[str, asyncio.Task[ExecutionResult]] = {}
+
+    @property
+    def background_tasks(self) -> dict[str, asyncio.Task[ExecutionResult]]:
+        """This instance's background task table (shared with CheckBashTaskTool)."""
+        return self._background_tasks
+
+    async def shutdown(self) -> None:
+        """Cancel all unfinished background tasks owned by this instance."""
+        tasks = [task for task in self._background_tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        logger.info("execute_bash_tool_shutdown", cancelled=len(tasks))
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Execute a bash command.
@@ -97,7 +114,7 @@ class ExecuteBashTool(Tool):
 
     async def _execute_background(self, command: str, timeout: int) -> ToolResult:
         """Execute a command in the background and return immediately."""
-        if len(_background_tasks) >= _MAX_BACKGROUND_TASKS:
+        if len(self._background_tasks) >= _MAX_BACKGROUND_TASKS:
             return ToolResult(
                 success=False,
                 data={},
@@ -113,8 +130,8 @@ class ExecuteBashTool(Tool):
             return await docker_runtime.execute(command, timeout=timeout)
 
         task = asyncio.create_task(_run())
-        task.add_done_callback(lambda _: _background_tasks.pop(task_id, None))
-        _background_tasks[task_id] = task
+        task.add_done_callback(lambda _: self._background_tasks.pop(task_id, None))
+        self._background_tasks[task_id] = task
 
         return ToolResult(
             success=True,
@@ -130,7 +147,14 @@ class ExecuteBashTool(Tool):
 class CheckBashTaskTool(Tool):
     """Tool to check the status of a background bash task."""
 
-    def __init__(self) -> None:
+    def __init__(self, background_tasks: dict[str, asyncio.Task[ExecutionResult]]) -> None:
+        """Initialize the tool.
+
+        Args:
+            background_tasks: The owning ExecuteBashTool instance's task table
+                (``execute_bash_tool.background_tasks``); only tasks started by
+                the same agent are visible.
+        """
         super().__init__(
             name="checkBashTask",
             description="检查后台 bash 任务的执行状态。通过 executeBashCommand 的 background=true 启动的任务，用此工具查询结果。",
@@ -145,6 +169,7 @@ class CheckBashTaskTool(Tool):
                 "required": ["task_id"],
             },
         )
+        self._background_tasks = background_tasks
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Check the status of a background task.
@@ -157,7 +182,7 @@ class CheckBashTaskTool(Tool):
         """
         task_id: str = kwargs["task_id"]
 
-        task = _background_tasks.get(task_id)
+        task = self._background_tasks.get(task_id)
         if task is None:
             return ToolResult(
                 success=False,

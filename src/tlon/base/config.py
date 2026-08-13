@@ -16,7 +16,7 @@ from tlon.base.events.event import EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
-from tlon.base.settings import get_agent_home, get_tlon_home
+from tlon.base.settings import get_tlon_home
 
 logger = get_logger(__name__)
 
@@ -52,8 +52,8 @@ class AgentInfoProvider(ABC):
         """
         return False
 
-    def delete_agent(self, agent_id: str, delete_data: bool = True) -> None:
-        """Remove one agent from the cache and (optionally) delete its home.
+    def delete_agent(self, agent_id: str) -> None:
+        """Remove one agent from the cache and delete its home directory.
 
         The default implementation reports the provider as read-only.
         """
@@ -141,9 +141,6 @@ class AgentConfig(BaseModel):
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
-    # Deprecated and ignored (R1b mail model): proactive routing is retired;
-    # the field stays so existing agent.yaml files keep loading.
-    proactive: bool = False
     # Deprecated and ignored (phase E): the boot set and the lazy set are
     # derived from the behavior spec's `:on` rules — a member with an
     # `:on :boot` rule starts at boot; without one (or a contractor role)
@@ -184,10 +181,6 @@ class AgentConfig(BaseModel):
         if not v:
             raise ValueError("agent name is required")
         return v
-
-    def get_data_dir(self, base_dir: Path) -> Path:
-        """Get the data directory for this agent."""
-        return get_agent_home(self.id)
 
 
 # =============================================================================
@@ -367,18 +360,9 @@ class ConfigService(Component, Device, AgentInfoProvider):
         self._agents[agent.id] = agent
         logger.info("agent_saved", agent_id=agent.id)
 
-    def delete_agent(self, agent_id: str, delete_data: bool = True) -> None:
-        """Delete an agent.
-
-        If delete_data is True, removes the entire ~/.tlon/{agent_id}/ directory.
-        If False, only removes the config YAML file.
-        """
-        if delete_data:
-            _yaml_delete(agent_id, self._tlon_home)
-        else:
-            yaml_file = paths.agent_config_file(agent_id)
-            if yaml_file.exists():
-                yaml_file.unlink()
+    def delete_agent(self, agent_id: str) -> None:
+        """Delete an agent: removes the entire ~/.tlon/{agent_id}/ directory."""
+        _yaml_delete(agent_id, self._tlon_home)
         self._agents.pop(agent_id, None)
         logger.info("agent_deleted", agent_id=agent_id)
 

@@ -113,7 +113,6 @@ async def gateway(
         session_manager=session_manager,
         notification_service=notifications,
         member_directory=directory,
-        config_manager=None,
         data_dir=tmp_path,
         host="127.0.0.1",
         port=0,

@@ -203,8 +203,9 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
   SessionScheduler 注入）；确定性规则的动作（emit/forward/start/stop/spawn）由运行时
   直接执行；唤醒粒度 = 规则的 `:on` 声明（沉睡期间只能按事件类型唤醒）。
 
-边界（R1b / 阶段 E）：`AgentConfig.proactive`、`activation` 均 deprecated ignored
-（旧 agent.yaml 继续可加载）；启动集合与 lazy 集合由 spec 的 `:on :boot` 规则派生；
+边界（R1b / 阶段 E）：`AgentConfig.proactive` 已删除（2026-08， 清理，
+旧 agent.yaml 残留该键被静默忽略）；`activation` deprecated ignored
+（字段保留仅为旧 agent.yaml 继续可加载）；启动集合与 lazy 集合由 spec 的 `:on :boot` 规则派生；
 `session_timeout_seconds` / `message_queue_size` 是构造期 infra，留在 `AgentConfig`
 不进 spec。
 

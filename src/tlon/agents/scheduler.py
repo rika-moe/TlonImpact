@@ -132,7 +132,7 @@ class SessionScheduler:
         """Agent's continuous main loop with multi-session scheduling.
 
         Cycles through all active sessions each pass:
-        0. Check idle timeout + reflection trigger (proactive, no message needed)
+        0. Check idle timeout + reflection trigger (timer-driven, no mail needed)
         1. New messages -> create/resume sessions
         2. ACTIVE sessions -> one think+dispatch step
         3. WAITING sessions -> collect completed background tools
@@ -149,7 +149,7 @@ class SessionScheduler:
             self._last_activity_at = datetime.now()
 
             while self._worker_running:
-                # ── 0. Proactive memory triggers (no mail required) ──
+                # ── 0. Memory triggers (no mail required) ──
                 await self._memory.check_idle_timeout()
                 await self._check_reflection()
 

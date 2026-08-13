@@ -57,8 +57,8 @@ R1b 桥接偏差中已被 R2 PR-A 收敛的项：**推送按收件人过滤**（
 HumanAdapter——NotificationService 不再向 chat session 投递
 `mail.delivered`）。其余桥已全部随 PR-C 拆除（见上方清单）。
 
-R1b 其它遗留：`AgentConfig.proactive` 字段保留但 deprecated ignored
-（旧 agent.yaml 可继续加载）；spec 旧 key（`:proactive` /
+R1b 其它遗留：`AgentConfig.proactive` 字段已于 2026-08 删除（ 清理，
+旧 agent.yaml 残留该键被静默忽略）；spec 旧 key（`:proactive` /
 `:room-history`）静默忽略；引用 `mentioned?` 的旧 trigger 表达式加载
 失败 → 回退 DefaultSpec 并记 `agent_spec_load_failed` 日志。
 

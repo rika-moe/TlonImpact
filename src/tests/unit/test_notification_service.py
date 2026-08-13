@@ -77,7 +77,7 @@ class TestShouldSendToSession:
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_THINKING))
         assert not service._should_send_to_session(session, make_event(EventType.AGENT_JOIN))
         assert not service._should_send_to_session(session, make_event(EventType.TOOL_EXECUTE))
-        assert not service._should_send_to_session(session, make_event(EventType.TRACE_START))
+        assert not service._should_send_to_session(session, make_event(EventType.CONFIG_UPDATED))
 
     def test_agent_mode_allows_only_agent_events(self, service):
         """Agent mode: only agent.* events (including high-frequency ones)."""

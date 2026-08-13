@@ -140,13 +140,17 @@ class EpisodicMemoryStore(MemoryStore):
         self._loaded = True
 
     async def _persist_summaries(self) -> None:
-        """Write summaries to disk."""
+        """Write summaries to disk atomically (temp file + os.replace)."""
+        tmp_file = self.summaries_file.with_name(self.summaries_file.name + ".tmp")
         try:
-            async with aiofiles.open(self.summaries_file, "w", encoding="utf-8") as f:
+            async with aiofiles.open(tmp_file, "w", encoding="utf-8") as f:
                 for item in self._summaries_cache:
                     await f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            await asyncio.to_thread(os.replace, tmp_file, self.summaries_file)
         except Exception as e:
             logger.error("summaries_persist_failed", error=str(e), exc_info=True)
+            with contextlib.suppress(OSError):
+                tmp_file.unlink(missing_ok=True)
 
     async def _persist_facts(self) -> None:
         """Write facts to disk atomically (temp file + os.replace)."""

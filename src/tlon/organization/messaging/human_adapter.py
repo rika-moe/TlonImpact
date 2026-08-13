@@ -9,7 +9,7 @@ R2 protocol (docs/design/mail.md): ``speak`` accepts explicit ``to`` /
 ``cc`` / ``subject`` fields; explicit addressing is the only entry point
 (the R1b ``mentions`` alias and the legacy ``@名字`` content-parsing
 bridge were removed in PR-C). A mail with zero resolvable recipients is
-rejected (proactive is dead — an unaddressed mail is illegal).
+rejected outright — an unaddressed mail is illegal.
 
 Delivery is single-track: like every Member, the adapter subscribes to
 MAIL_DELIVERED and fans out copies addressed to its own member id to its
@@ -192,8 +192,8 @@ class HumanAdapter(Member):
         fields (R2 protocol; the R1b ``mentions`` alias and the legacy
         ``@名字`` bridge were removed in PR-C). Unresolvable recipients
         are dropped with a warning; a mail with zero resolvable
-        recipients is rejected outright — with proactive gone, an
-        unaddressed mail is illegal.
+        recipients is rejected outright — an unaddressed mail is
+        illegal.
 
         Args:
             content: Message content
@@ -279,7 +279,7 @@ class HumanAdapter(Member):
 class AdapterManager(Component):
     """Manages HumanAdapter lifecycle (username → adapter, refcounted).
 
-    Not registered in the ComponentRegistry: adapters have a dynamic
+    Not part of ServerApp's managed component set: adapters have a dynamic
     lifecycle (attach/detach driven), the manager itself is a regular
     ServerApp component with initialize/shutdown.
     """
@@ -530,8 +530,11 @@ class AdapterManager(Component):
         """Resolve a recipient to a mail address.
 
         Accepts a full mail address (passed through), an agent id, an
-        agent display name, an online human's username, or the
-        "human:<username>" form.
+        agent display name, a human's username or the
+        "human:<username>" form. A human resolves when they are online
+        (adapter present) or known-but-offline with a persistent
+        mailbox — same rule as MailDelivery._resolve_address, so a
+        resolvable recipient here is deliverable there.
 
         Args:
             recipient: Recipient to resolve
@@ -558,6 +561,13 @@ class AdapterManager(Component):
         adapter = self._adapters.get(username)
         if adapter is not None:
             return adapter.address
+
+        # Known-but-offline human: a persistent mailbox exists, so mail
+        # addressed to them waits in their inbox (docs/design/mail.md) —
+        # the same rule MailDelivery applies on the delivery side.
+        member_id = f"{HUMAN_ID_PREFIX}{username}"
+        if self._paths.member_mail_dir_existing(member_id) is not None:
+            return address_for_member(member_id)
 
         return None
 

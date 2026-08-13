@@ -64,12 +64,6 @@ class EventType(StrEnum):
     SYSTEM_SHUTDOWN = "system.shutdown"
     SYSTEM_ERROR = "system.error"
 
-    # Trace events
-    TRACE_START = "trace.start"
-    TRACE_END = "trace.end"
-    TRACE_SPAN_START = "trace.span_start"
-    TRACE_SPAN_END = "trace.span_end"
-
     # Config events
     CONFIG_UPDATED = "config.updated"
 
