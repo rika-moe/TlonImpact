@@ -137,17 +137,18 @@ class TestSerializationProvenance:
 class TestSingleValidator:
     """The loader's gate: unknown actions and bad shape are rejected."""
 
-    def test_unknown_action_rejected_at_parse(self):
-        """Action heads are structurally validated in the EDN front."""
-        with pytest.raises(MemberSpecValidationError, match="unknown action"):
-            _parse(
-                """\
+    def test_unknown_action_rejected_by_validator(self):
+        """Unknown action heads are rejected by the single validator."""
+        spec = _parse(
+            """\
 {:version 1
  :rules [{:name "wild"
           :on :mail-delivered
           :actions [(jump {:to ["x@tlon.internal"]})]}]}
 """
-            )
+        )
+        with pytest.raises(MemberSpecValidationError, match="unknown action"):
+            validate_member_spec(spec)
 
     def test_unknown_when_builtin_rejected_by_validator(self):
         """Expression-level builtin scope is the validator's job (phase C)."""

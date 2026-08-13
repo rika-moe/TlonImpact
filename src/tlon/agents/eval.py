@@ -728,45 +728,6 @@ class ActionRequest:
 ACTION_NAMES = frozenset({"spawn", "emit"})
 
 
-def validate_action_form(form: Any, scope: set[str]) -> None:
-    """Statically validate one on-complete action form (no execution).
-
-    The two purity positions are checked with different registries:
-
-    - top level is either a single action form (``(spawn ...)`` /
-      ``(emit ...)``) or ``(when cond action ...)``;
-    - the ``when`` condition validates against :data:`TRIGGER_BUILTINS`
-      (pure only — actions in the condition are rejected);
-    - each action position must be an action form whose arguments are
-      pure expressions. Nested ``when`` is not supported.
-    """
-    if not isinstance(form, Form) or not form:
-        raise EvalError(
-            f"on-complete action must be an action form or (when ...), got {dumps(form)}"
-        )
-    head = form[0]
-    if isinstance(head, Symbol) and str(head) == "when":
-        if len(form) < 3:
-            raise EvalError("when expects a condition and at least one action")
-        validate_form(form[1], TRIGGER_BUILTINS, set(scope))
-        for action in form[2:]:
-            _validate_action_expr(action, scope)
-        return
-    _validate_action_expr(form, scope)
-
-
-def _validate_action_expr(form: Any, scope: set[str]) -> None:
-    if not isinstance(form, Form) or not form:
-        raise EvalError(f"action must be a (spawn ...)/(emit ...) form, got {dumps(form)}")
-    head = form[0]
-    if not isinstance(head, Symbol) or str(head) not in ACTION_NAMES:
-        raise EvalError(
-            f"unknown action: {dumps(head)} (allowed: {sorted(ACTION_NAMES)})"
-        )
-    for arg in form[1:]:
-        validate_form(arg, TRIGGER_BUILTINS, set(scope))
-
-
 # ── Script member builtins (phase P5a) ──
 
 

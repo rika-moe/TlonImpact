@@ -56,6 +56,7 @@ from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
     member_type,
+    validate_member_spec,
 )
 from tlon.base.config import AgentConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
@@ -406,12 +407,13 @@ def write_staging_prototype(
         raise PrototypeError(f"prototype '{name}' already exists in the staging area")
 
     # Validate first: a broken spec must never reach disk. The write-side
-    # gate is structural — placeholder stand-ins are concrete, so the
-    # unified schema check runs on the same text a runtime would load.
+    # gate runs the same chain a runtime load would — EDN parse, schema,
+    # then the single validator (host-less default registry: host
+    # predicates are Adam's vocabulary and must not pass staging).
     spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
     try:
         template = analyze(spec_text)
-        MemberSpec.from_edn(loads(template.standin_text))
+        validate_member_spec(MemberSpec.from_edn(loads(template.standin_text)))
     except BehaviorTemplateError as e:
         raise PrototypeError(f"behavior template error: {e}") from e
     except EDNParseError as e:

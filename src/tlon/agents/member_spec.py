@@ -14,9 +14,9 @@ the semantics authority. The legacy specs and their projections
 the single rules-form ``behavior.tlon`` directly into MemberSpec, the two
 runtimes converge on one interpreter (``agents/member_runtime.py``), and
 ``runtime`` becomes a derived value (:func:`member_type`). The EDN front
-performs structural validation (types, whitelisted action heads, form
-shapes); expression-level builtin-scope validation of ``:when`` /
-``:until`` / stage and section forms lives in the single validator
+performs structural validation (types, form shapes); the action-head
+whitelist and expression-level builtin-scope validation of ``:when`` /
+``:until`` / stage and section forms live in the single validator
 :func:`validate_member_spec`.
 """
 
@@ -27,7 +27,6 @@ from tlon.agents.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlon.agents.eval import (
     LOOP_BUILTINS,
     MAX_FUEL,
-    MEMBER_ACTION_NAMES,
     STAGE_COND_BUILTINS,
     Builtin,
     EvalError,
@@ -819,7 +818,11 @@ def _reflect_from(value: Any, rule_name: str) -> ReflectSpec:
 
 
 def _actions_from(value: Any, rule_name: str) -> tuple[Form, ...]:
-    """Read the optional :actions vector; every item an action form."""
+    """Read the optional :actions vector; every item a non-empty form.
+
+    Shape only — action-head whitelist and argument purity are the single
+    validator's job (:func:`validate_member_spec`), not the EDN front's.
+    """
     if value is None:
         return ()
     if isinstance(value, Form) or not isinstance(value, (list, tuple)):
@@ -837,63 +840,10 @@ def _actions_from(value: Any, rule_name: str) -> tuple[Form, ...]:
                 raise MemberSpecValidationError(
                     f"rule {rule_name!r}: invalid :actions expression: {e}"
                 ) from e
-        _validate_action(form, rule_name, item)
+        if not isinstance(form, Form) or not form:
+            raise MemberSpecValidationError(
+                f"rule {rule_name!r}: :actions items must be action forms, "
+                f"got {_type_name(item)}: {item!r}"
+            )
         forms.append(form)
     return tuple(forms)
-
-
-def _validate_action(form: Any, rule_name: str, original: Any) -> None:
-    """Structurally validate one action form (no execution).
-
-    The head must be a whitelisted action — or a ``when`` wrapper (legacy
-    on-complete) / a phase D loop wrapper (``while`` / ``map``) whose
-    action-bearing positions hold action forms; ``recur`` is the loop's
-    control flow, not an action. Argument-level builtin-scope validation is
-    done by ``validate_member_spec`` in this module.
-    """
-    if not isinstance(form, Form) or not form:
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :actions items must be action forms, "
-            f"got {_type_name(original)}: {original!r}"
-        )
-    head = form[0]
-    if isinstance(head, Symbol) and str(head) == "when":
-        if len(form) < 3:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: when expects a condition and at least one action"
-            )
-        for action in form[2:]:
-            _validate_action(action, rule_name, action)
-        return
-    if isinstance(head, Symbol) and str(head) == "while":
-        if len(form) < 3:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: while expects a binding vector and a test"
-            )
-        for body in form[3:]:
-            _validate_while_body(body, rule_name)
-        return
-    if isinstance(head, Symbol) and str(head) == "map":
-        if len(form) != 4:
-            raise MemberSpecValidationError(
-                f"rule {rule_name!r}: map expects a binding, a body, and a collection"
-            )
-        _validate_action(form[2], rule_name, form[2])
-        return
-    if not isinstance(head, Symbol) or str(head) not in MEMBER_ACTION_NAMES:
-        raise MemberSpecValidationError(
-            f"rule {rule_name!r}: unknown action {dumps(head)} "
-            f"(allowed: {sorted(MEMBER_ACTION_NAMES)}, when, while, map)"
-        )
-
-
-def _validate_while_body(form: Any, rule_name: str) -> None:
-    """A while body position: an action form or the loop's ``recur``."""
-    if (
-        isinstance(form, Form)
-        and form
-        and isinstance(form[0], Symbol)
-        and str(form[0]) == "recur"
-    ):
-        return
-    _validate_action(form, rule_name, form)
