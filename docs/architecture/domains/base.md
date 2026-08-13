@@ -130,12 +130,12 @@ cwd 的 .env 被忽略）。
   可选写能力（`reload_agent` 默认 False=只读，`delete_agent` 默认 raise）。
   消费方：AgentRegistry、MailDelivery、AdapterManager。
 
-**YAML CRUD 独立函数**（`config.py:208-272`）：`_yaml_load_file` /
-`_yaml_load_all`（扫 `~/.tlon/*/config/agent.yaml`，跳过 `shared`）/
-`_yaml_save`（`{"agent": ...}` 包装 + 确保 workspace/memory 目录）/
-`_yaml_delete`（rmtree 整个 agent home）/`_yaml_exists`。三方共用：
+**YAML CRUD 独立函数**（`config.py:208-272`）：`yaml_load_file` /
+`yaml_load_all`（扫 `~/.tlon/*/config/agent.yaml`，跳过 `shared`）/
+`yaml_save`（`{"agent": ...}` 包装 + 确保 workspace/memory 目录）/
+`yaml_delete`（rmtree 整个 agent home）/`yaml_exists`。三方共用：
 ConfigService、wizard 的 `AgentStore`（薄包装）、agents 域 registry/prototypes
-直接调 `_yaml_save`。
+直接调 `yaml_save`。
 
 **配置读写两条路径**：server 进程走 ConfigService（内存缓存 + reload 通知）；
 wizard/mirror 是独立进程，走 AgentStore 直接读写同一批 YAML + persona .md +

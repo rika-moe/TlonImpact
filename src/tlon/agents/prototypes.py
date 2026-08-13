@@ -57,7 +57,7 @@ from tlon.agents.member_spec import (
     MemberSpecValidationError,
     member_type,
 )
-from tlon.base.config import AgentConfig, _yaml_exists, _yaml_save
+from tlon.base.config import AgentConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 
@@ -212,7 +212,7 @@ def instantiate(
         raise PrototypeError(
             f"prototype '{prototype_name}' not found under {p.prototypes_dir()}"
         )
-    if _yaml_exists(agent_id, p.tlon_home()):
+    if yaml_exists(agent_id, p.tlon_home()):
         raise PrototypeError(f"agent '{agent_id}' already exists")
 
     behavior_file = proto_dir / BEHAVIOR_FILE
@@ -257,7 +257,7 @@ def instantiate(
         name=agent_name,
         prototype=prototype_name,
     )
-    _yaml_save(agent, p.tlon_home())
+    yaml_save(agent, p.tlon_home())
     logger.info(
         "prototype_instantiated",
         prototype=prototype_name,

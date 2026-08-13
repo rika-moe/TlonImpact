@@ -38,10 +38,9 @@ from tlon.organization.mail.mail import (
     POSTMASTER_ADDRESS,
     Mail,
     address_for_member,
-    member_id_for_address,
 )
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.messaging.human_adapter import HUMAN_ID_PREFIX, AdapterManager
+from tlon.organization.messaging.human_adapter import AdapterManager
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
@@ -50,6 +49,12 @@ logger = get_logger(__name__)
 
 #: Bound on the in-memory idempotency set (oldest entries evicted).
 _SEEN_CAP = 4096
+
+#: Bound on the on-demand Mailbox cache (oldest entries evicted).
+#: An evicted member's Mailbox is simply rebuilt on next delivery —
+#: the instance is a stateless handle, and mutual exclusion comes from
+#: the path-shared lock in ``mailbox._LOCKS``, not from the instance.
+_MAILBOXES_CAP = 4096
 
 
 class MailDelivery(Component, Device):
@@ -91,9 +96,14 @@ class MailDelivery(Component, Device):
         Device.__init__(self, event_bus=event_bus, name="MailDelivery")
         self._agent_info = agent_info_provider
         self._adapter_manager = adapter_manager
+        # Shared recipient resolver (single authority, issue ):
+        # address -> member resolution delegates to the same instance
+        # the speak side uses, so the "known human" rule exists once.
+        self._resolver = adapter_manager.recipient_resolver
         self._paths = tlon_paths or paths
-        # member_id -> Mailbox, created lazily on first delivery
-        self._mailboxes: dict[str, Mailbox] = {}
+        # member_id -> Mailbox, created lazily on first delivery;
+        # bounded LRU (_MAILBOXES_CAP, least recently used evicted)
+        self._mailboxes: OrderedDict[str, Mailbox] = OrderedDict()
         # Recently handled "mail_id|member" keys (in-process idempotency)
         self._seen: OrderedDict[str, None] = OrderedDict()
 
@@ -211,30 +221,32 @@ class MailDelivery(Component, Device):
     def _resolve_address(self, address: str) -> str | None:
         """Resolve a mail address to a member id, or None if unknown.
 
-        Agents (registered, sleeping included) win over humans on a
-        colliding local part. A human resolves when they are online
-        (adapter present) OR when they have a persistent mailbox —
-        mail to a known-but-offline human waits in their inbox
-        (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).
+        Delegates to the shared RecipientResolver (issue ): agents
+        (registered, sleeping included) win over humans on a colliding
+        local part; a human resolves when they are online or have a
+        persistent mailbox — mail to a known-but-offline human waits in
+        their inbox (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).
         """
-        local = member_id_for_address(address)
-        if local is None:
-            return None
-        if self._agent_info.get_config(local) is not None:
-            return local
-        human_id = f"{HUMAN_ID_PREFIX}{local}"
-        if self._adapter_manager.get_adapter(local) is not None:
-            return human_id
-        if self._paths.member_mail_dir_existing(human_id) is not None:
-            return human_id
-        return None
+        return self._resolver.resolve_member(address)
 
     def _mailbox_for(self, member_id: str) -> Mailbox:
-        """Return the cached Mailbox for a member, creating it on demand."""
+        """Return the cached Mailbox for a member, creating it on demand.
+
+        The cache is a bounded LRU (``_MAILBOXES_CAP``): hits are
+        refreshed to most-recently-used, and the least recently used
+        entry is evicted on overflow. Eviction is safe — a Mailbox is a
+        stateless handle and its mutual exclusion comes from the
+        path-shared lock in ``mailbox._LOCKS``, so a rebuilt instance
+        over the same directory acquires the same lock.
+        """
         mailbox = self._mailboxes.get(member_id)
-        if mailbox is None:
-            mailbox = Mailbox(self._paths.member_mail_dir(member_id))
-            self._mailboxes[member_id] = mailbox
+        if mailbox is not None:
+            self._mailboxes.move_to_end(member_id)
+            return mailbox
+        mailbox = Mailbox(self._paths.member_mail_dir(member_id))
+        self._mailboxes[member_id] = mailbox
+        if len(self._mailboxes) > _MAILBOXES_CAP:
+            self._mailboxes.popitem(last=False)
         return mailbox
 
     def _seen_before(self, key: str) -> bool:

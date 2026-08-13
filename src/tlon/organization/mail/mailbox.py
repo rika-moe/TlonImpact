@@ -23,6 +23,7 @@ instance.
 
 import asyncio
 import json
+from collections import OrderedDict
 from pathlib import Path
 
 import aiofiles
@@ -32,10 +33,41 @@ from tlon.organization.mail.mail import Mail
 
 logger = get_logger(__name__)
 
+#: Bound on the shared lock table (oldest entries evicted, same
+#: magnitude as ``delivery._SEEN_CAP``).
+_LOCKS_CAP = 4096
+
 #: Directory-keyed locks shared by every Mailbox instance over the same
-#: directory. Bounded by the member count; entries are never removed
-#: (a member's directory lives as long as the member).
-_LOCKS: dict[Path, asyncio.Lock] = {}
+#: directory. Bounded LRU (``_LOCKS_CAP``): the least recently used
+#: unlocked entry is evicted on overflow; a lock that is currently
+#: locked (held or awaited) is never evicted, since evicting it would
+#: break mutual exclusion for its waiters. An evicted directory simply
+#: gets a fresh lock on its next Mailbox — safe because nothing was
+#: waiting on the old one.
+_LOCKS: OrderedDict[Path, asyncio.Lock] = OrderedDict()
+
+
+def _lock_for(mail_dir: Path) -> asyncio.Lock:
+    """Return the shared lock for a directory (bounded LRU).
+
+    Hits are refreshed to most-recently-used. On overflow the oldest
+    unlocked entry is evicted; locked entries are skipped (if every
+    entry is locked the table temporarily grows past ``_LOCKS_CAP``).
+    """
+    lock = _LOCKS.get(mail_dir)
+    if lock is not None:
+        _LOCKS.move_to_end(mail_dir)
+        return lock
+    lock = asyncio.Lock()
+    _LOCKS[mail_dir] = lock
+    if len(_LOCKS) > _LOCKS_CAP:
+        for path, candidate in _LOCKS.items():
+            if path == mail_dir:
+                continue  # never evict the lock we are about to return
+            if not candidate.locked():
+                del _LOCKS[path]
+                break
+    return lock
 
 
 class Mailbox:
@@ -56,7 +88,7 @@ class Mailbox:
         self._inbox_path = mail_dir / "inbox.jsonl"
         self._sent_path = mail_dir / "sent.jsonl"
         self._cursor_path = mail_dir / "inbox.cursor"
-        self._lock = _LOCKS.setdefault(mail_dir, asyncio.Lock())
+        self._lock = _lock_for(mail_dir)
 
         self._dir.mkdir(parents=True, exist_ok=True)
 

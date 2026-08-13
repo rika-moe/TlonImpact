@@ -48,7 +48,7 @@ from tlon.agents.prototypes import get_prototype_info, instantiate
 from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, LLMConfig, _yaml_save
+from tlon.base.config import AgentConfig, LLMConfig, yaml_save
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
@@ -967,7 +967,7 @@ class AgentRegistry(Component):
         config.spawned_by = spawner_id
         config.spawn_depth = depth
         config.idle_timeout_seconds = self._contractor_idle_timeout_seconds
-        _yaml_save(config, tlon_paths.tlon_home())
+        yaml_save(config, tlon_paths.tlon_home())
 
         # Make the config visible to the provider (router, status queries)
         if not await self._agent_info.reload_agent(agent_id):

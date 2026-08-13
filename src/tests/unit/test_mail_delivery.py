@@ -414,3 +414,33 @@ class TestPayloadGuard:
         )
 
         assert _delivered(bus) == []
+
+
+class TestMailboxCacheLRU:
+    """The on-demand Mailbox cache is a bounded LRU (_MAILBOXES_CAP)."""
+
+    def test_evicts_oldest_over_cap(self, temp_paths, monkeypatch):
+        monkeypatch.setattr("tlon.organization.mail.delivery._MAILBOXES_CAP", 2)
+        delivery, _bus = _make_delivery(temp_paths)
+
+        a = delivery._mailbox_for("a")
+        delivery._mailbox_for("b")
+        delivery._mailbox_for("c")  # overflow: "a" evicted
+        assert set(delivery._mailboxes) == {"b", "c"}
+
+        # Eviction is safe: the rebuilt instance is a new stateless
+        # handle, but mutual exclusion comes from the path-shared lock
+        # in mailbox._LOCKS, so it acquires the very same lock.
+        rebuilt = delivery._mailbox_for("a")
+        assert rebuilt is not a
+        assert rebuilt._lock is a._lock
+
+    def test_hit_refreshes_recency(self, temp_paths, monkeypatch):
+        monkeypatch.setattr("tlon.organization.mail.delivery._MAILBOXES_CAP", 2)
+        delivery, _bus = _make_delivery(temp_paths)
+
+        a = delivery._mailbox_for("a")
+        delivery._mailbox_for("b")
+        assert delivery._mailbox_for("a") is a  # hit: "a" most recent now
+        delivery._mailbox_for("c")  # overflow: "b" evicted
+        assert set(delivery._mailboxes) == {"a", "c"}

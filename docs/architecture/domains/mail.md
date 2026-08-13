@@ -21,6 +21,7 @@ organization/
 │   ├── mail.py       # Mail dataclass + 地址规则（tlon.internal 域、all@、postmaster@）
 │   ├── mailbox.py    # Mailbox：单成员文件邮箱（inbox/sent/cursor 三文件）
 │   ├── delivery.py   # MailDelivery：MAIL_NEW → 展开/解析/落盘/MAIL_DELIVERED/bounce
+│   ├── resolver.py   # RecipientResolver：收件人解析单一权威（）
 │   └── __init__.py   # 空（仅 license 头）
 └── messaging/
     ├── member.py         # Member ABC：bus 公民契约（identity + lifecycle + bus I/O）
@@ -41,7 +42,8 @@ organization/
 | `MailDelivery` | 投递组件（router 继任者）：订阅 MAIL_NEW，落盘 + 每收件人发 MAIL_DELIVERED | `mail/delivery.py:72` |
 | `Member` | bus 公民抽象（`member_id`/`member_type`/`get_state`，`address` 派生）；统一点在 Member 层而非 Agent 层 | `messaging/member.py:30` |
 | `HumanAdapter` | 人类的 bus 存在；session 是其 attachment（refcount 语义） | `messaging/human_adapter.py:73` |
-| `AdapterManager` | adapter 生命周期（username→adapter）+ 第一层收件人解析 | `messaging/human_adapter.py:296` |
+| `AdapterManager` | adapter 生命周期（username→adapter）；构造并共享 RecipientResolver | `messaging/human_adapter.py:296` |
+| `RecipientResolver` | 收件人解析单一权威（）：名称→地址 + 地址→member id，"已知人类"规则一处 | `mail/resolver.py` |
 
 ---
 
@@ -50,15 +52,16 @@ organization/
 - **R2 邮件模型**：显式 `to`/`cc` 是唯一入口，R1b `mentions` 别名与 `@名字` 内容
   解析桥已在 PR-C 删除（`human_adapter.py:25-29` docstring）；零可解析收件人的
   邮件直接拒绝（`human_adapter.py:233-236`）。
-- **收件人解析两层**（ 对齐"离线人类"规则）：
-  - adapter 层（名称→地址）：`AdapterManager.resolve_address`
-    （`human_adapter.py:546-589`）——完整地址直通 → agent id → agent display name →
-    在线 human → **有持久邮箱的离线 human**；
-  - delivery 层（地址→member id）：`MailDelivery._resolve_address`
-    （`delivery.py:228-247`）——local part 冲突时 agent 优先；human 在线或有持久
-    邮箱即收。
-  - 两侧用同一条离线规则，保证"此处可解析 = 彼处可送达"（注释明确写于
-    `human_adapter.py:553`、`:584`）。
+- **收件人解析单一权威**（ 收敛，取代  时期的双轨对齐）：两个方向都收进
+  `RecipientResolver`（`mail/resolver.py`）——`resolve_address`（名称→地址：完整地址
+  直通 → agent id → agent display name → 在线或**有持久邮箱的离线** human）与
+  `resolve_member`（地址→member id：local part 冲突时 agent 优先；human 在线或有持久
+  邮箱即收）。"已知人类"规则（在线 OR 有持久邮箱）只写一次（`_known_human`），
+  结构性保证"此处可解析 = 彼处可送达"；能力全部构造注入（AgentInfoProvider +
+  在线检查 callable + TlonPaths），不破坏 organization 只依赖 base 的契约。
+  adapter 层 `AdapterManager.resolve_address` 与 delivery 层 `MailDelivery._resolve_address`
+  均为薄委托（MailDelivery 经 `adapter_manager.recipient_resolver` 共享同一实例，
+  避免构造环——ServerApp 先建 AdapterManager 后建 MailDelivery）。
 - **all@ 展开**：注册 agents（含沉睡，`AgentInfoProvider.get_all_ids`）+ 在线
   humans + 已知离线 humans（`known_human_ids`）；to+cc 展开后保序去重，一人一份
   （`delivery.py:197-226`）。
@@ -134,7 +137,7 @@ organization/
 ## 验证清单
 
 - [x] R2 模型：显式 to/cc 唯一入口，mentions/@名字 桥已删
-- [x] 收件人解析两层同规则（"此处可解析 = 彼处可送达"）
+- [x] 收件人解析收敛单一权威 RecipientResolver（；"此处可解析 = 彼处可送达"结构性保证）
 - [x] 邮箱即队列 + wake-on-mail + 已读游标集合语义
 - [x] 进程内幂等 _seen 与 bounce/postmaster 行为
 - [x] import-linter 契约：organization 只依赖 base

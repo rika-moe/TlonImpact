@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import tlon.organization.mail.mailbox as mailbox_module
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import (
     ALL_ADDRESS,
@@ -251,3 +252,55 @@ class TestMailbox:
         mailbox = Mailbox(tmp_path)
         assert await mailbox.unread() == []
         assert await mailbox.recent() == []
+
+
+class TestLockLRU:
+    """The shared per-directory lock table is a bounded LRU."""
+
+    @pytest.fixture
+    def small_lock_cap(self, monkeypatch: pytest.MonkeyPatch):
+        mailbox_module._LOCKS.clear()
+        monkeypatch.setattr(mailbox_module, "_LOCKS_CAP", 2)
+        yield
+        mailbox_module._LOCKS.clear()
+
+    def test_evicts_oldest_over_cap(self, tmp_path: Path, small_lock_cap):
+        a = Mailbox(tmp_path / "a")
+        Mailbox(tmp_path / "b")
+        Mailbox(tmp_path / "c")  # overflow: "a" is oldest, evicted
+
+        assert len(mailbox_module._LOCKS) == 2
+        assert (tmp_path / "a") not in mailbox_module._LOCKS
+
+        # A rebuilt mailbox gets a fresh lock (evicts "b" in turn).
+        rebuilt = Mailbox(tmp_path / "a")
+        assert rebuilt._lock is not a._lock
+        assert (tmp_path / "b") not in mailbox_module._LOCKS
+
+    async def test_locked_lock_is_not_evicted(
+        self, tmp_path: Path, small_lock_cap
+    ):
+        """A lock that is held or awaited must stay: evicting it would
+        break mutual exclusion for its waiters."""
+        a = Mailbox(tmp_path / "a")
+        Mailbox(tmp_path / "b")
+        await a._lock.acquire()
+        try:
+            Mailbox(tmp_path / "c")  # overflow: "a" locked, so "b" evicted
+        finally:
+            a._lock.release()
+
+        assert (tmp_path / "a") in mailbox_module._LOCKS
+        assert (tmp_path / "b") not in mailbox_module._LOCKS
+
+    def test_hit_refreshes_recency(self, tmp_path: Path, small_lock_cap):
+        """LRU refresh keeps mutual exclusion: a revisited directory
+        keeps the same lock and is not the eviction candidate."""
+        a = Mailbox(tmp_path / "a")
+        Mailbox(tmp_path / "b")
+        revisited = Mailbox(tmp_path / "a")  # hit: "a" is most recent now
+        Mailbox(tmp_path / "c")  # overflow: "b" is oldest, evicted
+
+        assert revisited._lock is a._lock
+        assert (tmp_path / "b") not in mailbox_module._LOCKS
+        assert (tmp_path / "a") in mailbox_module._LOCKS

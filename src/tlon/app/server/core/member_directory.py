@@ -5,7 +5,8 @@ Aggregates and provides information about all members in the system:
 - Humans (from AdapterManager — one online adapter per username)
 
 This is the address book (通讯录用): member listing and lookup only.
-Recipient→address resolution lives in AdapterManager.
+Recipient→address resolution lives in the shared RecipientResolver
+(organization/mail/resolver.py, issue ).
 """
 
 from tlon.agents.agent_registry import AgentRegistry

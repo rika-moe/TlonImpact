@@ -9,11 +9,11 @@ from pydantic import ValidationError
 
 from tlon.base.config import (
     AgentConfig,
-    _yaml_delete,
-    _yaml_exists,
-    _yaml_load_all,
-    _yaml_load_file,
-    _yaml_save,
+    yaml_delete,
+    yaml_exists,
+    yaml_load_all,
+    yaml_load_file,
+    yaml_save,
 )
 from tlon.base.logger import get_logger
 
@@ -51,13 +51,13 @@ class AgentStore:
         self._paths = paths or _paths
 
     def load_all_agents(self) -> dict[str, AgentConfig]:
-        return _yaml_load_all(self._paths.tlon_home())
+        return yaml_load_all(self._paths.tlon_home())
 
     def get_agent(self, agent_id: str) -> AgentConfig | None:
         filepath = self._paths.agent_config_file(agent_id)
         if not filepath.exists():
             return None
-        return _yaml_load_file(filepath)
+        return yaml_load_file(filepath)
 
     def get_agent_by_name(self, name: str) -> AgentConfig | None:
         for agent in self.load_all_agents().values():
@@ -67,7 +67,7 @@ class AgentStore:
 
     def save_agent(self, agent: AgentConfig) -> tuple[bool, str]:
         try:
-            _yaml_save(agent, self._paths.tlon_home())
+            yaml_save(agent, self._paths.tlon_home())
             return True, "Agent saved"
         except Exception as e:
             return False, f"Failed to save agent: {e}"
@@ -99,7 +99,7 @@ class AgentStore:
     def delete_agent(self, agent_id: str) -> tuple[bool, str]:
         """Delete an agent: removes the entire ~/.tlon/{agent_id}/ directory."""
         try:
-            _yaml_delete(agent_id, self._paths.tlon_home())
+            yaml_delete(agent_id, self._paths.tlon_home())
             return True, f"Agent '{agent_id}' deleted"
         except ValueError as e:
             return False, str(e)
@@ -107,7 +107,7 @@ class AgentStore:
             return False, f"Failed to delete agent: {e}"
 
     def agent_exists(self, agent_id: str) -> bool:
-        return _yaml_exists(agent_id, self._paths.tlon_home())
+        return yaml_exists(agent_id, self._paths.tlon_home())
 
     def validate_agent_data(self, data: dict[str, Any]) -> tuple[bool, list[str]]:
         """Validate agent data against the AgentConfig model.

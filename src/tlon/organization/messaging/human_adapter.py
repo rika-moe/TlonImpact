@@ -31,7 +31,8 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 from tlon.base.tracing.trace_context import start_span
-from tlon.organization.mail.mail import Mail, address_for_member, is_mail_address
+from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.resolver import RecipientResolver
 from tlon.organization.messaging.member import Member
 
 if TYPE_CHECKING:
@@ -300,9 +301,17 @@ class AdapterManager(Component):
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
-        self._agent_info = agent_info_provider
         self._paths = tlon_paths or paths
         self._adapters: dict[str, HumanAdapter] = {}  # username -> adapter
+        # Single authority for recipient resolution (issue ); the
+        # online check closes over ``self._adapters``, so the resolver
+        # always sees the live adapter set. MailDelivery delegates to
+        # the same instance via ``recipient_resolver``.
+        self._resolver = RecipientResolver(
+            agent_info_provider=agent_info_provider,
+            is_human_online=lambda username: username in self._adapters,
+            tlon_paths=self._paths,
+        )
         self._sessions: dict[str, str] = {}  # session_id -> username
         self._lock = asyncio.Lock()  # serializes attach/detach
 
@@ -526,15 +535,26 @@ class AdapterManager(Component):
         """
         return [self._adapters[name] for name in sorted(self._adapters)]
 
+    @property
+    def recipient_resolver(self) -> RecipientResolver:
+        """The shared recipient resolver (single authority, issue ).
+
+        MailDelivery picks it up here so both sides of resolution
+        (speak-side names, delivery-side addresses) share one
+        implementation of the "known human" rule.
+        """
+        return self._resolver
+
     def resolve_address(self, recipient: str) -> str | None:
         """Resolve a recipient to a mail address.
 
-        Accepts a full mail address (passed through), an agent id, an
-        agent display name, a human's username or the
+        Delegates to the shared RecipientResolver (mail domain, issue
+        ): accepts a full mail address (passed through), an agent
+        id, an agent display name, a human's username or the
         "human:<username>" form. A human resolves when they are online
-        (adapter present) or known-but-offline with a persistent
-        mailbox — same rule as MailDelivery._resolve_address, so a
-        resolvable recipient here is deliverable there.
+        or known-but-offline with a persistent mailbox — the same rule
+        MailDelivery applies on the delivery side, so a resolvable
+        recipient here is deliverable there.
 
         Args:
             recipient: Recipient to resolve
@@ -542,34 +562,7 @@ class AdapterManager(Component):
         Returns:
             The member's mail address, or None if unresolvable
         """
-        name = recipient.lstrip("@")
-        if is_mail_address(name):
-            return name
-
-        # Agent id direct hit, then agent display name lookup
-        if self._agent_info.get_config(name) is not None:
-            return address_for_member(name)
-        for agent_id in self._agent_info.get_all_ids():
-            config = self._agent_info.get_config(agent_id)
-            if config and config.name == name:
-                return address_for_member(agent_id)
-
-        # Online human ("alice" or "human:alice")
-        username = (
-            name[len(HUMAN_ID_PREFIX):] if name.startswith(HUMAN_ID_PREFIX) else name
-        )
-        adapter = self._adapters.get(username)
-        if adapter is not None:
-            return adapter.address
-
-        # Known-but-offline human: a persistent mailbox exists, so mail
-        # addressed to them waits in their inbox (docs/design/mail.md) —
-        # the same rule MailDelivery applies on the delivery side.
-        member_id = f"{HUMAN_ID_PREFIX}{username}"
-        if self._paths.member_mail_dir_existing(member_id) is not None:
-            return address_for_member(member_id)
-
-        return None
+        return self._resolver.resolve_address(recipient)
 
     def username_for(self, session_id: str) -> str | None:
         """Get the username owning a session.

@@ -263,7 +263,7 @@ Agent 的行为是数据不是代码（见 [../../design/dsl-agents.md](../../de
   prototype 存在与 agent_id 不冲突；behavior.tlon 原样**拷贝**（不合并）到
   `~/.tlon/{agent_id}/config/`；若原型声明 `:parameters`（模板变量 `${var}`），
   `params` 必须先提供，渲染后写盘（wizard 从 mirror 菜单按参数类型逐项提示，阶段 F）；
-  人格文件拷贝；agent.yaml 走与 wizard 相同的 `_yaml_save` 路径，`AgentConfig.prototype`
+  人格文件拷贝；agent.yaml 走与 wizard 相同的 `yaml_save` 路径，`AgentConfig.prototype`
   记录来源 prototype；
 - **生效时机**：热生效——wizard/mirror 创建后 best-effort 通知运行中的服务端
   （`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`），
