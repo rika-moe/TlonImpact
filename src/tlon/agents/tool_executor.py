@@ -25,7 +25,7 @@ class ToolExecutor:
 
     Example:
         >>> executor = ToolExecutor()
-        >>> executor.register_tool(ExecuteBashTool(docker_runtime))
+        >>> executor.register_tool(ExecuteBashTool(docker_config, docker_runtime))
         >>> await executor.initialize()
         >>> result = await executor.execute("executeBashCommand", {"command": "ls"})
     """

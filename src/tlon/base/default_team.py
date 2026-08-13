@@ -4,7 +4,7 @@ Shared by dream (server) and mirror (wizard) processes.
 IDs use pinyin form matching ~/.tlon/{id}/ directory names.
 
 Narrative fields (identity, profile, behavior) are stored as
-~/.tlon/{id}/IDENTITY.md, SOUL.md, RULES.md respectively.
+~/.tlon/{id}/config/IDENTITY.md, SOUL.md, RULES.md respectively.
 """
 
 from typing import Any

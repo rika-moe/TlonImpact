@@ -73,7 +73,7 @@ class Event:
     """Event for transmission via Event Bus.
 
     This class is designed to be shared across all components:
-    - Server (EventBus, ChatRoom)
+    - Server (EventBus, MailDelivery)
     - Agents
     - TUI/Web clients
 

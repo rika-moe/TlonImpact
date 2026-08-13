@@ -397,7 +397,7 @@ def _validate_cognitive(rule: MemberRule, label: str) -> None:
 
 
 def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
-    """Validate the section vector (mirrors AgentSpec's section checks)."""
+    """Validate the section vector (mirrored the legacy AgentSpec's section checks)."""
     seen: set[str] = set()
     for form in sections:
         if not isinstance(form, Form) or not form:
@@ -440,7 +440,7 @@ def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
 
 
 def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
-    """Validate the stage vector (mirrors AgentSpec's stage checks)."""
+    """Validate the stage vector (mirrored the legacy AgentSpec's stage checks)."""
     if not stages:
         raise MemberSpecValidationError(
             f"{label}: :stages must not be empty (no stage would ever advance the loop)"
@@ -478,7 +478,7 @@ def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
 def _validate_stage_opts(
     name: str, opts: dict[Any, Any], form: Form, label: str
 ) -> None:
-    """Validate one stage's opts map (mirrors AgentSpec's phase 7c checks)."""
+    """Validate one stage's opts map (mirrored the legacy AgentSpec's phase 7c checks)."""
     allowed = {"if", "max-steps"} if name == "plan" else {"if"}
     for key, value in opts.items():
         if not isinstance(key, Keyword):
@@ -679,8 +679,8 @@ def _expr_from(
 ) -> "Form | None":
     """Read an expression field: a parsed Form or an EDN source string.
 
-    Structural shape only — builtin-scope validation arrives with phase B's
-    single validator.
+    Structural shape only — builtin-scope validation is done by
+    ``validate_member_spec`` in this module.
     """
     if value is None:
         if required:
@@ -848,8 +848,8 @@ def _validate_action(form: Any, rule_name: str, original: Any) -> None:
     The head must be a whitelisted action — or a ``when`` wrapper (legacy
     on-complete) / a phase D loop wrapper (``while`` / ``map``) whose
     action-bearing positions hold action forms; ``recur`` is the loop's
-    control flow, not an action. Argument-level builtin-scope validation
-    arrives with phase B's single validator.
+    control flow, not an action. Argument-level builtin-scope validation is
+    done by ``validate_member_spec`` in this module.
     """
     if not isinstance(form, Form) or not form:
         raise MemberSpecValidationError(

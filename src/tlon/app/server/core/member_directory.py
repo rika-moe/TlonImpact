@@ -5,7 +5,7 @@ Aggregates and provides information about all members in the system:
 - Humans (from AdapterManager — one online adapter per username)
 
 This is the address book (通讯录用): member listing and lookup only.
-Mention→address resolution lives in AdapterManager (the R1b @ bridge).
+Recipient→address resolution lives in AdapterManager.
 """
 
 from tlon.agents.agent_registry import AgentRegistry

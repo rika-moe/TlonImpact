@@ -126,9 +126,9 @@ uv run pytest
 | 类型 | 文档 |
 |------|------|
 | 开发规范 | [开发流程](./docs/design/development-process.md), [代码风格](./docs/design/code-style.md) |
-| 架构 | [显式边界](./docs/architecture/explicit-boundaries.md), [agents 域](./docs/architecture/domains/agents.md), [base 域](./docs/architecture/domains/base.md) |
+| 架构 | [显式边界](./docs/architecture/explicit-boundaries.md), [agents 域](./docs/architecture/domains/agents.md), [base 域](./docs/architecture/domains/base.md), [server 域](./docs/architecture/domains/server.md), [mail 域](./docs/architecture/domains/mail.md), [memory 域](./docs/architecture/domains/memory.md), [sandbox 域](./docs/architecture/domains/sandbox.md), [tools 域](./docs/architecture/domains/tools.md) |
 | 速查 | [导入路径速查](./docs/reference/imports.md) |
 
 ---
 
-*最后更新：2026-08-06*
+*最后更新：2026-08-13*

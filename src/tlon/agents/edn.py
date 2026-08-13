@@ -18,8 +18,8 @@ Likewise Form (a list subclass) keeps ``(...)`` (an expression) distinct
 from ``[...]`` (a data vector) for the restricted evaluator.
 
 Parse failures raise :class:`EDNParseError` with line/column information.
-``dumps`` serializes back to EDN (test roundtrips, future agent-written
-spec files).
+``dumps`` serializes back to EDN (test roundtrips, agent-written spec
+files).
 """
 
 from typing import Any

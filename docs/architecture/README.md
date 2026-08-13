@@ -67,6 +67,11 @@ mirror ──读写文件────────────────→ ~/.
 |------|------|--------|
 | [explicit-boundaries.md](./explicit-boundaries.md) | 架构边界规则（所有进程通用） | 所有贡献者 |
 | [domains/agents.md](./domains/agents.md) | Agent 域：spec、生命周期、亚当、spawn | 想理解/修改 agent 系统 |
+| [domains/memory.md](./domains/memory.md) | memory 域：两 store、摘要、反思接口 | 想理解/修改记忆系统 |
+| [domains/mail.md](./domains/mail.md) | mail 域：R2 邮件模型、投递、邮箱 | 想理解/修改消息系统 |
 | [domains/base.md](./domains/base.md) | base 层：Component/Device/EventBus/ConfigService | 想理解基础设施 |
+| [domains/server.md](./domains/server.md) | server 域：ServerApp 装配、HTTP+SSE 端点、会话管理 | 想理解/修改服务端接入层 |
+| [domains/sandbox.md](./domains/sandbox.md) | sandbox 域：DockerRuntime、懒启动、文件 I/O | 想理解/修改沙箱执行环境 |
+| [domains/tools.md](./domains/tools.md) | tools 域：Tool 契约、注册机制、22 个工具清单 | 想理解/修改工具系统 |
 
 ---

@@ -9,5 +9,5 @@ Usage:
     >>> config = MemoryConfig()
     >>> memory = MemoryManager(agent_id="dev-001", config=config, data_dir=Path("./data"))
     >>> await memory.load()
-    >>> await memory.on_interaction_complete(message, response, tool_results)
+    >>> await memory.add_interaction(message, response, tool_results)
 """

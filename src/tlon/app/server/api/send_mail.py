@@ -1,8 +1,7 @@
-"""Shared field validation for the send-mail entry points.
+"""Field validation for the REST send-mail entry point.
 
-The WS ``message`` frame (deprecated in PR-1 of the HTTP+SSE migration,
-docs/design/http-sse-protocol.md) and REST ``POST /messages`` accept the
-same payload shape; this module is the single copy of that validation.
+REST ``POST /messages`` accepts a raw body dict; this module is the
+single copy of the validation for that payload shape.
 """
 
 from dataclasses import dataclass
@@ -30,13 +29,13 @@ class SendMailError:
 
 
 def parse_send_mail_fields(msg: dict[str, Any]) -> SendMailFields | SendMailError:
-    """Validate raw send-mail fields (WS frame or REST body).
+    """Validate raw send-mail fields (REST body).
 
     The shape stays lenient: unknown keys (e.g. the R1b ``mentions``
     alias, removed in PR-C) are silently ignored.
 
     Args:
-        msg: The raw frame/body dict
+        msg: The raw body dict
 
     Returns:
         The validated fields, or a SendMailError with a semantic reason

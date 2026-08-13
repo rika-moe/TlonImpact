@@ -131,7 +131,8 @@ class AgentConfig(BaseModel):
     """Complete agent configuration.
 
     Narrative identity/personality/rules are stored as .md files
-    (IDENTITY.md, SOUL.md, RULES.md) in the agent's home directory.
+    (IDENTITY.md, SOUL.md, RULES.md) in the agent's ``config/``
+    subdirectory (``~/.tlon/{id}/config/``).
     """
 
     id: str

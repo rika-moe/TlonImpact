@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import type { RestClient } from "../client/restClient.js";
 import { groupMetrics, type MetricsSnapshot } from "../metrics/snapshot.js";
 
-/** Polling interval; no other view polls (they are ws-driven), so the
+/** Polling interval; no other view polls (they are SSE-driven), so the
  * metrics view sets the convention: refresh every 2s. */
 const POLL_INTERVAL_MS = 2_000;
 

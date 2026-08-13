@@ -6,7 +6,7 @@ Provides commands (Borgesian metaphor):
 - tlon ops      : Open Operator console (monitor and manage)
 
 Usage:
-    $ tlon dream            # Start server on default ports
+    $ tlon dream            # Start server on the default port (8080)
     $ tlon dream --lucid    # Debug mode (lucid dream)
     $ tlon ops              # Connect operator TUI
     $ tlon mirror           # Run configuration wizard

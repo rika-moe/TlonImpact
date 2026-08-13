@@ -37,7 +37,7 @@ class MemoryManager:
         >>> await manager.load()
         >>>
         >>> # After interaction completes
-        >>> await manager.on_interaction_complete(message, response, tool_results)
+        >>> await manager.add_interaction(message, response, tool_results)
         >>>
         >>> # Build context for LLM
         >>> context_blocks = await manager.build_context_blocks(current_message)
@@ -169,25 +169,6 @@ class MemoryManager:
         Automatically called after each Agent response. Stores the
         interaction in Working Memory and checks if summary should
         be generated.
-
-        Args:
-            message: The incoming message (Message object or dict)
-            response: The agent's response (response object or dict)
-            tool_results: Optional list of tool execution results
-
-        Returns:
-            The interaction ID
-        """
-        # Also expose as on_interaction_complete for backward compatibility
-        return await self._store_interaction(message, response, tool_results)
-
-    async def on_interaction_complete(
-        self,
-        message: Any,
-        response: Any,
-        tool_results: list[Any] | None = None,
-    ) -> str:
-        """Alias for add_interaction - called by Agent after each response.
 
         Args:
             message: The incoming message (Message object or dict)

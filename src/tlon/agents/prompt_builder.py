@@ -48,8 +48,9 @@ _PROTOCOL = """## 交互协议
 class SystemPromptBuilder:
     """Builds system prompts by composing files + protocol.
 
-    Reads IDENTITY.md, SOUL.md, RULES.md from the agent's home directory
-    and composes them with team profiles and framework protocol rules.
+    Reads IDENTITY.md, SOUL.md, RULES.md from the agent's ``config/``
+    subdirectory (``~/.tlon/{id}/config/``) and composes them with team
+    profiles and framework protocol rules.
 
     ``include_persona`` gates the identity/team/behavior (persona file)
     sections; ``include_protocol`` gates the framework protocol section.

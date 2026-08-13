@@ -180,14 +180,17 @@ class RESTAPIHandler:
     - DELETE /sessions/{id} - Disconnect a session (protocol v2, PR-2)
     - GET /events - SSE event stream for a session (protocol v2, PR-2)
     - GET /agents - List all agents
+    - GET /agents/{id} - Get a single agent
     - GET /sessions - List active sessions
+    - GET /participants - List connected members
+    - GET /traces - List traces
+    - GET /traces/{trace_id} - Get a single trace
     - GET /agents/{id}/logs - Agent log entries
     - GET /logs - All log entries with combined filters
-    - GET /events/history - Event history (from persistence)
     - GET /metrics - In-process metrics snapshot
 
     Example:
-        >>> handler = RESTAPIHandler(server, agent_registry)
+        >>> handler = RESTAPIHandler(client_gateway, agent_registry)
         >>> app = handler.create_app()
         >>> runner = web.AppRunner(app)
         >>> await runner.setup()
@@ -853,7 +856,7 @@ class RESTAPIHandler:
         return response
 
     async def handle_list_participants(self, request: web.Request) -> web.Response:
-        """GET /participants - List chat room participants.
+        """GET /participants - List connected members.
 
         Returns:
             List of participants
@@ -1096,7 +1099,7 @@ class RESTServer:
     Wraps the aiohttp server with lifecycle management.
 
     Example:
-        >>> rest = RESTServer(server, config_manager, port=8080)
+        >>> rest = RESTServer(client_gateway, agent_registry, config_manager, port=8080)
         >>> await rest.start()
         >>> # Server is running
         >>> await rest.stop()

@@ -1,356 +1,160 @@
-# Tlon Operator - Agent 运维控制台
+# Tlon Operator - 人类操作台
 
-> 状态: ⚠️ 待验证
-> 最后验证: 2026-04-12
-> 版本: 1.0 (工程师版)
-> 产品定位: **Agent 集群的运维与调试工具**
+> 状态: ✅ 已验证
+> 最后验证: 2026-08-13
+> 实现: `apps/operator/`（TypeScript + Ink，Node ≥ 22）
+> 协议: HTTP + SSE 单端口 v2（见 [client-server-protocol.md](./client-server-protocol.md)）
 
-> **实现说明（2026-07-20）**：Operator 的实现已迁移至 `apps/operator/`（TypeScript + Ink），
-> 通过 REST + SSE 真实连接 dream 服务端；原 Python/Textual 实现（`src/tlon/app/clients/tui/operator/`）
-> 已删除，`tlon ops` 命令现在负责启动该 TS 应用。本文档保留为产品设计参考。
+**定位**：人类操作台——以 mail 视图为主界面（人类的邮件收发入口），外加 Agents / Events / Traces / Config / Metrics 五个监控视图。本文档描述 `apps/operator` 的当前实现，与代码同步。
 
 ---
 
-## 核心理念
+## 1. 启动
 
-1. **工程师优先**：信息密度高、快捷键丰富、调试友好
-2. **IDE 式布局**：三栏分区（树、主内容、检查器）
-3. **全生命周期管理**：部署、监控、诊断、配置一站式
-4. **与 Congress 互补**：运维工具与聊天客户端各司其职
+```bash
+uv run tlon ops
+```
+
+`tlon ops` 定位 `apps/operator/`：优先运行构建产物 `dist/cli.js`，否则回退到 tsx dev 模式（`src/tlon/app/launcher/commands/ops.py:46-64`）；连接参数通过命令行透传（`ops.py:96-104`）。
+
+**CLI 参数与环境变量**（`apps/operator/src/args.ts:9-26`）：
+
+| 参数 | 环境变量 | 默认值 | 说明 |
+|------|----------|--------|------|
+| `--host` | `TLON_HOST` | `127.0.0.1` | 服务端地址 |
+| `--rest-port` / `-r` | `TLON_REST_PORT` | `8080` | HTTP API 端口 |
+| `--username` / `-u` | `TLON_USERNAME` | `guest` | 邮件身份（`{username}@tlon.internal`） |
+
+也支持 `--host=x` 等号形式；`--help` 打印用法。
+
+---
+
+## 2. 连接协议
+
+Operator 是 HTTP+SSE 单端口 v2 协议的 TUI 客户端（`apps/operator/src/client/sseClient.ts`），协议全貌见 [client-server-protocol.md](./client-server-protocol.md)，本节只记客户端行为。
+
+**会话流程**：
+
+1. `POST /sessions`——声明 `username`、`client_type=tui`、`mode`、`filters`、`protocol_version=2.0.0`；返回 `session_id` + agents/participants 快照（作为 `agents`/`participants` 事件分发）（`sseClient.ts:134-161`）
+2. `GET /events?session_id=...`——打开 SSE 流；`data:` 帧携带 `{"type":"event", event_type, payload, source, timestamp, trace_id, span_id}`，`: ping` 注释行是服务端心跳（`sseClient.ts:163-217`）
+3. `PATCH /sessions/{id}`——切换 mode；会话建立后 App 立即切到 `"event"` 模式，让服务端推送全部事件类型（`App.tsx:38-42`，`sseClient.ts:79-95`）
+4. `DELETE /sessions/{id}`——`dispose()` 时 best-effort 显式断开（服务端幂等）（`sseClient.ts:97-115`）
+
+**断线重连**（`sseClient.ts:219-234`）：指数退避 1s → 30s 封顶（无 jitter，`backoffDelay`）；重连即从零重建会话——新 session_id、新快照，**中断期间的事件丢失**（与 WS 时代语义一致）。
+
+**REST 端点**（`apps/operator/src/client/restClient.ts:73-156`）：`GET /health`、`GET /config`、`GET /agents`、`GET /agents/{id}`、`GET /traces`、`GET /traces/{id}`、`GET /admin/config/agents`、`GET /inbox?username&limit`、`POST /messages`（同步回执：成功返回 `mail_id`，4xx 携带 `error`/`reason`）、`GET /participants`、`GET /metrics`。
+
+---
+
+## 3. 布局与全局键位
+
+**布局**：单行 Header + 内容区 + 底部提示行（`App.tsx:76-98`）。Header 左侧是视图页签 `1:Mail … 6:Metrics`，右侧是 `username@tlon.internal`、`host:port`、连接状态 `●`（绿 connected / 黄 connecting·reconnecting / 红 disconnected）（`components/Header.tsx:44-62`）。底部固定提示 `1-6 / tab / ←→ switch view · q quit`。
+
+**全局键位**（`App.tsx:53-72`）：
+
+| 键 | 功能 |
+|----|------|
+| `1`-`6` | 切到对应视图 |
+| `tab` / `→` | 下一视图 |
+| `←` | 上一视图 |
+| `q` / `Ctrl+C` | 退出 |
+
+mail 写信/回复表单编辑期间全局键被屏蔽（表单独占键盘；`Ctrl+C` 除外）（`App.tsx:27-28, 58`）。`r` 不是全局刷新——各视图自定义。
+
+**视图清单**（`types.ts:3-5`；默认视图是 mail，`App.tsx:25`）：Mail、Agents、Events、Traces、Config、Metrics。除 Metrics 外各视图为"左列表 + 右详情"两栏（共享 `components/ScrollList.tsx` 的 `ScrollList`/`JsonDetail`）。
+
+---
+
+## 4. Mail 视图（默认视图）
+
+`views/MailView.tsx`——人类的邮件主界面（设计见 [mail.md](./mail.md)）。
+
+- **线程列表 + 会话窗格**：左栏按 `thread_id` 分组线程、最新在前（显示参与者、主题/内容摘要、邮件数）；右栏按时间序显示选中线程的邮件（`mail/threads.ts` 的 `groupByThread`）
+- **初始加载**：`GET /inbox` + `GET /participants`（地址簿）（`MailView.tsx:82-102`）
+- **实时合并**：SSE `mail.delivered` 事件按 mail id 去重合并（服务端每个收件人发一条事件）；自己发的信不会投递回来，在 `POST /messages` 同步 ack 时以真实 id 上屏（`MailView.tsx:105-118, 196-213`）
+- **写信 / 回复**：四字段表单 To / Cc / Subject / Content；回复预填 To 与 `Re:` 主题，携带 `in_reply_to` / `thread_id`；To/Cc 字段下方显示地址簿候选（`MailView.tsx:266-295`）
+- **发送**：`POST /messages` 同步回执——成功即上屏关闭表单；失败时表单保留、服务端错误落回表单（`MailView.tsx:178-218`）
+
+**键位**（`MailView.tsx:220-264`）：
+
+| 场景 | 键 | 功能 |
+|------|----|------|
+| 浏览 | `↑` / `↓` | 选线程 |
+| 浏览 | `c` | 写信 |
+| 浏览 | `r` | 回复选中线程 |
+| 表单 | `enter` | 下一字段；Content 上提交 |
+| 表单 | `↑` / `↓` | 切字段 |
+| 表单 | `esc` | 取消 |
+
+---
+
+## 5. Agents 视图
+
+`views/AgentsView.tsx`——Agent 平铺列表 + raw JSON 详情。
+
+- 列表项为 `id name [state]`，按状态着色（running/active/idle/online 绿，stopped/offline/error/failed 红，其余黄）（`AgentsView.tsx:10-22`）
+- 数据来自 SSE 会话快照；任何 `agent*` 事件触发 `GET /agents` 重载（`AgentsView.tsx:46-63`）
+- 右栏默认显示选中 Agent 的列表项 JSON；`enter` 拉 `GET /agents/{id}` 完整详情（`AgentsView.tsx:74-83`）
+
+**键位**（`AgentsView.tsx:65-84`）：`↑`/`↓` 选择 · `enter` 详情 · `r` 刷新。
+
+---
+
+## 6. Events 视图
+
+`views/EventsView.tsx`——SSE 事件流。
+
+- 列表行显示 时间（本地接收时刻）/ eventType / source / traceId 前 8 位；右栏 raw JSON（`EventsView.tsx:73-95`）
+- 缓冲上限 500 条，超出从头裁（`EventsView.tsx:7, 24-28`）
+- 默认自动跟随最新事件；向上滚动即暂停跟随，回到底部恢复（`EventsView.tsx:36-38, 40-49`）
+
+**键位**（`EventsView.tsx:40-56`）：`↑`/`↓` 滚动 · `c` 清空 · `p` 暂停/恢复。
+
+---
+
+## 7. Traces 视图
+
+`views/TracesView.tsx`——Trace 列表 + raw JSON 详情。
+
+- 列表来自 `GET /traces?limit=100`，行显示 trace_id 及可用的 name/source/status/root_agent 摘要（`TracesView.tsx:12-20, 29-38`）
+- `enter` 拉 `GET /traces/{id}` 完整 trace JSON
+
+**键位**（`TracesView.tsx:44-62`）：`↑`/`↓` 选择 · `enter` 详情 · `r` 刷新。
+
+---
+
+## 8. Config 视图（只读）
+
+`views/ConfigView.tsx`——**只读**配置展示，上下两块 raw JSON：`GET /config`（服务端配置）与 `GET /admin/config/agents`（Agent 配置）（`ConfigView.tsx:6-7, 14-23`）。无编辑能力。
+
+**键位**：`r` 刷新（`ConfigView.tsx:29-31`）。
+
+---
+
+## 9. Metrics 视图
+
+`views/MetricsView.tsx`——`GET /metrics` 的服务端进程内指标快照，每 2s 轮询（唯一轮询视图），按分组展示（`metrics/snapshot.ts` 的 `groupMetrics`）（`MetricsView.tsx:7-8, 24-28`）。
+
+**键位**：`r` 手动刷新（`MetricsView.tsx:30-32`）。
+
+---
 
 ## 文档索引
 
 | 文档 | 目的 | 深度 |
 |------|------|------|
-| 本页 | Operator 运维控制台设计 | L1 |
-| [~~Congress~~（已退役）](../archive/tui-congres.md) | 极简聊天 TUI（2026-07 退役，由本 Operator 的 mail 视图取代） | L1 |
+| [client-server-protocol.md](./client-server-protocol.md) | HTTP+SSE v2 协议全貌 | L1 |
+| [mail.md](./mail.md) | 邮件模型设计 | L1 |
+
+---
 
 ## 验证清单
 
-- [ ] 代码实现与文档一致
-- [ ] 示例可运行
-- [ ] 术语最新
+- [x] 视图清单、键位与 `apps/operator/src/` 一致（六视图，默认 mail）
+- [x] 协议描述与 `sseClient.ts` / `restClient.ts` 一致（HTTP+SSE v2，无 WS）
+- [x] CLI 参数与环境变量与 `args.ts` 一致
+- [x] 无愿景/未实现功能描述
 
 ---
 
-## 1. 产品定位
-
-**Tlon Operator 不是给普通用户用的。**
-
-它是给工程师、运维、系统管理员的专业工具。功能丰富、操作灵活、信息密集。
-
-用户场景：
-- 部署新的 Agent 到集群
-- 排查某个 Agent 的运行异常
-- 查看系统事件流和 Trace
-- 调整 Agent 配置和参数
-- 监控 Agent 资源使用
-
----
-
-## 2. 设计哲学
-
-### 2.1 工程师优先
-
-- **信息密度高**：一屏显示尽可能多的信息
-- **操作快捷**：丰富的快捷键，支持 Vim 模式
-- **可配置**：布局、颜色、快捷键都可自定义
-- **调试友好**：日志、Trace、性能指标随手可得
-
-### 2.2 IDE 式布局
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Tlon Operator        [Agents] [Events] [Logs] [Traces] [Config] │
-├──────────┬──────────────────────────────────────┬───────────────┤
-│          │                                      │               │
-│  Agent   │           Main Content               │   Inspector   │
-│  Tree    │                                      │    Panel      │
-│          │                                      │               │
-├──────────┼──────────────────────────────────────┼───────────────┤
-│          │                                      │               │
-│  Event   │           Detail / Logs              │   Metrics /   │
-│  Stream  │                                      │   Status      │
-│  (Mini)  │                                      │               │
-└──────────┴──────────────────────────────────────┴───────────────┘
-   20%              60%                              20%
-```
-
----
-
-## 3. Agents 视图
-
-### 3.1 Agent 树形列表
-
-```
-┌─────────────────┐
-│ Agents          │
-│ ─────────────── │
-│ 📁 production   │
-│   🤖 dev-001  ● │
-│   🤖 pm-001   ○ │
-│ 📁 development  │
-│   🤖 dev-local  │
-│ 📁 system       │
-│   🔄 scheduler  │
-│                 │
-│ [+ New Agent]   │
-└─────────────────┘
-```
-
-**状态图标：**
-| 图标 | 状态 | 说明 |
-|------|------|------|
-| `●` | healthy | 运行正常 |
-| `○` | idle | 空闲 |
-| `◐` | busy | 处理中 |
-| `◌` | degraded | 性能降级 |
-| `✕` | error | 错误/崩溃 |
-| `⏸` | paused | 已暂停 |
-
-### 3.2 Agent 详情面板
-
-选中 Agent 后右侧显示详细信息：
-
-```
-┌──────────────────────┐
-│ dev-001              │
-│ ──────────────────── │
-│ Role: Developer      │
-│ Model: GPT-4         │
-│ Status: ● healthy    │
-│                      │
-│ Uptime: 2d 4h 32m    │
-│ Tasks: 142 total     │
-│ Errors: 3 (0.02%)    │
-│                      │
-│ CPU: 12%  MEM: 256MB │
-│ WS: ● connected      │
-│                      │
-│ [Restart] [Stop]     │
-│ [View Logs] [Config] │
-└──────────────────────┘
-```
-
----
-
-## 4. Events 视图
-
-### 4.1 事件流表格
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Events  [All ▼] [Agent ▼] [Level ▼]        [🔍] [⏸] [⚙]       │
-├──────────┬──────────┬────────┬──────────┬───────────────────────┤
-│ Time     │ Agent    │ Level  │ Type     │ Message               │
-├──────────┼──────────┼────────┼──────────┼───────────────────────┤
-│ 16:32:01 │ dev-001  │ INFO   │ task     │ Task completed:   │
-│ 16:31:58 │ pm-001   │ DEBUG  │ thinking │ Analysis complete     │
-│ 16:31:45 │ dev-001  │ INFO   │ tool     │ execute_bash: ls -la  │
-│ 16:31:30 │ system   │ ERROR  │ timeout  │ pm-001 task timeout   │
-│ 16:31:15 │ dev-001  │ WARN   │ retry    │ Retrying after error  │
-└──────────┴──────────┴────────┴──────────┴───────────────────────┘
-```
-
-**过滤条件：**
-- **Time Range**: Last 1h / 24h / 7d / Custom
-- **Agent**: All / Specific Agent / Group
-- **Level**: DEBUG / INFO / WARN / ERROR / FATAL
-- **Type**: task / tool / system / lifecycle / custom
-
-### 4.2 事件详情
-
-点击事件展开详情：
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Event                                         [📋] [❌]   │
-├─────────────────────────────────────────────────────────────────┤
-│ Time:    2026-04-12 16:31:30                                    │
-│ Agent:   pm-001                                                 │
-│ Level:   ERROR                                                  │
-│ Type:    timeout                                                │
-│                                                                 │
-│ Message: Task execution timeout after 30s                       │
-│                                                                 │
-│ Context:                                                        │
-│   - Task ID: task-556                                           │
-│   - Started: 16:31:00                                           │
-│   - Expected: < 10s                                             │
-│                                                                 │
-│ Stack Trace:                                                    │
-│   File "agent.py", line 234, in execute                         │
-│     result = await self.llm.complete(prompt)                    │
-│                                                                 │
-│ [View Full Trace]  [Related Logs]  [Jump to Agent]              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 5. Logs 视图
-
-### 5.1 实时日志流
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Logs: dev-001                           [▶ Live] [⬇ Download]   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│ 2026-04-12 16:32:01 [INFO] Task  completed successfully     │
-│ 2026-04-12 16:32:01 [DEBUG] Memory usage: 245MB                 │
-│ 2026-04-12 16:31:58 [INFO] Tool execution: file_write           │
-│ 2026-04-12 16:31:55 [DEBUG] LLM request: 2.3k tokens            │
-│ 2026-04-12 16:31:52 [INFO] Task  started                    │
-│ ...                                                             │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**功能：**
-- 实时流式更新
-- 关键字高亮（ERROR红色、WARN黄色）
-- 支持 grep 过滤
-- 下载完整日志
-- 日志轮转查看
-
----
-
-## 6. Traces 视图
-
-### 6.1 Trace 列表
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Traces                                  [🔍] [⏸] [⚙]          │
-├──────────┬──────────┬────────┬──────────┬───────────────────────┤
-│ Trace ID │ Root     │ Start  │ Duration │ Status                │
-├──────────┼──────────┼────────┼──────────┼───────────────────────┤
-│ trace-001│ dev-001  │ 16:32  │ 2.3s     │ ✅ completed          │
-│ trace-002│ pm-001   │ 16:30  │ 15.2s    │ ⚠️ partial            │
-│ trace-003│ dev-001  │ 16:28  │ 0.8s     │ ❌ failed             │
-└──────────┴──────────┴────────┴──────────┴───────────────────────┘
-```
-
-### 6.2 Trace 火焰图
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Trace: trace-001 (2.3s)                             [◀] [▶]   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│ dev-001  ████████████████████████████████████████████████ 2.3s │
-│   ├─ llm ████████████████████████████████ 1.2s                │
-│   ├─ tool ██████████████ 0.5s                                 │
-│   │   └─ file_read ██████ 0.3s                                │
-│   └─ parse ████████ 0.4s                                      │
-│                                                                 │
-│ pm-001   ████████████ 0.8s (parallel)                         │
-│   └─ review ████████████ 0.8s                                 │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 7. Config 视图
-
-### 7.1 Agent 配置编辑器
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Config: dev-001                          [💾] [↩ Revert]        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│ Name:        dev-001                              [Valid]       │
-│ Role:        Developer                                          │
-│ Model:       [GPT-4 ▼]                                          │
-│                                                                 │
-│ Parameters:                                                     │
-│   Temperature: 0.7        [====●====]                           │
-│   Max Tokens:  4096       [========●]                           │
-│   Timeout:     30s        [===●=====]                           │
-│                                                                 │
-│ Tools:                                                          │
-│   [✓] file_read    [✓] file_write    [✓] execute_bash          │
-│   [✓] search       [✗] database       [✗] browser              │
-│                                                                 │
-│ System Prompt:                                                  │
-│ ┌─────────────────────────────────────────────────────────────┐│
-│ │ You are a senior software engineer...                       ││
-│ │ ...                                                         ││
-│ └─────────────────────────────────────────────────────────────┘│
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 8. 快捷键系统
-
-### 8.1 全局快捷键
-
-| 快捷键 | 功能 |
-|--------|------|
-| `1` | Agents 视图 |
-| `2` | Events 视图 |
-| `3` | Logs 视图 |
-| `4` | Traces 视图 |
-| `5` | Config 视图 |
-| `r` | 刷新当前视图 |
-| `q` / `Ctrl+C` | 退出 |
-| `?` | 显示快捷键帮助 |
-
-### 8.2 Agent 树操作
-
-| 快捷键 | 功能 |
-|--------|------|
-| `↑` / `↓` / `j` / `k` | 上下选择 |
-| `Enter` | 查看详情 |
-| `Space` | 展开/折叠分组 |
-| `n` | 新建 Agent |
-| `e` | 编辑配置 |
-| `d` | 删除 Agent |
-| `s` | 停止/启动 Agent |
-| `l` | 查看日志 |
-
-### 8.3 事件/日志视图
-
-| 快捷键 | 功能 |
-|--------|------|
-| `f` | 设置过滤条件 |
-| `/` | 搜索 |
-| `n` / `p` | 下一个/上一个匹配 |
-| `g` | 跳到最新 |
-| `G` | 跳到最旧 |
-
----
-
-## 9. 与 Congress 的关系
-
-```
-┌─────────────────┐         ┌─────────────────┐
-│  Tlon Operator  │         │ Tlon Congress   │
-│  ─────────────  │         │ ─────────────── │
-│  运维工具        │◄───────►│ 聊天客户端       │
-│  面向工程师      │ 互补     │ 面向所有用户     │
-│  功能丰富        │         │ 极简专注        │
-│  专业调试        │         │ 快速上手        │
-└─────────────────┘         └─────────────────┘
-         │                           │
-         └───────────┬───────────────┘
-                     │
-              ┌──────────────┐
-              │  Tlon Server │
-              └──────────────┘
-```
-
-**使用场景：**
-- 工程师日常用 **Operator** 管理集群
-- 需要对话时用 **Congress** 与 Agents 交流
-- 调试问题时两者配合：Congress 复现，Operator 诊断
-
----
-
-*更新时间: 2026-04-12*  
-*版本: 1.0 工程师版*
+*更新时间: 2026-08-13*
