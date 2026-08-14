@@ -7,8 +7,9 @@ validator (host-less registry — Adam's host predicates must not pass).
 
 import pytest
 
-from tlon.agents.prototypes import PrototypeError, write_staging_prototype
+from tlon.agents.prototypes import write_staging_prototype
 from tlon.base.paths import TlonPaths
+from tlon.tools.prototypes.ports import PrototypeError
 
 
 class TestWriteStagingValidation:

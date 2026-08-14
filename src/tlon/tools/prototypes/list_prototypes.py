@@ -1,9 +1,10 @@
 """List behavior prototypes tool."""
 
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from tlon.agents.prototypes import list_prototypes
 from tlon.tools.base import Tool, ToolResult
+from tlon.tools.prototypes.ports import PrototypeSummary
 
 
 class ListPrototypesTool(Tool):
@@ -11,9 +12,11 @@ class ListPrototypesTool(Tool):
 
     Reads ``~/.tlon/prototypes/`` (the seeded, user-editable library),
     so prototypes added or modified by the user are visible to agents.
+    The actual listing is injected as ``lister`` (: tools must not
+    import ``tlon.agents``).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, lister: Callable[[], Sequence[PrototypeSummary]]) -> None:
         super().__init__(
             name="listPrototypes",
             description=(
@@ -26,9 +29,10 @@ class ListPrototypesTool(Tool):
                 "required": [],
             },
         )
+        self._lister = lister
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        prototypes = list_prototypes()
+        prototypes = self._lister()
         data = [
             {
                 "name": proto.name,

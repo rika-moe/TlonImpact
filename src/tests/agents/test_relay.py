@@ -11,12 +11,12 @@ import pytest
 from tlon.agents.edn import loads
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.prototypes import (
-    PrototypeError,
     get_prototype_info,
     instantiate,
     seed_prototypes,
 )
 from tlon.base.paths import TlonPaths
+from tlon.tools.prototypes.ports import PrototypeError
 
 
 def _paths(tmp_path) -> TlonPaths:

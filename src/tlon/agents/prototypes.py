@@ -61,6 +61,7 @@ from tlon.agents.member_spec import (
 from tlon.base.config import AgentConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
+from tlon.tools.prototypes.ports import PrototypeError
 
 logger = get_logger(__name__)
 
@@ -68,10 +69,6 @@ PROTOTYPE_PACKAGE = "tlon.prototypes"
 METADATA_FILE = "prototype.edn"
 BEHAVIOR_FILE = "behavior.tlon"
 PERSONA_FILES = ("IDENTITY.md", "SOUL.md", "RULES.md")
-
-
-class PrototypeError(ValueError):
-    """Prototype lookup or instantiation failure."""
 
 
 @dataclass(frozen=True)

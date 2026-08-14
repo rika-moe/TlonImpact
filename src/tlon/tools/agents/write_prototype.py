@@ -4,11 +4,12 @@ Supports both react (cognitive loop rule) and script (deterministic rules)
 prototypes — one unified rules-form format (phase C).
 """
 
+from collections.abc import Callable
 from typing import Any
 
-from tlon.agents.prototypes import PrototypeError, write_staging_prototype
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+from tlon.tools.prototypes.ports import PrototypeError, PrototypeSummary
 
 logger = get_logger(__name__)
 
@@ -53,7 +54,9 @@ class WritePrototypeTool(Tool):
     its EDN and retry.
     """
 
-    def __init__(self, author_id: str) -> None:
+    def __init__(
+        self, author_id: str, writer: Callable[..., PrototypeSummary]
+    ) -> None:
         super().__init__(
             name="writePrototype",
             description=(
@@ -109,6 +112,7 @@ class WritePrototypeTool(Tool):
             },
         )
         self._author_id = author_id
+        self._writer = writer
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         name: str = kwargs["name"]
@@ -128,7 +132,7 @@ class WritePrototypeTool(Tool):
         )
         hint = _SCRIPT_HINT if is_script else _BEHAVIOR_HINT
         try:
-            info = write_staging_prototype(
+            info = self._writer(
                 name,
                 behavior,
                 persona=persona,

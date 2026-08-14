@@ -255,12 +255,12 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
     def create_from_prototype(self) -> None:
         """Create an agent by instantiating a behavior prototype."""
         from tlon.agents.prototypes import (
-            PrototypeError,
             get_prototype_info,
             instantiate,
             list_prototypes,
             seed_prototypes,
         )
+        from tlon.tools.prototypes.ports import PrototypeError
 
         self.console.print("\n[bold]🧬 从 Prototype 创建[/bold]\n")
 
@@ -356,12 +356,12 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         from tlon.agents.prototypes import (
             BEHAVIOR_FILE,
             PERSONA_FILES,
-            PrototypeError,
             approve_prototype,
             list_staging_prototypes,
             reject_prototype,
         )
         from tlon.base.paths import paths
+        from tlon.tools.prototypes.ports import PrototypeError
 
         self.console.print("\n[bold]🛡️  规约审批[/bold]\n")
         self.console.print(

@@ -1,16 +1,13 @@
 """Spawn a contractor agent from a behavior prototype."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from structlog.contextvars import get_contextvars
 
-from tlon.agents.prototypes import PrototypeError
-from tlon.agents.spawn_errors import SpawnRejectedError
 from tlon.base.logger import get_logger
+from tlon.tools.agents.ports import AgentLifecycle, SpawnRejectedError
 from tlon.tools.base import Tool, ToolResult
-
-if TYPE_CHECKING:
-    from tlon.agents.agent_registry import AgentRegistry
+from tlon.tools.prototypes.ports import PrototypeError
 
 logger = get_logger(__name__)
 
@@ -30,7 +27,7 @@ class SpawnAgentTool(Tool):
     overridden at spawn time.
     """
 
-    def __init__(self, registry: "AgentRegistry", spawner_id: str) -> None:
+    def __init__(self, registry: AgentLifecycle, spawner_id: str) -> None:
         super().__init__(
             name="spawnAgent",
             description=(

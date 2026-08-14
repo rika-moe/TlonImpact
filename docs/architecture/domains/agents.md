@@ -23,7 +23,6 @@ agents/
 ├── prototypes.py          # Behavior prototype 库：种子 / 列举 / 实例化（纯拷贝）
 ├── behavior_templates.py  # rules 形态行为模板（wizard 默认 / 居民个性化狗粮）
 ├── behavior_template.py   # 模板层：:parameters 声明 + ${var} 渲染
-├── spawn_errors.py        # SpawnRejectedError / StopRejectedError（spawn/stop 拒绝原因）
 ├── scheduler.py           # SessionScheduler：主循环 + session 生命周期 + 超时清理
 ├── loop_driver.py         # LoopDriver：ReAct 步进 / 工具收割 / StageOutcome 应用（能力注入，无宿主回指）
 ├── executor.py            # EffectExecutor：引擎侧执行 stage 声明的外部效果（发信/写记忆/已读游标，C2）

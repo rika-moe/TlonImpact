@@ -1,12 +1,9 @@
 """Stop a contractor agent (drain semantics, residents refused)."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from tlon.agents.spawn_errors import StopRejectedError
+from tlon.tools.agents.ports import AgentLifecycle, StopRejectedError
 from tlon.tools.base import Tool, ToolResult
-
-if TYPE_CHECKING:
-    from tlon.agents.agent_registry import AgentRegistry
 
 
 class StopAgentTool(Tool):
@@ -18,7 +15,7 @@ class StopAgentTool(Tool):
     are refused; they can only sleep, never be deleted through this path.
     """
 
-    def __init__(self, registry: "AgentRegistry", spawner_id: str) -> None:
+    def __init__(self, registry: AgentLifecycle, spawner_id: str) -> None:
         super().__init__(
             name="stopAgent",
             description=(

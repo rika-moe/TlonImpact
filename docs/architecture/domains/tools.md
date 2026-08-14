@@ -22,8 +22,8 @@ tools/
 ├── shell/             # execute_bash.py：ExecuteBashTool + CheckBashTaskTool（同文件）
 ├── filesystem/        # read_file.py / write_file.py / edit_file.py + path_guard.py（容器路径白名单解析，纯 posixpath 字符串处理）
 ├── mail/              # send_email.py：SendEmailTool
-├── agents/            # spawn_agent.py / stop_agent.py / list_agents.py / write_prototype.py
-├── prototypes/        # list_prototypes.py
+├── agents/            # ports.py（AgentLifecycle Protocol + Spawn/StopRejectedError）+ spawn_agent.py / stop_agent.py / list_agents.py / write_prototype.py
+├── prototypes/        # ports.py（PrototypeError + PrototypeSummary Protocol）+ list_prototypes.py
 ├── memory/            # remember_fact.py / search_memories.py / compact.py / forget_memory.py（MemoryManager 仅 TYPE_CHECKING 引用）
 └── tasks/             # manager.py（TaskManager：单 agent 任务 CRUD，JSONL 持久化到 agent_tasks_file）+ models.py + 7 个工具文件
 ```
@@ -54,8 +54,10 @@ tools/
 - 注入方式（agent_registry.py:581-610）：shell/filesystem 共享同一个
   `DockerRuntime` 实例；`allowed_paths = config.tool.allowed_paths`（默认
   `["/workspace"]`，base/config.py:127-144）；Spawn/Stop/List 注入
-  `registry=self`；WritePrototype 注入 `author_id=config.id`；memory 工具注入
-  `MemoryManager`；tasks 工具注入 `TaskManager`。
+  `registry=self`（结构满足 `AgentLifecycle` Protocol）；ListPrototypes/
+  WritePrototype 注入裸 callable（`lister=list_prototypes` /
+  `writer=write_staging_prototype`）；memory 工具注入 `MemoryManager`；
+  tasks 工具注入 `TaskManager`。
 
 ---
 
@@ -96,20 +98,22 @@ tools/
 
 ---
 
-## tools ↔ agents 双向依赖（ 现状）
+## tools 与 agents 的依赖方向（ 已收敛）
 
-- **反向（agents→tools，合法）**：`agents/agent_registry.py:80-101` 顶层 import
+- **agents→tools（合法）**：`agents/agent_registry.py` 顶层 import
   全部 22 个工具类；`tool_executor.py:32`、`loop_driver.py:77`、
   `stages/act.py:37` import `tools.base`；`member_runtime.py:93` import
   `tools.tasks.manager`。
-- **正向（tools→agents，违规豁免）**：运行时 import 见于
-  `tools/prototypes/list_prototypes.py:22`（→agents.prototypes）、
-  `tools/agents/spawn_agent.py:24-25`（→agents.prototypes/spawn_errors）、
-  `stop_agent.py:22`、`write_prototype.py:26`；`AgentRegistry` 仅 TYPE_CHECKING
-  （spawn_agent.py:30、stop_agent.py:26、list_agents.py:25）。
-- import-linter 契约 "tools 不依赖 agents/app/prototypes（ 豁免除外）"
-  （pyproject.toml:210-229），`ignore_imports` 逐条豁免 8 条（:219-229），
-  注释明确"待  重构后移除"。
+- **tools→agents：零依赖**。端口与异常下沉 tools（依赖倒置）：
+  `tools/agents/ports.py` 提供 `AgentLifecycle` Protocol
+  （`spawn_contractor`/`stop_contractor`/`get_all_agent_status`）与
+  `SpawnRejectedError`/`StopRejectedError`（自 agents 平移，
+  `agents/spawn_errors.py` 已删除）；`tools/prototypes/ports.py` 提供
+  `PrototypeError` 与 `PrototypeSummary` Protocol。Spawn/Stop/List 工具的
+  构造注解是 `AgentLifecycle`（registry 实例结构满足）；list/write
+  prototypes 工具收裸 callable，由装配点注入 `agents.prototypes` 的函数。
+- import-linter 契约为干净的 "tools 不依赖 agents/app/prototypes"
+  （pyproject.toml），**无任何 ignore_imports 豁免**（原 8 条已于  删除）。
 
 ---
 
@@ -128,4 +132,4 @@ tools/
 - [x] 22 个工具 name/类/位置与代码逐一核对一致
 - [x] 注册机制（每 agent 一个 ToolExecutor，装配点 `_build_cognitive`）与代码一致
 - [x] 后台任务表实例级共享语义（ExecuteBashTool 持有、CheckBashTaskTool 只读）与代码一致
-- [x] import-linter 豁免清单（8 条）与 pyproject.toml 一致
+- [x] import-linter 契约无豁免，tools→agents 零依赖（ 收敛后）

@@ -1,11 +1,9 @@
 """List all agents with their runtime state and identity."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from tlon.tools.agents.ports import AgentLifecycle
 from tlon.tools.base import Tool, ToolResult
-
-if TYPE_CHECKING:
-    from tlon.agents.agent_registry import AgentRegistry
 
 
 class ListAgentsTool(Tool):
@@ -16,7 +14,7 @@ class ListAgentsTool(Tool):
     spawner. Useful before spawnAgent/stopAgent to see who exists.
     """
 
-    def __init__(self, registry: "AgentRegistry") -> None:
+    def __init__(self, registry: AgentLifecycle) -> None:
         super().__init__(
             name="listAgents",
             description=(

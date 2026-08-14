@@ -203,27 +203,16 @@ forbidden_modules = [
 
 # tools 依赖 base/sandbox（tools.memory.* 对 tlon.memory 仅 TYPE_CHECKING
 # 类型引用，暂不放进去）；不得反向依赖 agents/app/prototypes。
-# 已知违规（issue ：tools.agents.* / tools.prototypes.* 需要 AgentRegistry
-# 与原型写能力）逐条豁免如下，待  重构后移除。
+#  已落地：生命周期/原型工具改为依赖倒置——端口与异常声明在
+# tools/agents/ports.py 与 tools/prototypes/ports.py，装配层注入实现。
 [[tool.importlinter.contracts]]
-name = "tools 不依赖 agents/app/prototypes（ 豁免除外）"
+name = "tools 不依赖 agents/app/prototypes"
 type = "forbidden"
 source_modules = "tlon.tools"
 forbidden_modules = [
     "tlon.agents",
     "tlon.app",
     "tlon.prototypes",
-]
-ignore_imports = [
-    # issue 
-    "tlon.tools.agents.list_agents -> tlon.agents.agent_registry",
-    "tlon.tools.agents.write_prototype -> tlon.agents.prototypes",
-    "tlon.tools.agents.spawn_agent -> tlon.agents.prototypes",
-    "tlon.tools.agents.spawn_agent -> tlon.agents.spawn_errors",
-    "tlon.tools.agents.spawn_agent -> tlon.agents.agent_registry",
-    "tlon.tools.agents.stop_agent -> tlon.agents.spawn_errors",
-    "tlon.tools.agents.stop_agent -> tlon.agents.agent_registry",
-    "tlon.tools.prototypes.list_prototypes -> tlon.agents.prototypes",
 ]
 
 # agents 是领域层：可依赖 base/memory/organization/tools/sandbox，

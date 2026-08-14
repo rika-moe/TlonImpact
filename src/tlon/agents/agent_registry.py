@@ -44,8 +44,12 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
 from tlon.agents.member_spec import MemberSpec
-from tlon.agents.prototypes import get_prototype_info, instantiate
-from tlon.agents.spawn_errors import SpawnRejectedError, StopRejectedError
+from tlon.agents.prototypes import (
+    get_prototype_info,
+    instantiate,
+    list_prototypes,
+    write_staging_prototype,
+)
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig, LLMConfig, yaml_save
@@ -61,6 +65,7 @@ from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.sandbox.docker_runtime import DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
+from tlon.tools.agents.ports import SpawnRejectedError, StopRejectedError
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
@@ -571,16 +576,19 @@ class AgentRegistry(Component):
         tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
         tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
         tool_executor.register_tool(SendEmailTool())
-        tool_executor.register_tool(ListPrototypesTool())
+        tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))
         # Spawn/stop lifecycle tools (stage 6b): the registry is the
-        # assembler, so it injects itself; spawner_id binds the tool
-        # to the owning agent for budget accounting and audit.
+        # assembler, so it injects itself (it satisfies the AgentLifecycle
+        # port structurally); spawner_id binds the tool to the owning
+        # agent for budget accounting and audit.
         tool_executor.register_tool(SpawnAgentTool(registry=self, spawner_id=config.id))
         tool_executor.register_tool(StopAgentTool(registry=self, spawner_id=config.id))
         tool_executor.register_tool(ListAgentsTool(registry=self))
         # Spec authoring (stage 4a): writes untrusted prototypes to the
-        # staging area; spawner_id is recorded as the :author for audit.
-        tool_executor.register_tool(WritePrototypeTool(author_id=config.id))
+        # staging area; author_id is recorded as the :author for audit.
+        tool_executor.register_tool(
+            WritePrototypeTool(author_id=config.id, writer=write_staging_prototype)
+        )
         tool_executor.register_tool(RememberFactTool(memory))
         tool_executor.register_tool(SearchMemoriesTool(memory))
         tool_executor.register_tool(CompactTool(memory))
