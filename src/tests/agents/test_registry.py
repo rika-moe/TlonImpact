@@ -8,6 +8,7 @@ test.
 """
 
 import asyncio
+import shutil
 
 import pytest
 
@@ -402,5 +403,203 @@ class TestWakeOnMail:
         await _wait_for(lambda: len(replies) == 1)
         assert replies[0].payload.content == "已为您处理退订"
         assert replies[0].payload.to == ["user@tlon.internal"]
+
+        await registry.shutdown()
+
+
+class _FakeDockerRuntime:
+    """Stand-in for DockerRuntime: records remove() calls, can fail."""
+
+    def __init__(self, fail: bool = False):
+        self.remove_calls: list[bool] = []
+        self._fail = fail
+
+    async def remove(self, force: bool = False) -> None:
+        self.remove_calls.append(force)
+        if self._fail:
+            raise RuntimeError("daemon gone")
+
+
+class _DisposableProvider(_StaticProvider):
+    """Static provider that also deletes the agent home (rmtree)."""
+
+    def __init__(self, configs: dict[str, AgentConfig], paths: TlonPaths):
+        super().__init__(configs)
+        self._paths = paths
+
+    def delete_agent(self, agent_id: str) -> None:
+        # tlon_home()/id instead of agent_dir(): the latter mkdirs on call.
+        home = self._paths.tlon_home() / agent_id
+        if not home.exists():
+            raise ValueError(f"Agent '{agent_id}' not found")
+        shutil.rmtree(home)
+        self._configs.pop(agent_id, None)
+
+
+class TestContainerReclaim:
+    """: discarding a contractor reclaims its sandbox container.
+
+    Both discard triggers (``stop_contractor`` and the idle drain's
+    contractor branch) converge on ``_discard_contractor``; a resident's
+    drain (AGENT_SLEEPING) must never touch the container.
+    """
+
+    async def _make_registry(
+        self, bus, tmp_path, monkeypatch, configs: dict[str, AgentConfig], homes=()
+    ):
+        p = TlonPaths(home=tmp_path)
+        monkeypatch.setattr("tlon.agents.loader.paths", p)
+        for agent_id in homes:
+            (p.tlon_home() / agent_id).mkdir(parents=True, exist_ok=True)
+        registry = AgentRegistry(
+            event_bus=bus,
+            agent_info_provider=_DisposableProvider(configs, p),
+            paths=p,
+        )
+        await registry.initialize()
+        for agent_id in configs:
+            registry.register(agent_id)
+        return registry, p
+
+    async def _start(self, bus, registry, agent_id: str) -> None:
+        await bus.publish(
+            Event(
+                type=EventType.AGENT_START_REQUEST,
+                payload=StartRequest(agent_id=agent_id, reason="boot"),
+                source="adam",
+            )
+        )
+        await _wait_for(lambda: registry.get_agent(agent_id) is not None)
+
+    async def test_stop_contractor_reclaims_container(self, bus, tmp_path, monkeypatch):
+        agent_id = "c-relay-a1b2c3d4"
+        configs = {
+            agent_id: AgentConfig(id=agent_id, name="外包", role="contractor")
+        }
+        registry, p = await self._make_registry(
+            bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
+        )
+        runtime = _FakeDockerRuntime()
+        registry._docker_runtimes[agent_id] = runtime
+
+        stopped: list[Event] = []
+        bus.subscribe(EventType.AGENT_STOPPED, lambda e: stopped.append(e))
+
+        assert await registry.stop_contractor(agent_id, stopped_by="test") is True
+
+        # Container force-removed before the home dir went away.
+        assert runtime.remove_calls == [True]
+        assert agent_id not in registry._docker_runtimes
+        assert not (p.tlon_home() / agent_id).exists()
+        await _wait_for(lambda: len(stopped) == 1)
+        assert stopped[0].payload["agent_id"] == agent_id
+
+        await registry.shutdown()
+
+    async def test_stop_contractor_without_runtime_skips_reclaim(
+        self, bus, tmp_path, monkeypatch
+    ):
+        """daemon was unavailable at assembly: no handle, silent skip."""
+        agent_id = "c-relay-a1b2c3d4"
+        configs = {
+            agent_id: AgentConfig(id=agent_id, name="外包", role="contractor")
+        }
+        registry, p = await self._make_registry(
+            bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
+        )
+        assert agent_id not in registry._docker_runtimes
+
+        stopped: list[Event] = []
+        bus.subscribe(EventType.AGENT_STOPPED, lambda e: stopped.append(e))
+
+        assert await registry.stop_contractor(agent_id, stopped_by="test") is True
+        assert not (p.tlon_home() / agent_id).exists()
+        await _wait_for(lambda: len(stopped) == 1)
+
+        await registry.shutdown()
+
+    async def test_stop_contractor_reclaim_failure_still_discards(
+        self, bus, tmp_path, monkeypatch
+    ):
+        """A remove() error only logs — home is deleted, event published."""
+        agent_id = "c-relay-a1b2c3d4"
+        configs = {
+            agent_id: AgentConfig(id=agent_id, name="外包", role="contractor")
+        }
+        registry, p = await self._make_registry(
+            bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
+        )
+        runtime = _FakeDockerRuntime(fail=True)
+        registry._docker_runtimes[agent_id] = runtime
+
+        stopped: list[Event] = []
+        bus.subscribe(EventType.AGENT_STOPPED, lambda e: stopped.append(e))
+
+        assert await registry.stop_contractor(agent_id, stopped_by="test") is True
+        assert runtime.remove_calls == [True]
+        assert agent_id not in registry._docker_runtimes
+        assert not (p.tlon_home() / agent_id).exists()
+        await _wait_for(lambda: len(stopped) == 1)
+
+        await registry.shutdown()
+
+    async def test_idle_drain_contractor_reclaims_container(
+        self, bus, tmp_path, monkeypatch
+    ):
+        """The idle drain's contractor branch converges on the same discard."""
+        agent_id = "c-relay-a1b2c3d4"
+        configs = {
+            agent_id: AgentConfig(
+                id=agent_id,
+                name="外包",
+                role="contractor",
+                idle_timeout_seconds=0,
+            )
+        }
+        registry, p = await self._make_registry(
+            bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
+        )
+        _write_behavior(p, agent_id, RELAY_EDN)
+        await self._start(bus, registry, agent_id)
+        runtime = _FakeDockerRuntime()
+        registry._docker_runtimes[agent_id] = runtime
+
+        stopped: list[Event] = []
+        bus.subscribe(EventType.AGENT_STOPPED, lambda e: stopped.append(e))
+
+        await registry._drain_agent(agent_id, reason="drain")
+
+        assert runtime.remove_calls == [True]
+        assert registry.get_agent(agent_id) is None
+        assert not (p.tlon_home() / agent_id).exists()
+        await _wait_for(lambda: len(stopped) == 1)
+        assert stopped[0].payload["stopped_by"] == "idle_drain"
+
+        await registry.shutdown()
+
+    async def test_resident_drain_keeps_container(self, bus, tmp_path, monkeypatch):
+        """Regression lock: a resident sleep never touches the container."""
+        agent_id = "worker-1"
+        configs = {
+            agent_id: AgentConfig(id=agent_id, name="居民", idle_timeout_seconds=0)
+        }
+        registry, p = await self._make_registry(
+            bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
+        )
+        _write_behavior(p, agent_id, RELAY_EDN)  # no :on :boot → lazy resident
+        await self._start(bus, registry, agent_id)
+        runtime = _FakeDockerRuntime()
+        registry._docker_runtimes[agent_id] = runtime
+
+        sleeping: list[Event] = []
+        bus.subscribe(EventType.AGENT_SLEEPING, lambda e: sleeping.append(e))
+
+        await registry._drain_agent(agent_id, reason="drain")
+
+        assert runtime.remove_calls == []
+        assert registry._docker_runtimes[agent_id] is runtime
+        assert registry.get_agent(agent_id) is None
+        assert (p.tlon_home() / agent_id).exists()  # home survives
+        await _wait_for(lambda: len(sleeping) == 1)
 
         await registry.shutdown()

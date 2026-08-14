@@ -249,6 +249,14 @@ class AgentRegistry(Component):
         # shutdown / get_state / active_session_count / idle_seconds
         self._agents: dict[str, MemberRuntime] = {}
 
+        # Docker runtimes built during cognitive assembly, keyed by agent
+        # id — the registry-side handle used to reclaim a contractor's
+        # container on discard (). Resident sleeps and server shutdown
+        # deliberately keep their containers (zero-cost wake / lazy reuse
+        # on next boot), so entries are only consumed by
+        # ``_discard_contractor``; a re-assembly overwrites the entry.
+        self._docker_runtimes: dict[str, DockerRuntime] = {}
+
         # Request execution state: agents currently being started, and one
         # lock per agent serializing start/drain of the same persona
         self._waking: set[str] = set()
@@ -431,6 +439,9 @@ class AgentRegistry(Component):
         self._waking.clear()
         self._spawn_quota.clear()
         self._profiles.clear()  # phase E: spec-derived lifecycle profiles
+        # Containers outlive the server by design (lazy reuse on next
+        # boot) — only the handles are dropped.
+        self._docker_runtimes.clear()
         self._initialized = False
 
         logger.info("agent_registry_shutdown_completed")
@@ -562,6 +573,10 @@ class AgentRegistry(Component):
             docker_runtime = DockerRuntime(config.docker, config.id)
         except Exception as e:
             logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
+        # Registry-side handle for container reclaim on contractor
+        # discard (); a daemon failure leaves no entry to reclaim.
+        if docker_runtime is not None:
+            self._docker_runtimes[config.id] = docker_runtime
 
         # Create ToolExecutor (direct execution, no EventBus)
         tool_executor = ToolExecutor()
@@ -1097,15 +1112,32 @@ class AgentRegistry(Component):
         return True
 
     async def _discard_contractor(self, agent_id: str, stopped_by: str) -> None:
-        """Remove a stopped contractor: registration, config cache, home dir.
+        """Remove a stopped contractor: container, registration, home dir.
 
-        Only ever called for role=="contractor" agents. The home directory
+        Only ever called for role=="contractor" agents. The sandbox
+        container is force-removed and the home directory
         (``~/.tlon/{id}/``) is deleted — contractors are disposable; a
-        resident's directory is never touched by the registry.
+        resident's container and directory are never touched by the
+        registry.
         """
         if agent_id in self._registered_ids:
             self._registered_ids.remove(agent_id)
         self._profiles.pop(agent_id, None)  # phase E: spec profile cache
+
+        # Reclaim the sandbox container before the home dir goes: the
+        # container bind-mounts the workspace under it (). Runs after
+        # MemberRuntime.shutdown() (which drains tool execution, ) at
+        # both call sites. A missing runtime (daemon was unavailable at
+        # assembly, or the member never got cognitive capabilities) or a
+        # removal failure only logs — the discard must not be blocked.
+        runtime = self._docker_runtimes.pop(agent_id, None)
+        if runtime is not None:
+            try:
+                await runtime.remove(force=True)
+            except Exception as e:
+                logger.warning(
+                    "container_reclaim_failed", agent_id=agent_id, error=str(e)
+                )
 
         self._assert_deletable_agent_id(agent_id)
         try:

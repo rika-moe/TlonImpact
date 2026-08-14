@@ -82,10 +82,18 @@ exit 124 归一为超时错误；`demux=True` 分离 stdout/stderr。
   `image="ubuntu:22.04"`、`working_dir="/workspace"`、`memory_limit="512m"`、
   `cpu_limit=1.0`、`network_mode="host"`；来自 `AgentConfig.docker`。
 
-## 已知债
+## 容器回收（）
 
-`stop` / `remove` 全仓**零调用方**（grep `docker_runtime.(stop|remove)` 无生产
-代码命中）——agent 停机/回收时容器不被停止或删除，容器泄漏清理见 issue 。
+- **contractor 销毁即回收**：`_assemble_cognitive` 把构造出的 `DockerRuntime`
+  登记到 registry 侧句柄表 `AgentRegistry._docker_runtimes`；
+  `_discard_contractor`（`stop_contractor` 与 idle drain 的 contractor 分支
+  共同汇聚点）在 rmtree home 目录之前 `remove(force=True)`——容器挂着 home
+  下 workspace 的卷映射，必须先删容器。runtime 缺失（装配时 daemon 不可用）
+  或 remove 失败只记日志，不阻塞销毁。
+- **resident 不收**：休眠（AGENT_SLEEPING 分支）与 server 正常 shutdown 都
+  不动容器——唤醒零成本、下次启动按容器名懒复用（`ensure_running` 幂等）。
+- `stop()` 仍无生产调用方（保留 API）；`remove(force=True)` 的唯一生产调用方
+  即上述 contractor 销毁路径。server 异常退出遗留的孤儿容器不在  范围内。
 
 ## 依赖边界
 

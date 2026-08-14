@@ -159,9 +159,12 @@ agent 可从 prototype 现造临时工（contractor）并停止之，全程受 s
   `_start_agent` **立即启动** → 发 `AGENT_SPAWNED`（含 spawner/prototype/depth）；
 - **stop_contractor(agent_id, stopped_by)**：仅 contractor 可停（resident 拒绝）；
   drain 语义与 6a 一致（有 ACTIVE/WAITING session 拒绝，per-agent 锁下 shutdown 前
-  重查一次）→ shutdown → 注销 → **删除 home 目录** → 发 `AGENT_STOPPED`。
-  空闲回收路径对 contractor 同样删目录（`_drain_agent` 分支，发 `AGENT_STOPPED`
-  而非 `AGENT_SLEEPING`）；resident 回收只停进程不删目录。删除严格限定
+  重查一次）→ shutdown → **回收容器**（`_docker_runtimes` 句柄表
+  `remove(force=True)`，；runtime 缺失/失败只记日志）→ 注销 → **删除 home 目录**
+  → 发 `AGENT_STOPPED`。
+  空闲回收路径对 contractor 同样收容器删目录（`_drain_agent` 分支，发 `AGENT_STOPPED`
+  而非 `AGENT_SLEEPING`）；resident 回收只停进程，**容器与目录都保留**（唤醒零成本、
+  下次启动按名懒复用）。删除严格限定
   role==contractor，且 id 过字符集校验 + 解析路径必须在 tlon_home 直下（防路径注入）；
 - **孤儿策略（reparent，不连坐）**：spawner 休眠/停止后其 contractor 继续独立运行，
   由各自 idle timeout 回收；`spawned_by` 是审计记录不是生命周期锁；

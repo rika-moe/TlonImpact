@@ -41,6 +41,11 @@ class DockerRuntime:
     Each agent gets its own isolated container with full network access.
     Containers are created on-demand and persist across sessions.
 
+    Lifecycle (): the registry force-removes a contractor's container
+    when the contractor is discarded (stop / idle drain). Resident
+    containers are deliberately kept across sleeps and server restarts —
+    waking is zero-cost and the next boot lazily reattaches by name.
+
     File I/O is performed via 'cat' (reads) and put_archive with an
     in-memory tar (writes), so no software needs to be installed inside
     the container.
