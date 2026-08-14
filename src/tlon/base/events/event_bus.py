@@ -5,6 +5,7 @@ Central event routing system using async publish-subscribe pattern.
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 
 from tlon.base.component import Component
 from tlon.base.events.event import Event, EventType
@@ -15,12 +16,52 @@ logger = get_logger(__name__)
 # 订阅者可注册同步或异步处理器；异步处理器在事件循环内 await，同步处理器在线程池运行
 EventHandler = Callable[[Event], None | Awaitable[None]]
 
+# 每个订阅者队列的容量上限：慢订阅者只会积自己的队列，溢出时丢新事件
+# 并记 event_queue_overflow 警告，防止慢订阅者静默涨内存拖垮整个进程
+SUBSCRIBER_QUEUE_MAX_SIZE = 1000
+
+# shutdown 时等待所有订阅者消费 task 停止的有界超时（秒）
+SHUTDOWN_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass
+class _Subscription:
+    """Internal state for one subscription: handler + dedicated queue + consumer task."""
+
+    subscription_id: str
+    event_type: EventType
+    handler: EventHandler
+    queue: asyncio.Queue[Event] = field(
+        default_factory=lambda: asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX_SIZE)
+    )
+    task: asyncio.Task[None] | None = None
+
 
 class EventBus(Component):
     """Central event bus for message routing.
 
-    Uses async publish-subscribe pattern. Events are dispatched to
-    all subscribers of the event type.
+    Per-subscriber dispatch: each subscription gets its own bounded
+    ``asyncio.Queue`` and a long-lived consumer task. ``publish`` enqueues
+    the event into every matching subscriber's queue (O(1), never blocks),
+    so a slow handler only backs up its own queue, never the whole bus.
+
+    Ordering guarantee is per-subscriber: events delivered to one
+    subscription are handled strictly in publish order (FIFO), one at a
+    time. No ordering is guaranteed across different subscribers.
+
+    Overflow semantics: when a subscriber's queue is full
+    (``SUBSCRIBER_QUEUE_MAX_SIZE``), the *new* event is dropped and an
+    ``event_queue_overflow`` warning is logged; already-queued events are
+    kept (mail semantics: lose the new, not the old).
+
+    Error isolation: a raising handler only logs an error; it affects
+    neither its own subsequent events nor any other subscriber.
+
+    Unsubscribing cancels the consumer task and discards events still
+    queued for that subscription.
+
+    ``publish`` on a bus that is not running raises ``RuntimeError``
+    (fail fast) instead of silently dropping the event.
 
     This is a core infrastructure component that other components
     depend on for communication. It is created early in the
@@ -43,51 +84,63 @@ class EventBus(Component):
     def __init__(self) -> None:
         """Initialize the event bus."""
         super().__init__(name="EventBus")
-        self._subscribers: dict[EventType, list[tuple[str, EventHandler]]] = {}
-        self._event_queue: asyncio.Queue[Event] = asyncio.Queue()
+        self._subscribers: dict[EventType, list[_Subscription]] = {}
         self._running = False
-        self._processor_task: asyncio.Task[None] | None = None
         self._subscription_counter = 0
 
     async def initialize(self) -> None:
-        """Start the event processor.
+        """Start the event bus.
 
-        Begins processing events from the queue.
+        Spawns the consumer task for every existing subscription
+        (subscriptions created before initialize are supported).
         """
         if self._running:
             logger.warning("event_bus_already_running")
             return
 
         self._running = True
-        self._processor_task = asyncio.create_task(self._process_events())
+        for subscriptions in self._subscribers.values():
+            for subscription in subscriptions:
+                self._start_consumer(subscription)
         self._initialized = True
         logger.info("event_bus_started")
 
     async def shutdown(self) -> None:
-        """Stop the event processor.
+        """Stop the event bus.
 
-        Waits for current event processing to complete.
+        Cancels every subscriber's consumer task and waits for all of
+        them to stop, bounded by ``SHUTDOWN_TIMEOUT_SECONDS``. Events
+        still queued at shutdown are discarded.
         """
         if not self._running:
             return
 
         self._running = False
 
-        if self._processor_task:
+        tasks = [
+            subscription.task
+            for subscriptions in self._subscribers.values()
+            for subscription in subscriptions
+            if subscription.task is not None
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
             try:
-                # Cancel the processor task
-                self._processor_task.cancel()
-                # Wait for it to complete (with timeout)
-                await asyncio.wait_for(asyncio.shield(self._processor_task), timeout=5.0)
-            except asyncio.CancelledError:
-                pass  # Expected when task is cancelled
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=SHUTDOWN_TIMEOUT_SECONDS,
+                )
             except TimeoutError:
-                logger.warning("event_bus_shutdown_timeout")
+                logger.warning("event_bus_shutdown_timeout", pending=len(tasks))
 
         logger.info("event_bus_stopped")
 
     def subscribe(self, event_type: EventType, handler: EventHandler) -> str:
         """Subscribe to events of a specific type.
+
+        Creates a dedicated bounded queue and (when the bus is running)
+        a consumer task for this subscription.
 
         Args:
             event_type: The type of event to subscribe to
@@ -99,10 +152,18 @@ class EventBus(Component):
         self._subscription_counter += 1
         subscription_id = f"sub_{self._subscription_counter}"
 
+        subscription = _Subscription(
+            subscription_id=subscription_id,
+            event_type=event_type,
+            handler=handler,
+        )
+        if self._running:
+            self._start_consumer(subscription)
+
         if event_type not in self._subscribers:
             self._subscribers[event_type] = []
 
-        self._subscribers[event_type].append((subscription_id, handler))
+        self._subscribers[event_type].append(subscription)
         logger.debug(
             "event_subscribed", subscription_id=subscription_id, event_type=event_type.value
         )
@@ -112,16 +173,21 @@ class EventBus(Component):
     def unsubscribe(self, subscription_id: str) -> bool:
         """Unsubscribe from events.
 
+        Cancels the subscription's consumer task; events still queued
+        for it are discarded.
+
         Args:
             subscription_id: The subscription ID returned by subscribe()
 
         Returns:
             True if subscription was found and removed
         """
-        for event_type, handlers in self._subscribers.items():
-            for idx, (sid, _) in enumerate(handlers):
-                if sid == subscription_id:
-                    handlers.pop(idx)
+        for event_type, subscriptions in self._subscribers.items():
+            for idx, subscription in enumerate(subscriptions):
+                if subscription.subscription_id == subscription_id:
+                    subscriptions.pop(idx)
+                    if subscription.task is not None:
+                        subscription.task.cancel()
                     logger.debug(
                         "event_unsubscribed",
                         subscription_id=subscription_id,
@@ -135,118 +201,88 @@ class EventBus(Component):
     async def publish(self, event: Event) -> None:
         """Publish an event to the bus.
 
-        The event is queued and will be dispatched to subscribers
-        asynchronously.
+        The event is enqueued (non-blocking) into the dedicated queue of
+        every subscriber of its type. If a subscriber's queue is full,
+        the new event is dropped for that subscriber and an
+        ``event_queue_overflow`` warning is logged.
 
         Args:
             event: The event to publish
+
+        Raises:
+            RuntimeError: If the bus is not running (fail fast).
         """
         if not self._running:
-            logger.error("event_publish_rejected", event_type=event.type.value)
-            return
+            raise RuntimeError(
+                f"EventBus is not running; cannot publish {event.type.value}"
+            )
 
-        await self._event_queue.put(event)
-        logger.info(
-            "event_queued",
-            event_type=event.type.value,
-            source=event.source,
-            queue_size=self._event_queue.qsize(),
-        )
-
-    async def _process_events(self) -> None:
-        """Event processing loop.
-
-        Continuously processes events from the queue and dispatches
-        them to subscribers.
-        """
-        logger.info("event_processor_started")
-        try:
-            while self._running:
-                try:
-                    # Wait for an event with timeout to allow checking _running
-                    event = await asyncio.wait_for(self._event_queue.get(), timeout=0.5)
-                    logger.info("event_processing", event_type=event.type.value)
-                    await self._dispatch(event)
-                    self._event_queue.task_done()
-                except TimeoutError:
-                    continue
-                except asyncio.CancelledError:
-                    # Task was cancelled, exit cleanly
-                    logger.info("event_processor_cancelled")
-                    break
-                except Exception as e:
-                    logger.error("event_processing_error", error=str(e), exc_info=True)
-        except asyncio.CancelledError:
-            # Exit cleanly when cancelled
-            logger.info("event_processor_cancelled")
-        logger.info("event_processor_stopped")
-
-    async def _dispatch(self, event: Event) -> None:
-        """Dispatch an event to all subscribers.
-
-        Handlers are invoked sequentially in subscription order. Because the
-        event processing loop has a single consumer, each handler is awaited
-        before the next one starts: event order is preserved, at most one
-        handler runs at a time, and one handler's failure does not affect
-        the others.
-
-        Args:
-            event: The event to dispatch
-        """
-        handlers = self._subscribers.get(event.type, [])
-
-        if not handlers:
+        subscriptions = self._subscribers.get(event.type)
+        if not subscriptions:
             logger.warning("event_handler_missing", event_type=event.type.value)
             return
 
+        # Snapshot: handlers (sync ones run in threads) may unsubscribe concurrently
+        for subscription in list(subscriptions):
+            try:
+                subscription.queue.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "event_queue_overflow",
+                    subscription_id=subscription.subscription_id,
+                    event_type=event.type.value,
+                    queue_size=subscription.queue.qsize(),
+                )
+
         logger.info(
-            "event_dispatching",
+            "event_published",
             event_type=event.type.value,
-            handler_count=len(handlers),
-            handler_ids=[sid for sid, _ in handlers],
+            source=event.source,
+            subscriber_count=len(subscriptions),
         )
 
-        for subscription_id, handler in handlers:
-            try:
-                handler_name = getattr(handler, "__name__", str(handler))
-                logger.info(
-                    "handler_call",
-                    subscription_id=subscription_id,
-                    handler=handler_name,
-                    event_type=event.type.value,
-                )
-                if asyncio.iscoroutinefunction(handler):
-                    # Await async handler sequentially (errors are isolated
-                    # inside _run_handler so later handlers still run)
-                    await self._run_handler(handler, event, subscription_id)
-                else:
-                    # Run sync handler in thread pool
-                    await asyncio.get_event_loop().run_in_executor(None, handler, event)
-            except Exception as e:
-                logger.error(
-                    "event_dispatch_error",
-                    subscription_id=subscription_id,
-                    error=str(e),
-                    exc_info=True,
-                )
+    def _start_consumer(self, subscription: _Subscription) -> None:
+        """Spawn the long-lived consumer task for a subscription."""
+        subscription.task = asyncio.create_task(self._consume_events(subscription))
 
-    async def _run_handler(self, handler: EventHandler, event: Event, subscription_id: str) -> None:
-        """Run an async handler with error handling.
+    async def _consume_events(self, subscription: _Subscription) -> None:
+        """Consume events from one subscription's queue, in FIFO order.
 
-        Args:
-            handler: The async handler function
-            event: The event to handle
-            subscription_id: For logging purposes
+        Runs until cancelled (unsubscribe or shutdown). Handler errors
+        are logged and isolated: they never stop this consumer nor any
+        other subscriber.
         """
+        subscription_id = subscription.subscription_id
+        handler = subscription.handler
+        logger.debug("event_consumer_started", subscription_id=subscription_id)
         try:
-            result = handler(event)
-            if result is not None:
-                await result
-            logger.info("handler_completed", subscription_id=subscription_id)
-        except Exception as e:
-            logger.error(
-                "handler_error", subscription_id=subscription_id, error=str(e), exc_info=True
-            )
+            while True:
+                event = await subscription.queue.get()
+                try:
+                    if asyncio.iscoroutinefunction(handler):
+                        result = handler(event)
+                        if result is not None:
+                            await result
+                    else:
+                        # Run sync handler in thread pool, awaited so
+                        # per-subscriber FIFO order is preserved
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, handler, event
+                        )
+                    logger.info("handler_completed", subscription_id=subscription_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(
+                        "handler_error",
+                        subscription_id=subscription_id,
+                        error=str(e),
+                        exc_info=True,
+                    )
+                finally:
+                    subscription.queue.task_done()
+        except asyncio.CancelledError:
+            logger.debug("event_consumer_cancelled", subscription_id=subscription_id)
 
     def get_subscriber_count(self, event_type: EventType | None = None) -> int:
         """Get the number of subscribers.
@@ -260,12 +296,12 @@ class EventBus(Component):
         if event_type:
             return len(self._subscribers.get(event_type, []))
 
-        return sum(len(handlers) for handlers in self._subscribers.values())
+        return sum(len(subscriptions) for subscriptions in self._subscribers.values())
 
     def is_running(self) -> bool:
         """Check if the event bus is running.
 
         Returns:
-            True if the event processor is active
+            True if the bus has been initialized and not yet shut down
         """
         return self._running

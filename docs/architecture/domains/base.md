@@ -22,7 +22,7 @@ base/
 ├── device.py              # Device 基类（EventBus 交互能力，与 Component 正交）
 ├── events/
 │   ├── event.py           # EventType（StrEnum）+ Event dataclass（含 trace 字段，面向 SSE 线格式）
-│   └── event_bus.py       # EventBus：asyncio.Queue + 单消费者顺序派发
+│   └── event_bus.py       # EventBus：每订阅独立 asyncio.Queue + 长存消费 task（per-subscriber 保序）
 ├── logger.py              # structlog 配置（stdout + 每日滚动 JSONL 文件 sink；OTel trace context 注入）
 ├── llm_client.py          # LLMClient：OpenAI 兼容调用 + 指数退避重试 + llm.request span
 ├── metrics.py             # Metrics 支柱：init_metrics + MetricsService（纯事件消费者）
@@ -47,7 +47,7 @@ base/
 | `ConfigService` | 配置加载/缓存/保存 + reload 时 EventBus 通知 | `base/config.py:280` |
 | `Component` | 组件基类（initialize/shutdown 两阶段生命周期） | `base/component.py:38` |
 | `Device` | EventBus 交互能力（subscribe/emit/publish） | `base/device.py:66` |
-| `EventBus` | 异步事件总线（单队列单消费者，非单例） | `base/events/event_bus.py:36` |
+| `EventBus` | 异步事件总线（每订阅者一队列一消费 task，非单例） | `base/events/event_bus.py:65` |
 | `Event` / `EventType` | 事件数据模型（含 trace_id/span_id/parent_span_id） | `base/events/event.py:31,88` |
 | `LLMClient` | LLM API 调用（非 Component，装配期按 agent 新建） | `base/llm_client.py:70` |
 | `init_tracing` / `JsonlSpanExporter` / `FileTraceStore` | 链路追踪三件套（写 / 落盘 / 只读查） | `base/tracing/` |
@@ -164,10 +164,16 @@ AdapterManager → MemberDirectory → MailDelivery → gateway → REST），sh
 
 ## 事件系统（EventBus / Event）
 
-`EventBus(Component)`（`event_bus.py:36`）：**不是单例**——由 ServerApp 构造
-（`serverapp.py:129`）。进程内、单 `asyncio.Queue`、单消费者 `_process_events`
-循环；`_dispatch` 按订阅序逐个 await（保序、同时只有一个 handler 在跑、单
-handler 异常隔离）；同步 handler 进线程池（`event_bus.py:241`）。
+`EventBus(Component)`（`event_bus.py:65`）：**不是单例**——由 ServerApp 构造
+（`serverapp.py:129`）。进程内、**每订阅者一个 `asyncio.Queue` + 一个长存消费
+task**（`_consume_events`）：`publish` 只往各订阅者队列 `put_nowait`（O(1)
+不阻塞），慢 handler 只堵自己的队列。保序粒度为 **per-subscriber**（同一订阅
+者 FIFO、同一时刻只跑一个 handler），跨订阅者无顺序保证；handler 异常隔离
+（只记日志，不影响自己后续事件与其他订阅者）；同步 handler 进线程池（await
+完成以保序）。订阅者队列有上限（`SUBSCRIBER_QUEUE_MAX_SIZE = 1000`），溢出
+**丢新不丢旧**并记 `event_queue_overflow` 警告。退订取消消费 task 并丢弃队列
+中在途事件。`publish` 在 bus 未运行时**抛 `RuntimeError`**（快速失败）。
+shutdown 取消全部消费 task，有界等待（`SHUTDOWN_TIMEOUT_SECONDS = 5s`）。
 
 `Event` dataclass（`event.py:88`）自带 `trace_id`/`span_id`/`parent_span_id`，
 `to_dict`/`from_dict` 面向 SSE 线格式——是 SSE 推送与 trace carrier 的统一体。
@@ -263,7 +269,7 @@ REST `GET /metrics` 直接返回该 JSON；service 不可用时 503
 
 - [x] `AgentConfig` 字段与代码一致（无 identity/profile/behavior/proactive；activation deprecated ignored）
 - [x] `ConfigService` 构造签名 `(event_bus, tlon_home)`；`CONFIG_UPDATED` 仅在 reload_agent 发出
-- [x] EventBus 由 ServerApp 构造（非单例），单消费者顺序派发、异常隔离
+- [x] EventBus 由 ServerApp 构造（非单例），per-subscriber 队列保序、异常隔离、队列上限丢新不丢旧、未运行 publish 抛错
 - [x] `ComponentRegistry` 已删除，ServerApp 手工按拓扑序装配
 - [x] .env 只加载仓库根、真实环境变量优先、与 cwd 无关（有测试锁定）
 - [x] `~/.tlon/` 布局全部由 `TlonPaths` 解析

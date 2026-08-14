@@ -89,8 +89,20 @@ async def _collect_mail(bus: EventBus) -> list[Mail]:
 
 
 async def _drain(bus: EventBus) -> None:
-    """Wait until all queued events have been dispatched."""
-    await asyncio.wait_for(bus._event_queue.join(), timeout=5.0)
+    """Wait until all per-subscriber queues have been fully consumed."""
+    queues = [
+        subscription.queue
+        for subscriptions in bus._subscribers.values()
+        for subscription in subscriptions
+    ]
+
+    async def _join_all() -> None:
+        while True:
+            await asyncio.gather(*(q.join() for q in queues))
+            if all(q.empty() for q in queues):
+                return
+
+    await asyncio.wait_for(_join_all(), timeout=5.0)
 
 
 def _noop_sink(event: Event) -> None:
