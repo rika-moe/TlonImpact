@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from tlon.agents.agent_registry import AgentRegistry
+from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
 from tlon.agents.lifecycle import StartRequest
 from tlon.agents.loader import load_member_spec
 from tlon.base.config import AgentConfig, AgentInfoProvider
@@ -239,6 +239,27 @@ class TestSpecDerivedLifecycle:
         assert registry.is_lazy("ghost-1") is True
 
         await registry.shutdown()
+
+
+class TestRegistryQueries:
+    """The shared host-query implementation (Adam + script members)."""
+
+    def test_non_string_input_reads_as_false(self, tmp_path):
+        """A missing payload key yields None: non-string input must read as
+        False without ever reaching into the registry — the guard semantics
+        the Adam/registry query merge () settles on."""
+        registry = AgentRegistry(
+            event_bus=EventBus(),
+            agent_info_provider=_StaticProvider({}),
+            paths=TlonPaths(home=tmp_path),
+        )
+        queries = RegistryQueries(registry)
+
+        assert queries.is_sleeping(None) is False
+        assert queries.is_running(None) is False
+        assert queries.is_lazy(None) is False
+        assert queries.is_lazy(42) is False
+        assert queries.start_all_candidates() == []
 
 
 class TestWakeOnMail:

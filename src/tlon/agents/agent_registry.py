@@ -39,7 +39,7 @@ import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from tlon.agents.eval import make_member_builtins
+from tlon.agents.eval import ScriptHostQueries, make_member_builtins
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
@@ -121,13 +121,14 @@ def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMC
     )
 
 
-class _ScriptRegistryQueries:
-    """Host queries for registry-spawned script members (P5b).
+class RegistryQueries(ScriptHostQueries):
+    """The shared ``ScriptHostQueries`` implementation over the registry.
 
-    Same read-only registry interfaces Adam's queries wrap
-    (``agents/adam.py``) — duplicated here rather than shared because the
-    registry never imports Adam (kernel first, PID 1 second; the DAG
-    stays acyclic). Non-string input safely reads as False.
+    Used by registry-spawned script members (P5b) and by Adam
+    (``agents/adam.py``), which imports it from here — Adam depends on the
+    registry, never the reverse (kernel first, PID 1 second; the DAG stays
+    acyclic). Explicitly implements the protocol so signature drift fails
+    at this definition site. Non-string input safely reads as False.
     """
 
     def __init__(self, registry: "AgentRegistry"):
@@ -263,7 +264,7 @@ class AgentRegistry(Component):
         # Host builtins validated against — shared by the profile loader and
         # ``_start_agent`` so a member's spec passes the same gate whether
         # loaded for derivation or for assembly.
-        self._host_builtins = make_member_builtins(_ScriptRegistryQueries(self))
+        self._host_builtins = make_member_builtins(RegistryQueries(self))
 
         logger.info("agent_registry_constructed")
 

@@ -26,26 +26,23 @@ authority for both the boot set and the wake gate.
 Adam is a built-in Member (``member_id="adam"``, ``member_type="script"``):
 it does not come from any user spec file, is not registered in the agent
 registry, and does not appear in MemberDirectory. It holds no run-state
-of its own — the injected query closures read the registry's read-only
-interfaces (``get_agent`` / ``get_config`` / ``get_all``) instead of
-reconstructing state from events. Lifecycle decisions carry no dedup
-state either: the registry executes requests idempotently.
+of its own — the injected query closures (the shared ``RegistryQueries``
+implementation, imported from the registry module) read the registry's
+read-only interfaces (``get_agent`` / ``get_config`` / ``get_all``)
+instead of reconstructing state from events. Lifecycle decisions carry
+no dedup state either: the registry executes requests idempotently.
 
-The dependency is one-directional: Adam holds a registry reference; the
+The dependency is one-directional: Adam imports the registry; the
 registry never imports Adam (kernel first, PID 1 second — the DAG stays
 acyclic).
 """
 
-from typing import TYPE_CHECKING, Any
-
+from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
 from tlon.agents.edn import loads
 from tlon.agents.eval import make_member_builtins
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.events.event_bus import EventBus
-
-if TYPE_CHECKING:
-    from tlon.agents.agent_registry import AgentRegistry
 
 #: Adam's policy, as data. Parsed once per assembly by
 #: :func:`make_adam`; behavior is exactly the pre-P5a hand-written Adam's.
@@ -60,51 +57,20 @@ ADAM_SPEC_EDN = """\
 """
 
 
-class _AdamRegistryQueries:
-    """Adam's host queries: the registry's read-only interfaces as closures.
-
-    sleeping = registered (config known) but not running — the exact
-    wake-gate semantics of the pre-P5a hand-written Adam. Non-string
-    input (a missing payload key yields None) safely reads as False.
-    """
-
-    def __init__(self, registry: "AgentRegistry"):
-        self._registry = registry
-
-    def is_sleeping(self, agent_id: Any) -> bool:
-        """Registered (config known) but not running."""
-        if not isinstance(agent_id, str) or not agent_id:
-            return False
-        return (
-            self._registry.get_agent(agent_id) is None
-            and self._registry.get_config(agent_id) is not None
-        )
-
-    def is_running(self, agent_id: Any) -> bool:
-        """Currently in the run table."""
-        return isinstance(agent_id, str) and self._registry.get_agent(agent_id) is not None
-
-    def is_lazy(self, agent_id: Any) -> bool:
-        """A member that can sleep / be drained (phase E: spec-derived)."""
-        return self._registry.is_lazy(agent_id)
-
-    def start_all_candidates(self) -> list[str]:
-        """The boot set: members whose spec declares ``:on :boot`` (phase E)."""
-        return self._registry.boot_candidates()
-
-
-def make_adam(event_bus: EventBus, agent_registry: "AgentRegistry") -> MemberRuntime:
+def make_adam(event_bus: EventBus, agent_registry: AgentRegistry) -> MemberRuntime:
     """Assemble Adam: the built-in spec plus registry query closures.
 
     Adam is a deterministic member (no cognitive rule → cognitive=None): it
-    holds no registry reference beyond the injected query closures.
+    holds no registry reference beyond the injected query closures — the
+    shared ``RegistryQueries`` implementation imported from the registry
+    module (one-directional dependency: Adam → registry, never reverse).
 
     Args:
         event_bus: Event bus for subscriptions and request publishing
         agent_registry: The registry to query (read-only interfaces) and
             to address with start/stop requests
     """
-    builtins = make_member_builtins(_AdamRegistryQueries(agent_registry))
+    builtins = make_member_builtins(RegistryQueries(agent_registry))
     spec = MemberSpec.from_edn(loads(ADAM_SPEC_EDN))
     # Single-validator gate with the host builtins: the boot rule's
     # ``start-all`` action needs the registry host for candidate expansion,

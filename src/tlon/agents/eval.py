@@ -823,11 +823,12 @@ ARITHMETIC_BUILTINS: dict[str, Builtin] = {
 class ScriptHostQueries(Protocol):
     """Host read-only queries closure-injected into the script registry.
 
-    Implementations live outside this module (e.g. the Adam factory wraps
-    the AgentRegistry's read-only interfaces); the module-level registry
-    stays free of host state. Query arguments may be anything an
-    expression yields (including None for a missing payload key), so
-    implementations must tolerate non-string input.
+    The implementation lives outside this module — ``RegistryQueries`` in
+    ``agents/agent_registry.py``, shared by registry-spawned script members
+    and Adam — so the module-level registry stays free of host state.
+    Query arguments may be anything an expression yields (including None
+    for a missing payload key), so implementations must tolerate
+    non-string input.
     """
 
     def is_sleeping(self, agent_id: Any) -> bool:
