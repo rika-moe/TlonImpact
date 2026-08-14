@@ -20,6 +20,12 @@ repos:
         language: system
         files: ^src/.*\.py$
         pass_filenames: false
+      - id: check-stage-purity
+        name: Check stage purity (no direct session mutation, C2)
+        entry: python3 scripts/check_stage_purity.py --ci
+        language: system
+        files: ^src/tlon/agents/stages/.*\.py$
+        pass_filenames: false
       - id: mypy
         name: mypy (src/tlon, strict in pyproject.toml)
         entry: uv run mypy src/tlon/

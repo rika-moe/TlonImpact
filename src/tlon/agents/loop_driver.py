@@ -188,11 +188,14 @@ class LoopDriver:
         The stage computes; the engine mutates. Session-local fields
         land directly; external effects go through the EffectExecutor.
         A non-None ``outcome.response`` updates the round's response
-        chain. Application order: context -> scratch -> counters ->
-        response chain -> tool dispatch -> mails -> interaction save ->
-        on-complete actions -> completion — equivalent to the pre-C2
-        interleaving (save -> on-complete -> mark_completed stays inside
-        the session span, so spawn quota attribution is unchanged).
+        chain and is recorded as the session's last LLM response.
+        Application order: context -> scratch -> counters/state ->
+        tool results -> response chain -> tool dispatch -> mails ->
+        interaction save -> on-complete actions -> completion —
+        equivalent to the pre-C2 interleaving (tool results land before
+        the save so the saved interaction sees this round's results;
+        save -> on-complete -> mark_completed stays inside the session
+        span, so spawn quota attribution is unchanged).
         """
         if outcome.context_appends:
             session.context.extend(outcome.context_appends)
@@ -202,7 +205,12 @@ class LoopDriver:
             session.record_error()
         if outcome.advance_iteration:
             session.advance_iteration()
+        if outcome.mark_active:
+            session.mark_active()
+        for tc, result in outcome.tool_results:
+            session.add_tool_result(tc, result)
         if outcome.response is not None:
+            session.set_last_llm_response(outcome.response)
             response = outcome.response
         if outcome.tool_dispatches:
             # Declared by act; the concurrency is the engine's: one
@@ -330,11 +338,13 @@ class LoopDriver:
         """Collect completed background tools for a WAITING session.
 
         Scheduling shell for the collect half of the ``act`` stage
-        (phase 7a); the harvest itself is
+        (phase 7a). The harvest (``session.collect_completed``) is the
+        engine's; the results are handed to
         :func:`tlon.agents.stages.act.act_stage_collect`, whose declared
         Outcome the engine applies here.
         """
-        outcome = await act_stage_collect(self._services, session)
+        completed = session.collect_completed()
+        outcome = await act_stage_collect(self._services, session, completed)
         await self._apply_outcome(session, None, outcome)
 
     async def execute_one_tool(self, tc: ToolCall) -> tuple[ToolCall, ToolResult]:

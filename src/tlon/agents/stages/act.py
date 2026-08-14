@@ -4,9 +4,11 @@ One Python semantic unit spanning both halves of the step/collect
 model: :func:`act_stage_step` declares (no-tool reminder, sendEmail
 conflict check, the tool dispatch list) and :func:`act_stage_collect`
 harvests. Both are pure transformations ``Session x Services ->
-StageOutcome`` (C2): the stage declares *what* to dispatch; the engine
-owns the concurrency (one background task per tool) and applies the
-external effects (mails, memory save, on-complete actions, completion).
+StageOutcome`` (C2): the stage declares *what* to dispatch and what the
+harvested results imply; the engine owns the concurrency (one
+background task per tool), the harvest (``session.collect_completed``),
+all session-field writes, and the external effects (mails, memory save,
+on-complete actions, completion).
 """
 
 import json
@@ -70,24 +72,27 @@ async def act_stage_step(
     return StageOutcome(tool_dispatches=list(response.tool_calls))
 
 
-async def act_stage_collect(svc: StageServices, session: AgentSession) -> StageOutcome:
-    """act stage, collect half: harvest completed background tools.
+async def act_stage_collect(
+    svc: StageServices,
+    session: AgentSession,
+    completed: list[tuple[ToolCall, ToolResult]],
+) -> StageOutcome:
+    """act stage, collect half: process harvested background tools.
 
-    Processes results, declares the sendEmail reply mails, and
-    transitions state back to ACTIVE (continue thinking) or declares
-    completion (done). Completion is event-driven by act
-    (``is_complete``), not a loop boundary condition, so it stays
-    outside the until expression.
+    ``completed`` is harvested by the engine
+    (``session.collect_completed``); the stage only reads session state
+    and declares everything it wants changed: the tool results to
+    record, the sendEmail reply mails, the context appends, the
+    iteration advance / ACTIVE transition (continue thinking), or the
+    interaction save + on-complete actions + completion signal (done).
+    Completion is event-driven by act (``is_complete``), not a loop
+    boundary condition, so it stays outside the until expression.
 
-    Session-state methods (add_tool_result / advance_iteration /
-    mark_active) operate on the stage's own input state and are called
-    directly; the externally visible effects are observability through
-    services (TOOL_EXECUTE_END / TOOL_ERROR events) or declarations in
-    the Outcome (reply mails, interaction save, on-complete actions,
-    the completion signal — the engine runs them in this order:
-    context appends -> mails -> save -> on-complete -> mark_completed).
+    The engine applies the Outcome in this order: context appends ->
+    counters/state -> tool results -> mails -> save -> on-complete ->
+    mark_completed (tool results land before the save, so the saved
+    interaction includes this round).
     """
-    completed = session.collect_completed()
     if not completed:
         return StageOutcome()  # still waiting
 
@@ -96,7 +101,7 @@ async def act_stage_collect(svc: StageServices, session: AgentSession) -> StageO
     final_content = ""
 
     for tc, result in completed:
-        session.add_tool_result(tc, result)
+        outcome.tool_results.append((tc, result))
 
         await svc.publish_event(
             EventType.TOOL_EXECUTE_END,
@@ -168,8 +173,8 @@ async def act_stage_collect(svc: StageServices, session: AgentSession) -> StageO
         outcome.run_on_complete = True
         outcome.complete = True
     elif not session.has_pending_tools:
-        session.advance_iteration()
-        session.mark_active()
+        outcome.advance_iteration = True
+        outcome.mark_active = True
 
     return outcome
 

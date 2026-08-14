@@ -81,7 +81,10 @@ Protocol 文件（agents/host.py）已随最后一个消费者（SessionSchedule
   签名为 `(identity, spec, services: StageServices, executor: EffectExecutor,
   tool_executor, per_tool_timeout, on_complete)`——查询/可观测性走
   `StageServices`（含 LLM 调用、context 首建、session span），stage 声明的外部
-  效果（发信/写记忆/已读游标）由 `EffectExecutor` 执行；
+  效果（发信/写记忆/已读游标）由 `EffectExecutor` 执行。**session 字段写同样
+  只声明不直写**（last LLM response / tool 结果日志 / 迭代与 ACTIVE 转换），
+  收割（`collect_completed`）归引擎；纯度由
+  `scripts/check_stage_purity.py` 机制强制（）；
 - **SessionScheduler**：收 `(config, memory, session_span, mark_mail_read,
   check_reflection, loop_driver)`——六个委托分别来自 AgentConfig、
   MemoryManager、StageServices、EffectExecutor、ReflectionEngine 与直注的

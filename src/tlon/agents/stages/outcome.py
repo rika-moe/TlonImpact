@@ -2,12 +2,13 @@
 
 Stages are pure transformations ``Session x Services -> StageOutcome``:
 every system-state change a stage wants (context appends, scratch
-writes, iteration/error counters, and — from C2 — mails, tool
-dispatches, interaction saves, the completion signal) is returned as
-data; the LoopDriver applies it. Read-only external queries (the LLM
-call) and observability (logs/events/traces) go through the injected
-:mod:`tlon.agents.stages.services` instead — they are not state changes
-and never appear here.
+writes, iteration/error counters, session-field writes such as the
+last LLM response / tool-result log / ACTIVE transition, and — from
+C2 — mails, tool dispatches, interaction saves, the completion signal)
+is returned as data; the LoopDriver applies it. Read-only external
+queries (the LLM call) and observability (logs/events/traces) go
+through the injected :mod:`tlon.agents.stages.services` instead — they
+are not state changes and never appear here.
 
 The dataclasses are mutable: the containers (lists/dicts) are built up
 incrementally by the stages that fill them, and freezing the shell
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.tools.base import ToolResult
 
 
 @dataclass
@@ -55,6 +57,16 @@ class StageOutcome:
 
     record_error: bool = False
     """Record one error against the session."""
+
+    tool_results: list[tuple[ToolCall, ToolResult]] = field(default_factory=list)
+    """Harvested tool results to record on the session (C2).
+
+    Applied by the engine before ``save_interaction`` so the saved
+    interaction sees this round's results.
+    """
+
+    mark_active: bool = False
+    """Transition the session back to ACTIVE (WAITING -> ACTIVE, C2)."""
 
     mails: list[MailEffect] = field(default_factory=list)
     """Mails to send (C2)."""
