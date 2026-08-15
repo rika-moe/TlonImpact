@@ -12,25 +12,6 @@
 7. 架构决策往长了做。不接受"先这样以后再换"的临时方案。
 8. 先看成熟产品怎么解决同一个问题，用已验证的模式，别从零发明。
 
-
-> 一个由观念构建的、正在入侵现实的宇宙
-
----
-
-## 核心术语（博尔赫斯宇宙）
-
-| 概念 | 命名 | 出处 |
-|-----|------|------|
-| 产品 | Tlon / 特隆 | 《特隆、乌克巴尔、第三极的奥比斯·特蒂乌斯》 |
-| Chatroom | 代表大会 / Congress | 《代表大会》 |
-| 记忆系统 | Shakespeare | 《与莎士比亚的记忆》 |
-| ~~Skill 系统~~ | ~~巴别图书馆~~ | ~~《巴别图书馆》~~ |
-| Git 工作流 | 花园 / Garden | 《小径分叉的花园》 |
-| 自举计划 | 环形废墟 | 《环形废墟》 |
-| Agent 管理 | Mirror / 镜 | 《镜子与面具》 |
-
----
-
 ## 快速开始
 
 ```bash
@@ -48,44 +29,6 @@ uv run tlon ops       # 终端 2（Operator TUI，含 mail 视图——人类邮
 # 单元测试
 uv run pytest
 ```
-
-**文学化命令别名**：`server` = `dream`, `tui` = `intrude`, `wizard` = `mirror`
-
----
-
-## 文档索引
-
-| 领域 | 设计文档 | 架构文档 |
-|------|----------|----------|
-| 概述 | [design/README.md](./docs/design/README.md) | [architecture/README.md](./docs/architecture/README.md) |
-| **通信协议** | [design/client-server-protocol.md](./docs/design/client-server-protocol.md)（v2：HTTP+SSE 单端口 8080） | - |
-| HTTP+SSE 迁移 | [design/http-sse-protocol.md](./docs/design/http-sse-protocol.md)（已落地，WS 已退役） | - |
-| 用户指南 | [user/README.md](./docs/user/README.md) | - |
-| 架构边界 | - | [explicit-boundaries.md](./docs/architecture/explicit-boundaries.md) |
-| 配置系统 | [design/config.md](./docs/design/config.md) | [architecture/domains/base.md](./docs/architecture/domains/base.md) |
-| **文件系统布局** | **[design/config.md](./docs/design/config.md)** (含 ~/.tlon/ 目录结构) | - |
-| Agent 系统 | [design/agents.md](./docs/design/agents.md), [narrative-prompt.md](./docs/design/narrative-prompt.md), [async-agent-loop.md](./docs/design/async-agent-loop.md), **[dsl-agents.md](./docs/design/dsl-agents.md)** 🆕 | [architecture/domains/agents.md](./docs/architecture/domains/agents.md) |
-| 记忆系统 | [design/memory.md](./docs/design/memory.md) | - |
-| 消息系统 | **[design/mail.md](./docs/design/mail.md)** 📮 | - |
-| Member 与亚当 | **[design/members.md](./docs/design/members.md)** | - |
-| **TUI 设计** | **[Operator](./docs/design/tui-operator.md)**（Congress 已退役） | - |
-
----
-
-## 状态总览
-
-| 领域 | 状态 | 评分 | 备注 |
-|------|------|------|------|
-| 配置系统 | ✅ 已验证 | 100/100 | 稳定 |
-| Agent 系统 | ✅ 已验证 | 95/100 | 异步多 Session、步进调度 |
-| 记忆系统 | ✅ 已验证 | 100/100 | 稳定 |
-| 消息系统 | ✅ 已验证 | 95/100 | 邮件模型 R2 已切换（mail.md），PR-A/B/C 全部落地 |
-| Client-Server | ✅ 已验证 | 95/100 | HTTP+SSE 单端口定型（v2，WS 已退役）；Trace 系统、Event 扩展已完成 |
-| Metrics 支柱 | ✅ 已验证 | 95/100 | MetricsService 事件消费 + GET /metrics + operator metrics 视图；真实冒烟通过 |
-| ~~Skill 系统~~ | ❌ 已移除 | - | 2026-03-17 移除 |
-| ~~TUI (Congress)~~ | ❌ 已退役 | - | 2026-07 退役（PR-C），由 Operator mail 视图取代 |
-| TUI (Operator) | ⚠️ 待验证 | 80/100 | TypeScript/Ink 实现（apps/operator），真实连接服务端，mail 视图已落地 |
-| Sandbox | ✅ 已验证 | 95/100 | 共享 DockerRuntime, macOS 支持 |
 
 -- 
 ## 开发规范
@@ -121,14 +64,4 @@ uv run pytest
 
 ---
 
-## 参考链接
-
-| 类型 | 文档 |
-|------|------|
-| 开发规范 | [开发流程](./docs/design/development-process.md), [代码风格](./docs/design/code-style.md) |
-| 架构 | [显式边界](./docs/architecture/explicit-boundaries.md), [agents 域](./docs/architecture/domains/agents.md), [base 域](./docs/architecture/domains/base.md), [server 域](./docs/architecture/domains/server.md), [mail 域](./docs/architecture/domains/mail.md), [memory 域](./docs/architecture/domains/memory.md), [sandbox 域](./docs/architecture/domains/sandbox.md), [tools 域](./docs/architecture/domains/tools.md) |
-| 速查 | [导入路径速查](./docs/reference/imports.md) |
-
----
-
-*最后更新：2026-08-13*
+*最后更新：2026-08-15*

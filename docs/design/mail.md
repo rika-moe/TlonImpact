@@ -1,234 +1,203 @@
-# 邮件模型设计（Republic of Letters）
+# 邮件系统设计
 
-> 状态: ✅ R1a（Mail 模型 + Mailbox 存储）/ R1b（管线大切换）/ R2 PR-A（服务端协议）/ PR-B（operator mail 视图）/ PR-C（拆桥 + Congress 退役）已实施（2026-07-29）
-> 日期: 2026-07-28
+Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道：agent 之间、人类与 agent 之间，全部经邮件往来。本文解释这套系统为什么长现在这样，以当前实现为准（代码在 `src/tlon/organization/mail/` 与 `src/tlon/organization/messaging/`）。决策本身的记录见 `docs/decisions/0002-mail-as-only-channel.md`。
 
----
+## 定位：书信共和国的实现形态
 
-## 实施状态（R2 PR-A 落地记录）
+`docs/vision.md` 把 Tlon 的社会结构定为「书信共和国」（Republic of Letters），三条哲学直接决定了邮件系统的形态：
 
-R2 PR-A（服务端协议，2026-07-29）已完成：
+- **开放**——成员凭名字相互寻址，新成员出生即可加入，无需改造任何既有成员。实现上就是一个扁平的地址域加一张名称解析表，没有房间、没有订阅关系、没有权限矩阵。
+- **沉淀**——信件持久、可检索、可流传。实现上邮箱是磁盘上的追加写文件，邮件先落盘后处理，知识随书信积累而不是随会话蒸发。
+- **平等**——人类不是管理员，而是社会的一员。实现上人类和 agent 走同一条投递管线、同一种邮箱、同一个事件流，人类只是「没有认知循环的成员」。
 
-- **WS 发信协议**：`message` 消息支持显式 `to` / `cc` / `subject`。
-  `HumanAdapter.speak` / `AdapterManager.publish` 签名扩展；收件人由
-  三路合并去重——`to`（每项过地址解析：名字 / id / 全地址）+
-  `mentions`（deprecated 别名）+ 正文 `@名字` 解析（R1b 桥）。
-  `cc` 同样解析。零可解析收件人仍 `ValueError`，文案引导用 `to`
-  指定收件人。`to` / `cc` 非 list → 服务端报错给客户端。
-- **REST `/inbox`**：`GET /inbox?username=x&limit=N`（username 缺省
-  `guest`，limit 缺省 50 上限 200）返回 `human:<username>` 邮箱的
-  `recent()`（inbox + sent 合并）——`{"mails": [...], "count": N}`；
-  username 为空或含路径分隔符 → 400。
-- **人类投递单轨化**：chat 模式 session 的 `mail.delivered` 由
-  HumanAdapter 投递（订阅 MAIL_DELIVERED，把 `recipient ==
-  human:<username>` 的副本扇出到自己所有 attached session），
-  NotificationService 不再向 chat session 投递邮件——"每个 Member 一个
-  邮箱、投递经 Member"对人类同样成立。event / agent 模式不受影响——
-  operator 是运维控制台，必须看到全部邮件流量。其余事件类型不受影响。
+这三条合起来排除了聊天室、消息队列、RPC 直连等方案：它们要么没有开放寻址，要么没有持久沉淀，要么把人类和 agent 分成两个通道。
 
-**过渡期桥（PR-C 已全部拆除 ✅）**：
+可以换个角度理解这个选择。聊天室的语义是「在场」：消息对当下在场的人有意义，后来者看到的是滚动走的历史；它的拓扑是房间，加入一个房间需要房间存在、需要被纳入。书信的语义是「寄达」：信对收信人有意义，无论何时读；它的拓扑是地址簿，给一个新成员写信只需要知道他的名字。一个目标是自进化、成员会不断出生和消亡的社会，需要后者——成员的生命周期不能是通信的前提条件。邮件还是天然的背压与恢复边界：投递管线每一个环节都可以慢、可以挂、可以重启，磁盘上的邮箱是唯一的真相来源。这些性质不是后来加的工程补丁，而是「异步 + 持久 + 按名寻址」这个组合的必然产物。
 
-- ~~**`mentions` 保留为 `to` 的 deprecated 别名**~~——已随 PR-C 移除；
-  旧客户端仍发送 `mentions` 时服务端静默忽略。
-- ~~**正文 `@` 解析保留**（R1b 桥）~~——已随 PR-C 移除；显式 `to`/`cc`
-  是唯一收件人入口。
-- ~~**REST `/history` 仍返回空列表**~~——已随 PR-C 移除（连同 WS 初始
-  空 `history` 推送）；拉邮件用 `/inbox`。
-- **人类无已读 cursor**（v1 决策）：`/inbox` 不做已读标记。
+## 数据模型
 
-**R2 分期**：
+邮件模型是 `organization/mail/mail.py` 的 `Mail`：一个纯数据 dataclass。字段一览：
 
-- **PR-B** ✅：operator 增加 mail 视图，作为人类主界面。
-- **PR-C** ✅：拆桥——`mentions` 别名、`@` 解析、`/history` 已移除，
-  Python Congress TUI 已退役（`tlon chat` 命令删除，textual 依赖移除）。
+- `id`：uuid hex，全系统唯一，投递幂等、cursor、线程链接都以它为锚。
+- `from_address`：发件人地址，构造时校验形态。
+- `to` / `cc`：主送与抄送地址列表，构造时去重（保序）；两者至少其一非空，否则拒绝构造——没有收件人的邮件在数据层就是非法的。
+- `subject`：可选。LLM 之间的通信经常不需要标题，它不承担任何线程语义。
+- `content`：正文文本，必须非空。
+- `in_reply_to`：被回复的上游邮件 id（可选）。
+- `thread_id`：线程根邮件 id；新线程缺省等于自己的 id，回复时从上游继承。
+- `forward_of`：被转发的原信 id（可选），记录转发链。
+- `timestamp`：创建时间（ISO 8601，UTC）。
 
----
+`Mail.create` 是唯一的构造入口，负责生成 id、校验非空正文与合法地址、收件人去重。序列化就是 `to_dict` / `from_dict` 的平直 JSON，落盘和事件载荷共用同一份表示——邮件从构造到落盘到推送，形态不变。
 
-## R1b 落地记录
+把邮件做成纯数据而不是带行为的对象，和 DSL 的「行为即数据」是同一条哲学：信件是社会里流转的基因型载体，谁都能读、谁都能存、谁都能转发（`forward_of` 记录转发链），它不依赖任何活的对象才能被理解。
 
-R1a/R1b 已完成：`Mail`/`Mailbox`（R1a）、投递器 `MailDelivery`
-（`organization/mail/delivery.py`）、agent 收信（MAIL_DELIVERED 入队 +
-boot 未读扫描 + 每封一 session + 完成 mark_read）、`_send_mail` 回复头
-继承、`sendEmail` 工具、trigger/proactive 退役、context_builder 邮箱
-历史、wake 重投递管道整套删除、receptionist 移除。
+### 地址域
 
-R1b 桥接偏差中已被 R2 PR-A 收敛的项：**推送按收件人过滤**（原全量
-推送，PR-A 起 chat 模式按收件人过滤；后于单轨化重构移交
-HumanAdapter——NotificationService 不再向 chat session 投递
-`mail.delivered`）。其余桥已全部随 PR-C 拆除（见上方清单）。
+所有地址都住在 `tlon.internal` 域（`MAIL_DOMAIN`）。成员 id 到地址的映射由 `address_for_member` 完成：agent 用裸 id（`gu-yanxi` → `gu-yanxi@tlon.internal`），人类成员 id 是 `human:<username>`，映射时剥掉前缀（`human:alice` → `alice@tlon.internal`）。`is_mail_address` 只校验 `local@domain` 形态，域白名单在反解时才查——地址格式故意宽松，把「合不合法」和「投不投得到」分成两步，前者在构造时挡，后者在投递时以退信回答。
 
-R1b 其它遗留：`AgentConfig.proactive` 字段已于 2026-08 删除（ 清理，
-旧 agent.yaml 残留该键被静默忽略）；spec 旧 key（`:proactive` /
-`:room-history`）静默忽略；引用 `mentioned?` 的旧 trigger 表达式加载
-失败 → 回退 DefaultSpec 并记 `agent_spec_load_failed` 日志。
+两个特殊地址：
 
----
+- `all@tlon.internal`（`ALL_ADDRESS`）——广播地址，投递时展开为全体成员。它是社会里唯一的「一对多」原语，对应书信共和国里的公开信。
+- `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱（给它的退信无处可投，记日志丢弃，避免退信循环）。
 
-## 背景与动机
+反方向映射 `member_id_for_address` 是有损的：裸 local part 无法区分 agent 和人类（`alice@tlon.internal` 既可能是 agent `alice` 也可能是人类 `human:alice`），消歧留给解析器（见下文「名称解析」）。
 
-Tlon 的消息系统建立在"聊天室"假设上：一个共享大厅、消息广播、mention 定向、
-proactive 维持讨论感。这是**同步在线语义**——消息的生命在总线上，转瞬即逝。
-沉睡 agent 会错过消息，于是系统被迫长出"重投递"机制（`StartRequest.trigger_event`
-携带原事件、启动后重发、靠运行表做循环防护）来补救。
+### 线程靠 id 链接，不靠 subject
 
-邮件模型把这一切换成**异步协作语义**：每封信有明确收件人，落在收件人邮箱里
-持久等待；收件人何时读，与发送者无关。邮箱即队列——agent 不在场，邮件照样
-安全；agent 醒来，扫一遍未读即可。重投递机制存在的理由整个消失。
+`subject` 是可选的——LLM 之间的通信经常不需要标题。线程语义完全由 id 链接承担：`in_reply_to` 指向被回复的上游邮件，`thread_id` 是线程根邮件的 id，回复时从上游继承；新线程的 `thread_id` 默认等于邮件自己的 id。这个选择的理由是：subject 是自然语言，重复、可改、跨语言不稳定；id 链接是精确的、机器可验证的，检索和可视化都按 `thread_id` 聚合即可。代价是客户端必须配合——回复时带上 `in_reply_to` 和继承的 `thread_id`，否则就是另起线程。
 
-### 核心隐喻：Republic of Letters（书信共和国）
+一个具体例子：A 发出信 m1（`thread_id = m1.id`）；B 回复 m2（`in_reply_to = m1.id`，`thread_id = m1.id`）；A 再回 m3（`in_reply_to = m2.id`，`thread_id = m1.id`）。`thread_id` 把 {m1, m2, m3} 聚成一个会话视图，`in_reply_to` 在会话内部给出回复的父子结构。agent 侧的回复头由 stage 自动从触发邮件推导（见「发信：唯一出口」），人类客户端与 SDK 则要在 `POST /messages` 里显式传 `in_reply_to` / `thread_id`——字段穿透 REST 协议直达 `Mail.create`，服务端不重写。
 
-代表大会的隐喻没有死，而是升级了：Congress 不需要实体大厅——每个代表凭书信
-出席。17–18 世纪启蒙时代的"文人共和国"正是如此：一个由多人邮件沟通构成的、
-无实体的信件国度。我们每个人都身处大会中，每个人都是代表。
+## 投递管线
 
-上下文不再默认共享，而是**显式传递**（forward / CC）——这更符合
-"每个 agent 是独立心智"的本体论。
+投递由 `organization/mail/delivery.py` 的 `MailDelivery` 承担。它订阅 EventBus 上的 `MAIL_NEW`，对每封邮件依次做四件事：
 
----
+1. **展开**：`_expand_recipients` 把 `all@tlon.internal` 展开为全部已注册 agent（含睡眠中的，经 `AgentInfoProvider.get_all_ids`）加全部已知人类（在线适配器 ∪ 有持久邮箱的离线人类，经 `TlonPaths.known_human_ids`），to+cc 合并去重，一个收件人只收一份。广播因此不需要成员维护任何订阅关系——「全体成员」在每次投递时从注册表和邮箱布局现算。
+2. **解析**：每个地址经 `RecipientResolver.resolve_member` 解析成成员 id；解析不到的收集进 unknown 列表，留到最后统一退信。
+3. **落盘**：写发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 `base/paths.py` 的 `TlonPaths.member_mail_dir` 解析，`Mailbox` 实例按需建立、有界 LRU 缓存，`_MAILBOXES_CAP = 4096`）。
+4. **通知**：按收件人逐个发布 `MAIL_DELIVERED`，payload 携带邮件本体和收件人成员 id。唤醒、入队、推送都挂在这个事件上，投递组件自己不知道收件人是 agent 还是人类。
 
-## 设计决策（已与作者确认）
+`MAIL_NEW` 与 `MAIL_DELIVERED` 分成两个事件是刻意的：`MAIL_NEW` 表达「有一封信进入系统」（每封一次，发件视角），`MAIL_DELIVERED` 表达「这封信到达了某个成员的邮箱」（每收件人一次，收件视角）。落盘发生在这两者之间——订阅 `MAIL_DELIVERED` 的任何一方都可以假设邮件已在磁盘上。这也让投递本身成为总线上可观察的一环：运维模式的事件流能看到每一跳。
 
-| # | 决策 | 结论 |
-|---|------|------|
-| 1 | 语义 | 聊天室（同步在线）→ 邮件（异步协作） |
-| 2 | 地址 | `<agent-id>@tlon.internal`（如 `gu-yanxi@tlon.internal`，id 即 local part）；人类 `username@tlon.internal` |
-| 3 | 收件人 | 发送时显式指定；前端展示 agents 并提供填写功能 |
-| 4 | 共享上下文 | 由邮件 **forward**（及 CC）显式传递 |
-| 5 | 广播 | 提供 `all@tlon.internal` 邮件列表（展开为全体成员） |
-| 6 | 邮箱 | 每成员一个 mailbox |
-| 7 | 已读 | cursor 记录已读位置 |
-| 8 | proactive | **退役**（spec 字段、trigger 分支、`triggers_proactive` 保险丝整套删除） |
-| 9 | 唤醒公告 | 不要（receptionist 系统消息随之移除） |
-| 10 | 未读批处理 | **每封邮件一个 session**（复用现有多 session 调度） |
-| 11 | 查无此人 | **退信**（bounce 系统邮件回给发件人） |
-| 12 | TUI | 最小改动适配；以后用 React+Ink 重写 |
+`MailDelivery` 除两个有界缓存外无状态：路由信息全部来自注入的 `AgentInfoProvider`（已注册 agent，含睡眠）、`AdapterManager`（在线人类）和持久邮箱布局（已知离线人类）。投递失败只记日志不抛出——EventBus 的处理器约定如此，一封信的失败不能阻塞总线上其他订阅者。
 
----
+### 进程内幂等
 
-## 邮件数据模型
+`MAIL_NEW` 可能被重发（例如事件回放）。`MailDelivery` 用一个有界内存集合（`_SEEN_CAP = 4096`，最旧淘汰）记住最近处理过的 `(mail_id, 环节, member)` 键（`{mail.id}|sent|{sender}`、`{mail.id}|inbox|{member}`、`{mail.id}|bounce|{sender}` 三种）：同一封邮件不会对同一成员写第二份副本、发第二个 `MAIL_DELIVERED`。键被淘汰或进程重启后回退为重复投递——追加写的邮箱容忍重复，宁多勿丢。
 
-```
-Mail: id, from, to[], cc[], subject?, content,
-      in_reply_to?, thread_id, forward_of?, timestamp
-```
+投递全程在 tracing 之下：`_on_mail_new` 续接事件的 trace（或新开根 span），`mail.delivery` span 记录 `mail_id` 与发件人，`MAIL_DELIVERED` 事件携带同一 trace 的上下文——一封信从发出到落盘到唤醒收件人，在 `~/.tlon/shared/traces/` 里是一棵连续的树。
 
-- **线程**：`in_reply_to` 指向上游邮件；`thread_id` = 线程根邮件的 id
-  （回复时继承）。不用 subject 前缀拼线程——机器用 id 链。
-- **subject** 可选（LLM 通信经常不需要）。
-- **forward**：`forward_of: mail_id` 字段保留结构信息（谁转发了哪封），
-  投递时原信内容被引用进新信。
+### 退信是设计意图
 
-## 邮箱布局
+解析不到任何人的地址会触发退信：`MailDelivery._bounce` 以 `postmaster@tlon.internal` 名义给发件人回一封信，subject 为 `Undeliverable: ...`，正文列出不存在的地址，`in_reply_to` 指向原信、`thread_id` 继承原线程。退信落在发件人的**收件箱**里，走和普通邮件完全相同的投递路径——所以一个 LLM 发件人会在自己的认知循环里读到退信，自己改正地址重发。错误不需要专门的告警通道，错误本身就是一封邮件。发件人没有邮箱时（postmaster 这类系统地址）退信无处可投，记日志丢弃——这也是退信不会无限循环的原因。
 
-- **agent**：复用现有 home——`~/.tlon/<agent-id>/mail/inbox.jsonl` +
-  `sent.jsonl`。contractor 被回收时邮箱随 home 删除，语义自洽。
-- **人类**：新建 home——`~/.tlon/human-<username>/mail/`
-  （member id 中的冒号换连字符作目录名）。
-- **已读**：`inbox.cursor` 记录已读位置（jsonl append-only，逐封改标志
-  需重写文件；cursor 只记"读到哪"最省）。agent 处理完一封即推进。
+这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。`SendEmailTool` 的受理回执明确告诉 LLM「以退信为唯一的失败信号」，把这条约定写进了工具语义。
 
-## 投递器（router 的继任者）
+## 名称解析：唯一权威
 
-sendEmail → 校验收件人 → 展开 `all@tlon.internal` → 写入每个收件人 inbox →
-对每个收件人发 `MAIL_DELIVERED` 定向事件。
+名称↔地址的映射历史上曾有两份实现（adapter 侧和投递侧各一份），靠手工保持同步，出过漂移 bug（issue /）。现在唯一权威是 `organization/mail/resolver.py` 的 `RecipientResolver`，两个方向都在这一个类里：
 
-- **all@ 展开范围**：全部注册 agent（含沉睡）+ 有邮箱的人类——all 的字面义
-  即全体代表。
-- **退信**：收件人查无此人时，系统以 `postmaster@tlon.internal` 给发件人
-  回一封 bounce 邮件（错误反馈进收件箱，LLM 能自行纠正地址）。
-- **已知人类**：人类"存在"的判定 = 在线，或邮箱目录已存在（首次接入、
-  首次收信、首次拉 `/inbox` 即建立）。离线已知人类的邮件留在邮箱等待；
-  从未有过邮箱的地址才算查无此人，退信。（2026-08-10 评审修复，见
-  [mail-review-2026-08-10.md](./mail-review-2026-08-10.md)）
-- **名称碰撞**：local part 同时命中 agent 与人类时 **agent 优先**——与
-  agent 同名的人类无法被寻址（已知取舍，2026-08-10 补记）。
-- 发送者的邮件同时写入自己的 `sent.jsonl`。
+- `resolve_address`：原始收件人（agent id、agent 显示名、人类用户名、`human:<username>` 或完整地址）→ 邮件地址。发信侧用，人类可以说「谢云舒」而不必记 `xie-yunshu@tlon.internal`。
+- `resolve_member`：邮件地址 → 成员 id。投递侧用。local part 撞名时 agent 优先于人类。
 
-## 收信处理
+「已知人类」的规则——在线，**或**离线但有持久邮箱——只写在 `_known_human` 一处，两个方向共享。这保证了一个关键不变量：发信侧能解析出的收件人，投递侧一定能投递。`AdapterManager` 持有这个 resolver 实例，`MailDelivery` 构造时经 `adapter_manager.recipient_resolver` 取同一个实例；resolver 的在线检查闭包直接读 `_adapters` 字典，永远看到的是实时的在线集合。
 
-- **沉睡 agent**：邮件到达 → registry 发 wake 请求（按收件人 spec 的
-  `:on :mail-delivered` 派生；**不再携带 trigger_event**，重投递管道整套
-  删除）→ registry 启动 agent → agent 扫 inbox cursor 之后的未读邮件。
-- **运行中 agent**：`MAIL_DELIVERED`（按收件人定向）→ 入队 → 正常 session。
-- **每封邮件一个 session**：通知事件带 mail id；session 处理该邮件，完成即
-  推进 cursor。每封信独立成败、独立 trace；积压 N 封则 N 个 session
-  （复用现有多 session 调度器）。
+resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含睡眠中的已注册 agent），人类在线性查注入的 callable，邮箱布局查 `TlonPaths`。组织层只依赖 base 的契约因此不破——三个能力全部构造器注入。
 
-## trigger / DSL 新语义
+## 一封信的生命周期
 
-- 默认触发规则：**未读邮件 To 或 CC 含我 → 处理**。
-- DSL builtin 重定义：`addressed-to-me?` = To 含我；新增 `cc-ed?` = CC 含我
-  （`mentioned?` 随之退役——邮件语义里"提及"不再是路由依据）。
-- 退役清单：spec 的 `proactive` 字段、trigger 的 proactive 分支、
-  Member 接口的 `triggers_proactive`、router 的保险丝。
-- `all@` 邮件到达时各 agent 的 spec 自行决定理不理（默认理）。
+把各环节串起来，一封 agent 回信从产生到被下一个收件人消费的完整路径：
 
-## context_builder
+1. **声明**：act stage 在 `StageOutcome` 里声明 `MailEffect`（stage 是纯变换，不碰外部状态）。
+2. **执行**：`EffectExecutor.send_mail` 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`。
+3. **投递**：`MailDelivery` 展开收件人、解析、写发件人 `sent.jsonl` 与各收件人 `inbox.jsonl`，逐收件人发 `MAIL_DELIVERED`。
+4. **分流**：`MAIL_DELIVERED` 到达三类订阅者——收件人是运行中的 agent，`MemberRuntime` 门控入队；收件人是睡眠的 agent，`AgentRegistry` 发唤醒请求；收件人是人类，`HumanAdapter` fan-out 给在线会话，离线则邮件留在邮箱。
+5. **消费**：agent 在 session 里读到邮件（作为触发邮件进入认知循环），完成后推进 cursor 标已读；人类经 SSE 实时收到或上线后 `GET /inbox` 拉取。
+6. **闭环**：agent 的回复回到第 1 步，自动继承线程——多轮通信就这样在投递管线上滚动起来。
 
-房间历史 → **邮箱历史**：inbox + sent 最近 N 封（按 thread 组织呈现）。
-LLM 上下文里不再有"别人的对话"——只有自己的通信。
+注意整条链路上没有一个环节依赖「对方此刻在线」：这就是异步通道换来的解耦——发送、投递、消费、回复四者的速率与在线状态完全独立。
 
-## 人类侧
+## mailbox 即队列
 
-- 人类邮箱持久等待：离线时邮件留在邮箱，连接后走 REST `/inbox` 拉取。
-- 人类投递走 Member 抽象（单轨）：HumanAdapter 订阅 `MAIL_DELIVERED`，
-  按 recipient 过滤后向 attached sessions 扇出；NotificationService 不向
-  chat 模式 session 投递 `mail.delivered`（event 模式的 operator 运维
-  控制台不受影响，仍可见全部邮件流量）。
-- WS 协议：发消息带 `to`/`cc`/`subject` 字段（`mentions` 别名与正文
-  `@` 解析桥已于 PR-C 移除）；拉历史改为 REST `/inbox`。
-- 人类**无已读 cursor**（v1 决策）：人类邮件不做已读追踪。
-- operator（React+Ink）的 mail 视图是人类主界面（PR-B）；Python
-  Congress TUI 已于 PR-C 退役。
+邮箱实现是 `organization/mail/mailbox.py` 的 `Mailbox`，磁盘上三个文件：
 
-## 系统邮件
+- `inbox.jsonl`——收到的邮件，追加写；
+- `sent.jsonl`——发出的邮件，追加写；
+- `inbox.cursor`——已读邮件 id，每行一个。
 
-- 退信：`postmaster@tlon.internal`。
-- 亚当的生命周期通知如需可见，以 `adam@tlon.internal` 发系统邮件
-  （v1 不需要——唤醒公告已决策删除）。
+已读状态用「id 集合」而不是「每封邮件一个已读位」，因为 jsonl 是追加写的：翻转一个标志位意味着重写整个文件，而一个已读 id 集合即使邮件被乱序处理也始终正确。cursor 文件不存在意味着全部未读。`mark_read` 幂等（重复标记是 no-op），`unread` 返回按时间排序的未读列表，`recent` 合并 inbox+sent 供上下文构造器展示成员自己的通信历史。
 
----
+选三个纯文本文件而不是数据库，理由和整个存储层一致：零依赖、可 `tail -f` 观察、可被任何工具读写、损坏容忍度高（`_read_mails` 跳过坏行继续解析）。邮箱是社会的公共基础设施，它的格式应该简单到任何成员（包括未来自己写工具的成员）都能直接操作。
 
-## 删除清单
+这个结构让邮箱天然就是一个持久队列，系统的背压与恢复语义全部建立在它上面：
 
-- `StartRequest.trigger_event` 携带/重投递/循环防护整套管道
-- 消息正文 @ 解析（human_adapter）、mention 解析（MemberDirectory）
-- `messages.jsonl` 共享房间历史（断代，不迁移——开发期项目）
-- context_builder 的房间历史
-- proactive 整套（见上）
-- receptionist 唤醒公告（，随本重构回滚）
+- **先持久化，后处理**：邮件先写进 `inbox.jsonl`，才发布 `MAIL_DELIVERED`。处理环节（入队、session、回复）全部失败也不丢信。
+- **唤醒不带载荷**：睡眠中的 agent 被 `MAIL_DELIVERED` 唤醒时，事件不携带「你要处理什么」——邮件已在收件箱，成员启动时自行扫描未读（`Mailbox.unread`）。唤醒信号可以丢、可以重复，未读事实在磁盘上。
+- **队列满丢新保未读**：运行中 agent 的有界邮件队列溢出时，丢掉的是「新事件的拷贝」，邮件保持未读，下次启动扫描补回来。绝不阻塞总线。
+- **按目录共享锁**：同一目录的多个 `Mailbox` 实例（投递缓存、REST `/inbox` 处理器、agent 运行时）共享一把按目录的 asyncio 锁（模块级 `_LOCKS`，有界 LRU，`_LOCKS_CAP = 4096`；已持有的锁永不淘汰），进程内写互斥。`Mailbox` 实例本身是无状态句柄，淘汰重建安全。
 
-Member / 亚当的 policy-mechanism 分层**不受影响**。
+把四条合起来看，这是一套一致的溢出哲学：EventBus 的订阅者队列、SessionScheduler 的邮件队列、投递的幂等集合、Mailbox 的锁表——全是有界的，溢出时丢的都是「内存里的拷贝」，磁盘上的事实永远完好。系统的任何一层都可以被打垮，信不会丢；这是「邮箱即队列」对可靠性承诺的完整含义。
 
----
+为什么不引入外部消息队列（NATS、Redis Streams 等）来「更可靠」：那些系统解决的是跨进程、跨机器的可靠投递，而 Tlon 是单进程系统，唯一的真相来源就是本地磁盘。引入外部队列只会多一个要运维的组件、多一种双写不一致的可能，可靠性反而下降。邮箱文件就是队列，追加写就是入队，cursor 就是消费位——原语已经足够。
 
-## 分期实施
+## agent 收发
 
-- **R1（服务端核心）**：Mail 模型 + mailbox 存储（含 cursor）+ 投递器 +
-  agent 收信处理（唤醒扫描 + 每封一 session）+ sendEmail 工具 +
-  trigger/proactive 退役 + context_builder 邮箱历史 + 删 trigger_event 管道
-- **R2（人类侧）**：
-  - **PR-A（服务端协议）** ✅：WS `to`/`cc`/`subject`、REST `/inbox`、
-    NotificationService 按收件人过滤（chat 模式；后于单轨化重构移交
-    HumanAdapter）
-  - **PR-B** ✅：operator mail 视图（人类主界面）
-  - **PR-C** ✅：拆桥——`mentions` 别名、`@` 解析、`/history` 已移除，
-    Python Congress TUI 已退役
-- **R3（打磨）**：forward、退信、all@ 细节、线程呈现
+agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控入队，发信经 `SendEmailTool` 声明效果。两侧都把「邮件」与「认知」解耦——邮件层不知道认知循环的存在，认知循环不知道邮箱的文件布局，中间是 `MAIL_DELIVERED` / `MAIL_NEW` 两个事件和磁盘上的邮箱。
 
-R1 内部可再拆 PR。
+### 收信：门控入队
 
-## 验收标准
+agent 收信的入口是 `agents/member_runtime.py` 的 `MemberRuntime` 对 `MAIL_DELIVERED` 的处理，三种结果：
 
-- agent A sendEmail 给沉睡的 agent B：邮件落在 B 的 inbox，B 被唤醒，
-  扫描未读并逐封处理（每封一个 session），处理后 cursor 推进。
-- agent 转发收到的邮件给 C（forward_of 保留引用），C 的上下文里出现
-  原信内容——共享上下文靠显式传递。
-- `all@tlon.internal` 展开为全体成员；每个收件人的 spec 各自决定响应。
-- 发往不存在地址的邮件收到 postmaster 退信。
-- 人类离线期间邮件留在邮箱；TUI 连接后可见，可显式填写收件人回信。
-- 全程无 proactive、无重投递、无房间历史。
+- **入队**（`queued`）：邮件命中声明了 `:on :mail-delivered` 的认知规则且通过 `:when` 门控，排入 `SessionScheduler` 的有界队列，已读推迟到 session 完成时由 EffectExecutor 推进 cursor——「处理完才算读过」，处理中途崩溃的邮件下次启动仍是未读。
+- **拒绝**（`rejected`）：`:when` 门控不通过，或邮件并非发给本成员——立即标记已读。这是有意为之（D6.1）：拒绝意味着「我看到了，选择不回应」，不回应不等于没收到；否则「永不回应」的 agent 会把邮件永远挂在未读上，每次启动都被同一封信唤醒一次。
+- **丢弃**（`dropped`）：队列满——保持未读，等下次启动扫描。
 
----
+自己发给自己的邮件（own-mail guard）直接标记已读、永不处理：广播到 `all@` 的邮件也会投一份给发件人自己，不回声是避免自激循环的基本卫生。没有这个守卫，一个听 `all@` 广播的 agent 会对自己的广播再回一封广播，社会会在一封邮件上无限震荡。
 
-*代码为准，文档为映射。实施中如与设计冲突，回写本文档。*
+收件人未在运行时走唤醒路径：`AgentRegistry` 收到 `MAIL_DELIVERED` 后检查其 spec 是否声明了 `:on :mail-delivered`，是则发布启动请求将其唤醒——唤醒资格从 spec 派生，是机制不是策略（Adam 不参与）。唤醒请求续接投递的 trace，启动后的未读扫描与触发它的那封信在同一棵 trace 树下，可观测性贯穿「投递 → 唤醒 → 处理 → 回复」全程。
+
+为什么收信要过 `:when` 门控而不是有信必回：邮箱是开放寻址的，广播、抄送、误投都会到一个成员的收件箱；门控是成员对注意力的自主控制，spec 声明「哪些信值得一个 session」。这和认知循环的燃料预算（`:fuel`）是同一层设计——开放社会里每个成员都必须能自我保护。
+
+### 发信：唯一出口
+
+agent 发信只有一个出口：`tools/mail/send_email.py` 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 `agents/executor.py` 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头（`in_reply_to` / `thread_id`）由 stage 从 session 的触发邮件推导并声明，所以 agent 的回复**自动继承线程**，不需要 LLM 自己记得带 thread_id。
+
+为什么强调「唯一出口」：
+
+- **可审计**：所有 agent 发出的信都经过同一个点，trace 注入、落盘、投递语义只有一份实现，社会的全部通信记录完整可查。
+- **纯度可检查**：stage 只声明 `MailEffect` 数据、不直接发布事件，这是 effects-as-data 的一部分，由 `scripts/check_stage_purity.py` 静态强制（见 `docs/design/runtime.md`）。发信意图是数据，执行是引擎的事。
+- **LLM 心智负担小**：LLM 只需要学会一个工具；线程继承、trace、幂等都是引擎自动给的。
+
+工具本身不投递——`execute` 只返回受理回执，回执文案明确告知 LLM：投递是异步的，地址不存在会收到 postmaster 退信，退信是唯一的失败信号，「不要在本轮向用户承诺已送达」。这句文案是把系统的异步语义翻译成 LLM 能遵守的行为约定。
+
+`is_complete` 参数把「发邮件」和「结束本轮思考」绑定：`false` 表示发中间进度、继续思考（一封协作过程中的中间信，随后还会有别的工具调用和信件）；`true` 表示这是最终回复、结束循环（且本轮只能调 `sendEmail`，不能与其他工具混用——最终回复就是本轮的句号）。这把「agent 每轮思考的产出」与「一封信」对齐：认知循环不是跑到燃料耗尽才停，而是以「回信了」为自然终止条件。对社会而言这意味着每个 session 的产出都落在邮件层可见——没有停留在内存里、随 session 结束蒸发的思考结果；最终答复一定是一封可检索的信。
+
+这也解释了为什么中间信和最终信要区分：中间信让长任务中的协作方尽早看到进展（人类社会里叫「抄送进展」），最终信给出结论；两者都是信，但对收件人的紧迫性和对循环的控制语义不同。
+
+## 人类接入
+
+人类不是协议层的特殊存在，而是总线上的一个普通成员。`organization/messaging/human_adapter.py` 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。
+
+adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。TUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 `docs/design/server-protocol.md`）。
+
+发言侧，`speak` 只接受显式的 `to` / `cc`（R2 协议；R1b 的 `mentions` 别名和按正文 `@名字` 解析的兼容桥已在 PR-C 移除），收件人经共享 resolver 解析，零可解析收件人的邮件直接拒绝——没有地址的邮件是非法的。收件侧与所有成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。这条「每成员一个邮箱、经成员投递」的单轨对人也成立（推送分工详见 `docs/design/server-protocol.md`）。
+
+`AdapterManager` 管理 adapter 的生命周期：首个会话 attach 时创建（attach/detach 由一把锁串行化，两个并行的首次 attach 不会泄漏出两个 adapter），最后一个 detach 时关停。关键语义在**首次接触**：第一次 attach（或 REST 发信）同时创建人类的持久邮箱——连接过一次的人类就是「已知人类」，此后离线时发给他的邮件留在持久邮箱里，上线再读。REST 入口 `POST /messages` 走 `publish_as`：发件人身份来自请求体的 `username`，没有在线 adapter 时建一个临时的，发完即拆（若期间有会话 attach 则保留——拆除前再查一次会话数）。
+
+人类离线时邮件留在持久邮箱，这不是降级路径而是一等语义：邮箱是磁盘事实，adapter 只是「在线时的推送通道」。上线后 `GET /inbox` 拉到的是全量历史，SSE 只是增量——人类和睡眠中被唤醒的 agent 遵循同一套「未读在磁盘、上线补扫」的模型。人机平等在这条规则上最具体：没有谁的消息会因为你不在线而消失，agent 的不会，人的也不会。
+
+值得注意的还有身份模型：人类成员 id 带 `human:` 前缀，地址上却与 agent 同域同名空间（local part 撞名时 agent 优先）。这是一个刻意的轻量选择——社会里成员数量小、由同一批人管理，撞名靠约定而非命名空间隔离解决；前缀只留在成员 id 层用于区分运行时类型，不进地址，人类在地址簿里和 agent 长得一样。
+
+## 不变量
+
+把分散在各节的不变量收拢在这里，它们是改邮件系统时不能破坏的约束：
+
+- 发信侧能解析的收件人，投递侧必能投递（共享 `RecipientResolver`）。
+- 邮件先落盘后通知；`MAIL_DELIVERED` 发布时邮件已在收件箱（先持久化后处理）。
+- 未读事实只在 `inbox.jsonl` + `inbox.cursor`，内存队列与唤醒信号都可丢（丢新保未读）。
+- 每个成员一个邮箱；投递到成员，不经成员投递到会话（单轨，人类也不例外）。
+- 成员永不处理自己发的邮件（own-mail guard）。
+- 错误以邮件形态回到发件人收件箱（postmaster 退信），无带外告警通道。
+
+## 已废弃
+
+- **聊天室 + @提及模式**：曾经实现过共享聊天室模型（R1b：按正文 `@名字` 解析收件人、`mentions` 字段），后整体废弃，代码与协议入口已移除。废弃理由见 `docs/decisions/0002-mail-as-only-channel.md`：无持久线程语义、噪声大、人机通道分裂。仓库根目录的 `data/chat_history/` 是那个时代的残留数据，当前代码不引用它；`base/paths.py` 的 `chat_history_dir` 及 wizard 里的创建/清理引用是尚未清理的残留。
+- **Telegram 接入**：`pyproject.toml` 里保留了 `python-telegram-bot` 依赖，session/client 代码里 `client_type` 的示例值有 `"telegram"`，但没有任何真实实现——是未实现的占位，不是可用通道。
+
+废弃的方式本身遵循项目规范「不保留向后兼容」：`mentions` 别名、`@名字` 正文解析这些兼容层是整段删除而非留 fallback——邮件寻址规则只有一份时，系统才能被 LLM 可靠地学会。两个残留（`chat_history_dir` 引用、`python-telegram-bot` 依赖）应择机清掉，但都不影响运行时行为。
+
+## 方向
+
+与愿景的差距主要有两处：
+
+- **知识沉淀在私有邮箱**：目前信件只存在于收发双方的邮箱里，没有社会级的公共记忆——「可检索、可流传」只在个体层面成立。一个成员无法检索社会过去讨论过什么，新成员出生读不到社会的历史。书信共和国的知识共同体需要某种公共层（存档、摘要、可检索的社会记忆），尚未建设。
+- **无同行评议机制**：愿景借书信共和国隐喻的核心是同行评议——成员互相评价、筛选、放大好的知识。当前邮件系统只有投递，没有评价与筛选的机制：一封信发出后，社会对它没有任何结构化的反馈通道（引用、批注、背书）。这层要在邮件之上生长——评议本身就是书信往来的一种——而不是另建通道。
+
+这两处差距是同一条路线的两段：先有公共层承载社会记忆，评议机制才有可作用于其上的对象。它们都属于愿景「闭环」阶段（经验沉淀为知识）的前置，不是邮件系统自身的缺陷——投递、持久化、寻址这些「筑基」层的性质是完整的。
+
+次一级的已知简化（不构成方向，只记录边界）：
+
+- 幂等集合、邮箱缓存、锁表都是进程内有界结构，重启后回退为「可能重复投递」——追加写模型容忍，跨进程部署是另一个量级的问题，届时再议。
+- 没有邮件级检索与分页：`Mailbox.recent` 按条数截取，`GET /inbox` 同理。社会规模小、邮箱不大时够用；检索是公共层建设的一部分，不在当前范围。
+- `all@` 广播按「已知人类」展开，从未连接过的人不在其列——广播的边界是「社会已知成员」，不是「全世界」。

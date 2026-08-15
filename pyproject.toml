@@ -1,7 +1,7 @@
 [project]
 name = "tlon"
 version = "0.1.0"
-description = "A multi-agent collaboration system simulating a software engineering team"
+description = "Self-evolving agents, towards AGI"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
