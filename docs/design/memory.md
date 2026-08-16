@@ -1,24 +1,24 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：交互落盘为工作记忆，工作记忆满了就压缩成摘要与事实进入情景记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 `src/tlon/memory/`，agent 侧工具在 `src/tlon/tools/memory/`，反思在 `src/tlon/agents/reflection.py`）。
+Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：交互落盘为工作记忆，工作记忆满了就压缩成摘要与事实进入情景记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。
 
 ## 定位：可审计的个体记忆
 
-`docs/vision.md` 要求「经验沉淀为知识」。在 Tlon 的语境里这条要求有两个约束：
+[docs/vision.md](../vision.md) 要求「经验沉淀为知识」。在 Tlon 的语境里这条要求有两个约束：
 
 - **行为即数据**——记忆也是数据。agent 能读、能写、能改自己的记忆，人类也能直接打开文件审计。
 - **书信共和国**——社会的知识在邮件里积累，个体记忆只服务个体。记忆是 agent 私有的，共享靠发信，不靠共享存储。
 
-这两条决定了记忆系统的基本形态：每个 agent 一个私有目录（`~/.tlon/{agent_id}/memory/`，路径由 `base/paths.py` 的 `TlonPaths` 解析），全部内容是 JSONL 文本文件，没有数据库、没有向量索引。
+这两条决定了记忆系统的基本形态：每个 agent 一个私有目录（`~/.tlon/{agent_id}/memory/`，路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 解析），全部内容是 JSONL 文本文件，没有数据库、没有向量索引。
 
 还有一条隐含约束来自认知循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储与摘要能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（spec 的 `:loop` 声明与 `EffectExecutor` / `ContextBuilder` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。
 
 ## 双层结构
 
-`memory/manager.py` 的 `MemoryManager` 是统一入口，协调两层存储：
+[memory/manager.py](../../src/tlon/memory/manager.py) 的 `MemoryManager` 是统一入口，协调两层存储：
 
-- **工作记忆**——`memory/working_store.py` 的 `WorkingMemoryStore`，单个文件 `working/interactions.jsonl`，存原始交互（收到的邮件、agent 的回复、工具调用与结果），上限 `working_max_items`（默认 10）。这是一个滚动窗口：超出上限裁掉最旧的。
-- **情景记忆**——`memory/episodic_store.py` 的 `EpisodicMemoryStore`，两个文件 `episodic/summaries.jsonl`（会话摘要，上限 20）与 `episodic/facts.jsonl`（结构化事实，上限 50）。这是长期层，由压缩与 agent 主动记录共同填充。
+- **工作记忆**——[memory/working_store.py](../../src/tlon/memory/working_store.py) 的 `WorkingMemoryStore`，单个文件 `working/interactions.jsonl`，存原始交互（收到的邮件、agent 的回复、工具调用与结果），上限 `working_max_items`（默认 10）。这是一个滚动窗口：超出上限裁掉最旧的。
+- **情景记忆**——[memory/episodic_store.py](../../src/tlon/memory/episodic_store.py) 的 `EpisodicMemoryStore`，两个文件 `episodic/summaries.jsonl`（会话摘要，上限 20）与 `episodic/facts.jsonl`（结构化事实，上限 50）。这是长期层，由压缩与 agent 主动记录共同填充。
 
 分层的理由是两种数据的生命周期不同：原始交互量大、时效短、格式规整，适合滚动窗口；摘要与事实量小、长期有效、需要被搜索，适合独立存储。两层共用一个目录、各自一把 `asyncio.Lock`，写入是追加优先——`_persist`（临时文件 + `os.replace` 原子重写）只在裁剪、删除或追加失败时兜底。
 
@@ -26,12 +26,12 @@ Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部�
 
 ### 压缩：snapshot + delta-clear
 
-压缩由 `memory/summarizer.py` 的 `Summarizer` 完成：一次 LLM 调用生成中文摘要（含 `key_decisions` 与 `action_items`），再一次提取结构化事实（subject/predicate/object + 置信度），入口是 `process_interactions`。两次调用都是 30 秒超时，prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹——对 LLM 输出的鲁棒性做在解析层。事实提取时管理器先取最近 20 条已有事实传入，提取器把其中最近 10 条写进 prompt（「不要重复提取」），把去重职责交给模型而不是存储层。LLM 不可用时（未配置或调用失败）回退到 `_generate_fallback_summary`——只统计交互数与首尾消息的机械摘要。降级是设计意图：记忆压缩不能因 LLM 抖动而丢失。
+压缩由 [memory/summarizer.py](../../src/tlon/memory/summarizer.py) 的 `Summarizer` 完成：一次 LLM 调用生成中文摘要（含 `key_decisions` 与 `action_items`），再一次提取结构化事实（subject/predicate/object + 置信度），入口是 `process_interactions`。两次调用都是 30 秒超时，prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹——对 LLM 输出的鲁棒性做在解析层。事实提取时管理器先取最近 20 条已有事实传入，提取器把其中最近 10 条写进 prompt（「不要重复提取」），把去重职责交给模型而不是存储层。LLM 不可用时（未配置或调用失败）回退到 `_generate_fallback_summary`——只统计交互数与首尾消息的机械摘要。降级是设计意图：记忆压缩不能因 LLM 抖动而丢失。
 
 触发有两条路径，都在 `MemoryManager` 上：
 
 1. **容量触发**——`add_interaction` 之后 `_check_summary_trigger` 检查工作记忆是否满，满则 `generate_summary`。
-2. **空闲触发**——`check_idle_timeout` 由 `agents/scheduler.py` 的 `SessionScheduler` 在循环间隙调用，距上次交互超过 `idle_timeout_minutes`（默认 30）且有未压缩内容时强制摘要。
+2. **空闲触发**——`check_idle_timeout` 由 [agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的 `SessionScheduler` 在循环间隙调用，距上次交互超过 `idle_timeout_minutes`（默认 30）且有未压缩内容时强制摘要。
 
 `generate_summary` 的并发处理值得单独说明：先在 store 锁内对工作记忆做快照，**释放锁**再做 LLM 调用（可能很慢），完成后 `remove_by_ids` 只删快照里的条目——LLM 调用期间新进的交互被保留。这是「快照 + 增量清除」，避免了长调用持锁阻塞认知循环，也避免了摘要完成后误删新交互。
 
@@ -41,7 +41,7 @@ Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部�
 
 ## 数据模型与存储
 
-全部模型在 `memory/models.py`，都是纯数据 dataclass：
+全部模型在 [memory/models.py](../../src/tlon/memory/models.py)，都是纯数据 dataclass：
 
 - `Interaction`——一次完整回合：收到的消息、agent 的回复、`tool_calls` 与 `tool_results`、时间戳与 session id。id 是 uuid，由模型默认生成。
 - `Summary`——一次压缩的产出：摘要文本、`source_interactions`（来源交互的 id 列表，可追溯）、`key_decisions` / `action_items` / `participants` / `keywords`。
@@ -52,23 +52,23 @@ Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部�
 
 每个 store 一把 `asyncio.Lock`，缓存即真相（`_cache`），磁盘是缓存的持久化。进程内并发只有协作式抢占一个维度，单锁足够。`MemoryManager.load` 还有一层配置加载语义：`memory/config.json` 是**唯一的**记忆调参面——存在时以磁盘文件为准（绑定 `agent_id`），不存在时用构造传入的 `MemoryConfig`（生产装配传默认值）落盘初始化；合并后的 `working`/`episodic` 上限在 store 加载前重新应用到两个 store（上限在构造时快照，不重应用则调参不生效）。早期版本曾有两套配置（`agent.yaml` 的 `memory:` 段 + 按 `agent_id` 是否预填决定是否合并的 `config.json`），两套在生产都不生效，已收敛为单一磁盘文件。
 
-`MemoryConfig` 的默认值定义了整个系统的量级：工作记忆 10 条、摘要窗口 10 条、摘要上限 20、事实上限 50；进上下文的配额是摘要 5 / 事实 10 / 工作记忆 5；空闲 30 分钟触发压缩；反思至少间隔 5 条新交互。这些数字是容量与 token 成本之间的手工平衡点，集中在 `memory/models.py` 一处。
+`MemoryConfig` 的默认值定义了整个系统的量级：工作记忆 10 条、摘要窗口 10 条、摘要上限 20、事实上限 50；进上下文的配额是摘要 5 / 事实 10 / 工作记忆 5；空闲 30 分钟触发压缩；反思至少间隔 5 条新交互。这些数字是容量与 token 成本之间的手工平衡点，集中在 [memory/models.py](../../src/tlon/memory/models.py) 一处。
 
 ## 上下文注入
 
-记忆的回流通道是 `MemoryManager.build_context_blocks`：按固定配额取最近的内容拼成三个 `ContextBlock`（`memory/models.py`）——情景摘要 5 条（priority 1）、事实 10 条（priority 2）、工作记忆 5 条（priority 3），按优先级排序返回。`ContextBlock.to_openai_message` 把每块渲染成带中文标签（「过往会话摘要」「已知事实」「最近工作记录」）的文本。
+记忆的回流通道是 `MemoryManager.build_context_blocks`：按固定配额取最近的内容拼成三个 `ContextBlock`（[memory/models.py](../../src/tlon/memory/models.py)）——情景摘要 5 条（priority 1）、事实 10 条（priority 2）、工作记忆 5 条（priority 3），按优先级排序返回。`ContextBlock.to_openai_message` 把每块渲染成带中文标签（「过往会话摘要」「已知事实」「最近工作记录」）的文本。
 
-注入点是 `agents/context_builder.py` 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 调 `build_knowledge_context` 把这些块拼成一条 `[已知信息]` 开头的 user 消息，按 section 顺序插入对话；当前邮件永远最后追加（引擎拥有这个位置，DSL 只描述它之前的内容）。是否注入知识因此是 spec 层的声明——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
+注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 调 `build_knowledge_context` 把这些块拼成一条 `[已知信息]` 开头的 user 消息，按 section 顺序插入对话；当前邮件永远最后追加（引擎拥有这个位置，DSL 只描述它之前的内容）。是否注入知识因此是 spec 层的声明——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
 
 两个细节体现实用主义：一是**截断**——工作记忆块里工具结果只留 stdout 前 200 字符、回复前 200 字符，防单条交互吃掉整个上下文窗口；二是**降级**——`build_knowledge_context` 把记忆构建的异常整个兜住（记告警、返回空串），记忆损坏不阻断对话，空记忆等价于没有 `(knowledge)` 段。记忆是增强，不是依赖。
 
-写入侧的对称入口是 `EffectExecutor.save_interaction`（`agents/executor.py`）：认知循环结束时，若 spec 的 loop 声明了 `save-interaction true`，就把本轮邮件、LLM 回复与工具结果交给 `MemoryManager.add_interaction` 落工作记忆，同时喂给反思引擎的计数器。是否保存交互因此也是 spec 声明的——确定性成员（无 `:loop`）整个没有记忆管线，`MemoryManager` 只在 `_assemble_cognitive` 装配认知成员时创建。
+写入侧的对称入口是 `EffectExecutor.save_interaction`（[agents/executor.py](../../src/tlon/agents/executor.py)）：认知循环结束时，若 spec 的 loop 声明了 `save-interaction true`，就把本轮邮件、LLM 回复与工具结果交给 `MemoryManager.add_interaction` 落工作记忆，同时喂给反思引擎的计数器。是否保存交互因此也是 spec 声明的——确定性成员（无 `:loop`）整个没有记忆管线，`MemoryManager` 只在 `_assemble_cognitive` 装配认知成员时创建。
 
-配额是硬编码在 `MemoryConfig`（`memory/models.py`）里的默认值，落盘为 `memory/config.json`，与 spec 无关——记忆策略（存多少、取多少）目前是配置而不是行为数据，这是一个有意的边界（见「方向」）。
+配额是硬编码在 `MemoryConfig`（[memory/models.py](../../src/tlon/memory/models.py)）里的默认值，落盘为 `memory/config.json`，与 spec 无关——记忆策略（存多少、取多少）目前是配置而不是行为数据，这是一个有意的边界（见「方向」）。
 
 ## agent 侧接口
 
-agent 通过 `src/tlon/tools/memory/` 下的四个工具读写自己的记忆，全部在 `AgentRegistry._assemble_cognitive`（`agents/agent_registry.py`）装配认知成员时注册，直接持有本 agent 的 `MemoryManager` 实例：
+agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个工具读写自己的记忆，全部在 `AgentRegistry._assemble_cognitive`（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)）装配认知成员时注册，直接持有本 agent 的 `MemoryManager` 实例：
 
 - `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——主动记录一条事实进 `facts.jsonl`。
 - `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——关键词搜索摘要与事实，纯子串匹配（`search_summaries_by_keyword` / `search_facts_by_keyword`），无 embedding。
@@ -81,7 +81,7 @@ agent 通过 `src/tlon/tools/memory/` 下的四个工具读写自己的记忆，
 
 ## 反思：记忆的自我审计
 
-`agents/reflection.py` 的 `ReflectionEngine` 是 agent 对自己记忆的定期审计。触发门控是双条件：距上次反思超过 `rule.loop.reflect.interval_minutes`（来自 spec 的 `:reflect` 段），**且**期间新增交互数达到 `reflection_min_interactions`（默认 5，在 memory config 里）。两个条件一个防过频、一个防空转。计数由 `EffectExecutor.save_interaction`（`agents/executor.py`）在每次落交互后喂给 `note_interaction`；检查由 `SessionScheduler` 在循环间隙经注入的 `check_reflection` 委托——反思不是独立的后台定时器，而是挂在调度器的节拍上，进程里没有第二条时钟。
+[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine` 是 agent 对自己记忆的定期审计。触发门控是双条件：距上次反思超过 `rule.loop.reflect.interval_minutes`（来自 spec 的 `:reflect` 段），**且**期间新增交互数达到 `reflection_min_interactions`（默认 5，在 memory config 里）。两个条件一个防过频、一个防空转。计数由 `EffectExecutor.save_interaction`（[agents/executor.py](../../src/tlon/agents/executor.py)）在每次落交互后喂给 `note_interaction`；检查由 `SessionScheduler` 在循环间隙经注入的 `check_reflection` 委托——反思不是独立的后台定时器，而是挂在调度器的节拍上，进程里没有第二条时钟。
 
 审计本身是「快照 → LLM 分析 → 应用操作」三步：`get_memory_digest` 取记忆状态快照（工作记忆计数、最近 20 条摘要、最近 50 条事实），交给 LLM 按 `REFLECTION_SYSTEM_PROMPT` 分析（低温度 0.3、60 秒超时——审计要稳定不要发散），返回的操作列表（`record_fact` / `delete_fact` / `consolidate` / `noop`）逐个应用回 `MemoryManager`。反思的开关与间隔来自 spec 的 `:reflect` 段（`rule.loop.reflect`），因此它是行为数据的一部分——原型可以声明不同的反思频率（archivist 5 分钟、deep-thinker 10 分钟、fast-responder 15 分钟），但最小交互数阈值仍在 memory config 里，这是 spec 与配置分管反思策略的现状。
 

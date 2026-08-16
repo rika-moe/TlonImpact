@@ -1,6 +1,6 @@
 # API 参考（REST + SSE，协议 v2）
 
-Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.py` 的 `RESTServer` / `RESTAPIHandler`。设计理由见 `docs/design/server-protocol.md`，本文只描述当前实现。
+Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.py](../../src/tlon/app/server/api/rest.py) 的 `RESTServer` / `RESTAPIHandler`。设计理由见 [docs/design/server-protocol.md](../design/server-protocol.md)，本文只描述当前实现。
 
 ## 总述
 
@@ -8,7 +8,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 |---|---|---|
 | Base URL | `http://127.0.0.1:8080`（默认；host/port 由 `RESTServer` 构造参数决定） | `rest.py` 的 `RESTServer` |
 | 协议版本 | `SESSION_PROTOCOL_VERSION = "2.0.0"`，`POST /sessions` 唯一接受的版本 | `rest.py` |
-| 鉴权 | **无认证层**。身份即请求体/query 里的 `username`，信任边界是本机 | `docs/design/server-protocol.md` |
+| 鉴权 | **无认证层**。身份即请求体/query 里的 `username`，信任边界是本机 | [docs/design/server-protocol.md](../design/server-protocol.md) |
 | 响应格式 | 除 SSE 外全部是 JSON（`application/json`，`ensure_ascii=False`） | `rest.py` 的 `_json_response` |
 | CORS | 全开：`Access-Control-Allow-Origin: *`，方法 `GET, POST, PATCH, DELETE, OPTIONS`，允许头仅 `Content-Type`；预检由 `OPTIONS /{path:.*}` 应答 | `rest.py` 的 `handle_options` |
 
@@ -88,7 +88,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 人类成员发信，处理函数 `rest.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。受理即返回 **202**，投递是异步的；解析不到的收件人地址事后以 `postmaster@tlon.internal` 退信形式回到发件人收件箱。
 
-请求体字段（校验的唯一副本在 `app/server/api/send_mail.py` 的 `parse_send_mail_fields`）：
+请求体字段（校验的唯一副本在 [app/server/api/send_mail.py](../../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`）：
 
 | 字段 | 类型 | 必填 | 规则 |
 |---|---|---|---|
@@ -108,14 +108,14 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 ### GET /inbox
 
-读人类成员的持久邮箱，处理函数 `handle_inbox`，直接读磁盘 mailbox（`organization/mail/mailbox.py` 的 `Mailbox.recent`），inbox 与 sent 合并按时间序。
+读人类成员的持久邮箱，处理函数 `handle_inbox`，直接读磁盘 mailbox（[organization/mail/mailbox.py](../../src/tlon/organization/mail/mailbox.py) 的 `Mailbox.recent`），inbox 与 sent 合并按时间序。
 
 | Query 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `username` | string | `guest` | 读 `human:<username>` 的邮箱；空或含路径分隔符返回 400（`{"error"}`，无 reason） |
 | `limit` | int | 50（上限 200） | 非整数回落默认值 |
 
-- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（`organization/mail/mail.py` 的 `Mail.to_dict`）
+- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（[organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail.to_dict`）
 - 503：未装配 `paths`
 
 ### POST /sessions
@@ -130,7 +130,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 | `mode` | string | 否（默认 `"chat"`） | `chat` / `event` / `agent`，否则 400 `invalid_mode` |
 | `filters` | object | 否 | 初始事件过滤器（见 SSE 节），非 object 报 400 `invalid_filters` |
 
-- 201：会话状态 + 快照，字段 `session_id`、`username`、`client_type`、`mode`、`filters`、`connected_at`（ISO）、`participants`（`[{id, name, type}]`）、`agents`（同 `GET /agents` 元素）。session id 由 `SessionManager.create_session` 生成，格式 `{client_type}-{四位计数}`，进程内单调，重启清零
+- 201：会话状态 + 快照，字段 `session_id`、`username`、`client_type`、`mode`、`filters`、`connected_at`（ISO）、`participants`（`[{id, name, type}]`）、[agents](../../src/tlon/agents)（同 `GET /agents` 元素）。session id 由 `SessionManager.create_session` 生成，格式 `{client_type}-{四位计数}`，进程内单调，重启清零
 - 400：`{"error", "reason"}`
 - 会话状态全在内存（`SessionManager`），服务端重启即清空；客户端重连必须重新 POST
 
@@ -157,7 +157,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 ### GET /agents
 
-无参数。200：`{"agents": [...], "count": n}`，元素来自 `agents/agent_registry.py` 的 `get_agent_status`：
+无参数。200：`{"agents": [...], "count": n}`，元素来自 [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `get_agent_status`：
 
 | 字段 | 说明 |
 |---|---|
@@ -191,7 +191,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 ### POST /admin/config/agents/{agent_id}/reload（条件注册）
 
-热收纳磁盘上已存在的 agent 配置（成员创建类管理操作写完后调用），实际走 `agents/agent_registry.py` 的 `adopt_agent`。200：`{"status": "success", "agent_id", "result"}`，`result` 枚举：
+热收纳磁盘上已存在的 agent 配置（成员创建类管理操作写完后调用），实际走 [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `adopt_agent`。200：`{"status": "success", "agent_id", "result"}`，`result` 枚举：
 
 | result | 含义 |
 |---|---|
@@ -210,7 +210,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 | `limit` | int | 100（上限 1000） | 非整数回落默认值 |
 | `source` | string | — | 按来源组件过滤 |
 
-200：`{"traces": [<Trace.to_dict()>], "count": n}`；Trace 字段：`trace_id`、`root_span_id`、`name`、`start_time`、`source`、`spans`、可选 `end_time`/`duration_ms`/`metadata`（`base/tracing/trace_store.py`）。
+200：`{"traces": [<Trace.to_dict()>], "count": n}`；Trace 字段：`trace_id`、`root_span_id`、`name`、`start_time`、`source`、`spans`、可选 `end_time`/`duration_ms`/`metadata`（[base/tracing/trace_store.py](../../src/tlon/base/tracing/trace_store.py)）。
 
 ### GET /traces/{trace_id}（条件注册）
 
@@ -218,7 +218,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 ### GET /metrics
 
-200：`MetricsService.snapshot()`（`base/metrics.py`），形状 `{"metrics": {name: {"type": "counter"|"histogram"|"gauge", "description", "unit", "points": [...]}}}`；counter/gauge 的 point 为 `{"attributes", "value"}`，histogram 的 point 为 `{"attributes", "count", "sum", "min", "max"}`。503：未装配 metrics 服务。
+200：`MetricsService.snapshot()`（[base/metrics.py](../../src/tlon/base/metrics.py)），形状 `{"metrics": {name: {"type": "counter"|"histogram"|"gauge", "description", "unit", "points": [...]}}}`；counter/gauge 的 point 为 `{"attributes", "value"}`，histogram 的 point 为 `{"attributes", "count", "sum", "min", "max"}`。503：未装配 metrics 服务。
 
 ### GET /logs
 
@@ -285,10 +285,10 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 下行推送有两条不重叠的路径，任何一个会话的任何一个事件只从一个口子进来：
 
-1. **chat 会话的 `mail.delivered`**：经 `organization/messaging/human_adapter.py` 的 `HumanAdapter`——它订阅 `MAIL_DELIVERED`，把 `payload.recipient == 自己 member_id` 的副本 fan-out 给 attach 的会话（成员视角：你的邮箱到了一封信）。
-2. **其余事件**：经 `app/server/core/notification_service.py` 的 `NotificationService`，订阅全部 `EventType`，按会话 mode + filters 逐个过滤后推送（观察者视角）。
+1. **chat 会话的 `mail.delivered`**：经 [organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter`——它订阅 `MAIL_DELIVERED`，把 `payload.recipient == 自己 member_id` 的副本 fan-out 给 attach 的会话（成员视角：你的邮箱到了一封信）。
+2. **其余事件**：经 [app/server/core/notification_service.py](../../src/tlon/app/server/core/notification_service.py) 的 `NotificationService`，订阅全部 `EventType`，按会话 mode + filters 逐个过滤后推送（观察者视角）。
 
-事件类型枚举在 `base/events/event.py` 的 `EventType`：
+事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 | event_type | 产生者 | payload 主要字段 |
 |---|---|---|
@@ -325,7 +325,7 @@ mode 与 filters 可经 `PATCH /sessions/{id}` 在线修改。过滤只在服务
 
 ## 接入示例
 
-以下流程与 `src/tlon/app/clients/sdk/base_client.py` 的 `BaseClient` 行为一致（`connect` → `authenticate` 建会话 → `_stream_events` 读流 → `rest_post` 发信 → 断连后 `_reconnect` 重建会话）。
+以下流程与 [src/tlon/app/clients/sdk/base_client.py](../../src/tlon/app/clients/sdk/base_client.py) 的 `BaseClient` 行为一致（`connect` → `authenticate` 建会话 → `_stream_events` 读流 → `rest_post` 发信 → 断连后 `_reconnect` 重建会话）。
 
 ### curl
 
@@ -403,4 +403,4 @@ with httpx.Client(base_url=BASE, timeout=None) as http:
     http.delete(f"/sessions/{session_id}")
 ```
 
-生产用法直接用 SDK：`app/clients/sdk/client.py` 的 `TlonClient` 封装了以上全部（会话生命周期、SSE 重连、mode/filters 声明）。
+生产用法直接用 SDK：[app/clients/sdk/client.py](../../src/tlon/app/clients/sdk/client.py) 的 `TlonClient` 封装了以上全部（会话生命周期、SSE 重连、mode/filters 声明）。

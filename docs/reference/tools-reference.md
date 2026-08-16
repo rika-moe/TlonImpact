@@ -1,29 +1,29 @@
 # Tlon 工具手册
 
-agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 `src/tlon/tools/`，按域分包；参数表以各工具构造器里的 JSON schema 为准。本文只描述当前实现。
+agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 [src/tlon/tools/](../../src/tlon/tools)，按域分包；参数表以各工具构造器里的 JSON schema 为准。本文只描述当前实现。
 
 ## 总述
 
 ### Tool 基类契约
 
-`tools/base.py` 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。`execute(**kwargs)` 是唯一执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，`data` 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用（目前只有 `ExecuteBashTool` 用 `shutdown` 取消未完成的后台任务）。
+[tools/base.py](../../src/tlon/tools/base.py) 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。`execute(**kwargs)` 是唯一执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，[data](../../data) 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用（目前只有 `ExecuteBashTool` 用 `shutdown` 取消未完成的后台任务）。
 
 `Tool.validate_arguments` 在执行前按 schema 校验：缺必填、未知参数、类型不符都会拒绝执行，返回 `success=False, error="Argument validation failed: ..."`。schema 只做浅校验——`enum`、`minimum`/`maximum` 等约束不进 `validate_arguments`，靠各工具自己 clamp 或报错。
 
 ### ToolExecutor 执行模型
 
-`agents/tool_executor.py` 的 `ToolExecutor` 是每 agent 一个的工具注册表：直接 async 调用，不经过 EventBus。`execute(tool_name, arguments)` 包住一层 tracing span（`tool.{name}`，参数截断到 200 字符），三类失败都转成 `ToolResult(success=False)` 而不是抛异常：工具未注册、参数校验失败、`execute` 内部抛异常（记日志后返回 `error="Execution error: ..."`）。
+[agents/tool_executor.py](../../src/tlon/agents/tool_executor.py) 的 `ToolExecutor` 是每 agent 一个的工具注册表：直接 async 调用，不经过 EventBus。`execute(tool_name, arguments)` 包住一层 tracing span（`tool.{name}`，参数截断到 200 字符），三类失败都转成 `ToolResult(success=False)` 而不是抛异常：工具未注册、参数校验失败、`execute` 内部抛异常（记日志后返回 `error="Execution error: ..."`）。
 
 认知循环里的并发分发不在 ToolExecutor，而在引擎侧：
 
-- act stage（`agents/stages/act.py` 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
-- `agents/loop_driver.py` 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for(per_tool_timeout)`；超时返回 `success=False, error="Timeout after {n}s"`。`per_tool_timeout` 来自 agent 配置的 `tool.per_timeout`（`base/config.py` 的 `ToolConfig`，默认 30 秒）。
+- act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
+- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for(per_tool_timeout)`；超时返回 `success=False, error="Timeout after {n}s"`。`per_tool_timeout` 来自 agent 配置的 `tool.per_timeout`（[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
 - 特殊规则：同一轮里 `sendEmail` 带 `is_complete=true` 且伴随其他工具调用时，act stage 拒绝整轮（一个工具都不执行），向 LLM 返回冲突提示要求重新规划。
 
 ### 工具与成员类型
 
-工具只属于认知型成员。`agents/agent_registry.py` 的 `_start_agent` 从成员 spec 派生类型：spec 含带 `:loop` 的认知规则才调用 `_assemble_cognitive` 装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具；确定型成员（无 `:loop` 的规则）`cognitive=None`，不建任何工具、不消耗 token。
+工具只属于认知型成员。[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_start_agent` 从成员 spec 派生类型：spec 含带 `:loop` 的认知规则才调用 `_assemble_cognitive` 装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具；确定型成员（无 `:loop` 的规则）`cognitive=None`，不建任何工具、不消耗 token。
 
 ### 注册清单
 
@@ -31,32 +31,32 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
-| 1 | `executeBashCommand` | `tools/shell/execute_bash.py` 的 `ExecuteBashTool` | shell |
-| 2 | `checkBashTask` | `tools/shell/execute_bash.py` 的 `CheckBashTaskTool` | shell |
-| 3 | `readFile` | `tools/filesystem/read_file.py` 的 `ReadFileTool` | filesystem |
-| 4 | `writeFile` | `tools/filesystem/write_file.py` 的 `WriteFileTool` | filesystem |
-| 5 | `editFile` | `tools/filesystem/edit_file.py` 的 `EditFileTool` | filesystem |
-| 6 | `sendEmail` | `tools/mail/send_email.py` 的 `SendEmailTool` | mail |
-| 7 | `listPrototypes` | `tools/prototypes/list_prototypes.py` 的 `ListPrototypesTool` | prototypes |
-| 8 | `spawnAgent` | `tools/agents/spawn_agent.py` 的 `SpawnAgentTool` | agents |
-| 9 | `stopAgent` | `tools/agents/stop_agent.py` 的 `StopAgentTool` | agents |
-| 10 | `listAgents` | `tools/agents/list_agents.py` 的 `ListAgentsTool` | agents |
-| 11 | `writePrototype` | `tools/agents/write_prototype.py` 的 `WritePrototypeTool` | agents |
-| 12 | `rememberFact` | `tools/memory/remember_fact.py` 的 `RememberFactTool` | memory |
-| 13 | `searchMemories` | `tools/memory/search_memories.py` 的 `SearchMemoriesTool` | memory |
-| 14 | `compact` | `tools/memory/compact.py` 的 `CompactTool` | memory |
-| 15 | `forget` | `tools/memory/forget_memory.py` 的 `ForgetMemoryTool` | memory |
-| 16 | `createTask` | `tools/tasks/create_task.py` 的 `CreateTaskTool` | tasks |
-| 17 | `listTasks` | `tools/tasks/list_tasks.py` 的 `ListTasksTool` | tasks |
-| 18 | `startTask` | `tools/tasks/start_task.py` 的 `StartTaskTool` | tasks |
-| 19 | `pauseTask` | `tools/tasks/pause_task.py` 的 `PauseTaskTool` | tasks |
-| 20 | `completeTask` | `tools/tasks/complete_task.py` 的 `CompleteTaskTool` | tasks |
-| 21 | `removeTask` | `tools/tasks/remove_task.py` 的 `RemoveTaskTool` | tasks |
-| 22 | `getCurrentTask` | `tools/tasks/get_current_task.py` 的 `GetCurrentTaskTool` | tasks |
+| 1 | `executeBashCommand` | [tools/shell/execute_bash.py](../../src/tlon/tools/shell/execute_bash.py) 的 `ExecuteBashTool` | shell |
+| 2 | `checkBashTask` | [tools/shell/execute_bash.py](../../src/tlon/tools/shell/execute_bash.py) 的 `CheckBashTaskTool` | shell |
+| 3 | `readFile` | [tools/filesystem/read_file.py](../../src/tlon/tools/filesystem/read_file.py) 的 `ReadFileTool` | filesystem |
+| 4 | `writeFile` | [tools/filesystem/write_file.py](../../src/tlon/tools/filesystem/write_file.py) 的 `WriteFileTool` | filesystem |
+| 5 | `editFile` | [tools/filesystem/edit_file.py](../../src/tlon/tools/filesystem/edit_file.py) 的 `EditFileTool` | filesystem |
+| 6 | `sendEmail` | [tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool` | mail |
+| 7 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
+| 8 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
+| 9 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
+| 10 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
+| 11 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
+| 12 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
+| 13 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
+| 14 | `compact` | [tools/memory/compact.py](../../src/tlon/tools/memory/compact.py) 的 `CompactTool` | memory |
+| 15 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
+| 16 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 17 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 18 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 19 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 20 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 21 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 22 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
 
-依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 `tools/agents/ports.py`，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 `tools/prototypes/ports.py`；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
+依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
-shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（`sandbox/docker_runtime.py`）。容器在装配时不启动，首次 execute/read/write 时惰性拉起；Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。
+shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。容器在装配时不启动，首次 execute/read/write 时惰性拉起；Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。
 
 ## mail
 
@@ -73,7 +73,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（`sandbox/doc
 | `is_complete` | boolean | 是 | — | `false`=中间进度，发完继续思考；`true`=最终回复，结束本轮循环 |
 | `in_reply_to` | string | 否 | — | 被回复邮件的 id |
 
-返回行为：恒 `success=True`，`data` 回显全部参数。投递异步——地址不存在时稍后会收到 `postmaster@tlon.internal` 的退信，退信是唯一失败信号。
+返回行为：恒 `success=True`，[data](../../data) 回显全部参数。投递异步——地址不存在时稍后会收到 `postmaster@tlon.internal` 的退信，退信是唯一失败信号。
 
 注意事项：
 
@@ -83,9 +83,9 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（`sandbox/doc
 
 ## filesystem
 
-三个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 `tools/filesystem/path_guard.py` 的 `resolve_container_path` 校验：
+三个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [tools/filesystem/path_guard.py](../../src/tlon/tools/filesystem/path_guard.py) 的 `resolve_container_path` 校验：
 
-- 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 `.`/`..`/重复分隔符，`..` 越出根时在 `/` 处截断）。
+- 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
 - 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。
 - 空路径直接拒绝。全部是纯字符串处理，不做宿主机路径解析。
 
@@ -153,7 +153,7 @@ old_string/new_string 精确替换模型。
 
 ## memory
 
-四个工具都操作当前 agent 自己的 `MemoryManager`（`memory/manager.py`），数据落在 `~/.tlon/{agent_id}/memory/`。搜索均为简单关键词匹配，不是向量检索。
+四个工具都操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/`。搜索均为简单关键词匹配，不是向量检索。
 
 ### rememberFact
 
@@ -196,7 +196,7 @@ old_string/new_string 精确替换模型。
 
 ## tasks
 
-每个 agent 一份任务清单，由 `tools/tasks/manager.py` 的 `TaskManager` 管理，每次变更整体落盘到 `~/.tlon/{agent_id}/tasks.jsonl`。任务 id 自增（`t-001`、`t-002`…），重启后从文件恢复计数。状态机：`todo` / `doing` / `paused` / `done`（`tools/tasks/models.py` 的 `TaskStatus`）。
+每个 agent 一份任务清单，由 [tools/tasks/manager.py](../../src/tlon/tools/tasks/manager.py) 的 `TaskManager` 管理，每次变更整体落盘到 `~/.tlon/{agent_id}/tasks.jsonl`。任务 id 自增（`t-001`、`t-002`…），重启后从文件恢复计数。状态机：`todo` / `doing` / `paused` / `done`（[tools/tasks/models.py](../../src/tlon/tools/tasks/models.py) 的 `TaskStatus`）。
 
 ### createTask
 
@@ -255,7 +255,7 @@ old_string/new_string 精确替换模型。
 
 ## agents
 
-生命周期工具。实现注入自 `AgentRegistry`（端口见 `tools/agents/ports.py` 的 `AgentLifecycle`）。
+生命周期工具。实现注入自 `AgentRegistry`（端口见 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py) 的 `AgentLifecycle`）。
 
 ### spawnAgent
 

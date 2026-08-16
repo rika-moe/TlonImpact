@@ -1,12 +1,12 @@
 # 统一成员模型（Unified Member Model）
 
-> **状态：决策已拍板（2026-08）并完成阶段 2 代码实施**——成员类别（react/script、resident/contractor）已删除、装配统一、排空一律睡眠、删除路径退场。本文是改造的方向锚点与迁移路径总览；阶段 3（档案归档落地，随阶段 2 完成）与阶段 4（世代通道 `proposeBehavior`）待实施。决策记录见 `docs/decisions/0006-unified-member-model.md`。
+> **状态：决策已拍板（2026-08）并完成阶段 2 代码实施**——成员类别（react/script、resident/contractor）已删除、装配统一、排空一律睡眠、删除路径退场。本文是改造的方向锚点与迁移路径总览；阶段 3（档案归档落地，随阶段 2 完成）与阶段 4（世代通道 `proposeBehavior`）待实施。决策记录见 [docs/decisions/0006-unified-member-model.md](../decisions/0006-unified-member-model.md)。
 
 ## 背景：实然的四概念与两个类别轴
 
 当前系统里有四个概念，彼此关系如下（现状，非目标）：
 
-- **DSL** —— 受限 EDN 行为语言，语义权威是 `agents/member_spec.py` 的 `MemberSpec`，落盘为每成员 `config/behavior.tlon`。spec 是成员行为的唯一权威：boot/lazy/wake/成员类型全部由它派生。
+- **DSL** —— 受限 EDN 行为语言，语义权威是 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员 `config/behavior.tlon`。spec 是成员行为的唯一权威：boot/lazy/wake/成员类型全部由它派生。
 - **Agent** —— 术语分裂，横跨 `AgentConfig`（agent.yaml 身份卡）、`MemberRuntime`（统一解释器实例）、`~/.tlon/{id}/` home 目录。
 - **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.edn` 元数据；**不带人格**（ADR 0006 实施后：人格是成员创建时数据）。trusted 区可直接 spawn，staging 区（LLM 撰写）须人类批准。当时（决策前）还带可选人格 .md。
 - **Member** —— 社会成员：`MemberRuntime` 实例 + 持久身份。被两条类别轴切成三份：**react/script**（认知/确定）与 **resident/contractor**（常住/临时工）。
@@ -19,7 +19,7 @@
 | resident vs contractor（`AgentConfig.role`） | contractor：恒 lazy、短空闲引线、home 删除（idle-reap/stopAgent）；resident：只能睡、永不删 | 一条**生命周期治理策略**伪装成了出生标记；可丢弃性写死在身份上，出生即定型 |
 | 两者共用的外壳 | 同一个 `MemberRuntime` + 同一个 `AgentRegistry` | 运行时早就统一了，分类是**历史残留**（两套旧运行时合并 + spawn 体系引入） |
 
-另有三个文档已承认的缺陷作为背景：个体学习环断裂（反思写回记忆、到不了行为）、变异算子缺失 + 审批人工瓶颈、策略（Adam）不可进化。以及两个文档未承认但更根本的矛盾：标准 resident 团队的行为来自 Python 模板（`agents/behavior_templates.py` 的 `_RESIDENT_IDS` 狗粮），"行为即数据"在主干成员上打折；Prototype 不在书信共和国里（spec 不能作为信的载荷在社会中流传）。
+另有三个文档已承认的缺陷作为背景：个体学习环断裂（反思写回记忆、到不了行为）、变异算子缺失 + 审批人工瓶颈、策略（Adam）不可进化。以及两个文档未承认但更根本的矛盾：标准 resident 团队的行为来自 Python 模板（[agents/behavior_templates.py](../../src/tlon/agents/behavior_templates.py) 的 `_RESIDENT_IDS` 狗粮），"行为即数据"在主干成员上打折；Prototype 不在书信共和国里（spec 不能作为信的载荷在社会中流传）。
 
 **核心判断**：两个类别轴没有一条在做"行为"的事，全在做"资源分配"和"生命周期治理"的事——而这两件事按愿景都不该是类别（类 = 出生即定、代码写死），而应该是**策略**（可进化的数据）与**状态**（可变化的当前值）。
 
@@ -81,15 +81,15 @@
 
 | 现存机制 | 结局 |
 |---|---|
-| `agents/member_spec.py` 的 `member_type`（react/script 类别） | 删除类别语义；`:loop` 回到"这条规则有没有认知循环"的语法事实 |
-| `agents/prototypes.py` 的 `_derive_runtime` | 删除 |
-| `base/config.py` 的 `AgentConfig.role`（resident/contractor） | 删除；`spawned_by` / `spawn_depth` / `prototype` 血缘字段**保留为审计**（世代更替的可追溯性） |
-| `agents/agent_registry.py` 的 `is_lazy` 的 `config.role == "contractor"` 分支 | 删除；lazy 判定只由 spec 派生（现有 `_spec_profile` 逻辑收敛） |
-| `agents/agent_registry.py` 的 `spawn_contractor` 里 `config.role = "contractor"` | 删除 |
-| `agents/agent_registry.py` 的 `stop_contractor` 的 `resident_not_stoppable` 与 role 检查 | 删除；停止走 `AGENT_STOP_REQUEST` → 策略规则裁决（决策 7） |
-| `agents/agent_registry.py` 的 `_discard_contractor`（home 删除 + 容器 force-remove） | 整体退场；空闲回收变为"睡"（scale-to-zero），永不删档案（决策 8） |
-| `agents/agent_registry.py` 的 `_assemble_cognitive` if/else 分叉 | 统一装配 + 懒加载（决策 3） |
-| `agents/behavior_templates.py` 的 `_RESIDENT_IDS` 狗粮 | 退场（resident 特殊类别的残留）；标准团队从原型/数据出生 ✅（六个职位原型 + `default_team.py` 角色卡，2026-08 实施） |
+| [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `member_type`（react/script 类别） | 删除类别语义；`:loop` 回到"这条规则有没有认知循环"的语法事实 |
+| [agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `_derive_runtime` | 删除 |
+| [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig.role`（resident/contractor） | 删除；`spawned_by` / `spawn_depth` / `prototype` 血缘字段**保留为审计**（世代更替的可追溯性） |
+| [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `is_lazy` 的 `config.role == "contractor"` 分支 | 删除；lazy 判定只由 spec 派生（现有 `_spec_profile` 逻辑收敛） |
+| [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `spawn_contractor` 里 `config.role = "contractor"` | 删除 |
+| [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `stop_contractor` 的 `resident_not_stoppable` 与 role 检查 | 删除；停止走 `AGENT_STOP_REQUEST` → 策略规则裁决（决策 7） |
+| [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_discard_contractor`（home 删除 + 容器 force-remove） | 整体退场；空闲回收变为"睡"（scale-to-zero），永不删档案（决策 8） |
+| [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_assemble_cognitive` if/else 分叉 | 统一装配 + 懒加载（决策 3） |
+| [agents/behavior_templates.py](../../src/tlon/agents/behavior_templates.py) 的 `_RESIDENT_IDS` 狗粮 | 退场（resident 特殊类别的残留）；标准团队从原型/数据出生 ✅（六个职位原型 + `default_team.py` 角色卡，2026-08 实施） |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`） | **保留为纯资源硬顶**（机制）；"谁可以造新成员、一次造几个"是策略（可数据化，后续） |
 | docs：`design/dsl.md`（cost routing 叙事）、`design/runtime.md`（合并叙事/方向节）、`design/prototypes.md`（contractor/信任分级叙事）、`architecture.md`（装配/存储布局）、`reference/config-reference.md`（role 字段表）、`reference/tools-reference.md`（spawnAgent/stopAgent 语义） | 实施时同步；类别对照表退场 |
 

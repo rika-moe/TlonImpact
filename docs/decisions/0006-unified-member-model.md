@@ -4,13 +4,13 @@
 
 ## 背景
 
-系统当前的成员被两条类别轴切分：**react/script**（认知/确定，`agents/member_spec.py` 的 `member_type` 派生）与 **resident/contractor**（常住/临时工，`base/config.py` 的 `AgentConfig.role`）。审视后确认：这两条轴没有一条在做"行为"的事，全在做**资源分配**（script 零装配、零 token）与**生命周期治理**（contractor 可丢弃、home 删除）——而这两件事按愿景都不该是类别（类 = 出生即定、代码写死），而应该是策略（可进化的数据）与状态（可变化的当前值）。
+系统当前的成员被两条类别轴切分：**react/script**（认知/确定，[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `member_type` 派生）与 **resident/contractor**（常住/临时工，[base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig.role`）。审视后确认：这两条轴没有一条在做"行为"的事，全在做**资源分配**（script 零装配、零 token）与**生命周期治理**（contractor 可丢弃、home 删除）——而这两件事按愿景都不该是类别（类 = 出生即定、代码写死），而应该是策略（可进化的数据）与状态（可变化的当前值）。
 
-同时有三个已知缺陷需要一起回答：个体学习环断裂（反思只能写回记忆、到不了行为）、行为更新的信任闸没有着落、标准 resident 团队的行为来自 Python 模板（`agents/behavior_templates.py` 的 `_RESIDENT_IDS` 狗粮）而非数据。
+同时有三个已知缺陷需要一起回答：个体学习环断裂（反思只能写回记忆、到不了行为）、行为更新的信任闸没有着落、标准 resident 团队的行为来自 Python 模板（[agents/behavior_templates.py](../../src/tlon/agents/behavior_templates.py) 的 `_RESIDENT_IDS` 狗粮）而非数据。
 
 ## 决策
 
-**成员只有一种。** 两个类别轴（react/script 与 resident/contractor，三种类别）全消，同时拍板九条（完整定义与代码影响见 `docs/design/unified-member-model.md`）：
+**成员只有一种。** 两个类别轴（react/script 与 resident/contractor，三种类别）全消，同时拍板九条（完整定义与代码影响见 [docs/design/unified-member-model.md](../design/unified-member-model.md)）：
 
 1. **类别全消**——react/script、resident/contractor 作为类别删除；`:loop` 保留为 DSL 语法（一条规则有没有认知循环），不再是成员类型。
 2. **零 token 承诺废弃**——"确定型成员保证不调 LLM"不再是类别承诺；便宜路径保留为规则级策略（spec 推导的观察值）。
@@ -42,7 +42,7 @@
 
 ## 后果
 
-- **代码面**：删 `member_type` / `AgentConfig.role` / `_derive_runtime` / `_discard_contractor` / `stop_contractor` 的 role 检查；统一装配 + 懒加载；`spawned_by` / `spawn_depth` / `prototype` 血缘字段保留为审计。清单与分阶段迁移见 `docs/design/unified-member-model.md`。
+- **代码面**：删 `member_type` / `AgentConfig.role` / `_derive_runtime` / `_discard_contractor` / `stop_contractor` 的 role 检查；统一装配 + 懒加载；`spawned_by` / `spawn_depth` / `prototype` 血缘字段保留为审计。清单与分阶段迁移见 [docs/design/unified-member-model.md](../design/unified-member-model.md)。
 - **行为演化的主通道定型**：`writePrototype` → staging → 人类批准 → `spawnAgent` 派生新成员。人工审批是短期瓶颈（远期审批社会化，属路线"开放"一步）。
 - **存储只增不减**：磁盘单调增长，短期人类手动清理，长期需治理规则（与决策 7 同源）。
-- **文档同步义务**：本文与 `docs/design/unified-member-model.md` 是锚点；`design/dsl.md`、`design/runtime.md`、`design/prototypes.md`、`architecture.md`、`reference/config-reference.md`、`reference/tools-reference.md` 中的类别表述在代码实施时同步更新。
+- **文档同步义务**：本文与 [docs/design/unified-member-model.md](../design/unified-member-model.md) 是锚点；`design/dsl.md`、`design/runtime.md`、`design/prototypes.md`、`architecture.md`、`reference/config-reference.md`、`reference/tools-reference.md` 中的类别表述在代码实施时同步更新。

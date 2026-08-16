@@ -1,10 +1,10 @@
 # Tlon 配置参考
 
-三块配置，职责严格分开：**每 agent 的行为**在 `~/.tlon/{agent_id}/config/`（`agent.yaml` + 人格 `.md` + `behavior.tlon`），**进程级基础设施与密钥**走环境变量（`base/settings.py` 的 `Settings`），**记忆调参**在 `~/.tlon/{agent_id}/memory/config.json`。本文只描述当前实现，配置项以代码中的字段/默认值为准。
+三块配置，职责严格分开：**每 agent 的行为**在 `~/.tlon/{agent_id}/config/`（`agent.yaml` + 人格 `.md` + `behavior.tlon`），**进程级基础设施与密钥**走环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`），**记忆调参**在 `~/.tlon/{agent_id}/memory/config.json`。本文只描述当前实现，配置项以代码中的字段/默认值为准。
 
 ## 1. agent.yaml（每 agent 配置）
 
-位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 `base/paths.py` 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 `base/config.py` 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、`memory` 不生效、可清理——记忆调参唯一入口是 `memory/config.json`）。
+位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、[memory](../../src/tlon/memory) 不生效、可清理——记忆调参唯一入口是 `memory/config.json`）。
 
 ### 顶层字段
 
@@ -49,7 +49,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `total_timeout` | float | `60.0` | 一轮工具执行总超时（秒） |
-| `per_timeout` | float | `30.0` | 单个工具超时（秒），见 `agents/loop_driver.py` 的 `execute_one_tool` |
+| `per_timeout` | float | `30.0` | 单个工具超时（秒），见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool` |
 | `allowed_paths` | string[] | `["/workspace"]` | read/write/edit 文件工具只允许触碰的**容器内绝对路径**；非空、必须 `/` 开头（校验器强制） |
 
 ### 完整示例
@@ -78,7 +78,7 @@ agent:
 
 ## 2. 人格文件与行为规约
 
-`~/.tlon/{agent_id}/config/` 目录下除 `agent.yaml` 外还有四个文件（路径见 `base/paths.py` 的 `agent_identity_file` 等）：
+`~/.tlon/{agent_id}/config/` 目录下除 `agent.yaml` 外还有四个文件（路径见 [base/paths.py](../../src/tlon/base/paths.py) 的 `agent_identity_file` 等）：
 
 | 文件 | 内容 |
 |---|---|
@@ -89,7 +89,7 @@ agent:
 
 ## 3. 记忆配置 memory/config.json
 
-`~/.tlon/{agent_id}/memory/config.json`（`memory/models.py` 的 `MemoryConfig`，读写由 `memory/manager.py` 负责）。完整结构：
+`~/.tlon/{agent_id}/memory/config.json`（[memory/models.py](../../src/tlon/memory/models.py) 的 `MemoryConfig`，读写由 [memory/manager.py](../../src/tlon/memory/manager.py) 负责）。完整结构：
 
 ```json
 {
@@ -109,15 +109,15 @@ agent:
 
 各段与 `MemoryConfig` 字段对应：`working`（工作记忆）、`episodic`（情景记忆上限）、`context`（注入上下文的块数）、`triggers.idle_timeout_minutes`（空闲自动摘要）、`reflection.min_interactions`（自驱动记忆审计的最小交互数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。
 
-> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`，随后把 `working`/`episodic` 上限应用到两个 store——生产装配（`agents/agent_registry.py` 的 `_assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（`base/config.py` 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
+> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`，随后把 `working`/`episodic` 上限应用到两个 store——生产装配（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
 
 ## 4. 环境变量
 
-读取方是 `base/settings.py` 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 `base/tracing/otel.py`。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
+读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `TLON_HOME` | `~/.tlon` | 数据根目录；只认已存在且是目录的值，否则回落 `~/.tlon`（见 `base/paths.py` 的 `_resolve_tlon_home`） |
+| `TLON_HOME` | `~/.tlon` | 数据根目录；只认已存在且是目录的值，否则回落 `~/.tlon`（见 [base/paths.py](../../src/tlon/base/paths.py) 的 `_resolve_tlon_home`） |
 | `OPENAI_API_KEY` | `""` | LLM API 密钥。默认 provider 是 Moonshot（OpenAI 兼容接口），因此用 `OPENAI_` 前缀 |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | LLM base URL（默认 Moonshot 示例 `https://api.moonshot.cn/v1`） |
 | `OPENAI_MODEL_NAME` | `kimi-k2.5` | 默认模型名 |
@@ -129,14 +129,14 @@ agent:
 | `DEBUG` | `false` | 调试模式（`"true"` 生效） |
 | `TLON_LOG_RETENTION_DAYS` | `7` | 每日服务端日志文件保留天数（`~/.tlon/shared/logs/server-{date}.jsonl`） |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | 未设置 | OTLP collector base URL；需要可选依赖 `uv sync --extra otlp` |
-| `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（`base/tracing/otel.py` 的 `SAMPLE_RATIO_ENV`） |
+| `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（[base/tracing/otel.py](../../src/tlon/base/tracing/otel.py) 的 `SAMPLE_RATIO_ENV`） |
 | `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
 
 可选键：`ANTHROPIC_API_KEY`、`AZURE_OPENAI_*` 等当前代码不读取；`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME` 即 `~/.tlon/`。
 
 ## 5. `~/.tlon` 目录布局
 
-`base/paths.py` 的 `TlonPaths` 是**唯一**的路径构造入口，`paths` 是模块级默认实例。布局（docstring 原样）：
+[base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 是**唯一**的路径构造入口，`paths` 是模块级默认实例。布局（docstring 原样）：
 
 ```
 ~/.tlon/
@@ -181,6 +181,6 @@ agent:
 
 ## 6. 配置相关的常用操作
 
-- **增/删 agent**：`base/config.py` 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
-- **交互式管理**：ops 的 Agents 视图——创建成员（`c`）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；空社会首启由服务端自动初始化标准团队（`agents/bootstrap.py`）。
-- **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（`base/paths.py` 模块 docstring 的硬性规定）。
+- **增/删 agent**：[base/config.py](../../src/tlon/base/config.py) 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
+- **交互式管理**：ops 的 Agents 视图——创建成员（`c`）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；空社会首启由服务端自动初始化标准团队（[agents/bootstrap.py](../../src/tlon/agents/bootstrap.py)）。
+- **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（[base/paths.py](../../src/tlon/base/paths.py) 模块 docstring 的硬性规定）。

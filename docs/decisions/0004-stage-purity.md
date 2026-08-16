@@ -18,10 +18,10 @@
 
 具体分工：
 
-- **stage 只计算**。想做的一切变更——context 追加、scratch 写入、迭代/错误计数、工具结果与分发、响应链、邮件（`MailEffect`）、交互保存、on-complete、完成信号——都返回在 `agents/stages/outcome.py` 的 `StageOutcome` 里。stage 不触碰 session 的任何 mutator。
-- **只读查询与可观测性走服务**。LLM 调用（只读外部查询）与日志/事件/trace（可观测性）经注入的 `agents/stages/services.py` 的 `StageServices` 进行——它们不是状态变更，不进 Outcome。
-- **应用顺序集中在引擎**。`LoopDriver._apply_outcome`（`agents/loop_driver.py`）是会话状态的唯一变更点，按固定顺序应用 Outcome；外部效果委托给 `EffectExecutor`（`agents/executor.py`）：发信、记忆保存、收件箱 cursor 推进。并发（每工具一个后台 task）也是引擎的，act 只声明分发列表。
-- **纯度由静态检查强制**。`scripts/check_stage_purity.py` 用 AST 禁止 stage 模块调用 session mutator 方法、禁止对 session 属性赋值，纳入验证六件套，违规即构建失败。
+- **stage 只计算**。想做的一切变更——context 追加、scratch 写入、迭代/错误计数、工具结果与分发、响应链、邮件（`MailEffect`）、交互保存、on-complete、完成信号——都返回在 [agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py) 的 `StageOutcome` 里。stage 不触碰 session 的任何 mutator。
+- **只读查询与可观测性走服务**。LLM 调用（只读外部查询）与日志/事件/trace（可观测性）经注入的 [agents/stages/services.py](../../src/tlon/agents/stages/services.py) 的 `StageServices` 进行——它们不是状态变更，不进 Outcome。
+- **应用顺序集中在引擎**。`LoopDriver._apply_outcome`（[agents/loop_driver.py](../../src/tlon/agents/loop_driver.py)）是会话状态的唯一变更点，按固定顺序应用 Outcome；外部效果委托给 `EffectExecutor`（[agents/executor.py](../../src/tlon/agents/executor.py)）：发信、记忆保存、收件箱 cursor 推进。并发（每工具一个后台 task）也是引擎的，act 只声明分发列表。
+- **纯度由静态检查强制**。[scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 用 AST 禁止 stage 模块调用 session mutator 方法、禁止对 session 属性赋值，纳入验证六件套，违规即构建失败。
 
 ## 理由
 

@@ -1,10 +1,10 @@
 # 邮件系统设计
 
-Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道：agent 之间、人类与 agent 之间，全部经邮件往来。本文解释这套系统为什么长现在这样，以当前实现为准（代码在 `src/tlon/organization/mail/` 与 `src/tlon/organization/messaging/`）。决策本身的记录见 `docs/decisions/0002-mail-as-only-channel.md`。
+Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道：agent 之间、人类与 agent 之间，全部经邮件往来。本文解释这套系统为什么长现在这样，以当前实现为准（代码在 [src/tlon/organization/mail/](../../src/tlon/organization/mail) 与 [src/tlon/organization/messaging/](../../src/tlon/organization/messaging)）。决策本身的记录见 [docs/decisions/0002-mail-as-only-channel.md](../decisions/0002-mail-as-only-channel.md)。
 
 ## 定位：书信共和国的实现形态
 
-`docs/vision.md` 把 Tlon 的社会结构定为「书信共和国」（Republic of Letters），三条哲学直接决定了邮件系统的形态：
+[docs/vision.md](../vision.md) 把 Tlon 的社会结构定为「书信共和国」（Republic of Letters），三条哲学直接决定了邮件系统的形态：
 
 - **开放**——成员凭名字相互寻址，新成员出生即可加入，无需改造任何既有成员。实现上就是一个扁平的地址域加一张名称解析表，没有房间、没有订阅关系、没有权限矩阵。
 - **沉淀**——信件持久、可检索、可流传。实现上邮箱是磁盘上的追加写文件，邮件先落盘后处理，知识随书信积累而不是随会话蒸发。
@@ -16,7 +16,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 ## 数据模型
 
-邮件模型是 `organization/mail/mail.py` 的 `Mail`：一个纯数据 dataclass。字段一览：
+邮件模型是 [organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail`：一个纯数据 dataclass。字段一览：
 
 - `id`：uuid hex，全系统唯一，投递幂等、cursor、线程链接都以它为锚。
 - `from_address`：发件人地址，构造时校验形态。
@@ -51,11 +51,11 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 ## 投递管线
 
-投递由 `organization/mail/delivery.py` 的 `MailDelivery` 承担。它订阅 EventBus 上的 `MAIL_NEW`，对每封邮件依次做四件事：
+投递由 [organization/mail/delivery.py](../../src/tlon/organization/mail/delivery.py) 的 `MailDelivery` 承担。它订阅 EventBus 上的 `MAIL_NEW`，对每封邮件依次做四件事：
 
 1. **展开**：`_expand_recipients` 把 `all@tlon.internal` 展开为全部已注册 agent（含睡眠中的，经 `AgentInfoProvider.get_all_ids`）加全部已知人类（在线适配器 ∪ 有持久邮箱的离线人类，经 `TlonPaths.known_human_ids`），to+cc 合并去重，一个收件人只收一份。广播因此不需要成员维护任何订阅关系——「全体成员」在每次投递时从注册表和邮箱布局现算。
 2. **解析**：每个地址经 `RecipientResolver.resolve_member` 解析成成员 id；解析不到的收集进 unknown 列表，留到最后统一退信。
-3. **落盘**：写发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 `base/paths.py` 的 `TlonPaths.member_mail_dir` 解析，`Mailbox` 实例按需建立、有界 LRU 缓存，`_MAILBOXES_CAP = 4096`）。
+3. **落盘**：写发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths.member_mail_dir` 解析，`Mailbox` 实例按需建立、有界 LRU 缓存，`_MAILBOXES_CAP = 4096`）。
 4. **通知**：按收件人逐个发布 `MAIL_DELIVERED`，payload 携带邮件本体和收件人成员 id。唤醒、入队、推送都挂在这个事件上，投递组件自己不知道收件人是 agent 还是人类。
 
 `MAIL_NEW` 与 `MAIL_DELIVERED` 分成两个事件是刻意的：`MAIL_NEW` 表达「有一封信进入系统」（每封一次，发件视角），`MAIL_DELIVERED` 表达「这封信到达了某个成员的邮箱」（每收件人一次，收件视角）。落盘发生在这两者之间——订阅 `MAIL_DELIVERED` 的任何一方都可以假设邮件已在磁盘上。这也让投递本身成为总线上可观察的一环：运维模式的事件流能看到每一跳。
@@ -76,7 +76,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 ## 名称解析：唯一权威
 
-名称↔地址的映射历史上曾有两份实现（adapter 侧和投递侧各一份），靠手工保持同步，出过漂移 bug（issue /）。现在唯一权威是 `organization/mail/resolver.py` 的 `RecipientResolver`，两个方向都在这一个类里：
+名称↔地址的映射历史上曾有两份实现（adapter 侧和投递侧各一份），靠手工保持同步，出过漂移 bug（issue /）。现在唯一权威是 [organization/mail/resolver.py](../../src/tlon/organization/mail/resolver.py) 的 `RecipientResolver`，两个方向都在这一个类里：
 
 - `resolve_address`：原始收件人（agent id、agent 显示名、人类用户名、`human:<username>` 或完整地址）→ 邮件地址。发信侧用，人类可以说「谢云舒」而不必记 `xie-yunshu@tlon.internal`。
 - `resolve_member`：邮件地址 → 成员 id。投递侧用。local part 撞名时 agent 优先于人类。
@@ -100,7 +100,7 @@ resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含
 
 ## mailbox 即队列
 
-邮箱实现是 `organization/mail/mailbox.py` 的 `Mailbox`，磁盘上三个文件：
+邮箱实现是 [organization/mail/mailbox.py](../../src/tlon/organization/mail/mailbox.py) 的 `Mailbox`，磁盘上三个文件：
 
 - `inbox.jsonl`——收到的邮件，追加写；
 - `sent.jsonl`——发出的邮件，追加写；
@@ -127,7 +127,7 @@ agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控入
 
 ### 收信：门控入队
 
-agent 收信的入口是 `agents/member_runtime.py` 的 `MemberRuntime` 对 `MAIL_DELIVERED` 的处理，三种结果：
+agent 收信的入口是 [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 对 `MAIL_DELIVERED` 的处理，三种结果：
 
 - **入队**（`queued`）：邮件命中声明了 `:on :mail-delivered` 的认知规则且通过 `:when` 门控，排入 `SessionScheduler` 的有界队列，已读推迟到 session 完成时由 EffectExecutor 推进 cursor——「处理完才算读过」，处理中途崩溃的邮件下次启动仍是未读。
 - **拒绝**（`rejected`）：`:when` 门控不通过，或邮件并非发给本成员——立即标记已读。这是有意为之（D6.1）：拒绝意味着「我看到了，选择不回应」，不回应不等于没收到；否则「永不回应」的 agent 会把邮件永远挂在未读上，每次启动都被同一封信唤醒一次。
@@ -141,12 +141,12 @@ agent 收信的入口是 `agents/member_runtime.py` 的 `MemberRuntime` 对 `MAI
 
 ### 发信：唯一出口
 
-agent 发信只有一个出口：`tools/mail/send_email.py` 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 `agents/executor.py` 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头（`in_reply_to` / `thread_id`）由 stage 从 session 的触发邮件推导并声明，所以 agent 的回复**自动继承线程**，不需要 LLM 自己记得带 thread_id。
+agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 [agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头（`in_reply_to` / `thread_id`）由 stage 从 session 的触发邮件推导并声明，所以 agent 的回复**自动继承线程**，不需要 LLM 自己记得带 thread_id。
 
 为什么强调「唯一出口」：
 
 - **可审计**：所有 agent 发出的信都经过同一个点，trace 注入、落盘、投递语义只有一份实现，社会的全部通信记录完整可查。
-- **纯度可检查**：stage 只声明 `MailEffect` 数据、不直接发布事件，这是 effects-as-data 的一部分，由 `scripts/check_stage_purity.py` 静态强制（见 `docs/design/runtime.md`）。发信意图是数据，执行是引擎的事。
+- **纯度可检查**：stage 只声明 `MailEffect` 数据、不直接发布事件，这是 effects-as-data 的一部分，由 [scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 静态强制（见 [docs/design/runtime.md](./runtime.md)）。发信意图是数据，执行是引擎的事。
 - **LLM 心智负担小**：LLM 只需要学会一个工具；线程继承、trace、幂等都是引擎自动给的。
 
 工具本身不投递——`execute` 只返回受理回执，回执文案明确告知 LLM：投递是异步的，地址不存在会收到 postmaster 退信，退信是唯一的失败信号，「不要在本轮向用户承诺已送达」。这句文案是把系统的异步语义翻译成 LLM 能遵守的行为约定。
@@ -157,11 +157,11 @@ agent 发信只有一个出口：`tools/mail/send_email.py` 的 `SendEmailTool`�
 
 ## 人类接入
 
-人类不是协议层的特殊存在，而是总线上的一个普通成员。`organization/messaging/human_adapter.py` 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。
+人类不是协议层的特殊存在，而是总线上的一个普通成员。[organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。
 
-adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。TUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 `docs/design/server-protocol.md`）。
+adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。TUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
-发言侧，`speak` 只接受显式的 `to` / `cc`（R2 协议；R1b 的 `mentions` 别名和按正文 `@名字` 解析的兼容桥已在 PR-C 移除），收件人经共享 resolver 解析，零可解析收件人的邮件直接拒绝——没有地址的邮件是非法的。收件侧与所有成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。这条「每成员一个邮箱、经成员投递」的单轨对人也成立（推送分工详见 `docs/design/server-protocol.md`）。
+发言侧，`speak` 只接受显式的 `to` / `cc`（R2 协议；R1b 的 `mentions` 别名和按正文 `@名字` 解析的兼容桥已在 PR-C 移除），收件人经共享 resolver 解析，零可解析收件人的邮件直接拒绝——没有地址的邮件是非法的。收件侧与所有成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。这条「每成员一个邮箱、经成员投递」的单轨对人也成立（推送分工详见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
 `AdapterManager` 管理 adapter 的生命周期：首个会话 attach 时创建（attach/detach 由一把锁串行化，两个并行的首次 attach 不会泄漏出两个 adapter），最后一个 detach 时关停。关键语义在**首次接触**：第一次 attach（或 REST 发信）同时创建人类的持久邮箱——连接过一次的人类就是「已知人类」，此后离线时发给他的邮件留在持久邮箱里，上线再读。REST 入口 `POST /messages` 走 `publish_as`：发件人身份来自请求体的 `username`，没有在线 adapter 时建一个临时的，发完即拆（若期间有会话 attach 则保留——拆除前再查一次会话数）。
 
@@ -182,10 +182,10 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 
 ## 已废弃
 
-- **聊天室 + @提及模式**：曾经实现过共享聊天室模型（R1b：按正文 `@名字` 解析收件人、`mentions` 字段），后整体废弃，代码与协议入口已移除。废弃理由见 `docs/decisions/0002-mail-as-only-channel.md`：无持久线程语义、噪声大、人机通道分裂。仓库根目录的 `data/chat_history/` 是那个时代的残留数据，当前代码不引用它；`base/paths.py` 的 `chat_history_dir` 已随 wizard 移除一并删除。
-- **Telegram 接入**：`pyproject.toml` 里保留了 `python-telegram-bot` 依赖，session/client 代码里 `client_type` 的示例值有 `"telegram"`，但没有任何真实实现——是未实现的占位，不是可用通道。
+- **聊天室 + @提及模式**：曾经实现过共享聊天室模型（R1b：按正文 `@名字` 解析收件人、`mentions` 字段），后整体废弃，代码与协议入口已移除。废弃理由见 [docs/decisions/0002-mail-as-only-channel.md](../decisions/0002-mail-as-only-channel.md)：无持久线程语义、噪声大、人机通道分裂。仓库根目录的 [data/chat_history/](../../data/chat_history) 是那个时代的残留数据，当前代码不引用它；[base/paths.py](../../src/tlon/base/paths.py) 的 `chat_history_dir` 已随 wizard 移除一并删除。
+- **Telegram 接入**：[pyproject.toml](../../pyproject.toml) 里保留了 `python-telegram-bot` 依赖，session/client 代码里 `client_type` 的示例值有 `"telegram"`，但没有任何真实实现——是未实现的占位，不是可用通道。
 
-废弃的方式本身遵循项目规范「不保留向后兼容」：`mentions` 别名、`@名字` 正文解析这些兼容层是整段删除而非留 fallback——邮件寻址规则只有一份时，系统才能被 LLM 可靠地学会。两个残留（`chat_history_dir` 引用、`python-telegram-bot` 依赖）应择机清掉，但都不影响运行时行为。
+废弃的方式本身遵循项目规范「不保留向后兼容」：`mentions` 别名、`@名字` 正文解析这些兼容层是整段删除而非留 fallback——邮件寻址规则只有一份时，系统才能被 LLM 可靠地学会。一个残留（`python-telegram-bot` 依赖）应择机清掉，不影响运行时行为。
 
 ## 方向
 

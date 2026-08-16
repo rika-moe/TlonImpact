@@ -32,7 +32,7 @@ OPENAI_BASE_URL=https://api.moonshot.cn/v1   # 默认 Moonshot；换别的 OpenA
 OPENAI_MODEL_NAME=kimi-k2.5
 ```
 
-`.env` 不覆盖真实环境变量（`base/settings.py` 的 `_load_dotenv_files`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（dream 日志会提示）。全部变量见 `reference/config-reference.md` 第 4 节。
+`.env` 不覆盖真实环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `_load_dotenv_files`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（dream 日志会提示）。全部变量见 `reference/config-reference.md` 第 4 节。
 
 ## 3. 起服务端（终端 1）—— 空社会首启自动初始化
 
@@ -43,7 +43,7 @@ uv run tlon dream
 
 - 默认绑定 `127.0.0.1:8080`（REST + SSE 单端口）；改端口用 `--rest-port`。
 - `--lucid`（或 `-l`）开调试日志。
-- 启动时会播种内置原型（`agents/prototypes.py` 的 `seed_prototypes`），并**若 `~/.tlon` 下没有任何 agent，自动从职位原型初始化标准团队**（`agents/bootstrap.py`：林知遥←developer / 江予白←ops / 沈清晏←pm / 顾言蹊←support / 苏晚晴←product / 谢云舒←data-analyst，含角色卡人格）——幂等，已有成员即跳过。日志见 `bootstrap_standard_team_ready`。
+- 启动时会播种内置原型（[agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `seed_prototypes`），并**若 `~/.tlon` 下没有任何 agent，自动从职位原型初始化标准团队**（[agents/bootstrap.py](../../src/tlon/agents/bootstrap.py)：林知遥←developer / 江予白←ops / 沈清晏←pm / 顾言蹊←support / 苏晚晴←product / 谢云舒←data-analyst，含角色卡人格）——幂等，已有成员即跳过。日志见 `bootstrap_standard_team_ready`。
 - 随后注册全部 agent，并给带 `:on :boot` 规则的成员发启动请求。
 
 看到日志出现 `server_started` 即就绪。此时 `curl http://127.0.0.1:8080/health` 应返回 200。
@@ -81,7 +81,7 @@ uv run tlon ops
 
 ## 6. 验证与下一步
 
-- 回信会落到 `~/.tlon/human-{你的用户名}/mail/inbox.jsonl`（人类收件箱，`base/paths.py` 的 `member_mail_dir`）；离线时信件在此等待投递。
+- 回信会落到 `~/.tlon/human-{你的用户名}/mail/inbox.jsonl`（人类收件箱，[base/paths.py](../../src/tlon/base/paths.py) 的 `member_mail_dir`）；离线时信件在此等待投递。
 - 发信记录在 `~/.tlon/human-{你的用户名}/mail/sent.jsonl`。
 - agent 收发的邮件在各自 `~/.tlon/{agent_id}/mail/`（`inbox.jsonl` / `sent.jsonl` / `inbox.cursor`）。
 - 想看 agent 在做什么：切换到 Agents 视图看状态，Events 视图看实时事件流，Traces 视图看一次会话的完整追踪。

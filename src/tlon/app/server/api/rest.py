@@ -935,8 +935,8 @@ class RESTAPIHandler:
     async def handle_reload_agent(self, request: web.Request) -> web.Response:
         """POST /admin/config/agents/{agent_id}/reload - Hot-adopt a new agent.
 
-        Entry point for out-of-process creation (wizard/mirror write
-        agent.yaml directly): the registry reloads the config, registers
+        Entry point for out-of-process creation (ops admin API writes
+        agent.yaml): the registry reloads the config, registers
         the agent, and starts it unless it is lazy-activated.
 
         Returns:

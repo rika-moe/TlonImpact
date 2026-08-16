@@ -1,6 +1,6 @@
 # 服务端协议设计（REST + SSE，协议 v2）
 
-Tlon 服务端对外只暴露一个 HTTP 端口：纯 REST + SSE，没有 WebSocket。本文解释这个协议面为什么长这样，以当前实现为准（`src/tlon/app/server/api/rest.py` 的 `RESTServer` / `RESTAPIHandler`）。选 SSE 的决策记录见 `docs/decisions/0005-sse-over-websocket.md`；协议所服务的邮件与成员模型见 `docs/design/mail.md`。
+Tlon 服务端对外只暴露一个 HTTP 端口：纯 REST + SSE，没有 WebSocket。本文解释这个协议面为什么长这样，以当前实现为准（[src/tlon/app/server/api/rest.py](../../src/tlon/app/server/api/rest.py) 的 `RESTServer` / `RESTAPIHandler`）。选 SSE 的决策记录见 [docs/decisions/0005-sse-over-websocket.md](../decisions/0005-sse-over-websocket.md)；协议所服务的邮件与成员模型见 [docs/design/mail.md](./mail.md)。
 
 ## 形态：一个端口，两种动词
 
@@ -29,7 +29,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 
 路由集中在 `RESTAPIHandler.create_app` 注册，按职责分五组：
 
-- **消息**：`POST /messages`（人类发信，异步受理，成功返回 202 + `mail_id`，字段校验的唯一副本在 `app/server/api/send_mail.py` 的 `parse_send_mail_fields`）；`GET /inbox`（读自己的邮箱，inbox+sent 合并按时间序，`username` 参数缺省为 `guest`）。
+- **消息**：`POST /messages`（人类发信，异步受理，成功返回 202 + `mail_id`，字段校验的唯一副本在 [app/server/api/send_mail.py](../../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`）；`GET /inbox`（读自己的邮箱，inbox+sent 合并按时间序，`username` 参数缺省为 `guest`）。
 - **会话**：`POST /sessions`（声明 username/client_type/mode/filters/protocol_version，201 返回 session id 及 participants/agents 快照）；`PATCH /sessions/{id}`（改 mode/filters，响应即更新后状态，不在流上推确认帧）；`DELETE /sessions/{id}`（幂等断开）；`GET /events`（SSE 流，session_id 走 query 参数或 `X-Session-Id` 头，同一会话重复开流返回 409）。
 - **成员**：`GET /agents`、`GET /agents/{agent_id}`、`GET /participants`、`GET /sessions`。
 - **配置**：`GET /config`；管理面 `GET /admin/config/agents`、`POST/PATCH/DELETE /admin/config/agents`（成员 CRUD）、`/admin/prototypes` 与 `/admin/prototypes/staging`（原型列表与审批）、`POST /admin/config/agents/{agent_id}/reload`（热重载）。
@@ -61,7 +61,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 下行推送有两条路径，刻意不重叠：
 
 - **chat 类会话的邮件**走成员层：`HumanAdapter` 订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。人类收信和 agent 收信遵循同一条「每成员一个邮箱、经成员投递」的规则。
-- **系统/agent 事件**走 `app/server/core/notification_service.py` 的 `NotificationService`：订阅全部事件类型，按会话的 mode 语义（`MODE_EVENT_PATTERNS`：chat 收 `mail.*`/`agent.response`/`agent.started` 等、`agent` 收 `agent.*`、`event` 不加限制）和会话 filters（`trace_id`、`event_types`、`exclude_event_types`、`agent`，支持 `prefix.*` / `*` 通配）逐个会话过滤后推送。
+- **系统/agent 事件**走 [app/server/core/notification_service.py](../../src/tlon/app/server/core/notification_service.py) 的 `NotificationService`：订阅全部事件类型，按会话的 mode 语义（`MODE_EVENT_PATTERNS`：chat 收 `mail.*`/`agent.response`/`agent.started` 等、`agent` 收 `agent.*`、`event` 不加限制）和会话 filters（`trace_id`、`event_types`、`exclude_event_types`、`agent`，支持 `prefix.*` / `*` 通配）逐个会话过滤后推送。
 
 ### mode 与 filters
 
@@ -89,8 +89,8 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 两个官方客户端，都只经 REST + SSE 与服务端通信：
 
-- `apps/operator`（TypeScript/Ink TUI）：`src/client/sseClient.ts` 的 `SseClient` 用 fetch 实现整个协议——`POST /sessions` 开流前拿快照，`GET /events` 读流，PATCH 改 mode，断线后指数退避重连（`backoffDelay`，1s 起步、30s 封顶）并**从零重建会话**（新 session id、新快照），断连期间的事件丢弃。`dispose` 中止流并尽力 DELETE 会话。整个客户端协议实现只有这一个文件、两百余行——这是协议面小的直接证据。
-- `src/tlon/app/clients/sdk/`（Python SDK）：`client.py` 的 `TlonClient` = `base_client.py` 的 `BaseClient`（REST + SSE 传输、自动重连、重连后重新 `POST /sessions`）+ `adapter.py` 的 `ClientAdapter`（按客户端类型声明 client_type/mode/filters 等默认行为）。契约上只依赖 `tlon.base`，不触碰服务端内部（import-linter 强制）——SDK 能用的就是协议暴露的，没有后门。
+- [apps/operator](../../apps/operator)（TypeScript/Ink TUI）：`src/client/sseClient.ts` 的 `SseClient` 用 fetch 实现整个协议——`POST /sessions` 开流前拿快照，`GET /events` 读流，PATCH 改 mode，断线后指数退避重连（`backoffDelay`，1s 起步、30s 封顶）并**从零重建会话**（新 session id、新快照），断连期间的事件丢弃。`dispose` 中止流并尽力 DELETE 会话。整个客户端协议实现只有这一个文件、两百余行——这是协议面小的直接证据。
+- [src/tlon/app/clients/sdk/](../../src/tlon/app/clients/sdk)（Python SDK）：`client.py` 的 `TlonClient` = `base_client.py` 的 `BaseClient`（REST + SSE 传输、自动重连、重连后重新 `POST /sessions`）+ `adapter.py` 的 `ClientAdapter`（按客户端类型声明 client_type/mode/filters 等默认行为）。契约上只依赖 `tlon.base`，不触碰服务端内部（import-linter 强制）——SDK 能用的就是协议暴露的，没有后门。
 
 两个客户端共同的约定值得强调：**过滤声明在服务端执行**。adapter 把想要的 mode 和 filters 随 `POST /sessions` / `PATCH` 发给服务端，本地收到什么就展示什么，不再二次过滤。这让「客户端看到什么」的语义只有一个权威实现（`NotificationService`），客户端类型再怎么增加也不会各自漂移出自己的过滤规则。
 

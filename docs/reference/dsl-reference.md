@@ -1,10 +1,10 @@
 # Tlon 行为 DSL 参考手册
 
-每个成员的行为由一份 `behavior.tlon` 描述（Lisp 风格 EDN），由统一解释器 `MemberRuntime`（`src/tlon/agents/member_runtime.py`）执行。本文是该 DSL 的完整语义参考，一切以代码为准；语义权威是 `src/tlon/agents/member_spec.py` 的 `MemberSpec` 数据模型，EDN 只是它的序列化前端。
+每个成员的行为由一份 `behavior.tlon` 描述（Lisp 风格 EDN），由统一解释器 `MemberRuntime`（[src/tlon/agents/member_runtime.py](../../src/tlon/agents/member_runtime.py)）执行。本文是该 DSL 的完整语义参考，一切以代码为准；语义权威是 [src/tlon/agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` 数据模型，EDN 只是它的序列化前端。
 
 ## 1. EDN 语法速览
 
-解析器：`src/tlon/agents/edn.py` 的 `loads()`。只解析数据，不求值。
+解析器：[src/tlon/agents/edn.py](../../src/tlon/agents/edn.py) 的 `loads()`。只解析数据，不求值。
 
 | 字面量 | 例子 | 解析结果 |
 |---|---|---|
@@ -19,10 +19,10 @@
 | 映射 | `{:a 1 :b 2}` | dict；必须偶数个表单项，否则报解析错误 |
 | 注释 | `; 到行尾` | 跳过；逗号视为空白 |
 
-要点（`src/tlon/agents/edn.py` 模块 docstring）：
+要点（[src/tlon/agents/edn.py](../../src/tlon/agents/edn.py) 模块 docstring）：
 
 - `(...)` 与 `[...]` 语义不同：列表是表达式，向量是数据。`:when`、`:until`、stage、section、action 字段都必须是 `(...)` 形式。
-- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（`src/tlon/agents/eval.py` 的 `_value_equal`）。
+- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlon/agents/eval.py](../../src/tlon/agents/eval.py) 的 `_value_equal`）。
 - 符号可用字符集：字母、数字及 `*+!-_?./<>=`，所以 `addressed-to-me?`、`>=`、`start-all` 都是合法符号。
 - 解析失败抛 `EDNParseError`，带 1 起始的行列号。
 
@@ -42,7 +42,7 @@
 | `:parameters` | map | 否 | 模板参数声明（见第 8 节），运行时加载器忽略 |
 | 其他键 | — | — | 未知键记 warning 后忽略（前向兼容） |
 
-**total 语义**（`MemberSpec.from_dict` docstring）：缺必填字段是错误，不给默认值；类型错误同样拒绝。加载路径 `load_member_spec()`（`src/tlon/agents/loader.py`）：文件不存在抛 `FileNotFoundError`，EDN 非法抛 `EDNParseError`，校验失败抛 `MemberSpecValidationError`——任何失败都使该成员拒绝启动（注册表隔离失败，不影响其他成员）。
+**total 语义**（`MemberSpec.from_dict` docstring）：缺必填字段是错误，不给默认值；类型错误同样拒绝。加载路径 `load_member_spec()`（[src/tlon/agents/loader.py](../../src/tlon/agents/loader.py)）：文件不存在抛 `FileNotFoundError`，EDN 非法抛 `EDNParseError`，校验失败抛 `MemberSpecValidationError`——任何失败都使该成员拒绝启动（注册表隔离失败，不影响其他成员）。
 
 ## 3. 规则四要素
 
@@ -68,7 +68,7 @@
 
 ### 3.1 `:on` 可选事件
 
-`:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（`src/tlon/base/events/event.py`，转换逻辑在 `member_spec._on_from`）。合法值：
+`:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（[src/tlon/base/events/event.py](../../src/tlon/base/events/event.py)，转换逻辑在 `member_spec._on_from`）。合法值：
 
 | 类别 | 关键字 |
 |---|---|
@@ -96,7 +96,7 @@
 
 ## 4. 求值器
 
-受限求值器：`src/tlon/agents/eval.py` 的 `eval_form()`。
+受限求值器：[src/tlon/agents/eval.py](../../src/tlon/agents/eval.py) 的 `eval_form()`。
 
 ### 4.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
 
@@ -119,7 +119,7 @@
 ### 4.2 计量与终止
 
 - 每个求值步消耗 1 单位 **fuel**，耗尽抛 `FuelExhaustedError`；form 嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。递归不可能（无法命名函数），`while`/`recur` 表达能力等价图灵机，**终止性由 fuel 保证**。
-- fuel 默认值（`src/tlon/agents/eval.py` 顶部常量）：`:when` 门控 200（`DEFAULT_WHEN_FUEL`），动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。
+- fuel 默认值（[src/tlon/agents/eval.py](../../src/tlon/agents/eval.py) 顶部常量）：`:when` 门控 200（`DEFAULT_WHEN_FUEL`），动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。
 - 声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
 
 ### 4.3 纯度约束（"DSL 描述，引擎执行"）
@@ -226,7 +226,7 @@
 
 stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>`（用 5.3 的谓词；条件为假或求值失败都跳过该 stage）。仅 `plan` 额外支持 `:max-steps <正整数>`（默认 5）。其余 opts 键加载即拒绝。
 
-| stage | 语义（实现见 `src/tlon/agents/stages/`） |
+| stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
 | `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出回复邮件（显式 `to` 优先，否则回复触发邮件发件人）；`is_complete=true` 触发会话完成——保存交互、跑 on-complete 的 `:actions`、标记完成 |
@@ -234,7 +234,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | `critique` | 额外一次 LLM 评审：首行 `PASS`/`FAIL`，无法解析按 PASS（宽容默认，永不阻塞主流程）；结论写入 `scratch.critique = {:passed bool :feedback str}`。失败软降级 |
 | `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作 |
 
-stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（`src/tlon/agents/stages/outcome.py`），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → 保存交互 → on-complete 动作 → 完成标记。
+stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → 保存交互 → on-complete 动作 → 完成标记。
 
 ### 6.3 循环推进与终止（`LoopDriver.step_session`）
 
@@ -258,7 +258,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（`src/
 
 ## 8. `:parameters` 模板（写侧专属）
 
-`behavior.tlon` 可声明顶层 `:parameters` map，并在规则文本里以 `${name}` 引用（`src/tlon/agents/behavior_template.py`）：
+`behavior.tlon` 可声明顶层 `:parameters` map，并在规则文本里以 `${name}` 引用（[src/tlon/agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)）：
 
 ```clojure
 :parameters {:to {:type :string-list :required true}}
@@ -273,11 +273,11 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（`src/
 
 ## 9. `member_type` 派生规则
 
-`member_type()`（`src/tlon/agents/member_spec.py`）：**任一规则带 `:loop` 即 `"react"`（认知成员），否则 `"script"`（确定成员）**。类型是派生值，从不落盘。认知成员由注册表装配完整引擎（LLM、记忆、工具、调度器、反思）；确定成员只装配事件外壳，无 LLM。
+`member_type()`（[src/tlon/agents/member_spec.py](../../src/tlon/agents/member_spec.py)）：**任一规则带 `:loop` 即 `"react"`（认知成员），否则 `"script"`（确定成员）**。类型是派生值，从不落盘。认知成员由注册表装配完整引擎（LLM、记忆、工具、调度器、反思）；确定成员只装配事件外壳，无 LLM。
 
 ## 10. 完整示例
 
-### 10.1 认知型：`deep-thinker`（`src/tlon/prototypes/deep-thinker/behavior.tlon`）
+### 10.1 认知型：`deep-thinker`（[src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -302,9 +302,9 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（`src/
           :actions []}]}                                        ; 无动作也要写空向量或省略
 ```
 
-> 注：仓库中 `src/tlon/prototypes/deep-thinker/behavior.tlon` 当前版本的规则一 map 少一个闭合 `}`，无法通过 `edn.loads` 解析；上例已补上（上文中单独标注的那行），抄写时以本文为准。
+> 注：仓库中 [src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon) 当前版本的规则一 map 少一个闭合 `}`，无法通过 `edn.loads` 解析；上例已补上（上文中单独标注的那行），抄写时以本文为准。
 
-### 10.2 确定型：`relay`（`src/tlon/prototypes/relay/behavior.tlon`）
+### 10.2 确定型：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -317,7 +317,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（`src/
           :actions []}]}
 ```
 
-更复杂的确定型例子见 `src/tlon/agents/adam.py` 的 `ADAM_SPEC_EDN`：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员，`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员——展示了选项 map 里嵌表达式与 Adam 专属宿主谓词的用法。
+更复杂的确定型例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员，`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员——展示了选项 map 里嵌表达式与 Adam 专属宿主谓词的用法。
 
 ## 11. 常见错误与加载失败行为
 

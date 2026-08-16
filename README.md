@@ -4,7 +4,7 @@
 
 ## 愿景
 
-> **让 agent 社会实现自进化**：不依赖人类修改代码，新的行为、新的能力、新的成员从社会内部生长出来，整个社会随时间变得更好。判断标准只有一条——**人类退得越远，社会是否依然进步**。完整愿景见 `docs/vision.md`。
+> **让 agent 社会实现自进化**：不依赖人类修改代码，新的行为、新的能力、新的成员从社会内部生长出来，整个社会随时间变得更好。判断标准只有一条——**人类退得越远，社会是否依然进步**。完整愿景见 [docs/vision.md](./docs/vision.md)。
 
 两条哲学支柱：
 
@@ -30,7 +30,7 @@ uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面 + 成员/
 # 4. 发第一封信：在 TUI 的 Mail 视图按 c，给团队某成员（如「顾言蹊」）写信
 ```
 
-完整走查（含常见问题排查）见 `docs/guides/quickstart.md`。
+完整走查（含常见问题排查）见 [docs/guides/quickstart.md](./docs/guides/quickstart.md)。
 
 ## 架构速览
 
@@ -42,18 +42,18 @@ Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtim
 
 **邮件——成员如何通信。** 邮件是唯一通道：agent 发信只有一个出口（`sendEmail` 工具），人类以普通成员身份加入同一网络。邮箱是磁盘文件（`inbox.jsonl` / `sent.jsonl` / `inbox.cursor`），先持久化、后处理；`all@tlon.internal` 广播、退信、离线等待都是书信共和国的机制。
 
-系统是单进程 asyncio：一个服务端（`tlon dream`）暴露一个 aiohttp 端口（REST + SSE，无 WebSocket），组件间只经 `EventBus` 通信（per-subscriber 有界队列）。代码按客户端 / 服务端装配 / 领域 / 基础设施四层组织，详细分层、装配顺序与数据流见 `docs/architecture.md`。
+系统是单进程 asyncio：一个服务端（`tlon dream`）暴露一个 aiohttp 端口（REST + SSE，无 WebSocket），组件间只经 `EventBus` 通信（per-subscriber 有界队列）。代码按客户端 / 服务端装配 / 领域 / 基础设施四层组织，详细分层、装配顺序与数据流见 [docs/architecture.md](./docs/architecture.md)。
 
 ## 文档地图
 
 | 文档 | 内容 |
 |---|---|
-| `docs/vision.md` | 愿景、哲学、路线 |
-| `docs/architecture.md` | 分层、依赖方向、装配、运行时数据流、存储布局 |
-| `docs/design/` | 各域设计取舍：DSL / 运行时 / 邮件 / 记忆 / 原型 / 协议 |
-| `docs/reference/` | 参考手册：DSL 语法 / 配置 / 工具 / REST+SSE API |
-| `docs/guides/` | 操作指南：快速开始 / 手写 prototype |
-| `docs/decisions/` | 架构决策记录（ADR） |
+| [docs/vision.md](./docs/vision.md) | 愿景、哲学、路线 |
+| [docs/architecture.md](./docs/architecture.md) | 分层、依赖方向、装配、运行时数据流、存储布局 |
+| [docs/design/](./docs/design) | 各域设计取舍：DSL / 运行时 / 邮件 / 记忆 / 原型 / 协议 |
+| [docs/reference/](./docs/reference) | 参考手册：DSL 语法 / 配置 / 工具 / REST+SSE API |
+| [docs/guides/](./docs/guides) | 操作指南：快速开始 / 手写 prototype |
+| [docs/decisions/](./docs/decisions) | 架构决策记录（ADR） |
 
-完整文件清单与分层原则见 `docs/README.md`；开发协作规范见 `AGENTS.md`。
+完整文件清单与分层原则见 [docs/README.md](./docs/README.md)；开发协作规范见 [AGENTS.md](./AGENTS.md)。
 

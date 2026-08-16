@@ -5,7 +5,7 @@
 
 ## 背景
 
-Tlon 要求 agent 的行为是数据而不是代码（见 [../vision.md](../vision.md) 的「行为即数据」）：只有行为可被读写，agent 才能自己书写行为，自进化才有可能。同时这份数据的预期作者包括 LLM（`tools/agents/write_prototype.py`），所以承载它的语言必须满足一组不常见的同时成立的约束：
+Tlon 要求 agent 的行为是数据而不是代码（见 [../vision.md](../vision.md) 的「行为即数据」）：只有行为可被读写，agent 才能自己书写行为，自进化才有可能。同时这份数据的预期作者包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py)），所以承载它的语言必须满足一组不常见的同时成立的约束：
 
 1. 是数据——可解析、可序列化、可整体校验；
 2. 能表达策略——条件门控、循环、对事件负载的计算，不只是静态配置；
@@ -16,17 +16,17 @@ Tlon 要求 agent 的行为是数据而不是代码（见 [../vision.md](../visi
 
 ## 决策
 
-用 Lisp 风格的 EDN（Extensible Data Notation）子集作为 DSL 语法。解析器是自研的单文件实现 `agents/edn.py`（`loads` / `dumps`），语义模型是 `agents/member_spec.py` 的 `MemberSpec` dataclass 树——EDN 只是序列化前端，dataclass 才是语义权威。
+用 Lisp 风格的 EDN（Extensible Data Notation）子集作为 DSL 语法。解析器是自研的单文件实现 [agents/edn.py](../../src/tlon/agents/edn.py)（`loads` / `dumps`），语义模型是 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` dataclass 树——EDN 只是序列化前端，dataclass 才是语义权威。
 
 ## 理由
 
 **`(...)` 代码 / `[...]` 数据在语法层面二分。** 这是选 EDN 而非通用数据格式的核心理由。解析器把列表 `(think)` 解析为 `Form`（代码，交给求值器），把向量 `[...]` 解析为普通 list（数据）——表达式与字面量在解析完成的那一刻就是两个不同的 Python 类型，无需任何二次解析、无需约定俗成的转义协议即可区分。`:when` 字段里写一个谓词表达式和写一个字符串，下游靠类型就能分辨。
 
-**解析器极小，total 校验可行。** EDN 子集只有九种字面量（nil/布尔/数/字符串/关键字/符号/向量/列表/映射），`agents/edn.py` 是一个约三百行的递归下降解析器，无依赖、错误带行列号。安全语言的前提是"没有未定义行为"：语法足够小，加载时的全量静态校验（`validate_form` 遍历表达式，确认每个 form 头是白名单特殊形式或已注册 builtin、每个符号在作用域内）才是彻底而非抽样的。
+**解析器极小，total 校验可行。** EDN 子集只有九种字面量（nil/布尔/数/字符串/关键字/符号/向量/列表/映射），[agents/edn.py](../../src/tlon/agents/edn.py) 是一个约三百行的递归下降解析器，无依赖、错误带行列号。安全语言的前提是"没有未定义行为"：语法足够小，加载时的全量静态校验（`validate_form` 遍历表达式，确认每个 form 头是白名单特殊形式或已注册 builtin、每个符号在作用域内）才是彻底而非抽样的。
 
 **同像性让特殊形式可扩展而不改语法。** 代码即数据意味着新增一个特殊形式（如 phase D 加入的 `while`/`recur`）只需要扩展求值器的白名单 `SPECIAL_FORMS` 和校验器，解析器与所有既有 spec 文本一行不动。语法演化成本被压到接近零，这对一个会长期演进、且作者会逐渐变成 agent 的语言至关重要。
 
-**受限求值器在 EDN 上实现成本最低。** DSL 的核心安全性质——fuel 计量保证停机、无 fn/def/宏、求值纯无副作用、动作只产出 `ActionRequest` 数据（见 design 文档）——落在 s-expression 上是教科书形态：一个 `eval_form` 函数（`agents/eval.py`）递归解释 `Form`，每个求值步扣一格 fuel，form 头不是特殊形式就是 builtin 白名单成员。没有语句、没有运算符优先级、没有作用域解析的语法歧义需要处理，求值器与静态校验器共享同一套遍历逻辑。
+**受限求值器在 EDN 上实现成本最低。** DSL 的核心安全性质——fuel 计量保证停机、无 fn/def/宏、求值纯无副作用、动作只产出 `ActionRequest` 数据（见 design 文档）——落在 s-expression 上是教科书形态：一个 `eval_form` 函数（[agents/eval.py](../../src/tlon/agents/eval.py)）递归解释 `Form`，每个求值步扣一格 fuel，form 头不是特殊形式就是 builtin 白名单成员。没有语句、没有运算符优先级、没有作用域解析的语法歧义需要处理，求值器与静态校验器共享同一套遍历逻辑。
 
 **读写对称。** `dumps` 把数据序列化回 EDN 文本，roundtrip 成立。agent 书写 spec（writePrototype 的校验-修正-重试循环）、`MemberSpec.to_edn` 导出，都依赖同一套对称性——这在"配置文件"类格式里通常要么缺失要么需要引第三方库。
 
