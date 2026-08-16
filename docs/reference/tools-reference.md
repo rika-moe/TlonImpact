@@ -19,7 +19,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 - act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
 - [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for(per_tool_timeout)`；超时返回 `success=False, error="Timeout after {n}s"`。`per_tool_timeout` 来自 agent 配置的 `tool.per_timeout`（[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
-- 特殊规则：同一轮里 `sendEmail` 带 `is_complete=true` 且伴随其他工具调用时，act stage 拒绝整轮（一个工具都不执行），向 LLM 返回冲突提示要求重新规划。
+- 特殊规则：同一轮里 `sendEmail` 带 `is_complete=true` 且伴随其他工具调用时，act stage 拒绝整轮（一个工具都不执行），向 LLM 返回冲突提示要求重新规划；`silence` 与 `sendEmail` 互斥（见 [mail/silence](#silence)），同时调用同样整轮拒绝。
 
 ### 工具与成员类型
 
@@ -27,7 +27,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### 注册清单
 
-`_assemble_cognitive` 为每个认知型成员注册 22 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：
+`_assemble_cognitive` 为每个认知型成员注册 23 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -37,22 +37,23 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 4 | `writeFile` | [tools/filesystem/write_file.py](../../src/tlon/tools/filesystem/write_file.py) 的 `WriteFileTool` | filesystem |
 | 5 | `editFile` | [tools/filesystem/edit_file.py](../../src/tlon/tools/filesystem/edit_file.py) 的 `EditFileTool` | filesystem |
 | 6 | `sendEmail` | [tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool` | mail |
-| 7 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
-| 8 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
-| 9 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
-| 10 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
-| 11 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
-| 12 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
-| 13 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
-| 14 | `compact` | [tools/memory/compact.py](../../src/tlon/tools/memory/compact.py) 的 `CompactTool` | memory |
-| 15 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 16 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 17 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 18 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 19 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 20 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 21 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 22 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
+| 7 | `silence` | [tools/mail/silence.py](../../src/tlon/tools/mail/silence.py) 的 `SilenceTool` | mail |
+| 8 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
+| 9 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
+| 10 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
+| 11 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
+| 12 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
+| 13 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
+| 14 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
+| 15 | `compact` | [tools/memory/compact.py](../../src/tlon/tools/memory/compact.py) 的 `CompactTool` | memory |
+| 16 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
+| 17 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 18 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 19 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 20 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 21 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 22 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 23 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
@@ -80,6 +81,21 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 - `is_complete=true` 时本轮不得同时调用其他工具，否则整轮被 act stage 拒绝（见总述）。
 - 线程继承由引擎完成而非工具：`act_stage_collect` 构造 `MailEffect` 时，`in_reply_to`/`thread_id` 总是取 session 触发邮件的值——工具参数 `in_reply_to` 当前不被读取，另起线程靠新 session（新触发邮件）实现。
 - `to` 传空数组时回退为回复触发邮件的发件人（`act_stage_collect` 的 reply 语义）。
+
+### silence
+
+不回复即结束本轮。当 LLM 决定不回信（循环寒暄、重复内容、无事可回）时调用，替代 `sendEmail` 的"发一封『我们该停了』的信"：工具本身无副作用，不投递任何邮件、不写记忆、不持久化任何状态；act stage 收割到成功的 `silence` 调用后把本轮标记完成（`is_complete=true` 语义），触发邮件沿既有 completion 路径被标记已读，循环就此收口。
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `reason` | string | 否 | — | 停止原因（只进本轮上下文，不落任何存储） |
+
+返回行为：恒 `success=True`，[data](../../data) 为 `{"silenced": true, "reason": ...}`。收割时不计入 `final_content`、不产生 interaction 记录——silence 是一轮"什么都没说"的结束。
+
+注意事项：
+
+- 与 `sendEmail` 互斥：同一轮同时调用 `silence` 和 `sendEmail`（无论 `is_complete` 取值）时，act stage 拒绝整轮并要求重新规划（见总述）。
+- 无状态、无跨轮记忆：silence 不阻止后续新邮件触发新 session，也不对其他线程生效——它只结束当前这一轮。
 
 ## filesystem
 

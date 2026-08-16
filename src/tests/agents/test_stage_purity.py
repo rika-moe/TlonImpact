@@ -158,3 +158,42 @@ class TestEngineApplication:
         assert session.all_tool_results == [{"tool_call": tc, "result": result}]
         assert session.state == SessionState.ACTIVE
         assert session.iteration == 1
+
+    async def test_act_collect_silence_completes_without_mail(self) -> None:
+        """silence is a completion signal: loop ends, no mail, no interaction
+        save (there is no reply content to store)."""
+        svc = _make_services()
+        session = AgentSession(session_id="s1", trigger_content="trigger")
+        session.set_last_llm_response(LLMResponse(content="working"))
+        tc = ToolCall(id="t1", function_name="silence", arguments={"reason": "循环"})
+        result = ToolResult(success=True, data={"silenced": True, "reason": "循环"})
+
+        outcome = await act_stage_collect(svc, session, [(tc, result)])
+
+        assert outcome.complete is True
+        assert outcome.run_on_complete is True
+        assert outcome.mails == []  # nothing sent
+        assert outcome.save_interaction is None  # nothing to store
+        assert session.is_completed is False
+
+    async def test_act_step_silence_conflicts_with_send_email(self) -> None:
+        """A silence round must be the only tool call (like sendEmail
+        is_complete=true): silence + sendEmail in the same round is
+        refused with a corrective prompt."""
+        from tlon.agents.stages.act import act_stage_step
+
+        svc = _make_services()
+        session = AgentSession(session_id="s1", trigger_content="trigger")
+        response = LLMResponse(
+            content="done",
+            tool_calls=[
+                ToolCall(id="s1", function_name="silence", arguments={}),
+                ToolCall(id="m1", function_name="sendEmail", arguments={"is_complete": True}),
+            ],
+        )
+
+        outcome = await act_stage_step(svc, session, response)
+
+        assert outcome.tool_dispatches == []  # refused
+        assert any("冲突" in str(a.get("content")) for a in outcome.context_appends)
+        assert outcome.advance_iteration is True

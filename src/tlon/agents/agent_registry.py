@@ -73,6 +73,7 @@ from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
 from tlon.tools.mail.send_email import SendEmailTool
+from tlon.tools.mail.silence import SilenceTool
 from tlon.tools.memory.compact import CompactTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
@@ -581,6 +582,7 @@ class AgentRegistry(Component):
         tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
         tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
         tool_executor.register_tool(SendEmailTool())
+        tool_executor.register_tool(SilenceTool())
         tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))
         # Spawn/stop lifecycle tools (stage 6b): the registry is the
         # assembler, so it injects itself (it satisfies the AgentLifecycle

@@ -48,19 +48,27 @@ async def act_stage_step(
             context_appends=_no_tool_reminder_appends(response), advance_iteration=True
         )
 
-    # Conflict detection
+    # Conflict detection: a completion signal (sendEmail is_complete=true
+    # or a silence call) must be the round's only tool call.
     send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendEmail"]
-    other_calls = [tc for tc in response.tool_calls if tc.function_name != "sendEmail"]
-    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls)
+    silence_calls = [tc for tc in response.tool_calls if tc.function_name == "silence"]
+    other_calls = [
+        tc
+        for tc in response.tool_calls
+        if tc.function_name not in ("sendEmail", "silence")
+    ]
+    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(
+        silence_calls
+    )
 
-    if has_complete and other_calls:
+    if has_complete and (other_calls or (silence_calls and send_calls)):
         return StageOutcome(
             context_appends=[
                 {
                     "role": "user",
                     "content": (
-                        "冲突：当 sendEmail 的 is_complete 设为 true 时，"
-                        "不得与其他工具同时调用。\n"
+                        "冲突：当 sendEmail 的 is_complete 设为 true 或调用 silence "
+                        "时，本轮不得与其他工具（含 sendEmail）同时调用。\n"
                         "请重新规划。"
                     ),
                 }
@@ -141,6 +149,10 @@ async def act_stage_collect(
             if result.data.get("is_complete"):
                 is_complete = True
                 final_content = content
+        elif tc.function_name == "silence" and result.success:
+            # Completion without any reply: the loop ends, no mail is
+            # emitted, and the trigger mail is marked read on completion.
+            is_complete = True
 
         # Append to context
         assistant_msg: dict[str, Any] = {
@@ -162,7 +174,7 @@ async def act_stage_collect(
 
     if is_complete:
         llm_resp = session.last_llm_response
-        if llm_resp:
+        if llm_resp and final_content:
             outcome.save_interaction = final_content
         svc.logger.info("session_completed", session_id=session.id, content=final_content)
         # On-complete action expressions (phase 4b): declared here,
