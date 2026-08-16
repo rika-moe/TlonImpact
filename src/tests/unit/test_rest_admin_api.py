@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from tlon.agents.prototypes import (
     get_prototype_info,
     seed_prototypes,
@@ -196,3 +198,87 @@ class TestAdminStaging:
         assert rejected.status == 200
         assert get_prototype_info("llm-idea", tlon_paths=p) is None
         assert not (p.prototypes_staging_dir() / "llm-idea").exists()
+
+
+class TestAdminSettingsEnv:
+    """GET/PUT /admin/settings/env — read/write {TLON_HOME}/.env."""
+
+    def _fake_settings(self, monkeypatch: pytest.MonkeyPatch, **values) -> None:
+        from types import SimpleNamespace
+
+        defaults = {
+            "llm_api_key": "",
+            "llm_base_url": "https://api.openai.com/v1",
+            "llm_model_name": "kimi-k2.5",
+            "llm_temperature": 1.0,
+        }
+        defaults.update(values)
+        monkeypatch.setattr(
+            "tlon.app.server.api.rest.get_settings",
+            lambda: SimpleNamespace(**defaults),
+        )
+
+    async def test_get_reports_effective_values(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._fake_settings(monkeypatch, llm_api_key="sk-test", llm_model_name="m")
+        p = TlonPaths(home=tmp_path)
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+
+        resp = await handler.handle_get_settings_env(StubRequest())
+
+        assert resp.status == 200
+        body = json.loads(resp.text)
+        assert body["path"] == str(p.env_file())
+        assert body["configured"] is True
+        assert body["values"]["model_name"] == "m"
+
+    async def test_get_unconfigured_key_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._fake_settings(monkeypatch)
+        p = TlonPaths(home=tmp_path)
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+
+        resp = await handler.handle_get_settings_env(StubRequest())
+
+        body = json.loads(resp.text)
+        assert body["configured"] is False
+        assert body["values"]["api_key"] == ""
+
+    async def test_put_merges_and_keeps_other_keys(self, tmp_path: Path):
+        p = TlonPaths(home=tmp_path)
+        (tmp_path / ".env").write_text(
+            "# comment\nOPENAI_BASE_URL=https://old.example\nCUSTOM_KEY=keep\n",
+            encoding="utf-8",
+        )
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+
+        resp = await handler.handle_update_settings_env(
+            StubRequest(
+                body={
+                    "base_url": "https://api.moonshot.cn/v1",
+                    "api_key": "sk-new",
+                    "temperature": 0.7,
+                }
+            )
+        )
+
+        assert resp.status == 200
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "OPENAI_BASE_URL=https://api.moonshot.cn/v1" in text
+        assert "OPENAI_API_KEY=sk-new" in text
+        assert "OPENAI_TEMPERATURE=0.7" in text
+        assert "CUSTOM_KEY=keep" in text  # untouched keys preserved
+        assert "# comment" in text  # comments preserved
+
+    async def test_put_invalid_body_400(self, tmp_path: Path):
+        p = TlonPaths(home=tmp_path)
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+        req = StubRequest(body={})
+
+        resp = await handler.handle_update_settings_env(req)
+
+        # empty body is a valid merge (no-op update) — 200 with empty list
+        assert resp.status == 200
+        assert json.loads(resp.text)["updated"] == []

@@ -44,13 +44,15 @@ def configure_logging(
             ``server-{date}.jsonl`` (rotated daily)
         retention_days: Number of daily log files to keep
     """
-    # Processors shared by structlog loggers and foreign (plain stdlib) records
+    # Processors shared by structlog loggers and foreign (plain stdlib)
+    # records. NOTE: ``filter_by_level`` is deliberately NOT here — the
+    # foreign chain (httpx etc.) passes no real logger to processors, so
+    # ``filter_by_level`` crashes on ``logger.disabled``; foreign records
+    # are already level-filtered by the stdlib logging machinery itself.
     shared_processors: list[Any] = [
         # Merge contextvars (e.g. agent_id) into the event
         structlog.contextvars.merge_contextvars,
         _add_trace_context,
-        # Add log level to the event
-        structlog.stdlib.filter_by_level,
         # Add timestamp
         structlog.processors.TimeStamper(fmt="iso"),
         # Add caller info
@@ -65,6 +67,18 @@ def configure_logging(
         # Decode unicode
         structlog.processors.UnicodeDecoder(),
     ]
+
+    # The structlog chain additionally filters by level (before timestamping).
+    structlog_processors: list[Any] = [
+        structlog.stdlib.filter_by_level,
+        *shared_processors,
+    ]
+
+    # httpx logs a per-request "HTTP Request: ..." line at INFO (success and
+    # 4xx/5xx alike); Tlon already logs LLM requests/errors structurally via
+    # llm_client, so the raw HTTP line is redundant noise. Silence it at
+    # INFO and below (errors still surface in structlog events).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     def _formatter(renderer: Any) -> structlog.stdlib.ProcessorFormatter:
         return structlog.stdlib.ProcessorFormatter(
@@ -109,7 +123,8 @@ def configure_logging(
 
     # Configure structlog: rendering happens in the per-handler formatters
     structlog.configure(
-        processors=shared_processors + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
+        processors=structlog_processors
+        + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,

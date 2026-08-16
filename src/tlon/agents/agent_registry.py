@@ -101,22 +101,21 @@ _UNKNOWN_SESSION = "-"
 def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMConfig:
     """Merge LLM config from YAML file with runtime settings.
 
-    File config provides model parameters (model_name, temperature, etc.)
-    Settings provide runtime parameters (base_url, auth_token, etc.)
+    Model identity (``model_name`` / ``temperature``) is process-level
+    config, driven by settings (env / ``{TLON_HOME}/.env``). The file's
+    values are NOT used for these: bootstrap snapshots them into
+    agent.yaml at creation, so letting them win would shadow a later
+    .env edit (the Settings view). The file keeps the per-agent knobs
+    the process does not manage: ``max_tokens`` / ``top_p``.
 
-    Args:
-        file_config: LLMConfig from agent YAML (may be None)
-        settings: Application settings from environment variables
-
-    Returns:
-        Merged LLMConfig with all fields populated
+    Settings provide the runtime parameters (base_url, auth_token, ...).
     """
     if file_config is None:
         file_config = LLMConfig()
 
     return LLMConfig(
-        model_name=file_config.model_name,
-        temperature=file_config.temperature,
+        model_name=settings.llm_model_name,
+        temperature=settings.llm_temperature,
         max_tokens=file_config.max_tokens,
         top_p=file_config.top_p,
         base_url=settings.llm_base_url,

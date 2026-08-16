@@ -14,11 +14,10 @@ society like any other.
 """
 
 from tlon.agents.prototypes import instantiate, seed_prototypes
-from tlon.base.config import LLMConfig, yaml_load_all, yaml_save
+from tlon.base.config import yaml_load_all, yaml_save
 from tlon.base.default_team import STANDARD_TEAM_DICTS
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
-from tlon.base.settings import get_settings
 
 logger = get_logger(__name__)
 
@@ -54,18 +53,15 @@ def bootstrap_standard_team(tlon_paths: TlonPaths | None = None) -> list[str]:
         )
         return []
 
-    settings = get_settings()
     created: list[str] = []
     for role in STANDARD_TEAM_DICTS:
         cfg = instantiate(
             role["prototype"], role["id"], role["name"], tlon_paths=p
         )
-        # LLM knobs follow the process settings (env/.env), like the old
-        # quickstart; the rest of the config stays on defaults.
-        cfg.llm = LLMConfig(
-            model_name=settings.llm_model_name,
-            temperature=settings.llm_temperature,
-        )
+        # Model identity is NOT snapshotted into agent.yaml: _build_llm_config
+        # reads model_name/temperature from settings (env/.env) at runtime,
+        # so a later Settings-view edit takes effect without touching the
+        # members' configs. max_tokens/top_p stay at their defaults.
         yaml_save(cfg, p.tlon_home())
 
         config_dir = p.agent_config_dir(role["id"])

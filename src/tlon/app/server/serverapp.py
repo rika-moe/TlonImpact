@@ -384,6 +384,15 @@ async def run_server(
 
     logger.info("server_starting", host=host, rest_port=rest_port)
 
+    # No-key guidance: the server runs fine, but cognitive members fail on
+    # their first LLM call. Point the operator at the Settings view.
+    if not settings.llm_api_key:
+        logger.warning(
+            "llm_api_key_not_configured",
+            hint="在 ops 的 Settings 视图（数字键 7）配置 LLM 参数，"
+            "或设 OPENAI_API_KEY 环境变量",
+        )
+
     # Create and run server
     app = ServerApp(host=host, rest_port=rest_port)
 

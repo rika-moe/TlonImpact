@@ -71,7 +71,7 @@ export class RestClient {
   }
 
   private async send<T>(
-    method: "POST" | "PATCH" | "DELETE",
+    method: "POST" | "PATCH" | "PUT" | "DELETE",
     path: string,
     body?: unknown,
   ): Promise<T> {
@@ -229,6 +229,30 @@ export class RestClient {
   /** Administratively remove a member (records + home archive deleted). */
   async deleteAgent(agentId: string): Promise<Record<string, unknown>> {
     return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  /** Current LLM env configuration (Settings view). */
+  async getSettingsEnv(): Promise<{
+    path: string;
+    configured: boolean;
+    values: {
+      base_url: string;
+      api_key: string;
+      model_name: string;
+      temperature: number;
+    };
+  }> {
+    return this.get("/admin/settings/env");
+  }
+
+  /** Write LLM env config to {TLON_HOME}/.env (merge semantics). */
+  async updateSettingsEnv(body: {
+    base_url?: string;
+    api_key?: string;
+    model_name?: string;
+    temperature?: number;
+  }): Promise<Record<string, unknown>> {
+    return this.send("PUT", "/admin/settings/env", body);
   }
 
   /** In-process metrics snapshot (MetricsService.snapshot()). */

@@ -21,11 +21,10 @@ uv sync
 
 ## 2. 配置环境变量
 
-```bash
-mkdir -p ~/.tlon && cp .env.example ~/.tlon/.env
-```
+两种方式（任选其一）：
 
-编辑 `~/.tlon/.env`，至少填上：
+- **ops 配置（推荐）**：起 dream 后在 ops 的 **Settings 视图**（数字键 `7`）按 `e` 编辑 LLM 参数（base_url / api_key / model_name / temperature），提交后写 `~/.tlon/.env`，重启 dream 生效。
+- **手写**：`~/.tlon/.env`（与数据同目录）填：
 
 ```env
 OPENAI_API_KEY=your-api-key-here
@@ -33,7 +32,7 @@ OPENAI_BASE_URL=https://api.moonshot.cn/v1   # 默认 Moonshot；换别的 OpenA
 OPENAI_MODEL_NAME=kimi-k2.5
 ```
 
-`.env` 与数据同目录（`{TLON_HOME}/.env`，默认 `~/.tlon/.env`），不覆盖真实环境变量（`base/settings.py` 的 `_load_dotenv_files`，`override=False`）；没建 `.env` 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败。全部变量见 `reference/config-reference.md` 第 4 节。
+`.env` 不覆盖真实环境变量（`base/settings.py` 的 `_load_dotenv_files`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（dream 日志会提示）。全部变量见 `reference/config-reference.md` 第 4 节。
 
 ## 3. 起服务端（终端 1）—— 空社会首启自动初始化
 

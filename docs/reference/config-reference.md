@@ -27,10 +27,10 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `model_name` | string | `"kimi-k2.5"` | 模型名 |
-| `temperature` | float | `1.0` | 采样温度，合法域 `[0, 2]`（校验器强制） |
-| `max_tokens` | int | `4096` | 单次生成上限 |
-| `top_p` | float | `0.9` | 核采样 |
+| `model_name` | string | `"kimi-k2.5"` | **运行时由进程级配置驱动**（`OPENAI_MODEL_NAME`，见第 4 节）——agent.yaml 里的值不生效（`_build_llm_config` 以 settings 为准，改 `.env` 后重启生效；bootstrap 的历史快照不再被读取） |
+| `temperature` | float | `1.0` | **同上**，由 `OPENAI_TEMPERATURE` 驱动 |
+| `max_tokens` | int | `4096` | 单次生成上限（**每 agent 可调**——进程级不管理此项） |
+| `top_p` | float | `0.9` | 核采样（**每 agent 可调**） |
 
 运行时字段不进 YAML：`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout` 由进程级环境变量注入（见第 3 节），Pydantic 标注 `exclude=True`，不会落盘。
 
@@ -119,7 +119,7 @@ agent:
 |---|---|---|
 | `TLON_HOME` | `~/.tlon` | 数据根目录；只认已存在且是目录的值，否则回落 `~/.tlon`（见 `base/paths.py` 的 `_resolve_tlon_home`） |
 | `OPENAI_API_KEY` | `""` | LLM API 密钥。默认 provider 是 Moonshot（OpenAI 兼容接口），因此用 `OPENAI_` 前缀 |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | LLM base URL（示例 `.env.example` 填 `https://api.moonshot.cn/v1`） |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | LLM base URL（默认 Moonshot 示例 `https://api.moonshot.cn/v1`） |
 | `OPENAI_MODEL_NAME` | `kimi-k2.5` | 默认模型名 |
 | `OPENAI_TEMPERATURE` | `1.0` | 默认温度 |
 | `OPENAI_MAX_RETRIES` | `3` | LLM 调用重试次数 |
@@ -132,7 +132,7 @@ agent:
 | `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（`base/tracing/otel.py` 的 `SAMPLE_RATIO_ENV`） |
 | `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
 
-`.env.example` 里还列了 `ANTHROPIC_API_KEY`、`AZURE_OPENAI_*`、`DATA_DIR`，但当前代码不读取它们（`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME/data` 即 `~/.tlon/`）。
+可选键：`ANTHROPIC_API_KEY`、`AZURE_OPENAI_*` 等当前代码不读取；`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME` 即 `~/.tlon/`。
 
 ## 5. `~/.tlon` 目录布局
 

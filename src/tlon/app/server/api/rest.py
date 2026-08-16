@@ -31,6 +31,7 @@ from tlon.base.config import LLMConfig, yaml_load_file, yaml_save
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import get_settings
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.human_adapter import (
     DEFAULT_USERNAME,
@@ -291,6 +292,10 @@ class RESTAPIHandler:
         app.router.add_post(
             "/admin/prototypes/staging/{name}/reject", self.handle_reject_prototype
         )
+
+        # Admin env settings (wizard removal F): read/write {TLON_HOME}/.env
+        app.router.add_get("/admin/settings/env", self.handle_get_settings_env)
+        app.router.add_put("/admin/settings/env", self.handle_update_settings_env)
 
         # Trace routes (only if trace_store is available)
         if self.trace_store:
@@ -1192,6 +1197,109 @@ class RESTAPIHandler:
         except PrototypeError as e:
             return self._json_response({"status": "error", "message": str(e)}, status=400)
         return self._json_response({"status": "success", "name": name, "rejected": True})
+
+    # ---- Admin env settings (wizard removal F): {TLON_HOME}/.env ----
+
+    #: ops settings form fields -> .env keys (merge-write semantics: keys
+    #: not edited are left untouched in the file).
+    _ENV_FIELDS: dict[str, str] = {
+        "base_url": "OPENAI_BASE_URL",
+        "api_key": "OPENAI_API_KEY",
+        "model_name": "OPENAI_MODEL_NAME",
+        "temperature": "OPENAI_TEMPERATURE",
+    }
+
+    async def handle_get_settings_env(self, request: web.Request) -> web.Response:
+        """GET /admin/settings/env - current LLM env configuration.
+
+        Returns the effective values (real environment variables win over
+        .env) with the .env file path. The API key is returned in plain
+        text — this is a local admin tool (the operator console is the
+        owner of this config; user decision).
+
+        Returns:
+            200 with ``{path, configured, values}``; 503 when the admin
+            context is unavailable.
+        """
+        if not self.paths:
+            return self._json_response(
+                {"status": "error", "message": "Admin API not available"}, status=503
+            )
+        settings = get_settings()
+        return self._json_response(
+            {
+                "status": "success",
+                "path": str(self.paths.env_file()),
+                "configured": bool(settings.llm_api_key),
+                "values": {
+                    "base_url": settings.llm_base_url,
+                    "api_key": settings.llm_api_key,
+                    "model_name": settings.llm_model_name,
+                    "temperature": settings.llm_temperature,
+                },
+            }
+        )
+
+    async def handle_update_settings_env(self, request: web.Request) -> web.Response:
+        """PUT /admin/settings/env - write LLM env config to {TLON_HOME}/.env.
+
+        Merge semantics: only the fields present in the body are updated;
+        other lines (comments and untouched keys) in the .env are kept.
+        The process reads env at startup — the change takes effect after a
+        dream restart (Settings is a process-level singleton).
+
+        Returns:
+            200 with ``{path, note, updated}``; 400 invalid body; 503 admin
+            context unavailable.
+        """
+        if not self.paths:
+            return self._json_response(
+                {"status": "error", "message": "Admin API not available"}, status=503
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response(
+                {"status": "error", "message": "invalid JSON body"}, status=400
+            )
+
+        # map ops field names -> .env keys; stringify non-string values
+        updates: dict[str, str] = {}
+        for field, env_key in self._ENV_FIELDS.items():
+            if field in body and body[field] is not None:
+                updates[env_key] = str(body[field])
+
+        env_file = self.paths.env_file()
+        lines: list[str] = []
+        if env_file.exists():
+            lines = env_file.read_text(encoding="utf-8").splitlines()
+
+        new_lines: list[str] = []
+        updated: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if "=" in stripped and not stripped.startswith("#"):
+                key, _, _ = stripped.partition("=")
+                if key in updates:
+                    new_lines.append(f"{key}={updates.pop(key)}")
+                    updated.append(key)
+                    continue
+            new_lines.append(line)
+        for key, value in updates.items():
+            new_lines.append(f"{key}={value}")
+            updated.append(key)
+
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        logger.info("settings_env_updated", path=str(env_file), keys=sorted(updated))
+        return self._json_response(
+            {
+                "status": "success",
+                "path": str(env_file),
+                "note": "重启 dream 生效（Settings 是进程级单例）",
+                "updated": sorted(updated),
+            }
+        )
 
     async def handle_list_traces(self, request: web.Request) -> web.Response:
         """GET /traces - List traces with optional filtering.

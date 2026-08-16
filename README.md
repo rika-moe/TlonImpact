@@ -17,9 +17,10 @@
 # 1. 安装依赖
 uv sync
 
-# 2. 配置环境（首次使用）
-mkdir -p ~/.tlon && cp .env.example ~/.tlon/.env
-# 编辑 ~/.tlon/.env，填入 OPENAI_API_KEY（或直接用真实环境变量，.env 仅作便捷层）
+# 2. 配置环境（首次使用，可选）
+# 起 dream 后在 ops 的 Settings 视图（数字键 7）填 LLM 参数，或：
+mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 OPENAI_API_KEY=...
+# （或用真实环境变量，.env 仅作便捷层）
 
 # 3. 运行——两个终端
 uv run tlon dream    # 终端 1：服务端（REST + SSE，默认 127.0.0.1:8080）
