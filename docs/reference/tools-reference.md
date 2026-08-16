@@ -273,7 +273,7 @@ old_string/new_string 精确替换模型。
 
 | reason | 含义 |
 |---|---|
-| `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 mirror 批准；先于一切预算检查 |
+| `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 ops 中批准；先于一切预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
 | `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本只在内存，重启清零） |
@@ -297,7 +297,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### writePrototype
 
-创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 mirror 的「规约审批」批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格是成员创建时数据，不属基因库。
+创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格是成员创建时数据，不属基因库。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|

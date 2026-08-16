@@ -2,14 +2,12 @@
 
 Provides commands (Borgesian metaphor):
 - tlon dream    : Maintain the dream (start server) - from "The Circular Ruins"
-- tlon mirror   : Create in the mirror (configure agents) - from "The Mirror and the Mask"
 - tlon ops      : Open Operator console (monitor and manage)
 
 Usage:
     $ tlon dream            # Start server on the default port (8080)
     $ tlon dream --lucid    # Debug mode (lucid dream)
     $ tlon ops              # Connect operator TUI
-    $ tlon mirror           # Run configuration wizard
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ import sys
 from typing import TYPE_CHECKING
 
 from tlon.app.launcher.commands.dream import run_dream
-from tlon.app.launcher.commands.mirror import run_mirror
 from tlon.app.launcher.commands.ops import run_ops
 from tlon.base.logger import configure_logging
 from tlon.base.settings import get_settings
@@ -44,13 +41,11 @@ Commands:
   %(prog)s dream            Maintain the dream (start server)
   %(prog)s dream --lucid    Lucid dream mode (debug)
   %(prog)s ops              Open Operator console (ops TUI)
-  %(prog)s mirror           Create in the mirror (configure agents)
 
 Legacy Aliases (for backward compatibility):
   %(prog)s server           Same as 'dream'
   %(prog)s intrude          Same as 'ops'
   %(prog)s tui              Same as 'ops'
-  %(prog)s wizard           Same as 'mirror'
         """,
     )
 
@@ -140,27 +135,6 @@ Defaults to the Operator console for backward compatibility.""",
         "--debug", action="store_true", help=argparse.SUPPRESS
     )  # Hidden alias
 
-    # mirror command - create in the mirror (configure agents)
-    mirror_parser = subparsers.add_parser(
-        "mirror",
-        aliases=["wizard"],  # Backward compatibility
-        help="Create in the mirror (configure agents)",
-        description="""Interactive configuration wizard for creating and managing agents.
-
-From "The Mirror and the Mask": The mirror reveals and creates.
-Through the mirror, you shape the forms that will inhabit Tlon.""",
-    )
-    mirror_parser.add_argument(
-        "--lucid",
-        "-l",
-        dest="debug",
-        action="store_true",
-        help="Lucid dream mode - enable debug logging",
-    )
-    mirror_parser.add_argument(
-        "--debug", action="store_true", help=argparse.SUPPRESS
-    )  # Hidden alias
-
     return parser
 
 
@@ -196,25 +170,19 @@ async def main_async(args: Namespace | None = None) -> int:
     elif cmd in ("ops", "intrude", "tui"):
         return await run_ops(args)
 
-    # mirror / wizard (configure agents)
-    elif cmd in ("mirror", "wizard"):
-        return await run_mirror(args)
-
     else:
         # No command - show help
         print("""
 🐙 Tlon - 一个由观念构建的、正在入侵现实的宇宙
 
 Commands:
-  dream       维持梦境（启动 Server）
-  ops         打开运维控制台（含邮件视图）
-  mirror      镜中造物（配置 Agent）
+  dream       维持梦境（启动 Server，空社会首启自动初始化标准团队）
+  ops         打开运维控制台（含邮件视图与成员/原型管理）
 
 Usage:
   tlon dream                    # 启动服务
   tlon dream --lucid            # Debug 模式
   tlon ops                      # 运维控制台
-  tlon mirror                   # 配置向导
 
 Run 'tlon --help' for more information.
 """)

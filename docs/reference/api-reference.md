@@ -191,7 +191,7 @@ Tlon 服务端对外的完整协议面。实现：`src/tlon/app/server/api/rest.
 
 ### POST /admin/config/agents/{agent_id}/reload（条件注册）
 
-热收纳进程外写入的 agent 配置（`tlon mirror` 向导写完 `agent.yaml` 后调用），实际走 `agents/agent_registry.py` 的 `adopt_agent`。200：`{"status": "success", "agent_id", "result"}`，`result` 枚举：
+热收纳磁盘上已存在的 agent 配置（成员创建类管理操作写完后调用），实际走 `agents/agent_registry.py` 的 `adopt_agent`。200：`{"status": "success", "agent_id", "result"}`，`result` 枚举：
 
 | result | 含义 |
 |---|---|

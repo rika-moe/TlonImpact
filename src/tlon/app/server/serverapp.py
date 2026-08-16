@@ -19,6 +19,7 @@ from typing import Any
 
 from tlon.agents.adam import make_adam
 from tlon.agents.agent_registry import AgentRegistry
+from tlon.agents.bootstrap import bootstrap_standard_team
 from tlon.agents.prototypes import seed_prototypes
 from tlon.base.config import ConfigService
 from tlon.base.events.event import Event, EventType
@@ -107,6 +108,17 @@ class ServerApp:
         # 1.0 Seed built-in behavior prototypes (idempotent; before any agent starts)
         seeded = seed_prototypes()
         logger.info("prototypes_ready", seeded=seeded)
+
+        # 1.0b First-boot bootstrap (wizard removal): an empty society gets
+        # the standard team from its role prototypes. Idempotent — skips
+        # when any agent already exists. Must run before ConfigService
+        # reads the agent configs below.
+        bootstrapped = bootstrap_standard_team()
+        if bootstrapped:
+            logger.info(
+                "server_bootstrapped_standard_team",
+                agent_ids=bootstrapped,
+            )
 
         # 1.1 EventBus - event bus for inter-component communication (create first)
         event_bus = EventBus()

@@ -22,10 +22,10 @@ uv sync
 ## 2. 配置环境变量
 
 ```bash
-cp .env.example .env
+mkdir -p ~/.tlon && cp .env.example ~/.tlon/.env
 ```
 
-编辑 `.env`，至少填上：
+编辑 `~/.tlon/.env`，至少填上：
 
 ```env
 OPENAI_API_KEY=your-api-key-here
@@ -33,20 +33,9 @@ OPENAI_BASE_URL=https://api.moonshot.cn/v1   # 默认 Moonshot；换别的 OpenA
 OPENAI_MODEL_NAME=kimi-k2.5
 ```
 
-`.env` 只在该文件存在的仓库根目录加载，且不覆盖真实环境变量（`base/settings.py` 的 `_load_dotenv_files`）。全部变量见 `reference/config-reference.md` 第 4 节。
+`.env` 与数据同目录（`{TLON_HOME}/.env`，默认 `~/.tlon/.env`），不覆盖真实环境变量（`base/settings.py` 的 `_load_dotenv_files`，`override=False`）；没建 `.env` 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败。全部变量见 `reference/config-reference.md` 第 4 节。
 
-## 3. 初始化团队（可选，推荐首次使用）
-
-`tlon mirror`（别名 `tlon wizard`）是交互式配置向导，主菜单选「🚀 快速开始」，4 步走完即建好一套标准团队：
-
-1. **环境检查** — 校验 API key、目录可写等；
-2. **API 配置** — 填 Base URL / API Key，选默认模型，会实测连通性；
-3. **团队配置** — 选标准团队（`base/default_team.py` 的 `STANDARD_TEAM_DICTS`：林知遥/江予白/沈清晏/顾言蹊/苏晚晴/谢云舒 六人）或自定义；
-4. **确认创建** — 写入各 `~/.tlon/{id}/config/agent.yaml` 与人格文件。
-
-也可以跳过这步，直接手写 `agent.yaml`（见 `reference/config-reference.md`）；服务端启动时会从 `~/.tlon/*/config/agent.yaml` 扫描并注册所有 agent（`serverapp.py` 启动流程），不需要预注册。
-
-## 4. 起服务端（终端 1）
+## 3. 起服务端（终端 1）—— 空社会首启自动初始化
 
 ```bash
 uv run tlon dream
@@ -55,11 +44,12 @@ uv run tlon dream
 
 - 默认绑定 `127.0.0.1:8080`（REST + SSE 单端口）；改端口用 `--rest-port`。
 - `--lucid`（或 `-l`）开调试日志。
-- 启动时会播种内置原型（`agents/prototypes.py` 的 `seed_prototypes`）、注册全部 agent，并给带 `:on :boot` 规则的成员发启动请求。
+- 启动时会播种内置原型（`agents/prototypes.py` 的 `seed_prototypes`），并**若 `~/.tlon` 下没有任何 agent，自动从职位原型初始化标准团队**（`agents/bootstrap.py`：林知遥←developer / 江予白←ops / 沈清晏←pm / 顾言蹊←support / 苏晚晴←product / 谢云舒←data-analyst，含角色卡人格）——幂等，已有成员即跳过。日志见 `bootstrap_standard_team_ready`。
+- 随后注册全部 agent，并给带 `:on :boot` 规则的成员发启动请求。
 
 看到日志出现 `server_started` 即就绪。此时 `curl http://127.0.0.1:8080/health` 应返回 200。
 
-## 5. 打开 Operator TUI（终端 2）
+## 4. 打开 Operator TUI（终端 2）
 
 ```bash
 # 首次使用需要先构建 TUI（Node ≥ 22）：
@@ -75,7 +65,7 @@ uv run tlon ops
 
 视图切换：数字键 `1`–`6` 对应 Mail / Agents / Events / Traces / Config / Metrics，`tab` 循环。邮件视图是人类的「信件主界面」：左栏线程列表（新→旧），右栏选中线程的邮件明细，`mail.delivered` 事件实时并入。
 
-## 6. 发第一封信
+## 5. 发第一封信
 
 在 Mail 视图按 `c` 打开写邮件，依次填四个字段（**回车**进入下一个，在 Content 上回车即发送；`esc` 放弃，↑↓ 换字段）：
 
@@ -90,7 +80,7 @@ uv run tlon ops
 
 给客服专员发一封，例如 To 填 `顾言蹊`，正文写「你好，帮我看看项目环境是不是正常」。几秒内她的回信会以 `mail.delivered` 事件帧出现在右栏——agent 是异步处理邮件的，回信经 SSE 推送，无需刷新。
 
-## 7. 验证与下一步
+## 6. 验证与下一步
 
 - 回信会落到 `~/.tlon/human-{你的用户名}/mail/inbox.jsonl`（人类收件箱，`base/paths.py` 的 `member_mail_dir`）；离线时信件在此等待投递。
 - 发信记录在 `~/.tlon/human-{你的用户名}/mail/sent.jsonl`。

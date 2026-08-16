@@ -182,7 +182,7 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 
 ## 已废弃
 
-- **聊天室 + @提及模式**：曾经实现过共享聊天室模型（R1b：按正文 `@名字` 解析收件人、`mentions` 字段），后整体废弃，代码与协议入口已移除。废弃理由见 `docs/decisions/0002-mail-as-only-channel.md`：无持久线程语义、噪声大、人机通道分裂。仓库根目录的 `data/chat_history/` 是那个时代的残留数据，当前代码不引用它；`base/paths.py` 的 `chat_history_dir` 及 wizard 里的创建/清理引用是尚未清理的残留。
+- **聊天室 + @提及模式**：曾经实现过共享聊天室模型（R1b：按正文 `@名字` 解析收件人、`mentions` 字段），后整体废弃，代码与协议入口已移除。废弃理由见 `docs/decisions/0002-mail-as-only-channel.md`：无持久线程语义、噪声大、人机通道分裂。仓库根目录的 `data/chat_history/` 是那个时代的残留数据，当前代码不引用它；`base/paths.py` 的 `chat_history_dir` 已随 wizard 移除一并删除。
 - **Telegram 接入**：`pyproject.toml` 里保留了 `python-telegram-bot` 依赖，session/client 代码里 `client_type` 的示例值有 `"telegram"`，但没有任何真实实现——是未实现的占位，不是可用通道。
 
 废弃的方式本身遵循项目规范「不保留向后兼容」：`mentions` 别名、`@名字` 正文解析这些兼容层是整段删除而非留 fallback——邮件寻址规则只有一份时，系统才能被 LLM 可靠地学会。两个残留（`chat_history_dir` 引用、`python-telegram-bot` 依赖）应择机清掉，但都不影响运行时行为。

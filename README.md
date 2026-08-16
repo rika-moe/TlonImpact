@@ -17,18 +17,16 @@
 # 1. 安装依赖
 uv sync
 
-# 2. 配置环境
-cp .env.example .env
-# 编辑 .env，填入 OPENAI_API_KEY
+# 2. 配置环境（首次使用）
+mkdir -p ~/.tlon && cp .env.example ~/.tlon/.env
+# 编辑 ~/.tlon/.env，填入 OPENAI_API_KEY（或直接用真实环境变量，.env 仅作便捷层）
 
-# 3. 初始化团队（首次使用，可选）
-uv run tlon mirror   # 主菜单选「快速开始」，4 步建好一套标准团队
-
-# 4. 运行——两个终端
+# 3. 运行——两个终端
 uv run tlon dream    # 终端 1：服务端（REST + SSE，默认 127.0.0.1:8080）
-uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面）
+                     # 空社会首次启动自动从职位原型初始化标准团队（幂等）
+uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面 + 成员/原型管理）
 
-# 5. 发第一封信：在 TUI 的 Mail 视图按 c，给团队某成员（如「顾言蹊」）写信
+# 4. 发第一封信：在 TUI 的 Mail 视图按 c，给团队某成员（如「顾言蹊」）写信
 ```
 
 完整走查（含常见问题排查）见 `docs/guides/quickstart.md`。

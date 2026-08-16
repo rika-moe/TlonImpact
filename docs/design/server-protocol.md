@@ -32,7 +32,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 - **消息**：`POST /messages`（人类发信，异步受理，成功返回 202 + `mail_id`，字段校验的唯一副本在 `app/server/api/send_mail.py` 的 `parse_send_mail_fields`）；`GET /inbox`（读自己的邮箱，inbox+sent 合并按时间序，`username` 参数缺省为 `guest`）。
 - **会话**：`POST /sessions`（声明 username/client_type/mode/filters/protocol_version，201 返回 session id 及 participants/agents 快照）；`PATCH /sessions/{id}`（改 mode/filters，响应即更新后状态，不在流上推确认帧）；`DELETE /sessions/{id}`（幂等断开）；`GET /events`（SSE 流，session_id 走 query 参数或 `X-Session-Id` 头，同一会话重复开流返回 409）。
 - **成员**：`GET /agents`、`GET /agents/{agent_id}`、`GET /participants`、`GET /sessions`。
-- **配置**：`GET /config`；管理面 `GET /admin/config/agents`、`POST /admin/config/agents/{agent_id}/reload`（热重载，供 wizard/mirror 等进程外写入配置后让服务端收纳）。
+- **配置**：`GET /config`；管理面 `GET /admin/config/agents`、`POST/PATCH/DELETE /admin/config/agents`（成员 CRUD）、`/admin/prototypes` 与 `/admin/prototypes/staging`（原型列表与审批）、`POST /admin/config/agents/{agent_id}/reload`（热重载）。
 - **可观测性**：`GET /traces`、`GET /traces/{trace_id}`、`GET /metrics`、`GET /agents/{agent_id}/logs`、`GET /logs`。另有 `GET /health`；`GET /test/ping`、`POST /test/echo` 仅 debug 模式注册。
 
 几个端点层面的设计选择：
@@ -41,7 +41,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 - **快照随会话建立返回**：`POST /sessions` 的 201 响应内嵌 participants/agents 快照，省掉客户端启动时的一轮级联查询；之后的变化靠 SSE 事件增量。这是「历史 + 增量」读模型在成员目录上的复用。
 - **写少读多**：写端点只有 `POST /messages` 和会话管理三个，其余全是 GET。人类对系统能做的动作本来就只有「写信」和「调整自己的接收方式」，端点表是这个事实的直译。
 - **条件注册**：admin 路由在 config_manager 存在时才注册，traces 路由在 trace_store 存在时才注册，`/metrics` 无 metrics 服务时返回 503。装配层（`ServerApp`）决定哪些能力上线，API 层不猜测——缺失的能力以明确的 503/缺路由表达，不伪装成功。
-- **热重载走管理面**：`POST /admin/config/agents/{agent_id}/reload` 是给 `tlon mirror` 向导这类进程外写入者准备的收纳入口——写完 `agent.yaml` 后让运行中的服务端注册并启动该 agent（或登记为 lazy）。配置的唯一权威仍是磁盘文件，端点只是触发重读。
+- **热重载走管理面**：`POST /admin/config/agents/{agent_id}/reload` 让运行中的服务端注册并启动一个磁盘上已存在的 agent（或登记为 lazy）——创建类管理操作的收尾。配置的唯一权威仍是磁盘文件，端点只是触发重读。
 
 会话即存在（presence）：SSE 流建立时才把会话 attach 到对应人类的 `HumanAdapter` 并注册事件处理器；流断开（客户端断连、心跳写失败、主动 DELETE）即可靠地 detach 并关闭会话——**SSE 断开等于离线**，客户端重连需重新 `POST /sessions` 拿新 session id 和新快照。
 

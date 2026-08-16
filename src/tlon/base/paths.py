@@ -6,7 +6,6 @@ No other module should hardcode directory structure assumptions.
 Layout:
     ~/.tlon/
     ├── shared/
-    │   ├── chat_history/
     │   ├── traces/
     │   │   └── trace-{uuid}.jsonl
     │   └── logs/
@@ -73,6 +72,15 @@ class TlonPaths:
 
     def tlon_home(self) -> Path:
         return self._home
+
+    def env_file(self) -> Path:
+        """The process-level env config (``{TLON_HOME}/.env``).
+
+        Loaded by ``base/settings.py`` as a fallback source of environment
+        variables; real environment variables always win. Does not create
+        the file — an absent .env is the normal first-run state.
+        """
+        return self._home / ".env"
 
     def shared_dir(self) -> Path:
         d = self._home / "shared"
@@ -203,11 +211,6 @@ class TlonPaths:
         return self.agent_memory_dir(agent_id) / "config.json"
 
     # ===== Shared =====
-
-    def chat_history_dir(self) -> Path:
-        d = self.shared_dir() / "chat_history"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
 
     def traces_dir(self) -> Path:
         d = self.shared_dir() / "traces"

@@ -63,7 +63,7 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 
 ### 信任闸：staging + 人工批准
 
-受限语言把风险降到了"写错行为"的级别，但写错的行为仍然是行为。所以 LLM 撰写的 spec 不直接生效：`WritePrototypeTool` 的产物经 `agents/prototypes.py` 的 `write_staging_prototype` 落入 `~/.tlon/prototypes-staging/`，元数据标记 `:trusted false`；`AgentRegistry` 在 spawn 前检查信任位，未受信原型直接拒绝。人类在 mirror（`tlon mirror`）中批准后，`approve_prototype` 把目录移入受信库并改写 `:trusted true`。
+受限语言把风险降到了"写错行为"的级别，但写错的行为仍然是行为。所以 LLM 撰写的 spec 不直接生效：`WritePrototypeTool` 的产物经 `agents/prototypes.py` 的 `write_staging_prototype` 落入 `~/.tlon/prototypes-staging/`，元数据标记 `:trusted false`；`AgentRegistry` 在 spawn 前检查信任位，未受信原型直接拒绝。人类在 ops 的 Agents 视图（`s` 审批）中批准后，`approve_prototype` 把目录移入受信库并改写 `:trusted true`。
 
 信任的默认值是不对称的：随包播种的与人类手写的原型默认受信（`:trusted true`，可直接 spawn——手写即意味着人类已经看过），只有 staging 区写出 `:trusted false`。也就是说信任位标记的不是"这份 spec 的质量"，而是"它的作者是不是机器"；审批动作把一份机器产物正式记为人类认可。`:author` 字段记录撰写者 agent 的 id，审计链完整：谁写的、谁批准的、何时进的可信库，都可追溯。
 

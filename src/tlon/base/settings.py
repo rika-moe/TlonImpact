@@ -13,17 +13,17 @@ from tlon.base.paths import paths
 
 
 def _load_dotenv_files() -> None:
-    """Load the repo-root .env as a fallback source of environment variables.
+    """Load ``{TLON_HOME}/.env`` as a fallback source of environment variables.
 
-    Only the .env next to the repository root is loaded, regardless of the
-    current working directory. Real environment variables always win
-    (override=False): the .env only fills in variables that are not already
-    set in the process environment.
+    Configuration lives with the data, not the checkout: the .env sits in
+    the Tlon home directory (``~/.tlon/.env``, or ``$TLON_HOME/.env``).
+    Real environment variables always win (``override=False``): the .env
+    only fills in variables that are not already set in the process
+    environment.
     """
-    project_dir = Path(__file__).parent.parent.parent.parent
-    project_env = project_dir / ".env"
-    if project_env.exists():
-        load_dotenv(project_env, override=False)
+    env_file = paths.env_file()
+    if env_file.exists():
+        load_dotenv(env_file, override=False)
 
 
 def get_tlon_home() -> Path:

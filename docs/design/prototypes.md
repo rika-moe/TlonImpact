@@ -11,7 +11,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 - `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`。缺省时以目录名兜底（`_read_metadata`）。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
 
-统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件（IDENTITY.md / SOUL.md / RULES.md）是**创建时的数据**（wizard 角色卡 / 未来工具注入），不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
+统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件（IDENTITY.md / SOUL.md / RULES.md）是**创建时的数据**（ops 创建时填写 / 未来工具注入），不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
 
 两个「不声明」值得注意：
 
@@ -60,8 +60,8 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
 2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。
-3. `agent.yaml` 走与 wizard 相同的 `yaml_save` 路径写出，`prototype` 字段记录来源。
-4. 无需重启生效：调用方（wizard 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
+3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。
+4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
 拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。
 
@@ -99,7 +99,7 @@ agent 侧入口是 `SpawnAgentTool`（`tools/agents/spawn_agent.py`，工具名 
 
 预算的三个硬编码默认值（注册表构造参数）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本 `_spawn_quota` 只在内存里，重启清零——这是防失控机制，不是计量系统，重启丢失可接受。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。
 
-拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 mirror 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
+拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 ops 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
 
 ### 权限不可升格
 
@@ -123,7 +123,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 `write_staging_prototype`（`agents/prototypes.py`）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。
 
-晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 mirror 的「规约审批」；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
+晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 
 `writePrototype` 支持两种 `spec_type`：`react`（认知规则模板，默认）与 `script`（无 `:loop` 的确定性规则）。两者输出的是同一种统一 rules 形态的 `behavior.tlon`——`spec_type` 只选择写侧模板（是否带 `:loop`），不写人格文件，也不标记成员类别（统一成员模型，ADR 0006）。这让 staging 闸对两类形态是同一条校验链，没有旁路。
 

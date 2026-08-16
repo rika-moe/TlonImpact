@@ -239,6 +239,5 @@ forbidden_modules = [
     "tlon.tools",
     "tlon.prototypes",
     "tlon.app.server",
-    "tlon.app.wizard",
     "tlon.app.launcher",
 ]

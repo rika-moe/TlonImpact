@@ -1112,6 +1112,69 @@ class AgentRegistry(Component):
         logger.info("agent_stopped", agent_id=agent_id, stopped_by=stopped_by)
         return True
 
+    async def remove_member(self, agent_id: str, removed_by: str) -> bool:
+        """Administrative removal of a member (wizard removal, ADR 0006).
+
+        Distinct from ``stop_member`` (which sleeps, keeping the home
+        archive): this deletes the member's records — it is stopped
+        (sleeps) if running, unregistered, and its home directory is
+        deleted by the config provider. The runtime never does this on
+        its own; it is the explicit management action behind the admin
+        DELETE API.
+
+        Args:
+            agent_id: member to remove
+            removed_by: who requested the removal (audit)
+
+        Returns:
+            True when the member was removed.
+
+        Raises:
+            StopRejectedError: unknown agent / live sessions
+        """
+        config = self._agent_info.get_config(agent_id)
+        if config is None:
+            raise StopRejectedError("unknown_agent", f"agent '{agent_id}' not found")
+
+        # Serialize with a concurrent wake of the same persona
+        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            agent = self._agents.pop(agent_id, None)
+            if agent is not None:
+                if agent.active_session_count > 0:
+                    self._agents[agent_id] = agent
+                    raise StopRejectedError(
+                        "active_sessions",
+                        f"agent '{agent_id}' has live sessions; stop it first",
+                    )
+                try:
+                    await agent.shutdown()
+                except Exception as e:
+                    logger.error("agent_stop_failed", agent_id=agent_id, error=str(e))
+
+            if agent_id in self._registered_ids:
+                self._registered_ids.remove(agent_id)
+            self._profiles.pop(agent_id, None)
+            self._wake_locks.pop(agent_id, None)
+            try:
+                self._agent_info.delete_agent(agent_id)
+            except ValueError:
+                logger.warning("agent_home_missing", agent_id=agent_id)
+
+        logger.info("agent_removed", agent_id=agent_id, removed_by=removed_by)
+        await self.event_bus.publish(
+            Event(
+                type=EventType.AGENT_STOPPED,
+                payload={
+                    "agent_id": agent_id,
+                    "stopped_by": removed_by,
+                    "removed": True,
+                },
+                source="agent_registry",
+            )
+        )
+        return True
+
     # ==================== Idle fact detection + drain execution ====================
 
     async def _idle_monitor_loop(self) -> None:

@@ -3,7 +3,7 @@
 完整走查：从零写一个行为原型，把它变成活的 agent。读完你就能：
 
 - 手写一份 `behavior.tlon`（rules-form EDN）并把目录放进 `~/.tlon/prototypes/`；
-- 用 mirror 或 `spawnAgent` 从原型派生 agent；
+- 用 ops 管理界面或 `spawnAgent` 从原型派生 agent；
 - 走一遍「LLM 创作 → staging → 人工审批」的完整管线。
 
 前置：先通读 `design/prototypes.md`（为什么这么设计）与 `reference/dsl-reference.md`（EDN 语法与 MemberSpec 全字段）。本文是操作手册，不重复语法。
@@ -75,19 +75,15 @@
 
 ### 2.3 人格文件：创建时数据，不进原型
 
-原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）是创建成员时的数据：wizard 创建时写入（快速开始的角色卡来自 `base/default_team.py`），之后可在成员 `config/` 下随时编辑——它不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
+原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）是创建成员时的数据：服务端首启自动初始化或 ops 创建时写入（标准团队的角色卡来自 `base/default_team.py`），之后可在成员 `config/` 下随时编辑——它不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
 
 ## 3. 从原型派生 agent
 
 `behavior.tlon` 会在派生时**逐字拷贝**进 `~/.tlon/{agent_id}/config/`，此后改原型不影响已派生的 agent（拷贝即冻结）；`agent.yaml` 的 `prototype` 字段记录来源（血缘）。两种派生入口：
 
-### 方法 A：mirror（人类）
+### 方法 A：ops Agents 视图（人类）
 
-```bash
-uv run tlon mirror
-```
-
-主菜单 → 「🧬 从 Prototype 创建」→ 选中你的原型 → 填姓名与 agent ID → 确认。启动模式由 `behavior.tlon` 的 `:on :boot` 规则自动决定，无需配置。
+`uv run tlon ops` → Agents 视图按 `c` 创建：选中你的原型 → 填姓名（可选 agent_id / identity）→ 回车提交。启动模式由 `behavior.tlon` 的 `:on :boot` 规则自动决定，无需配置。
 
 ### 方法 B：spawnAgent（LLM）
 
@@ -115,7 +111,7 @@ uv run tlon mirror
 「agent 创造 agent」不直接落进 trusted 库，走两区制：
 
 1. **创作**：LLM 用 `writePrototype` 工具，传 `name` + `behavior`（EDN 字符串）+ `spec_type`（`react` 默认 / `script`）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
-2. **审批**：人类在 `uv run tlon mirror` → 主菜单 → 「🛡️ 规约审批」里批准或拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 保留，审计链不断）；`reject_prototype` 整个删除。
+2. **审批**：人类在 ops 的 Agents 视图按 `s`（staging 列表）`a` 批准 / `x` 拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 保留，审计链不断）；`reject_prototype` 整个删除。
 3. **实例化**：批准后即可被 `spawnAgent` 使用。`spawnAgent` 对 staging 里的不可信原型直接拒绝（`untrusted_prototype`），且在一切预算检查之前——不可信原型连配额都消耗不到。
 
 ## 6. 校验与排错

@@ -179,10 +179,10 @@ def instantiate(
     file is rendered with those values before writing to disk. Otherwise
     ``params`` must be empty.
 
-    ``agent.yaml`` is written through the same save path as the wizard.
-    The new agent takes effect without a restart: the caller
-    (wizard / registry spawn) hot-adopts it — the wizard notifies the
-    running server (POST ``/admin/config/agents/{id}/reload`` →
+    ``agent.yaml`` is written via ``yaml_save`` (the standard config save
+    path). The new agent takes effect without a restart: the caller
+    (ops admin API / registry spawn) hot-adopts it — the caller
+    requests ``POST /admin/config/agents/{id}/reload`` →
     ``AgentRegistry.adopt_agent``); when no server is running, it takes
     effect after the next server restart.
 

@@ -70,6 +70,34 @@ export class RestClient {
     return (await response.json()) as T;
   }
 
+  private async send<T>(
+    method: "POST" | "PATCH" | "DELETE",
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch (err) {
+      throw new RestError(`REST request failed: ${method} ${path} (${String(err)})`);
+    }
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      reason?: string;
+    } & T;
+    if (!response.ok) {
+      throw new RestError(
+        data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
+        response.status,
+      );
+    }
+    return data;
+  }
+
   async health(): Promise<Record<string, unknown>> {
     return this.get("/health");
   }
@@ -148,6 +176,59 @@ export class RestClient {
   async listParticipants(): Promise<ParticipantInfo[]> {
     const data = await this.get<{ participants?: ParticipantInfo[] }>("/participants");
     return data.participants ?? [];
+  }
+
+  // ---- Admin (wizard removal): agent CRUD + prototype approval ----
+
+  /** Trusted prototypes a member can be created from (behavior genome). */
+  async listPrototypes(): Promise<Record<string, unknown>[]> {
+    const data = await this.get<{ prototypes?: Record<string, unknown>[] }>(
+      "/admin/prototypes",
+    );
+    return data.prototypes ?? [];
+  }
+
+  /** LLM-authored prototypes awaiting human approval. */
+  async listStaging(): Promise<Record<string, unknown>[]> {
+    const data = await this.get<{ prototypes?: Record<string, unknown>[] }>(
+      "/admin/prototypes/staging",
+    );
+    return data.prototypes ?? [];
+  }
+
+  async approvePrototype(name: string): Promise<Record<string, unknown>> {
+    return this.send("POST", `/admin/prototypes/staging/${encodeURIComponent(name)}/approve`);
+  }
+
+  async rejectPrototype(name: string): Promise<Record<string, unknown>> {
+    return this.send("POST", `/admin/prototypes/staging/${encodeURIComponent(name)}/reject`);
+  }
+
+  /** Create a member from a prototype (persona = creation-time data). */
+  async createAgent(body: {
+    prototype: string;
+    name: string;
+    agent_id?: string;
+    params?: Record<string, unknown>;
+    persona?: Record<string, string>;
+  }): Promise<Record<string, unknown>> {
+    return this.send("POST", "/admin/config/agents", body);
+  }
+
+  /** Edit a member's persona / LLM knobs. */
+  async updateAgent(
+    agentId: string,
+    body: {
+      persona?: Record<string, string>;
+      llm?: { model_name?: string; temperature?: number };
+    },
+  ): Promise<Record<string, unknown>> {
+    return this.send("PATCH", `/admin/config/agents/${encodeURIComponent(agentId)}`, body);
+  }
+
+  /** Administratively remove a member (records + home archive deleted). */
+  async deleteAgent(agentId: string): Promise<Record<string, unknown>> {
+    return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
   }
 
   /** In-process metrics snapshot (MetricsService.snapshot()). */

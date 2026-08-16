@@ -24,8 +24,10 @@ export default function App({
   const { stdout } = useStdout();
   const [view, setView] = useState<ViewName>("mail");
   const [status, setStatus] = useState<ConnectionStatus>({ state: "connecting", attempt: 0 });
-  // While a mail form captures text input, global view-switch keys are off.
+  // While a mail form or the agents admin form captures text input,
+  // global view-switch keys are off.
   const [mailEditing, setMailEditing] = useState(false);
+  const [agentsEditing, setAgentsEditing] = useState(false);
 
   const sse = useMemo(
     () => new SseClient({ host, port: restPort, clientType: "tui", username }),
@@ -55,7 +57,7 @@ export default function App({
       exit();
       return;
     }
-    if (mailEditing) return; // a mail form owns the keyboard
+    if (mailEditing || agentsEditing) return; // a form owns the keyboard
     if (input === "q") {
       exit();
       return;
@@ -85,7 +87,9 @@ export default function App({
         {view === "mail" ? (
           <MailView sse={sse} rest={rest} username={username} onEditingChange={setMailEditing} />
         ) : null}
-        {view === "agents" ? <AgentsView rest={rest} sse={sse} /> : null}
+        {view === "agents" ? (
+          <AgentsView rest={rest} sse={sse} onEditingChange={setAgentsEditing} />
+        ) : null}
         {view === "events" ? <EventsView sse={sse} /> : null}
         {view === "traces" ? <TracesView rest={rest} /> : null}
         {view === "config" ? <ConfigView rest={rest} /> : null}

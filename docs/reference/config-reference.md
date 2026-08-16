@@ -113,7 +113,7 @@ agent:
 
 ## 4. 环境变量
 
-读取方是 `base/settings.py` 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 `base/tracing/otel.py`。`.env` 只在仓库根目录加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）。
+读取方是 `base/settings.py` 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 `base/tracing/otel.py`。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -140,8 +140,8 @@ agent:
 
 ```
 ~/.tlon/
+├── .env                              # 进程级环境配置（API key 等，可选；真实环境变量优先）
 ├── shared/
-│   ├── chat_history/                 # 共享聊天历史
 │   ├── traces/
 │   │   └── trace-{uuid}.jsonl        # 会话追踪
 │   └── logs/
@@ -182,5 +182,5 @@ agent:
 ## 6. 配置相关的常用操作
 
 - **增/删 agent**：`base/config.py` 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
-- **交互式配置**：`tlon mirror`（别名 `tlon wizard`）启动配置向导。
+- **交互式管理**：ops 的 Agents 视图——创建成员（`c`）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；空社会首启由服务端自动初始化标准团队（`agents/bootstrap.py`）。
 - **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（`base/paths.py` 模块 docstring 的硬性规定）。

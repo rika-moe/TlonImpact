@@ -49,7 +49,7 @@ REST 接口一览（均在 `rest.py` 注册）：
 
 客户端侧有两类接入方式：`tlon ops`（`app/launcher/commands/ops.py`）定位仓库内 `apps/operator/` 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。`app/clients/sdk/` 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上只依赖 `tlon.base`，不触碰服务端内部。
 
-第三条命令 `tlon mirror` 是交互式配置向导（`app/wizard/`，`app/launcher/commands/mirror.py` 入口），用于创建和管理 agent 配置；内置默认团队定义在 `base/default_team.py`。向导写的是 `~/.tlon/{agent_id}/config/` 下的 `agent.yaml` 与人格文件，运行中的服务端可通过 `POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
+成员配置的创建与审批走服务端管理面：空社会首启自动初始化标准团队（`agents/bootstrap.py`，角色卡定义在 `base/default_team.py`），成员/原型管理经 ops 的管理 API（`POST/PATCH/DELETE /admin/config/agents`、`/admin/prototypes/staging` 审批），`POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
 
 ## 分层与依赖方向
 
@@ -65,7 +65,7 @@ REST 接口一览（均在 `rest.py` 注册）：
 | `tlon.agents` | 领域核心：注册表、成员运行时、认知循环 | base/memory/organization/tools/sandbox；不依赖 app/prototypes | import-linter |
 | `tlon.prototypes` | 内置行为原型库（随包携带，启动时播种到 `~/.tlon/prototypes/`） | —（无独立契约） | — |
 | `tlon.app.clients.sdk` | 外部客户端用的纯协议层 SDK | 仅 tlon.base | import-linter「app.clients.sdk 只依赖 tlon.base」 |
-| `tlon.app`（server/launcher/wizard） | 装配层与命令行入口 | 下层全部 | 无显式契约，靠分层惯例 |
+| `tlon.app`（server/launcher） | 装配层与命令行入口 | 下层全部 | 无显式契约，靠分层惯例 |
 
 除 import-linter 外，`scripts/` 下还有三个 AST 检查脚本：
 
