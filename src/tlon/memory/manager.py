@@ -96,6 +96,14 @@ class MemoryManager:
 
         Called once at Agent startup. Loads config, working memory,
         and episodic memory.
+
+        ``memory/config.json`` is the single per-agent tuning surface:
+        when it exists it replaces the constructor-provided config (the
+        registry passes defaults), so a human-edited file takes effect.
+        The working/episodic store limits are snapshotted at construction,
+        so the merged values are re-applied to the stores before they
+        load. A missing file is created with the current defaults; a
+        corrupt one is logged and re-initialized with defaults.
         """
         if self._loaded:
             return
@@ -109,17 +117,24 @@ class MemoryManager:
                     content = await f.read()
                     data = json.loads(content)
                     loaded_config = MemoryConfig.from_dict(data)
-                    # Merge with provided config (provided takes precedence)
-                    if not self.config.agent_id:
-                        self.config = loaded_config
+                    loaded_config.agent_id = self.agent_id
+                    self.config = loaded_config
                     logger.info("memory_config_loaded", agent_id=self.agent_id)
             except Exception as e:
                 logger.error("memory_config_load_failed", error=str(e), exc_info=True)
+                self.config.agent_id = self.agent_id
                 await self._save_config()
         else:
             # Save initial config
             self.config.agent_id = self.agent_id
             await self._save_config()
+
+        # Store limits snapshot at construction; re-apply the (possibly
+        # merged) values before the stores load so a tuned config.json is
+        # honored from the first boot.
+        self.working.max_items = self.config.working_max_items
+        self.episodic.max_summaries = self.config.episodic_max_summaries
+        self.episodic.max_facts = self.config.episodic_max_facts
 
         # Load working memory
         await self.working.load()

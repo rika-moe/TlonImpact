@@ -100,13 +100,6 @@ class DockerRuntimeConfig(BaseModel):
     network_mode: str = "host"
 
 
-class MemoryConfig(BaseModel):
-    """Memory configuration for an agent."""
-
-    max_history: int = 10
-    summary_window: int = 20
-
-
 class ToolConfig(BaseModel):
     """Tool execution configuration for an agent."""
 
@@ -140,7 +133,6 @@ class AgentConfig(BaseModel):
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
-    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
     # Deprecated and ignored (phase E): the boot set and the lazy set are
     # derived from the behavior spec's `:on` rules — a member with an
@@ -372,7 +364,6 @@ __all__ = [
     "AgentInfoProvider",
     "LLMConfig",
     "DockerRuntimeConfig",
-    "MemoryConfig",
     "ToolConfig",
     "AgentConfig",
     "ConfigService",

@@ -131,16 +131,16 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 
 ## 已知问题
 
-如实记录一处当前缺陷：**archivist、deep-thinker、fast-responder 三个内置原型的 `behavior.tlon` 是非法 EDN**——第一条规则的 map 缺一个闭合 `}`（`:loop` 的 map 闭合后，规则 map 本身没有闭合就接了下一条规则），`edn.loads` 报 `EDNParseError: unmatched delimiter: ']'`。
+~~一处当前缺陷：**archivist、deep-thinker、fast-responder 三个内置原型的 `behavior.tlon` 是非法 EDN**——第一条规则的 map 缺一个闭合 `}`（`:loop` 的 map 闭合后，规则 map 本身没有闭合就接了下一条规则），`edn.loads` 报 `EDNParseError: unmatched delimiter: ']'`。~~ **已修复**（三处补齐 `}`，且新增 `src/tests/agents/test_builtin_prototypes.py` 对四个内置原型做「播种 → 实例化 → 加载 spec」冒烟测试，解析 + 单一校验器全过，防止同类回归）。
 
-这个 bug 被两层兜底掩盖了：
+当时这个 bug 被两层兜底掩盖了：
 
 - 元数据读取不许失败：`_derive_runtime` 解析失败回退 `"react"`（恰好是正确答案），`_read_parameters` 失败回退空参数——所以 `listPrototypes` 看起来一切正常。
 - `instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。
 
-失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。现有测试只覆盖了 relay（`src/tests/agents/test_relay.py`），三个认知型内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
+失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。当时现有测试只覆盖了 relay（`src/tests/agents/test_relay.py`），三个认知型内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
 
-修复方向有两层，互相独立：直接修复是补上三处缺失的 `}`；系统性修复是给四个内置原型各加一个「播种 → 实例化 → 加载 spec」的冒烟测试（relay 的测试形态直接可复用），并在播种或列出时对 trusted 库做一次廉价的解析体检——容错原则保护的是 staging 与用户目录，包内携带的原型没有理由不可解析。
+系统性修复有两层，互相独立：直接修复是补上三处缺失的 `}`（已完成）；回归防护是给四个内置原型各加一个「播种 → 实例化 → 加载 spec」的冒烟测试（已完成，relay 的测试形态直接复用）。「播种/列出时对 trusted 库做解析体检」暂未做——容错原则保护的是 staging 与用户目录，包内携带的原型由冒烟测试兜底。
 
 ## 方向
 

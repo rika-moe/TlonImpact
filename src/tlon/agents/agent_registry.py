@@ -551,10 +551,12 @@ class AgentRegistry(Component):
         llm_client = LLMClient(llm_config)
 
         agent_home = (self._paths or paths).agent_dir(config.id)
-        memory_config = (
-            config.memory if isinstance(config.memory, MemoryConfig) else MemoryConfig()
-        )
-        memory_config.agent_id = config.id
+        # Single memory tuning surface: `memory/config.json` per agent
+        # (memory/models.py MemoryConfig). The agent_id is left empty here
+        # so MemoryManager.load merges the on-disk config; there is no
+        # agent.yaml memory section (the old base/config.MemoryConfig is
+        # gone — its fields were never consumed).
+        memory_config = MemoryConfig()
         memory = MemoryManager(
             agent_id=config.id,
             config=memory_config,

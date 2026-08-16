@@ -4,7 +4,7 @@
 
 ## 1. agent.yaml（每 agent 配置）
 
-位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 `base/paths.py` 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 `base/config.py` 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive` 不生效、可清理）。
+位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 `base/paths.py` 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 `base/config.py` 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、`memory` 不生效、可清理——记忆调参唯一入口是 `memory/config.json`）。
 
 ### 顶层字段
 
@@ -22,7 +22,6 @@
 | `message_queue_size` | int | `100` | 入站消息队列容量，溢出丢弃新消息 |
 | `llm` | object | 见下 | LLM 客户端配置 |
 | `docker` | object | 见下 | Docker 运行时配置 |
-| `memory` | object | 见下 | 记忆配置（注意与 `memory/config.json` 是两回事） |
 | `tool` | object | 见下 | 工具执行配置 |
 
 ### `llm`
@@ -45,15 +44,6 @@
 | `memory_limit` | string | `"512m"` | 容器内存上限 |
 | `cpu_limit` | float | `1.0` | CPU 上限 |
 | `network_mode` | string | `"host"` | 网络模式 |
-
-### `memory`
-
-| 字段 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `max_history` | int | `10` | 保留的交互条数 |
-| `summary_window` | int | `20` | 触发摘要的交互窗口 |
-
-> **注意：本节当前不生效。** `AgentConfig.memory` 是 `base/config.py` 自己的 `MemoryConfig`（Pydantic），而 `agents/agent_registry.py` 的 `_assemble_cognitive` 在构造 `MemoryManager` 时做 `isinstance(config.memory, MemoryConfig)` 检查，那里 import 的是 `memory/models.py` 的**另一个同名** `MemoryConfig`（dataclass）——恒为 `False`，于是永远落回 `models.MemoryConfig()` 默认值，`agent.yaml` 的 `memory:` 段解析后不被消费。有效调参面见第 3 节 `memory/config.json`（同样有接线限制，见该节注）。
 
 ### `tool`
 
@@ -79,9 +69,6 @@ agent:
     memory_limit: 512m
     cpu_limit: 1.0
     network_mode: host
-  memory:
-    max_history: 10
-    summary_window: 20
   tool:
     total_timeout: 60.0
     per_timeout: 30.0
@@ -124,7 +111,7 @@ agent:
 
 各段与 `MemoryConfig` 字段对应：`working`（工作记忆）、`episodic`（情景记忆上限）、`context`（注入上下文的块数）、`triggers.idle_timeout_minutes`（空闲自动摘要）、`reflection.min_interactions`（自驱动记忆审计的最小交互数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。
 
-> **接线限制**：`MemoryManager.load` 只在传入 config 的 `agent_id` 为空时才把磁盘上的 `config.json` 合并进来；生产装配 `agent_registry.py` 的 `_assemble_cognitive` 先 `memory_config.agent_id = config.id` 填非空，所以**生产环境目前跑的是 `models.MemoryConfig()` 默认值**，`config.json` 只在测试等直接构造且不填 `agent_id` 的路径生效。若要让调参生效，需先改 `agent_registry.py` 的接线（或删除本文件与 `agent.yaml` 的 `memory:` 段中无效的一方）。
+> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`，随后把 `working`/`episodic` 上限应用到两个 store——生产装配（`agents/agent_registry.py` 的 `_assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（`base/config.py` 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
 
 ## 4. 环境变量
 

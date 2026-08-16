@@ -9,7 +9,7 @@
                  :max-iterations 10
                  :max-consecutive-errors 3
                  :save-interaction true
-                 :reflect {:enabled true :interval-minutes 5}}
+                 :reflect {:enabled true :interval-minutes 5}}}
          {:name "boot"
           :on :boot
           :actions []}]}
