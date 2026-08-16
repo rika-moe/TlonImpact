@@ -75,6 +75,11 @@ export function MailView({
   const [formError, setFormError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Recipient autocomplete: cycling highlight among candidates (tab).
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  // Thread filter ("/" enters filter mode; enter applies, esc clears).
+  const [filter, setFilter] = useState("");
+  const [filtering, setFiltering] = useState(false);
   const height = useListHeight();
 
   const replyRef = useRef<{ in_reply_to?: string; thread_id?: string }>({});
@@ -124,16 +129,37 @@ export function MailView({
   }, [mode, onEditingChange]);
 
   const threads = useMemo(() => groupByThread(mails, myAddress), [mails, myAddress]);
+
+  /** Display name of a participant id (fallback: the id itself). */
+  const displayName = (id: string): string => {
+    return participants.find((p) => p.id === id)?.name ?? id;
+  };
+
+  /** Threads matching the active filter (participant name/id, subject,
+   * content — case-insensitive). */
+  const visibleThreads = useMemo(() => {
+    if (!filter) return threads;
+    const f = filter.toLowerCase();
+    return threads.filter((t) => {
+      const who = t.participants.map((id) => displayName(id)).join(" ");
+      const haystack = `${who} ${t.latest.subject ?? ""} ${t.latest.content}`.toLowerCase();
+      return haystack.includes(f);
+    });
+  }, [threads, filter, participants]);
+
   const selectedIndex = Math.max(
     0,
-    threads.findIndex((thread) => thread.threadId === selectedId),
+    visibleThreads.findIndex((thread) => thread.threadId === selectedId),
   );
-  const selectedThread = threads[selectedIndex] ?? null;
+  const selectedThread = visibleThreads[selectedIndex] ?? null;
 
   const move = (delta: number) => {
-    if (threads.length === 0) return;
-    const next = Math.min(threads.length - 1, Math.max(0, selectedIndex + delta));
-    setSelectedId(threads[next]?.threadId ?? null);
+    if (visibleThreads.length === 0) return;
+    const next = Math.min(
+      visibleThreads.length - 1,
+      Math.max(0, selectedIndex + delta),
+    );
+    setSelectedId(visibleThreads[next]?.threadId ?? null);
     setNotice(null);
   };
 
@@ -208,6 +234,7 @@ export function MailView({
         thread_id: reply.thread_id ?? mailId,
         forward_of: null,
         timestamp: new Date().toISOString(),
+        read: true,
       };
       setMails((prev) => mergeMails(prev, [sent]));
       closeForm();
@@ -217,12 +244,71 @@ export function MailView({
     }
   };
 
+  /** The recipient segment currently being typed (after the last comma). */
+  const currentSegment = (value: string): string => {
+    const idx = value.lastIndexOf(",");
+    return (idx >= 0 ? value.slice(idx + 1) : value).trim();
+  };
+
+  /** Filtered recipient candidates for the active to/cc field. */
+  const candidates = useMemo(() => {
+    if (mode === "browse" || (field !== 0 && field !== 1)) return [];
+    const seg = currentSegment(form[FIELDS[field] as FieldName] ?? "");
+    return participants
+      .filter((p) => {
+        const n = p.name ?? "";
+        return seg === "" || n.startsWith(seg) || p.id.startsWith(seg);
+      })
+      .slice(0, 5);
+  }, [mode, field, form, participants]);
+
+  /** Fill the current recipient segment with a candidate.
+   *
+   * Display names are the addressing surface (main addressing, ADR 0006);
+   * a name shared by multiple participants falls back to the stable id so
+   * the fill stays unambiguous. */
+  const fillCandidate = (c: ParticipantInfo) => {
+    const active = FIELDS[field] as FieldName;
+    const value = form[active] ?? "";
+    const idx = value.lastIndexOf(",");
+    const prefix = idx >= 0 ? `${value.slice(0, idx + 1)} ` : "";
+    const dup =
+      participants.filter((p) => p.name && c.name && p.name === c.name).length > 1;
+    const token = dup ? c.id : (c.name ?? c.id);
+    setForm((prev) => ({ ...prev, [active]: prefix + token }));
+    setCandidateIndex(0);
+  };
+
+  /** Display label for a candidate: name, or "name (id)" when duplicated. */
+  const candidateLabel = (c: ParticipantInfo): string => {
+    const dup =
+      participants.filter((p) => p.name && c.name && p.name === c.name).length > 1;
+    return dup ? `${c.name ?? c.id} (${c.id})` : (c.name ?? c.id);
+  };
+
   useInput((input, key) => {
     if (mode === "browse") {
+      if (filtering) {
+        if (key.escape) {
+          setFiltering(false);
+          setFilter("");
+        } else if (key.return) {
+          setFiltering(false);
+        } else if (key.backspace || key.delete) {
+          setFilter((v) => v.slice(0, -1));
+        } else if (input && input !== "/" && !key.ctrl && !key.meta) {
+          setFilter((v) => v + input);
+        }
+        return;
+      }
       if (key.upArrow) move(-1);
       else if (key.downArrow) move(1);
       else if (input === "c") openCompose();
       else if (input === "r") openReply();
+      else if (input === "/") {
+        setFiltering(true);
+        setFilter("");
+      }
       return;
     }
 
@@ -254,7 +340,15 @@ export function MailView({
       setForm((prev) => ({ ...prev, [active]: prev[active].slice(0, -1) }));
       return;
     }
-    if (key.tab || key.ctrl || key.meta) return;
+    if (key.tab) {
+      // Autocomplete: tab fills the highlighted candidate and cycles.
+      if ((field === 0 || field === 1) && candidates.length > 0) {
+        fillCandidate(candidates[candidateIndex % candidates.length]!);
+        setCandidateIndex((i) => i + 1);
+      }
+      return;
+    }
+    if (key.ctrl || key.meta) return;
     if (input) {
       const text = input.replace(/[\r\n]/g, "");
       if (!text) return;
@@ -284,10 +378,18 @@ export function MailView({
               {name === active ? <Text inverse> </Text> : null}
             </Box>
           ))}
-          {(active === "to" || active === "cc") && addressBook ? (
-            <Text dimColor wrap="truncate">
-              candidates: {addressBook}
-            </Text>
+          {(active === "to" || active === "cc") && candidates.length > 0 ? (
+            <Box>
+              <Text dimColor>tab 补全: </Text>
+              {candidates.map((c, i) => (
+                <Text
+                  key={c.id}
+                  inverse={i === (candidateIndex % candidates.length)}
+                >
+                  {candidateLabel(c)}{" "}
+                </Text>
+              ))}
+            </Box>
           ) : null}
           {formError ? <Text color="red">{formError}</Text> : null}
         </Box>
@@ -300,22 +402,27 @@ export function MailView({
       <Box gap={2}>
         <Text bold>Mail</Text>
         <Text dimColor>{myAddress}</Text>
-        <Text dimColor>c 写信 · r 回复 · ↑↓ 选线程 · {threads.length} 线程</Text>
+        <Text dimColor>
+          c 写信 · r 回复 · / 过滤 · ↑↓ 选线程 · {visibleThreads.length} 线程
+        </Text>
+        {filtering ? <Text color="cyan">过滤: {filter}</Text> : null}
+        {filter && !filtering ? <Text color="cyan">过滤: {filter} (esc 清除)</Text> : null}
         {notice ? <Text color="yellow">{notice}</Text> : null}
       </Box>
       <Box>
         <Box flexDirection="column" width="40%" borderStyle="round" borderColor="gray" paddingX={1}>
           <ScrollList
-            items={threads}
+            items={visibleThreads}
             selected={selectedIndex}
             height={height}
             renderItem={(item, _index, isSelected) => {
               const thread = item as (typeof threads)[number];
-              const who = thread.participants.join(", ") || "(me)";
+              const who = thread.participants.map((id) => displayName(id)).join(", ") || "(me)";
               const snippet = thread.latest.subject ?? thread.latest.content.slice(0, 24);
               return (
                 <Text inverse={isSelected}>
-                  <Text bold={isSelected}>{who}</Text>
+                  {thread.unread ? <Text bold>● </Text> : null}
+                  <Text bold={isSelected || thread.unread}>{who}</Text>
                   <Text dimColor> · {snippet}</Text>
                   {thread.count > 1 ? <Text dimColor> ({thread.count})</Text> : null}
                 </Text>
@@ -331,7 +438,7 @@ export function MailView({
           paddingX={1}
           marginLeft={1}
         >
-          <Conversation thread={selectedThread} height={height} />
+          <Conversation thread={selectedThread} height={height} displayName={displayName} />
         </Box>
       </Box>
     </Box>
@@ -342,19 +449,22 @@ export function MailView({
 function Conversation({
   thread,
   height,
+  displayName,
 }: {
   thread: { mails: MailItem[] } | null;
   height: number;
+  displayName: (id: string) => string;
 }) {
   const rows: ReactNode[] = [];
   if (thread) {
     for (const mail of thread.mails) {
       const to = [...mail.to, ...mail.cc.map((addr) => `(cc) ${addr}`)]
         .map(localPart)
+        .map(displayName)
         .join(", ");
       rows.push(
         <Text key={`${mail.id}-h`} wrap="truncate">
-          <Text color="magenta">{localPart(mail.from_address)}</Text>
+          <Text color="magenta">{displayName(localPart(mail.from_address))}</Text>
           <Text dimColor> → {to} · {formatTime(mail.timestamp)}</Text>
         </Text>,
       );

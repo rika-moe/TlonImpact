@@ -101,10 +101,24 @@ class RecipientResolver:
         # Agent id direct hit, then agent display name lookup
         if self._agent_info.get_config(name) is not None:
             return address_for_member(name)
-        for agent_id in self._agent_info.get_all_ids():
-            config = self._agent_info.get_config(agent_id)
-            if config and config.name == name:
-                return address_for_member(agent_id)
+        matches = [
+            agent_id
+            for agent_id in self._agent_info.get_all_ids()
+            if (config := self._agent_info.get_config(agent_id))
+            and config.name == name
+        ]
+        if len(matches) == 1:
+            return address_for_member(matches[0])
+        if len(matches) > 1:
+            # Display names are the addressing surface (ADR 0006 member
+            # model); a collision must not silently pick the first one.
+            # Refuse explicitly so the caller can surface the ambiguity.
+            logger.warning(
+                "recipient_ambiguous_display_name",
+                recipient=name,
+                matches=matches,
+            )
+            return None
 
         # Human ("alice" or "human:alice"), online or known-offline
         username = (

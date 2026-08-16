@@ -100,3 +100,36 @@ class TestHandleInbox:
         response = await handler.handle_inbox(StubRequest({"username": "alice"}))
 
         assert response.status == 503
+
+    async def test_read_flag_from_cursor(
+        self, paths: TlonPaths, handler: RESTAPIHandler
+    ):
+        """/inbox exposes read semantics: unread inbox mail is read=false;
+        mail marked read (cursor) flips to true."""
+        seeded = await _seed_mailbox(paths, "alice", count=2)
+        mailbox = Mailbox(paths.member_mail_dir("human:alice"))
+        await mailbox.mark_read(seeded[0].id)
+
+        response = await handler.handle_inbox(StubRequest({"username": "alice"}))
+
+        body = json.loads(response.text)
+        read_by_id = {m["id"]: m["read"] for m in body["mails"]}
+        assert read_by_id[seeded[0].id] is True  # marked read
+        assert read_by_id[seeded[1].id] is False  # still unread
+
+    async def test_sent_mail_is_read(
+        self, paths: TlonPaths, handler: RESTAPIHandler
+    ):
+        """The sender's own copy is always read."""
+        mailbox = Mailbox(paths.member_mail_dir("human:alice"))
+        mail = Mail.create(
+            from_address="alice@tlon.internal",
+            to=["gu-yanxi@tlon.internal"],
+            content="outgoing",
+        )
+        await mailbox.append_sent(mail)
+
+        response = await handler.handle_inbox(StubRequest({"username": "alice"}))
+
+        body = json.loads(response.text)
+        assert body["mails"][0]["read"] is True

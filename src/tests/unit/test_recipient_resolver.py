@@ -143,3 +143,30 @@ class TestSharedResolver:
         assert resolver.resolve_member("alice@tlon.internal") == "alice"
         await mgr.shutdown()
         await bus.shutdown()
+
+    async def test_ambiguous_display_name_is_refused(
+        self, provider: MockAgentInfoProvider
+    ):
+        """Two agents sharing a display name must not resolve silently to
+        the first one — the addressing surface is the name (ADR 0006), so
+        a collision refuses explicitly (None), pushing the sender to the
+        stable agent id."""
+        provider._configs["dupe-1"] = AgentConfig(id="dupe-1", name="谢云舒")
+        resolver = RecipientResolver(
+            agent_info_provider=provider,
+            is_human_online=lambda _username: False,
+        )
+
+        assert resolver.resolve_address("谢云舒") is None
+        # The stable id still resolves (the escape hatch)
+        assert resolver.resolve_address("dupe-1") == "dupe-1@tlon.internal"
+        assert resolver.resolve_address("xie-yunshu") == "xie-yunshu@tlon.internal"
+
+    async def test_unique_display_name_still_resolves(
+        self, provider: MockAgentInfoProvider
+    ):
+        resolver = RecipientResolver(
+            agent_info_provider=provider,
+            is_human_online=lambda _username: False,
+        )
+        assert resolver.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"

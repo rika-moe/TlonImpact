@@ -59,7 +59,8 @@ export function groupByThread(mails: readonly MailItem[], myAddress: string): Th
         if (!participants.includes(name)) participants.push(name);
       }
     }
-    threads.push({ threadId, mails: sorted, participants, latest, count: sorted.length });
+    const unread = sorted.some((mail) => mail.read === false);
+    threads.push({ threadId, mails: sorted, participants, latest, count: sorted.length, unread });
   }
 
   threads.sort((a, b) => (a.latest.timestamp < b.latest.timestamp ? 1 : -1));

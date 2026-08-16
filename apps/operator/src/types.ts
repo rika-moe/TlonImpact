@@ -82,6 +82,8 @@ export interface MailItem {
   thread_id: string;
   forward_of: string | null;
   timestamp: string;
+  /** Whether the recipient has read this mail (inbox cursor semantics). */
+  read: boolean;
 }
 
 /** A conversation thread: mails sharing one `thread_id`. */
@@ -94,6 +96,8 @@ export interface ThreadGroup {
   /** Latest mail in the thread (drives list ordering and previews). */
   latest: MailItem;
   count: number;
+  /** Whether the thread contains any unread mail (attention marker). */
+  unread: boolean;
 }
 
 /** A participant entry from `GET /participants`. */

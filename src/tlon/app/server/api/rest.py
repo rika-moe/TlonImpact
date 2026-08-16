@@ -420,11 +420,19 @@ class RESTAPIHandler:
         limit = _parse_limit(request, default=50, maximum=200)
         mailbox = Mailbox(self.paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}"))
         mails = await mailbox.recent(limit)
+        # Read semantics: an inbox mail is read when its id is in the
+        # cursor; sent mail is always read (the sender has seen it).
+        unread_ids = {m.id for m in await mailbox.unread()}
+        result = []
+        for mail in mails:
+            item = mail.to_dict()
+            item["read"] = mail.id not in unread_ids
+            result.append(item)
 
         return self._json_response(
             {
-                "mails": [mail.to_dict() for mail in mails],
-                "count": len(mails),
+                "mails": result,
+                "count": len(result),
             }
         )
 
