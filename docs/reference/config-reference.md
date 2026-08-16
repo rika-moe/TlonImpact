@@ -15,7 +15,6 @@
 | `prototype` | string \| null | `null` | 从原型实例化时的原型名（手建则为 null） |
 | `spawned_by` | string \| null | `null` | 血缘审计（统一成员模型，ADR 0006）：spawn 出本成员的 agent id（非 spawn 为 null） |
 | `spawn_depth` | int | `0` | 血缘审计：spawn 链深度（非 spawn 为 0，spawned = spawner.depth + 1） |
-| `activation` | `"always" \| "lazy"` | `"always"` | **已废弃并忽略**（phase E）：boot 集与 lazy 集由 `behavior.tlon` 的 `:on :boot` 规则派生，字段仅保留兼容旧文件加载 |
 | `idle_timeout_seconds` | int | `600` | lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档） |
 | `session_timeout_seconds` | int | `1800` | ACTIVE/WAITING 的会话空闲超时即取消 |
 | `message_queue_size` | int | `100` | 入站消息队列容量，溢出丢弃新消息 |

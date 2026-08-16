@@ -159,7 +159,7 @@ class ServerApp:
 
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
-        logger.info("agents_loaded", agent_count=len(agent_registry.get_all()))
+        logger.info("agents_loaded", agent_count=len(agent_registry.get_all_ids()))
 
         # 2.4b Adam — built-in lifecycle policy member (PID 1; members.md 阶段 D).
         # Kernel first, PID 1 second: Adam is initialized after the registry
@@ -244,12 +244,12 @@ class ServerApp:
         self._running = False
         await event_bus.publish(Event(
             type=EventType.SYSTEM_STARTUP,
-            payload={"agents": len(agent_registry.get_all())},
+            payload={"agents": len(agent_registry.get_all_ids())},
             source="server",
         ))
         logger.info(
             "server_initialized",
-            agent_count=len(agent_registry.get_all()),
+            agent_count=len(agent_registry.get_all_ids()),
             url=f"http://{self.host}:{self.rest_port}",
         )
 
@@ -275,7 +275,7 @@ class ServerApp:
             "server_started",
             host=self.host,
             rest_port=self.rest_port,
-            agent_count=len(agent_registry.get_all()) if agent_registry else 0,
+            agent_count=len(agent_registry.get_all_ids()) if agent_registry else 0,
         )
 
         # Wait for shutdown signal

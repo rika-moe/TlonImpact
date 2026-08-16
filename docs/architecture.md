@@ -36,7 +36,7 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
          EventBus 横贯各层：组件间通信的唯一通道（发布/订阅）
 ```
 
-整个系统只有一个服务端进程（`tlon dream`，`tlon server` 是其兼容别名），入口 [src/tlon/app/launcher/main.py](../src/tlon/app/launcher/main.py) 的 `main`，最终由 [app/server/serverapp.py](../src/tlon/app/server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [app/server/api/rest.py](../src/tlon/app/server/api/rest.py) 的 `RESTServer`，没有 WebSocket。
+整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon/app/launcher/main.py](../src/tlon/app/launcher/main.py) 的 `main`，最终由 [app/server/serverapp.py](../src/tlon/app/server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [app/server/api/rest.py](../src/tlon/app/server/api/rest.py) 的 `RESTServer`，没有 WebSocket。
 
 REST 接口一览（均在 `rest.py` 注册）：
 

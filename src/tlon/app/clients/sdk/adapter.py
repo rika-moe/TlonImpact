@@ -33,7 +33,6 @@ class ProtocolCapabilities:
     trace: bool = True
     filter: bool = True
     history: bool = True
-    # TODO: Add more capabilities as needed
 
 
 class ClientAdapter(ABC):

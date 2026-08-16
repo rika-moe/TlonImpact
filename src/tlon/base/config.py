@@ -5,7 +5,6 @@ Unified configuration management with validation and EventBus integration.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -134,11 +133,6 @@ class AgentConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
-    # Deprecated and ignored (phase E): the boot set and the lazy set are
-    # derived from the behavior spec's `:on` rules — a member with an
-    # `:on :boot` rule starts at boot; without one it is lazy. The field
-    # stays so existing agent.yaml files keep loading.
-    activation: Literal["always", "lazy"] = "always"
     # Idle seconds before a lazy member is drained.
     idle_timeout_seconds: int = 600
     # Source behavior prototype name when instantiated from one (None = manual)

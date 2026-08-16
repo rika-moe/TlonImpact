@@ -1298,16 +1298,6 @@ class AgentRegistry(Component):
         """
         return list(self._agent_info.get_all_ids())
 
-    def get_all(self) -> list[str]:
-        """Get all registered agent IDs.
-
-        Alias for get_all_ids() for backward compatibility.
-
-        Returns:
-            List of all agent IDs
-        """
-        return self.get_all_ids()
-
     def get_config(self, agent_id: str) -> AgentConfig | None:
         """Get an agent's configuration.
 

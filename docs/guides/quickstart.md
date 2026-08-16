@@ -38,7 +38,6 @@ OPENAI_MODEL_NAME=kimi-k2.5
 
 ```bash
 uv run tlon dream
-# 或别名：uv run tlon server
 ```
 
 - 默认绑定 `127.0.0.1:8080`（REST + SSE 单端口）；改端口用 `--rest-port`。
@@ -57,7 +56,7 @@ cd apps/operator && npm install && npm run build && cd ../..
 uv run tlon ops
 ```
 
-`tlon ops`（别名 `tlon intrude` / `tlon tui`）启动 Operator 运维控制台，默认视图就是 **Mail**。常用参数：
+`tlon ops` 启动 Operator 运维控制台，默认视图就是 **Mail**。常用参数：
 
 - `--username <名字>`（或环境变量 `TLON_USERNAME`）设置你的邮件身份，默认 `guest`；
 - `--host` / `--rest-port` 连到服务端（默认 `127.0.0.1:8080`）。

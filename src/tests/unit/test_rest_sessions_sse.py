@@ -95,7 +95,7 @@ async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManage
 def registry() -> MagicMock:
     """Provide a stub AgentRegistry with one agent."""
     reg = MagicMock()
-    reg.get_all.return_value = list(AGENT_CONFIGS)
+    reg.get_all_ids.return_value = list(AGENT_CONFIGS)
     reg.get_config.side_effect = AGENT_CONFIGS.get
     reg.get_all_agent_status.return_value = list(AGENT_STATUS)
     return reg

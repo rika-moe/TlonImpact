@@ -41,11 +41,6 @@ Commands:
   %(prog)s dream            Maintain the dream (start server)
   %(prog)s dream --lucid    Lucid dream mode (debug)
   %(prog)s ops              Open Operator console (ops TUI)
-
-Legacy Aliases (for backward compatibility):
-  %(prog)s server           Same as 'dream'
-  %(prog)s intrude          Same as 'ops'
-  %(prog)s tui              Same as 'ops'
         """,
     )
 
@@ -58,7 +53,6 @@ Legacy Aliases (for backward compatibility):
     # dream command - maintain the dream (start server)
     dream_parser = subparsers.add_parser(
         "dream",
-        aliases=["server"],  # Backward compatibility
         help="Maintain the dream (start server daemon)",
         description="""Start the Tlon server with the HTTP API (REST + SSE).
 
@@ -109,32 +103,6 @@ Professional operations console for monitoring and managing agents.""",
     )
     ops_parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)  # Hidden alias
 
-    # intrude command - intrude into reality (legacy, now same as ops)
-    intrude_parser = subparsers.add_parser(
-        "intrude",
-        aliases=["tui"],  # Backward compatibility
-        help="Intrude into reality (legacy alias for 'ops')",
-        description="""Legacy command - use 'tlon ops' instead.
-
-Defaults to the Operator console for backward compatibility.""",
-    )
-    intrude_parser.add_argument(
-        "--host", default="127.0.0.1", help="Server host (default: 127.0.0.1)"
-    )
-    intrude_parser.add_argument(
-        "--rest-port", "-r", type=int, default=8080, help="Server HTTP API port (default: 8080)"
-    )
-    intrude_parser.add_argument(
-        "--lucid",
-        "-l",
-        dest="debug",
-        action="store_true",
-        help="Lucid dream mode - enable debug logging",
-    )
-    intrude_parser.add_argument(
-        "--debug", action="store_true", help=argparse.SUPPRESS
-    )  # Hidden alias
-
     return parser
 
 
@@ -162,12 +130,10 @@ async def main_async(args: Namespace | None = None) -> int:
     # Route to appropriate command
     cmd = args.command
 
-    # dream / server (start server)
-    if cmd in ("dream", "server"):
+    if cmd == "dream":
         return await run_dream(args)
 
-    # ops / intrude / tui (Operator TUI)
-    elif cmd in ("ops", "intrude", "tui"):
+    elif cmd == "ops":
         return await run_ops(args)
 
     else:

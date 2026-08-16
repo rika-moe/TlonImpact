@@ -138,7 +138,7 @@ class MemberDirectory:
         """
         members: list[MemberInfo] = []
 
-        for agent_id in self._agent_registry.get_all():
+        for agent_id in self._agent_registry.get_all_ids():
             config = self._agent_registry.get_config(agent_id)
             if config:
                 members.append(
@@ -158,7 +158,7 @@ class MemberDirectory:
         Returns:
             Number of registered agents
         """
-        return len(self._agent_registry.get_all())
+        return len(self._agent_registry.get_all_ids())
 
     def count_humans(self) -> int:
         """Get the number of online human members.
