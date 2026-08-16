@@ -1,13 +1,13 @@
 """Behavior prototype library (stage 5 of docs/design/dsl-agents.md).
 
-A prototype is a directory of pure data:
+A prototype is a directory of pure data — the behavior genome (unified
+member model, ADR 0006: prototypes carry **no persona**; a member's
+persona files are creation-time data, never part of the genome):
 
 - ``prototype.edn`` — metadata ``{:name :display-name :description :trusted :author}``
 - ``behavior.tlon`` — a complete (total) member spec, unified rules form
   (``{:version 1 :rules [...]}``, phase C — the old ``script.tlon``
   ScriptSpec file is gone)
-- ``IDENTITY.md`` / ``SOUL.md`` / ``RULES.md`` — persona templates
-  (optional; only meaningful for cognitive members)
 
 A directory qualifies as a prototype when it contains ``behavior.tlon``.
 The member type (cognitive ``react`` vs deterministic ``script``) is no
@@ -33,10 +33,10 @@ reference the variables as ``${to}`` inside rule forms. Instantiation
 renders the template with the caller's values before writing the instance
 file; the runtime never sees placeholders.
 
-Instantiation **copies** rather than references: persona files and the
-behavior file are copied verbatim, so an agent's behavior is frozen at
-creation time. There are no overrides — a spec is total, and the
-prototype's file is the whole behavior.
+Instantiation **copies** rather than references: the behavior file is
+copied verbatim, so an agent's behavior is frozen at creation time. There
+are no overrides — a spec is total, and the prototype's file is the whole
+behavior.
 """
 
 import shutil
@@ -55,7 +55,6 @@ from tlon.agents.edn import EDNParseError, Keyword, dumps, loads
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
-    member_type,
     validate_member_spec,
 )
 from tlon.base.config import AgentConfig, yaml_exists, yaml_save
@@ -68,7 +67,6 @@ logger = get_logger(__name__)
 PROTOTYPE_PACKAGE = "tlon.prototypes"
 METADATA_FILE = "prototype.edn"
 BEHAVIOR_FILE = "behavior.tlon"
-PERSONA_FILES = ("IDENTITY.md", "SOUL.md", "RULES.md")
 
 
 @dataclass(frozen=True)
@@ -89,7 +87,6 @@ class PrototypeInfo:
     description: str
     trusted: bool = True
     author: str | None = None
-    runtime: str = "react"
     parameters: tuple[ParameterSpec, ...] = ()
 
     @property
@@ -238,16 +235,13 @@ def instantiate(
             )
         behavior_text = raw_text
 
-    # Persona templates and behavior: copy, not reference (frozen at
-    # creation time; a spec is total, so there is nothing to merge)
+    # Behavior only — copy, not reference (frozen at creation time; a
+    # spec is total, so there is nothing to merge). Unified member model
+    # (ADR 0006): prototypes carry no persona — a member's persona files
+    # are creation-time data (wizard role cards / future tools), not part
+    # of the behavior genome.
     config_dir = p.agent_config_dir(agent_id)
     (config_dir / BEHAVIOR_FILE).write_text(behavior_text, encoding="utf-8")
-    for filename in PERSONA_FILES:
-        source = proto_dir / filename
-        if source.exists():
-            (config_dir / filename).write_text(
-                source.read_text(encoding="utf-8"), encoding="utf-8"
-            )
 
     # agent.yaml via the same save path as the wizard
     agent = AgentConfig(
@@ -265,33 +259,11 @@ def instantiate(
     return agent
 
 
-def _derive_runtime(proto_dir: Path) -> str:
-    """Derive a prototype's member type from its behavior file's rules.
-
-    ``runtime`` is a derived value in phase C — the spec decides whether
-    this prototype produces a cognitive (react) or deterministic (script)
-    member. A template's stand-ins are structurally valid, so the derived
-    type is stable regardless of the eventual parameter values. Anything
-    unparseable falls back to ``"react"`` (metadata read must not fail a
-    listing).
-    """
-    behavior_file = proto_dir / BEHAVIOR_FILE
-    if not behavior_file.exists():
-        return "react"
-    try:
-        template = analyze(behavior_file.read_text(encoding="utf-8"))
-        member = MemberSpec.from_edn(loads(template.standin_text))
-    except Exception:
-        return "react"
-    return member_type(member)
-
-
 def _read_parameters(proto_dir: Any) -> tuple[ParameterSpec, ...]:
     """The behavior template's declared ``:parameters`` (empty if concrete).
 
     Metadata reading must never fail a listing: an unparseable behavior
-    yields no parameters (``_derive_runtime`` already falls back to
-    ``"react"`` the same way).
+    yields no parameters.
     """
     behavior_file = proto_dir / BEHAVIOR_FILE
     if not behavior_file.exists():
@@ -304,7 +276,12 @@ def _read_parameters(proto_dir: Any) -> tuple[ParameterSpec, ...]:
 
 
 def _read_metadata(proto_dir: Any) -> PrototypeInfo:
-    """Read ``prototype.edn`` metadata, falling back to the directory name."""
+    """Read ``prototype.edn`` metadata, falling back to the directory name.
+
+    No runtime is derived or declared (ADR 0006, unified member model):
+    a prototype is a behavior template, not a member class — whether a
+    spawned member gets the cognitive engine follows from its spec.
+    """
     name = proto_dir.name
     parameters = _read_parameters(proto_dir)
     metadata_file = proto_dir / METADATA_FILE
@@ -313,7 +290,6 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
             name=name,
             display_name=name,
             description="",
-            runtime=_derive_runtime(proto_dir),
             parameters=parameters,
         )
     try:
@@ -325,7 +301,6 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
             description=str(data.get("description") or ""),
             trusted=bool(data.get("trusted", True)),
             author=str(author) if author else None,
-            runtime=_derive_runtime(proto_dir),
             parameters=parameters,
         )
     except Exception as e:
@@ -339,7 +314,6 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
 def write_staging_prototype(
     name: str,
     behavior_edn: str,
-    persona: dict[str, str] | None = None,
     display_name: str = "",
     description: str = "",
     author_id: str = "",
@@ -350,12 +324,12 @@ def write_staging_prototype(
 
     Validation happens **before** anything touches disk.
 
-    ``spec_type`` selects the **template**, not the file format (phase C
-    unified the format): ``"react"`` (default) writes persona files
-    alongside the behavior; ``"script"`` is a persona-less deterministic
-    daemon. Either way the output is a single unified rules-form
-    ``behavior.tlon`` — the old ``script.tlon`` ScriptSpec file and its
-    ``:runtime :script`` metadata keyword are gone.
+    ``spec_type`` selects the **write-side template**, not a member class
+    (unified member model, ADR 0006): ``"react"`` is the cognitive rule
+    template (a loop rule), ``"script"`` the deterministic one. Either
+    way the output is a single unified rules-form ``behavior.tlon`` —
+    prototypes carry no persona; a member's persona files are
+    creation-time data, not part of the behavior genome.
 
     The behavior text may be a write-side template: when it declares
     ``:parameters`` and references ``${var}`` placeholders, the declaration
@@ -371,13 +345,11 @@ def write_staging_prototype(
         name: prototype directory name (charset-checked, must be unique
             across both the trusted library and the staging area)
         behavior_edn: raw EDN text of the unified behavior spec
-        persona: optional ``{filename: content}`` for IDENTITY.md / SOUL.md /
-            RULES.md (only these keys are accepted; ignored for script)
         display_name: human-facing name (falls back to ``name``)
         description: human-facing description
         author_id: id of the agent that authored the spec (audit)
-        spec_type: ``"react"`` (persona + cognitive behavior) or
-            ``"script"`` (persona-less deterministic behavior)
+        spec_type: ``"react"`` (cognitive rule template) or ``"script"``
+            (deterministic rule template)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
@@ -394,8 +366,6 @@ def write_staging_prototype(
         )
     p = tlon_paths or paths
     _validate_name(name)
-
-    is_script = spec_type == "script"
 
     if (p.prototypes_dir() / name / BEHAVIOR_FILE).exists():
         raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
@@ -418,22 +388,9 @@ def write_staging_prototype(
     except MemberSpecValidationError as e:
         raise PrototypeError(f"behavior spec validation failed: {e}") from e
 
-    persona = persona or {}
-    if not is_script:
-        for filename in persona:
-            if filename not in PERSONA_FILES:
-                raise PrototypeError(
-                    f"persona file must be one of {list(PERSONA_FILES)}, got {filename!r}"
-                )
-
     staging_dir.mkdir(parents=True)
 
     (staging_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
-
-    if not is_script:
-        for filename, content in persona.items():
-            if content:
-                (staging_dir / filename).write_text(content, encoding="utf-8")
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
@@ -499,8 +456,8 @@ def approve_prototype(name: str, tlon_paths: TlonPaths | None = None) -> Prototy
 def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
     """Delete a staged prototype (human rejection).
 
-    Path-injection guard mirrors the contractor home deletion: the name must
-    pass the charset check and resolve strictly inside the staging root.
+    Path-injection guard: the name must pass the charset check and resolve
+    strictly inside the staging root.
 
     Raises:
         PrototypeError: invalid name or nothing staged under that name

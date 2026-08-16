@@ -136,21 +136,16 @@ class AgentConfig(BaseModel):
     tool: ToolConfig = Field(default_factory=ToolConfig)
     # Deprecated and ignored (phase E): the boot set and the lazy set are
     # derived from the behavior spec's `:on` rules — a member with an
-    # `:on :boot` rule starts at boot; without one (or a contractor role)
-    # it is lazy. The field stays so existing agent.yaml files keep
-    # loading.
+    # `:on :boot` rule starts at boot; without one it is lazy. The field
+    # stays so existing agent.yaml files keep loading.
     activation: Literal["always", "lazy"] = "always"
     # Idle seconds before a lazy member is drained.
     idle_timeout_seconds: int = 600
     # Source behavior prototype name when instantiated from one (None = manual)
     prototype: str | None = None
-    # Identity kind: "resident" is a durable named persona (sleeps, keeps its
-    # home directory forever); "contractor" is spawned from a prototype,
-    # disposable — its home directory is deleted on stop/idle-reap.
-    role: Literal["resident", "contractor"] = "resident"
-    # Agent id that spawned this contractor (None for residents)
+    # Lineage audit (unified member model, ADR 0006): which member spawned
+    # this one (None for non-spawned), and the spawn-chain depth (0 = root).
     spawned_by: str | None = None
-    # Spawn-chain depth: residents are 0, a contractor is spawner.depth + 1
     spawn_depth: int = 0
 
     # ReAct loop limits live in the behavior spec (behavior.tlon), not here.

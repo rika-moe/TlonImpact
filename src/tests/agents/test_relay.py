@@ -26,12 +26,14 @@ def _paths(tmp_path) -> TlonPaths:
 
 
 class TestRelayPrototype:
-    def test_derived_runtime_is_script(self, tmp_path):
+    def test_prototype_declares_no_runtime(self, tmp_path):
+        """Unified member model (ADR 0006): a prototype is a behavior
+        template, not a member class — no runtime is declared or derived
+        in its metadata."""
         p = _paths(tmp_path)
         info = get_prototype_info("relay", tlon_paths=p)
         assert info is not None
-        # Derived from the spec: relay's rule has no :loop.
-        assert info.runtime == "script"
+        assert not hasattr(info, "runtime")
 
     def test_instantiate_renders_forward(self, tmp_path):
         p = _paths(tmp_path)

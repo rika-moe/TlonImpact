@@ -1,5 +1,7 @@
 # 成员运行时设计
 
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；排空一律是睡眠、档案归档。类别相关的历史叙事已同步本文；模型总览见 `docs/design/unified-member-model.md`。
+
 本文解释 `tlon.agents` 里成员运行时为什么是现在这个样子：统一解释器、认知循环管线、effects-as-data、唤醒补偿、注册表的机制面。系统骨架与装配顺序见 `docs/architecture.md`，DSL 本身的取舍见 `docs/design/dsl.md`，邮件层见 `docs/design/mail.md`，方向锚点是 `docs/vision.md`。
 
 两份相关 ADR：`docs/decisions/0003-mechanism-vs-policy.md`（注册表/Adam 的机制策略分工）、`docs/decisions/0004-stage-purity.md`（stage 纯度）。本文侧重整体结构与动机，决策的备选方案与后果论证以 ADR 为准。
@@ -176,19 +178,19 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 `agents/agent_registry.py` 的 `AgentRegistry` 是纯机制组件（策略在 Adam，论证见 ADR 0003）。它持有的机制：
 
-- **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；spec 带认知规则时经 `_assemble_cognitive` 装配认知能力——LLM 客户端、双层记忆、任务管理器、Docker 运行时、全套工具（生命周期与原型工具经端口依赖倒置注入注册表自身）。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
+- **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；统一装配（ADR 0006）——每个成员都经 `_assemble_cognitive` 得到全套能力对象（LLM 客户端、双层记忆、任务管理器、Docker 运行时、全套工具），是否装配认知引擎（调度器/循环）由 spec 是否有 `:loop` 规则派生，加载按需（懒装配：对象便宜，调用才贵）。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
 - **幂等的生命周期执行**。注册表订阅 `AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 并幂等执行：`_waking` 集合在派发上下文里同步去重（背靠背请求折叠为一次装配）；每个 persona 一把 wake lock 串行化启动与排空；装配有 60 秒超时兜底——挂起的启动不能永远占住锁。
-- **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。contractor 排空即销毁（连家目录一起），resident 只是睡眠。
-- **spawn 预算**。三道防失控闸门：全局同时运行上限 `max_activations = 8`（resident 计入）、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本只在内存，重启清零——对防失控用途这是可接受的近似。spawn 前还有信任闸：未受信的（LLM 撰写、待审批）原型不能实例化。
+- **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。统一成员模型（ADR 0006）：排空一律是睡眠——home 目录永不删除，只发 `AGENT_SLEEPING`。
+- **spawn 预算**。三道防失控闸门：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本只在内存，重启清零——对防失控用途这是可接受的近似。spawn 前还有信任闸：未受信的（LLM 撰写、待审批）原型不能实例化。预算与信任闸是纯机制；"谁可以造新成员、一次造几个"是策略（可数据化，见 `design/unified-member-model.md`）。
 - **spec 派生的生命周期档案**。boot 集合（`boot_candidates`）、lazy 判定（`is_lazy`）、唤醒资格全部从缓存的 spec profile 派生；加载失败缓存为 None，热重载/收养时才失效重试。spec 是生命周期归属的唯一权威，注册表不维护第二份事实。
 
 ### 热收养：运行中的系统接纳新成员
 
 `AgentRegistry.adopt_agent` 让进程外创建的 agent（向导写的 `agent.yaml`）无需重启即被系统接纳：配置提供者重载、注册、非 lazy 立即走同一条 `_start_agent` 装配路径，lazy 则只注册、等第一封邮件唤醒。这里的设计要点是**收养与冷启动共用一条装配路径**——系统里没有"运行时才有的第二套启动逻辑"，新成员与开机成员经历完全相同的 spec 校验、能力装配与 wake lock 纪律。spec profile 缓存条目在收养时失效，保证磁盘上新写的行为文件会被重新读取而非沿用旧派生。
 
-### contractor：可丢弃的成员
+### spawn 出的成员：与手建成员同构
 
-spawn 出的 contractor 与 resident 共用同一个 `MemberRuntime`、同一个注册表，差异只在机制对待它们的方式：身份由注册表生成（`c-{prototype}-{8hex}`，调用方不能指定）、总是 lazy、空闲引线更短、排空即连家目录一起销毁。孤儿策略是 reparent 而非 kill——contractor 独立注册，spawner 睡眠或停止不影响它，由自己的空闲超时回收。可丢弃性让"由 agent 创造 agent"的代价可控：造出来的成员没有一种状态是需要别人负责收尾的。
+统一成员模型（ADR 0006）下 spawn 出的成员与手建成员**没有类别差异**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`c-{prototype}-{8hex}`，调用方不能指定），lazy/常驻由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（sleep，不删）。成员只会"睡"，不会"蒸发"（档案归档）。
 
 ## 方向
 

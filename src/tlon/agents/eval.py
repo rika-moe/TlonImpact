@@ -840,8 +840,9 @@ class ScriptHostQueries(Protocol):
         ...
 
     def is_lazy(self, agent_id: Any) -> bool:
-        """A member that can sleep / be drained: contractor, or its spec has
-        no ``:on :boot`` rule (or the spec is unreadable). Phase E."""
+        """A member that can sleep / be drained: its spec has no ``:on :boot``
+        rule (or the spec is unreadable). Unified member model (ADR 0006):
+        laziness is spec-derived, never a birth marker."""
         ...
 
     def start_all_candidates(self) -> list[str]:

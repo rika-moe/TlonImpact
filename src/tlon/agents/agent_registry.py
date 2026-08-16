@@ -7,12 +7,12 @@ policy/mechanism split):
   AGENT_STOP_REQUEST and fulfills them idempotently (wake locks,
   ``_waking`` dedup, run-state re-validation)
 - Idle *fact* detection: the monitor publishes AGENT_IDLE for lazy agents
-  (no ``:on :boot`` rule, or contractors) idle past their timeout with no
-  live sessions — deciding what to do with that fact is not the
-  registry's job
-- Spawn/stop of contractors (stage 6b): prototype instantiation under a
-  spawn budget (global activation cap, spawn depth, per-session quota);
-  agent-spawned contractors connect to the registry directly (= fork)
+  (no ``:on :boot`` rule) idle past their timeout with no live sessions —
+  deciding what to do with that fact is not the registry's job
+- Spawn/stop of members (stage 6b, unified member model ADR 0006):
+  prototype instantiation under a spawn budget (global activation cap,
+  spawn depth, per-session quota); spawned members connect to the
+  registry directly (= fork) and are never discarded — they sleep
 
 Policy — which agents should run — lives in Adam (tlon.agents.adam), the
 built-in init member: boot set and idle drain are its two decision lines.
@@ -171,8 +171,9 @@ class AgentRegistry(Component):
       ``_waking`` dedup set, and executes AGENT_START_REQUEST /
       AGENT_STOP_REQUEST idempotently.
     - "lazy" agents sleep until a start request arrives and are drained
-      after `idle_timeout_seconds` of inactivity with no live sessions;
-      idle contractors are discarded entirely, home directory included.
+      after `idle_timeout_seconds` of inactivity with no live sessions.
+      Unified member model (ADR 0006): draining always means sleep —
+      members are never discarded, home directories are archived forever.
     - Which requests get issued is Adam's policy, not the registry's.
 
     Configuration is provided by AgentInfoProvider (typically ConfigManager),
@@ -207,7 +208,6 @@ class AgentRegistry(Component):
         max_activations: int = 8,
         max_spawn_depth: int = 3,
         session_spawn_quota: int = 2,
-        contractor_idle_timeout_seconds: int = 300,
     ):
         """Initialize the agent registry.
 
@@ -218,14 +218,11 @@ class AgentRegistry(Component):
             agent_info_provider: Provider for agent configuration queries
             paths: TlonPaths instance (defaults to module singleton)
             max_activations: spawn budget — cap on running agents total
-                (residents included); spawning beyond it is rejected
-            max_spawn_depth: spawn budget — a contractor's depth is
+                (boot-set members included); spawning beyond it is rejected
+            max_spawn_depth: spawn budget — a spawned member's depth is
                 spawner.depth + 1; exceeding this rejects the spawn
             session_spawn_quota: spawn budget — max spawns per
                 (spawner, session) pair
-            contractor_idle_timeout_seconds: idle drain timeout assigned to
-                spawned contractors (shorter than the resident default —
-                contractors are disposable)
         """
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
@@ -237,7 +234,6 @@ class AgentRegistry(Component):
         self._max_activations = max_activations
         self._max_spawn_depth = max_spawn_depth
         self._session_spawn_quota = session_spawn_quota
-        self._contractor_idle_timeout_seconds = contractor_idle_timeout_seconds
         # (spawner_id, session_id) -> successful spawn count
         self._spawn_quota: dict[tuple[str, str], int] = {}
 
@@ -249,13 +245,12 @@ class AgentRegistry(Component):
         # shutdown / get_state / active_session_count / idle_seconds
         self._agents: dict[str, MemberRuntime] = {}
 
-        # Docker runtimes built during cognitive assembly, keyed by agent
-        # id — the registry-side handle used to reclaim a contractor's
-        # container on discard (). Resident sleeps and server shutdown
-        # deliberately keep their containers (zero-cost wake / lazy reuse
-        # on next boot), so entries are only consumed by
-        # ``_discard_contractor``; a re-assembly overwrites the entry.
-        self._docker_runtimes: dict[str, DockerRuntime] = {}
+        # Docker runtimes are built during cognitive assembly, keyed by
+        # agent id — but the registry deliberately does NOT hold handles
+        # for reclaim: a sleeping member keeps its container (zero-cost
+        # wake / lazy reuse on next boot, unified member model — members
+        # never have their home or container force-removed, ADR 0006).
+        # A re-assembly reuses the container by name.
 
         # Request execution state: agents currently being started, and one
         # lock per agent serializing start/drain of the same persona
@@ -353,15 +348,14 @@ class AgentRegistry(Component):
         return candidates
 
     def is_lazy(self, agent_id: str) -> bool:
-        """A member that can sleep / be drained (phase E: spec-derived).
+        """A member that can sleep / be drained (spec-derived, ADR 0006).
 
-        Contractors are always lazy (disposable, idle-reaped). Otherwise a
-        member is lazy iff its spec has no ``:on :boot`` rule — or its spec
-        cannot be loaded, in which case it is inert (registered only).
+        A member is lazy iff its spec has no ``:on :boot`` rule — or its
+        spec cannot be loaded, in which case it is inert (registered
+        only). Laziness is a spec fact, never a birth marker: a spawned
+        member whose prototype carries a boot rule is a resident member
+        and starts at boot like any other.
         """
-        config = self._agent_info.get_config(agent_id)
-        if config is not None and config.role == "contractor":
-            return True
         spec = self._spec_profile(agent_id)
         if spec is None:
             return True
@@ -439,21 +433,19 @@ class AgentRegistry(Component):
         self._waking.clear()
         self._spawn_quota.clear()
         self._profiles.clear()  # phase E: spec-derived lifecycle profiles
-        # Containers outlive the server by design (lazy reuse on next
-        # boot) — only the handles are dropped.
-        self._docker_runtimes.clear()
         self._initialized = False
 
         logger.info("agent_registry_shutdown_completed")
 
     async def _start_agent(self, agent_id: str) -> MemberRuntime | None:
-        """Assemble and start one agent (phase C: no runtime fork).
+        """Assemble and start one agent (unified member model, ADR 0006).
 
         This is the sole assembler for members and their infrastructure.
-        The behavior spec is total and derives the member type: a spec with
-        a cognitive rule gets cognitive capabilities attached
-        (``_assemble_cognitive``), a deterministic spec builds none — both
-        become the same MemberRuntime.
+        Every member gets the full capability set (``_assemble_cognitive``:
+        LLM client, memory, task manager, Docker runtime, tools); whether
+        the cognitive engine (scheduler / loop) is attached is derived
+        from the spec — a rule with a ``:loop`` gets it, one without does
+        not (lazy assembly: objects are cheap, loading is on demand).
 
         Args:
             agent_id: ID of the agent to start
@@ -473,20 +465,16 @@ class AgentRegistry(Component):
         try:
             logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
 
-            # Unified assembly (phase C): the spec is total and derives the
-            # member type — a cognitive rule gets the cognitive engine
-            # attached, a deterministic spec builds no LLM/memory/tool
-            # infrastructure at all. Host builtins gate validation too
-            # (D6.6: host predicates open to registry members).
+            # Unified assembly (ADR 0006): every member gets the full
+            # capability set; the cognitive engine attachment is derived
+            # from the spec inside MemberRuntime. Host builtins gate
+            # validation too (D6.6: host predicates open to registry
+            # members).
             builtins = self._host_builtins
             spec = load_member_spec(agent_id, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
-            cognitive = (
-                await self._assemble_cognitive(config, mailbox)
-                if any(rule.loop is not None for rule in spec.rules)
-                else None
-            )
+            capabilities = await self._assemble_cognitive(config, mailbox)
 
             member = MemberRuntime(
                 member_id=config.id,
@@ -495,7 +483,7 @@ class AgentRegistry(Component):
                 spec=spec,
                 builtins=builtins,
                 mailbox=mailbox,
-                cognitive=cognitive,
+                cognitive=capabilities,
                 registry=self,
             )
             await member.initialize()
@@ -533,16 +521,18 @@ class AgentRegistry(Component):
     async def _assemble_cognitive(
         self, config: AgentConfig, mailbox: Mailbox
     ) -> CognitiveCapabilities:
-        """Assemble the cognitive capabilities for a member with a loop rule.
+        """Assemble the capability set for a member.
 
-        Everything the cognitive engine needs beyond the deterministic
-        core: LLM client, memory, task manager, Docker runtime, tools, and
-        the team roster. Deterministic members build none of this
-        (D1: cognitive=None). The container is NOT started here:
-        DockerRuntime lazily calls ensure_running() on first
-        execute/read/write, so waking an agent for pure conversation costs
-        zero containers — a daemon failure surfaces as a tool error, not a
-        start failure.
+        Unified member model (ADR 0006): every member gets the full
+        capability set — LLM client, memory, task manager, Docker runtime,
+        tools, and the team roster. Whether the cognitive engine (loop /
+        scheduler) is actually attached is derived from the spec inside
+        ``MemberRuntime``; a member without a loop rule simply never uses
+        these objects (lazy assembly: objects are cheap, loading is on
+        demand). The container is NOT started here: DockerRuntime lazily
+        calls ensure_running() on first execute/read/write, so waking an
+        agent for pure conversation costs zero containers — a daemon
+        failure surfaces as a tool error, not a start failure.
         """
         from tlon.base.settings import get_settings
 
@@ -575,10 +565,9 @@ class AgentRegistry(Component):
             docker_runtime = DockerRuntime(config.docker, config.id)
         except Exception as e:
             logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
-        # Registry-side handle for container reclaim on contractor
-        # discard (); a daemon failure leaves no entry to reclaim.
-        if docker_runtime is not None:
-            self._docker_runtimes[config.id] = docker_runtime
+        # No registry-side container handle is kept (ADR 0006): members
+        # are never force-removed — a sleeping member keeps its container
+        # (zero-cost wake); a re-assembly reuses it by name.
 
         # Create ToolExecutor (direct execution, no EventBus)
         tool_executor = ToolExecutor()
@@ -885,7 +874,7 @@ class AgentRegistry(Component):
 
     # ==================== Spawn / stop (stage 6b) ====================
 
-    async def spawn_contractor(
+    async def spawn_member(
         self,
         prototype: str,
         name: str,
@@ -893,12 +882,17 @@ class AgentRegistry(Component):
         session_id: str | None,
         params: dict[str, Any] | None = None,
     ) -> AgentConfig:
-        """Spawn a contractor from a prototype and start it immediately.
+        """Spawn a new member from a prototype and start it immediately.
 
-        Pipeline: budget checks -> id generation -> ``instantiate()`` (writes
-        persona + behavior + agent.yaml to disk) -> contractor fields
-        (role/depth/spawned_by; laziness is role-derived, phase E) ->
-        ``reload_agent`` so the config is visible to the provider ->
+        Unified member model (ADR 0006): a spawned member is a member like
+        any other — laziness/boot membership derive from the prototype's
+        spec, and its home directory is never deleted (retirement
+        archives, members only sleep). Lineage is kept for audit:
+        ``spawned_by`` / ``spawn_depth`` / ``prototype``.
+
+        Pipeline: budget checks -> id generation -> ``instantiate()``
+        (writes persona + behavior + agent.yaml to disk) -> lineage fields
+        -> ``reload_agent`` so the config is visible to the provider ->
         ``register`` + ``_start_agent`` -> ``AGENT_SPAWNED`` event.
 
         Permissions cannot escalate: the only source is the prototype
@@ -907,19 +901,19 @@ class AgentRegistry(Component):
         nothing to override and a spawner cannot grant capabilities beyond
         the prototype.
 
-        Orphan policy (reparent, not kill): the contractor is registered
-        independently of its spawner; when the spawner sleeps or stops, the
-        contractor keeps running and is reclaimed by its own idle timeout.
+        Orphan policy (reparent, not kill): the member is registered
+        independently of its spawner; when the spawner sleeps or stops,
+        the member keeps running and is reclaimed by its own idle policy.
 
         Args:
             prototype: prototype directory name under ~/.tlon/prototypes/
-            name: display name of the new contractor
+            name: display name of the new member
             spawner_id: id of the agent requesting the spawn (audit + depth)
             session_id: session the spawn belongs to (quota bucket); None
                 buckets all context-less spawns of the spawner together
 
         Returns:
-            The new contractor's AgentConfig (role="contractor").
+            The new member's AgentConfig (with lineage fields).
 
         Raises:
             SpawnRejectedError: a budget cap was hit (see ``.reason``)
@@ -986,13 +980,11 @@ class AgentRegistry(Component):
             prototype, agent_id, name, params=params, tlon_paths=tlon_paths
         )
 
-        # Contractor identity: disposable, always lazy (role-derived in
-        # phase E — no activation field), short idle fuse. Re-save so the
-        # YAML on disk carries the final config.
-        config.role = "contractor"
+        # Lineage audit (ADR 0006): who spawned this member and how deep.
+        # No role is stamped — a spawned member is a member like any other.
+        # Re-save so the YAML on disk carries the final config.
         config.spawned_by = spawner_id
         config.spawn_depth = depth
-        config.idle_timeout_seconds = self._contractor_idle_timeout_seconds
         yaml_save(config, tlon_paths.tlon_home())
 
         # Make the config visible to the provider (router, status queries)
@@ -1054,31 +1046,29 @@ class AgentRegistry(Component):
         )
         raise SpawnRejectedError(reason, f"spawn rejected ({reason}): {detail}")
 
-    async def stop_contractor(self, agent_id: str, stopped_by: str) -> bool:
-        """Stop a contractor: drain-check, shutdown, delete its home dir.
+    async def stop_member(self, agent_id: str, stopped_by: str) -> bool:
+        """Stop a member: drain-check, then put it to sleep.
 
-        Drain semantics mirror the idle reaper: a contractor with any live
-        (ACTIVE/WAITING) session is never stopped. Residents are never
-        stoppable through this path — their home directories live forever.
+        Unified member model (ADR 0006): stopping never deletes — a member
+        sleeps (scale-to-zero) and its home directory is archived forever.
+        Drain semantics mirror the idle reaper: a member with any live
+        (ACTIVE/WAITING) session is never stopped. Whether a stop request
+        is accepted is policy (decision 7); the registry executes requests
+        idempotently and re-checks drain conditions under the lock.
 
         Args:
-            agent_id: contractor to stop
+            agent_id: member to stop
             stopped_by: agent id requesting the stop (audit)
 
         Returns:
-            True when the contractor was stopped and discarded.
+            True when the member was stopped (asleep).
 
         Raises:
-            StopRejectedError: unknown agent / resident / live sessions
+            StopRejectedError: unknown agent / live sessions
         """
         config = self._agent_info.get_config(agent_id)
         if config is None:
             raise StopRejectedError("unknown_agent", f"agent '{agent_id}' not found")
-        if config.role != "contractor":
-            raise StopRejectedError(
-                "resident_not_stoppable",
-                f"agent '{agent_id}' is a resident; only contractors can be stopped",
-            )
 
         agent = self._agents.get(agent_id)
         if agent is not None and agent.active_session_count > 0:
@@ -1094,7 +1084,7 @@ class AgentRegistry(Component):
             agent = self._agents.pop(agent_id, None)
             if agent is not None:
                 # Drain re-check under the lock: a session that started in
-                # the race window keeps the contractor alive
+                # the race window keeps the member awake
                 if agent.active_session_count > 0:
                     self._agents[agent_id] = agent
                     raise StopRejectedError(
@@ -1104,81 +1094,23 @@ class AgentRegistry(Component):
                 try:
                     await agent.shutdown()
                 except Exception as e:
-                    # Already out of the run table; discard proceeds so the
-                    # disposable persona does not leak
+                    # Already out of the run table; a later start request
+                    # assembles a fresh activation.
                     logger.error("agent_stop_failed", agent_id=agent_id, error=str(e))
 
-            await self._discard_contractor(agent_id, stopped_by=stopped_by)
-
-        logger.info("contractor_stopped", agent_id=agent_id, stopped_by=stopped_by)
-        return True
-
-    async def _discard_contractor(self, agent_id: str, stopped_by: str) -> None:
-        """Remove a stopped contractor: container, registration, home dir.
-
-        Only ever called for role=="contractor" agents. The sandbox
-        container is force-removed and the home directory
-        (``~/.tlon/{id}/``) is deleted — contractors are disposable; a
-        resident's container and directory are never touched by the
-        registry.
-        """
-        if agent_id in self._registered_ids:
-            self._registered_ids.remove(agent_id)
-        self._profiles.pop(agent_id, None)  # phase E: spec profile cache
-
-        # Reclaim the sandbox container before the home dir goes: the
-        # container bind-mounts the workspace under it (). Runs after
-        # MemberRuntime.shutdown() (which drains tool execution, ) at
-        # both call sites. A missing runtime (daemon was unavailable at
-        # assembly, or the member never got cognitive capabilities) or a
-        # removal failure only logs — the discard must not be blocked.
-        runtime = self._docker_runtimes.pop(agent_id, None)
-        if runtime is not None:
-            try:
-                await runtime.remove(force=True)
-            except Exception as e:
-                logger.warning(
-                    "container_reclaim_failed", agent_id=agent_id, error=str(e)
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.AGENT_STOPPED,
+                    payload={
+                        "agent_id": agent_id,
+                        "stopped_by": stopped_by,
+                    },
+                    source="agent_registry",
                 )
-
-        self._assert_deletable_agent_id(agent_id)
-        try:
-            self._agent_info.delete_agent(agent_id)
-        except ValueError:
-            # Home directory already gone — cache entry removed regardless
-            logger.warning("contractor_home_missing", agent_id=agent_id)
-        logger.info("contractor_home_deleted", agent_id=agent_id, stopped_by=stopped_by)
-
-        await self.event_bus.publish(
-            Event(
-                type=EventType.AGENT_STOPPED,
-                payload={
-                    "agent_id": agent_id,
-                    "stopped_by": stopped_by,
-                    "role": "contractor",
-                },
-                source="agent_registry",
             )
-        )
 
-    def _assert_deletable_agent_id(self, agent_id: str) -> None:
-        """Path-injection guard for home-directory deletion.
-
-        Spawned ids are generated as ``c-{prototype}-{8hex}`` and carry no
-        separators, but the guard is enforced anyway: the id must satisfy
-        the AgentConfig charset and resolve strictly inside tlon_home.
-        """
-        if not agent_id.replace("-", "").replace("_", "").isalnum():
-            raise StopRejectedError(
-                "invalid_agent_id", f"agent id '{agent_id}' fails the charset check"
-            )
-        home = (self._paths or paths).tlon_home().resolve()
-        target = (home / agent_id).resolve()
-        if target.parent != home:
-            raise StopRejectedError(
-                "invalid_agent_id",
-                f"agent id '{agent_id}' resolves outside tlon_home",
-            )
+        logger.info("agent_stopped", agent_id=agent_id, stopped_by=stopped_by)
+        return True
 
     # ==================== Idle fact detection + drain execution ====================
 
@@ -1265,18 +1197,9 @@ class AgentRegistry(Component):
                 logger.error("agent_sleep_failed", agent_id=agent_id, error=str(e))
                 return
 
-            # Contractors are disposable: draining discards the persona
-            # entirely (home dir deleted) instead of putting it to sleep.
-            if config.role == "contractor":
-                logger.info(
-                    "contractor_idle_reaped",
-                    agent_id=agent_id,
-                    idle_seconds=idle,
-                    reason=reason,
-                )
-                await self._discard_contractor(agent_id, stopped_by="idle_drain")
-                return
-
+            # Unified member model (ADR 0006): draining always means
+            # sleep — members are never discarded, their home directories
+            # are archived forever.
             logger.info("agent_sleeping", agent_id=agent_id, idle_seconds=idle, reason=reason)
             await self.event_bus.publish(
                 Event(
@@ -1364,7 +1287,6 @@ class AgentRegistry(Component):
             "id": agent_id,
             "name": config.name,
             "state": state,
-            "role": config.role,
             "prototype": config.prototype,
             "spawned_by": config.spawned_by,
             "spawn_depth": config.spawn_depth,

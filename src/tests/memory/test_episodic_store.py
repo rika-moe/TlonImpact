@@ -6,17 +6,14 @@ from pathlib import Path
 
 import pytest
 
-import tlon.memory.episodic_store as episodic_store_module
 from tlon.base.paths import TlonPaths
 from tlon.memory.episodic_store import EpisodicMemoryStore
 
 
 @pytest.fixture
-def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TlonPaths:
-    """Point the module-level paths singleton at a temp dir."""
-    test_paths = TlonPaths(home=tmp_path)
-    monkeypatch.setattr(episodic_store_module, "paths", test_paths)
-    return test_paths
+def isolated_paths(tmp_path: Path) -> TlonPaths:
+    """A temp TlonPaths; its memory dir is the stores' storage_path."""
+    return TlonPaths(home=tmp_path)
 
 
 def _make_fact(fact_id: str, description: str = "some fact") -> dict:
@@ -36,13 +33,13 @@ class TestFactSupersedePersistence:
         self, isolated_paths: TlonPaths
     ) -> None:
         """Adding a fact with the same triple supersedes the old one on disk."""
-        store = EpisodicMemoryStore("test-agent", Path("ignored"))
+        store = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add_fact(_make_fact("f-001", "old version"))
         await store.add_fact(_make_fact("f-002", "new version"))
 
         # Simulate restart: fresh instance replays the JSONL file.
-        reloaded = EpisodicMemoryStore("test-agent", Path("ignored"))
+        reloaded = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await reloaded.load()
 
         old_fact = await reloaded.get_fact("f-001")
@@ -57,14 +54,14 @@ class TestFactSupersedePersistence:
 
     async def test_non_superseded_facts_still_appended(self, isolated_paths: TlonPaths) -> None:
         """Facts with distinct triples remain active after reload."""
-        store = EpisodicMemoryStore("test-agent", Path("ignored"))
+        store = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add_fact(_make_fact("f-001"))
         other = _make_fact("f-002")
         other["object"] = "tea"
         await store.add_fact(other)
 
-        reloaded = EpisodicMemoryStore("test-agent", Path("ignored"))
+        reloaded = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await reloaded.load()
 
         active = await reloaded.get_all_facts()
@@ -82,7 +79,7 @@ class TestAtomicPersist:
         self, isolated_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If os.replace fails, the original summaries file stays intact."""
-        store = EpisodicMemoryStore("test-agent", Path("ignored"))
+        store = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add_summary(_make_summary("s-001"))
         original = store.summaries_file.read_bytes()
@@ -101,7 +98,7 @@ class TestAtomicPersist:
         self, isolated_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If serialization fails mid-write, the original file stays intact."""
-        store = EpisodicMemoryStore("test-agent", Path("ignored"))
+        store = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add_summary(_make_summary("s-001"))
         await store.add_summary(_make_summary("s-002", "another"))
@@ -120,7 +117,7 @@ class TestAtomicPersist:
 
     async def test_summaries_persist_normal_path(self, isolated_paths: TlonPaths) -> None:
         """Normal persist rewrites the file and leaves no temp file behind."""
-        store = EpisodicMemoryStore("test-agent", Path("ignored"))
+        store = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add_summary(_make_summary("s-001"))
         await store.add_summary(_make_summary("s-002", "another"))
@@ -128,7 +125,7 @@ class TestAtomicPersist:
 
         assert not store.summaries_file.with_name(store.summaries_file.name + ".tmp").exists()
 
-        reloaded = EpisodicMemoryStore("test-agent", Path("ignored"))
+        reloaded = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await reloaded.load()
         summaries = await reloaded.get_all_summaries()
         assert [s["id"] for s in summaries] == ["s-002"]
@@ -137,7 +134,7 @@ class TestAtomicPersist:
         self, isolated_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If os.replace fails, the original facts file stays intact."""
-        store = EpisodicMemoryStore("test-agent", Path("ignored"))
+        store = EpisodicMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add_fact(_make_fact("f-001"))
         original = store.facts_file.read_bytes()

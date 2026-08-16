@@ -259,7 +259,7 @@ old_string/new_string 精确替换模型。
 
 ### spawnAgent
 
-从 behavior prototype 派生一个临时工 agent（contractor）并立即启动；完工后由自己的空闲超时自动回收。behavior 文件原样拷贝（spec 是 total 的，无 overrides），spawn 不能授予新工具。
+从 behavior prototype 派生一个新 agent 并立即启动（统一成员模型，ADR 0006：新 agent 是普通社会成员，永不删除——空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生）。behavior 文件原样拷贝（spec 是 total 的，无 overrides），spawn 不能授予新工具。
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -267,15 +267,15 @@ old_string/new_string 精确替换模型。
 | `name` | string | 是 | 显示名，他人 @ 此名即可对话 |
 | `params` | object | 否 | 模板参数，仅当 prototype 声明 `:parameters`；`:string` 传字符串，`:string-list` 传字符串数组 |
 
-成功返回 `agent_id`（注册表生成，形如 `c-{prototype}-{8位hex}`）、`name`、`role`、`prototype`、`spawn_depth`。
+成功返回 `agent_id`（注册表生成，形如 `c-{prototype}-{8位hex}`）、`name`、`prototype`、`spawn_depth`。
 
 拒绝行为（`SpawnRejectedError`，`success=False`，`data.reason` 为机器可读 token）：
 
 | reason | 含义 |
 |---|---|
 | `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 mirror 批准；先于一切预算检查 |
-| `max_activations` | 全局同时运行 agent 数到顶（默认 8，含居民） |
-| `max_spawn_depth` | spawn 链深度超限（默认 3，居民深度 0） |
+| `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
+| `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
 | `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本只在内存，重启清零） |
 | `config_reload_failed` | 新配置未能被 config provider 加载 |
 
@@ -283,30 +283,29 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### stopAgent
 
-停止一个 contractor：立即关闭并删除其 home 目录（人格、记忆全部清除），不可恢复。
+停止一个 agent（统一成员模型，ADR 0006）：立即关闭并使其**睡眠**——home 目录（人格、记忆、邮箱）永久保留（归档），之后可被唤醒。停止永不删除数据。
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `agent_id` | string | 是 | contractor 的 agent_id（`c-` 开头） |
+| `agent_id` | string | 是 | 要停止的 agent_id |
 
-拒绝行为（`StopRejectedError`，`data.reason`）：`unknown_agent`（不存在）、`resident_not_stoppable`（居民只能睡眠，永不能经此路径删除）、`active_sessions`（drain 语义：有进行中的 session 就拒绝，停止临界区内在锁内复检一次）、`invalid_agent_id`（id 字符集或路径检查失败，防目录逃逸）。
+拒绝行为（`StopRejectedError`，`data.reason`）：`unknown_agent`（不存在）、`active_sessions`（drain 语义：有进行中的 session 就拒绝，停止临界区内在锁内复检一次）。
 
 ### listAgents
 
-无参数。返回全部已注册 agent 的状态列表：运行状态（running/sleeping/waking）、角色（resident/contractor）、来源 prototype、spawner。spawn/stop 前用来确认目标。
+无参数。返回全部已注册 agent 的状态列表：运行状态（running/sleeping/waking）、来源 prototype、spawner 血缘。spawn/stop 前用来确认目标。
 
 ### writePrototype
 
-创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 mirror 的「规约审批」批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。
+创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 mirror 的「规约审批」批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格是成员创建时数据，不属基因库。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `name` | string | 是 | — | 名称（字母/数字/`-`/`_`，全局唯一） |
 | `behavior` | string | 是 | — | 行为规约 EDN 字符串，v1 schema 的 rules-form |
-| `spec_type` | string | 否 | `react` | enum：`react`（带 `:loop` 的认知规则 + 人格文件）/ `script`（无 `:loop` 的确定性规则，零 token daemon） |
+| `spec_type` | string | 否 | `react` | 写侧模板：`react`（带 `:loop` 的认知规则）/ `script`（无 `:loop` 的确定性规则） |
 | `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
-| `identity` / `soul` / `rules` | string | 否 | `""` | IDENTITY.md / SOUL.md / RULES.md 内容；仅 `react` 使用，`script` 忽略 |
 
 失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带对应 spec_type 的 schema 提示（`_BEHAVIOR_HINT`/`_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
 

@@ -1,0 +1,5 @@
+; 开发工程师原型——纯行为原型（统一成员模型，ADR 0006：原型=行为基因型，无人格）
+{:name :developer
+ :display-name "开发工程师原型"
+ :description "标准 ReAct 认知成员：开发工程师行为模板（分析 → 规划 → 工具验证 → 回复）。"
+ :trusted true}

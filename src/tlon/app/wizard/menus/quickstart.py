@@ -235,7 +235,7 @@ class QuickstartWizard:
         table.add_column("启动模式", style="blue")
 
         for member in STANDARD_TEAM_DICTS:
-            mode = startup_mode_from_behavior(standard_behavior_edn(member["id"]))
+            mode = startup_mode_from_behavior(standard_behavior_edn())
             table.add_row(member["name"], mode)
 
         self.console.print(table)
@@ -360,11 +360,27 @@ class QuickstartWizard:
         for entry in team_config["agents"]:
             agent = entry["config"]
             data = entry.get("data", {})
-            success, msg = self.agent_store.save_agent(agent)
-            if success:
-                # Write the canonical total behavior spec
-                self.agent_store.write_behavior_file(agent.id)
-                # Write narrative .md files
+            try:
+                prototype = data.get("prototype")
+                if prototype:
+                    # Unified member model: standard team members are born
+                    # from role prototypes (behavior genome); persona files
+                    # are written below as creation-time data.
+                    from tlon.agents.prototypes import instantiate, seed_prototypes
+
+                    p = self.agent_store._paths
+                    seed_prototypes(p)
+                    instantiate(prototype, agent.id, agent.name, tlon_paths=p)
+                else:
+                    success, msg = self.agent_store.save_agent(agent)
+                    if not success:
+                        self.console.print(f"[red]✗ 创建 Agent 失败: {msg}[/red]")
+                        continue
+                    # Write the canonical total behavior spec
+                    self.agent_store.write_behavior_file(agent.id)
+
+                # Write narrative .md files (persona = creation-time data,
+                # not part of the prototype's behavior genome, ADR 0006)
                 config_dir = Path(self.agent_store._paths.agent_config_dir(agent.id))
                 for field, filename in [
                     ("identity", "IDENTITY.md"),
@@ -376,8 +392,8 @@ class QuickstartWizard:
                         (config_dir / filename).write_text(content.strip() + "\n")
                 created_ids.append(agent.id)
                 self.console.print(f"[green]✓ 创建 Agent: {agent.name}[/green]")
-            else:
-                self.console.print(f"[red]✗ 创建 Agent 失败: {msg}[/red]")
+            except Exception as e:
+                self.console.print(f"[red]✗ 创建 Agent 失败: {agent.name}: {e}[/red]")
 
         # Best-effort hot adoption by a running server; silently skipped
         # when no server is up (restart fallback applies)

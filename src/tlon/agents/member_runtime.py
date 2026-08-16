@@ -97,11 +97,15 @@ class MemberState(Enum):
 
 @dataclass
 class CognitiveCapabilities:
-    """Everything a cognitive member needs beyond the deterministic core.
+    """The full capability set every member gets (unified member model,
+    ADR 0006): LLM client, memory, task manager, Docker runtime, and
+    tools.
 
-    Assembled by the registry for members whose spec carries a cognitive
-    rule; ``None`` (the default) means a pure deterministic member — no
-    LLM, memory, task manager, Docker runtime, or tools are built.
+    Assembly is unconditional (lazy assembly: objects are cheap, loading
+    is on demand); whether the cognitive *engine* (scheduler / loop) is
+    attached is derived from the spec inside ``MemberRuntime`` — a member
+    without a loop rule simply never uses these objects. ``None`` is only
+    used by built-in instances like Adam (no capabilities at all).
     """
 
     config: AgentConfig
@@ -146,8 +150,11 @@ class MemberRuntime(Member):
                 included (built by the caller via make_member_builtins)
             mailbox: The member's mailbox for unread rescue scans and
                 read-marking (None for built-in instances like Adam)
-            cognitive: Cognitive capabilities for members with a loop rule;
-                None assembles a pure deterministic member
+            cognitive: The member's capability set (LLM/memory/tools).
+                The registry assembles it for every member; None is only
+                used by built-in instances like Adam. The cognitive
+                engine (scheduler / loop) is attached iff the spec has a
+                loop rule — derived, never stored.
             registry: Agent registry for ``spawn`` actions (None, e.g.
                 Adam, disables them)
         """
@@ -178,17 +185,18 @@ class MemberRuntime(Member):
         self._context_builder: ContextBuilder | None = None
         self._logger = logger.bind(agent_id=member_id)
         self._state: MemberState | None = None
-        if cognitive is not None:
-            assert self._cognitive_rule is not None, (
-                "cognitive capabilities require a member spec with a loop rule"
-            )
+        # Cognitive engine attachment is spec-derived (ADR 0006): a member
+        # with a loop rule gets the engine, one without keeps the full
+        # capability set unused (lazy assembly — objects are cheap,
+        # loading is on demand).
+        if cognitive is not None and self._cognitive_rule is not None:
             self._assemble_cognitive(cognitive)
         with bound_contextvars(agent_id=self._member_id):
             logger.info(
                 "member_initialized",
                 member_id=member_id,
                 member_type=self.member_type,
-                cognitive=cognitive is not None,
+                cognitive_engine=self._cognitive_rule is not None,
             )
 
     # ── Identity / derived values ──
@@ -260,7 +268,8 @@ class MemberRuntime(Member):
         queue).
         """
         with bound_contextvars(agent_id=self._member_id):
-            if self._cognitive is not None:
+            if self._cognitive_rule is not None:
+                assert self._cognitive is not None
                 await self._cognitive.memory.load()
                 self._cognitive.task_manager.load()
                 self._state = MemberState.INITIALIZING
@@ -278,7 +287,7 @@ class MemberRuntime(Member):
 
             await self._scan_unread_mail()
 
-            if self._cognitive is not None:
+            if self._cognitive_rule is not None:
                 assert self._scheduler is not None
                 self._scheduler.start()
                 self._state = MemberState.ACTIVE
@@ -683,7 +692,7 @@ class MemberRuntime(Member):
         await self._publish_mail(forwarded, self._carrier_for(trigger_event))
 
     async def _execute_spawn(self, request: ActionRequest) -> None:
-        """Spawn a contractor through the registry's full trust gate and
+        """Spawn a new member through the registry's full trust gate and
         spawn budget (stage 6b); the session-id binding for quota
         attribution comes from structlog contextvars when inside a session."""
         registry = self._registry
@@ -692,7 +701,7 @@ class MemberRuntime(Member):
         prototype = request.data["prototype"]
         name = request.data["name"] or f"{prototype}-{uuid.uuid4().hex[:4]}"
         session_id = get_contextvars().get("session_id")
-        await registry.spawn_contractor(
+        await registry.spawn_member(
             prototype=prototype,
             name=name,
             spawner_id=self._member_id,

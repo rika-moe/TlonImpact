@@ -352,10 +352,15 @@ def _validate_fuel(rule: MemberRule, label: str) -> None:
 
 
 def member_type(spec: MemberSpec) -> str:
-    """Derive a member's runtime kind from its spec (phase C: derived).
+    """Derive a member's current cognitive form from its spec (observed
+    value, ADR 0006 — never a stored category).
 
-    A cognitive member runs at least one rule with a loop; a member with
-    only loop-less rules is deterministic.
+    A spec with at least one rule carrying a loop yields ``"react"``
+    (the cognitive engine is attached); one with only loop-less rules
+    yields ``"script"``. This is a projection of the spec's rules, not a
+    member class: any member can cross between forms by changing its
+    behavior file (via prototype instantiation), and a ``"script"``
+    member is simply one whose spec has no loop rule today.
     """
     return "react" if any(rule.loop is not None for rule in spec.rules) else "script"
 

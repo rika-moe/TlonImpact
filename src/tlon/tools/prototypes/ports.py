@@ -17,7 +17,11 @@ class PrototypeError(ValueError):
 
 
 class PrototypeSummary(Protocol):
-    """Read-only view of a prototype's metadata used by the tools."""
+    """Read-only view of a prototype's metadata used by the tools.
+
+    No runtime is declared or derived (unified member model, ADR 0006):
+    a prototype is a behavior template, not a member class.
+    """
 
     @property
     def name(self) -> str: ...
@@ -30,6 +34,3 @@ class PrototypeSummary(Protocol):
 
     @property
     def trusted(self) -> bool: ...
-
-    @property
-    def runtime(self) -> str: ...

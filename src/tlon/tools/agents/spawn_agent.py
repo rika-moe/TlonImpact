@@ -1,4 +1,4 @@
-"""Spawn a contractor agent from a behavior prototype."""
+"""Spawn a member from a behavior prototype."""
 
 from typing import Any
 
@@ -13,10 +13,12 @@ logger = get_logger(__name__)
 
 
 class SpawnAgentTool(Tool):
-    """Tool to spawn a disposable contractor agent from a prototype.
+    """Tool to spawn a new member from a prototype.
 
-    The contractor starts immediately and is reclaimed by its own idle
-    timeout when done. Spawning is bounded by the registry's budget
+    Unified member model (ADR 0006): the spawned member is a member like
+    any other — it is never discarded (stopping puts it to sleep, its
+    home directory is archived), and whether it boots/lazes follows from
+    the prototype's spec. Spawning is bounded by the registry's budget
     (global activation cap, spawn depth, per-session quota) — rejections
     come back as ``budget_exceeded: <reason>``.
 
@@ -31,8 +33,9 @@ class SpawnAgentTool(Tool):
         super().__init__(
             name="spawnAgent",
             description=(
-                "从 behavior prototype 派生一个临时工 Agent（contractor）并立即启动。"
-                "临时工完成委托任务后会被自动回收（空闲超时即弃）。"
+                "从 behavior prototype 派生一个新 Agent 并立即启动。"
+                "新 Agent 是普通社会成员（不会自动回收/删除，空闲时睡眠，"
+                "是否开机启动由原型 spec 决定）。"
                 "受 spawn 预算约束：全局运行数上限、spawn 深度、每会话配额。"
                 "behavior 文件原样拷贝（spec 是 total 的，无 overrides），无法授予新工具。"
             ),
@@ -71,7 +74,7 @@ class SpawnAgentTool(Tool):
         # contextvars; direct calls (tests) fall back to a single bucket.
         session_id = get_contextvars().get("session_id")
         try:
-            config = await self._registry.spawn_contractor(
+            config = await self._registry.spawn_member(
                 prototype=prototype,
                 name=name,
                 spawner_id=self._spawner_id,
@@ -97,12 +100,11 @@ class SpawnAgentTool(Tool):
             data={
                 "agent_id": config.id,
                 "name": config.name,
-                "role": config.role,
                 "prototype": config.prototype,
                 "spawn_depth": config.spawn_depth,
             },
             message=(
-                f"临时工 {config.name}（{config.id}）已创建并启动；"
-                f"@ {config.name} 即可分配任务，完工后会被自动回收"
+                f"新成员 {config.name}（{config.id}）已创建并启动；"
+                f"@ {config.name} 即可分配任务"
             ),
         )

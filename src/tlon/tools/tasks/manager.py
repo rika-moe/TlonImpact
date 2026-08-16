@@ -1,6 +1,7 @@
 """Task Manager for agent personal task management."""
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tlon.base.logger import get_logger
@@ -28,17 +29,25 @@ class TaskManager:
 
         Args:
             agent_id: Unique identifier for the agent
-            data_dir: Ignored (backward compat)
+            data_dir: The agent's home directory (``{home}/{agent_id}``);
+                the tasks file resolves as ``{data_dir}/tasks.jsonl``.
+                The registry always passes it (unified assembly, ADR
+                0006); the ``paths`` arg / module singleton are fallbacks.
             paths: TlonPaths instance (defaults to module singleton)
         """
         from tlon.base.paths import paths as _paths
 
         self.agent_id = agent_id
-        self._paths = paths or _paths
         self.tasks: dict[str, Task] = {}
         self._counter = 0
 
-        self._storage_path = self._paths.agent_tasks_file(agent_id)
+        if data_dir is not None:
+            storage_dir = Path(data_dir)
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            self._storage_path = storage_dir / "tasks.jsonl"
+        else:
+            self._paths = paths or _paths
+            self._storage_path = self._paths.agent_tasks_file(agent_id)
 
     def _generate_id(self) -> str:
         """Generate a new task ID.

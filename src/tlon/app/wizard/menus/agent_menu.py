@@ -355,7 +355,6 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         """Approve or reject LLM-authored prototypes in the staging area."""
         from tlon.agents.prototypes import (
             BEHAVIOR_FILE,
-            PERSONA_FILES,
             approve_prototype,
             list_staging_prototypes,
             reject_prototype,
@@ -378,7 +377,7 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
             self.questionary.Choice(
                 f"{proto.display_name} ({proto.name})"
                 f" — 作者: {proto.author or '未知'}"
-                f" — [{proto.runtime}] {proto.description}",
+                f" — {proto.description}",
                 value=proto.name,
             )
             for proto in staged
@@ -389,21 +388,14 @@ Temperature: {agent.llm.temperature if agent.llm else "default"}
         if not name or name == "back":
             return
 
-        # Preview the unified behavior spec and persona files before deciding
+        # Preview the unified behavior spec before deciding (prototypes
+        # carry no persona, ADR 0006)
         from rich.panel import Panel
 
         staging_dir = paths.prototypes_staging_dir() / name
-        staging_proto = next((p for p in staged if p.name == name), None)
-        is_script = staging_proto is not None and staging_proto.runtime == "script"
 
         behavior = (staging_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
         self.console.print(Panel(behavior, title=f"behavior.tlon: {name}"))
-        if not is_script:
-            for filename in PERSONA_FILES:
-                persona_file = staging_dir / filename
-                if persona_file.exists():
-                    content = persona_file.read_text(encoding="utf-8")
-                    self.console.print(Panel(content, title=filename))
 
         decision = self.questionary.select(
             "审批决定:",

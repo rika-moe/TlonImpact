@@ -55,16 +55,23 @@ class MemoryManager:
         Args:
             agent_id: The agent ID
             config: Memory configuration
-            data_dir: Ignored (for backward compat). Uses TlonPaths internally.
+            data_dir: The agent's home directory (``{home}/{agent_id}``);
+                the memory dir resolves as ``{data_dir}/memory``. When
+                None, the global ``paths`` singleton is used — the
+                registry always passes an explicit data_dir (unified
+                assembly, ADR 0006), so the singleton is only a fallback.
             llm_config: Optional LLM config for summarization
         """
         self.agent_id = agent_id
         self.config = config
 
-        self.storage_path = paths.agent_memory_dir(agent_id)
-
-        # Config file path
-        self.config_file = paths.memory_config_file(agent_id)
+        if data_dir is not None:
+            self.storage_path = data_dir / "memory"
+            self.storage_path.mkdir(parents=True, exist_ok=True)
+            self.config_file = self.storage_path / "config.json"
+        else:
+            self.storage_path = paths.agent_memory_dir(agent_id)
+            self.config_file = paths.memory_config_file(agent_id)
 
         # Initialize stores
         self.working = WorkingMemoryStore(

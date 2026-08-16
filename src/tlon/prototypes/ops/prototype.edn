@@ -1,0 +1,5 @@
+; 运维工程师原型——纯行为原型（统一成员模型，ADR 0006：原型=行为基因型，无人格）
+{:name :ops
+ :display-name "运维工程师原型"
+ :description "标准 ReAct 认知成员：运维工程师行为模板（部署、环境配置、故障处理）。"
+ :trusted true}

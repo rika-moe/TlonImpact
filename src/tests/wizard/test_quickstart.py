@@ -40,7 +40,7 @@ class TestStartupModeFromBehavior:
         """Every standard team member's behavior declares :on :boot → 常驻."""
         assert STANDARD_TEAM_DICTS, "standard team must not be empty"
         for member in STANDARD_TEAM_DICTS:
-            mode = startup_mode_from_behavior(standard_behavior_edn(member["id"]))
+            mode = startup_mode_from_behavior(standard_behavior_edn())
             assert mode == "常驻", f"{member['id']} should boot at startup"
 
     def test_unparseable_behavior_is_lazy(self):

@@ -82,7 +82,7 @@ class AgentStore:
         from tlon.agents.behavior_templates import standard_behavior_edn
 
         filepath = self._paths.agent_behavior_file(agent_id)
-        filepath.write_text(standard_behavior_edn(agent_id), encoding="utf-8")
+        filepath.write_text(standard_behavior_edn(), encoding="utf-8")
 
     def startup_mode(self, agent_id: str) -> str:
         """Startup mode label (常驻/延迟) derived from the on-disk behavior spec.

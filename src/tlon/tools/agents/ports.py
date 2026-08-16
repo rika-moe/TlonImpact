@@ -30,7 +30,7 @@ class StopRejectedError(ValueError):
     """Stop refused by a precondition check.
 
     ``reason`` is a machine-readable token: "unknown_agent" /
-    "resident_not_stoppable" / "active_sessions" / "invalid_agent_id".
+    "active_sessions".
     """
 
     def __init__(self, reason: str, message: str) -> None:
@@ -41,7 +41,7 @@ class StopRejectedError(ValueError):
 class AgentLifecycle(Protocol):
     """The slice of ``AgentRegistry`` the lifecycle tools depend on."""
 
-    async def spawn_contractor(
+    async def spawn_member(
         self,
         prototype: str,
         name: str,
@@ -50,6 +50,6 @@ class AgentLifecycle(Protocol):
         params: dict[str, Any] | None = None,
     ) -> AgentConfig: ...
 
-    async def stop_contractor(self, agent_id: str, stopped_by: str) -> bool: ...
+    async def stop_member(self, agent_id: str, stopped_by: str) -> bool: ...
 
     def get_all_agent_status(self) -> list[dict[str, Any]]: ...

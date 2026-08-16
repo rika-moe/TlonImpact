@@ -1,7 +1,9 @@
 """Write an LLM-authored behavior prototype to the staging area (stage 4a).
 
 Supports both react (cognitive loop rule) and script (deterministic rules)
-prototypes — one unified rules-form format (phase C).
+prototypes — one unified rules-form format (phase C). Unified member
+model (ADR 0006): prototypes carry no persona — a member's persona files
+are creation-time data, never part of the behavior genome.
 """
 
 from collections.abc import Callable
@@ -27,7 +29,6 @@ _BEHAVIOR_HINT = (
     "确定性规则（无 :loop）在前——确定性规则先处理便宜路径，认知规则的 :when "
     "用 (not ...) 排除它已处理的（deflection）。"
     "可选 :parameters 声明模板变量（:type :string 或 :string-list），引用时用 ${变量名}。"
-    "可选 :identity / :soul / :rules 为人格文件内容。"
 )
 
 _SCRIPT_HINT = (
@@ -36,18 +37,18 @@ _SCRIPT_HINT = (
     ":when (纯谓词表达式，可选) :actions [(动作表达式) ...]} ...]。"
     "确定性规则（无 :loop）：命中后直接执行 :actions（start/stop/forward）。"
     "可选 :parameters 声明模板变量（:type :string 或 :string-list），"
-    "引用时用 ${变量名}。确定性模板不需要 persona 文件。"
+    "引用时用 ${变量名}。"
 )
 
 
 class WritePrototypeTool(Tool):
-    """Tool to author a new behavior prototype (pure-data spec + persona).
+    """Tool to author a new behavior prototype (pure-data spec).
 
     Accepts both react specs (a cognitive rule with a loop) and script
     specs (loop-less deterministic rules) — the output is one unified
     rules-form behavior.tlon either way; ``spec_type`` only picks the
-    template (react writes persona files alongside, script is a
-    persona-less daemon). The prototype lands in
+    write-side template. Prototypes carry no persona (unified member
+    model, ADR 0006). The prototype lands in
     ``~/.tlon/prototypes-staging/`` marked untrusted: it cannot be spawned
     until a human approves it in the mirror (the Gatekeeper model of
     stage 4a). Validation errors come back verbatim so the LLM can fix
@@ -60,10 +61,10 @@ class WritePrototypeTool(Tool):
         super().__init__(
             name="writePrototype",
             description=(
-                "创作一个新的 behavior prototype（行为规约 + 人格模板），写入 staging 区。"
+                "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。"
                 "支持 spec_type='react'（默认，认知规则——带 :loop 的规则形态）"
-                "和 spec_type='script'（确定性规则——无 :loop，零 token daemon）。"
-                "两种都输出统一的 rules-form behavior.tlon。"
+                "和 spec_type='script'（确定性规则——无 :loop）。"
+                "两种都输出统一的 rules-form behavior.tlon，不标记成员类别。"
                 "新 prototype 默认不可信：需人类在 mirror 中批准后才能被 spawnAgent 使用。"
                 "behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。"
                 "确定性规则可声明 :parameters 以支持 spawn 时参数化。"
@@ -85,7 +86,7 @@ class WritePrototypeTool(Tool):
                     "spec_type": {
                         "type": "string",
                         "enum": ["react", "script"],
-                        "description": "模板类型：'react'（认知规则 + 人格文件，默认）或 'script'（确定性规则，零 token daemon）",
+                        "description": "写侧模板类型：'react'（认知规则，默认）或 'script'（确定性规则）",
                     },
                     "display_name": {
                         "type": "string",
@@ -94,18 +95,6 @@ class WritePrototypeTool(Tool):
                     "description": {
                         "type": "string",
                         "description": "一句话描述这个原型的行为定位",
-                    },
-                    "identity": {
-                        "type": "string",
-                        "description": "可选 IDENTITY.md 内容（仅 react；script 忽略）",
-                    },
-                    "soul": {
-                        "type": "string",
-                        "description": "可选 SOUL.md 内容（仅 react；script 忽略）",
-                    },
-                    "rules": {
-                        "type": "string",
-                        "description": "可选 RULES.md 内容（仅 react；script 忽略）",
                     },
                 },
                 "required": ["name", "behavior"],
@@ -120,22 +109,12 @@ class WritePrototypeTool(Tool):
         spec_type: str = kwargs.get("spec_type", "react")
         display_name: str = kwargs.get("display_name", "")
         description: str = kwargs.get("description", "")
-        identity: str = kwargs.get("identity", "")
-        soul: str = kwargs.get("soul", "")
-        rules: str = kwargs.get("rules", "")
 
-        is_script = spec_type == "script"
-        persona = (
-            None
-            if is_script
-            else {"IDENTITY.md": identity, "SOUL.md": soul, "RULES.md": rules}
-        )
-        hint = _SCRIPT_HINT if is_script else _BEHAVIOR_HINT
+        hint = _SCRIPT_HINT if spec_type == "script" else _BEHAVIOR_HINT
         try:
             info = self._writer(
                 name,
                 behavior,
-                persona=persona,
                 display_name=display_name,
                 description=description,
                 author_id=self._author_id,
@@ -153,14 +132,13 @@ class WritePrototypeTool(Tool):
             "name": info.name,
             "display_name": info.display_name,
             "trusted": info.trusted,
-            "runtime": info.runtime,
             "status": "pending_approval",
         }
         return ToolResult(
             success=True,
             data=data,
             message=(
-                f"prototype '{info.name}'（{info.runtime}）已写入 staging 区（不可信）。"
+                f"prototype '{info.name}' 已写入 staging 区（不可信）。"
                 "需人类在 mirror 的「规约审批」中批准后才能 spawn。"
             ),
         )

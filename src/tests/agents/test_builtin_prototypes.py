@@ -22,13 +22,21 @@ from tlon.agents.prototypes import (
 from tlon.base.paths import TlonPaths
 
 # Every built-in prototype, with the template parameters instantiation
-# requires (relay declares a ``${to}`` placeholder; the cognitive three
-# are concrete specs and take none).
+# requires (relay declares a ``${to}`` placeholder; the others are
+# concrete specs and take none). Includes the six role prototypes
+# (developer/ops/pm/support/product/data-analyst) that the standard team
+# is born from (ADR 0006).
 BUILTIN_PARAMS: dict[str, dict] = {
     "archivist": {},
     "deep-thinker": {},
     "fast-responder": {},
     "relay": {"to": ["a@tlon.internal"]},
+    "developer": {},
+    "ops": {},
+    "pm": {},
+    "support": {},
+    "product": {},
+    "data-analyst": {},
 }
 
 

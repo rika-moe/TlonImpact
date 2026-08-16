@@ -10,7 +10,6 @@ from typing import Any, cast
 import aiofiles
 
 from tlon.base.logger import get_logger
-from tlon.base.paths import paths
 
 from .base import MemoryStore
 
@@ -59,11 +58,12 @@ class WorkingMemoryStore(MemoryStore):
 
         Args:
             agent_id: The agent ID
-            storage_path: Ignored (for backward compat). Uses TlonPaths internally.
+            storage_path: The memory directory (``{home}/{agent_id}/memory``);
+                the working subdir resolves as ``{storage_path}/working``.
             max_items: Maximum interactions to keep (default: 10)
         """
         super().__init__(agent_id)
-        self.working_dir = paths.memory_working_dir(agent_id)
+        self.working_dir = storage_path / "working"
         self.interactions_file = self.working_dir / "interactions.jsonl"
         self.max_items = max_items
         self._cache: list[dict[str, Any]] = []

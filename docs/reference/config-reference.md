@@ -12,12 +12,11 @@
 |---|---|---|---|
 | `id` | string | — | **必填**。字母/数字/`-`/`_`，agent 目录名即此 id |
 | `name` | string | — | **必填**。显示名，他人 `@` 此名可与之对话 |
-| `role` | `"resident" \| "contractor"` | `"resident"` | `resident` 是持久的命名人格（睡眠、保留 home）；`contractor` 由原型 spawn，一次性、停止/空闲回收时删除 home |
 | `prototype` | string \| null | `null` | 从原型实例化时的原型名（手建则为 null） |
-| `spawned_by` | string \| null | `null` | spawn 出本 contractor 的 agent id（resident 为 null） |
-| `spawn_depth` | int | `0` | spawn 链深度：resident 为 0，contractor = spawner.depth + 1 |
+| `spawned_by` | string \| null | `null` | 血缘审计（统一成员模型，ADR 0006）：spawn 出本成员的 agent id（非 spawn 为 null） |
+| `spawn_depth` | int | `0` | 血缘审计：spawn 链深度（非 spawn 为 0，spawned = spawner.depth + 1） |
 | `activation` | `"always" \| "lazy"` | `"always"` | **已废弃并忽略**（phase E）：boot 集与 lazy 集由 `behavior.tlon` 的 `:on :boot` 规则派生，字段仅保留兼容旧文件加载 |
-| `idle_timeout_seconds` | int | `600` | lazy 成员空闲多少秒后回收 |
+| `idle_timeout_seconds` | int | `600` | lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档） |
 | `session_timeout_seconds` | int | `1800` | ACTIVE/WAITING 的会话空闲超时即取消 |
 | `message_queue_size` | int | `100` | 入站消息队列容量，溢出丢弃新消息 |
 | `llm` | object | 见下 | LLM 客户端配置 |
@@ -59,7 +58,6 @@
 agent:
   id: su-wanqing
   name: 苏晚晴
-  role: resident
   llm:
     model_name: kimi-k2.5
     temperature: 1.0
@@ -151,13 +149,12 @@ agent:
 ├── prototypes/                       # 行为原型库（只读解析，不自动创建）
 │   └── {prototype_name}/
 │       ├── prototype.edn             # 原型元数据（:name / :display-name / :description / :trusted）
-│       ├── behavior.tlon             # 行为规约（total spec）
-│       └── IDENTITY.md / SOUL.md / RULES.md   # 人格模板（react 型）
+│       └── behavior.tlon             # 行为规约（total spec；原型无人格，ADR 0006）
 ├── prototypes-staging/               # LLM 创作、待人类批准的原型（闸门）
 ├── {agent_id}/
 │   ├── config/
 │   │   ├── agent.yaml                # 本 agent 配置
-│   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 人格
+│   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 人格（创建时数据，非基因型）
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
 │   ├── memory/
 │   │   ├── config.json               # 记忆调参

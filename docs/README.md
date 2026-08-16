@@ -31,6 +31,7 @@
 | `design/mail.md` | Republic of Letters：投递、线程、唤醒、人类接入 | ✅ |
 | `design/memory.md` | 双层记忆与 Summarizer | ✅ |
 | `design/prototypes.md` | 原型库、spawn、信任分级 | ✅ |
+| `design/unified-member-model.md` | **统一成员模型**（2026-08 拍板并实施阶段 2）：一类成员 + 世代更替，9 条决策与迁移路径 | ✅ |
 | `design/server-protocol.md` | REST + SSE 协议 v2 的设计取舍 | ✅ |
 | `reference/dsl-reference.md` | EDN 语法、MemberSpec 全字段、builtin/stage/section 清单 | ✅ |
 | `reference/config-reference.md` | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
@@ -38,6 +39,6 @@
 | `reference/api-reference.md` | REST/SSE 端点与事件帧格式 | ✅ |
 | `guides/quickstart.md` | uv sync → dream → ops → 第一封信 | ✅ |
 | `guides/writing-a-prototype.md` | 手写一个 prototype 的完整走查 | ✅ |
-| `decisions/` | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE | ✅ |
+| `decisions/` | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、**0006 统一成员模型** | ✅ |
 
 ✅ = 已写并与代码同步；📝 = 计划内未写。新增文档先登记进本表。

@@ -141,50 +141,8 @@ class TestAgentStore:
             assert spec.rules[1].name == "boot"
             assert spec.rules[1].on is None  # :on :boot
 
-    def test_write_behavior_file_resident_personalized(self):
-        """A known resident gets its personalized behavior, not the canonical."""
-        from tlon.agents.behavior_templates import standard_behavior_edn
-        from tlon.agents.edn import loads
-        from tlon.agents.member_spec import MemberSpec
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = _make_store(tmpdir)
-            store.save_agent(AgentConfig(id="lin-zhiyao", name="林知遥"))
-
-            store.write_behavior_file("lin-zhiyao")
-
-            behavior_file = TlonPaths(home=Path(tmpdir)).agent_behavior_file("lin-zhiyao")
-            text = behavior_file.read_text(encoding="utf-8")
-            assert text != standard_behavior_edn()  # personalized, not canonical
-            spec = MemberSpec.from_edn(loads(text))
-            # 开发工程师的深度迭代：max-iterations 20
-            assert spec.rules[0].loop is not None
-            assert spec.rules[0].loop.max_iterations == 20
-
-    def test_write_behavior_file_gu_yanxi_mixed(self):
-        """客服 gu-yanxi 是阶段 F 混排狗粮：auto-optout 确定性规则前置 +
-        respond 认知规则（deflection）——共 3 条规则。"""
-        from tlon.agents.edn import loads
-        from tlon.agents.member_spec import MemberSpec
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = _make_store(tmpdir)
-            store.save_agent(AgentConfig(id="gu-yanxi", name="顾言蹊"))
-
-            store.write_behavior_file("gu-yanxi")
-
-            behavior_file = TlonPaths(home=Path(tmpdir)).agent_behavior_file("gu-yanxi")
-            spec = MemberSpec.from_edn(loads(behavior_file.read_text(encoding="utf-8")))
-            names = [r.name for r in spec.rules]
-            assert names == ["auto-optout", "respond", "boot"]
-            # auto-optout is deterministic; respond is cognitive; respond
-            # excludes 退订 so the cheap path handles it first (deflection).
-            assert spec.rules[0].loop is None
-            assert spec.rules[1].loop is not None
-            assert spec.rules[1].name == "respond"
-
     def test_write_behavior_file_non_resident_canonical(self):
-        """A non-resident agent still gets the canonical ReAct behavior."""
+        """A wizard-created agent gets the canonical ReAct behavior."""
         from tlon.agents.behavior_templates import standard_behavior_edn
 
         with tempfile.TemporaryDirectory() as tmpdir:

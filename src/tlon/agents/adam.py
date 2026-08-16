@@ -23,14 +23,15 @@ from each member's spec (``:on :mail-delivered``) and issues its own
 AGENT_START_REQUEST{reason="wake"}, so the spec is the single lifecycle
 authority for both the boot set and the wake gate.
 
-Adam is a built-in Member (``member_id="adam"``, ``member_type="script"``):
-it does not come from any user spec file, is not registered in the agent
-registry, and does not appear in MemberDirectory. It holds no run-state
-of its own — the injected query closures (the shared ``RegistryQueries``
-implementation, imported from the registry module) read the registry's
-read-only interfaces (``get_agent`` / ``get_config`` / ``get_all``)
-instead of reconstructing state from events. Lifecycle decisions carry
-no dedup state either: the registry executes requests idempotently.
+Adam is a built-in Member (``member_id="adam"``, ``member_type="script"``
+as an observed value — its spec has no loop rule): it does not come from
+any user spec file, is not registered in the agent registry, and does
+not appear in MemberDirectory. It holds no run-state of its own — the
+injected query closures (the shared ``RegistryQueries`` implementation,
+imported from the registry module) read the registry's read-only
+interfaces (``get_agent`` / ``get_config`` / ``get_all``) instead of
+reconstructing state from events. Lifecycle decisions carry no dedup
+state either: the registry executes requests idempotently.
 
 The dependency is one-directional: Adam imports the registry; the
 registry never imports Adam (kernel first, PID 1 second — the DAG stays

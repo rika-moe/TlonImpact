@@ -1,5 +1,7 @@
 # Tlon 系统架构
 
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；排空一律是睡眠、档案归档、spawn 出的成员永不删除。历史叙事已同步本文；模型总览见 `docs/design/unified-member-model.md`。
+
 Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮件为唯一通信方式，模拟一个软件工程团队；人类用户以普通成员身份加入同一个邮件网络。本文描述当前实现的整体结构、依赖方向、装配顺序与运行时数据流。
 
 ## 总览
@@ -118,7 +120,7 @@ REST 接口一览（均在 `rest.py` 注册）：
 
 ### 策略/机制分离
 
-`AgentRegistry`（`agents/agent_registry.py`）是纯机制：装配与运行表、启动/停止请求的幂等执行（wake lock、`_waking` 去重）、空闲*事实*检测（发布 `AGENT_IDLE`，不决定后果）、contractor 的 spawn/stop。spawn 预算是硬编码默认值：全局同时运行上限 `max_activations = 8`、spawn 深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`；配额账本只在内存中，重启清零（防失控用途，可接受）。
+`AgentRegistry`（`agents/agent_registry.py`）是纯机制：装配与运行表、启动/停止请求的幂等执行（wake lock、`_waking` 去重）、空闲*事实*检测（发布 `AGENT_IDLE`，不决定后果）、成员的 spawn/stop（统一成员模型，ADR 0006：spawn 出的成员与手建成员同构，停止/排空一律是睡眠，永不删除）。spawn 预算是硬编码默认值：全局同时运行上限 `max_activations = 8`、spawn 深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`；配额账本只在内存中，重启清零（防失控用途，可接受）。
 
 策略只有一个实例：Adam（`agents/adam.py`），agent 世界的内置 init 进程（PID 1）。策略是数据而不是代码——`ADAM_SPEC_EDN` 是一段内置 MemberSpec 文本，只有两条规则：`:on :boot` 时对候选集合发 `AGENT_START_REQUEST{reason="boot"}`，`:on :agent-idle` 时把空闲事实转成 `AGENT_STOP_REQUEST{reason="drain"}`。Adam 是一个普通的 `MemberRuntime` 实例，不进注册表、不出现在 MemberDirectory；依赖单向（Adam import 注册表，反之永不），DAG 保持无环。
 

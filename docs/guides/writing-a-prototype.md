@@ -15,11 +15,10 @@
 ```
 ~/.tlon/prototypes/{prototype_name}/
 ├── prototype.edn          # 元数据：:name / :display-name / :description / :trusted / :author
-├── behavior.tlon          # 成员的全部行为规约（total spec，唯一权威）
-├── IDENTITY.md            # 人格模板，可选（只对认知型有意义）
-├── SOUL.md
-└── RULES.md
+└── behavior.tlon          # 成员的全部行为规约（total spec，唯一权威）
 ```
+
+原型**不带人格文件**（统一成员模型，ADR 0006）：原型是行为的基因型；成员的人格（IDENTITY/SOUL/RULES.md）是创建时的数据，不是基因型的一部分。快速开始创建标准团队时，人格由 `base/default_team.py` 的角色卡写入。
 
 两个关键约束（写之前先记住）：
 
@@ -74,18 +73,13 @@
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。
 - **`:on :boot` 规则**：带它的成员开机即启动；不带的按需唤醒（startup 模式由此派生，`agent.yaml` 不再控制）。
 
-### 2.3 人格文件（可选）
+### 2.3 人格文件：创建时数据，不进原型
 
-`IDENTITY.md` / `SOUL.md` / `RULES.md` 对认知型是 LLM 的 persona 注入，可有可无：
-
-```markdown
-<!-- IDENTITY.md -->
-你是简报员，一名高效、直接的信息检索助手。先查证再回答，结论给要点。
-```
+原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）是创建成员时的数据：wizard 创建时写入（快速开始的角色卡来自 `base/default_team.py`），之后可在成员 `config/` 下随时编辑——它不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
 
 ## 3. 从原型派生 agent
 
-`behavior.tlon` 与人格文件会在派生时**逐字拷贝**进 `~/.tlon/{agent_id}/config/`，此后改原型不影响已派生的 agent（拷贝即冻结）。两种派生入口：
+`behavior.tlon` 会在派生时**逐字拷贝**进 `~/.tlon/{agent_id}/config/`，此后改原型不影响已派生的 agent（拷贝即冻结）；`agent.yaml` 的 `prototype` 字段记录来源（血缘）。两种派生入口：
 
 ### 方法 A：mirror（人类）
 
@@ -97,11 +91,11 @@ uv run tlon mirror
 
 ### 方法 B：spawnAgent（LLM）
 
-认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`。派生出的 contractor（`c-{prototype}-{uuid8}`）是匿名的、一次性的：空闲超时（默认 300 秒）即回收，home 目录连同沙箱容器一起删除。
+认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`。派生出的成员（`c-{prototype}-{uuid8}`）与手建成员同构（统一成员模型，ADR 0006）：永不删除，空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生。
 
 ## 4. 确定型（script）原型
 
-无 `:loop` 的规则是确定型成员：零 token、不建 LLM 客户端、不注册工具，纯动作。内置的 `relay`（转发者）是完整示例（`src/tlon/prototypes/relay/behavior.tlon`）：
+无 `:loop` 的规则是确定型规则：只跑 `:actions`、不启动认知会话（统一装配下能力对象仍存在，只是不被使用——对象便宜，调用才贵）。内置的 `relay`（转发者）是完整示例（`src/tlon/prototypes/relay/behavior.tlon`）：
 
 ```edn
 {:version 1

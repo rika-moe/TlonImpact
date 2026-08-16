@@ -344,7 +344,7 @@ class TestDeterministicDispatch:
             def __init__(self) -> None:
                 self.calls: list[tuple] = []
 
-            async def spawn_contractor(self, *, prototype, name, spawner_id, session_id):
+            async def spawn_member(self, *, prototype, name, spawner_id, session_id):
                 self.calls.append((prototype, name, spawner_id, session_id))
 
         registry = _StubRegistry()

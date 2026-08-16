@@ -202,16 +202,6 @@ class TlonPaths:
     def memory_config_file(self, agent_id: str) -> Path:
         return self.agent_memory_dir(agent_id) / "config.json"
 
-    def memory_working_dir(self, agent_id: str) -> Path:
-        d = self.agent_memory_dir(agent_id) / "working"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def memory_episodic_dir(self, agent_id: str) -> Path:
-        d = self.agent_memory_dir(agent_id) / "episodic"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
     # ===== Shared =====
 
     def chat_history_dir(self) -> Path:

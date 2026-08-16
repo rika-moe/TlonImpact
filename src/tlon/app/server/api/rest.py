@@ -518,7 +518,6 @@ class RESTAPIHandler:
             "name": config.name,
             "state": state,
             "config": {
-                "role": config.role,
                 "prototype": config.prototype,
             },
         }

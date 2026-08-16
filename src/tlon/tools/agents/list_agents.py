@@ -10,17 +10,16 @@ class ListAgentsTool(Tool):
     """Tool to list every registered agent.
 
     Covers the persona full set (running, sleeping, waking), each with its
-    identity fields: role (resident/contractor), source prototype, and
-    spawner. Useful before spawnAgent/stopAgent to see who exists.
+    identity fields: source prototype and lineage (spawner / depth).
+    Useful before spawnAgent/stopAgent to see who exists.
     """
 
     def __init__(self, registry: AgentLifecycle) -> None:
         super().__init__(
             name="listAgents",
             description=(
-                "列出全部 Agent：运行状态（running/sleeping/waking）、身份"
-                "（resident 居民 / contractor 临时工）、来源 prototype、"
-                "由谁 spawn。spawn 或 stop 前可用它确认目标。"
+                "列出全部 Agent：运行状态（running/sleeping/waking）、来源 "
+                "prototype、由谁 spawn。spawn 或 stop 前可用它确认目标。"
             ),
             parameters={
                 "type": "object",

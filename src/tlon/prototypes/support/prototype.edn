@@ -1,0 +1,5 @@
+; 客服专员原型——纯行为原型（统一成员模型，ADR 0006：原型=行为基因型，无人格）
+{:name :support
+ :display-name "客服专员原型"
+ :description "标准 ReAct 认知成员：客服专员行为模板（用户接待、问题诊断与转派）。"
+ :trusted true}

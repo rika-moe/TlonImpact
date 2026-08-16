@@ -1,0 +1,5 @@
+; 项目经理原型——纯行为原型（统一成员模型，ADR 0006：原型=行为基因型，无人格）
+{:name :pm
+ :display-name "项目经理原型"
+ :description "标准 ReAct 认知成员：项目经理行为模板（任务协调、进度把控、资源分配）。"
+ :trusted true}

@@ -5,17 +5,14 @@ from pathlib import Path
 
 import pytest
 
-import tlon.memory.working_store as working_store_module
 from tlon.base.paths import TlonPaths
 from tlon.memory.working_store import WorkingMemoryStore
 
 
 @pytest.fixture
-def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TlonPaths:
-    """Point the module-level paths singleton at a temp dir."""
-    test_paths = TlonPaths(home=tmp_path)
-    monkeypatch.setattr(working_store_module, "paths", test_paths)
-    return test_paths
+def isolated_paths(tmp_path: Path) -> TlonPaths:
+    """A temp TlonPaths; its memory dir is the stores' storage_path."""
+    return TlonPaths(home=tmp_path)
 
 
 def _make_interaction(interaction_id: str, text: str = "hello") -> dict:
@@ -29,7 +26,7 @@ class TestAtomicPersist:
         self, isolated_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If os.replace fails, the original interactions file stays intact."""
-        store = WorkingMemoryStore("test-agent", Path("ignored"))
+        store = WorkingMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add(_make_interaction("i-001"))
         original = store.interactions_file.read_bytes()
@@ -47,7 +44,7 @@ class TestAtomicPersist:
 
     async def test_persist_normal_path(self, isolated_paths: TlonPaths) -> None:
         """Normal persist rewrites the file and leaves no temp file behind."""
-        store = WorkingMemoryStore("test-agent", Path("ignored"))
+        store = WorkingMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await store.load()
         await store.add(_make_interaction("i-001"))
         await store.add(_make_interaction("i-002", "again"))
@@ -56,7 +53,7 @@ class TestAtomicPersist:
         tmp_file = store.interactions_file.with_name(store.interactions_file.name + ".tmp")
         assert not tmp_file.exists()
 
-        reloaded = WorkingMemoryStore("test-agent", Path("ignored"))
+        reloaded = WorkingMemoryStore("test-agent", isolated_paths.agent_memory_dir("test-agent"))
         await reloaded.load()
         interactions = await reloaded.get_all()
         assert [i["id"] for i in interactions] == ["i-002"]

@@ -1,5 +1,7 @@
 # DSL 设计：行为即数据
 
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；DSL 语言本身的受限设计（本文主体）不受影响。模型总览见 `docs/design/unified-member-model.md`。
+
 语法、全字段与 builtin 清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文只回答"为什么这样设计"。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)。一切以代码为准。
 
 ## DSL 在愿景中的位置
@@ -112,7 +114,7 @@ spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里�
 
 唯一权威还有两层推论：
 
-- **实例化是复制，不是引用**。`agents/prototypes.py` 的 `instantiate` 把原型的 behavior 文件与人格文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。
+- **实例化是复制，不是引用**。`agents/prototypes.py` 的 `instantiate` 把原型的 behavior 文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件是创建时数据。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。
 - **模板只存在于写侧**。behavior 文件可以声明顶层 `:parameters` 并用 `${name}` 占位（`agents/behavior_template.py`），但渲染发生在实例化落盘之前；运行时加载器永远见不到占位符，`:parameters` 本身也只作为未知键记 warning。运行时面对的永远是一份完全的、具体的 spec——"这份文件就是这个成员的全部行为"这个命题，不需要任何上下文就成立。
 
 ## 分层

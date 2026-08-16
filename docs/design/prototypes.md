@@ -1,5 +1,7 @@
 # 原型与 spawn 体系设计
 
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，spawn 出的成员与手建成员无类别差异、永不删除（停止即睡眠、档案归档）；`spawned_by`/`spawn_depth` 保留为血缘审计。历史叙事已同步本文；模型总览见 `docs/design/unified-member-model.md`。
+
 Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 `src/tlon/agents/prototypes.py`，内置原型在 `src/tlon/prototypes/`，spawn 工具在 `src/tlon/tools/agents/`）。
 
 ## 原型是什么
@@ -8,25 +10,39 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 - `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`。缺省时以目录名兜底（`_read_metadata`）。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
-- `IDENTITY.md` / `SOUL.md` / `RULES.md`——人格模板，可选，只对认知型成员有意义。
+
+统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件（IDENTITY.md / SOUL.md / RULES.md）是**创建时的数据**（wizard 角色卡 / 未来工具注入），不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
 
 两个「不声明」值得注意：
 
-- **不声明运行时类型**。成员是认知型（react）还是确定型（script）由 spec 的规则**派生**——任何规则带 `:loop` 即 react（`_derive_runtime`，调 `member_type`）。元数据里没有 `:runtime` 字段，因为派生值不需要存储，存储了反而可能和 spec 漂移。
+- **不声明运行时类型**。统一成员模型（ADR 0006）：原型是行为模板，不是成员类别——元数据里没有 `:runtime` 字段（`PrototypeInfo` 也不派生它）。派生的成员是认知型还是确定型，由实例 spec 的规则决定（任何规则带 `:loop` 即认知），从 `agents/member_spec.py` 的 `member_type` 现算。
 - **不声明权限**。spec 是 total 的：工具能力、循环结构、上下文段全部写在 `behavior.tlon` 里，原型之外没有可叠加的东西。
 
 元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
 
-`src/tlon/prototypes/` 随包携带四个内置原型，恰好覆盖了体系的两个维度——认知/确定、重思考/轻响应：
+`src/tlon/prototypes/` 随包携带十个内置原型，分两类（统一成员模型，ADR 0006：`形态` 列是**当前 spec 的观测**，不是成员类别）：
 
-| 原型 | 类型 | 关键 spec 差异 |
+**角色行为原型**（快速开始的标准团队从它们出生，`base/default_team.py` 角色卡记录每人的来源）：
+
+| 原型 | 当前形态 | 关键 spec 差异 |
 |---|---|---|
-| archivist（档案管理者） | react | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
-| deep-thinker（深度思考者） | react | `:max-iterations 25`，stages 带 `(critique)` 与条件 `(revise {:if (critique-failed?)})`——多轮自评审 |
-| fast-responder（快速反应者） | react | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
-| relay（转发者） | script | 无 `:loop`，`:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——零 token daemon |
+| developer（开发工程师） | 认知 | 标准 ReAct 模板 |
+| ops（运维工程师） | 认知 | 标准 ReAct 模板 |
+| pm（项目经理） | 认知 | 标准 ReAct 模板 |
+| support（客服专员） | 认知 | 标准 ReAct 模板 |
+| product（产品经理） | 认知 | 标准 ReAct 模板 |
+| data-analyst（数据分析师） | 认知 | 标准 ReAct 模板 |
 
-三者认知型原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员类型就是新的一份 spec。
+**行为形态原型**（覆盖体系的两个维度——认知/确定、重思考/轻响应）：
+
+| 原型 | 当前形态 | 关键 spec 差异 |
+|---|---|---|
+| archivist（档案管理者） | 认知 | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
+| deep-thinker（深度思考者） | 认知 | `:max-iterations 25`，stages 带 `(critique)` 与条件 `(revise {:if (critique-failed?)})`——多轮自评审 |
+| fast-responder（快速反应者） | 认知 | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
+| relay（转发者） | 确定 | 无 `:loop`，`:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
+
+所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员类型就是新的一份 spec。原型不带人格（ADR 0006）：快速开始创建标准团队时，成员的人格（IDENTITY/SOUL/RULES.md）来自 `default_team.py` 的角色卡，是创建时数据，不是基因型。
 
 ## 生命周期：播种 → 列出 → 实例化
 
@@ -36,14 +52,14 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ### 为什么原型是目录而不是单文件
 
-原型需要打包三类异质内容：EDN 元数据、EDN 行为 spec、Markdown 人格文件。单文件方案要么把 Markdown 嵌进 EDN 字符串（转义地狱，人格文件失去独立编辑性），要么发明新的打包格式。目录是零发明的答案：每种内容保持自己的格式与工具链，`behavior.tlon` 的存在与否天然成为判定谓词，「加一个原型」就是「拷一个目录」。这也与人格文件在 agent 侧的存储形态同构——原型目录和实例的 `config/` 目录结构一致，实例化因此是纯粹的目录内容拷贝。
+原型需要打包两类异质内容：EDN 元数据、EDN 行为 spec。单文件方案要么发明新的打包格式，要么把元数据塞进行为文本。目录是零发明的答案：每种内容保持自己的格式与工具链，`behavior.tlon` 的存在与否天然成为判定谓词，「加一个原型」就是「拷一个目录」。
 
 ### 列出与实例化
 
 `listPrototypes` 工具（`tools/prototypes/list_prototypes.py` 的 `ListPrototypesTool`）把库的元数据暴露给 agent（名称、显示名、描述、trusted 标志）。`instantiate` 做真正的派生，语义是**拷贝，不是引用**：
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
-2. 行为文件与人格文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。
+2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。
 3. `agent.yaml` 走与 wizard 相同的 `yaml_save` 路径写出，`prototype` 字段记录来源。
 4. 无需重启生效：调用方（wizard 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
@@ -65,23 +81,23 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 以 relay 为完整例：它的 `behavior.tlon` 声明 `:parameters {:to {:type :string-list :required true}}`，规则体里是 `(forward {:to ${to}})`。spawn 时传 `params={"to": ["a@tlon.internal", "b@tlon.internal"]}`，渲染后落盘的实例文件里是 `(forward {:to ["a@tlon.internal" "b@tlon.internal"]})`——占位符消失，值已是序列化好的 EDN 字面量。同一个转发原型由此可以派生出转发目标各异的任意多个 relay 实例，而原型本身保持一份。
 
-## spawn：从原型派生 contractor
+## spawn：从原型派生新成员
 
-agent 侧入口是 `SpawnAgentTool`（`tools/agents/spawn_agent.py`，工具名 `spawnAgent`）：指定原型名、显示名、可选模板参数，从原型派生一个 contractor（临时工）并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
+agent 侧入口是 `SpawnAgentTool`（`tools/agents/spawn_agent.py`，工具名 `spawnAgent`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent（统一成员模型，ADR 0006：与手建成员无类别差异）并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
 
-真正的管线在 `AgentRegistry.spawn_contractor`（`agents/agent_registry.py`），顺序是刻意安排的：**信任门先于一切预算检查**——`untrusted_prototype` 的拒绝在计数之前，staging 里的原型连预算都消耗不到。随后：
+真正的管线在 `AgentRegistry.spawn_member`（`agents/agent_registry.py`），顺序是刻意安排的：**信任门先于一切预算检查**——`untrusted_prototype` 的拒绝在计数之前，staging 里的原型连预算都消耗不到。随后：
 
 1. **预算检查**（见下节）。
-2. **生成 id**——`c-{prototype}-{uuid8}`，由注册表生成、调用方无法指定，字符集收敛在 AgentConfig 允许的范围内（原型名先做字符清洗）。id 不让调用方指定，是为了让「contractor 是匿名的、一次性的」成为惯例：`c-` 前缀一眼可辨，uuid 后缀防碰撞，没有任何语义可供依赖。
+2. **生成 id**——`c-{prototype}-{uuid8}`，由注册表生成、调用方无法指定，字符集收敛在 AgentConfig 允许的范围内（原型名先做字符清洗）。`c-` 前缀一眼可辨，uuid 后缀防碰撞，没有任何语义可供依赖。
 3. **`instantiate`**——拷贝落盘（行为冻结）。
-4. **contractor 身份**——`role="contractor"`、`spawned_by` 记录 spawner、`spawn_depth` 继承递增、空闲超时收紧为 `contractor_idle_timeout_seconds`（默认 300 秒，比 resident 短——临时工是可弃的）。
+4. **血缘审计**——`spawned_by` 记录 spawner、`spawn_depth` 继承递增。不设任何角色标记：lazy/常驻由原型 spec 的 `:on :boot` 规则派生。
 5. **注册并启动**，发布 `AGENT_SPAWNED`。
 
-孤儿策略是**reparent 而非 kill**：contractor 独立于 spawner 注册，spawner 睡眠或停止不影响它，回收只由它自己的空闲超时决定。不选 kill 的理由：contractor 可能在为多个委托方工作（邮件寻址是开放的，任何人都能 @ 它），spawner 只是它的出生证明，不是它的所有者；所有权归注册表，生命周期归空闲事实——这与全系统「idle 是事实、drain 是策略」的分工一致。
+孤儿策略是**reparent 而非 kill**：新成员独立于 spawner 注册，spawner 睡眠或停止不影响它，回收只由它自己的空闲策略决定（sleep，不删）。理由：成员可能在为多个委托方工作（邮件寻址是开放的，任何人都能 @ 它），spawner 只是它的出生证明，不是它的所有者；所有权归注册表，生命周期归空闲事实——这与全系统「idle 是事实、drain 是策略」的分工一致。
 
 ### spawn 预算：内存账本
 
-预算的三个硬编码默认值（注册表构造参数）：全局同时运行上限 `max_activations = 8`（resident 也算）、spawn 链深度 `max_spawn_depth = 3`（resident 深度 0）、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本 `_spawn_quota` 只在内存里，重启清零——这是防失控机制，不是计量系统，重启丢失可接受。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷临时工。
+预算的三个硬编码默认值（注册表构造参数）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本 `_spawn_quota` 只在内存里，重启清零——这是防失控机制，不是计量系统，重启丢失可接受。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。
 
 拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 mirror 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
 
@@ -89,19 +105,14 @@ agent 侧入口是 `SpawnAgentTool`（`tools/agents/spawn_agent.py`，工具名 
 
 spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
-- **来源唯一**——contractor 的 spec 只能来自原型库（trusted 那半边），LLM 不能临场写一份 spec 直接 spawn（它写的进 staging，见下节）。
+- **来源唯一**——新成员的 spec 只能来自原型库（trusted 那半边），LLM 不能临场写一份 spec 直接 spawn（它写的进 staging，见下节）。
 - **spec total，无 overrides**——行为文件逐字拷贝，spawn 时没有任何参数能修改 spec 内容（模板参数只能填原型自己声明的槽位）。spawner 的能力上限就是它能用到的原型的上限。
 
-### 销毁：容器强删与 home 删除
+### 停止与排空：睡，永不删
 
-contractor 的终点有两条：`stopAgent`（`tools/agents/stop_agent.py` 的 `StopAgentTool` → `stop_contractor`，先做 drain 检查——有 ACTIVE/WAITING session 的拒绝停）或空闲超时收割（idle reaper 走同一条 `_discard_contractor`）。销毁做两件事：
+统一成员模型（ADR 0006）：成员只有一种，`stopAgent`（`tools/agents/stop_agent.py` 的 `StopAgentTool` → `stop_member`，先做 drain 检查——有 ACTIVE/WAITING session 的拒绝停）与空闲超时收割（idle reaper 走 `_drain_agent`）对**所有**成员一视同仁：停止即睡眠（`AGENT_STOPPED` / `AGENT_SLEEPING`），home 目录永不删除——人格、记忆、邮箱、workspace 全部归档，之后可被唤醒。容器也从不 force-remove（睡眠保留容器，零成本唤醒）。系统里不存在"删除成员"这条路径：成员只会"睡"，不会"蒸发"。
 
-1. **沙箱容器强删**——`DockerRuntime.remove(force=True)`。必须先于 home 删除执行，因为容器 bind-mount 了 home 下的 workspace。注册表侧为此缓存 container 句柄。
-2. **删除 home 目录**——`~/.tlon/{id}/` 整个删掉。contractor 是可弃的，它的记忆、邮箱、workspace 随之消失。
-
-对照组是 resident：睡眠或服务端关闭时**容器保留**（零成本唤醒、lazy 复用），home 目录更不会被碰。`stopAgent` 对 resident 直接拒绝（`resident_not_stoppable`）——resident 只能睡，永远不能经这条路径删除。这个不对称就是角色语义——resident 是社会的成员，contractor 是一次性的工具。
-
-配套的可观测性是 `listAgents`（`tools/agents/list_agents.py` 的 `ListAgentsTool`）：列出全部注册 agent 的运行状态（running/sleeping/waking）与身份字段（role、来源 prototype、spawned_by）。spawn/stop 之前先 list，是工具设计上给 LLM 的标准用法——`spawnAgent` 成功回执里带回 `agent_id`、`spawn_depth` 等字段，供后续 `stopAgent` 或 @ 寻址使用。
+配套的可观测性是 `listAgents`（`tools/agents/list_agents.py` 的 `ListAgentsTool`）：列出全部注册 agent 的运行状态（running/sleeping/waking）与血缘字段（来源 prototype、spawned_by）。spawn/stop 之前先 list，是工具设计上给 LLM 的标准用法——`spawnAgent` 成功回执里带回 `agent_id`、`spawn_depth` 等字段，供后续 `stopAgent` 或 @ 寻址使用。
 
 ## 信任分级：staging 闸
 
@@ -114,15 +125,15 @@ contractor 的终点有两条：`stopAgent`（`tools/agents/stop_agent.py` 的 `
 
 晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 mirror 的「规约审批」；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 
-`writePrototype` 支持两种 `spec_type`：`react`（认知规则 + 人格文件，默认）与 `script`（无 `:loop` 的确定性规则，零 token daemon，不需要人格）。两者输出的是同一种统一 rules 形态的 `behavior.tlon`——`spec_type` 只选择模板（写不写人格文件），不制造第二种文件格式。这让 staging 闸对两类成员是同一条校验链，没有旁路。
+`writePrototype` 支持两种 `spec_type`：`react`（认知规则模板，默认）与 `script`（无 `:loop` 的确定性规则）。两者输出的是同一种统一 rules 形态的 `behavior.tlon`——`spec_type` 只选择写侧模板（是否带 `:loop`），不写人格文件，也不标记成员类别（统一成员模型，ADR 0006）。这让 staging 闸对两类形态是同一条校验链，没有旁路。
 
-信任门与预算检查的顺序也是设计：`spawn_contractor` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
+信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
 
 ## 依赖倒置
 
 spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 prototypes 层（原型库），但 import-linter 契约禁止 `tlon.tools` 反向依赖 `tlon.agents`。解法是端口声明在 tools 侧：
 
-- `tools/agents/ports.py`——`AgentLifecycle` Protocol（`spawn_contractor` / `stop_contractor` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
+- `tools/agents/ports.py`——`AgentLifecycle` Protocol（`spawn_member` / `stop_member` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
 - `tools/prototypes/ports.py`——`PrototypeError`（原型库抛、工具捕）与 `PrototypeSummary`（只读元数据视图，`PrototypeInfo` 结构化满足）。
 
 装配层（`AgentRegistry._assemble_cognitive`，`agents/agent_registry.py`）把实现注入工具实例：注册表把自己注入 `SpawnAgentTool` / `StopAgentTool` / `ListAgentsTool`（它结构化满足 `AgentLifecycle` Protocol，无须显式继承），把 `list_prototypes` / `write_staging_prototype` 作为普通 callable 注入 `ListPrototypesTool` / `WritePrototypeTool`。import 方向保持 tools → ports，永不倒流，由 `uv run lint-imports` 强制。
