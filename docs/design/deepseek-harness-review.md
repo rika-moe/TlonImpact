@@ -34,13 +34,15 @@ Tlon 现状：有记忆摘要器（`memory/summarizer.py`），但认知循环�
 
 借鉴形态：在 think stage 前加压力检查点；pruning 优先于摘要；摘要事件落 session 日志（依赖第 1 条）。
 
-### 4. 文档从源码生成 + CI 保鲜门
+### 4. 文档从源码生成 + CI 保鲜门 ✅ 已实施（2026-08-22）
 
 dsh 做法：`docs/subsystems/*` 的工具目录、事件 producer/consumer 图、API 段全部由 `scripts/gen-*.ts` 从源码 AST 生成，CI 有 freshness gate 检查文档与代码漂移。
 
 Tlon 现状：已有 `scripts/check_*.py` 静态检查文化（架构 DAG、re-export、stage 纯度），`docs/reference/` 的工具清单、事件类型表靠手写同步。
 
 借鉴形态：给 tools 目录和 `EventType` 枚举写生成脚本，输出到 reference 文档，CI 加 freshness 检查。零架构改动，与现有工程文化零摩擦。
+
+**实施记录**：`scripts/gen_reference_docs.py`（AST 提取 `_assemble_cognitive` 注册序 + `Tool` 子类清单 + `EventType` 枚举），生成区块以 `<!-- BEGIN/END GENERATED -->` 标记嵌入 [reference/tools-reference.md](../reference/tools-reference.md)（注册清单）与 [reference/api-reference.md](../reference/api-reference.md)（事件枚举全集）；`--check` 为保鲜门，已接入 CI（`.github/workflows/unit-tests.yml`）并列入 AGENTS.md 验证八件套。手写叙事段落保持手写，只有易漂移的清单由源码生成。
 
 ## 中期，方向性借鉴（先讨论再动）
 

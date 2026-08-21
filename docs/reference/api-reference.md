@@ -48,37 +48,54 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 
 ## 端点总表
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/health` | 健康检查 |
-| POST | `/messages` | 人类发信（202 异步受理） |
-| GET | `/inbox` | 读自己的邮箱（inbox + sent 合并） |
-| POST | `/sessions` | 建立会话（协议握手点） |
-| GET | `/sessions` | 列出活跃会话 |
-| PATCH | `/sessions/{session_id}` | 改 mode / filters |
-| DELETE | `/sessions/{session_id}` | 断开会话（幂等） |
-| GET | `/events` | SSE 事件流（见后文专节） |
-| GET | `/agents` | 列出全部 agent 状态 |
-| GET | `/agents/{agent_id}` | 单个 agent 状态 |
-| GET | `/participants` | 成员目录（agent + 人类） |
-| GET | `/config` | 服务端配置摘要（脱敏） |
-| GET | `/admin/config/agents` | 当前 agent 配置清单（条件注册） |
-| POST | `/admin/config/agents/{agent_id}/reload` | 热重载单个 agent 配置（条件注册） |
-| GET | `/admin/prototypes` | 正式库原型列表（条目含 `parameters`） |
-| GET | `/admin/prototypes/staging` | staging 原型列表（待审批，同上） |
-| GET | `/admin/prototypes/{name}` | 正式库原型详情（元数据 + parameters + behavior 全文） |
-| GET | `/admin/prototypes/staging/{name}` | staging 原型详情（同上，trusted=false） |
-| POST | `/admin/prototypes` | 人类手写创建，直接进正式库（trusted=true） |
-| PATCH | `/admin/prototypes/{name}` | 更新元数据和/或 behavior（重跑校验链） |
-| PATCH | `/admin/prototypes/staging/{name}` | 审批前编辑 staging 原型（同上） |
-| DELETE | `/admin/prototypes/{name}` | 删除正式库原型（staging 的删除即 reject） |
-| GET | `/traces` | trace 列表（条件注册） |
-| GET | `/traces/{trace_id}` | 单条 trace 含 span 树（条件注册） |
-| GET | `/metrics` | 进程内 metrics 快照 |
-| GET | `/logs` | 全局日志查询 |
-| GET | `/agents/{agent_id}/logs` | 单 agent 日志 |
-| GET | `/test/ping` | 冒烟 ping（仅 debug） |
-| POST | `/test/echo` | 回显请求体（仅 debug） |
+<!-- BEGIN GENERATED: rest-endpoints -->
+`create_app` 共注册 40 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 方法 | 路径 | handler | 注册条件 |
+|---|---|---|---|
+| GET | `/health` | `handle_health` | 无条件 |
+| GET | `/config` | `handle_config` | 无条件 |
+| GET | `/inbox` | `handle_inbox` | 无条件 |
+| POST | `/messages` | `handle_send_message` | 无条件 |
+| GET | `/agents` | `handle_list_agents` | 无条件 |
+| GET | `/agents/{agent_id}` | `handle_get_agent` | 无条件 |
+| GET | `/sessions` | `handle_list_sessions` | 无条件 |
+| POST | `/sessions` | `handle_create_session` | 无条件 |
+| PATCH | `/sessions/{session_id}` | `handle_update_session` | 无条件 |
+| DELETE | `/sessions/{session_id}` | `handle_delete_session` | 无条件 |
+| GET | `/events` | `handle_events` | 无条件 |
+| GET | `/participants` | `handle_list_participants` | 无条件 |
+| GET | `/admin/config/agents` | `handle_list_agent_configs` | config_manager |
+| POST | `/admin/config/agents/{agent_id}/reload` | `handle_reload_agent` | config_manager |
+| POST | `/admin/config/agents` | `handle_create_agent` | 无条件 |
+| PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
+| DELETE | `/admin/config/agents/{agent_id}` | `handle_delete_agent` | 无条件 |
+| GET | `/admin/prototypes/staging` | `handle_list_staging` | 无条件 |
+| GET | `/admin/prototypes/staging/{name}` | `handle_get_staging_prototype` | 无条件 |
+| PATCH | `/admin/prototypes/staging/{name}` | `handle_update_staging_prototype` | 无条件 |
+| GET | `/admin/prototypes` | `handle_list_prototypes` | 无条件 |
+| POST | `/admin/prototypes` | `handle_create_prototype` | 无条件 |
+| POST | `/admin/prototypes/staging/{name}/approve` | `handle_approve_prototype` | 无条件 |
+| POST | `/admin/prototypes/staging/{name}/reject` | `handle_reject_prototype` | 无条件 |
+| GET | `/admin/prototypes/{name}` | `handle_get_prototype` | 无条件 |
+| PATCH | `/admin/prototypes/{name}` | `handle_update_prototype` | 无条件 |
+| DELETE | `/admin/prototypes/{name}` | `handle_delete_prototype` | 无条件 |
+| GET | `/admin/settings/env` | `handle_get_settings_env` | 无条件 |
+| PUT | `/admin/settings/env` | `handle_update_settings_env` | 无条件 |
+| GET | `/traces` | `handle_list_traces` | trace_store |
+| GET | `/traces/{trace_id}` | `handle_get_trace` | trace_store |
+| GET | `/metrics` | `handle_metrics` | 无条件 |
+| GET | `/agents/{agent_id}/logs` | `handle_get_agent_logs` | 无条件 |
+| GET | `/logs` | `handle_list_logs` | 无条件 |
+| GET | `/test/ping` | `handle_test_ping` | debug |
+| POST | `/test/echo` | `handle_test_echo` | debug |
+| GET | `/ui` | `handle_webui_redirect` | webui dist 存在 |
+| GET | `/ui/` | `handle_webui_index` | webui dist 存在 |
+| GET | `/ui/` | `(static)` | webui dist 存在 |
+| OPTIONS | `/{path:.*}` | `handle_options` | 无条件 |
+<!-- END GENERATED: rest-endpoints -->
+
+各端点的请求/响应细节见下文「端点详情」。
 
 ## 端点详情
 
@@ -308,6 +325,46 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
+<!-- BEGIN GENERATED: event-types -->
+枚举全集（31 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| event_type | 枚举成员 | 说明 |
+|---|---|---|
+| `mail.new` | `MAIL_NEW` | A mail was sent (pre-delivery) |
+| `mail.delivered` | `MAIL_DELIVERED` | A mail landed in one recipient's inbox |
+| `agent.join` | `AGENT_JOIN` |  |
+| `agent.leave` | `AGENT_LEAVE` |  |
+| `agent.thinking` | `AGENT_THINKING` |  |
+| `agent.response` | `AGENT_RESPONSE` |  |
+| `agent.started` | `AGENT_STARTED` |  |
+| `agent.stopped` | `AGENT_STOPPED` |  |
+| `agent.error` | `AGENT_ERROR` |  |
+| `agent.state_changed` | `AGENT_STATE_CHANGED` |  |
+| `agent.waking` | `AGENT_WAKING` |  |
+| `agent.woken` | `AGENT_WOKEN` |  |
+| `agent.wake_failed` | `AGENT_WAKE_FAILED` |  |
+| `agent.sleeping` | `AGENT_SLEEPING` |  |
+| `agent.start_request` | `AGENT_START_REQUEST` |  |
+| `agent.stop_request` | `AGENT_STOP_REQUEST` |  |
+| `agent.idle` | `AGENT_IDLE` |  |
+| `agent.spawned` | `AGENT_SPAWNED` |  |
+| `agent.thinking_start` | `AGENT_THINKING_START` |  |
+| `agent.thinking_end` | `AGENT_THINKING_END` |  |
+| `agent.llm_request` | `AGENT_LLM_REQUEST` |  |
+| `agent.llm_response` | `AGENT_LLM_RESPONSE` |  |
+| `tool.execute` | `TOOL_EXECUTE` |  |
+| `tool.result` | `TOOL_RESULT` |  |
+| `tool.error` | `TOOL_ERROR` |  |
+| `tool.execute_start` | `TOOL_EXECUTE_START` |  |
+| `tool.execute_end` | `TOOL_EXECUTE_END` |  |
+| `system.startup` | `SYSTEM_STARTUP` |  |
+| `system.shutdown` | `SYSTEM_SHUTDOWN` |  |
+| `system.error` | `SYSTEM_ERROR` |  |
+| `config.updated` | `CONFIG_UPDATED` |  |
+<!-- END GENERATED: event-types -->
+
+各事件的产生者与 payload（手写维护，按域分组）：
+
 | event_type | 产生者 | payload 主要字段 |
 |---|---|---|
 | `mail.new` | `HumanAdapter.speak` / `SendEmailTool` | Mail 对象（发信、投递前） |
@@ -327,9 +384,16 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 
 0. **单轨排除**：chat 模式的会话**永不**经 NotificationService 收到 `mail.delivered`（那封邮件正从 HumanAdapter 过来）；event/agent 模式豁免（运维控制台要看全量邮件流量）。
 1. **mode 语义**（`MODE_EVENT_PATTERNS`，唯一权威）：
-   - `chat`：`mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.error`、`system.*`
-   - `agent`：`agent.*`
-   - `event`：不加限制
+
+<!-- BEGIN GENERATED: mode-patterns -->
+生成自 `MODE_EVENT_PATTERNS`（`.*` 后缀为前缀匹配，其余精确匹配；表外的 mode —— 即 `event` —— 不加限制）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| mode | 事件模式 |
+|---|---|
+| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.error`、`system.*` |
+| `agent` | `agent.*` |
+<!-- END GENERATED: mode-patterns -->
+
 2. **filters**（会话级，全部可选）：
 
 | filter 键 | 类型 | 语义 |

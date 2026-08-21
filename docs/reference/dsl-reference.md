@@ -70,13 +70,44 @@
 
 `:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（[src/tlon/base/events/event.py](../../src/tlon/base/events/event.py)，转换逻辑在 `member_spec._on_from`）。合法值：
 
-| 类别 | 关键字 |
-|---|---|
-| 特殊 | `:boot` —— 订阅就绪后运行一次；此时 `msg` / `event` 均为 `nil` |
-| 邮件 | `:mail-new`、`:mail-delivered` |
-| 成员生命周期 | `:agent-join`、`:agent-leave`、`:agent-started`、`:agent-stopped`、`:agent-error`、`:agent-state-changed`、`:agent-waking`、`:agent-woken`、`:agent-wake-failed`、`:agent-sleeping`、`:agent-idle`、`:agent-start-request`、`:agent-stop-request`、`:agent-spawned` |
-| 可观测性 | `:agent-thinking`、`:agent-response`、`:agent-thinking-start`、`:agent-thinking-end`、`:agent-llm-request`、`:agent-llm-response`、`:tool-execute`、`:tool-result`、`:tool-error`、`:tool-execute-start`、`:tool-execute-end` |
-| 系统 / 配置 | `:system-startup`、`:system-shutdown`、`:system-error`、`:config-updated` |
+<!-- BEGIN GENERATED: dsl-on-events -->
+合法值共 32 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| `:on` 关键字 | 事件值 | 说明 |
+|---|---|---|
+| `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |
+| `:mail-new` | `mail.new` | A mail was sent (pre-delivery) |
+| `:mail-delivered` | `mail.delivered` | A mail landed in one recipient's inbox |
+| `:agent-join` | `agent.join` |  |
+| `:agent-leave` | `agent.leave` |  |
+| `:agent-thinking` | `agent.thinking` |  |
+| `:agent-response` | `agent.response` |  |
+| `:agent-started` | `agent.started` |  |
+| `:agent-stopped` | `agent.stopped` |  |
+| `:agent-error` | `agent.error` |  |
+| `:agent-state-changed` | `agent.state_changed` |  |
+| `:agent-waking` | `agent.waking` |  |
+| `:agent-woken` | `agent.woken` |  |
+| `:agent-wake-failed` | `agent.wake_failed` |  |
+| `:agent-sleeping` | `agent.sleeping` |  |
+| `:agent-start-request` | `agent.start_request` |  |
+| `:agent-stop-request` | `agent.stop_request` |  |
+| `:agent-idle` | `agent.idle` |  |
+| `:agent-spawned` | `agent.spawned` |  |
+| `:agent-thinking-start` | `agent.thinking_start` |  |
+| `:agent-thinking-end` | `agent.thinking_end` |  |
+| `:agent-llm-request` | `agent.llm_request` |  |
+| `:agent-llm-response` | `agent.llm_response` |  |
+| `:tool-execute` | `tool.execute` |  |
+| `:tool-result` | `tool.result` |  |
+| `:tool-error` | `tool.error` |  |
+| `:tool-execute-start` | `tool.execute_start` |  |
+| `:tool-execute-end` | `tool.execute_end` |  |
+| `:system-startup` | `system.startup` |  |
+| `:system-shutdown` | `system.shutdown` |  |
+| `:system-error` | `system.error` |  |
+| `:config-updated` | `config.updated` |  |
+<!-- END GENERATED: dsl-on-events -->
 
 约束（`MemberRuntime._on_event`）：**认知规则（带 `:loop`）只在 `:mail-delivered` 上生效**，订阅其他事件会在运行时记 warning 并跳过。
 
@@ -101,6 +132,10 @@
 ### 4.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
 
 无 `def`、无 `lambda`、无宏、无可变全局状态；除下列形式外，form 头必须是已注册的 builtin 名。
+
+<!-- BEGIN GENERATED: dsl-special-forms -->
+封闭白名单（10 个）：`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+<!-- END GENERATED: dsl-special-forms -->
 
 | 形式 | 形状 | 语义 |
 |---|---|---|
@@ -131,50 +166,95 @@
 
 ## 5. Builtin 完整清单
 
-### 5.1 trigger / 通用纯函数（成员统一注册表 `make_member_builtins` 的纯子集）
+模块级注册表在 [src/tlon/agents/eval.py](../../src/tlon/agents/eval.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。宿主谓词 `sleeping?` / `running?` / `lazy?` 读注册表状态，由调用方闭包注入（**仅 Adam 可用**），不在任何模块级注册表；普通成员的注册表里没有，使用即加载校验失败。
 
-可用于 `:when`、动作参数、（经合并后）一切纯位置。环境 `{msg, event, self}`。
+### 5.1 `TRIGGER_BUILTINS`（触发器谓词）
 
-| 名称 | 签名 | 语义 |
+`:when` 门控可用，环境 `{msg, event, self}`。
+
+<!-- BEGIN GENERATED: dsl-builtins-trigger -->
+`TRIGGER_BUILTINS`（6 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 名称 | pure | 说明 |
 |---|---|---|
-| `addressed-to-me?` | `(addressed-to-me? msg)` | 我的地址在邮件 To 列表；`msg` 为 `nil`（非邮件事件）安全返回 `false` |
-| `cc-ed?` | `(cc-ed? msg)` | 我的地址在 CC 列表；同上 nil 安全 |
-| `content-matches?` | `(content-matches? target pattern)` | 对 `Mail` 正文或字符串做正则搜索（`re.search`）；`target` 为 `nil` 返回 `false`；正则非法抛错 |
-| `contains?` | `(contains? coll item)` | 字符串包含子串，或向量包含元素 |
-| `get` | `(get target key [default])` | 读 dict 键，缺键得 `default`（默认 `nil`）；非 dict 目标也得 default，**永不抛错** |
-| `=` | `(= a b ...)` | 全等；`Keyword`/`Symbol`/字符串类型互不相等（`:a` ≠ `"a"`）；少于 2 参恒真 |
-| `not` | `(not x)` | 逻辑非 |
-| `+` `*` | `(+ a...)` `(* a...)` | 任意元算术；拒绝布尔与非数字 |
-| `-` | `(- a [b])` | 一元取负，二元相减 |
-| `inc` `dec` | `(inc a)` `(dec a)` | ±1 |
-| `<` `>` `<=` `>=` | `(< a b)` 等 | 二元数值比较 |
-| `sleeping?` `running?` `lazy?` | `(sleeping? agent-id)` 等 | **仅 Adam 可用**（宿主谓词，闭包注入；普通成员的注册表里没有，使用即加载校验失败） |
+| `addressed-to-me?` | 是 | My address is in the mail's To list. |
+| `cc-ed?` | 是 | My address is in the mail's CC list (None-safe, see addressed-to-me?). |
+| `content-matches?` | 是 | Regex-search a Mail's content or a plain string (e.g. ``result``). |
+| `contains?` | 是 |  |
+| `=` | 是 |  |
+| `not` | 是 |  |
+<!-- END GENERATED: dsl-builtins-trigger -->
 
-### 5.2 loop `:until` 谓词（`LOOP_BUILTINS`，环境 `{self, state, limits}`）
+### 5.2 `LOOP_BUILTINS`（loop `:until` 谓词）
 
-`state` = `{:iteration n :error_count n}`，`limits` = `{:max_iterations n :max_consecutive_errors n}`。键缺失安全返回 `false`，不抛错。
+环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n}`，`limits` = `{:max_iterations n :max_consecutive_errors n}`。键缺失安全返回 `false`，不抛错。
 
-| 名称 | 语义 |
-|---|---|
-| `iteration-limit-reached?` | `state.iteration ≥ limits.max_iterations` |
-| `error-limit-reached?` | `state.error_count ≥ limits.max_consecutive_errors` |
-| `=` / `not` | 同 5.1 |
+<!-- BEGIN GENERATED: dsl-builtins-loop -->
+`LOOP_BUILTINS`（4 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
-### 5.3 stage `:if` 谓词（`STAGE_COND_BUILTINS`，环境 `{state, scratch}`）
+| 名称 | pure | 说明 |
+|---|---|---|
+| `iteration-limit-reached?` | 是 | ``state.iteration`` has reached ``limits.max_iterations``. |
+| `error-limit-reached?` | 是 | ``state.error_count`` has reached ``limits.max_consecutive_errors``. |
+| `=` | 是 |  |
+| `not` | 是 |  |
+<!-- END GENERATED: dsl-builtins-loop -->
 
-`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 6 节）。
+### 5.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
 
-| 名称 | 语义 |
-|---|---|
-| `critique-failed?` | `scratch.critique` 存在且 `passed` 为 `false` |
-| `critique-passed?` | `scratch.critique` 存在且 `passed` 为 `true` |
-| `plan-exists?` | `scratch.plan` 是非空字符串 |
-| `first-iteration?` | `state.iteration == 0`（循环第一轮） |
-| `=` / `not` | 同 5.1 |
+环境 `{state, scratch}`；`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 6 节）。
 
-### 5.4 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
+<!-- BEGIN GENERATED: dsl-builtins-stage-cond -->
+`STAGE_COND_BUILTINS`（6 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
-`:actions` 里的每个 form 头必须是这六个之一（或 `when`/`while`/`map` 包装）。
+| 名称 | pure | 说明 |
+|---|---|---|
+| `critique-failed?` | 是 | A critique verdict exists in scratch and did not pass. |
+| `critique-passed?` | 是 | A critique verdict exists in scratch and passed. |
+| `plan-exists?` | 是 | Scratch holds a non-empty plan string. |
+| `first-iteration?` | 是 | ``state.iteration`` is 0 (the loop's first round). |
+| `=` | 是 |  |
+| `not` | 是 |  |
+<!-- END GENERATED: dsl-builtins-stage-cond -->
+
+### 5.4 `SCRIPT_BUILTINS`（确定规则纯访问器）
+
+环境 `{event, self}`：`event` 是触发事件的负载 map。
+
+<!-- BEGIN GENERATED: dsl-builtins-script -->
+`SCRIPT_BUILTINS`（4 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 名称 | pure | 说明 |
+|---|---|---|
+| `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
+| `contains?` | 是 |  |
+| `=` | 是 |  |
+| `not` | 是 |  |
+<!-- END GENERATED: dsl-builtins-script -->
+
+### 5.5 `ARITHMETIC_BUILTINS`（算术）
+
+任意元算术与二元数值比较；拒绝布尔与非数字。
+
+<!-- BEGIN GENERATED: dsl-builtins-arithmetic -->
+`ARITHMETIC_BUILTINS`（9 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 名称 | pure | 说明 |
+|---|---|---|
+| `+` | 是 |  |
+| `-` | 是 |  |
+| `*` | 是 |  |
+| `inc` | 是 |  |
+| `dec` | 是 |  |
+| `<` | 是 |  |
+| `>` | 是 |  |
+| `<=` | 是 |  |
+| `>=` | 是 |  |
+<!-- END GENERATED: dsl-builtins-arithmetic -->
+
+### 5.6 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
+
+动作 builtin 不在模块级注册表——它们由 `make_member_builtins` 以闭包定义、按调用方装配（`collector` / `host` 注入），因此本表手写维护。`:actions` 里的每个 form 头必须是这六个之一（或 `when`/`while`/`map` 包装）。
 
 | 名称 | 签名 | 语义 |
 |---|---|---|
@@ -186,6 +266,13 @@
 | `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发触发邮件：`:to` 必填非空地址向量，`:cc` 可选向量，`:subject` 可选字符串；正文取自触发邮件，新邮件以 `forward_of` 链接原邮件；无触发邮件时跳过并记 warning |
 
 ## 6. `:loop` 详解（认知会话）
+
+<!-- BEGIN GENERATED: dsl-loop-names -->
+合法名称全集（生成自 `member_spec.py`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+- stage（`STAGE_NAMES`，5 个）：`act`、`critique`、`plan`、`revise`、`think`
+- section（`SECTION_NAMES`，4 个）：`knowledge`、`mail-history`、`persona`、`protocol`
+<!-- END GENERATED: dsl-loop-names -->
 
 `:loop` 是引擎执行的 ReAct 会话。所有字段均为 total 语义——**以下键全部必填，无默认值**（`_loop_from`）：
 

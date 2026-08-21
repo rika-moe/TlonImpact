@@ -8,48 +8,79 @@
 
 ### 顶层字段
 
+<!-- BEGIN GENERATED: agent-yaml-fields-agent -->
+`AgentConfig` 字段（11 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `id` | string | — | **必填**。字母/数字/`-`/`_`，agent 目录名即此 id |
-| `name` | string | — | **必填**。显示名，他人 `@` 此名可与之对话 |
-| `prototype` | string \| null | `null` | 从原型实例化时的原型名（手建则为 null） |
-| `spawned_by` | string \| null | `null` | 血缘审计（统一成员模型，ADR 0006）：spawn 出本成员的 agent id（非 spawn 为 null） |
-| `spawn_depth` | int | `0` | 血缘审计：spawn 链深度（非 spawn 为 0，spawned = spawner.depth + 1） |
-| `idle_timeout_seconds` | int | `600` | lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档） |
-| `session_timeout_seconds` | int | `1800` | ACTIVE/WAITING 的会话空闲超时即取消 |
-| `message_queue_size` | int | `100` | 入站消息队列容量，溢出丢弃新消息 |
-| `llm` | object | 见下 | LLM 客户端配置 |
-| `docker` | object | 见下 | Docker 运行时配置 |
-| `tool` | object | 见下 | 工具执行配置 |
+| `id` | `str` | —（必填） |  |
+| `name` | `str` | —（必填） |  |
+| `llm` | `LLMConfig` | LLMConfig() |  |
+| `docker` | `DockerRuntimeConfig` | DockerRuntimeConfig() |  |
+| `tool` | `ToolConfig` | ToolConfig() |  |
+| `idle_timeout_seconds` | `int` | 600 |  |
+| `prototype` | `str \| None` | None |  |
+| `spawned_by` | `str \| None` | None |  |
+| `spawn_depth` | `int` | 0 |  |
+| `session_timeout_seconds` | `int` | 1800 |  |
+| `message_queue_size` | `int` | 100 |  |
+<!-- END GENERATED: agent-yaml-fields-agent -->
+
+生成表只搬字段形状，语义补充（手写）：
+
+- `id` / `name` 必填；`id` 只允许字母/数字/`-`/`_`（校验器强制），agent 目录名即此 id，`name` 是显示名（他人 `@` 此名可与之对话）。
+- `prototype` / `spawned_by` / `spawn_depth`：血缘审计（统一成员模型，ADR 0006）——spawn 出本成员的 agent id 与 spawn 链深度，非 spawn 为 `null` / `0`。
+- `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
+- `session_timeout_seconds`：ACTIVE/WAITING 的会话空闲超时即取消。
+- `message_queue_size`：入站消息队列容量，溢出丢弃新消息。
 
 ### `llm`
 
+<!-- BEGIN GENERATED: agent-yaml-fields-llm -->
+`LLMConfig` 字段（9 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `model_name` | string | `"kimi-k2.5"` | **运行时由进程级配置驱动**（`OPENAI_MODEL_NAME`，见第 4 节）——agent.yaml 里的值不生效（`_build_llm_config` 以 settings 为准，改 `.env` 后重启生效；bootstrap 的历史快照不再被读取） |
-| `temperature` | float | `1.0` | **同上**，由 `OPENAI_TEMPERATURE` 驱动 |
-| `max_tokens` | int | `4096` | 单次生成上限（**每 agent 可调**——进程级不管理此项） |
-| `top_p` | float | `0.9` | 核采样（**每 agent 可调**） |
+| `model_name` | `str` | "kimi-k2.5" |  |
+| `temperature` | `float` | 1.0 |  |
+| `max_tokens` | `int` | 4096 |  |
+| `top_p` | `float` | 0.9 |  |
+| `base_url` | `str` | "" | 运行时字段，不进 YAML |
+| `auth_token` | `str` | "" | 运行时字段，不进 YAML |
+| `max_retries` | `int` | 3 | 运行时字段，不进 YAML |
+| `base_delay` | `float` | 1.0 | 运行时字段，不进 YAML |
+| `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
+<!-- END GENERATED: agent-yaml-fields-llm -->
 
-运行时字段不进 YAML：`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout` 由进程级环境变量注入（见第 3 节），Pydantic 标注 `exclude=True`，不会落盘。
+`model_name` / `temperature` **运行时由进程级配置驱动**（`OPENAI_MODEL_NAME` / `OPENAI_TEMPERATURE`，见第 4 节）——agent.yaml 里的值不生效（`_build_llm_config` 以 settings 为准，改 `.env` 后重启生效；bootstrap 的历史快照不再被读取）；`max_tokens` / `top_p` 每 agent 可调。运行时字段（`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout`）由进程级环境变量注入（见第 4 节），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 
+<!-- BEGIN GENERATED: agent-yaml-fields-docker -->
+`DockerRuntimeConfig` 字段（5 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `image` | string | `"ubuntu:22.04"` | 沙箱镜像 |
-| `working_dir` | string | `"/workspace"` | 容器工作目录 |
-| `memory_limit` | string | `"512m"` | 容器内存上限 |
-| `cpu_limit` | float | `1.0` | CPU 上限 |
-| `network_mode` | string | `"host"` | 网络模式 |
+| `image` | `str` | "ubuntu:22.04" |  |
+| `working_dir` | `str` | "/workspace" |  |
+| `memory_limit` | `str` | "512m" |  |
+| `cpu_limit` | `float` | 1.0 |  |
+| `network_mode` | `str` | "host" |  |
+<!-- END GENERATED: agent-yaml-fields-docker -->
 
 ### `tool`
 
+<!-- BEGIN GENERATED: agent-yaml-fields-tool -->
+`ToolConfig` 字段（3 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `total_timeout` | float | `60.0` | 一轮工具执行总超时（秒） |
-| `per_timeout` | float | `30.0` | 单个工具超时（秒），见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool` |
-| `allowed_paths` | string[] | `["/workspace"]` | read/write/edit 文件工具只允许触碰的**容器内绝对路径**；非空、必须 `/` 开头（校验器强制） |
+| `total_timeout` | `float` | 60.0 |  |
+| `per_timeout` | `float` | 30.0 |  |
+| `allowed_paths` | `list[str]` | ['/workspace'] |  |
+<!-- END GENERATED: agent-yaml-fields-tool -->
+
+`per_timeout` 是单个工具超时，见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool`；`allowed_paths` 是 read/write/edit 文件工具只允许触碰的**容器内绝对路径**，非空、必须 `/` 开头（校验器强制）。
 
 ### 完整示例
 
@@ -114,22 +145,33 @@ agent:
 
 读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
+<!-- BEGIN GENERATED: env-vars -->
+`Settings` 读取的环境变量（11 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `APP_NAME` | Tlon | App settings |
+| `LOG_LEVEL` | INFO |  |
+| `DEBUG` | false |  |
+| `OPENAI_BASE_URL` | https://api.openai.com/v1 | LLM client settings (secrets and endpoints) |
+| `OPENAI_API_KEY` | "" |  |
+| `OPENAI_MODEL_NAME` | kimi-k2.5 |  |
+| `OPENAI_TEMPERATURE` | 1.0 |  |
+| `OPENAI_MAX_RETRIES` | 3 |  |
+| `OPENAI_BASE_DELAY` | 1.0 |  |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | （未设置） | Observability (OTel): optional OTLP collector, requires the `otlp` extra |
+| `TLON_LOG_RETENTION_DAYS` | 7 | Logging: retention (days) for the daily server log file sink |
+<!-- END GENERATED: env-vars -->
+
+上表是 `Settings` 的全部读取点；另有三个环境变量由其他模块读取（手写维护）：
+
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `TLON_HOME` | `~/.tlon` | 数据根目录；只认已存在且是目录的值，否则回落 `~/.tlon`（见 [base/paths.py](../../src/tlon/base/paths.py) 的 `_resolve_tlon_home`） |
-| `OPENAI_API_KEY` | `""` | LLM API 密钥。默认 provider 是 Moonshot（OpenAI 兼容接口），因此用 `OPENAI_` 前缀 |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | LLM base URL（默认 Moonshot 示例 `https://api.moonshot.cn/v1`） |
-| `OPENAI_MODEL_NAME` | `kimi-k2.5` | 默认模型名 |
-| `OPENAI_TEMPERATURE` | `1.0` | 默认温度 |
-| `OPENAI_MAX_RETRIES` | `3` | LLM 调用重试次数 |
-| `OPENAI_BASE_DELAY` | `1.0` | 重试基础退避（秒） |
-| `APP_NAME` | `Tlon` | 应用名 |
-| `LOG_LEVEL` | `INFO` | 日志级别 |
-| `DEBUG` | `false` | 调试模式（`"true"` 生效） |
-| `TLON_LOG_RETENTION_DAYS` | `7` | 每日服务端日志文件保留天数（`~/.tlon/shared/logs/server-{date}.jsonl`） |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 未设置 | OTLP collector base URL；需要可选依赖 `uv sync --extra otlp` |
 | `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（[base/tracing/otel.py](../../src/tlon/base/tracing/otel.py) 的 `SAMPLE_RATIO_ENV`） |
 | `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
+
+`OPENAI_API_KEY` 默认 provider 是 Moonshot（OpenAI 兼容接口），因此用 `OPENAI_` 前缀（Moonshot 示例 base URL `https://api.moonshot.cn/v1`）；`TLON_LOG_RETENTION_DAYS` 管每日服务端日志文件保留（`~/.tlon/shared/logs/server-{date}.jsonl`）；`DEBUG` 为 `"true"` 时生效。
 
 可选键：`ANTHROPIC_API_KEY`、`AZURE_OPENAI_*` 等当前代码不读取；`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME` 即 `~/.tlon/`。
 
