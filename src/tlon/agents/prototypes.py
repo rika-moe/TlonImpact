@@ -311,6 +311,35 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
 # ==================== Staging area (stage 4a trust gate) ====================
 
 
+def _validate_behavior(behavior_edn: str) -> str:
+    """Run the write-side validation chain; return the normalized spec text.
+
+    The gate runs the same chain a runtime load would — template analysis,
+    EDN parse, then the single validator (host-less default registry: host
+    predicates are Adam's vocabulary and must not pass).
+
+    Args:
+        behavior_edn: raw EDN text of the unified behavior spec
+
+    Returns:
+        The spec text normalized to end with a newline.
+
+    Raises:
+        PrototypeError: the spec failed template / EDN / schema validation
+    """
+    spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
+    try:
+        template = analyze(spec_text)
+        validate_member_spec(MemberSpec.from_edn(loads(template.standin_text)))
+    except BehaviorTemplateError as e:
+        raise PrototypeError(f"behavior template error: {e}") from e
+    except EDNParseError as e:
+        raise PrototypeError(f"behavior EDN parse failed: {e}") from e
+    except MemberSpecValidationError as e:
+        raise PrototypeError(f"behavior spec validation failed: {e}") from e
+    return spec_text
+
+
 def write_staging_prototype(
     name: str,
     behavior_edn: str,
@@ -373,20 +402,8 @@ def write_staging_prototype(
     if staging_dir.exists():
         raise PrototypeError(f"prototype '{name}' already exists in the staging area")
 
-    # Validate first: a broken spec must never reach disk. The write-side
-    # gate runs the same chain a runtime load would — EDN parse, schema,
-    # then the single validator (host-less default registry: host
-    # predicates are Adam's vocabulary and must not pass staging).
-    spec_text = behavior_edn if behavior_edn.endswith("\n") else behavior_edn + "\n"
-    try:
-        template = analyze(spec_text)
-        validate_member_spec(MemberSpec.from_edn(loads(template.standin_text)))
-    except BehaviorTemplateError as e:
-        raise PrototypeError(f"behavior template error: {e}") from e
-    except EDNParseError as e:
-        raise PrototypeError(f"behavior EDN parse failed: {e}") from e
-    except MemberSpecValidationError as e:
-        raise PrototypeError(f"behavior spec validation failed: {e}") from e
+    # Validate first: a broken spec must never reach disk.
+    spec_text = _validate_behavior(behavior_edn)
 
     staging_dir.mkdir(parents=True)
 
@@ -472,6 +489,188 @@ def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
         raise PrototypeError(f"no staged prototype named '{name}'")
     shutil.rmtree(target)
     logger.info("prototype_rejected", name=name)
+
+
+def get_prototype_detail(
+    name: str, staging: bool = False, tlon_paths: TlonPaths | None = None
+) -> tuple[PrototypeInfo, str]:
+    """Metadata plus the full ``behavior.tlon`` text of one prototype.
+
+    Args:
+        name: prototype directory name
+        staging: read from the staging area instead of the trusted library
+        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+
+    Returns:
+        ``(metadata, behavior_text)``.
+
+    Raises:
+        PrototypeError: invalid name or no prototype under that name
+    """
+    p = tlon_paths or paths
+    _validate_name(name)
+    root = p.prototypes_staging_dir() if staging else p.prototypes_dir()
+    proto_dir = root / name
+    if not _is_prototype_dir(proto_dir):
+        where = "staging area" if staging else "trusted library"
+        raise PrototypeError(f"no prototype named '{name}' in the {where}")
+    info = _read_metadata(proto_dir)
+    behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
+    return info, behavior
+
+
+def write_trusted_prototype(
+    name: str,
+    behavior_edn: str,
+    display_name: str = "",
+    description: str = "",
+    tlon_paths: TlonPaths | None = None,
+) -> PrototypeInfo:
+    """Write a human-authored prototype directly into the trusted library.
+
+    Handwritten implies trusted (the same rule the metadata reader encodes):
+    the metadata is written with ``:trusted true`` and no ``:author``.
+    Validation happens **before** anything touches disk — the same
+    chain as the staging gate.
+
+    Args:
+        name: prototype directory name (charset-checked, must be unique
+            across both the trusted library and the staging area)
+        behavior_edn: raw EDN text of the unified behavior spec
+        display_name: human-facing name (falls back to ``name``)
+        description: human-facing description
+        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+
+    Returns:
+        Metadata of the created prototype (``trusted=True``).
+
+    Raises:
+        PrototypeError: invalid name, name conflict, or spec failed
+            validation (nothing is written in any case)
+    """
+    p = tlon_paths or paths
+    _validate_name(name)
+
+    proto_dir = p.prototypes_dir() / name
+    if (proto_dir / BEHAVIOR_FILE).exists():
+        raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
+    if (p.prototypes_staging_dir() / name).exists():
+        raise PrototypeError(f"prototype '{name}' already exists in the staging area")
+
+    spec_text = _validate_behavior(behavior_edn)
+
+    proto_dir.mkdir(parents=True)
+    (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
+
+    metadata: dict[Any, Any] = {
+        Keyword("name"): Keyword(name),
+        Keyword("display-name"): display_name or name,
+        Keyword("description"): description,
+        Keyword("trusted"): True,
+    }
+    (proto_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
+
+    logger.info("trusted_prototype_written", name=name)
+    return _read_metadata(proto_dir)
+
+
+def update_prototype(
+    name: str,
+    *,
+    display_name: str | None = None,
+    description: str | None = None,
+    behavior_edn: str | None = None,
+    staging: bool = False,
+    tlon_paths: TlonPaths | None = None,
+) -> PrototypeInfo:
+    """Update a prototype's metadata and/or rewrite its behavior file.
+
+    A behavior change runs the full validation chain first — a broken spec
+    raises and leaves the disk untouched. The metadata rewrite preserves
+    the existing ``:trusted``/``:author`` fields (only the explicitly
+    provided fields change).
+
+    Args:
+        name: prototype directory name
+        display_name: new display name (None = keep)
+        description: new description (None = keep)
+        behavior_edn: new raw EDN behavior spec (None = keep)
+        staging: update in the staging area instead of the trusted library
+            (pre-approval editing of an LLM-authored prototype)
+        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+
+    Returns:
+        Metadata of the updated prototype.
+
+    Raises:
+        PrototypeError: invalid name, prototype not found, nothing to
+            update, or the new behavior failed validation (nothing is
+            written in the last case)
+    """
+    p = tlon_paths or paths
+    _validate_name(name)
+    root = p.prototypes_staging_dir() if staging else p.prototypes_dir()
+    proto_dir = root / name
+    if not _is_prototype_dir(proto_dir):
+        where = "staging area" if staging else "trusted library"
+        raise PrototypeError(f"no prototype named '{name}' in the {where}")
+    if display_name is None and description is None and behavior_edn is None:
+        raise PrototypeError(
+            "nothing to update: provide display_name, description or behavior_edn"
+        )
+
+    spec_text = _validate_behavior(behavior_edn) if behavior_edn is not None else None
+
+    if spec_text is not None:
+        (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
+
+    if display_name is not None or description is not None:
+        metadata_file = proto_dir / METADATA_FILE
+        data: dict[Any, Any] = {}
+        if metadata_file.exists():
+            parsed = loads(metadata_file.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data = dict(parsed)
+        if display_name is not None:
+            data[Keyword("display-name")] = display_name
+        if description is not None:
+            data[Keyword("description")] = description
+        data.setdefault(Keyword("name"), Keyword(name))
+        data.setdefault(Keyword("display-name"), name)
+        data.setdefault(Keyword("description"), "")
+        data.setdefault(Keyword("trusted"), not staging)
+        metadata_file.write_text(dumps(data) + "\n", encoding="utf-8")
+
+    logger.info(
+        "prototype_updated",
+        name=name,
+        staging=staging,
+        behavior_rewritten=spec_text is not None,
+    )
+    return _read_metadata(proto_dir)
+
+
+def delete_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
+    """Delete a prototype from the trusted library.
+
+    Deleting a staged prototype is the existing ``reject_prototype``; this
+    is the trusted-library counterpart. Path-injection guard: the name
+    must pass the charset check and resolve strictly inside the library
+    root.
+
+    Raises:
+        PrototypeError: invalid name or no trusted prototype under that name
+    """
+    p = tlon_paths or paths
+    _validate_name(name)
+    library_root = p.prototypes_dir().resolve()
+    target = (library_root / name).resolve()
+    if target.parent != library_root:
+        raise PrototypeError(f"prototype name '{name}' resolves outside the trusted library")
+    if not _is_prototype_dir(target):
+        raise PrototypeError(f"no prototype named '{name}' in the trusted library")
+    shutil.rmtree(target)
+    logger.info("prototype_deleted", name=name)
 
 
 def _validate_name(name: str) -> None:

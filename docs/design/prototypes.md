@@ -123,7 +123,9 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 `write_staging_prototype`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。
 
-晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
+晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）与 WebUI 的 PROTOTYPES 视图；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
+
+人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes` → `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description` 和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
 `writePrototype` 支持两种 `spec_type`：`react`（认知规则模板，默认）与 `script`（无 `:loop` 的确定性规则）。两者输出的是同一种统一 rules 形态的 `behavior.tlon`——`spec_type` 只选择写侧模板（是否带 `:loop`），不写人格文件，也不标记成员类别（统一成员模型，ADR 0006）。这让 staging 闸对两类形态是同一条校验链，没有旁路。
 

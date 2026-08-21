@@ -6,6 +6,7 @@ import type { SseClient } from "./client/sse";
 export type ViewName =
   | "mail"
   | "agents"
+  | "prototypes"
   | "events"
   | "traces"
   | "metrics"
@@ -15,6 +16,7 @@ export type ViewName =
 export const VIEWS: readonly ViewName[] = [
   "mail",
   "agents",
+  "prototypes",
   "events",
   "traces",
   "metrics",
@@ -25,6 +27,7 @@ export const VIEWS: readonly ViewName[] = [
 export const VIEW_TITLES: Record<ViewName, string> = {
   mail: "MAIL",
   agents: "AGENTS",
+  prototypes: "PROTOTYPES",
   events: "EVENTS",
   traces: "TRACES",
   metrics: "METRICS",

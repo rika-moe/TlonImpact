@@ -1,0 +1,669 @@
+/**
+ * PROTOTYPES view — prototype library management: TRUSTED LIBRARY / STAGING
+ * lists, detail (metadata + parameters + behavior.tlon full text),
+ * handwritten create, edit, delete, staging approve/reject.
+ *
+ * API contract: docs/design/webui.md「原型管理 API」. The staging approval
+ * block previously in AGENTS lives here (2026-08-21 decision).
+ */
+
+import { useCallback, useEffect, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
+import { PrototypeError } from "../client/rest";
+import type {
+  PrototypeDetail,
+  PrototypePatch,
+  PrototypeSummary,
+  RestClient,
+} from "../client/rest";
+import type { ViewProps } from "../types";
+import "../styles/prototypes.css";
+
+/** Which list a prototype belongs to (drives detail/edit endpoints). */
+interface Selection {
+  name: string;
+  staging: boolean;
+}
+
+type Modal =
+  | { kind: "new" }
+  | { kind: "edit"; selection: Selection; detail: PrototypeDetail }
+  | { kind: "delete"; name: string };
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Error text for prototype writes: surface reason + message on 400. */
+function writeErrMsg(err: unknown): string {
+  if (err instanceof PrototypeError && err.reason) {
+    return `${err.reason}: ${err.message}`;
+  }
+  return errMsg(err);
+}
+
+export function PrototypesView({ rest }: ViewProps): ReactElement {
+  const [trusted, setTrusted] = useState<PrototypeSummary[]>([]);
+  const [staging, setStaging] = useState<PrototypeSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
+  const [detail, setDetail] = useState<PrototypeDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [modal, setModal] = useState<Modal | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [trustedList, stagingList] = await Promise.all([
+        rest.listPrototypes(),
+        rest.listStaging(),
+      ]);
+      setTrusted(trustedList);
+      setStaging(stagingList);
+      setError(null);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [rest]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const fetchDetail = useCallback(
+    async (sel: Selection): Promise<void> => {
+      setDetail(null);
+      setDetailLoading(true);
+      try {
+        setDetail(
+          sel.staging
+            ? await rest.getStagingPrototype(sel.name)
+            : await rest.getPrototype(sel.name),
+        );
+      } catch (err) {
+        setError(errMsg(err));
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [rest],
+  );
+
+  /** Toggle the detail panel; fetches the detail endpoint on expand. */
+  const selectProto = (sel: Selection): void => {
+    if (selected && selected.name === sel.name && selected.staging === sel.staging) {
+      setSelected(null);
+      setDetail(null);
+      return;
+    }
+    setSelected(sel);
+    void fetchDetail(sel);
+  };
+
+  const approve = async (name: string, accept: boolean): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (accept) {
+        await rest.approvePrototype(name);
+        setNotice(`APPROVED ${name}`);
+      } else {
+        await rest.rejectPrototype(name);
+        setNotice(`REJECTED ${name}`);
+      }
+      // The entry left staging; drop its detail panel.
+      if (selected?.staging && selected.name === name) {
+        setSelected(null);
+        setDetail(null);
+      }
+      await load();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Shared post-action wrap-up: close modal, notice, reload both lists. */
+  const onActionDone = (msg: string): void => {
+    setModal(null);
+    setNotice(msg);
+    setError(null);
+    void load();
+    if (selected) void fetchDetail(selected);
+  };
+
+  return (
+    <div className="prototypes-view">
+      <div className="prototypes-toolbar">
+        <h2 className="tech-label prototypes-title">PROTOTYPES</h2>
+        <span className="tech-label">
+          {trusted.length} TRUSTED / {staging.length} STAGING
+        </span>
+        <span className="prototypes-spacer" />
+        <button
+          type="button"
+          className="btn btn--secondary"
+          onClick={() => {
+            setNotice(null);
+            void load();
+          }}
+        >
+          REFRESH
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => setModal({ kind: "new" })}
+        >
+          + NEW
+        </button>
+      </div>
+
+      {error ? <div className="prototypes-error-bar">{error}</div> : null}
+      {notice ? <div className="prototypes-notice">{notice}</div> : null}
+
+      {loading ? (
+        <p className="prototypes-empty">LOADING…</p>
+      ) : (
+        <div className="prototypes-body">
+          <div className="prototypes-list">
+            <section className="proto-section">
+              <h3 className="tech-label proto-section-title">
+                TRUSTED LIBRARY ({trusted.length})
+              </h3>
+              {trusted.length === 0 ? (
+                <p className="prototypes-empty">NO PROTOTYPES // 正式库为空</p>
+              ) : (
+                trusted.map((p) => (
+                  <ProtoCard
+                    key={p.name}
+                    proto={p}
+                    staging={false}
+                    selected={
+                      selected !== null && !selected.staging && selected.name === p.name
+                    }
+                    onSelect={() => selectProto({ name: p.name, staging: false })}
+                  />
+                ))
+              )}
+            </section>
+            {staging.length > 0 ? (
+              <section className="proto-section">
+                <h3 className="tech-label proto-section-title proto-section-title--staging">
+                  STAGING ({staging.length})
+                </h3>
+                {staging.map((p) => (
+                  <ProtoCard
+                    key={p.name}
+                    proto={p}
+                    staging={true}
+                    selected={
+                      selected !== null && selected.staging && selected.name === p.name
+                    }
+                    onSelect={() => selectProto({ name: p.name, staging: true })}
+                  />
+                ))}
+              </section>
+            ) : null}
+          </div>
+
+          {selected ? (
+            <section className="panel proto-detail">
+              <div className="proto-detail-head">
+                <span className="tech-label">
+                  {selected.staging ? "STAGING" : "TRUSTED"} // {selected.name}
+                </span>
+                <span className="prototypes-spacer" />
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  disabled={busy || detail === null}
+                  onClick={() => {
+                    if (detail) setModal({ kind: "edit", selection: selected, detail });
+                  }}
+                >
+                  EDIT
+                </button>
+                {selected.staging ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      disabled={busy}
+                      onClick={() => void approve(selected.name, true)}
+                    >
+                      APPROVE
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--danger"
+                      disabled={busy}
+                      onClick={() => void approve(selected.name, false)}
+                    >
+                      REJECT
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--danger"
+                    disabled={busy}
+                    onClick={() => setModal({ kind: "delete", name: selected.name })}
+                  >
+                    DELETE
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={() => {
+                    setSelected(null);
+                    setDetail(null);
+                  }}
+                >
+                  CLOSE
+                </button>
+              </div>
+              {detailLoading ? (
+                <p className="prototypes-empty">LOADING…</p>
+              ) : detail ? (
+                <>
+                  <div className="proto-meta">
+                    <div className="proto-meta-row">
+                      <span className="tech-label">NAME</span>
+                      <span className="proto-meta-value">{detail.name}</span>
+                    </div>
+                    <div className="proto-meta-row">
+                      <span className="tech-label">DISPLAY_NAME</span>
+                      <span className="proto-meta-value">
+                        {detail.display_name || "—"}
+                      </span>
+                    </div>
+                    <div className="proto-meta-row">
+                      <span className="tech-label">AUTHOR</span>
+                      <span className="proto-meta-value">{detail.author || "unknown"}</span>
+                    </div>
+                    <div className="proto-meta-row">
+                      <span className="tech-label">TRUSTED</span>
+                      <span className="proto-meta-value">{String(detail.trusted)}</span>
+                    </div>
+                    {detail.description ? (
+                      <div className="proto-meta-row">
+                        <span className="tech-label">DESCRIPTION</span>
+                        <span className="proto-meta-value">{detail.description}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  <span className="tech-label">PARAMETERS</span>
+                  {detail.parameters.length > 0 ? (
+                    <div className="proto-params">
+                      {detail.parameters.map((param) => (
+                        <span className="proto-param" key={param.name}>
+                          {param.name}: {param.type}
+                          {param.required ? " *" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="prototypes-empty">NO PARAMETERS</p>
+                  )}
+                  <span className="tech-label">BEHAVIOR.TLON</span>
+                  <pre className="terminal proto-behavior">{detail.behavior}</pre>
+                </>
+              ) : (
+                <p className="prototypes-empty">NO DETAIL</p>
+              )}
+            </section>
+          ) : (
+            <section className="panel proto-detail proto-detail--empty">
+              <p className="prototypes-empty">SELECT A PROTOTYPE // 选择左侧原型查看详情</p>
+            </section>
+          )}
+        </div>
+      )}
+
+      {modal?.kind === "new" ? (
+        <NewModal rest={rest} onDone={onActionDone} onClose={() => setModal(null)} />
+      ) : null}
+      {modal?.kind === "edit" ? (
+        <EditModal
+          rest={rest}
+          selection={modal.selection}
+          detail={modal.detail}
+          onDone={onActionDone}
+          onClose={() => setModal(null)}
+        />
+      ) : null}
+      {modal?.kind === "delete" ? (
+        <DeleteModal
+          rest={rest}
+          name={modal.name}
+          onDone={(msg) => {
+            if (selected?.name === modal.name && !selected.staging) {
+              setSelected(null);
+              setDetail(null);
+            }
+            onActionDone(msg);
+          }}
+          onClose={() => setModal(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** One prototype list card (cyan for trusted, yellow outline for staging). */
+function ProtoCard({
+  proto,
+  staging,
+  selected,
+  onSelect,
+}: {
+  proto: PrototypeSummary;
+  staging: boolean;
+  selected: boolean;
+  onSelect: () => void;
+}): ReactElement {
+  return (
+    <div
+      className={`proto-card${staging ? " proto-card--staging" : ""}${
+        selected ? " proto-card--selected" : ""
+      }`}
+      onClick={onSelect}
+    >
+      <div className="proto-card-display">{proto.display_name || proto.name}</div>
+      <div className="proto-card-name">{proto.name}</div>
+      {proto.description ? (
+        <div className="proto-card-desc">{proto.description}</div>
+      ) : null}
+      <div className="tech-label">AUTHOR: {proto.author || "unknown"}</div>
+    </div>
+  );
+}
+
+/** Centered modal frame (overlay click / esc closes). */
+function ModalShell({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <div className="proto-modal-overlay" onClick={onClose}>
+      <div
+        className="panel proto-modal"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+      >
+        <h3 className="tech-label proto-modal-title">{title}</h3>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** Handwritten creation: name + metadata + behavior.tlon full text. */
+function NewModal({
+  rest,
+  onDone,
+  onClose,
+}: {
+  rest: RestClient;
+  onDone: (notice: string) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [description, setDescription] = useState("");
+  const [behavior, setBehavior] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (): Promise<void> => {
+    if (!name.trim()) {
+      setError("NAME 不能为空");
+      return;
+    }
+    if (!behavior.trim()) {
+      setError("BEHAVIOR 不能为空");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await rest.createPrototype({
+        name: name.trim(),
+        behavior,
+        display_name: displayName.trim() || undefined,
+        description: description.trim() || undefined,
+      });
+      onDone(`CREATED ${name.trim()}`);
+    } catch (err) {
+      setError(writeErrMsg(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell title="NEW // HANDWRITTEN PROTOTYPE" onClose={onClose}>
+      <div className="proto-form">
+        <label className="proto-form-row">
+          <span className="tech-label">NAME *</span>
+          <input
+            className="input"
+            value={name}
+            autoFocus
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className="proto-form-row">
+          <span className="tech-label">DISPLAY_NAME (可选)</span>
+          <input
+            className="input"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </label>
+        <label className="proto-form-row">
+          <span className="tech-label">DESCRIPTION (可选)</span>
+          <input
+            className="input"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </label>
+        <label className="proto-form-row">
+          <span className="tech-label">BEHAVIOR.TLON *</span>
+          <textarea
+            className="input proto-form-behavior"
+            value={behavior}
+            spellCheck={false}
+            onChange={(e) => setBehavior(e.target.value)}
+          />
+        </label>
+      </div>
+      {error ? <div className="prototypes-error-bar">{error}</div> : null}
+      <div className="proto-modal-actions">
+        <button
+          type="button"
+          className="btn btn--secondary"
+          onClick={onClose}
+          disabled={busy}
+        >
+          CANCEL
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => void submit()}
+          disabled={busy}
+        >
+          {busy ? "CREATING…" : "CREATE"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/** Edit metadata and/or behavior; PATCH sends only changed fields. */
+function EditModal({
+  rest,
+  selection,
+  detail,
+  onDone,
+  onClose,
+}: {
+  rest: RestClient;
+  selection: Selection;
+  detail: PrototypeDetail;
+  onDone: (notice: string) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [displayName, setDisplayName] = useState(detail.display_name);
+  const [description, setDescription] = useState(detail.description);
+  const [behavior, setBehavior] = useState(detail.behavior);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (): Promise<void> => {
+    const patch: PrototypePatch = {};
+    if (displayName !== detail.display_name) patch.display_name = displayName;
+    if (description !== detail.description) patch.description = description;
+    if (behavior !== detail.behavior) patch.behavior = behavior;
+    if (Object.keys(patch).length === 0) {
+      setError("未修改任何字段");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (selection.staging) {
+        await rest.updateStagingPrototype(selection.name, patch);
+      } else {
+        await rest.updatePrototype(selection.name, patch);
+      }
+      onDone(`UPDATED ${selection.name}`);
+    } catch (err) {
+      setError(writeErrMsg(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell title={`EDIT // ${selection.name}`} onClose={onClose}>
+      <div className="proto-form">
+        <label className="proto-form-row">
+          <span className="tech-label">DISPLAY_NAME</span>
+          <input
+            className="input"
+            value={displayName}
+            autoFocus
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </label>
+        <label className="proto-form-row">
+          <span className="tech-label">DESCRIPTION</span>
+          <input
+            className="input"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </label>
+        <label className="proto-form-row">
+          <span className="tech-label">BEHAVIOR.TLON</span>
+          <textarea
+            className="input proto-form-behavior"
+            value={behavior}
+            spellCheck={false}
+            onChange={(e) => setBehavior(e.target.value)}
+          />
+        </label>
+      </div>
+      {error ? <div className="prototypes-error-bar">{error}</div> : null}
+      <div className="proto-modal-actions">
+        <button
+          type="button"
+          className="btn btn--secondary"
+          onClick={onClose}
+          disabled={busy}
+        >
+          CANCEL
+        </button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={() => void submit()}
+          disabled={busy}
+        >
+          {busy ? "SAVING…" : "SAVE"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+/** Delete confirmation dialog (trusted library only; staging uses reject). */
+function DeleteModal({
+  rest,
+  name,
+  onDone,
+  onClose,
+}: {
+  rest: RestClient;
+  name: string;
+  onDone: (notice: string) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await rest.deletePrototype(name);
+      onDone(`DELETED ${name}`);
+    } catch (err) {
+      setError(errMsg(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell title={`DELETE // ${name}`} onClose={onClose}>
+      <p className="proto-delete-warning">
+        DELETE PROTOTYPE {name}? Members already created from it are not
+        affected, but the prototype is removed permanently.
+      </p>
+      {error ? <div className="prototypes-error-bar">{error}</div> : null}
+      <div className="proto-modal-actions">
+        <button
+          type="button"
+          className="btn btn--secondary"
+          onClick={onClose}
+          disabled={busy}
+        >
+          CANCEL
+        </button>
+        <button
+          type="button"
+          className="btn btn--danger"
+          onClick={() => void submit()}
+          disabled={busy}
+        >
+          {busy ? "DELETING…" : "CONFIRM DELETE"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}

@@ -64,6 +64,60 @@ export interface LogList {
   count: number;
 }
 
+/** A declared parameter of a prototype (from prototype.edn). */
+export type PrototypeParameter = {
+  name: string;
+  type: string;
+  required: boolean;
+};
+
+/**
+ * Prototype list entry (GET /admin/prototypes[/staging]).
+ * Type alias (not interface) so it stays assignable to
+ * Record<string, unknown> for existing consumers.
+ */
+export type PrototypeSummary = {
+  name: string;
+  display_name: string;
+  description: string;
+  trusted: boolean;
+  author: string;
+  parameters: PrototypeParameter[];
+};
+
+/** Prototype detail: list metadata + full behavior.tlon source. */
+export type PrototypeDetail = PrototypeSummary & { behavior: string };
+
+/** Handwritten prototype creation body (POST /admin/prototypes). */
+export type PrototypeCreate = {
+  name: string;
+  behavior: string;
+  display_name?: string;
+  description?: string;
+};
+
+/** Prototype edit body (PATCH); only changed fields are sent. */
+export type PrototypePatch = {
+  display_name?: string;
+  description?: string;
+  behavior?: string;
+};
+
+/**
+ * Prototype write rejection (POST/PATCH): like RestError but also carries
+ * the server's semantic reason code (e.g. "invalid_prototype" on 400).
+ */
+export class PrototypeError extends Error {
+  constructor(
+    message: string,
+    readonly reason?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "PrototypeError";
+  }
+}
+
 export class RestClient {
   readonly baseUrl: string;
 
@@ -195,20 +249,99 @@ export class RestClient {
 
   // ---- Admin (wizard removal): agent CRUD + prototype approval ----
 
+  /**
+   * Like send(), but rejects with a PrototypeError carrying the server's
+   * semantic reason code (prototype writes report 400 invalid_prototype).
+   */
+  private async prototypeSend<T>(
+    method: "POST" | "PATCH",
+    path: string,
+    body: unknown,
+  ): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      throw new PrototypeError(
+        `REST request failed: ${method} ${path} (${String(err)})`,
+      );
+    }
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      reason?: string;
+    } & T;
+    if (!response.ok) {
+      throw new PrototypeError(
+        data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
+        data.reason,
+        response.status,
+      );
+    }
+    return data;
+  }
+
   /** Trusted prototypes a member can be created from (behavior genome). */
-  async listPrototypes(): Promise<Record<string, unknown>[]> {
-    const data = await this.get<{ prototypes?: Record<string, unknown>[] }>(
+  async listPrototypes(): Promise<PrototypeSummary[]> {
+    const data = await this.get<{ prototypes?: PrototypeSummary[] }>(
       "/admin/prototypes",
     );
     return data.prototypes ?? [];
   }
 
   /** LLM-authored prototypes awaiting human approval. */
-  async listStaging(): Promise<Record<string, unknown>[]> {
-    const data = await this.get<{ prototypes?: Record<string, unknown>[] }>(
+  async listStaging(): Promise<PrototypeSummary[]> {
+    const data = await this.get<{ prototypes?: PrototypeSummary[] }>(
       "/admin/prototypes/staging",
     );
     return data.prototypes ?? [];
+  }
+
+  /** Trusted prototype detail: metadata + full behavior.tlon source. */
+  async getPrototype(name: string): Promise<PrototypeDetail> {
+    return this.get(`/admin/prototypes/${encodeURIComponent(name)}`);
+  }
+
+  /** Staging prototype detail, same shape as getPrototype. */
+  async getStagingPrototype(name: string): Promise<PrototypeDetail> {
+    return this.get(`/admin/prototypes/staging/${encodeURIComponent(name)}`);
+  }
+
+  /** Handwritten creation: lands directly in the trusted library (201). */
+  async createPrototype(body: PrototypeCreate): Promise<Record<string, unknown>> {
+    return this.prototypeSend("POST", "/admin/prototypes", body);
+  }
+
+  /** Edit a trusted prototype's metadata and/or behavior (re-validated). */
+  async updatePrototype(
+    name: string,
+    body: PrototypePatch,
+  ): Promise<Record<string, unknown>> {
+    return this.prototypeSend(
+      "PATCH",
+      `/admin/prototypes/${encodeURIComponent(name)}`,
+      body,
+    );
+  }
+
+  /** Edit a staging prototype before approval, same semantics. */
+  async updateStagingPrototype(
+    name: string,
+    body: PrototypePatch,
+  ): Promise<Record<string, unknown>> {
+    return this.prototypeSend(
+      "PATCH",
+      `/admin/prototypes/staging/${encodeURIComponent(name)}`,
+      body,
+    );
+  }
+
+  /** Delete a trusted prototype (staging deletion is reject). */
+  async deletePrototype(name: string): Promise<Record<string, unknown>> {
+    return this.send("DELETE", `/admin/prototypes/${encodeURIComponent(name)}`);
   }
 
   async approvePrototype(name: string): Promise<Record<string, unknown>> {

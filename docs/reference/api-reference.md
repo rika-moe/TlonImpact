@@ -64,6 +64,14 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 | GET | `/config` | 服务端配置摘要（脱敏） |
 | GET | `/admin/config/agents` | 当前 agent 配置清单（条件注册） |
 | POST | `/admin/config/agents/{agent_id}/reload` | 热重载单个 agent 配置（条件注册） |
+| GET | `/admin/prototypes` | 正式库原型列表（条目含 `parameters`） |
+| GET | `/admin/prototypes/staging` | staging 原型列表（待审批，同上） |
+| GET | `/admin/prototypes/{name}` | 正式库原型详情（元数据 + parameters + behavior 全文） |
+| GET | `/admin/prototypes/staging/{name}` | staging 原型详情（同上，trusted=false） |
+| POST | `/admin/prototypes` | 人类手写创建，直接进正式库（trusted=true） |
+| PATCH | `/admin/prototypes/{name}` | 更新元数据和/或 behavior（重跑校验链） |
+| PATCH | `/admin/prototypes/staging/{name}` | 审批前编辑 staging 原型（同上） |
+| DELETE | `/admin/prototypes/{name}` | 删除正式库原型（staging 的删除即 reject） |
 | GET | `/traces` | trace 列表（条件注册） |
 | GET | `/traces/{trace_id}` | 单条 trace 含 span 树（条件注册） |
 | GET | `/metrics` | 进程内 metrics 快照 |
@@ -202,6 +210,16 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 | `start-failed` | 启动失败（细节见服务端日志） |
 
 注意：`result` 为 `config-not-found` / `start-failed` 时 HTTP 状态仍是 200，调用方须检查 `result`。
+
+### 原型管理端点（WebUI PROTOTYPES 视图）
+
+域函数在 [agents/prototypes.py](../../src/tlon/agents/prototypes.py)；原型对象形状 `{name, display_name, description, trusted, author, parameters: [{name, type, required}]}`，详情端点额外带 `behavior`（behavior.tlon 全文）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
+
+- `GET /admin/prototypes`、`GET /admin/prototypes/staging`——200：`{"status": "success", "prototypes": [<原型对象>]}`；503：未装配 `paths`
+- `GET /admin/prototypes/{name}`、`GET /admin/prototypes/staging/{name}`——200：`{"status": "success", "prototype": <原型对象 + behavior>}`；404：`{"error", "reason": "prototype_not_found"}`
+- `POST /admin/prototypes`——body `{name, behavior, display_name?, description?}`，手写创建直接进正式库（`:trusted true`、无 author）。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段或校验失败）
+- `PATCH /admin/prototypes/{name}`、`PATCH /admin/prototypes/staging/{name}`——body `{display_name?, description?, behavior?}`（全空 → 400 `invalid_prototype`），behavior 变更重跑校验链（失败则磁盘原样）。200：`{"status": "success", "prototype": <原型对象>}`；404：`prototype_not_found`
+- `DELETE /admin/prototypes/{name}`——200：`{"status": "success"}`；404：`prototype_not_found`
 
 ### GET /traces（条件注册）
 

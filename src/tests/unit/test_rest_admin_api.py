@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tlon.agents.prototypes import (
+    get_prototype_detail,
     get_prototype_info,
     seed_prototypes,
     write_staging_prototype,
@@ -198,6 +199,210 @@ class TestAdminStaging:
         assert rejected.status == 200
         assert get_prototype_info("llm-idea", tlon_paths=p) is None
         assert not (p.prototypes_staging_dir() / "llm-idea").exists()
+
+
+class TestAdminPrototypeManagement:
+    """Prototype management endpoints (WebUI PROTOTYPES view): detail,
+    human-authored create, edit, delete."""
+
+    _BEHAVIOR = (
+        "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+    )
+    _TEMPLATED = (
+        "{:version 1\n"
+        " :parameters {:to {:type :string-list :required true}}\n"
+        " :rules [{:name \"relay\" :on :mail-delivered"
+        " :actions [(forward {:to ${to}})]}]}\n"
+    )
+    _INVALID = (
+        "{:version 1 :rules [{:name \"w\" :on :mail-delivered"
+        " :actions [(jump {:to [\"x@tlon.internal\"]})]}]}\n"
+    )
+
+    def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
+        p = TlonPaths(home=tmp_path)
+        return RESTAPIHandler(None, MagicMock(), paths=p), p
+
+    async def test_create_writes_trusted_library(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+
+        resp = await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR,
+                              "display_name": "手写"})
+        )
+
+        assert resp.status == 201
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["trusted"] is True
+        assert proto["author"] is None
+        assert proto["parameters"] == []
+        info = get_prototype_info("hand", tlon_paths=p)
+        assert info is not None and info.trusted
+
+    async def test_create_missing_fields_400(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+
+        resp = await handler.handle_create_prototype(StubRequest(body={"name": "x"}))
+
+        assert resp.status == 400
+        assert json.loads(resp.text)["reason"] == "invalid_prototype"
+
+    async def test_create_invalid_behavior_400_nothing_on_disk(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+
+        resp = await handler.handle_create_prototype(
+            StubRequest(body={"name": "bad", "behavior": self._INVALID})
+        )
+
+        assert resp.status == 400
+        assert json.loads(resp.text)["reason"] == "invalid_prototype"
+        assert not (p.prototypes_dir() / "bad").exists()
+
+    async def test_detail_includes_behavior_and_parameters(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "tpl", "behavior": self._TEMPLATED})
+        )
+
+        resp = await handler.handle_get_prototype(StubRequest(name="tpl"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["behavior"] == self._TEMPLATED
+        assert proto["parameters"] == [
+            {"name": "to", "type": "string-list", "required": True}
+        ]
+
+    async def test_detail_unknown_404(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+
+        resp = await handler.handle_get_prototype(StubRequest(name="nope"))
+
+        assert resp.status == 404
+        assert json.loads(resp.text)["reason"] == "prototype_not_found"
+
+    async def test_staging_detail_is_untrusted(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["trusted"] is False
+        assert proto["author"] == "adam"
+
+    async def test_update_metadata_and_behavior(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_update_prototype(
+            StubRequest(name="hand",
+                        body={"description": "新描述", "behavior": self._TEMPLATED})
+        )
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["description"] == "新描述"
+        assert proto["trusted"] is True
+        _info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        assert behavior == self._TEMPLATED
+
+    async def test_update_empty_body_400(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_update_prototype(StubRequest(name="hand", body={}))
+
+        assert resp.status == 400
+        assert json.loads(resp.text)["reason"] == "invalid_prototype"
+
+    async def test_update_invalid_behavior_leaves_disk_untouched(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_update_prototype(
+            StubRequest(name="hand", body={"behavior": self._INVALID})
+        )
+
+        assert resp.status == 400
+        assert json.loads(resp.text)["reason"] == "invalid_prototype"
+        _info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        assert behavior == self._BEHAVIOR
+
+    async def test_update_unknown_404(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+
+        resp = await handler.handle_update_prototype(
+            StubRequest(name="nope", body={"description": "d"})
+        )
+
+        assert resp.status == 404
+        assert json.loads(resp.text)["reason"] == "prototype_not_found"
+
+    async def test_update_staging_preserves_author(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        resp = await handler.handle_update_staging_prototype(
+            StubRequest(name="staged", body={"display_name": "改名"})
+        )
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["trusted"] is False
+        assert proto["author"] == "adam"
+
+    async def test_delete_removes_prototype(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_delete_prototype(StubRequest(name="hand"))
+
+        assert resp.status == 200
+        assert json.loads(resp.text)["status"] == "success"
+        assert get_prototype_info("hand", tlon_paths=p) is None
+
+    async def test_delete_unknown_404(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+
+        resp = await handler.handle_delete_prototype(StubRequest(name="nope"))
+
+        assert resp.status == 404
+        assert json.loads(resp.text)["reason"] == "prototype_not_found"
+
+    async def test_list_includes_parameters(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "tpl", "behavior": self._TEMPLATED})
+        )
+
+        resp = await handler.handle_list_prototypes(StubRequest())
+
+        assert resp.status == 200
+        protos = json.loads(resp.text)["prototypes"]
+        assert protos[0]["parameters"] == [
+            {"name": "to", "type": "string-list", "required": True}
+        ]
+
+    def test_staging_routes_precede_named_routes(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        app = handler.create_app()
+        canonicals = [
+            (route.method, route.resource.canonical) for route in app.router.routes()
+        ]
+        for method in ("GET", "PATCH"):
+            staging_idx = canonicals.index((method, "/admin/prototypes/staging/{name}"))
+            named_idx = canonicals.index((method, "/admin/prototypes/{name}"))
+            assert staging_idx < named_idx
 
 
 class TestAdminSettingsEnv:

@@ -1,11 +1,11 @@
 /**
  * AGENTS view — member card grid (state-colored) + detail terminal, create
- * (pick a prototype -> form), edit, delete (confirm), staging prototype
- * approval.
+ * (pick a prototype -> form), edit, delete (confirm).
  *
  * Ported from apps/operator/src/views/AgentsView.tsx: same REST/SSE semantics
- * (GET /agents[/{id}], /admin/config/agents CRUD, /admin/prototypes(/staging/*),
- * SSE agents snapshot + agent* events), rendering layer rewritten to DOM.
+ * (GET /agents[/{id}], /admin/config/agents CRUD, SSE agents snapshot +
+ * agent* events), rendering layer rewritten to DOM. Staging prototype
+ * approval moved to the PROTOTYPES view (2026-08-21 decision).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -50,7 +50,6 @@ function errMsg(err: unknown): string {
 
 export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
-  const [staging, setStaging] = useState<ProtoRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -58,7 +57,6 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [modal, setModal] = useState<Modal | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -72,18 +70,9 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
     }
   }, [rest]);
 
-  const loadStaging = useCallback(async () => {
-    try {
-      setStaging(await rest.listStaging());
-    } catch (err) {
-      setError(errMsg(err));
-    }
-  }, [rest]);
-
   useEffect(() => {
     void load();
-    void loadStaging();
-  }, [load, loadStaging]);
+  }, [load]);
 
   // Real-time refresh: the session's agents snapshot replaces the list;
   // any agent* event triggers a reload.
@@ -120,32 +109,12 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
       .finally(() => setDetailLoading(false));
   };
 
-  const approve = async (name: string, accept: boolean): Promise<void> => {
-    setBusy(true);
-    setError(null);
-    try {
-      if (accept) {
-        await rest.approvePrototype(name);
-        setNotice(`APPROVED ${name}`);
-      } else {
-        await rest.rejectPrototype(name);
-        setNotice(`REJECTED ${name}`);
-      }
-      await loadStaging();
-    } catch (err) {
-      setError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   /** Shared post-action wrap-up: close modal, notice, reload. */
   const onActionDone = (msg: string): void => {
     setModal(null);
     setNotice(msg);
     setError(null);
     void load();
-    void loadStaging();
   };
 
   return (
@@ -160,7 +129,6 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           onClick={() => {
             setNotice(null);
             void load();
-            void loadStaging();
           }}
         >
           REFRESH
@@ -176,42 +144,6 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
 
       {error ? <div className="agents-error-bar">{error}</div> : null}
       {notice ? <div className="agents-notice">{notice}</div> : null}
-
-      {staging.length > 0 ? (
-        <section className="panel staging-section">
-          <h3 className="tech-label staging-title">
-            STAGING // 待审批原型 ({staging.length})
-          </h3>
-          {staging.map((p) => {
-            const name = String(p["name"] ?? "?");
-            return (
-              <div className="staging-item" key={name}>
-                <span className="staging-name">{protoLabel(p)}</span>
-                <span className="tech-label">
-                  AUTHOR: {String(p["author"] ?? "unknown")}
-                </span>
-                <span className="agents-spacer" />
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  disabled={busy}
-                  onClick={() => void approve(name, true)}
-                >
-                  APPROVE
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--danger"
-                  disabled={busy}
-                  onClick={() => void approve(name, false)}
-                >
-                  REJECT
-                </button>
-              </div>
-            );
-          })}
-        </section>
-      ) : null}
 
       {loading ? (
         <p className="agents-empty">LOADING…</p>

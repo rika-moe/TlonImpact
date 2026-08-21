@@ -6,6 +6,7 @@ import type { ConnectionStatus, ViewName } from "./types";
 import { VIEWS, VIEW_TITLES } from "./types";
 import { MailView } from "./views/MailView";
 import { AgentsView } from "./views/AgentsView";
+import { PrototypesView } from "./views/PrototypesView";
 import { EventsView } from "./views/EventsView";
 import { TracesView } from "./views/TracesView";
 import { MetricsView } from "./views/MetricsView";
@@ -51,6 +52,7 @@ const VIEW_COMPONENTS: Record<ViewName, (props: {
 }) => ReactElement> = {
   mail: MailView,
   agents: AgentsView,
+  prototypes: PrototypesView,
   events: EventsView,
   traces: TracesView,
   metrics: MetricsView,

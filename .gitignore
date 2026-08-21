@@ -46,6 +46,7 @@ apps/operator/node_modules/
 apps/operator/dist/
 apps/webui/node_modules/
 apps/webui/dist/
+apps/webui/.vite/
 # apps/webui/src/lib/ holds ported pure-logic modules; the Python-template
 # "lib/" rule above would otherwise ignore it.
 !apps/webui/src/lib/

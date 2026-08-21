@@ -1,0 +1,260 @@
+/**
+ * PROTOTYPES view styles. Colors come from tokens.css variables only
+ * (alpha variants of the same neon hues, per components.css precedent).
+ */
+
+.prototypes-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.prototypes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.prototypes-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.prototypes-spacer {
+  flex: 1;
+}
+
+.prototypes-empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-yellow);
+}
+
+/* Operation feedback. */
+.prototypes-notice {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-cyan);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.prototypes-error-bar {
+  color: var(--neon-magenta);
+  border: 1px solid rgba(255, 0, 229, 0.6);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  box-shadow: var(--glow-magenta);
+  font-size: 12px;
+}
+
+/* ---------- two-pane body: lists | detail ---------- */
+
+.prototypes-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.prototypes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.proto-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.proto-section-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.proto-section-title--staging {
+  color: var(--neon-yellow);
+}
+
+/* ---------- prototype cards ---------- */
+
+.proto-card {
+  background: var(--bg-2);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: var(--radius);
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proto-card:hover {
+  border-color: rgba(0, 240, 255, 0.5);
+}
+
+.proto-card--staging {
+  border: 1px solid rgba(255, 230, 0, 0.4);
+}
+
+.proto-card--staging:hover {
+  border-color: rgba(255, 230, 0, 0.7);
+}
+
+.proto-card--selected {
+  border: var(--border-neon);
+  box-shadow: var(--glow-cyan);
+}
+
+.proto-card-display {
+  color: var(--text);
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proto-card-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proto-card-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* ---------- detail panel ---------- */
+
+.proto-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.proto-detail--empty {
+  align-items: flex-start;
+}
+
+.proto-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.proto-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proto-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.proto-meta-row .tech-label {
+  min-width: 120px;
+}
+
+.proto-meta-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+/* Parameter badges: `name: type` pills, `*` marks required. */
+.proto-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.proto-param {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--neon-cyan);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+}
+
+.proto-behavior {
+  max-height: 50vh;
+  margin: 0;
+}
+
+/* ---------- modals ---------- */
+
+.proto-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 18, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.proto-modal {
+  width: 560px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.proto-modal-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.proto-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Create / edit forms. */
+.proto-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.proto-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.proto-form-row .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+textarea.proto-form-behavior {
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+.proto-delete-warning {
+  color: var(--neon-magenta);
+  font-size: 13px;
+  margin: 0;
+}

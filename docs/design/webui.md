@@ -42,12 +42,34 @@ apps/webui/
 | 页面 | 对应 TUI 视图 | 功能 | 端点 / 事件 |
 |---|---|---|---|
 | MAIL | mail | 三栏：线程列表（未读 ●）｜会话内容｜写信抽屉（To/Cc 补全、回复预填 in_reply_to/thread_id） | `GET /inbox`、`GET /participants`、`POST /messages`、SSE `mail.delivered` |
-| AGENTS | agents | 成员卡片网格（状态着色）+ 详情、创建（选原型→表单）、编辑、删除、staging 原型审批 | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`/admin/prototypes(/staging/*)` |
+| AGENTS | agents | 成员卡片网格（状态着色）+ 详情、创建（选原型→表单）、编辑、删除 | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`GET /admin/prototypes`（创建向导） |
 | EVENTS | events | 终端面板式全量事件流、暂停/清空、展开 JSON | 纯 SSE |
 | TRACES | traces | trace 列表 + span 详情 | `GET /traces[/{id}]` |
 | METRICS | metrics | 指标仪表盘，按 mail/agent/llm/tool 分组，2s 轮询 | `GET /metrics` |
 | LOGS | —（新增） | 日志流，level/agent/trace 过滤 | `GET /logs`、`GET /agents/{id}/logs` |
 | SETTINGS | config + settings | 服务端配置只读区 + LLM env 编辑（base_url/api_key/model_name/temperature） | `GET /config`、`GET /admin/config/agents`、`GET/PUT /admin/settings/env` |
+| PROTOTYPES | —（新增） | 原型库管理：正式库/ staging 双区列表、详情（元数据 + parameters + behavior.tlon 全文）、手写创建、编辑、删除、staging 审批 | 见下文「原型管理 API」 |
+
+staging 原型审批区从 AGENTS 视图迁至 PROTOTYPES 视图（2026-08-21 拍板：原型管理是独立职责）。
+
+## 原型管理 API（2026-08-21 拍板：元数据、详情、审批、编辑、增删查改）
+
+原型 = 目录（`behavior.tlon` + `prototype.edn` 元数据），信任分级不变：staging（LLM 写，`:trusted false`）→ 人工 approve → 正式库；**人类手写直接进正式库**（handwritten implies trusted，与既有语义一致）。写路径一律先过校验链（`analyze` 模板分析 → EDN parse → `validate_member_spec` schema），校验失败不落盘。
+
+在既有 `GET /admin/prototypes`、`GET /admin/prototypes/staging`、`POST .../staging/{name}/approve|reject` 之上新增（域函数在 [agents/prototypes.py](../../src/tlon/agents/prototypes.py)，路由在 rest.py 管理面）：
+
+| 端点 | 语义 | 响应 / 错误 |
+|---|---|---|
+| `GET /admin/prototypes/{name}` | 正式库原型详情：元数据 + `parameters` + `behavior`（behavior.tlon 全文） | 404 `prototype_not_found` |
+| `GET /admin/prototypes/staging/{name}` | staging 原型详情，同上（trusted=false） | 同上 |
+| `POST /admin/prototypes` | 人类手写创建，直接进正式库（trusted=true）；body `{name, behavior, display_name?, description?}` | 201；校验失败 400 `invalid_prototype` |
+| `PATCH /admin/prototypes/{name}` | 更新元数据（display_name/description）和/或 behavior（重跑校验链，失败不落盘） | 200 / 400 / 404 |
+| `PATCH /admin/prototypes/staging/{name}` | 审批前编辑 LLM 产物，同上 | 同上 |
+| `DELETE /admin/prototypes/{name}` | 删除正式库原型（staging 的删除即已有 reject） | 200 / 404 |
+
+两个 GET 列表端点的响应顺带补上 `parameters`（纯增量字段，不破坏现有客户端）。
+
+`PROTOTYPES` 视图：左栏双区列表（TRUSTED LIBRARY 青卡片 / STAGING 黄描边卡片），右侧详情面板（元信息 + parameters 徽章 + behavior.tlon 终端面板全文）；操作：NEW（手写表单，behavior 大文本域）、EDIT（元数据 + behavior）、DELETE（确认框，品红）、staging 的 APPROVE（青）/ REJECT（品红）。导航位于 AGENTS 之后。
 
 SSE 生命周期与 TUI 相同：`POST /sessions`（client_type 用 `"webui"`）→ 立即 `PATCH` 切 `event` 模式 → `GET /events?session_id=` 开 `EventSource`；断线指数退避（1s→30s）后**从零重建会话**。顶栏常驻连接状态徽章（connected / reconnecting / down）。
 
