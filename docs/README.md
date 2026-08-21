@@ -34,6 +34,7 @@
 | [design/unified-member-model.md](./design/unified-member-model.md) | **统一成员模型**（2026-08 拍板并实施阶段 2）：一类成员 + 世代更替，9 条决策与迁移路径 | ✅ |
 | [design/server-protocol.md](./design/server-protocol.md) | REST + SSE 协议 v2 的设计取舍 | ✅ |
 | [design/webui.md](./design/webui.md) | WebUI（apps/webui）：React+Vite、/ui/ 静态托管、cyberpunk 视觉规范 | ✅ |
+| [design/deepseek-harness-review.md](./design/deepseek-harness-review.md) | 外部调研：dsh 对 Tlon 的可借鉴点（方向讨论输入材料，非决策） | ✅ |
 | [reference/dsl-reference.md](./reference/dsl-reference.md) | EDN 语法、MemberSpec 全字段、builtin/stage/section 清单 | ✅ |
 | [reference/config-reference.md](./reference/config-reference.md) | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
 | [reference/tools-reference.md](./reference/tools-reference.md) | 全部工具的参数与语义 | ✅ |
