@@ -1,0 +1,225 @@
+import { useCallback, useEffect, useState } from "react";
+import type { ChangeEvent, ReactElement } from "react";
+import type { ViewProps } from "../types";
+import "../styles/settings.css";
+
+interface EnvForm {
+  base_url: string;
+  api_key: string;
+  model_name: string;
+  temperature: string;
+}
+
+const ENV_FIELDS: ReadonlyArray<keyof EnvForm> = [
+  "base_url",
+  "api_key",
+  "model_name",
+  "temperature",
+];
+
+/** Flatten nested config objects into dotted key/value display rows. */
+function flatten(obj: Record<string, unknown>, prefix = ""): Array<[string, string]> {
+  const rows: Array<[string, string]> = [];
+  for (const key of Object.keys(obj).sort()) {
+    const value = obj[key];
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      rows.push(...flatten(value as Record<string, unknown>, path));
+    } else {
+      rows.push([path, String(value)]);
+    }
+  }
+  return rows;
+}
+
+function formatAgentConfig(agent: Record<string, unknown>): string {
+  const parts = [agent["id"], agent["name"], agent["identity"]]
+    .filter((v): v is string => typeof v === "string" && v.length > 0);
+  return parts.join(" · ");
+}
+
+/**
+ * SETTINGS — merges the TUI's config + settings views. Upper half is
+ * read-only: server config (GET /config) and member configs
+ * (GET /admin/config/agents). Lower half edits the LLM env
+ * (GET/PUT /admin/settings/env, merge semantics). The api_key is shown
+ * in plain text — a deliberate decision for this local console.
+ */
+export function SettingsView({ rest }: ViewProps): ReactElement {
+  const [config, setConfig] = useState<Record<string, unknown> | null>(null);
+  const [agentConfigs, setAgentConfigs] = useState<Record<string, unknown>[]>([]);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  const [envPath, setEnvPath] = useState<string | null>(null);
+  const [configured, setConfigured] = useState(false);
+  const [form, setForm] = useState<EnvForm>({
+    base_url: "",
+    api_key: "",
+    model_name: "",
+    temperature: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [envError, setEnvError] = useState<string | null>(null);
+
+  // Read-only section and env form load independently: a 503 on one
+  // (e.g. no config manager) must not break the other.
+  const loadConfig = useCallback(async () => {
+    try {
+      const [cfg, agents] = await Promise.all([rest.config(), rest.listAgentConfigs()]);
+      setConfig(cfg);
+      setAgentConfigs(agents);
+      setConfigError(null);
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : String(err));
+    }
+  }, [rest]);
+
+  const loadEnv = useCallback(async () => {
+    try {
+      const data = await rest.getSettingsEnv();
+      setEnvPath(data.path);
+      setConfigured(data.configured);
+      setForm({
+        base_url: data.values.base_url ?? "",
+        api_key: data.values.api_key ?? "",
+        model_name: data.values.model_name ?? "",
+        temperature: String(data.values.temperature ?? ""),
+      });
+      setEnvError(null);
+    } catch (err) {
+      setEnvError(err instanceof Error ? err.message : String(err));
+    }
+  }, [rest]);
+
+  useEffect(() => {
+    void loadConfig();
+    void loadEnv();
+  }, [loadConfig, loadEnv]);
+
+  const setField =
+    (field: keyof EnvForm) =>
+    (e: ChangeEvent<HTMLInputElement>): void => {
+      setForm((prev) => ({ ...prev, [field]: e.target.value }));
+      setSaved(null);
+    };
+
+  const save = async (): Promise<void> => {
+    setSaving(true);
+    setSaved(null);
+    try {
+      const temp = Number.parseFloat(form.temperature);
+      await rest.updateSettingsEnv({
+        base_url: form.base_url.trim() || undefined,
+        api_key: form.api_key.trim() || undefined,
+        model_name: form.model_name.trim() || undefined,
+        temperature: Number.isFinite(temp) ? temp : undefined,
+      });
+      setSaved("已保存 — 重启 dream 生效");
+      setEnvError(null);
+      void loadEnv();
+    } catch (err) {
+      setEnvError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="settings-view">
+      <div className="settings-toolbar">
+        <h2 className="tech-label settings-title">SETTINGS</h2>
+        <span className="settings-spacer" />
+        <button
+          type="button"
+          className="btn btn--secondary"
+          onClick={() => {
+            void loadConfig();
+            void loadEnv();
+          }}
+        >
+          REFRESH
+        </button>
+      </div>
+
+      <div className="settings-grid">
+        <div className="panel">
+          <h3 className="tech-label settings-section-title">SERVER CONFIG · GET /config</h3>
+          {configError ? (
+            <div className="tech-label settings-error">{configError}</div>
+          ) : config === null ? (
+            <div className="tech-label settings-dim">LOADING…</div>
+          ) : (
+            flatten(config).map(([key, value]) => (
+              <div className="kv-row" key={key}>
+                <span className="tech-label">{key}</span>
+                <span className="kv-value">{value}</span>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="panel">
+          <h3 className="tech-label settings-section-title">
+            MEMBER CONFIGS · GET /admin/config/agents
+          </h3>
+          {agentConfigs.length === 0 ? (
+            <div className="tech-label settings-dim">NO MEMBERS</div>
+          ) : (
+            agentConfigs.map((agent, index) => (
+              <div className="kv-row" key={String(agent["id"] ?? index)}>
+                <span className="kv-value">{formatAgentConfig(agent)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="panel">
+        <h3 className="tech-label settings-section-title">
+          LLM ENV · GET/PUT /admin/settings/env
+        </h3>
+        <div className="settings-status-row">
+          <span className="tech-label">API KEY</span>
+          <span
+            className={`tech-label ${configured ? "settings-status--ok" : "settings-status--warn"}`}
+          >
+            {configured ? "CONFIGURED" : "NOT CONFIGURED — 认知成员首次调用 LLM 会失败"}
+          </span>
+        </div>
+        <div className="settings-form">
+          {ENV_FIELDS.map((field) => (
+            <div className="settings-field" key={field}>
+              <label className="tech-label" htmlFor={`env-${field}`}>
+                {field}
+              </label>
+              <input
+                id={`env-${field}`}
+                className="input"
+                // api_key in plain text: deliberate for a local console.
+                type="text"
+                value={form[field]}
+                onChange={setField(field)}
+                disabled={saving}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+          ))}
+        </div>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => void save()}
+            disabled={saving}
+          >
+            {saving ? "SAVING…" : "SAVE"}
+          </button>
+          {saved ? <span className="tech-label settings-saved">{saved}</span> : null}
+          {envError ? <span className="tech-label settings-error">{envError}</span> : null}
+        </div>
+        {envPath ? <div className="settings-path">写入: {envPath}</div> : null}
+      </div>
+    </section>
+  );
+}

@@ -1,0 +1,65 @@
+/* EVENTS view (src/views/EventsView.tsx). Colors come from tokens.css only. */
+
+.events-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.events-toolbar .view-title {
+  margin: 0;
+}
+
+.events-spacer {
+  flex: 1;
+}
+
+/* pause / follow-off flags: yellow accent (attention, not danger). */
+.events-flag {
+  color: var(--neon-yellow);
+}
+
+.events-terminal {
+  height: calc(100vh - 260px);
+  min-height: 320px;
+}
+
+.events-empty {
+  color: var(--text-dim);
+}
+
+.event-row {
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.event-row:hover {
+  background: rgba(0, 240, 255, 0.06);
+}
+
+.event-row--expanded {
+  text-shadow: var(--glow-cyan);
+}
+
+.event-time,
+.event-dim {
+  color: var(--text-dim);
+}
+
+.event-type {
+  color: var(--neon-cyan);
+}
+
+.event-json {
+  margin: 4px 0 8px 18px;
+  padding: 8px 12px;
+  background: var(--bg-2);
+  border-left: 1px solid rgba(0, 240, 255, 0.4);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

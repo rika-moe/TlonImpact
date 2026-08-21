@@ -33,13 +33,31 @@ from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.messaging.human_adapter import AdapterManager
 
-from .api.rest import RESTServer
+from .api.rest import WEBUI_DIST_DIR, RESTServer
 from .core.client_gateway import ClientGateway
 from .core.member_directory import MemberDirectory
 from .core.notification_service import NotificationService
 from .core.session_manager import SessionManager
 
 logger = get_logger(__name__)
+
+
+def _startup_banner(host: str, rest_port: int) -> str:
+    """User-facing startup banner printed to the terminal by `tlon dream`."""
+    base = f"http://{host}:{rest_port}"
+    lines = [
+        "",
+        "🐙 Tlon dream is running",
+        f"   REST + SSE : {base}",
+    ]
+    if (WEBUI_DIST_DIR / "index.html").is_file():
+        lines.append(f"   WebUI      : {base}/ui/")
+    else:
+        lines.append(
+            "   WebUI      : not built (cd apps/webui && npm install && npm run build)"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 class ServerApp:
@@ -277,6 +295,8 @@ class ServerApp:
             rest_port=self.rest_port,
             agent_count=len(agent_registry.get_all_ids()) if agent_registry else 0,
         )
+
+        print(_startup_banner(self.host, self.rest_port), flush=True)
 
         # Wait for shutdown signal
         await self._shutdown_event.wait()

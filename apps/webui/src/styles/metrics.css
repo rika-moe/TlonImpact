@@ -1,0 +1,68 @@
+/* METRICS view (src/views/MetricsView.tsx). Colors come from tokens.css only. */
+
+.metrics-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.metrics-title {
+  margin: 0;
+}
+
+.metrics-error {
+  color: var(--neon-magenta);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.metric-group-title {
+  margin: 0 0 8px;
+  color: var(--neon-cyan);
+}
+
+.metric-empty {
+  color: var(--text-dim);
+  padding: 8px 0;
+}
+
+.metric-row {
+  padding: 8px 0;
+  border-top: 1px solid rgba(0, 240, 255, 0.12);
+}
+
+.metric-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.metric-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* Large mono number with the cyan glow (dashboard convention). */
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--neon-cyan);
+  text-shadow: var(--glow-cyan);
+  text-align: right;
+  word-break: break-all;
+}
+
+.metric-attrs {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  word-break: break-all;
+}

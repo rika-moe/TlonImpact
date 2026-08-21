@@ -142,11 +142,11 @@ async def main_async(args: Namespace | None = None) -> int:
 🐙 Tlon - 一个由观念构建的、正在入侵现实的宇宙
 
 Commands:
-  dream       维持梦境（启动 Server，空社会首启自动初始化标准团队）
+  dream       维持梦境（启动 Server，空社会首启自动初始化标准团队；WebUI 托管于 /ui/）
   ops         打开运维控制台（含邮件视图与成员/原型管理）
 
 Usage:
-  tlon dream                    # 启动服务
+  tlon dream                    # 启动服务（启动 banner 显示 WebUI 地址）
   tlon dream --lucid            # Debug 模式
   tlon ops                      # 运维控制台
 

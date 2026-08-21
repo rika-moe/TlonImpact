@@ -1,0 +1,69 @@
+/* LOGS view (src/views/LogsView.tsx). Colors come from tokens.css only. */
+
+.logs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.logs-toolbar .view-title {
+  margin: 0;
+}
+
+.logs-spacer {
+  flex: 1;
+}
+
+.logs-level-select {
+  cursor: pointer;
+}
+
+.logs-filter-input {
+  width: 160px;
+}
+
+.logs-error {
+  color: var(--neon-magenta);
+}
+
+.logs-terminal {
+  height: calc(100vh - 280px);
+  min-height: 320px;
+}
+
+.logs-empty {
+  color: var(--text-dim);
+}
+
+.log-dim {
+  color: var(--text-dim);
+}
+
+.log-msg {
+  color: var(--text);
+}
+
+.log-level {
+  display: inline-block;
+  font-weight: bold;
+}
+
+/* Level coloring: error magenta / warning yellow / info cyan / debug dim. */
+.log-level--error {
+  color: var(--neon-magenta);
+  text-shadow: var(--glow-magenta);
+}
+
+.log-level--warning {
+  color: var(--neon-yellow);
+}
+
+.log-level--info {
+  color: var(--neon-cyan);
+}
+
+.log-level--debug {
+  color: var(--text-dim);
+}

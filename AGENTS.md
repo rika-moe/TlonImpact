@@ -22,9 +22,10 @@ uv sync
 cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY
 
-# 运行（服务端 + Operator TUI）
-uv run tlon server    # 终端 1
+# 运行（服务端 + 客户端）
+uv run tlon dream     # 终端 1（服务端，REST + SSE，默认 127.0.0.1:8080；启动 banner 显示 WebUI 地址）
 uv run tlon ops       # 终端 2（Operator TUI，含 mail 视图——人类邮件主界面）
+# 浏览器 WebUI 由 dream 托管于 /ui/（需先 cd apps/webui && npm install && npm run build）
 
 # 单元测试
 uv run pytest

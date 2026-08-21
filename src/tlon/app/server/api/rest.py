@@ -57,6 +57,11 @@ SESSION_MODES = ("chat", "event", "agent")
 # SSE heartbeat: a ": ping" comment line every this many seconds.
 SSE_HEARTBEAT_SECONDS = 25.0
 
+# WebUI static hosting: built assets of apps/webui (npm run build).
+# Repository root: src/tlon/app/server/api/rest.py -> parents[5]
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+WEBUI_DIST_DIR = _REPO_ROOT / "apps" / "webui" / "dist"
+
 
 def _validate_username(username_raw: Any) -> str | None:
     """Normalize a human username; None when invalid.
@@ -315,10 +320,27 @@ class RESTAPIHandler:
             app.router.add_get("/test/ping", self.handle_test_ping)
             app.router.add_post("/test/echo", self.handle_test_echo)
 
+        # WebUI static hosting (apps/webui/dist). Conditional registration:
+        # a missing build means no route, same policy as admin/traces routes.
+        if (WEBUI_DIST_DIR / "index.html").is_file():
+            app.router.add_get("/ui", self.handle_webui_redirect)
+            # aiohttp's add_static does not serve index.html for the prefix
+            # root itself (directory requests are 403) — register it first.
+            app.router.add_get("/ui/", self.handle_webui_index)
+            app.router.add_static("/ui/", WEBUI_DIST_DIR, name="webui")
+
         # CORS
         app.router.add_options("/{path:.*}", self.handle_options)
 
         return app
+
+    async def handle_webui_redirect(self, request: web.Request) -> web.Response:
+        """Redirect /ui to /ui/ so the static index resolves relative assets."""
+        raise web.HTTPFound("/ui/")
+
+    async def handle_webui_index(self, request: web.Request) -> web.StreamResponse:
+        """Serve the WebUI entry page."""
+        return web.FileResponse(WEBUI_DIST_DIR / "index.html")
 
     def _json_response(self, data: Any, status: int = 200) -> web.Response:
         """Create a JSON response.

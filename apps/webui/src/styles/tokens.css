@@ -1,0 +1,29 @@
+/**
+ * Cyberpunk design tokens — the single source of truth for the WebUI
+ * (see docs/design/webui.md「视觉规范」).
+ *
+ * Discipline: neon colors ≤ 3 (cyan primary / magenta danger / yellow
+ * accent only), border-radius ≤ 8px, no light surfaces.
+ */
+
+:root {
+  --bg: #0a0a12;
+  --bg-2: #12121f;
+
+  --text: #e8e8f0;
+  --text-dim: #8a8aa0;
+
+  --neon-cyan: #00f0ff;
+  --neon-magenta: #ff00e5;
+  --neon-yellow: #ffe600;
+
+  --border-neon: 1px solid rgba(0, 240, 255, 0.6);
+  --glow-cyan: 0 0 8px rgba(0, 240, 255, 0.8), 0 0 24px rgba(0, 240, 255, 0.4);
+  --glow-magenta: 0 0 8px rgba(255, 0, 229, 0.6), 0 0 24px rgba(255, 0, 229, 0.3);
+
+  --font-tech: 'Arial Black', 'Helvetica Neue', Impact, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius: 4px;
+  --radius-lg: 8px;
+}

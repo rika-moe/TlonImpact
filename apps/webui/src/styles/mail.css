@@ -1,0 +1,268 @@
+/**
+ * MAIL view styles. Colors come from tokens.css variables only
+ * (alpha variants of the same neon hues, per components.css precedent).
+ */
+
+.mail-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mail-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.mail-spacer {
+  flex: 1;
+}
+
+.mail-notice {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-yellow);
+}
+
+/* ---------- two-column layout: thread list | conversation ---------- */
+
+.mail-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.mail-threads-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mail-filter {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mail-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 64vh;
+  overflow-y: auto;
+}
+
+.mail-thread-item {
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.mail-thread-item:hover {
+  border-color: rgba(0, 240, 255, 0.35);
+}
+
+.mail-thread-item--active {
+  border: var(--border-neon);
+  box-shadow: var(--glow-cyan);
+}
+
+.mail-thread-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.unread-dot {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 6px rgba(255, 230, 0, 0.8);
+}
+
+.mail-thread-who {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-thread-who--unread {
+  font-weight: bold;
+  color: var(--neon-yellow);
+}
+
+.mail-thread-meta {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.mail-thread-snippet {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* ---------- conversation: mail cards ---------- */
+
+.mail-conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.mail-card {
+  max-width: 78%;
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--bg);
+}
+
+/* Own sends: right-aligned with a full neon outline. */
+.mail-card--own {
+  align-self: flex-end;
+  border: var(--border-neon);
+  box-shadow: var(--glow-cyan);
+}
+
+.mail-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mail-card-from {
+  color: var(--neon-cyan);
+}
+
+.mail-card-to {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-card-time {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.mail-card-subject {
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+
+.mail-card-body {
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.mail-card-actions {
+  margin-top: 8px;
+}
+
+.mail-empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-yellow);
+}
+
+/* ---------- compose / reply modal ---------- */
+
+.mail-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 18, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.mail-modal {
+  width: 560px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mail-modal-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.mail-form-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mail-form-row .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+textarea.mail-content {
+  min-height: 140px;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+/* Recipient autocomplete dropdown. */
+.mail-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--bg-2);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-cyan);
+  z-index: 110;
+}
+
+.mail-suggest-item {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mail-suggest-item--active {
+  background: rgba(0, 240, 255, 0.15);
+  color: var(--neon-cyan);
+}
+
+/* Send failure bar: magenta (server reason + message). */
+.mail-error-bar {
+  color: var(--neon-magenta);
+  border: 1px solid rgba(255, 0, 229, 0.6);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  box-shadow: var(--glow-magenta);
+  font-size: 12px;
+}
+
+.mail-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

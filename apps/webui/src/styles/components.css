@@ -1,0 +1,299 @@
+/**
+ * Cyberpunk base component classes (see docs/design/webui.md「视觉规范」).
+ * All colors come from tokens.css; no other hex values allowed here.
+ */
+
+/* ---------- global background: dark + faint grid + scanlines ---------- */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+body {
+  /* Faint 1px grid lines. */
+  background-image:
+    linear-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Optional scanline overlay. */
+.scanlines::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.12) 3px,
+    rgba(0, 0, 0, 0.12) 4px
+  );
+}
+
+/* ---------- tech label: mono, uppercase, tracked ---------- */
+
+.tech-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+}
+
+/* ---------- panel / card: bg-2 + neon border + HUD corner brackets ---------- */
+
+.panel {
+  position: relative;
+  background: var(--bg-2);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+/* Four HUD corner brackets drawn with one pseudo-element. */
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  background:
+    linear-gradient(to right, var(--neon-cyan), var(--neon-cyan)) left top / 12px 2px,
+    linear-gradient(to bottom, var(--neon-cyan), var(--neon-cyan)) left top / 2px 12px,
+    linear-gradient(to left, var(--neon-cyan), var(--neon-cyan)) right top / 12px 2px,
+    linear-gradient(to bottom, var(--neon-cyan), var(--neon-cyan)) right top / 2px 12px,
+    linear-gradient(to right, var(--neon-cyan), var(--neon-cyan)) left bottom / 12px 2px,
+    linear-gradient(to bottom, var(--neon-cyan), var(--neon-cyan)) left bottom / 2px 12px,
+    linear-gradient(to left, var(--neon-cyan), var(--neon-cyan)) right bottom / 12px 2px,
+    linear-gradient(to bottom, var(--neon-cyan), var(--neon-cyan)) right bottom / 2px 12px;
+  background-repeat: no-repeat;
+}
+
+/* Subtle inner glow line. */
+.panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 24px rgba(0, 240, 255, 0.05);
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+/* Primary: cyan fill, black text, glow. */
+.btn--primary {
+  background: var(--neon-cyan);
+  color: ;
+  border: 1px solid var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.btn--primary:hover {
+  box-shadow: 0 0 12px rgba(0, 240, 255, 1), 0 0 32px rgba(0, 240, 255, 0.5);
+}
+
+/* Secondary: transparent + cyan outline. */
+.btn--secondary {
+  background: transparent;
+  color: var(--neon-cyan);
+  border: var(--border-neon);
+}
+
+.btn--secondary:hover {
+  box-shadow: var(--glow-cyan);
+}
+
+/* Danger: magenta. */
+.btn--danger {
+  background: transparent;
+  color: var(--neon-magenta);
+  border: 1px solid rgba(255, 0, 229, 0.6);
+}
+
+.btn--danger:hover {
+  box-shadow: var(--glow-magenta);
+}
+
+/* ---------- badges (connection status) ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid currentColor;
+}
+
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge--connected {
+  color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.badge--reconnecting {
+  color: var(--neon-yellow);
+}
+
+.badge--down {
+  color: var(--neon-magenta);
+  box-shadow: var(--glow-magenta);
+}
+
+/* ---------- inputs ---------- */
+
+.input {
+  background: var(--bg);
+  color: var(--text);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+}
+
+.input::placeholder {
+  color: var(--text-dim);
+}
+
+.input:focus {
+  box-shadow: var(--glow-cyan);
+}
+
+/* ---------- terminal panel (EVENTS / LOGS) ---------- */
+
+.terminal {
+  background: ;
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-cyan);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.terminal .terminal-line::before {
+  content: "> ";
+  color: var(--text-dim);
+}
+
+/* ---------- glowing title ---------- */
+
+.glow-title {
+  font-family: var(--font-tech);
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.8), 0 0 24px rgba(0, 240, 255, 0.4);
+  letter-spacing: 0.1em;
+  margin: 0;
+}
+
+/* ---------- app shell ---------- */
+
+.app-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 180px 1fr;
+  grid-template-areas:
+    "topbar topbar"
+    "nav main";
+  height: 100vh;
+}
+
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  background: var(--bg-2);
+  border-bottom: var(--border-neon);
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+.sidenav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 8px;
+  background: var(--bg-2);
+  border-right: var(--border-neon);
+}
+
+.nav-item {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  text-align: left;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  color: var(--neon-cyan);
+}
+
+.nav-item--active {
+  color: var(--neon-cyan);
+  border: var(--border-neon);
+  box-shadow: var(--glow-cyan);
+}
+
+.main {
+  grid-area: main;
+  padding: 20px;
+  overflow: auto;
+}
+
+/* ---------- placeholder view ---------- */
+
+.view-panel .view-title {
+  margin: 0 0 12px;
+}
+
+.todo-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-yellow);
+}

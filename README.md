@@ -25,7 +25,10 @@ mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 OPENAI_API_KEY=...
 # 3. 运行——两个终端
 uv run tlon dream    # 终端 1：服务端（REST + SSE，默认 127.0.0.1:8080）
                      # 空社会首次启动自动从职位原型初始化标准团队（幂等）
+                     # 启动 banner 会打印 WebUI 地址（http://127.0.0.1:8080/ui/）
 uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面 + 成员/原型管理）
+# 或者用浏览器 WebUI（cyberpunk 风格，功能与 TUI 对齐 + Logs 视图）：
+#   cd apps/webui && npm install && npm run build   # 首次构建，之后由 dream 托管于 /ui/
 
 # 4. 发第一封信：在 TUI 的 Mail 视图按 c，给团队某成员（如「顾言蹊」）写信
 ```
