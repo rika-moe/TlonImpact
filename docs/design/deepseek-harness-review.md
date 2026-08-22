@@ -20,13 +20,15 @@ Tlon 现状：邮件是磁盘事实（mailbox 即队列，先持久化后处理�
 
 **实施记录**：[ADR 0007](../decisions/0007-session-event-sourcing.md) + [agents/session_journal.py](../../src/tlon/agents/session_journal.py)（append/resume/derive_context，孤儿 dispatch 自愈为合成 interrupted 结果）；`LoopDriver` 所有状态变更先落日志再改内存（`session/start` 于首个 stage 前，`tool/result` 在后台 task 内即写），`SessionScheduler` 按日志恢复（completed 只标读、孤儿工具走 `resume_collect`、超时/异常补 `session/end`）；装配经 `CognitiveCapabilities.tlon_paths` 注入。token 级 chunk 未落日志（Tlon 的 LLM 调用非流式，无 chunk 可记）。测试见 [src/tests/agents/test_session_journal.py](../../src/tests/agents/test_session_journal.py)（roundtrip / 坏行容忍 / 崩溃恢复端到端 / 调度准入门）。
 
-### 2. 超长工具输出 spill 落盘 + locator
+### 2. 超长工具输出 spill 落盘 + locator ✅ 已实施（2026-08-22）
 
 dsh 做法（`docs/subsystems/spill.md`）：`dsh-spill` 把超长工具输出落盘，给模型返回 locator + 检索提示，在 `tools/post-execute` 策略点触发。
 
 Tlon 现状：shell/filesystem 工具输出直接进上下文，是上下文爆炸的常见来源。
 
 借鉴形态：EffectExecutor 执行工具后按大小阈值落盘到成员 workspace，模型只看到 locator。机制简单、收益直接。
+
+**实施记录**：`src/tlon/tools/spill.py` 的 `ToolSpill`（阈值 `SPILL_THRESHOLD_CHARS` = 16k 字符，超出即把整个 `ToolResult.data` 以缩进 JSON 写到 `workspace/spills/{session_id}/{tool_call_id}.json`——workspace 经 bind mount 即容器工作目录，模型可用 `readFile` 的 offset/limit 分页读回），模型只见 locator（路径/大小/500 字符 preview/检索提示）。拦截点在引擎层 `LoopDriver.execute_one_tool`，先于 `tool/result` 落 session 日志——日志与上下文持有同一 locator，重放保真（ADR 0007 的不变式不被破坏）。写盘失败回退原结果（上下文大总比丢结果强）。
 
 ### 3. 上下文压力管理成 seam
 

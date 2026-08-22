@@ -75,6 +75,7 @@ from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
+from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
 
 if TYPE_CHECKING:
@@ -890,6 +891,7 @@ class MemberRuntime(Member):
             per_tool_timeout=caps.per_tool_timeout,
             on_complete=on_complete,
             journal=journal,
+            spill=ToolSpill(caps.tlon_paths, self._member_id),
         )
         self._scheduler = SessionScheduler(
             caps.config,

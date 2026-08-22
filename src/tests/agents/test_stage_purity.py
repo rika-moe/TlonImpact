@@ -21,6 +21,7 @@ from tlon.agents.trigger import AgentIdentity
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.tools.base import ToolResult
+from tlon.tools.spill import ToolSpill
 
 
 def _make_services() -> MagicMock:
@@ -42,6 +43,7 @@ def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
         per_tool_timeout=1.0,
         on_complete=MagicMock(),
         journal=SessionJournal("agent1", TlonPaths(home=tmp_path)),
+        spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
     )
 
 

@@ -59,6 +59,7 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
+from tlon.tools.spill import ToolSpill
 
 logger = get_logger(__name__)
 
@@ -75,6 +76,7 @@ class LoopDriver:
         per_tool_timeout: float,
         on_complete: OnCompleteRunner,
         journal: SessionJournal,
+        spill: ToolSpill,
     ):
         self._identity = identity
         # A loop driver serves a cognitive agent — its rule carries a loop.
@@ -94,6 +96,9 @@ class LoopDriver:
         # Session event journal (ADR 0007): every state change is appended
         # before the in-memory mutation — the log is the truth.
         self._journal = journal
+        # Oversized tool outputs spill to the workspace; the model (and the
+        # journal) only ever see the locator (harness-review item 2).
+        self._spill = spill
         # Stage registry (phases 7a/7c), step side. The collect half of
         # ``act`` is collect_session_results — one semantic unit split by
         # the step/collect asyncio model. Handlers take
@@ -438,6 +443,8 @@ class LoopDriver:
             result = ToolResult(success=False, data={}, error=f"Timeout after {timeout}s")
         except Exception as e:
             result = ToolResult(success=False, data={}, error=str(e))
+        # Spill before journaling: log and context hold the same locator.
+        result = await self._spill.maybe_spill(session_id, tc, result)
         await self._journal.append(
             session_id, "tool/result", tool_call=tc.to_dict(), result=result.to_dict()
         )

@@ -27,6 +27,7 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
+from tlon.tools.spill import ToolSpill
 
 COGNITIVE_EDN = """\
 {:version 1
@@ -261,6 +262,7 @@ def _make_driver(
         per_tool_timeout=5.0,
         on_complete=on_complete,
         journal=journal,
+        spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
     )
     return driver, journal, executor, services
 
@@ -330,6 +332,57 @@ class TestDriverJournaling:
                 session, None, StageOutcome(context_appends=[{"role": "user", "content": "x"}])
             )
         assert session.context == []  # no journal, no mutation
+
+    async def test_oversized_tool_output_spills_before_journaling(
+        self, tmp_path: Path
+    ) -> None:
+        """Spill (harness-review item 2): journal and context hold the
+        locator; the payload lives in the workspace spill file."""
+        from tlon.tools.spill import SPILL_THRESHOLD_CHARS
+
+        mail = _mail()
+        big_stdout = "y" * (SPILL_THRESHOLD_CHARS * 2)
+        round1 = LLMResponse(
+            content="working", tool_calls=[_tc("c1", "executeBashCommand", {"command": "big"})]
+        )
+        round2 = LLMResponse(
+            content="done",
+            tool_calls=[_tc("c2", "sendEmail", {"content": "final", "is_complete": True})],
+        )
+
+        async def tool_execute(name: str, args: dict) -> ToolResult:
+            if name == "sendEmail":
+                return ToolResult(
+                    success=True,
+                    data={"content": args["content"], "is_complete": True},
+                )
+            return ToolResult(success=True, data={"stdout": big_stdout})
+
+        driver, journal, _, _ = _make_driver(
+            tmp_path, [round1, round2], tool_execute=tool_execute
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        # The journaled tool/result is the locator, not the payload.
+        replay = await journal.resume(session.id)
+        assert replay is not None
+        entry = replay.all_tool_results[0]
+        locator = entry["result"].data
+        assert locator["_spilled"] is True
+        assert locator["spill_path"] == f"spills/{session.id}/c1.json"
+        # The model's context holds the locator too (invariant preserved).
+        assert await journal.derive_context(session.id) == session.context
+        assert big_stdout not in json.dumps(session.context)
+        # The full payload is on disk, readable as JSON.
+        spill_file = (
+            tmp_path / "agent1" / "workspace" / "spills" / session.id / "c1.json"
+        )
+        assert json.loads(spill_file.read_text(encoding="utf-8"))["stdout"] == big_stdout
 
 
 # ── Crash recovery: orphan tools resume through resume_collect ──────────
