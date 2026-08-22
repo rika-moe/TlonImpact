@@ -33,6 +33,7 @@ from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import Tool
@@ -586,7 +587,7 @@ class TestDerivedMemberType:
 # ── Cognitive routing (D6.1 / loop-first-then-actions) ─────────────────
 
 
-def _cognitive_caps(config: AgentConfig) -> CognitiveCapabilities:
+def _cognitive_caps(config: AgentConfig, tlon_paths: TlonPaths) -> CognitiveCapabilities:
     return CognitiveCapabilities(
         config=config,
         llm_client=_StubLLM(),
@@ -594,6 +595,7 @@ def _cognitive_caps(config: AgentConfig) -> CognitiveCapabilities:
         task_manager=_TaskStub(),
         tool_executor=ToolExecutor(),
         team_members=[],
+        tlon_paths=tlon_paths,
     )
 
 
@@ -606,7 +608,7 @@ def _make_cognitive_member(
         edn,
         event_bus,
         mailbox=mailbox,
-        cognitive=_cognitive_caps(config),
+        cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
     )
 
 
@@ -680,6 +682,7 @@ class TestToolShutdownWiring:
             task_manager=_TaskStub(),
             tool_executor=tool_executor,
             team_members=[],
+            tlon_paths=TlonPaths(home=mail_dir.parent),
         )
         member = _make_member("thinker-x", COGNITIVE_EDN, bus, mailbox=mailbox, cognitive=caps)
 

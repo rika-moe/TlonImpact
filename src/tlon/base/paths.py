@@ -20,6 +20,8 @@ Layout:
     │   │   └── episodic/
     │   │       ├── summaries.jsonl
     │   │       └── facts.jsonl
+    │   ├── sessions/
+    │   │   └── {session_id}.jsonl
     │   ├── tasks.jsonl
     │   ├── workspace/
     │   └── mail/
@@ -114,6 +116,12 @@ class TlonPaths:
 
     def agent_tasks_file(self, agent_id: str) -> Path:
         return self.agent_dir(agent_id) / "tasks.jsonl"
+
+    def agent_sessions_dir(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/sessions/ — per-session event journals (ADR 0007)."""
+        d = self._home / agent_id / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     def agent_mail_dir(self, agent_id: str) -> Path:
         d = self._home / agent_id / "mail"

@@ -37,7 +37,7 @@ class AgentSession:
         # ReAct loop state
         self._iteration = 0
         self._error_count = 0
-        self._last_llm_response = None
+        self._last_llm_response: Any = None
         self._all_tool_results: list[dict[str, Any]] = []
 
         # Per-session scratchpad shared between loop stages (phase 7c):

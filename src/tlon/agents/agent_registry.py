@@ -635,6 +635,7 @@ class AgentRegistry(Component):
             task_manager=task_manager,
             tool_executor=tool_executor,
             team_members=team_members,
+            tlon_paths=self._paths or paths,
             per_tool_timeout=per_tool_timeout,
             registry=self,
         )

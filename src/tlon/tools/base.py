@@ -23,6 +23,16 @@ class ToolResult:
             "message": self.message,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ToolResult":
+        """Parse the to_dict shape back into a ToolResult."""
+        return cls(
+            success=bool(data["success"]),
+            data=data.get("data"),
+            error=data.get("error", ""),
+            message=data.get("message", ""),
+        )
+
 
 class Tool(ABC):
     """Base class for agent tools.

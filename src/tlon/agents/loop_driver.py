@@ -44,6 +44,7 @@ from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession, SessionState
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import act_stage_collect, act_stage_step
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.outcome import MailEffect, StageOutcome
@@ -73,6 +74,7 @@ class LoopDriver:
         tool_executor: ToolExecutor,
         per_tool_timeout: float,
         on_complete: OnCompleteRunner,
+        journal: SessionJournal,
     ):
         self._identity = identity
         # A loop driver serves a cognitive agent — its rule carries a loop.
@@ -89,6 +91,9 @@ class LoopDriver:
         self._tool_executor = tool_executor
         self._per_tool_timeout = per_tool_timeout
         self._on_complete = on_complete
+        # Session event journal (ADR 0007): every state change is appended
+        # before the in-memory mutation — the log is the truth.
+        self._journal = journal
         # Stage registry (phases 7a/7c), step side. The collect half of
         # ``act`` is collect_session_results — one semantic unit split by
         # the step/collect asyncio model. Handlers take
@@ -116,10 +121,26 @@ class LoopDriver:
         """
         log = self._services.logger
 
-        # Build context on first call (after LLM error: skip rebuild)
-        if not session.context:
+        # The trigger mail is recorded on the first step, unconditionally —
+        # a resumed session already has context but still needs the mail
+        # (on-complete action expressions read it as ``msg``).
+        if session.trigger_message is None:
             session.trigger_message = mail
+
+        # Build context on first call (after LLM error: skip rebuild). The
+        # session/start event is journaled before the context lands in
+        # memory and before the first stage runs (ADR 0007).
+        if not session.context:
             context = await self._services.build_context(mail)
+            await self._journal.append(
+                session.id,
+                "session/start",
+                agent_id=self._identity.id,
+                mail_id=mail.id,
+                trigger_content=session.trigger_content,
+                carrier=session.carrier,
+                context=context,
+            )
             session.context = context
             log.debug(
                 "session_context_built", session_id=session.id, message_count=len(context)
@@ -143,6 +164,7 @@ class LoopDriver:
                     thread_id=mail.thread_id,
                 )
             )
+            await self._journal.append(session.id, "session/end", reason="max_iterations")
             session.mark_completed()
             return
 
@@ -178,6 +200,7 @@ class LoopDriver:
         # programs. WAITING sessions are excluded — act's collect half
         # advances once the round's tools are harvested.
         if session.state == SessionState.ACTIVE and session.iteration == start_iteration:
+            await self._journal.append(session.id, "iteration", value=session.iteration + 1)
             session.advance_iteration()
 
     async def _apply_outcome(
@@ -196,28 +219,51 @@ class LoopDriver:
         the save so the saved interaction sees this round's results;
         save -> on-complete -> mark_completed stays inside the session
         span, so spawn quota attribution is unchanged).
+
+        Event sourcing (ADR 0007): every session-state change is appended
+        to the journal *before* the in-memory mutation; a failed append
+        raises, leaving the session untouched (model-visible ⇒ journaled).
+        Tool results are not journaled here — the collect path already
+        covered them with tool/result + tool/collect.
         """
         if outcome.context_appends:
+            await self._journal.append(
+                session.id, "context/append", messages=outcome.context_appends
+            )
             session.context.extend(outcome.context_appends)
         if outcome.scratch_updates:
+            await self._journal.append(
+                session.id, "scratch/update", updates=outcome.scratch_updates
+            )
             session.loop_scratch.update(outcome.scratch_updates)
         if outcome.record_error:
+            await self._journal.append(session.id, "errors", value=session.error_count + 1)
             session.record_error()
         if outcome.advance_iteration:
+            await self._journal.append(session.id, "iteration", value=session.iteration + 1)
             session.advance_iteration()
         if outcome.mark_active:
+            await self._journal.append(session.id, "state", value=SessionState.ACTIVE.value)
             session.mark_active()
         for tc, result in outcome.tool_results:
             session.add_tool_result(tc, result)
         if outcome.response is not None:
+            await self._journal.append(
+                session.id, "llm/response", response=outcome.response.to_dict()
+            )
             session.set_last_llm_response(outcome.response)
             response = outcome.response
         if outcome.tool_dispatches:
             # Declared by act; the concurrency is the engine's: one
             # background task and one TOOL_EXECUTE_START event per tool.
+            await self._journal.append(
+                session.id,
+                "tool/dispatch",
+                tool_calls=[tc.to_dict() for tc in outcome.tool_dispatches],
+            )
             tasks = {}
             for tc in outcome.tool_dispatches:
-                tasks[tc.id] = asyncio.create_task(self.execute_one_tool(tc))
+                tasks[tc.id] = asyncio.create_task(self.execute_one_tool(session.id, tc))
                 await self._executor.publish(
                     EventType.TOOL_EXECUTE_START,
                     payload={
@@ -228,6 +274,7 @@ class LoopDriver:
                     source=self._identity.id,
                 )
             session.dispatch_tools(outcome.tool_dispatches, tasks)
+            await self._journal.append(session.id, "state", value=SessionState.WAITING.value)
             session.mark_waiting()
         for effect in outcome.mails:
             await self._executor.send_mail(effect)
@@ -238,6 +285,7 @@ class LoopDriver:
         if outcome.run_on_complete:
             await self._on_complete.run(session, outcome.save_interaction or "")
         if outcome.complete:
+            await self._journal.append(session.id, "session/end", reason="complete")
             session.mark_completed()
         return response
 
@@ -297,6 +345,7 @@ class LoopDriver:
                 thread_id=mail.thread_id,
             )
         )
+        await self._journal.append(session.id, "session/end", reason="until", detail=reason)
         session.mark_completed()
 
     def _stage_condition_met(self, session: AgentSession, name: str, opts: dict[str, Any]) -> bool:
@@ -341,28 +390,58 @@ class LoopDriver:
         (phase 7a). The harvest (``session.collect_completed``) is the
         engine's; the results are handed to
         :func:`tlon.agents.stages.act.act_stage_collect`, whose declared
-        Outcome the engine applies here.
+        Outcome the engine applies here. The harvest is journaled as
+        ``tool/collect`` before the stage runs (ADR 0007).
         """
         completed = session.collect_completed()
+        if completed:
+            await self._journal.append(
+                session.id, "tool/collect", tool_call_ids=[tc.id for tc, _ in completed]
+            )
         outcome = await act_stage_collect(self._services, session, completed)
         await self._apply_outcome(session, None, outcome)
 
-    async def execute_one_tool(self, tc: ToolCall) -> tuple[ToolCall, ToolResult]:
+    async def resume_collect(
+        self, session: AgentSession, completed: list[tuple[ToolCall, ToolResult]]
+    ) -> None:
+        """Feed journaled-but-uncollected tool results into the collect half.
+
+        Crash recovery (ADR 0007): a resumed session's orphan tool results
+        (real ones journaled pre-crash plus synthetic interrupted ones)
+        are collected exactly as if they had just finished — the
+        ``tool/collect`` event is journaled so the log stays a complete
+        dispatch -> result -> collect chain.
+        """
+        if completed:
+            await self._journal.append(
+                session.id, "tool/collect", tool_call_ids=[tc.id for tc, _ in completed]
+            )
+        outcome = await act_stage_collect(self._services, session, completed)
+        await self._apply_outcome(session, None, outcome)
+
+    async def execute_one_tool(self, session_id: str, tc: ToolCall) -> tuple[ToolCall, ToolResult]:
         """Execute one tool with timeout, returning (tc, result) tuple.
 
         Catches all exceptions and returns ToolResult(success=False).
-        Designed to run via asyncio.create_task in step_session.
+        Designed to run via asyncio.create_task in step_session. The
+        result is journaled (``tool/result``) as soon as it exists — the
+        log must have it even if the process dies before the collect.
         """
         timeout = self._per_tool_timeout
+        result: ToolResult
         try:
-            return tc, await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._tool_executor.execute(tc.function_name, tc.arguments),
                 timeout=timeout,
             )
         except TimeoutError:
-            return tc, ToolResult(success=False, data={}, error=f"Timeout after {timeout}s")
+            result = ToolResult(success=False, data={}, error=f"Timeout after {timeout}s")
         except Exception as e:
-            return tc, ToolResult(success=False, data={}, error=str(e))
+            result = ToolResult(success=False, data={}, error=str(e))
+        await self._journal.append(
+            session_id, "tool/result", tool_call=tc.to_dict(), result=result.to_dict()
+        )
+        return tc, result
 
     # ── Synchronous message processing (for tests) ──
 

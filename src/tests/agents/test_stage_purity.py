@@ -8,15 +8,18 @@ land before the interaction save).
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.session import AgentSession, SessionState
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import act_stage_collect
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.think import think_stage
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.base.paths import TlonPaths
 from tlon.tools.base import ToolResult
 
 
@@ -27,7 +30,7 @@ def _make_services() -> MagicMock:
     return svc
 
 
-def _make_driver(executor: MagicMock) -> LoopDriver:
+def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
     rule = MagicMock()
     rule.loop.fuel = None
     return LoopDriver(
@@ -38,6 +41,7 @@ def _make_driver(executor: MagicMock) -> LoopDriver:
         tool_executor=MagicMock(),
         per_tool_timeout=1.0,
         on_complete=MagicMock(),
+        journal=SessionJournal("agent1", TlonPaths(home=tmp_path)),
     )
 
 
@@ -97,8 +101,8 @@ class TestStagePurity:
 
 
 class TestEngineApplication:
-    async def test_response_recorded_as_last_llm_response(self) -> None:
-        driver = _make_driver(MagicMock())
+    async def test_response_recorded_as_last_llm_response(self, tmp_path: Path) -> None:
+        driver = _make_driver(MagicMock(), tmp_path)
         session = AgentSession(session_id="s1", trigger_content="trigger")
         response = LLMResponse(content="hi")
 
@@ -107,10 +111,10 @@ class TestEngineApplication:
         assert chain is response
         assert session.last_llm_response is response
 
-    async def test_tool_results_land_before_save_interaction(self) -> None:
+    async def test_tool_results_land_before_save_interaction(self, tmp_path: Path) -> None:
         executor = MagicMock()
         executor.save_interaction = AsyncMock()
-        driver = _make_driver(executor)
+        driver = _make_driver(executor, tmp_path)
         session = AgentSession(session_id="s1", trigger_content="trigger")
         tc = ToolCall(id="t1", function_name="someTool", arguments={})
         result = ToolResult(success=True, data={})
@@ -124,8 +128,8 @@ class TestEngineApplication:
             "final", session.last_llm_response, session.all_tool_results
         )
 
-    async def test_mark_active_and_iteration_applied(self) -> None:
-        driver = _make_driver(MagicMock())
+    async def test_mark_active_and_iteration_applied(self, tmp_path: Path) -> None:
+        driver = _make_driver(MagicMock(), tmp_path)
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.mark_waiting()
 
@@ -136,11 +140,11 @@ class TestEngineApplication:
         assert session.state == SessionState.ACTIVE
         assert session.iteration == 1
 
-    async def test_collect_session_results_harvests_in_engine(self) -> None:
+    async def test_collect_session_results_harvests_in_engine(self, tmp_path: Path) -> None:
         """The harvest (collect_completed) is the engine's; the stage
         receives the completed results and its Outcome is applied."""
         executor = MagicMock()
-        driver = _make_driver(executor)
+        driver = _make_driver(executor, tmp_path)
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.mark_waiting()
         tc = ToolCall(id="t1", function_name="someTool", arguments={})

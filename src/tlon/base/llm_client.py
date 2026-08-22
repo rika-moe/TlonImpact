@@ -38,6 +38,24 @@ class ToolCall:
             },
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ToolCall":
+        """Parse the to_dict (OpenAI wire) shape back into a ToolCall.
+
+        Malformed arguments JSON degrades to an empty dict, same as the
+        LLM response parser.
+        """
+        function = data.get("function") or {}
+        try:
+            arguments = json.loads(function.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        return cls(
+            id=data["id"],
+            function_name=function.get("name", ""),
+            arguments=arguments if isinstance(arguments, dict) else {},
+        )
+
 
 @dataclass
 class LLMResponse:
@@ -48,6 +66,30 @@ class LLMResponse:
     finish_reason: str = "stop"
     usage: dict[str, int] | None = None
     reasoning_content: str | None = None  # For kimi-k2.5 thinking mode
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary (session journal persistence, ADR 0007)."""
+        return {
+            "content": self.content,
+            "tool_calls": (
+                [tc.to_dict() for tc in self.tool_calls] if self.tool_calls else None
+            ),
+            "finish_reason": self.finish_reason,
+            "usage": self.usage,
+            "reasoning_content": self.reasoning_content,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LLMResponse":
+        """Parse the to_dict shape back into an LLMResponse."""
+        raw_calls = data.get("tool_calls")
+        return cls(
+            content=data.get("content"),
+            tool_calls=[ToolCall.from_dict(tc) for tc in raw_calls] if raw_calls else None,
+            finish_reason=data.get("finish_reason", "stop"),
+            usage=data.get("usage"),
+            reasoning_content=data.get("reasoning_content"),
+        )
 
 
 class LLMClient:

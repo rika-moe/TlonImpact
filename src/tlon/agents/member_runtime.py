@@ -58,6 +58,7 @@ from tlon.agents.member_spec import MemberRule, MemberSpec, member_type
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.services import StageServices, make_event_publisher
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
@@ -68,6 +69,7 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
+from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import get_current_trace
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
@@ -114,6 +116,7 @@ class CognitiveCapabilities:
     task_manager: TaskManager
     tool_executor: ToolExecutor
     team_members: list[AgentConfig]
+    tlon_paths: TlonPaths
     per_tool_timeout: float = 30.0
     registry: "AgentRegistry | None" = None
 
@@ -875,6 +878,9 @@ class MemberRuntime(Member):
         on_complete = OnCompleteRunner(
             identity, rule, self._logger, execute_action=self._execute_action
         )
+        # Session event journal (ADR 0007): one append-only log per session,
+        # shared by the driver (writes) and the scheduler (resume on boot).
+        journal = SessionJournal(self._member_id, caps.tlon_paths)
         self._loop_driver = LoopDriver(
             identity=identity,
             rule=rule,
@@ -883,6 +889,7 @@ class MemberRuntime(Member):
             tool_executor=caps.tool_executor,
             per_tool_timeout=caps.per_tool_timeout,
             on_complete=on_complete,
+            journal=journal,
         )
         self._scheduler = SessionScheduler(
             caps.config,
@@ -891,6 +898,7 @@ class MemberRuntime(Member):
             self._mark_read,
             self._reflection.check_trigger,
             self._loop_driver,
+            journal,
         )
 
     def _env(self, payload: Any) -> dict[str, Any]:

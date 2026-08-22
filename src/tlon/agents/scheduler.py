@@ -28,10 +28,13 @@ from structlog.contextvars import bound_contextvars
 
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.session import AgentSession, SessionState
+from tlon.agents.session_journal import SessionJournal, SessionReplay
 from tlon.base.config import AgentConfig
+from tlon.base.llm_client import ToolCall
 from tlon.base.logger import get_logger
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
+from tlon.tools.base import ToolResult
 
 logger = get_logger(__name__)
 
@@ -53,6 +56,7 @@ class SessionScheduler:
         mark_mail_read: MarkMailRead,
         check_reflection: CheckReflection,
         loop_driver: LoopDriver,
+        journal: SessionJournal,
     ):
         self._id = config.id
         self._config = config
@@ -61,6 +65,7 @@ class SessionScheduler:
         self._mark_mail_read = mark_mail_read
         self._check_reflection = check_reflection
         self._loop_driver = loop_driver
+        self._journal = journal
         # Live (non-completed) sessions; run() rebinds this to its working
         # dict. Read by the registry's idle monitor via the properties below.
         self._sessions: dict[str, AgentSession] = {}
@@ -133,7 +138,7 @@ class SessionScheduler:
 
         Cycles through all active sessions each pass:
         0. Check idle timeout + reflection trigger (timer-driven, no mail needed)
-        1. New messages -> create/resume sessions
+        1. New messages -> create/resume sessions (journal replay, ADR 0007)
         2. ACTIVE sessions -> one think+dispatch step
         3. WAITING sessions -> collect completed background tools
         4. COMPLETED -> cleanup
@@ -145,6 +150,9 @@ class SessionScheduler:
             logger.info("agent_main_loop_started")
             sessions: dict[str, AgentSession] = {}
             session_mails: dict[str, Mail] = {}
+            # Resumed sessions with journaled-but-uncollected tool results:
+            # fed to LoopDriver.resume_collect once, then back to normal.
+            pending_collects: dict[str, list[tuple[ToolCall, ToolResult]]] = {}
             self._sessions = sessions
             self._last_activity_at = datetime.now()
 
@@ -154,27 +162,21 @@ class SessionScheduler:
                 await self._check_reflection()
 
                 # ── 1. New mail — one session per mail ──
+                incoming: tuple[Mail, dict[str, str | None]] | None = None
                 try:
-                    mail, carrier = self._mail_queue.get_nowait()
-                    sid = f"{self._id}-{mail.id}"
-                    session = AgentSession(sid, mail.content, carrier=carrier)
-                    sessions[sid] = session
-                    session_mails[sid] = mail
-                    self._last_activity_at = datetime.now()
-                    logger.info("session_started", session_id=sid, content=mail.content)
+                    incoming = self._mail_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     # No new mail — if no sessions either, block
                     if not sessions:
                         try:
-                            mail, carrier = await asyncio.wait_for(
+                            incoming = await asyncio.wait_for(
                                 self._mail_queue.get(), timeout=0.5
                             )
-                            sid = f"{self._id}-{mail.id}"
-                            sessions[sid] = AgentSession(sid, mail.content, carrier=carrier)
-                            session_mails[sid] = mail
-                            self._last_activity_at = datetime.now()
                         except TimeoutError:
                             continue
+                if incoming is not None:
+                    mail, carrier = incoming
+                    await self._admit(mail, carrier, sessions, session_mails, pending_collects)
 
                 # ── 2 & 3. Advance sessions ──
                 for sid in list(sessions.keys()):
@@ -192,11 +194,18 @@ class SessionScheduler:
                                 (datetime.now() - session.last_active_at).total_seconds()
                             ),
                         )
-                        session.mark_completed()
+                        await self._end_session(session, "timeout")
                     else:
                         try:
                             with self._session_span(session):
-                                if session.state == SessionState.WAITING:
+                                if sid in pending_collects:
+                                    # Crash recovery (ADR 0007): harvest the
+                                    # journaled tool results once, then the
+                                    # session rejoins the normal flow.
+                                    await self._loop_driver.resume_collect(
+                                        session, pending_collects.pop(sid)
+                                    )
+                                elif session.state == SessionState.WAITING:
                                     await self._loop_driver.collect_session_results(session)
                                 elif session.state == SessionState.ACTIVE:
                                     mail = session_mails[sid]
@@ -205,14 +214,16 @@ class SessionScheduler:
                             logger.error(
                                 "session_error", session_id=sid, error=str(e), exc_info=True
                             )
-                            session.mark_completed()
+                            await self._end_session(session, "error")
 
                     # ── 4. Cleanup: the mail is processed, cursor advances ──
                     if session.is_completed:
+                        await self._ensure_session_end(session)
                         await session.cancel_pending()
                         await self._mark_mail_read(session_mails.get(sid))
                         del sessions[sid]
                         session_mails.pop(sid, None)
+                        pending_collects.pop(sid, None)
                         self._last_activity_at = datetime.now()
 
                 # Agent state derives on read (Agent.state property) — the
@@ -222,6 +233,96 @@ class SessionScheduler:
                 await asyncio.sleep(0.01 if sessions else 0.05)
 
             logger.info("agent_main_loop_stopped")
+
+    async def _admit(
+        self,
+        mail: Mail,
+        carrier: dict[str, str | None],
+        sessions: dict[str, AgentSession],
+        session_mails: dict[str, Mail],
+        pending_collects: dict[str, list[tuple[ToolCall, ToolResult]]],
+    ) -> None:
+        """Admit one mail as a session: resume from the journal when there
+        is one (ADR 0007), else create a fresh session.
+
+        A log with ``session/end`` means a previous process already ran
+        this mail to completion: only the read cursor advances, the
+        session is never re-run. A log with orphaned tool dispatches
+        resumes with a one-shot ``resume_collect`` before the normal
+        step/collect flow.
+        """
+        sid = f"{self._id}-{mail.id}"
+        replay = await self._journal.resume(sid)
+        if replay is not None and replay.completed:
+            logger.info(
+                "session_journal_completed", session_id=sid, end_reason=replay.end_reason
+            )
+            await self._mark_mail_read(mail)
+            return
+        if replay is None:
+            sessions[sid] = AgentSession(sid, mail.content, carrier=carrier)
+            logger.info("session_started", session_id=sid, content=mail.content)
+        else:
+            sessions[sid] = self._restore_session(replay, mail, carrier)
+            logger.info(
+                "session_resumed",
+                session_id=sid,
+                iteration=replay.iteration,
+                pending_collect=len(replay.pending_collect),
+            )
+            if replay.pending_collect:
+                pending_collects[sid] = replay.pending_collect
+        session_mails[sid] = mail
+        self._last_activity_at = datetime.now()
+
+    def _restore_session(
+        self, replay: SessionReplay, mail: Mail, carrier: dict[str, str | None]
+    ) -> AgentSession:
+        """Rebuild the in-memory session from a journal replay.
+
+        Data fields only — side effects (mails, interaction saves,
+        on-complete actions) are never re-executed (ADR 0007). The
+        trigger mail and carrier are re-attached from the live delivery.
+        """
+        session = AgentSession(
+            replay.session_id,
+            replay.trigger_content,
+            carrier=replay.carrier or carrier,
+        )
+        session.context = replay.context
+        session._iteration = replay.iteration
+        session._error_count = replay.error_count
+        session._last_llm_response = replay.last_llm_response
+        session._all_tool_results = replay.all_tool_results
+        session.loop_scratch = replay.loop_scratch
+        session.state = replay.state
+        session.trigger_message = mail
+        return session
+
+    async def _end_session(self, session: AgentSession, reason: str) -> None:
+        """Journal ``session/end``, then mark the session completed.
+
+        A journal failure must not wedge the session: the reap proceeds
+        and the session is re-run on the next boot.
+        """
+        try:
+            await self._journal.append(session.id, "session/end", reason=reason)
+        except Exception as e:
+            logger.error("session_journal_end_failed", session_id=session.id, error=str(e))
+        session.mark_completed()
+
+    async def _ensure_session_end(self, session: AgentSession) -> None:
+        """Backstop: every reaped session must carry a ``session/end``.
+
+        The loop driver journals the end on its own completion paths;
+        this covers any completion that bypassed them. Idempotent — a
+        log that already ends is left alone.
+        """
+        try:
+            if await self._journal.end_reason(session.id) is None:
+                await self._journal.append(session.id, "session/end", reason="complete")
+        except Exception as e:
+            logger.error("session_journal_end_failed", session_id=session.id, error=str(e))
 
     def _is_session_timed_out(self, session: AgentSession) -> bool:
         """A session idle beyond the configured timeout is considered stuck."""

@@ -52,7 +52,7 @@
 统一解释器的边界同样重要——以下职责被刻意排除在外：
 
 - **不决定自己或他人的生死**。成员的启动、停止、唤醒全部以请求事件表达，执行在注册表；运行时甚至不知道自己是不是 lazy。
-- **不持久化会话**。`AgentSession` 是易失的，进程重启即蒸发；持久性完全由邮箱（未读集合）与记忆（交互/摘要/事实）承担。会话只是"正在处理"的投影，不是需要抢救的状态。
+- ~~**不持久化会话**。`AgentSession` 是易失的，进程重启即蒸发；持久性完全由邮箱（未读集合）与记忆（交互/摘要/事实）承担。会话只是"正在处理"的投影，不是需要抢救的状态。~~ 已被 [ADR 0007](../decisions/0007-session-event-sourcing.md) 取代：session 状态的唯一真相是 append-only 事件日志（见下文「Session 事件溯源」），内存中的 `AgentSession` 仍是易失投影，但可重放恢复。
 - **不做投递与寻址**。发出的邮件只到 `MAIL_NEW` 事件为止；地址解析、落盘、退信是邮件层的职责（见 [docs/design/mail.md](./mail.md)）。
 - **不保管第二份行为事实**。除 spec 的派生缓存外，运行时不维护任何需要与 spec 对账的状态。
 
@@ -87,6 +87,12 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、入队）
 `AgentSession` 是一封邮件触发的完整工作上下文：对话 context、迭代与错误计数、响应链、工具结果、后台任务句柄，以及 `loop_scratch`——stage 间共享的会话内草稿板（plan 文本、critique 结论等）。草稿板由引擎持有，DSL 只能经 stage 条件谓词读它：它是引擎内部状态，不是程序可写的内容。
 
 会话的粒度是**一封邮件**而不是一个线程：会话 id 由邮件 id 派生（`{agent_id}-{mail.id}`）。邮件是系统里天然的工作单元——持久、有唯一 id、有明确的处理完成时点（标读）；线程归由由邮件头（`in_reply_to` / `thread_id`）在内容层表达，会话结构不必承担它。这让多封邮件天然并行成多个会话，而"同一话题的多轮往来"由 context builder 读邮箱历史还原，不需要长生命周期会话。
+
+### Session 事件溯源
+
+会话状态的**唯一真相**是 append-only 事件日志（ADR 0007，[agents/session_journal.py](../../src/tlon/agents/session_journal.py) 的 `SessionJournal`）：每个 session 一个 JSONL 文件（`~/.tlon/{agent_id}/sessions/{session_id}.jsonl`），每行一个 `{seq, ts, type, ...payload}` 事件，覆盖 session 从生到死的全部状态变更——初始 context、每次 context 追加、scratch 写入、迭代/错误计数、LLM 响应、工具 dispatch/result/collect、状态迁移、终止原因。
+
+引擎遵守一条不变式：**模型可见 ⇒ 已入日志**。context 只有两个写入点（首次构建、`_apply_outcome`），都先写日志成功再改内存；写失败抛异常、不动内存。因此进程重启后调度器可以纯重放恢复会话：邮件再次进入调度时先查日志——含 `session/end` 的只推进收件箱 cursor 不重跑；有孤儿工具 dispatch 的（已落盘的结果保留，没结果的补一条合成 interrupted 结果并自愈进日志）经 `resume_collect` 续跑；无日志才新建。副作用（发信、记忆保存、on-complete 动作）绝不重演。journal 只在引擎层（LoopDriver / SessionScheduler / 装配点）出现，stage 纯度边界不变。
 
 ### LoopDriver：循环的所有权在引擎
 

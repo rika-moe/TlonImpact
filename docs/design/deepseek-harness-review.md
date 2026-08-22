@@ -10,13 +10,15 @@
 
 ## 强烈契合，建议优先借鉴
 
-### 1. Session 事件溯源 +「模型可见 ⇒ 已入日志」不变式
+### 1. Session 事件溯源 +「模型可见 ⇒ 已入日志」不变式 ✅ 已实施（2026-08-22）
 
 dsh 做法（`docs/subsystems/session.md`）：session 是 append-only `SessionEvent` 日志，是**唯一真相**；模型历史由 `deriveMessages()` 从日志推导，从不单独存储；replay = 重推导；崩溃恢复不截断，而是给孤儿 turn 补一个合成的 `turn/end{reason:'interrupted'}`；「模型可见的内容必定已入日志」有 runtime invariant 断言把关。token 级的 `assistant/chunk` 也落日志，回放保真。
 
 Tlon 现状：邮件是磁盘事实（mailbox 即队列，先持久化后处理），但认知循环的 `AgentSession` 是内存态，进程重启 session 即蒸发；traces 落盘是观测而非真相源。
 
 借鉴形态：`AgentSession` 的 think/plan/act/critique/revise 产出与工具结果落 JSONL 事件日志，重启后重放恢复——与「行为即数据」哲学同构：**认知过程也是数据**。
+
+**实施记录**：[ADR 0007](../decisions/0007-session-event-sourcing.md) + [agents/session_journal.py](../../src/tlon/agents/session_journal.py)（append/resume/derive_context，孤儿 dispatch 自愈为合成 interrupted 结果）；`LoopDriver` 所有状态变更先落日志再改内存（`session/start` 于首个 stage 前，`tool/result` 在后台 task 内即写），`SessionScheduler` 按日志恢复（completed 只标读、孤儿工具走 `resume_collect`、超时/异常补 `session/end`）；装配经 `CognitiveCapabilities.tlon_paths` 注入。token 级 chunk 未落日志（Tlon 的 LLM 调用非流式，无 chunk 可记）。测试见 [src/tests/agents/test_session_journal.py](../../src/tests/agents/test_session_journal.py)（roundtrip / 坏行容忍 / 崩溃恢复端到端 / 调度准入门）。
 
 ### 2. 超长工具输出 spill 落盘 + locator
 
