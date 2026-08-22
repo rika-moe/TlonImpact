@@ -19,6 +19,32 @@ from tlon.base.tracing.trace_context import start_span
 logger = get_logger(__name__)
 
 
+class ContextWindowExceededError(Exception):
+    """The provider rejected the request because the context is too long.
+
+    Raised instead of retrying (ADR 0008): a context-length 4xx can never
+    succeed on retry — the engine (LoopDriver) catches it, force-compacts
+    the session context, and retries the stage once.
+    """
+
+
+#: Substrings (case-insensitive) that mark a provider error as a
+#: context-length rejection, matched against the error code and message.
+_CONTEXT_LENGTH_MARKERS = (
+    "context_length",
+    "context length",
+    "maximum context",
+    "context window",
+)
+
+
+def _is_context_length_error(error: openai.BadRequestError) -> bool:
+    """True when the 4xx is a context-length rejection (ADR 0008)."""
+    code = getattr(error, "code", None)
+    text = f"{code or ''} {error}".lower()
+    return any(marker in text for marker in _CONTEXT_LENGTH_MARKERS)
+
+
 @dataclass
 class ToolCall:
     """A tool call from LLM."""
@@ -267,6 +293,23 @@ class LLMClient:
                 logger.warning(
                     "llm_retry",
                     reason="connection_error",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    error=str(e),
+                )
+
+            except openai.BadRequestError as e:
+                # Context-length 4xx: retrying can never succeed — surface it
+                # as ContextWindowExceededError so the engine force-compacts
+                # and retries once (ADR 0008). Other 4xx keep the existing
+                # retry policy (must come before APIError, its parent class).
+                if _is_context_length_error(e):
+                    logger.error("llm_context_window_exceeded", error=str(e))
+                    raise ContextWindowExceededError(str(e)) from e
+                last_error = e
+                logger.warning(
+                    "llm_retry",
+                    reason="api_error",
                     attempt=attempt + 1,
                     max_retries=self.max_retries,
                     error=str(e),

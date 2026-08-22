@@ -5,7 +5,7 @@ from typing import Any
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
-from tlon.base.llm_client import LLMResponse
+from tlon.base.llm_client import ContextWindowExceededError, LLMResponse
 
 
 async def critique_stage(
@@ -37,6 +37,10 @@ async def critique_stage(
             ],
             span="agent.critique",
         )
+    except ContextWindowExceededError:
+        # ADR 0008: not a soft failure — the engine force-compacts and
+        # retries this stage once.
+        raise
     except Exception as e:
         svc.logger.warning(
             "loop_stage_failed", session_id=session.id, stage="critique", error=str(e)

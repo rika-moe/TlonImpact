@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.edn import loads
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
@@ -263,6 +264,8 @@ def _make_driver(
         on_complete=on_complete,
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
+        # Default context window: the threshold is never crossed here.
+        pressure=ContextPressure(MagicMock(), journal, 262144),
     )
     return driver, journal, executor, services
 

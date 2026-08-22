@@ -94,6 +94,10 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、入队）
 
 引擎遵守一条不变式：**模型可见 ⇒ 已入日志**。context 只有两个写入点（首次构建、`_apply_outcome`），都先写日志成功再改内存；写失败抛异常、不动内存。因此进程重启后调度器可以纯重放恢复会话：邮件再次进入调度时先查日志——含 `session/end` 的只推进收件箱 cursor 不重跑；有孤儿工具 dispatch 的（已落盘的结果保留，没结果的补一条合成 interrupted 结果并自愈进日志）经 `resume_collect` 续跑；无日志才新建。副作用（发信、记忆保存、on-complete 动作）绝不重演。journal 只在引擎层（LoopDriver / SessionScheduler / 装配点）出现，stage 纯度边界不变。
 
+### 上下文压力管理
+
+context 是模型可见的视图，可以在不动日志真相的前提下被压缩（ADR 0008，[agents/context_pressure.py](../../src/tlon/agents/context_pressure.py) 的 `ContextPressure`）。`LoopDriver.step_session` 在每个 step 的 stage 向量运行前做 token 估算（CJK 1 token/字、其余 4 字符/token 的字符启发式），超过阈值（`max(context_window - 40_000, 0.8w)`，`LLMConfig.context_window` 可配）时按梯度减压：先把锚点（初始构建块，`session.anchor_len`）之后、保留窗口（最近 20 条，不拆 tool_call/tool 配对）之外的 tool 结果原位换成占位符（prune，零 LLM 成本）；仍超才把中段交给 LLM 摘要成一条 `[前文摘要]` 消息（running summary 滚动折叠，摘要失败回退占位）。每次压缩先落 `context/compact` 事件（携带压缩后全量）再改内存，重放时整体替换、与运行态逐字节一致。紧急路径：`llm_client` 把 context-length 4xx 识别为 `ContextWindowExceededError` 不重试直接抛，driver 捕获后强制完整梯度压缩（窗口收紧到 10 条）并重试该 stage 一次。
+
 ### LoopDriver：循环的所有权在引擎
 
 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver` 把 loop 规则（`MemberLoop`）解释为逐步执行。关键边界：

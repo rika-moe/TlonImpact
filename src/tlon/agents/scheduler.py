@@ -290,6 +290,7 @@ class SessionScheduler:
             carrier=replay.carrier or carrier,
         )
         session.context = replay.context
+        session.anchor_len = replay.anchor_len
         session._iteration = replay.iteration
         session._error_count = replay.error_count
         session._last_llm_response = replay.last_llm_response

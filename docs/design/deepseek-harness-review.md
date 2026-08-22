@@ -30,13 +30,15 @@ Tlon 现状：shell/filesystem 工具输出直接进上下文，是上下文爆�
 
 **实施记录**：`src/tlon/tools/spill.py` 的 `ToolSpill`（阈值 `SPILL_THRESHOLD_CHARS` = 16k 字符，超出即把整个 `ToolResult.data` 以缩进 JSON 写到 `workspace/spills/{session_id}/{tool_call_id}.json`——workspace 经 bind mount 即容器工作目录，模型可用 `readFile` 的 offset/limit 分页读回），模型只见 locator（路径/大小/500 字符 preview/检索提示）。拦截点在引擎层 `LoopDriver.execute_one_tool`，先于 `tool/result` 落 session 日志——日志与上下文持有同一 locator，重放保真（ADR 0007 的不变式不被破坏）。写盘失败回退原结果（上下文大总比丢结果强）。
 
-### 3. 上下文压力管理成 seam
+### 3. 上下文压力管理成 seam ✅ 已实施（2026-08-22）
 
 dsh 做法（`docs/subsystems/compaction.md`）：`ctx.tokenMeter` 单例估算；压力触发点在 `agent/pre-step`；先做可选 tool-result pruning 再选摘要范围；真溢出恢复走 `agent/request-error`（surface 替换、代际前进才开新 retry turn）；摘要经带 `surfaceOp` 的 `user/message` 落日志（满足第 1 条的不变式）。
 
 Tlon 现状：有记忆摘要器（`memory/summarizer.py`），但认知循环内的上下文压力管理不成体系。
 
 借鉴形态：在 think stage 前加压力检查点；pruning 优先于摘要；摘要事件落 session 日志（依赖第 1 条）。
+
+**实施记录**：[ADR 0008](../decisions/0008-context-pressure.md) + [agents/context_pressure.py](../../src/tlon/agents/context_pressure.py)（`estimate_tokens` 字符启发式：CJK 1 token/字、其余 4 字符/token，阈值 `max(context_window - 40_000, 0.8w)`，`LLMConfig.context_window` 持久化可配）；两级减压——prune（锚点后、保留窗口前的 tool 结果原位换占位符，配对不破，零 LLM 成本）→ summary（中段摘要成一条 `[前文摘要]` user 消息，running summary 滚动折叠，摘要器失败回退占位）；锚点 = `session.anchor_len`（初始构建块，随 `session/start` 落日志、重放回填），永不压缩；每次压缩先落 `context/compact`（携带压缩后全量 + tokens_before/after）再改内存，重放整体替换、与运行态逐字节一致；紧急路径——`llm_client` 把 context-length 4xx 识别为 `ContextWindowExceededError` 不重试直接抛，`LoopDriver.step_session` 捕获后 force compact（窗口收紧到 10 条）并重试该 stage 一次。压缩逻辑只在引擎层，stage 纯度边界不变。测试见 [src/tests/agents/test_context_pressure.py](../../src/tests/agents/test_context_pressure.py)。
 
 ### 4. 文档从源码生成 + CI 保鲜门 ✅ 已实施（2026-08-22）
 

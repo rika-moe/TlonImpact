@@ -37,7 +37,7 @@
 ### `llm`
 
 <!-- BEGIN GENERATED: agent-yaml-fields-llm -->
-`LLMConfig` 字段（9 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`LLMConfig` 字段（10 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -45,6 +45,7 @@
 | `temperature` | `float` | 1.0 |  |
 | `max_tokens` | `int` | 4096 |  |
 | `top_p` | `float` | 0.9 |  |
+| `context_window` | `int` | 262144 |  |
 | `base_url` | `str` | "" | 运行时字段，不进 YAML |
 | `auth_token` | `str` | "" | 运行时字段，不进 YAML |
 | `max_retries` | `int` | 3 | 运行时字段，不进 YAML |

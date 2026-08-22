@@ -73,6 +73,9 @@ class LLMConfig(BaseModel):
     temperature: float = 1.0
     max_tokens: int = 4096
     top_p: float = 0.9
+    # Model context window (tokens); drives context-pressure management
+    # (ADR 0008). Persisted so each agent can be tuned per model.
+    context_window: int = 262144
 
     # Runtime-only fields (not persisted to YAML)
     base_url: str = Field(default="", exclude=True)

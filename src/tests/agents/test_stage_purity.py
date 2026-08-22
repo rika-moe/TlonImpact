@@ -11,6 +11,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
@@ -34,6 +35,7 @@ def _make_services() -> MagicMock:
 def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
     rule = MagicMock()
     rule.loop.fuel = None
+    journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     return LoopDriver(
         identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon"),
         rule=rule,
@@ -42,8 +44,10 @@ def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
         tool_executor=MagicMock(),
         per_tool_timeout=1.0,
         on_complete=MagicMock(),
-        journal=SessionJournal("agent1", TlonPaths(home=tmp_path)),
+        journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
+        # Default context window: the threshold is never crossed here.
+        pressure=ContextPressure(MagicMock(), journal, 262144),
     )
 
 

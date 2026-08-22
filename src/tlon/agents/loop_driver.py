@@ -33,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
+from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.eval import (
     DEFAULT_FUEL,
     LOOP_BUILTINS,
@@ -55,7 +56,7 @@ from tlon.agents.stages.think import think_stage
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.events.event import EventType
-from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
@@ -77,6 +78,7 @@ class LoopDriver:
         on_complete: OnCompleteRunner,
         journal: SessionJournal,
         spill: ToolSpill,
+        pressure: ContextPressure,
     ):
         self._identity = identity
         # A loop driver serves a cognitive agent — its rule carries a loop.
@@ -99,6 +101,9 @@ class LoopDriver:
         # Oversized tool outputs spill to the workspace; the model (and the
         # journal) only ever see the locator (harness-review item 2).
         self._spill = spill
+        # Context pressure relief (ADR 0008): checked before each step and
+        # forced after a context-length 4xx.
+        self._pressure = pressure
         # Stage registry (phases 7a/7c), step side. The collect half of
         # ``act`` is collect_session_results — one semantic unit split by
         # the step/collect asyncio model. Handlers take
@@ -147,9 +152,17 @@ class LoopDriver:
                 context=context,
             )
             session.context = context
+            # The initial build block is the compaction anchor (ADR 0008) —
+            # never compressed, never dropped.
+            session.anchor_len = len(context)
             log.debug(
                 "session_context_built", session_id=session.id, message_count=len(context)
             )
+
+        # Context pressure check (ADR 0008): prune/summarize the
+        # model-facing view before this step's LLM calls when the estimated
+        # size crosses the threshold. Journaled before mutating (ADR 0007).
+        await self._pressure.maybe_compact(session)
 
         loop = self._loop
 
@@ -194,7 +207,25 @@ class LoopDriver:
             if not self._stage_condition_met(session, name, opts):
                 continue
             log.debug("loop_stage_start", session_id=session.id, stage=name)
-            outcome = await handler(session, response, opts)
+            try:
+                outcome = await handler(session, response, opts)
+            except ContextWindowExceededError:
+                # Emergency path (ADR 0008): the stage's LLM call was
+                # rejected for context length. Stages re-raise this error
+                # instead of folding it into their record_error fallback so
+                # the engine can act on it: force one full compaction
+                # (tightened keep window) and retry the stage exactly once.
+                # A second failure is NOT caught here — it propagates to
+                # the scheduler's session_error handler, which journals
+                # session/end (the pre-existing fatal path for a stage that
+                # cannot produce an outcome at all).
+                log.warning(
+                    "loop_stage_context_window_exceeded",
+                    session_id=session.id,
+                    stage=name,
+                )
+                await self._pressure.maybe_compact(session, force=True)
+                outcome = await handler(session, response, opts)
             response = await self._apply_outcome(session, response, outcome)
             if name == "think" and outcome.response is None:
                 # think failed: error recorded; until terminates the

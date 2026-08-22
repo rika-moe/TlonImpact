@@ -9,14 +9,18 @@ session by replaying the log.
 
 One event per line: ``{seq, ts, type, ...payload}`` — ``seq`` is a
 per-file increasing sequence number, ``ts`` an ISO 8601 timestamp. Event
-types: ``session/start``, ``context/append``, ``scratch/update``,
-``iteration``, ``errors``, ``llm/response``, ``tool/dispatch``,
-``tool/result``, ``tool/collect``, ``state``, ``session/end``.
+types: ``session/start``, ``context/append``, ``context/compact``,
+``scratch/update``, ``iteration``, ``errors``, ``llm/response``,
+``tool/dispatch``, ``tool/result``, ``tool/collect``, ``state``,
+``session/end``.
 
 Replay rules:
 
 - context = ``session/start.context`` + every ``context/append.messages``
-  in order.
+  in order; a ``context/compact`` event (ADR 0008) replaces the context
+  accumulated so far with the full post-compaction snapshot it carries.
+- ``anchor_len`` (ADR 0008) = the length of ``session/start.context`` —
+  the compaction anchor, restored onto the session by the scheduler.
 - ``_all_tool_results`` = the ``tool/result`` events whose ids appear in
   some ``tool/collect`` (in collect order).
 - Orphaned dispatches (a ``tool/dispatch`` with no matching
@@ -98,6 +102,7 @@ class SessionReplay:
     trigger_content: str
     carrier: dict[str, str | None] | None
     context: list[dict[str, Any]] = field(default_factory=list)
+    anchor_len: int = 0
     iteration: int = 0
     error_count: int = 0
     last_llm_response: LLMResponse | None = None
@@ -200,6 +205,7 @@ class SessionJournal:
 
         start: dict[str, Any] | None = None
         context: list[dict[str, Any]] = []
+        anchor_len = 0
         scratch: dict[str, Any] = {}
         iteration = 0
         error_count = 0
@@ -218,11 +224,17 @@ class SessionJournal:
                     continue  # garbage before the start event
                 start = event
                 context = list(event.get("context") or [])
+                anchor_len = len(context)
                 continue
             if event_type == "session/start":
                 continue  # a second start event is ignored; the first wins
             if event_type == "context/append":
                 context.extend(event.get("messages") or [])
+            elif event_type == "context/compact":
+                # ADR 0008: full replacement — the event carries the whole
+                # post-compaction context, so replay stays in the compacted
+                # state, byte-identical with the runtime.
+                context = list(event.get("context") or [])
             elif event_type == "scratch/update":
                 scratch.update(event.get("updates") or {})
             elif event_type == "iteration":
@@ -305,6 +317,7 @@ class SessionJournal:
             trigger_content=str(start.get("trigger_content") or ""),
             carrier=start.get("carrier"),
             context=context,
+            anchor_len=anchor_len,
             iteration=iteration,
             error_count=error_count,
             last_llm_response=last_response,
@@ -325,6 +338,8 @@ class SessionJournal:
                 context = list(event.get("context") or [])
             elif event_type == "context/append":
                 context.extend(event.get("messages") or [])
+            elif event_type == "context/compact":
+                context = list(event.get("context") or [])
         return context
 
     async def end_reason(self, session_id: str) -> str | None:

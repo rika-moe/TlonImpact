@@ -21,6 +21,11 @@ class AgentSession:
     def __init__(self, session_id: str, trigger_content: str, carrier: dict[str, str | None] | None = None):
         self.id = session_id
         self.context: list[dict[str, Any]] = []
+        # Length of the initial context block (knowledge + mail history +
+        # trigger mail, journaled with session/start): the compaction
+        # anchor — messages before it are never compressed (ADR 0008).
+        # Restored from the journal on resume; 0 until the first build.
+        self.anchor_len = 0
         self.created_at = datetime.now()
         self.last_active_at = datetime.now()
         self.state = SessionState.ACTIVE

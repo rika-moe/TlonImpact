@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 from structlog.contextvars import bound_contextvars, get_contextvars
 
 from tlon.agents.context_builder import ContextBuilder
+from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.eval import (
     DEFAULT_FUEL,
     DEFAULT_MAX_DEPTH,
@@ -892,6 +893,11 @@ class MemberRuntime(Member):
             on_complete=on_complete,
             journal=journal,
             spill=ToolSpill(caps.tlon_paths, self._member_id),
+            # Context pressure relief (ADR 0008): same journal, the
+            # model's context window from the agent's LLM config.
+            pressure=ContextPressure(
+                caps.llm_client, journal, caps.config.llm.context_window
+            ),
         )
         self._scheduler = SessionScheduler(
             caps.config,
