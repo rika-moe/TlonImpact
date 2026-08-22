@@ -126,21 +126,19 @@ agent:
 {
   "version": "1.0",
   "agent_id": "su-wanqing",
-  "working": { "max_items": 10, "summary_window": 10 },
+  "summary": { "window": 3 },
   "episodic": { "max_summaries": 20, "max_facts": 50 },
   "context": {
     "max_summaries_in_context": 5,
-    "max_facts_in_context": 10,
-    "max_working_in_context": 5
+    "max_facts_in_context": 10
   },
-  "triggers": { "idle_timeout_minutes": 30 },
   "reflection": { "min_interactions": 5 }
 }
 ```
 
-各段与 `MemoryConfig` 字段对应：`working`（工作记忆）、`episodic`（情景记忆上限）、`context`（注入上下文的块数）、`triggers.idle_timeout_minutes`（空闲自动摘要）、`reflection.min_interactions`（自驱动记忆审计的最小交互数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。
+各段与 `MemoryConfig` 字段对应：`summary.window`（批量摘要窗口——已完成且未被任何 Summary 引用的 session 数达到该值即触发批量压缩，ADR 0009）、`episodic`（情景记忆上限）、`context`（注入上下文的块数）、`reflection.min_interactions`（自驱动记忆审计的最小完成会话数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
 
-> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`，随后把 `working`/`episodic` 上限应用到两个 store——生产装配（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
+> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`，随后把 `episodic` 上限应用到 store——生产装配（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
 
 ## 4. 环境变量
 
@@ -200,11 +198,11 @@ agent:
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
 │   ├── memory/
 │   │   ├── config.json               # 记忆调参
-│   │   ├── working/
-│   │   │   └── interactions.jsonl
 │   │   └── episodic/
 │   │       ├── summaries.jsonl
 │   │       └── facts.jsonl
+│   ├── sessions/                     # session 事件日志（ADR 0007/0009：交互唯一真相）
+│   │   └── {session_id}.jsonl
 │   ├── tasks.jsonl                   # TaskManager 持久化
 │   ├── workspace/                    # 沙箱工作目录
 │   └── mail/

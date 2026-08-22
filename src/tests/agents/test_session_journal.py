@@ -39,7 +39,6 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -241,7 +240,6 @@ def _make_driver(
     executor = MagicMock()
     executor.send_mail = AsyncMock()
     executor.publish = AsyncMock()
-    executor.save_interaction = AsyncMock()
     executor.mark_mail_read = AsyncMock()
 
     tool_executor = MagicMock()
@@ -315,9 +313,8 @@ class TestDriverJournaling:
         assert await journal.derive_context(session.id) == session.context
         assert await journal.end_reason(session.id) == "complete"
         executor.send_mail.assert_awaited_once()
-        executor.save_interaction.assert_awaited_once_with(
-            "reply", session.last_llm_response, session.all_tool_results
-        )
+        # ADR 0009: no interaction save — the journal is the truth; the
+        # batch summary trigger reads it at the scheduler's reap point.
 
     async def test_journal_write_failure_leaves_memory_untouched(
         self, tmp_path: Path
@@ -449,9 +446,6 @@ class TestCrashRecovery:
         assert executed.count("someTool") == 1  # replayed, not re-run
         assert executed.count("sendEmail") == 1
         executor.send_mail.assert_awaited_once()
-        executor.save_interaction.assert_awaited_once_with(
-            "final", resumed.last_llm_response, resumed.all_tool_results
-        )
         # The healed log replays cleanly end to end.
         final = await journal.resume(sid)
         assert final is not None and final.completed and final.end_reason == "complete"
@@ -472,6 +466,7 @@ def _make_scheduler(
         session_span=lambda session: contextlib.nullcontext(),
         mark_mail_read=mark_read,
         check_reflection=AsyncMock(),
+        note_interaction=MagicMock(),
         loop_driver=loop_driver or MagicMock(),
         journal=journal,
     )

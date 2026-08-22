@@ -51,7 +51,6 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -101,7 +100,7 @@ async def _compact_events(
 ) -> list[dict[str, Any]]:
     return [
         event
-        for event in await journal._read_events(session_id)
+        for event in await journal.read_events(session_id)
         if event.get("type") == "context/compact"
     ]
 
@@ -375,6 +374,7 @@ class TestReplay:
             session_span=lambda session: contextlib.nullcontext(),
             mark_mail_read=AsyncMock(),
             check_reflection=AsyncMock(),
+            note_interaction=MagicMock(),
             loop_driver=MagicMock(),
             journal=journal,
         )
@@ -464,7 +464,6 @@ class TestDriverEmergency:
         executor = MagicMock()
         executor.send_mail = AsyncMock()
         executor.publish = AsyncMock()
-        executor.save_interaction = AsyncMock()
 
         journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
         driver = LoopDriver(

@@ -11,16 +11,15 @@ import aiofiles
 
 from tlon.base.logger import get_logger
 
-from .base import MemoryStore
-
 logger = get_logger(__name__)
 
 
-class EpisodicMemoryStore(MemoryStore):
+class EpisodicMemoryStore:
     """Episodic Memory store for summaries and facts.
 
     Stores long-term memory in two categories:
-    - Summaries: Session summaries generated from working memory
+    - Summaries: Batch summaries generated from completed sessions'
+      journals (ADR 0009)
     - Facts: Key facts extracted from interactions
 
     Storage format: JSON Lines (JSONL), one item per line
@@ -51,7 +50,7 @@ class EpisodicMemoryStore(MemoryStore):
             max_summaries: Maximum summaries to keep (default: 20)
             max_facts: Maximum facts to keep (default: 50)
         """
-        super().__init__(agent_id)
+        self.agent_id = agent_id
         self.episodic_dir = storage_path / "episodic"
         self.summaries_file = self.episodic_dir / "summaries.jsonl"
         self.facts_file = self.episodic_dir / "facts.jsonl"
@@ -343,94 +342,6 @@ class EpisodicMemoryStore(MemoryStore):
                     await self._persist_facts()
                     return True
             return False
-
-    # ===== Base Class Implementation =====
-
-    async def add(self, item: dict[str, Any]) -> str:
-        """Add item - delegates to appropriate method based on type.
-
-        Args:
-            item: Must have '_type' field: 'summary' or 'fact'
-        """
-        item_type = item.get("_type", "summary")
-        if item_type == "fact":
-            return await self.add_fact(item)
-        else:
-            return await self.add_summary(item)
-
-    async def get(self, item_id: str) -> dict[str, Any] | None:
-        """Get item by ID - checks both summaries and facts."""
-        result = await self.get_summary(item_id)
-        if result:
-            return result
-        return await self.get_fact(item_id)
-
-    async def get_recent(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Get recent items - returns summaries by default."""
-        return await self.get_recent_summaries(limit)
-
-    async def delete(self, item_id: str) -> bool:
-        """Delete item by ID."""
-        if await self.delete_summary(item_id):
-            return True
-        return await self.delete_fact(item_id)
-
-    async def clear(self) -> None:
-        """Clear all episodic memory."""
-        async with self._lock:
-            self._summaries_cache = []
-            self._facts_cache = []
-            if self.summaries_file.exists():
-                try:
-                    self.summaries_file.unlink()
-                except Exception as e:
-                    logger.error("summaries_file_clear_failed", error=str(e), exc_info=True)
-            if self.facts_file.exists():
-                try:
-                    self.facts_file.unlink()
-                except Exception as e:
-                    logger.error("facts_file_clear_failed", error=str(e), exc_info=True)
-
-    async def clear_summaries(self) -> None:
-        """Clear only summaries."""
-        async with self._lock:
-            self._summaries_cache = []
-            if self.summaries_file.exists():
-                try:
-                    self.summaries_file.unlink()
-                except Exception as e:
-                    logger.error("summaries_file_clear_failed", error=str(e), exc_info=True)
-
-    async def clear_facts(self) -> None:
-        """Clear only facts."""
-        async with self._lock:
-            self._facts_cache = []
-            if self.facts_file.exists():
-                try:
-                    self.facts_file.unlink()
-                except Exception as e:
-                    logger.error("facts_file_clear_failed", error=str(e), exc_info=True)
-
-    async def count(self) -> int:
-        """Get total count of summaries and facts."""
-        if not self._loaded:
-            await self.load()
-        async with self._lock:
-            return len(self._summaries_cache) + len(self._facts_cache)
-
-    async def count_summaries(self) -> int:
-        """Get count of summaries."""
-        if not self._loaded:
-            await self.load()
-        async with self._lock:
-            return len(self._summaries_cache)
-
-    async def count_facts(self) -> int:
-        """Get count of facts."""
-        if not self._loaded:
-            await self.load()
-        async with self._lock:
-            return len(self._facts_cache)
 
     # ===== Search =====
 

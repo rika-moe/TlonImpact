@@ -89,7 +89,6 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -120,7 +119,6 @@ COGNITIVE_LOOP_ACTIONS = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(while [i 0] (< i 3) (emit "done" ["sink@tlon.internal"]) (recur (inc i)))]}]}
 """
@@ -136,7 +134,6 @@ COGNITIVE_EXHAUSTED = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(while [i 0] (< i 1000) (emit "never" ["sink@tlon.internal"]) (recur (inc i)))]}]}
 """
@@ -151,7 +148,6 @@ COGNITIVE_WITH_ACTIONS = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(emit "done" ["sink@tlon.internal"])]}]}
 """
@@ -173,7 +169,6 @@ MIXED_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -198,9 +193,6 @@ class _MemoryStub:
     config: Any = None
 
     async def load(self) -> None: ...
-
-    async def check_idle_timeout(self) -> Any:
-        return None
 
 
 class _TaskStub:

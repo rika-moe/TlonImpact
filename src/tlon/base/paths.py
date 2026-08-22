@@ -15,8 +15,6 @@ Layout:
     │   │   └── agent.yaml
     │   ├── memory/
     │   │   ├── config.json
-    │   │   ├── working/
-    │   │   │   └── interactions.jsonl
     │   │   └── episodic/
     │   │       ├── summaries.jsonl
     │   │       └── facts.jsonl

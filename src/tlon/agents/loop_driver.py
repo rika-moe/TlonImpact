@@ -250,10 +250,9 @@ class LoopDriver:
         chain and is recorded as the session's last LLM response.
         Application order: context -> scratch -> counters/state ->
         tool results -> response chain -> tool dispatch -> mails ->
-        interaction save -> on-complete actions -> completion —
-        equivalent to the pre-C2 interleaving (tool results land before
-        the save so the saved interaction sees this round's results;
-        save -> on-complete -> mark_completed stays inside the session
+        on-complete actions -> completion —
+        equivalent to the pre-C2 interleaving (on-complete ->
+        mark_completed stays inside the session
         span, so spawn quota attribution is unchanged).
 
         Event sourcing (ADR 0007): every session-state change is appended
@@ -314,12 +313,8 @@ class LoopDriver:
             session.mark_waiting()
         for effect in outcome.mails:
             await self._executor.send_mail(effect)
-        if outcome.save_interaction is not None:
-            await self._executor.save_interaction(
-                outcome.save_interaction, session.last_llm_response, session.all_tool_results
-            )
         if outcome.run_on_complete:
-            await self._on_complete.run(session, outcome.save_interaction or "")
+            await self._on_complete.run(session, outcome.final_reply or "")
         if outcome.complete:
             await self._journal.append(session.id, "session/end", reason="complete")
             session.mark_completed()

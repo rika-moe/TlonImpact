@@ -7,8 +7,8 @@ harvests. Both are pure transformations ``Session x Services ->
 StageOutcome`` (C2): the stage declares *what* to dispatch and what the
 harvested results imply; the engine owns the concurrency (one
 background task per tool), the harvest (``session.collect_completed``),
-all session-field writes, and the external effects (mails, memory save,
-on-complete actions, completion).
+all session-field writes, and the external effects (mails, on-complete
+actions, completion).
 """
 
 import json
@@ -92,14 +92,13 @@ async def act_stage_collect(
     and declares everything it wants changed: the tool results to
     record, the sendEmail reply mails, the context appends, the
     iteration advance / ACTIVE transition (continue thinking), or the
-    interaction save + on-complete actions + completion signal (done).
+    final reply + on-complete actions + completion signal (done).
     Completion is event-driven by act (``is_complete``), not a loop
     boundary condition, so it stays outside the until expression.
 
     The engine applies the Outcome in this order: context appends ->
-    counters/state -> tool results -> mails -> save -> on-complete ->
-    mark_completed (tool results land before the save, so the saved
-    interaction includes this round).
+    counters/state -> tool results -> mails -> on-complete ->
+    mark_completed.
     """
     if not completed:
         return StageOutcome()  # still waiting
@@ -173,9 +172,7 @@ async def act_stage_collect(
         )
 
     if is_complete:
-        llm_resp = session.last_llm_response
-        if llm_resp and final_content:
-            outcome.save_interaction = final_content
+        outcome.final_reply = final_content or None
         svc.logger.info("session_completed", session_id=session.id, content=final_content)
         # On-complete action expressions (phase 4b): declared here,
         # executed by the engine with full failure isolation — they

@@ -77,8 +77,8 @@ class MemberLoop:
 
     ``context_sections`` is the section vector the engine assembles into the
     LLM context; ``stages`` the stage vector and ``until`` the termination
-    expression of the engine-executed loop. ``save_interaction`` and
-    ``reflect`` are the session-completion settings, folded here from the
+    expression of the engine-executed loop. ``reflect`` is the
+    session-completion reflection setting, folded here from the
     legacy ``OnCompleteSpec``. ``fuel`` (phase D) is the self-declared
     budget of the iron-law revision (docs/design/dsl-agents.md): it caps
     the DSL evaluation of the loop's ``:until`` and stage conditions
@@ -91,7 +91,6 @@ class MemberLoop:
     until: Form
     max_iterations: int
     max_consecutive_errors: int
-    save_interaction: bool
     reflect: ReflectSpec
     fuel: int | None = None
 
@@ -105,7 +104,6 @@ class MemberLoop:
             "until": dumps(self.until),
             "max_iterations": self.max_iterations,
             "max_consecutive_errors": self.max_consecutive_errors,
-            "save_interaction": self.save_interaction,
             "reflect": {
                 "enabled": self.reflect.enabled,
                 "interval_minutes": self.reflect.interval_minutes,
@@ -121,7 +119,6 @@ class MemberLoop:
             Keyword("until"): self.until,
             Keyword("max-iterations"): self.max_iterations,
             Keyword("max-consecutive-errors"): self.max_consecutive_errors,
-            Keyword("save-interaction"): self.save_interaction,
             Keyword("reflect"): {
                 Keyword("enabled"): self.reflect.enabled,
                 Keyword("interval-minutes"): self.reflect.interval_minutes,
@@ -529,7 +526,7 @@ def _normalize_data(value: Any) -> Any:
 
 
 def _normalize_key(key: Any) -> str:
-    """Map an EDN key (``:save-interaction``) to a snake_case field name."""
+    """Map an EDN key (``:max-iterations``) to a snake_case field name."""
     if isinstance(key, (Keyword, str)):
         return str(key).replace("-", "_")
     raise MemberSpecValidationError(
@@ -627,7 +624,6 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
             "until",
             "max_iterations",
             "max_consecutive_errors",
-            "save_interaction",
             "reflect",
             "fuel",
         }
@@ -787,12 +783,6 @@ def _loop_from(value: Any, rule_name: str) -> "MemberLoop | None":
             "max_consecutive_errors",
             f"rule {rule_name!r}: :loop/:max-consecutive-errors",
             kind=int,
-        ),
-        save_interaction=_read(
-            value,
-            "save_interaction",
-            f"rule {rule_name!r}: :loop/:save-interaction",
-            kind=bool,
         ),
         reflect=_reflect_from(
             _require(value, "reflect", f"rule {rule_name!r}: :loop/:reflect"),

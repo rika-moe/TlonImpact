@@ -62,7 +62,6 @@ def standard_behavior_edn() -> str:
                     Keyword("until"): loads(_REACT_UNTIL),
                     Keyword("max-iterations"): 10,
                     Keyword("max-consecutive-errors"): 3,
-                    Keyword("save-interaction"): True,
                     Keyword("reflect"): {
                         Keyword("enabled"): True,
                         Keyword("interval-minutes"): 15,

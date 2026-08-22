@@ -858,7 +858,11 @@ class MemberRuntime(Member):
         self._context_builder = ContextBuilder(
             caps.config, caps.team_members, self._mailbox, caps.memory, rule, self.address
         )
-        self._reflection = ReflectionEngine(caps.memory, caps.llm_client, rule)
+        # Session event journal (ADR 0007): one append-only log per session,
+        # shared by the driver (writes), the scheduler (resume on boot), the
+        # reflection digest and the summary trigger (ADR 0009 reads).
+        journal = SessionJournal(self._member_id, caps.tlon_paths)
+        self._reflection = ReflectionEngine(caps.memory, caps.llm_client, rule, journal)
         self._stage_services = StageServices(
             identity=identity,
             source_hash=self._spec.source_hash,
@@ -871,8 +875,6 @@ class MemberRuntime(Member):
         self._effect_executor = EffectExecutor(
             identity=identity,
             rule=rule,
-            memory=caps.memory,
-            reflection=self._reflection,
             mailbox=self._mailbox,
             publish=publisher,
             logger=self._logger,
@@ -880,9 +882,6 @@ class MemberRuntime(Member):
         on_complete = OnCompleteRunner(
             identity, rule, self._logger, execute_action=self._execute_action
         )
-        # Session event journal (ADR 0007): one append-only log per session,
-        # shared by the driver (writes) and the scheduler (resume on boot).
-        journal = SessionJournal(self._member_id, caps.tlon_paths)
         self._loop_driver = LoopDriver(
             identity=identity,
             rule=rule,
@@ -905,6 +904,7 @@ class MemberRuntime(Member):
             self._stage_services.session_span,
             self._mark_read,
             self._reflection.check_trigger,
+            self._reflection.note_interaction,
             self._loop_driver,
             journal,
         )

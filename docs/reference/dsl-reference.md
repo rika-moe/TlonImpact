@@ -282,7 +282,6 @@
        :until (or (iteration-limit-reached?) (error-limit-reached?))
        :max-iterations 25
        :max-consecutive-errors 3
-       :save-interaction true
        :reflect {:enabled true :interval-minutes 10}
        :fuel 1000}                  ; 可选
 ```
@@ -294,8 +293,7 @@
 | `:until` | 表达式 form | 终止谓词，每步 pre-think 求值 |
 | `:max-iterations` | int | 迭代硬顶（引擎无条件执行，`:until` 无法覆盖） |
 | `:max-consecutive-errors` | int | 连续错误上限 |
-| `:save-interaction` | bool | 会话完成时是否把最终回复存入记忆 |
-| `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少交互数双门控，对记忆做整理/增删） |
+| `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
 
 ### 6.1 `:sections`（`SECTION_NAMES`，4 种）
@@ -316,12 +314,12 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
-| `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出回复邮件（显式 `to` 优先，否则回复触发邮件发件人）；`is_complete=true` 触发会话完成——保存交互、跑 on-complete 的 `:actions`、标记完成 |
+| `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出回复邮件（显式 `to` 优先，否则回复触发邮件发件人）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
 | `critique` | 额外一次 LLM 评审：首行 `PASS`/`FAIL`，无法解析按 PASS（宽容默认，永不阻塞主流程）；结论写入 `scratch.critique = {:passed bool :feedback str}`。失败软降级 |
 | `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作 |
 
-stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → 保存交互 → on-complete 动作 → 完成标记。
+stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → on-complete 动作 → 完成标记。
 
 ### 6.3 循环推进与终止（`LoopDriver.step_session`）
 
@@ -381,7 +379,6 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
                             (error-limit-reached?))
                  :max-iterations 25                             ; 引擎硬顶（先于 :until 生效）
                  :max-consecutive-errors 3
-                 :save-interaction true                         ; 完成时把最终回复存记忆
                  :reflect {:enabled true :interval-minutes 10}}  ; 每 10 分钟级后台记忆审计
          }                                                      ; ← 注意：此处必须有 } 闭合规则 map
          {:name "boot"
@@ -389,7 +386,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :actions []}]}                                        ; 无动作也要写空向量或省略
 ```
 
-> 注：仓库中 [src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon) 当前版本的规则一 map 少一个闭合 `}`，无法通过 `edn.loads` 解析；上例已补上（上文中单独标注的那行），抄写时以本文为准。
+> 注：仓库中 [src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon) 的规则一 map 曾少一个闭合 `}`（历史问题，已修复）；抄写时以上例的闭合层次为准。
 
 ### 10.2 确定型：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
 

@@ -4,7 +4,7 @@ Stages are pure transformations ``Session x Services -> StageOutcome``:
 every system-state change a stage wants (context appends, scratch
 writes, iteration/error counters, session-field writes such as the
 last LLM response / tool-result log / ACTIVE transition, and — from
-C2 — mails, tool dispatches, interaction saves, the completion signal)
+C2 — mails, tool dispatches, the final reply, the completion signal)
 is returned as data; the LoopDriver applies it. Read-only external
 queries (the LLM call) and observability (logs/events/traces) go
 through the injected :mod:`tlon.agents.stages.services` instead — they
@@ -59,11 +59,7 @@ class StageOutcome:
     """Record one error against the session."""
 
     tool_results: list[tuple[ToolCall, ToolResult]] = field(default_factory=list)
-    """Harvested tool results to record on the session (C2).
-
-    Applied by the engine before ``save_interaction`` so the saved
-    interaction sees this round's results.
-    """
+    """Harvested tool results to record on the session (C2)."""
 
     mark_active: bool = False
     """Transition the session back to ACTIVE (WAITING -> ACTIVE, C2)."""
@@ -74,8 +70,13 @@ class StageOutcome:
     tool_dispatches: list[ToolCall] = field(default_factory=list)
     """Tool calls to dispatch as background tasks (C2)."""
 
-    save_interaction: str | None = None
-    """Final reply to persist to memory (C2)."""
+    final_reply: str | None = None
+    """The session's final reply text (C2).
+
+    Bound as ``result`` in the on-complete action env — the DSL's
+    documented completion input. Memory persistence is NOT derived from
+    this anymore (ADR 0009: summaries read the journal directly).
+    """
 
     run_on_complete: bool = False
     """Run the spec's on-complete action expressions (C2)."""

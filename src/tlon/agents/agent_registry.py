@@ -74,7 +74,6 @@ from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.write_file import WriteFileTool
 from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.mail.silence import SilenceTool
-from tlon.tools.memory.compact import CompactTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
@@ -598,7 +597,6 @@ class AgentRegistry(Component):
         )
         tool_executor.register_tool(RememberFactTool(memory))
         tool_executor.register_tool(SearchMemoriesTool(memory))
-        tool_executor.register_tool(CompactTool(memory))
         tool_executor.register_tool(ForgetMemoryTool(memory))
         tool_executor.register_tool(CreateTaskTool(task_manager))
         tool_executor.register_tool(ListTasksTool(task_manager))

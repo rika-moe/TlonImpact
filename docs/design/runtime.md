@@ -106,7 +106,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 - **stage 向量是白名单组合**。跑哪些 stage、什么顺序，由 spec 的 `LoopSpec.stages` 决定；每个 stage 可选带 `:if` 条件（纯谓词，求值失败一律跳过——安全默认是"不跑"）。DSL 只能选择与排序既有积木，不能发明新 stage。
 - **响应链由引擎串接**。think 产出本轮 LLM 响应，act 消费它，辅助 stage（plan / critique / revise）原样透传。
 - **终止判定只在轮首发生**。`:until` 在每轮 think 之前求值一次，不在 stage 向量中途检查——循环要么完整地跑完一轮声明的 stage，要么整轮不开始，不存在"跑到一半的轮"这种需要定义语义的中间态。think 失败也只记错误并提前结束本轮，留给下一轮的 until 走统一终止路径收口。
-- **`_apply_outcome` 是唯一的状态变更点**。stage 声明的一切变更在这里按固定顺序落地：context 追加 → scratch 写入 → 计数器/状态 → 工具结果 → 响应链 → 工具分发 → 邮件 → 交互保存 → on-complete 动作 → 完成标记。顺序集中在一处，与历史实现的等价性可审计。
+- **`_apply_outcome` 是唯一的状态变更点**。stage 声明的一切变更在这里按固定顺序落地：context 追加 → scratch 写入 → 计数器/状态 → 工具结果 → 响应链 → 工具分发 → 邮件 → on-complete 动作 → 完成标记。顺序集中在一处，与历史实现的等价性可审计。
 - **没有 act 的程序也必然停机**。不含 act 的 stage 向量自己不会推进迭代计数，引擎代为推进——硬上限对任何合法程序都成立，停机性不依赖程序写对了什么。
 - **并发是引擎的**。act 只声明工具分发列表；每个工具调用一个后台 task、每个工具一个超时（`per_tool_timeout`），由引擎创建与收割。stage 不知道 asyncio 的存在。
 
@@ -131,7 +131,6 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 [agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor` 执行 stage 声明的外部效果：
 
 - **发邮件**：`MailEffect` → 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`——与人类发信汇入同一条投递管道；
-- **保存交互记忆**：受 loop 的 `save_interaction` 开关门控，保存成功后给反思引擎计数；
 - **推进收件箱 cursor**：会话完成（成功、出错、超时不限）即标读——邮件已被处理，与处理结果无关。
 
 所有效果执行**永不抛异常**：失败只记日志。一个失败的效果不能打断循环、不能破坏会话生命周期——循环的停机保证不被外部系统的故障绑架。
@@ -141,7 +140,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 认知循环的每个 stage 是纯变换 `Session × StageServices → StageOutcome`。这条切分把 stage 对外的接触分成三类，各有唯一通道：
 
 - **只读的外部查询**（LLM 调用）与**可观测性**（日志、事件、trace span）：走注入的 [agents/stages/services.py](../../src/tlon/agents/stages/services.py) 的 `StageServices`。它们不改变系统状态，因此不出现在 Outcome 里。
-- **状态变更**：stage 永不执行，只声明。全部意图返回在 [agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py) 的 `StageOutcome` 里——context 追加、scratch 写入、迭代/错误计数、工具结果与分发、响应、邮件、交互保存、on-complete、完成信号。默认全空的 Outcome 应用后是 no-op：stage 只声明它真正要改的部分。
+- **状态变更**：stage 永不执行，只声明。全部意图返回在 [agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py) 的 `StageOutcome` 里——context 追加、scratch 写入、迭代/错误计数、工具结果与分发、响应、邮件、最终回复（on-complete 的 `result` 输入）、on-complete、完成信号。默认全空的 Outcome 应用后是 no-op：stage 只声明它真正要改的部分。
 - **应用**：`LoopDriver._apply_outcome` 落地会话本地字段，`EffectExecutor` 执行外部效果。stage 与副作用之间隔着一层可枚举、可断言的数据。
 
 这条纯度不是约定而是强制：[scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 用 AST 静态禁止 stage 模块调用 session 的任何 mutator 方法、禁止对 session 属性赋值，纳入验证六件套，违规即构建失败。引擎与策略的边界因此是**机器可检查**的——这正是 DSL 白名单组合 stage 的安全地基，完整论证见 [docs/decisions/0004-stage-purity.md](../decisions/0004-stage-purity.md)。
@@ -152,7 +151,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 管线上的每个组件都由**能力**装配，而非由宿主对象装配：
 
-- `SessionScheduler` 收到的是 config、memory、四个委托闭包与 LoopDriver；
+- `SessionScheduler` 收到的是 config、memory、五个委托闭包与 LoopDriver；
 - `LoopDriver` 收到的是 identity、`MemberRule`、`StageServices`、`EffectExecutor`、ToolExecutor 与 OnCompleteRunner；
 - `EffectExecutor`、`OnCompleteRunner`、`ReflectionEngine` 收到的都是 identity / rule / memory / 闭包这类纯数据与函数；
 - 事件发布走 `make_event_publisher`（[agents/stages/services.py](../../src/tlon/agents/stages/services.py)）闭包——闭包只封住 EventBus 与默认 source，不封住任何 Member。
@@ -179,8 +178,8 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 会话的收尾有两台机器，都在循环之外、由引擎在固定时点触发：
 
-- **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少交互数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆摘要，产出 `record_fact` / `delete_fact` / `consolidate` / `noop` 操作并应用。交互计数由 `EffectExecutor.save_interaction` 经 `note_interaction` 喂入——只有真正落盘的交互才算数。
-- **完成动作**（[agents/on_complete.py](../../src/tlon/agents/on_complete.py) 的 `OnCompleteRunner`）：认知会话产出最终回复后，把认知规则的 `:actions` 求值一次——环境在统一环境上追加 `result`（最终回复文本），收集到的动作请求走 `MemberRuntime._execute_action` 统一执行，五种动作全部可用。调用时点在交互保存之后、会话标记完成之前，仍在会话 span 内，因此 spawn 配额的会话归属（contextvars 携带 session_id）不受影响。任何求值或执行失败只记日志，不打断剩余动作与会话生命周期。
+- **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少完成会话数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆摘要，产出 `record_fact` / `delete_fact` / `noop` 操作并应用。会话计数由调度器在 session 回收点经 `note_interaction` 喂入——只有真正完成的会话才算数（ADR 0009：摘要触发也挂在这个回收点上，pending 达 `summary_window` 即从 journal 批量压缩进 episodic，无需反思催办）。
+- **完成动作**（[agents/on_complete.py](../../src/tlon/agents/on_complete.py) 的 `OnCompleteRunner`）：认知会话产出最终回复后，把认知规则的 `:actions` 求值一次——环境在统一环境上追加 `result`（最终回复文本，由 act stage 经 `StageOutcome.final_reply` 声明），收集到的动作请求走 `MemberRuntime._execute_action` 统一执行，五种动作全部可用。调用时点在会话标记完成之前，仍在会话 span 内，因此 spawn 配额的会话归属（contextvars 携带 session_id）不受影响。任何求值或执行失败只记日志，不打断剩余动作与会话生命周期。
 
 两者的共同点是"挂在引擎的固定时点上，而非 stage 的程序内容"：反思与收尾是运行时服务质量的一部分，DSL 不能关掉它们，也不用知道它们存在。
 

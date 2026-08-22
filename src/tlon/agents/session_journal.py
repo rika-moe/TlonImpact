@@ -35,8 +35,11 @@ Replay rules:
 The read side tolerates corrupt lines (a crash can leave a torn tail
 line): each line is parsed independently and a bad line is skipped with
 a warning, same as the mailbox reader. Replay never re-executes side
-effects — mails, interaction saves and on-complete actions happened (or
-did not) in the previous process; replay only rebuilds data fields.
+effects — mails and on-complete actions happened (or did not) in the
+previous process; replay only rebuilds data fields. Completed logs
+(``list_completed``) also feed the journal → episodic summary trigger
+(ADR 0009): the log is the sole interaction truth, so summarization
+reads it directly.
 
 Writes are serialized by one asyncio lock per journal file, shared
 process-wide across SessionJournal instances (same pattern as the
@@ -199,7 +202,7 @@ class SessionJournal:
         dispatches are healed: a synthetic interrupted result is appended
         for each dispatched call that never produced a result.
         """
-        events = await self._read_events(session_id)
+        events = await self.read_events(session_id)
         if not events:
             return None
 
@@ -332,7 +335,7 @@ class SessionJournal:
     async def derive_context(self, session_id: str) -> list[dict[str, Any]]:
         """Re-derive the session context from the log (test assertions)."""
         context: list[dict[str, Any]] = []
-        for event in await self._read_events(session_id):
+        for event in await self.read_events(session_id):
             event_type = event.get("type")
             if event_type == "session/start":
                 context = list(event.get("context") or [])
@@ -344,12 +347,27 @@ class SessionJournal:
 
     async def end_reason(self, session_id: str) -> str | None:
         """The ``session/end`` reason if the log has one, else None."""
-        for event in reversed(await self._read_events(session_id)):
+        for event in reversed(await self.read_events(session_id)):
             if event.get("type") == "session/end":
                 return str(event.get("reason", "unknown"))
         return None
 
-    async def _read_events(self, session_id: str) -> list[dict[str, Any]]:
+    async def list_completed(self) -> list[str]:
+        """Session ids whose log carries a ``session/end`` (ADR 0009).
+
+        The summary trigger (``MemoryManager``) diffs this set against
+        the ``source_session_ids`` already recorded in episodic
+        summaries, so a session is summarized exactly once. Order is
+        stable (file name order).
+        """
+        sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
+        completed: list[str] = []
+        for path in sorted(sessions_dir.glob("*.jsonl")):
+            if await self.end_reason(path.stem) is not None:
+                completed.append(path.stem)
+        return completed
+
+    async def read_events(self, session_id: str) -> list[dict[str, Any]]:
         """Read all events from the log, skipping malformed lines."""
         path = self._path(session_id)
         if not path.exists():

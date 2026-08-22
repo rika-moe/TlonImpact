@@ -26,7 +26,6 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -109,7 +108,6 @@ class TestDerivedRuntime:
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 5
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}
          {:name "heartbeat"
           :on :agent-idle
@@ -186,7 +184,6 @@ class TestSingleValidator:
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 5
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}
          {:name "second-brain"
           :on :mail-delivered
@@ -196,7 +193,6 @@ class TestSingleValidator:
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 5
                  :max-consecutive-errors 3
-                 :save-interaction true
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
         )

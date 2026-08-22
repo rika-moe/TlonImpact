@@ -8,19 +8,22 @@ from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 
+from .models import SessionProjection
+
 logger = get_logger(__name__)
 
 
 class Summarizer:
     """Uses LLM to generate session summaries and extract facts.
 
-    This class handles the intelligent processing of working memory
-    interactions to create meaningful summaries and extract structured
-    facts for long-term storage.
+    This class handles the intelligent processing of completed-session
+    projections (rebuilt from the session journals, ADR 0009) to create
+    meaningful summaries and extract structured facts for long-term
+    storage.
 
     Example:
         >>> summarizer = Summarizer(llm_config)
-        >>> summary, facts = await summarizer.process_interactions(interactions)
+        >>> summary, facts = await summarizer.process_sessions(projections)
     """
 
     def __init__(self, llm_config: LLMConfig):
@@ -33,14 +36,14 @@ class Summarizer:
 
     async def generate_summary(
         self,
-        interactions: list[dict[str, Any]],
+        sessions: list[SessionProjection],
         instructions: str | None = None,
         temperature: float | None = None,
     ) -> tuple[str, list[str], list[str]]:
-        """Generate a natural language summary from interactions.
+        """Generate a natural language summary from session projections.
 
         Args:
-            interactions: List of interaction dictionaries
+            sessions: List of completed-session projections
             instructions: Optional focus for the summary, e.g. topics or
                 decisions that must be preserved
             temperature: Optional temperature override
@@ -48,15 +51,15 @@ class Summarizer:
         Returns:
             Tuple of (summary_text, key_decisions, action_items)
         """
-        if not interactions:
-            return "No interactions to summarize.", [], []
+        if not sessions:
+            return "No sessions to summarize.", [], []
 
-        # Format interactions for the prompt
-        formatted_interactions = self._format_interactions(interactions)
+        # Format sessions for the prompt
+        formatted_sessions = self._format_sessions(sessions)
 
         system_prompt = """你是一个会话摘要生成助手。你的任务是分析用户与AI助手之间的对话历史，生成简洁但有信息量的中文摘要。
 
-请生成一个自然语言摘要，总结这段会话的主要内容。摘要应该：
+请生成一个自然语言摘要，总结这些会话的主要内容。摘要应该：
 1. 概括用户的主要请求和意图
 2. 说明AI助手执行了哪些操作（如工具调用）
 3. 提及任何重要的发现或结果
@@ -77,7 +80,7 @@ class Summarizer:
             system_prompt += f"\n\n请特别保留/关注以下内容：{instructions}"
 
         messages = [
-            {"role": "user", "content": f"请为以下对话生成摘要：\n\n{formatted_interactions}"}
+            {"role": "user", "content": f"请为以下会话生成摘要：\n\n{formatted_sessions}"}
         ]
 
         try:
@@ -92,7 +95,7 @@ class Summarizer:
 
             if not response.content:
                 logger.warning("summary_response_empty")
-                return self._generate_fallback_summary(interactions), [], []
+                return self._generate_fallback_summary(sessions), [], []
 
             # Parse JSON response
             try:
@@ -103,7 +106,7 @@ class Summarizer:
 
                 # Validate and clean
                 if not summary:
-                    summary = self._generate_fallback_summary(interactions)
+                    summary = self._generate_fallback_summary(sessions)
 
                 # Ensure lists
                 if not isinstance(key_decisions, list):
@@ -120,27 +123,27 @@ class Summarizer:
 
         except Exception as e:
             logger.error("summary_generation_failed", error=str(e), exc_info=True)
-            return self._generate_fallback_summary(interactions), [], []
+            return self._generate_fallback_summary(sessions), [], []
 
     async def extract_facts(
         self,
-        interactions: list[dict[str, Any]],
+        sessions: list[SessionProjection],
         existing_facts: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Extract key facts from interactions.
+        """Extract key facts from session projections.
 
         Args:
-            interactions: List of interaction dictionaries
+            sessions: List of completed-session projections
             existing_facts: Optional list of existing facts to avoid duplicates
 
         Returns:
             List of fact dictionaries
         """
-        if not interactions:
+        if not sessions:
             return []
 
-        formatted_interactions = self._format_interactions(interactions)
+        formatted_sessions = self._format_sessions(sessions)
 
         # Build existing facts context
         existing_facts_text = ""
@@ -182,7 +185,7 @@ class Summarizer:
     ]
 }"""
 
-        user_content = "请从以下对话中提取事实：\n\n" + formatted_interactions
+        user_content = "请从以下会话中提取事实：\n\n" + formatted_sessions
         if existing_facts_text:
             user_content += "\n\n" + existing_facts_text
 
@@ -232,21 +235,19 @@ class Summarizer:
             logger.error("facts_extraction_failed", error=str(e), exc_info=True)
             return []
 
-    async def process_interactions(
+    async def process_sessions(
         self,
-        interactions: list[dict[str, Any]],
-        session_id: str,
+        sessions: list[SessionProjection],
         existing_facts: list[dict[str, Any]] | None = None,
         instructions: str | None = None,
         temperature: float | None = None,
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-        """Process interactions to generate summary and extract facts.
+        """Process session projections to generate a summary and extract facts.
 
         This is the main entry point that calls both generation methods.
 
         Args:
-            interactions: List of interaction dictionaries
-            session_id: Current session ID
+            sessions: Completed-session projections (the batch to summarize)
             existing_facts: Optional existing facts to avoid duplicates
             instructions: Optional focus for the summary, e.g. topics or
                 decisions that must be preserved
@@ -255,61 +256,40 @@ class Summarizer:
         Returns:
             Tuple of (summary_dict, facts_list)
         """
-        if not interactions:
+        if not sessions:
             return None, []
 
         # Generate summary
         summary_text, key_decisions, action_items = await self.generate_summary(
-            interactions, instructions=instructions, temperature=temperature
+            sessions, instructions=instructions, temperature=temperature
         )
 
         # Extract facts
-        facts = await self.extract_facts(interactions, existing_facts, temperature=temperature)
+        facts = await self.extract_facts(sessions, existing_facts, temperature=temperature)
 
         # Build summary dict
         summary_dict = {
             "timestamp": datetime.now().isoformat(),
-            "session_id": session_id,
             "summary_text": summary_text,
             "key_decisions": key_decisions,
             "action_items": action_items,
-            "participants": self._extract_participants(interactions),
-            "interaction_count": len(interactions),
+            "interaction_count": sum(len(s.llm_responses) for s in sessions),
         }
 
         return summary_dict, facts
 
-    def _format_interactions(self, interactions: list[dict[str, Any]]) -> str:
-        """Format interactions for LLM prompt."""
+    def _format_sessions(self, sessions: list[SessionProjection]) -> str:
+        """Format session projections for LLM prompt."""
         lines = []
 
-        for i, inter in enumerate(interactions, 1):
-            msg = inter.get("message", {})
-            resp = inter.get("response", {})
-            tool_results = inter.get("tool_results", [])
+        for i, session in enumerate(sessions, 1):
+            lines.append(f"[会话 {i}] 触发：{session.trigger_content}")
 
-            # User message
-            sender = msg.get("sender_name", "User")
-            content = msg.get("content", "")
-            lines.append(f"[{i}] {sender}: {content}")
+            for resp in session.llm_responses:
+                lines.append(f"    Agent: {resp[:200]}")
 
-            # Tool calls and results
-            if tool_results:
-                for tr in tool_results:
-                    tool_name = tr.get("tool_name", "unknown")
-                    stdout = tr.get("stdout", "")
-                    if stdout:
-                        lines.append(f"    [Tool: {tool_name}] {stdout[:150]}")
-
-            # Agent response
-            resp_content = ""
-            if isinstance(resp, dict):
-                resp_content = resp.get("content", "")
-            elif isinstance(resp, str):
-                resp_content = resp
-
-            if resp_content:
-                lines.append(f"    Agent: {resp_content[:200]}")
+            for tool_line in session.tool_results:
+                lines.append(f"    [Tool] {tool_line[:150]}")
 
             lines.append("")
 
@@ -335,31 +315,24 @@ class Summarizer:
         return cast(dict[str, Any], json.loads(content))
 
     @staticmethod
-    def _generate_fallback_summary(interactions: list[dict[str, Any]]) -> str:
-        """Generate a simple fallback summary without LLM."""
-        if not interactions:
-            return "No interactions."
+    def _generate_fallback_summary(sessions: list[SessionProjection]) -> str:
+        """Generate a simple fallback summary without LLM.
 
-        count = len(interactions)
-        tool_count = sum(1 for i in interactions if i.get("tool_results"))
+        The projection carries the session's real trigger content, so the
+        fallback quotes the actual user requests (the retired working
+        memory only had the agent's own reply and quoted that instead).
+        """
+        if not sessions:
+            return "No sessions."
 
-        # Get first and last message previews
-        first_msg = interactions[0].get("message", {}).get("content", "")[:30]
-        last_msg = interactions[-1].get("message", {}).get("content", "")[:30]
+        count = len(sessions)
+        tool_count = sum(len(s.tool_results) for s in sessions)
+
+        # Get first and last trigger previews
+        first_trigger = sessions[0].trigger_content[:30]
+        last_trigger = sessions[-1].trigger_content[:30]
 
         return (
-            f"会话包含 {count} 次交互，使用了 {tool_count} 次工具。"
-            f'开始："{first_msg}..."，结束："{last_msg}..."'
+            f"包含 {count} 个会话，共调用 {tool_count} 次工具。"
+            f'首个请求："{first_trigger}..."，最后请求："{last_trigger}..."'
         )
-
-    def _extract_participants(self, interactions: list[dict[str, Any]]) -> list[str]:
-        """Extract unique participant names from interactions."""
-        participants = set()
-
-        for inter in interactions:
-            msg = inter.get("message", {})
-            sender = msg.get("sender_name", "")
-            if sender and sender != "Agent":
-                participants.add(sender)
-
-        return list(participants)

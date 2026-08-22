@@ -43,6 +43,7 @@ logger = get_logger(__name__)
 SessionSpan = Callable[[AgentSession], AbstractContextManager[None]]
 MarkMailRead = Callable[["Mail | None"], Awaitable[None]]
 CheckReflection = Callable[[], Awaitable[None]]
+NoteInteraction = Callable[[], None]
 
 
 class SessionScheduler:
@@ -55,6 +56,7 @@ class SessionScheduler:
         session_span: SessionSpan,
         mark_mail_read: MarkMailRead,
         check_reflection: CheckReflection,
+        note_interaction: NoteInteraction,
         loop_driver: LoopDriver,
         journal: SessionJournal,
     ):
@@ -64,6 +66,7 @@ class SessionScheduler:
         self._session_span = session_span
         self._mark_mail_read = mark_mail_read
         self._check_reflection = check_reflection
+        self._note_interaction = note_interaction
         self._loop_driver = loop_driver
         self._journal = journal
         # Live (non-completed) sessions; run() rebinds this to its working
@@ -137,11 +140,12 @@ class SessionScheduler:
         """Agent's continuous main loop with multi-session scheduling.
 
         Cycles through all active sessions each pass:
-        0. Check idle timeout + reflection trigger (timer-driven, no mail needed)
+        0. Reflection trigger (timer-driven, no mail needed)
         1. New messages -> create/resume sessions (journal replay, ADR 0007)
         2. ACTIVE sessions -> one think+dispatch step
         3. WAITING sessions -> collect completed background tools
-        4. COMPLETED -> cleanup
+        4. COMPLETED -> cleanup (+ reflection counter and the batch
+           summary trigger, ADR 0009)
         """
         # This loop runs in its own task per agent, so binding agent_id for
         # its whole lifetime is safe and also covers logs inside session
@@ -157,8 +161,7 @@ class SessionScheduler:
             self._last_activity_at = datetime.now()
 
             while self._worker_running:
-                # ── 0. Memory triggers (no mail required) ──
-                await self._memory.check_idle_timeout()
+                # ── 0. Reflection trigger (timer-driven, no mail needed) ──
                 await self._check_reflection()
 
                 # ── 1. New mail — one session per mail ──
@@ -225,6 +228,11 @@ class SessionScheduler:
                         session_mails.pop(sid, None)
                         pending_collects.pop(sid, None)
                         self._last_activity_at = datetime.now()
+                        # Session completed: feed the reflection counter
+                        # and check the batch summary trigger (ADR 0009 —
+                        # journal -> episodic, threshold config.summary_window).
+                        self._note_interaction()
+                        await self._check_session_summaries()
 
                 # Agent state derives on read (Agent.state property) — the
                 # scheduler never calls back into the Agent.
@@ -324,6 +332,21 @@ class SessionScheduler:
                 await self._journal.append(session.id, "session/end", reason="complete")
         except Exception as e:
             logger.error("session_journal_end_failed", session_id=session.id, error=str(e))
+
+    async def _check_session_summaries(self) -> None:
+        """Run the batch summary trigger at the reap point (ADR 0009).
+
+        Never raises: a summarization failure (LLM outage, disk error)
+        is logged and retried at the next session's reap — the pending
+        sessions stay pending because no Summary records them.
+        """
+        try:
+            summary_id = await self._memory.maybe_summarize_completed_sessions(self._journal)
+        except Exception as e:
+            logger.error("session_summary_check_failed", error=str(e), exc_info=True)
+            return
+        if summary_id:
+            logger.info("session_summary_generated", summary_id=summary_id)
 
     def _is_session_timed_out(self, session: AgentSession) -> bool:
         """A session idle beyond the configured timeout is considered stuck."""

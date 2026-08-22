@@ -21,7 +21,7 @@ _BEHAVIOR_HINT = (
     ":loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history N)]} "
     ":stages [(think) (act)] "
     ":until (or (iteration-limit-reached?) (error-limit-reached?)) "
-    ":max-iterations int :max-consecutive-errors int :save-interaction bool "
+    ":max-iterations int :max-consecutive-errors int "
     ":reflect {:enabled bool :interval-minutes int}} "
     ":actions [(动作表达式) ...]} ...]。认知规则（带 :loop）的默认命中谓词是 "
     "(or (addressed-to-me? msg) (cc-ed? msg))。"

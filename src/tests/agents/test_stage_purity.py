@@ -3,8 +3,7 @@
 Stages are pure transformations ``Session x Services -> StageOutcome``:
 no direct session mutation. These tests pin both halves — the stages
 (think/act) only declare, and ``LoopDriver._apply_outcome`` applies the
-declarations in the order the pre-C2 interleaving had (tool results
-land before the interaction save).
+declarations in the order the pre-C2 interleaving had.
 """
 
 import asyncio
@@ -93,7 +92,7 @@ class TestStagePurity:
 
         assert outcome.complete is True
         assert outcome.run_on_complete is True
-        assert outcome.save_interaction == "done"
+        assert outcome.final_reply == "done"
         assert len(outcome.mails) == 1
         assert session.is_completed is False
 
@@ -117,22 +116,25 @@ class TestEngineApplication:
         assert chain is response
         assert session.last_llm_response is response
 
-    async def test_tool_results_land_before_save_interaction(self, tmp_path: Path) -> None:
+    async def test_tool_results_and_final_reply_applied(self, tmp_path: Path) -> None:
         executor = MagicMock()
-        executor.save_interaction = AsyncMock()
+        on_complete = MagicMock()
+        on_complete.run = AsyncMock()
         driver = _make_driver(executor, tmp_path)
+        driver._on_complete = on_complete
         session = AgentSession(session_id="s1", trigger_content="trigger")
         tc = ToolCall(id="t1", function_name="someTool", arguments={})
         result = ToolResult(success=True, data={})
-        outcome = StageOutcome(tool_results=[(tc, result)], save_interaction="final")
+        outcome = StageOutcome(
+            tool_results=[(tc, result)], final_reply="final", run_on_complete=True
+        )
 
         await driver._apply_outcome(session, None, outcome)
 
-        # The save sees this round's results (pre-C2 ordering preserved).
+        # The harvested results land on the session; the final reply is
+        # the on-complete env's `result` (ADR 0009: no memory save).
         assert session.all_tool_results == [{"tool_call": tc, "result": result}]
-        executor.save_interaction.assert_awaited_once_with(
-            "final", session.last_llm_response, session.all_tool_results
-        )
+        on_complete.run.assert_awaited_once_with(session, "final")
 
     async def test_mark_active_and_iteration_applied(self, tmp_path: Path) -> None:
         driver = _make_driver(MagicMock(), tmp_path)
@@ -170,8 +172,8 @@ class TestEngineApplication:
         assert session.iteration == 1
 
     async def test_act_collect_silence_completes_without_mail(self) -> None:
-        """silence is a completion signal: loop ends, no mail, no interaction
-        save (there is no reply content to store)."""
+        """silence is a completion signal: loop ends, no mail, no final
+        reply (there is no reply content to pass to on-complete)."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.set_last_llm_response(LLMResponse(content="working"))
@@ -183,7 +185,7 @@ class TestEngineApplication:
         assert outcome.complete is True
         assert outcome.run_on_complete is True
         assert outcome.mails == []  # nothing sent
-        assert outcome.save_interaction is None  # nothing to store
+        assert outcome.final_reply is None  # nothing to pass on
         assert session.is_completed is False
 
     async def test_act_step_silence_conflicts_with_send_email(self) -> None:

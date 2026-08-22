@@ -2,9 +2,9 @@
 
 ``memory/config.json`` is the single per-agent tuning surface: when it
 exists it is authoritative (the constructor config is defaults in
-production), and its working/episodic limits must reach the stores —
-which snapshot them at construction — before they load. Guards the
-wiring fix in agents/agent_registry.py + memory/manager.py.
+production), and its episodic limits must reach the store — which
+snapshots them at construction — before it loads. Guards the wiring in
+agents/agent_registry.py + memory/manager.py.
 """
 
 import json
@@ -35,12 +35,11 @@ async def test_load_disk_config_is_authoritative_and_reaches_stores(
     manager = _manager(
         tmp_path,
         {
-            "working": {"max_items": 3, "summary_window": 4},
+            "summary": {"window": 4},
             "episodic": {"max_summaries": 7, "max_facts": 9},
             "context": {
                 "max_summaries_in_context": 1,
                 "max_facts_in_context": 2,
-                "max_working_in_context": 1,
             },
         },
     )
@@ -48,13 +47,13 @@ async def test_load_disk_config_is_authoritative_and_reaches_stores(
     await manager.load()
 
     assert manager.config.agent_id == "test-agent"
-    assert manager.config.working_max_items == 3
-    assert manager.config.working_summary_window == 4
+    assert manager.config.summary_window == 4
     assert manager.config.episodic_max_summaries == 7
     assert manager.config.episodic_max_facts == 9
+    assert manager.config.context_max_summaries == 1
+    assert manager.config.context_max_facts == 2
     # Store limits are snapshotted at construction — load() must re-apply
-    # the merged values before the stores read their files.
-    assert manager.working.max_items == 3
+    # the merged values before the store reads its files.
     assert manager.episodic.max_summaries == 7
     assert manager.episodic.max_facts == 9
 
@@ -67,6 +66,24 @@ async def test_load_creates_default_config_when_missing(tmp_path: Path) -> None:
     assert manager.config.agent_id == "test-agent"
     assert (tmp_path / "memory" / "config.json").exists()
     # Constructor defaults survive the first boot (no disk file to merge).
-    assert manager.working.max_items == 10
+    assert manager.config.summary_window == 3
     assert manager.episodic.max_summaries == 20
     assert manager.episodic.max_facts == 50
+
+
+async def test_load_tolerates_retired_working_sections(tmp_path: Path) -> None:
+    """A pre-ADR-0009 config.json (with working/triggers sections) loads as
+    the current defaults — the retired sections are simply not read."""
+    manager = _manager(
+        tmp_path,
+        {
+            "working": {"max_items": 3, "summary_window": 4},
+            "triggers": {"idle_timeout_minutes": 5},
+            "episodic": {"max_summaries": 7, "max_facts": 9},
+        },
+    )
+
+    await manager.load()
+
+    assert manager.config.summary_window == 3  # default; old keys ignored
+    assert manager.config.episodic_max_summaries == 7

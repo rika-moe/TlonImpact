@@ -1,9 +1,16 @@
-"""Memory Manager - Coordinates Working and Episodic memory stores."""
+"""Memory Manager - the episodic memory interface (ADR 0009).
+
+The working-memory layer is retired: the session journal (ADR 0007) is
+the sole interaction truth, and summarization flows journal -> episodic
+directly. The manager keeps the episodic store (summaries + facts), the
+context-block assembly for the ``(knowledge)`` section, and the batch
+summary trigger the scheduler calls at its session reap point.
+"""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol
 
 import aiofiles
 
@@ -16,28 +23,45 @@ from .models import (
     ContextBlock,
     Fact,
     FactType,
-    Interaction,
     MemoryConfig,
+    SessionProjection,
     Summary,
 )
 from .summarizer import Summarizer
-from .working_store import WorkingMemoryStore
 
 logger = get_logger(__name__)
+
+
+class SessionLogReader(Protocol):
+    """The journal read surface the summary trigger needs.
+
+    ``tlon.memory`` cannot import ``tlon.agents`` (import-linter), so the
+    journal (agents layer) is injected structurally: any object with
+    these two methods qualifies — in production, ``SessionJournal``.
+    """
+
+    async def list_completed(self) -> list[str]:
+        """Session ids whose log carries a ``session/end``."""
+        ...
+
+    async def read_events(self, session_id: str) -> list[dict[str, Any]]:
+        """All events of one session's log, in order."""
+        ...
 
 
 class MemoryManager:
     """Main interface for Agent memory management.
 
-    Coordinates Working Memory (recent interactions) and Episodic Memory
-    (summaries and facts) to provide a unified memory interface.
+    Owns Episodic Memory (summaries and facts), builds the context
+    blocks injected into the LLM conversation, and runs the batch
+    summary trigger (journal -> episodic).
 
     Usage:
         >>> manager = MemoryManager("dev-001", config, Path("./data"))
         >>> await manager.load()
         >>>
-        >>> # After interaction completes
-        >>> await manager.add_interaction(message, response, tool_results)
+        >>> # At the scheduler's session reap point
+        >>> await manager.maybe_summarize_completed_sessions(journal)
         >>>
         >>> # Build context for LLM
         >>> context_blocks = await manager.build_context_blocks(current_message)
@@ -73,12 +97,6 @@ class MemoryManager:
             self.storage_path = paths.agent_memory_dir(agent_id)
             self.config_file = paths.memory_config_file(agent_id)
 
-        # Initialize stores
-        self.working = WorkingMemoryStore(
-            agent_id=agent_id,
-            storage_path=self.storage_path,
-            max_items=config.working_max_items,
-        )
         self.episodic = EpisodicMemoryStore(
             agent_id=agent_id,
             storage_path=self.storage_path,
@@ -87,8 +105,6 @@ class MemoryManager:
         )
 
         self._loaded = False
-        self._session_id: str | None = None
-        self._last_interaction_time: datetime | None = None
 
         # Initialize summarizer if LLM config provided
         if llm_config:
@@ -101,15 +117,14 @@ class MemoryManager:
     async def load(self) -> None:
         """Load memory from disk.
 
-        Called once at Agent startup. Loads config, working memory,
-        and episodic memory.
+        Called once at Agent startup. Loads config and episodic memory.
 
         ``memory/config.json`` is the single per-agent tuning surface:
         when it exists it replaces the constructor-provided config (the
         registry passes defaults), so a human-edited file takes effect.
-        The working/episodic store limits are snapshotted at construction,
-        so the merged values are re-applied to the stores before they
-        load. A missing file is created with the current defaults; a
+        The episodic store limits are snapshotted at construction,
+        so the merged values are re-applied to the store before it
+        loads. A missing file is created with the current defaults; a
         corrupt one is logged and re-initialized with defaults.
         """
         if self._loaded:
@@ -137,16 +152,11 @@ class MemoryManager:
             await self._save_config()
 
         # Store limits snapshot at construction; re-apply the (possibly
-        # merged) values before the stores load so a tuned config.json is
+        # merged) values before the store loads so a tuned config.json is
         # honored from the first boot.
-        self.working.max_items = self.config.working_max_items
         self.episodic.max_summaries = self.config.episodic_max_summaries
         self.episodic.max_facts = self.config.episodic_max_facts
 
-        # Load working memory
-        await self.working.load()
-
-        # Load episodic memory
         await self.episodic.load()
 
         self._loaded = True
@@ -160,179 +170,167 @@ class MemoryManager:
         except Exception as e:
             logger.error("memory_config_save_failed", error=str(e), exc_info=True)
 
-    async def save(self) -> None:
-        """Explicitly save all memory to disk.
+    # ===== Batch summarization (journal -> episodic, ADR 0009) =====
 
-        Note: Memory is persisted incrementally, so this is usually
-        not necessary. Useful for graceful shutdown.
-        """
-        await self._save_config()
-        # Stores persist automatically on add operations
-        logger.info("memory_saved", agent_id=self.agent_id)
+    async def maybe_summarize_completed_sessions(self, logs: SessionLogReader) -> str | None:
+        """Summarize completed sessions not yet covered by any Summary.
 
-    def set_session_id(self, session_id: str) -> None:
-        """Set the current session ID.
-
-        Args:
-            session_id: Unique identifier for this session
-        """
-        self._session_id = session_id
-
-    # ===== System Auto-Triggered Operations =====
-
-    async def add_interaction(
-        self,
-        message: Any,
-        response: Any,
-        tool_results: list[Any] | None = None,
-    ) -> str:
-        """Store a completed interaction.
-
-        Automatically called after each Agent response. Stores the
-        interaction in Working Memory and checks if summary should
-        be generated.
-
-        Args:
-            message: The incoming message (Message object or dict)
-            response: The agent's response (response object or dict)
-            tool_results: Optional list of tool execution results
+        Called by the scheduler at its session reap point. The pending
+        set is ``logs.list_completed()`` minus every session id recorded
+        as ``source_session_ids`` in the recent summaries (scan capped at
+        ``episodic_max_summaries`` entries); when the pending count
+        reaches ``config.summary_window`` the whole batch is summarized
+        from the sessions' journals into one episodic Summary.
 
         Returns:
-            The interaction ID
-        """
-        return await self._store_interaction(message, response, tool_results)
-
-    async def _store_interaction(
-        self,
-        message: Any,
-        response: Any,
-        tool_results: list[Any] | None = None,
-    ) -> str:
-        """Internal method to store an interaction.
-
-        Args:
-            message: The incoming message (Message object or dict)
-            response: The agent's response (response object or dict)
-            tool_results: Optional list of tool execution results
-
-        Returns:
-            The interaction ID
+            The summary ID if one was generated, None otherwise
         """
         if not self._loaded:
             await self.load()
 
-        # Ensure session ID
-        if not self._session_id:
-            self._session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        completed = await logs.list_completed()
+        if not completed:
+            return None
 
-        # Convert inputs to serializable format
-        msg_dict = self._convert_to_dict(message)
-        resp_dict = self._convert_response_to_dict(response)
-        tool_dicts = [self._convert_to_dict(tr) for tr in (tool_results or [])]
+        recent = await self.episodic.get_recent_summaries(self.config.episodic_max_summaries)
+        summarized = {
+            session_id
+            for summary in recent
+            for session_id in summary.get("source_session_ids", [])
+        }
+        pending = [sid for sid in completed if sid not in summarized]
 
-        # Extract tool calls from response if present
-        tool_calls = []
-        if isinstance(response, dict) and "tool_calls" in response:
-            tool_calls = response["tool_calls"]
-        elif hasattr(response, "tool_calls") and response.tool_calls:
-            tool_calls = [
-                tc.to_dict() if hasattr(tc, "to_dict") else tc for tc in response.tool_calls
-            ]
+        if len(pending) < self.config.summary_window:
+            logger.debug(
+                "summary_window_not_reached",
+                pending_count=len(pending),
+                window=self.config.summary_window,
+            )
+            return None
 
-        # Create interaction
-        interaction = Interaction(
-            timestamp=datetime.now().isoformat(),
-            session_id=self._session_id,
-            message=msg_dict,
-            response=resp_dict,
-            tool_calls=tool_calls,
-            tool_results=tool_dicts,
+        projections = [
+            self._build_projection(session_id, await logs.read_events(session_id))
+            for session_id in pending
+        ]
+        return await self._summarize_sessions(projections)
+
+    @staticmethod
+    def _build_projection(session_id: str, events: list[dict[str, Any]]) -> SessionProjection:
+        """Rebuild one session's summarization view from its journal events.
+
+        The projection is: the real trigger content (from
+        ``session/start``), every round's LLM response content, and a
+        one-line digest per tool result.
+        """
+        trigger_content = ""
+        llm_responses: list[str] = []
+        tool_results: list[str] = []
+        for event in events:
+            event_type = event.get("type")
+            if event_type == "session/start":
+                trigger_content = str(event.get("trigger_content") or "")
+            elif event_type == "llm/response":
+                content = (event.get("response") or {}).get("content") or ""
+                if content:
+                    llm_responses.append(str(content))
+            elif event_type == "tool/result":
+                tool_call = event.get("tool_call") or {}
+                name = (tool_call.get("function") or {}).get("name", "unknown")
+                result = event.get("result") or {}
+                text = (
+                    result.get("message")
+                    or result.get("error")
+                    or json.dumps(result.get("data") or {}, ensure_ascii=False)
+                )
+                tool_results.append(f"{name}: {text}")
+        return SessionProjection(
+            session_id=session_id,
+            trigger_content=trigger_content,
+            llm_responses=llm_responses,
+            tool_results=tool_results,
         )
 
-        # Store in working memory
-        interaction_id = await self.working.add(interaction.to_dict())
+    async def _summarize_sessions(self, projections: list[SessionProjection]) -> str | None:
+        """Summarize a batch of session projections into episodic memory."""
+        source_session_ids = [p.session_id for p in projections]
+        turn_count = sum(len(p.llm_responses) for p in projections)
+        logger.info(
+            "summary_generation_started",
+            session_count=len(projections),
+            turn_count=turn_count,
+        )
 
-        # Update last interaction time
-        self._last_interaction_time = datetime.now()
+        summary_id: str | None = None
+        if self.summarizer:
+            try:
+                existing_facts = await self.episodic.get_recent_facts(20)
+                summary_dict, facts = await self.summarizer.process_sessions(
+                    sessions=projections,
+                    existing_facts=existing_facts,
+                )
 
-        logger.debug("interaction_stored", interaction_id=interaction_id)
+                if summary_dict:
+                    summary = Summary(
+                        timestamp=summary_dict["timestamp"],
+                        summary_text=summary_dict["summary_text"],
+                        source_session_ids=source_session_ids,
+                        interaction_count=summary_dict.get("interaction_count", turn_count),
+                        key_decisions=summary_dict.get("key_decisions", []),
+                        action_items=summary_dict.get("action_items", []),
+                    )
+                    summary_id = await self.episodic.add_summary(summary.to_dict())
 
-        # Check if we should generate summary
-        await self._check_summary_trigger()
+                    for fact_data in facts:
+                        fact_obj = Fact(
+                            timestamp=datetime.now().isoformat(),
+                            session_id="",
+                            fact_type=FactType(fact_data.get("fact_type", "GENERAL")),
+                            subject=fact_data.get("subject", "用户"),
+                            predicate=fact_data.get("predicate", "提到"),
+                            object=fact_data.get("object", ""),
+                            description=fact_data.get("description", ""),
+                            confidence=fact_data.get("confidence", 0.5),
+                        )
+                        await self.episodic.add_fact(fact_obj.to_dict())
 
-        return interaction_id
+                    logger.info(
+                        "summary_generated",
+                        summary_id=summary_id,
+                        fact_count=len(facts),
+                    )
+                else:
+                    summary_id = await self._persist_fallback_summary(projections)
 
-    def _convert_to_dict(self, obj: Any) -> dict[str, Any]:
-        """Convert object to dictionary."""
-        if obj is None:
-            return {}
-        if hasattr(obj, "to_dict"):
-            return cast(dict[str, Any], obj.to_dict())
-        if hasattr(obj, "__dict__"):
-            return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
-        if isinstance(obj, dict):
-            return obj
-        return {"content": str(obj)}
+            except Exception as e:
+                logger.error("llm_summarization_failed", error=str(e), exc_info=True)
+                summary_id = await self._persist_fallback_summary(projections)
+        else:
+            summary_id = await self._persist_fallback_summary(projections)
 
-    def _convert_response_to_dict(self, response: Any) -> dict[str, Any] | None:
-        """Convert response object to dictionary."""
-        if response is None:
-            return None
-        if hasattr(response, "to_dict"):
-            return cast(dict[str, Any], response.to_dict())
-        if isinstance(response, dict):
-            return response
-        if hasattr(response, "content"):
-            result = {"content": response.content}
-            if hasattr(response, "finish_reason"):
-                result["finish_reason"] = response.finish_reason
-            return result
-        return {"content": str(response)}
+        return summary_id
 
-    async def _check_summary_trigger(self) -> None:
-        """Check if summary should be generated.
+    async def _persist_fallback_summary(
+        self, projections: list[SessionProjection]
+    ) -> str | None:
+        """Persist a mechanical fallback summary without LLM.
 
-        Triggers:
-        1. Working memory is full (reaches max_items)
-        2. Session has been idle for configured timeout
+        Runs inside ``_summarize_sessions``'s fallback paths; a
+        persistence failure here must not escape into the scheduler's
+        reap path.
         """
-        # Check if working memory is full
-        if await self.working.is_full():
-            logger.info("working_memory_full")
-            await self.generate_summary()
-
-    async def check_idle_timeout(self) -> str | None:
-        """Check if idle timeout has been reached and generate summary.
-
-        This should be called periodically (e.g., before processing
-        a new message) to check if the session has been idle.
-
-        Returns:
-            Summary ID if generated, None otherwise
-        """
-        if not self._loaded:
+        summary = Summary(
+            timestamp=datetime.now().isoformat(),
+            summary_text=Summarizer._generate_fallback_summary(projections),
+            source_session_ids=[p.session_id for p in projections],
+            interaction_count=sum(len(p.llm_responses) for p in projections),
+        )
+        try:
+            summary_id = await self.episodic.add_summary(summary.to_dict())
+        except Exception as e:
+            logger.error("summary_persist_failed", error=str(e), exc_info=True)
             return None
-
-        if not self._last_interaction_time:
-            return None
-
-        # Check if there's anything to summarize
-        count = await self.working.count()
-        if count == 0:
-            return None
-
-        # Calculate idle time
-        idle_time = datetime.now() - self._last_interaction_time
-        timeout = timedelta(minutes=self.config.idle_timeout_minutes)
-
-        if idle_time >= timeout:
-            logger.info(
-                "idle_timeout",
-                idle_minutes=round(idle_time.total_seconds() / 60, 1),
-            )
-            return await self.generate_summary(force=True)
-
-        return None
+        logger.info("simple_summary_generated", summary_id=summary_id)
+        return summary_id
 
     async def build_context_blocks(
         self,
@@ -343,7 +341,6 @@ class MemoryManager:
         Assembles relevant memory into formatted blocks:
         - Episodic summaries (recent 5)
         - Key facts (recent 10)
-        - Working memory interactions (recent 5)
 
         Args:
             current_message: The current message being processed
@@ -404,176 +401,10 @@ class MemoryManager:
                     )
                 )
 
-        # Get recent working memory interactions
-        interactions = await self.working.get_recent(self.config.context_max_working)
-        if interactions:
-            interaction_lines = []
-            interaction_ids: list[str] = []
-            for i, inter in enumerate(interactions, 1):
-                msg = inter.get("message", {})
-                resp = inter.get("response", {})
-                tool_results = inter.get("tool_results", [])
-
-                # Format: [User] message
-                sender = msg.get("sender_name", "User")
-                content = msg.get("content", "")
-                lines = [f"{i}. [{sender}] {content}"]
-
-                # Add tool results if present
-                if tool_results:
-                    for tr in tool_results:
-                        stdout = tr.get("stdout", "")
-                        if stdout:
-                            lines.append(f"   [Tool Result] {stdout[:200]}")  # Truncate
-
-                # Add response
-                resp_content = ""
-                if isinstance(resp, dict):
-                    resp_content = resp.get("content", "")
-                elif isinstance(resp, str):
-                    resp_content = resp
-
-                if resp_content:
-                    lines.append(f"   [Agent] {resp_content[:200]}")  # Truncate
-
-                interaction_lines.append("\n".join(lines))
-                if (iid := inter.get("id")) is not None:
-                    interaction_ids.append(iid)
-
-            if interaction_lines:
-                blocks.append(
-                    ContextBlock(
-                        block_type="recent_working",
-                        priority=3,
-                        content="\n\n".join(interaction_lines),
-                        source_ids=interaction_ids,
-                    )
-                )
-
         # Sort by priority
         blocks.sort(key=lambda b: b.priority)
 
         return blocks
-
-    async def generate_summary(
-        self, force: bool = False, instructions: str | None = None
-    ) -> str | None:
-        """Generate a session summary from working memory.
-
-        Uses snapshot + delta-clear: snapshots working memory before the
-        LLM call, and only removes snapshot items after. Items added to
-        working memory during the LLM call are preserved.
-
-        Args:
-            force: If True, generate summary even if not enough interactions
-            instructions: Optional focus for the summary, passed to the
-                summarizer so specific content is preserved
-
-        Returns:
-            The summary ID if generated, None if no interactions
-        """
-        if not self._loaded:
-            await self.load()
-
-        # ── 1. Snapshot working memory (atomically, inside store lock) ──
-        interactions = await self.working.get_all()
-        if not interactions:
-            logger.debug("no_interactions_to_summarize")
-            return None
-
-        if not force and len(interactions) < self.config.working_summary_window:
-            logger.debug(
-                "insufficient_interactions",
-                interaction_count=len(interactions),
-                window=self.config.working_summary_window,
-            )
-            return None
-
-        snapshot_ids = {i["id"] for i in interactions}
-        source_ids = list(snapshot_ids)
-        count = len(interactions)
-        logger.info("summary_generation_started", interaction_count=count)
-
-        # ── 2. LLM call (no locks held, can run long) ──
-        summary_id: str | None = None
-        if self.summarizer:
-            try:
-                existing_facts = await self.episodic.get_recent_facts(20)
-                summary_dict, facts = await self.summarizer.process_interactions(
-                    interactions=interactions,
-                    session_id=self._session_id or "unknown",
-                    existing_facts=existing_facts,
-                    instructions=instructions,
-                )
-
-                if summary_dict:
-                    summary_dict["id"] = Summary(
-                        timestamp="", session_id="", summary_text=""
-                    ).id
-                    summary_dict["source_interactions"] = source_ids
-                    summary = Summary.from_dict(summary_dict)
-                    summary_id = await self.episodic.add_summary(summary.to_dict())
-
-                    for fact_data in facts:
-                        fact_obj = Fact(
-                            timestamp=datetime.now().isoformat(),
-                            session_id=self._session_id or "unknown",
-                            fact_type=FactType(fact_data.get("fact_type", "GENERAL")),
-                            subject=fact_data.get("subject", "用户"),
-                            predicate=fact_data.get("predicate", "提到"),
-                            object=fact_data.get("object", ""),
-                            description=fact_data.get("description", ""),
-                            confidence=fact_data.get("confidence", 0.5),
-                        )
-                        await self.episodic.add_fact(fact_obj.to_dict())
-
-                    logger.info(
-                        "summary_generated",
-                        summary_id=summary_id,
-                        fact_count=len(facts),
-                    )
-                else:
-                    summary_id = await self._generate_simple_summary(interactions, source_ids)
-
-            except Exception as e:
-                logger.error("llm_summarization_failed", error=str(e), exc_info=True)
-                summary_id = await self._generate_simple_summary(interactions, source_ids)
-        else:
-            summary_id = await self._generate_simple_summary(interactions, source_ids)
-
-        # ── 3. Delta-clear: only remove snapshot items ──
-        removed = await self.working.remove_by_ids(snapshot_ids)
-        logger.info(
-            "working_memory_delta_cleared",
-            removed_count=removed,
-            total_count=count,
-        )
-
-        return summary_id
-
-    async def _generate_simple_summary(
-        self, interactions: list[dict[str, Any]], source_ids: list[str]
-    ) -> str:
-        """Generate a simple fallback summary without LLM.
-
-        Delegates the summary text to Summarizer._generate_fallback_summary
-        to keep a single fallback implementation.
-        """
-        count = len(interactions)
-        summary_text = Summarizer._generate_fallback_summary(interactions)
-
-        summary = Summary(
-            timestamp=datetime.now().isoformat(),
-            session_id=self._session_id or "unknown",
-            summary_text=summary_text,
-            source_interactions=source_ids,
-            interaction_count=count,
-        )
-
-        summary_id = await self.episodic.add_summary(summary.to_dict())
-        logger.info("simple_summary_generated", summary_id=summary_id)
-
-        return summary_id
 
     # ===== LLM Tool Operations =====
 
@@ -607,13 +438,9 @@ class MemoryManager:
         except ValueError:
             fact_type_enum = FactType.GENERAL
 
-        # Ensure session ID
-        if not self._session_id:
-            self._session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
         fact_obj = Fact(
             timestamp=datetime.now().isoformat(),
-            session_id=self._session_id,
+            session_id="",
             fact_type=fact_type_enum,
             subject=subject,
             predicate=predicate,
@@ -734,129 +561,35 @@ class MemoryManager:
 
         return f"已删除 {deleted_count} 条记忆。"
 
-    async def get_memory_digest(self) -> dict[str, Any]:
+    async def get_memory_digest(self, logs: SessionLogReader) -> dict[str, Any]:
         """Get a digest of current memory state for reflection/audit.
 
-        Returns a dict with summaries, facts, and working memory count
-        for the reflection sub-agent to analyze.
+        Returns a dict with summaries, facts, and the number of completed
+        sessions not yet covered by a Summary for the reflection
+        sub-agent to analyze.
 
         Returns:
-            Dict with keys: working_count, summary_count, fact_count,
-            summaries, facts, last_interaction_time
+            Dict with keys: unsummarized_session_count, summary_count,
+            fact_count, summaries, facts
         """
         if not self._loaded:
             await self.load()
 
         summaries = await self.episodic.get_recent_summaries(20)
         facts = await self.episodic.get_recent_facts(50)
-        working_count = await self.working.count()
+
+        completed = await logs.list_completed()
+        summarized = {
+            session_id
+            for summary in summaries
+            for session_id in summary.get("source_session_ids", [])
+        }
+        unsummarized_count = sum(1 for sid in completed if sid not in summarized)
 
         return {
-            "working_count": working_count,
+            "unsummarized_session_count": unsummarized_count,
             "summary_count": len(summaries),
             "fact_count": len(facts),
             "summaries": summaries,
             "facts": facts,
-            "last_interaction_time": (
-                self._last_interaction_time.isoformat()
-                if self._last_interaction_time
-                else None
-            ),
         }
-
-    # ===== User Command Operations =====
-
-    async def get_history_text(self, limit: int = 20) -> str:
-        """Get formatted history for user display.
-
-        Args:
-            limit: Number of interactions to show
-
-        Returns:
-            Formatted history text
-        """
-        if not self._loaded:
-            await self.load()
-
-        interactions = await self.working.get_recent(limit)
-
-        if not interactions:
-            return "没有历史记录。"
-
-        lines = ["## 历史记录", ""]
-
-        for _i, inter in enumerate(reversed(interactions), 1):
-            msg = inter.get("message", {})
-            resp = inter.get("response", {})
-
-            sender = msg.get("sender_name", "User")
-            content = msg.get("content", "")
-            timestamp = inter.get("timestamp", "")[11:19]  # Just time
-
-            lines.append(f"[{timestamp}] {sender}: {content}")
-
-            if resp:
-                resp_content = ""
-                if isinstance(resp, dict):
-                    resp_content = resp.get("content", "")
-                elif isinstance(resp, str):
-                    resp_content = resp
-                if resp_content:
-                    lines.append(f"  → Agent: {resp_content[:200]}")
-
-            lines.append("")
-
-        return "\n".join(lines)
-
-    async def get_summary_text(self) -> str:
-        """Get formatted summaries for user display.
-
-        Returns:
-            Formatted summaries text
-        """
-        if not self._loaded:
-            await self.load()
-
-        summaries = await self.episodic.get_recent_summaries(10)
-
-        if not summaries:
-            return "没有会话摘要。"
-
-        lines = ["## 会话摘要", ""]
-
-        for s in summaries:
-            text = s.get("summary_text", "")
-            timestamp = s.get("timestamp", "")[:16]  # Date + time
-            count = s.get("interaction_count", 0)
-
-            lines.append(f"[{timestamp}] ({count} 次交互)")
-            lines.append(f"  {text}")
-            lines.append("")
-
-        return "\n".join(lines)
-
-    async def get_facts_text(self) -> str:
-        """Get formatted facts for user display.
-
-        Returns:
-            Formatted facts text
-        """
-        if not self._loaded:
-            await self.load()
-
-        facts = await self.episodic.get_recent_facts(50)
-
-        if not facts:
-            return "没有记录的事实。"
-
-        lines = ["## 已知事实", ""]
-
-        for f in facts:
-            desc = f.get("description", "")
-            if not desc:
-                desc = f"{f.get('subject', '')} {f.get('predicate', '')} {f.get('object', '')}"
-
-            fact_type = f.get("fact_type", "GENERAL")
-            lines.append(f"[{fact_type}] {desc}")
-
-        return "\n".join(lines)

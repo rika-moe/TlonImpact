@@ -2,7 +2,7 @@
 
 Agent self-driven memory audit: periodically snapshots memory state, asks
 the LLM to analyze it, and applies the resulting operations (record/delete
-facts, trigger consolidation). Extracted from the Agent god class.
+facts). Extracted from the Agent god class.
 """
 
 import asyncio
@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from tlon.agents.member_spec import MemberRule
+from tlon.agents.session_journal import SessionJournal
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.memory.manager import MemoryManager
@@ -21,13 +22,14 @@ logger = get_logger(__name__)
 class ReflectionEngine:
     """Runs background memory reflections for an agent.
 
-    Owns the reflection scheduling state (interval, interaction counter,
+    Owns the reflection scheduling state (interval, session counter,
     running flag). Initial enabled/interval come from the cognitive rule's
     loop (``rule.loop.reflect``, projected from the legacy ``:on-complete``
     section); ``enabled`` stays a runtime switch.
 
-    P4: the engine receives its services (memory, LLM client) and the
-    cognitive rule directly — no back-reference to the Agent.
+    P4: the engine receives its services (memory, LLM client, session
+    journal) and the cognitive rule directly — no back-reference to the
+    Agent.
     """
 
     REFLECTION_SYSTEM_PROMPT = (
@@ -38,22 +40,27 @@ class ReflectionEngine:
         "fact_type（USER_PREFERENCE/PROJECT_STATE/TECH_STACK/DECISION/GENERAL）、"
         "subject、predicate、object、confidence（0.0-1.0）。\n"
         "- delete_fact: 删除过时、冗余或矛盾的事实。需要提供 fact_id 或 description 用于匹配。\n"
-        "- consolidate: 如果工作记忆中有未处理的交互，请求触发摘要生成。\n"
         "- noop: 当前记忆状态良好，无需操作。\n\n"
         "原则：\n"
         "1. 只记录明确、重要的信息，不要推测\n"
         "2. 发现两个事实描述相同内容时，只保留更完整的一个\n"
         "3. 发现事实互相矛盾时，删除置信度更低的一个\n"
-        "4. 如果工作记忆中有 >= 5 条交互且没有近期摘要，建议 consolidate\n"
-        "5. 多数情况下不需要操作，noop 是正常的\n\n"
+        "4. 多数情况下不需要操作，noop 是正常的\n\n"
         "请用 JSON 格式返回："
         '{"analysis": "对当前记忆状态的简要分析", '
         '"operations": [{"action": "...", ...}]}'
     )
 
-    def __init__(self, memory: MemoryManager, llm_client: LLMClient, rule: MemberRule):
+    def __init__(
+        self,
+        memory: MemoryManager,
+        llm_client: LLMClient,
+        rule: MemberRule,
+        journal: SessionJournal,
+    ):
         self._memory = memory
         self._llm_client = llm_client
+        self._journal = journal
 
         # Reflection settings live on the cognitive rule's loop.
         assert rule.loop is not None, "ReflectionEngine requires a cognitive rule"
@@ -64,12 +71,12 @@ class ReflectionEngine:
             memory.config, "reflection_min_interactions", 5
         )
         self._last_reflection_time: datetime | None = None
-        self._interaction_count_since_reflection = 0
+        self._session_count_since_reflection = 0
         self._running = False
 
     def note_interaction(self) -> None:
-        """Record that an interaction was saved to memory (feeds the trigger)."""
-        self._interaction_count_since_reflection += 1
+        """Record that a session completed (feeds the trigger)."""
+        self._session_count_since_reflection += 1
 
     async def check_trigger(self) -> None:
         """Check if memory reflection should run and trigger if needed."""
@@ -84,11 +91,11 @@ class ReflectionEngine:
             if elapsed < self._interval:
                 return
 
-        if self._interaction_count_since_reflection < self._min_interactions:
+        if self._session_count_since_reflection < self._min_interactions:
             return
 
         self._last_reflection_time = now
-        self._interaction_count_since_reflection = 0
+        self._session_count_since_reflection = 0
         self._running = True
         asyncio.create_task(self._run())
 
@@ -96,13 +103,13 @@ class ReflectionEngine:
         """Run a background memory reflection/audit.
 
         Takes a snapshot of memory state, asks LLM to analyze it, and applies
-        the resulting operations (add/delete facts, trigger consolidation).
-        Runs in a background task to avoid blocking the main loop.
+        the resulting operations (add/delete facts). Runs in a background
+        task to avoid blocking the main loop.
         """
         try:
-            digest = await self._memory.get_memory_digest()
+            digest = await self._memory.get_memory_digest(self._journal)
 
-            if digest["working_count"] == 0 and digest["summary_count"] == 0 and digest["fact_count"] == 0:
+            if digest["summary_count"] == 0 and digest["fact_count"] == 0:
                 logger.debug("reflection_skipped", reason="no_memory")
                 return
 
@@ -130,11 +137,9 @@ class ReflectionEngine:
         """Build the reflection prompt from memory digest."""
         parts = ["## 当前记忆状态\n"]
 
-        parts.append(f"工作记忆交互数：{digest['working_count']}")
+        parts.append(f"未摘要会话数：{digest['unsummarized_session_count']}")
         parts.append(f"会话摘要数：{digest['summary_count']}")
         parts.append(f"已知事实数：{digest['fact_count']}")
-        if digest["last_interaction_time"]:
-            parts.append(f"最后交互时间：{digest['last_interaction_time'][:19]}")
         parts.append("")
 
         if digest["summaries"]:
@@ -159,12 +164,6 @@ class ReflectionEngine:
                 conf = f.get("confidence", 0.5)
                 parts.append(f"- [{fid}] [{ftype}] {desc} (置信度:{conf:.1f})")
             parts.append("")
-
-        parts.append("### 工作记忆概览")
-        if digest["working_count"] > 0:
-            parts.append(f"有 {digest['working_count']} 条交互待处理")
-        else:
-            parts.append("工作记忆为空")
 
         parts.append("")
         parts.append("请分析以上记忆状态，返回需要执行的 JSON 操作列表。")
@@ -213,9 +212,6 @@ class ReflectionEngine:
                     if query:
                         await self._memory.forget(query=query, confirm=True)
                         logger.debug("reflection_fact_deleted", query=query)
-                elif action == "consolidate":
-                    await self._memory.generate_summary(force=True)
-                    logger.debug("reflection_consolidation_triggered")
                 elif action == "noop":
                     pass
                 else:

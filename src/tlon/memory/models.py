@@ -23,22 +23,21 @@ class MemoryConfig:
     Attributes:
         version: Config file version
         agent_id: Associated agent ID
-        working_max_items: Maximum interactions in working memory
-        working_summary_window: Interactions before generating summary
+        summary_window: Completed unsummarized sessions before a batch
+            summary is generated (ADR 0009)
         episodic_max_summaries: Maximum summaries to keep
         episodic_max_facts: Maximum facts to keep
         context_max_summaries: Summaries to include in context
         context_max_facts: Facts to include in context
-        context_max_working: Working interactions in context
-        idle_timeout_minutes: Idle time before auto-summary
+        reflection_min_interactions: Completed sessions before reflection
+            may trigger
     """
 
     version: str = "1.0"
     agent_id: str = ""
 
-    # Working Memory settings
-    working_max_items: int = 10
-    working_summary_window: int = 10
+    # Summarization trigger (ADR 0009: journal -> episodic, batch by window)
+    summary_window: int = 3
 
     # Episodic Memory settings
     episodic_max_summaries: int = 20
@@ -47,10 +46,6 @@ class MemoryConfig:
     # Context building settings
     context_max_summaries: int = 5
     context_max_facts: int = 10
-    context_max_working: int = 5
-
-    # Trigger settings
-    idle_timeout_minutes: int = 30
 
     # Reflection settings (agent self-driven memory audit). The on/off
     # switch and interval live in the behavior spec
@@ -62,9 +57,8 @@ class MemoryConfig:
         return {
             "version": self.version,
             "agent_id": self.agent_id,
-            "working": {
-                "max_items": self.working_max_items,
-                "summary_window": self.working_summary_window,
+            "summary": {
+                "window": self.summary_window,
             },
             "episodic": {
                 "max_summaries": self.episodic_max_summaries,
@@ -73,10 +67,6 @@ class MemoryConfig:
             "context": {
                 "max_summaries_in_context": self.context_max_summaries,
                 "max_facts_in_context": self.context_max_facts,
-                "max_working_in_context": self.context_max_working,
-            },
-            "triggers": {
-                "idle_timeout_minutes": self.idle_timeout_minutes,
             },
             "reflection": {
                 "min_interactions": self.reflection_min_interactions,
@@ -85,7 +75,12 @@ class MemoryConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MemoryConfig":
-        """Create config from dictionary."""
+        """Create config from dictionary.
+
+        Sections that no longer exist (``working``, ``triggers`` from the
+        retired working-memory layer) are simply not read — an old
+        ``config.json`` on disk loads as the current defaults.
+        """
         config = cls()
 
         if "version" in data:
@@ -93,9 +88,8 @@ class MemoryConfig:
         if "agent_id" in data:
             config.agent_id = data["agent_id"]
 
-        if "working" in data:
-            config.working_max_items = data["working"].get("max_items", 10)
-            config.working_summary_window = data["working"].get("summary_window", 10)
+        if "summary" in data:
+            config.summary_window = data["summary"].get("window", 3)
 
         if "episodic" in data:
             config.episodic_max_summaries = data["episodic"].get("max_summaries", 20)
@@ -105,10 +99,6 @@ class MemoryConfig:
             ctx = data["context"]
             config.context_max_summaries = ctx.get("max_summaries_in_context", 5)
             config.context_max_facts = ctx.get("max_facts_in_context", 10)
-            config.context_max_working = ctx.get("max_working_in_context", 5)
-
-        if "triggers" in data:
-            config.idle_timeout_minutes = data["triggers"].get("idle_timeout_minutes", 30)
 
         if "reflection" in data:
             config.reflection_min_interactions = data["reflection"].get("min_interactions", 5)
@@ -117,60 +107,27 @@ class MemoryConfig:
 
 
 @dataclass
-class Interaction:
-    """A single interaction between user and agent.
+class SessionProjection:
+    """One completed session's summarization view (ADR 0009).
 
-    This represents one complete turn: user message -> agent response (possibly with tool calls).
+    Rebuilt from the session's journal (the sole interaction truth):
+    the trigger content plus, per round, the LLM response content and a
+    one-line digest of each tool result.
     """
 
-    timestamp: str
     session_id: str
-    message: dict[str, Any]
-    response: dict[str, Any] | None = None
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    tool_results: list[dict[str, Any]] = field(default_factory=list)
-    importance_score: float = 0.5
-    tags: list[str] = field(default_factory=list)
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "id": self.id,
-            "timestamp": self.timestamp,
-            "session_id": self.session_id,
-            "message": self.message,
-            "response": self.response,
-            "tool_calls": self.tool_calls,
-            "tool_results": self.tool_results,
-            "importance_score": self.importance_score,
-            "tags": self.tags,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Interaction":
-        """Create from dictionary."""
-        return cls(
-            id=data.get("id", str(uuid.uuid4())),
-            timestamp=data["timestamp"],
-            session_id=data["session_id"],
-            message=data["message"],
-            response=data.get("response"),
-            tool_calls=data.get("tool_calls", []),
-            tool_results=data.get("tool_results", []),
-            importance_score=data.get("importance_score", 0.5),
-            tags=data.get("tags", []),
-        )
+    trigger_content: str
+    llm_responses: list[str] = field(default_factory=list)
+    tool_results: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Summary:
-    """A session summary generated from multiple interactions."""
+    """A batch summary generated from completed sessions' journals."""
 
     timestamp: str
-    session_id: str
     summary_text: str
-    source_interactions: list[str] = field(default_factory=list)
+    source_session_ids: list[str] = field(default_factory=list)
     interaction_count: int = 0
     key_decisions: list[str] = field(default_factory=list)
     action_items: list[str] = field(default_factory=list)
@@ -183,9 +140,8 @@ class Summary:
         return {
             "id": self.id,
             "timestamp": self.timestamp,
-            "session_id": self.session_id,
             "summary_text": self.summary_text,
-            "source_interactions": self.source_interactions,
+            "source_session_ids": self.source_session_ids,
             "interaction_count": self.interaction_count,
             "key_decisions": self.key_decisions,
             "action_items": self.action_items,
@@ -195,13 +151,18 @@ class Summary:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Summary":
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Old ``summaries.jsonl`` lines predate ``source_session_ids``
+        (they carry ``session_id`` / ``source_interactions`` instead):
+        a missing field reads as an empty list — the old lines stay
+        loadable, and their sessions are simply never deduped against.
+        """
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             timestamp=data["timestamp"],
-            session_id=data["session_id"],
             summary_text=data["summary_text"],
-            source_interactions=data.get("source_interactions", []),
+            source_session_ids=data.get("source_session_ids", []),
             interaction_count=data.get("interaction_count", 0),
             key_decisions=data.get("key_decisions", []),
             action_items=data.get("action_items", []),
@@ -285,7 +246,7 @@ class ContextBlock:
     to an OpenAI-style message for inclusion in the conversation.
     """
 
-    block_type: Literal["episodic_summaries", "key_facts", "recent_working"]
+    block_type: Literal["episodic_summaries", "key_facts"]
     priority: int
     content: str
     source_ids: list[str] = field(default_factory=list)
@@ -295,7 +256,6 @@ class ContextBlock:
         type_labels = {
             "episodic_summaries": "过往会话摘要",
             "key_facts": "已知事实",
-            "recent_working": "最近工作记录",
         }
         label = type_labels.get(self.block_type, self.block_type)
 
