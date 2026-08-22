@@ -13,6 +13,8 @@ Layout:
     ├── {agent_id}/
     │   ├── config/
     │   │   └── agent.yaml
+    │   ├── skills/
+    │   │   └── {skill}/SKILL.md
     │   ├── memory/
     │   │   ├── config.json
     │   │   └── episodic/
@@ -22,10 +24,13 @@ Layout:
     │   │   └── {session_id}.jsonl
     │   ├── tasks.jsonl
     │   ├── workspace/
+    │   │   └── .agents/skills/{skill}/SKILL.md
     │   └── mail/
     │       ├── inbox.jsonl
     │       ├── sent.jsonl
     │       └── inbox.cursor
+    ├── skills/
+    │   └── {skill}/SKILL.md
     ├── human-{username}/
     │   └── mail/
     │       └── ...
@@ -192,6 +197,33 @@ class TlonPaths:
         one file (phase C unified the format; ``script.tlon`` is gone).
         """
         return self._home / agent_id / "config" / "behavior.tlon"
+
+    # ===== Skills (ADR 0010) =====
+
+    def skills_dir(self) -> Path:
+        """~/.tlon/skills/ — global skill library root (shared across agents).
+
+        Read-only resolution: does NOT create the directory, so checking
+        ``exists()`` stays side-effect free.
+        """
+        return self._home / "skills"
+
+    def agent_skills_dir(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/skills/ — agent-private skills.
+
+        Read-only resolution: does NOT create the directory.
+        """
+        return self._home / agent_id / "skills"
+
+    def agent_workspace_skills_dir(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/workspace/.agents/skills/ — project-level skills.
+
+        The workspace bind-mounts into the agent's container, so this is
+        also the container's ``/workspace/.agents/skills/``; the engine
+        reads it from the host, never via container exec. Read-only
+        resolution: does NOT create the directory.
+        """
+        return self._home / agent_id / "workspace" / ".agents" / "skills"
 
     # ===== Behavior prototypes =====
 

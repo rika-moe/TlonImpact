@@ -4,7 +4,7 @@
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
-          :loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+          :loop {:context {:sections [(persona) (protocol) (knowledge) (skills) (mail-history 20)]}
                  :stages [(think) (act) (critique) (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 25

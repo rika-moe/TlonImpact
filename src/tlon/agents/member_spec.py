@@ -48,10 +48,10 @@ MEMBER_SPEC_VERSION = 1
 STAGE_NAMES = frozenset({"think", "act", "plan", "critique", "revise"})
 
 #: Section names the engine implements (phase 7b). ``persona`` and
-#: ``protocol`` feed the system prompt; ``knowledge`` and
+#: ``protocol`` feed the system prompt; ``knowledge``, ``skills`` and
 #: ``mail-history`` feed the conversation context, in vector order.
 #: Relocated from the legacy ``agents/spec.py`` in phase C.
-SECTION_NAMES = frozenset({"persona", "protocol", "knowledge", "mail-history"})
+SECTION_NAMES = frozenset({"persona", "protocol", "knowledge", "skills", "mail-history"})
 
 
 def has_section(sections: tuple[Form, ...], name: str) -> bool:

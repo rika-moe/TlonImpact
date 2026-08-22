@@ -35,12 +35,13 @@
 | [design/server-protocol.md](./design/server-protocol.md) | REST + SSE 协议 v2 的设计取舍 | ✅ |
 | [design/webui.md](./design/webui.md) | WebUI（apps/webui）：React+Vite、/ui/ 静态托管、cyberpunk 视觉规范 | ✅ |
 | [design/deepseek-harness-review.md](./design/deepseek-harness-review.md) | 外部调研：dsh 对 Tlon 的可借鉴点（方向讨论输入材料，非决策） | ✅ |
+| [design/skills.md](./design/skills.md) | Skill 能力：开放标准 SKILL.md、三层目录、progressive disclosure | ✅ |
 | [reference/dsl-reference.md](./reference/dsl-reference.md) | EDN 语法、MemberSpec 全字段、builtin/stage/section 清单 | ✅ |
 | [reference/config-reference.md](./reference/config-reference.md) | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
 | [reference/tools-reference.md](./reference/tools-reference.md) | 全部工具的参数与语义 | ✅ |
 | [reference/api-reference.md](./reference/api-reference.md) | REST/SSE 端点与事件帧格式 | ✅ |
 | [guides/quickstart.md](./guides/quickstart.md) | uv sync → dream → ops → 第一封信 | ✅ |
 | [guides/writing-a-prototype.md](./guides/writing-a-prototype.md) | 手写一个 prototype 的完整走查 | ✅ |
-| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、**0006 统一成员模型** | ✅ |
+| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力 | ✅ |
 
 ✅ = 已写并与代码同步；📝 = 计划内未写。新增文档先登记进本表。

@@ -47,7 +47,7 @@
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
-          :loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
+          :loop {:context {:sections [(persona) (protocol) (knowledge) (skills) (mail-history 20)]}
                  :stages [(think) (act)]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 3
@@ -65,7 +65,7 @@
 - **`{:version 1}`** 顶层必须。
 - **`:rules [...]`** 是规则向量。`:name "respond"` 规则：**`:on :mail-delivered`** 触发（收到投递事件）、**`:when`** 门控（收件人含自己才响应——没有这个门，系统里每一封邮件都会唤醒它）。
 - **`:loop`** 使它成为认知型成员：
-  - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`knowledge`/`mail-history N` 四种，见 dsl-reference §6.1）；
+  - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`knowledge`/`skills`/`mail-history N` 五种，见 dsl-reference §6.1）；
   - `:stages` 认知循环的阶段程序（`think` / `act`，可加 `critique`、`revise`）；
   - `:until` 停机条件 + `:max-iterations` 迭代上限（DSL 的停机性靠预算，不靠砍循环）；
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。

@@ -271,7 +271,7 @@
 合法名称全集（生成自 `member_spec.py`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 - stage（`STAGE_NAMES`，5 个）：`act`、`critique`、`plan`、`revise`、`think`
-- section（`SECTION_NAMES`，4 个）：`knowledge`、`mail-history`、`persona`、`protocol`
+- section（`SECTION_NAMES`，5 个）：`knowledge`、`mail-history`、`persona`、`protocol`、`skills`
 <!-- END GENERATED: dsl-loop-names -->
 
 `:loop` 是引擎执行的 ReAct 会话。所有字段均为 total 语义——**以下键全部必填，无默认值**（`_loop_from`）：
@@ -296,15 +296,16 @@
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
 
-### 6.1 `:sections`（`SECTION_NAMES`，4 种）
+### 6.1 `:sections`（`SECTION_NAMES`，5 种）
 
-`persona` 与 `protocol` 进 system prompt；`knowledge` 与 `mail-history` 按向量顺序追加到对话上下文（`ContextBuilder`）。section 名不得重复。
+`persona` 与 `protocol` 进 system prompt；`knowledge`、`skills` 与 `mail-history` 按向量顺序追加到对话上下文（`ContextBuilder`）。section 名不得重复。
 
 | section | 参数 | 语义 |
 |---|---|---|
 | `(persona)` | 无 | 成员人格文件（SOUL/IDENTITY/RULES 等）进 system prompt |
 | `(protocol)` | 无 | 协作协议文本进 system prompt |
 | `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息 |
+| `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
 | `(mail-history n)` | 一个非负 int | 取邮箱最近 n 封邮件进对话上下文 |
 
 ### 6.2 五个 stage（`STAGE_NAMES`）

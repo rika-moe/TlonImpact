@@ -29,11 +29,13 @@ _REACT_UNTIL: str = "(or (iteration-limit-reached?) (error-limit-reached?))"
 _TRIGGER_PREDICATE = "(or (addressed-to-me? msg) (cc-ed? msg))"
 
 #: Default context program (phase 7b): persona + protocol in the system
-#: prompt, then knowledge, then 20 mails of history in the conversation.
+#: prompt, then knowledge, then the skills index (ADR 0010), then 20
+#: mails of history in the conversation.
 _DEFAULT_SECTIONS: tuple[str, ...] = (
     "(persona)",
     "(protocol)",
     "(knowledge)",
+    "(skills)",
     "(mail-history 20)",
 )
 
