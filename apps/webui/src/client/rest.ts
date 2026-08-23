@@ -146,6 +146,14 @@ export class PrototypeError extends Error {
   }
 }
 
+/** GET /health response (see handle_health in src/tlon/app/server/api/rest.py). */
+export interface ServerHealth {
+  status: string;
+  running: boolean;
+  timestamp: string;
+  version: string;
+}
+
 export class RestClient {
   readonly baseUrl: string;
 
@@ -195,7 +203,7 @@ export class RestClient {
     return data;
   }
 
-  async health(): Promise<Record<string, unknown>> {
+  async health(): Promise<ServerHealth> {
     return this.get("/health");
   }
 

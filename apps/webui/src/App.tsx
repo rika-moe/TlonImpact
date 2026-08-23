@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import { RestClient } from "./client/rest";
+import type { ServerHealth } from "./client/rest";
 import { SseClient } from "./client/sse";
 import type { ConnectionStatus, ViewName } from "./types";
 import { VIEWS, VIEW_TITLES } from "./types";
@@ -45,6 +46,36 @@ const BADGE_TEXT: Record<BadgeKind, string> = {
   down: "DOWN",
 };
 
+/** Header health poll interval: startup + every 30s. */
+const HEALTH_POLL_INTERVAL_MS = 30_000;
+
+/**
+ * Server health for the topbar. null = first poll still pending (keep
+ * only the SSE badge until the first answer lands).
+ */
+type HealthState = { kind: "ok"; health: ServerHealth } | { kind: "unreachable" } | null;
+
+/**
+ * Server version + runtime badge (GET /health). Degrades gracefully:
+ * on request failure only an UNREACHABLE badge replaces the version, no
+ * error surfaces elsewhere.
+ */
+function ServerHealthBadge({ state }: { state: HealthState }): ReactElement | null {
+  if (state === null) return null;
+  if (state.kind === "unreachable") {
+    return <span className="badge badge--down">UNREACHABLE</span>;
+  }
+  const { version, running } = state.health;
+  return (
+    <>
+      <span className="tech-label">SERVER v{version}</span>
+      <span className={`badge badge--${running ? "connected" : "reconnecting"}`}>
+        {running ? "RUNNING" : "STOPPED"}
+      </span>
+    </>
+  );
+}
+
 const VIEW_COMPONENTS: Record<ViewName, (props: {
   rest: RestClient;
   sse: SseClient;
@@ -70,6 +101,7 @@ export default function App(): ReactElement {
     [username],
   );
   const [status, setStatus] = useState<ConnectionStatus>(() => sse.getStatus());
+  const [health, setHealth] = useState<HealthState>(null);
   const [view, setView] = useState<ViewName>("mail");
 
   useEffect(() => {
@@ -82,6 +114,26 @@ export default function App(): ReactElement {
     };
   }, [sse]);
 
+  // Poll GET /health: once at startup, then every 30s. Failures only
+  // flip the header badge to UNREACHABLE — no error spam.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async (): Promise<void> => {
+      try {
+        const data = await rest.health();
+        if (!cancelled) setHealth({ kind: "ok", health: data });
+      } catch {
+        if (!cancelled) setHealth({ kind: "unreachable" });
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), HEALTH_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [rest]);
+
   const kind = badgeKind(status);
   const ActiveView = VIEW_COMPONENTS[view];
 
@@ -90,6 +142,7 @@ export default function App(): ReactElement {
       <header className="topbar">
         <h1 className="glow-title">TLON://OPERATOR</h1>
         <span className="tech-label">{window.location.host}</span>
+        <ServerHealthBadge state={health} />
         <span className="spacer" />
         <span className="tech-label">USER: {username}</span>
         <span className={`badge badge--${kind}`}>{BADGE_TEXT[kind]}</span>
