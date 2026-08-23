@@ -48,12 +48,19 @@ function logMessage(entry: LogEntry): string {
   return strField(entry, "event") ?? strField(entry, "message") ?? JSON.stringify(entry);
 }
 
+/** Full entry JSON for the expanded row: every structlog context field. */
+function logJson(entry: LogEntry): string {
+  return JSON.stringify(entry, null, 2);
+}
+
 /**
  * LOGS — server log stream (GET /logs), a webui-only view with no TUI
  * counterpart. Filters: minimum level (dropdown, applies instantly),
  * agent_id and trace_id (applied on REFRESH / next auto-refresh tick);
  * all filters combine server-side. The latest entries render in a
- * terminal panel, newest at the bottom. AUTO re-fetches every 5s.
+ * terminal panel, newest at the bottom; clicking a row expands the
+ * entry's full JSON (same interaction as the Events view).
+ * AUTO re-fetches every 5s.
  */
 export function LogsView({ rest }: ViewProps): ReactElement {
   const [filters, setFilters] = useState<LogFilters>({ level: "", agentId: "", traceId: "" });
@@ -72,6 +79,7 @@ export function LogsView({ rest }: ViewProps): ReactElement {
   const [count, setCount] = useState(0);
   const [auto, setAuto] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<LogEntry | null>(null);
   const termRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -164,16 +172,22 @@ export function LogsView({ rest }: ViewProps): ReactElement {
           const entryTrace = strField(entry, "trace_id");
           const entryAgent = strField(entry, "agent_id");
           return (
-            <div className="terminal-line log-row" key={index}>
-              <span className="log-dim">{formatTimestamp(strField(entry, "timestamp"))} </span>
-              <span className={levelClass(entryLevel)}>
-                {entryLevel.toUpperCase().padEnd(7)}
-              </span>{" "}
-              <span className="log-msg">{logMessage(entry)}</span>
-              {entryAgent ? <span className="log-dim"> {entryAgent}</span> : null}
-              {entryTrace ? (
-                <span className="log-dim"> trace:{entryTrace.slice(0, 8)}</span>
-              ) : null}
+            <div key={index}>
+              <div
+                className={`terminal-line log-row${expanded === entry ? " log-row--expanded" : ""}`}
+                onClick={() => setExpanded(expanded === entry ? null : entry)}
+              >
+                <span className="log-dim">{formatTimestamp(strField(entry, "timestamp"))} </span>
+                <span className={levelClass(entryLevel)}>
+                  {entryLevel.toUpperCase().padEnd(7)}
+                </span>{" "}
+                <span className="log-msg">{logMessage(entry)}</span>
+                {entryAgent ? <span className="log-dim"> {entryAgent}</span> : null}
+                {entryTrace ? (
+                  <span className="log-dim"> trace:{entryTrace.slice(0, 8)}</span>
+                ) : null}
+              </div>
+              {expanded === entry ? <pre className="log-json">{logJson(entry)}</pre> : null}
             </div>
           );
         })}

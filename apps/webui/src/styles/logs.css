@@ -67,3 +67,30 @@
 .log-level--debug {
   color: var(--text-dim);
 }
+
+/* Row expansion: click toggles the entry's full JSON (mirrors events.css). */
+.log-row {
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.log-row:hover {
+  background: rgba(0, 240, 255, 0.06);
+}
+
+.log-row--expanded {
+  text-shadow: var(--glow-cyan);
+}
+
+.log-json {
+  margin: 4px 0 8px 18px;
+  padding: 8px 12px;
+  background: var(--bg-2);
+  border-left: 1px solid rgba(0, 240, 255, 0.4);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
