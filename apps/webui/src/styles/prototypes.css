@@ -117,6 +117,33 @@
   white-space: nowrap;
 }
 
+/* Card head: display name + TRUSTED/STAGING badge. */
+.proto-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* List-card trust badge; same tone language as agents.css state-badge
+ * (cyan = trusted, yellow = staging). */
+.proto-card-badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.proto-card-badge--staging {
+  color: var(--neon-yellow);
+  box-shadow: none;
+}
+
 .proto-card-name {
   font-family: var(--font-mono);
   font-size: 11px;

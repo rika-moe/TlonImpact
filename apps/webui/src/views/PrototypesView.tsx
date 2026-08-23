@@ -12,6 +12,7 @@ import type { ReactElement, ReactNode } from "react";
 import { PrototypeError } from "../client/rest";
 import type {
   PrototypeDetail,
+  PrototypeParameter,
   PrototypePatch,
   PrototypeSummary,
   RestClient,
@@ -301,14 +302,7 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
                   </div>
                   <span className="tech-label">PARAMETERS</span>
                   {detail.parameters.length > 0 ? (
-                    <div className="proto-params">
-                      {detail.parameters.map((param) => (
-                        <span className="proto-param" key={param.name}>
-                          {param.name}: {param.type}
-                          {param.required ? " *" : ""}
-                        </span>
-                      ))}
-                    </div>
+                    <ProtoParams parameters={detail.parameters} />
                   ) : (
                     <p className="prototypes-empty">NO PARAMETERS</p>
                   )}
@@ -376,12 +370,43 @@ function ProtoCard({
       }`}
       onClick={onSelect}
     >
-      <div className="proto-card-display">{proto.display_name || proto.name}</div>
+      <div className="proto-card-head">
+        <div className="proto-card-display">{proto.display_name || proto.name}</div>
+        <span
+          className={`proto-card-badge${staging ? " proto-card-badge--staging" : ""}`}
+        >
+          {staging ? "STAGING" : "TRUSTED"}
+        </span>
+      </div>
       <div className="proto-card-name">{proto.name}</div>
       {proto.description ? (
         <div className="proto-card-desc">{proto.description}</div>
       ) : null}
+      {proto.parameters.length > 0 ? (
+        <ProtoParams parameters={proto.parameters} />
+      ) : null}
       <div className="tech-label">AUTHOR: {proto.author || "unknown"}</div>
+    </div>
+  );
+}
+
+/**
+ * Parameter chips: `name: type` pills, `*` marks required.
+ * Shared by the list cards and the detail panel (issue ).
+ */
+function ProtoParams({
+  parameters,
+}: {
+  parameters: PrototypeParameter[];
+}): ReactElement {
+  return (
+    <div className="proto-params">
+      {parameters.map((param) => (
+        <span className="proto-param" key={param.name}>
+          {param.name}: {param.type}
+          {param.required ? " *" : ""}
+        </span>
+      ))}
     </div>
   );
 }
