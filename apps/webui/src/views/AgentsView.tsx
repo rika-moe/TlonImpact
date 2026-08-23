@@ -1,6 +1,7 @@
 /**
  * AGENTS view — member card grid (state-colored, with lineage) +
- * structured detail panel, create (pick a prototype -> form), edit,
+ * structured detail panel (with the member's recent logs embedded,
+ * GET /agents/{id}/logs), create (pick a prototype -> form), edit,
  * delete (confirm).
  *
  * Ported from apps/operator/src/views/AgentsView.tsx: same REST/SSE semantics
@@ -13,11 +14,13 @@
  * combines the list row with the GET /agents/{id} response.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import type { AgentDetail, AgentSummary, RestClient } from "../client/rest";
+import type { AgentDetail, AgentSummary, LogEntry, RestClient } from "../client/rest";
+import { formatTimestamp, levelClass, logJson, logMessage, strField } from "../lib/logs";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/agents.css";
+import "../styles/logs.css";
 
 type ProtoRecord = Record<string, unknown>;
 
@@ -225,6 +228,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           ) : (
             <p className="agents-empty">NO DETAIL</p>
           )}
+          <MemberLogs rest={rest} agentId={selectedId} />
         </section>
       ) : null}
 
@@ -327,6 +331,89 @@ function AgentDetailPanel({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+const MEMBER_LOGS_LIMIT = 20;
+
+/**
+ * Recent logs of one member (GET /agents/{id}/logs), embedded in the
+ * detail panel. Same row rendering as the LOGS view — timestamp,
+ * colored level, message; clicking a row expands the entry's full JSON.
+ * Newest entries sit at the bottom.
+ */
+function MemberLogs({
+  rest,
+  agentId,
+}: {
+  rest: RestClient;
+  agentId: string;
+}): ReactElement {
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<LogEntry | null>(null);
+  const termRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setExpanded(null);
+    rest
+      .getAgentLogs(agentId, { limit: MEMBER_LOGS_LIMIT })
+      .then((data) => {
+        if (cancelled) return;
+        setLogs(data.logs);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(errMsg(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rest, agentId]);
+
+  // The log list is chronological; stick to the newest entries.
+  useEffect(() => {
+    const el = termRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs]);
+
+  return (
+    <div className="agent-logs">
+      <span className="tech-label agent-detail-label">RECENT LOGS</span>
+      {error ? <div className="agents-error-bar">{error}</div> : null}
+      <div className="terminal agent-logs-terminal" ref={termRef}>
+        {loading ? (
+          <div className="terminal-line logs-empty">loading…</div>
+        ) : logs.length === 0 ? (
+          <div className="terminal-line logs-empty">no log entries</div>
+        ) : null}
+        {logs.map((entry, index) => {
+          const entryLevel = (strField(entry, "level") ?? "info").toLowerCase();
+          return (
+            <div key={index}>
+              <div
+                className={`terminal-line log-row${expanded === entry ? " log-row--expanded" : ""}`}
+                onClick={() => setExpanded(expanded === entry ? null : entry)}
+              >
+                <span className="log-dim">{formatTimestamp(strField(entry, "timestamp"))} </span>
+                <span className={levelClass(entryLevel)}>
+                  {entryLevel.toUpperCase().padEnd(7)}
+                </span>{" "}
+                <span className="log-msg">{logMessage(entry)}</span>
+              </div>
+              {expanded === entry ? <pre className="log-json">{logJson(entry)}</pre> : null}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

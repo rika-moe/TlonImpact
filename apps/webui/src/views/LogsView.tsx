@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactElement } from "react";
 import type { LogEntry } from "../client/rest";
+import { formatTimestamp, levelClass, logJson, logMessage, strField } from "../lib/logs";
 import type { ViewProps } from "../types";
 import "../styles/logs.css";
 
@@ -14,43 +15,6 @@ interface LogFilters {
   level: string;
   agentId: string;
   traceId: string;
-}
-
-function strField(entry: LogEntry, key: string): string | undefined {
-  const value = entry[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function levelClass(level: string): string {
-  switch (level) {
-    case "error":
-    case "critical":
-      return "log-level log-level--error";
-    case "warning":
-      return "log-level log-level--warning";
-    case "debug":
-      return "log-level log-level--debug";
-    default:
-      return "log-level log-level--info";
-  }
-}
-
-function formatTimestamp(ts: string | undefined): string {
-  if (!ts) return "??:??:??";
-  const date = new Date(ts);
-  return Number.isNaN(date.getTime())
-    ? ts
-    : date.toLocaleTimeString("en-GB", { hour12: false });
-}
-
-/** The structlog message lives under "event"; fall back to the raw JSON. */
-function logMessage(entry: LogEntry): string {
-  return strField(entry, "event") ?? strField(entry, "message") ?? JSON.stringify(entry);
-}
-
-/** Full entry JSON for the expanded row: every structlog context field. */
-function logJson(entry: LogEntry): string {
-  return JSON.stringify(entry, null, 2);
 }
 
 /**
