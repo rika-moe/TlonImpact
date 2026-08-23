@@ -140,7 +140,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 | `username` | string | `guest` | 读 `human:<username>` 的邮箱；空或含路径分隔符返回 400（`{"error"}`，无 reason） |
 | `limit` | int | 50（上限 200） | 非整数回落默认值 |
 
-- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（[organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail.to_dict`）
+- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（[organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail.to_dict`）；handler 额外注入 `read: bool`——收件箱邮件按已读游标判定（id 不在未读集合即已读），已发邮件恒为 `true`
 - 503：未装配 `paths`
 
 ### POST /sessions
@@ -189,14 +189,13 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 | `id` | agent id |
 | `name` | 显示名 |
 | `state` | 运行时状态；未运行时派生为 `waking` / `sleeping`（lazy）/ `unknown` |
-| `role` | 配置角色 |
 | `prototype` | 行为原型 |
 | `spawned_by` | spawn 者 id |
 | `spawn_depth` | spawn 深度 |
 
 ### GET /agents/{agent_id}
 
-单个 agent。200：`{"id", "name", "state", "config": {"role", "prototype"}}`——形状与 `GET /agents` 的列表元素**不同**（状态字段嵌进 `config`，且无 spawned_by/spawn_depth）。404：agent 未注册（`{"error"}`，无 reason）。
+单个 agent。200：`{"id", "name", "state", "config": {"prototype"}}`——形状与 `GET /agents` 的列表元素**不同**：`prototype` 嵌在 `config` 下，且无 `spawned_by`/`spawn_depth`；`state` 派生也不同，未运行时一律为 `unknown`（列表元素会区分 `waking`/`sleeping`）。404：agent 未注册（`{"error"}`，无 reason）。
 
 ### GET /participants
 
@@ -380,10 +379,12 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
-| `agent.response` / `agent.thinking*` / `agent.llm_*` / `agent.error` / `agent.state_changed` / `agent.join` / `agent.leave` | 成员运行时 | 各发布点自定义 dict |
-| `tool.execute*` / `tool.result` / `tool.error` | 工具执行层 | 各发布点自定义 dict |
-| `system.startup` / `system.shutdown` / `system.error` | `ServerApp`（source `server`） | 如 `{"agents": n}` |
-| `config.updated` | 配置层 | 各发布点自定义 dict |
+| `agent.thinking_start` / `agent.thinking_end` / `agent.llm_request` / `agent.llm_response` | 成员运行时（`agents/stages/services.py`） | 各发布点自定义 dict |
+| `tool.execute_start` / `tool.execute_end` / `tool.error` | 工具执行层（`agents/loop_driver.py`、`agents/stages/act.py`） | 各发布点自定义 dict |
+| `system.startup` / `system.shutdown` | `ServerApp`（source `server`） | 如 `{"agents": n}` |
+| `config.updated` | 配置层（`ConfigManager.reload_agent`） | `{"agent_id", "action"}` |
+
+以下 9 个事件类型已在枚举中定义，但全代码库**当前无发布点**——订阅它们不会收到任何事件：`agent.join`、`agent.leave`、`agent.thinking`、`agent.response`、`agent.state_changed`、`agent.error`、`tool.execute`、`tool.result`、`system.error`。
 
 ### mode 与 filters
 
