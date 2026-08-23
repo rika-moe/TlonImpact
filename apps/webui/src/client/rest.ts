@@ -415,7 +415,11 @@ export class RestClient {
     return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
   }
 
-  /** Current LLM env configuration (Settings view). */
+  /**
+   * Current LLM env configuration (Settings view). `values.api_key` is
+   * masked (`****` + last 4, "" when unset) — the plain key is never
+   * exposed.
+   */
   async getSettingsEnv(): Promise<{
     path: string;
     configured: boolean;
@@ -429,7 +433,10 @@ export class RestClient {
     return this.get("/admin/settings/env");
   }
 
-  /** Write LLM env config to {TLON_HOME}/.env (merge semantics). */
+  /**
+   * Write LLM env config to {TLON_HOME}/.env (merge semantics). Omit
+   * `api_key` (or echo back the masked value) to keep the current key.
+   */
   async updateSettingsEnv(body: {
     base_url?: string;
     api_key?: string;

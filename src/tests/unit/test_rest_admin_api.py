@@ -426,7 +426,7 @@ class TestAdminSettingsEnv:
     async def test_get_reports_effective_values(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        self._fake_settings(monkeypatch, llm_api_key="sk-test", llm_model_name="m")
+        self._fake_settings(monkeypatch, llm_api_key="sk-secret1234", llm_model_name="m")
         p = TlonPaths(home=tmp_path)
         handler = RESTAPIHandler(None, MagicMock(), paths=p)
 
@@ -437,6 +437,20 @@ class TestAdminSettingsEnv:
         assert body["path"] == str(p.env_file())
         assert body["configured"] is True
         assert body["values"]["model_name"] == "m"
+        # masked: last 4 chars visible, plain key never returned
+        assert body["values"]["api_key"] == "****1234"
+
+    async def test_get_masks_short_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._fake_settings(monkeypatch, llm_api_key="abc")
+        p = TlonPaths(home=tmp_path)
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+
+        resp = await handler.handle_get_settings_env(StubRequest())
+
+        body = json.loads(resp.text)
+        assert body["values"]["api_key"] == "****"
 
     async def test_get_unconfigured_key_flag(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -476,6 +490,41 @@ class TestAdminSettingsEnv:
         assert "OPENAI_TEMPERATURE=0.7" in text
         assert "CUSTOM_KEY=keep" in text  # untouched keys preserved
         assert "# comment" in text  # comments preserved
+
+    async def test_put_masked_api_key_keeps_current(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._fake_settings(monkeypatch, llm_api_key="sk-secret1234")
+        p = TlonPaths(home=tmp_path)
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-secret1234\n", encoding="utf-8")
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+
+        resp = await handler.handle_update_settings_env(
+            StubRequest(body={"api_key": "****1234", "model_name": "m2"})
+        )
+
+        assert resp.status == 200
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "OPENAI_API_KEY=sk-secret1234" in text
+        assert "****" not in text
+        assert json.loads(resp.text)["updated"] == ["OPENAI_MODEL_NAME"]
+
+    async def test_put_empty_api_key_keeps_current(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._fake_settings(monkeypatch, llm_api_key="sk-secret1234")
+        p = TlonPaths(home=tmp_path)
+        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-secret1234\n", encoding="utf-8")
+        handler = RESTAPIHandler(None, MagicMock(), paths=p)
+
+        resp = await handler.handle_update_settings_env(
+            StubRequest(body={"api_key": ""})
+        )
+
+        assert resp.status == 200
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "OPENAI_API_KEY=sk-secret1234" in text
+        assert json.loads(resp.text)["updated"] == []
 
     async def test_put_invalid_body_400(self, tmp_path: Path):
         p = TlonPaths(home=tmp_path)

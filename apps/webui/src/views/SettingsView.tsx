@@ -42,8 +42,10 @@ function formatAgentConfig(agent: Record<string, unknown>): string {
  * SETTINGS — merges the TUI's config + settings views. Upper half is
  * read-only: server config (GET /config) and member configs
  * (GET /admin/config/agents). Lower half edits the LLM env
- * (GET/PUT /admin/settings/env, merge semantics). The api_key is shown
- * in plain text — a deliberate decision for this local console.
+ * (GET/PUT /admin/settings/env, merge semantics). The api_key is
+ * write-only: the server returns it masked (`****` + last 4) and the
+ * form shows that as a placeholder — an empty field on save keeps the
+ * current key, a typed value replaces it.
  */
 export function SettingsView({ rest }: ViewProps): ReactElement {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -52,6 +54,7 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
 
   const [envPath, setEnvPath] = useState<string | null>(null);
   const [configured, setConfigured] = useState(false);
+  const [apiKeyMasked, setApiKeyMasked] = useState("");
   const [form, setForm] = useState<EnvForm>({
     base_url: "",
     api_key: "",
@@ -80,9 +83,12 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
       const data = await rest.getSettingsEnv();
       setEnvPath(data.path);
       setConfigured(data.configured);
+      // api_key comes back masked; the field stays empty until the user
+      // types a new key (empty on save = keep the current key).
+      setApiKeyMasked(data.values.api_key ?? "");
       setForm({
         base_url: data.values.base_url ?? "",
-        api_key: data.values.api_key ?? "",
+        api_key: "",
         model_name: data.values.model_name ?? "",
         temperature: String(data.values.temperature ?? ""),
       });
@@ -195,9 +201,13 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
               <input
                 id={`env-${field}`}
                 className="input"
-                // api_key in plain text: deliberate for a local console.
                 type="text"
                 value={form[field]}
+                placeholder={
+                  field === "api_key"
+                    ? apiKeyMasked || "未配置 — 输入新 key 并保存"
+                    : undefined
+                }
                 onChange={setField(field)}
                 disabled={saving}
                 spellCheck={false}

@@ -228,6 +228,13 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 
 注意：`result` 为 `config-not-found` / `start-failed` 时 HTTP 状态仍是 200，调用方须检查 `result`。
 
+### GET/PUT /admin/settings/env
+
+读写 `{TLON_HOME}/.env` 里的 LLM 配置（WebUI SETTINGS 的 LLM ENV 表单）。
+
+- `GET`——200：`{"status": "success", "path", "configured", "values": {base_url, api_key, model_name, temperature}}`，`values` 为生效值（真实环境变量优先于 .env）。`api_key` 脱敏返回（`****` + 末 4 位，短于等于 4 位为 `****`，未配置为空串），明文永不出进程；`configured` 表示 key 是否已配置
+- `PUT`——body `{base_url?, api_key?, model_name?, temperature?}`，merge 语义：只更新出现的字段，.env 里其余行（注释、未触碰的 key）原样保留。`api_key` 为 write-only：空串或原样回传 GET 的脱敏值表示"不修改"，不会写进 .env；提交新值才覆盖。200：`{"status": "success", "path", "note", "updated": [<写入的 .env key>]}`；改动重启 dream 生效（Settings 是进程级单例）
+
 ### 原型管理端点（WebUI PROTOTYPES 视图）
 
 域函数在 [agents/prototypes.py](../../src/tlon/agents/prototypes.py)；原型对象形状 `{name, display_name, description, trusted, author, parameters: [{name, type, required}]}`，详情端点额外带 `behavior`（behavior.tlon 全文）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。

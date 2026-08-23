@@ -207,6 +207,16 @@ def _parse_limit(request: web.Request, default: int = 100, maximum: int = 1000) 
         return default
 
 
+def _mask_api_key(api_key: str) -> str:
+    """Mask an API key for display: ``****`` + last 4 chars (``****`` when
+    shorter, ``""`` when unset). Never returns the plain key."""
+    if not api_key:
+        return ""
+    if len(api_key) <= 4:
+        return "****"
+    return f"****{api_key[-4:]}"
+
+
 class RESTAPIHandler:
     """Handler for REST API requests.
 
@@ -1397,9 +1407,9 @@ class RESTAPIHandler:
         """GET /admin/settings/env - current LLM env configuration.
 
         Returns the effective values (real environment variables win over
-        .env) with the .env file path. The API key is returned in plain
-        text — this is a local admin tool (the operator console is the
-        owner of this config; user decision).
+        .env) with the .env file path. The API key is masked
+        (``****`` + last 4 chars, empty when unset) — the plain key never
+        leaves the process.
 
         Returns:
             200 with ``{path, configured, values}``; 503 when the admin
@@ -1417,7 +1427,7 @@ class RESTAPIHandler:
                 "configured": bool(settings.llm_api_key),
                 "values": {
                     "base_url": settings.llm_base_url,
-                    "api_key": settings.llm_api_key,
+                    "api_key": _mask_api_key(settings.llm_api_key),
                     "model_name": settings.llm_model_name,
                     "temperature": settings.llm_temperature,
                 },
@@ -1431,6 +1441,10 @@ class RESTAPIHandler:
         other lines (comments and untouched keys) in the .env are kept.
         The process reads env at startup — the change takes effect after a
         dream restart (Settings is a process-level singleton).
+
+        ``api_key`` is write-only: an empty value or the masked value
+        returned by GET (``****`` + last 4) means "keep the current key"
+        and is never written to the .env.
 
         Returns:
             200 with ``{path, note, updated}``; 400 invalid body; 503 admin
@@ -1448,10 +1462,15 @@ class RESTAPIHandler:
             )
 
         # map ops field names -> .env keys; stringify non-string values
+        masked_key = _mask_api_key(get_settings().llm_api_key)
         updates: dict[str, str] = {}
         for field, env_key in self._ENV_FIELDS.items():
             if field in body and body[field] is not None:
-                updates[env_key] = str(body[field])
+                value = str(body[field])
+                # api_key: empty or the echoed-back masked value = keep as is
+                if field == "api_key" and (not value.strip() or value == masked_key):
+                    continue
+                updates[env_key] = value
 
         env_file = self.paths.env_file()
         lines: list[str] = []
