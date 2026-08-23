@@ -42,6 +42,15 @@ function splitList(value: string): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+/** A human participant is online while it has at least one live session. */
+function isOnlineHuman(p: ParticipantInfo): boolean {
+  return (
+    p.type === "human" &&
+    typeof p.metadata?.session_count === "number" &&
+    p.metadata.session_count > 0
+  );
+}
+
 /** The recipient segment currently being typed (after the last comma). */
 function currentSegment(value: string): string {
   const idx = value.lastIndexOf(",");
@@ -583,7 +592,17 @@ function RecipientInput({
                 fill(c);
               }}
             >
-              {labelOf(c)}
+              <span className="mail-suggest-label">{labelOf(c)}</span>
+              <span className="mail-suggest-badges">
+                {isOnlineHuman(c) ? (
+                  <span className="tech-label mail-online">● ONLINE</span>
+                ) : null}
+                <span
+                  className={`tech-label mail-suggest-type mail-suggest-type--${c.type ?? "agent"}`}
+                >
+                  {(c.type ?? "agent").toUpperCase()}
+                </span>
+              </span>
             </div>
           ))}
         </div>

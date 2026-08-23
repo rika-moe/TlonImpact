@@ -110,7 +110,8 @@ export interface ThreadGroup {
 export interface ParticipantInfo {
   id: string;
   name?: string;
-  type?: string;
+  type?: "human" | "agent";
+  /** Humans carry `{session_count: n}` (0 sinks = offline); agents get `{}`. */
   metadata?: Record<string, unknown>;
 }
 
