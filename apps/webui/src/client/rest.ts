@@ -64,6 +64,34 @@ export interface LogList {
   count: number;
 }
 
+/**
+ * Member list entry (GET /agents). Lineage fields (ADR 0006):
+ * `spawned_by` is the spawning member's id (null = root member),
+ * `spawn_depth` the generation (0 = root). Type alias (not interface)
+ * so it stays assignable to Record<string, unknown> for existing
+ * consumers.
+ */
+export type AgentSummary = {
+  id: string;
+  name: string;
+  state: string;
+  prototype: string | null;
+  spawned_by: string | null;
+  spawn_depth: number;
+};
+
+/**
+ * Member detail (GET /agents/{id}): fresher state plus the config slice
+ * the endpoint exposes. The detail payload carries no lineage fields —
+ * combine with the AgentSummary row for spawned_by / spawn_depth.
+ */
+export type AgentDetail = {
+  id: string;
+  name: string;
+  state: string;
+  config: { prototype: string | null } & Record<string, unknown>;
+};
+
 /** A declared parameter of a prototype (from prototype.edn). */
 export type PrototypeParameter = {
   name: string;
@@ -175,12 +203,12 @@ export class RestClient {
     return this.get("/config");
   }
 
-  async listAgents(): Promise<Record<string, unknown>[]> {
-    const data = await this.get<{ agents?: Record<string, unknown>[] }>("/agents");
+  async listAgents(): Promise<AgentSummary[]> {
+    const data = await this.get<{ agents?: AgentSummary[] }>("/agents");
     return data.agents ?? [];
   }
 
-  async getAgent(agentId: string): Promise<Record<string, unknown>> {
+  async getAgent(agentId: string): Promise<AgentDetail> {
     return this.get(`/agents/${encodeURIComponent(agentId)}`);
   }
 

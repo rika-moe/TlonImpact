@@ -1,20 +1,24 @@
 /**
- * AGENTS view — member card grid (state-colored) + detail terminal, create
- * (pick a prototype -> form), edit, delete (confirm).
+ * AGENTS view — member card grid (state-colored, with lineage) +
+ * structured detail panel, create (pick a prototype -> form), edit,
+ * delete (confirm).
  *
  * Ported from apps/operator/src/views/AgentsView.tsx: same REST/SSE semantics
  * (GET /agents[/{id}], /admin/config/agents CRUD, SSE agents snapshot +
  * agent* events), rendering layer rewritten to DOM. Staging prototype
  * approval moved to the PROTOTYPES view (2026-08-21 decision).
+ *
+ * Lineage (ADR 0006): the list payload carries prototype / spawned_by /
+ * spawn_depth; the detail endpoint does not, so the detail panel
+ * combines the list row with the GET /agents/{id} response.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import type { RestClient } from "../client/rest";
+import type { AgentDetail, AgentSummary, RestClient } from "../client/rest";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/agents.css";
 
-type AgentRecord = Record<string, unknown>;
 type ProtoRecord = Record<string, unknown>;
 
 type Modal =
@@ -25,17 +29,13 @@ type Modal =
 
 type StateTone = "cyan" | "dim" | "magenta" | "yellow";
 
-/** Card/badge color from the member's state value. */
-function stateTone(agent: AgentRecord): StateTone {
-  const s = String(agent["state"] ?? "").toLowerCase();
+/** Card/badge color from a state value. */
+function stateTone(state: string): StateTone {
+  const s = state.toLowerCase();
   if (["running", "active", "idle", "online"].includes(s)) return "cyan";
   if (["error", "failed"].includes(s)) return "magenta";
   if (["sleeping", "stopped", "offline"].includes(s)) return "dim";
   return "yellow";
-}
-
-function agentIdOf(agent: AgentRecord): string {
-  return String(agent["id"] ?? agent["name"] ?? "?");
 }
 
 function protoLabel(p: ProtoRecord): string {
@@ -49,12 +49,12 @@ function errMsg(err: unknown): string {
 }
 
 export function AgentsView({ rest, sse }: ViewProps): ReactElement {
-  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [modal, setModal] = useState<Modal | null>(null);
 
@@ -78,7 +78,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   // any agent* event triggers a reload.
   useEffect(() => {
     const onAgents = (list: unknown[]): void => {
-      setAgents(list as AgentRecord[]);
+      setAgents(list as AgentSummary[]);
       setError(null);
     };
     const onEvent = (ev: ServerEvent): void => {
@@ -152,12 +152,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
       ) : (
         <div className="agents-grid">
           {agents.map((agent) => {
-            const id = agentIdOf(agent);
-            const state = String(agent["state"] ?? "unknown");
-            const name =
-              typeof agent["name"] === "string" && agent["name"] !== id
-                ? agent["name"]
-                : null;
+            const id = agent.id;
             return (
               <div
                 key={id}
@@ -166,11 +161,16 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
               >
                 <div className="agent-card-head">
                   <span className="agent-card-id">{id}</span>
-                  <span className={`state-badge state-badge--${stateTone(agent)}`}>
-                    {state}
+                  <span className={`state-badge state-badge--${stateTone(agent.state)}`}>
+                    {agent.state}
                   </span>
                 </div>
-                {name ? <div className="tech-label agent-card-name">{name}</div> : null}
+                {agent.name !== id ? (
+                  <div className="tech-label agent-card-name">{agent.name}</div>
+                ) : null}
+                <div className="tech-label agent-card-meta">
+                  {agent.prototype ?? "MANUAL"} · GEN {agent.spawn_depth}
+                </div>
                 <div className="agent-card-actions">
                   <button
                     type="button"
@@ -218,9 +218,10 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           {detailLoading ? (
             <p className="agents-empty">LOADING…</p>
           ) : detail ? (
-            <pre className="terminal agent-detail-json">
-              {JSON.stringify(detail, null, 2)}
-            </pre>
+            <AgentDetailPanel
+              detail={detail}
+              listItem={agents.find((a) => a.id === selectedId)}
+            />
           ) : (
             <p className="agents-empty">NO DETAIL</p>
           )}
@@ -261,6 +262,70 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           }}
           onClose={() => setModal(null)}
         />
+      ) : null}
+    </div>
+  );
+}
+
+/** One labeled value row in the member detail panel. */
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}): ReactElement {
+  return (
+    <div className="agent-detail-row">
+      <span className="tech-label agent-detail-label">{label}</span>
+      <span className="agent-detail-value">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Structured member detail: state/name/config from GET /agents/{id},
+ * lineage (prototype / spawned_by / spawn_depth) from the list row —
+ * the detail endpoint does not carry those fields.
+ */
+function AgentDetailPanel({
+  detail,
+  listItem,
+}: {
+  detail: AgentDetail;
+  listItem?: AgentSummary;
+}): ReactElement {
+  const prototype = listItem?.prototype ?? detail.config.prototype ?? "MANUAL";
+  const spawnedBy = listItem?.spawned_by ?? null;
+  const spawnDepth = listItem?.spawn_depth;
+  // config.prototype is already a top-level field; show the rest.
+  const configEntries = Object.entries(detail.config).filter(
+    ([key]) => key !== "prototype",
+  );
+  return (
+    <div className="agent-detail-fields">
+      <DetailRow label="STATE">
+        <span className={`state-badge state-badge--${stateTone(detail.state)}`}>
+          {detail.state}
+        </span>
+      </DetailRow>
+      <DetailRow label="NAME">{detail.name}</DetailRow>
+      <DetailRow label="PROTOTYPE">{prototype}</DetailRow>
+      <DetailRow label="SPAWNED_BY">{spawnedBy ?? "ROOT // 初代"}</DetailRow>
+      <DetailRow label="SPAWN_DEPTH">
+        {spawnDepth !== undefined ? `GEN ${spawnDepth}` : "—"}
+      </DetailRow>
+      {configEntries.length > 0 ? (
+        <div className="agent-detail-config">
+          <span className="tech-label agent-detail-label">CONFIG</span>
+          {configEntries.map(([key, value]) => (
+            <DetailRow key={key} label={key.toUpperCase()}>
+              {typeof value === "object" && value !== null
+                ? JSON.stringify(value)
+                : String(value)}
+            </DetailRow>
+          ))}
+        </div>
       ) : null}
     </div>
   );
