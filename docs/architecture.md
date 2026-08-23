@@ -148,7 +148,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### 工具层与依赖倒置
 
-`tlon.tools` 按域分包：`mail`（`sendEmail`，agent 唯一发信出口）、`filesystem`（读/写/编辑文件）、`shell`（`execute_bash` 及后台任务查询）、[memory](../src/tlon/memory)（记忆读写）、`tasks`（`TaskManager` 及任务生命周期工具）、[agents](../src/tlon/agents)（`spawnAgent` / `stopAgent` / `listAgents` / `writePrototype`）、`prototypes`（`listPrototypes`）。工具的实例化与注册发生在 `AgentRegistry` 装配成员能力时（[agents/agent_registry.py](../src/tlon/agents/agent_registry.py) 的 `_assemble_cognitive`）。
+`tlon.tools` 按域分包：`mail`（`sendEmail`，agent 唯一发信出口）、`filesystem`（读/写/编辑文件）、`shell`（`execute_bash` 及后台任务查询）、[memory](../src/tlon/memory)（记忆读写）、`tasks`（`TaskManager` 及任务生命周期工具）、[agents](../src/tlon/agents)（`spawnAgent` / `stopAgent` / `listAgents` / `writePrototype`）、`prototypes`（`listPrototypes`）。工具的实例化与注册发生在装配成员能力时（[agents/assembly.py](../src/tlon/agents/assembly.py) 的 `assemble_cognitive`，由 `AgentRegistry._start_agent` 调用）。
 
 生命周期与原型工具天然需要触碰 agents/prototypes 层，但契约禁止 tools 反向依赖；解法是依赖倒置——端口与异常（`SpawnRejectedError`、`StopRejectedError` 等）声明在 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py) 和 [tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py)，装配层（注册表）把自身实现注入工具实例，import 方向保持 tools → 端口，不倒流。
 

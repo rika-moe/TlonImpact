@@ -6,7 +6,7 @@ handwritten; only the drift-prone inventories are generated:
 
 - ``tool-registry`` in docs/reference/tools-reference.md — the cognitive
   member's tool registration table, in the exact registration order of
-  ``AgentRegistry._assemble_cognitive`` (agents/agent_registry.py), joined
+  ``assemble_cognitive`` (agents/assembly.py), joined
   with the ``Tool`` subclasses under src/tlon/tools/.
 - ``event-types`` in docs/reference/api-reference.md — the flat EventType
   enum table from base/events/event.py (wire value + trailing comment).
@@ -45,7 +45,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "tlon"
 TOOLS_DIR = SRC / "tools"
-REGISTRY_FILE = SRC / "agents" / "agent_registry.py"
+REGISTRY_FILE = SRC / "agents" / "assembly.py"
 EVENTS_FILE = SRC / "base" / "events" / "event.py"
 EVAL_FILE = SRC / "agents" / "eval.py"
 BUILTINS_FILE = SRC / "agents" / "builtins.py"
@@ -153,11 +153,11 @@ def scan_tools() -> dict[str, ToolInfo]:
 
 
 def registration_order() -> list[str]:
-    """Class names in the exact order ``_assemble_cognitive`` registers them."""
+    """Class names in the exact order ``assemble_cognitive`` registers them."""
     tree = ast.parse(REGISTRY_FILE.read_text(encoding="utf-8"), filename=str(REGISTRY_FILE))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-            node.name == "_assemble_cognitive"
+            node.name == "assemble_cognitive"
         ):
             # Track simple `var = XxxTool(...)` bindings so registrations via
             # a variable (`register_tool(execute_bash_tool)`) resolve too.
@@ -193,7 +193,7 @@ def registration_order() -> list[str]:
                     )
             # ast.walk is BFS, not source order — sort by line number.
             return [class_name for _, class_name in sorted(found)]
-    raise GenerationError(f"{REGISTRY_FILE}: _assemble_cognitive not found")
+    raise GenerationError(f"{REGISTRY_FILE}: assemble_cognitive not found")
 
 
 @dataclass(frozen=True)
@@ -616,7 +616,7 @@ def render_tool_registry() -> str:
         )
     count = len(rows)
     header = (
-        f"`_assemble_cognitive` 为每个认知型成员注册 {count} 个工具"
+        f"`assemble_cognitive`（agents/assembly.py）为每个认知型成员注册 {count} 个工具"
         f"（注册顺序即下表顺序；同名注册会覆盖并记 warning）：{GENERATED_NOTE}\n\n"
         "| # | 工具名 | 实现 | 域 |\n"
         "|---|---|---|---|"

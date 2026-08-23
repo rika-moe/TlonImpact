@@ -64,7 +64,7 @@ Summarizer 的输入是 **session 事件投影**（`SessionProjection`，[memory
 
 ## agent 侧接口
 
-agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的三个工具读写自己的记忆，全部在 `AgentRegistry._assemble_cognitive`（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)）装配认知成员时注册，直接持有本 agent 的 `MemoryManager` 实例：
+agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的三个工具读写自己的记忆，全部在 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配认知成员时注册，直接持有本 agent 的 `MemoryManager` 实例：
 
 - `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——主动记录一条事实进 `facts.jsonl`。
 - `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——关键词搜索摘要与事实，纯子串匹配（`search_summaries_by_keyword` / `search_facts_by_keyword`），无 embedding。

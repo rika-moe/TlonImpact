@@ -2,17 +2,20 @@
 
 The registry is pure mechanism (docs/design/members.md, 阶段 D — the
 policy/mechanism split):
-- Agent assembly and run table (``_start_agent`` / shutdown)
+- Agent assembly and run table (``_start_agent`` / shutdown; the
+  capability-set assembly itself lives in ``agents/assembly.py``)
 - Execution of lifecycle requests: it subscribes to AGENT_START_REQUEST /
   AGENT_STOP_REQUEST and fulfills them idempotently (wake locks,
   ``_waking`` dedup, run-state re-validation)
-- Idle *fact* detection: the monitor publishes AGENT_IDLE for lazy agents
-  (no ``:on :boot`` rule) idle past their timeout with no live sessions —
-  deciding what to do with that fact is not the registry's job
+- Idle *fact* detection: the monitor (``agents/reaper.py`` ``IdleReaper``)
+  publishes AGENT_IDLE for lazy agents (no ``:on :boot`` rule) idle past
+  their timeout with no live sessions — deciding what to do with that
+  fact is not the registry's job
 - Spawn/stop of members (stage 6b, unified member model ADR 0006):
   prototype instantiation under a spawn budget (global activation cap,
-  spawn depth, per-session quota); spawned members connect to the
-  registry directly (= fork) and are never discarded — they sleep
+  spawn depth, per-session quota — ``agents/spawn.py`` ``SpawnManager``);
+  spawned members connect to the registry directly (= fork) and are
+  never discarded — they sleep
 
 Policy — which agents should run — lives in Adam (tlon.agents.adam), the
 built-in init member: boot set and idle drain are its two decision lines.
@@ -30,99 +33,39 @@ Architecture:
     - EventBus (for agent event publishing and request subscriptions)
     - AgentInfoProvider (for configuration queries)
 
-    All dependencies are injected via constructor (DAG rule).
+    All dependencies are injected via constructor (DAG rule). The
+    collaborators (assembly / spawn / reaper) get the registry injected
+    back at construction; the import direction stays one-directional
+    (agent_registry → assembly/spawn/reaper).
 """
 
 import asyncio
 import time
-import uuid
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 
+from tlon.agents.assembly import assemble_cognitive
 from tlon.agents.builtins import ScriptHostQueries, make_member_builtins
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
-from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
+from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
-from tlon.agents.prototypes import (
-    get_prototype_info,
-    instantiate,
-    list_prototypes,
-    write_staging_prototype,
-)
-from tlon.agents.tool_executor import ToolExecutor
+from tlon.agents.reaper import IdleReaper
+from tlon.agents.spawn import SpawnManager
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig, LLMConfig, yaml_save
+from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
-from tlon.base.settings import Settings
 from tlon.base.tracing.trace_context import continue_trace, start_span
-from tlon.memory.manager import MemoryManager
-from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.sandbox.docker_runtime import DockerRuntime
-from tlon.tools.agents.list_agents import ListAgentsTool
-from tlon.tools.agents.ports import SpawnRejectedError, StopRejectedError
-from tlon.tools.agents.spawn_agent import SpawnAgentTool
-from tlon.tools.agents.stop_agent import StopAgentTool
-from tlon.tools.agents.write_prototype import WritePrototypeTool
-from tlon.tools.filesystem.edit_file import EditFileTool
-from tlon.tools.filesystem.read_file import ReadFileTool
-from tlon.tools.filesystem.write_file import WriteFileTool
-from tlon.tools.mail.send_email import SendEmailTool
-from tlon.tools.mail.silence import SilenceTool
-from tlon.tools.memory.forget_memory import ForgetMemoryTool
-from tlon.tools.memory.remember_fact import RememberFactTool
-from tlon.tools.memory.search_memories import SearchMemoriesTool
-from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
-from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
-from tlon.tools.tasks.complete_task import CompleteTaskTool
-from tlon.tools.tasks.create_task import CreateTaskTool
-from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
-from tlon.tools.tasks.list_tasks import ListTasksTool
-from tlon.tools.tasks.manager import TaskManager
-from tlon.tools.tasks.pause_task import PauseTaskTool
-from tlon.tools.tasks.remove_task import RemoveTaskTool
-from tlon.tools.tasks.start_task import StartTaskTool
+from tlon.tools.agents.ports import StopRejectedError
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
-
-# Quota bucket used when no session context is available (e.g. direct calls
-# from tests): all such spawns share one bucket per spawner.
-_UNKNOWN_SESSION = "-"
-
-
-def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMConfig:
-    """Merge LLM config from YAML file with runtime settings.
-
-    Model identity (``model_name`` / ``temperature``) is process-level
-    config, driven by settings (env / ``{TLON_HOME}/.env``). The file's
-    values are NOT used for these: bootstrap snapshots them into
-    agent.yaml at creation, so letting them win would shadow a later
-    .env edit (the Settings view). The file keeps the per-agent knobs
-    the process does not manage: ``max_tokens`` / ``top_p``.
-
-    Settings provide the runtime parameters (base_url, auth_token, ...).
-    """
-    if file_config is None:
-        file_config = LLMConfig()
-
-    return LLMConfig(
-        model_name=settings.llm_model_name,
-        temperature=settings.llm_temperature,
-        max_tokens=file_config.max_tokens,
-        top_p=file_config.top_p,
-        base_url=settings.llm_base_url,
-        auth_token=settings.llm_api_key,
-        max_retries=settings.llm_max_retries,
-        base_delay=settings.llm_base_delay,
-    )
 
 
 class RegistryQueries(ScriptHostQueries):
@@ -192,9 +135,6 @@ class AgentRegistry(Component):
         >>> agent = registry.get_agent("dev-001")  # Get running agent
     """
 
-    # Idle monitor check period (seconds)
-    _IDLE_CHECK_INTERVAL_SECONDS = 30
-
     # Per-agent assembly timeout (seconds): a hung start must not wedge
     # the agent's wake lock forever (restores the old boot-loop guard).
     _START_TIMEOUT_SECONDS = 60
@@ -228,13 +168,11 @@ class AgentRegistry(Component):
         self._agent_info = agent_info_provider
         self._paths = paths  # None means use module singleton
 
-        # Spawn budget (stage 6b). The quota ledger lives in memory only —
-        # a restart zeroes it, which is acceptable for an anti-runaway cap.
-        self._max_activations = max_activations
-        self._max_spawn_depth = max_spawn_depth
-        self._session_spawn_quota = session_spawn_quota
-        # (spawner_id, session_id) -> successful spawn count
-        self._spawn_quota: dict[tuple[str, str], int] = {}
+        # Spawn budget + idle reaper (stage 6b / scale-to-zero). The quota
+        # ledger lives in memory only — a restart zeroes it, which is
+        # acceptable for an anti-runaway cap.
+        self._spawn = SpawnManager(self, max_activations, max_spawn_depth, session_spawn_quota)
+        self._reaper = IdleReaper(self)
 
         # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
@@ -377,24 +315,18 @@ class AgentRegistry(Component):
         # Lifecycle request subscriptions (idempotent across re-initialize)
         if not self._request_subscriptions:
             self._request_subscriptions.append(
-                self.event_bus.subscribe(
-                    EventType.AGENT_START_REQUEST, self._on_start_request
-                )
+                self.event_bus.subscribe(EventType.AGENT_START_REQUEST, self._on_start_request)
             )
             self._request_subscriptions.append(
-                self.event_bus.subscribe(
-                    EventType.AGENT_STOP_REQUEST, self._on_stop_request
-                )
+                self.event_bus.subscribe(EventType.AGENT_STOP_REQUEST, self._on_stop_request)
             )
             self._request_subscriptions.append(
-                self.event_bus.subscribe(
-                    EventType.MAIL_DELIVERED, self._on_mail_delivered
-                )
+                self.event_bus.subscribe(EventType.MAIL_DELIVERED, self._on_mail_delivered)
             )
 
         # Idle fact monitor (idempotent across re-initialize)
         if self._idle_monitor_task is None:
-            self._idle_monitor_task = asyncio.create_task(self._idle_monitor_loop())
+            self._idle_monitor_task = asyncio.create_task(self._reaper.run())
 
         self._initialized = True
         logger.info(
@@ -430,7 +362,7 @@ class AgentRegistry(Component):
         self._agents.clear()
         self._registered_ids.clear()
         self._waking.clear()
-        self._spawn_quota.clear()
+        self._spawn.reset()
         self._profiles.clear()  # phase E: spec-derived lifecycle profiles
         self._initialized = False
 
@@ -440,11 +372,12 @@ class AgentRegistry(Component):
         """Assemble and start one agent (unified member model, ADR 0006).
 
         This is the sole assembler for members and their infrastructure.
-        Every member gets the full capability set (``_assemble_cognitive``:
-        LLM client, memory, task manager, Docker runtime, tools); whether
-        the cognitive engine (scheduler / loop) is attached is derived
-        from the spec — a rule with a ``:loop`` gets it, one without does
-        not (lazy assembly: objects are cheap, loading is on demand).
+        Every member gets the full capability set (``assemble_cognitive`` in
+        ``agents/assembly.py``: LLM client, memory, task manager, Docker
+        runtime, tools); whether the cognitive engine (scheduler / loop) is
+        attached is derived from the spec — a rule with a ``:loop`` gets
+        it, one without does not (lazy assembly: objects are cheap,
+        loading is on demand).
 
         Args:
             agent_id: ID of the agent to start
@@ -473,7 +406,12 @@ class AgentRegistry(Component):
             spec = load_member_spec(agent_id, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
-            capabilities = await self._assemble_cognitive(config, mailbox)
+            capabilities = await assemble_cognitive(
+                config,
+                registry=self,
+                agent_info=self._agent_info,
+                tlon_paths=self._paths or paths,
+            )
 
             member = MemberRuntime(
                 member_id=config.id,
@@ -517,127 +455,6 @@ class AgentRegistry(Component):
             logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
             return None
 
-    async def _assemble_cognitive(
-        self, config: AgentConfig, mailbox: Mailbox
-    ) -> CognitiveCapabilities:
-        """Assemble the capability set for a member.
-
-        Unified member model (ADR 0006): every member gets the full
-        capability set — LLM client, memory, task manager, Docker runtime,
-        tools, and the team roster. Whether the cognitive engine (loop /
-        scheduler) is actually attached is derived from the spec inside
-        ``MemberRuntime``; a member without a loop rule simply never uses
-        these objects (lazy assembly: objects are cheap, loading is on
-        demand). The container is NOT started here: DockerRuntime lazily
-        calls ensure_running() on first execute/read/write, so waking an
-        agent for pure conversation costs zero containers — a daemon
-        failure surfaces as a tool error, not a start failure.
-        """
-        from tlon.base.settings import get_settings
-
-        # Build infrastructure dependencies
-        llm_config = _build_llm_config(config.llm, get_settings())
-        llm_client = LLMClient(llm_config)
-
-        agent_home = (self._paths or paths).agent_dir(config.id)
-        # Single memory tuning surface: `memory/config.json` per agent
-        # (memory/models.py MemoryConfig). The agent_id is left empty here
-        # so MemoryManager.load merges the on-disk config; there is no
-        # agent.yaml memory section (the old base/config.MemoryConfig is
-        # gone — its fields were never consumed).
-        memory_config = MemoryConfig()
-        memory = MemoryManager(
-            agent_id=config.id,
-            config=memory_config,
-            data_dir=agent_home,
-            llm_config=llm_config,
-        )
-
-        task_manager = TaskManager(
-            agent_id=config.id,
-            data_dir=str(agent_home),
-        )
-
-        # Create Docker runtime (shared by shell + filesystem tools).
-        docker_runtime: DockerRuntime | None = None
-        try:
-            docker_runtime = DockerRuntime(config.docker, config.id)
-        except Exception as e:
-            logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
-        # No registry-side container handle is kept (ADR 0006): members
-        # are never force-removed — a sleeping member keeps its container
-        # (zero-cost wake); a re-assembly reuses it by name.
-
-        # Create ToolExecutor (direct execution, no EventBus)
-        tool_executor = ToolExecutor()
-
-        # Register tools
-        execute_bash_tool = ExecuteBashTool(config.docker, docker_runtime)
-        tool_executor.register_tool(execute_bash_tool)
-        # checkBashTask shares this agent's task table: no cross-agent visibility.
-        tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
-        allowed_paths = config.tool.allowed_paths
-        tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
-        tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
-        tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
-        tool_executor.register_tool(SendEmailTool())
-        tool_executor.register_tool(SilenceTool())
-        tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))
-        # Spawn/stop lifecycle tools (stage 6b): the registry is the
-        # assembler, so it injects itself (it satisfies the AgentLifecycle
-        # port structurally); spawner_id binds the tool to the owning
-        # agent for budget accounting and audit.
-        tool_executor.register_tool(SpawnAgentTool(registry=self, spawner_id=config.id))
-        tool_executor.register_tool(StopAgentTool(registry=self, spawner_id=config.id))
-        tool_executor.register_tool(ListAgentsTool(registry=self))
-        # Spec authoring (stage 4a): writes untrusted prototypes to the
-        # staging area; author_id is recorded as the :author for audit.
-        tool_executor.register_tool(
-            WritePrototypeTool(author_id=config.id, writer=write_staging_prototype)
-        )
-        tool_executor.register_tool(RememberFactTool(memory))
-        tool_executor.register_tool(SearchMemoriesTool(memory))
-        tool_executor.register_tool(ForgetMemoryTool(memory))
-        tool_executor.register_tool(CreateTaskTool(task_manager))
-        tool_executor.register_tool(ListTasksTool(task_manager))
-        tool_executor.register_tool(StartTaskTool(task_manager))
-        tool_executor.register_tool(PauseTaskTool(task_manager))
-        tool_executor.register_tool(CompleteTaskTool(task_manager))
-        tool_executor.register_tool(RemoveTaskTool(task_manager))
-        tool_executor.register_tool(GetCurrentTaskTool(task_manager))
-        logger.debug(
-            "tools_registered",
-            agent_name=config.name,
-            tool_count=len(tool_executor.list_tools()),
-        )
-
-        # Initialize tools
-        await tool_executor.initialize()
-
-        # Prepare team members config (all other agents)
-        all_ids = self._agent_info.get_all_ids()
-        team_members = [
-            cfg
-            for aid in all_ids
-            if aid != config.id
-            and (cfg := self._agent_info.get_config(aid)) is not None
-        ]
-
-        # Read tool timeout from agent config
-        per_tool_timeout = config.tool.per_timeout
-
-        return CognitiveCapabilities(
-            config=config,
-            llm_client=llm_client,
-            memory=memory,
-            task_manager=task_manager,
-            tool_executor=tool_executor,
-            team_members=team_members,
-            tlon_paths=self._paths or paths,
-            per_tool_timeout=per_tool_timeout,
-            registry=self,
-        )
-
     # ==================== Lifecycle request execution ====================
 
     async def _on_mail_delivered(self, event: Event) -> None:
@@ -661,9 +478,7 @@ class AgentRegistry(Component):
         if self._agent_info.get_config(recipient) is None:
             return  # unknown member
         spec = self._spec_profile(recipient)
-        if spec is None or not any(
-            rule.on is EventType.MAIL_DELIVERED for rule in spec.rules
-        ):
+        if spec is None or not any(rule.on is EventType.MAIL_DELIVERED for rule in spec.rules):
             return  # spec does not subscribe to mail delivery
         await self.event_bus.publish(
             Event(
@@ -833,46 +648,17 @@ class AgentRegistry(Component):
         request = event.payload
         if not isinstance(request, StopRequest):
             return
-        asyncio.create_task(self._drain_agent(request.agent_id, request.reason))
+        asyncio.create_task(self._reaper.drain(request.agent_id, request.reason))
 
-    # ==================== Hot adoption (out-of-process creation) ====================
+    # ==================== Hot adoption + spawn (stage 6b) ====================
 
     async def adopt_agent(self, agent_id: str) -> str:
         """Adopt an agent created out-of-process (wizard/mirror), no restart.
 
-        External tools write ``agent.yaml`` directly; this makes the running
-        server pick the new agent up: the provider reloads the config, the
-        agent is registered, and non-lazy agents are started immediately
-        (same assembly path as boot/spawn). A lazy agent is registered only
-        and wakes on its first mail, same as at boot.
-
-        Args:
-            agent_id: id of the agent to adopt
-
-        Returns:
-            One of "already-known" (running or registered — no-op; a known
-            agent's config is never reloaded here), "config-not-found" (no
-            agent.yaml on disk), "registered-lazy", "started", "start-failed"
-            (``agent_start_failed`` already logged by ``_start_agent``).
+        Delegates to ``agents/spawn.py`` ``SpawnManager``; see there for
+        semantics and the result enum.
         """
-        if agent_id in self._agents or agent_id in self._registered_ids:
-            result = "already-known"
-        elif not await self._agent_info.reload_agent(agent_id):
-            result = "config-not-found"
-        else:
-            self.register(agent_id)
-            self._profiles.pop(agent_id, None)  # spec may have changed (phase E)
-            config = self._agent_info.get_config(agent_id)
-            if config is not None and self.is_lazy(agent_id):
-                result = "registered-lazy"
-            else:
-                agent = await self._start_agent(agent_id)
-                result = "started" if agent is not None else "start-failed"
-
-        logger.info("agent_adopted", agent_id=agent_id, result=result)
-        return result
-
-    # ==================== Spawn / stop (stage 6b) ====================
+        return await self._spawn.adopt_agent(agent_id)
 
     async def spawn_member(
         self,
@@ -884,167 +670,14 @@ class AgentRegistry(Component):
     ) -> AgentConfig:
         """Spawn a new member from a prototype and start it immediately.
 
-        Unified member model (ADR 0006): a spawned member is a member like
-        any other — laziness/boot membership derive from the prototype's
-        spec, and its home directory is never deleted (retirement
-        archives, members only sleep). Lineage is kept for audit:
-        ``spawned_by`` / ``spawn_depth`` / ``prototype``.
-
-        Pipeline: budget checks -> id generation -> ``instantiate()``
-        (writes persona + behavior + agent.yaml to disk) -> lineage fields
-        -> ``reload_agent`` so the config is visible to the provider ->
-        ``register`` + ``_start_agent`` -> ``AGENT_SPAWNED`` event.
-
-        Permissions cannot escalate: the only source is the prototype
-        library (trusted, Tlon-prebuilt or user-installed), and the
-        behavior file is copied verbatim — a spec is total, so there is
-        nothing to override and a spawner cannot grant capabilities beyond
-        the prototype.
-
-        Orphan policy (reparent, not kill): the member is registered
-        independently of its spawner; when the spawner sleeps or stops,
-        the member keeps running and is reclaimed by its own idle policy.
-
-        Args:
-            prototype: prototype directory name under ~/.tlon/prototypes/
-            name: display name of the new member
-            spawner_id: id of the agent requesting the spawn (audit + depth)
-            session_id: session the spawn belongs to (quota bucket); None
-                buckets all context-less spawns of the spawner together
-
-        Returns:
-            The new member's AgentConfig (with lineage fields).
+        Delegates to ``agents/spawn.py`` ``SpawnManager`` (budget checks,
+        instantiation, lineage, AGENT_SPAWNED); see there for semantics.
 
         Raises:
             SpawnRejectedError: a budget cap was hit (see ``.reason``)
             PrototypeError: prototype missing
         """
-        tlon_paths = self._paths or paths
-
-        # Trust gate (stage 4a): before any budget check, an untrusted
-        # prototype (LLM-authored, awaiting human approval) cannot spawn.
-        # A missing prototype falls through to instantiate's not-found error.
-        info = get_prototype_info(prototype, tlon_paths)
-        if info is not None and not info.trusted:
-            self._reject_spawn(
-                "untrusted_prototype",
-                spawner_id=spawner_id,
-                session_id=session_id,
-                prototype=prototype,
-                detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
-            )
-
-        # Budget 1: global activation cap (residents included)
-        if len(self._agents) >= self._max_activations:
-            self._reject_spawn(
-                "max_activations",
-                spawner_id=spawner_id,
-                session_id=session_id,
-                prototype=prototype,
-                detail=f"running agents {len(self._agents)} >= cap {self._max_activations}",
-            )
-
-        # Budget 2: spawn-chain depth (residents are depth 0)
-        spawner_config = self._agent_info.get_config(spawner_id)
-        spawner_depth = spawner_config.spawn_depth if spawner_config else 0
-        depth = spawner_depth + 1
-        if depth > self._max_spawn_depth:
-            self._reject_spawn(
-                "max_spawn_depth",
-                spawner_id=spawner_id,
-                session_id=session_id,
-                prototype=prototype,
-                detail=f"depth {depth} > cap {self._max_spawn_depth}",
-            )
-
-        # Budget 3: per-(spawner, session) quota
-        quota_key = (spawner_id, session_id or _UNKNOWN_SESSION)
-        used = self._spawn_quota.get(quota_key, 0)
-        if used >= self._session_spawn_quota:
-            self._reject_spawn(
-                "session_quota",
-                spawner_id=spawner_id,
-                session_id=session_id,
-                prototype=prototype,
-                detail=f"quota {self._session_spawn_quota} per session exhausted",
-            )
-
-        # Id is generated here (never caller-supplied): sanitize the
-        # prototype fragment so the id stays within the AgentConfig charset
-        safe_prototype = "".join(c for c in prototype if c.isalnum() or c in "-_")
-        agent_id = f"c-{safe_prototype}-{uuid.uuid4().hex[:8]}"
-
-        # Writes persona + behavior + agent.yaml (copy semantics; behavior
-        # frozen at creation time). PrototypeError propagates to the caller.
-        config = instantiate(
-            prototype, agent_id, name, params=params, tlon_paths=tlon_paths
-        )
-
-        # Lineage audit (ADR 0006): who spawned this member and how deep.
-        # No role is stamped — a spawned member is a member like any other.
-        # Re-save so the YAML on disk carries the final config.
-        config.spawned_by = spawner_id
-        config.spawn_depth = depth
-        yaml_save(config, tlon_paths.tlon_home())
-
-        # Make the config visible to the provider (router, status queries)
-        if not await self._agent_info.reload_agent(agent_id):
-            self._reject_spawn(
-                "config_reload_failed",
-                spawner_id=spawner_id,
-                session_id=session_id,
-                prototype=prototype,
-                detail=f"provider could not load new config for '{agent_id}'",
-            )
-
-        self._spawn_quota[quota_key] = used + 1
-        self.register(agent_id)
-        agent = await self._start_agent(agent_id)
-
-        logger.info(
-            "agent_spawned",
-            agent_id=agent_id,
-            agent_name=name,
-            prototype=prototype,
-            spawner_id=spawner_id,
-            spawn_depth=depth,
-            started=agent is not None,
-        )
-        await self.event_bus.publish(
-            Event(
-                type=EventType.AGENT_SPAWNED,
-                payload={
-                    "agent_id": agent_id,
-                    "name": name,
-                    "prototype": prototype,
-                    "spawner_id": spawner_id,
-                    "spawn_depth": depth,
-                    "started": agent is not None,
-                },
-                source="agent_registry",
-            )
-        )
-        return config
-
-    def _reject_spawn(
-        self,
-        reason: str,
-        *,
-        spawner_id: str,
-        session_id: str | None,
-        prototype: str,
-        detail: str,
-    ) -> NoReturn:
-        """Log and raise a budget rejection (single funnel for audit)."""
-        logger.warning(
-            "spawn_rejected",
-            reason=reason,
-            spawner_id=spawner_id,
-            session_id=session_id,
-            prototype=prototype,
-            detail=detail,
-        )
-        raise SpawnRejectedError(reason, f"spawn rejected ({reason}): {detail}")
+        return await self._spawn.spawn_member(prototype, name, spawner_id, session_id, params)
 
     async def stop_member(self, agent_id: str, stopped_by: str) -> bool:
         """Stop a member: drain-check, then put it to sleep.
@@ -1175,102 +808,18 @@ class AgentRegistry(Component):
         )
         return True
 
-    # ==================== Idle fact detection + drain execution ====================
-
-    async def _idle_monitor_loop(self) -> None:
-        """Periodically report idle lazy agents (scale-to-zero facts).
-
-        Every `_IDLE_CHECK_INTERVAL_SECONDS`, each running lazy agent that
-        has been idle past its configured timeout and has no live sessions
-        is reported as an AGENT_IDLE fact event. Stopping it is a policy
-        decision (Adam's); the registry only executes the resulting
-        AGENT_STOP_REQUEST.
-        """
-        while True:
-            await asyncio.sleep(self._IDLE_CHECK_INTERVAL_SECONDS)
-            for agent_id in list(self._agents.keys()):
-                try:
-                    await self._report_if_idle(agent_id)
-                except Exception as e:
-                    logger.error("agent_idle_check_failed", agent_id=agent_id, error=str(e))
-
-    async def _report_if_idle(self, agent_id: str) -> None:
-        """Publish an AGENT_IDLE fact if the agent is idle past its timeout.
-
-        Fact detection only — no state is changed here. An agent with any
-        live (ACTIVE/WAITING) session is never reported idle.
-        """
-        config = self._agent_info.get_config(agent_id)
-        if not config or not self.is_lazy(agent_id):
-            return
-
-        agent = self._agents.get(agent_id)
-        if agent is None:
-            return
-        if agent.active_session_count > 0 or agent.idle_seconds < config.idle_timeout_seconds:
-            return
-
-        idle = int(agent.idle_seconds)
-        logger.info("agent_idle_detected", agent_id=agent_id, idle_seconds=idle)
-        await self.event_bus.publish(
-            Event(
-                type=EventType.AGENT_IDLE,
-                payload={"agent_id": agent_id, "idle_seconds": idle},
-                source="agent_registry",
-            )
-        )
+    # ==================== Idle drain execution ====================
 
     async def _drain_agent(self, agent_id: str, reason: str) -> None:
         """Execute a stop request: drain one idle lazy agent.
 
-        The fact that motivated the request may be stale, so the condition
-        is re-checked under the per-agent lock right before shutdown — a
-        session that started (or activity that resumed) in the race window
-        keeps the agent alive.
+        Delegates to ``agents/reaper.py`` ``IdleReaper.drain`` — the
+        condition is re-checked under the per-agent lock right before
+        shutdown.
         """
-        config = self._agent_info.get_config(agent_id)
-        if not config or not self.is_lazy(agent_id):
-            return
+        await self._reaper.drain(agent_id, reason)
 
-        agent = self._agents.get(agent_id)
-        if agent is None:
-            return
-        if agent.active_session_count > 0 or agent.idle_seconds < config.idle_timeout_seconds:
-            return
-
-        # Serialize with a concurrent start of the same persona
-        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
-        async with lock:
-            agent = self._agents.get(agent_id)
-            if agent is None:
-                return
-            # Drain re-check under the lock
-            if agent.active_session_count > 0:
-                return
-            if agent.idle_seconds < config.idle_timeout_seconds:
-                return
-
-            self._agents.pop(agent_id)
-            idle = int(agent.idle_seconds)
-            try:
-                await agent.shutdown()
-            except Exception as e:
-                # The agent is already out of the run table; a later
-                # start request assembles a fresh activation.
-                logger.error("agent_sleep_failed", agent_id=agent_id, error=str(e))
-                return
-
-            # Unified member model (ADR 0006): draining always means
-            # sleep — members are never discarded, their home directories
-            # are archived forever.
-            logger.info("agent_sleeping", agent_id=agent_id, idle_seconds=idle, reason=reason)
-            await self.event_bus.publish(
-                Event(
-                    type=EventType.AGENT_SLEEPING,
-                    payload={"agent_id": agent_id, "idle_seconds": idle},
-                    source="agent_registry",
-                )
-            )
+    # ==================== State queries ====================
 
     def get_agent(self, agent_id: str) -> MemberRuntime | None:
         """Get an active agent by ID.

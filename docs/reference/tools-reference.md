@@ -24,12 +24,12 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### 工具与成员类型
 
-工具只属于认知型成员。[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_start_agent` 从成员 spec 派生类型：spec 含带 `:loop` 的认知规则才调用 `_assemble_cognitive` 装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具；确定型成员（无 `:loop` 的规则）`cognitive=None`，不建任何工具、不消耗 token。
+工具只属于认知型成员。[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_start_agent` 从成员 spec 派生类型：spec 含带 `:loop` 的认知规则才调用 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具；确定型成员（无 `:loop` 的规则）`cognitive=None`，不建任何工具、不消耗 token。
 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`_assemble_cognitive` 为每个认知型成员注册 22 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为每个认知型成员注册 22 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|

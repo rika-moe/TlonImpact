@@ -5,7 +5,7 @@ The spawn/stop/list tools live in ``tlon.tools`` while their implementation
 one-directional (agents → tools), the slice of the registry the tools need
 is declared here as a ``Protocol``, together with the rejection errors both
 sides share. The registry satisfies the protocol structurally; the assembler
-(``AgentRegistry._build_cognitive``) injects itself.
+(``assemble_cognitive`` in ``tlon.agents.assembly``) injects it.
 """
 
 from typing import Any, Protocol
