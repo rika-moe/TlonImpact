@@ -9,7 +9,7 @@
 
 ## 决策
 
-对外协议为纯 HTTP REST + SSE：下行推送走 `GET /events` 的 SSE 长连接（协议 v2），上行写操作走普通 REST（`POST /messages` 等）。不提供 WebSocket 端点。实现见 [src/tlon/app/server/api/rest.py](../../src/tlon/app/server/api/rest.py)，设计细节见 [docs/design/server-protocol.md](../design/server-protocol.md)。
+对外协议为纯 HTTP REST + SSE：下行推送走 `GET /events` 的 SSE 长连接（协议 v2），上行写操作走普通 REST（`POST /messages` 等）。不提供 WebSocket 端点。实现见 [src/tlon/app/server/api/rest/](../../src/tlon/app/server/api/rest) 包，设计细节见 [docs/design/server-protocol.md](../design/server-protocol.md)。
 
 ## 理由
 

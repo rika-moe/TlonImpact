@@ -16,7 +16,7 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 ┌──────────────▼───────────────────────────────▼───────────────────┐
 │ 服务端装配层 app/server                                           │
 │   ServerApp —— 唯一装配者，按拓扑序构造全部组件（DI）             │
-│   api/rest.py RESTServer —— aiohttp，REST + SSE，无 WebSocket     │
+│   api/rest/ RESTServer —— aiohttp，REST + SSE，无 WebSocket       │
 │   core/ —— ClientGateway / SessionManager / NotificationService / │
 │            MemberDirectory                                        │
 ├──────────────────────────── 领域层 ──────────────────────────────┤
@@ -36,9 +36,9 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
          EventBus 横贯各层：组件间通信的唯一通道（发布/订阅）
 ```
 
-整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon/app/launcher/main.py](../src/tlon/app/launcher/main.py) 的 `main`，最终由 [app/server/serverapp.py](../src/tlon/app/server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [app/server/api/rest.py](../src/tlon/app/server/api/rest.py) 的 `RESTServer`，没有 WebSocket。
+整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon/app/launcher/main.py](../src/tlon/app/launcher/main.py) 的 `main`，最终由 [app/server/serverapp.py](../src/tlon/app/server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [app/server/api/rest/](../src/tlon/app/server/api/rest) 包的 `RESTServer`（`rest/app.py` 的 `create_app` 注册全部路由，handler 按域拆在 `rest/` 各模块），没有 WebSocket。
 
-REST 接口一览（均在 `rest.py` 注册）：
+REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 - 消息与邮箱：`POST /messages`（人类发信）、`GET /inbox`（读自己的邮箱）
 - 实时推送：`GET /events`（SSE 长连接）
@@ -96,7 +96,7 @@ REST 接口一览（均在 `rest.py` 注册）：
 
 以「人类从客户端发一封邮件给 agent，agent 处理后回邮」为例：
 
-1. **人类发信（REST 入口）**。客户端 `POST /messages`，由 `rest.py` 的 `handle_send_message` 处理，字段校验的唯一副本在 [app/server/api/send_mail.py](../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`。发件人身份取自请求体的 `username`；若该人类没有在线适配器，`AdapterManager` 会建一个临时的 `HumanAdapter`（[organization/messaging/human_adapter.py](../src/tlon/organization/messaging/human_adapter.py)）。适配器的 `speak` 要求显式 `to`/`cc`，零可解析收件人的邮件直接拒绝；合法则构造 `Mail`（[organization/mail/mail.py](../src/tlon/organization/mail/mail.py)）并向 EventBus 发布 `MAIL_NEW`。
+1. **人类发信（REST 入口）**。客户端 `POST /messages`，由 `rest/mail.py` 的 `handle_send_message` 处理，字段校验的唯一副本在 [app/server/api/send_mail.py](../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`。发件人身份取自请求体的 `username`；若该人类没有在线适配器，`AdapterManager` 会建一个临时的 `HumanAdapter`（[organization/messaging/human_adapter.py](../src/tlon/organization/messaging/human_adapter.py)）。适配器的 `speak` 要求显式 `to`/`cc`，零可解析收件人的邮件直接拒绝；合法则构造 `Mail`（[organization/mail/mail.py](../src/tlon/organization/mail/mail.py)）并向 EventBus 发布 `MAIL_NEW`。
 
    **agent 发信只有一个出口**：[tools/mail/send_email.py](../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`。认知循环里 act stage 把工具调用声明进 `StageOutcome`，由 `EffectExecutor`（[agents/executor.py](../src/tlon/agents/executor.py)）执行其中的 `MailEffect`——构造 `Mail`、发布 `MAIL_NEW`，与人类发信汇入同一条管道。
 

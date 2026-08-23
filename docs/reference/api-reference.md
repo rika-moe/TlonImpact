@@ -1,16 +1,16 @@
 # API 参考（REST + SSE，协议 v2）
 
-Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.py](../../src/tlon/app/server/api/rest.py) 的 `RESTServer` / `RESTAPIHandler`。设计理由见 [docs/design/server-protocol.md](../design/server-protocol.md)，本文只描述当前实现。
+Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/](../../src/tlon/app/server/api/rest) 包的 `RESTServer` / `RESTAPIHandler`（`rest/app.py`；路由域按模块拆分）。设计理由见 [docs/design/server-protocol.md](../design/server-protocol.md)，本文只描述当前实现。
 
 ## 总述
 
 | 项 | 值 | 出处 |
 |---|---|---|
-| Base URL | `http://127.0.0.1:8080`（默认；host/port 由 `RESTServer` 构造参数决定） | `rest.py` 的 `RESTServer` |
-| 协议版本 | `SESSION_PROTOCOL_VERSION = "2.0.0"`，`POST /sessions` 唯一接受的版本 | `rest.py` |
+| Base URL | `http://127.0.0.1:8080`（默认；host/port 由 `RESTServer` 构造参数决定） | `rest/app.py` 的 `RESTServer` |
+| 协议版本 | `SESSION_PROTOCOL_VERSION = "2.0.0"`，`POST /sessions` 唯一接受的版本 | `rest/sessions.py` |
 | 鉴权 | **无认证层**。身份即请求体/query 里的 `username`，信任边界是本机 | [docs/design/server-protocol.md](../design/server-protocol.md) |
-| 响应格式 | 除 SSE 外全部是 JSON（`application/json`，`ensure_ascii=False`） | `rest.py` 的 `_json_response` |
-| CORS | 全开：`Access-Control-Allow-Origin: *`，方法 `GET, POST, PATCH, DELETE, OPTIONS`，允许头仅 `Content-Type`；预检由 `OPTIONS /{path:.*}` 应答 | `rest.py` 的 `handle_options` |
+| 响应格式 | 除 SSE 外全部是 JSON（`application/json`，`ensure_ascii=False`） | `rest/common.py` 的 `_json_response` |
+| CORS | 全开：`Access-Control-Allow-Origin: *`，方法 `GET, POST, PATCH, DELETE, OPTIONS`，允许头仅 `Content-Type`；预检由 `OPTIONS /{path:.*}` 应答 | `rest/common.py` 的 `handle_options` |
 
 ### 错误响应
 
@@ -19,7 +19,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 | reason | 触发端点 | 含义 |
 |---|---|---|
 | `invalid_json` | `POST /messages`、`POST /sessions`、`PATCH /sessions/{id}` | 请求体不是合法 JSON 或不是 JSON object |
-| `invalid_username` | `POST /messages`、`POST /sessions` | username 非字符串、为空、或含 `/`、`\`（路径穿越防御，见 `rest.py` 的 `_validate_username`） |
+| `invalid_username` | `POST /messages`、`POST /sessions` | username 非字符串、为空、或含 `/`、`\`（路径穿越防御，见 `rest/common.py` 的 `_validate_username`） |
 | `invalid_client_type` | `POST /sessions` | client_type 缺失、非字符串或为空白 |
 | `invalid_mode` | `POST /sessions`、`PATCH /sessions/{id}` | mode 不在 `SESSION_MODES = ("chat", "event", "agent")` 内 |
 | `invalid_filters` | `POST /sessions`、`PATCH /sessions/{id}` | filters 不是 object |
@@ -111,7 +111,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 
 ### POST /messages
 
-人类成员发信，处理函数 `rest.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。受理即返回 **202**，投递是异步的；解析不到的收件人地址事后以 `postmaster@tlon.internal` 退信形式回到发件人收件箱。
+人类成员发信，处理函数 `rest/mail.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。受理即返回 **202**，投递是异步的；解析不到的收件人地址事后以 `postmaster@tlon.internal` 退信形式回到发件人收件箱。
 
 请求体字段（校验的唯一副本在 [app/server/api/send_mail.py](../../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`）：
 
@@ -299,7 +299,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest.
 
 ### 事件帧格式
 
-流上只有一种数据帧，由 `rest.py` 的 `_event_frame` 生成，一个 SSE `data:` 块一帧（`data: {json}\n\n`）：
+流上只有一种数据帧，由 `rest/sessions.py` 的 `_event_frame` 生成，一个 SSE `data:` 块一帧（`data: {json}\n\n`）：
 
 ```json
 {

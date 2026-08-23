@@ -1,10 +1,10 @@
 # 服务端协议设计（REST + SSE，协议 v2）
 
-Tlon 服务端对外只暴露一个 HTTP 端口：纯 REST + SSE，没有 WebSocket。本文解释这个协议面为什么长这样，以当前实现为准（[src/tlon/app/server/api/rest.py](../../src/tlon/app/server/api/rest.py) 的 `RESTServer` / `RESTAPIHandler`）。选 SSE 的决策记录见 [docs/decisions/0005-sse-over-websocket.md](../decisions/0005-sse-over-websocket.md)；协议所服务的邮件与成员模型见 [docs/design/mail.md](./mail.md)。
+Tlon 服务端对外只暴露一个 HTTP 端口：纯 REST + SSE，没有 WebSocket。本文解释这个协议面为什么长这样，以当前实现为准（[src/tlon/app/server/api/rest/](../../src/tlon/app/server/api/rest) 包的 `RESTServer` / `RESTAPIHandler`）。选 SSE 的决策记录见 [docs/decisions/0005-sse-over-websocket.md](../decisions/0005-sse-over-websocket.md)；协议所服务的邮件与成员模型见 [docs/design/mail.md](./mail.md)。
 
 ## 形态：一个端口，两种动词
 
-协议 v2（`SESSION_PROTOCOL_VERSION = "2.0.0"`，`rest.py` 中 `POST /sessions` 唯一接受的版本）只有两种数据流向：
+协议 v2（`SESSION_PROTOCOL_VERSION = "2.0.0"`，`rest/sessions.py` 中 `POST /sessions` 唯一接受的版本）只有两种数据流向：
 
 - **客户端 → 服务端：普通 HTTP 请求**。发信、建会话、改过滤、查状态，全是无状态 REST。
 - **服务端 → 客户端：一条 SSE 长连接**。`GET /events` 返回 `text/event-stream`，事件帧是 JSON（`{"type": "event", "event_type", "payload", "source", "timestamp", ...}`，含 trace 字段），一个 SSE `data:` 块一帧；每 `SSE_HEARTBEAT_SECONDS = 25` 秒发一行 `: ping` 注释作为心跳——写心跳失败即判定客户端已走。
@@ -17,7 +17,7 @@ Tlon 服务端对外只暴露一个 HTTP 端口：纯 REST + SSE，没有 WebSoc
 
 ## 事件帧格式
 
-SSE 流上只有一种数据帧（`rest.py` 的 `_event_frame` 生成）：
+SSE 流上只有一种数据帧（`rest/sessions.py` 的 `_event_frame` 生成）：
 
 ```json
 {"type": "event", "event_type": "mail.delivered", "payload": {...}, "source": "mail_delivery", "timestamp": "...", "trace_id": "...", "span_id": "...", "parent_span_id": "..."}
@@ -83,7 +83,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 协议没有认证层：`POST /messages` 的发件人身份来自请求体的 `username`，`GET /inbox` 的身份来自 query 参数，`POST /sessions` 同理。这是刻意的——服务端默认绑定 `127.0.0.1:8080`，信任边界是本机。这不是「尚未实现认证」，而是和邮件系统的身份模型对齐：书信共和国的成员按名字存在，名字即身份；在本机单用户场景里，声明 `username` 就是出示身份。
 
-唯一的输入防御是路径安全：username 会变成邮箱目录名（`~/.tlon/human-{username}/`），所以 `rest.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。如果未来要暴露到非本机，认证与授权是需要先行补上的独立决策，本文不展开。
+唯一的输入防御是路径安全：username 会变成邮箱目录名（`~/.tlon/human-{username}/`），所以 `rest/common.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。如果未来要暴露到非本机，认证与授权是需要先行补上的独立决策，本文不展开。
 
 ## 客户端
 
