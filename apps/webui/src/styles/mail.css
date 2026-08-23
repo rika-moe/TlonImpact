@@ -139,6 +139,27 @@
   box-shadow: var(--glow-cyan);
 }
 
+/* Unread mail: yellow accent, matching the thread list's unread dot. */
+.mail-card--unread {
+  border-color: rgba(255, 230, 0, 0.6);
+}
+
+.mail-card-unread {
+  color: var(--neon-yellow);
+  text-shadow: 0 0 6px rgba(255, 230, 0, 0.8);
+}
+
+/* Reference line for in_reply_to / forward_of metadata. */
+.mail-card-ref {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 6px;
+}
+
 .mail-card-head {
   display: flex;
   align-items: baseline;

@@ -2,6 +2,11 @@
  * MAIL view — three columns: thread list (unread ●) | conversation cards |
  * compose modal (To/Cc autocomplete, reply pre-fills in_reply_to/thread_id).
  *
+ * Each conversation card shows the mail's metadata: an unread marker for
+ * unread mail, a "↩ RE" reference line resolving in_reply_to against the
+ * loaded mails (silently dropped when the parent is not in the inbox), and
+ * a "⤳ FWD OF" origin line when the mail is a forward.
+ *
  * Ported from apps/operator/src/views/MailView.tsx: same REST/SSE semantics
  * (GET /inbox, GET /participants, POST /messages, SSE mail.delivered),
  * rendering layer rewritten from ink to DOM.
@@ -192,6 +197,7 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
         <section className="panel mail-conversation-panel">
           <Conversation
             thread={selectedThread}
+            mails={mails}
             myAddress={myAddress}
             displayName={displayName}
             onReply={openReply}
@@ -249,11 +255,14 @@ function ThreadItem({
 /** The selected thread's mails, oldest first, tail-visible. */
 function Conversation({
   thread,
+  mails,
   myAddress,
   displayName,
   onReply,
 }: {
   thread: ThreadGroup | null;
+  /** All loaded mails, used to resolve in_reply_to / forward_of references. */
+  mails: MailItem[];
   myAddress: string;
   displayName: (id: string) => string;
   onReply: (mail: MailItem) => void;
@@ -261,6 +270,12 @@ function Conversation({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const threadId = thread?.threadId ?? null;
   const mailCount = thread?.mails.length ?? 0;
+
+  const byId = useMemo(() => {
+    const map = new Map<string, MailItem>();
+    for (const mail of mails) map.set(mail.id, mail);
+    return map;
+  }, [mails]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -278,15 +293,40 @@ function Conversation({
           .map(localPart)
           .map(displayName)
           .join(", ");
+        // Reference lines: an unresolved in_reply_to is dropped silently
+        // (the parent may live outside the loaded inbox); an unresolved
+        // forward_of falls back to the id prefix.
+        const parent = mail.in_reply_to ? byId.get(mail.in_reply_to) : undefined;
+        const forwardSource = mail.forward_of ? byId.get(mail.forward_of) : undefined;
         return (
-          <article key={mail.id} className={`mail-card${own ? " mail-card--own" : ""}`}>
+          <article
+            key={mail.id}
+            className={`mail-card${own ? " mail-card--own" : ""}${mail.read ? "" : " mail-card--unread"}`}
+          >
             <div className="mail-card-head">
+              {!mail.read ? (
+                <span className="tech-label mail-card-unread">● UNREAD</span>
+              ) : null}
               <span className="tech-label mail-card-from">
                 {displayName(localPart(mail.from_address))}
               </span>
               <span className="tech-label mail-card-to">→ {to}</span>
               <span className="mail-card-time">{formatTime(mail.timestamp)}</span>
             </div>
+            {parent ? (
+              <div className="mail-card-ref">
+                ↩ RE {displayName(localPart(parent.from_address))} ·{" "}
+                {parent.subject ?? parent.content.slice(0, 24)} · {formatTime(parent.timestamp)}
+              </div>
+            ) : null}
+            {mail.forward_of ? (
+              <div className="mail-card-ref">
+                ⤳ FWD OF{" "}
+                {forwardSource
+                  ? `${displayName(localPart(forwardSource.from_address))} · ${forwardSource.subject ?? forwardSource.content.slice(0, 24)}`
+                  : `#${mail.forward_of.slice(0, 8)}`}
+              </div>
+            ) : null}
             {mail.subject ? <div className="mail-card-subject">{mail.subject}</div> : null}
             <div className="mail-card-body">{mail.content}</div>
             {!own ? (
