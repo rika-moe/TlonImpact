@@ -1,0 +1,64 @@
+/* SESSIONS view (src/views/SessionsView.tsx). Colors come from tokens.css only. */
+
+.sessions-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sessions-spacer {
+  flex: 1;
+}
+
+.sessions-error {
+  color: var(--neon-magenta);
+}
+
+.sessions-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.sessions-table th {
+  text-align: left;
+  padding: 6px 12px 6px 0;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.35);
+}
+
+.sessions-table td {
+  padding: 6px 12px 6px 0;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.12);
+  vertical-align: top;
+}
+
+.session-id {
+  color: var(--neon-cyan);
+  text-shadow: var(--glow-cyan);
+  word-break: break-all;
+}
+
+.session-client-type {
+  color: var(--text);
+}
+
+.session-mode {
+  color: var(--neon-yellow);
+}
+
+.session-connected {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.session-filters {
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.sessions-empty {
+  color: var(--text-dim);
+  padding: 12px 0;
+}

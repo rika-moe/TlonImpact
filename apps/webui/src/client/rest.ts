@@ -154,6 +154,24 @@ export interface ServerHealth {
   version: string;
 }
 
+/**
+ * Active client session entry (GET /sessions, see handle_list_sessions
+ * in src/tlon/app/server/api/rest.py). Note: the id field is `id`, not
+ * `session_id` (that name is only used by POST/PATCH /sessions).
+ */
+export type SessionInfo = {
+  id: string;
+  client_type: string;
+  connected_at: string;
+  mode: string;
+  filters: Record<string, unknown>;
+};
+
+export interface SessionList {
+  sessions: SessionInfo[];
+  count: number;
+}
+
 export class RestClient {
   readonly baseUrl: string;
 
@@ -209,6 +227,12 @@ export class RestClient {
 
   async config(): Promise<Record<string, unknown>> {
     return this.get("/config");
+  }
+
+  /** Active client sessions (GET /sessions): which clients are connected. */
+  async listSessions(): Promise<SessionList> {
+    const data = await this.get<SessionList>("/sessions");
+    return { sessions: data.sessions ?? [], count: data.count ?? 0 };
   }
 
   async listAgents(): Promise<AgentSummary[]> {

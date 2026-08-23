@@ -10,6 +10,7 @@ export type ViewName =
   | "events"
   | "traces"
   | "metrics"
+  | "sessions"
   | "logs"
   | "settings";
 
@@ -20,6 +21,7 @@ export const VIEWS: readonly ViewName[] = [
   "events",
   "traces",
   "metrics",
+  "sessions",
   "logs",
   "settings",
 ];
@@ -31,6 +33,7 @@ export const VIEW_TITLES: Record<ViewName, string> = {
   events: "EVENTS",
   traces: "TRACES",
   metrics: "METRICS",
+  sessions: "SESSIONS",
   logs: "LOGS",
   settings: "SETTINGS",
 };

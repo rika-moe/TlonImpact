@@ -11,6 +11,7 @@ import { PrototypesView } from "./views/PrototypesView";
 import { EventsView } from "./views/EventsView";
 import { TracesView } from "./views/TracesView";
 import { MetricsView } from "./views/MetricsView";
+import { SessionsView } from "./views/SessionsView";
 import { LogsView } from "./views/LogsView";
 import { SettingsView } from "./views/SettingsView";
 
@@ -87,6 +88,7 @@ const VIEW_COMPONENTS: Record<ViewName, (props: {
   events: EventsView,
   traces: TracesView,
   metrics: MetricsView,
+  sessions: SessionsView,
   logs: LogsView,
   settings: SettingsView,
 };
