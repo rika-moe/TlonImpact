@@ -6,7 +6,7 @@
  * `GET /metrics` returns `{"metrics": {name: entry}}` as produced by
  * MetricsService.snapshot() (src/tlon/base/metrics.py); here the flat
  * map is grouped into the four metric families (mail / agent / llm /
- * tool) for display.
+ * tool) for display; metrics outside those families fall into "other".
  */
 
 /** One data point of a metric (counter/gauge carry `value`, histograms
@@ -31,9 +31,12 @@ export interface MetricsSnapshot {
   metrics?: Record<string, MetricEntry>;
 }
 
-/** One rendered row: metric short name, formatted attributes, value. */
+/** One rendered row: metric short name, description, unit, formatted
+ * attributes, value. */
 export interface MetricRow {
   metric: string;
+  description: string;
+  unit: string;
   attributes: string;
   value: string;
 }
@@ -80,25 +83,36 @@ export function formatValue(entry: MetricEntry, point: MetricPoint): string {
 }
 
 /**
- * Group the flat snapshot into the four metric families. Metrics whose
- * name matches no family prefix are dropped; families with no points
- * still appear (empty) so the layout is stable.
+ * Group the flat snapshot into the four metric families, plus an "other"
+ * bucket for metrics whose name matches no family prefix. Families with
+ * no points still appear (empty) so the layout is stable; "other" only
+ * appears when it actually holds rows.
  */
 export function groupMetrics(snapshot: MetricsSnapshot): MetricGroup[] {
   const metrics = snapshot.metrics ?? {};
-  return GROUP_PREFIXES.map(([name, prefix]) => {
-    const rows: MetricRow[] = [];
-    for (const metricName of Object.keys(metrics).sort()) {
-      if (!metricName.startsWith(prefix)) continue;
-      const entry = metrics[metricName] as MetricEntry;
-      for (const point of entry.points) {
-        rows.push({
-          metric: shortName(metricName),
-          attributes: formatAttributes(point.attributes),
-          value: formatValue(entry, point),
-        });
-      }
+  const buckets = new Map<string, MetricRow[]>();
+  for (const [name] of GROUP_PREFIXES) buckets.set(name, []);
+  const other: MetricRow[] = [];
+
+  for (const metricName of Object.keys(metrics).sort()) {
+    const family = GROUP_PREFIXES.find(([, prefix]) => metricName.startsWith(prefix));
+    const entry = metrics[metricName] as MetricEntry;
+    const target = family ? (buckets.get(family[0]) as MetricRow[]) : other;
+    for (const point of entry.points) {
+      target.push({
+        metric: family ? shortName(metricName) : metricName,
+        description: entry.description,
+        unit: entry.unit,
+        attributes: formatAttributes(point.attributes),
+        value: formatValue(entry, point),
+      });
     }
-    return { name, rows };
-  });
+  }
+
+  const result = GROUP_PREFIXES.map(([name]) => ({
+    name,
+    rows: buckets.get(name) as MetricRow[],
+  }));
+  if (other.length > 0) result.push({ name: "other", rows: other });
+  return result;
 }

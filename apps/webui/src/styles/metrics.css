@@ -59,6 +59,14 @@
   word-break: break-all;
 }
 
+/* Dim subtitle carrying the metric description and unit. */
+.metric-desc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
 .metric-attrs {
   font-family: var(--font-mono);
   font-size: 11px;

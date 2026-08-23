@@ -14,7 +14,12 @@ function counter(value: number, attributes: Record<string, string> = {}): Metric
 
 const SAMPLE: MetricsSnapshot = {
   metrics: {
-    "tlon.mail.sent": counter(3, { agent: "gu-yanxi" }),
+    "tlon.mail.sent": {
+      type: "counter",
+      description: "Mails sent",
+      unit: "mail",
+      points: [{ attributes: { agent: "gu-yanxi" }, value: 3 }],
+    },
     "tlon.mail.delivered": {
       type: "counter",
       description: "",
@@ -67,6 +72,12 @@ test("groupMetrics buckets metrics into the four families", () => {
     ],
   );
 
+  // Rows carry the entry's description and unit for display.
+  assert.deepEqual(
+    mail.rows.map((r) => `${r.description}|${r.unit}`),
+    ["|", "|", "Mails sent|mail"],
+  );
+
   const llm = groups[2]!;
   assert.deepEqual(
     llm.rows.map((r) => `${r.metric} ${r.attributes} ${r.value}`),
@@ -74,11 +85,20 @@ test("groupMetrics buckets metrics into the four families", () => {
   );
 });
 
-test("groupMetrics keeps empty families and drops unknown prefixes", () => {
+test("groupMetrics keeps empty families and buckets unknown prefixes into other", () => {
   const groups = groupMetrics({ metrics: { "other.thing": counter(1) } });
-  assert.equal(groups.length, 4);
-  assert.ok(groups.every((g) => g.rows.length === 0));
+  assert.deepEqual(
+    groups.map((g) => g.name),
+    ["mail", "agent", "llm", "tool", "other"],
+  );
 
+  const other = groups[4]!;
+  assert.deepEqual(
+    other.rows.map((r) => `${r.metric} ${r.attributes} ${r.value}`),
+    ["other.thing - 1"],
+  );
+
+  // The other bucket is omitted entirely when nothing falls into it.
   const empty = groupMetrics({});
   assert.deepEqual(
     empty.map((g) => g.name),

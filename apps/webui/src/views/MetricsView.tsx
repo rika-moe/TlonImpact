@@ -10,9 +10,10 @@ const POLL_INTERVAL_MS = 2_000;
 
 /**
  * METRICS — dashboard of the server's in-process metrics (GET /metrics),
- * grouped by mail/agent/llm/tool via lib/snapshot.ts, polled every 2s.
+ * grouped by mail/agent/llm/tool/other via lib/snapshot.ts, polled every 2s.
  * Counter/gauge rows show a large glowing value; histogram rows show
- * count/avg/min/max (formatted by lib/snapshot.ts).
+ * count/avg/min/max (formatted by lib/snapshot.ts). Each row also shows the
+ * metric description and unit as a dim subtitle when present.
  */
 export function MetricsView({ rest }: ViewProps): ReactElement {
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
@@ -55,6 +56,12 @@ export function MetricsView({ rest }: ViewProps): ReactElement {
                     <span className="metric-name">{row.metric}</span>
                     <span className="metric-value">{row.value}</span>
                   </div>
+                  {row.description || row.unit ? (
+                    <div className="metric-desc">
+                      {row.description}
+                      {row.unit ? ` (${row.unit})` : ""}
+                    </div>
+                  ) : null}
                   <div className="metric-attrs">{row.attributes}</div>
                 </div>
               ))
