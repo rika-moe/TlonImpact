@@ -12,6 +12,8 @@ interface SpanNode {
   source?: string;
   event_type?: string;
   duration_ms?: number;
+  payload?: unknown;
+  metadata?: unknown;
   children?: SpanNode[];
 }
 
@@ -41,11 +43,28 @@ function formatStartTime(trace: TraceRecord): string {
   return Number.isNaN(date.getTime()) ? raw : date.toLocaleString("en-GB", { hour12: false });
 }
 
-/** One span row plus its descendants (indentation encodes depth). */
+/** JSON shown when a span row is expanded (only defined fields included). */
+function spanJson(node: SpanNode): string {
+  const out: Record<string, unknown> = {};
+  if (node.payload !== undefined) out["payload"] = node.payload;
+  if (node.metadata !== undefined) out["metadata"] = node.metadata;
+  return JSON.stringify(out, null, 2);
+}
+
+/** One span row plus its descendants (indentation encodes depth). Rows
+ *  with a payload/metadata expand on click (mirrors events/logs views). */
 function SpanTreeRows({ node, depth }: { node: SpanNode; depth: number }): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const expandable = node.payload !== undefined || node.metadata !== undefined;
   return (
     <>
-      <div className="span-row" style={{ paddingLeft: depth * 18 }}>
+      <div
+        className={`span-row${expandable ? " span-row--expandable" : ""}${
+          expanded ? " span-row--expanded" : ""
+        }`}
+        style={{ paddingLeft: depth * 18 }}
+        onClick={expandable ? () => setExpanded((prev) => !prev) : undefined}
+      >
         <span className="span-name">{node.name ?? "(unnamed)"}</span>
         {node.source ? <span className="span-dim">{node.source}</span> : null}
         {node.event_type ? <span className="span-dim">{node.event_type}</span> : null}
@@ -56,6 +75,11 @@ function SpanTreeRows({ node, depth }: { node: SpanNode; depth: number }): React
           <span className="span-dim">open</span>
         )}
       </div>
+      {expanded && expandable ? (
+        <pre className="span-json" style={{ marginLeft: depth * 18 }}>
+          {spanJson(node)}
+        </pre>
+      ) : null}
       {(node.children ?? []).map((child, index) => (
         <SpanTreeRows key={child.span_id ?? index} node={child} depth={depth + 1} />
       ))}

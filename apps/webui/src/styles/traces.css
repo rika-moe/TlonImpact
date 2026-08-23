@@ -115,6 +115,37 @@
   color: var(--neon-yellow);
 }
 
+/* Row expansion: click toggles the span's payload/metadata JSON (mirrors
+   events.css / logs.css). */
+.span-row--expandable {
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.span-row--expandable:hover {
+  background: rgba(0, 240, 255, 0.06);
+}
+
+.span-row--expanded {
+  text-shadow: var(--glow-cyan);
+}
+
+/* Payloads can hold LLM context fragments: cap height and scroll. */
+.span-json {
+  margin: 4px 0 8px 0;
+  padding: 8px 12px;
+  background: var(--bg-2);
+  border-left: 1px solid rgba(0, 240, 255, 0.4);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
+}
+
 .traces-json {
   margin: 0;
   font-family: var(--font-mono);
