@@ -13,6 +13,7 @@ See docs/design/members.md (阶段 D).
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,10 @@ class StartRequest:
     agent_id: str
     reason: str
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-ready dict for the SSE event payload."""
+        return {"agent_id": self.agent_id, "reason": self.reason}
+
 
 @dataclass(frozen=True)
 class StopRequest:
@@ -49,3 +54,7 @@ class StopRequest:
 
     agent_id: str
     reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-ready dict for the SSE event payload."""
+        return {"agent_id": self.agent_id, "reason": self.reason}

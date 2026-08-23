@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.app.server.api import rest as rest_module
 from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.app.server.core.client_gateway import ClientGateway
@@ -513,3 +514,36 @@ class TestEventsStream:
         assert first["payload"]["mail"]["id"] == mail.id
         assert first["payload"]["mail"]["content"] == "你好"
         assert second["event_type"] == "system.startup"
+
+    async def test_lifecycle_request_payloads_are_json_objects(
+        self, client: TestClient, bus: EventBus, manager: AdapterManager
+    ):
+        """agent.start_request / agent.stop_request frames carry their
+        StartRequest/StopRequest payload as a JSON object, not the
+        dataclass repr string."""
+        session = await _create_session(client)
+        async with client.get("/events", params={"session_id": session["session_id"]}) as resp:
+            await _wait_for(lambda: manager.get_adapter("alice") is not None)
+
+            await bus.publish(
+                Event(
+                    type=EventType.AGENT_START_REQUEST,
+                    payload=StartRequest(agent_id="xie-yunshu", reason="wake"),
+                    source="agent_registry",
+                )
+            )
+            await bus.publish(
+                Event(
+                    type=EventType.AGENT_STOP_REQUEST,
+                    payload=StopRequest(agent_id="xie-yunshu", reason="drain"),
+                    source="adam",
+                )
+            )
+
+            start = await _read_event_frame(resp)
+            stop = await _read_event_frame(resp)
+
+        assert start["event_type"] == "agent.start_request"
+        assert start["payload"] == {"agent_id": "xie-yunshu", "reason": "wake"}
+        assert stop["event_type"] == "agent.stop_request"
+        assert stop["payload"] == {"agent_id": "xie-yunshu", "reason": "drain"}
