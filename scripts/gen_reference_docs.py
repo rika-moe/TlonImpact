@@ -13,7 +13,8 @@ handwritten; only the drift-prone inventories are generated:
 - ``dsl-special-forms`` / ``dsl-on-events`` / ``dsl-builtins-*`` /
   ``dsl-loop-names`` in docs/reference/dsl-reference.md — the DSL
   whitelists (special forms, ``:on`` event keywords, builtin registries,
-  stage/section names) from agents/eval.py and agents/member_spec.py.
+  stage/section names) from agents/eval.py, agents/builtins.py and
+  agents/member_spec.py.
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
   the route table from ``RESTAPIHandler.create_app`` (with registration
   conditions) and the ``MODE_EVENT_PATTERNS`` mode semantics.
@@ -47,6 +48,7 @@ TOOLS_DIR = SRC / "tools"
 REGISTRY_FILE = SRC / "agents" / "agent_registry.py"
 EVENTS_FILE = SRC / "base" / "events" / "event.py"
 EVAL_FILE = SRC / "agents" / "eval.py"
+BUILTINS_FILE = SRC / "agents" / "builtins.py"
 MEMBER_SPEC_FILE = SRC / "agents" / "member_spec.py"
 REST_FILE = SRC / "app" / "server" / "api" / "rest.py"
 NOTIFICATION_FILE = SRC / "app" / "server" / "core" / "notification_service.py"
@@ -278,15 +280,15 @@ class BuiltinEntry:
 
 def builtin_registry(name: str) -> list[BuiltinEntry]:
     """A ``NAME: dict[str, Builtin] = {"x": Builtin(_fn, pure=...)}`` registry
-    from agents/eval.py, in source order."""
-    tree = _parse(EVAL_FILE)
-    value = _module_value(tree, name, EVAL_FILE)
+    from agents/builtins.py, in source order."""
+    tree = _parse(BUILTINS_FILE)
+    value = _module_value(tree, name, BUILTINS_FILE)
     if not isinstance(value, ast.Dict):
-        raise GenerationError(f"{EVAL_FILE}: {name} is not a dict literal")
+        raise GenerationError(f"{BUILTINS_FILE}: {name} is not a dict literal")
     entries: list[BuiltinEntry] = []
     for key, val in zip(value.keys, value.values, strict=True):
         if key is None:
-            raise GenerationError(f"{EVAL_FILE}: {name} uses dict unpacking")
+            raise GenerationError(f"{BUILTINS_FILE}: {name} uses dict unpacking")
         builtin_name = str(_literal(key))
         if not (
             isinstance(val, ast.Call)
@@ -296,7 +298,7 @@ def builtin_registry(name: str) -> list[BuiltinEntry]:
             and isinstance(val.args[0], ast.Name)
         ):
             raise GenerationError(
-                f"{EVAL_FILE}: {name}[{builtin_name!r}] is not Builtin(<fn>, ...)"
+                f"{BUILTINS_FILE}: {name}[{builtin_name!r}] is not Builtin(<fn>, ...)"
             )
         fn_name = val.args[0].id
         pure = True
@@ -305,17 +307,17 @@ def builtin_registry(name: str) -> list[BuiltinEntry]:
                 pure = bool(_literal(kw.value))
             else:
                 raise GenerationError(
-                    f"{EVAL_FILE}: {name}[{builtin_name!r}] has unexpected kwarg {kw.arg}"
+                    f"{BUILTINS_FILE}: {name}[{builtin_name!r}] has unexpected kwarg {kw.arg}"
                 )
         entries.append(
             BuiltinEntry(
                 name=builtin_name,
                 pure=pure,
-                doc=_function_doc_first_line(tree, fn_name, EVAL_FILE),
+                doc=_function_doc_first_line(tree, fn_name, BUILTINS_FILE),
             )
         )
     if not entries:
-        raise GenerationError(f"{EVAL_FILE}: {name} is empty")
+        raise GenerationError(f"{BUILTINS_FILE}: {name} is empty")
     return entries
 
 

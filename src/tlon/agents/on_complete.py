@@ -3,7 +3,7 @@
 When a cognitive session completes with a final reply, the action forms
 declared on the cognitive rule (``rule.actions``) are evaluated once —
 purely: ``spawn`` / ``emit`` builtins record :class:`ActionRequest` data
-into a collector (see ``agents/eval.py``) — and the collected requests are
+into a collector (see ``agents/builtins.py``) — and the collected requests are
 then executed by the runtime's unified action executor, one by one. All
 five action kinds are accepted (D6.2: the react rule's completion actions
 no longer restrict to spawn/emit).
@@ -20,14 +20,13 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from tlon.agents.eval import (
-    DEFAULT_FUEL,
+from tlon.agents.builtins import (
     ActionRequest,
     EvalError,
     FuelExhaustedError,
-    eval_form,
     make_member_builtins,
 )
+from tlon.agents.eval import DEFAULT_FUEL, eval_form
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail

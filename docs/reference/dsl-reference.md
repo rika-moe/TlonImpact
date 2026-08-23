@@ -22,7 +22,7 @@
 要点（[src/tlon/agents/edn.py](../../src/tlon/agents/edn.py) 模块 docstring）：
 
 - `(...)` 与 `[...]` 语义不同：列表是表达式，向量是数据。`:when`、`:until`、stage、section、action 字段都必须是 `(...)` 形式。
-- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlon/agents/eval.py](../../src/tlon/agents/eval.py) 的 `_value_equal`）。
+- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlon/agents/builtins.py](../../src/tlon/agents/builtins.py) 的 `_value_equal`）。
 - 符号可用字符集：字母、数字及 `*+!-_?./<>=`，所以 `addressed-to-me?`、`>=`、`start-all` 都是合法符号。
 - 解析失败抛 `EDNParseError`，带 1 起始的行列号。
 
@@ -166,7 +166,7 @@
 
 ## 5. Builtin 完整清单
 
-模块级注册表在 [src/tlon/agents/eval.py](../../src/tlon/agents/eval.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。宿主谓词 `sleeping?` / `running?` / `lazy?` 读注册表状态，由调用方闭包注入（**仅 Adam 可用**），不在任何模块级注册表；普通成员的注册表里没有，使用即加载校验失败。
+模块级注册表在 [src/tlon/agents/builtins.py](../../src/tlon/agents/builtins.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。宿主谓词 `sleeping?` / `running?` / `lazy?` 读注册表状态，由调用方闭包注入（**仅 Adam 可用**），不在任何模块级注册表；普通成员的注册表里没有，使用即加载校验失败。
 
 ### 5.1 `TRIGGER_BUILTINS`（触发器谓词）
 

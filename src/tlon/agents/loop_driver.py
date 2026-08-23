@@ -33,14 +33,9 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
+from tlon.agents.builtins import LOOP_BUILTINS, STAGE_COND_BUILTINS, EvalError
 from tlon.agents.context_pressure import ContextPressure
-from tlon.agents.eval import (
-    DEFAULT_FUEL,
-    LOOP_BUILTINS,
-    STAGE_COND_BUILTINS,
-    EvalError,
-    eval_form,
-)
+from tlon.agents.eval import DEFAULT_FUEL, eval_form
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner

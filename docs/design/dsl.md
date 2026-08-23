@@ -55,7 +55,7 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 
 参数校验同样前置在纯求值期完成：动作 builtin 在产出请求前就把参数查完（`spawn` 的 prototype 必须是字符串、`start`/`stop` 的 `:reason` 必须非空、`forward` 的 `:to` 必须是非空地址向量），引擎执行侧拿到的 `ActionRequest` 是已验证的数据，执行路径因此不必重复防御。校验集中在描述侧、执行保持简单——这是"DSL 描述，引擎执行"的另一半：描述侧把错都挑完，执行侧只管照做。
 
-纯度约束还细化到了语法位置（[agents/eval.py](../../src/tlon/agents/eval.py) 的 `validate_member_action`）：动作位置允许的包装形式只有 `when` / `while` / `map`，`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。也就是说"计算"与"产生意图"在语法上是分区的——一个 spec 里哪里可能有动作意图，校验器一眼就能数清，不存在藏在深层计算里的副作用声明。
+纯度约束还细化到了语法位置（[agents/validate.py](../../src/tlon/agents/validate.py) 的 `validate_member_action`）：动作位置允许的包装形式只有 `when` / `while` / `map`，`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。也就是说"计算"与"产生意图"在语法上是分区的——一个 spec 里哪里可能有动作意图，校验器一眼就能数清，不存在藏在深层计算里的副作用声明。
 
 数据与计算之间留了一座受控的桥：map 字面量的键保持字面（实际中都是关键字），值会被求值。于是动作的选项 map 可以内嵌表达式——`(stop {:agent (get event :agent_id) :reason "drain"})` 里目标成员 id 取自触发事件。桥是单向的：数据位置可以引入计算，计算的结果再回流成请求数据；反向（表达式产出新的表达式再执行）不存在，语言没有 `eval`。这条"无自反求值"的禁令配合无宏，保证了 spec 文本就是行为的全部——不存在运行时生成的、加载时看不见的行为。
 
@@ -125,7 +125,7 @@ DSL 的实现分四层，各层职责单一、失败模式明确：
 |---|---|---|---|
 | EDN 解析（L0） | [agents/edn.py](../../src/tlon/agents/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
 | 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `MemberLoop` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
-| 受限求值器（L1） | [agents/eval.py](../../src/tlon/agents/eval.py) 的 `eval_form` / `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
+| 受限求值器（L1） | [agents/eval.py](../../src/tlon/agents/eval.py) 的 `eval_form` 与 [agents/validate.py](../../src/tlon/agents/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |
 
 L0 不求值这一点值得单独说：解析的产物是惰性、安全、可流转的数据。正因为如此，模板分析（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 在文本/数据层提取 `:parameters`）、`source_hash` 对原文字节做哈希、原型元数据读取失败时安全回退（`_read_metadata` 对一个坏掉的 `prototype.edn` 只记 warning 返回名字兜底）都可以在完全不触碰求值器的前提下工作。求值被推迟到 L1 且永远由引擎发起——数据在系统里流动的每一站都不承担"执行"的风险。
@@ -138,7 +138,7 @@ L0 不求值这一点值得单独说：解析的产物是惰性、安全、可�
 
 `dumps` 的存在也不只是为了测试 roundtrip：agent 自己书写 spec（writePrototype 修正重试、`to_edn` 序列化）依赖同一套读写对称性。
 
-L1 内部还有一个刻意的同居：运行时求值（`eval_form`）与加载时静态校验（`validate_form`）住在同一个模块、共享对表达式树的同一套结构理解（特殊形式的形状、尾位置规则、绑定向量格式在两处是 mirrored 实现）。这保证了"校验器承认的语言"与"求值器执行的语言"不会随版本漂移而裂开——如果校验在别处另起炉灶，两边对 `(recur ...)` 合法位置的理解迟早出现缝隙，而静态校验的全部价值就在于它证明的东西在运行时成立。
+L1 内部还有一个刻意的紧邻：运行时求值（`eval_form`）与加载时静态校验（`validate_form`）住在同包相邻的两个模块（`eval.py` 求值、`validate.py` 校验）、共享对表达式树的同一套结构理解（特殊形式的形状、尾位置规则、绑定向量格式在两处是 mirrored 实现）。这保证了"校验器承认的语言"与"求值器执行的语言"不会随版本漂移而裂开——如果校验在别处另起炉灶，两边对 `(recur ...)` 合法位置的理解迟早出现缝隙，而静态校验的全部价值就在于它证明的东西在运行时成立。
 
 loader 是整个系统**唯一**的读盘路径，这点也有设计意图：热重载、首次启动、测试中的临时 spec，走的都是同一条"解析 → 模型 → 校验 → 挂 provenance"的链，不存在第二条绕过校验的加载方式。链条唯一意味着校验策略的改动（比如新增一条结构约束）自动对所有加载场景生效，不需要逐个调用点追缴。
 

@@ -39,8 +39,8 @@ acyclic).
 """
 
 from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
+from tlon.agents.builtins import make_member_builtins
 from tlon.agents.edn import loads
-from tlon.agents.eval import make_member_builtins
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.events.event_bus import EventBus

@@ -14,8 +14,8 @@ seam the tests monkeypatch.
 import hashlib
 from dataclasses import replace
 
+from tlon.agents.builtins import Builtin
 from tlon.agents.edn import loads
-from tlon.agents.eval import Builtin
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.paths import paths
 

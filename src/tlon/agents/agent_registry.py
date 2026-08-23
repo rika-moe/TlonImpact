@@ -39,7 +39,7 @@ import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from tlon.agents.eval import ScriptHostQueries, make_member_builtins
+from tlon.agents.builtins import ScriptHostQueries, make_member_builtins
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime

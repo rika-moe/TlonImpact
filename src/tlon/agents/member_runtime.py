@@ -39,16 +39,13 @@ from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars, get_contextvars
 
+from tlon.agents.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.eval import (
     DEFAULT_FUEL,
     DEFAULT_MAX_DEPTH,
     DEFAULT_WHEN_FUEL,
-    ActionRequest,
-    Builtin,
-    EvalError,
-    FuelExhaustedError,
     _Evaluator,
     eval_form,
 )
