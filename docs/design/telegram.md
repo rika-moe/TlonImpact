@@ -42,13 +42,13 @@ bot 进程 = python-telegram-bot（polling）+ 官方 SDK `TlonClient`（chat �
 
 新建：
 
-- `src/tlon/app/clients/telegram/`——`bot.py`（PTB 应用 + 消息路由）、`adapter.py`（TelegramAdapter）、`reply_map.py`（消息↔邮件映射 + 白名单校验，纯逻辑可测）
+- `src/tlon/app/clients/telegram/`——`bot.py`（PTB 应用 + 消息路由）、`reply_map.py`（消息↔邮件映射 + 白名单校验，纯逻辑可测）；`adapter.py` 不重复——PR1 的 `sdk/adapter.py` TelegramAdapter 直接复用
 - `src/tlon/app/launcher/commands/telegram.py`
-- `src/tests/unit/test_telegram_bot.py`（映射 / 白名单 / 发信组包单测；收发链路参考 `test_sdk.py` 的 in-process 集成模式）
+- `src/tests/unit/test_telegram_bot.py`（映射 / 白名单 / 发信组包单测；收发链路参考 `test_sdk.py` 的 in-process 集成模式，PTB 侧以 deliver seam 打桩）
 
-修改：
+修改（PR2）：`launcher/main.py`（注册命令）、`base/settings.py`（TELEGRAM_* 配置）、`pyproject.toml`（lint-imports 契约 + mypy override）、`README.md` / `AGENTS.md`（快速开始）。
 
-- `sdk/client.py`（`get_inbox()`）、`launcher/main.py`（注册命令）、`pyproject.toml`（extra + lint-imports 契约）、`docs/design/mail.md`（已废弃一节的过时表述）、`README.md` / `AGENTS.md`（快速开始）
+PR1 已落地：`sdk/client.py`（`get_inbox()`）、`sdk/adapter.py`（TelegramAdapter）、pyproject `telegram` extra。`docs/design/mail.md`（已废弃一节的过时表述）另行处理。
 
 ## 错误处理与边界
 

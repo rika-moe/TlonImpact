@@ -80,6 +80,10 @@ class Settings:
         # Observability (OTel): optional OTLP collector, requires the `otlp` extra
         self.otel_exporter_otlp_endpoint: str | None = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
+        # Telegram bot client (optional `telegram` extra)
+        self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")  # @BotFather 颁发的 bot token；缺失则 `tlon telegram` 拒绝启动
+        self.telegram_allowed_users = os.getenv("TELEGRAM_ALLOWED_USERS", "")  # Telegram user-id 白名单（逗号分隔）；为空则拒绝启动
+
         # Logging: retention (days) for the daily server log file sink
         self.log_retention_days = int(os.getenv("TLON_LOG_RETENTION_DAYS", "7"))
 

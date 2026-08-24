@@ -95,6 +95,13 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_calls = false
 
+# python-telegram-bot 是 optional extra：无 extra 环境下 telegram.* 解析
+# 为 Any（clients/telegram/bot.py 仍能过 mypy）；装上 extra 后 PTB 自带
+# py.typed，按真实类型全量检查
+[[tool.mypy.overrides]]
+module = "telegram.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["src/tests"]
@@ -236,6 +243,19 @@ forbidden_modules = [
     "tlon.app.launcher",
 ]
 
-# 注意：app.clients.telegram 契约（只依赖 sdk/base/第三方库）随 PR2 的
-# bot 包一起落地——import-linter 会校验 source_modules 存在，提前加会报
-# "Module does not exist"。
+# Telegram bot 客户端：与 sdk 同层的纯客户端包，只依赖 sdk / base /
+# 第三方库（python-telegram-bot）；forbidden 清单镜像上面的 sdk 契约
+[[tool.importlinter.contracts]]
+name = "app.clients.telegram 只依赖 sdk/base/第三方"
+type = "forbidden"
+source_modules = "tlon.app.clients.telegram"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.memory",
+    "tlon.sandbox",
+    "tlon.tools",
+    "tlon.prototypes",
+    "tlon.app.server",
+    "tlon.app.launcher",
+]

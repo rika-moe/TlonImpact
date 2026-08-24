@@ -27,6 +27,11 @@ uv run tlon dream     # 终端 1（服务端，REST + SSE，默认 127.0.0.1:808
 uv run tlon ops       # 终端 2（Operator TUI，含 mail 视图——人类邮件主界面）
 # 浏览器 WebUI 由 dream 托管于 /ui/（需先 cd apps/webui && npm install && npm run build）
 
+# Telegram 客户端（可选第三条人类通道，手机收发邮件）
+uv sync --extra telegram
+# ~/.tlon/.env 配置 TELEGRAM_BOT_TOKEN=<BotFather token>、TELEGRAM_ALLOWED_USERS=<user_id 逗号分隔>
+uv run tlon telegram  # 手机 /send <名字> <内容> 发信；对来信推送点「回复」回信；/inbox 看未读
+
 # 单元测试
 uv run pytest
 ```

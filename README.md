@@ -31,6 +31,16 @@ uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面 + 成员/
 #   cd apps/webui && npm install && npm run build   # 首次构建，之后由 dream 托管于 /ui/
 
 # 4. 发第一封信：在 TUI 的 Mail 视图按 c，给团队某成员（如「顾言蹊」）写信
+
+# 5. Telegram 客户端（可选，手机收发邮件）
+uv sync --extra telegram
+# ~/.tlon/.env 配置：
+#   TELEGRAM_BOT_TOKEN=<@BotFather 颁发的 token>
+#   TELEGRAM_ALLOWED_USERS=<你的 Telegram user_id，逗号分隔；给 bot 发条消息后访问
+#     https://api.telegram.org/bot<token>/getUpdates 可查到自己的 user_id>
+uv run tlon telegram   # 白名单外消息一律忽略
+# 真机自验：手机对 bot /send 顾言蹊 <内容> → agent 收到并回信、手机收到推送 →
+#   对推送点「回复」→ agent 收到带 in_reply_to 的回信；/inbox 看未读
 ```
 
 完整走查（含常见问题排查）见 [docs/guides/quickstart.md](./docs/guides/quickstart.md)。
