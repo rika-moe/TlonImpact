@@ -24,7 +24,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from tlon.app.clients.sdk.adapter import TerminalAdapter
+from tlon.app.clients.sdk.adapter import TelegramAdapter, TerminalAdapter
 from tlon.app.clients.sdk.base_client import BaseClient, ConnectionState
 from tlon.app.clients.sdk.client import TlonClient
 from tlon.app.clients.sdk.exceptions import (
@@ -143,11 +143,35 @@ def make_test_app() -> web.Application:
             )
         return web.json_response({"mail_id": "mail-1"}, status=202)
 
+    async def inbox(request: web.Request) -> web.Response:
+        app["requests"].append(("GET", "/inbox", dict(request.query)))
+        return web.json_response(
+            {
+                "mails": [
+                    {
+                        "id": "mail-1",
+                        "from_address": "agent:dev-001",
+                        "to": ["human:alice"],
+                        "cc": [],
+                        "subject": "hi",
+                        "content": "hello",
+                        "in_reply_to": None,
+                        "thread_id": None,
+                        "forward_of": None,
+                        "timestamp": 123.0,
+                        "read": False,
+                    }
+                ],
+                "count": 1,
+            }
+        )
+
     app.router.add_post("/sessions", create_session)
     app.router.add_patch("/sessions/{session_id}", update_session)
     app.router.add_delete("/sessions/{session_id}", delete_session)
     app.router.add_get("/events", events)
     app.router.add_post("/messages", send_message)
+    app.router.add_get("/inbox", inbox)
     return app
 
 
@@ -475,6 +499,48 @@ class TestTerminalAdapter:
         assert "platform" in metadata
 
 
+class TestTelegramAdapter:
+    """Tests for TelegramAdapter class."""
+
+    @pytest.fixture
+    def adapter(self):
+        """Create a TelegramAdapter instance."""
+        return TelegramAdapter()
+
+    def test_init(self, adapter):
+        """A Telegram client is a mail-only chat channel."""
+        assert adapter.client_type == "telegram"
+        assert adapter.mode == "chat"
+        assert "filter" in adapter.capabilities
+        assert "trace" not in adapter.capabilities
+        assert "history" not in adapter.capabilities
+
+    def test_effective_filters_default_mail_only(self, adapter):
+        """By default a Telegram client declares mail.* delivery only."""
+        assert adapter.get_effective_filters() == {"event_types": ["mail.*"]}
+
+    def test_effective_filters_user_event_types_take_over(self, adapter):
+        """Explicit user event_types replace the mail-only default."""
+        adapter.set_event_filters({"event_types": ["mail.delivered"]})
+        assert adapter.get_effective_filters() == {"event_types": ["mail.delivered"]}
+
+    def test_effective_filters_with_trace_filter(self, adapter):
+        """Trace filter is declared alongside the mail-only default."""
+        adapter.set_trace_filter("trace-abc-123")
+        assert adapter.get_effective_filters() == {
+            "event_types": ["mail.*"],
+            "trace_id": "trace-abc-123",
+        }
+
+    def test_clear_filters_restores_default(self, adapter):
+        """Clearing user filters falls back to the mail-only default."""
+        adapter.set_event_filters({"event_types": ["agent.*"]})
+
+        adapter.clear_filters()
+
+        assert adapter.get_effective_filters() == {"event_types": ["mail.*"]}
+
+
 class TestTlonClient:
     """Tests for TlonClient class."""
 
@@ -639,6 +705,37 @@ class TestTlonClient:
         trace = await client.get_trace("t-1")
         assert trace["trace_id"] == "t-1"
 
+    async def test_get_inbox(self, client):
+        """get_inbox returns the mails list and passes username/limit params."""
+        client._base = AsyncMock()
+        client._base.rest_get = AsyncMock(
+            return_value={"mails": [{"id": "mail-1", "read": False}], "count": 1}
+        )
+
+        mails = await client.get_inbox(username="alice", limit=20)
+
+        assert mails == [{"id": "mail-1", "read": False}]
+        client._base.rest_get.assert_called_once_with(
+            "/inbox", {"username": "alice", "limit": 20}
+        )
+
+    async def test_get_inbox_omits_username_when_unset(self, client):
+        """Without a username the server-side default ("guest") applies."""
+        client._base = AsyncMock()
+        client._base.rest_get = AsyncMock(return_value={"mails": [], "count": 0})
+
+        mails = await client.get_inbox()
+
+        assert mails == []
+        client._base.rest_get.assert_called_once_with("/inbox", {"limit": 50})
+
+    async def test_get_inbox_request_failed(self, client):
+        """A failed request (rest_get -> None) yields an empty list."""
+        client._base = AsyncMock()
+        client._base.rest_get = AsyncMock(return_value=None)
+
+        assert await client.get_inbox(username="alice") == []
+
 
 class TestTlonClientIntegration:
     """TlonClient against the in-process v2 server (end-to-end transport)."""
@@ -679,3 +776,15 @@ class TestTlonClientIntegration:
 
         # Context-manager exit deleted the session
         assert any(r[0] == "DELETE" for r in server.app["requests"])
+
+    async def test_get_inbox_integration(self, base_url, server):
+        """get_inbox hits GET /inbox with the declared query params."""
+        async with TlonClient(base_url=base_url, auto_reconnect=False) as client:
+            mails = await client.get_inbox(username="alice", limit=5)
+
+        assert len(mails) == 1
+        assert mails[0]["id"] == "mail-1"
+        assert mails[0]["read"] is False
+        inbox_req = [r for r in server.app["requests"] if r[1] == "/inbox"][0]
+        assert inbox_req[0] == "GET"
+        assert inbox_req[2] == {"username": "alice", "limit": "5"}

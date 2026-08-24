@@ -16,4 +16,5 @@ Architecture:
     - ClientAdapter: Abstract interface for client-specific behavior
     - TlonClient: Unified entry point combining BaseClient + Adapter
     - TerminalAdapter: Adapter for TUI clients (receives all events)
+    - TelegramAdapter: Adapter for Telegram bot clients (mail.* only)
 """

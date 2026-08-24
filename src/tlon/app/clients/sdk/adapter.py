@@ -2,6 +2,7 @@
 
 Adapters encapsulate client-type-specific behavior:
 - TerminalAdapter: Declares mode display state and optional high-frequency exclusions
+- TelegramAdapter: Declares a mail-only chat channel (filters: event_types=["mail.*"])
 
 Each adapter provides:
 - Client type identification
@@ -208,3 +209,41 @@ class TerminalAdapter(ClientAdapter):
             exclude: True to exclude high-frequency events
         """
         self._exclude_high_frequency = exclude
+
+
+class TelegramAdapter(ClientAdapter):
+    """Adapter for Telegram bot clients.
+
+    A Telegram bot is a pure mail channel: always chat mode, and it
+    declares ``event_types: ["mail.*"]`` by default so the server only
+    forwards mail events (the actual matching happens server-side).
+    Traces and history views are not rendered on Telegram.
+
+    Example:
+        >>> adapter = TelegramAdapter()
+        >>> adapter.get_effective_filters()
+        {'event_types': ['mail.*']}
+    """
+
+    def __init__(self) -> None:
+        super().__init__(ClientType.TELEGRAM)
+
+    def _get_capabilities(self) -> ProtocolCapabilities:
+        """Telegram clients filter events but render no traces/history."""
+        return ProtocolCapabilities(trace=False, filter=True, history=False)
+
+    @property
+    def mode(self) -> str:
+        """Telegram clients always operate in chat mode."""
+        return "chat"
+
+    def get_effective_filters(self) -> dict[str, Any]:
+        """Declare mail-only delivery unless the user set event types.
+
+        The ``mail.*`` include list is the client-type default; explicit
+        user event_types (set_event_filters) take over the declaration.
+        """
+        filters = super().get_effective_filters()
+        if "event_types" not in filters:
+            filters["event_types"] = ["mail.*"]
+        return filters

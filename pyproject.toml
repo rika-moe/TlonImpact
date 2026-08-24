@@ -37,6 +37,10 @@ dependencies = [
 otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.30",
 ]
+# Telegram bot 客户端（PR2 落地本体）；不用此功能不装
+telegram = [
+    "python-telegram-bot>=21",
+]
 
 [project.scripts]
 tlon = "tlon.app.launcher.main:main"
@@ -231,3 +235,7 @@ forbidden_modules = [
     "tlon.app.server",
     "tlon.app.launcher",
 ]
+
+# 注意：app.clients.telegram 契约（只依赖 sdk/base/第三方库）随 PR2 的
+# bot 包一起落地——import-linter 会校验 source_modules 存在，提前加会报
+# "Module does not exist"。

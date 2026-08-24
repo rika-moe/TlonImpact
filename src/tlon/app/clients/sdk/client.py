@@ -401,6 +401,25 @@ class TlonClient:
         result = await self._base.rest_get("/traces", {"limit": limit})
         return result.get("traces", []) if result else []
 
+    async def get_inbox(self, username: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Get a human member's mailbox (GET /inbox).
+
+        Args:
+            username: Human username — the inbox of "human:<username>" is
+                served (server defaults to "guest" when omitted)
+            limit: Maximum number of mails (server default 50, max 200)
+
+        Returns:
+            List of mail dicts (id, from_address, to, cc, subject, content,
+            in_reply_to, thread_id, forward_of, timestamp, read), inbox and
+            sent merged in chronological order
+        """
+        params: dict[str, Any] = {"limit": limit}
+        if username is not None:
+            params["username"] = username
+        result = await self._base.rest_get("/inbox", params)
+        return result.get("mails", []) if result else []
+
     async def get_agent_logs(self, agent_id: str) -> str | None:
         """Get agent logs.
 
