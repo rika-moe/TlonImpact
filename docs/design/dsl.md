@@ -2,7 +2,7 @@
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；DSL 语言本身的受限设计（本文主体）不受影响。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
-语法、全字段与 builtin 清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文只回答"为什么这样设计"。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)。一切以代码为准。
+语法、全字段与 builtin 清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文只回答"为什么这样设计"。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)；语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）的决策见 [../decisions/0011-sci-compatible-subset.md](../decisions/0011-sci-compatible-subset.md)。一切以代码为准。
 
 ## DSL 在愿景中的位置
 
