@@ -85,7 +85,9 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 唯一的输入防御是路径安全：username 会变成邮箱目录名（`~/.tlon/human-{username}/`），所以 `rest/common.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。
 
-绑定非回环地址（`--host 0.0.0.0` 或任何局域网/公网地址）时，服务端不阻止——显式给出 `--host` 本身就是知情动作——但会在两处留下醒目记录：启动 banner 追加「NO authentication」警告块，日志打 `server_exposed_non_loopback` warning（判定逻辑是 [app/server/serverapp.py](../../src/tlon/app/server/serverapp.py) 的 `_LOOPBACK_HOSTS` 白名单：`127.0.0.1` / `localhost` / `::1`）。如果未来要暴露到非本机，认证与授权是需要先行补上的独立决策（issue ），本文不展开。
+绑定非回环地址（`--host 0.0.0.0` 或任何局域网/公网地址）时，服务端不阻止——显式给出 `--host` 本身就是知情动作——但会在两处留下醒目记录：启动 banner 追加「NO authentication」警告块，日志打 `server_exposed_non_loopback` warning（判定逻辑是 [app/server/serverapp.py](../../src/tlon/app/server/serverapp.py) 的 `_LOOPBACK_HOSTS` 白名单：`127.0.0.1` / `localhost` / `::1`）。
+
+唯一的认证层是 admin 面的共享 token（ADR 0013）：配置 `TLON_ADMIN_TOKEN` 后，所有 `/admin/*` 请求必须携带 `Authorization: Bearer <token>`，否则 401（`reason: unauthorized`）；强制点是 `RESTAPIHandler.create_app` 注册的 middleware，单一拦截、未来新增 admin 路由自动被保护。默认（未配置）认证关闭，行为与上述「名字即身份」模型完全一致——它是给非回环暴露场景的可选硬防线，不是本地工具的额外摩擦。邮件面（`/messages`、`/inbox`、`/sessions`、`/events`）不在保护范围内：需要保护它们时应绑定回环地址。
 
 ## 客户端
 

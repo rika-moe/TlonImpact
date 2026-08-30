@@ -271,6 +271,7 @@ class ServerApp:
             adapter_manager=adapter_manager,  # For POST /messages
             host=self.host,
             port=self.rest_port,
+            admin_token=get_settings().admin_api_token or None,  # ADR 0013
         )
 
         self._running = False
@@ -315,6 +316,8 @@ class ServerApp:
                 host=self.host,
                 rest_port=self.rest_port,
             )
+        if get_settings().admin_api_token:
+            logger.info("admin_auth_enabled")
 
         print(_startup_banner(self.host, self.rest_port), flush=True)
 

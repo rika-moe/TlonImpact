@@ -87,6 +87,10 @@ class Settings:
         # Logging: retention (days) for the daily server log file sink
         self.log_retention_days = int(os.getenv("TLON_LOG_RETENTION_DAYS", "7"))
 
+        # Admin API auth (ADR 0013): shared Bearer token guarding /admin/*;
+        # empty = auth disabled (default, localhost trust boundary)
+        self.admin_api_token = os.getenv("TLON_ADMIN_TOKEN", "")  # 配置后 /admin/* 需 Authorization: Bearer；空 = 关闭
+
         self.tlon_home.mkdir(parents=True, exist_ok=True)
 
     def get_agent_data_dir(self, agent_id: str) -> Path:

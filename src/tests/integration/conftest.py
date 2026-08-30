@@ -12,6 +12,7 @@ import os
 import socket
 import tempfile
 from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -68,12 +69,16 @@ async def _wait_ready(
             await asyncio.sleep(0.25)
 
 
-@pytest.fixture
-async def tlon_server() -> AsyncGenerator[tuple[str, Path]]:
+@asynccontextmanager
+async def _run_server(
+    extra_env: dict[str, str] | None = None,
+) -> AsyncGenerator[tuple[str, Path]]:
     """Boot a real ``tlon dream`` subprocess with an isolated TLON_HOME.
 
-    Yields (base_url, tlon_home). The subprocess output is drained
-    continuously so a startup failure can report what the server said.
+    Yields (base_url, tlon_home). ``extra_env`` is merged into the
+    subprocess environment on top of TLON_HOME (e.g. TLON_ADMIN_TOKEN).
+    The subprocess output is drained continuously so a startup failure
+    can report what the server said.
     """
     port = _free_port()
     output: list[str] = []
@@ -91,7 +96,7 @@ async def tlon_server() -> AsyncGenerator[tuple[str, Path]]:
             "127.0.0.1",
             "--rest-port",
             str(port),
-            env={**os.environ, "TLON_HOME": tlon_home},
+            env={**os.environ, "TLON_HOME": tlon_home, **(extra_env or {})},
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -115,6 +120,16 @@ async def tlon_server() -> AsyncGenerator[tuple[str, Path]]:
                     proc.kill()
                     await proc.wait()
             await drain
+
+
+@pytest.fixture
+async def tlon_server() -> AsyncGenerator[tuple[str, Path]]:
+    """Boot a real ``tlon dream`` subprocess with an isolated TLON_HOME.
+
+    Yields (base_url, tlon_home). Function scope — isolation over speed.
+    """
+    async with _run_server() as server:
+        yield server
 
 
 async def _assert_delivered(tlon_home: Path, member_dir: str, token: str) -> None:

@@ -43,6 +43,6 @@
 | [reference/api-reference.md](./reference/api-reference.md) | REST/SSE 端点与事件帧格式 | ✅ |
 | [guides/quickstart.md](./guides/quickstart.md) | uv sync → dream → ops → 第一封信 | ✅ |
 | [guides/writing-a-prototype.md](./guides/writing-a-prototype.md) | 手写一个 prototype 的完整走查 | ✅ |
-| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力 | ✅ |
+| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力、0011 SCI 兼容子集、0012 litellm 传输层、0013 admin token 鉴权 | ✅ |
 
 ✅ = 已写并与代码同步；📝 = 计划内未写。新增文档先登记进本表。

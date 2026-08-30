@@ -16,7 +16,9 @@ Provides HTTP endpoints for:
 """
 
 import asyncio
+import hmac
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -94,6 +96,7 @@ class RESTAPIHandler(
         paths: TlonPaths | None = None,
         adapter_manager: AdapterManager | None = None,
         debug: bool = False,
+        admin_token: str | None = None,
     ):
         """Initialize the REST API handler.
 
@@ -107,6 +110,8 @@ class RESTAPIHandler(
             paths: Optional TlonPaths for mailbox resolution (/inbox)
             adapter_manager: Optional AdapterManager for sending mail (/messages)
             debug: Whether to enable debug/test endpoints (never enable in production)
+            admin_token: Shared Bearer token guarding /admin/* (ADR 0013);
+                None disables authentication (default, localhost trust boundary)
         """
         self.client_gateway = client_gateway
         self.agent_registry = agent_registry
@@ -117,6 +122,7 @@ class RESTAPIHandler(
         self.logs_dir = logs_dir
         self.paths = paths
         self.adapter_manager = adapter_manager
+        self.admin_token = admin_token
         # Active SSE streams: session_id -> frame queue (None sentinel ends
         # the stream; see handle_events / handle_delete_session)
         self._sse_queues: dict[str, asyncio.Queue[str | None]] = {}
@@ -127,7 +133,10 @@ class RESTAPIHandler(
         Returns:
             Configured aiohttp Application
         """
-        app = web.Application()
+        if self.admin_token:
+            app = web.Application(middlewares=[self._admin_auth_middleware])
+        else:
+            app = web.Application()
 
         # Add API routes first
         app.router.add_get("/health", self.handle_health)
@@ -211,6 +220,27 @@ class RESTAPIHandler(
         app.router.add_options("/{path:.*}", self.handle_options)
 
         return app
+
+    @web.middleware
+    async def _admin_auth_middleware(
+        self,
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        """Guard /admin/* with the shared Bearer token (ADR 0013).
+
+        Registered only when ``admin_token`` is configured. CORS preflight
+        (OPTIONS) carries no credentials by design and passes through.
+        """
+        if request.method != "OPTIONS" and request.path.startswith("/admin/"):
+            header = request.headers.get("Authorization", "")
+            expected = f"Bearer {self.admin_token}"
+            if not hmac.compare_digest(header, expected):
+                return self._json_response(
+                    {"error": "Admin authentication required", "reason": "unauthorized"},
+                    status=401,
+                )
+        return await handler(request)
 
     async def handle_webui_redirect(self, request: web.Request) -> web.Response:
         """Redirect /ui to /ui/ so the static index resolves relative assets."""
@@ -345,6 +375,7 @@ class RESTServer:
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
+        admin_token: str | None = None,
     ):
         """Initialize the REST server.
 
@@ -360,6 +391,7 @@ class RESTServer:
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
+            admin_token: Shared Bearer token guarding /admin/* (ADR 0013)
         """
         self.client_gateway = client_gateway
         self.host = host
@@ -374,6 +406,7 @@ class RESTServer:
             paths,
             adapter_manager,
             debug,
+            admin_token,
         )
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
