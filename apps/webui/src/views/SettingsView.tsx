@@ -33,7 +33,7 @@ function flatten(obj: Record<string, unknown>, prefix = ""): Array<[string, stri
 }
 
 function formatAgentConfig(agent: Record<string, unknown>): string {
-  const parts = [agent["id"], agent["name"], agent["identity"]]
+  const parts = [agent["id"], agent["name"], agent["prototype"]]
     .filter((v): v is string => typeof v === "string" && v.length > 0);
   return parts.join(" · ");
 }

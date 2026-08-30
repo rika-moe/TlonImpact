@@ -34,7 +34,7 @@ class AdminAgentHandlers(RestHandlerBase):
                 {
                     "id": agent.id,
                     "name": agent.name,
-                    "identity": agent.identity,
+                    "prototype": agent.prototype,
                 }
             )
 
@@ -216,8 +216,8 @@ class AdminAgentHandlers(RestHandlerBase):
         management action — the runtime never removes members on its own.
 
         Returns:
-            200 removed; 404 unknown agent; 409 live sessions; 503 admin
-            context unavailable.
+            200 removed; 409 unknown agent or rejection (e.g. live
+            sessions); 503 admin context unavailable.
         """
         guard = self._require_admin_context()
         if guard is not None:

@@ -1,11 +1,10 @@
 """Integration tests for the admin agent config CRUD endpoints.
 
-Covers POST/PATCH/DELETE /admin/config/agents: a create -> update ->
-delete lifecycle over the hot-adopt path, plus the validation branches
-(missing fields, unknown prototype, unknown agent). Presence is asserted
-on the filesystem (the member home under TLON_HOME): GET
-/admin/config/agents is currently broken server-side (500) and left
-untested here on purpose.
+Covers GET/POST/PATCH/DELETE /admin/config/agents: a create -> list ->
+update -> delete lifecycle over the hot-adopt path, plus the validation
+branches (missing fields, unknown prototype, unknown agent). Presence is
+asserted both through GET /admin/config/agents and on the filesystem
+(the member home under TLON_HOME).
 """
 
 import uuid
@@ -35,6 +34,12 @@ async def test_agent_config_crud_lifecycle(tlon_server: tuple[str, Path]) -> Non
         config_dir = tlon_home / agent_id / "config"
         assert (config_dir / "agent.yaml").is_file()
 
+        async with http.get(f"{base_url}/admin/config/agents") as resp:
+            assert resp.status == 200
+            listed: dict[str, Any] = await resp.json()
+        match = [a for a in listed["agents"] if a["id"] == agent_id]
+        assert match == [{"id": agent_id, "name": name, "prototype": "developer"}]
+
         try:
             async with http.patch(
                 f"{base_url}/admin/config/agents/{agent_id}",
@@ -52,6 +57,11 @@ async def test_agent_config_crud_lifecycle(tlon_server: tuple[str, Path]) -> Non
                 assert deleted["removed"] is True
 
         assert not (tlon_home / agent_id).exists()
+
+        async with http.get(f"{base_url}/admin/config/agents") as resp:
+            assert resp.status == 200
+            after: dict[str, Any] = await resp.json()
+        assert agent_id not in {a["id"] for a in after["agents"]}
 
 
 async def test_agent_config_validation(tlon_server: tuple[str, Path]) -> None:
