@@ -8,7 +8,17 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-import openai
+import litellm
+from litellm.exceptions import (
+    APIConnectionError,
+    APIError,
+    BadRequestError,
+    RateLimitError,
+    Timeout,
+)
+from litellm.exceptions import (
+    ContextWindowExceededError as _LitellmContextWindowExceeded,
+)
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -38,8 +48,15 @@ _CONTEXT_LENGTH_MARKERS = (
 )
 
 
-def _is_context_length_error(error: openai.BadRequestError) -> bool:
-    """True when the 4xx is a context-length rejection (ADR 0008)."""
+def _is_context_length_error(error: BadRequestError) -> bool:
+    """True when the 4xx is a context-length rejection (ADR 0008).
+
+    Two paths are recognized: litellm maps provider context-length errors to
+    its own ContextWindowExceededError directly, and for providers it does
+    not recognize the raw error text is matched against the markers below.
+    """
+    if isinstance(error, _LitellmContextWindowExceeded):
+        return True
     code = getattr(error, "code", None)
     text = f"{code or ''} {error}".lower()
     return any(marker in text for marker in _CONTEXT_LENGTH_MARKERS)
@@ -121,7 +138,9 @@ class LLMResponse:
 class LLMClient:
     """Client for LLM API calls with retry logic.
 
-    Supports OpenAI-compatible APIs with exponential backoff retry.
+    Calls go through litellm (OpenAI-compatible endpoint in phase 1, ADR 0012);
+    retries use Tlon's own exponential backoff loop, litellm's internal retry
+    is disabled (num_retries=0) to avoid double backoff.
 
     Example:
         >>> config = LLMConfig(base_url="...", auth_token="...", model_name="gpt-4")
@@ -140,10 +159,6 @@ class LLMClient:
             config: LLM configuration
         """
         self.config = config
-        self.client = openai.AsyncOpenAI(
-            base_url=config.base_url,
-            api_key=config.auth_token,
-        )
         self.max_retries = config.max_retries
         self.base_delay = config.base_delay
 
@@ -247,12 +262,20 @@ class LLMClient:
         Raises:
             Exception: If all retries fail
         """
-        # Prepare request parameters
+        # Prepare request parameters. num_retries=0 disables litellm's own
+        # retry: the loop below owns all retries (no double backoff).
+        # The openai/ prefix forces litellm's openai provider: phase 1 keeps
+        # the config surface unchanged (bare model names against an
+        # OpenAI-compatible api_base, ADR 0012); litellm refuses to route a
+        # bare unknown model name without it.
         params: dict[str, Any] = {
-            "model": self.config.model_name,
+            "model": f"openai/{self.config.model_name}",
             "messages": all_messages,
             "temperature": temperature if temperature is not None else self.config.temperature,
             "timeout": timeout if timeout is not None else self.config.request_timeout,
+            "api_base": self.config.base_url or None,
+            "api_key": self.config.auth_token,
+            "num_retries": 0,
         }
 
         if tools:
@@ -264,10 +287,10 @@ class LLMClient:
 
         for attempt in range(self.max_retries):
             try:
-                response = await self.client.chat.completions.create(**params)
+                response = await litellm.acompletion(**params)
                 return self._parse_response(response)
 
-            except openai.RateLimitError as e:
+            except RateLimitError as e:
                 # Rate limit - retry with backoff
                 last_error = e
                 logger.warning(
@@ -277,8 +300,9 @@ class LLMClient:
                     max_retries=self.max_retries,
                 )
 
-            except openai.APITimeoutError as e:
-                # Timeout - retry
+            except Timeout as e:
+                # Timeout - retry (litellm's Timeout subclasses openai's
+                # APITimeoutError; litellm has no APITimeoutError of its own)
                 last_error = e
                 logger.warning(
                     "llm_retry",
@@ -287,7 +311,7 @@ class LLMClient:
                     max_retries=self.max_retries,
                 )
 
-            except openai.APIConnectionError as e:
+            except APIConnectionError as e:
                 # Connection error - retry (must come before APIError, its parent class)
                 last_error = e
                 logger.warning(
@@ -298,7 +322,7 @@ class LLMClient:
                     error=str(e),
                 )
 
-            except openai.BadRequestError as e:
+            except BadRequestError as e:
                 # Context-length 4xx: retrying can never succeed — surface it
                 # as ContextWindowExceededError so the engine force-compacts
                 # and retries once (ADR 0008). Other 4xx keep the existing
@@ -315,7 +339,7 @@ class LLMClient:
                     error=str(e),
                 )
 
-            except openai.APIError as e:
+            except APIError as e:
                 # API error - may be transient, retry
                 last_error = e
                 logger.warning(

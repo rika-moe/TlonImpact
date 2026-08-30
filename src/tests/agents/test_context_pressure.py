@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
-import openai
+import litellm
 import pytest
 
 from tlon.agents.context_pressure import (
@@ -390,10 +390,14 @@ class TestReplay:
 # ── Emergency path: no client retry, driver force-compacts ──────────────
 
 
-def _bad_request(message: str) -> openai.BadRequestError:
+def _bad_request(message: str) -> litellm.BadRequestError:
     request = httpx.Request("POST", "https://api.test/chat")
-    return openai.BadRequestError(
-        message, response=httpx.Response(400, request=request), body=None
+    return litellm.BadRequestError(
+        message,
+        llm_provider="openai",
+        model="m",
+        response=httpx.Response(400, request=request),
+        body=None,
     )
 
 
@@ -409,36 +413,64 @@ def _make_llm_client() -> LLMClient:
     )
 
 
+def _patch_acompletion(monkeypatch: pytest.MonkeyPatch, error: Exception) -> AsyncMock:
+    create = AsyncMock(side_effect=error)
+    monkeypatch.setattr(litellm, "acompletion", create)
+    return create
+
+
 class TestClientEmergency:
-    async def test_context_length_error_never_retried(self) -> None:
+    async def test_context_length_error_never_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         client = _make_llm_client()
-        create = AsyncMock(
-            side_effect=_bad_request(
-                "Error code: 400 - {'error': {'code': 'context_length_exceeded'}}"
-            )
+        create = _patch_acompletion(
+            monkeypatch,
+            _bad_request("Error code: 400 - {'error': {'code': 'context_length_exceeded'}}"),
         )
-        client.client.chat.completions.create = create  # type: ignore[method-assign]
 
         with pytest.raises(ContextWindowExceededError):
             await client.chat(system_prompt="s", messages=[_user("hi")])
 
         assert create.await_count == 1  # no retry
 
-    async def test_context_window_wording_also_detected(self) -> None:
+    async def test_context_window_wording_also_detected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         client = _make_llm_client()
-        client.client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
-            side_effect=_bad_request("This model's maximum context length is exceeded")
+        _patch_acompletion(
+            monkeypatch, _bad_request("This model's maximum context length is exceeded")
         )
 
         with pytest.raises(ContextWindowExceededError):
             await client.chat(system_prompt="s", messages=[_user("hi")])
 
-    async def test_other_bad_requests_keep_retrying(self) -> None:
+    async def test_litellm_context_window_error_mapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """litellm's own ContextWindowExceededError maps by type, no text match."""
         client = _make_llm_client()
-        create = AsyncMock(side_effect=_bad_request("invalid argument: temperature"))
-        client.client.chat.completions.create = create  # type: ignore[method-assign]
+        request = httpx.Request("POST", "https://api.test/chat")
+        _patch_acompletion(
+            monkeypatch,
+            litellm.ContextWindowExceededError(
+                "provider-specific message without any known marker",
+                llm_provider="openai",
+                model="m",
+                response=httpx.Response(400, request=request),
+            ),
+        )
 
-        with pytest.raises(openai.BadRequestError):
+        with pytest.raises(ContextWindowExceededError):
+            await client.chat(system_prompt="s", messages=[_user("hi")])
+
+    async def test_other_bad_requests_keep_retrying(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _make_llm_client()
+        create = _patch_acompletion(monkeypatch, _bad_request("invalid argument: temperature"))
+
+        with pytest.raises(litellm.BadRequestError):
             await client.chat(system_prompt="s", messages=[_user("hi")])
 
         assert create.await_count == 3  # unchanged retry policy

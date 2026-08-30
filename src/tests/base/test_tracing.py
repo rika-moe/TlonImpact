@@ -12,8 +12,9 @@ d) llm.request and tool.{name} spans and their attributes/status.
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
+import litellm
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -158,8 +159,10 @@ class _FakeResponse:
     usage = _FakeUsage()
 
 
-def _make_llm_client(create_return: Any = None, create_side_effect: Any = None) -> LLMClient:
-    """Build an LLMClient whose underlying OpenAI call is mocked out."""
+def _make_llm_client(
+    monkeypatch: pytest.MonkeyPatch, create_return: Any = None, create_side_effect: Any = None
+) -> LLMClient:
+    """Build an LLMClient whose underlying litellm call is mocked out."""
     config = LLMConfig(
         model_name="test-model",
         base_url="https://example.invalid/v1",
@@ -167,15 +170,17 @@ def _make_llm_client(create_return: Any = None, create_side_effect: Any = None) 
         max_retries=1,
         base_delay=0.0,
     )
-    client = LLMClient(config)
-    client.client = MagicMock()
-    client.client.chat.completions.create = AsyncMock(
-        return_value=create_return, side_effect=create_side_effect
+    monkeypatch.setattr(
+        litellm,
+        "acompletion",
+        AsyncMock(return_value=create_return, side_effect=create_side_effect),
     )
-    return client
+    return LLMClient(config)
 
 
-async def test_end_to_end_propagation_chain(otel_dir: Path) -> None:
+async def test_end_to_end_propagation_chain(
+    otel_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """gateway → router → agent session → think → llm.request form one tree."""
     # Gateway: root span for an incoming message
     with start_span("message.received", source="client_gateway") as gw_ctx:
@@ -194,7 +199,7 @@ async def test_end_to_end_propagation_chain(otel_dir: Path) -> None:
         start_span("agent.session", source="agent-1"),
         start_span("agent.think", source="agent-1"),
     ):
-        client = _make_llm_client(create_return=_FakeResponse())
+        client = _make_llm_client(monkeypatch, create_return=_FakeResponse())
         response = await client.chat(
             system_prompt="sys", messages=[{"role": "user", "content": "hi"}]
         )
@@ -225,9 +230,11 @@ async def test_end_to_end_propagation_chain(otel_dir: Path) -> None:
     assert llm["payload"]["llm.usage.completion_tokens"] == 5
 
 
-async def test_llm_request_span_success(memory_spans: InMemorySpanExporter) -> None:
+async def test_llm_request_span_success(
+    memory_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """llm.request span records model, message count and usage attributes."""
-    client = _make_llm_client(create_return=_FakeResponse())
+    client = _make_llm_client(monkeypatch, create_return=_FakeResponse())
     await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
 
     spans = memory_spans.get_finished_spans()
@@ -240,9 +247,11 @@ async def test_llm_request_span_success(memory_spans: InMemorySpanExporter) -> N
     assert attrs["llm.usage.completion_tokens"] == 5
 
 
-async def test_llm_request_span_failure(memory_spans: InMemorySpanExporter) -> None:
+async def test_llm_request_span_failure(
+    memory_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A failing LLM call sets ERROR status and records the exception."""
-    client = _make_llm_client(create_side_effect=RuntimeError("boom"))
+    client = _make_llm_client(monkeypatch, create_side_effect=RuntimeError("boom"))
     with pytest.raises(RuntimeError, match="boom"):
         await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
 

@@ -1,0 +1,58 @@
+# ADR 0012：引入 LiteLLM 作为 LLM 传输层 + provider 预设（方案 B）
+
+- 状态：已接受（2026-08-30，方向讨论拍板）
+- 相关：[0008-context-pressure.md](0008-context-pressure.md)（context window 驱动压缩）、[0007-session-event-sourcing.md](0007-session-event-sourcing.md)（LLMResponse journal 序列化契约）
+
+## 背景
+
+各家 LLM 服务商有自己的 base_url、model name、context window，用户需要逐一查询并手工配置（`OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL_NAME` + agent.yaml 的 `context_window`），繁琐且易错。同时 `llm_client.py` 的 openai SDK + 可配 base_url 只能接 OpenAI 兼容端点，Claude native、Gemini、Bedrock 等非兼容 API 无法接入。
+
+业界已有成熟方案：[LiteLLM](https://github.com/BerriAI/litellm)（~46k★）内置各 provider 的 base_url 路由表与社区维护的模型元数据注册表（context window / 价格 / 能力），按 `provider/model` 前缀自动路由，异常体系兼容 openai SDK（`litellm.ContextWindowExceededError` 等直接对应现有错误处理）。
+
+## 决策
+
+引入 LiteLLM，分两个阶段、各自独立 PR（行为不变先行，能力扩张随后）：
+
+**阶段 1（传输层替换，配置面不动）：**
+
+- `pyproject.toml` 引入 `litellm`（锁定版本），移除直接依赖 `openai`（litellm 传递依赖它）
+- `llm_client.py` 内部把 `openai.AsyncOpenAI.chat.completions.create` 换成 `litellm.acompletion`；现有指数退避重试循环保留（litellm 异常继承 openai 同名类），新增 `litellm.ContextWindowExceededError` → Tlon `ContextWindowExceededError` 的映射
+- 用户配置方式不变
+
+**阶段 2（provider 预设，用户只填 token）：**
+
+- 配置简化为 `LLM_MODEL=<provider>/<model>`（如 `deepseek/deepseek-chat`）+ 各家约定的 key 环境变量（`DEEPSEEK_API_KEY`、`ANTHROPIC_API_KEY` 等，litellm 按前缀自动匹配）；不再需要手配 base_url
+- `context_window` 启动时从 `litellm.get_model_info()` 自动填充，agent.yaml 中的值降级为可选覆盖（元数据缺失/滞后时的兜底）
+- `OPENAI_BASE_URL` 保留为 escape hatch（私有部署 / 代理 / 注册表未收录的 provider）
+- 更新 `.env.example`、Settings 视图、`admin_agents.py` 的配置写入路径、配置指南文档与 AGENTS.md 快速开始
+
+**无论哪个阶段都保留（Tlon 编排契约，LiteLLM 无法取代）：**
+
+- `LLMResponse` / `ToolCall` dataclass 及其 `to_dict` / `from_dict`——session journal 持久化格式（ADR 0007），必须自己控制
+- `ContextWindowExceededError` → LoopDriver 强制压缩后重试一次的编排（ADR 0008）——litellm 只提供异常识别，压缩重试是引擎行为
+- OTel span 属性约定与结构化日志格式
+
+## 备选方案
+
+**方案 A（只换传输层）。** 最小风险，但不解决"用户只填 token"的核心诉求——base_url 与 context_window 仍需手配。被方案 B 包含（B 的阶段 1 即 A），不单列。
+
+**方案 C（B + fallback 路由 / 成本统计 / 分角色模型）。** fallback 路由（Router）与成本统计（`completion_cost`）有价值，但分角色模型会改变 agent 行为（便宜模型做 summary 的质量未实测），属于未验证的复杂度。B 稳定后可单独立项。
+
+**models.dev 快照 + 自写薄解析层。** 数据干净、语言无关（对 JVM 迁移友好），但要自己维护快照更新机制与解析代码，且解决不了非兼容 provider 的协议差异（那部分 litellm 已经写好）。litellm 的元数据注册表覆盖同一诉求，不重复造。
+
+**aisuite / any-llm / OpenRouter。** aisuite 覆盖 provider 少且无元数据注册表；any-llm 较新、生态未验证；OpenRouter 是托管服务（流量过第三方、有加价），Tlon 是用户自托管软件，不应把 LLM 流量强制导向中间商。
+
+## 后果
+
+**换得的收益：**
+
+- 用户配置从"查文档填 base_url + model name + context window"简化为"填 token + 选 provider/model"
+- 非 OpenAI 兼容 provider（Claude native、Gemini、Bedrock、Azure）可接
+- context window 自动填充使 ADR 0008 的压缩阈值免于手配与试错
+
+**接受的代价：**
+
+- litellm 依赖体积大、版本间有 breaking change 记录——锁版本，升级单独评估
+- 元数据注册表对新发布的国产模型可能滞后——agent.yaml 的 `context_window` 覆盖与 `OPENAI_BASE_URL` escape hatch 兜底
+- litellm 自带的重试/fallback/日志默认行为与 Tlon 现有重试循环叠加的风险——阶段 1 明确：重试由 Tlon 侧控制，litellm 的 `num_retries` 置 0，避免双重退避
+- JVM 迁移时这层要换成 Java 生态对应物（如 LangChain4j），但 `LLMConfig` 的字段语义（provider/model + token）可平移，与 ADR 0011 同理：配置即资产
