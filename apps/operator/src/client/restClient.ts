@@ -236,9 +236,9 @@ export class RestClient {
     path: string;
     configured: boolean;
     values: {
-      base_url: string;
+      model: string;
       api_key: string;
-      model_name: string;
+      base_url: string;
       temperature: number;
     };
   }> {
@@ -247,9 +247,9 @@ export class RestClient {
 
   /** Write LLM env config to {TLON_HOME}/.env (merge semantics). */
   async updateSettingsEnv(body: {
-    base_url?: string;
+    model?: string;
     api_key?: string;
-    model_name?: string;
+    base_url?: string;
     temperature?: number;
   }): Promise<Record<string, unknown>> {
     return this.send("PUT", "/admin/settings/env", body);

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import list_prototypes, write_staging_prototype
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.base.config import AgentConfig, LLMConfig
+from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -52,17 +52,45 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
+    """Resolve the model's context window (ADR 0012 phase 2).
+
+    An explicit ``context_window`` in agent.yaml wins (fallback for
+    missing/stale registry metadata); otherwise litellm's model registry
+    (``get_model_info`` → ``max_input_tokens``); otherwise
+    ``DEFAULT_CONTEXT_WINDOW``.
+    """
+    import litellm
+
+    if file_config.context_window is not None:
+        return file_config.context_window
+    try:
+        max_input_tokens = litellm.get_model_info(model_name).get("max_input_tokens")
+        if max_input_tokens:
+            return int(max_input_tokens)
+    except Exception:
+        pass
+    logger.info(
+        "context_window_fallback",
+        model=model_name,
+        context_window=DEFAULT_CONTEXT_WINDOW,
+    )
+    return DEFAULT_CONTEXT_WINDOW
+
+
 def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMConfig:
     """Merge LLM config from YAML file with runtime settings.
 
     Model identity (``model_name`` / ``temperature``) is process-level
     config, driven by settings (env / ``{TLON_HOME}/.env``). The file's
-    values are NOT used for these: bootstrap snapshots them into
-    agent.yaml at creation, so letting them win would shadow a later
-    .env edit (the Settings view). The file keeps the per-agent knobs
-    the process does not manage: ``max_tokens`` / ``top_p``.
+    values are NOT used for these: bootstrap does not snapshot them into
+    agent.yaml, so a Settings-view edit takes effect on restart. The file
+    keeps the per-agent knobs the process does not manage: ``max_tokens`` /
+    ``top_p`` / ``context_window`` (explicit override; None = auto-resolve
+    from litellm's model registry).
 
     Settings provide the runtime parameters (base_url, auth_token, ...).
+    The returned config always carries a resolved ``context_window`` int.
     """
     if file_config is None:
         file_config = LLMConfig()
@@ -72,6 +100,7 @@ def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMC
         temperature=settings.llm_temperature,
         max_tokens=file_config.max_tokens,
         top_p=file_config.top_p,
+        context_window=_resolve_context_window(file_config, settings.llm_model_name),
         base_url=settings.llm_base_url,
         auth_token=settings.llm_api_key,
         max_retries=settings.llm_max_retries,
@@ -192,7 +221,9 @@ async def assemble_cognitive(
     per_tool_timeout = config.tool.per_timeout
 
     return CognitiveCapabilities(
-        config=config,
+        # Swap in the merged LLM config so consumers (context pressure,
+        # member_runtime.py) see the resolved context_window int.
+        config=config.model_copy(update={"llm": llm_config}),
         llm_client=llm_client,
         memory=memory,
         task_manager=task_manager,

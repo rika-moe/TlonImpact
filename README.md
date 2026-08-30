@@ -19,7 +19,7 @@ uv sync
 
 # 2. 配置环境（首次使用，可选）
 # 起 dream 后在 ops 的 Settings 视图（数字键 7）填 LLM 参数，或：
-mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 OPENAI_API_KEY=...
+mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 LLM_API_KEY=...（可选 LLM_MODEL=provider/model，默认 moonshot/kimi-k2.5）
 # （或用真实环境变量，.env 仅作便捷层）
 
 # 3. 运行——两个终端

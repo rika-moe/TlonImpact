@@ -23,13 +23,13 @@ uv sync
 
 两种方式（任选其一）：
 
-- **ops 配置（推荐）**：起 dream 后在 ops 的 **Settings 视图**（数字键 `7`）按 `e` 编辑 LLM 参数（base_url / api_key / model_name / temperature），提交后写 `~/.tlon/.env`，重启 dream 生效。
-- **手写**：`~/.tlon/.env`（与数据同目录）填：
+- **ops 配置（推荐）**：起 dream 后在 ops 的 **Settings 视图**（数字键 `7`）按 `e` 编辑 LLM 参数（model / api_key / temperature，base_url 可选），提交后写 `~/.tlon/.env`，重启 dream 生效。
+- **手写**：`~/.tlon/.env`（与数据同目录）填（模板见仓库根的 `.env.example`）：
 
 ```env
-OPENAI_API_KEY=your-api-key-here
-OPENAI_BASE_URL=https://api.moonshot.cn/v1   # 默认 Moonshot；换别的 OpenAI 兼容端点改这里
-OPENAI_MODEL_NAME=kimi-k2.5
+LLM_API_KEY=your-api-key-here
+LLM_MODEL=moonshot/kimi-k2.5   # provider/model 形式；换 deepseek 就写 deepseek/deepseek-chat
+# LLM_BASE_URL=...             # 可选 escape hatch：仅裸模型名（不含 /）接私有部署时需要
 ```
 
 `.env` 不覆盖真实环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `_load_dotenv_files`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（dream 日志会提示）。全部变量见 `reference/config-reference.md` 第 4 节。
@@ -90,6 +90,6 @@ uv run tlon ops
 ## 常见问题
 
 - **`tlon ops` 报 Operator TUI not installed** — 先 `cd apps/operator && npm install && npm run build`。
-- **agent 不回信** — 确认 (1) `.env` 的 `OPENAI_API_KEY` 有效；(2) To/CC 里真的写了对方（`behavior.tlon` 里 `:when` 门控通常要求收件人包含自己才响应）；(3) 服务端日志有报错。回信是异步的，最多等几秒到几十秒。
+- **agent 不回信** — 确认 (1) `.env` 的 `LLM_API_KEY` 有效；(2) To/CC 里真的写了对方（`behavior.tlon` 里 `:when` 门控通常要求收件人包含自己才响应）；(3) 服务端日志有报错。回信是异步的，最多等几秒到几十秒。
 - **shell/filesystem 工具报 `Docker runtime not initialized`** — Docker daemon 没起来或不可用；不影响 agent 本体和邮件收发。
 - **改了 `agent.yaml` 不生效** — 服务端启动时扫描一次，热重载走 `POST /admin/config/agents/{agent_id}/reload`（条件注册端点，见 `reference/api-reference.md`）。

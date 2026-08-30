@@ -436,7 +436,7 @@ class TestAdminSettingsEnv:
         body = json.loads(resp.text)
         assert body["path"] == str(p.env_file())
         assert body["configured"] is True
-        assert body["values"]["model_name"] == "m"
+        assert body["values"]["model"] == "m"
         # masked: last 4 chars visible, plain key never returned
         assert body["values"]["api_key"] == "****1234"
 
@@ -468,7 +468,7 @@ class TestAdminSettingsEnv:
     async def test_put_merges_and_keeps_other_keys(self, tmp_path: Path):
         p = TlonPaths(home=tmp_path)
         (tmp_path / ".env").write_text(
-            "# comment\nOPENAI_BASE_URL=https://old.example\nCUSTOM_KEY=keep\n",
+            "# comment\nLLM_BASE_URL=https://old.example\nCUSTOM_KEY=keep\n",
             encoding="utf-8",
         )
         handler = RESTAPIHandler(None, MagicMock(), paths=p)
@@ -485,9 +485,9 @@ class TestAdminSettingsEnv:
 
         assert resp.status == 200
         text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "OPENAI_BASE_URL=https://api.moonshot.cn/v1" in text
-        assert "OPENAI_API_KEY=sk-new" in text
-        assert "OPENAI_TEMPERATURE=0.7" in text
+        assert "LLM_BASE_URL=https://api.moonshot.cn/v1" in text
+        assert "LLM_API_KEY=sk-new" in text
+        assert "LLM_TEMPERATURE=0.7" in text
         assert "CUSTOM_KEY=keep" in text  # untouched keys preserved
         assert "# comment" in text  # comments preserved
 
@@ -496,25 +496,25 @@ class TestAdminSettingsEnv:
     ):
         self._fake_settings(monkeypatch, llm_api_key="sk-secret1234")
         p = TlonPaths(home=tmp_path)
-        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-secret1234\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("LLM_API_KEY=sk-secret1234\n", encoding="utf-8")
         handler = RESTAPIHandler(None, MagicMock(), paths=p)
 
         resp = await handler.handle_update_settings_env(
-            StubRequest(body={"api_key": "****1234", "model_name": "m2"})
+            StubRequest(body={"api_key": "****1234", "model": "m2"})
         )
 
         assert resp.status == 200
         text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "OPENAI_API_KEY=sk-secret1234" in text
+        assert "LLM_API_KEY=sk-secret1234" in text
         assert "****" not in text
-        assert json.loads(resp.text)["updated"] == ["OPENAI_MODEL_NAME"]
+        assert json.loads(resp.text)["updated"] == ["LLM_MODEL"]
 
     async def test_put_empty_api_key_keeps_current(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         self._fake_settings(monkeypatch, llm_api_key="sk-secret1234")
         p = TlonPaths(home=tmp_path)
-        (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-secret1234\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("LLM_API_KEY=sk-secret1234\n", encoding="utf-8")
         handler = RESTAPIHandler(None, MagicMock(), paths=p)
 
         resp = await handler.handle_update_settings_env(
@@ -523,7 +523,7 @@ class TestAdminSettingsEnv:
 
         assert resp.status == 200
         text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "OPENAI_API_KEY=sk-secret1234" in text
+        assert "LLM_API_KEY=sk-secret1234" in text
         assert json.loads(resp.text)["updated"] == []
 
     async def test_put_invalid_body_400(self, tmp_path: Path):

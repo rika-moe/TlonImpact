@@ -20,10 +20,10 @@ logger = get_logger("tlon.app.server.api.rest")
 #: ops settings form fields -> .env keys (merge-write semantics: keys
 #: not edited are left untouched in the file).
 _ENV_FIELDS: dict[str, str] = {
-    "base_url": "OPENAI_BASE_URL",
-    "api_key": "OPENAI_API_KEY",
-    "model_name": "OPENAI_MODEL_NAME",
-    "temperature": "OPENAI_TEMPERATURE",
+    "model": "LLM_MODEL",
+    "api_key": "LLM_API_KEY",
+    "base_url": "LLM_BASE_URL",
+    "temperature": "LLM_TEMPERATURE",
 }
 
 
@@ -74,9 +74,9 @@ class SettingsHandlers(RestHandlerBase):
                 "path": str(self.paths.env_file()),
                 "configured": bool(settings.llm_api_key),
                 "values": {
-                    "base_url": settings.llm_base_url,
+                    "model": settings.llm_model_name,
                     "api_key": _mask_api_key(settings.llm_api_key),
-                    "model_name": settings.llm_model_name,
+                    "base_url": settings.llm_base_url,
                     "temperature": settings.llm_temperature,
                 },
             }

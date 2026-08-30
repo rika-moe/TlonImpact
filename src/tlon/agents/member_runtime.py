@@ -61,7 +61,7 @@ from tlon.agents.stages.services import StageServices, make_event_publisher
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.component import Component
-from tlon.base.config import AgentConfig
+from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -890,9 +890,13 @@ class MemberRuntime(Member):
             journal=journal,
             spill=ToolSpill(caps.tlon_paths, self._member_id),
             # Context pressure relief (ADR 0008): same journal, the
-            # model's context window from the agent's LLM config.
+            # model's context window — resolved to an int at assembly
+            # (ADR 0012 phase 2); the fallback covers capabilities built
+            # without assembly (tests).
             pressure=ContextPressure(
-                caps.llm_client, journal, caps.config.llm.context_window
+                caps.llm_client,
+                journal,
+                caps.config.llm.context_window or DEFAULT_CONTEXT_WINDOW,
             ),
         )
         self._scheduler = SessionScheduler(

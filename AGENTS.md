@@ -18,9 +18,9 @@
 # 安装依赖
 uv sync
 
-# 配置环境
-cp .env.example .env
-# 编辑 .env，填入 OPENAI_API_KEY
+# 配置环境（Tlon 读 ~/.tlon/.env，.env.example 是模板）
+cp .env.example ~/.tlon/.env
+# 编辑 ~/.tlon/.env，填入 LLM_API_KEY（可选改 LLM_MODEL=provider/model）
 
 # 运行（服务端 + 客户端）
 uv run tlon dream     # 终端 1（服务端，REST + SSE，默认 127.0.0.1:8080；启动 banner 显示 WebUI 地址）
@@ -70,4 +70,4 @@ uv run pytest
 
 ---
 
-*最后更新：2026-08-15*
+*最后更新：2026-08-30*

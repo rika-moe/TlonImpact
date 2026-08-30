@@ -7,11 +7,11 @@ import type { RestClient } from "../client/restClient.js";
  * stored in {TLON_HOME}/.env. The API key is shown in plain text — this
  * is the local operator console's own config (user decision).
  */
-const FIELDS = ["base_url", "api_key", "model_name", "temperature"] as const;
+const FIELDS = ["model", "api_key", "base_url", "temperature"] as const;
 const LABELS: Record<string, string> = {
-  base_url: "base_url",
+  model: "model",
   api_key: "api_key",
-  model_name: "model_name",
+  base_url: "base_url (可选)",
   temperature: "temperature",
 };
 
@@ -38,9 +38,9 @@ export function SettingsView({
       setPath(data.path);
       setConfigured(data.configured);
       setForm({
-        base_url: data.values.base_url ?? "",
+        model: data.values.model ?? "",
         api_key: data.values.api_key ?? "",
-        model_name: data.values.model_name ?? "",
+        base_url: data.values.base_url ?? "",
         temperature: String(data.values.temperature ?? ""),
       });
       setError(null);
@@ -65,9 +65,9 @@ export function SettingsView({
     try {
       const temp = Number.parseFloat(form["temperature"] ?? "");
       await rest.updateSettingsEnv({
-        base_url: form["base_url"]?.trim() || undefined,
+        model: form["model"]?.trim() || undefined,
         api_key: form["api_key"]?.trim() || undefined,
-        model_name: form["model_name"]?.trim() || undefined,
+        base_url: form["base_url"]?.trim() || undefined,
         temperature: Number.isFinite(temp) ? temp : undefined,
       });
       setSaved("已保存——重启 dream 生效（Settings 是进程级单例）");
@@ -178,12 +178,12 @@ export function SettingsView({
           </Text>
         </Box>
         <Box>
-          <Text bold>base_url: </Text>
-          <Text>{form["base_url"] ?? ""}</Text>
+          <Text bold>model: </Text>
+          <Text>{form["model"] ?? ""}</Text>
         </Box>
         <Box>
-          <Text bold>model_name: </Text>
-          <Text>{form["model_name"] ?? ""}</Text>
+          <Text bold>base_url: </Text>
+          <Text>{form["base_url"] ?? ""}</Text>
         </Box>
         <Box>
           <Text bold>temperature: </Text>

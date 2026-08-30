@@ -19,6 +19,10 @@ from tlon.base.settings import get_tlon_home
 
 logger = get_logger(__name__)
 
+#: Fallback context window (tokens) when litellm's model registry has no
+#: entry for the configured model (ADR 0012 phase 2).
+DEFAULT_CONTEXT_WINDOW = 262144
+
 
 # =============================================================================
 # Abstract Interface
@@ -74,8 +78,11 @@ class LLMConfig(BaseModel):
     max_tokens: int = 4096
     top_p: float = 0.9
     # Model context window (tokens); drives context-pressure management
-    # (ADR 0008). Persisted so each agent can be tuned per model.
-    context_window: int = 262144
+    # (ADR 0008). None = auto: resolved at assembly from litellm's model
+    # registry (ADR 0012 phase 2); an explicit value here overrides the
+    # registry lookup (fallback for missing/stale metadata). The resolved
+    # int is what the runtime consumes — it is never None there.
+    context_window: int | None = None
 
     # Runtime-only fields (not persisted to YAML)
     base_url: str = Field(default="", exclude=True)
@@ -355,6 +362,7 @@ class ConfigService(Component, Device, AgentInfoProvider):
 __all__ = [
     "AgentInfoProvider",
     "LLMConfig",
+    "DEFAULT_CONTEXT_WINDOW",
     "DockerRuntimeConfig",
     "ToolConfig",
     "AgentConfig",

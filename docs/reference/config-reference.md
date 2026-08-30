@@ -45,7 +45,7 @@
 | `temperature` | `float` | 1.0 |  |
 | `max_tokens` | `int` | 4096 |  |
 | `top_p` | `float` | 0.9 |  |
-| `context_window` | `int` | 262144 |  |
+| `context_window` | `int \| None` | None |  |
 | `base_url` | `str` | "" | 运行时字段，不进 YAML |
 | `auth_token` | `str` | "" | 运行时字段，不进 YAML |
 | `max_retries` | `int` | 3 | 运行时字段，不进 YAML |
@@ -53,7 +53,7 @@
 | `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
 <!-- END GENERATED: agent-yaml-fields-llm -->
 
-`model_name` / `temperature` **运行时由进程级配置驱动**（`OPENAI_MODEL_NAME` / `OPENAI_TEMPERATURE`，见第 4 节）——agent.yaml 里的值不生效（`_build_llm_config` 以 settings 为准，改 `.env` 后重启生效；bootstrap 的历史快照不再被读取）；`max_tokens` / `top_p` 每 agent 可调。运行时字段（`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout`）由进程级环境变量注入（见第 4 节），Pydantic 标注 `exclude=True`，不落盘。
+`model_name` / `temperature` **运行时由进程级配置驱动**（`LLM_MODEL` / `LLM_TEMPERATURE`，见第 4 节）——agent.yaml 里的值不生效（`_build_llm_config` 以 settings 为准，改 `.env` 后重启生效）；`max_tokens` / `top_p` 每 agent 可调。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout`）由进程级环境变量注入（见第 4 节），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 
@@ -152,12 +152,12 @@ agent:
 | `APP_NAME` | Tlon | App settings |
 | `LOG_LEVEL` | INFO |  |
 | `DEBUG` | false |  |
-| `OPENAI_BASE_URL` | https://api.openai.com/v1 | LLM client settings (secrets and endpoints) |
-| `OPENAI_API_KEY` | "" |  |
-| `OPENAI_MODEL_NAME` | kimi-k2.5 |  |
-| `OPENAI_TEMPERATURE` | 1.0 |  |
-| `OPENAI_MAX_RETRIES` | 3 |  |
-| `OPENAI_BASE_DELAY` | 1.0 |  |
+| `LLM_BASE_URL` | https://api.openai.com/v1 | 仅裸 model 名的 escape hatch 生效；provider/model 由 litellm 路由 |
+| `LLM_API_KEY` | "" |  |
+| `LLM_MODEL` | moonshot/kimi-k2.5 | provider/model 形式，如 deepseek/deepseek-chat |
+| `LLM_TEMPERATURE` | 1.0 |  |
+| `LLM_MAX_RETRIES` | 3 |  |
+| `LLM_BASE_DELAY` | 1.0 |  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | （未设置） | Observability (OTel): optional OTLP collector, requires the `otlp` extra |
 | `TELEGRAM_BOT_TOKEN` | "" | @BotFather 颁发的 bot token；缺失则 `tlon telegram` 拒绝启动 |
 | `TELEGRAM_ALLOWED_USERS` | "" | Telegram user-id 白名单（逗号分隔）；为空则拒绝启动 |
@@ -172,7 +172,7 @@ agent:
 | `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（[base/tracing/otel.py](../../src/tlon/base/tracing/otel.py) 的 `SAMPLE_RATIO_ENV`） |
 | `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
 
-`OPENAI_API_KEY` 默认 provider 是 Moonshot（OpenAI 兼容接口），因此用 `OPENAI_` 前缀（Moonshot 示例 base URL `https://api.moonshot.cn/v1`）；`TLON_LOG_RETENTION_DAYS` 管每日服务端日志文件保留（`~/.tlon/shared/logs/server-{date}.jsonl`）；`DEBUG` 为 `"true"` 时生效。
+LLM 配置统一用 `LLM_` 前缀（ADR 0012 阶段 2）：`LLM_MODEL` 是 `provider/model` 形式（默认 `moonshot/kimi-k2.5`），litellm 内置路由表按 provider 前缀解析 base_url，无需手配；`LLM_BASE_URL` 是 escape hatch——仅当 `LLM_MODEL` 为裸模型名（不含 `/`）时生效，用于私有部署 / 代理 / 注册表未收录的端点。`TLON_LOG_RETENTION_DAYS` 管每日服务端日志文件保留（`~/.tlon/shared/logs/server-{date}.jsonl`）；`DEBUG` 为 `"true"` 时生效。
 
 可选键：`ANTHROPIC_API_KEY`、`AZURE_OPENAI_*` 等当前代码不读取；`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME` 即 `~/.tlon/`。
 

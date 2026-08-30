@@ -138,9 +138,11 @@ class LLMResponse:
 class LLMClient:
     """Client for LLM API calls with retry logic.
 
-    Calls go through litellm (OpenAI-compatible endpoint in phase 1, ADR 0012);
-    retries use Tlon's own exponential backoff loop, litellm's internal retry
-    is disabled (num_retries=0) to avoid double backoff.
+    Calls go through litellm (ADR 0012): ``provider/model`` names route via
+    litellm's provider table, bare names via the openai provider + configured
+    api_base (escape hatch); retries use Tlon's own exponential backoff loop,
+    litellm's internal retry is disabled (num_retries=0) to avoid double
+    backoff.
 
     Example:
         >>> config = LLMConfig(base_url="...", auth_token="...", model_name="gpt-4")
@@ -187,7 +189,7 @@ class LLMClient:
         """
         # Check if API key is configured
         if not self.config.auth_token:
-            raise Exception("LLM API key not configured. Please set OPENAI_API_KEY in .env file")
+            raise Exception("LLM API key not configured. Please set LLM_API_KEY in .env file")
 
         # Prepare messages
         all_messages = [{"role": "system", "content": system_prompt}] + messages
@@ -264,16 +266,25 @@ class LLMClient:
         """
         # Prepare request parameters. num_retries=0 disables litellm's own
         # retry: the loop below owns all retries (no double backoff).
-        # The openai/ prefix forces litellm's openai provider: phase 1 keeps
-        # the config surface unchanged (bare model names against an
-        # OpenAI-compatible api_base, ADR 0012); litellm refuses to route a
-        # bare unknown model name without it.
+        # Model routing (ADR 0012 phase 2): a ``provider/model`` name is
+        # passed to litellm as-is — its built-in routing table resolves the
+        # provider's base_url, and the single LLM_API_KEY is forwarded
+        # explicitly (no per-provider env vars required). A bare model name
+        # is the escape hatch: forced through the openai provider against
+        # the configured api_base (private deployments / OpenAI-compatible
+        # endpoints litellm's registry does not know).
+        if "/" in self.config.model_name:
+            model = self.config.model_name
+            api_base = None
+        else:
+            model = f"openai/{self.config.model_name}"
+            api_base = self.config.base_url or None
         params: dict[str, Any] = {
-            "model": f"openai/{self.config.model_name}",
+            "model": model,
             "messages": all_messages,
             "temperature": temperature if temperature is not None else self.config.temperature,
             "timeout": timeout if timeout is not None else self.config.request_timeout,
-            "api_base": self.config.base_url or None,
+            "api_base": api_base,
             "api_key": self.config.auth_token,
             "num_retries": 0,
         }
