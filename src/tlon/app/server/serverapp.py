@@ -41,6 +41,10 @@ from .core.session_manager import SessionManager
 
 logger = get_logger(__name__)
 
+# Hosts that keep the server reachable only from this machine. Anything
+# else (wildcard or a LAN/public address) exposes an unauthenticated API.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
 
 def _startup_banner(host: str, rest_port: int) -> str:
     """User-facing startup banner printed to the terminal by `tlon dream`."""
@@ -55,6 +59,16 @@ def _startup_banner(host: str, rest_port: int) -> str:
     else:
         lines.append(
             "   WebUI      : not built (cd apps/webui && npm install && npm run build)"
+        )
+    if host not in _LOOPBACK_HOSTS:
+        lines.append(
+            "   ⚠️  Security  : non-loopback bind — Tlon has NO authentication;"
+        )
+        lines.append(
+            "                 anyone who can reach this port can read mail"
+        )
+        lines.append(
+            "                 and call admin endpoints"
         )
     lines.append("")
     return "\n".join(lines)
@@ -295,6 +309,12 @@ class ServerApp:
             rest_port=self.rest_port,
             agent_count=len(agent_registry.get_all_ids()) if agent_registry else 0,
         )
+        if self.host not in _LOOPBACK_HOSTS:
+            logger.warning(
+                "server_exposed_non_loopback",
+                host=self.host,
+                rest_port=self.rest_port,
+            )
 
         print(_startup_banner(self.host, self.rest_port), flush=True)
 

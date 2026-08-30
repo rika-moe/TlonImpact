@@ -83,7 +83,9 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 协议没有认证层：`POST /messages` 的发件人身份来自请求体的 `username`，`GET /inbox` 的身份来自 query 参数，`POST /sessions` 同理。这是刻意的——服务端默认绑定 `127.0.0.1:8080`，信任边界是本机。这不是「尚未实现认证」，而是和邮件系统的身份模型对齐：书信共和国的成员按名字存在，名字即身份；在本机单用户场景里，声明 `username` 就是出示身份。
 
-唯一的输入防御是路径安全：username 会变成邮箱目录名（`~/.tlon/human-{username}/`），所以 `rest/common.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。如果未来要暴露到非本机，认证与授权是需要先行补上的独立决策，本文不展开。
+唯一的输入防御是路径安全：username 会变成邮箱目录名（`~/.tlon/human-{username}/`），所以 `rest/common.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。
+
+绑定非回环地址（`--host 0.0.0.0` 或任何局域网/公网地址）时，服务端不阻止——显式给出 `--host` 本身就是知情动作——但会在两处留下醒目记录：启动 banner 追加「NO authentication」警告块，日志打 `server_exposed_non_loopback` warning（判定逻辑是 [app/server/serverapp.py](../../src/tlon/app/server/serverapp.py) 的 `_LOOPBACK_HOSTS` 白名单：`127.0.0.1` / `localhost` / `::1`）。如果未来要暴露到非本机，认证与授权是需要先行补上的独立决策（issue ），本文不展开。
 
 ## 客户端
 
