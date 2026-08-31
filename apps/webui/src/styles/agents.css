@@ -130,6 +130,50 @@
   white-space: nowrap;
 }
 
+/* Event-driven live status line (lib/agentLiveStatus.ts): THINKING
+   badge, last LLM duration/model, most recent tool call. */
+.agent-card-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.live-item {
+  color: var(--text-dim);
+}
+
+.live-tool--ok {
+  color: var(--neon-cyan);
+}
+
+.live-tool--fail {
+  color: var(--neon-magenta);
+}
+
+.live-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid var(--neon-cyan);
+  border-radius: var(--radius);
+  color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 /* State badge tones: running/active cyan, sleeping/stopped dim,
  * error/failed magenta, anything else yellow. */
 .state-badge {

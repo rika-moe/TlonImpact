@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent, ReactElement } from "react";
-import type { ViewProps } from "../types";
+import type { ServerEvent, ViewProps } from "../types";
 import "../styles/settings.css";
 
 interface EnvForm {
@@ -45,9 +45,10 @@ function formatAgentConfig(agent: Record<string, unknown>): string {
  * (GET/PUT /admin/settings/env, merge semantics). The api_key is
  * write-only: the server returns it masked (`****` + last 4) and the
  * form shows that as a placeholder — an empty field on save keeps the
- * current key, a typed value replaces it.
+ * current key, a typed value replaces it. SSE `config.updated` reloads
+ * the read-only sections (the env form is left untouched).
  */
-export function SettingsView({ rest }: ViewProps): ReactElement {
+export function SettingsView({ rest, sse }: ViewProps): ReactElement {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [agentConfigs, setAgentConfigs] = useState<Record<string, unknown>[]>([]);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -107,6 +108,19 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
     void loadConfig();
     void loadEnv();
   }, [loadConfig, loadEnv]);
+
+  // A member config change anywhere (WebUI, TUI, agent tool) reloads the
+  // read-only config sections. The env form is deliberately not reloaded —
+  // clobbering an in-progress edit would be worse than a stale display.
+  useEffect(() => {
+    const onEvent = (ev: ServerEvent): void => {
+      if (ev.eventType === "config.updated") void loadConfig();
+    };
+    sse.on("event", onEvent);
+    return () => {
+      sse.off("event", onEvent);
+    };
+  }, [sse, loadConfig]);
 
   const setField =
     (field: keyof EnvForm) =>

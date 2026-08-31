@@ -30,6 +30,8 @@
 }
 
 .event-row {
+  display: flex;
+  align-items: baseline;
   cursor: pointer;
   border-radius: var(--radius);
 }
@@ -47,7 +49,33 @@
   color: var(--text-dim);
 }
 
-.event-type {
+/* Kind chip: small neon square marking the entry's category.
+   Palette discipline (tokens.css): cyan primary, yellow accent,
+   magenta danger, dim for low-signal kinds. */
+.event-kind {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: var(--text-dim);
+  flex: none;
+}
+
+.event-kind--mail,
+.event-kind--thinking,
+.event-kind--llm {
+  background: var(--neon-cyan);
+  box-shadow: 0 0 6px rgba(0, 240, 255, 0.6);
+}
+
+.event-kind--tool,
+.event-kind--config {
+  background: var(--neon-yellow);
+  box-shadow: 0 0 6px rgba(255, 230, 0, 0.6);
+}
+
+.event-title {
   color: var(--neon-cyan);
 }
 

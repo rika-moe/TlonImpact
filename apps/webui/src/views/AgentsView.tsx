@@ -4,6 +4,11 @@
  * GET /agents/{id}/logs), create (pick a prototype -> form), edit,
  * delete (confirm).
  *
+ * Cards carry an event-driven live status line (lib/agentLiveStatus.ts):
+ * THINKING badge while agent.thinking_start is open, last LLM call
+ * duration + model, most recent tool call. Structural changes
+ * (spawned/stopped/…) and config.updated still trigger a full reload.
+ *
  * Ported from apps/operator/src/views/AgentsView.tsx: same REST/SSE semantics
  * (GET /agents[/{id}], /admin/config/agents CRUD, SSE agents snapshot +
  * agent* events), rendering layer rewritten to DOM. Staging prototype
@@ -17,6 +22,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import type { AgentDetail, AgentSummary, LogEntry, RestClient } from "../client/rest";
+import { formatDurationMs } from "../lib/activity";
+import { applyEvent } from "../lib/agentLiveStatus";
+import type { AgentLiveStatus, LiveStatusMap } from "../lib/agentLiveStatus";
 import { formatTimestamp, levelClass, logJson, logMessage, strField } from "../lib/logs";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/agents.css";
@@ -53,6 +61,7 @@ function errMsg(err: unknown): string {
 
 export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [live, setLive] = useState<LiveStatusMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -78,14 +87,18 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   }, [load]);
 
   // Real-time refresh: the session's agents snapshot replaces the list;
-  // any agent* event triggers a reload.
+  // any agent* event (or a config change) triggers a reload. Every event
+  // also feeds the per-agent live status reducer (thinking/LLM/tool).
   useEffect(() => {
     const onAgents = (list: unknown[]): void => {
       setAgents(list as AgentSummary[]);
       setError(null);
     };
     const onEvent = (ev: ServerEvent): void => {
-      if (ev.eventType.startsWith("agent")) void load();
+      setLive((prev) => applyEvent(prev, ev));
+      if (ev.eventType.startsWith("agent") || ev.eventType === "config.updated") {
+        void load();
+      }
     };
     sse.on("agents", onAgents);
     sse.on("event", onEvent);
@@ -174,6 +187,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
                 <div className="tech-label agent-card-meta">
                   {agent.prototype ?? "MANUAL"} · GEN {agent.spawn_depth}
                 </div>
+                {live[id] ? <AgentLiveLine status={live[id]} /> : null}
                 <div className="agent-card-actions">
                   <button
                     type="button"
@@ -266,6 +280,35 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           }}
           onClose={() => setModal(null)}
         />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Event-driven live status line on a member card (lib/agentLiveStatus.ts):
+ * THINKING badge while a thinking round is open, last LLM call duration
+ * + model, and the most recent tool call (✓/✗). Renders nothing until
+ * the first relevant event for this agent arrives.
+ */
+function AgentLiveLine({ status }: { status: AgentLiveStatus }): ReactElement | null {
+  const llmMs = status.lastLlmMs;
+  if (!status.thinking && llmMs === undefined && status.lastTool === undefined) return null;
+  return (
+    <div className="tech-label agent-card-live">
+      {status.thinking ? <span className="live-badge">THINKING</span> : null}
+      {llmMs !== undefined ? (
+        <span className="live-item">
+          LLM {formatDurationMs(llmMs)}
+          {status.lastLlmModel ? ` · ${status.lastLlmModel}` : ""}
+        </span>
+      ) : null}
+      {status.lastTool ? (
+        <span
+          className={`live-item ${status.lastTool.success ? "live-tool--ok" : "live-tool--fail"}`}
+        >
+          {status.lastTool.name} {status.lastTool.success ? "✓" : "✗"}
+        </span>
       ) : null}
     </div>
   );

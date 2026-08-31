@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement, UIEvent } from "react";
+import { toActivity } from "../lib/activity";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/events.css";
 
@@ -31,10 +32,13 @@ function eventJson(ev: ServerEvent): string {
 }
 
 /**
- * EVENTS — terminal-style full event stream (pure SSE, no REST). Ring
- * buffer of 500 events; the terminal auto-follows the bottom until the
- * user scrolls up. PAUSE freezes the stream (incoming events are dropped
- * while paused); clicking a row expands the event's JSON payload.
+ * EVENTS — semantic activity feed over the full event stream (pure SSE,
+ * no REST). Each ServerEvent is mapped to a human-readable entry by
+ * lib/activity.ts (kind chip + title + detail); unknown types degrade to
+ * the raw type name. Ring buffer of 500 events; the feed auto-follows
+ * the bottom until the user scrolls up. PAUSE freezes the stream
+ * (incoming events are dropped while paused); clicking a row expands the
+ * event's JSON payload.
  */
 export function EventsView({ sse }: ViewProps): ReactElement {
   const [events, setEvents] = useState<ServerEvent[]>([]);
@@ -102,22 +106,28 @@ export function EventsView({ sse }: ViewProps): ReactElement {
         {events.length === 0 ? (
           <div className="terminal-line events-empty">waiting for events…</div>
         ) : null}
-        {events.map((ev, index) => (
-          <div key={`${ev.receivedAt}-${index}`}>
-            <div
-              className={`terminal-line event-row${expanded === ev ? " event-row--expanded" : ""}`}
-              onClick={() => setExpanded(expanded === ev ? null : ev)}
-            >
-              <span className="event-time">{formatTime(ev)} </span>
-              <span className="event-type">{ev.eventType}</span>
-              {ev.source ? <span className="event-dim"> {ev.source}</span> : null}
-              {ev.traceId ? (
-                <span className="event-dim"> trace:{ev.traceId.slice(0, 8)}</span>
-              ) : null}
+        {events.map((ev, index) => {
+          const item = toActivity(ev);
+          return (
+            <div key={`${ev.receivedAt}-${index}`}>
+              <div
+                className={`terminal-line event-row${expanded === ev ? " event-row--expanded" : ""}`}
+                onClick={() => setExpanded(expanded === ev ? null : ev)}
+              >
+                <span className={`event-kind event-kind--${item.kind}`} />
+                <span className="event-time">{formatTime(ev)} </span>
+                <span className="event-title">{item.title}</span>
+                {item.detail ? (
+                  <span className="event-dim"> {item.detail}</span>
+                ) : null}
+                {ev.traceId ? (
+                  <span className="event-dim"> trace:{ev.traceId.slice(0, 8)}</span>
+                ) : null}
+              </div>
+              {expanded === ev ? <pre className="event-json">{eventJson(ev)}</pre> : null}
             </div>
-            {expanded === ev ? <pre className="event-json">{eventJson(ev)}</pre> : null}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
