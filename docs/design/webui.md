@@ -106,6 +106,6 @@ SSE 生命周期与 TUI 相同：`POST /sessions`（client_type 用 `"webui"`）
 
 ## 边界
 
-- 不做认证/多用户——与本机信任边界一致（见 server-protocol.md「身份与安全边界」）。
+- 不做认证/多用户——与本机信任边界一致（见 server-protocol.md「身份与安全边界」）。例外是 admin token 的**透传**（ADR 0013）：服务端配置 `TLON_ADMIN_TOKEN` 后，`RestClient` 把用户在 Settings 页填入的 token 以 `Authorization: Bearer` 随所有请求发送；token 只存浏览器 localStorage（`tlon.adminToken`），401 错误文案会指引到 Settings 页配置。WebUI 自身仍无登录概念。
 - username 与 TUI 同规则：启动参数 / localStorage 持久，默认 `guest`。
 - 不引入 react-router、状态管理库、UI 组件库——视图少且交互直给，手写最简。

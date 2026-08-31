@@ -23,6 +23,18 @@ export class RestError extends Error {
   }
 }
 
+/** localStorage key for the admin Bearer token (ADR 0013). */
+export const ADMIN_TOKEN_KEY = "tlon.adminToken";
+
+/** Read the persisted admin token; "" when unset or storage unavailable. */
+function readStoredAdminToken(): string {
+  try {
+    return globalThis.localStorage?.getItem(ADMIN_TOKEN_KEY)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 /** A mail send request (see `sendMail`). */
 export interface SendMailMessage {
   to: string[];
@@ -174,21 +186,64 @@ export interface SessionList {
 
 export class RestClient {
   readonly baseUrl: string;
+  private adminToken: string;
 
-  /** `baseUrl` defaults to "" (same-origin relative paths). */
-  constructor(baseUrl = "") {
+  /**
+   * `baseUrl` defaults to "" (same-origin relative paths). `adminToken`
+   * defaults to the value persisted in localStorage (ADR 0013); pass an
+   * explicit value in tests / non-browser contexts.
+   */
+  constructor(baseUrl = "", adminToken?: string) {
     this.baseUrl = baseUrl;
+    this.adminToken = adminToken ?? readStoredAdminToken();
+  }
+
+  /** Whether an admin Bearer token is configured. */
+  get hasAdminToken(): boolean {
+    return this.adminToken.length > 0;
+  }
+
+  /**
+   * Set (or clear, with "") the admin Bearer token, persisting it to
+   * localStorage like the username. Takes effect on the next request.
+   */
+  setAdminToken(token: string): void {
+    this.adminToken = token.trim();
+    try {
+      if (this.adminToken) {
+        globalThis.localStorage?.setItem(ADMIN_TOKEN_KEY, this.adminToken);
+      } else {
+        globalThis.localStorage?.removeItem(ADMIN_TOKEN_KEY);
+      }
+    } catch {
+      // Storage unavailable (tests, privacy mode) — in-memory only.
+    }
+  }
+
+  /** Authorization header for every request when a token is configured. */
+  private authHeaders(): Record<string, string> {
+    return this.adminToken ? { Authorization: `Bearer ${this.adminToken}` } : {};
+  }
+
+  /** 401 means the server wants an admin token — say where to fix it. */
+  private static withAuthHint(message: string, status?: number): string {
+    return status === 401
+      ? `${message} — admin 端点需要 token，请在 Settings 页配置`
+      : message;
   }
 
   private async get<T>(path: string): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}${path}`);
+      response = await fetch(`${this.baseUrl}${path}`, { headers: this.authHeaders() });
     } catch (err) {
       throw new RestError(`REST request failed: ${path} (${String(err)})`);
     }
     if (!response.ok) {
-      throw new RestError(`REST ${path} returned ${response.status}`, response.status);
+      throw new RestError(
+        RestClient.withAuthHint(`REST ${path} returned ${response.status}`, response.status),
+        response.status,
+      );
     }
     return (await response.json()) as T;
   }
@@ -202,7 +257,10 @@ export class RestClient {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+        headers: {
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...this.authHeaders(),
+        },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
     } catch (err) {
@@ -214,7 +272,10 @@ export class RestClient {
     } & T;
     if (!response.ok) {
       throw new RestError(
-        data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
+        RestClient.withAuthHint(
+          data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
+          response.status,
+        ),
         response.status,
       );
     }
@@ -322,7 +383,7 @@ export class RestClient {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.authHeaders() },
         body: JSON.stringify(body),
       });
     } catch (err) {
@@ -336,7 +397,10 @@ export class RestClient {
     } & T;
     if (!response.ok) {
       throw new PrototypeError(
-        data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
+        RestClient.withAuthHint(
+          data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
+          response.status,
+        ),
         data.reason,
         response.status,
       );

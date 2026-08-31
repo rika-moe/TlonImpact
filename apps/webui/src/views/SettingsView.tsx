@@ -55,6 +55,11 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
   const [envPath, setEnvPath] = useState<string | null>(null);
   const [configured, setConfigured] = useState(false);
   const [apiKeyMasked, setApiKeyMasked] = useState("");
+  // Admin token (ADR 0013): lives in localStorage, sent as Bearer on every
+  // request. Never shown back — the field stays empty after save.
+  const [adminTokenInput, setAdminTokenInput] = useState("");
+  const [adminTokenConfigured, setAdminTokenConfigured] = useState(rest.hasAdminToken);
+  const [adminTokenSaved, setAdminTokenSaved] = useState<string | null>(null);
   const [form, setForm] = useState<EnvForm>({
     base_url: "",
     api_key: "",
@@ -129,6 +134,16 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveAdminToken = (token: string): void => {
+    rest.setAdminToken(token);
+    setAdminTokenConfigured(rest.hasAdminToken);
+    setAdminTokenInput("");
+    setAdminTokenSaved(token.trim() ? "已保存 — 立即生效" : "已清除");
+    // Panels that 401'd before the token was set get a fresh chance.
+    void loadConfig();
+    void loadEnv();
   };
 
   return (
@@ -229,6 +244,66 @@ export function SettingsView({ rest }: ViewProps): ReactElement {
           {envError ? <span className="tech-label settings-error">{envError}</span> : null}
         </div>
         {envPath ? <div className="settings-path">写入: {envPath}</div> : null}
+      </div>
+
+      <div className="panel">
+        <h3 className="tech-label settings-section-title">
+          ADMIN TOKEN · TLON_ADMIN_TOKEN（ADR 0013）
+        </h3>
+        <div className="settings-status-row">
+          <span className="tech-label">TOKEN</span>
+          <span
+            className={`tech-label ${adminTokenConfigured ? "settings-status--ok" : "settings-status--warn"}`}
+          >
+            {adminTokenConfigured
+              ? "CONFIGURED — 随所有请求以 Bearer 发送"
+              : "NOT CONFIGURED — 服务端开启鉴权后 admin 功能不可用"}
+          </span>
+        </div>
+        <div className="settings-form">
+          <div className="settings-field">
+            <label className="tech-label" htmlFor="admin-token">
+              admin token
+            </label>
+            <input
+              id="admin-token"
+              className="input"
+              type="password"
+              value={adminTokenInput}
+              placeholder={
+                adminTokenConfigured ? "已配置 — 输入新 token 并保存以替换" : "输入服务端配置的 TLON_ADMIN_TOKEN"
+              }
+              onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                setAdminTokenInput(e.target.value);
+                setAdminTokenSaved(null);
+              }}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
+        </div>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => saveAdminToken(adminTokenInput)}
+            disabled={!adminTokenInput.trim()}
+          >
+            SAVE
+          </button>
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => saveAdminToken("")}
+            disabled={!adminTokenConfigured}
+          >
+            CLEAR
+          </button>
+          {adminTokenSaved ? (
+            <span className="tech-label settings-saved">{adminTokenSaved}</span>
+          ) : null}
+        </div>
+        <div className="settings-path">仅存浏览器 localStorage（tlon.adminToken），不上传</div>
       </div>
     </section>
   );
