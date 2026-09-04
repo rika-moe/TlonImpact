@@ -77,6 +77,14 @@ _MAX_ITERATIONS_SYSTEM_PROMPT = (
 #: so the input is the key tail, never the full context.
 _DISTILL_TOKEN_BUDGET = 40_000
 
+#: Engine grace added on top of a tool's own declared timeout. A tool that
+#: declares a `timeout` parameter is its own timeout authority (e.g.
+#: executeBashCommand kills the command in-container at its declared
+#: value); the engine's wait_for only guards against the tool itself
+#: hanging past its deadline. Tools without one fall back to the engine's
+#: per-tool limit (tool.per_timeout).
+_TOOL_TIMEOUT_GRACE = 10.0
+
 class LoopDriver:
     """Drives the ReAct step/collect cycle for agent sessions."""
 
@@ -544,7 +552,7 @@ class LoopDriver:
         result is journaled (``tool/result``) as soon as it exists — the
         log must have it even if the process dies before the collect.
         """
-        timeout = self._per_tool_timeout
+        timeout, authority = self._tool_timeout_budget(tc)
         result: ToolResult
         try:
             result = await asyncio.wait_for(
@@ -552,7 +560,11 @@ class LoopDriver:
                 timeout=timeout,
             )
         except TimeoutError:
-            result = ToolResult(success=False, data={}, error=f"Timeout after {timeout}s")
+            result = ToolResult(
+                success=False,
+                data={},
+                error=f"Timeout after {timeout}s ({authority})",
+            )
         except Exception as e:
             result = ToolResult(success=False, data={}, error=str(e))
         # Spill before journaling: log and context hold the same locator.
@@ -561,6 +573,32 @@ class LoopDriver:
             session_id, "tool/result", tool_call=tc.to_dict(), result=result.to_dict()
         )
         return tc, result
+
+    def _tool_timeout_budget(self, tc: ToolCall) -> tuple[float, str]:
+        """Effective wait_for budget for one tool call, plus its authority.
+
+        The schema the model sees must be honored: a tool declaring a
+        ``timeout`` parameter self-limits at that value, so the engine
+        waits the declared value (argument or schema default) plus
+        ``_TOOL_TIMEOUT_GRACE``. Tools without one keep the engine's
+        per-tool fallback (``tool.per_timeout``).
+        """
+        try:
+            tool = self._tool_executor.get_tool(tc.function_name)
+            schema = tool.parameters.get("properties", {}).get("timeout")
+        except (AttributeError, ValueError):
+            schema = None
+        if isinstance(schema, dict):
+            declared = tc.arguments.get("timeout", schema.get("default"))
+            if isinstance(declared, (int, float)) and not isinstance(declared, bool):
+                return float(declared) + _TOOL_TIMEOUT_GRACE, (
+                    f"tool '{tc.function_name}' declared timeout {declared}s "
+                    f"+ {_TOOL_TIMEOUT_GRACE}s engine grace"
+                )
+        return self._per_tool_timeout, (
+            f"engine per-tool limit tool.per_timeout; "
+            f"'{tc.function_name}' declares no timeout of its own"
+        )
 
     # ── Synchronous message processing (for tests) ──
 

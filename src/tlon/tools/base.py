@@ -169,5 +169,23 @@ class Tool(ABC):
                     errors.append(
                         f"Parameter '{field}': expected {expected_type}, got {actual}"
                     )
+                    continue
+                # Numeric bounds declared in the schema are real limits —
+                # the model can only pass values the tool will honor.
+                if expected_type in ("integer", "number") and isinstance(
+                    value, (int, float)
+                ):
+                    minimum = props[field].get("minimum")
+                    maximum = props[field].get("maximum")
+                    if minimum is not None and value < minimum:
+                        errors.append(
+                            f"Parameter '{field}': value {value} is below the "
+                            f"schema minimum {minimum}"
+                        )
+                    if maximum is not None and value > maximum:
+                        errors.append(
+                            f"Parameter '{field}': value {value} exceeds the "
+                            f"schema maximum {maximum}"
+                        )
 
         return errors

@@ -10,6 +10,7 @@ import asyncio
 import pytest
 
 import tlon.tools.shell.execute_bash as execute_bash_module
+from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DockerRuntimeConfig
 from tlon.sandbox.docker_runtime import ExecutionResult
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
@@ -115,3 +116,29 @@ async def test_shutdown_cancels_pending_tasks_and_clears_table():
         result = await check.execute(task_id=task_id)
         assert not result.success
         assert "not found" in result.error
+
+
+async def test_timeout_above_schema_maximum_is_rejected_with_the_real_limit():
+    """Issue : the schema is the timeout authority — a value above the
+    declared maximum is refused up front, naming the real bound (300)."""
+    executor = ToolExecutor()
+    executor.register_tool(ExecuteBashTool(DockerRuntimeConfig(), None))
+
+    result = await executor.execute(
+        "executeBashCommand", {"command": "true", "timeout": 301}
+    )
+
+    assert not result.success
+    assert "maximum 300" in result.error
+
+
+async def test_timeout_below_schema_minimum_is_rejected_with_the_real_limit():
+    executor = ToolExecutor()
+    executor.register_tool(ExecuteBashTool(DockerRuntimeConfig(), None))
+
+    result = await executor.execute(
+        "executeBashCommand", {"command": "true", "timeout": 0}
+    )
+
+    assert not result.success
+    assert "minimum 1" in result.error

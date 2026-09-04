@@ -17,7 +17,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 认知循环里的并发分发不在 ToolExecutor，而在引擎侧：
 
 - act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
-- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for(per_tool_timeout)`；超时返回 `success=False, error="Timeout after {n}s"`。`per_tool_timeout` 来自 agent 配置的 `tool.per_timeout`（[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。
+- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for`。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `executeBashCommand`）时，引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
 - 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{tool_call_id}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `readFile` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
 - 特殊规则：同一轮里 `sendEmail` 带 `is_complete=true` 且伴随其他工具调用时，act stage 拒绝整轮（一个工具都不执行），向 LLM 返回冲突提示要求重新规划；`silence` 与 `sendEmail` 互斥（见 [mail/silence](#silence)），同时调用同样整轮拒绝。
@@ -156,7 +156,7 @@ old_string/new_string 精确替换模型。
 
 注意事项：
 
-- 所有工具调用外层还有 `per_tool_timeout`（默认 30 秒，见总述）：前台命令即使 `timeout` 设到 300，超过 `per_tool_timeout` 也会被引擎先砍成 `Timeout after 30s`。长跑命令请用 `background=true`（后台任务不受 `per_tool_timeout` 约束，因为 `execute` 立即返回）。
+- `timeout` 是前台命令的限时权威：schema 声明的 1–300 秒区间全部可兑现——超界值在参数校验时就被拒（错误信息含实际上限/下限），区间内的值引擎会等足（声明值 + 10 秒宽限，见总述），不会再被 `per_tool_timeout` 提前砍掉。容器内由 `timeout` 命令限时，到点返回 `Command timed out after {n} seconds`。需要超过 300 秒的长跑命令请用 `background=true`（后台任务不受此外层等待约束，因为 `execute` 立即返回）。
 - agent 停止时 `ExecuteBashTool.shutdown` 取消该 agent 全部未完成后台任务。
 
 ### checkBashTask
