@@ -9,7 +9,7 @@
 ### 顶层字段
 
 <!-- BEGIN GENERATED: agent-yaml-fields-agent -->
-`AgentConfig` 字段（12 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`AgentConfig` 字段（13 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -25,6 +25,7 @@
 | `session_timeout_seconds` | `int` | 1800 |  |
 | `message_queue_size` | `int` | 100 |  |
 | `max_concurrent_sessions` | `int` | 4 |  |
+| `mail_rescan_interval_seconds` | `float` | 900.0 |  |
 <!-- END GENERATED: agent-yaml-fields-agent -->
 
 生成表只搬字段形状，语义补充（手写）：
@@ -34,6 +35,7 @@
 - `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
 - `session_timeout_seconds`：ACTIVE/WAITING 的会话空闲超时即取消。
 - `message_queue_size`：入站消息队列容量，溢出丢弃新消息。
+- `mail_rescan_interval_seconds`：运行中周期重扫未读邮件的间隔（issue ）；被满队列丢弃、保持未读的邮件由这个重扫拾起，不用等重启。
 
 ### `llm`
 

@@ -160,6 +160,10 @@ class AgentConfig(BaseModel):
     # Live sessions advanced concurrently; excess mail waits in the
     # bounded queue (backlog throttling, issue )
     max_concurrent_sessions: int = Field(default=4, ge=1)
+    # Running members re-scan unread mail on this cadence (issue ):
+    # live mail a full bounded queue dropped stays unread, and a
+    # resident member never reboots — the periodic rescan picks it up.
+    mail_rescan_interval_seconds: float = Field(default=900.0, gt=0)
 
     @field_validator("id")
     @classmethod

@@ -901,19 +901,175 @@ class TestBootScanThrottle:
         # read, standing in for session completions.
         member._initialized = True
         with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
-            task = asyncio.create_task(member._rescan_when_drained())
+            member._rescan_task = asyncio.create_task(member._rescan_loop())
             processed: list[str] = []
             while len(processed) < len(mails):
                 for mail in self._drain_queue(member):
                     processed.append(mail.id)
                     await member._mark_read(mail)
                 await asyncio.sleep(0.01)
-            await asyncio.wait_for(task, timeout=2.0)
+            await _wait_for(lambda: not member._scan_deferred)
 
         # Every mail was picked up exactly once; the scan went clean and
-        # the rescan task exited on its own.
+        # the task left the trickle cadence for the periodic sweep.
         assert sorted(processed) == sorted(m.id for m in mails)
         assert member._scan_deferred is False
         assert await mailbox.unread() == []
 
         await member.shutdown()
+
+
+class TestPeriodicRescan:
+    """The one background rescan task also sweeps periodically (issue ).
+
+    A resident member (``:on :boot``) never sleeps and never reboots, so
+    live mail the full bounded queue dropped would wait for a process
+    restart without the periodic sweep. The same task that trickles
+    boot-scan overflow re-scans unread mail every
+    ``mail_rescan_interval_seconds``; a sweep over an empty inbox
+    enqueues nothing and never touches the LLM.
+
+    The scheduler itself is never started here (its sessions would need
+    a real LLM); the tests drive the queue directly, standing in for
+    session completions, the same way TestBootScanThrottle does.
+    """
+
+    @staticmethod
+    def _make_rescan_member(
+        member_id: str,
+        bus: EventBus,
+        mailbox: Mailbox,
+        *,
+        queue_size: int,
+        interval: float,
+    ) -> MemberRuntime:
+        config = AgentConfig(
+            id=member_id,
+            name=member_id,
+            llm=LLMConfig(model_name="test"),
+            message_queue_size=queue_size,
+            mail_rescan_interval_seconds=interval,
+        )
+        return _make_member(
+            member_id,
+            COGNITIVE_EDN,
+            bus,
+            mailbox=mailbox,
+            cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
+        )
+
+    async def test_live_dropped_mail_picked_up_by_periodic_rescan(self, bus, mail_dir):
+        """A resident member never reboots: the periodic sweep picks up
+        live mail the full bounded queue dropped."""
+        mailbox = Mailbox(mail_dir)
+        member = self._make_rescan_member(
+            "resident-1", bus, mailbox, queue_size=1, interval=0.05
+        )
+        first = Mail.create(
+            from_address="alice@tlon.internal", content="one", to=[member.address]
+        )
+        second = Mail.create(
+            from_address="alice@tlon.internal", content="two", to=[member.address]
+        )
+        await mailbox.append_inbox(first)
+        await mailbox.append_inbox(second)
+
+        # Live dispatch: the first fills the bounded queue, the second is
+        # dropped and stays unread (live drop semantics unchanged).
+        await member._on_event(_deliver(first, member.member_id))
+        await member._on_event(_deliver(second, member.member_id))
+        assert [m.id for m in await mailbox.unread()] == [first.id, second.id]
+
+        member._initialized = True
+        with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
+            member._rescan_task = asyncio.create_task(member._rescan_loop())
+            # Drain + mark read, standing in for session completions.
+            processed: list[str] = []
+            while len(processed) < 2:
+                for mail in TestBootScanThrottle._drain_queue(member):
+                    processed.append(mail.id)
+                    await member._mark_read(mail)
+                await asyncio.sleep(0.01)
+
+        assert sorted(processed) == sorted([first.id, second.id])
+        assert await mailbox.unread() == []
+
+        await member.shutdown()
+
+    async def test_periodic_rescan_without_unread_enqueues_nothing(self, bus, mail_dir):
+        """An idle sweep is a no-op: no enqueue, no scan state, no LLM
+        call (the stub LLM raises if ever invoked)."""
+        mailbox = Mailbox(mail_dir)
+        member = self._make_rescan_member(
+            "resident-2", bus, mailbox, queue_size=2, interval=0.03
+        )
+        member._initialized = True
+        member._rescan_task = asyncio.create_task(member._rescan_loop())
+        await asyncio.sleep(0.15)  # several sweeps
+        await member.shutdown()
+
+        assert TestBootScanThrottle._drain_queue(member) == []
+        assert member._scan_pending == set()
+        assert member._scan_deferred is False
+        assert await mailbox.unread() == []
+
+    async def test_one_task_covers_trickle_and_periodic_sweep(self, bus, mail_dir):
+        """No concurrent rescans: one task runs both cadences.
+
+        The deferred trickle drains boot-scan overflow; once the scan
+        goes clean the same task keeps sweeping periodically and picks
+        up a later live drop — ``_rescan_task`` is never replaced.
+        """
+        mailbox = Mailbox(mail_dir)
+        member = self._make_rescan_member(
+            "resident-3", bus, mailbox, queue_size=1, interval=0.05
+        )
+        sender = "alice@tlon.internal"
+        backlog = [
+            Mail.create(from_address=sender, content=f"backlog {i}", to=[member.address])
+            for i in range(2)
+        ]
+        for mail in backlog:
+            await mailbox.append_inbox(mail)
+        await member._scan_unread_mail()
+        assert member._scan_deferred is True
+
+        member._initialized = True
+        with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
+            task = asyncio.create_task(member._rescan_loop())
+            member._rescan_task = task
+
+            # Trickle cadence: drain + read, the overflow follows.
+            processed: list[str] = []
+            while len(processed) < len(backlog):
+                for mail in TestBootScanThrottle._drain_queue(member):
+                    processed.append(mail.id)
+                    await member._mark_read(mail)
+                await asyncio.sleep(0.01)
+            await _wait_for(lambda: not member._scan_deferred)
+            assert member._rescan_task is task
+
+            # A live drop while the queue is full: the periodic sweep of
+            # the same task picks it up (no reboot, no second task).
+            live = Mail.create(from_address=sender, content="live", to=[member.address])
+            await mailbox.append_inbox(live)
+            filler = Mail.create(from_address=sender, content="filler", to=[member.address])
+            assert member._scheduler is not None
+            assert member._scheduler.enqueue(filler, {})
+            await member._on_event(_deliver(live, member.member_id))
+            assert [m.id for m in await mailbox.unread()] == [live.id]
+
+            while live.id not in processed:
+                for mail in TestBootScanThrottle._drain_queue(member):
+                    if mail.id != filler.id:
+                        processed.append(mail.id)
+                    await member._mark_read(mail)
+                await asyncio.sleep(0.01)
+            assert member._rescan_task is task
+
+        await member.shutdown()
+        # Shutdown cancelled the one rescan task; nothing else was ever
+        # created.
+        assert member._rescan_task is None
+        assert sorted(processed) == sorted([m.id for m in backlog] + [live.id])
+        assert await mailbox.unread() == []

@@ -90,7 +90,8 @@ class SessionScheduler:
         Returns:
             True when queued; False when the bounded queue is full (the
             caller logs the drop — the mail stays unread in the mailbox
-            and is picked up again by the next boot scan)
+            and is picked up again by the member runtime's rescan task,
+            on its periodic sweep or at the next boot)
         """
         try:
             self._mail_queue.put_nowait((mail, carrier))
