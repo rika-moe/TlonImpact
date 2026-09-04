@@ -374,6 +374,27 @@ class LoopDriver:
         await self._journal.append(session.id, "session/end", reason="until", detail=reason)
         session.mark_completed()
 
+    async def send_failure_reply(self, mail: Mail, reason: str) -> None:
+        """Reply to the trigger mail's sender when the scheduler ends a
+        session abnormally (idle timeout / unhandled stage error).
+
+        The fatal paths live in the scheduler; the reply goes through the
+        same MailEffect -> EffectExecutor pipeline every other engine mail
+        uses (send_mail never raises).
+        """
+        if reason == "timeout":
+            content = "抱歉，处理这封邮件超时了，请稍后重试。"
+        else:
+            content = "抱歉，处理邮件时出现了错误。"
+        await self._executor.send_mail(
+            MailEffect(
+                to=[mail.from_address],
+                content=content,
+                in_reply_to=mail.id,
+                thread_id=mail.thread_id,
+            )
+        )
+
     def _stage_condition_met(self, session: AgentSession, name: str, opts: dict[str, Any]) -> bool:
         """Evaluate a stage's optional ``:if`` condition (phase 7c).
 

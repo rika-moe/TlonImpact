@@ -3,7 +3,8 @@
 Pins the append/resume roundtrip, the orphan-dispatch self-healing, the
 "model-visible ⇒ journaled" invariant (derive_context == session.context
 after a full driver run), crash recovery via resume_collect, and the
-scheduler admission rules (completed logs only advance the read cursor).
+scheduler admission rules (completed logs only advance the read cursor),
+and the abnormal-termination failure replies (timeout / stage error).
 """
 
 import asyncio
@@ -536,3 +537,105 @@ class TestSchedulerAdmission:
         lines = await _read_lines("s-end", journal)
         ends = [json.loads(line) for line in lines if json.loads(line)["type"] == "session/end"]
         assert len(ends) == 1
+
+
+# ── Abnormal termination: the sender always gets an answer ──────────────
+
+
+class TestFailureReply:
+    async def test_send_failure_reply_timeout_and_error(self, tmp_path: Path) -> None:
+        driver, _, executor, _ = _make_driver(tmp_path, [])
+        mail = _mail()
+
+        await driver.send_failure_reply(mail, "timeout")
+
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.to == ["user@tlon.internal"]
+        assert effect.in_reply_to == mail.id
+        assert effect.thread_id == mail.thread_id
+        assert "超时" in effect.content
+
+        executor.send_mail.reset_mock()
+        await driver.send_failure_reply(mail, "error")
+
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.to == ["user@tlon.internal"]
+        assert effect.in_reply_to == mail.id
+        assert "错误" in effect.content
+
+
+class TestSchedulerFailureReply:
+    """Session timeout / stage error both reply to the trigger mail's
+    sender before the reap (the scheduler owns the fatal paths; the
+    reply goes through LoopDriver.send_failure_reply)."""
+
+    @staticmethod
+    async def _wait_reaped(mark_read: AsyncMock) -> None:
+        for _ in range(500):
+            if mark_read.await_count:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("session was not reaped in time")
+
+    async def test_timeout_ends_session_and_replies(
+        self, journal: SessionJournal
+    ) -> None:
+        mail = _mail()
+        loop_driver = MagicMock()
+        loop_driver.send_failure_reply = AsyncMock()
+        scheduler, mark_read = _make_scheduler(journal, loop_driver=loop_driver)
+        scheduler._config.session_timeout_seconds = 0
+
+        scheduler.enqueue(mail, {})
+        scheduler.start()
+        try:
+            await self._wait_reaped(mark_read)
+        finally:
+            await scheduler.stop()
+
+        loop_driver.send_failure_reply.assert_awaited_once()
+        assert loop_driver.send_failure_reply.await_args.args == (mail, "timeout")
+        assert await journal.end_reason(f"agent1-{mail.id}") == "timeout"
+        mark_read.assert_awaited_once_with(mail)
+
+    async def test_stage_error_ends_session_and_replies(
+        self, journal: SessionJournal
+    ) -> None:
+        mail = _mail()
+        loop_driver = MagicMock()
+        loop_driver.send_failure_reply = AsyncMock()
+        loop_driver.step_session = AsyncMock(side_effect=RuntimeError("boom"))
+        scheduler, mark_read = _make_scheduler(journal, loop_driver=loop_driver)
+
+        scheduler.enqueue(mail, {})
+        scheduler.start()
+        try:
+            await self._wait_reaped(mark_read)
+        finally:
+            await scheduler.stop()
+
+        loop_driver.send_failure_reply.assert_awaited_once()
+        assert loop_driver.send_failure_reply.await_args.args == (mail, "error")
+        assert await journal.end_reason(f"agent1-{mail.id}") == "error"
+        mark_read.assert_awaited_once_with(mail)
+
+    async def test_reply_failure_does_not_break_reap(
+        self, journal: SessionJournal
+    ) -> None:
+        mail = _mail()
+        loop_driver = MagicMock()
+        loop_driver.send_failure_reply = AsyncMock(side_effect=OSError("bus down"))
+        loop_driver.step_session = AsyncMock(side_effect=RuntimeError("boom"))
+        scheduler, mark_read = _make_scheduler(journal, loop_driver=loop_driver)
+
+        scheduler.enqueue(mail, {})
+        scheduler.start()
+        try:
+            await self._wait_reaped(mark_read)
+        finally:
+            await scheduler.stop()
+
+        # The reply failed, but the session still ended and was reaped.
+        loop_driver.send_failure_reply.assert_awaited_once()
+        assert await journal.end_reason(f"agent1-{mail.id}") == "error"
+        mark_read.assert_awaited_once_with(mail)

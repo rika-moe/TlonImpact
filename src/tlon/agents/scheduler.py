@@ -198,6 +198,9 @@ class SessionScheduler:
                             ),
                         )
                         await self._end_session(session, "timeout")
+                        await self._notify_failure_reply(
+                            session, session_mails.get(sid), "timeout"
+                        )
                     else:
                         try:
                             with self._session_span(session):
@@ -218,6 +221,9 @@ class SessionScheduler:
                                 "session_error", session_id=sid, error=str(e), exc_info=True
                             )
                             await self._end_session(session, "error")
+                            await self._notify_failure_reply(
+                                session, session_mails.get(sid), "error"
+                            )
 
                     # ── 4. Cleanup: the mail is processed, cursor advances ──
                     if session.is_completed:
@@ -307,6 +313,24 @@ class SessionScheduler:
         session.state = replay.state
         session.trigger_message = mail
         return session
+
+    async def _notify_failure_reply(
+        self, session: AgentSession, mail: Mail | None, reason: str
+    ) -> None:
+        """Best-effort reply to the trigger mail's sender when a session
+        ends abnormally — the 'every mail gets an answer' contract.
+
+        Never raises: the reply is courtesy; a failure here must not
+        break the scheduler loop.
+        """
+        if mail is None:
+            return
+        try:
+            await self._loop_driver.send_failure_reply(mail, reason)
+        except Exception as e:
+            logger.error(
+                "session_failure_reply_failed", session_id=session.id, error=str(e)
+            )
 
     async def _end_session(self, session: AgentSession, reason: str) -> None:
         """Journal ``session/end``, then mark the session completed.
