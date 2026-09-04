@@ -6,6 +6,7 @@ facts). Extracted from the Agent god class.
 """
 
 import asyncio
+import contextlib
 import json
 from datetime import datetime
 from typing import Any, cast
@@ -73,6 +74,17 @@ class ReflectionEngine:
         self._last_reflection_time: datetime | None = None
         self._session_count_since_reflection = 0
         self._running = False
+        self._task: asyncio.Task[None] | None = None
+
+    @property
+    def is_running(self) -> bool:
+        """A reflection (memory digest + LLM audit) is in flight right now.
+
+        Read by the member runtime's idle accounting: an in-flight
+        reflection is real background activity — the member must not be
+        reported idle and drained mid-audit.
+        """
+        return self._running
 
     def note_interaction(self) -> None:
         """Record that a session completed (feeds the trigger)."""
@@ -97,7 +109,20 @@ class ReflectionEngine:
         self._last_reflection_time = now
         self._session_count_since_reflection = 0
         self._running = True
-        asyncio.create_task(self._run())
+        self._task = asyncio.create_task(self._run())
+
+    async def shutdown(self) -> None:
+        """Cancel an in-flight reflection and await it.
+
+        Called from the member runtime's shutdown so no free-floating
+        reflection task survives the member.
+        """
+        if self._task is None:
+            return
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+        self._task = None
 
     async def _run(self) -> None:
         """Run a background memory reflection/audit.
@@ -132,6 +157,7 @@ class ReflectionEngine:
             logger.warning("reflection_failed", error=str(e))
         finally:
             self._running = False
+            self._task = None
 
     def _build_prompt(self, digest: dict[str, Any]) -> str:
         """Build the reflection prompt from memory digest."""

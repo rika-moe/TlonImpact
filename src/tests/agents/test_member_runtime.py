@@ -14,6 +14,7 @@ construction, so the routing logic under test never dereferences them.
 
 import asyncio
 import inspect
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from tlon.agents.trigger import AgentIdentity
 from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.llm_client import LLMResponse
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
@@ -1073,3 +1075,111 @@ class TestPeriodicRescan:
         assert member._rescan_task is None
         assert sorted(processed) == sorted([m.id for m in backlog] + [live.id])
         assert await mailbox.unread() == []
+
+
+# ── Idle-aware background tasks (issue ) ────────────────────────────
+
+COGNITIVE_REFLECT_EDN = """\
+{:version 1
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :when (addressed-to-me? msg)
+          :loop {:context {:sections [(persona) (protocol)]}
+                 :stages [(think) (act)]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :max-iterations 10
+                 :max-consecutive-errors 3
+                 :reflect {:enabled true :interval-minutes 0}}}]}
+"""
+
+
+class _BlockingLLM:
+    """Duck-typed LLMClient whose chat blocks until released."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def chat(self, **kwargs: Any) -> Any:
+        self.started.set()
+        await self.release.wait()
+        return LLMResponse(content='{"operations": []}')
+
+
+class _DigestMemoryStub(_MemoryStub):
+    """Memory stub with one fact, so a reflection proceeds to the LLM call."""
+
+    async def get_memory_digest(self, logs: Any) -> dict[str, Any]:
+        return {
+            "unsummarized_session_count": 0,
+            "summary_count": 0,
+            "fact_count": 1,
+            "summaries": [],
+            "facts": [{"id": "fact-1", "description": "something"}],
+        }
+
+
+class TestIdleAwareBackground:
+    """Background activity feeds the idle accounting; shutdown cancels it
+    (issue ).
+
+    An in-flight reflection (memory digest + LLM audit) is real work:
+    ``idle_seconds`` must not report the member idle mid-audit, and
+    shutdown must cancel the reflection task instead of leaving a
+    free-floating coroutine. The resident rescan task, by contrast,
+    sleeps between sweeps — its mere existence never counts as activity.
+    """
+
+    async def test_in_flight_reflection_counts_as_active(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-i1", COGNITIVE_EDN, bus, mailbox)
+        scheduler = member._scheduler
+        reflection = member._reflection
+        assert scheduler is not None and reflection is not None
+
+        # No sessions for a long while: the member reads idle.
+        scheduler._last_activity_at = datetime.now() - timedelta(seconds=999)
+        assert member.idle_seconds > 600
+
+        # An in-flight reflection is real activity — not idle.
+        reflection._running = True
+        assert member.idle_seconds == 0.0
+
+        reflection._running = False
+        assert member.idle_seconds > 600
+
+    async def test_shutdown_cancels_in_flight_reflection(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        config = AgentConfig(
+            id="thinker-i2", name="thinker-i2", llm=LLMConfig(model_name="test")
+        )
+        llm = _BlockingLLM()
+        caps = CognitiveCapabilities(
+            config=config,
+            llm_client=llm,
+            memory=_DigestMemoryStub(),
+            task_manager=_TaskStub(),
+            tool_executor=ToolExecutor(),
+            team_members=[],
+            tlon_paths=TlonPaths(home=mail_dir.parent),
+        )
+        member = _make_member(
+            "thinker-i2", COGNITIVE_REFLECT_EDN, bus, mailbox=mailbox, cognitive=caps
+        )
+        reflection = member._reflection
+        assert reflection is not None
+
+        for _ in range(5):  # reflection_min_interactions default
+            reflection.note_interaction()
+        await reflection.check_trigger()
+        await asyncio.wait_for(llm.started.wait(), timeout=2)
+        assert reflection.is_running
+        assert member.idle_seconds == 0.0
+
+        task = reflection._task
+        assert task is not None
+        await member.shutdown()
+
+        assert task.cancelled()
+        assert reflection._task is None
+        assert not reflection.is_running

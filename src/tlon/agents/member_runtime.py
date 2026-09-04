@@ -21,7 +21,9 @@ and all five action kinds (``spawn`` / ``emit`` / ``start`` / ``stop`` /
 Derived values: ``member_type`` is computed from the spec (any rule with a
 loop ⇒ ``react``), never stored. ``state`` / ``active_session_count`` /
 ``idle_seconds`` delegate to the scheduler when cognitive, else to
-deterministic idle bookkeeping.
+deterministic idle bookkeeping — with real background activity (an
+in-flight reflection) folded into ``idle_seconds`` so a member mid-audit
+is never reported idle.
 
 Mail semantics: a delivered mail addressed to this member is marked read
 once processed — a deterministic hit reads it immediately; a cognitive hit
@@ -266,11 +268,18 @@ class MemberRuntime(Member):
     def idle_seconds(self) -> float:
         """Seconds since the last activity.
 
-        Cognitive: the scheduler's session activity clock. Deterministic:
-        time since the last executed rule action (from initialize when no
-        action has run yet); 0 before initialization.
+        Cognitive: the scheduler's session activity clock, with real
+        background activity folded in — an in-flight reflection LLM call
+        is work in progress and counts as active, so the member is not
+        reported idle and drained mid-audit. The rescan task's mere
+        existence does not count: it sleeps between sweeps, and a
+        sweep's enqueued mail already becomes session activity.
+        Deterministic: time since the last executed rule action (from
+        initialize when no action has run yet); 0 before initialization.
         """
         if self._scheduler is not None:
+            if self._reflection is not None and self._reflection.is_running:
+                return 0.0
             return self._scheduler.idle_seconds
         if self._initialized_at is None:
             return 0.0
@@ -335,7 +344,8 @@ class MemberRuntime(Member):
             )
 
     async def shutdown(self) -> None:
-        """Shutdown the member: stop the cognitive loop, release
+        """Shutdown the member: cancel the background tasks (rescan,
+        in-flight reflection), stop the cognitive loop, release
         subscriptions, shut down tools (cancelling background bash tasks)."""
         with bound_contextvars(agent_id=self._member_id):
             if self._rescan_task is not None:
@@ -345,6 +355,11 @@ class MemberRuntime(Member):
                 self._rescan_task = None
             if self._scheduler is not None:
                 await self._scheduler.stop()
+            if self._reflection is not None:
+                # The scheduler is stopped, so no new reflection can
+                # trigger; cancel one already in flight — no
+                # free-floating task survives the member.
+                await self._reflection.shutdown()
             self.unsubscribe_all()
             if self._cognitive is not None:
                 await self._cognitive.tool_executor.shutdown()

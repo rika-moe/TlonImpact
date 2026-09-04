@@ -41,11 +41,11 @@
 - **命中即执行**：规则命中时，有 loop 先跑认知循环再跑 `:actions`；无 loop 只跑 `:actions`。
 - **统一环境**：求值环境为 `{msg, event, self}`（`MemberRuntime._env`），会话完成时追加 `result`。环境取两个旧运行时词表的并集：非邮件事件让 `msg` 为 None，谓词安全地返回 False——同一套谓词词汇表对邮件与非邮件事件都成立，spec 作者不用区分自己在哪种运行时语境里写规则。
 - **统一动作执行器**：`spawn` / `emit` / `start` / `stop` / `forward` 五种动作全部经 `MemberRuntime._execute_action` 一个出口。其中 `start` / `stop` 只是向总线发布生命周期**请求**——成员只表达决策，执行是注册表的事（见 ADR 0003）。
-- **同构的生命周期**：确定型成员不装配任何认知基础设施（无 LLM、无记忆、无工具），只是同一外壳下 `cognitive=None` 的实例。两类成员在注册表眼里完全同构：同一张运行表、同一套启动/排空路径、同一套状态读法——`get_state` / `active_session_count` / `idle_seconds` 对认知型委派给调度器，对确定型退化为简单的活跃记账。
+- **同构的生命周期**：确定型成员不装配任何认知基础设施（无 LLM、无记忆、无工具），只是同一外壳下 `cognitive=None` 的实例。两类成员在注册表眼里完全同构：同一张运行表、同一套启动/排空路径、同一套状态读法——`get_state` / `active_session_count` / `idle_seconds` 对认知型委派给调度器（并叠入 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，常驻但大部分时间在 sleep 的重扫任务不算），对确定型退化为简单的活跃记账。
 
 ### 无工作者模型
 
-`MemberRuntime` 自己不持有任何 worker task：全部规则派发发生在 EventBus 的派发上下文里（总线已经隔离了处理器异常），认知工作只是入队，由调度器的主循环 task 消费。这带来两个性质：一是成员组件的并发复杂度为零——它不会在自己的上下文里跑长任务，派发慢的代价由有界队列的背压吸收而不是拖垮总线；二是关闭语义简单——`shutdown` 只需停调度器、退订、关工具，没有需要 join 的后台任务。运行时里长住的 task 只有两类：每成员的调度器主循环，以及反思这类显式声明的后台工作。
+`MemberRuntime` 的规则派发全部发生在 EventBus 的派发上下文里（总线已经隔离了处理器异常），认知工作只是入队，由调度器的主循环 task 消费。这带来两个性质：一是成员不在派发上下文里跑长任务，派发慢的代价由有界队列的背压吸收而不是拖垮总线；二是关闭语义收敛——`shutdown` 依次停掉成员的后台 task 与认知循环（重扫、调度器主循环、进行中的反思，全部 cancel + await），再退订、关工具，不留游离协程。运行时里长住的 task 只有少数几类显式声明的后台工作：每成员的调度器主循环、邮件重扫（issue ）、反思。
 
 ### 运行时不做什么
 
@@ -178,7 +178,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 会话的收尾有两台机器，都在循环之外、由引擎在固定时点触发：
 
-- **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少完成会话数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆摘要，产出 `record_fact` / `delete_fact` / `noop` 操作并应用。会话计数由调度器在 session 回收点经 `note_interaction` 喂入——只有真正完成的会话才算数（ADR 0009：摘要触发也挂在这个回收点上，pending 达 `summary_window` 即从 journal 批量压缩进 episodic，无需反思催办）。
+- **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少完成会话数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进——task 由引擎持有：进行中计入成员活跃（`idle_seconds` 不判空闲，drain 不会打断审计），成员 shutdown 时被取消并 await，不留游离协程。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆摘要，产出 `record_fact` / `delete_fact` / `noop` 操作并应用。会话计数由调度器在 session 回收点经 `note_interaction` 喂入——只有真正完成的会话才算数（ADR 0009：摘要触发也挂在这个回收点上，pending 达 `summary_window` 即从 journal 批量压缩进 episodic，无需反思催办）。
 - **完成动作**（[agents/on_complete.py](../../src/tlon/agents/on_complete.py) 的 `OnCompleteRunner`）：认知会话产出最终回复后，把认知规则的 `:actions` 求值一次——环境在统一环境上追加 `result`（最终回复文本，由 act stage 经 `StageOutcome.final_reply` 声明），收集到的动作请求走 `MemberRuntime._execute_action` 统一执行，五种动作全部可用。调用时点在会话标记完成之前，仍在会话 span 内，因此 spawn 配额的会话归属（contextvars 携带 session_id）不受影响。任何求值或执行失败只记日志，不打断剩余动作与会话生命周期。
 
 两者的共同点是"挂在引擎的固定时点上，而非 stage 的程序内容"：反思与收尾是运行时服务质量的一部分，DSL 不能关掉它们，也不用知道它们存在。
@@ -189,7 +189,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 - **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；统一装配（ADR 0006）——每个成员都经 `_assemble_cognitive` 得到全套能力对象（LLM 客户端、双层记忆、任务管理器、Docker 运行时、全套工具），是否装配认知引擎（调度器/循环）由 spec 是否有 `:loop` 规则派生，加载按需（懒装配：对象便宜，调用才贵）。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
 - **幂等的生命周期执行**。注册表订阅 `AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 并幂等执行：`_waking` 集合在派发上下文里同步去重（背靠背请求折叠为一次装配）；每个 persona 一把 wake lock 串行化启动与排空；装配有 60 秒超时兜底——挂起的启动不能永远占住锁。
-- **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。统一成员模型（ADR 0006）：排空一律是睡眠——home 目录永不删除，只发 `AGENT_SLEEPING`。
+- **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。空闲计时含 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，成员不会在审计中途被判空闲。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。统一成员模型（ADR 0006）：排空一律是睡眠——home 目录永不删除，只发 `AGENT_SLEEPING`。
 - **spawn 预算**。三道防失控闸门：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本只在内存，重启清零——对防失控用途这是可接受的近似。spawn 前还有信任闸：未受信的（LLM 撰写、待审批）原型不能实例化。预算与信任闸是纯机制；"谁可以造新成员、一次造几个"是策略（可数据化，见 `design/unified-member-model.md`）。
 - **spec 派生的生命周期档案**。boot 集合（`boot_candidates`）、lazy 判定（`is_lazy`）、唤醒资格全部从缓存的 spec profile 派生；加载失败缓存为 None，热重载/收养时才失效重试。spec 是生命周期归属的唯一权威，注册表不维护第二份事实。
 

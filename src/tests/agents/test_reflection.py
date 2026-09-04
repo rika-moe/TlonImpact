@@ -7,6 +7,7 @@ silently no-op'ing (the old path fed the uuid into keyword substring
 matching, which could never match any fact text).
 """
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -136,3 +137,69 @@ class TestRunEndToEnd:
         await engine._run()
 
         assert await manager.episodic.get_fact(victim_id) is None
+
+
+class _BlockingLLM:
+    """Duck-typed LLMClient whose chat blocks until released."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def chat(self, **kwargs: Any) -> LLMResponse:
+        self.started.set()
+        await self.release.wait()
+        return LLMResponse(content='{"operations": []}')
+
+
+class TestLifecycle:
+    """The reflection task is tracked, not free-floating (issue ).
+
+    An in-flight reflection reports itself as running (the member
+    runtime's idle accounting reads this), and ``shutdown`` cancels it
+    instead of leaving an orphaned coroutine.
+    """
+
+    async def _trigger(self, tmp_path: Path) -> tuple[ReflectionEngine, _BlockingLLM]:
+        """Trigger a reflection that blocks inside the LLM call."""
+        manager = MemoryManager("agent1", MemoryConfig(), data_dir=tmp_path / "agent1")
+        await manager.remember_fact("一条供反思审视的事实")
+        journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
+        llm = _BlockingLLM()
+        engine = ReflectionEngine(manager, cast(LLMClient, llm), _rule(), journal)
+        for _ in range(5):  # reflection_min_interactions default
+            engine.note_interaction()
+        await engine.check_trigger()
+        await asyncio.wait_for(llm.started.wait(), timeout=2)
+        return engine, llm
+
+    async def test_in_flight_reflection_reports_running(self, tmp_path: Path) -> None:
+        engine, llm = await self._trigger(tmp_path)
+        assert engine.is_running
+        task = engine._task
+        assert task is not None and not task.done()
+
+        llm.release.set()
+        await task
+
+        assert not engine.is_running
+        assert engine._task is None
+
+    async def test_shutdown_cancels_in_flight_reflection(self, tmp_path: Path) -> None:
+        engine, _llm = await self._trigger(tmp_path)
+        task = engine._task
+        assert task is not None
+
+        await engine.shutdown()
+
+        assert task.cancelled()
+        assert engine._task is None
+        assert not engine.is_running
+
+    async def test_shutdown_without_reflection_is_noop(self, tmp_path: Path) -> None:
+        engine, _manager = _engine(tmp_path)
+
+        await engine.shutdown()  # never triggered: nothing to cancel
+
+        assert engine._task is None
+        assert not engine.is_running
