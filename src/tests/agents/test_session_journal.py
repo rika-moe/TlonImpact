@@ -458,11 +458,11 @@ class TestCrashRecovery:
 
 
 def _make_scheduler(
-    journal: SessionJournal, loop_driver: object = None
+    journal: SessionJournal, loop_driver: object = None, config: AgentConfig | None = None
 ) -> tuple[SessionScheduler, AsyncMock]:
     mark_read = AsyncMock()
     scheduler = SessionScheduler(
-        AgentConfig(id="agent1", name="agent1"),
+        config or AgentConfig(id="agent1", name="agent1"),
         memory=MagicMock(),
         session_span=lambda session: contextlib.nullcontext(),
         mark_mail_read=mark_read,
@@ -700,3 +700,41 @@ class TestSchedulerFailureReply:
         loop_driver.send_failure_reply.assert_awaited_once()
         assert await journal.end_reason(f"agent1-{mail.id}") == "error"
         mark_read.assert_awaited_once_with(mail)
+
+
+# ── Session concurrency cap (backlog throttling, issue ) ──────────────
+
+
+class TestSessionConcurrencyCap:
+    """The scheduler admits at most ``max_concurrent_sessions`` live
+    sessions; excess mail waits in the bounded queue instead of burning
+    LLM quota all at once."""
+
+    async def test_admission_capped_excess_waits_in_queue(
+        self, journal: SessionJournal
+    ) -> None:
+        loop_driver = MagicMock()
+        loop_driver.step_session = AsyncMock()  # sessions stay ACTIVE forever
+        loop_driver.collect_session_results = AsyncMock()
+        scheduler, mark_read = _make_scheduler(
+            journal,
+            loop_driver=loop_driver,
+            config=AgentConfig(id="agent1", name="agent1", max_concurrent_sessions=2),
+        )
+        mails = [_mail() for _ in range(4)]
+        for mail in mails:
+            assert scheduler.enqueue(mail, {})
+
+        scheduler.start()
+        try:
+            deadline = asyncio.get_running_loop().time() + 2.0
+            while scheduler.active_session_count < 2:
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.01)
+            await asyncio.sleep(0.2)  # the cap must hold, not be transient
+            assert scheduler.active_session_count == 2
+            assert scheduler._mail_queue.qsize() == 2
+            loop_driver.step_session.assert_awaited()
+            mark_read.assert_not_awaited()
+        finally:
+            await scheduler.stop()

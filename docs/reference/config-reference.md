@@ -9,7 +9,7 @@
 ### 顶层字段
 
 <!-- BEGIN GENERATED: agent-yaml-fields-agent -->
-`AgentConfig` 字段（11 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`AgentConfig` 字段（12 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -24,6 +24,7 @@
 | `spawn_depth` | `int` | 0 |  |
 | `session_timeout_seconds` | `int` | 1800 |  |
 | `message_queue_size` | `int` | 100 |  |
+| `max_concurrent_sessions` | `int` | 4 |  |
 <!-- END GENERATED: agent-yaml-fields-agent -->
 
 生成表只搬字段形状，语义补充（手写）：

@@ -117,6 +117,15 @@ class SessionScheduler:
         return len(self._sessions)
 
     @property
+    def has_queue_capacity(self) -> bool:
+        """The bounded mail queue can take at least one more mail.
+
+        Read by the member runtime's deferred rescan to trickle boot-scan
+        overflow in as sessions drain.
+        """
+        return not self._mail_queue.full()
+
+    @property
     def last_activity_at(self) -> datetime:
         """Most recent session activity timestamp.
 
@@ -141,7 +150,9 @@ class SessionScheduler:
 
         Cycles through all active sessions each pass:
         0. Reflection trigger (timer-driven, no mail needed)
-        1. New messages -> create/resume sessions (journal replay, ADR 0007)
+        1. New messages -> create/resume sessions (journal replay, ADR 0007),
+           at most ``config.max_concurrent_sessions`` live at once — excess
+           mail waits in the bounded queue (backlog throttling, issue )
         2. ACTIVE sessions -> one think+dispatch step
         3. WAITING sessions -> collect completed background tools
         4. COMPLETED -> cleanup (+ reflection counter and the batch
@@ -164,19 +175,20 @@ class SessionScheduler:
                 # ── 0. Reflection trigger (timer-driven, no mail needed) ──
                 await self._check_reflection()
 
-                # ── 1. New mail — one session per mail ──
+                # ── 1. New mail — one session per mail, capped concurrency ──
                 incoming: tuple[Mail, dict[str, str | None]] | None = None
-                try:
-                    incoming = self._mail_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    # No new mail — if no sessions either, block
-                    if not sessions:
-                        try:
-                            incoming = await asyncio.wait_for(
-                                self._mail_queue.get(), timeout=0.5
-                            )
-                        except TimeoutError:
-                            continue
+                if len(sessions) < self._config.max_concurrent_sessions:
+                    try:
+                        incoming = self._mail_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        # No new mail — if no sessions either, block
+                        if not sessions:
+                            try:
+                                incoming = await asyncio.wait_for(
+                                    self._mail_queue.get(), timeout=0.5
+                                )
+                            except TimeoutError:
+                                continue
                 if incoming is not None:
                     mail, carrier = incoming
                     await self._admit(mail, carrier, sessions, session_mails, pending_collects)

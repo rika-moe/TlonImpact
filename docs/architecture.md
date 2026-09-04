@@ -105,10 +105,11 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 3. **收件人是 agent：唤醒或入队**。
    - 若收件人未在运行，`AgentRegistry._on_mail_delivered`（[agents/agent_registry.py](../src/tlon/agents/agent_registry.py)）检查其 spec 是否声明了 `:on :mail-delivered`，是则发布 `AGENT_START_REQUEST{reason="wake"}` 将其唤醒。唤醒不带触发事件——邮件已持久化在收件箱，成员启动时自行扫描未读邮件。
    - 若收件人在运行，`MemberRuntime`（[agents/member_runtime.py](../src/tlon/agents/member_runtime.py)）收到 `MAIL_DELIVERED`：先过 `:when` 门控，命中认知规则则把邮件排入 `SessionScheduler` 的有界队列（队列满时丢新邮件、保持未读，等下次启动扫描）；自己发给自己的邮件直接标记已读、永不处理。
+   - 启动未读扫描对积压邮件做节流（issue ）：同一 thread 的未读合并为一个 session（线程内最新一封为代表，更早的标记已读、由该 session 的 mail-history 上下文覆盖）；有界队列装不下的溢出邮件保持完全未读（确定性规则也一并推迟），由顺延重扫在调度器腾出队列容量后分批补拾，直到无延期为止——积压只排队，不丢信。
 
 4. **认知循环**。`SessionScheduler`（[agents/scheduler.py](../src/tlon/agents/scheduler.py)）把队列里的邮件排成 `AgentSession`（[agents/session.py](../src/tlon/agents/session.py)），交给 `LoopDriver`（[agents/loop_driver.py](../src/tlon/agents/loop_driver.py)）逐步推进：think / plan / act / critique / revise 五个 stage（[agents/stages/](../src/tlon/agents/stages) 下各文件）是纯函数 `Session × StageServices → StageOutcome`，循环有 `max_iterations` 硬上限，耗尽时不丢中间成果：引擎用一次额外的 LLM 调用把 session 已完成的工作蒸馏成给发件人的回信（说明做了什么、做到哪、为何没做完），蒸馏失败则回落固定文案。stage 声明的外部效果由 `EffectExecutor` 真正执行：发邮件（回到第 2 步的 `MAIL_NEW`，形成 agent 间多轮通信）、保存交互记忆、推进收件箱 cursor。stage 跑哪些、以什么顺序跑，由 spec 里 loop 规则的 `stages` 向量决定；`act` 只声明工具分发列表，并发（每个工具调用一个后台 task）是引擎的。
 
-   一个 agent 同时可以有多个进行中的 session（多封邮件、多个线程），`SessionScheduler` 负责逐个推进、回收完成与过期的 session；session 因空闲超时或 stage 异常被终止时，调度器会给触发邮件的发件人回一封固定文案的失败通知（经 `LoopDriver` 的 MailEffect → `EffectExecutor` 管道，与正常回信同一出口），保证「邮件必有回音」。agent 的整体状态在读取时从 session 集合派生，不靠回调维护。反思引擎（[agents/reflection.py](../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）按交互计数触发，由调度器在循环间隙经注入的 `check_reflection` 委托检查。
+   一个 agent 同时可以有多个进行中的 session（多封邮件、多个线程），上限 `max_concurrent_sessions`（默认 4），超出的邮件留在有界队列里等 session 完成再逐个补位；`SessionScheduler` 负责逐个推进、回收完成与过期的 session；session 因空闲超时或 stage 异常被终止时，调度器会给触发邮件的发件人回一封固定文案的失败通知（经 `LoopDriver` 的 MailEffect → `EffectExecutor` 管道，与正常回信同一出口），保证「邮件必有回音」。agent 的整体状态在读取时从 session 集合派生，不靠回调维护。反思引擎（[agents/reflection.py](../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）按交互计数触发，由调度器在循环间隙经注入的 `check_reflection` 委托检查。
 
 5. **收件人是人类：推送或拉取**。`HumanAdapter` 与其他成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的邮件 fan-out 给 attach 上来的客户端会话；客户端通过 `GET /events` 的 SSE 长连接实时收信（推送侧由 [app/server/core/notification_service.py](../src/tlon/app/server/core/notification_service.py) 的 `NotificationService` 管理），也可随时 `GET /inbox` 直接读邮箱文件。人类离线时邮件留在其持久邮箱里，上线后再读。
 

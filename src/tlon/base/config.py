@@ -157,6 +157,9 @@ class AgentConfig(BaseModel):
     session_timeout_seconds: int = 1800
     # Inbound message queue capacity; overflow drops new messages
     message_queue_size: int = 100
+    # Live sessions advanced concurrently; excess mail waits in the
+    # bounded queue (backlog throttling, issue )
+    max_concurrent_sessions: int = Field(default=4, ge=1)
 
     @field_validator("id")
     @classmethod

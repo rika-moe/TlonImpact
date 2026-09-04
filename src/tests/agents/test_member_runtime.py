@@ -754,3 +754,166 @@ class TestMixedMemberDeflection:
         assert await mailbox.unread() == []
 
         await member.shutdown()
+
+
+# ── Boot-scan throttling (issue ) ────────────────────────────────────
+
+
+class TestBootScanThrottle:
+    """The boot unread scan throttles a mail backlog.
+
+    One thread merges into one session (the thread's latest unread mail is
+    the representative; earlier siblings are marked read as covered — the
+    session's mail-history context renders the whole thread), and overflow
+    the bounded queue cannot take stays fully unread for the deferred
+    rescan, which trickles it in as the scheduler drains. Nothing is
+    dropped on the floor and no mail is enqueued twice.
+
+    The scheduler itself is never started here (its sessions would need a
+    real LLM); the tests drive the scan and the queue directly, the same
+    way TestCognitiveRouting drives ``_on_event``.
+    """
+
+    @staticmethod
+    def _make_throttled_member(
+        member_id: str, bus: EventBus, mailbox: Mailbox, *, queue_size: int
+    ) -> MemberRuntime:
+        config = AgentConfig(
+            id=member_id,
+            name=member_id,
+            llm=LLMConfig(model_name="test"),
+            message_queue_size=queue_size,
+        )
+        return _make_member(
+            member_id,
+            COGNITIVE_EDN,
+            bus,
+            mailbox=mailbox,
+            cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
+        )
+
+    @staticmethod
+    def _drain_queue(member: MemberRuntime) -> list[Mail]:
+        """Dequeue every queued mail (simulating the scheduler's intake)."""
+        scheduler = member._scheduler
+        assert scheduler is not None
+        drained: list[Mail] = []
+        while True:
+            try:
+                mail, _carrier = scheduler._mail_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return drained
+            drained.append(mail)
+
+    async def test_same_thread_unread_merges_into_one_session(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-t1", COGNITIVE_EDN, bus, mailbox)
+        root = Mail.create(
+            from_address="alice@tlon.internal", content="first", to=[member.address]
+        )
+        reply = Mail.create(
+            from_address="alice@tlon.internal",
+            content="second",
+            to=[member.address],
+            in_reply_to=root.id,
+            thread_id=root.thread_id,
+        )
+        other = Mail.create(
+            from_address="alice@tlon.internal", content="separate", to=[member.address]
+        )
+        for mail in (root, reply, other):
+            await mailbox.append_inbox(mail)
+
+        await member._scan_unread_mail()
+
+        # The thread's latest mail represents it; the separate thread is
+        # its own session.
+        assert [m.id for m in self._drain_queue(member)] == [reply.id, other.id]
+        assert member._scan_pending == {reply.id, other.id}
+        # The merged sibling is read as covered; the representatives defer
+        # their read to session completion (D6.1).
+        assert [m.id for m in await mailbox.unread()] == [reply.id, other.id]
+        assert member._scan_deferred is False
+
+    async def test_single_unread_enqueued_as_before(self, bus, mail_dir):
+        """No backlog, no sharing: behavior is unchanged."""
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-t2", COGNITIVE_EDN, bus, mailbox)
+        mail = Mail.create(
+            from_address="alice@tlon.internal", content="hello", to=[member.address]
+        )
+        await mailbox.append_inbox(mail)
+
+        await member._scan_unread_mail()
+
+        assert [m.id for m in self._drain_queue(member)] == [mail.id]
+        assert [m.id for m in await mailbox.unread()] == [mail.id]  # read deferred
+        assert member._scan_deferred is False
+
+    async def test_overflow_stays_unread_and_rescan_picks_up(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        member = self._make_throttled_member("thinker-t3", bus, mailbox, queue_size=2)
+        mails = [
+            Mail.create(
+                from_address="alice@tlon.internal",
+                content=f"backlog {i}",
+                to=[member.address],
+            )
+            for i in range(4)
+        ]
+        for mail in mails:
+            await mailbox.append_inbox(mail)
+
+        await member._scan_unread_mail()
+        assert [m.id for m in self._drain_queue(member)] == [mails[0].id, mails[1].id]
+        assert member._scan_deferred is True
+        # The overflow is fully unread — queued mail defers its read,
+        # dropped mail keeps it (deterministic rules deferred with it).
+        assert [m.id for m in await mailbox.unread()] == [m.id for m in mails]
+
+        # Sessions complete (their read marks land) and the rescan
+        # trickles the overflow in — nothing lost, nothing enqueued twice.
+        await member._mark_read(mails[0])
+        await member._mark_read(mails[1])
+        await member._scan_unread_mail()
+        assert [m.id for m in self._drain_queue(member)] == [mails[2].id, mails[3].id]
+        assert member._scan_pending == {mails[2].id, mails[3].id}
+        assert member._scan_deferred is False
+
+    async def test_deferred_rescan_trickles_overflow_until_done(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        member = self._make_throttled_member("thinker-t4", bus, mailbox, queue_size=2)
+        mails = [
+            Mail.create(
+                from_address="alice@tlon.internal",
+                content=f"backlog {i}",
+                to=[member.address],
+            )
+            for i in range(5)
+        ]
+        for mail in mails:
+            await mailbox.append_inbox(mail)
+
+        await member._scan_unread_mail()
+        assert member._scan_deferred is True
+
+        # The scheduler stays stopped; the test drains the queue and marks
+        # read, standing in for session completions.
+        member._initialized = True
+        with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
+            task = asyncio.create_task(member._rescan_when_drained())
+            processed: list[str] = []
+            while len(processed) < len(mails):
+                for mail in self._drain_queue(member):
+                    processed.append(mail.id)
+                    await member._mark_read(mail)
+                await asyncio.sleep(0.01)
+            await asyncio.wait_for(task, timeout=2.0)
+
+        # Every mail was picked up exactly once; the scan went clean and
+        # the rescan task exited on its own.
+        assert sorted(processed) == sorted(m.id for m in mails)
+        assert member._scan_deferred is False
+        assert await mailbox.unread() == []
+
+        await member.shutdown()

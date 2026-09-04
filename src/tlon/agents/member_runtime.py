@@ -29,8 +29,18 @@ defers the read to session completion; a mail the ``:when`` gate rejects is
 read anyway (D6.1, retiring the react "never responds → mail stuck unread"
 quirk). A mail that a full bounded queue drops stays unread for the next
 boot scan. Own mail (sent by this member) is never processed.
+
+Boot-scan throttling (issue ): the unread rescue scan merges one
+thread into one session (the thread's latest unread mail is the
+representative; earlier siblings are marked read as covered — the
+session's mail-history context renders the whole thread), and overflow
+the bounded queue cannot take stays fully unread (deterministic rules
+deferred with it) for a deferred rescan that trickles mail in as the
+scheduler drains — backlog is queued, never dropped on the floor.
 """
 
+import asyncio
+import contextlib
 import time
 import uuid
 from dataclasses import dataclass
@@ -83,6 +93,10 @@ logger = get_logger(__name__)
 
 #: Trace carrier triple for forwarding an event's span tree to a decision.
 Carrier = tuple[str | None, str | None, str | None]
+
+#: Poll interval of the deferred rescan that trickles boot-scan overflow
+#: into the scheduler as sessions drain (issue ).
+_RESCAN_POLL_SECONDS = 5.0
 
 
 class MemberState(Enum):
@@ -187,6 +201,13 @@ class MemberRuntime(Member):
         self._context_builder: ContextBuilder | None = None
         self._logger = logger.bind(agent_id=member_id)
         self._state: MemberState | None = None
+        # Boot-scan throttle state (issue ): mails a scan enqueued
+        # whose sessions have not yet marked them read, whether the last
+        # scan left overflow unread (bounded queue full), and the deferred
+        # rescan task that picks the overflow up.
+        self._scan_pending: set[str] = set()
+        self._scan_deferred = False
+        self._rescan_task: asyncio.Task[None] | None = None
         # Cognitive engine attachment is spec-derived (ADR 0006): a member
         # with a loop rule gets the engine, one without keeps the full
         # capability set unused (lazy assembly — objects are cheap,
@@ -293,6 +314,10 @@ class MemberRuntime(Member):
                 assert self._scheduler is not None
                 self._scheduler.start()
                 self._state = MemberState.ACTIVE
+                if self._scan_deferred:
+                    # Boot-scan overflow stayed unread (bounded queue full):
+                    # trickle it in as the scheduler drains.
+                    self._rescan_task = asyncio.create_task(self._rescan_when_drained())
 
             logger.info(
                 "member_runtime_initialized",
@@ -306,6 +331,11 @@ class MemberRuntime(Member):
         """Shutdown the member: stop the cognitive loop, release
         subscriptions, shut down tools (cancelling background bash tasks)."""
         with bound_contextvars(agent_id=self._member_id):
+            if self._rescan_task is not None:
+                self._rescan_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._rescan_task
+                self._rescan_task = None
             if self._scheduler is not None:
                 await self._scheduler.stop()
             self.unsubscribe_all()
@@ -779,6 +809,7 @@ class MemberRuntime(Member):
         """Mark a processed mail read; failures are logged only."""
         if mail is None or self._mailbox is None:
             return
+        self._scan_pending.discard(mail.id)
         try:
             await self._mailbox.mark_read(mail.id)
         except Exception as e:
@@ -795,10 +826,17 @@ class MemberRuntime(Member):
         """Replay unread inbox mail through the matching rules (boot scan).
 
         Mail that arrived while the member slept sits unread in the inbox.
-        Cognitive members gate and enqueue each unread mail (rejected mail
-        is marked read now, D6.1); deterministic members run the mail rules
-        inline. Every processed mail is marked read — failures of the scan
-        itself are logged and skip the scan only.
+        Cognitive members gate and enqueue unread mail (rejected mail is
+        marked read now, D6.1) under two throttles (issue ): one
+        thread merges into one session — the thread's latest unread mail
+        is the representative, its earlier siblings are marked read as
+        covered (the session's mail-history context renders the whole
+        thread) — and overflow the bounded queue cannot take stays fully
+        unread, deterministic rules deferred with it, for the deferred
+        rescan (falling through to read-marking here used to lose the
+        mail without a session). Deterministic members run the mail rules
+        inline. Failures of the scan itself are logged and skip the scan
+        only.
         """
         if self._mailbox is None:
             return
@@ -811,17 +849,42 @@ class MemberRuntime(Member):
                 error=str(e),
             )
             return
+        cognitive_scan = (
+            self._cognitive is not None
+            and self._cognitive_rule is not None
+            and self._cognitive_rule.on is EventType.MAIL_DELIVERED
+        )
+        # Merge candidates: own mail is read without processing, and a
+        # mail a previous scan enqueued still belongs to its session —
+        # neither takes part in thread merging.
+        candidates = [
+            mail
+            for mail in unread
+            if mail.from_address != self.address and mail.id not in self._scan_pending
+        ]
+        merged = self._merged_thread_ids(candidates) if cognitive_scan else set()
+        dropped = False
         for mail in unread:
             if mail.from_address == self.address:
                 await self._mark_read(mail)
                 continue
+            if mail.id in self._scan_pending:
+                continue  # a previous scan's session owns this mail's read
             cognitive_deferred = False
-            if self._cognitive is not None and self._cognitive_rule is not None:
-                rule = self._cognitive_rule
-                if rule.on is EventType.MAIL_DELIVERED:
-                    result = await self._enqueue_cognitive(rule, mail, trigger_event=None)
-                    if result == "queued":
-                        cognitive_deferred = True
+            if cognitive_scan and mail.id not in merged:
+                assert self._cognitive_rule is not None
+                result = await self._enqueue_cognitive(
+                    self._cognitive_rule, mail, trigger_event=None
+                )
+                if result == "queued":
+                    cognitive_deferred = True
+                    self._scan_pending.add(mail.id)
+                elif result == "dropped":
+                    # Bounded queue full: leave the mail fully unread —
+                    # the deferred rescan picks it up once the scheduler
+                    # drains.
+                    dropped = True
+                    continue
             # Deterministic MAIL_DELIVERED rules always run (phase F: a mixed
             # member's cheap path — auto-optout deflection — fires even when
             # a cognitive rule also matches this mail). Read is deferred only
@@ -832,12 +895,46 @@ class MemberRuntime(Member):
                     await self._run_rule(rule, trigger_event=None, payload=payload)
             if not cognitive_deferred:
                 await self._mark_read(mail)
+        self._scan_deferred = dropped
         if unread:
             logger.info(
                 "member_mail_unread_scanned",
                 member_id=self._member_id,
                 count=len(unread),
+                merged=len(merged),
+                deferred=dropped,
             )
+
+    @staticmethod
+    def _merged_thread_ids(mails: list[Mail]) -> set[str]:
+        """Ids of unread mails covered by a later sibling in the same thread.
+
+        One thread = one session: the latest unread mail of a thread is the
+        representative (enqueued for the cognitive rule); every earlier
+        sibling merges into it.
+        """
+        representative: dict[str, str] = {}
+        for mail in mails:  # chronological, the latest wins
+            representative[mail.thread_id] = mail.id
+        return {mail.id for mail in mails if mail.id != representative[mail.thread_id]}
+
+    async def _rescan_when_drained(self) -> None:
+        """Re-run the unread scan once the scheduler has queue capacity.
+
+        Boot-scan overflow (a full bounded queue) stays unread; this task
+        trickles it in as sessions drain and exits when a scan defers
+        nothing. Mails a previous scan already enqueued are skipped via
+        ``_scan_pending`` — their session owns the read.
+        """
+        while True:
+            await asyncio.sleep(_RESCAN_POLL_SECONDS)
+            if not self._initialized or self._scheduler is None:
+                return
+            if not self._scheduler.has_queue_capacity:
+                continue
+            await self._scan_unread_mail()
+            if not self._scan_deferred:
+                return
 
     # ── Cognitive assembly (member_spec rule → LoopDriver engine) ──
 
