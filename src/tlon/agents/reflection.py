@@ -208,10 +208,25 @@ class ReflectionEngine:
                     )
                     logger.debug("reflection_fact_recorded", description=op.get("description", ""))
                 elif action == "delete_fact":
-                    query = op.get("description") or op.get("fact_id", "")
-                    if query:
-                        await self._memory.forget(query=query, confirm=True)
-                        logger.debug("reflection_fact_deleted", query=query)
+                    fact_id = op.get("fact_id", "")
+                    if fact_id:
+                        deleted = await self._memory.forget_fact(fact_id)
+                        if deleted:
+                            logger.debug("reflection_fact_deleted", fact_id=fact_id)
+                        # Not found / ambiguous: already logged by the manager.
+                    else:
+                        description = op.get("description", "")
+                        if description:
+                            result = await self._memory.forget(
+                                query=description, confirm=True
+                            )
+                            logger.debug(
+                                "reflection_fact_deleted_by_description",
+                                description=description,
+                                result=result,
+                            )
+                        else:
+                            logger.warning("reflection_delete_fact_no_target", operation=op)
                 elif action == "noop":
                     pass
                 else:

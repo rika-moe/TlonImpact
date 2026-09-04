@@ -561,6 +561,52 @@ class MemoryManager:
 
         return f"已删除 {deleted_count} 条记忆。"
 
+    async def forget_fact(self, fact_id: str) -> bool:
+        """Delete one fact by ID (called by the reflection engine).
+
+        The reflection prompt lists facts by an ID prefix, so an exact
+        miss falls back to unique-prefix resolution. Unknown or ambiguous
+        IDs delete nothing and are logged — never a silent no-op.
+
+        Args:
+            fact_id: The fact's full ID or an ID prefix
+
+        Returns:
+            True if exactly one fact was deleted
+        """
+        if not self._loaded:
+            await self.load()
+
+        if await self.episodic.delete_fact(fact_id):
+            logger.info("fact_deleted", agent_id=self.agent_id, fact_id=fact_id)
+            return True
+
+        all_facts = await self.episodic.get_all_facts(include_superseded=True)
+        matches = [f for f in all_facts if str(f.get("id", "")).startswith(fact_id)]
+        if len(matches) == 1:
+            resolved_id = str(matches[0]["id"])
+            await self.episodic.delete_fact(resolved_id)
+            logger.info(
+                "fact_deleted",
+                agent_id=self.agent_id,
+                fact_id=resolved_id,
+                requested_id=fact_id,
+            )
+            return True
+
+        if matches:
+            logger.warning(
+                "fact_delete_ambiguous",
+                agent_id=self.agent_id,
+                fact_id=fact_id,
+                match_count=len(matches),
+            )
+        else:
+            logger.warning(
+                "fact_delete_not_found", agent_id=self.agent_id, fact_id=fact_id
+            )
+        return False
+
     async def get_memory_digest(self, logs: SessionLogReader) -> dict[str, Any]:
         """Get a digest of current memory state for reflection/audit.
 

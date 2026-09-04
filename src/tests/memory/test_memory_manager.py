@@ -1,10 +1,14 @@
-"""MemoryManager.load config semantics.
+"""MemoryManager.load config semantics plus ``forget_fact`` resolution.
 
 ``memory/config.json`` is the single per-agent tuning surface: when it
 exists it is authoritative (the constructor config is defaults in
 production), and its episodic limits must reach the store — which
 snapshots them at construction — before it loads. Guards the wiring in
 agents/agent_registry.py + memory/manager.py.
+
+``forget_fact`` (issue ) is the reflection engine's deletion path:
+exact ID first, then unique-prefix (the reflection prompt shows IDs
+truncated); unknown or ambiguous IDs delete nothing and log a warning.
 """
 
 import json
@@ -87,3 +91,53 @@ async def test_load_tolerates_retired_working_sections(tmp_path: Path) -> None:
 
     assert manager.config.summary_window == 3  # default; old keys ignored
     assert manager.config.episodic_max_summaries == 7
+
+
+# ── forget_fact: ID resolution for the reflection engine (issue ) ──
+
+
+async def test_forget_fact_exact_id(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, None)
+    victim_id = await manager.remember_fact("用户偏好深色主题")
+    keeper_id = await manager.remember_fact("项目使用 Python")
+
+    assert await manager.forget_fact(victim_id) is True
+
+    assert await manager.episodic.get_fact(victim_id) is None
+    assert await manager.episodic.get_fact(keeper_id) is not None
+
+
+async def test_forget_fact_unique_prefix(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, None)
+    victim_id = await manager.remember_fact("过时的部署地址")
+
+    assert await manager.forget_fact(victim_id[:8]) is True
+    assert await manager.episodic.get_fact(victim_id) is None
+
+
+async def test_forget_fact_unknown_id_warns_and_deletes_nothing(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, None)
+    keeper_id = await manager.remember_fact("仍然有效的事实")
+
+    with patch("tlon.memory.manager.logger") as mock_logger:
+        assert await manager.forget_fact("no-such-fact-id") is False
+
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.warning.call_args.args[0] == "fact_delete_not_found"
+    assert await manager.episodic.get_fact(keeper_id) is not None
+
+
+async def test_forget_fact_ambiguous_prefix_warns_and_deletes_nothing(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path, None)
+    await manager.load()
+    for fact_id in ("shared-prefix-1", "shared-prefix-2"):
+        await manager.episodic.add_fact({"id": fact_id, "description": "x"})
+
+    with patch("tlon.memory.manager.logger") as mock_logger:
+        assert await manager.forget_fact("shared-prefix") is False
+
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.warning.call_args.args[0] == "fact_delete_ambiguous"
+    assert len(await manager.episodic.get_all_facts(include_superseded=True)) == 2
