@@ -136,7 +136,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### mailbox 即队列
 
-邮箱是磁盘上的三个文件（`inbox.jsonl` 追加写、`sent.jsonl` 追加写、`inbox.cursor` 已读 id 集合），实现见 [organization/mail/mailbox.py](../src/tlon/organization/mail/mailbox.py) 的 `Mailbox`。邮件先持久化、后处理：唤醒不携带事件载荷，成员启动时扫描未读；运行中队列溢出丢的是「新事件的拷贝」，磁盘上的未读事实不变，下次启动会补扫。同一目录的多个 `Mailbox` 实例（投递缓存、REST `/inbox`、agent 运行时）共享一把按目录的 asyncio 锁（有界 LRU），进程内写互斥。
+邮箱是磁盘上的三个文件（`inbox.jsonl` 追加写、`sent.jsonl` 追加写、`inbox.cursor` 已读 id 集合），实现见 [organization/mail/mailbox.py](../src/tlon/organization/mail/mailbox.py) 的 `Mailbox`。邮件先持久化、后处理：唤醒不携带事件载荷，成员启动时扫描未读；运行中队列溢出丢的是「新事件的拷贝」，磁盘上的未读事实不变，下次启动会补扫。同一目录的多个 `Mailbox` 实例（投递缓存、REST `/inbox`、agent 运行时）共享一把按目录的 asyncio 锁（有界 LRU），进程内写互斥。未读扫描是增量的：按目录的扫描缓存（有界 LRU，与锁表同纪律）记住已解析的字节偏移与解析结果，重复扫描只解析追加部分；文件被替换（inode 变化）或截断时回落全量扫描，崩溃留下的半行不消费、下次重试。
 
 ### DAG 组件装配
 

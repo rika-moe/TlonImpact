@@ -254,6 +254,136 @@ class TestMailbox:
         assert await mailbox.recent() == []
 
 
+class TestIncrementalScan:
+    """unread() parses only the appended tail once an inbox was scanned."""
+
+    async def test_incremental_matches_fresh_full_scan(self, tmp_path: Path):
+        mailbox = Mailbox(tmp_path)
+        mails = [_mail(content=f"m{i}") for i in range(3)]
+        for mail in mails:
+            await mailbox.append_inbox(mail)
+        await mailbox.unread()  # warm the scan cache
+
+        more = [_mail(content=f"n{i}") for i in range(2)]
+        for mail in more:
+            await mailbox.append_inbox(mail)
+        incremental = [m.id for m in await mailbox.unread()]
+
+        mailbox_module._SCANS.clear()  # force a cold full scan
+        full = [m.id for m in await Mailbox(tmp_path).unread()]
+        assert incremental == full == [m.id for m in [*mails, *more]]
+
+    async def test_incremental_parses_only_appended_lines(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        mailbox = Mailbox(tmp_path)
+        first = _mail(content="first")
+        await mailbox.append_inbox(first)
+        await mailbox.unread()  # warm the scan cache
+
+        calls = 0
+        real_from_dict = Mail.from_dict
+
+        def counting_from_dict(data):
+            nonlocal calls
+            calls += 1
+            return real_from_dict(data)
+
+        monkeypatch.setattr(mailbox_module.Mail, "from_dict", counting_from_dict)
+
+        second = _mail(content="second")
+        await mailbox.append_inbox(second)
+        unread = await mailbox.unread()
+
+        assert [m.id for m in unread] == [first.id, second.id]
+        assert calls == 1  # only the appended line was parsed
+
+    async def test_mark_read_then_incremental_append(self, tmp_path: Path):
+        mailbox = Mailbox(tmp_path)
+        first = _mail(content="first")
+        await mailbox.append_inbox(first)
+        await mailbox.mark_read(first.id)
+        assert await mailbox.unread() == []  # warm with everything read
+
+        second = _mail(content="second")
+        await mailbox.append_inbox(second)
+        assert [m.id for m in await mailbox.unread()] == [second.id]
+
+    async def test_malformed_appended_lines_are_skipped(self, tmp_path: Path):
+        mailbox = Mailbox(tmp_path)
+        first = _mail(content="first")
+        await mailbox.append_inbox(first)
+        await mailbox.unread()  # warm the scan cache
+
+        with open(tmp_path / "inbox.jsonl", "a", encoding="utf-8") as f:
+            f.write("not json\n")
+            f.write(json.dumps({"broken": True}) + "\n")
+        good = _mail(content="good")
+        await mailbox.append_inbox(good)
+
+        unread = await mailbox.unread()
+        assert [m.id for m in unread] == [first.id, good.id]
+
+        # A cold full scan agrees with the incremental result.
+        mailbox_module._SCANS.clear()
+        assert [m.id for m in await Mailbox(tmp_path).unread()] == [first.id, good.id]
+
+    async def test_partial_trailing_line_is_retried(self, tmp_path: Path):
+        """A crash-torn append (no trailing newline) is not consumed; it
+        is parsed once the rest of the line lands."""
+        mailbox = Mailbox(tmp_path)
+        first = _mail(content="first")
+        await mailbox.append_inbox(first)
+        assert [m.id for m in await mailbox.unread()] == [first.id]
+
+        second = _mail(content="second")
+        line = json.dumps(second.to_dict(), ensure_ascii=False) + "\n"
+        half = len(line) // 2
+        with open(tmp_path / "inbox.jsonl", "a", encoding="utf-8") as f:
+            f.write(line[:half])  # torn write: no newline yet
+        assert [m.id for m in await mailbox.unread()] == [first.id]
+
+        with open(tmp_path / "inbox.jsonl", "a", encoding="utf-8") as f:
+            f.write(line[half:])  # the line completes
+        assert [m.id for m in await mailbox.unread()] == [first.id, second.id]
+
+    async def test_truncated_inbox_falls_back_to_full_scan(self, tmp_path: Path):
+        mailbox = Mailbox(tmp_path)
+        kept = _mail(content="kept")
+        await mailbox.append_inbox(kept)
+        await mailbox.append_inbox(_mail(content="dropped"))
+        assert len(await mailbox.unread()) == 2  # warm the scan cache
+
+        (tmp_path / "inbox.jsonl").write_text(
+            json.dumps(kept.to_dict(), ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        assert [m.id for m in await mailbox.unread()] == [kept.id]
+
+    async def test_replaced_inbox_falls_back_to_full_scan(self, tmp_path: Path):
+        """An inode change (file replaced) invalidates the scan cache."""
+        mailbox = Mailbox(tmp_path)
+        old = _mail(content="old")
+        await mailbox.append_inbox(old)
+        assert [m.id for m in await mailbox.unread()] == [old.id]  # warm
+
+        new = _mail(content="new")
+        replacement = tmp_path / "inbox.jsonl.new"
+        replacement.write_text(
+            json.dumps(new.to_dict(), ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        replacement.replace(tmp_path / "inbox.jsonl")  # new inode
+
+        assert [m.id for m in await mailbox.unread()] == [new.id]
+
+    async def test_deleted_inbox_clears_scan(self, tmp_path: Path):
+        mailbox = Mailbox(tmp_path)
+        await mailbox.append_inbox(_mail())
+        assert len(await mailbox.unread()) == 1
+
+        (tmp_path / "inbox.jsonl").unlink()
+        assert await mailbox.unread() == []
+
+
 class TestLockLRU:
     """The shared per-directory lock table is a bounded LRU."""
 
