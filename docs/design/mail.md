@@ -72,7 +72,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 解析不到任何人的地址会触发退信：`MailDelivery._bounce` 以 `postmaster@tlon.internal` 名义给发件人回一封信，subject 为 `Undeliverable: ...`，正文列出不存在的地址，`in_reply_to` 指向原信、`thread_id` 继承原线程。退信落在发件人的**收件箱**里，走和普通邮件完全相同的投递路径——所以一个 LLM 发件人会在自己的认知循环里读到退信，自己改正地址重发。错误不需要专门的告警通道，错误本身就是一封邮件。发件人没有邮箱时（postmaster 这类系统地址）退信无处可投，记日志丢弃——这也是退信不会无限循环的原因。
 
-这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。`SendEmailTool` 的受理回执明确告诉 LLM「以退信为唯一的失败信号」，把这条约定写进了工具语义。
+这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。发送侧失败（`EffectExecutor.send_mail` 构造 `Mail` 被拒或 `MAIL_NEW` 发布失败）走同一风格：postmaster 名义的失败通知直接写进发件 agent 自己的收件箱（不经过 `MAIL_NEW`——通知路径不能依赖刚刚失败的那次发布），附一条 `MAIL_DELIVERED` 唤醒它。`SendEmailTool` 的受理回执明确告诉 LLM「以 postmaster 通知为唯一的失败信号」，把这条约定写进了工具语义。
 
 ## 名称解析：唯一权威
 
@@ -90,7 +90,7 @@ resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含
 把各环节串起来，一封 agent 回信从产生到被下一个收件人消费的完整路径：
 
 1. **声明**：act stage 在 `StageOutcome` 里声明 `MailEffect`（stage 是纯变换，不碰外部状态）。
-2. **执行**：`EffectExecutor.send_mail` 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`。
+2. **执行**：`EffectExecutor.send_mail` 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`；失败则改为把 postmaster 失败通知落进自己的收件箱（见「退信是设计意图」），不抛出。
 3. **投递**：`MailDelivery` 展开收件人、解析、写发件人 `sent.jsonl` 与各收件人 `inbox.jsonl`，逐收件人发 `MAIL_DELIVERED`。
 4. **分流**：`MAIL_DELIVERED` 到达三类订阅者——收件人是运行中的 agent，`MemberRuntime` 门控入队；收件人是睡眠的 agent，`AgentRegistry` 发唤醒请求；收件人是人类，`HumanAdapter` fan-out 给在线会话，离线则邮件留在邮箱。
 5. **消费**：agent 在 session 里读到邮件（作为触发邮件进入认知循环），完成后推进 cursor 标已读；人类经 SSE 实时收到或上线后 `GET /inbox` 拉取。
@@ -149,7 +149,7 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 - **纯度可检查**：stage 只声明 `MailEffect` 数据、不直接发布事件，这是 effects-as-data 的一部分，由 [scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 静态强制（见 [docs/design/runtime.md](./runtime.md)）。发信意图是数据，执行是引擎的事。
 - **LLM 心智负担小**：LLM 只需要学会一个工具；线程继承、trace、幂等都是引擎自动给的。
 
-工具本身不投递——`execute` 只返回受理回执，回执文案明确告知 LLM：投递是异步的，地址不存在会收到 postmaster 退信，退信是唯一的失败信号，「不要在本轮向用户承诺已送达」。这句文案是把系统的异步语义翻译成 LLM 能遵守的行为约定。
+工具本身不投递——`execute` 只返回受理回执，回执文案明确告知 LLM：投递是异步的，发送或投递失败会收到 postmaster 的通知邮件，该通知是唯一的失败信号，「不要在本轮向用户承诺已送达」。这句文案是把系统的异步语义翻译成 LLM 能遵守的行为约定。
 
 `is_complete` 参数把「发邮件」和「结束本轮思考」绑定：`false` 表示发中间进度、继续思考（一封协作过程中的中间信，随后还会有别的工具调用和信件）；`true` 表示这是最终回复、结束循环（且本轮只能调 `sendEmail`，不能与其他工具混用——最终回复就是本轮的句号）。这把「agent 每轮思考的产出」与「一封信」对齐：认知循环不是跑到燃料耗尽才停，而是以「回信了」为自然终止条件。对社会而言这意味着每个 session 的产出都落在邮件层可见——没有停留在内存里、随 session 结束蒸发的思考结果；最终答复一定是一封可检索的信。
 
