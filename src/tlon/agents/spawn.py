@@ -1,11 +1,18 @@
 """Spawn budget and derivation logic (split from agent_registry, ).
 
 ``SpawnManager`` owns the stage-6b spawn budget (global activation cap,
-spawn depth, per-session quota; the quota ledger is memory-only — a
-restart zeroes it, acceptable for an anti-runaway cap) and executes the
-two member-derivation flows: ``spawn_member`` (prototype instantiation
-under the budget) and ``adopt_agent`` (hot adoption of an
-out-of-process creation).
+spawn depth, per-session quota) and executes the two member-derivation
+flows: ``spawn_member`` (prototype instantiation under the budget) and
+``adopt_agent`` (hot adoption of an out-of-process creation).
+
+Of the three budgets, only the per-(spawner, session) quota is a ledger,
+and it is persisted (``TlonPaths.spawn_quota_ledger_file``, atomic
+replace): sessions themselves survive a restart via journal replay
+(ADR 0007), so a memory-only quota would let a spawner refill its quota
+by restarting. The activation cap is a runtime fact (the run table is
+empty after a restart — persisting it would import dead members'
+activations) and the spawn depth derives from lineage already persisted
+in each member's ``agent.yaml`` (``spawn_depth``).
 
 The registry is constructor-injected and used for the run table,
 registration, and assembly callbacks; the import direction stays
@@ -13,7 +20,10 @@ one-directional (agent_registry → spawn, the back-reference is a type
 annotation only).
 """
 
+import json
+import os
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from tlon.agents.prototypes import get_prototype_info, instantiate
@@ -51,12 +61,72 @@ class SpawnManager:
         self._max_activations = max_activations
         self._max_spawn_depth = max_spawn_depth
         self._session_spawn_quota = session_spawn_quota
-        # (spawner_id, session_id) -> successful spawn count
-        self._quota: dict[tuple[str, str], int] = {}
+        # (spawner_id, session_id) -> successful spawn count, persisted to
+        # disk so the anti-runaway quota survives restarts (sessions do,
+        # via journal replay).
+        self._ledger_path: Path = (registry._paths or paths).spawn_quota_ledger_file()
+        self._quota: dict[tuple[str, str], int] = self._load_ledger()
 
     def reset(self) -> None:
-        """Zero the quota ledger (registry shutdown)."""
+        """Zero the in-memory quota ledger (registry shutdown).
+
+        The persisted ledger file is deliberately left in place: the
+        quota must survive a process restart or the anti-runaway cap
+        would reset with it.
+        """
         self._quota.clear()
+
+    def _load_ledger(self) -> dict[tuple[str, str], int]:
+        """Load the persisted quota ledger.
+
+        A missing file is the normal first-run state. Corrupt data (bad
+        JSON, wrong shape, malformed entries) warns and starts empty —
+        a broken ledger must never block the server from booting.
+        """
+        path = self._ledger_path
+        if not path.exists():
+            return {}
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            entries = raw.get("quota") if isinstance(raw, dict) else None
+            if not isinstance(entries, list):
+                raise ValueError("missing 'quota' list")
+        except (OSError, ValueError) as e:
+            logger.warning("spawn_quota_ledger_unreadable", file_path=str(path), error=str(e))
+            return {}
+        quota: dict[tuple[str, str], int] = {}
+        for entry in entries:
+            if (
+                isinstance(entry, dict)
+                and isinstance(entry.get("spawner"), str)
+                and isinstance(entry.get("session"), str)
+                and isinstance(entry.get("count"), int)
+                and entry["count"] > 0
+            ):
+                quota[(entry["spawner"], entry["session"])] = entry["count"]
+            else:
+                logger.warning("spawn_quota_ledger_entry_skipped", entry=repr(entry))
+        return quota
+
+    def _save_ledger(self) -> None:
+        """Persist the quota ledger (atomic replace: temp file + rename).
+
+        A failed save logs and leaves the in-memory ledger authoritative
+        for this process — the cap still holds until the next restart.
+        """
+        entries = [
+            {"spawner": spawner, "session": session, "count": count}
+            for (spawner, session), count in sorted(self._quota.items())
+        ]
+        payload = json.dumps({"version": 1, "quota": entries}, ensure_ascii=False) + "\n"
+        tmp_path = self._ledger_path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(payload, encoding="utf-8")
+            os.replace(tmp_path, self._ledger_path)
+        except OSError as e:
+            logger.error(
+                "spawn_quota_ledger_save_failed", file_path=str(self._ledger_path), error=str(e)
+            )
 
     async def spawn_member(
         self,
@@ -181,6 +251,7 @@ class SpawnManager:
             )
 
         self._quota[quota_key] = used + 1
+        self._save_ledger()
         registry.register(agent_id)
         agent = await registry._start_agent(agent_id)
 

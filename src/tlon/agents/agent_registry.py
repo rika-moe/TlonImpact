@@ -168,9 +168,9 @@ class AgentRegistry(Component):
         self._agent_info = agent_info_provider
         self._paths = paths  # None means use module singleton
 
-        # Spawn budget + idle reaper (stage 6b / scale-to-zero). The quota
-        # ledger lives in memory only — a restart zeroes it, which is
-        # acceptable for an anti-runaway cap.
+        # Spawn budget + idle reaper (stage 6b / scale-to-zero). The
+        # per-session quota ledger is persisted (sessions survive a
+        # restart via journal replay, so the anti-runaway cap must too).
         self._spawn = SpawnManager(self, max_activations, max_spawn_depth, session_spawn_quota)
         self._reaper = IdleReaper(self)
 

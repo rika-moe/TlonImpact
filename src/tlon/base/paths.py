@@ -8,8 +8,9 @@ Layout:
     ├── shared/
     │   ├── traces/
     │   │   └── trace-{uuid}.jsonl
-    │   └── logs/
-    │       └── server-{date}.jsonl
+    │   ├── logs/
+    │   │   └── server-{date}.jsonl
+    │   └── spawn-quota.json
     ├── {agent_id}/
     │   ├── config/
     │   │   └── agent.yaml
@@ -259,6 +260,17 @@ class TlonPaths:
         d = self.shared_dir() / "logs"
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def spawn_quota_ledger_file(self) -> Path:
+        """~/.tlon/shared/spawn-quota.json — persisted spawn quota ledger.
+
+        The (spawner, session) spawn quota ledger (``agents/spawn.py``
+        ``SpawnManager``) survives process restarts: sessions themselves
+        persist via journal replay (ADR 0007), so the anti-runaway quota
+        must persist too. Read-only resolution: does NOT create the file —
+        an absent ledger is the normal first-run state.
+        """
+        return self.shared_dir() / "spawn-quota.json"
 
 
 # Module-level default instance for convenience
