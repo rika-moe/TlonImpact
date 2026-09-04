@@ -12,6 +12,7 @@ from tlon.tools.base import Tool, ToolResult
 logger = get_logger(__name__)
 
 _MAX_BACKGROUND_TASKS = 20
+_MAX_FINISHED_TASKS = 50
 
 
 class ExecuteBashTool(Tool):
@@ -54,6 +55,9 @@ class ExecuteBashTool(Tool):
         self._docker_runtime = docker_runtime
         # Per-instance background task table: each agent owns its quota and
         # task handles, so concurrent agents never share or starve it.
+        # Finished tasks stay in the table (an asyncio.Task holds its result)
+        # so checkBashTask can return real output; the oldest finished entries
+        # are evicted once more than _MAX_FINISHED_TASKS have completed.
         self._background_tasks: dict[str, asyncio.Task[ExecutionResult]] = {}
 
     @property
@@ -114,7 +118,9 @@ class ExecuteBashTool(Tool):
 
     async def _execute_background(self, command: str, timeout: int) -> ToolResult:
         """Execute a command in the background and return immediately."""
-        if len(self._background_tasks) >= _MAX_BACKGROUND_TASKS:
+        self._evict_finished_tasks()
+        running = sum(1 for task in self._background_tasks.values() if not task.done())
+        if running >= _MAX_BACKGROUND_TASKS:
             return ToolResult(
                 success=False,
                 data={},
@@ -130,7 +136,6 @@ class ExecuteBashTool(Tool):
             return await docker_runtime.execute(command, timeout=timeout)
 
         task = asyncio.create_task(_run())
-        task.add_done_callback(lambda _: self._background_tasks.pop(task_id, None))
         self._background_tasks[task_id] = task
 
         return ToolResult(
@@ -142,6 +147,18 @@ class ExecuteBashTool(Tool):
             },
             message=f"✅ 后台任务已启动 ({task_id})",
         )
+
+    def _evict_finished_tasks(self) -> None:
+        """Drop the oldest finished tasks beyond the retention window.
+
+        The dict preserves insertion order, so the finished tasks at the
+        front are the longest-retained results. Eviction happens lazily on
+        the next background start, keeping the table bounded at
+        _MAX_BACKGROUND_TASKS running + _MAX_FINISHED_TASKS finished.
+        """
+        finished = [task_id for task_id, task in self._background_tasks.items() if task.done()]
+        for task_id in finished[:-_MAX_FINISHED_TASKS]:
+            del self._background_tasks[task_id]
 
 
 class CheckBashTaskTool(Tool):
@@ -187,7 +204,13 @@ class CheckBashTaskTool(Tool):
             return ToolResult(
                 success=False,
                 data={},
-                error=f"Task '{task_id}' not found. It may have already completed.",
+                error=(
+                    f"Task '{task_id}' not found. It either never existed, "
+                    f"finished and was evicted from the retention window "
+                    f"(last {_MAX_FINISHED_TASKS} finished tasks per agent), "
+                    f"or the process restarted (the task table is in-memory "
+                    f"and does not survive restarts)."
+                ),
             )
 
         if not task.done():
@@ -213,6 +236,15 @@ class CheckBashTaskTool(Tool):
                 },
                 error=result.stderr if result.exit_code != 0 else "",
                 message=f"✅ 任务 {task_id} 已完成 (exit code: {result.exit_code})",
+            )
+        except asyncio.CancelledError:
+            return ToolResult(
+                success=False,
+                data={
+                    "task_id": task_id,
+                    "status": "cancelled",
+                },
+                error=f"Task '{task_id}' was cancelled before completing; no output was captured.",
             )
         except Exception as e:
             return ToolResult(

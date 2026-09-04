@@ -152,7 +152,7 @@ old_string/new_string 精确替换模型。
 
 前台：返回 `exit_code`/`stdout`/`stderr`；`success` 等于 `exit_code == 0`，非零时 `error` 为 stderr 内容。
 
-后台（`background=true`）：立即返回 `success=True` 和 `data={task_id, command(截断200字符), status="running"}`；任务在该 agent 的后台任务表里执行，上限 20 个（`_MAX_BACKGROUND_TASKS`），超限直接拒绝。任务表是 per-agent 的，agent 之间互不可见。
+后台（`background=true`）：立即返回 `success=True` 和 `data={task_id, command(截断200字符), status="running"}`；任务在该 agent 的后台任务表里执行，运行中任务上限 20 个（`_MAX_BACKGROUND_TASKS`，只统计未完成，已完成结果不占配额），超限直接拒绝。任务表是 per-agent 的，agent 之间互不可见。任务完成后结果（exit code/stdout/stderr）保留在任务表中供 `checkBashTask` 查询，每个 agent 最多保留最近 50 个已完成结果（`_MAX_FINISHED_TASKS`），超出后启动新后台任务时从最老的开始逐出。
 
 注意事项：
 
@@ -165,9 +165,12 @@ old_string/new_string 精确替换模型。
 |---|---|---|---|
 | `task_id` | string | 是 | `executeBashCommand` 后台模式返回的 id |
 
-返回：执行中 → `status="running"`；完成 → `status="completed"` + `exit_code`/`stdout`/`stderr`；任务抛异常 → `success=False, status="failed"`。
+返回：执行中 → `status="running"`；完成 → `status="completed"` + `exit_code`/`stdout`/`stderr`；任务被取消 → `success=False, status="cancelled"`；任务抛异常 → `success=False, status="failed"`。
 
-注意事项：任务完成时 done callback 会把它从任务表中移除，因此查一个已完成任务通常得到 `success=False, error="Task '...' not found. It may have already completed."`——想拿到输出要在任务刚完成、尚未被移除的窗口内查询，实践中基本拿不到。后台任务的可靠产出方式是命令自己写文件，再用 `readFile` 读。
+注意事项：
+
+- 已完成任务的结果保留在 per-agent 任务表中，可重复查询；保留窗口为每个 agent 最近 50 个已完成结果（`_MAX_FINISHED_TASKS`），更早的结果在启动新后台任务时被逐出。
+- 查不到任务时返回 `success=False`，error 说明三种可能：任务从未存在、已完成并被逐出保留窗口、或进程已重启（任务表是内存态，不随重启存活）。无法进一步区分这三种情况——需要长期可靠产出时请让命令自己写文件，再用 `readFile` 读。
 
 ## memory
 
