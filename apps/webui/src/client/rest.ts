@@ -426,12 +426,18 @@ export class RestClient {
 
   /** Trusted prototype detail: metadata + full behavior.tlon source. */
   async getPrototype(name: string): Promise<PrototypeDetail> {
-    return this.get(`/admin/prototypes/${encodeURIComponent(name)}`);
+    const data = await this.get<{ prototype: PrototypeDetail }>(
+      `/admin/prototypes/${encodeURIComponent(name)}`,
+    );
+    return data.prototype;
   }
 
   /** Staging prototype detail, same shape as getPrototype. */
   async getStagingPrototype(name: string): Promise<PrototypeDetail> {
-    return this.get(`/admin/prototypes/staging/${encodeURIComponent(name)}`);
+    const data = await this.get<{ prototype: PrototypeDetail }>(
+      `/admin/prototypes/staging/${encodeURIComponent(name)}`,
+    );
+    return data.prototype;
   }
 
   /** Handwritten creation: lands directly in the trusted library (201). */
