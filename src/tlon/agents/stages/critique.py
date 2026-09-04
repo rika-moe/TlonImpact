@@ -17,10 +17,13 @@ async def critique_stage(
     """critique stage (phase 7c): review the round's latest output.
 
     Parses the verdict's first line: PASS -> passed; FAIL -> failed
-    with the remaining text as feedback; anything unparseable passes
-    (lenient default — critique never blocks the main flow). The
-    verdict is declared for the loop scratchpad. Fails soft like plan;
-    does not consume or produce the round's response.
+    with the remaining text as feedback; an unparseable first line is
+    "we don't know the review outcome" — treating it as PASS would be
+    fail-open, so the critique is skipped like a soft failure (warning
+    logged, no verdict written: neither critique-passed? nor
+    critique-failed? fires, revise is not triggered). The verdict is
+    declared for the loop scratchpad. Fails soft like plan; does not
+    consume or produce the round's response.
     """
     try:
         verdict_response = await svc.think(
@@ -49,11 +52,23 @@ async def critique_stage(
     text = (verdict_response.content or "").strip()
     first_line, _, rest = text.partition("\n")
     verdict = first_line.strip()
-    if verdict.startswith("FAIL"):
+    if verdict.startswith("PASS"):
+        passed, feedback = True, ""
+    elif verdict.startswith("FAIL"):
         passed, feedback = False, rest.strip()
     else:
-        # PASS or unparseable: lenient default, never block the flow.
-        passed, feedback = True, ""
+        # Unparseable verdict: an unknown review outcome must not be
+        # recorded as PASS (fail-open). Skip this critique like the
+        # soft-failure path above — no verdict in scratch, so neither
+        # critique-passed? nor critique-failed? fires and revise is not
+        # triggered — but leave a visible warning.
+        svc.logger.warning(
+            "critique_verdict_unparseable",
+            session_id=session.id,
+            stage="critique",
+            raw=text[:200],
+        )
+        return StageOutcome(response=response)
     return StageOutcome(
         response=response,
         scratch_updates={"critique": {"passed": passed, "feedback": feedback}},
