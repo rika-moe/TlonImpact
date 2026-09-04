@@ -564,6 +564,67 @@ class TestFailureReply:
         assert "错误" in effect.content
 
 
+# ── Max-iterations exhaustion: the reply distills the work done ─────────
+
+
+class TestMaxIterationsDistillReply:
+    """The hard-ceiling termination distills the session's intermediate
+    work into the reply via one extra LLM call; a failed distillation
+    falls back to the fixed text (the termination path must never fail)."""
+
+    @staticmethod
+    def _responses(rounds: int) -> list[LLMResponse]:
+        # Content-only rounds: act appends the no-tool reminder and
+        # advances the iteration, so the loop burns to the hard ceiling.
+        return [LLMResponse(content=f"working {i}") for i in range(rounds)]
+
+    async def test_max_iterations_sends_distilled_reply(self, tmp_path: Path) -> None:
+        mail = _mail()
+        driver, journal, executor, services = _make_driver(
+            tmp_path, self._responses(10)
+        )
+        services.distill = AsyncMock(
+            return_value=LLMResponse(content="已查到三份资料并整理了大纲，但报告尚未写完。")
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "max_iterations"
+        executor.send_mail.assert_awaited_once()
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.to == ["user@tlon.internal"]
+        assert effect.in_reply_to == mail.id
+        assert effect.thread_id == mail.thread_id
+        assert effect.content == "已查到三份资料并整理了大纲，但报告尚未写完。"
+        # The distillation input is the context tail plus the instruction
+        # carrying the original request.
+        distill_messages = services.distill.await_args.args[1]
+        assert mail.content in distill_messages[-1]["content"]
+        assert any("working 9" in str(m.get("content")) for m in distill_messages)
+
+    async def test_max_iterations_distill_failure_falls_back(self, tmp_path: Path) -> None:
+        mail = _mail()
+        driver, journal, executor, services = _make_driver(
+            tmp_path, self._responses(10)
+        )
+        services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "max_iterations"
+        executor.send_mail.assert_awaited_once()
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.content == "思考时间过长，请简化您的问题。"
+
+
 class TestSchedulerFailureReply:
     """Session timeout / stage error both reply to the trigger mail's
     sender before the reap (the scheduler owns the fatal paths; the

@@ -34,7 +34,7 @@ from functools import partial
 from typing import Any
 
 from tlon.agents.builtins import LOOP_BUILTINS, STAGE_COND_BUILTINS, EvalError
-from tlon.agents.context_pressure import ContextPressure
+from tlon.agents.context_pressure import ContextPressure, estimate_tokens
 from tlon.agents.eval import DEFAULT_FUEL, eval_form
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberLoop, MemberRule
@@ -58,6 +58,24 @@ from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 
 logger = get_logger(__name__)
+
+#: Fallback reply when max_iterations is hit and the distillation call
+#: itself fails — the termination path must never fail.
+_MAX_ITERATIONS_FALLBACK = "思考时间过长，请简化您的问题。"
+
+#: Distillation prompt for the max-iterations reply: the engine's hard
+#: ceiling fired mid-work, so one extra LLM call condenses the session's
+#: intermediate results into the reply instead of a bare apology.
+_MAX_ITERATIONS_SYSTEM_PROMPT = (
+    "你是通过邮件工作的智能体。你处理一封来信时达到了内部迭代上限，任务未能彻底完成。"
+    "请根据给出的工作记录，给来信人写一封简短的中文回信：说明已经做了什么、"
+    "进展到哪一步、为什么没能完成。语气诚恳简洁，只输出回信正文。"
+)
+
+#: Token budget (estimate_tokens units) for the distillation input tail:
+#: a session that hit the ceiling may sit near the context-window cap,
+#: so the input is the key tail, never the full context.
+_DISTILL_TOKEN_BUDGET = 40_000
 
 class LoopDriver:
     """Drives the ReAct step/collect cycle for agent sessions."""
@@ -162,7 +180,9 @@ class LoopDriver:
         loop = self._loop
 
         # Engine hard ceiling: max_iterations is an infrastructure cap,
-        # enforced no matter what the until expression says.
+        # enforced no matter what the until expression says. Exhaustion
+        # is not failure — the session's intermediate work is distilled
+        # into the reply by one extra LLM call (fixed-text fallback).
         if session.iteration >= loop.max_iterations:
             log.warning(
                 "session_max_iterations",
@@ -172,7 +192,7 @@ class LoopDriver:
             await self._executor.send_mail(
                 MailEffect(
                     to=[mail.from_address],
-                    content="思考时间过长，请简化您的问题。",
+                    content=await self._distill_reply(session),
                     in_reply_to=mail.id,
                     thread_id=mail.thread_id,
                 )
@@ -373,6 +393,56 @@ class LoopDriver:
         )
         await self._journal.append(session.id, "session/end", reason="until", detail=reason)
         session.mark_completed()
+
+    async def _distill_reply(self, session: AgentSession) -> str:
+        """Distill the session's intermediate work into the max-iterations reply.
+
+        One extra LLM call over the context tail turns the completed
+        rounds (thoughts, tool results) into a reply saying what was
+        done, how far it got, and why it stopped. Fully defensive: any
+        failure (LLM error, timeout, empty answer) falls back to the
+        fixed text — the termination path itself must never fail.
+        """
+        log = self._services.logger
+        try:
+            response = await self._services.distill(
+                _MAX_ITERATIONS_SYSTEM_PROMPT,
+                self._distill_messages(session),
+                span="agent.distill",
+            )
+            content = (response.content or "").strip()
+            if not content:
+                raise ValueError("empty distillation")
+            return content
+        except Exception as e:
+            log.warning(
+                "max_iterations_distill_failed", session_id=session.id, error=str(e)
+            )
+            return _MAX_ITERATIONS_FALLBACK
+
+    @staticmethod
+    def _distill_messages(session: AgentSession) -> list[dict[str, Any]]:
+        """Build the distillation input: context tail under a token budget.
+
+        The session may sit near the context-window cap after hitting the
+        ceiling, so the input is the key tail (most recent rounds, where
+        the progress lives) rather than the full context. The instruction
+        carries the original request, which the tail may no longer reach.
+        """
+        tail: list[dict[str, Any]] = []
+        tokens = 0
+        for message in reversed(session.context):
+            cost = estimate_tokens([message])
+            if tail and tokens + cost > _DISTILL_TOKEN_BUDGET:
+                break
+            tail.append(message)
+            tokens += cost
+        tail.reverse()
+        instruction = (
+            "以上是你处理来信时的工作记录（可能不完整）。原始来信内容：\n\n"
+            f"{session.trigger_content}\n\n请写回信正文。"
+        )
+        return [*tail, {"role": "user", "content": instruction}]
 
     async def send_failure_reply(self, mail: Mail, reason: str) -> None:
         """Reply to the trigger mail's sender when the scheduler ends a
