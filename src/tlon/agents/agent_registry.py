@@ -139,6 +139,11 @@ class AgentRegistry(Component):
     # the agent's wake lock forever (restores the old boot-loop guard).
     _START_TIMEOUT_SECONDS = 60
 
+    # Pending-stop watcher poll interval (seconds): a stop registered with
+    # when_idle=true fires as soon as the member's sessions drain — it
+    # must not wait for the idle reaper's timeout.
+    _PENDING_STOP_POLL_SECONDS = 1.0
+
     def __init__(
         self,
         event_bus: EventBus,
@@ -193,6 +198,15 @@ class AgentRegistry(Component):
         # lock per agent serializing start/drain of the same persona
         self._waking: set[str] = set()
         self._wake_locks: dict[str, asyncio.Lock] = {}
+
+        # Pending stops (stopAgent when_idle=true): agent_id → stopped_by,
+        # with one watcher task per entry. In-memory only — a pending stop
+        # is a one-shot intent tied to the current activation; across a
+        # restart the target's session state changes anyway and the caller
+        # can re-issue, so persistence would add nothing ( precedent:
+        # transient runtime intents are not journaled).
+        self._pending_stops: dict[str, str] = {}
+        self._pending_stop_tasks: dict[str, asyncio.Task[None]] = {}
 
         # Lifecycle request subscriptions + idle monitor task
         self._request_subscriptions: list[str] = []
@@ -345,6 +359,14 @@ class AgentRegistry(Component):
             with suppress(asyncio.CancelledError):
                 await self._idle_monitor_task
             self._idle_monitor_task = None
+
+        # Pending stops die with the process (in-memory one-shot intents)
+        for task in list(self._pending_stop_tasks.values()):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        self._pending_stop_tasks.clear()
+        self._pending_stops.clear()
 
         # Stop lifecycle request subscriptions
         for subscription in self._request_subscriptions:
@@ -679,7 +701,7 @@ class AgentRegistry(Component):
         """
         return await self._spawn.spawn_member(prototype, name, spawner_id, session_id, params)
 
-    async def stop_member(self, agent_id: str, stopped_by: str) -> bool:
+    async def stop_member(self, agent_id: str, stopped_by: str, when_idle: bool = False) -> bool:
         """Stop a member: drain-check, then put it to sleep.
 
         Unified member model (ADR 0006): stopping never deletes — a member
@@ -689,15 +711,27 @@ class AgentRegistry(Component):
         is accepted is policy (decision 7); the registry executes requests
         idempotently and re-checks drain conditions under the lock.
 
+        Pending semantics (``when_idle=True``): instead of rejecting a
+        member with live sessions, register a "stop when idle" intent —
+        a watcher fires the stop the moment the sessions drain (it does
+        not wait for the idle timeout). Registration is idempotent:
+        re-registering just refreshes the audit ``stopped_by``. A member
+        that wakes back up during the wait simply keeps the watcher
+        waiting — the intent is condition-based, not a timer.
+
         Args:
             agent_id: member to stop
             stopped_by: agent id requesting the stop (audit)
+            when_idle: register a pending stop instead of rejecting when
+                the member has live sessions
 
         Returns:
-            True when the member was stopped (asleep).
+            True when the member was stopped (asleep); False when a
+            pending stop was registered instead (``when_idle=True`` only).
 
         Raises:
-            StopRejectedError: unknown agent / live sessions
+            StopRejectedError: unknown agent / live sessions without
+                ``when_idle``
         """
         config = self._agent_info.get_config(agent_id)
         if config is None:
@@ -705,11 +739,14 @@ class AgentRegistry(Component):
 
         agent = self._agents.get(agent_id)
         if agent is not None and agent.active_session_count > 0:
-            raise StopRejectedError(
-                "active_sessions",
-                f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
-                "wait for them to finish (drain)",
-            )
+            if not when_idle:
+                raise StopRejectedError(
+                    "active_sessions",
+                    f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
+                    "wait for them to finish (drain), or stop with when_idle=true",
+                )
+            self._register_pending_stop(agent_id, stopped_by)
+            return False
 
         # Serialize with a concurrent wake of the same persona
         lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
@@ -720,6 +757,9 @@ class AgentRegistry(Component):
                 # the race window keeps the member awake
                 if agent.active_session_count > 0:
                     self._agents[agent_id] = agent
+                    if when_idle:
+                        self._register_pending_stop(agent_id, stopped_by)
+                        return False
                     raise StopRejectedError(
                         "active_sessions",
                         f"agent '{agent_id}' gained a live session; stop aborted",
@@ -742,8 +782,76 @@ class AgentRegistry(Component):
                 )
             )
 
+        # The stop fulfills any pending intent for this member (cancel the
+        # watcher outside the wake lock; never cancel ourselves — the
+        # watcher calls stop_member to fire its intent).
+        self._pending_stops.pop(agent_id, None)
+        watcher = self._pending_stop_tasks.pop(agent_id, None)
+        if watcher is not None and watcher is not asyncio.current_task():
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+
         logger.info("agent_stopped", agent_id=agent_id, stopped_by=stopped_by)
         return True
+
+    def _register_pending_stop(self, agent_id: str, stopped_by: str) -> None:
+        """Register a "stop when idle" intent and start its watcher.
+
+        Idempotent: a repeated registration refreshes the audit
+        ``stopped_by`` and reuses the existing watcher task.
+        """
+        self._pending_stops[agent_id] = stopped_by
+        if agent_id in self._pending_stop_tasks:
+            return
+        logger.info("pending_stop_registered", agent_id=agent_id, stopped_by=stopped_by)
+        self._pending_stop_tasks[agent_id] = asyncio.create_task(
+            self._watch_pending_stop(agent_id)
+        )
+
+    async def _watch_pending_stop(self, agent_id: str) -> None:
+        """Fire a pending stop the moment the member's sessions drain.
+
+        Polls ``active_session_count`` (the same criterion ``stop_member``
+        drains on) and delegates the actual stop to ``stop_member`` so the
+        drain re-check under the wake lock stays the single guard. The
+        watcher exits when the intent is cancelled (stopped by other
+        means), fulfilled (member asleep), or the member is gone from the
+        config; a member that wakes back up during the wait just keeps the
+        watcher waiting.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self._PENDING_STOP_POLL_SECONDS)
+                stopped_by = self._pending_stops.get(agent_id)
+                if stopped_by is None:
+                    return  # cancelled — stopped (or removed) by other means
+                agent = self._agents.get(agent_id)
+                if agent is None:
+                    # Already asleep (drained or stopped): intent fulfilled.
+                    self._pending_stops.pop(agent_id, None)
+                    return
+                if agent.active_session_count > 0:
+                    continue
+                self._pending_stops.pop(agent_id, None)
+                try:
+                    stopped_now = await self.stop_member(
+                        agent_id, stopped_by=stopped_by, when_idle=True
+                    )
+                except StopRejectedError as e:
+                    # Only unknown_agent can reach here (the member left
+                    # the config); the intent is unfulfillable.
+                    logger.warning(
+                        "pending_stop_dropped", agent_id=agent_id, reason=e.reason
+                    )
+                    return
+                if stopped_now:
+                    logger.info("pending_stop_fired", agent_id=agent_id)
+                    return
+                # A session slipped into the race window: stop_member
+                # re-registered the intent — keep watching.
+        finally:
+            self._pending_stop_tasks.pop(agent_id, None)
 
     async def remove_member(self, agent_id: str, removed_by: str) -> bool:
         """Administrative removal of a member (wizard removal, ADR 0006).

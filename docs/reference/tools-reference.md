@@ -294,7 +294,7 @@ old_string/new_string 精确替换模型。
 | `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 ops 中批准；先于一切预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
-| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本只在内存，重启清零） |
+| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活） |
 | `config_reload_failed` | 新配置未能被 config provider 加载 |
 
 prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `success=False` 返回。session 归属经 structlog contextvars 里的 `session_id` 绑定，用于配额记账。
@@ -306,8 +306,11 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `agent_id` | string | 是 | 要停止的 agent_id |
+| `when_idle` | boolean | 否 | `true` 时有活会话不拒绝，改为登记挂起停止（默认 `false`） |
 
 拒绝行为（`StopRejectedError`，`data.reason`）：`unknown_agent`（不存在）、`active_sessions`（drain 语义：有进行中的 session 就拒绝，停止临界区内在锁内复检一次）。
+
+挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员被其他途径停止/排空即视为意图达成，watcher 自清。挂起状态只在内存（ 先例：瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
 
 ### listAgents
 
