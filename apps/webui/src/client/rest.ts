@@ -520,7 +520,7 @@ export class RestClient {
     values: {
       base_url: string;
       api_key: string;
-      model_name: string;
+      model: string;
       temperature: number;
     };
   }> {
@@ -534,7 +534,7 @@ export class RestClient {
   async updateSettingsEnv(body: {
     base_url?: string;
     api_key?: string;
-    model_name?: string;
+    model?: string;
     temperature?: number;
   }): Promise<Record<string, unknown>> {
     return this.send("PUT", "/admin/settings/env", body);

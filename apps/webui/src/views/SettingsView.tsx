@@ -6,14 +6,14 @@ import "../styles/settings.css";
 interface EnvForm {
   base_url: string;
   api_key: string;
-  model_name: string;
+  model: string;
   temperature: string;
 }
 
 const ENV_FIELDS: ReadonlyArray<keyof EnvForm> = [
   "base_url",
   "api_key",
-  "model_name",
+  "model",
   "temperature",
 ];
 
@@ -64,7 +64,7 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
   const [form, setForm] = useState<EnvForm>({
     base_url: "",
     api_key: "",
-    model_name: "",
+    model: "",
     temperature: "",
   });
   const [saving, setSaving] = useState(false);
@@ -95,7 +95,7 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
       setForm({
         base_url: data.values.base_url ?? "",
         api_key: "",
-        model_name: data.values.model_name ?? "",
+        model: data.values.model ?? "",
         temperature: String(data.values.temperature ?? ""),
       });
       setEnvError(null);
@@ -137,7 +137,7 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
       await rest.updateSettingsEnv({
         base_url: form.base_url.trim() || undefined,
         api_key: form.api_key.trim() || undefined,
-        model_name: form.model_name.trim() || undefined,
+        model: form.model.trim() || undefined,
         temperature: Number.isFinite(temp) ? temp : undefined,
       });
       setSaved("已保存 — 重启 dream 生效");
