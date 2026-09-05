@@ -59,6 +59,23 @@ uv run pytest
 - 验证八件套：`uv run pytest src/tests/ -q`、`uv run ruff check src/`、`uv run python scripts/check_architecture.py`、`uv run python scripts/check_no_reexport.py`、`uv run python scripts/check_stage_purity.py`、`uv run mypy src/tlon`、`uv run lint-imports`、`uv run python scripts/gen_reference_docs.py --check`（文档保鲜门），全绿才算完
 - 真实冒烟：起 dream + SDK 发邮件 + 查 `~/.tlon` 收件箱验证；完事清理冒烟痕迹、释放 8080 端口
 
+### EPIC 施工流程（AI 自服务闭环）
+
+EPIC issue（任务清单型）的 standardized 施工法，已在 // 验证。默认仍是「等人类合并」；用户明确说「自己合并」后才进入自服务闭环。
+
+1. **拆分**：一个任务项一个 PR，严格串行。施工顺序按文件冲突邻接排（改同一区域的项相邻施工），有依赖的按依赖序。
+2. **每个 PR 的循环**：
+   - `checkout main && pull`，拉新分支（`fix|feat|perf(<域>): 描述`）
+   - 派 coder subagent 实现：brief 给文件:行号、已核实事实、设计约束（边界/不做什么）、测试要求、八件套命令、**禁止 git 操作**
+   - 主会话复核：审 diff（重点抽查 subagent 声明的关键事实，如接口签名、调用方、共享可变性），亲自重跑八件套——不盲信汇报
+   - commit（conventional 格式 + 中文描述 + `Refs #issue`）→ push → `gh pr create`（body：修复内容/实现/设计决策/测试/验证结果/偏离说明）→ `gh pr checks <N> --watch` 等 CI → 绿后 `gh pr merge <N> --squash` → 删本地分支 → 下一个
+3. **收尾**：全部合并后回 EPIC issue 勾选任务清单并标注 PR 号。
+4. **事故处理**（都是实战踩过的）：
+   - subagent 超时：先查工作区落盘情况——改动完整则主会话接手审查验证后自行提交；不完整或无产出则 resume 续跑
+   - `gh` 网络 EOF：直接重试；重试前先确认真实状态（PR 是否已建、merge 是否已发生），防重复操作
+   - 施工中发现既有文档欠账（前序 PR 漏同步的描述）：顺带修，在 PR 描述中注明
+   - 网络抖动后 `git pull` 失败导致分支基点错误的，删了重建分支再继续
+
 ### 质量准则
 - 既有测试无需保障通过率， 没通过的单元测试可以直接删除明
 - 文档与代码同步：设计文档随代码更新；历史达成情况保留，被废止的决策用删除线或新决策覆盖
@@ -70,4 +87,4 @@ uv run pytest
 
 ---
 
-*最后更新：2026-08-30*
+*最后更新：2026-09-05*
