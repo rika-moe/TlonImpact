@@ -61,22 +61,30 @@ class EffectExecutor:
     async def send_mail(self, effect: MailEffect) -> None:
         """Send a declared mail via the event bus, injecting the trace context.
 
-        Reply headers (``in_reply_to`` / ``thread_id``) are declared by
-        the stage, which derives them from the session's trigger mail;
-        both default to a fresh thread. Never raises: a failure is
-        logged and answered with a postmaster-style notice in the
-        agent's own inbox (the same failure signal the delivery bounce
-        gives), not propagated into the loop.
+        Reply headers are declared by the stage: ``in_reply_to`` is the
+        model's explicit choice or the session's trigger mail, and the
+        ``thread_id`` declared alongside is only the trigger-derived
+        fallback — the thread must follow the *referenced* mail, which
+        only a mailbox read can establish (stages stay I/O-free). The
+        reference is validated against the agent's own mailbox: a mail
+        referencing an id the mailbox does not hold (typically a
+        hallucinated id) is not sent at all, instead of shipping with a
+        dangling reference. Both headers default to a fresh thread.
+        Never raises: a failure is logged and answered with a
+        postmaster-style notice in the agent's own inbox (the same
+        failure signal the delivery bounce gives), not propagated into
+        the loop.
         """
         try:
+            in_reply_to, thread_id = await self._resolve_reply_headers(effect)
             mail = Mail.create(
                 from_address=self.identity.address,
                 to=effect.to,
                 cc=effect.cc,
                 subject=effect.subject,
                 content=effect.content,
-                in_reply_to=effect.in_reply_to,
-                thread_id=effect.thread_id,
+                in_reply_to=in_reply_to,
+                thread_id=thread_id,
             )
             with start_span(
                 "mail.send",
@@ -95,6 +103,28 @@ class EffectExecutor:
         except Exception as e:
             self._logger.error("mail_emit_failed", exc_info=True)
             await self._notify_send_failure(effect, e)
+
+    async def _resolve_reply_headers(self, effect: MailEffect) -> tuple[str | None, str | None]:
+        """Validate the reply reference and derive the thread from it.
+
+        The referenced mail is looked up in the agent's own mailbox
+        (inbox + sent — the only mails an agent can legitimately reply
+        to); the reply joins the referenced mail's thread. Without a
+        mailbox (bare test setups) the declared headers pass through
+        unresolved.
+
+        Raises:
+            ValueError: The referenced mail is not in the agent's
+                mailbox (typically a hallucinated id)
+        """
+        if effect.in_reply_to is None or self._mailbox is None:
+            return effect.in_reply_to, effect.thread_id
+        referenced = await self._mailbox.find(effect.in_reply_to)
+        if referenced is None:
+            raise ValueError(
+                f"in_reply_to 引用的邮件不在你的邮箱中: {effect.in_reply_to}"
+            )
+        return effect.in_reply_to, referenced.thread_id
 
     async def _notify_send_failure(self, effect: MailEffect, error: Exception) -> None:
         """Land a send-failure notice in the agent's own inbox (issue ).

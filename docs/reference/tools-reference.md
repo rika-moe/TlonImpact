@@ -74,14 +74,14 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 | `subject` | string | 否 | — | 邮件主题 |
 | `content` | string | 是 | — | 邮件正文 |
 | `is_complete` | boolean | 是 | — | `false`=中间进度，发完继续思考；`true`=最终回复，结束本轮循环 |
-| `in_reply_to` | string | 否 | — | 被回复邮件的 id |
+| `in_reply_to` | string | 否 | — | 被回复邮件的 id；留空默认回复触发邮件 |
 
 返回行为：恒 `success=True`，[data](../../data) 回显全部参数。投递异步——地址不存在时稍后会收到 `postmaster@tlon.internal` 的退信，退信是唯一失败信号。
 
 注意事项：
 
 - `is_complete=true` 时本轮不得同时调用其他工具，否则整轮被 act stage 拒绝（见总述）。
-- 线程继承由引擎完成而非工具：`act_stage_collect` 构造 `MailEffect` 时，`in_reply_to`/`thread_id` 总是取 session 触发邮件的值——工具参数 `in_reply_to` 当前不被读取，另起线程靠新 session（新触发邮件）实现。
+- 回复目标与线程由引擎最终确定而非工具：`act_stage_collect` 构造 `MailEffect` 时，模型显式传的 `in_reply_to` 优先，缺省取 session 触发邮件；`EffectExecutor` 发送前在 agent 自己的邮箱（inbox+sent）里校验被引用邮件并把回复并入该邮件的线程（`thread_id` 取被引用邮件的值）。id 不在邮箱中（典型如幻觉 id）则该封不发送，agent 收到 postmaster 通知——不产生带悬空引用的邮件。另起线程仍靠新 session（新触发邮件）。
 - `to` 传空数组时回退为回复触发邮件的发件人（`act_stage_collect` 的 reply 语义）。
 
 ### silence

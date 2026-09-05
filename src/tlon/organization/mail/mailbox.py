@@ -167,6 +167,22 @@ class Mailbox:
                 )
                 raise
 
+    async def find(self, mail_id: str) -> Mail | None:
+        """Look up a mail by id across inbox and sent.
+
+        Args:
+            mail_id: The mail id to find
+
+        Returns:
+            The mail, or None when neither file holds it
+        """
+        inbox = await self._read_inbox()
+        sent = await self._read_mails(self._sent_path)
+        for mail in [*inbox, *sent]:
+            if mail.id == mail_id:
+                return mail
+        return None
+
     async def unread(self) -> list[Mail]:
         """List inbox mail whose id is not yet in the read cursor.
 

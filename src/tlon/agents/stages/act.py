@@ -135,13 +135,21 @@ async def act_stage_collect(
             # reply goes back to the sender of the trigger mail, with
             # thread headers inherited from it.
             to = result.data.get("to") or ([trigger_mail.from_address] if trigger_mail else [])
+            # An explicit in_reply_to from the model wins over the
+            # trigger default. The thread must follow the *referenced*
+            # mail — which only a mailbox read can establish, so the
+            # engine (EffectExecutor) validates the reference and
+            # re-derives thread_id from it; stages stay I/O-free.
+            in_reply_to = result.data.get("in_reply_to") or (
+                trigger_mail.id if trigger_mail else None
+            )
             outcome.mails.append(
                 MailEffect(
                     to=to,
                     content=content,
                     cc=result.data.get("cc"),
                     subject=result.data.get("subject"),
-                    in_reply_to=trigger_mail.id if trigger_mail else None,
+                    in_reply_to=in_reply_to,
                     thread_id=trigger_mail.thread_id if trigger_mail else None,
                 )
             )

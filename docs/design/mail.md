@@ -47,7 +47,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 `subject` 是可选的——LLM 之间的通信经常不需要标题。线程语义完全由 id 链接承担：`in_reply_to` 指向被回复的上游邮件，`thread_id` 是线程根邮件的 id，回复时从上游继承；新线程的 `thread_id` 默认等于邮件自己的 id。这个选择的理由是：subject 是自然语言，重复、可改、跨语言不稳定；id 链接是精确的、机器可验证的，检索和可视化都按 `thread_id` 聚合即可。代价是客户端必须配合——回复时带上 `in_reply_to` 和继承的 `thread_id`，否则就是另起线程。
 
-一个具体例子：A 发出信 m1（`thread_id = m1.id`）；B 回复 m2（`in_reply_to = m1.id`，`thread_id = m1.id`）；A 再回 m3（`in_reply_to = m2.id`，`thread_id = m1.id`）。`thread_id` 把 {m1, m2, m3} 聚成一个会话视图，`in_reply_to` 在会话内部给出回复的父子结构。agent 侧的回复头由 stage 自动从触发邮件推导（见「发信：唯一出口」），人类客户端与 SDK 则要在 `POST /messages` 里显式传 `in_reply_to` / `thread_id`——字段穿透 REST 协议直达 `Mail.create`，服务端不重写。
+一个具体例子：A 发出信 m1（`thread_id = m1.id`）；B 回复 m2（`in_reply_to = m1.id`，`thread_id = m1.id`）；A 再回 m3（`in_reply_to = m2.id`，`thread_id = m1.id`）。`thread_id` 把 {m1, m2, m3} 聚成一个会话视图，`in_reply_to` 在会话内部给出回复的父子结构。agent 侧的回复头缺省从触发邮件推导、模型可显式指定 `in_reply_to` 回复别的邮件（线程跟随被引用邮件，见「发信：唯一出口」），人类客户端与 SDK 则要在 `POST /messages` 里显式传 `in_reply_to` / `thread_id`——字段穿透 REST 协议直达 `Mail.create`，服务端不重写。
 
 ## 投递管线
 
@@ -72,7 +72,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 解析不到任何人的地址会触发退信：`MailDelivery._bounce` 以 `postmaster@tlon.internal` 名义给发件人回一封信，subject 为 `Undeliverable: ...`，正文列出不存在的地址，`in_reply_to` 指向原信、`thread_id` 继承原线程。退信落在发件人的**收件箱**里，走和普通邮件完全相同的投递路径——所以一个 LLM 发件人会在自己的认知循环里读到退信，自己改正地址重发。错误不需要专门的告警通道，错误本身就是一封邮件。发件人没有邮箱时（postmaster 这类系统地址）退信无处可投，记日志丢弃——这也是退信不会无限循环的原因。
 
-这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。发送侧失败（`EffectExecutor.send_mail` 构造 `Mail` 被拒或 `MAIL_NEW` 发布失败）走同一风格：postmaster 名义的失败通知直接写进发件 agent 自己的收件箱（不经过 `MAIL_NEW`——通知路径不能依赖刚刚失败的那次发布），附一条 `MAIL_DELIVERED` 唤醒它。`SendEmailTool` 的受理回执明确告诉 LLM「以 postmaster 通知为唯一的失败信号」，把这条约定写进了工具语义。
+这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。发送侧失败（`EffectExecutor.send_mail` 的 `in_reply_to` 引用校验不通过、构造 `Mail` 被拒或 `MAIL_NEW` 发布失败）走同一风格：postmaster 名义的失败通知直接写进发件 agent 自己的收件箱（不经过 `MAIL_NEW`——通知路径不能依赖刚刚失败的那次发布），附一条 `MAIL_DELIVERED` 唤醒它。`SendEmailTool` 的受理回执明确告诉 LLM「以 postmaster 通知为唯一的失败信号」，把这条约定写进了工具语义。
 
 ## 名称解析：唯一权威
 
@@ -141,7 +141,7 @@ agent 收信的入口是 [agents/member_runtime.py](../../src/tlon/agents/member
 
 ### 发信：唯一出口
 
-agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 [agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头（`in_reply_to` / `thread_id`）由 stage 从 session 的触发邮件推导并声明，所以 agent 的回复**自动继承线程**，不需要 LLM 自己记得带 thread_id。
+agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 [agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头的分工是 stage 声明、引擎定稿：stage 把模型显式传的 `in_reply_to`（缺省取 session 触发邮件）声明进 `MailEffect`，`thread_id` 只带触发邮件推导的兜底值；`EffectExecutor` 发送前在 agent 自己的邮箱里按 `in_reply_to` 查到被引用邮件，以它的 `thread_id` 为线程根——所以回复**自动并入被回复邮件的线程**，不需要 LLM 自己记得带 thread_id。查不到被引用邮件（典型如幻觉 id）时该封不发送，按「退信是设计意图」的同一风格落一封 postmaster 通知，不产生带悬空引用的邮件。
 
 为什么强调「唯一出口」：
 

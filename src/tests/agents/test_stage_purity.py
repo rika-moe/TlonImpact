@@ -20,6 +20,7 @@ from tlon.agents.stages.think import think_stage
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 
@@ -103,6 +104,65 @@ class TestStagePurity:
         outcome = await act_stage_collect(svc, session, [])
 
         assert outcome == StageOutcome()
+
+    async def test_act_collect_send_email_inherits_trigger_headers_by_default(
+        self,
+    ) -> None:
+        """Without an explicit in_reply_to the reply keeps the status
+        quo: reply headers come from the session's trigger mail."""
+        svc = _make_services()
+        session = AgentSession(session_id="s1", trigger_content="trigger")
+        trigger = Mail.create(
+            from_address="user@tlon.internal",
+            to=["agent1@tlon.internal"],
+            content="触发邮件",
+        )
+        session.trigger_message = trigger
+        tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
+        result = ToolResult(
+            success=True,
+            data={"to": ["user@tlon.internal"], "content": "回复", "is_complete": True},
+        )
+
+        outcome = await act_stage_collect(svc, session, [(tc, result)])
+
+        assert len(outcome.mails) == 1
+        mail = outcome.mails[0]
+        assert mail.to == ["user@tlon.internal"]
+        assert mail.in_reply_to == trigger.id
+        assert mail.thread_id == trigger.thread_id
+
+    async def test_act_collect_send_email_explicit_in_reply_to_wins(self) -> None:
+        """The model's explicit in_reply_to (reply to a non-trigger
+        mail) is declared on the MailEffect. The stage cannot read the
+        mailbox, so thread_id stays the trigger-derived fallback — the
+        engine re-derives it from the referenced mail (issue )."""
+        svc = _make_services()
+        session = AgentSession(session_id="s1", trigger_content="trigger")
+        trigger = Mail.create(
+            from_address="user@tlon.internal",
+            to=["agent1@tlon.internal"],
+            content="触发邮件",
+        )
+        session.trigger_message = trigger
+        tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
+        result = ToolResult(
+            success=True,
+            data={
+                "to": ["other@tlon.internal"],
+                "content": "回复更早的那封",
+                "is_complete": False,
+                "in_reply_to": "m-earlier",
+            },
+        )
+
+        outcome = await act_stage_collect(svc, session, [(tc, result)])
+
+        assert len(outcome.mails) == 1
+        mail = outcome.mails[0]
+        assert mail.to == ["other@tlon.internal"]
+        assert mail.in_reply_to == "m-earlier"
+        assert mail.thread_id == trigger.thread_id  # fallback; engine re-derives
 
 
 class TestEngineApplication:
