@@ -73,10 +73,10 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 
 DSL 的设计前提是看清哪一半在语言内、哪一半在语言外：
 
-- **机制是 Python 固定实现**：工具（发邮件、读写文件、Shell、记忆、spawn）、stage（think / act / plan / critique / revise）、section（persona / protocol / knowledge / mail-history）、求值器本身、事件总线。这些由引擎提供，有单元测试，不随 spec 变化。
+- **机制是 Python 固定实现**：工具（发邮件、读写文件、Shell、记忆、spawn）、stage（think / act / plan / critique / revise）、section（persona / protocol / knowledge / skills / current-task / mail-history）、求值器本身、事件总线。这些由引擎提供，有单元测试，不随 spec 变化。
 - **策略是 spec 数据**：何时醒（`:on` + `:when`）、如何思考（`:loop` 的 stage 编排、上下文组装、`:until` 终止条件）、何时完成、完成后做什么（`:actions`）。Adam 是最纯粹的例子：作为 agent 世界的 init 进程，它的全部策略就是 [agents/adam.py](../../src/tlon/agents/adam.py) 里一段内置 spec 文本（`ADAM_SPEC_EDN`），boot 时 `start-all`、空闲时 `stop`，机制上一个普通的 `MemberRuntime` 实例。这个例子的分量在于：系统里权限最高的成员（能启停其他所有成员）恰恰是用最受限的方式写成的——它的权力不来自语言能力的豁免，只来自注入给它的宿主谓词与动作。权限是注入的，不是语法授予的。
 
-由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 发明不出第六个 stage、第五种 section、第七个动作。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
+由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 发明不出第六个 stage、第七种 section、第七个动作。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
 
 机制/策略的界线在认知循环内部同样清晰。`:stages` 向量决定跑哪些 stage、以什么顺序、各自带什么条件（`:if`），但每个 stage 的语义——`think` 是一次 LLM 调用、`act` 是执行本轮全部工具调用、`critique` 失败如何软降级——是 [agents/stages/](../../src/tlon/agents/stages) 下的 Python 实现。spec 里的 `act` 只声明"执行这轮的工具分发列表"，每个工具一个后台 task 的并发执行是引擎的事。更关键的是引擎保留了 spec 无法覆盖的否决权：`:max-iterations` 是迭代硬顶，在任何 `:until` 求值之前无条件生效——spec 可以声明终止条件，但声明不出"永不终止"。策略可以自由，自由有边。
 

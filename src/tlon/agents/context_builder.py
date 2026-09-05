@@ -1,14 +1,14 @@
 """Context assembly for Agent.
 
 Builds the LLM conversation context (memory knowledge blocks + skills
-index + mailbox history + current mail) and the system prompt (persona
-files with mtime-keyed caching). Extracted from the Agent god class;
-complements prompt_builder's pure SystemPromptBuilder with the
-agent-bound fetching/caching side.
+index + current doing task + mailbox history + current mail) and the
+system prompt (persona files with mtime-keyed caching). Extracted from
+the Agent god class; complements prompt_builder's pure
+SystemPromptBuilder with the agent-bound fetching/caching side.
 
 P4: the builder receives its dependencies (config, team members,
-mailbox, memory, rule, address) explicitly and owns the system prompt
-cache — no back-reference to the Agent.
+mailbox, memory, task manager, rule, address) explicitly and owns the
+system prompt cache — no back-reference to the Agent.
 """
 
 from pathlib import Path
@@ -24,6 +24,7 @@ from tlon.base.paths import paths
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.tools.tasks.manager import TaskManager
 
 logger = get_logger(__name__)
 
@@ -56,6 +57,7 @@ class ContextBuilder:
         team_members: list[AgentConfig],
         mailbox: Mailbox | None,
         memory: MemoryManager,
+        task_manager: TaskManager,
         rule: MemberRule,
         address: str,
     ):
@@ -63,6 +65,7 @@ class ContextBuilder:
         self._team_members = team_members
         self._mailbox = mailbox
         self._memory = memory
+        self._task_manager = task_manager
         # A context builder serves a cognitive agent — its rule carries a loop.
         assert rule.loop is not None, "ContextBuilder requires a cognitive rule"
         self._rule = rule
@@ -108,6 +111,35 @@ class ContextBuilder:
             logger.warning("skills_index_build_failed", exc_info=True)
             return ""
 
+    def build_current_task(self) -> str:
+        """Build the current-task text (the ``(current-task)`` section).
+
+        Light by design: only the doing task (at most one — the
+        TaskManager pauses any other when a new task starts), never the
+        full task list, and unlike ``TaskManager.get_current_task`` no
+        paused-task fallback — a paused task is not what the agent is
+        doing. Empty string when no task is doing (the section is then
+        skipped, same empty-state convention as knowledge/skills). Task
+        reads are in-memory, but failures still degrade to empty — a
+        broken task store must never block context assembly.
+
+        Anchor caveat: the context is built once per session (the first
+        ``LoopDriver`` step), so a task started or completed mid-session
+        is only reflected from the next session on.
+        """
+        try:
+            doing = self._task_manager.list_tasks(status_filter="doing")
+            if not doing:
+                return ""
+            task = doing[0]
+            lines = ["[当前任务]", f"{task.id}: {task.title}（{task.status.value}）"]
+            if task.description:
+                lines.append(f"描述：{task.description}")
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("current_task_build_failed", exc_info=True)
+            return ""
+
     async def build_context(self, current_mail: Mail) -> list[dict[str, Any]]:
         """Build conversation context for LLM (sections interpreted in order).
 
@@ -128,6 +160,10 @@ class ContextBuilder:
                 index = await self.build_skills_index()
                 if index:
                     context.append({"role": "user", "content": index})
+            elif name == "current-task":
+                current_task = self.build_current_task()
+                if current_task:
+                    context.append({"role": "user", "content": current_task})
             elif name == "mail-history":
                 context.extend(await self._build_mail_history(form[1], current_mail))
 
