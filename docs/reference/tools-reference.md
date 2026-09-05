@@ -8,7 +8,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 [tools/base.py](../../src/tlon/tools/base.py) 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。`execute(**kwargs)` 是唯一执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，[data](../../data) 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用（目前只有 `ExecuteBashTool` 用 `shutdown` 取消未完成的后台任务）。
 
-`Tool.validate_arguments` 在执行前按 schema 校验：缺必填、未知参数、类型不符都会拒绝执行，返回 `success=False, error="Argument validation failed: ..."`。schema 只做浅校验——`enum`、`minimum`/`maximum` 等约束不进 `validate_arguments`，靠各工具自己 clamp 或报错。
+`Tool.validate_arguments` 在执行前按 schema 校验：缺必填、未知参数、类型不符都会拒绝执行，返回 `success=False, error="Argument validation failed: ..."`；数值参数的 `minimum`/`maximum` 也在此强制（被拒时错误含真实界限值），`enum` 等其余约束不进 `validate_arguments`，靠各工具自己 clamp 或报错。
 
 ### ToolExecutor 执行模型
 
@@ -29,7 +29,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为每个认知型成员注册 22 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为每个认知型成员注册 25 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -38,23 +38,26 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 3 | `readFile` | [tools/filesystem/read_file.py](../../src/tlon/tools/filesystem/read_file.py) 的 `ReadFileTool` | filesystem |
 | 4 | `writeFile` | [tools/filesystem/write_file.py](../../src/tlon/tools/filesystem/write_file.py) 的 `WriteFileTool` | filesystem |
 | 5 | `editFile` | [tools/filesystem/edit_file.py](../../src/tlon/tools/filesystem/edit_file.py) 的 `EditFileTool` | filesystem |
-| 6 | `sendEmail` | [tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool` | mail |
-| 7 | `silence` | [tools/mail/silence.py](../../src/tlon/tools/mail/silence.py) 的 `SilenceTool` | mail |
-| 8 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
-| 9 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
-| 10 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
-| 11 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
-| 12 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
-| 13 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
-| 14 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
-| 15 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 16 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 17 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 18 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 19 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 20 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 21 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 22 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
+| 6 | `listDirectory` | [tools/filesystem/list_directory.py](../../src/tlon/tools/filesystem/list_directory.py) 的 `ListDirectoryTool` | filesystem |
+| 7 | `searchFiles` | [tools/filesystem/search_files.py](../../src/tlon/tools/filesystem/search_files.py) 的 `SearchFilesTool` | filesystem |
+| 8 | `getCurrentTime` | [tools/system/current_time.py](../../src/tlon/tools/system/current_time.py) 的 `GetCurrentTimeTool` | system |
+| 9 | `sendEmail` | [tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool` | mail |
+| 10 | `silence` | [tools/mail/silence.py](../../src/tlon/tools/mail/silence.py) 的 `SilenceTool` | mail |
+| 11 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
+| 12 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
+| 13 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
+| 14 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
+| 15 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
+| 16 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
+| 17 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
+| 18 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
+| 19 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 20 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 21 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 22 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 23 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 24 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 25 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
 <!-- END GENERATED: tool-registry -->
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
@@ -101,7 +104,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 ## filesystem
 
-三个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [tools/filesystem/path_guard.py](../../src/tlon/tools/filesystem/path_guard.py) 的 `resolve_container_path` 校验：
+五个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [tools/filesystem/path_guard.py](../../src/tlon/tools/filesystem/path_guard.py) 的 `resolve_container_path` 校验：
 
 - 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
 - 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。
@@ -137,6 +140,36 @@ old_string/new_string 精确替换模型。
 | `new_string` | string | 是 | 替换后文本 |
 
 行为：`old_string` 出现 0 次 → 失败（提示文本不在文件中）；出现 2 次及以上 → 失败（提示加上下文消歧）；唯一匹配则替换一次写回。返回 `replaced=true`、`old_length`、`new_length`。失败：文件不存在、非 UTF-8、路径越界。
+
+### listDirectory
+
+列目录内容（不递归），结构化返回名称/类型/大小/修改时间，目录在前按名排序。
+
+| 参数 | 类型 | 必填 | 默认 | 约束 |
+|---|---|---|---|---|
+| `path` | string | 否 | `.` | 相对工作目录或白名单内绝对路径 |
+| `max_entries` | integer | 否 | 200 | 1–1000 |
+
+返回 `entries`（每项 `name`/`type`（dir/file/symlink）/`size`/`modified`）、`count`、`truncated`。截断时附 `hint` 提示缩小到子目录。失败：路径不存在、不是目录、路径越界、Docker 不可用。
+
+### searchFiles
+
+文件名 glob 与内容正则检索合一，两个模式都跳过 `.git`。
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `pattern` | string | 是 | — | content 模式是扩展正则（grep -E）；filename 模式是 glob（不区分大小写） |
+| `path` | string | 否 | `.` | 搜索起点目录 |
+| `mode` | string | 否 | `content` | enum：`content` / `filename` |
+| `max_results` | integer | 否 | 50 | 1–200 |
+
+content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断到 200 字符）；filename 模式返回路径列表。返回 `count`/`truncated`，截断时附 `hint`。无匹配仍 `success=True`、`count=0`。失败：路径不存在、正则非法、路径越界、Docker 不可用。
+
+## system
+
+### getCurrentTime
+
+无参数。返回宿主机本地时间（与用户同处一个时区）：`iso`（ISO 8601 含时区偏移）、`unix`、`timezone`、`weekday`。不依赖 Docker 沙箱，容器不可用时仍可用。
 
 ## shell
 

@@ -1,4 +1,5 @@
-"""Tests for filesystem tools (ReadFile, WriteFile, EditFile) via DockerRuntime."""
+"""Tests for filesystem tools (ReadFile, WriteFile, EditFile, ListDirectory,
+SearchFiles) via DockerRuntime."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,8 +8,10 @@ from pydantic import ValidationError
 
 from tlon.base.config import ToolConfig
 from tlon.tools.filesystem.edit_file import EditFileTool
+from tlon.tools.filesystem.list_directory import ListDirectoryTool
 from tlon.tools.filesystem.path_guard import normalize_container_path, resolve_container_path
 from tlon.tools.filesystem.read_file import ReadFileTool
+from tlon.tools.filesystem.search_files import SearchFilesTool
 from tlon.tools.filesystem.write_file import WriteFileTool
 
 
@@ -242,6 +245,213 @@ class TestEditFileTool:
         assert "not initialized" in result.error.lower()
 
 
+class TestListDirectoryTool:
+    @pytest.fixture
+    def list_tool(self):
+        tool = ListDirectoryTool.__new__(ListDirectoryTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+        return tool
+
+    async def test_list_success(self, list_tool):
+        list_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0,
+            stdout=(
+                "d\t4096\t2026-09-05T14:32\tsrc\n"
+                "f\t123\t2026-09-04T09:10\tREADME.md\n"
+                "l\t7\t2026-09-03T08:00\tlink\n"
+            ),
+            stderr="",
+        )
+
+        result = await list_tool.execute(path=".")
+
+        assert result.success is True
+        assert result.data["count"] == 3
+        assert result.data["truncated"] is False
+        # Directories sort first, then files by name
+        assert [e["name"] for e in result.data["entries"]] == ["src", "README.md", "link"]
+        assert result.data["entries"][0]["type"] == "dir"
+        assert result.data["entries"][1] == {
+            "name": "README.md",
+            "type": "file",
+            "size": 123,
+            "modified": "2026-09-04T09:10",
+        }
+        assert result.data["entries"][2]["type"] == "symlink"
+
+        command = list_tool._docker_runtime.execute.await_args[0][0]
+        assert "find /workspace" in command
+
+    async def test_list_truncation(self, list_tool):
+        lines = [f"f\t1\t2026-09-05T00:00\tfile{i}.txt" for i in range(6)]
+        list_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0, stdout="\n".join(lines) + "\n", stderr=""
+        )
+
+        result = await list_tool.execute(path=".", max_entries=5)
+
+        assert result.success is True
+        assert result.data["count"] == 5
+        assert result.data["truncated"] is True
+        assert "hint" in result.data
+
+    async def test_list_not_found(self, list_tool):
+        list_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=1, stdout="", stderr="__TLON_NOT_FOUND__\n"
+        )
+
+        result = await list_tool.execute(path="missing")
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
+
+    async def test_list_not_a_directory(self, list_tool):
+        list_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=1, stdout="", stderr="__TLON_NOT_A_DIRECTORY__\n"
+        )
+
+        result = await list_tool.execute(path="README.md")
+
+        assert result.success is False
+        assert "not a directory" in result.error.lower()
+
+    async def test_list_runtime_not_initialized(self, list_tool):
+        list_tool._docker_runtime = None
+
+        result = await list_tool.execute(path=".")
+
+        assert result.success is False
+        assert "not initialized" in result.error.lower()
+
+
+class TestSearchFilesTool:
+    @pytest.fixture
+    def search_tool(self):
+        tool = SearchFilesTool.__new__(SearchFilesTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+        return tool
+
+    async def test_search_content_success(self, search_tool):
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0,
+            stdout=(
+                "/workspace/src/main.py\x0012:def main():\n/workspace/README.md\x003:main entry\n"
+            ),
+            stderr="",
+        )
+
+        result = await search_tool.execute(pattern="main", path="src")
+
+        assert result.success is True
+        assert result.data["count"] == 2
+        assert result.data["truncated"] is False
+        assert result.data["matches"][0] == {
+            "file": "/workspace/src/main.py",
+            "line": 12,
+            "text": "def main():",
+        }
+        assert result.data["matches"][1]["file"] == "/workspace/README.md"
+
+        command = search_tool._docker_runtime.execute.await_args[0][0]
+        assert "grep" in command
+        assert "/workspace/src" in command
+
+    async def test_search_content_line_truncation(self, search_tool):
+        long_line = "x" * 500
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0,
+            stdout=f"/workspace/big.js\x001:{long_line}\n",
+            stderr="",
+        )
+
+        result = await search_tool.execute(pattern="x+")
+
+        assert result.success is True
+        text = result.data["matches"][0]["text"]
+        assert len(text) == SearchFilesTool._MAX_LINE_CHARS + 1
+        assert text.endswith("…")
+
+    async def test_search_content_truncation(self, search_tool):
+        lines = [f"/workspace/f.py\x00{i}:match" for i in range(6)]
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0, stdout="\n".join(lines) + "\n", stderr=""
+        )
+
+        result = await search_tool.execute(pattern="match", max_results=5)
+
+        assert result.success is True
+        assert result.data["count"] == 5
+        assert result.data["truncated"] is True
+        assert "hint" in result.data
+
+    async def test_search_no_matches(self, search_tool):
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0, stdout="", stderr=""
+        )
+
+        result = await search_tool.execute(pattern="nothing_here")
+
+        assert result.success is True
+        assert result.data["count"] == 0
+        assert result.data["matches"] == []
+
+    async def test_search_filename_mode(self, search_tool):
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0,
+            stdout="/workspace/src/main.py\n/workspace/src/tests/test_main.py\n",
+            stderr="",
+        )
+
+        result = await search_tool.execute(pattern="*.py", mode="filename")
+
+        assert result.success is True
+        assert result.data["matches"] == [
+            "/workspace/src/main.py",
+            "/workspace/src/tests/test_main.py",
+        ]
+        command = search_tool._docker_runtime.execute.await_args[0][0]
+        assert "find /workspace -iname" in command
+
+    async def test_search_invalid_mode(self, search_tool):
+        result = await search_tool.execute(pattern="x", mode="sideways")
+
+        assert result.success is False
+        assert "invalid mode" in result.error.lower()
+        search_tool._docker_runtime.execute.assert_not_awaited()
+
+    async def test_search_bad_regex(self, search_tool):
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0, stdout="", stderr="grep: Invalid regular expression\n"
+        )
+
+        result = await search_tool.execute(pattern="([")
+
+        assert result.success is False
+        assert "search failed" in result.error.lower()
+
+    async def test_search_path_not_found(self, search_tool):
+        search_tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=1, stdout="", stderr="__TLON_NOT_FOUND__\n"
+        )
+
+        result = await search_tool.execute(pattern="x", path="missing")
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
+
+    async def test_search_runtime_not_initialized(self, search_tool):
+        search_tool._docker_runtime = None
+
+        result = await search_tool.execute(pattern="x")
+
+        assert result.success is False
+        assert "not initialized" in result.error.lower()
+
+
 class TestPathGuard:
     """Unit tests for container-path normalization and whitelist checks."""
 
@@ -355,6 +565,30 @@ class TestFilesystemToolSandbox:
         assert result.success is False
         assert "outside the allowed paths" in result.error
         tool._docker_runtime.read_file.assert_not_awaited()
+
+    async def test_list_rejects_absolute_path_outside_whitelist(self):
+        tool = ListDirectoryTool.__new__(ListDirectoryTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        result = await tool.execute(path="/etc")
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.execute.assert_not_awaited()
+
+    async def test_search_rejects_dotdot_escape(self):
+        tool = SearchFilesTool.__new__(SearchFilesTool)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = ["/workspace"]
+        tool._docker_runtime = _make_mock_runtime()
+
+        result = await tool.execute(pattern="x", path="../../etc")
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.execute.assert_not_awaited()
 
     async def test_read_allows_absolute_path_in_whitelist(self):
         tool = ReadFileTool.__new__(ReadFileTool)

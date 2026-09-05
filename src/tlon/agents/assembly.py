@@ -27,7 +27,9 @@ from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.filesystem.edit_file import EditFileTool
+from tlon.tools.filesystem.list_directory import ListDirectoryTool
 from tlon.tools.filesystem.read_file import ReadFileTool
+from tlon.tools.filesystem.search_files import SearchFilesTool
 from tlon.tools.filesystem.write_file import WriteFileTool
 from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.mail.silence import SilenceTool
@@ -36,6 +38,7 @@ from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
+from tlon.tools.system.current_time import GetCurrentTimeTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
 from tlon.tools.tasks.create_task import CreateTaskTool
 from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
@@ -175,6 +178,9 @@ async def assemble_cognitive(
     tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
     tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
     tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
+    tool_executor.register_tool(ListDirectoryTool(config.docker, docker_runtime, allowed_paths))
+    tool_executor.register_tool(SearchFilesTool(config.docker, docker_runtime, allowed_paths))
+    tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())
     tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))

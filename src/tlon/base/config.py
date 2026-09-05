@@ -114,8 +114,8 @@ class ToolConfig(BaseModel):
 
     total_timeout: float = 60.0
     per_timeout: float = 30.0
-    # Filesystem tools (read/write/edit) may only touch paths under these
-    # absolute container directories.
+    # Filesystem tools (read/write/edit/list/search) may only touch paths
+    # under these absolute container directories.
     allowed_paths: list[str] = Field(default_factory=lambda: ["/workspace"])
 
     @field_validator("allowed_paths")
