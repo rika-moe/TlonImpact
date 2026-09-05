@@ -297,6 +297,12 @@ class LoopDriver:
         if outcome.record_error:
             await self._journal.append(session.id, "errors", value=session.error_count + 1)
             session.record_error()
+        if outcome.clear_errors and session.error_count > 0:
+            # A successful think ends the error streak: the counter is
+            # max_consecutive_errors, not a lifetime total. The journaled
+            # "errors" value is absolute, so replay restores the reset.
+            await self._journal.append(session.id, "errors", value=0)
+            session.reset_errors()
         if outcome.advance_iteration:
             await self._journal.append(session.id, "iteration", value=session.iteration + 1)
             session.advance_iteration()

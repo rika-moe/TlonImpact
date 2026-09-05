@@ -64,6 +64,12 @@ class AgentSession:
 
     @property
     def error_count(self) -> int:
+        """Consecutive think-stage failures since the last successful think.
+
+        Not a lifetime total: ``reset_errors`` (declared by think on
+        success, applied by the engine) zeroes it, so
+        ``max_consecutive_errors`` bounds error *streaks* only.
+        """
         return self._error_count
 
     @property
@@ -89,7 +95,12 @@ class AgentSession:
         self._iteration += 1
 
     def record_error(self) -> None:
+        """Record one consecutive error (see the error_count property)."""
         self._error_count += 1
+
+    def reset_errors(self) -> None:
+        """Zero the consecutive error count (a think call succeeded)."""
+        self._error_count = 0
 
     def set_last_llm_response(self, response: Any) -> None:
         self._last_llm_response = response

@@ -187,7 +187,7 @@
 
 ### 5.2 `LOOP_BUILTINS`（loop `:until` 谓词）
 
-环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n}`，`limits` = `{:max_iterations n :max_consecutive_errors n}`。键缺失安全返回 `false`，不抛错。
+环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n}`（`error_count` 是**连续** think 失败数——think 成功一次即清零，不是会话累计值），`limits` = `{:max_iterations n :max_consecutive_errors n}`。键缺失安全返回 `false`，不抛错。
 
 <!-- BEGIN GENERATED: dsl-builtins-loop -->
 `LOOP_BUILTINS`（4 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
@@ -195,7 +195,7 @@
 | 名称 | pure | 说明 |
 |---|---|---|
 | `iteration-limit-reached?` | 是 | ``state.iteration`` has reached ``limits.max_iterations``. |
-| `error-limit-reached?` | 是 | ``state.error_count`` has reached ``limits.max_consecutive_errors``. |
+| `error-limit-reached?` | 是 | ``state.error_count`` (consecutive think failures; a successful think resets it to 0) has reached ``limits.max_consecutive_errors``. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-loop -->
@@ -292,7 +292,7 @@
 | `:stages` | 向量 | stage form 列表，**不得为空**；每步按序解释执行 |
 | `:until` | 表达式 form | 终止谓词，每步 pre-think 求值 |
 | `:max-iterations` | int | 迭代硬顶（引擎无条件执行，`:until` 无法覆盖） |
-| `:max-consecutive-errors` | int | 连续错误上限 |
+| `:max-consecutive-errors` | int | 连续错误上限（think 成功一次即清零重计；散布的错误不累计） |
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
 
@@ -315,7 +315,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
-| `think` | 一次 LLM 调用，产出本轮响应（进响应链）。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
+| `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
 | `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出回复邮件（显式 `to` 优先，否则回复触发邮件发件人）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
 | `critique` | 额外一次 LLM 评审：首行 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、不写 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不按 PASS 放行。失败软降级 |

@@ -625,6 +625,81 @@ class TestMaxIterationsDistillReply:
         assert effect.content == "思考时间过长，请简化您的问题。"
 
 
+class TestConsecutiveErrorLimit:
+    """error_count counts *consecutive* think failures, not a lifetime
+    total: a successful think resets it (issue ). Scattered LLM
+    errors across a long session must not kill it; only an unbroken
+    streak of max_consecutive_errors failures terminates via until."""
+
+    async def test_scattered_errors_do_not_terminate(self, tmp_path: Path) -> None:
+        mail = _mail()
+        working = LLMResponse(content="working")  # no tool calls: act advances
+        final = LLMResponse(
+            content="done",
+            tool_calls=[_tc("c-final", "sendEmail", {"content": "reply", "is_complete": True})],
+        )
+
+        async def tool_execute(name: str, args: dict) -> ToolResult:
+            return ToolResult(
+                success=True, data={"content": args["content"], "is_complete": True}
+            )
+
+        # err - ok - err - ok - err - ok: three errors, never consecutive.
+        driver, journal, executor, services = _make_driver(
+            tmp_path,
+            [
+                RuntimeError("llm down 1"),
+                working,
+                RuntimeError("llm down 2"),
+                working,
+                RuntimeError("llm down 3"),
+                final,
+            ],
+            tool_execute=tool_execute,
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "complete"
+        # Each success reset the streak; the session ends at zero.
+        assert session.error_count == 0
+        # The reset is journaled (absolute value), so replay agrees.
+        replay = await journal.resume(session.id)
+        assert replay is not None and replay.error_count == 0
+        error_events = [
+            json.loads(line)["value"]
+            for line in await _read_lines(session.id, journal)
+            if json.loads(line)["type"] == "errors"
+        ]
+        assert error_events == [1, 0, 1, 0, 1, 0]
+
+    async def test_consecutive_errors_terminate(self, tmp_path: Path) -> None:
+        mail = _mail()
+        driver, journal, executor, services = _make_driver(
+            tmp_path,
+            [RuntimeError("llm down")] * 3 + [LLMResponse(content="never reached")],
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert session.error_count == 3
+        assert services.think.await_count == 3  # the 4th response is never consumed
+        assert await journal.end_reason(session.id) == "until"
+        executor.send_mail.assert_awaited_once()
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.to == ["user@tlon.internal"]
+        assert effect.in_reply_to == mail.id
+        assert "错误" in effect.content
+
+
 class TestSchedulerFailureReply:
     """Session timeout / stage error both reply to the trigger mail's
     sender before the reap (the scheduler owns the fatal paths; the

@@ -58,6 +58,9 @@ class StageOutcome:
     record_error: bool = False
     """Record one error against the session."""
 
+    clear_errors: bool = False
+    """Reset the session's consecutive error count to zero (think succeeded)."""
+
     tool_results: list[tuple[ToolCall, ToolResult]] = field(default_factory=list)
     """Harvested tool results to record on the session (C2)."""
 

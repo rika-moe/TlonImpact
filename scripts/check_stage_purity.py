@@ -8,8 +8,9 @@ declared in the returned StageOutcome and applied by the engine
 
 1. Calls to session mutator methods (add_tool_result,
    set_last_llm_response, mark_active/waiting/completed,
-   advance_iteration, record_error, dispatch_tools, collect_completed,
-   cancel_pending) — declare the change in the StageOutcome instead;
+   advance_iteration, record_error, reset_errors, dispatch_tools,
+   collect_completed, cancel_pending) — declare the change in the
+   StageOutcome instead;
    the harvest (collect_completed) and dispatch are the engine's.
 2. Direct attribute assignment on the session (``session.x = ...``).
 
@@ -40,6 +41,7 @@ FORBIDDEN_METHODS = {
     "mark_completed",
     "advance_iteration",
     "record_error",
+    "reset_errors",
     "dispatch_tools",
     "collect_completed",
     "cancel_pending",

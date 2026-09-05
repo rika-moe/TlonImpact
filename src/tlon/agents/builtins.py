@@ -176,7 +176,7 @@ def _builtin_iteration_limit_reached(env: dict[str, Any]) -> bool:
 
 
 def _builtin_error_limit_reached(env: dict[str, Any]) -> bool:
-    """``state.error_count`` has reached ``limits.max_consecutive_errors``."""
+    """``state.error_count`` (consecutive think failures; a successful think resets it to 0) has reached ``limits.max_consecutive_errors``."""
     error_count = _loop_state_int(env, "state", "error_count")
     max_errors = _loop_state_int(env, "limits", "max_consecutive_errors")
     if error_count is None or max_errors is None:
