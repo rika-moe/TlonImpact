@@ -45,6 +45,8 @@ class ReadFileTool(Tool):
             description=(
                 "读取沙箱中的文件内容。用于查看代码、配置文件、日志等。"
                 "支持指定起始行和读取行数，避免大文件导致上下文过长。"
+                "自己的家目录以只读方式挂载在 /tlon-home"
+                "（config/ 行为定义、memory/ 记忆、mail/ 邮箱等，可读不可写）。"
                 "所有操作在隔离的 Docker 容器内执行。"
             ),
             parameters={

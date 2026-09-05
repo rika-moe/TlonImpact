@@ -621,6 +621,100 @@ class TestFilesystemToolSandbox:
         assert tool._allowed_paths == ["/workspace"]
 
 
+class TestAgentHomeAccess:
+    """Agent home read access (issue ): the agent's own home is mounted
+    read-only at /tlon-home; read/list/search whitelist it, write/edit don't."""
+
+    _READ_PATHS = ["/workspace", "/tlon-home"]
+    _WRITE_PATHS = ["/workspace"]
+
+    def _make(self, cls, allowed_paths):
+        tool = cls.__new__(cls)
+        tool._docker_config = MagicMock(working_dir="/workspace")
+        tool._allowed_paths = allowed_paths
+        tool._docker_runtime = _make_mock_runtime()
+        return tool
+
+    async def test_read_own_home_allowed(self):
+        tool = self._make(ReadFileTool, self._READ_PATHS)
+        tool._docker_runtime.read_file.return_value = b":rules []\n"
+
+        result = await tool.execute(file_path="/tlon-home/config/behavior.tlon")
+
+        assert result.success is True
+        tool._docker_runtime.read_file.assert_awaited_once_with(
+            "/tlon-home/config/behavior.tlon"
+        )
+
+    async def test_read_own_mailbox_allowed(self):
+        tool = self._make(ReadFileTool, self._READ_PATHS)
+        tool._docker_runtime.read_file.return_value = b"{}\n"
+
+        result = await tool.execute(file_path="/tlon-home/mail/inbox.jsonl")
+
+        assert result.success is True
+
+    async def test_list_own_home_allowed(self):
+        tool = self._make(ListDirectoryTool, self._READ_PATHS)
+        tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0, stdout="d\t4096\t2026-09-05T14:32\tconfig\n", stderr=""
+        )
+
+        result = await tool.execute(path="/tlon-home")
+
+        assert result.success is True
+        command = tool._docker_runtime.execute.await_args[0][0]
+        assert "find /tlon-home" in command
+
+    async def test_search_own_home_allowed(self):
+        tool = self._make(SearchFilesTool, self._READ_PATHS)
+        tool._docker_runtime.execute.return_value = MagicMock(
+            exit_code=0,
+            stdout="/tlon-home/config/behavior.tlon\x001:(defrule x)\n",
+            stderr="",
+        )
+
+        result = await tool.execute(pattern="defrule", path="/tlon-home/config")
+
+        assert result.success is True
+        assert result.data["matches"][0]["file"] == "/tlon-home/config/behavior.tlon"
+
+    async def test_write_own_home_rejected(self):
+        tool = self._make(WriteFileTool, self._WRITE_PATHS)
+
+        result = await tool.execute(
+            file_path="/tlon-home/config/behavior.tlon", content="x"
+        )
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.write_file.assert_not_awaited()
+
+    async def test_edit_own_home_rejected(self):
+        tool = self._make(EditFileTool, self._WRITE_PATHS)
+
+        result = await tool.execute(
+            file_path="/tlon-home/memory/config.json", old_string="a", new_string="b"
+        )
+
+        assert result.success is False
+        assert "outside the allowed paths" in result.error
+        tool._docker_runtime.read_file.assert_not_awaited()
+
+    async def test_read_outside_workspace_and_home_rejected(self):
+        # Cross-agent reads are structurally impossible (only the agent's own
+        # home is mounted into its container); the whitelist rejects anything
+        # outside /workspace and /tlon-home, sibling prefixes included.
+        tool = self._make(ReadFileTool, self._READ_PATHS)
+
+        for path in ("/etc/passwd", "/tlon-home-other/config/agent.yaml"):
+            result = await tool.execute(file_path=path)
+
+            assert result.success is False
+            assert "outside the allowed paths" in result.error
+        tool._docker_runtime.read_file.assert_not_awaited()
+
+
 class TestToolConfigAllowedPaths:
     def test_default_allowed_paths(self):
         config = ToolConfig()

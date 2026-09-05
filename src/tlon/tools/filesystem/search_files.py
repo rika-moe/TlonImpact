@@ -55,6 +55,7 @@ class SearchFilesTool(Tool):
                 "返回匹配的文件、行号和行内容；mode=filename 按文件名 glob 查找（如 *.py，不区分大小写）。"
                 "搜索文件优先用此工具，不要用 executeBashCommand 跑 grep/find。"
                 "结果有界：匹配数上限 + 每行长度截断，超出会注明。"
+                "自己的家目录以只读方式挂载在 /tlon-home，可作为搜索起点。"
                 "所有操作在隔离的 Docker 容器内执行。"
             ),
             parameters={

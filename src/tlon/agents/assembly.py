@@ -21,7 +21,7 @@ from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.sandbox.docker_runtime import DockerRuntime
+from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
@@ -175,11 +175,17 @@ async def assemble_cognitive(
     # checkBashTask shares this agent's task table: no cross-agent visibility.
     tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
     allowed_paths = config.tool.allowed_paths
-    tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, allowed_paths))
+    # Read-side tools additionally see the agent's own home (behavior spec,
+    # memory, mailbox) at the read-only mount (issue : 行为即数据 —
+    # self-awareness is the precondition of self-evolution). Write/edit keep
+    # the configured whitelist: behavior changes go through the prototype
+    # channel, never direct file writes.
+    read_allowed_paths = [*allowed_paths, AGENT_HOME_CONTAINER_PATH]
+    tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, read_allowed_paths))
     tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
     tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
-    tool_executor.register_tool(ListDirectoryTool(config.docker, docker_runtime, allowed_paths))
-    tool_executor.register_tool(SearchFilesTool(config.docker, docker_runtime, allowed_paths))
+    tool_executor.register_tool(ListDirectoryTool(config.docker, docker_runtime, read_allowed_paths))
+    tool_executor.register_tool(SearchFilesTool(config.docker, docker_runtime, read_allowed_paths))
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())

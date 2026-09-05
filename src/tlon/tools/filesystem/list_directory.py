@@ -50,7 +50,8 @@ class ListDirectoryTool(Tool):
             description=(
                 "列出沙箱中目录的内容（名称/类型/大小/修改时间，目录在前按名排序）。"
                 "查看目录结构时优先用此工具，不要用 executeBashCommand 跑 ls。"
-                "条目数有上限，超出会截断并注明。所有操作在隔离的 Docker 容器内执行。"
+                "条目数有上限，超出会截断并注明。自己的家目录以只读方式挂载在 /tlon-home。"
+                "所有操作在隔离的 Docker 容器内执行。"
             ),
             parameters={
                 "type": "object",

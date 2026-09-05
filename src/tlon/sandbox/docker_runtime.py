@@ -25,6 +25,14 @@ from tlon.base.paths import paths
 
 logger = get_logger(__name__)
 
+#: Container path where the agent's own home directory (``~/.tlon/{agent_id}``)
+#: is bind-mounted read-only (issue ): readFile/listDirectory/searchFiles
+#: whitelist it (agents/assembly.py), writeFile/editFile do not, and the ``ro``
+#: mount is the kernel-level guarantee. Only the agent's own home is mounted —
+#: other members' homes never enter the container, so cross-agent reads are
+#: structurally impossible.
+AGENT_HOME_CONTAINER_PATH = "/tlon-home"
+
 
 @dataclass
 class ExecutionResult:
@@ -145,11 +153,19 @@ class DockerRuntime:
             logger.info("image_pulled", image=image)
 
         workspace = paths.agent_workspace_dir(self.agent_id)
+        # Own home read-only (issue ): the agent can inspect its behavior
+        # spec, memory and mailbox through the filesystem tools; the ro mount
+        # keeps writes impossible even if a whitelist were misconfigured.
+        agent_home = paths.agent_dir(self.agent_id)
         volumes = {
             str(workspace): {
                 "bind": self.config.working_dir,
                 "mode": "rw",
-            }
+            },
+            str(agent_home): {
+                "bind": AGENT_HOME_CONTAINER_PATH,
+                "mode": "ro",
+            },
         }
 
         logger.info("container_run", container_name=self.container_name, image=image)

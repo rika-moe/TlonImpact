@@ -84,7 +84,7 @@
 | `allowed_paths` | `list[str]` | ['/workspace'] |  |
 <!-- END GENERATED: agent-yaml-fields-tool -->
 
-`per_timeout` 是单个工具超时，见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool`；`allowed_paths` 是 read/write/edit 文件工具只允许触碰的**容器内绝对路径**，非空、必须 `/` 开头（校验器强制）。
+`per_timeout` 是单个工具超时，见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool`；`allowed_paths` 是文件工具只允许触碰的**容器内绝对路径**（writeFile/editFile 的完整白名单），非空、必须 `/` 开头（校验器强制）。readFile/listDirectory/searchFiles 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
 
 ### 完整示例
 

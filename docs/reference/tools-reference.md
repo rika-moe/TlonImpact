@@ -107,7 +107,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 五个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [tools/filesystem/path_guard.py](../../src/tlon/tools/filesystem/path_guard.py) 的 `resolve_container_path` 校验：
 
 - 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
-- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。
+- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（readFile/listDirectory/searchFiles）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（issue ），可读取自己的行为定义、记忆与邮箱；writeFile/editFile 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
 - 空路径直接拒绝。全部是纯字符串处理，不做宿主机路径解析。
 
 ### readFile
