@@ -30,14 +30,15 @@ _TRIGGER_PREDICATE = "(or (addressed-to-me? msg) (cc-ed? msg))"
 
 #: Default context program (phase 7b): persona + protocol in the system
 #: prompt, then knowledge, then the skills index (ADR 0010), then the
-#: current doing task (issue ), then 20 mails of history in the
-#: conversation.
+#: current doing task (issue ), then the thread's previous-round
+#: recap (issue ), then 20 mails of history in the conversation.
 _DEFAULT_SECTIONS: tuple[str, ...] = (
     "(persona)",
     "(protocol)",
     "(knowledge)",
     "(skills)",
     "(current-task)",
+    "(thread-recap)",
     "(mail-history 20)",
 )
 

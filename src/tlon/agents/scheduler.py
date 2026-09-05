@@ -28,7 +28,7 @@ from structlog.contextvars import bound_contextvars
 
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.session import AgentSession, SessionState
-from tlon.agents.session_journal import SessionJournal, SessionReplay
+from tlon.agents.session_journal import SessionJournal, SessionReplay, session_id_for
 from tlon.base.config import AgentConfig
 from tlon.base.llm_client import ToolCall
 from tlon.base.logger import get_logger
@@ -278,7 +278,7 @@ class SessionScheduler:
         resumes with a one-shot ``resume_collect`` before the normal
         step/collect flow.
         """
-        sid = f"{self._id}-{mail.id}"
+        sid = session_id_for(self._id, mail.id)
         replay = await self._journal.resume(sid)
         if replay is not None and replay.completed:
             logger.info(

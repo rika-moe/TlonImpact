@@ -183,6 +183,23 @@ class Mailbox:
                 return mail
         return None
 
+    async def thread_incoming(self, thread_id: str) -> list[Mail]:
+        """List inbox mails belonging to one thread, in chronological order.
+
+        Used by the context builder's ``thread-recap`` section to locate
+        the thread's earlier session triggers (a session is only ever
+        opened for an incoming mail). Backed by the incremental inbox
+        scan cache, so repeat scans only parse the appended tail.
+
+        Args:
+            thread_id: The thread root mail id
+
+        Returns:
+            Inbox mails with this thread id, oldest first
+        """
+        inbox = await self._read_inbox()
+        return [mail for mail in inbox if mail.thread_id == thread_id]
+
     async def unread(self) -> list[Mail]:
         """List inbox mail whose id is not yet in the read cursor.
 

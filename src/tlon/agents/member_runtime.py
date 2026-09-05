@@ -987,6 +987,11 @@ class MemberRuntime(Member):
 
         identity = AgentIdentity(id=self._member_id, name=self._name, address=self.address)
         publisher = make_event_publisher(self._event_bus, self._name)
+        # Session event journal (ADR 0007): one append-only log per session,
+        # written by the driver, read by the scheduler (resume on boot), the
+        # reflection digest, the summary trigger (ADR 0009) and the context
+        # builder (thread-recap section).
+        journal = SessionJournal(self._member_id, caps.tlon_paths)
         self._context_builder = ContextBuilder(
             caps.config,
             caps.team_members,
@@ -995,11 +1000,8 @@ class MemberRuntime(Member):
             caps.task_manager,
             rule,
             self.address,
+            journal,
         )
-        # Session event journal (ADR 0007): one append-only log per session,
-        # shared by the driver (writes), the scheduler (resume on boot), the
-        # reflection digest and the summary trigger (ADR 0009 reads).
-        journal = SessionJournal(self._member_id, caps.tlon_paths)
         self._reflection = ReflectionEngine(caps.memory, caps.llm_client, rule, journal)
         self._stage_services = StageServices(
             identity=identity,

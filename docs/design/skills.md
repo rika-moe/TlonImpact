@@ -62,7 +62,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 **DSL**：`(skills)` 是 `:context :sections` 向量的一员，无参数，与 `(knowledge)` 平级，按向量顺序落位：
 
 ```clojure
-:context {:sections [(persona) (protocol) (knowledge) (skills) (current-task) (mail-history 20)]}
+:context {:sections [(persona) (protocol) (knowledge) (skills) (current-task) (thread-recap) (mail-history 20)]}
 ```
 
 不加该 section 的成员没有任何 skill 开销（确定性 script 成员天然如此）。

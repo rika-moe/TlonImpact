@@ -112,6 +112,8 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
    一个 agent 同时可以有多个进行中的 session（多封邮件、多个线程），上限 `max_concurrent_sessions`（默认 4），超出的邮件留在有界队列里等 session 完成再逐个补位；`SessionScheduler` 负责逐个推进、回收完成与过期的 session；session 因空闲超时或 stage 异常被终止时，调度器会给触发邮件的发件人回一封固定文案的失败通知（经 `LoopDriver` 的 MailEffect → `EffectExecutor` 管道，与正常回信同一出口），保证「邮件必有回音」。agent 的整体状态在读取时从 session 集合派生，不靠回调维护。反思引擎（[agents/reflection.py](../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）按交互计数触发，由调度器在循环间隙经注入的 `check_reflection` 委托检查；反思跑在引擎持有的后台 task 里——进行中计入成员活跃（不会被判空闲 drain 掉），成员 shutdown 时统一取消。
 
+   每封邮件开一个新 session，但同一线程的往复不是失忆重逢：`ContextBuilder`（[agents/context_builder.py](../src/tlon/agents/context_builder.py)）组装上下文时，`(thread-recap)` section 从 session journal（ADR 0007）确定性重建本线程最近一个已完成 session 的简报（触发、调了哪些工具、结论是什么），不调 LLM、不等批触发摘要；与 `mail-history` 的邮件原文互补——原文给「说了什么」，简报给「我做了什么」。只注入最近一轮，成本不随线程长度膨胀（issue ）。
+
 5. **收件人是人类：推送或拉取**。`HumanAdapter` 与其他成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的邮件 fan-out 给 attach 上来的客户端会话；客户端通过 `GET /events` 的 SSE 长连接实时收信（推送侧由 [app/server/core/notification_service.py](../src/tlon/app/server/core/notification_service.py) 的 `NotificationService` 管理），也可随时 `GET /inbox` 直接读邮箱文件。人类离线时邮件留在其持久邮箱里，上线后再读。
 
 全链路的背压策略一致：EventBus 的 per-subscriber 队列、SessionScheduler 的邮件队列都是有界的，溢出时丢新保旧并保未读，绝不阻塞总线。

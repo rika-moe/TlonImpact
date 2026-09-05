@@ -1,9 +1,9 @@
 """Context assembly for Agent.
 
 Builds the LLM conversation context (memory knowledge blocks + skills
-index + current doing task + mailbox history + current mail) and the
-system prompt (persona files with mtime-keyed caching). Extracted from
-the Agent god class; complements prompt_builder's pure
+index + current doing task + thread recap + mailbox history + current
+mail) and the system prompt (persona files with mtime-keyed caching).
+Extracted from the Agent god class; complements prompt_builder's pure
 SystemPromptBuilder with the agent-bound fetching/caching side.
 
 P4: the builder receives its dependencies (config, team members,
@@ -11,12 +11,14 @@ mailbox, memory, task manager, rule, address) explicitly and owns the
 system prompt cache — no back-reference to the Agent.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
 from tlon.agents.member_spec import MemberRule, has_section
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
+from tlon.agents.session_journal import SessionJournal, session_id_for
 from tlon.agents.skills import Signature, render_skills_index, scan_signature, scan_skills
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
@@ -27,6 +29,14 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.tasks.manager import TaskManager
 
 logger = get_logger(__name__)
+
+#: Truncation bounds for the ``thread-recap`` section: the recap is a
+#: bounded digest, never a transcript — one completed session, a few
+#: clipped fields.
+_RECAP_TRIGGER_MAX = 100
+_RECAP_TOOL_MAX = 120
+_RECAP_TOOLS_LIMIT = 5
+_RECAP_CONCLUSION_MAX = 200
 
 
 def _render_mail(mail: Mail) -> str:
@@ -41,6 +51,63 @@ def _render_mail(mail: Mail) -> str:
     lines.append("")
     lines.append(mail.content)
     return "\n".join(lines)
+
+
+def _clip(text: str, limit: int) -> str:
+    """Clip text to ``limit`` chars, marking the truncation."""
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _render_thread_recap(events: list[dict[str, Any]]) -> str:
+    """Render one completed session's journal events as a bounded digest.
+
+    The recap complements ``mail-history`` (raw correspondence) with what
+    the correspondence does not show: the previous round's tool activity
+    and conclusion. Same event vocabulary as
+    ``MemoryManager._build_projection`` — trigger from ``session/start``,
+    one line per ``tool/result``, the last ``llm/response`` content as
+    the conclusion.
+    """
+    trigger = ""
+    end_reason = ""
+    tool_lines: list[str] = []
+    conclusion = ""
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "session/start":
+            trigger = str(event.get("trigger_content") or "")
+        elif event_type == "tool/result":
+            tool_call = event.get("tool_call") or {}
+            name = (tool_call.get("function") or {}).get("name", "unknown")
+            result = event.get("result") or {}
+            text = (
+                result.get("message")
+                or result.get("error")
+                or json.dumps(result.get("data") or {}, ensure_ascii=False)
+            )
+            tool_lines.append(_clip(f"{name}: {text}", _RECAP_TOOL_MAX))
+        elif event_type == "llm/response":
+            content = (event.get("response") or {}).get("content") or ""
+            if content:
+                conclusion = str(content)
+        elif event_type == "session/end":
+            end_reason = str(event.get("reason") or "")
+
+    lines = ["[本线程上一轮处理摘要]"]
+    if trigger:
+        lines.append(f"触发来信：{_clip(trigger, _RECAP_TRIGGER_MAX)}")
+    if end_reason:
+        lines.append(f"处理结果：{end_reason}")
+    if tool_lines:
+        shown = tool_lines[-_RECAP_TOOLS_LIMIT:]
+        header = f"工具调用（共 {len(tool_lines)} 次"
+        header += f"，列最近 {len(shown)} 条）：" if len(tool_lines) > len(shown) else "）："
+        lines.append(header)
+        lines.extend(f"- {line}" for line in shown)
+    if conclusion:
+        lines.append(f"结论：{_clip(conclusion, _RECAP_CONCLUSION_MAX)}")
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 class ContextBuilder:
@@ -60,6 +127,7 @@ class ContextBuilder:
         task_manager: TaskManager,
         rule: MemberRule,
         address: str,
+        journal: SessionJournal | None = None,
     ):
         self._config = config
         self._team_members = team_members
@@ -71,6 +139,9 @@ class ContextBuilder:
         self._rule = rule
         self._loop = rule.loop
         self._address = address
+        # Session journal (ADR 0007): read-only, feeds the thread-recap
+        # section; None degrades that section to empty.
+        self._journal = journal
         # Prompt cache — rebuilt when persona file mtimes change
         self._system_prompt_cache: str | None = None
         self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
@@ -166,6 +237,10 @@ class ContextBuilder:
                     context.append({"role": "user", "content": current_task})
             elif name == "mail-history":
                 context.extend(await self._build_mail_history(form[1], current_mail))
+            elif name == "thread-recap":
+                recap = await self.build_thread_recap(current_mail)
+                if recap:
+                    context.append({"role": "user", "content": recap})
 
         context.append({"role": "user", "content": _render_mail(current_mail)})
         return context
@@ -195,6 +270,52 @@ class ContextBuilder:
             role = "assistant" if mail.from_address == self._address else "user"
             messages.append({"role": role, "content": _render_mail(mail)})
         return messages
+
+    async def build_thread_recap(self, current_mail: Mail) -> str:
+        """Build the ``(thread-recap)`` section: a digest of the thread's
+        most recent completed session.
+
+        Data source is the session journal (ADR 0007), not the episodic
+        summaries: a Summary is batch-triggered (ADR 0009, pending count
+        must reach ``summary_window``) and spans several sessions across
+        threads, so the previous round of *this* thread is usually not
+        summarized yet when the follow-up mail arrives. The journal log
+        is complete at session end, per-session, and reading it needs no
+        LLM call — the recap is a deterministic, bounded rendering.
+
+        Cost is bounded: only the single most recent completed session of
+        the thread is recapped, however long the thread grows. With no
+        previous completed session (first mail of the thread, or the
+        previous session still running/crashed before ``session/end``)
+        the section is skipped — same empty-state convention as
+        knowledge/skills. Journal/mailbox failures degrade to empty —
+        a broken recap must never block context assembly.
+
+         compatibility: the boot scan merges a thread's unread mails
+        into one session keyed by the latest (representative) mail and
+        marks the earlier siblings read without sessions — they simply
+        have no journal log, and the newest-first walk skips them until
+        it hits a mail that actually ran a session.
+        """
+        if self._mailbox is None or self._journal is None:
+            return ""
+        try:
+            thread = await self._mailbox.thread_incoming(current_mail.thread_id)
+            for mail in reversed(thread):
+                if mail.id == current_mail.id:
+                    continue
+                events = await self._journal.read_events(
+                    session_id_for(self._config.id, mail.id)
+                )
+                if not events:  # no log: this mail never ran a session
+                    continue
+                if not any(event.get("type") == "session/end" for event in events):
+                    continue  # in flight or crashed mid-session
+                return _render_thread_recap(events)
+            return ""
+        except Exception:
+            logger.warning("thread_recap_build_failed", exc_info=True)
+            return ""
 
     async def build_prompt_context(self) -> AgentPromptContext:
         """Build AgentPromptContext by pre-fetching team SOUL.md files."""

@@ -48,11 +48,19 @@ STAGE_NAMES = frozenset({"think", "act", "plan", "critique", "revise"})
 
 #: Section names the engine implements (phase 7b). ``persona`` and
 #: ``protocol`` feed the system prompt; ``knowledge``, ``skills``,
-#: ``current-task`` and ``mail-history`` feed the conversation context,
-#: in vector order.
+#: ``current-task``, ``thread-recap`` and ``mail-history`` feed the
+#: conversation context, in vector order.
 #: Relocated from the legacy ``agents/spec.py`` in phase C.
 SECTION_NAMES = frozenset(
-    {"persona", "protocol", "knowledge", "skills", "current-task", "mail-history"}
+    {
+        "persona",
+        "protocol",
+        "knowledge",
+        "skills",
+        "current-task",
+        "thread-recap",
+        "mail-history",
+    }
 )
 
 

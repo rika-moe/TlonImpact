@@ -72,6 +72,16 @@ INTERRUPTED_ERROR = "interrupted: process restart"
 #: Bound on the shared lock table (same magnitude as the mailbox's).
 _LOCKS_CAP = 4096
 
+
+def session_id_for(agent_id: str, mail_id: str) -> str:
+    """The session id of one trigger mail (one mail = one session).
+
+    Single source for the scheduler's sid construction; the context
+    builder's ``thread-recap`` section uses it to map a thread's earlier
+    mails back to their session logs.
+    """
+    return f"{agent_id}-{mail_id}"
+
 #: File-keyed locks shared by every SessionJournal over the same file
 #: (bounded LRU; a locked entry is never evicted — see mailbox._lock_for).
 _LOCKS: OrderedDict[Path, asyncio.Lock] = OrderedDict()
