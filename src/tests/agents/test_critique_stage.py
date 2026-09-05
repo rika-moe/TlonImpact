@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.revise import revise_stage
-from tlon.base.llm_client import LLMResponse
+from tlon.base.llm_client import LLMResponse, ToolCall
 
 
 def _make_services(verdict_text: str) -> MagicMock:
@@ -89,3 +89,73 @@ class TestCritiqueVerdict:
 
         assert "critique" not in session.loop_scratch
         assert revise_outcome.context_appends == []
+
+
+class TestCritiqueReviewInput:
+    """The reviewer sees the round's pending draft (the pre-submission
+    gate reviews the reply about to be sent, not just the context)."""
+
+    async def test_pending_draft_is_included_in_review_input(self) -> None:
+        svc = _make_services("PASS")
+        session = _make_session()
+        session.context.append({"role": "user", "content": "来信正文"})
+        response = LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    function_name="sendEmail",
+                    arguments={"content": "草稿回复", "is_complete": True},
+                )
+            ],
+        )
+
+        await critique_stage(svc, session, response)
+
+        messages = svc.think.await_args.args[0]
+        # The draft precedes the review instruction; the session context
+        # itself is untouched (the render is review-input only).
+        assert messages[0] == {"role": "user", "content": "来信正文"}
+        assert messages[-2]["role"] == "assistant"
+        assert "草稿回复" in messages[-2]["content"]
+        assert "sendEmail" in messages[-2]["content"]
+        assert session.context == [{"role": "user", "content": "来信正文"}]
+
+    async def test_no_pending_response_keeps_context_only_input(self) -> None:
+        svc = _make_services("PASS")
+        session = _make_session()
+        session.context.append({"role": "user", "content": "来信正文"})
+
+        await critique_stage(svc, session, None)
+
+        messages = svc.think.await_args.args[0]
+        assert len(messages) == 2  # context + review instruction
+        assert messages[-1]["role"] == "user"
+
+
+class TestReviseConsumesVerdict:
+    async def test_feedback_appended_and_verdict_cleared(self) -> None:
+        svc = _make_services("unused")
+        session = _make_session()
+        session.loop_scratch["critique"] = {"passed": False, "feedback": "缺少结论"}
+
+        outcome = await revise_stage(svc, session, None)
+
+        assert outcome.context_appends[0]["content"].startswith("[评审反馈]")
+        assert "缺少结论" in outcome.context_appends[0]["content"]
+        # The consumed verdict is declared cleared, so a later round where
+        # critique is skipped cannot re-fire revise on a stale FAIL.
+        assert outcome.scratch_updates == {"critique": None}
+        session.loop_scratch.update(outcome.scratch_updates)
+        followup = await revise_stage(svc, session, None)
+        assert followup.context_appends == []
+
+    async def test_no_feedback_stays_noop(self) -> None:
+        svc = _make_services("unused")
+        session = _make_session()
+        session.loop_scratch["critique"] = {"passed": True, "feedback": ""}
+
+        outcome = await revise_stage(svc, session, None)
+
+        assert outcome.context_appends == []
+        assert outcome.scratch_updates == {}

@@ -228,15 +228,28 @@ def _builtin_first_iteration(env: dict[str, Any]) -> bool:
     return _loop_state_int(env, "state", "iteration") == 0
 
 
+def _builtin_completing(env: dict[str, Any]) -> bool:
+    """The round's pending response would end the session if dispatched.
+
+    True for a completion signal — ``sendEmail`` with ``is_complete=true``
+    or ``silence`` — with no conflicting tool calls (act's conflict rule).
+    """
+    round_map = env.get("round")
+    return isinstance(round_map, dict) and round_map.get("completing") is True
+
+
 #: Stage ``:if`` condition predicates (phase 7c). Pure only; evaluation is
 #: side-effect free by construction. The environment provides ``state``
-#: (iteration / error_count) and ``scratch`` (the session's loop
-#: scratchpad); missing keys safely yield False, never raise.
+#: (iteration / error_count), ``scratch`` (the session's loop scratchpad)
+#: and ``round`` (``completing`` — whether the response currently on the
+#: round's chain would end the session); missing keys safely yield False,
+#: never raise.
 STAGE_COND_BUILTINS: dict[str, Builtin] = {
     "critique-failed?": Builtin(_builtin_critique_failed, pure=True),
     "critique-passed?": Builtin(_builtin_critique_passed, pure=True),
     "plan-exists?": Builtin(_builtin_plan_exists, pure=True),
     "first-iteration?": Builtin(_builtin_first_iteration, pure=True),
+    "completing?": Builtin(_builtin_completing, pure=True),
     "=": Builtin(_builtin_eq, pure=True),
     "not": Builtin(_builtin_not, pure=True),
 }

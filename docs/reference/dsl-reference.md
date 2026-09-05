@@ -202,10 +202,10 @@
 
 ### 5.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
 
-环境 `{state, scratch}`；`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 6 节）。
+环境 `{state, scratch, round}`；`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 6 节）；`round` = `{:completing bool}`——响应链上的本轮响应若派发是否会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence` 调用，判定与 act 的完成/冲突规则一致）。
 
 <!-- BEGIN GENERATED: dsl-builtins-stage-cond -->
-`STAGE_COND_BUILTINS`（6 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`STAGE_COND_BUILTINS`（7 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -213,6 +213,7 @@
 | `critique-passed?` | 是 | A critique verdict exists in scratch and passed. |
 | `plan-exists?` | 是 | Scratch holds a non-empty plan string. |
 | `first-iteration?` | 是 | ``state.iteration`` is 0 (the loop's first round). |
+| `completing?` | 是 | The round's pending response would end the session if dispatched. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-stage-cond -->
@@ -278,7 +279,10 @@
 
 ```clojure
 :loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
-       :stages [(think) (act) (critique) (revise {:if (critique-failed?)})]
+       :stages [(think)
+                (critique {:if (completing?)})
+                (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                (revise {:if (critique-failed?)})]
        :until (or (iteration-limit-reached?) (error-limit-reached?))
        :max-iterations 25
        :max-consecutive-errors 3
@@ -318,8 +322,8 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
 | `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出回复邮件（显式 `to` 优先，否则回复触发邮件发件人）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
-| `critique` | 额外一次 LLM 评审：首行 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、不写 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不按 PASS 放行。失败软降级 |
-| `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作 |
+| `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审草稿（响应链上尚未入 context 的响应，渲染为 assistant 消息）+ 评审指令；首行 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、不写 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不按 PASS 放行。失败软降级 |
+| `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |
 
 stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → on-complete 动作 → 完成标记。
 
@@ -376,9 +380,11 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
                                       (skills)                  ; 对话上下文：技能索引（ADR 0010）
                                       (current-task)            ; 对话上下文：当前 doing 任务（issue ）
                                       (mail-history 20)]}       ; 对话上下文：最近 20 封邮件
-                 :stages [(think) (act)                         ; 想 + 做（ReAct 主循环）
-                          (critique)                            ; 评审本轮输出
-                          (revise {:if (critique-failed?)})]    ; 仅当评审 FAIL 时把反馈喂回
+                 :stages [(think)                                  ; 想：一次 LLM 调用
+                          (critique {:if (completing?)})             ; 只在即将交卷时评审待交回复
+                          (act {:if (or (not (completing?))          ; 做：评审 FAIL 时拦截本轮完成
+                                        (not (critique-failed?)))})
+                          (revise {:if (critique-failed?)})]         ; FAIL 时把反馈喂回，下轮修正后重审
                  :until (or (iteration-limit-reached?)          ; 兜底终止：迭代或错误到顶
                             (error-limit-reached?))
                  :max-iterations 25                             ; 引擎硬顶（先于 :until 生效）

@@ -22,6 +22,31 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.tools.base import ToolResult
 
 
+def attempts_completion(response: "LLMResponse | None") -> bool:
+    """Whether dispatching this response would end the session.
+
+    True exactly when the response carries a completion signal (a
+    ``sendEmail`` call with ``is_complete=true``, or a ``silence`` call)
+    that act would actually dispatch — i.e. without the conflict act
+    rejects (a completion signal mixed with other tool calls). Used by
+    the engine to expose ``round.completing`` to stage ``:if``
+    conditions; must stay in lockstep with the conflict rule in
+    :func:`act_stage_step`.
+    """
+    if response is None or not response.tool_calls:
+        return False
+    calls = response.tool_calls
+    send_calls = [tc for tc in calls if tc.function_name == "sendEmail"]
+    silence_calls = [tc for tc in calls if tc.function_name == "silence"]
+    other_calls = [
+        tc for tc in calls if tc.function_name not in ("sendEmail", "silence")
+    ]
+    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(
+        silence_calls
+    )
+    return bool(has_complete and not (other_calls or (silence_calls and send_calls)))
+
+
 async def act_stage_step(
     svc: StageServices,
     session: AgentSession,

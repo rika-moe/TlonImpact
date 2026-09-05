@@ -41,7 +41,7 @@ from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
-from tlon.agents.stages.act import act_stage_collect, act_stage_step
+from tlon.agents.stages.act import act_stage_collect, act_stage_step, attempts_completion
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.outcome import MailEffect, StageOutcome
 from tlon.agents.stages.plan import plan_stage
@@ -227,7 +227,7 @@ class LoopDriver:
                 # load-time validation prevents this
                 log.warning("loop_unknown_stage", session_id=session.id, stage=name)
                 continue
-            if not self._stage_condition_met(session, name, opts):
+            if not self._stage_condition_met(session, name, opts, response):
                 continue
             log.debug("loop_stage_start", session_id=session.id, stage=name)
             try:
@@ -479,13 +479,21 @@ class LoopDriver:
             )
         )
 
-    def _stage_condition_met(self, session: AgentSession, name: str, opts: dict[str, Any]) -> bool:
+    def _stage_condition_met(
+        self,
+        session: AgentSession,
+        name: str,
+        opts: dict[str, Any],
+        response: LLMResponse | None,
+    ) -> bool:
         """Evaluate a stage's optional ``:if`` condition (phase 7c).
 
-        The condition is a pure predicate over loop state and the
-        session's loop scratchpad. False skips the stage; an evaluation
-        failure also skips it (safe default: never run a stage whose
-        gating condition is broken).
+        The condition is a pure predicate over loop state, the session's
+        loop scratchpad, and the round section — ``round.completing``
+        reflects whether the response currently on the chain would end
+        the session (act's completion rule). False skips the stage; an
+        evaluation failure also skips it (safe default: never run a
+        stage whose gating condition is broken).
         """
         condition = opts.get("if")
         if condition is None:
@@ -494,6 +502,7 @@ class LoopDriver:
         env = {
             "state": {"iteration": session.iteration, "error_count": session.error_count},
             "scratch": session.loop_scratch,
+            "round": {"completing": attempts_completion(response)},
         }
         try:
             result = eval_form(

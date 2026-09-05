@@ -1,10 +1,13 @@
-; 档案管理者：标准 ReAct 程序，高频记忆反思（total spec——文件即全部行为）
+; 档案管理者：标准认知程序（交卷前自评审），高频记忆反思（total spec——文件即全部行为）
 {:version 1
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (knowledge) (skills) (current-task) (mail-history 20)]}
-                 :stages [(think) (act)]
+                 :stages [(think)
+                          (critique {:if (completing?)})
+                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3

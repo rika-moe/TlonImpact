@@ -116,11 +116,11 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 - `think`：一次 LLM 调用，产出本轮响应；
 - `plan`：轮前规划，结论写草稿板；
-- `critique`：评审本轮最新产出；
-- `revise`：把评审反馈写回 context；
+- `critique`：评审本轮最新产出（含响应链上待派发、尚未入 context 的草稿）；
+- `revise`：把评审反馈写回 context，并清除已消费的 verdict；
 - `act`：工具执行。它按 asyncio 的"分发后收割"模型拆成两半——`act_stage_step` 声明分发列表，`act_stage_collect` 声明收割结果的含义；两半都是纯变换，并发与收割本身是引擎的。
 
-默认循环是 think + act；plan / critique / revise 是 spec 可选插入的自省积木。把自省拆成独立 stage 而不是做进 think 的理由：自省是**程序级的选择**——一个成员要不要规划、要不要自我评审、评审几次，应该写在 spec 里可审计、可改写，而不是埋在 prompt 工程里。拆成积木后，"带自我评审的 ReAct"与"朴素 ReAct"是同一个引擎跑两份不同的 stage 向量，引擎零改动。
+默认循环是 think + act，外加一道**交卷前自查**（issue ）：`(critique {:if (completing?)})` 只在本轮响应会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence`，判定与 act 的完成/冲突规则一致）时评审待交草稿；FAIL 则 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截本轮派发、`(revise {:if (critique-failed?)})` 把反馈喂回上下文让下一轮 think 修正后重审。评审成本与轮数无关（每次交卷尝试一次全量评审），不随长 session 平方放大；plan 与更密的 critique 排布仍是 spec 可选插入的自省积木。把自省拆成独立 stage 而不是做进 think 的理由：自省是**程序级的选择**——一个成员要不要规划、要不要自我评审、评审几次，应该写在 spec 里可审计、可改写，而不是埋在 prompt 工程里。拆成积木后，"带自我评审的 ReAct"与"朴素 ReAct"是同一个引擎跑两份不同的 stage 向量，引擎零改动。
 
 ### 认知规则的唯一性
 

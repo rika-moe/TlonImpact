@@ -20,6 +20,12 @@ async def revise_stage(
     message so the next round's think revises naturally. No-op when
     there is no critique verdict or no feedback. Does not consume or
     produce the round's response.
+
+    A consumed verdict is cleared (``scratch.critique`` set to nil):
+    the verdict belongs to the round it reviewed, and clearing keeps a
+    stale FAIL from re-triggering revise (duplicate feedback) or
+    mis-gating downstream stages on later rounds where critique is
+    conditionally skipped.
     """
     critique = session.loop_scratch.get("critique")
     feedback = critique.get("feedback") if isinstance(critique, dict) else None
@@ -28,4 +34,5 @@ async def revise_stage(
     return StageOutcome(
         response=response,
         context_appends=[{"role": "user", "content": f"[评审反馈]\n\n{feedback}\n请据此修正。"}],
+        scratch_updates={"critique": None},
     )

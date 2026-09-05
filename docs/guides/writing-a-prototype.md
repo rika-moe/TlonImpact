@@ -27,7 +27,7 @@
 
 ## 2. 从零写一个认知型原型
 
-认知型 = 有 LLM 参与、带 `:loop` 循环的成员。我们写一个「简报员」：收到点名自己的邮件就做一轮简短的 think/act 循环，最多 3 轮。
+认知型 = 有 LLM 参与、带 `:loop` 循环的成员。我们写一个「简报员」：收到点名自己的邮件就做一轮简短的认知循环（think/act + 交卷前自评审），最多 3 轮。
 
 ### 2.1 prototype.edn
 
@@ -48,7 +48,10 @@
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (knowledge) (skills) (current-task) (mail-history 20)]}
-                 :stages [(think) (act)]
+                 :stages [(think)
+                          (critique {:if (completing?)})
+                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 3
                  :max-consecutive-errors 2
@@ -66,7 +69,7 @@
 - **`:rules [...]`** 是规则向量。`:name "respond"` 规则：**`:on :mail-delivered`** 触发（收到投递事件）、**`:when`** 门控（收件人含自己才响应——没有这个门，系统里每一封邮件都会唤醒它）。
 - **`:loop`** 使它成为认知型成员：
   - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`knowledge`/`skills`/`current-task`/`mail-history N` 六种，见 dsl-reference §6.1）；
-  - `:stages` 认知循环的阶段程序（`think` / `act`，可加 `critique`、`revise`）；
+  - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (completing?)})` 只在即将完成时评审待交回复，FAIL 时 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §6.2）；
   - `:until` 停机条件 + `:max-iterations` 迭代上限（DSL 的停机性靠预算，不靠砍循环）；
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。
 - **`:on :boot` 规则**：带它的成员开机即启动；不带的按需唤醒（startup 模式由此派生，`agent.yaml` 不再控制）。

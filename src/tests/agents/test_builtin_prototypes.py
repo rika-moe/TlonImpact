@@ -10,10 +10,13 @@ masked by the listing/instantiation tolerance until spawn
 (docs/design/prototypes.md).
 """
 
+from pathlib import Path
+
 import pytest
 
-from tlon.agents.edn import loads
-from tlon.agents.member_spec import MemberSpec, validate_member_spec
+import tlon
+from tlon.agents.edn import dumps, loads
+from tlon.agents.member_spec import MemberLoop, MemberSpec, validate_member_spec
 from tlon.agents.prototypes import (
     get_prototype_info,
     instantiate,
@@ -78,3 +81,49 @@ class TestBuiltinPrototypes:
         # (the unified spec is total — the derived runtime comes from here).
         assert any(rule.on is None for rule in spec.rules)
         assert sum(rule.loop is not None for rule in spec.rules) <= 1
+
+
+#: The default cognitive loop (issue ): a lightweight pre-submission
+#: review. critique fires only when the round's pending response would
+#: end the session (``completing?``) — one review per completion attempt,
+#: independent of the round count; a FAIL blocks act and revise feeds the
+#: feedback back for the next think.
+DEFAULT_COGNITIVE_STAGES = [
+    "(think)",
+    "(critique {:if (completing?)})",
+    "(act {:if (or (not (completing?)) (not (critique-failed?)))})",
+    "(revise {:if (critique-failed?)})",
+]
+
+#: Cognitive prototypes carrying the default loop. fast-responder is
+#: deliberately bare (minimal design); relay is deterministic (no loop).
+GATED_PROTOTYPES = [
+    "archivist",
+    "deep-thinker",
+    "developer",
+    "ops",
+    "pm",
+    "support",
+    "product",
+    "data-analyst",
+]
+
+
+class TestDefaultStageVector:
+    @pytest.mark.parametrize("name", GATED_PROTOTYPES)
+    def test_cognitive_prototypes_carry_the_lightweight_critique(self, name: str) -> None:
+        loop = _prototype_loop(name)
+        assert [dumps(form) for form in loop.stages] == DEFAULT_COGNITIVE_STAGES
+
+    def test_fast_responder_stays_bare(self) -> None:
+        loop = _prototype_loop("fast-responder")
+        assert [dumps(form) for form in loop.stages] == ["(think)", "(act)"]
+
+
+def _prototype_loop(name: str) -> MemberLoop:
+    """The validated cognitive loop of a package-carried prototype."""
+    path = Path(tlon.__file__).parent / "prototypes" / name / "behavior.tlon"
+    spec = validate_member_spec(MemberSpec.from_edn(loads(path.read_text(encoding="utf-8"))))
+    loop = spec.rules[0].loop
+    assert loop is not None
+    return loop

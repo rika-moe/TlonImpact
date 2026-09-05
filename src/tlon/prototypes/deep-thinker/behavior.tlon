@@ -1,11 +1,15 @@
-; 深度思考者：多轮评审的思考程序（total spec——文件即全部行为）
-; 阶段 7c：显式 stage 程序——think/act 之后评审本轮输出，FAIL 时把反馈喂回上下文
+; 深度思考者：高迭代上限 + 交卷前自评审（total spec——文件即全部行为）
+; 阶段 7c：critique 只在即将完成（completing?）时评审待交回复——FAIL 时拦截 act，
+; revise 把反馈喂回上下文，下一轮 think 修正后重审，直到通过（成本与轮数无关）
 {:version 1
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (knowledge) (skills) (current-task) (mail-history 20)]}
-                 :stages [(think) (act) (critique) (revise {:if (critique-failed?)})]
+                 :stages [(think)
+                          (critique {:if (completing?)})
+                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 25
                  :max-consecutive-errors 3

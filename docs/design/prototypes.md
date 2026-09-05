@@ -38,7 +38,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 | 原型 | 当前形态 | 关键 spec 差异 |
 |---|---|---|
 | archivist（档案管理者） | 认知 | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
-| deep-thinker（深度思考者） | 认知 | `:max-iterations 25`，stages 带 `(critique)` 与条件 `(revise {:if (critique-failed?)})`——多轮自评审 |
+| deep-thinker（深度思考者） | 认知 | `:max-iterations 25`——更长思考预算；stage 程序同默认（交卷前自评审） |
 | fast-responder（快速反应者） | 认知 | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
 | relay（转发者） | 确定 | 无 `:loop`，`:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
 
