@@ -180,10 +180,14 @@ class ServerApp:
         logger.info("component_initialized", component="trace_store")
 
         # 2.4 AgentRegistry - agent management
-        # Depends on EventBus and ConfigService (as AgentInfoProvider)
+        # Depends on EventBus and ConfigService (as AgentInfoProvider);
+        # the metrics/trace pillars are forwarded into each member's
+        # observability tools (read-only, )
         agent_registry = AgentRegistry(
             event_bus=event_bus,
             agent_info_provider=config_service,
+            metrics_service=metrics_service,
+            trace_store=trace_store,
         )
         # Register initial agents (by ID, config is looked up from provider)
         for agent_id in config_service.agents:

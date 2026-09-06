@@ -62,8 +62,10 @@ from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
+from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths, paths
 from tlon.base.tracing.trace_context import continue_trace, start_span
+from tlon.base.tracing.trace_store import TraceStore
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.agents.ports import StopRejectedError
 
@@ -157,6 +159,8 @@ class AgentRegistry(Component):
         max_activations: int = 8,
         max_spawn_depth: int = 3,
         session_spawn_quota: int = 2,
+        metrics_service: MetricsService | None = None,
+        trace_store: TraceStore | None = None,
     ):
         """Initialize the agent registry.
 
@@ -172,11 +176,19 @@ class AgentRegistry(Component):
                 spawner.depth + 1; exceeding this rejects the spawn
             session_spawn_quota: spawn budget — max spawns per
                 (spawner, session) pair
+            metrics_service: Metrics pillar injected into each member's
+                observability tools (read-only snapshot, ); None
+                skips the getMetrics tool
+            trace_store: Trace pillar injected into each member's
+                observability tools (read-only, ); None skips the
+                listTraces/getTrace tools
         """
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self._paths = paths  # None means use module singleton
+        self._metrics_service = metrics_service
+        self._trace_store = trace_store
 
         # Spawn budget + idle reaper (stage 6b / scale-to-zero). The
         # per-session quota ledger is persisted (sessions survive a
@@ -451,6 +463,8 @@ class AgentRegistry(Component):
                 registry=self,
                 agent_info=self._agent_info,
                 tlon_paths=self._paths or paths,
+                metrics_service=self._metrics_service,
+                trace_store=self._trace_store,
             )
 
             member = MemberRuntime(

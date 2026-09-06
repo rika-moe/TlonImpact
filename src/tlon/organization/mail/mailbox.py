@@ -183,6 +183,18 @@ class Mailbox:
                 return mail
         return None
 
+    async def inbox(self) -> list[Mail]:
+        """List all mails in the inbox, in file order.
+
+        Backed by the incremental scan cache (see :meth:`_read_inbox`),
+        so repeat scans only parse the appended tail. Used by the
+        mail-stats provider (issue ).
+
+        Returns:
+            Every parseable mail in inbox.jsonl, oldest first
+        """
+        return await self._read_inbox()
+
     async def sent(self) -> list[Mail]:
         """List all mails in the sent file, in file order.
 

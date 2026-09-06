@@ -11,14 +11,17 @@ ports live in ``tlon.tools.agents.ports``, ).
 
 from typing import TYPE_CHECKING
 
+from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import list_prototypes, write_staging_prototype
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
+from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
+from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
@@ -36,6 +39,9 @@ from tlon.tools.mail.silence import SilenceTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
+from tlon.tools.observability.get_metrics import GetMetricsTool
+from tlon.tools.observability.mail_stats import GetMailStatsTool
+from tlon.tools.observability.traces import GetTraceTool, ListTracesTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 from tlon.tools.system.current_time import GetCurrentTimeTool
@@ -117,6 +123,8 @@ async def assemble_cognitive(
     registry: "AgentRegistry",
     agent_info: "AgentInfoProvider",
     tlon_paths: TlonPaths,
+    metrics_service: MetricsService | None = None,
+    trace_store: TraceStore | None = None,
 ) -> CognitiveCapabilities:
     """Assemble the capability set for a member.
 
@@ -212,6 +220,18 @@ async def assemble_cognitive(
     tool_executor.register_tool(CompleteTaskTool(task_manager))
     tool_executor.register_tool(RemoveTaskTool(task_manager))
     tool_executor.register_tool(GetCurrentTaskTool(task_manager))
+    # Observability (read-only, ): the agent can read the society's
+    # health report but never write it. Metrics/traces pillars are
+    # optional here so tests can assemble without the OTel pipeline; the
+    # server always injects both.
+    tool_executor.register_tool(
+        GetMailStatsTool(provider=mail_stats_provider(tlon_paths), agent_id=config.id)
+    )
+    if metrics_service is not None:
+        tool_executor.register_tool(GetMetricsTool(snapshot=metrics_service.snapshot))
+    if trace_store is not None:
+        tool_executor.register_tool(ListTracesTool(trace_store=trace_store, agent_id=config.id))
+        tool_executor.register_tool(GetTraceTool(trace_store=trace_store))
     logger.debug(
         "tools_registered",
         agent_name=config.name,
