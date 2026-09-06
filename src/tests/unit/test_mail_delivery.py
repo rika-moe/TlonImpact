@@ -444,3 +444,97 @@ class TestMailboxCacheLRU:
         assert delivery._mailbox_for("a") is a  # hit: "a" most recent now
         delivery._mailbox_for("c")  # overflow: "b" evicted
         assert set(delivery._mailboxes) == {"a", "c"}
+
+
+class TestEndorsedEvent:
+    """A delivered mail carrying an `endorsing` reference publishes one
+    MAIL_ENDORSED reputation fact (issue )."""
+
+    @pytest.mark.asyncio
+    async def test_endorsement_publishes_mail_endorsed(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        # The endorsed mail sits in the endorser's mailbox (the executor
+        # guarantees this for agent senders).
+        endorsed = Mail.create(
+            from_address="a-002@tlon.internal",
+            to=["a-001@tlon.internal"],
+            content="有用的分析",
+            subject="分析报告",
+        )
+        await Mailbox(temp_paths.member_mail_dir("a-001")).append_inbox(endorsed)
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal"],
+            content="这封信帮到了我，谢谢！",
+            endorsing=endorsed.id,
+            thread_id="t-9",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        endorsed_events = [
+            call.args[0]
+            for call in bus.publish.await_args_list
+            if call.args[0].type == EventType.MAIL_ENDORSED
+        ]
+        assert len(endorsed_events) == 1
+        payload = endorsed_events[0].payload
+        assert payload["endorser"] == "a-001"
+        assert payload["mail_id"] == endorsed.id
+        assert payload["author"] == "a-002@tlon.internal"
+        assert payload["thread_id"] == "t-9"
+
+    @pytest.mark.asyncio
+    async def test_plain_mail_publishes_no_endorsement(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal"],
+            content="普通来信",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        assert not [
+            call
+            for call in bus.publish.await_args_list
+            if call.args[0].type == EventType.MAIL_ENDORSED
+        ]
+
+    @pytest.mark.asyncio
+    async def test_republish_does_not_emit_endorsement_twice(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["a-002@tlon.internal"],
+            content="致谢",
+            endorsing="m-x",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+        await delivery._on_mail_new(_mail_event(mail))  # replay
+
+        endorsed_events = [
+            call.args[0]
+            for call in bus.publish.await_args_list
+            if call.args[0].type == EventType.MAIL_ENDORSED
+        ]
+        assert len(endorsed_events) == 1
+        # The endorsed mail is nowhere on disk: author degrades to None.
+        assert endorsed_events[0].payload["author"] is None

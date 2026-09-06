@@ -20,6 +20,7 @@ class EventType(StrEnum):
     # Mail events (Republic of Letters, see docs/design/mail.md)
     MAIL_NEW = "mail.new"  # A mail was sent (pre-delivery)
     MAIL_DELIVERED = "mail.delivered"  # A mail landed in one recipient's inbox
+    MAIL_ENDORSED = "mail.endorsed"  # A delivered mail endorses another mail (reputation signal, )
 
     # Agent events
     AGENT_JOIN = "agent.join"

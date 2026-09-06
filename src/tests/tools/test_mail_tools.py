@@ -36,7 +36,23 @@ class TestSendEmailTool:
         assert result.data["cc"] == []
         assert result.data["subject"] is None
         assert result.data["in_reply_to"] is None
+        assert result.data["endorsing"] is None
         assert result.data["is_complete"] is False
+
+    @pytest.mark.asyncio
+    async def test_endorsing_passes_through(self):
+        """The endorsement signal () rides the tool result data to
+        the stage, which declares it on the MailEffect."""
+        tool = SendEmailTool()
+        result = await tool.execute(
+            to=["a-001@tlon.internal"],
+            content="这封信帮到了我",
+            is_complete=True,
+            endorsing="m-helpful",
+        )
+
+        assert result.success
+        assert result.data["endorsing"] == "m-helpful"
 
     def test_tool_schema(self):
         tool = SendEmailTool()

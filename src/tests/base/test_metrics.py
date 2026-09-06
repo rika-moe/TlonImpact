@@ -25,7 +25,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.metrics import MetricsService
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail
 
-ALLOWED_ATTRIBUTE_KEYS = {"agent", "kind", "agent_id", "tool_name"}
+ALLOWED_ATTRIBUTE_KEYS = {"agent", "kind", "agent_id", "tool_name", "endorser"}
 
 
 @pytest.fixture
@@ -192,6 +192,27 @@ async def test_tool_counters(
     assert _point(snapshot, "tlon.tool.errors", tool_name="sendEmail")["value"] == 1
 
 
+async def test_mail_endorsed_counts_by_endorser(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService],
+) -> None:
+    """MAIL_ENDORSED increments tlon.mail.endorsements by endorser ()."""
+    _, service = metric_setup
+    service._on_mail_endorsed(
+        Event(
+            type=EventType.MAIL_ENDORSED,
+            payload={"endorser": "gu-yanxi", "mail_id": "m1", "author": "a@t", "thread_id": "t1"},
+            source="mail_delivery",
+        )
+    )
+    service._on_mail_endorsed(
+        Event(type=EventType.MAIL_ENDORSED, payload=None, source="mail_delivery")
+    )
+
+    snapshot = service.snapshot()
+    assert _point(snapshot, "tlon.mail.endorsements", endorser="gu-yanxi")["value"] == 1
+    assert _point(snapshot, "tlon.mail.endorsements", endorser="unknown")["value"] == 1
+
+
 # ── Cardinality discipline ──
 
 
@@ -309,7 +330,7 @@ async def test_initialize_subscribes_and_shutdown_unsubscribes(
     _, service = metric_setup
     bus = service.event_bus
     await service.initialize()
-    assert len(service._subscriptions) == 11
+    assert len(service._subscriptions) == 12
     for event_type in (
         EventType.MAIL_NEW,
         EventType.MAIL_DELIVERED,
@@ -322,6 +343,7 @@ async def test_initialize_subscribes_and_shutdown_unsubscribes(
         EventType.TOOL_ERROR,
         EventType.AGENT_NOISY,
         EventType.MAIL_ORPHAN_SCAN,
+        EventType.MAIL_ENDORSED,
     ):
         assert bus._subscribers.get(event_type), f"missing subscription for {event_type}"
     await service.shutdown()

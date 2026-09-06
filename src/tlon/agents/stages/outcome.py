@@ -32,6 +32,7 @@ class MailEffect:
     subject: str | None = None
     in_reply_to: str | None = None
     thread_id: str | None = None
+    endorsing: str | None = None
 
 
 @dataclass

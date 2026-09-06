@@ -332,12 +332,13 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 <!-- BEGIN GENERATED: event-types -->
-枚举全集（33 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+枚举全集（34 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
 | `mail.new` | `MAIL_NEW` | A mail was sent (pre-delivery) |
 | `mail.delivered` | `MAIL_DELIVERED` | A mail landed in one recipient's inbox |
+| `mail.endorsed` | `MAIL_ENDORSED` | A delivered mail endorses another mail (reputation signal, ) |
 | `agent.join` | `AGENT_JOIN` |  |
 | `agent.leave` | `AGENT_LEAVE` |  |
 | `agent.thinking` | `AGENT_THINKING` |  |

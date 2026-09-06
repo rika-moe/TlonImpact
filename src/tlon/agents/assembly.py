@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import list_prototypes, write_staging_prototype
+from tlon.agents.reputation import reputation_provider
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.llm_client import LLMClient
@@ -41,6 +42,7 @@ from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.observability.get_metrics import GetMetricsTool
 from tlon.tools.observability.mail_stats import GetMailStatsTool
+from tlon.tools.observability.reputation import GetReputationTool
 from tlon.tools.observability.traces import GetTraceTool, ListTracesTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
@@ -226,6 +228,18 @@ async def assemble_cognitive(
     # server always injects both.
     tool_executor.register_tool(
         GetMailStatsTool(provider=mail_stats_provider(tlon_paths), agent_id=config.id)
+    )
+    # Reputation (): derived, never stored — the member enumeration
+    # is re-read per query so the report always sees the current roster.
+    tool_executor.register_tool(
+        GetReputationTool(
+            provider=reputation_provider(
+                tlon_paths,
+                member_ids=lambda: sorted(agent_info.get_all_ids())
+                + tlon_paths.known_human_ids(),
+            ),
+            agent_id=config.id,
+        )
     )
     if metrics_service is not None:
         tool_executor.register_tool(GetMetricsTool(snapshot=metrics_service.snapshot))

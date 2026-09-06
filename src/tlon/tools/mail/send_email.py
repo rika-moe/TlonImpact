@@ -25,6 +25,12 @@ class SendEmailTool(Tool):
     ``thread_id`` from the referenced mail — before publishing
     MAIL_NEW; ``is_complete`` then decides whether the loop returns.
 
+    ``endorsing`` marks the mail as an endorsement of another mail
+    ("this mail helped me", issue ): the reference is validated
+    against the agent's own mailbox like ``in_reply_to`` (hallucinated
+    ids and self-endorsement fail the send), and the endorsement feeds
+    the derived reputation signal.
+
     Example:
         >>> tool = SendEmailTool()
         >>> result = await tool.execute(
@@ -80,6 +86,17 @@ class SendEmailTool(Tool):
                             "回复将并入该邮件所在的线程。"
                         ),
                     },
+                    "endorsing": {
+                        "type": "string",
+                        "description": (
+                            "可选。致谢信号：被致谢邮件的 id——表示「这封邮件帮到了我」。"
+                            "id 必须是你自己邮箱中真实存在的邮件（幻觉 id 会导致发送失败），"
+                            "且不能是你自己写的邮件（不允许自我致谢）。"
+                            "致谢是公开的、机器可读的社会行为：它会进入对方收件箱，"
+                            "并累积为你的社会行为记录（声誉从中派生）。"
+                            "与 in_reply_to 相互独立：致谢通常同时是回复，但语义不同。"
+                        ),
+                    },
                 },
                 "required": ["to", "content", "is_complete"],
             },
@@ -98,6 +115,7 @@ class SendEmailTool(Tool):
             cc: Optional carbon-copy recipients.
             subject: Optional subject.
             in_reply_to: Optional id of the mail being replied to.
+            endorsing: Optional id of the mail being endorsed.
 
         Returns:
             ToolResult containing the mail data.
@@ -108,6 +126,7 @@ class SendEmailTool(Tool):
         cc: list[str] | None = kwargs.get("cc")
         subject: str | None = kwargs.get("subject")
         in_reply_to: str | None = kwargs.get("in_reply_to")
+        endorsing: str | None = kwargs.get("endorsing")
 
         return ToolResult(
             success=True,
@@ -118,6 +137,7 @@ class SendEmailTool(Tool):
                 "content": content,
                 "is_complete": is_complete,
                 "in_reply_to": in_reply_to,
+                "endorsing": endorsing,
                 "action": "send_email",
             },
             message=(

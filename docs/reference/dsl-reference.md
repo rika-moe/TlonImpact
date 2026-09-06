@@ -71,13 +71,14 @@
 `:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（[src/tlon/base/events/event.py](../../src/tlon/base/events/event.py)，转换逻辑在 `member_spec._on_from`）。合法值：
 
 <!-- BEGIN GENERATED: dsl-on-events -->
-合法值共 34 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+合法值共 35 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | `:on` 关键字 | 事件值 | 说明 |
 |---|---|---|
 | `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |
 | `:mail-new` | `mail.new` | A mail was sent (pre-delivery) |
 | `:mail-delivered` | `mail.delivered` | A mail landed in one recipient's inbox |
+| `:mail-endorsed` | `mail.endorsed` | A delivered mail endorses another mail (reputation signal, ) |
 | `:agent-join` | `agent.join` |  |
 | `:agent-leave` | `agent.leave` |  |
 | `:agent-thinking` | `agent.thinking` |  |

@@ -115,6 +115,7 @@ class MetricsService(Component, Device):
         TOOL_ERROR          -> tlon.tool.errors {tool_name}
         AGENT_NOISY         -> tlon.agent.noisy {agent_id}
         MAIL_ORPHAN_SCAN    -> tlon.mail.orphan_scans
+        MAIL_ENDORSED       -> tlon.mail.endorsements {endorser}
 
     Dependencies (constructor injected):
         - event_bus: EventBus to subscribe to
@@ -181,6 +182,9 @@ class MetricsService(Component, Device):
         self._mail_orphan_scans = meter.create_counter(
             "tlon.mail.orphan_scans", description="Orphan-mail scans completed"
         )
+        self._mail_endorsements = meter.create_counter(
+            "tlon.mail.endorsements", description="Mail endorsements delivered ()"
+        )
 
         logger.info("metrics_service_constructed")
 
@@ -197,6 +201,7 @@ class MetricsService(Component, Device):
         self.subscribe(EventType.TOOL_ERROR, self._on_tool_error)
         self.subscribe(EventType.AGENT_NOISY, self._on_agent_noisy)
         self.subscribe(EventType.MAIL_ORPHAN_SCAN, self._on_mail_orphan_scan)
+        self.subscribe(EventType.MAIL_ENDORSED, self._on_mail_endorsed)
         self._initialized = True
         logger.info("metrics_service_initialized")
 
@@ -281,6 +286,14 @@ class MetricsService(Component, Device):
         """Count one completed orphan scan (orphan_count stays in the payload)."""
         try:
             self._mail_orphan_scans.add(1, {})
+        except Exception as e:
+            logger.warning("metrics_event_failed", event_type=event.type.value, error=str(e))
+
+    def _on_mail_endorsed(self, event: Event) -> None:
+        """Count one endorsement fact, tagged by endorser ()."""
+        try:
+            endorser = str(_payload_value(event.payload, "endorser") or "unknown")
+            self._mail_endorsements.add(1, {"endorser": endorser})
         except Exception as e:
             logger.warning("metrics_event_failed", event_type=event.type.value, error=str(e))
 

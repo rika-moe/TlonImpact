@@ -209,3 +209,71 @@ class TestSendMailFailureNotice:
         # the notice's MAIL_DELIVERED never went out (append failed first).
         publish.assert_not_awaited()
         assert [m.id for m in await mailbox.unread()] == ["m-trigger"]
+
+
+class TestEndorsementValidation:
+    """The endorsing reference gets the same mailbox validation as
+    in_reply_to (issue ): hallucinated ids and self-endorsement
+    fail the send with a postmaster notice."""
+
+    async def _seed_endorsed(self, mailbox: Mailbox, mail_id: str = "m-helpful") -> Mail:
+        """Append the mail being endorsed (from someone else) to the inbox."""
+        mail = Mail.create(
+            from_address="user@tlon.internal",
+            to=["agent1@tlon.internal"],
+            content="有用的来信",
+        )
+        mail.id = mail_id
+        await mailbox.append_inbox(mail)
+        return mail
+
+    async def test_valid_endorsement_passes_through(self, tmp_path: Path) -> None:
+        executor, mailbox, publish = _make_executor(tmp_path)
+        await self._seed_endorsed(mailbox)
+
+        await executor.send_mail(
+            _effect(in_reply_to=None, thread_id=None, endorsing="m-helpful")
+        )
+
+        publish.assert_awaited_once()
+        assert publish.await_args.args[0] is EventType.MAIL_NEW
+        mail = publish.await_args.kwargs["payload"]
+        assert mail.endorsing == "m-helpful"
+
+    async def test_hallucinated_endorsing_fails_with_notice(
+        self, tmp_path: Path
+    ) -> None:
+        executor, mailbox, publish = _make_executor(tmp_path)
+
+        await executor.send_mail(
+            _effect(in_reply_to=None, thread_id=None, endorsing="m-ghost")
+        )
+
+        publish.assert_awaited_once()
+        assert publish.await_args.args[0] is EventType.MAIL_DELIVERED
+        unread = await mailbox.unread()
+        assert len(unread) == 1
+        notice = unread[0]
+        assert notice.from_address == POSTMASTER_ADDRESS
+        assert "m-ghost" in notice.content
+
+    async def test_self_endorsement_fails_with_notice(self, tmp_path: Path) -> None:
+        """Endorsing one's own mail is reputation self-puffery: rejected."""
+        executor, mailbox, publish = _make_executor(tmp_path)
+        own = Mail.create(
+            from_address="agent1@tlon.internal",
+            to=["user@tlon.internal"],
+            content="我自己写的",
+        )
+        await mailbox.append_sent(own)
+
+        await executor.send_mail(
+            _effect(in_reply_to=None, thread_id=None, endorsing=own.id)
+        )
+
+        publish.assert_awaited_once()
+        assert publish.await_args.args[0] is EventType.MAIL_DELIVERED
+        unread = await mailbox.unread()
+        assert len(unread) == 1
+        assert unread[0].from_address == POSTMASTER_ADDRESS
+        assert own.id in unread[0].content

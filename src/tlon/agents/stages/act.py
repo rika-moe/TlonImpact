@@ -176,6 +176,11 @@ async def act_stage_collect(
                     subject=result.data.get("subject"),
                     in_reply_to=in_reply_to,
                     thread_id=trigger_mail.thread_id if trigger_mail else None,
+                    # Endorsement signal (): passed through as
+                    # declared; the engine validates the reference
+                    # against the agent's own mailbox (same
+                    # hallucination guard as in_reply_to).
+                    endorsing=result.data.get("endorsing"),
                 )
             )
             if result.data.get("is_complete"):

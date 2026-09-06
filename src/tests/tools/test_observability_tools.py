@@ -17,6 +17,7 @@ from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.observability.get_metrics import GetMetricsTool
 from tlon.tools.observability.mail_stats import GetMailStatsTool
+from tlon.tools.observability.reputation import GetReputationTool
 from tlon.tools.observability.traces import (
     LIST_TRACES_MAX_LIMIT,
     GetTraceTool,
@@ -322,3 +323,53 @@ class TestGetMailStatsTool:
         tool = GetMailStatsTool(provider=provider, agent_id=AGENT_ID)
         assert tool.name == "getMailStats"
         assert tool.parameters["required"] == []
+
+
+class TestGetReputationTool:
+    """getReputation (): reputation is public in the Republic —
+    the tool defaults to the caller but can query any member."""
+
+    @staticmethod
+    def _fake_provider(seen: list[str]):
+        async def provider(agent_id: str) -> dict[str, Any]:
+            seen.append(agent_id)
+            return {
+                "agent_id": agent_id,
+                "endorsements_given": 1,
+                "endorsements_received": 2,
+                "top_endorsed_mails": [],
+                "mail_behavior": {},
+            }
+
+        return provider
+
+    @pytest.mark.asyncio
+    async def test_default_subject_is_the_caller(self):
+        seen: list[str] = []
+        tool = GetReputationTool(provider=self._fake_provider(seen), agent_id=AGENT_ID)
+
+        result = await tool.execute()
+
+        assert result.success
+        assert seen == [AGENT_ID]
+        assert result.data["endorsements_received"] == 2
+
+    @pytest.mark.asyncio
+    async def test_explicit_agent_id_queries_another_member(self):
+        seen: list[str] = []
+        tool = GetReputationTool(provider=self._fake_provider(seen), agent_id=AGENT_ID)
+
+        result = await tool.execute(agent_id="b-002")
+
+        assert result.success
+        assert seen == ["b-002"]
+        assert result.data["agent_id"] == "b-002"
+
+    def test_tool_schema(self):
+        async def provider(agent_id: str) -> dict[str, Any]:
+            return {}
+
+        tool = GetReputationTool(provider=provider, agent_id=AGENT_ID)
+        assert tool.name == "getReputation"
+        assert tool.parameters["required"] == []
+        assert "agent_id" in tool.parameters["properties"]

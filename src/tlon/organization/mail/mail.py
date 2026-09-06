@@ -95,6 +95,8 @@ class Mail:
         in_reply_to: Id of the upstream mail being replied to (optional)
         thread_id: Id of the thread's root mail
         forward_of: Id of the original mail this one forwards (optional)
+        endorsing: Id of the mail this one endorses ("this mail helped
+            me") — the endorsement signal (optional)
         timestamp: When the mail was created (ISO 8601 string)
     """
 
@@ -108,6 +110,7 @@ class Mail:
     thread_id: str
     forward_of: str | None
     timestamp: str
+    endorsing: str | None = None
 
     @classmethod
     def create(
@@ -120,6 +123,7 @@ class Mail:
         in_reply_to: str | None = None,
         thread_id: str | None = None,
         forward_of: str | None = None,
+        endorsing: str | None = None,
     ) -> "Mail":
         """Factory method to create a new mail with auto-generated id.
 
@@ -136,6 +140,7 @@ class Mail:
             in_reply_to: Id of the mail being replied to
             thread_id: Thread root id (defaults to this mail's own id)
             forward_of: Id of the mail being forwarded
+            endorsing: Id of the mail this one endorses (optional)
 
         Returns:
             A new Mail instance
@@ -167,6 +172,7 @@ class Mail:
             in_reply_to=in_reply_to,
             thread_id=thread_id or mail_id,
             forward_of=forward_of,
+            endorsing=endorsing,
             timestamp=datetime.now(UTC).isoformat(),
         )
 
@@ -186,6 +192,7 @@ class Mail:
             "in_reply_to": self.in_reply_to,
             "thread_id": self.thread_id,
             "forward_of": self.forward_of,
+            "endorsing": self.endorsing,
             "timestamp": self.timestamp,
         }
 
@@ -194,7 +201,7 @@ class Mail:
         """Deserialize mail from dictionary.
 
         Tolerates missing optional fields (subject, cc, in_reply_to,
-        forward_of, thread_id).
+        forward_of, endorsing, thread_id).
 
         Args:
             data: Dictionary containing mail data
@@ -213,6 +220,7 @@ class Mail:
             thread_id=data.get("thread_id") or data["id"],
             forward_of=data.get("forward_of"),
             timestamp=data["timestamp"],
+            endorsing=data.get("endorsing"),
         )
 
     def involves(self, address: str) -> bool:

@@ -77,6 +77,7 @@ class EffectExecutor:
         """
         try:
             in_reply_to, thread_id = await self._resolve_reply_headers(effect)
+            endorsing = await self._resolve_endorsing(effect)
             mail = Mail.create(
                 from_address=self.identity.address,
                 to=effect.to,
@@ -85,6 +86,7 @@ class EffectExecutor:
                 content=effect.content,
                 in_reply_to=in_reply_to,
                 thread_id=thread_id,
+                endorsing=endorsing,
             )
             with start_span(
                 "mail.send",
@@ -125,6 +127,32 @@ class EffectExecutor:
                 f"in_reply_to 引用的邮件不在你的邮箱中: {effect.in_reply_to}"
             )
         return effect.in_reply_to, referenced.thread_id
+
+    async def _resolve_endorsing(self, effect: MailEffect) -> str | None:
+        """Validate the endorsement reference (issue ).
+
+        Same hallucination guard as the reply reference: the endorsed
+        mail must exist in the agent's own mailbox, and it must not be
+        the agent's own mail — self-endorsement is reputation
+        self-puffery and is rejected. Without a mailbox (bare test
+        setups) the declared reference passes through unresolved.
+
+        Raises:
+            ValueError: The endorsed mail is not in the agent's
+                mailbox, or it was written by the agent itself
+        """
+        if effect.endorsing is None or self._mailbox is None:
+            return effect.endorsing
+        endorsed = await self._mailbox.find(effect.endorsing)
+        if endorsed is None:
+            raise ValueError(
+                f"endorsing 致谢的邮件不在你的邮箱中: {effect.endorsing}"
+            )
+        if endorsed.from_address == self.identity.address:
+            raise ValueError(
+                f"不能致谢自己写的邮件: {effect.endorsing}"
+            )
+        return effect.endorsing
 
     async def _notify_send_failure(self, effect: MailEffect, error: Exception) -> None:
         """Land a send-failure notice in the agent's own inbox (issue ).

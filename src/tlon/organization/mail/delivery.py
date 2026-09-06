@@ -11,7 +11,9 @@ The MailDelivery component subscribes to MAIL_NEW and, for each mail:
    recipient's ``inbox.jsonl`` (mailboxes are resolved via
    ``paths.member_mail_dir`` and cached on demand);
 4. publishes one MAIL_DELIVERED event per recipient, carrying the Mail
-   and the recipient's member id.
+   and the recipient's member id; a mail carrying an ``endorsing``
+   reference additionally publishes one MAIL_ENDORSED (the reputation
+   signal, issue ).
 
 Recipients that resolve to nobody are collected and answered with a
 bounce mail from ``postmaster@tlon.internal`` to the sender — the error
@@ -169,6 +171,12 @@ class MailDelivery(Component, Device):
                 unknown=unknown,
             )
 
+            # Endorsement signal (issue ): a mail carrying an
+            # `endorsing` reference is a public reputation fact; publish
+            # it once per mail, independent of the recipient fan-out.
+            if mail.endorsing and not self._seen_before(f"{mail.id}|endorsed"):
+                await self._publish_endorsed(mail, sender_id, ctx)
+
             if unknown and sender_id is not None:
                 if not self._seen_before(f"{mail.id}|bounce|{sender_id}"):
                     await self._bounce(mail, unknown, sender_id, ctx)
@@ -279,6 +287,45 @@ class MailDelivery(Component, Device):
             event_kwargs["span_id"] = ctx.span_id
             event_kwargs["parent_span_id"] = ctx.parent_span_id
         await self.publish(Event(**event_kwargs))
+
+    async def _publish_endorsed(
+        self, mail: Mail, sender_id: str | None, ctx: SpanCtx
+    ) -> None:
+        """Publish MAIL_ENDORSED for a mail carrying an endorsement.
+
+        Payload: ``endorser`` (sender member id, or the raw address when
+        the sender resolves to no member), ``mail_id`` (the endorsed
+        mail), ``thread_id``, and ``author`` (the endorsed mail's author
+        address, derived from the endorser's own mailbox when findable —
+        the executor guarantees the mail sits there for agent senders).
+        """
+        author: str | None = None
+        if sender_id is not None:
+            endorsed = await self._mailbox_for(sender_id).find(mail.endorsing or "")
+            if endorsed is not None:
+                author = endorsed.from_address
+        event_kwargs: dict[str, Any] = {
+            "type": EventType.MAIL_ENDORSED,
+            "payload": {
+                "endorser": sender_id or mail.from_address,
+                "mail_id": mail.endorsing,
+                "author": author,
+                "thread_id": mail.thread_id,
+            },
+            "source": "mail_delivery",
+        }
+        if ctx and ctx.trace_id:
+            event_kwargs["trace_id"] = ctx.trace_id
+            event_kwargs["span_id"] = ctx.span_id
+            event_kwargs["parent_span_id"] = ctx.parent_span_id
+        await self.publish(Event(**event_kwargs))
+        logger.info(
+            "mail_endorsed",
+            mail_id=mail.id,
+            endorser=sender_id or mail.from_address,
+            endorsed_id=mail.endorsing,
+            author=author,
+        )
 
     async def _bounce(
         self, mail: Mail, unknown: list[str], sender_id: str, ctx: SpanCtx

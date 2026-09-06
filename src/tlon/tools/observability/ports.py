@@ -17,3 +17,7 @@ MetricsSnapshot = Callable[[], dict[str, Any]]
 #: Mail social statistics provider: takes an agent id, returns that
 #: agent's per-correspondent mail statistics as a JSON-safe dict.
 MailStatsProvider = Callable[[str], Awaitable[dict[str, Any]]]
+
+#: Reputation provider (): takes a member id, returns that member's
+#: reputation derived from the society's mail files as a JSON-safe dict.
+ReputationProvider = Callable[[str], Awaitable[dict[str, Any]]]

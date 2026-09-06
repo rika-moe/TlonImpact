@@ -120,6 +120,28 @@ class TestMailSerialization:
         assert restored.thread_id == mail.id
 
 
+class TestMailEndorsing:
+    """The endorsement signal field (issue )."""
+
+    def test_create_accepts_endorsing(self):
+        mail = _mail(endorsing="m-helpful")
+        assert mail.endorsing == "m-helpful"
+
+    def test_endorsing_defaults_to_none(self):
+        assert _mail().endorsing is None
+
+    def test_endorsing_round_trip(self):
+        mail = _mail(endorsing="m-helpful", in_reply_to="m-helpful")
+        assert Mail.from_dict(mail.to_dict()) == mail
+
+    def test_from_dict_tolerates_missing_endorsing(self):
+        """Old jsonl rows have no endorsing field: they read as None."""
+        mail = _mail()
+        data = mail.to_dict()
+        del data["endorsing"]
+        assert Mail.from_dict(data).endorsing is None
+
+
 class TestMailInvolves:
     def test_involves_sender_and_recipients(self):
         mail = _mail(cc=[ADA])
