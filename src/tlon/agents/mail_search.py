@@ -11,6 +11,7 @@ member's mailbox is reachable through this provider.
 from typing import Any
 
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.mail import is_external_address
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.mail.ports import MailboxMailsProvider
 
@@ -20,13 +21,21 @@ async def read_own_mails(agent_id: str, *, tlon_paths: TlonPaths) -> list[dict[s
 
     Each dict is ``Mail.to_dict()`` plus a ``box`` marker
     (``"inbox"`` / ``"sent"``) so callers can tell which side of the
-    correspondence a mail belongs to.
+    correspondence a mail belongs to, plus an ``external`` flag (issue
+    ) derived from the sender address domain — the trust marker
+    travels with the data into tool results.
     """
     mailbox = Mailbox(tlon_paths.member_mail_dir(agent_id))
     mails: list[dict[str, Any]] = []
     for box, folder in (("inbox", await mailbox.inbox()), ("sent", await mailbox.sent())):
         for mail in folder:
-            mails.append({"box": box, **mail.to_dict()})
+            mails.append(
+                {
+                    "box": box,
+                    "external": is_external_address(mail.from_address),
+                    **mail.to_dict(),
+                }
+            )
     return mails
 
 

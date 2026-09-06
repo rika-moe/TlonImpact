@@ -226,6 +226,28 @@ class TestSearchMailsTool:
         assert "至少传一个" in result.error
 
     @pytest.mark.asyncio
+    async def test_external_flag_marks_untrusted_senders(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        """searchMails results carry the derived trust flag (issue ):
+        external senders are marked, internal ones are not."""
+        await mailbox.append_inbox(
+            _mail("ext1", "notifications@github.com", [OWN], "CI 红了", "2026-09-06T10:00:00")
+        )
+        await mailbox.append_inbox(
+            _mail("int1", BOB, [OWN], "内部来信", "2026-09-06T11:00:00")
+        )
+        tool = _search_tool(tlon_paths)
+
+        external = await tool.execute(query="CI")
+        assert external.data["mails"][0]["external"] is True
+
+        internal = await tool.execute(query="内部来信")
+        assert internal.data["mails"][0]["external"] is False
+
+        # mail_id lookup returns the full dict, flag included
+        full = await tool.execute(mail_id="ext1")
+        assert full.data["mail"]["external"] is True
+
+    @pytest.mark.asyncio
     async def test_excerpt_truncated(self, tlon_paths: TlonPaths, mailbox: Mailbox):
         await mailbox.append_inbox(
             _mail("m-long", BOB, [OWN], "长" * (CONTENT_EXCERPT_LENGTH + 100), "2026-09-06T12:00:00")

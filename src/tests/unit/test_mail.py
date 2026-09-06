@@ -12,6 +12,7 @@ from tlon.organization.mail.mail import (
     POSTMASTER_ADDRESS,
     Mail,
     address_for_member,
+    is_external_address,
     is_mail_address,
     member_id_for_address,
 )
@@ -56,6 +57,20 @@ class TestAddresses:
         assert not is_mail_address("gu-yanxi")
         assert not is_mail_address("a@b@c")
         assert not is_mail_address("")
+
+    def test_is_external_address(self):
+        """The trust boundary derives from the address domain (issue )."""
+        # Internal: members, humans, system addresses
+        assert not is_external_address(GU)
+        assert not is_external_address(ALICE)
+        assert not is_external_address(ALL_ADDRESS)
+        assert not is_external_address(POSTMASTER_ADDRESS)
+        # External: any other domain
+        assert is_external_address("notifications@github.com")
+        assert is_external_address("alerts@monitoring.example.org")
+        # Malformed addresses count as external (untrusted by default)
+        assert is_external_address("not-an-address")
+        assert is_external_address("")
 
 
 class TestMailCreate:

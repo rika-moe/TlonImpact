@@ -286,6 +286,85 @@ class TestBounce:
         assert not (temp_paths.tlon_home() / "nobody").exists()
 
 
+class TestExternalSender:
+    """External senders (real-world addresses, issue ): an external
+    address resolves to no member, so the mail delivers to recipients
+    normally but the sender gets no sent copy and no bounce."""
+
+    @pytest.mark.asyncio
+    async def test_external_mail_delivers_to_member_inbox(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="notifications@github.com",
+            to=["a-001@tlon.internal"],
+            content="CI 失败：main 分支构建红了",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "a-001"
+        assert events[0].payload["mail"].id == mail.id
+
+        inbox = Mailbox(temp_paths.member_mail_dir("a-001"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_external_sender_gets_no_sent_copy(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="notifications@github.com",
+            to=["a-001@tlon.internal"],
+            content="有新 issue",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        # No mailbox directory is created for the external sender
+        assert not (temp_paths.tlon_home() / "notifications").exists()
+
+    @pytest.mark.asyncio
+    async def test_external_sender_unknown_recipient_no_bounce(self, temp_paths):
+        """An external sender has no mailbox: the bounce is dropped
+        safely (logged), never delivered anywhere."""
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="alerts@monitoring.example.org",
+            to=["ghost@tlon.internal"],
+            content="告警：磁盘 95%",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        assert _delivered(bus) == []  # no delivery, no bounce
+        assert not (temp_paths.tlon_home() / "alerts").exists()
+
+    @pytest.mark.asyncio
+    async def test_external_sender_mixed_recipients_delivers_valid(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="notifications@github.com",
+            to=["a-001@tlon.internal", "ghost@tlon.internal"],
+            content="混合收件人",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        assert len(events) == 1  # valid recipient only; no bounce
+        assert events[0].payload["recipient"] == "a-001"
+        assert events[0].payload["mail"].id == mail.id
+
+
 class TestOfflineHumans:
     """Mail to a known-but-offline human waits in their inbox (mail.md 人类侧).
 

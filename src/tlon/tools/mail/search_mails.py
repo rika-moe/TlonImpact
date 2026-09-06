@@ -45,6 +45,7 @@ def _summary(mail: dict[str, Any]) -> dict[str, Any]:
         "id": mail.get("id"),
         "box": mail.get("box"),
         "from_address": mail.get("from_address"),
+        "external": bool(mail.get("external")),
         "to": mail.get("to") or [],
         "cc": mail.get("cc") or [],
         "subject": mail.get("subject"),
