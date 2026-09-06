@@ -309,7 +309,7 @@ async def test_initialize_subscribes_and_shutdown_unsubscribes(
     _, service = metric_setup
     bus = service.event_bus
     await service.initialize()
-    assert len(service._subscriptions) == 9
+    assert len(service._subscriptions) == 11
     for event_type in (
         EventType.MAIL_NEW,
         EventType.MAIL_DELIVERED,
@@ -320,6 +320,8 @@ async def test_initialize_subscribes_and_shutdown_unsubscribes(
         EventType.AGENT_LLM_RESPONSE,
         EventType.TOOL_EXECUTE_END,
         EventType.TOOL_ERROR,
+        EventType.AGENT_NOISY,
+        EventType.MAIL_ORPHAN_SCAN,
     ):
         assert bus._subscribers.get(event_type), f"missing subscription for {event_type}"
     await service.shutdown()

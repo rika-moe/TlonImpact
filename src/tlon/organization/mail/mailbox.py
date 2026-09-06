@@ -183,6 +183,17 @@ class Mailbox:
                 return mail
         return None
 
+    async def sent(self) -> list[Mail]:
+        """List all mails in the sent file, in file order.
+
+        Full scan (no incremental cache — sent volumes are small). Used by
+        the public-health monitor's orphan-mail scan (issue ).
+
+        Returns:
+            Every parseable mail in sent.jsonl, oldest first
+        """
+        return await self._read_mails(self._sent_path)
+
     async def thread_incoming(self, thread_id: str) -> list[Mail]:
         """List inbox mails belonging to one thread, in chronological order.
 

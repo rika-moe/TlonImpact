@@ -71,7 +71,7 @@
 `:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（[src/tlon/base/events/event.py](../../src/tlon/base/events/event.py)，转换逻辑在 `member_spec._on_from`）。合法值：
 
 <!-- BEGIN GENERATED: dsl-on-events -->
-合法值共 32 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+合法值共 34 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | `:on` 关键字 | 事件值 | 说明 |
 |---|---|---|
@@ -94,6 +94,8 @@
 | `:agent-stop-request` | `agent.stop_request` |  |
 | `:agent-idle` | `agent.idle` |  |
 | `:agent-spawned` | `agent.spawned` |  |
+| `:agent-noisy` | `agent.noisy` | A member is generating social noise (mail burst / broadcast storm) |
+| `:mail-orphan-scan` | `mail.orphan_scan` | Periodic orphan-mail (unanswered thread root) scan statistics |
 | `:agent-thinking-start` | `agent.thinking_start` |  |
 | `:agent-thinking-end` | `agent.thinking_end` |  |
 | `:agent-llm-request` | `agent.llm_request` |  |

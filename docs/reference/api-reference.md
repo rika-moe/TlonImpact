@@ -332,7 +332,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 <!-- BEGIN GENERATED: event-types -->
-枚举全集（31 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+枚举全集（33 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
@@ -354,6 +354,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | `agent.stop_request` | `AGENT_STOP_REQUEST` |  |
 | `agent.idle` | `AGENT_IDLE` |  |
 | `agent.spawned` | `AGENT_SPAWNED` |  |
+| `agent.noisy` | `AGENT_NOISY` | A member is generating social noise (mail burst / broadcast storm) |
+| `mail.orphan_scan` | `MAIL_ORPHAN_SCAN` | Periodic orphan-mail (unanswered thread root) scan statistics |
 | `agent.thinking_start` | `AGENT_THINKING_START` |  |
 | `agent.thinking_end` | `AGENT_THINKING_END` |  |
 | `agent.llm_request` | `AGENT_LLM_REQUEST` |  |

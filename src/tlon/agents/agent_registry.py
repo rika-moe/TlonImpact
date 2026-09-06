@@ -16,6 +16,10 @@ policy/mechanism split):
   spawn depth, per-session quota — ``agents/spawn.py`` ``SpawnManager``);
   spawned members connect to the registry directly (= fork) and are
   never discarded — they sleep
+- Social public-health facts (issue ): the monitor
+  (``agents/health.py`` ``PublicHealthMonitor``) detects noisy senders
+  (AGENT_NOISY) and scans for orphan mail (MAIL_ORPHAN_SCAN) — facts
+  only, no enforcement
 
 Policy — which agents should run — lives in Adam (tlon.agents.adam), the
 built-in init member: boot set and idle drain are its two decision lines.
@@ -46,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 from tlon.agents.assembly import assemble_cognitive
 from tlon.agents.builtins import ScriptHostQueries, make_member_builtins
+from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
@@ -178,6 +183,13 @@ class AgentRegistry(Component):
         # restart via journal replay, so the anti-runaway cap must too).
         self._spawn = SpawnManager(self, max_activations, max_spawn_depth, session_spawn_quota)
         self._reaper = IdleReaper(self)
+        # Social public-health monitor (): noise detection + orphan-mail
+        # scan. Facts only — no enforcement. Same ownership as the reaper.
+        self._health = PublicHealthMonitor(
+            event_bus=event_bus,
+            agent_info_provider=agent_info_provider,
+            tlon_paths=paths,
+        )
 
         # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
@@ -342,6 +354,9 @@ class AgentRegistry(Component):
         if self._idle_monitor_task is None:
             self._idle_monitor_task = asyncio.create_task(self._reaper.run())
 
+        # Public-health monitor (noise subscription + orphan scan task)
+        await self._health.initialize()
+
         self._initialized = True
         logger.info(
             "agent_registry_initialized",
@@ -359,6 +374,9 @@ class AgentRegistry(Component):
             with suppress(asyncio.CancelledError):
                 await self._idle_monitor_task
             self._idle_monitor_task = None
+
+        # Stop the public-health monitor (scan task + MAIL_NEW subscription)
+        await self._health.shutdown()
 
         # Pending stops die with the process (in-memory one-shot intents)
         for task in list(self._pending_stop_tasks.values()):
