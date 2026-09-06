@@ -187,6 +187,7 @@ LLM 配置统一用 `LLM_` 前缀（ADR 0012 阶段 2）：`LLM_MODEL` 是 `prov
 ```
 ~/.tlon/
 ├── .env                              # 进程级环境配置（API key 等，可选；真实环境变量优先）
+├── cron.yaml                         # 声明式周期任务邮件（可选；启动时读一次，改动需重启）
 ├── shared/
 │   ├── traces/
 │   │   └── trace-{uuid}.jsonl        # 会话追踪
@@ -224,6 +225,7 @@ LLM 配置统一用 `LLM_` 前缀（ADR 0012 阶段 2）：`LLM_MODEL` 是 `prov
 - 人类 id `human:{username}` 的邮箱映射到 `human-{username}/mail/`——冒号只在 `member_mail_dir` 里换连字符。
 - 人类一旦有邮箱目录（首次 attach 会话、首次投递或首次读 `/inbox`）即"known"；离线人类收到的信在 `inbox.jsonl` 等待。
 - `prototypes/` 与 `prototypes-staging/` 是**只读解析**，`exists()` 检查无副作用；`prototypes/` 是受信任源，`prototypes-staging/` 是信任闸（人工批准后才能被 spawn）。
+- `cron.yaml` 是声明式周期任务（`{name, to, subject, content}` + `interval_seconds` 或 5 字段 `cron` 表达式），由 [agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler` 在启动时读一次——改动需重启生效；不存在即无声明条目。格式与示例见 [design/mail.md](../design/mail.md)「周期任务：tick 即邮件」。
 
 ## 6. 配置相关的常用操作
 

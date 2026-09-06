@@ -160,9 +160,30 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 
 ## 周期任务：tick 即邮件
 
-系统需要周期性触发的工作（目前的实例是「社会文摘」，issue ）不引入新的 timer 事件类型，也不改认知运行时——周期触发本身就是一封邮件。[agents/digest.py](../../src/tlon/agents/digest.py) 的 `DigestScheduler`（归 `AgentRegistry` 拥有，与 `IdleReaper` / `PublicHealthMonitor` 同族）每隔一个间隔（默认一天）以 `postmaster@tlon.internal` 名义给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单；书记员的普通 `:on :mail-delivered` 认知规则被触发，LLM 调观测工具（getMetrics / listTraces+getTrace / getReputation / getSocialHealth / listStagingPrototypes）汇总，再一封 sendEmail 发给全体已知人类。
+系统需要周期性触发的工作不引入新的 timer 事件类型，也不改认知运行时——周期触发本身就是一封邮件。[agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler`（归 `AgentRegistry` 拥有，与 `IdleReaper` / `PublicHealthMonitor` 同族）把「tick 即邮件」泛化为通用机制（issue ， 的单用途 `DigestScheduler` 已被它取代）：每个周期任务是一个条目 `{name, schedule, to, subject, content}`，到点以 `postmaster@tlon.internal` 名义给目标成员发一封任务邮件；收件人的普通 `:on :mail-delivered` 认知规则被触发，做什么由收件人自己的 spec 决定。
 
-这个设计是「退信是设计意图」的同构延伸：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
+条目来自两个来源，合并管理：
+
+- **内置条目**（代码注册，内容可在 tick 时现算）。目前的实例是「社会文摘」：每隔一个间隔（默认一天）给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单（tick 时从 `known_human_ids()` 现算）；书记员的 LLM 调观测工具（getMetrics / listTraces+getTrace / getReputation / getSocialHealth / listStagingPrototypes）汇总，再一封 sendEmail 发给全体已知人类。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
+- **声明式条目**（`~/.tlon/cron.yaml`，启动时读一次，改动需重启生效；文件不存在 = 无声明条目）。每条目声明静态正文和两种 schedule 之一：`interval_seconds: N`（每 N 秒，首轮也等 N 秒后）或 `cron: "分 时 日 月 周"`（标准 5 字段 cron 表达式，本地时区，用 croniter 计算下次触发）。`to` 是成员 id（agent id 或 `human:<username>`）。配置非法的条目（缺字段、两种 schedule 都写或都不写、cron 表达式解析失败）在启动时记 warning 拒绝，不影响其他条目；目标成员不存在时 tick 记日志跳过。示例：
+
+```yaml
+- name: weekly-report
+  to: human:alice
+  subject: 周报
+  content: 这是本周社会动态占位，等书记员机制接管后可改成给 agent 的任务。
+  cron: "0 9 * * 1"
+
+- name: staging-check
+  to: ji-shuheng
+  subject: 定期检查 staging 提案
+  content: 用 listStagingPrototypes 查一下原型暂存区，有待批准的提案就汇总发给人类。
+  interval_seconds: 21600
+```
+
+声明条目只支持静态 content；需要动态内容（如按当前人类清单现算）的周期任务走代码注册的内置条目。
+
+这个设计是「退信是设计意图」的同构延伸：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。
 
 配套的两个只读工具把「待人类处置」可查询化：`getSocialHealth`（[tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 

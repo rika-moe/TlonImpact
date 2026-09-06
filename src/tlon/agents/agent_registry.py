@@ -20,9 +20,10 @@ policy/mechanism split):
   (``agents/health.py`` ``PublicHealthMonitor``) detects noisy senders
   (AGENT_NOISY) and scans for orphan mail (MAIL_ORPHAN_SCAN) — facts
   only, no enforcement
-- Digest scheduling (issue , "tick is a mail"): the scheduler
-  (``agents/digest.py`` ``DigestScheduler``) periodically mails the
-  scribe a digest task from postmaster — the mail itself carries the
+- Cron scheduling (issue , "tick is a mail"): the scheduler
+  (``agents/cron.py`` ``CronScheduler``) periodically mails members a
+  task from postmaster — built-in entries (the daily digest) plus
+  entries declared in ``~/.tlon/cron.yaml``; the mail itself carries the
   work instructions
 
 Policy — which agents should run — lives in Adam (tlon.agents.adam), the
@@ -54,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 from tlon.agents.assembly import assemble_cognitive
 from tlon.agents.builtins import ScriptHostQueries, make_member_builtins
-from tlon.agents.digest import DigestScheduler
+from tlon.agents.cron import CronScheduler
 from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
@@ -207,9 +208,10 @@ class AgentRegistry(Component):
             agent_info_provider=agent_info_provider,
             tlon_paths=paths,
         )
-        # Digest scheduler (): "tick is a mail" — periodically mails the
-        # scribe (书记员) a digest task from postmaster. Same ownership.
-        self._digest = DigestScheduler(
+        # Cron scheduler (): "tick is a mail" — periodic task mails
+        # from postmaster (built-in digest + declared cron.yaml entries).
+        # Same ownership.
+        self._cron = CronScheduler(
             event_bus=event_bus,
             agent_info_provider=agent_info_provider,
             tlon_paths=paths,
@@ -381,8 +383,8 @@ class AgentRegistry(Component):
         # Public-health monitor (noise subscription + orphan scan task)
         await self._health.initialize()
 
-        # Digest scheduler (periodic scribe task mail, )
-        await self._digest.initialize()
+        # Cron scheduler (periodic task mails, )
+        await self._cron.initialize()
 
         self._initialized = True
         logger.info(
@@ -405,8 +407,8 @@ class AgentRegistry(Component):
         # Stop the public-health monitor (scan task + MAIL_NEW subscription)
         await self._health.shutdown()
 
-        # Stop the digest scheduler ()
-        await self._digest.shutdown()
+        # Stop the cron scheduler ()
+        await self._cron.shutdown()
 
         # Pending stops die with the process (in-memory one-shot intents)
         for task in list(self._pending_stop_tasks.values()):

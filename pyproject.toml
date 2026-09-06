@@ -31,6 +31,7 @@ dependencies = [
     "opentelemetry-sdk>=1.30",
     # LLM（litellm 次版本间有 breaking change，锁定次版本，ADR 0012）
     "litellm==1.98.*",
+    "croniter>=6.2.4",
 ]
 
 [project.optional-dependencies]
@@ -140,6 +141,7 @@ dev = [
     "opentelemetry-exporter-otlp-proto-http>=1.30",
     # 依赖方向契约检查（lint-imports）
     "import-linter>=2.5",
+    "types-croniter>=6.2.4.20260711",
 ]
 
 [tool.importlinter]

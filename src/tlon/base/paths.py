@@ -5,6 +5,7 @@ No other module should hardcode directory structure assumptions.
 
 Layout:
     ~/.tlon/
+    ├── cron.yaml
     ├── shared/
     │   ├── traces/
     │   │   └── trace-{uuid}.jsonl
@@ -174,6 +175,17 @@ class TlonPaths:
             if child.is_dir() and (child / "mail").is_dir():
                 ids.append(f"human:{child.name[len('human-'):]}")
         return ids
+
+    # ===== Society-level config =====
+
+    def cron_file(self) -> Path:
+        """~/.tlon/cron.yaml — declared periodic task mails (issue ).
+
+        Read-only resolution: does NOT create the file — an absent file
+        is the normal state (no declared entries). Read once at
+        ``CronScheduler.initialize``; edits take effect on restart.
+        """
+        return self._home / "cron.yaml"
 
     # ===== Agent persona files =====
 
