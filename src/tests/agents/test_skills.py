@@ -2,13 +2,16 @@
 
 Pins the three-layer scan (project > agent > global), the frontmatter
 validation rules, name-conflict shadowing, the mtime signature used for
-caching, and the ``[可用技能]`` index format. Also pins the DSL side:
-``(skills)`` is a valid no-argument section.
+caching, and the ``[可用技能]`` index format. Also pins the DSL side
+(``(skills)`` is a valid no-argument section), the built-in skill
+seeding (``seed_skills``, issue ), and the repo-carried
+``explain-decision`` skill's frontmatter/body contract.
 """
 
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tlon.agents.edn import loads
 from tlon.agents.member_spec import (
@@ -20,10 +23,13 @@ from tlon.agents.skills import (
     render_skills_index,
     scan_signature,
     scan_skills,
+    seed_skills,
 )
 from tlon.base.paths import TlonPaths
 
 AGENT = "agent1"
+
+BUILTIN_SKILL = "explain-decision"
 
 VALID_SKILL = """---
 name: pdf-extract
@@ -222,3 +228,86 @@ def test_skills_section_rejects_arguments() -> None:
     spec = _spec_with_sections("[(skills 3)]")
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
         validate_member_spec(spec)
+
+
+# ===== 内置 skill 播种与 pin（）=====
+
+
+def _builtin_skill_file() -> Path:
+    import tlon
+
+    return Path(tlon.__file__).parent / "skills" / BUILTIN_SKILL / "SKILL.md"
+
+
+class TestBuiltinSkillPin:
+    """Repo 内的 explain-decision/SKILL.md 是全员可问责性的落地载体：
+
+    frontmatter 必须能被扫描器解析（name/description 合规），否则播种后
+    会被静默跳过、内置 skill 形同虚设。
+    """
+
+    def test_builtin_skill_exists_with_valid_frontmatter(self) -> None:
+        text = _builtin_skill_file().read_text(encoding="utf-8")
+        lines = text.splitlines()
+        assert lines[0].strip() == "---"
+        end = lines[1:].index("---") + 1
+        data = yaml.safe_load("\n".join(lines[1:end]))
+
+        assert data["name"] == BUILTIN_SKILL
+        # description 是模型判断「要不要用」的唯一依据：必须写清触发场景。
+        assert "为什么" in data["description"]
+
+    def test_builtin_skill_body_teaches_evidence_discipline(self) -> None:
+        body = _builtin_skill_file().read_text(encoding="utf-8")
+        # 三条证据源与回答纪律的关键词必须都在正文里。
+        for keyword in ("listTraces", "getTrace", "searchMemories", "searchMails", "无据可查"):
+            assert keyword in body
+
+
+class TestSeedSkills:
+    """镜像 seed_prototypes 的语义：幂等、不覆盖、返回拷贝计数。"""
+
+    def test_seeds_builtin_skills_to_global_layer(self, tmp_path: Path) -> None:
+        p = TlonPaths(home=tmp_path)
+
+        copied = seed_skills(p)
+
+        assert copied >= 1
+        target = p.skills_dir() / BUILTIN_SKILL / "SKILL.md"
+        assert target.read_text(encoding="utf-8") == _builtin_skill_file().read_text(
+            encoding="utf-8"
+        )
+
+    def test_seed_is_idempotent(self, tmp_path: Path) -> None:
+        p = TlonPaths(home=tmp_path)
+
+        first = seed_skills(p)
+        second = seed_skills(p)
+
+        assert first >= 1
+        assert second == 0
+
+    def test_seed_never_overwrites_user_files(self, tmp_path: Path) -> None:
+        p = TlonPaths(home=tmp_path)
+        user_file = p.skills_dir() / BUILTIN_SKILL / "SKILL.md"
+        user_file.parent.mkdir(parents=True)
+        user_file.write_text("用户改过的版本\n", encoding="utf-8")
+        # 用户自建的 skill 也必须存活。
+        user_skill = _write_skill(p.skills_dir(), "mine", _skill("mine", "自建技能"))
+
+        copied = seed_skills(p)
+
+        assert copied == 0
+        assert user_file.read_text(encoding="utf-8") == "用户改过的版本\n"
+        assert user_skill.exists()
+
+    def test_seeded_builtin_skill_is_scannable(self, tmp_path: Path) -> None:
+        p = TlonPaths(home=tmp_path)
+        seed_skills(p)
+
+        skills = scan_skills(AGENT, p)
+
+        builtin = [s for s in skills if s.name == BUILTIN_SKILL]
+        assert len(builtin) == 1
+        assert builtin[0].scope == "global"
+        assert builtin[0].path == p.skills_dir() / BUILTIN_SKILL / "SKILL.md"

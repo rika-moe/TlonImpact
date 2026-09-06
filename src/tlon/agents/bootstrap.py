@@ -14,6 +14,7 @@ society like any other.
 """
 
 from tlon.agents.prototypes import instantiate, seed_prototypes
+from tlon.agents.skills import seed_skills
 from tlon.base.config import yaml_load_all, yaml_save
 from tlon.base.default_team import STANDARD_TEAM_DICTS
 from tlon.base.logger import get_logger
@@ -45,6 +46,7 @@ def bootstrap_standard_team(tlon_paths: TlonPaths | None = None) -> list[str]:
     """
     p = tlon_paths or paths
     seed_prototypes(p)
+    seed_skills(p)
 
     existing = yaml_load_all(p.tlon_home())
     if existing:

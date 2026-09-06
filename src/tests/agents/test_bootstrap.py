@@ -75,3 +75,18 @@ def test_existing_agent_skips_bootstrap(tmp_path: Path) -> None:
 
     assert created == []
     assert "someone" in yaml_load_all(p.tlon_home())
+
+
+def test_bootstrap_seeds_builtin_skills(tmp_path: Path) -> None:
+    """Bootstrap seeds the built-in skills alongside the prototypes ():
+    the explain-decision skill must land in the global layer even when the
+    society itself is not empty."""
+    p = _paths(tmp_path)
+    config_dir = p.agent_config_dir("someone")
+    (config_dir / "agent.yaml").write_text(
+        "agent:\n  id: someone\n  name: 某人\n", encoding="utf-8"
+    )
+
+    bootstrap_standard_team(p)
+
+    assert (p.skills_dir() / "explain-decision" / "SKILL.md").exists()

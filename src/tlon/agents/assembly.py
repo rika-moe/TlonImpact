@@ -12,6 +12,7 @@ ports live in ``tlon.tools.agents.ports``, ).
 from typing import TYPE_CHECKING
 
 from tlon.agents.health import orphan_mail_provider
+from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import (
@@ -40,6 +41,7 @@ from tlon.tools.filesystem.list_directory import ListDirectoryTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.search_files import SearchFilesTool
 from tlon.tools.filesystem.write_file import WriteFileTool
+from tlon.tools.mail.search_mails import SearchMailsTool
 from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.mail.silence import SilenceTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
@@ -206,6 +208,11 @@ async def assemble_cognitive(
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())
+    # searchMails (): read-only structured query over the agent's own
+    # mailbox — the mail evidence source of the explain-decision skill.
+    tool_executor.register_tool(
+        SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=config.id)
+    )
     tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))
     # Staging proposals (): agent-authored prototypes awaiting human
     # trust approval — visible so a member (e.g. the scribe's digest) can

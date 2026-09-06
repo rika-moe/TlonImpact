@@ -14,9 +14,16 @@ no ``use_skill`` tool.
 Name conflicts resolve project > agent > global: the layers are scanned
 in that order and the first occurrence of a name wins; later duplicates
 are skipped with a warning.
+
+Built-in skills ship inside the package (``tlon/skills/``) and are
+seeded to the global layer ``~/.tlon/skills/`` on startup by
+:func:`seed_skills` (same mechanism as ``seed_prototypes``); seeding
+never overwrites existing files, so user edits and user-added skills
+survive re-seeding.
 """
 
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Literal
 
@@ -30,6 +37,9 @@ logger = get_logger(__name__)
 
 #: The file that anchors a skill directory.
 SKILL_FILE = "SKILL.md"
+
+#: Resource package carrying the built-in skills (issue ).
+SKILL_PACKAGE = "tlon.skills"
 
 Scope = Literal["project", "agent", "global"]
 
@@ -51,6 +61,37 @@ class SkillInfo:
     description: str
     path: Path
     scope: Scope
+
+
+def seed_skills(tlon_paths: TlonPaths | None = None) -> int:
+    """Copy built-in skills to the global layer ``~/.tlon/skills/`` (idempotent).
+
+    Mirrors ``seed_prototypes`` (``tlon.agents.prototypes``): existing files
+    are never overwritten, so user edits and user-added skills survive
+    re-seeding.
+
+    Returns:
+        Number of files copied (0 when everything already exists).
+    """
+    p = tlon_paths or default_paths
+    target_root = p.skills_dir()
+    copied = 0
+    for entry in resources.files(SKILL_PACKAGE).iterdir():
+        # __pycache__ appears when running from a source tree
+        if not entry.is_dir() or entry.name.startswith(("_", ".")):
+            continue
+        target_dir = target_root / entry.name
+        for resource in entry.iterdir():
+            if not resource.is_file() or resource.name.startswith(("_", ".")):
+                continue
+            target = target_dir / resource.name
+            if target.exists():
+                continue
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(resource.read_bytes())
+            copied += 1
+    logger.info("skills_seeded", copied=copied, dir=str(target_root))
+    return copied
 
 
 def _layer_dirs(agent_id: str, paths: TlonPaths) -> list[tuple[Scope, Path]]:

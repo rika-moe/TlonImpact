@@ -25,6 +25,14 @@ Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 
 
 注意：索引里的路径是**宿主机绝对路径**；项目级 skill 的正文模型也可以在容器内按 `/workspace/.agents/skills/...` 读（同一文件），但 `read_file` 工具走宿主机路径。
 
+## 内置 skill
+
+仓库自带的 skill 随包发布在 `src/tlon/skills/`（资源包，与内置原型库 `src/tlon/prototypes/` 同一打包方式），服务启动时由 `seed_skills`（[agents/skills.py](../../src/tlon/agents/skills.py)，镜像 `seed_prototypes`）幂等拷贝到全局层 `~/.tlon/skills/`——已存在的文件不覆盖，用户的修改与自建的 skill 在重新播种后存活。
+
+当前内置：
+
+- **explain-decision**（issue ）：可问责性接口。被问「你为什么这么决定」时，教 agent 用 `listTraces`/`getTrace`、`searchMemories`、`searchMails` 三条证据源取证，并按「论断必附出处、无据明说不编造、区分事实与推断」的纪律组织回答。
+
 ## SKILL.md 格式
 
 ```markdown

@@ -21,6 +21,7 @@ from tlon.agents.adam import make_adam
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.bootstrap import bootstrap_standard_team
 from tlon.agents.prototypes import seed_prototypes
+from tlon.agents.skills import seed_skills
 from tlon.base.config import ConfigService
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -140,6 +141,10 @@ class ServerApp:
         # 1.0 Seed built-in behavior prototypes (idempotent; before any agent starts)
         seeded = seed_prototypes()
         logger.info("prototypes_ready", seeded=seeded)
+
+        # 1.0a Seed built-in skills to the global layer (idempotent; )
+        seeded_skills = seed_skills()
+        logger.info("skills_ready", seeded=seeded_skills)
 
         # 1.0b First-boot bootstrap (wizard removal): an empty society gets
         # the standard team from its role prototypes. Idempotent — skips
