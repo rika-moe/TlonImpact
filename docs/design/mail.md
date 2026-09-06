@@ -98,6 +98,8 @@ resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含
 
 与  噪音治理的关系：标记防的是「内容欺骗」，不防「数量冲刷」。外部源失控刷信时由既有公共健康机制接管——同一发件人的邮件突发超过阈值，`PublicHealthMonitor` 发布 `AGENT_NOISY` 事实，噪音治理覆盖外部源与内部成员一视同仁。
 
+第一个外部源：GitHub webhook（issue ，入站方向）。入站链路是：GitHub 投递 webhook 到 `POST /webhooks/github`（配置 `GITHUB_WEBHOOK_SECRET` 才注册该端点）→ REST 层对原始 body 做 HMAC-SHA256 验签（`X-Hub-Signature-256`，`hmac.compare_digest` 比较）→ [organization/messaging/github_adapter.py](../../src/tlon/organization/messaging/github_adapter.py) 的 `GitHubAdapter` 把受支持的事件（issue 开立/指派、issue/PR 评论、PR review、CI 失败）映射成 `notifications@github.com` 的外部来信并发布 `MAIL_NEW`——之后走的就是本节描述的既有投递与不可信标记链路，无任何特判。subject 携带 `[owner/repo]` 上下文，为出站方向（回信 → GitHub comment，后续 PR）的 thread 对齐预留锚点；不支持的事件与动作直接跳过（200 ignored），不进入系统。
+
 明确不做（边界）：受限 stage、向量隔离等重机制不上——当前攻击面是「一封带标记的信进入上下文」，标记 + 通则足够；待真实攻击面出现再评估。
 
 ## 一封信的生命周期

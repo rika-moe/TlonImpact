@@ -32,6 +32,7 @@ from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.organization.mail.delivery import MailDelivery
+from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
 
 from .api.rest import WEBUI_DIST_DIR, RESTServer
@@ -269,6 +270,27 @@ class ServerApp:
         logger.info("component_initialized", component="client_gateway")
 
         # ========== Step 4: API Layer (DI) ==========
+        settings = get_settings()
+
+        # GitHub webhook ingress (issue ): the adapter exists only when
+        # a webhook secret is configured; without one there is no endpoint.
+        github_adapter: GitHubAdapter | None = None
+        if settings.github_webhook_secret:
+            github_adapter = GitHubAdapter(
+                event_bus=event_bus,
+                agent_info_provider=config_service,
+                tlon_paths=paths,
+                recipient_id=settings.github_recipient or None,
+            )
+            self._components["github_adapter"] = github_adapter
+            logger.info(
+                "component_initialized",
+                component="github_adapter",
+                recipient=settings.github_recipient or None,
+            )
+        else:
+            logger.info("github_webhook_not_configured")
+
         self.rest = RESTServer(
             self.client_gateway,
             agent_registry=agent_registry,  # Direct access for agent operations
@@ -280,7 +302,9 @@ class ServerApp:
             adapter_manager=adapter_manager,  # For POST /messages
             host=self.host,
             port=self.rest_port,
-            admin_token=get_settings().admin_api_token or None,  # ADR 0013
+            admin_token=settings.admin_api_token or None,  # ADR 0013
+            github_adapter=github_adapter,  # For /webhooks/github
+            github_webhook_secret=settings.github_webhook_secret or None,
         )
 
         self._running = False

@@ -344,10 +344,22 @@ _ROUTER_METHODS = {
 def _route_condition(test: ast.expr) -> str:
     """Label one enclosing ``if`` guard of a route registration."""
     if (
+        isinstance(test, ast.BoolOp)
+        and isinstance(test.op, ast.And)
+    ):
+        return " + ".join(_route_condition(value) for value in test.values)
+    if (
         isinstance(test, ast.Attribute)
         and isinstance(test.value, ast.Name)
         and test.value.id == "self"
-        and test.attr in ("config_manager", "trace_store", "debug")
+        and test.attr
+        in (
+            "config_manager",
+            "trace_store",
+            "debug",
+            "github_adapter",
+            "github_webhook_secret",
+        )
     ):
         return test.attr
     if (

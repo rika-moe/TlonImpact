@@ -16,6 +16,7 @@ from aiohttp import web
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.app.server.core.client_gateway import ClientGateway
 from tlon.base.paths import TlonPaths
+from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
 
 
@@ -35,6 +36,8 @@ class RestHandlerBase:
     logs_dir: Path | None
     paths: TlonPaths | None
     adapter_manager: AdapterManager | None
+    github_adapter: GitHubAdapter | None
+    github_webhook_secret: str | None
     # Active SSE streams: session_id -> frame queue (None sentinel ends
     # the stream; see handle_events / handle_delete_session)
     _sse_queues: dict[str, asyncio.Queue[str | None]]

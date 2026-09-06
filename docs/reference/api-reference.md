@@ -49,7 +49,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 40 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 41 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -85,6 +85,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | GET | `/traces` | `handle_list_traces` | trace_store |
 | GET | `/traces/{trace_id}` | `handle_get_trace` | trace_store |
 | GET | `/metrics` | `handle_metrics` | 无条件 |
+| POST | `/webhooks/github` | `handle_github_webhook` | github_adapter + github_webhook_secret |
 | GET | `/agents/{agent_id}/logs` | `handle_get_agent_logs` | 无条件 |
 | GET | `/logs` | `handle_list_logs` | 无条件 |
 | GET | `/test/ping` | `handle_test_ping` | debug |

@@ -125,3 +125,32 @@ class TestSettingsLLMEnv:
         assert settings.llm_temperature == 1.0
         assert settings.llm_max_retries == 3
         assert settings.llm_base_delay == 1.0
+
+
+class TestSettingsGitHubEnv:
+    """Settings reads the GitHub webhook ingress variables (issue )."""
+
+    def test_reads_github_env_vars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("tlon.base.settings.paths", TlonPaths(home=tmp_path))
+        monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "whsec")
+        monkeypatch.setenv("GITHUB_RECIPIENT", "human:alice")
+
+        settings = Settings()
+
+        assert settings.github_webhook_secret == "whsec"
+        assert settings.github_recipient == "human:alice"
+
+    def test_defaults_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty secret = the /webhooks/github route is not registered."""
+        monkeypatch.setattr("tlon.base.settings.paths", TlonPaths(home=tmp_path))
+        monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
+        monkeypatch.delenv("GITHUB_RECIPIENT", raising=False)
+
+        settings = Settings()
+
+        assert settings.github_webhook_secret == ""
+        assert settings.github_recipient == ""

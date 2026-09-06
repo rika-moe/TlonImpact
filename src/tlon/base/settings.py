@@ -91,6 +91,11 @@ class Settings:
         # empty = auth disabled (default, localhost trust boundary)
         self.admin_api_token = os.getenv("TLON_ADMIN_TOKEN", "")  # 配置后 /admin/* 需 Authorization: Bearer；空 = 关闭
 
+        # GitHub webhook ingress (issue ): HMAC secret of the webhook;
+        # empty = POST /webhooks/github is not registered at all
+        self.github_webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")  # GitHub webhook 配置的 secret；空 = 端点不注册
+        self.github_recipient = os.getenv("GITHUB_RECIPIENT", "")  # GitHub 来信的默认收件人 member id；空 = 发给全体已知人类
+
         self.tlon_home.mkdir(parents=True, exist_ok=True)
 
     def get_agent_data_dir(self, agent_id: str) -> Path:

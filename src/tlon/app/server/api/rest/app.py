@@ -29,10 +29,12 @@ from tlon.agents.agent_registry import AgentRegistry
 from tlon.app.server.core.client_gateway import ClientGateway
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
 
 from .admin_agents import AdminAgentHandlers
 from .admin_prototypes import AdminPrototypeHandlers
+from .github import GitHubWebhookMixin
 from .mail import MailHandlers
 from .observability import ObservabilityHandlers
 from .sessions import SessionHandlers
@@ -54,6 +56,7 @@ class RESTAPIHandler(
     AdminPrototypeHandlers,
     SettingsHandlers,
     ObservabilityHandlers,
+    GitHubWebhookMixin,
 ):
     """Handler for REST API requests.
 
@@ -75,6 +78,7 @@ class RESTAPIHandler(
     - GET /agents/{id}/logs - Agent log entries
     - GET /logs - All log entries with combined filters
     - GET /metrics - In-process metrics snapshot
+    - POST /webhooks/github - GitHub webhook ingress (issue ; only when configured)
 
     Example:
         >>> handler = RESTAPIHandler(client_gateway, agent_registry)
@@ -97,6 +101,8 @@ class RESTAPIHandler(
         adapter_manager: AdapterManager | None = None,
         debug: bool = False,
         admin_token: str | None = None,
+        github_adapter: GitHubAdapter | None = None,
+        github_webhook_secret: str | None = None,
     ):
         """Initialize the REST API handler.
 
@@ -112,6 +118,10 @@ class RESTAPIHandler(
             debug: Whether to enable debug/test endpoints (never enable in production)
             admin_token: Shared Bearer token guarding /admin/* (ADR 0013);
                 None disables authentication (default, localhost trust boundary)
+            github_adapter: Optional GitHubAdapter for /webhooks/github (issue
+                ); the route registers only together with a webhook secret
+            github_webhook_secret: HMAC secret of the GitHub webhook; None
+                means the /webhooks/github route is not registered
         """
         self.client_gateway = client_gateway
         self.agent_registry = agent_registry
@@ -123,6 +133,8 @@ class RESTAPIHandler(
         self.paths = paths
         self.adapter_manager = adapter_manager
         self.admin_token = admin_token
+        self.github_adapter = github_adapter
+        self.github_webhook_secret = github_webhook_secret
         # Active SSE streams: session_id -> frame queue (None sentinel ends
         # the stream; see handle_events / handle_delete_session)
         self._sse_queues: dict[str, asyncio.Queue[str | None]] = {}
@@ -196,6 +208,12 @@ class RESTAPIHandler(
 
         # Metrics route (503 when the metrics service is unavailable)
         app.router.add_get("/metrics", self.handle_metrics)
+
+        # GitHub webhook ingress (issue ): registered only when both the
+        # adapter and the webhook secret are configured — an unconfigured
+        # server exposes no endpoint at all.
+        if self.github_adapter and self.github_webhook_secret:
+            app.router.add_post("/webhooks/github", self.handle_github_webhook)
 
         # Agent logs route
         app.router.add_get("/agents/{agent_id}/logs", self.handle_get_agent_logs)
@@ -376,6 +394,8 @@ class RESTServer:
         port: int = 8080,
         debug: bool = False,
         admin_token: str | None = None,
+        github_adapter: GitHubAdapter | None = None,
+        github_webhook_secret: str | None = None,
     ):
         """Initialize the REST server.
 
@@ -392,6 +412,9 @@ class RESTServer:
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
             admin_token: Shared Bearer token guarding /admin/* (ADR 0013)
+            github_adapter: Optional GitHubAdapter for /webhooks/github ()
+            github_webhook_secret: HMAC secret of the GitHub webhook; None
+                means the /webhooks/github route is not registered
         """
         self.client_gateway = client_gateway
         self.host = host
@@ -407,6 +430,8 @@ class RESTServer:
             adapter_manager,
             debug,
             admin_token,
+            github_adapter,
+            github_webhook_secret,
         )
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
