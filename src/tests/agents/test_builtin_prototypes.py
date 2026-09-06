@@ -26,9 +26,9 @@ from tlon.base.paths import TlonPaths
 
 # Every built-in prototype, with the template parameters instantiation
 # requires (relay declares a ``${to}`` placeholder; the others are
-# concrete specs and take none). Includes the six role prototypes
-# (developer/ops/pm/support/product/data-analyst) that the standard team
-# is born from (ADR 0006).
+# concrete specs and take none). Includes the seven role prototypes
+# (developer/ops/pm/support/product/data-analyst/scribe) that the
+# standard team is born from (ADR 0006).
 BUILTIN_PARAMS: dict[str, dict] = {
     "archivist": {},
     "deep-thinker": {},
@@ -40,6 +40,7 @@ BUILTIN_PARAMS: dict[str, dict] = {
     "support": {},
     "product": {},
     "data-analyst": {},
+    "scribe": {},
 }
 
 
@@ -106,6 +107,7 @@ GATED_PROTOTYPES = [
     "support",
     "product",
     "data-analyst",
+    "scribe",
 ]
 
 

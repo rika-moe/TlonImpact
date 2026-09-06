@@ -21,3 +21,8 @@ MailStatsProvider = Callable[[str], Awaitable[dict[str, Any]]]
 #: Reputation provider (): takes a member id, returns that member's
 #: reputation derived from the society's mail files as a JSON-safe dict.
 ReputationProvider = Callable[[str], Awaitable[dict[str, Any]]]
+
+#: Orphan-mail scan provider (): runs an on-demand society-wide scan
+#: and returns the report (scanned_members / orphan_count / orphans) as a
+#: JSON-safe dict. Derived, never stored.
+OrphanMailProvider = Callable[[], Awaitable[dict[str, Any]]]

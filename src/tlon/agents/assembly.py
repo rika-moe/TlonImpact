@@ -11,9 +11,14 @@ ports live in ``tlon.tools.agents.ports``, ).
 
 from typing import TYPE_CHECKING
 
+from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
-from tlon.agents.prototypes import list_prototypes, write_staging_prototype
+from tlon.agents.prototypes import (
+    list_prototypes,
+    list_staging_prototypes,
+    write_staging_prototype,
+)
 from tlon.agents.reputation import reputation_provider
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
@@ -43,8 +48,10 @@ from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.observability.get_metrics import GetMetricsTool
 from tlon.tools.observability.mail_stats import GetMailStatsTool
 from tlon.tools.observability.reputation import GetReputationTool
+from tlon.tools.observability.social_health import GetSocialHealthTool
 from tlon.tools.observability.traces import GetTraceTool, ListTracesTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
+from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 from tlon.tools.system.current_time import GetCurrentTimeTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
@@ -200,6 +207,10 @@ async def assemble_cognitive(
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())
     tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))
+    # Staging proposals (): agent-authored prototypes awaiting human
+    # trust approval — visible so a member (e.g. the scribe's digest) can
+    # surface them as pending human decisions.
+    tool_executor.register_tool(ListStagingPrototypesTool(lister=list_staging_prototypes))
     # Spawn/stop lifecycle tools (stage 6b): the registry is the
     # assembler, so it injects itself (it satisfies the AgentLifecycle
     # port structurally); spawner_id binds the tool to the owning
@@ -239,6 +250,19 @@ async def assemble_cognitive(
                 + tlon_paths.known_human_ids(),
             ),
             agent_id=config.id,
+        )
+    )
+    # Social health (): the orphan-mail scan is the same collector the
+    # PublicHealthMonitor publishes as MAIL_ORPHAN_SCAN, here on demand;
+    # the roster is re-read per query so the report sees the current
+    # society.
+    tool_executor.register_tool(
+        GetSocialHealthTool(
+            provider=orphan_mail_provider(
+                tlon_paths,
+                member_ids=lambda: sorted(agent_info.get_all_ids())
+                + tlon_paths.known_human_ids(),
+            )
         )
     )
     if metrics_service is not None:

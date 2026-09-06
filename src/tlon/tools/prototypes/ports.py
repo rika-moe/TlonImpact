@@ -34,3 +34,6 @@ class PrototypeSummary(Protocol):
 
     @property
     def trusted(self) -> bool: ...
+
+    @property
+    def author(self) -> str | None: ...

@@ -40,7 +40,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 两个特殊地址：
 
 - `all@tlon.internal`（`ALL_ADDRESS`）——广播地址，投递时展开为全体成员。它是社会里唯一的「一对多」原语，对应书信共和国里的公开信。
-- `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱（给它的退信无处可投，记日志丢弃，避免退信循环）。
+- `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱（给它的退信无处可投，记日志丢弃，避免退信循环）。周期任务的 tick 邮件也以它为发件人（见「周期任务：tick 即邮件」）。
 
 反方向映射 `member_id_for_address` 是有损的：裸 local part 无法区分 agent 和人类（`alice@tlon.internal` 既可能是 agent `alice` 也可能是人类 `human:alice`），消歧留给解析器（见下文「名称解析」）。
 
@@ -157,6 +157,14 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 `is_complete` 参数把「发邮件」和「结束本轮思考」绑定：`false` 表示发中间进度、继续思考（一封协作过程中的中间信，随后还会有别的工具调用和信件）；`true` 表示这是最终回复、结束循环（且本轮只能调 `sendEmail`，不能与其他工具混用——最终回复就是本轮的句号）。这把「agent 每轮思考的产出」与「一封信」对齐：认知循环不是跑到燃料耗尽才停，而是以「回信了」为自然终止条件。对社会而言这意味着每个 session 的产出都落在邮件层可见——没有停留在内存里、随 session 结束蒸发的思考结果；最终答复一定是一封可检索的信。
 
 这也解释了为什么中间信和最终信要区分：中间信让长任务中的协作方尽早看到进展（人类社会里叫「抄送进展」），最终信给出结论；两者都是信，但对收件人的紧迫性和对循环的控制语义不同。
+
+## 周期任务：tick 即邮件
+
+系统需要周期性触发的工作（目前的实例是「社会文摘」，issue ）不引入新的 timer 事件类型，也不改认知运行时——周期触发本身就是一封邮件。[agents/digest.py](../../src/tlon/agents/digest.py) 的 `DigestScheduler`（归 `AgentRegistry` 拥有，与 `IdleReaper` / `PublicHealthMonitor` 同族）每隔一个间隔（默认一天）以 `postmaster@tlon.internal` 名义给书记员（`ji-shuheng`，scribe 原型）发一封「社会文摘周期任务」邮件，正文自带完整工作指令与人类收件人清单；书记员的普通 `:on :mail-delivered` 认知规则被触发，LLM 调观测工具（getMetrics / listTraces+getTrace / getReputation / getSocialHealth / listStagingPrototypes）汇总，再一封 sendEmail 发给全体已知人类。
+
+这个设计是「退信是设计意图」的同构延伸：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。书记员未注册或尚无已知人类时 tick 记日志跳过——没有读者就没有文摘。
+
+配套的两个只读工具把「待人类处置」可查询化：`getSocialHealth`（[tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 
 ## 人类接入
 

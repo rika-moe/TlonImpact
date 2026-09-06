@@ -26,6 +26,7 @@ registry's own initialize/shutdown.
 import asyncio
 import time
 from collections import deque
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -35,12 +36,16 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 from tlon.organization.mail.mail import ALL_ADDRESS, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.tools.observability.ports import OrphanMailProvider
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
     from tlon.base.events.event_bus import EventBus
 
 logger = get_logger(__name__)
+
+#: Max orphan entries carried in one scan payload (payload bloat guard).
+ORPHAN_REPORT_CAP = 20
 
 
 def _payload_value(payload: Any, key: str) -> Any:
@@ -61,6 +66,123 @@ def _mail_timestamp(value: str) -> datetime | None:
     return ts
 
 
+async def collect_orphan_mails(
+    member_ids: list[str],
+    *,
+    tlon_paths: TlonPaths,
+    orphan_mail_days: int,
+    report_cap: int = ORPHAN_REPORT_CAP,
+) -> dict[str, Any]:
+    """Scan every member's mailbox for unanswered old thread roots.
+
+    An orphan is a sent thread root (``in_reply_to`` empty) that is
+    older than ``orphan_mail_days`` and whose thread has no reply in
+    the owner's inbox. Broadcasts to ``all@tlon.internal`` are excluded
+    (they expect no per-member reply), as are the owner's own replies.
+
+    Read-only: mailboxes are only opened when they already exist on disk
+    (``member_mail_dir_existing``) — a scan never creates a mailbox.
+
+    Args:
+        member_ids: Every society member id to scan (agents + known
+            humans); injected to keep the collector testable
+        tlon_paths: Mailbox layout resolver
+        orphan_mail_days: Minimum thread-root age to qualify as orphan
+        report_cap: Max orphan entries in the payload
+
+    Returns:
+        The scan payload: ``scanned_members`` (count), ``orphan_count``
+        (total found), ``orphans`` (capped at ``report_cap``, oldest
+        first, each with mail_id/from/to/subject/age_days)
+    """
+    now = datetime.now(UTC)
+    min_age = timedelta(days=orphan_mail_days)
+
+    orphans: list[dict[str, Any]] = []
+    scanned_members = 0
+    for member_id in member_ids:
+        mail_dir = tlon_paths.member_mail_dir_existing(member_id)
+        if mail_dir is None:
+            continue  # never create a mailbox from a read-only scan
+        scanned_members += 1
+        try:
+            found = await _orphans_for(member_id, Mailbox(mail_dir), now, min_age)
+        except Exception as e:
+            logger.error("orphan_scan_member_failed", member_id=member_id, error=str(e))
+            continue
+        orphans.extend(found)
+
+    orphans.sort(key=lambda entry: entry["age_days"], reverse=True)
+    return {
+        "scanned_members": scanned_members,
+        "orphan_count": len(orphans),
+        "orphans": orphans[:report_cap],
+    }
+
+
+async def _orphans_for(
+    member_id: str,
+    mailbox: Mailbox,
+    now: datetime,
+    min_age: timedelta,
+) -> list[dict[str, Any]]:
+    """One member's orphan thread roots (see :func:`collect_orphan_mails`)."""
+    own_address = address_for_member(member_id)
+    orphans: list[dict[str, Any]] = []
+    for mail in await mailbox.sent():
+        if mail.in_reply_to is not None:
+            continue  # not a thread root
+        if ALL_ADDRESS in mail.to or ALL_ADDRESS in mail.cc:
+            continue  # broadcasts expect no per-member reply
+        timestamp = _mail_timestamp(mail.timestamp)
+        if timestamp is None:
+            continue
+        age = now - timestamp
+        if age < min_age:
+            continue
+        thread = await mailbox.thread_incoming(mail.thread_id)
+        answered = any(
+            reply.in_reply_to is not None and reply.from_address != own_address
+            for reply in thread
+        )
+        if answered:
+            continue
+        orphans.append(
+            {
+                "mail_id": mail.id,
+                "from": mail.from_address,
+                "to": list(mail.to),
+                "subject": mail.subject,
+                "age_days": round(age.total_seconds() / 86400, 1),
+            }
+        )
+    return orphans
+
+
+def orphan_mail_provider(
+    tlon_paths: TlonPaths,
+    member_ids: Callable[[], list[str]],
+    orphan_mail_days: int = 3,
+) -> OrphanMailProvider:
+    """Bind the orphan scan to a paths layout and a live roster ().
+
+    The roster callable is re-read per query so the report always sees
+    the current society (same pattern as the reputation provider).
+
+    Returns:
+        An ``OrphanMailProvider`` running the on-demand scan
+    """
+
+    async def scan() -> dict[str, Any]:
+        return await collect_orphan_mails(
+            member_ids(),
+            tlon_paths=tlon_paths,
+            orphan_mail_days=orphan_mail_days,
+        )
+
+    return scan
+
+
 class PublicHealthMonitor:
     """Publishes social-health facts: AGENT_NOISY and MAIL_ORPHAN_SCAN.
 
@@ -77,7 +199,7 @@ class PublicHealthMonitor:
     """
 
     #: Max orphan entries carried in one MAIL_ORPHAN_SCAN payload
-    ORPHAN_REPORT_CAP = 20
+    ORPHAN_REPORT_CAP = ORPHAN_REPORT_CAP
 
     def __init__(
         self,
@@ -229,10 +351,10 @@ class PublicHealthMonitor:
     async def scan_orphan_mail(self) -> dict[str, Any]:
         """Scan every member's mailbox for unanswered old thread roots.
 
-        An orphan is a sent thread root (``in_reply_to`` empty) that is
-        older than ``orphan_mail_days`` and whose thread has no reply in
-        the owner's inbox. Broadcasts to ``all@tlon.internal`` are excluded
-        (they expect no per-member reply), as are the owner's own replies.
+        The scan itself is the module-level pure collector
+        (:func:`collect_orphan_mails` — shared with the ``getSocialHealth``
+        observability tool, ); this method supplies the roster and the
+        monitor's thresholds. See there for the orphan definition.
 
         Returns:
             The MAIL_ORPHAN_SCAN payload: ``scanned_members`` (count),
@@ -240,66 +362,9 @@ class PublicHealthMonitor:
             ``ORPHAN_REPORT_CAP``, oldest first, each with
             mail_id/from/to/subject/age_days)
         """
-        now = datetime.now(UTC)
-        min_age = timedelta(days=self._orphan_mail_days)
         member_ids = sorted(self._agent_info.get_all_ids()) + self._paths.known_human_ids()
-
-        orphans: list[dict[str, Any]] = []
-        scanned_members = 0
-        for member_id in member_ids:
-            mail_dir = self._paths.member_mail_dir_existing(member_id)
-            if mail_dir is None:
-                continue  # never create a mailbox from a read-only scan
-            scanned_members += 1
-            try:
-                found = await self._orphans_for(member_id, Mailbox(mail_dir), now, min_age)
-            except Exception as e:
-                logger.error("orphan_scan_member_failed", member_id=member_id, error=str(e))
-                continue
-            orphans.extend(found)
-
-        orphans.sort(key=lambda entry: entry["age_days"], reverse=True)
-        return {
-            "scanned_members": scanned_members,
-            "orphan_count": len(orphans),
-            "orphans": orphans[: self.ORPHAN_REPORT_CAP],
-        }
-
-    async def _orphans_for(
-        self,
-        member_id: str,
-        mailbox: Mailbox,
-        now: datetime,
-        min_age: timedelta,
-    ) -> list[dict[str, Any]]:
-        """One member's orphan thread roots (see :meth:`scan_orphan_mail`)."""
-        own_address = address_for_member(member_id)
-        orphans: list[dict[str, Any]] = []
-        for mail in await mailbox.sent():
-            if mail.in_reply_to is not None:
-                continue  # not a thread root
-            if ALL_ADDRESS in mail.to or ALL_ADDRESS in mail.cc:
-                continue  # broadcasts expect no per-member reply
-            timestamp = _mail_timestamp(mail.timestamp)
-            if timestamp is None:
-                continue
-            age = now - timestamp
-            if age < min_age:
-                continue
-            thread = await mailbox.thread_incoming(mail.thread_id)
-            answered = any(
-                reply.in_reply_to is not None and reply.from_address != own_address
-                for reply in thread
-            )
-            if answered:
-                continue
-            orphans.append(
-                {
-                    "mail_id": mail.id,
-                    "from": mail.from_address,
-                    "to": list(mail.to),
-                    "subject": mail.subject,
-                    "age_days": round(age.total_seconds() / 86400, 1),
-                }
-            )
-        return orphans
+        return await collect_orphan_mails(
+            member_ids,
+            tlon_paths=self._paths,
+            orphan_mail_days=self._orphan_mail_days,
+        )

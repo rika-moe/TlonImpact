@@ -5,11 +5,12 @@ snapshot callable, traces from the read-only ``TraceStore`` ABC, and the
 mail stats from the agents-layer provider over the agent's own mailbox.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
+from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import collect_mail_stats, mail_stats_provider
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import SpanRecord, TraceRecord, TraceStore
@@ -18,6 +19,7 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.observability.get_metrics import GetMetricsTool
 from tlon.tools.observability.mail_stats import GetMailStatsTool
 from tlon.tools.observability.reputation import GetReputationTool
+from tlon.tools.observability.social_health import GetSocialHealthTool
 from tlon.tools.observability.traces import (
     LIST_TRACES_MAX_LIMIT,
     GetTraceTool,
@@ -373,3 +375,62 @@ class TestGetReputationTool:
         assert tool.name == "getReputation"
         assert tool.parameters["required"] == []
         assert "agent_id" in tool.parameters["properties"]
+
+
+class TestGetSocialHealthTool:
+    """getSocialHealth (): the orphan-mail scan, on demand over the
+    real mailbox layout — same collector the health monitor publishes."""
+
+    @staticmethod
+    def _tool(tlon_paths: TlonPaths, member_ids: list[str]) -> GetSocialHealthTool:
+        return GetSocialHealthTool(
+            provider=orphan_mail_provider(
+                tlon_paths, member_ids=lambda: member_ids, orphan_mail_days=3
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_orphan_is_reported(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        # Old unanswered thread root sent by the agent.
+        await mailbox.append_sent(
+            _mail("old1", OWN, [BOB], "2026-08-01T10:00:00", thread_id="old1")
+        )
+        tool = self._tool(tlon_paths, [AGENT_ID])
+
+        result = await tool.execute()
+
+        assert result.success
+        assert result.data["scanned_members"] == 1
+        assert result.data["orphan_count"] == 1
+        assert result.data["orphans"][0]["mail_id"] == "old1"
+
+    @pytest.mark.asyncio
+    async def test_no_orphans(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        # A fresh thread root is not yet an orphan.
+        fresh = datetime.now(UTC).isoformat()
+        await mailbox.append_sent(_mail("f1", OWN, [BOB], fresh, thread_id="f1"))
+        tool = self._tool(tlon_paths, [AGENT_ID])
+
+        result = await tool.execute()
+
+        assert result.success
+        assert result.data["orphan_count"] == 0
+        assert result.data["orphans"] == []
+
+    @pytest.mark.asyncio
+    async def test_read_only_scan_creates_no_mailbox(self, tlon_paths: TlonPaths):
+        tool = self._tool(tlon_paths, ["ghost-member"])
+
+        result = await tool.execute()
+
+        assert result.success
+        assert result.data["scanned_members"] == 0
+        assert not (tlon_paths._home / "ghost-member").exists()
+
+    def test_tool_schema(self):
+        async def provider() -> dict[str, Any]:
+            return {}
+
+        tool = GetSocialHealthTool(provider=provider)
+        assert tool.name == "getSocialHealth"
+        assert tool.parameters["required"] == []
