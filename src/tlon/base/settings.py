@@ -95,6 +95,7 @@ class Settings:
         # empty = POST /webhooks/github is not registered at all
         self.github_webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")  # GitHub webhook 配置的 secret；空 = 端点不注册
         self.github_recipient = os.getenv("GITHUB_RECIPIENT", "")  # GitHub 来信的默认收件人 member id；空 = 发给全体已知人类
+        self.github_token = os.getenv("GITHUB_TOKEN", "")  # GitHub API token（出站：回信 → issue/PR comment）；空 = 出站禁用，入站不受影响
 
         self.tlon_home.mkdir(parents=True, exist_ok=True)
 

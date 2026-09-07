@@ -170,3 +170,64 @@ class TestSharedResolver:
             is_human_online=lambda _username: False,
         )
         assert resolver.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
+
+
+class TestExternalGatewayClaims:
+    """External addresses resolve only via a gateway claim (issue 
+    egress); unclaimed external recipients stay unknown and bounce."""
+
+    EXTERNAL = "notifications@github.com"
+
+    def _resolver(
+        self, provider: MockAgentInfoProvider, tmp_path, with_owner: bool = True
+    ) -> RecipientResolver:
+        owners = {self.EXTERNAL: "gateway:github"}
+        return RecipientResolver(
+            agent_info_provider=provider,
+            is_human_online=lambda _username: False,
+            tlon_paths=TlonPaths(home=tmp_path),
+            external_owner=owners.get if with_owner else None,
+        )
+
+    async def test_claimed_external_address_resolves_to_gateway(
+        self, provider: MockAgentInfoProvider, tmp_path
+    ):
+        resolver = self._resolver(provider, tmp_path)
+        assert resolver.resolve_member(self.EXTERNAL) == "gateway:github"
+
+    async def test_unclaimed_external_address_stays_unknown(
+        self, provider: MockAgentInfoProvider, tmp_path
+    ):
+        resolver = self._resolver(provider, tmp_path)
+        assert resolver.resolve_member("nobody@example.com") is None
+
+    async def test_no_external_owner_keeps_everything_external_unknown(
+        self, provider: MockAgentInfoProvider, tmp_path
+    ):
+        """Default construction (no claim lookup) is the pre- behavior."""
+        resolver = self._resolver(provider, tmp_path, with_owner=False)
+        assert resolver.resolve_member(self.EXTERNAL) is None
+
+    async def test_internal_resolution_unaffected_by_claims(
+        self, provider: MockAgentInfoProvider, tmp_path
+    ):
+        resolver = self._resolver(provider, tmp_path)
+        assert resolver.resolve_member("xie-yunshu@tlon.internal") == "xie-yunshu"
+        assert resolver.resolve_member("ghost@tlon.internal") is None
+
+    async def test_claim_via_adapter_manager_shared_resolver(
+        self, provider: MockAgentInfoProvider, tmp_path
+    ):
+        """The delivery path shares the AdapterManager's resolver — wiring
+        the claim lookup into the manager reaches delivery resolution."""
+        bus = EventBus()
+        await bus.initialize()
+        mgr = AdapterManager(
+            event_bus=bus,
+            agent_info_provider=provider,
+            tlon_paths=TlonPaths(home=tmp_path),
+            external_owner={self.EXTERNAL: "gateway:github"}.get,
+        )
+        assert mgr.recipient_resolver.resolve_member(self.EXTERNAL) == "gateway:github"
+        await mgr.shutdown()
+        await bus.shutdown()

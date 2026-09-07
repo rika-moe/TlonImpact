@@ -1,35 +1,51 @@
-"""GitHub Adapter: GitHub webhook events as external incoming mail (issue ).
+"""GitHub Adapter: GitHub webhook events as external mail (issue ).
 
-The first external event source of the "外部来信" mechanism (, see
-docs/design/mail.md 「外部来信与信任面」). The REST endpoint
-``POST /webhooks/github`` verifies the HMAC signature and hands the
-decoded event here; the adapter maps supported events onto one ``Mail``
-from the real external address ``notifications@github.com`` and publishes
-``MAIL_NEW`` directly on the bus (the cron.py bare-publish precedent).
-Delivery needs no special-casing for external senders: no ``sent`` copy,
-bounce safely dropped, ``MAIL_DELIVERED`` normal, and every rendering
-point marks the mail as untrusted external input.
+The first external gateway of the "外部来信" mechanism (, see
+docs/design/mail.md 「外部来信与信任面」), covering both directions:
 
-v1 supports a fixed event mapping (no per-event routing configuration):
-``issues`` (opened/assigned), ``issue_comment`` (created),
-``pull_request_review`` (submitted) and ``check_run`` (completed with a
-failure/timed_out conclusion). Everything else — unknown event types,
-unsupported actions, malformed payloads — is skipped (returns None,
-logged); an unsupported delivery is acknowledged with 200 "ignored" so
-GitHub does not retry.
+- **Ingress**: the REST endpoint ``POST /webhooks/github`` verifies the
+  HMAC signature and hands the decoded event here; the adapter maps
+  supported events onto one ``Mail`` from the real external address
+  ``notifications@github.com`` and publishes ``MAIL_NEW`` directly on
+  the bus (the cron.py bare-publish precedent). Delivery needs no
+  special-casing for external senders: no ``sent`` copy, bounce safely
+  dropped, ``MAIL_DELIVERED`` normal, and every rendering point marks
+  the mail as untrusted external input.
+- **Egress**: ``initialize`` claims ``notifications@github.com`` for the
+  gateway member ``gateway:github`` in the ExternalGatewayRegistry, so
+  replies to that address resolve and land in the gateway mailbox (the
+  outbound audit trail); the adapter's ``MAIL_DELIVERED`` subscription
+  then posts the mail body as a GitHub issue/PR comment. Thread mapping
+  is "in-memory table + subject anchor fallback" (documented limits in
+  docs/design/mail.md); unmapped mail stays in the mailbox, logged, no
+  bounce, no retry.
+
+v1 ingress supports a fixed event mapping (no per-event routing
+configuration): ``issues`` (opened/assigned), ``issue_comment``
+(created), ``pull_request_review`` (submitted) and ``check_run``
+(completed with a failure/timed_out conclusion). Everything else —
+unknown event types, unsupported actions, malformed payloads — is
+skipped (returns None, logged); an unsupported delivery is acknowledged
+with 200 "ignored" so GitHub does not retry.
 
 Addressing: the configured ``recipient_id`` member when set, otherwise
 all known humans (``known_human_ids()``); with neither, the event is
 skipped with a warning. The issue/PR number goes into the subject
-(``[owner/repo]``) so the follow-up outbound PR (reply → GitHub
-comment) can map a thread back to its GitHub object.
+(``[owner/repo]``) — the anchor the egress direction falls back to
+when its in-memory thread table has no entry (e.g. after a restart).
 """
 
+import re
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
+
+from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
+from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import HUMAN_ID_PREFIX, Mail, address_for_member
 
 if TYPE_CHECKING:
@@ -42,11 +58,37 @@ logger = get_logger(__name__)
 #: trust boundary derives from the address domain ().
 GITHUB_FROM_ADDRESS = "notifications@github.com"
 
+#: Member id of this gateway on the bus; claimed external addresses
+#: resolve to it, and its mailbox is the outbound audit trail.
+GATEWAY_MEMBER_ID = "gateway:github"
+
 #: check_run conclusions that warrant a mail (CI failure signals).
 _FAILURE_CONCLUSIONS = frozenset({"failure", "timed_out"})
 
 #: Body excerpt cap — a webhook payload body can be arbitrarily long.
 _BODY_EXCERPT_CHARS = 1000
+
+#: The ``[owner/repo]`` subject anchor (inbound and outbound share it).
+_ANCHOR_RE = re.compile(r"\[([\w.-]+/[\w.-]+)#(\d+)\]")
+
+#: GitHub REST API base (comments endpoint).
+_GITHUB_API = "https://api.github.com"
+
+#: Egress HTTP timeout — a wedged connection must not stall the handler.
+_HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+#: Egress POST injection point: (url, headers, json body) -> status code.
+#: Tests fake it; the default implementation uses aiohttp.
+HttpPost = Callable[[str, dict[str, str], dict[str, Any]], Awaitable[int]]
+
+
+async def _aiohttp_post(url: str, headers: dict[str, str], body: dict[str, Any]) -> int:
+    """Default egress transport: one short-lived session per call."""
+    async with (
+        aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session,
+        session.post(url, headers=headers, json=body) as response,
+    ):
+        return response.status
 
 
 def _str(value: Any) -> str:
@@ -62,36 +104,64 @@ def _excerpt(body: Any) -> str:
     return text
 
 
-class GitHubAdapter:
-    """Maps GitHub webhook events onto external incoming mail.
+class GitHubAdapter(Device):
+    """Maps GitHub webhook events onto external mail, both directions.
 
-    A plain component (cron.py precedent, not a Member): constructed with
+    A Device (not a managed Component): constructed at assembly time with
     the event bus, the agent info provider (recipient existence check),
-    the paths resolver (known humans) and the configured default
-    recipient. It has no bus subscriptions — events arrive via the REST
-    endpoint calling ``receive``.
+    the paths resolver (known humans), the external gateway registry and
+    the egress configuration; ``initialize``/``shutdown`` are called by
+    the assembly site (serverapp). Ingress events arrive via the REST
+    endpoint calling ``receive``; egress is driven by the
+    ``MAIL_DELIVERED`` subscription ``initialize`` installs.
     """
 
     def __init__(
         self,
         event_bus: "EventBus",
         agent_info_provider: "AgentInfoProvider",
+        gateway_registry: ExternalGatewayRegistry,
         tlon_paths: TlonPaths | None = None,
         recipient_id: str | None = None,
+        github_token: str | None = None,
+        http_post: HttpPost | None = None,
     ):
         """Initialize the GitHub adapter.
 
         Args:
-            event_bus: Event bus to publish MAIL_NEW on
+            event_bus: Event bus to publish/subscribe on
             agent_info_provider: Agent existence queries (recipient check)
+            gateway_registry: External address claim table; ``initialize``
+                claims ``notifications@github.com`` for ``gateway:github``
             tlon_paths: Path resolver (tests); None uses the singleton
             recipient_id: Default recipient member id from settings;
                 None routes GitHub mail to all known humans
+            github_token: GitHub API token for egress comments; None or
+                empty disables egress only (ingress unaffected)
+            http_post: Egress HTTP injection point (tests); None uses
+                the default aiohttp implementation
         """
-        self._event_bus = event_bus
+        super().__init__(event_bus=event_bus, name="GitHubAdapter")
         self._agent_info = agent_info_provider
+        self._registry = gateway_registry
         self._paths = tlon_paths or paths
         self._recipient_id = recipient_id
+        self._github_token = github_token
+        self._http_post: HttpPost = http_post or _aiohttp_post
+        # In-memory thread table: inbound mail id -> (repo, issue/PR
+        # number). Lost on restart by design — the subject anchor is
+        # the fallback (docs/design/mail.md 外部收件人与出口方向).
+        self._threads: dict[str, tuple[str, int]] = {}
+
+    async def initialize(self) -> None:
+        """Claim the gateway address and subscribe to deliveries."""
+        self._registry.claim(GITHUB_FROM_ADDRESS, GATEWAY_MEMBER_ID)
+        self.subscribe(EventType.MAIL_DELIVERED, self._on_mail_delivered)
+        logger.info("github_adapter_initialized", egress_enabled=bool(self._github_token))
+
+    async def shutdown(self) -> None:
+        """Stop the adapter (the address claim is assembly-lifetime)."""
+        self.unsubscribe_all()
 
     async def receive(self, event_type: str, payload: dict[str, Any]) -> Mail | None:
         """Map one GitHub webhook event onto an incoming mail and publish it.
@@ -125,9 +195,85 @@ class GitHubAdapter:
         await self._event_bus.publish(
             Event(type=EventType.MAIL_NEW, payload=mail, source="github_adapter")
         )
+        anchor = self._parse_anchor(mail.subject)
+        if anchor is not None:
+            self._threads[mail.id] = anchor
         logger.info("github_mail_published", event_type=event_type,
                     mail_id=mail.id, to=mail.to)
         return mail
+
+    # ==================== Egress (reply -> GitHub comment) ====================
+
+    async def _on_mail_delivered(self, event: Event) -> None:
+        """Post mail delivered to this gateway as a GitHub comment.
+
+        Errors never propagate: the bus isolates handler failures, but
+        the failure facts (mail id, target, status) must be logged here
+        — the mail itself stays in the gateway mailbox as the audit
+        trail, with no bounce and no retry (docs/design/mail.md).
+        """
+        payload = event.payload
+        if not isinstance(payload, dict) or payload.get("recipient") != GATEWAY_MEMBER_ID:
+            return  # not this gateway's delivery
+        mail = payload.get("mail")
+        if not isinstance(mail, Mail):
+            logger.warning("github_egress_bad_payload", payload_type=type(mail).__name__)
+            return
+        if not self._github_token:
+            logger.warning("github_egress_skipped", reason="no_token", mail_id=mail.id)
+            return
+        if not any(
+            self._registry.owner_of(a) == GATEWAY_MEMBER_ID
+            for a in [*mail.to, *mail.cc]
+        ):
+            logger.warning("github_egress_skipped", reason="no_claimed_recipient",
+                           mail_id=mail.id)
+            return
+        target = self._thread_target(mail)
+        if target is None:
+            logger.error("github_egress_unmapped", mail_id=mail.id,
+                         subject=mail.subject)
+            return
+        repo, number = target
+        url = f"{_GITHUB_API}/repos/{repo}/issues/{number}/comments"
+        headers = {
+            "Authorization": f"Bearer {self._github_token}",
+            "Accept": "application/vnd.github+json",
+        }
+        try:
+            status = await self._http_post(url, headers, {"body": mail.content})
+        except Exception as e:
+            logger.error("github_egress_failed", mail_id=mail.id, repo=repo,
+                         number=number, error=str(e))
+            return
+        if not 200 <= status < 300:
+            logger.error("github_egress_failed", mail_id=mail.id, repo=repo,
+                         number=number, status=status)
+            return
+        logger.info("github_egress_sent", mail_id=mail.id, repo=repo, number=number)
+
+    def _thread_target(self, mail: Mail) -> tuple[str, int] | None:
+        """Map an outbound mail to ``(repo, issue number)``.
+
+        The in-memory thread table (keyed by ``in_reply_to``) wins; the
+        subject anchor is the fallback — it survives restarts as long as
+        the reply keeps the ``[owner/repo#N]`` subject.
+        """
+        if mail.in_reply_to:
+            hit = self._threads.get(mail.in_reply_to)
+            if hit is not None:
+                return hit
+        return self._parse_anchor(mail.subject)
+
+    @staticmethod
+    def _parse_anchor(subject: str | None) -> tuple[str, int] | None:
+        """Extract ``(repo, number)`` from a ``[owner/repo#N]`` subject."""
+        if not subject:
+            return None
+        match = _ANCHOR_RE.search(subject)
+        if match is None:
+            return None
+        return match.group(1), int(match.group(2))
 
     # ==================== Event mapping ====================
 

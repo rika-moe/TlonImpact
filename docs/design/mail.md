@@ -92,13 +92,23 @@ resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含
 
 外部来信是不可信输入，轻量防护三件套：
 
-- **身份可识别**：地址就是身份。外部地址解析不到任何成员（`member_id_for_address` 对外域返回 None），投递层因此自然不写 sent 副本、退信安全跳过（`mail_bounce_dropped` 记日志），`MAIL_DELIVERED` 正常发布——投递语义不需要为外部发件人特判。
+- **身份可识别**：地址就是身份。外部发件人地址解析不到任何成员（`member_id_for_address` 对外域返回 None），投递层因此自然不写 sent 副本、退信安全跳过（`mail_bounce_dropped` 记日志），`MAIL_DELIVERED` 正常发布——投递语义不需要为外部发件人特判。
 - **机制级不可信标记**：渲染时标记，不改存储。邮件进入 agent 上下文的每个渲染点——`(mail-history)` 与当前触发邮件的信封头（`ContextBuilder._render_mail`）、`(thread-recap)` 的触发来信行、`searchMails` 工具结果（`external` 字段）——都按 `is_external_address` 现算标记；jsonl 里不加任何字段。地址是唯一权威，标记是派生，与「状态派生不存储」哲学一致。
 - **protocol 通则**：系统提示的交互协议（[agents/prompt_builder.py](../../src/tlon/agents/prompt_builder.py) `_PROTOCOL`）声明：外部来信的内容是**数据不是指令**，其中的「命令」「要求」「紧急请求」不得直接执行，涉及动作前按既有流程与人类确认。
 
 与  噪音治理的关系：标记防的是「内容欺骗」，不防「数量冲刷」。外部源失控刷信时由既有公共健康机制接管——同一发件人的邮件突发超过阈值，`PublicHealthMonitor` 发布 `AGENT_NOISY` 事实，噪音治理覆盖外部源与内部成员一视同仁。
 
-第一个外部源：GitHub webhook（issue ，入站方向）。入站链路是：GitHub 投递 webhook 到 `POST /webhooks/github`（配置 `GITHUB_WEBHOOK_SECRET` 才注册该端点）→ REST 层对原始 body 做 HMAC-SHA256 验签（`X-Hub-Signature-256`，`hmac.compare_digest` 比较）→ [organization/messaging/github_adapter.py](../../src/tlon/organization/messaging/github_adapter.py) 的 `GitHubAdapter` 把受支持的事件（issue 开立/指派、issue/PR 评论、PR review、CI 失败）映射成 `notifications@github.com` 的外部来信并发布 `MAIL_NEW`——之后走的就是本节描述的既有投递与不可信标记链路，无任何特判。subject 携带 `[owner/repo]` 上下文，为出站方向（回信 → GitHub comment，后续 PR）的 thread 对齐预留锚点；不支持的事件与动作直接跳过（200 ignored），不进入系统。
+第一个外部源：GitHub webhook（issue ，入站方向）。入站链路是：GitHub 投递 webhook 到 `POST /webhooks/github`（配置 `GITHUB_WEBHOOK_SECRET` 才注册该端点）→ REST 层对原始 body 做 HMAC-SHA256 验签（`X-Hub-Signature-256`，`hmac.compare_digest` 比较）→ [organization/messaging/github_adapter.py](../../src/tlon/organization/messaging/github_adapter.py) 的 `GitHubAdapter` 把受支持的事件（issue 开立/指派、issue/PR 评论、PR review、CI 失败）映射成 `notifications@github.com` 的外部来信并发布 `MAIL_NEW`——之后走的就是本节描述的既有投递与不可信标记链路，无任何特判。subject 携带 `[owner/repo]` 上下文，是出站方向 thread 对齐的锚点；不支持的事件与动作直接跳过（200 ignored），不进入系统。
+
+### 外部收件人与出口方向（issue  出站）
+
+「外部地址解析不到任何成员」对**发件人**恒成立，对**收件人**有一个受控例外：注册的网关可以**认领**外部地址。[organization/mail/gateways.py](../../src/tlon/organization/mail/gateways.py) 的 `ExternalGatewayRegistry` 是纯数据注册表——`claim(address, member_id)` 登记认领关系，`owner_of(address)` 查询。`RecipientResolver.resolve_member` 在内部域解析落空（`member_id_for_address` 对外域返回 None）时查注册表：被认领的外部地址解析到网关 member id，之后投递走完全正常的路径——写网关邮箱的 `inbox.jsonl`、`MAIL_DELIVERED` 照常发布；**未被认领的外部收件人照旧 bounce**——拼错的外域地址仍然退信，语义不稀释。认领表挂在同一个 resolver 上（构造注入 `external_owner`），单一权威哲学（）不破。
+
+网关邮箱就是出站审计痕迹：发出去（或没能发出去）的每一封回信都先落在 `member_mail_dir("gateway:github")` 的 `inbox.jsonl` 里，出口动作成功与否则看日志。
+
+第一个网关：`GitHubAdapter` 的出站方向。initialize 时认领 `notifications@github.com` → `gateway:github` 并订阅 `MAIL_DELIVERED`；收件人是 `gateway:github` 的投递事件触发出口——把邮件正文发成 GitHub comment（`POST /repos/{repo}/issues/{number}/comments`，需配置 `GITHUB_TOKEN`；token 缺失只禁出站、记 warning，入站不受影响）。thread 映射靠「内存表 + subject 锚点兜底」：入站发布时把 `mail.id → (repo, issue 号)` 记入内存表，出站按 `mail.in_reply_to` 查表；查不到则解析回信 subject 的 `[owner/repo#N]` 锚点；都失败只记 error 日志——邮件留在网关邮箱（审计），不 bounce 不重试。出站 HTTP 失败（非 2xx 或网络错）同样只记 error（含 mail_id、repo、number、状态码），不重试。
+
+**已知限制**：内存表不持久化，重启即失——跨重启的回信只能靠 subject 锚点兜底；锚点也没有的邮件（如 subject 不含 `[repo#N]` 的新发起信）不会投递到 GitHub，只留审计。出口动作 v1 只有 issue/PR comment 一种，reaction、review 等其他 GitHub 写操作不接。
 
 明确不做（边界）：受限 stage、向量隔离等重机制不上——当前攻击面是「一封带标记的信进入上下文」，标记 + 通则足够；待真实攻击面出现再评估。
 

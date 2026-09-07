@@ -9,6 +9,7 @@ Covers:
 """
 
 import tempfile
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.delivery import MailDelivery
+from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import (
     ALL_ADDRESS,
     POSTMASTER_ADDRESS,
@@ -58,11 +60,13 @@ def _make_delivery(
     temp_paths: TlonPaths,
     configs: dict[str, AgentConfig] | None = None,
     online_humans: list[str] | None = None,
+    external_owner: Callable[[str], str | None] | None = None,
 ):
     bus = _make_bus()
     provider = MockAgentInfoProvider(configs or {})
     adapter_manager = AdapterManager(
-        event_bus=bus, agent_info_provider=provider, tlon_paths=temp_paths
+        event_bus=bus, agent_info_provider=provider, tlon_paths=temp_paths,
+        external_owner=external_owner,
     )
     for username in online_humans or []:
         adapter_manager._adapters[username] = MagicMock(
@@ -363,6 +367,67 @@ class TestExternalSender:
         assert len(events) == 1  # valid recipient only; no bounce
         assert events[0].payload["recipient"] == "a-001"
         assert events[0].payload["mail"].id == mail.id
+
+
+class TestExternalGatewayRecipient:
+    """Egress direction (issue ): an external recipient claimed by a
+    gateway resolves to the gateway member id and delivers normally —
+    the gateway mailbox is the outbound audit trail. Unclaimed external
+    recipients keep bouncing."""
+
+    EXTERNAL = "notifications@github.com"
+
+    @pytest.mark.asyncio
+    async def test_claimed_external_recipient_delivers_to_gateway(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        registry = ExternalGatewayRegistry()
+        registry.claim(self.EXTERNAL, "gateway:github")
+        delivery, bus = _make_delivery(
+            temp_paths, configs, external_owner=registry.owner_of
+        )
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=[self.EXTERNAL],
+            content="收到，我来处理",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        # Exactly one MAIL_DELIVERED: to the gateway member, no bounce
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "gateway:github"
+        assert events[0].payload["mail"].id == mail.id
+
+        # The gateway mailbox holds the outbound copy (audit trail)
+        inbox = Mailbox(temp_paths.member_mail_dir("gateway:github"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_external_recipient_still_bounces(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        registry = ExternalGatewayRegistry()
+        registry.claim(self.EXTERNAL, "gateway:github")
+        delivery, bus = _make_delivery(
+            temp_paths, configs, external_owner=registry.owner_of
+        )
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["typo@github.com"],  # not the claimed address
+            content="发错域了",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        # Exactly one MAIL_DELIVERED: the bounce, to the sender
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "a-001"
+        bounce: Mail = events[0].payload["mail"]
+        assert bounce.from_address == POSTMASTER_ADDRESS
+        assert "typo@github.com" in bounce.content
 
 
 class TestOfflineHumans:

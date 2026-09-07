@@ -32,6 +32,7 @@ from tlon.base.settings import get_settings, get_tlon_home
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.organization.mail.delivery import MailDelivery
+from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
 
@@ -215,9 +216,16 @@ class ServerApp:
         logger.info("component_initialized", component="adam")
 
         # 2.5 AdapterManager - human adapter lifecycle (one per username)
+        # The external gateway registry (issue  egress) is a plain
+        # data component constructed here so every resolver instance on
+        # the delivery path consults the same claim table; gateways
+        # (github_adapter) claim their addresses at initialize.
+        gateway_registry = ExternalGatewayRegistry()
+        self._components["gateway_registry"] = gateway_registry
         adapter_manager = AdapterManager(
             event_bus=event_bus,
             agent_info_provider=config_service,
+            external_owner=gateway_registry.owner_of,
         )
         await adapter_manager.initialize()
         self._components["adapter_manager"] = adapter_manager
@@ -272,21 +280,27 @@ class ServerApp:
         # ========== Step 4: API Layer (DI) ==========
         settings = get_settings()
 
-        # GitHub webhook ingress (issue ): the adapter exists only when
-        # a webhook secret is configured; without one there is no endpoint.
+        # GitHub webhook ingress + egress (issue ): the adapter exists
+        # only when a webhook secret is configured; without one there is
+        # no endpoint. A missing GITHUB_TOKEN disables egress only — the
+        # address claim still routes replies into the gateway mailbox.
         github_adapter: GitHubAdapter | None = None
         if settings.github_webhook_secret:
             github_adapter = GitHubAdapter(
                 event_bus=event_bus,
                 agent_info_provider=config_service,
+                gateway_registry=gateway_registry,
                 tlon_paths=paths,
                 recipient_id=settings.github_recipient or None,
+                github_token=settings.github_token or None,
             )
+            await github_adapter.initialize()
             self._components["github_adapter"] = github_adapter
             logger.info(
                 "component_initialized",
                 component="github_adapter",
                 recipient=settings.github_recipient or None,
+                egress_enabled=bool(settings.github_token),
             )
         else:
             logger.info("github_webhook_not_configured")
@@ -390,6 +404,10 @@ class ServerApp:
         adam = self._components.get("adam")
         if adam:
             await adam.shutdown()
+
+        github_adapter = self._components.get("github_adapter")
+        if github_adapter:
+            await github_adapter.shutdown()
 
         agent_registry = self._components.get("agent_registry")
         if agent_registry:

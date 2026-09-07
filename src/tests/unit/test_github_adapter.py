@@ -1,10 +1,14 @@
-"""GitHubAdapter — GitHub webhook events as external incoming mail ().
+"""GitHubAdapter — GitHub webhook events as external mail ().
 
-Pins the v1 event mapping (issues opened/assigned, issue_comment created,
-pull_request_review submitted, check_run failure), the addressing rule
-(configured recipient → all known humans → skip), the real external
-sender address, and the skip-not-raise semantics for unsupported events
-and malformed payloads.
+Ingress: pins the v1 event mapping (issues opened/assigned, issue_comment
+created, pull_request_review submitted, check_run failure), the
+addressing rule (configured recipient → all known humans → skip), the
+real external sender address, and the skip-not-raise semantics for
+unsupported events and malformed payloads.
+
+Egress: pins the reply → GitHub comment flow — address claim at
+initialize, thread mapping (in-memory table + subject anchor fallback),
+and the log-only failure semantics (no bounce, no retry, never raise).
 """
 
 import asyncio
@@ -17,10 +21,13 @@ from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.messaging.github_adapter import (
+    GATEWAY_MEMBER_ID,
     GITHUB_FROM_ADDRESS,
     GitHubAdapter,
+    HttpPost,
 )
 
 REPO = "alice/Tlon"
@@ -67,12 +74,18 @@ def _adapter(
     tmp_path: Path,
     agent_ids: list[str] | None = None,
     recipient_id: str | None = None,
+    registry: ExternalGatewayRegistry | None = None,
+    github_token: str | None = None,
+    http_post: HttpPost | None = None,
 ) -> GitHubAdapter:
     return GitHubAdapter(
         event_bus=bus,
         agent_info_provider=_AgentInfoStub(agent_ids or []),
+        gateway_registry=registry or ExternalGatewayRegistry(),
         tlon_paths=TlonPaths(home=tmp_path),
         recipient_id=recipient_id,
+        github_token=github_token,
+        http_post=http_post,
     )
 
 
@@ -332,3 +345,157 @@ class TestAddressing:
         ) is None
         await asyncio.sleep(0.05)
         assert mails == []
+
+
+class _FakePost:
+    """Fake egress transport: records calls, returns a fixed status."""
+
+    def __init__(self, status: int = 201, error: Exception | None = None):
+        self.status = status
+        self.error = error
+        self.calls: list[tuple[str, dict[str, str], dict[str, Any]]] = []
+
+    async def __call__(
+        self, url: str, headers: dict[str, str], body: dict[str, Any]
+    ) -> int:
+        self.calls.append((url, headers, body))
+        if self.error is not None:
+            raise self.error
+        return self.status
+
+
+def _reply(inbound: Mail | None, subject: str | None, content: str = "收到，我来处理") -> Mail:
+    return Mail.create(
+        from_address="alice@tlon.internal",
+        to=[GITHUB_FROM_ADDRESS],
+        subject=subject,
+        content=content,
+        in_reply_to=inbound.id if inbound else None,
+        thread_id=inbound.thread_id if inbound else None,
+    )
+
+
+def _delivered_event(mail: Mail, recipient: str = GATEWAY_MEMBER_ID) -> Event:
+    return Event(
+        type=EventType.MAIL_DELIVERED,
+        payload={"mail": mail, "recipient": recipient},
+        source="mail_delivery",
+    )
+
+
+class TestEgress:
+    """Reply → GitHub comment (issue , outbound direction)."""
+
+    async def _inbound(self, bus: EventBus, adapter: GitHubAdapter) -> Mail:
+        mail = await adapter.receive(
+            "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}
+        )
+        assert mail is not None
+        return mail
+
+    async def test_initialize_claims_the_gateway_address(self, bus, tmp_path):
+        registry = ExternalGatewayRegistry()
+        adapter = _adapter(bus, tmp_path, registry=registry)
+        await adapter.initialize()
+        assert registry.owner_of(GITHUB_FROM_ADDRESS) == GATEWAY_MEMBER_ID
+        await adapter.shutdown()
+
+    async def test_reply_posts_comment_via_thread_table(self, bus, tmp_path):
+        _make_human(tmp_path, "alice")
+        post = _FakePost()
+        adapter = _adapter(bus, tmp_path, github_token="tok", http_post=post)
+        await adapter.initialize()
+        inbound = await self._inbound(bus, adapter)
+
+        await bus.publish(_delivered_event(_reply(inbound, inbound.subject)))
+
+        await _wait_for(lambda: len(post.calls) == 1)
+        url, headers, body = post.calls[0]
+        assert url == f"https://api.github.com/repos/{REPO}/issues/376/comments"
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers["Accept"] == "application/vnd.github+json"
+        assert body == {"body": "收到，我来处理"}
+        await adapter.shutdown()
+
+    async def test_subject_anchor_fallback(self, bus, tmp_path):
+        """No thread-table entry (e.g. after a restart): the subject's
+        [owner/repo#N] anchor still maps the reply to its GitHub object."""
+        post = _FakePost()
+        adapter = _adapter(bus, tmp_path, github_token="tok", http_post=post)
+        await adapter.initialize()
+
+        reply = _reply(None, f"[{REPO}#99] Re: 旧线程")
+        reply.in_reply_to = "unknown-mail-id"
+        await bus.publish(_delivered_event(reply))
+
+        await _wait_for(lambda: len(post.calls) == 1)
+        url, _, _ = post.calls[0]
+        assert url == f"https://api.github.com/repos/{REPO}/issues/99/comments"
+        await adapter.shutdown()
+
+    async def test_unmapped_reply_only_logged(self, bus, tmp_path):
+        """Neither table hit nor anchor: log and keep the mail in the
+        gateway mailbox (audit) — no post, no raise, no retry."""
+        post = _FakePost()
+        adapter = _adapter(bus, tmp_path, github_token="tok", http_post=post)
+        await adapter.initialize()
+
+        reply = _reply(None, "没有锚点的信")
+        await bus.publish(_delivered_event(reply))
+
+        await asyncio.sleep(0.1)
+        assert post.calls == []
+        await adapter.shutdown()
+
+    async def test_missing_token_skips_egress(self, bus, tmp_path):
+        """No GITHUB_TOKEN: egress disabled, ingress unaffected."""
+        _make_human(tmp_path, "alice")
+        post = _FakePost()
+        adapter = _adapter(bus, tmp_path, github_token=None, http_post=post)
+        await adapter.initialize()
+        inbound = await self._inbound(bus, adapter)  # ingress still works
+
+        await bus.publish(_delivered_event(_reply(inbound, inbound.subject)))
+
+        await asyncio.sleep(0.1)
+        assert post.calls == []
+        await adapter.shutdown()
+
+    async def test_other_recipients_delivery_ignored(self, bus, tmp_path):
+        _make_human(tmp_path, "alice")
+        post = _FakePost()
+        adapter = _adapter(bus, tmp_path, github_token="tok", http_post=post)
+        await adapter.initialize()
+        inbound = await self._inbound(bus, adapter)
+
+        await bus.publish(
+            _delivered_event(_reply(inbound, inbound.subject), recipient="a-001")
+        )
+
+        await asyncio.sleep(0.1)
+        assert post.calls == []
+        await adapter.shutdown()
+
+    async def test_non_2xx_logged_no_raise(self, bus, tmp_path):
+        _make_human(tmp_path, "alice")
+        post = _FakePost(status=403)
+        adapter = _adapter(bus, tmp_path, github_token="tok", http_post=post)
+        await adapter.initialize()
+        inbound = await self._inbound(bus, adapter)
+
+        await bus.publish(_delivered_event(_reply(inbound, inbound.subject)))
+
+        await _wait_for(lambda: len(post.calls) == 1)  # attempted, logged
+        await adapter.shutdown()
+
+    async def test_http_error_logged_no_raise(self, bus, tmp_path):
+        _make_human(tmp_path, "alice")
+        post = _FakePost(error=ConnectionError("network down"))
+        adapter = _adapter(bus, tmp_path, github_token="tok", http_post=post)
+        await adapter.initialize()
+        inbound = await self._inbound(bus, adapter)
+
+        await bus.publish(_delivered_event(_reply(inbound, inbound.subject)))
+
+        await _wait_for(lambda: len(post.calls) == 1)  # attempted, logged
+        await adapter.shutdown()

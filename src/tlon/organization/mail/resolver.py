@@ -9,7 +9,8 @@ to be kept in sync by hand;  was a drift bug):
   human username, ``human:<username>`` or full address) -> mail address.
   Used by the adapter side (HumanAdapter speaks with raw names).
 - ``resolve_member``: mail address -> member id. Used by the delivery
-  side (MailDelivery routes concrete addresses).
+  side (MailDelivery routes concrete addresses). External addresses
+  resolve only via a gateway claim (``external_owner``, issue ).
 
 The "known human" rule — online OR offline with a persistent mailbox —
 is written exactly once (``_known_human``), so a recipient resolvable
@@ -52,6 +53,9 @@ class RecipientResolver:
           display-name lookup and id enumeration
         - is_human_online: username -> True when a live adapter exists
         - tlon_paths: TlonPaths instance (defaults to module singleton)
+        - external_owner: external address -> claiming gateway member id
+          (ExternalGatewayRegistry.owner_of; None = no gateway claims,
+          external recipients always bounce)
 
     Example:
         >>> resolver = RecipientResolver(
@@ -67,6 +71,7 @@ class RecipientResolver:
         agent_info_provider: "AgentInfoProvider",
         is_human_online: Callable[[str], bool],
         tlon_paths: TlonPaths | None = None,
+        external_owner: Callable[[str], str | None] | None = None,
     ):
         """Initialize the resolver.
 
@@ -74,10 +79,13 @@ class RecipientResolver:
             agent_info_provider: Provider for agent configuration queries
             is_human_online: Online check for a human username
             tlon_paths: Path resolver (tests); None uses the singleton
+            external_owner: Gateway claim lookup (address -> gateway
+                member id); None keeps external recipients unresolvable
         """
         self._agent_info = agent_info_provider
         self._is_human_online = is_human_online
         self._paths = tlon_paths or paths
+        self._external_owner = external_owner
 
     def resolve_address(self, recipient: str) -> str | None:
         """Resolve a raw recipient to a mail address.
@@ -138,14 +146,21 @@ class RecipientResolver:
         to a known-but-offline human waits in their inbox
         (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).
 
+        External (foreign-domain) addresses resolve only when a gateway
+        has claimed them in the external gateway registry (issue 
+        egress); unclaimed external recipients stay unknown and bounce.
+
         Args:
-            address: A mail address in the tlon.internal domain
+            address: A mail address, internal or external
 
         Returns:
-            The member id (agent id or "human:<username>"), or None
+            The member id (agent id, "human:<username>" or gateway id),
+            or None
         """
         local = member_id_for_address(address)
         if local is None:
+            if self._external_owner is not None:
+                return self._external_owner(address)
             return None
         if self._agent_info.get_config(local) is not None:
             return local

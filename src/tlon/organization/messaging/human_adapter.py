@@ -290,6 +290,7 @@ class AdapterManager(Component):
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
         tlon_paths: TlonPaths | None = None,
+        external_owner: Callable[[str], str | None] | None = None,
     ):
         """Initialize the adapter manager.
 
@@ -298,6 +299,8 @@ class AdapterManager(Component):
             agent_info_provider: Provider for agent config queries
                 (recipient name → address resolution)
             tlon_paths: Path resolver (tests); None uses the singleton
+            external_owner: Gateway claim lookup forwarded to the shared
+                resolver (issue  egress); None = no gateway claims
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
@@ -311,6 +314,7 @@ class AdapterManager(Component):
             agent_info_provider=agent_info_provider,
             is_human_online=lambda username: username in self._adapters,
             tlon_paths=self._paths,
+            external_owner=external_owner,
         )
         self._sessions: dict[str, str] = {}  # session_id -> username
         self._lock = asyncio.Lock()  # serializes attach/detach
