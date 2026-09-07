@@ -1,12 +1,6 @@
 # ADR 0006：统一成员模型——一类成员 + 世代更替
 
-状态：已接受（2026-08-16，方向讨论拍板；代码未实施）
-
-## 背景
-
-系统当前的成员被两条类别轴切分：**react/script**（认知/确定，[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `member_type` 派生）与 **resident/contractor**（常住/临时工，[base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig.role`）。审视后确认：这两条轴没有一条在做"行为"的事，全在做**资源分配**（script 零装配、零 token）与**生命周期治理**（contractor 可丢弃、home 删除）——而这两件事按愿景都不该是类别（类 = 出生即定、代码写死），而应该是策略（可进化的数据）与状态（可变化的当前值）。
-
-同时有三个已知缺陷需要一起回答：个体学习环断裂（反思只能写回记忆、到不了行为）、行为更新的信任闸没有着落、标准 resident 团队的行为来自 Python 模板（[agents/behavior_templates.py](../../src/tlon/agents/behavior_templates.py) 的 `_RESIDENT_IDS` 狗粮）而非数据。
+状态：已接受（2026-08-16，方向讨论拍板）；阶段 1–3 已实施（2026-08，类别删除、统一装配、档案归档），阶段 4（世代通道 `proposeBehavior`）待实施——进度见 [docs/design/unified-member-model.md](../design/unified-member-model.md)
 
 ## 决策
 
