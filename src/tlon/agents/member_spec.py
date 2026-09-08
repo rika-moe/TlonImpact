@@ -12,8 +12,7 @@ tree plus a serialization frontend — EDN is only syntax, the dataclass is
 the semantics authority. The legacy specs and their projections
 (``agents/spec_mapping.py``) were deleted in phase C: the loader parses
 the single rules-form ``behavior.tlon`` directly into MemberSpec, the two
-runtimes converge on one interpreter (``agents/member_runtime.py``), and
-``runtime`` becomes a derived value (:func:`member_type`). The EDN front
+runtimes converge on one interpreter (``agents/member_runtime.py``). The EDN front
 performs structural validation (types, form shapes); the action-head
 whitelist and expression-level builtin-scope validation of ``:when`` /
 ``:until`` / stage and section forms live in the single validator
@@ -356,20 +355,6 @@ def _validate_fuel(rule: MemberRule, label: str) -> None:
             raise MemberSpecValidationError(
                 f"{label}: :loop/:fuel {rule.loop.fuel} exceeds engine hard cap {MAX_FUEL}"
             )
-
-
-def member_type(spec: MemberSpec) -> str:
-    """Derive a member's current cognitive form from its spec (observed
-    value, ADR 0006 — never a stored category).
-
-    A spec with at least one rule carrying a loop yields ``"react"``
-    (the cognitive engine is attached); one with only loop-less rules
-    yields ``"script"``. This is a projection of the spec's rules, not a
-    member class: any member can cross between forms by changing its
-    behavior file (via prototype instantiation), and a ``"script"``
-    member is simply one whose spec has no loop rule today.
-    """
-    return "react" if any(rule.loop is not None for rule in spec.rules) else "script"
 
 
 def _validate_when(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> None:

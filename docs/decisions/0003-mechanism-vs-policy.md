@@ -4,7 +4,7 @@
 
 ## 背景
 
-系统里有三类生命周期动作：agent 何时启动（boot）、何时停止（idle 排空）、何时被唤醒（wake-on-mail）。早期这些决策散落在各处：注册表内置了启动逻辑，唤醒曾是 Adam 的一条策略规则。随着 lazy 成员（scale-to-zero）与 contractor（spawn 出的临时工）出现，"谁决定哪个 agent 应该活着"这个问题需要一个明确的家。
+系统里有三类生命周期动作：agent 何时启动（boot）、何时停止（idle 排空）、何时被唤醒（wake-on-mail）。早期这些决策散落在各处：注册表内置了启动逻辑，唤醒曾是 Adam 的一条策略规则。随着 lazy 成员（scale-to-zero）与 spawn 出的成员出现，"谁决定哪个 agent 应该活着"这个问题需要一个明确的家。
 
 同时愿景要求策略可进化：未来策略的作者不应是人类改代码，而应是系统内部产生的数据。如果策略硬化在注册表的 Python 里，它就和机制绑定死，永远无法被 agent 自己改写。
 
@@ -14,8 +14,8 @@
 
 具体边界：
 
-- **注册表 = 机制**。装配与运行表、`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 的幂等执行（wake lock、`_waking` 去重、锁下条件复查）、空闲*事实*检测（发布 `AGENT_IDLE`，不决定后果）、spawn 预算。注册表从不回答"该不该"，只回答"怎么做到"。（原文还列有"contractor 的 spawn/stop"——contractor 类别已随 ADR 0006 删除。）
-- **Adam = 策略，且策略是数据**。Adam 是一个普通的 `MemberRuntime` 实例（确定型，不进注册表、不出现在 MemberDirectory），其全部策略是内置的 `ADAM_SPEC_EDN` 文本，只有两条规则：`:on :boot` 时对候选集合发 `AGENT_START_REQUEST{reason="boot"}`（`start-all`）；`:on :agent-idle` 时把空闲事实转成 `AGENT_STOP_REQUEST{reason="drain"}`。
+- **注册表 = 机制**。装配与运行表、`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 的幂等执行（wake lock、`_waking` 去重、锁下条件复查）、空闲*事实*检测（发布 `AGENT_IDLE`，不决定后果）、spawn 预算。注册表从不回答"该不该"，只回答"怎么做到"。
+- **Adam = 策略，且策略是数据**。Adam 是一个普通的 `MemberRuntime` 实例（无 `:loop` 规则，不进注册表、不出现在 MemberDirectory），其全部策略是内置的 `ADAM_SPEC_EDN` 文本，只有两条规则：`:on :boot` 时对候选集合发 `AGENT_START_REQUEST{reason="boot"}`（`start-all`）；`:on :agent-idle` 时把空闲事实转成 `AGENT_STOP_REQUEST{reason="drain"}`。
 - **依赖单向**。Adam import 注册表（复用 `RegistryQueries` 读取运行状态），注册表永不 import Adam——kernel 先行、PID 1 随后，组件 DAG 保持无环。
 - **wake-on-mail 是机制，不是策略**。唤醒资格由注册表从各成员 spec 派生（声明了 `:on :mail-delivered` 的睡眠收件人被 `AgentRegistry._on_mail_delivered` 唤醒），不需要 Adam 参与——唤醒资格本质是 spec 声明的订阅事实，不是一条可自由裁量的策略。
 

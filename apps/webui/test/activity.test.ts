@@ -152,10 +152,10 @@ test("lifecycle events map with their payload specifics", () => {
   );
 
   const started = toActivity(
-    ev("agent.started", { agent_id: "a", name: "林知遥", runtime: "cognitive" }),
+    ev("agent.started", { agent_id: "a", name: "林知遥" }),
   );
   assert.equal(started.title, "林知遥 已启动");
-  assert.equal(started.detail, "cognitive");
+  assert.equal(started.detail, undefined);
 
   const stopped = toActivity(
     ev("agent.stopped", { agent_id: "a", stopped_by: "adam" }),

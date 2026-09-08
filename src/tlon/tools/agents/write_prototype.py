@@ -1,9 +1,10 @@
 """Write an LLM-authored behavior prototype to the staging area (stage 4a).
 
-Supports both react (cognitive loop rule) and script (deterministic rules)
-prototypes — one unified rules-form format (phase C). Unified member
-model (ADR 0006): prototypes carry no persona — a member's persona files
-are creation-time data, never part of the behavior genome.
+Supports both rule forms — cognitive rules carrying a ``:loop`` session
+and loop-less deterministic rules — in one unified rules-form format
+(phase C). Unified member model (ADR 0006): prototypes carry no persona —
+a member's persona files are creation-time data, never part of the
+behavior genome.
 """
 
 from collections.abc import Callable
@@ -44,10 +45,9 @@ _SCRIPT_HINT = (
 class WritePrototypeTool(Tool):
     """Tool to author a new behavior prototype (pure-data spec).
 
-    Accepts both react specs (a cognitive rule with a loop) and script
-    specs (loop-less deterministic rules) — the output is one unified
-    rules-form behavior.tlon either way; ``spec_type`` only picks the
-    write-side template. Prototypes carry no persona (unified member
+    Accepts both rule forms (a cognitive rule with a ``:loop``, or
+    loop-less deterministic rules) — the output is one unified rules-form
+    behavior.tlon either way. Prototypes carry no persona (unified member
     model, ADR 0006). The prototype lands in
     ``~/.tlon/prototypes-staging/`` marked untrusted: it cannot be spawned
     until a human approves it in the mirror (the Gatekeeper model of
@@ -62,12 +62,11 @@ class WritePrototypeTool(Tool):
             name="writePrototype",
             description=(
                 "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。"
-                "支持 spec_type='react'（默认，认知规则——带 :loop 的规则形态）"
-                "和 spec_type='script'（确定性规则——无 :loop）。"
-                "两种都输出统一的 rules-form behavior.tlon，不标记成员类别。"
+                "两种规则形态都输出统一的 rules-form behavior.tlon："
+                "带 :loop 的规则（挂认知循环）与无 :loop 的规则（命中后直接执行 :actions）。"
                 "新 prototype 默认不可信：需人类在 mirror 中批准后才能被 spawnAgent 使用。"
                 "behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。"
-                "确定性规则可声明 :parameters 以支持 spawn 时参数化。"
+                "无 :loop 的规则可声明 :parameters 以支持 spawn 时参数化。"
             ),
             parameters={
                 "type": "object",
@@ -79,14 +78,9 @@ class WritePrototypeTool(Tool):
                     "behavior": {
                         "type": "string",
                         "description": (
-                            "行为规约（EDN 字符串）。统一 rules-form：react 是带 :loop 的"
-                            "认知规则，script 是纯确定性规则（可选 :parameters，引用变量用 ${name}）"
+                            "行为规约（EDN 字符串）。统一 rules-form：带 :loop 的规则是"
+                            "认知规则，无 :loop 的是确定性规则（可选 :parameters，引用变量用 ${name}）"
                         ),
-                    },
-                    "spec_type": {
-                        "type": "string",
-                        "enum": ["react", "script"],
-                        "description": "写侧模板类型：'react'（认知规则，默认）或 'script'（确定性规则）",
                     },
                     "display_name": {
                         "type": "string",
@@ -106,11 +100,10 @@ class WritePrototypeTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         name: str = kwargs["name"]
         behavior: str = kwargs["behavior"]
-        spec_type: str = kwargs.get("spec_type", "react")
         display_name: str = kwargs.get("display_name", "")
         description: str = kwargs.get("description", "")
 
-        hint = _SCRIPT_HINT if spec_type == "script" else _BEHAVIOR_HINT
+        hint = _BEHAVIOR_HINT if ":loop" in behavior else _SCRIPT_HINT
         try:
             info = self._writer(
                 name,
@@ -118,7 +111,6 @@ class WritePrototypeTool(Tool):
                 display_name=display_name,
                 description=description,
                 author_id=self._author_id,
-                spec_type=spec_type,
             )
         except PrototypeError as e:
             return ToolResult(

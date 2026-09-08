@@ -90,11 +90,6 @@ class HumanAdapter(Member):
         return f"{HUMAN_ID_PREFIX}{self._username}"
 
     @property
-    def member_type(self) -> str:
-        """Member type; humans are adapter members."""
-        return "adapter"
-
-    @property
     def session_count(self) -> int:
         """Number of currently attached sessions."""
         return len(self._sinks)

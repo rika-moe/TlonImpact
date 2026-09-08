@@ -31,7 +31,7 @@
 | [design/mail.md](./design/mail.md) | Republic of Letters：投递、线程、唤醒、人类接入 | ✅ |
 | [design/memory.md](./design/memory.md) | 双层记忆与 Summarizer | ✅ |
 | [design/prototypes.md](./design/prototypes.md) | 原型库、spawn、信任分级 | ✅ |
-| [design/unified-member-model.md](./design/unified-member-model.md) | **统一成员模型**（2026-08 拍板并实施阶段 2）：一类成员 + 世代更替，9 条决策与迁移路径 | ✅ |
+| [design/unified-member-model.md](./design/unified-member-model.md) | **统一成员模型**（2026-08 拍板并实施）：一类成员 + 世代更替，概念、9 条决策与代码锚点 | ✅ |
 | [design/server-protocol.md](./design/server-protocol.md) | REST + SSE 协议 v2 的设计取舍 | ✅ |
 | [design/webui.md](./design/webui.md) | WebUI（apps/webui）：React+Vite、/ui/ 静态托管、cyberpunk 视觉规范 | ✅ |
 | [design/deepseek-harness-review.md](./design/deepseek-harness-review.md) | 外部调研：dsh 对 Tlon 的可借鉴点（方向讨论输入材料，非决策） | ✅ |

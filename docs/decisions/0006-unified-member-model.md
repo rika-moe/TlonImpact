@@ -1,13 +1,12 @@
 # ADR 0006：统一成员模型——一类成员 + 世代更替
 
-状态：已接受（2026-08-16，方向讨论拍板）；阶段 1–3 已实施（2026-08，类别删除、统一装配、档案归档），阶段 4（世代通道 `proposeBehavior`）待实施——进度见 [docs/design/unified-member-model.md](../design/unified-member-model.md)
+状态：已接受（2026-08-16，方向讨论拍板）；阶段 1–3 已实施（2026-08，统一装配、档案归档），阶段 4（世代通道 `proposeBehavior`）待实施——进度见 [docs/design/unified-member-model.md](../design/unified-member-model.md)
 
 ## 决策
 
-**成员只有一种。** 两个类别轴（react/script 与 resident/contractor，三种类别）全消，同时拍板九条（完整定义与代码影响见 [docs/design/unified-member-model.md](../design/unified-member-model.md)）：
+**成员只有一种。** 同时拍板九条（完整定义与模型现状见 [docs/design/unified-member-model.md](../design/unified-member-model.md)）：
 
-1. **类别全消**——react/script、resident/contractor 作为类别删除；`:loop` 保留为 DSL 语法（一条规则有没有认知循环），不再是成员类型。
-2. **零 token 承诺废弃**——"确定型成员保证不调 LLM"不再是类别承诺；便宜路径保留为规则级策略（spec 推导的观察值）。
+1. `:loop` 保留为 DSL 语法（一条规则有没有认知循环），不再是成员类型。
 3. **懒装配**——能力对象对所有成员统一构造（对象便宜），加载按需（调用才贵）。
 4. **spec 不可直接修改，自己的也不行**——行为更新的唯一通道：创建新 prototype → 派生新 member。成员是基因型的纯表达，不反馈回基因型（世代更替，反拉马克）。
 5. **允许 member 创建新 prototype**——`writePrototype`（写 staging）通道即行为演化的主通道，现状已具备。
@@ -18,25 +17,22 @@
 
 ## 理由
 
-- **类别 vs 策略/状态**：类别出生即定、代码写死，无法被社会演化触及；策略/状态是数据，可被改写。愿景"行为即数据"要求一切可变的都落在数据侧。两个类别轴的三种类别全部是"可以但不是必须由社会决定"的东西，因此全部移到数据侧。
 - **世代更替优于个体可塑性**（决策 4 的核心论证）：
   - 运行中热更新行为的所有信任难题（并发会话读新旧混合、回滚、审计）被整个绕开——因为不存在"运行中改"。
   - 进化的单位清晰：原型（可变的基因型）与成员（不可变的表达）在两个时间尺度上各自演化；成员生命周期（会话/记忆/退休）与物种生命周期（原型演化/评审/新世代）解耦。
   - 与书信共和国咬合：知识沉淀在信里、行为沉淀在原型里，个体只是流动的渡口；"学习的成果归种群，不归个体"正是社会进化的结构。
-  - 信任闸按**影响半径**分级（改自己是危险的 → 干脆禁止；提案是安全的 → 走评审），而不是按成员类别分级——类别被影响半径取代。
+  - 信任闸按**影响半径**分级（改自己是危险的 → 干脆禁止；提案是安全的 → 走评审）。
 - **归档而非删除**（决策 8）：书信共和国要求知识在书信中积累；删除 home = 知识随个体蒸发，与愿景直接冲突。不删是"保留策略"，治理（清理）是显式动作。
-- **懒装配**（决策 3）：统一装配 + 按需加载，能力统一但成本可控；"无 loop 不触发 LLM/记忆"仍由 spec 派生的引擎行为事实保证，只是不再作为类别承诺宣传。
+- **懒装配**（决策 3）：统一装配 + 按需加载，能力统一但成本可控；"无 loop 不触发 LLM/记忆"仍由 spec 派生的引擎行为事实保证。
 
 ## 备选方案
 
-- **保留 script/react 为观察值**：脚本作为"当前没有 loop 规则"的派生观察值而非类别。被否：观察值在文档和心智模型里很容易重新固化成类别；决策 1 的"成员只有一种"表述更干净，需要观察值时（如 UI 展示）从 spec 现算即可。
 - **允许成员修改自己的 spec（个体可塑性）**：个体学习环直接闭合，无需出生新个体。被否：运行中改行为的一致性与回滚难题无解；且"学习成果归个体"使进化停留在个体层面，社会无法继承——与"进化发生在种群中"的愿景相悖。
-- **只消 resident/contractor，保留 script**：改动面更小。被否：两个类别轴同源（资源分配与生命周期治理的类别化），只消一条会留下半套类别叙事，且 `member_type` 的装配分叉正是统一装配（决策 3）要拆的对象。
 - **原型种子知识**（决策 9 的备选）：让新世代带着父代要点出生。被否（暂缓）：知识继承通道（跨成员读取）尚未存在，种子知识没有落地形态；先做"档案归档"这一保留侧，继承侧等个体学习环接上后再议。
 
 ## 后果
 
-- **代码面**：删 `member_type` / `AgentConfig.role` / `_derive_runtime` / `_discard_contractor` / `stop_contractor` 的 role 检查；统一装配 + 懒加载；`spawned_by` / `spawn_depth` / `prototype` 血缘字段保留为审计。清单与分阶段迁移见 [docs/design/unified-member-model.md](../design/unified-member-model.md)。
+- **代码面**：删 `member_type` / `AgentConfig.role` / `_derive_runtime` / `_discard_contractor` / `stop_contractor` 的 role 检查；统一装配 + 懒加载；`spawned_by` / `spawn_depth` / `prototype` 血缘字段保留为审计。模型现状与代码锚点见 [docs/design/unified-member-model.md](../design/unified-member-model.md)。
 - **行为演化的主通道定型**：`writePrototype` → staging → 人类批准 → `spawnAgent` 派生新成员。人工审批是短期瓶颈（远期审批社会化，属路线"开放"一步）。
 - **存储只增不减**：磁盘单调增长，短期人类手动清理，长期需治理规则（与决策 7 同源）。
-- **文档同步义务**：本文与 [docs/design/unified-member-model.md](../design/unified-member-model.md) 是锚点；`design/dsl.md`、`design/runtime.md`、`design/prototypes.md`、`architecture.md`、`reference/config-reference.md`、`reference/tools-reference.md` 中的类别表述在代码实施时同步更新。
+- **文档同步义务**：本文与 [docs/design/unified-member-model.md](../design/unified-member-model.md) 是锚点；`design/dsl.md`、`design/runtime.md`、`design/prototypes.md`、`architecture.md`、`reference/config-reference.md`、`reference/tools-reference.md` 中的表述在代码实施时同步更新。

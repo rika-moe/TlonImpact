@@ -3,9 +3,8 @@
 Pins the deterministic dispatch (all five action kinds, boot rules, the
 unread rescue scan, the own-mail guard), the D6.1 mark-read semantics
 (processed mail read immediately; a cognitive enqueue defers the read to
-session completion; a gate-rejected mail is read anyway), the cognitive
-routing (loop rules enqueue instead of executing inline), and the derived
-member_type.
+session completion; a gate-rejected mail is read anyway), and the cognitive
+routing (loop rules enqueue instead of executing inline).
 
 The cognitive tests exercise the routing with lightweight stand-ins for the
 unchanged cognitive engine: ``_assemble_cognitive`` only stores its deps at
@@ -567,17 +566,6 @@ class TestBootAndUnread:
         await member.shutdown()
 
 
-class TestDerivedMemberType:
-    def test_deterministic_member_is_script(self, bus):
-        member = _make_member("relay-1", SCRIPT_FORWARD, bus)
-        assert member.member_type == "script"
-
-    def test_loop_rule_member_is_react(self, bus):
-        """A loop-rule spec derives react even without cognitive capabilities."""
-        member = _make_member("thinker-1", COGNITIVE_EDN, bus)
-        assert member.member_type == "react"
-
-
 # ── Cognitive routing (D6.1 / loop-first-then-actions) ─────────────────
 
 
@@ -924,7 +912,7 @@ class TestBootScanThrottle:
 class TestPeriodicRescan:
     """The one background rescan task also sweeps periodically (issue ).
 
-    A resident member (``:on :boot``) never sleeps and never reboots, so
+    A boot member (``:on :boot``) never sleeps and never reboots, so
     live mail the full bounded queue dropped would wait for a process
     restart without the periodic sweep. The same task that trickles
     boot-scan overflow re-scans unread mail every
@@ -961,7 +949,7 @@ class TestPeriodicRescan:
         )
 
     async def test_live_dropped_mail_picked_up_by_periodic_rescan(self, bus, mail_dir):
-        """A resident member never reboots: the periodic sweep picks up
+        """A boot member never reboots: the periodic sweep picks up
         live mail the full bounded queue dropped."""
         mailbox = Mailbox(mail_dir)
         member = self._make_rescan_member(

@@ -1,9 +1,8 @@
-"""MemberSpec: EDN roundtrip, derived runtime, and the single validator.
+"""MemberSpec: EDN roundtrip and the single validator.
 
 The unified spec (phase C) is the one semantic authority — this pins the
 serialization roundtrip (the EDN front is the syntax, the dataclass is the
-semantics), the derived ``member_type`` (any rule with a loop ⇒ react), and
-the loader's single-validation gate.
+semantics) and the loader's single-validation gate.
 """
 
 import pytest
@@ -12,7 +11,6 @@ from tlon.agents.edn import Keyword, loads
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
-    member_type,
     validate_member_spec,
 )
 
@@ -84,37 +82,6 @@ class TestRoundtrip:
         assert rule.loop is None
         assert len(rule.actions) == 1
         assert _action_kind(_parse(spec.to_edn())) == "forward"
-
-
-class TestDerivedRuntime:
-    """member_type is derived from the spec (phase C), never stored."""
-
-    def test_cognitive_spec_is_react(self):
-        assert member_type(_parse(COGNITIVE_EDN)) == "react"
-
-    def test_deterministic_spec_is_script(self):
-        assert member_type(_parse(SCRIPT_EDN)) == "script"
-
-    def test_any_loop_rule_makes_react(self):
-        """A mixed member (a loop rule + a deterministic one) is react."""
-        spec = _parse(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :when (addressed-to-me? msg)
-          :loop {:context {:sections [(persona)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 5
-                 :max-consecutive-errors 3
-                 :reflect {:enabled false :interval-minutes 5}}}
-         {:name "heartbeat"
-          :on :agent-idle
-          :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}]}
-"""
-        )
-        assert member_type(spec) == "react"
 
 
 class TestSerializationProvenance:

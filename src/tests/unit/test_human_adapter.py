@@ -143,7 +143,6 @@ class TestHumanAdapterIdentity:
     def test_member_interface(self, bus: EventBus):
         adapter = HumanAdapter("alice", bus, lambda name: None)
         assert adapter.member_id == "human:alice"
-        assert adapter.member_type == "adapter"
         assert adapter.address == "alice@tlon.internal"
         assert adapter.username == "alice"
 

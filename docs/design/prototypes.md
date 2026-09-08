@@ -1,6 +1,6 @@
 # 原型与 spawn 体系设计
 
-> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，spawn 出的成员与手建成员无类别差异、永不删除（停止即睡眠、档案归档）；`spawned_by`/`spawn_depth` 保留为血缘审计。历史叙事已同步本文；模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种；spawn 出的成员与手建成员同构、永不删除（停止即睡眠、档案归档）；`spawned_by`/`spawn_depth` 保留为血缘审计。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
 Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes.py](../../src/tlon/agents/prototypes.py)，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/tools/agents/](../../src/tlon/tools/agents)）。
 
@@ -15,34 +15,34 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 两个「不声明」值得注意：
 
-- **不声明运行时类型**。统一成员模型（ADR 0006）：原型是行为模板，不是成员类别——元数据里没有 `:runtime` 字段（`PrototypeInfo` 也不派生它）。派生的成员是认知型还是确定型，由实例 spec 的规则决定（任何规则带 `:loop` 即认知），从 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `member_type` 现算。
+- **不声明运行时类型**。原型是行为模板——元数据里没有 `:runtime` 字段（`PrototypeInfo` 也不派生它）。一条规则带不带 `:loop` 是实例 spec 的语法事实，不构成任何类型标记。
 - **不声明权限**。spec 是 total 的：工具能力、循环结构、上下文段全部写在 `behavior.tlon` 里，原型之外没有可叠加的东西。
 
 元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
 
-[src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带十个内置原型，分两类（统一成员模型，ADR 0006：`形态` 列是**当前 spec 的观测**，不是成员类别）：
+[src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带十个内置原型：
 
 **角色行为原型**（快速开始的标准团队从它们出生，[base/default_team.py](../../src/tlon/base/default_team.py) 角色卡记录每人的来源）：
 
-| 原型 | 当前形态 | 关键 spec 差异 |
+| 原型 | 规则形态 | 关键 spec 差异 |
 |---|---|---|
-| developer（开发工程师） | 认知 | 标准 ReAct 模板 |
-| ops（运维工程师） | 认知 | 标准 ReAct 模板 |
-| pm（项目经理） | 认知 | 标准 ReAct 模板 |
-| support（客服专员） | 认知 | 标准 ReAct 模板 |
-| product（产品经理） | 认知 | 标准 ReAct 模板 |
-| data-analyst（数据分析师） | 认知 | 标准 ReAct 模板 |
+| developer（开发工程师） | 带 `:loop` | 标准 ReAct 模板 |
+| ops（运维工程师） | 带 `:loop` | 标准 ReAct 模板 |
+| pm（项目经理） | 带 `:loop` | 标准 ReAct 模板 |
+| support（客服专员） | 带 `:loop` | 标准 ReAct 模板 |
+| product（产品经理） | 带 `:loop` | 标准 ReAct 模板 |
+| data-analyst（数据分析师） | 带 `:loop` | 标准 ReAct 模板 |
 
-**行为形态原型**（覆盖体系的两个维度——认知/确定、重思考/轻响应）：
+**行为形态原型**（覆盖体系的两个维度——带不带 `:loop`、重思考/轻响应）：
 
-| 原型 | 当前形态 | 关键 spec 差异 |
+| 原型 | 规则形态 | 关键 spec 差异 |
 |---|---|---|
-| archivist（档案管理者） | 认知 | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
-| deep-thinker（深度思考者） | 认知 | `:max-iterations 25`——更长思考预算；stage 程序同默认（交卷前自评审） |
-| fast-responder（快速反应者） | 认知 | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
-| relay（转发者） | 确定 | 无 `:loop`，`:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
+| archivist（档案管理者） | 带 `:loop` | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
+| deep-thinker（深度思考者） | 带 `:loop` | `:max-iterations 25`——更长思考预算；stage 程序同默认（交卷前自评审） |
+| fast-responder（快速反应者） | 带 `:loop` | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
+| relay（转发者） | 无 `:loop` | `:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
 
-所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员类型就是新的一份 spec。原型不带人格（ADR 0006）：快速开始创建标准团队时，成员的人格（IDENTITY/SOUL/RULES.md）来自 `default_team.py` 的角色卡，是创建时数据，不是基因型。
+所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：快速开始创建标准团队时，成员的人格（IDENTITY/SOUL/RULES.md）来自 `default_team.py` 的角色卡，是创建时数据，不是基因型。
 
 ## 生命周期：播种 → 列出 → 实例化
 
@@ -83,7 +83,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ## spawn：从原型派生新成员
 
-agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py)，工具名 `spawnAgent`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent（统一成员模型，ADR 0006：与手建成员无类别差异）并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
+agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py)，工具名 `spawnAgent`）：指定原型名、显示名、可选模板参数，从原型派生一个新 agent 并立即启动。session 归属经 structlog contextvars 绑定——agent 的 session span 把 `session_id` 注入上下文变量，工具执行时取出作为配额桶；脱离 session 的直接调用（如测试）落入 spawner 的单一桶。这意味着配额记账不需要工具签名里多一个参数，session 是隐式上下文，LLM 看不见也伪造不了。
 
 真正的管线在 `AgentRegistry.spawn_member`（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)），顺序是刻意安排的：**信任门先于一切预算检查**——`untrusted_prototype` 的拒绝在计数之前，staging 里的原型连预算都消耗不到。随后：
 
@@ -127,7 +127,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes` → `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description` 和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
-`writePrototype` 支持两种 `spec_type`：`react`（认知规则模板，默认）与 `script`（无 `:loop` 的确定性规则）。两者输出的是同一种统一 rules 形态的 `behavior.tlon`——`spec_type` 只选择写侧模板（是否带 `:loop`），不写人格文件，也不标记成员类别（统一成员模型，ADR 0006）。这让 staging 闸对两类形态是同一条校验链，没有旁路。
+`writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
 
 信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
 
@@ -151,7 +151,7 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 - 元数据读取不许失败：`_derive_runtime` 解析失败回退 `"react"`（恰好是正确答案），`_read_parameters` 失败回退空参数——所以 `listPrototypes` 看起来一切正常。
 - `instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。
 
-失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。当时现有测试只覆盖了 relay（[src/tests/agents/test_relay.py](../../src/tests/agents/test_relay.py)），三个认知型内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
+失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。当时现有测试只覆盖了 relay（[src/tests/agents/test_relay.py](../../src/tests/agents/test_relay.py)），三个带 `:loop` 的内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
 
 系统性修复有两层，互相独立：直接修复是补上三处缺失的 `}`（已完成）；回归防护是给四个内置原型各加一个「播种 → 实例化 → 加载 spec」的冒烟测试（已完成，relay 的测试形态直接复用）。「播种/列出时对 trusted 库做解析体检」暂未做——容错原则保护的是 staging 与用户目录，包内携带的原型由冒烟测试兜底。
 

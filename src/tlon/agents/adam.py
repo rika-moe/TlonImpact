@@ -23,8 +23,8 @@ from each member's spec (``:on :mail-delivered``) and issues its own
 AGENT_START_REQUEST{reason="wake"}, so the spec is the single lifecycle
 authority for both the boot set and the wake gate.
 
-Adam is a built-in Member (``member_id="adam"``, ``member_type="script"``
-as an observed value — its spec has no loop rule): it does not come from
+Adam is a built-in Member (``member_id="adam"``; its spec has no loop
+rule): it does not come from
 any user spec file, is not registered in the agent registry, and does
 not appear in MemberDirectory. It holds no run-state of its own — the
 injected query closures (the shared ``RegistryQueries`` implementation,

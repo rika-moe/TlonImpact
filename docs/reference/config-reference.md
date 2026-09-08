@@ -119,7 +119,7 @@ agent:
 | `IDENTITY.md` | 叙事身份：我是谁 |
 | `SOUL.md` | 性格/价值观/语气 |
 | `RULES.md` | 硬性行为规则 |
-| `behavior.tlon` | **成员的全部行为规约**——EDN rules-form，语法见 `reference/dsl-reference.md`；spec 是 total 的，成员是认知型（含 `:loop` 的规则）还是确定型（无 `:loop`）由此文件派生，`agent.yaml` 不再控制 |
+| `behavior.tlon` | **成员的全部行为规约**——EDN rules-form，语法见 `reference/dsl-reference.md`；spec 是 total 的，规则带不带 `:loop` 由此文件决定，`agent.yaml` 不再控制 |
 
 ## 3. 记忆配置 memory/config.json
 

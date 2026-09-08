@@ -346,19 +346,17 @@ def write_staging_prototype(
     display_name: str = "",
     description: str = "",
     author_id: str = "",
-    spec_type: str = "react",
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
 
     Validation happens **before** anything touches disk.
 
-    ``spec_type`` selects the **write-side template**, not a member class
-    (unified member model, ADR 0006): ``"react"`` is the cognitive rule
-    template (a loop rule), ``"script"`` the deterministic one. Either
-    way the output is a single unified rules-form ``behavior.tlon`` —
-    prototypes carry no persona; a member's persona files are
-    creation-time data, not part of the behavior genome.
+    Both rule forms are accepted (a cognitive rule carrying a ``:loop``,
+    or loop-less deterministic rules); the output is a single unified
+    rules-form ``behavior.tlon`` — prototypes carry no persona (unified
+    member model, ADR 0006); a member's persona files are creation-time
+    data, not part of the behavior genome.
 
     The behavior text may be a write-side template: when it declares
     ``:parameters`` and references ``${var}`` placeholders, the declaration
@@ -377,8 +375,6 @@ def write_staging_prototype(
         display_name: human-facing name (falls back to ``name``)
         description: human-facing description
         author_id: id of the agent that authored the spec (audit)
-        spec_type: ``"react"`` (cognitive rule template) or ``"script"``
-            (deterministic rule template)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
@@ -389,10 +385,6 @@ def write_staging_prototype(
             template / EDN / schema validation (nothing is written in any
             case)
     """
-    if spec_type not in ("react", "script"):
-        raise PrototypeError(
-            f"spec_type must be 'react' or 'script', got {spec_type!r}"
-        )
     p = tlon_paths or paths
     _validate_name(name)
 
@@ -422,7 +414,6 @@ def write_staging_prototype(
         "staging_prototype_written",
         name=name,
         author_id=author_id,
-        spec_type=spec_type,
     )
     return _read_metadata(staging_dir)
 

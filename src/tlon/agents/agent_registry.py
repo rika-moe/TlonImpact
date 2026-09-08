@@ -220,9 +220,8 @@ class AgentRegistry(Component):
         # Registered agent IDs (persona full set; may or may not be running)
         self._registered_ids: list[str] = []
 
-        # Running agents (activations): one unified member runtime (react
-        # or deterministic by the derived member_type) — all expose
-        # shutdown / get_state / active_session_count / idle_seconds
+        # Running agents (activations): one unified member runtime — all
+        # expose shutdown / get_state / active_session_count / idle_seconds
         self._agents: dict[str, MemberRuntime] = {}
 
         # Docker runtimes are built during cognitive assembly, keyed by
@@ -342,7 +341,7 @@ class AgentRegistry(Component):
         A member is lazy iff its spec has no ``:on :boot`` rule — or its
         spec cannot be loaded, in which case it is inert (registered
         only). Laziness is a spec fact, never a birth marker: a spawned
-        member whose prototype carries a boot rule is a resident member
+        member whose prototype carries a boot rule is a boot member
         and starts at boot like any other.
         """
         spec = self._spec_profile(agent_id)
@@ -502,14 +501,13 @@ class AgentRegistry(Component):
             # Track active agent
             self._agents[agent_id] = member
 
-            # Publish agent started event (runtime derived from the spec)
+            # Publish agent started event
             await self.event_bus.publish(
                 Event(
                     type=EventType.AGENT_STARTED,
                     payload={
                         "agent_id": agent_id,
                         "name": config.name,
-                        "runtime": member.member_type,
                         "spec_hash": spec.source_hash,
                     },
                     source="agent_registry",
@@ -521,7 +519,6 @@ class AgentRegistry(Component):
                 agent_id=agent_id,
                 agent_name=config.name,
                 spec_hash=spec.source_hash,
-                runtime=member.member_type,
             )
             return member
 

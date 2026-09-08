@@ -1,6 +1,6 @@
 # 成员运行时设计
 
-> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；排空一律是睡眠、档案归档。类别相关的历史叙事已同步本文；模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种；排空一律是睡眠、档案归档。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
 本文解释 `tlon.agents` 里成员运行时为什么是现在这个样子：统一解释器、认知循环管线、effects-as-data、唤醒补偿、注册表的机制面。系统骨架与装配顺序见 [docs/architecture.md](../architecture.md)，DSL 本身的取舍见 [docs/design/dsl.md](./dsl.md)，邮件层见 [docs/design/mail.md](./mail.md)，方向锚点是 [docs/vision.md](../vision.md)。
 
@@ -10,7 +10,7 @@
 
 愿景要求 agent 社会自进化，前提是行为可被系统自己读写——行为必须是**数据**而不是代码。这条原则落到运行时上，推出两个结构性决定：
 
-- **spec 是唯一权威**。每个成员的全部行为由一份 `MemberSpec`（[agents/member_spec.py](../../src/tlon/agents/member_spec.py)）描述，落盘为每成员的 `config/behavior.tlon`：规则 = `:on` + `:when` + 可选 `:loop` + `:actions`。运行时不持有任何 spec 之外的行为知识；boot 集合、lazy 判定、唤醒资格、`member_type` 全部从 spec 派生。
+- **spec 是唯一权威**。每个成员的全部行为由一份 `MemberSpec`（[agents/member_spec.py](../../src/tlon/agents/member_spec.py)）描述，落盘为每成员的 `config/behavior.tlon`：规则 = `:on` + `:when` + 可选 `:loop` + `:actions`。运行时不持有任何 spec 之外的行为知识；boot 集合、lazy 判定、唤醒资格全部从 spec 派生。
 - **引擎与策略分离**。求值（DSL 表达式）与执行（状态变更、外部效果）是两层：DSL 只"描述"，引擎才"执行"。这条线贯穿整个运行时——规则动作求值为 `ActionRequest` 数据再由统一执行器落地；在 stage 层则表现为 effects-as-data（见下文）。
 
 后文的每一个组件划分，本质上都是这两条决定的展开。
@@ -20,20 +20,16 @@
 运行时要执行的数据未来可能出自 LLM 之手，因此 DSL 求值层（[agents/eval.py](../../src/tlon/agents/eval.py)）的两条性质是运行时设计的前提，而不是附加功能：
 
 - **可停机由 fuel 保证**。每个求值都有步数预算：规则的 `:fuel` 声明时是门控与动作共享的总预算，未声明时 `:when` 门控与各动作分别使用引擎默认值（`DEFAULT_WHEN_FUEL` / `DEFAULT_FUEL`）。跑飞的表达式耗尽预算即抛 `FuelExhaustedError`，与普通的 `EvalError` 区分记日志——前者是程序失控，后者是程序写错，运维含义不同。
-- **求值永不产生副作用**。所有动作 builtin（`spawn` / `emit` / `start` / `stop` / `start-all` / `forward`）只做参数校验并产出 `ActionRequest` 数据；请求到达引擎的路径按规则形态区分——确定型规则收集动作表达式的返回值，on-complete 场景追加进收集器（`make_member_builtins` 的 `collector`）。「DSL 描述、引擎执行」在求值层就已经成立，不是执行层才开始的约定。
+- **求值永不产生副作用**。所有动作 builtin（`spawn` / `emit` / `start` / `stop` / `start-all` / `forward`）只做参数校验并产出 `ActionRequest` 数据；请求到达引擎的路径按规则形态区分——无 `:loop` 的规则收集动作表达式的返回值，on-complete 场景追加进收集器（`make_member_builtins` 的 `collector`）。「DSL 描述、引擎执行」在求值层就已经成立，不是执行层才开始的约定。
 - **失败的安全默认一律是"不动"**。门控求值失败 = 不响应；规则求值失败 = 跳过该规则；stage 条件失败 = 跳过该 stage；until 失败 = 回落引擎默认终止检查。写错的程序最坏是沉默，而不是失控——这是把语言交给不可信作者的前提。
 
 ## 统一解释器
 
-### 为什么合并
-
-系统曾经有过两个运行时：认知型的 `Agent`（LoopDriver 引擎）与确定型的 `ScriptMember`（规则外壳）。两者已合并为 [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) 的 `MemberRuntime`——一个 spec 驱动的统一解释器。
-
-合并的理由是：两种成员的差异不是两种实现，而是同一份 spec 的两种形态。`MemberSpec` 中任一规则带 `:loop` 即为认知型，否则为确定型。两个运行时的并存意味着订阅、门控、已读语义、动作执行这些共享逻辑要维护两份，且行为差异从"数据的不同取值"退化为"代码的两条分支"——与行为即数据直接冲突。
+[agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 是 spec 驱动的统一解释器：带不带 `:loop` 是同一份 spec 的两种规则形态，不是两种实现——任一规则带 `:loop` 的成员挂认知引擎，否则只跑 `:actions`。共享逻辑（订阅、门控、已读语义、动作执行）只有一份。
 
 ### 派生而非存储
 
-`member_type`（[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `member_type` 函数）是从 spec **派生**的值：任一规则有 `:loop` 即 `react`，从不存储。存一份冗余的类型字段只会制造与 spec 不一致的可能；派生值则永远与权威一致。同一原则贯穿整个运行时：boot 集合看 `:on :boot` 规则是否存在，lazy 判定看 spec 是否声明了 boot 规则，唤醒资格看是否订阅 `:mail-delivered`。
+生命周期归属是从 spec **派生**的值，从不存储。存一份冗余的归属字段只会制造与 spec 不一致的可能；派生值则永远与权威一致。同一原则贯穿整个运行时：boot 集合看 `:on :boot` 规则是否存在，lazy 判定看 spec 是否声明了 boot 规则，唤醒资格看是否订阅 `:mail-delivered`。
 
 ### 统一的具体内容
 
@@ -41,7 +37,7 @@
 - **命中即执行**：规则命中时，有 loop 先跑认知循环再跑 `:actions`；无 loop 只跑 `:actions`。
 - **统一环境**：求值环境为 `{msg, event, self}`（`MemberRuntime._env`），会话完成时追加 `result`。环境取两个旧运行时词表的并集：非邮件事件让 `msg` 为 None，谓词安全地返回 False——同一套谓词词汇表对邮件与非邮件事件都成立，spec 作者不用区分自己在哪种运行时语境里写规则。
 - **统一动作执行器**：`spawn` / `emit` / `start` / `stop` / `forward` 五种动作全部经 `MemberRuntime._execute_action` 一个出口。其中 `start` / `stop` 只是向总线发布生命周期**请求**——成员只表达决策，执行是注册表的事（见 ADR 0003）。
-- **同构的生命周期**：确定型成员不装配任何认知基础设施（无 LLM、无记忆、无工具），只是同一外壳下 `cognitive=None` 的实例。两类成员在注册表眼里完全同构：同一张运行表、同一套启动/排空路径、同一套状态读法——`get_state` / `active_session_count` / `idle_seconds` 对认知型委派给调度器（并叠入 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，常驻但大部分时间在 sleep 的重扫任务不算），对确定型退化为简单的活跃记账。
+- **同构的生命周期**：所有成员在注册表眼里完全同构：同一张运行表、同一套启动/排空路径、同一套状态读法——`get_state` / `active_session_count` / `idle_seconds` 对带 `:loop` 的成员委派给调度器（并叠入 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，常驻但大部分时间在 sleep 的重扫任务不算），对无 `:loop` 的成员退化为简单的活跃记账。装配同样统一：每个成员都拿到完整能力集（LLM、记忆、工具），无 `:loop` 的成员只是从不启动认知引擎——对象便宜，调用才贵。
 
 ### 无工作者模型
 
@@ -124,7 +120,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 ### 认知规则的唯一性
 
-一个成员至多一条认知规则（D6.7）。这不是表达力的损失而是刻意的收窄：认知循环需要唯一一份 loop 配置（stage 向量、until、max_iterations、reflect），多条认知规则意味着多套循环配置竞争同一套会话与记忆基础设施，语义上说不清谁拥有循环。需要"对不同邮件做不同认知处理"时，答案是 spec 内的 `:when` 门控与确定型规则的廉价前置路径（如自动婉拒），而不是第二条认知规则。确定型规则与认知规则可以在同一成员内混编：邮件命中时确定型规则内联执行，认知规则走会话——贵的能力只花在门控放行的邮件上。
+一个成员至多一条认知规则（D6.7）。这不是表达力的损失而是刻意的收窄：认知循环需要唯一一份 loop 配置（stage 向量、until、max_iterations、reflect），多条认知规则意味着多套循环配置竞争同一套会话与记忆基础设施，语义上说不清谁拥有循环。需要"对不同邮件做不同认知处理"时，答案是 spec 内的 `:when` 门控与无 `:loop` 规则的廉价前置路径（如自动婉拒），而不是第二条认知规则。带 `:loop` 与不带 `:loop` 的规则可以在同一成员内混编：邮件命中时无 `:loop` 的规则内联执行，带 `:loop` 的规则走会话——贵的能力只花在门控放行的邮件上。
 
 ### EffectExecutor：效果的唯一执行口
 
@@ -199,7 +195,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 ### spawn 出的成员：与手建成员同构
 
-统一成员模型（ADR 0006）下 spawn 出的成员与手建成员**没有类别差异**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`c-{prototype}-{8hex}`，调用方不能指定），lazy/常驻由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（sleep，不删）。成员只会"睡"，不会"蒸发"（档案归档）。
+spawn 出的成员与手建成员**同构**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`c-{prototype}-{8hex}`，调用方不能指定），boot/lazy 判定由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（sleep，不删）。成员只会"睡"，不会"蒸发"（档案归档）。
 
 ## 方向
 

@@ -1,6 +1,6 @@
 # Tlon 系统架构
 
-> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；排空一律是睡眠、档案归档、spawn 出的成员永不删除。历史叙事已同步本文；模型总览见 [docs/design/unified-member-model.md](./design/unified-member-model.md)。
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种；排空一律是睡眠、档案归档、成员永不删除。模型总览见 [docs/design/unified-member-model.md](./design/unified-member-model.md)。
 
 Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮件为唯一通信方式，模拟一个软件工程团队；人类用户以普通成员身份加入同一个邮件网络。本文描述当前实现的整体结构、依赖方向、装配顺序与运行时数据流。
 
@@ -106,7 +106,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
    - 若收件人未在运行，`AgentRegistry._on_mail_delivered`（[agents/agent_registry.py](../src/tlon/agents/agent_registry.py)）检查其 spec 是否声明了 `:on :mail-delivered`，是则发布 `AGENT_START_REQUEST{reason="wake"}` 将其唤醒。唤醒不带触发事件——邮件已持久化在收件箱，成员启动时自行扫描未读邮件。
    - 若收件人在运行，`MemberRuntime`（[agents/member_runtime.py](../src/tlon/agents/member_runtime.py)）收到 `MAIL_DELIVERED`：先过 `:when` 门控，命中认知规则则把邮件排入 `SessionScheduler` 的有界队列（队列满时丢新邮件、保持未读，由重扫任务补拾）；自己发给自己的邮件直接标记已读、永不处理。
    - 启动未读扫描对积压邮件做节流（issue ）：同一 thread 的未读合并为一个 session（线程内最新一封为代表，更早的标记已读、由该 session 的 mail-history 上下文覆盖）；有界队列装不下的溢出邮件保持完全未读（确定性规则也一并推迟），由重扫在调度器腾出队列容量后分批补拾，直到无延期为止——积压只排队，不丢信。
-   - 每个认知成员有且只有一个后台重扫任务，两种节拍合一：有延期时按 5 秒轮询、随调度器排空分批补拾溢出；无延期时按 `mail_rescan_interval_seconds`（默认 15 分钟）周期重扫未读。常驻成员（`:on :boot`）从不睡眠、从不重新 boot，live 路径被丢的邮件靠这个周期重扫拾起，不用等进程重启。扫描本身幂等且不调 LLM：只 enqueue，`_scan_pending` 跳过已有 session 认领的邮件，无未读时什么都不做。
+   - 每个认知成员有且只有一个后台重扫任务，两种节拍合一：有延期时按 5 秒轮询、随调度器排空分批补拾溢出；无延期时按 `mail_rescan_interval_seconds`（默认 15 分钟）周期重扫未读。boot 成员（`:on :boot`）从不睡眠、从不重新 boot，live 路径被丢的邮件靠这个周期重扫拾起，不用等进程重启。扫描本身幂等且不调 LLM：只 enqueue，`_scan_pending` 跳过已有 session 认领的邮件，无未读时什么都不做。
 
 4. **认知循环**。`SessionScheduler`（[agents/scheduler.py](../src/tlon/agents/scheduler.py)）把队列里的邮件排成 `AgentSession`（[agents/session.py](../src/tlon/agents/session.py)），交给 `LoopDriver`（[agents/loop_driver.py](../src/tlon/agents/loop_driver.py)）逐步推进：think / plan / act / critique / revise 五个 stage（[agents/stages/](../src/tlon/agents/stages) 下各文件）是纯函数 `Session × StageServices → StageOutcome`，循环有 `max_iterations` 硬上限，耗尽时不丢中间成果：引擎用一次额外的 LLM 调用把 session 已完成的工作蒸馏成给发件人的回信（说明做了什么、做到哪、为何没做完），蒸馏失败则回落固定文案。stage 声明的外部效果由 `EffectExecutor` 真正执行：发邮件（回到第 2 步的 `MAIL_NEW`，形成 agent 间多轮通信）、保存交互记忆、推进收件箱 cursor。stage 跑哪些、以什么顺序跑，由 spec 里 loop 规则的 `stages` 向量决定；`act` 只声明工具分发列表，并发（每个工具调用一个后台 task）是引擎的。
 
@@ -132,7 +132,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### spec 是唯一权威
 
-每个成员的行为完全由一份 spec 描述：[agents/member_spec.py](../src/tlon/agents/member_spec.py) 的 `MemberSpec`（规则 = `:on` + `:when` + 可选 `:loop` + `:actions`），落盘为每成员唯一的 `config/behavior.tlon` 文件。[agents/member_runtime.py](../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 是统一解释器——认知型（带 loop，挂 LoopDriver + SessionScheduler + 记忆 + 反思）与确定型（无 loop，只跑 actions）共用同一个外壳。boot 集合、lazy 集合、wake 门控全部从 spec 的 `:on` 规则派生；`member_type`（react/确定性）也是派生值，从不存储。
+每个成员的行为完全由一份 spec 描述：[agents/member_spec.py](../src/tlon/agents/member_spec.py) 的 `MemberSpec`（规则 = `:on` + `:when` + 可选 `:loop` + `:actions`），落盘为每成员唯一的 `config/behavior.tlon` 文件。[agents/member_runtime.py](../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 是统一解释器；认知引擎（LoopDriver + SessionScheduler + 记忆 + 反思）只对带 `:loop` 规则的成员挂载，无 `:loop` 的规则只跑 `:actions`。boot 集合、lazy 集合、wake 门控全部从 spec 的 `:on` 规则派生。
 
 ### effects-as-data
 

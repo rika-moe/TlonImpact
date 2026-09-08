@@ -49,9 +49,9 @@ uv run tlon telegram   # 白名单外消息一律忽略
 
 Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtime**（行为如何执行）、**邮件**（成员如何通信）：
 
-**DSL——行为即数据。** 每个成员的全部行为是一份 EDN 规约（`config/behavior.tlon`）：规则 = `:on` + `:when` + `:loop` / `:actions`。受限设计——可停机、无副作用、只能组合已有机制——让这份数据安全到足以交给 agent 自己书写；认知型/确定型、启动集合、唤醒门控全部由 spec 派生，从不存储冗余值。
+**DSL——行为即数据。** 每个成员的全部行为是一份 EDN 规约（`config/behavior.tlon`）：规则 = `:on` + `:when` + `:loop` / `:actions`。受限设计——可停机、无副作用、只能组合已有机制——让这份数据安全到足以交给 agent 自己书写；启动集合、唤醒门控全部由 spec 派生，从不存储冗余值。
 
-**Runtime——行为如何执行。** `MemberRuntime` 是统一解释器：认知型成员挂认知循环（think / plan / act / critique / revise 五个 stage 是纯变换，外部效果声明在 `StageOutcome`、由 `EffectExecutor` 执行，迭代上限保证停机）；确定型成员只跑 `:actions`，零 token。`AgentRegistry` 是纯机制，策略只有一个实例 Adam——本身也是一段 spec。
+**Runtime——行为如何执行。** `MemberRuntime` 是统一解释器：带 `:loop` 规则的成员挂认知循环（think / plan / act / critique / revise 五个 stage 是纯变换，外部效果声明在 `StageOutcome`、由 `EffectExecutor` 执行，迭代上限保证停机）；无 `:loop` 的规则只跑 `:actions`，零 token。`AgentRegistry` 是纯机制，策略只有一个实例 Adam——本身也是一段 spec。
 
 **邮件——成员如何通信。** 邮件是唯一通道：agent 发信只有一个出口（`sendEmail` 工具），人类以普通成员身份加入同一网络。邮箱是磁盘文件（`inbox.jsonl` / `sent.jsonl` / `inbox.cursor`），先持久化、后处理；`all@tlon.internal` 广播、退信、离线等待都是书信共和国的机制。
 

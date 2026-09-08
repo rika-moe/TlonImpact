@@ -189,7 +189,7 @@ class SpawnManager:
                 detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
             )
 
-        # Budget 1: global activation cap (residents included)
+        # Budget 1: global activation cap (boot members included)
         if len(registry._agents) >= self._max_activations:
             self._reject_spawn(
                 "max_activations",
@@ -199,7 +199,7 @@ class SpawnManager:
                 detail=f"running agents {len(registry._agents)} >= cap {self._max_activations}",
             )
 
-        # Budget 2: spawn-chain depth (residents are depth 0)
+        # Budget 2: spawn-chain depth (boot members are depth 0)
         spawner_config = registry._agent_info.get_config(spawner_id)
         spawner_depth = spawner_config.spawn_depth if spawner_config else 0
         depth = spawner_depth + 1

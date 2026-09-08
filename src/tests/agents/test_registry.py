@@ -1,10 +1,10 @@
 """AgentRegistry — the unified assembler (unified member model, ADR 0006).
 
 Pins the unified ``_start_agent``: one MemberRuntime for every member with
-the full capability set, the derived ``member_type`` in the AGENT_STARTED
-payload, and the spec hash provenance. Laziness/boot membership derive
-from the spec's ``:on`` rules (no role field); stopping/draining means
-sleeping — home directories are archived forever, never deleted.
+the full capability set and the spec hash provenance in the AGENT_STARTED
+payload. Laziness/boot membership derive from the spec's ``:on`` rules (no
+role field); stopping/draining means sleeping — home directories are
+archived forever, never deleted.
 """
 
 import asyncio
@@ -111,7 +111,7 @@ def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:
 
 class TestRegistryStart:
     async def test_start_deterministic_member(self, bus, tmp_path, monkeypatch):
-        """The unified assembler starts a script member with derived runtime."""
+        """The unified assembler starts a loop-less member inline."""
         p = TlonPaths(home=tmp_path)
         monkeypatch.setattr("tlon.agents.loader.paths", p)
         _write_behavior(p, "relay-1", RELAY_EDN)
@@ -139,13 +139,11 @@ class TestRegistryStart:
         await _wait_for(lambda: registry.get_agent("relay-1") is not None)
         member = registry.get_agent("relay-1")
         assert member is not None
-        assert member.member_type == "script"  # derived, no loop rule
         assert member.get_state() == "active"
 
-        # AGENT_STARTED carries the derived runtime + spec provenance.
+        # AGENT_STARTED carries the spec provenance.
         await _wait_for(lambda: len(started) == 1)
         assert started[0].payload["agent_id"] == "relay-1"
-        assert started[0].payload["runtime"] == "script"
         assert started[0].payload["spec_hash"] == load_member_spec("relay-1").source_hash
 
         await registry.shutdown()

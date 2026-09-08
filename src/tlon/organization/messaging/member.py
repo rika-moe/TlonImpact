@@ -33,11 +33,6 @@ class Member(Component, Device):
         """Unique member ID (e.g. "xie-yunshu" / "human:alice")."""
 
     @property
-    @abstractmethod
-    def member_type(self) -> str:
-        """Member type: "react" | "adapter" ("script" reserved)."""
-
-    @property
     def address(self) -> str:
         """The member's mail address, derived from ``member_id``."""
         return address_for_member(self.member_id)

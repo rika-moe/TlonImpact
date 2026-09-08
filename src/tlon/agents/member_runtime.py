@@ -18,8 +18,7 @@ unify to the superset ``{msg, event, self}`` (completion adds ``result``),
 and all five action kinds (``spawn`` / ``emit`` / ``start`` / ``stop`` /
 ``forward``) execute through one executor.
 
-Derived values: ``member_type`` is computed from the spec (any rule with a
-loop ⇒ ``react``), never stored. ``state`` / ``active_session_count`` /
+Derived values: ``state`` / ``active_session_count`` /
 ``idle_seconds`` delegate to the scheduler when cognitive, else to
 deterministic idle bookkeeping — with real background activity (an
 in-flight reflection) folded into ``idle_seconds`` so a member mid-audit
@@ -31,7 +30,7 @@ defers the read to session completion; a mail the ``:when`` gate rejects is
 read anyway (D6.1, retiring the react "never responds → mail stuck unread"
 quirk). A mail that a full bounded queue drops stays unread for the
 rescan — the member's one background rescan task picks it up on its
-periodic sweep, without waiting for a reboot (a resident member with
+periodic sweep, without waiting for a reboot (a boot member with
 ``:on :boot`` never gets a second boot scan). Own mail (sent by this
 member) is never processed.
 
@@ -67,7 +66,7 @@ from tlon.agents.eval import (
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loop_driver import LoopDriver
-from tlon.agents.member_spec import MemberRule, MemberSpec, member_type
+from tlon.agents.member_spec import MemberRule, MemberSpec
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
@@ -224,7 +223,6 @@ class MemberRuntime(Member):
             logger.info(
                 "member_initialized",
                 member_id=member_id,
-                member_type=self.member_type,
                 cognitive_engine=self._cognitive_rule is not None,
             )
 
@@ -234,11 +232,6 @@ class MemberRuntime(Member):
     def member_id(self) -> str:
         """Member identity on the bus."""
         return self._member_id
-
-    @property
-    def member_type(self) -> str:
-        """Member type, derived from the spec: any loop rule ⇒ react."""
-        return member_type(self._spec)
 
     @property
     def spec(self) -> MemberSpec:
@@ -331,14 +324,13 @@ class MemberRuntime(Member):
                 # boot-scan overflow in as the scheduler drains and, on a
                 # longer cadence, re-scans unread mail so live mail the
                 # full queue dropped is picked up while the member runs —
-                # a resident member never reboots, so there is no "next
+                # a boot member never reboots, so there is no "next
                 # boot scan" for it.
                 self._rescan_task = asyncio.create_task(self._rescan_loop())
 
             logger.info(
                 "member_runtime_initialized",
                 member_id=self._member_id,
-                member_type=self.member_type,
                 subscriptions=sorted(event_type.value for event_type in event_types),
                 boot_rules=[rule.name for rule in boot_rules],
             )
@@ -949,7 +941,7 @@ class MemberRuntime(Member):
         ``_RESCAN_POLL_SECONDS`` and re-scan as soon as the scheduler
         has queue capacity; otherwise re-scan every
         ``mail_rescan_interval_seconds`` so live mail a full queue
-        dropped is picked up while the member runs (a resident member
+        dropped is picked up while the member runs (a boot member
         never reboots, so there is no "next boot scan" for it). A
         periodic sweep that itself hits a full queue flips back into
         the drain-trickle cadence.

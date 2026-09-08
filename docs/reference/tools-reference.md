@@ -22,14 +22,14 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
 - 特殊规则：同一轮里 `sendEmail` 带 `is_complete=true` 且伴随其他工具调用时，act stage 拒绝整轮（一个工具都不执行），向 LLM 返回冲突提示要求重新规划；`silence` 与 `sendEmail` 互斥（见 [mail/silence](#silence)），同时调用同样整轮拒绝。
 
-### 工具与成员类型
+### 工具装配
 
-工具只属于认知型成员。[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `_start_agent` 从成员 spec 派生类型：spec 含带 `:loop` 的认知规则才调用 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具；确定型成员（无 `:loop` 的规则）`cognitive=None`，不建任何工具、不消耗 token。
+每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。
 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为每个认知型成员注册 33 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为每个成员注册 33 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -380,11 +380,10 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 |---|---|---|---|---|
 | `name` | string | 是 | — | 名称（字母/数字/`-`/`_`，全局唯一） |
 | `behavior` | string | 是 | — | 行为规约 EDN 字符串，v1 schema 的 rules-form |
-| `spec_type` | string | 否 | `react` | 写侧模板：`react`（带 `:loop` 的认知规则）/ `script`（无 `:loop` 的确定性规则） |
 | `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
 
-失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带对应 spec_type 的 schema 提示（`_BEHAVIOR_HINT`/`_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
+失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带按提交内容选择的 schema 提示（含 `:loop` 用 `_BEHAVIOR_HINT`，否则 `_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
 
 ## prototypes
 

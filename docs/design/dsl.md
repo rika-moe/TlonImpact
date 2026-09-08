@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种，react/script 是 spec 派生观测、resident/contractor 类别已删除；DSL 语言本身的受限设计（本文主体）不受影响。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
+> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
 语法、全字段与 builtin 清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文只回答"为什么这样设计"。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)；语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）的决策见 [../decisions/0011-sci-compatible-subset.md](../decisions/0011-sci-compatible-subset.md)。一切以代码为准。
 
@@ -12,7 +12,7 @@ Tlon 的愿景是 agent 社会自进化（见 [../vision.md](../vision.md)）：
 
 由此推出本文其余部分的全部设计取向：这门语言的预期作者不只是人类，还包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` 让 agent 自己撰写新成员的 spec）。所以 DSL 被**故意**设计得受限——表达能力让渡给安全性，一门语言只有足够安全，才配交给 agent 自己书写。
 
-一个补充事实：spec 只有一种。历史上认知型 agent（`AgentSpec`）与确定型脚本成员（`ScriptSpec`）各有自己的 spec 格式与运行时，合并后的 `MemberSpec` 用统一规则形态 `规则 = :on + :when + 可选 :loop + :actions` 同时覆盖两者——有 `:loop` 即认知规则，无即确定规则——由统一解释器 [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 执行。统一的理由同样是面向作者的：LLM 只需学会一种格式，`writePrototype` 的 `spec_type` 参数只选择模板（认知型附带人格文件，确定型是无人格的 daemon），输出永远是同一个 rules-form 的 `behavior.tlon`。格式每多一种，作者要学的、校验器要管的、文档要讲的都多一份。
+一个补充事实：spec 只有一种。`MemberSpec` 用统一规则形态 `规则 = :on + :when + 可选 :loop + :actions` 覆盖所有成员——规则带不带 `:loop` 只是形态差异——由统一解释器 [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 执行。统一的理由是面向作者的：LLM 只需学会一种格式，`writePrototype` 输出永远是同一个 rules-form 的 `behavior.tlon`。格式每多一种，作者要学的、校验器要管的、文档要讲的都多一份。
 
 愿景的判断标准是"人类退得越远，社会是否依然进步"。DSL 的受限程度直接决定人类能退多远：语言每安全一分，审批者就可以少看一行；反过来，语言里任何一处不受约束的能力，最终都会变成一个人类必须亲自盯住的岗位。本文后面描述的每一道限制，都可以换算成"人类往后退了一步"。
 
@@ -105,12 +105,11 @@ total 还体现在两条结构性约束上，都在加载时拒绝而非运行�
 
 spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里凡是可以从 spec 算出来的东西，一律现算、从不落盘：
 
-- **成员类型**：`member_spec.py` 的 `member_type`——任一规则带 `:loop` 即认知成员（react），否则确定成员（script）。认知/确定的分叉（装配完整引擎还是只装事件外壳）由这个派生值驱动。
 - **boot 集合**：`AgentRegistry.start_all_candidates`——spec 声明了 `:on :boot` 的成员。
 - **lazy 资格**：`AgentRegistry.is_lazy`——spec 没有 `:on :boot` 规则（或 spec 不可读）的成员可以被排空。
 - **wake 资格**：`AgentRegistry._on_mail_delivered`——睡眠收件人的 spec 声明了 `:on :mail-delivered` 才发唤醒请求。
 
-不存储的原因是消除双源真相：如果 boot 集合存了一份缓存，spec 改动后就要考虑失效与迁移，而 spec 文件本身就是那盘——改文件即改行为，热重载（`POST /admin/config/agents/{agent_id}/reload`）只是重新走一遍加载链。派生也让原型库自然继承同一语义：原型的形态（认知/确定）由实例 spec 现算（[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `member_type`），`prototype.edn` 元数据里永远没有 `:runtime` 字段。
+不存储的原因是消除双源真相：如果 boot 集合存了一份缓存，spec 改动后就要考虑失效与迁移，而 spec 文件本身就是那盘——改文件即改行为，热重载（`POST /admin/config/agents/{agent_id}/reload`）只是重新走一遍加载链。派生也让原型库自然继承同一语义：`prototype.edn` 元数据里永远没有 `:runtime` 字段。
 
 唯一权威还有两层推论：
 

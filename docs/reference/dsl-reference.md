@@ -366,13 +366,9 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | 双向校验 | 正文出现的每个 `${var}` 必须在 `:parameters` 声明，反之亦然 |
 | 生命周期 | **写侧专属**：实例化时 `${var}` 被渲染为 EDN 字面量后才落盘；运行时加载器看不到 `:parameters`（作为未知键记 warning），也永远见不到 `${...}` |
 
-## 9. `member_type` 派生规则
+## 9. 完整示例
 
-`member_type()`（[src/tlon/agents/member_spec.py](../../src/tlon/agents/member_spec.py)）：**任一规则带 `:loop` 即 `"react"`（认知成员），否则 `"script"`（确定成员）**。类型是派生值，从不落盘。认知成员由注册表装配完整引擎（LLM、记忆、工具、调度器、反思）；确定成员只装配事件外壳，无 LLM。
-
-## 10. 完整示例
-
-### 10.1 认知型：`deep-thinker`（[src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon)）
+### 9.1 带 `:loop`：`deep-thinker`（[src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -403,7 +399,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 > 注：仓库中 [src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon) 的规则一 map 曾少一个闭合 `}`（历史问题，已修复）；抄写时以上例的闭合层次为准。
 
-### 10.2 确定型：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
+### 9.2 无 `:loop`：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -416,9 +412,9 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :actions []}]}
 ```
 
-更复杂的确定型例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员，`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员——展示了选项 map 里嵌表达式与 Adam 专属宿主谓词的用法。
+更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员，`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员——展示了选项 map 里嵌表达式与 Adam 专属宿主谓词的用法。
 
-## 11. 常见错误与加载失败行为
+## 10. 常见错误与加载失败行为
 
 | 错误 | 后果（出处） |
 |---|---|

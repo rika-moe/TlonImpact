@@ -73,7 +73,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 :context {:sections [(persona) (protocol) (knowledge) (skills) (current-task) (thread-recap) (mail-history 20)]}
 ```
 
-不加该 section 的成员没有任何 skill 开销（确定性 script 成员天然如此）。
+不加该 section 的成员没有任何 skill 开销（无 `:loop` 的成员天然如此）。
 
 **加载（progressive disclosure）**：模型看到索引后自行决定——要用某 skill，就用 `read_file` 读索引里给出的 SKILL.md 路径拿正文；要跑脚本就用 `execute_bash`（容器内执行）。引擎不做正文注入，没有 `use_skill` 工具。
 

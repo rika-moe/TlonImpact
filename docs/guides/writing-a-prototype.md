@@ -23,11 +23,11 @@
 两个关键约束（写之前先记住）：
 
 - **`behavior.tlon` 是文件即全部行为**。工具能力、循环结构、上下文段全部写在 spec 里，原型之外没有可叠加的东西，spawn 时无法 override。
-- **原型不声明运行时类型**。成员是认知型（react，带 `:loop` 的规则）还是确定型（script，无 `:loop`）由规则**派生**——带不带 `:loop` 决定一切。
+- **原型不声明运行时类型**。成员的规则带不带 `:loop` 由 spec **派生**——带 `:loop` 的规则挂认知引擎，无 `:loop` 的规则命中后直接执行动作；带不带 `:loop` 决定一切。
 
-## 2. 从零写一个认知型原型
+## 2. 从零写一个带 `:loop` 的原型
 
-认知型 = 有 LLM 参与、带 `:loop` 循环的成员。我们写一个「简报员」：收到点名自己的邮件就做一轮简短的认知循环（think/act + 交卷前自评审），最多 3 轮。
+带 `:loop` = 有 LLM 参与、跑认知循环的成员。我们写一个「简报员」：收到点名自己的邮件就做一轮简短的认知循环（think/act + 交卷前自评审），最多 3 轮。
 
 ### 2.1 prototype.edn
 
@@ -61,13 +61,13 @@
           :actions []}]}
 ```
 
-（本示例已用 `tlon.agents` 的解析器验证：合法 EDN + schema 校验通过 + 派生类型 `react`。）
+（本示例已用 `tlon.agents` 的解析器验证：合法 EDN + schema 校验通过。）
 
 逐段拆解：
 
 - **`{:version 1}`** 顶层必须。
 - **`:rules [...]`** 是规则向量。`:name "respond"` 规则：**`:on :mail-delivered`** 触发（收到投递事件）、**`:when`** 门控（收件人含自己才响应——没有这个门，系统里每一封邮件都会唤醒它）。
-- **`:loop`** 使它成为认知型成员：
+- **`:loop`** 使它挂认知引擎：
   - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`knowledge`/`skills`/`current-task`/`thread-recap`/`mail-history N` 七种，见 dsl-reference §6.1）；
   - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (completing?)})` 只在即将完成时评审待交回复，FAIL 时 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §6.2）；
   - `:until` 停机条件 + `:max-iterations` 迭代上限（DSL 的停机性靠预算，不靠砍循环）；
@@ -90,9 +90,9 @@
 
 认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`。派生出的成员（`c-{prototype}-{uuid8}`）与手建成员同构（统一成员模型，ADR 0006）：永不删除，空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生。
 
-## 4. 确定型（script）原型
+## 4. 无 `:loop` 的原型
 
-无 `:loop` 的规则是确定型规则：只跑 `:actions`、不启动认知会话（统一装配下能力对象仍存在，只是不被使用——对象便宜，调用才贵）。内置的 `relay`（转发者）是完整示例（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）：
+无 `:loop` 的规则只跑 `:actions`、不启动认知会话（统一装配下能力对象仍存在，只是不被使用——对象便宜，调用才贵）。内置的 `relay`（转发者）是完整示例（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）：
 
 ```edn
 {:version 1
@@ -111,7 +111,7 @@
 
 「agent 创造 agent」不直接落进 trusted 库，走两区制：
 
-1. **创作**：LLM 用 `writePrototype` 工具，传 `name` + `behavior`（EDN 字符串）+ `spec_type`（`react` 默认 / `script`）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
+1. **创作**：LLM 用 `writePrototype` 工具，传 `name` + `behavior`（EDN 字符串）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
 2. **审批**：人类在 ops 的 Agents 视图按 `s`（staging 列表）`a` 批准 / `x` 拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 保留，审计链不断）；`reject_prototype` 整个删除。
 3. **实例化**：批准后即可被 `spawnAgent` 使用。`spawnAgent` 对 staging 里的不可信原型直接拒绝（`untrusted_prototype`），且在一切预算检查之前——不可信原型连配额都消耗不到。
 
@@ -121,17 +121,17 @@
 - **schema 必填项**：`:loop` 里 `:until`、`:max-iterations`、`:max-consecutive-errors`、`:reflect`（`enabled` + `interval-minutes`）都是必填，缺一个 `validate_member_spec` 直接拒。
 - **模板占位符**：带 `${var}` 的文件**不是**合法 EDN（`$` 会让裸解析报错），这是正常现象——模板只在渲染后才是 spec。用 [agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 做结构校验（把占位符替换成 stand-in 后试解析）。
 - **门控忘写**：`respond` 规则没有 `:when` 门控的话，系统里每封邮件都会唤醒这个成员。
-- **语法对照**：builtin/stage/section 完整清单与常见加载失败行为，见 `reference/dsl-reference.md` §5–§11。
+- **语法对照**：builtin/stage/section 完整清单与常见加载失败行为，见 `reference/dsl-reference.md` §5–§10。
 
 本地验证一份 `behavior.tlon`：
 
 ```bash
 uv run python -c "
 from tlon.agents.edn import loads
-from tlon.agents.member_spec import MemberSpec, member_type, validate_member_spec
+from tlon.agents.member_spec import MemberSpec, validate_member_spec
 spec = MemberSpec.from_edn(loads(open('behavior.tlon').read()))
 validate_member_spec(spec)   # 无异常即通过
-print('OK', member_type(spec))
+print('OK', any(rule.loop is not None for rule in spec.rules))
 "
 ```
 
@@ -144,7 +144,7 @@ print('OK', member_type(spec))
 - [ ] 目录在 `~/.tlon/prototypes/{name}/`，有 `behavior.tlon`（判定标准）；
 - [ ] `prototype.edn` 含 `:name`（缺省兜底目录名）、`:display-name`、`:description`；
 - [ ] `behavior.tlon` 是合法 EDN，能 `loads` + `validate_member_spec`；
-- [ ] 认知型带 `:loop`（有 `:until` + 迭代上限 + `:reflect`），确定型无 `:loop` 纯 `:actions`；
+- [ ] 带 `:loop` 的规则写全了 `:until` + 迭代上限 + `:reflect`；无 `:loop` 的规则纯 `:actions`；
 - [ ] 每个 `respond` 规则都写了 `:when` 门控；
 - [ ] 参数化原型：`:parameters` 声明与 `${var}` 引用闭合，参数类型只用 `:string` / `:string-list`；
 - [ ] LLM 创作走 staging + 人类审批，不直接写 trusted 库。

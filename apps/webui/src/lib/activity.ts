@@ -218,7 +218,7 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
       );
     }
     case "agent.started":
-      return entry("lifecycle", `${name} 已启动`, ev, str(p["runtime"]), agentId);
+      return entry("lifecycle", `${name} 已启动`, ev, undefined, agentId);
     case "agent.stopped": {
       const stoppedBy = str(p["stopped_by"]);
       return entry(
