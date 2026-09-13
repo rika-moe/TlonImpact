@@ -213,6 +213,14 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 
 配套的两个只读工具把「待人类处置」可查询化：`getSocialHealth`（[tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 
+## 退休交接信（issue ）
+
+成员被蓄意停止（`AGENT_STOPPED`，与退休蒸馏同一触发点）时，[agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` 离线盘点它的归档：未完成任务（todo/doing/paused）、未回复的邮件线程（inbox 按 thread 分组，组内最后一封来自他人且 sent 里没有更晚的本人回复）、记忆摘要。有东西可交接或可说（digest 非空、有未完成任务或有未回复线程）时，一次 LLM 调用（`purpose="farewell"`，归属退休成员账本）写一封告别信——任期总结 + 未竟事项 + 移交清单 + 给继任者的建议。
+
+这封信的特殊之处在于发件人：**以退休成员自己的地址发出**（退休 = 睡眠，成员仍在注册表，地址可解析，sent 副本正常落进它的归档）。收件人是它的「负责人」：`spawned_by` 指向的成员，非 spawn 成员（标准团队）则兜底给 guest 人类。无论信是否发出（LLM 失败、空移交），都发布 `AGENT_RETIRED` 事实事件携带移交清单——可见性不依赖 LLM 成败。
+
+**任务认领不做自动化**：信把清单送达即完成「死亡不丢东西」；认领哪件、由谁认领，是收件者（成员或人类）的决定。
+
 ## 人类接入
 
 人类不是协议层的特殊存在，而是总线上的一个普通成员。[organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。

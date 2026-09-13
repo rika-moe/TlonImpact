@@ -333,7 +333,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 <!-- BEGIN GENERATED: event-types -->
-枚举全集（34 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+枚举全集（35 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
@@ -346,6 +346,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | `agent.response` | `AGENT_RESPONSE` |  |
 | `agent.started` | `AGENT_STARTED` |  |
 | `agent.stopped` | `AGENT_STOPPED` |  |
+| `agent.retired` | `AGENT_RETIRED` | Retirement ceremony fact: handover inventory + farewell outcome () |
 | `agent.error` | `AGENT_ERROR` |  |
 | `agent.state_changed` | `AGENT_STATE_CHANGED` |  |
 | `agent.waking` | `AGENT_WAKING` |  |
@@ -379,7 +380,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 |---|---|---|
 | `mail.new` | `HumanAdapter.speak` / `SendEmailTool` | Mail 对象（发信、投递前） |
 | `mail.delivered` | `MailDelivery`（source `mail_delivery`，每收件人一条） | `mail`（Mail）、`recipient`（成员 id） |
-| `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by`、`role` |
+| `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
+| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`，） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
@@ -402,7 +404,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 | mode | 事件模式 |
 |---|---|
-| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.error`、`system.*` |
+| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.retired`、`agent.error`、`system.*` |
 | `agent` | `agent.*` |
 <!-- END GENERATED: mode-patterns -->
 

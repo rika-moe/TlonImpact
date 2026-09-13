@@ -127,13 +127,14 @@ async def test_mail_delivered_counts_by_member_kind(
 async def test_agent_lifecycle_counters(
     metric_setup: tuple[InMemoryMetricReader, MetricsService],
 ) -> None:
-    """AGENT_STARTED/WOKEN/SLEEPING/STOPPED each increment their counter."""
+    """AGENT_STARTED/WOKEN/SLEEPING/STOPPED/RETIRED each increment their counter."""
     _, service = metric_setup
     cases = [
         (EventType.AGENT_STARTED, service._on_agent_started, "tlon.agent.started"),
         (EventType.AGENT_WOKEN, service._on_agent_woken, "tlon.agent.woken"),
         (EventType.AGENT_SLEEPING, service._on_agent_sleeping, "tlon.agent.sleeping"),
         (EventType.AGENT_STOPPED, service._on_agent_stopped, "tlon.agent.stopped"),
+        (EventType.AGENT_RETIRED, service._on_agent_retired, "tlon.agent.retired"),
     ]
     for event_type, handler, _ in cases:
         handler(Event(type=event_type, payload={"agent_id": "gu-yanxi"}, source="agent_registry"))
@@ -330,7 +331,7 @@ async def test_initialize_subscribes_and_shutdown_unsubscribes(
     _, service = metric_setup
     bus = service.event_bus
     await service.initialize()
-    assert len(service._subscriptions) == 12
+    assert len(service._subscriptions) == 13
     for event_type in (
         EventType.MAIL_NEW,
         EventType.MAIL_DELIVERED,
@@ -338,6 +339,7 @@ async def test_initialize_subscribes_and_shutdown_unsubscribes(
         EventType.AGENT_WOKEN,
         EventType.AGENT_SLEEPING,
         EventType.AGENT_STOPPED,
+        EventType.AGENT_RETIRED,
         EventType.AGENT_LLM_RESPONSE,
         EventType.TOOL_EXECUTE_END,
         EventType.TOOL_ERROR,

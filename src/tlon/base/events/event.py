@@ -29,6 +29,7 @@ class EventType(StrEnum):
     AGENT_RESPONSE = "agent.response"
     AGENT_STARTED = "agent.started"
     AGENT_STOPPED = "agent.stopped"
+    AGENT_RETIRED = "agent.retired"  # Retirement ceremony fact: handover inventory + farewell outcome ()
     AGENT_ERROR = "agent.error"
     AGENT_STATE_CHANGED = "agent.state_changed"
     # Dynamic registry (wake/sleep) lifecycle events

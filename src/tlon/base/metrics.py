@@ -162,6 +162,9 @@ class MetricsService(Component, Device):
         self._agent_stopped = meter.create_counter(
             "tlon.agent.stopped", description="Agent stops"
         )
+        self._agent_retired = meter.create_counter(
+            "tlon.agent.retired", description="Retirement ceremonies held ()"
+        )
         self._llm_calls = meter.create_counter(
             "tlon.llm.calls", description="Completed LLM calls"
         )
@@ -196,6 +199,7 @@ class MetricsService(Component, Device):
         self.subscribe(EventType.AGENT_WOKEN, self._on_agent_woken)
         self.subscribe(EventType.AGENT_SLEEPING, self._on_agent_sleeping)
         self.subscribe(EventType.AGENT_STOPPED, self._on_agent_stopped)
+        self.subscribe(EventType.AGENT_RETIRED, self._on_agent_retired)
         self.subscribe(EventType.AGENT_LLM_RESPONSE, self._on_llm_response)
         self.subscribe(EventType.TOOL_EXECUTE_END, self._on_tool_execute_end)
         self.subscribe(EventType.TOOL_ERROR, self._on_tool_error)
@@ -243,6 +247,9 @@ class MetricsService(Component, Device):
 
     def _on_agent_stopped(self, event: Event) -> None:
         self._count_agent_event(self._agent_stopped, event)
+
+    def _on_agent_retired(self, event: Event) -> None:
+        self._count_agent_event(self._agent_retired, event)
 
     def _count_agent_event(self, counter: Any, event: Event) -> None:
         """Increment an agent lifecycle counter tagged by agent_id."""

@@ -100,7 +100,7 @@ ADR 0009 删掉了反思的 `consolidate` 操作（连同 prompt 里「工作记
 
 蒸馏调用沿用反思的参数先例（temperature 0.3、timeout 60 秒），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（ 的 per-member 账本自然覆盖），LLMConfig 从其 `agent.yaml` 的 `llm` 段 + settings 构造（与 `assemble_cognitive` 同一条合并路径）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
 
-`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md) 决策 9 补注）。把 lessons 自动写成提案（）与退休交接信（）是后续项。
+`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md) 决策 9 补注）。退休交接信（）已落地为 `RetirementCeremony`（见 [mail.md](./mail.md)「退休交接信」）——蒸馏沉淀给下一代，交接信盘点给同代的接管者；把 lessons 自动写成提案（）仍是后续项。
 
 ## 一次交互的完整链路
 
@@ -138,5 +138,5 @@ ADR 0009 删掉了反思的 `consolidate` 操作（连同 prompt 里「工作记
 
 与愿景的差距主要有两处：
 
-- **个体学习未闭环**——记忆的出口曾只有 context； 补上了代际出口（退休蒸馏 → `lessons.md` → 原型 `LESSONS.md` → 新成员的 `(lessons)` section），经验由此能随出生包传给下一代。仍缺的一环是「经验改写行为」本身：lessons 进的是对话上下文，spec 不因它改变——从记忆/教训到 spec 修订提案的自动回流（）尚未建设。
+- **个体学习未闭环**——记忆的出口曾只有 context； 补上了代际出口（退休蒸馏 → `lessons.md` → 原型 `LESSONS.md` → 新成员的 `(lessons)` section）， 补上了同代出口（退休交接信把未竟事项送达接管者），经验由此能随出生包传给下一代、随告别信交给同代。仍缺的一环是「经验改写行为」本身：lessons 进的是对话上下文，spec 不因它改变——从记忆/教训到 spec 修订提案的自动回流（）尚未建设。
 - **无社会级公共记忆**——每个 agent 各自摘要、各自记事实，社会层面没有可检索的公共层。邮件提供了沉淀的原材料，但「把书信提炼成社会知识」的机制（存档、共享摘要、同行评议筛选后的公共记忆）还不存在。

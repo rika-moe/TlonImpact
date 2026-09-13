@@ -67,6 +67,7 @@ class TestShouldSendToSession:
         assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STARTED))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_STOPPED))
+        assert service._should_send_to_session(session, make_event(EventType.AGENT_RETIRED))
         assert service._should_send_to_session(session, make_event(EventType.AGENT_ERROR))
         assert service._should_send_to_session(session, make_event(EventType.SYSTEM_STARTUP))
 

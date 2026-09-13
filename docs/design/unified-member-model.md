@@ -77,6 +77,7 @@
 | 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决、谱系（`:parent`/`:generation`/`:proposal-note` 落盘，`get_prototype_lineage` 派生查询，） | [agents/prototypes.py](../../src/tlon/agents/prototypes.py) |
 | 生命周期机制：`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 幂等执行、排空=睡眠 | [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) |
 | 退休蒸馏：`AGENT_STOPPED` 触发离线记忆蒸馏 → `memory/lessons.md`（issue ；归属记账在退休成员头上，） | [agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` |
+| 退休交接：`AGENT_STOPPED` 触发离线移交盘点 → 告别信（退休成员地址发出）+ `AGENT_RETIRED` 事实（issue ） | [agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` |
 | 生命周期策略：boot/stop 裁决 + 出生欢迎信（Adam 的策略规则，数据；issue  出生社会化） | [agents/adam.py](../../src/tlon/agents/adam.py) |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制 | [agents/spawn.py](../../src/tlon/agents/spawn.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
@@ -84,7 +85,7 @@
 
 ## 后续未决项（不阻塞当前模型）
 
-世代更替的完整闭环（出生社会化、~~教训蒸馏~~（ 已落地）、退休交接、谱系可见性、基因多样性）由 EPIC issue  汇总跟踪。
+世代更替的完整闭环（出生社会化、~~教训蒸馏~~（ 已落地）、~~退休交接~~（ 已落地）、谱系可见性、基因多样性）由 EPIC issue  汇总跟踪。
 
 - **世代通道 `proposeBehavior`**：把个体经验/总结接到原型提案上——"经验改写行为"的真正落点。当前个体学习环在此断裂：反思写回记忆，到不了行为。
 - **知识继承通道**：~~归档 ≠ 知识继承——当前没有跨成员读取通道（mailbox 是私有的）。新成员读旧世代的知识是独立未来项（种子知识已暂缓，决策 9）。~~ **已部分落地（，2026-09）**：继承通道 = `LESSONS.md` 随原型包传递 + spec 的 `(lessons)` section 注入——但传的是退休蒸馏的教训（digest 提炼），不是任意跨成员记忆读取；通用知识共享仍未建设（决策 9 补注）。

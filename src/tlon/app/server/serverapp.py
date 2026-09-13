@@ -22,6 +22,7 @@ from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.bootstrap import bootstrap_standard_team
 from tlon.agents.lessons import LessonsDistiller
 from tlon.agents.prototypes import seed_prototypes
+from tlon.agents.retirement import RetirementCeremony
 from tlon.agents.skills import seed_skills
 from tlon.base.config import ConfigService
 from tlon.base.events.event import Event, EventType
@@ -216,6 +217,16 @@ class ServerApp:
         await lessons_distiller.initialize()
         self._components["lessons_distiller"] = lessons_distiller
         logger.info("component_initialized", component="lessons_distiller")
+
+        # 2.4aa RetirementCeremony — retirement handover (issue ).
+        # Same pure-event-consumer mold as the LessonsDistiller, on the
+        # same AGENT_STOPPED trigger: inventory the retiree's archive
+        # offline, mail a farewell letter when there is anything to hand
+        # over, and always publish the AGENT_RETIRED fact.
+        retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=paths)
+        await retirement_ceremony.initialize()
+        self._components["retirement_ceremony"] = retirement_ceremony
+        logger.info("component_initialized", component="retirement_ceremony")
 
         # 2.4b Adam — built-in lifecycle policy member (PID 1; members.md 阶段 D).
         # Kernel first, PID 1 second: Adam is initialized after the registry
@@ -429,6 +440,10 @@ class ServerApp:
         lessons_distiller = self._components.get("lessons_distiller")
         if lessons_distiller:
             await lessons_distiller.shutdown()
+
+        retirement_ceremony = self._components.get("retirement_ceremony")
+        if retirement_ceremony:
+            await retirement_ceremony.shutdown()
 
         mail_delivery = self._components.get("mail_delivery")
         if mail_delivery:
