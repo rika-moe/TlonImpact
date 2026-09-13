@@ -199,3 +199,46 @@ class TestSpawnTilt:
             await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
         assert exc.value.reason == "session_quota"
         assert "tilt 1.00" in str(exc.value)
+
+
+def _const_solvency(value: bool):
+    async def provider(prototype: str) -> bool:
+        return value
+
+    return provider
+
+
+class TestSpawnSolvency:
+    """Solvency gate (): an insolvent bloodline cannot spawn; the
+    check sits after the trust gate and fails open."""
+
+    async def test_insolvent_lineage_rejected(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, solvency=_const_solvency(False)
+        )
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        assert exc.value.reason == "insolvent_lineage"
+
+    async def test_solvent_lineage_spawns(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, solvency=_const_solvency(True)
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+
+    async def test_provider_failure_fails_open(self, tmp_path):
+        """A raising solvency provider never blocks a spawn."""
+
+        async def _boom(prototype: str) -> bool:
+            raise OSError("fitness derivation broke")
+
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, solvency=_boom
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")

@@ -11,6 +11,7 @@ ports live in ``tlon.tools.agents.ports``, ).
 
 from typing import TYPE_CHECKING
 
+from tlon.agents.fitness import solvency_provider
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
@@ -237,8 +238,18 @@ async def assemble_cognitive(
     tool_executor.register_tool(ListAgentsTool(registry=registry))
     # Spec authoring (stage 4a): writes untrusted prototypes to the
     # staging area; author_id is recorded as the :author for audit.
+    # Proposal solvency gate (, agent side only — the human direct
+    # write channel is never gated): an insolvent bloodline loses
+    # proposal eligibility until it earns endorsements back. The gate
+    # recomputes from raw files per call (proposals are low-frequency).
+    proposal_solvency = solvency_provider(tlon_paths)
     tool_executor.register_tool(
-        WritePrototypeTool(author_id=config.id, writer=write_staging_prototype)
+        WritePrototypeTool(
+            author_id=config.id,
+            writer=write_staging_prototype,
+            prototype=config.prototype,
+            solvency=proposal_solvency,
+        )
     )
     # Experience entry of the generation channel (): drafts the next
     # generation's spec from the member's own behavior + memory, parented
@@ -255,6 +266,7 @@ async def assemble_cognitive(
             logs=SessionJournal(config.id, tlon_paths),
             writer=write_staging_prototype,
             tlon_paths=tlon_paths,
+            solvency=proposal_solvency,
         )
     )
     tool_executor.register_tool(RememberFactTool(memory))

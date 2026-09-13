@@ -58,6 +58,7 @@ def _make_tool(
     llm: _FakeLLM,
     prototype: str | None = "base",
     memory: MemoryManager | None = None,
+    solvency: Any = None,
 ) -> ProposeBehaviorTool:
     if memory is None:
         memory = MemoryManager(agent_id, MemoryConfig(), data_dir=p.agent_dir(agent_id))
@@ -70,6 +71,7 @@ def _make_tool(
         logs=SessionJournal(agent_id, p),
         writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         tlon_paths=p,
+        solvency=solvency,
     )
 
 
@@ -196,3 +198,44 @@ class TestProposeBehavior:
 
         assert not result.success
         assert "already exists" in result.error
+
+
+class TestProposeSolvency:
+    """提案偿付闸（）：失去偿付能力的血脉不能提案；闸 fail-open。"""
+
+    async def test_insolvent_bloodline_rejected_before_drafting(
+        self, tmp_path: Path
+    ) -> None:
+        """闸排在起草调用之前：被闸时 LLM 一次都不调用，staging 无残留。"""
+        p = TlonPaths(home=tmp_path)
+        agent_id = "c-base-00000001"
+        _write_behavior(p, agent_id)
+
+        async def _insolvent(prototype: str) -> bool:
+            return False
+
+        llm = _FakeLLM(_DRAFT_SPEC)
+        tool = _make_tool(p, agent_id, llm, solvency=_insolvent)
+
+        result = await tool.execute(intent="改", name="base-gen2")
+
+        assert not result.success
+        assert "insolvent" in result.error
+        assert llm.calls == []
+        assert not (p.prototypes_staging_dir() / "base-gen2").exists()
+
+    async def test_solvency_failure_is_fail_open(self, tmp_path: Path) -> None:
+        """solvency 抛异常 → 放行（fail-open），提案照常走起草 + staging。"""
+        p = TlonPaths(home=tmp_path)
+        agent_id = "c-base-00000001"
+        write_trusted_prototype("base", _CURRENT_SPEC, tlon_paths=p)
+        _write_behavior(p, agent_id)
+
+        async def _boom(prototype: str) -> bool:
+            raise OSError("fitness derivation broke")
+
+        tool = _make_tool(p, agent_id, _FakeLLM(_DRAFT_SPEC), solvency=_boom)
+
+        result = await tool.execute(intent="改", name="base-gen2")
+
+        assert result.success, result.error

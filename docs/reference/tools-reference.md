@@ -350,6 +350,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | reason | 含义 |
 |---|---|
 | `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 ops 中批准；先于一切预算检查 |
+| `insolvent_lineage` | 偿付门槛（）：目标血脉失去偿付能力（总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25，派生自 `agents/fitness.py`，fail-open），血脉靠手上成员挣回 endorse 前不能 spawn；紧随信任门、先于预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
 | `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜（）：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；拒绝 detail 注明实际 tilt 与有效配额 |
@@ -390,6 +391,8 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带按提交内容选择的 schema 提示（含 `:loop` 用 `_BEHAVIOR_HINT`，否则 `_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
 
+另有血脉偿付闸（，仅 agent 侧）：作者血脉失去偿付能力时提案在写入前被拒（`success=False`，staging 无残留，提示先挣回 endorse 再提案）；偿付派生异常时 fail-open 放行。无 prototype 的 manual 成员无血脉可判，不受闸。
+
 ### proposeBehavior
 
 世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（摘要/事实）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、temperature 0.3、timeout 60s），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
@@ -403,7 +406,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 成功返回 `{name, parent, generation, trusted=false, status="pending_approval"}`——与 `writePrototype` 同一信任闸：人类在 mirror 批准后才能 `spawnAgent` 派生新世代。
 
-失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：起草响应剥离 ``` 代码围栏后找不到 EDN map；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；名称冲突；成员无 `behavior.tlon` 底稿。
+失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：血脉偿付闸拒绝（，与 `writePrototype` 同一道闸，排在起草调用之前——被闸时不消耗起草 token，staging 无残留；fail-open）；起草响应剥离 ``` 代码围栏后找不到 EDN map；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；名称冲突；成员无 `behavior.tlon` 底稿。
 
 ## prototypes
 

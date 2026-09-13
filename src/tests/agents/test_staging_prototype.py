@@ -176,3 +176,63 @@ class TestWritePrototypeToolLessons:
 
         assert result.success
         assert not (p.prototypes_staging_dir() / "plain" / "LESSONS.md").exists()
+
+
+class TestWritePrototypeSolvency:
+    """Proposal solvency gate (, agent side): an insolvent bloodline
+    loses proposal eligibility; the check fails open."""
+
+    async def test_insolvent_bloodline_rejected_nothing_on_disk(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+
+        async def _insolvent(prototype: str) -> bool:
+            return False
+
+        tool = WritePrototypeTool(
+            author_id="adam",
+            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            prototype="broke",
+            solvency=_insolvent,
+        )
+
+        result = await tool.execute(name="wild", behavior=VALID_SPEC)
+
+        assert not result.success
+        assert "insolvent" in result.error
+        assert not (p.prototypes_staging_dir() / "wild").exists()
+
+    async def test_solvency_failure_is_fail_open(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+
+        async def _boom(prototype: str) -> bool:
+            raise OSError("fitness derivation broke")
+
+        tool = WritePrototypeTool(
+            author_id="adam",
+            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            prototype="broke",
+            solvency=_boom,
+        )
+
+        result = await tool.execute(name="fine", behavior=VALID_SPEC)
+
+        assert result.success, result.error
+
+    async def test_manual_member_never_gated(self, tmp_path):
+        """An author without a prototype (manual member) has no bloodline
+        to judge — the gate does not apply."""
+        p = TlonPaths(home=tmp_path)
+
+        async def _insolvent(prototype: str) -> bool:
+            return False
+
+        tool = WritePrototypeTool(
+            author_id="adam",
+            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+            prototype=None,
+            solvency=_insolvent,
+        )
+
+        result = await tool.execute(name="root", behavior=VALID_SPEC)
+
+        assert result.success, result.error

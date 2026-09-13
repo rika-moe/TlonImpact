@@ -7,7 +7,7 @@ a member's persona files are creation-time data, never part of the
 behavior genome.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from tlon.base.logger import get_logger
@@ -56,7 +56,11 @@ class WritePrototypeTool(Tool):
     """
 
     def __init__(
-        self, author_id: str, writer: Callable[..., PrototypeSummary]
+        self,
+        author_id: str,
+        writer: Callable[..., PrototypeSummary],
+        prototype: str | None = None,
+        solvency: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
         super().__init__(
             name="writePrototype",
@@ -117,8 +121,38 @@ class WritePrototypeTool(Tool):
         )
         self._author_id = author_id
         self._writer = writer
+        # Author's bloodline + solvency gate (): an insolvent
+        # bloodline loses proposal eligibility. None (either side) =
+        # always eligible.
+        self._prototype = prototype
+        self._solvency = solvency
+
+    async def _solvent(self, prototype: str) -> bool:
+        """Proposal-eligibility check for the author's bloodline (fail-open).
+
+        A missing provider or any provider failure yields True — solvency
+        bookkeeping must never block a proposal.
+        """
+        if self._solvency is None:
+            return True
+        try:
+            return bool(await self._solvency(prototype))
+        except Exception as e:
+            logger.warning("solvency_check_failed", prototype=prototype, error=str(e))
+            return True
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if self._prototype is not None and not await self._solvent(self._prototype):
+            return ToolResult(
+                success=False,
+                data={},
+                error=f"bloodline '{self._prototype}' is insolvent",
+                message=(
+                    f"血脉 '{self._prototype}' 已失去偿付能力（长期入不敷出），提案资格被暂停。"
+                    "先用手上成员做出被 endorse 的产出，恢复偿付能力后再提案。"
+                ),
+            )
+
         name: str = kwargs["name"]
         behavior: str = kwargs["behavior"]
         display_name: str = kwargs.get("display_name", "")

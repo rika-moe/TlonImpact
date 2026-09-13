@@ -17,11 +17,21 @@ value / max(total_tokens, 1).
 efficiency relative to the society mean, clamped to [0.5, 2.0]. Cold
 start (no data, or every bloodline at zero) is neutral 1.0 — the system
 behaves exactly as before the tilt existed until evidence accumulates.
-The floor is 0.5, not 0: starvation/extinction is the solvency gate's
-job (); this module only tilts.
+
+The tilt is continuous; the solvency gate () is its binary
+counterpart, derived from the same efficiency table: a bloodline is
+*insolvent* only when both (a) its total token spend reaches
+``_MIN_SAMPLE_TOKENS`` (below that the evidence is too thin — presumption
+of innocence) and (b) its efficiency falls below ``SOLVENCY_RATIO`` × the
+society mean (long-term outgoings exceed endorsed income). Insolvent
+bloodlines lose proposal eligibility (``writePrototype`` /
+``proposeBehavior``) and spawn eligibility; the tilt's floor is 0.5, not
+0, because starvation/extinction is this gate's job — the tilt only
+tilts, the gate decides life and death.
 
 Everything fails open: any error in the derivation yields the neutral
-tilt 1.0 — a fitness bookkeeping failure must never block a spawn.
+tilt 1.0 / the empty insolvent set — fitness bookkeeping must never
+block a spawn or a proposal.
 """
 
 from collections.abc import Awaitable, Callable
@@ -41,6 +51,18 @@ TILT_MAX = 2.0
 
 #: Neutral tilt: cold start and every failure path.
 TILT_NEUTRAL = 1.0
+
+#: Solvency sample floor (): a bloodline that has spent fewer tokens
+#: than this is never insolvent — the evidence is too thin to convict
+#: (presumption of innocence). 100k tokens is orders of magnitude above a
+#: single session's spend, so only long-lived bloodlines can be judged.
+_MIN_SAMPLE_TOKENS = 100_000
+
+#: Solvency threshold (): insolvent = efficiency below this fraction
+#: of the society mean. 0.25 is deliberately conservative — the gate
+#: condemns only bloodlines four times worse than average, erring on the
+#: side of letting marginal ones live.
+SOLVENCY_RATIO = 0.25
 
 
 async def lineage_efficiency(tlon_paths: TlonPaths) -> dict[str, float]:
@@ -99,3 +121,52 @@ def tilt_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[flo
         return tilt_for(await lineage_efficiency(resolved), prototype)
 
     return tilt
+
+
+async def insolvent_lineages(tlon_paths: TlonPaths) -> set[str]:
+    """Bloodlines that have lost solvency (): proposal/spawn gate input.
+
+    A bloodline is insolvent only when BOTH hold:
+
+    - its ``total_tokens`` reaches ``_MIN_SAMPLE_TOKENS`` (below the
+      floor the evidence is too thin — presumption of innocence);
+    - its efficiency is below ``SOLVENCY_RATIO`` × the society mean
+      (long-term outgoings exceed endorsed income).
+
+    Returns:
+        Set of insolvent bloodline names. Empty on no data, on
+        society-wide zero consumption, and on any failure (fail-open,
+        same discipline as the tilt).
+    """
+    try:
+        lineages = await collect_lineage_ledgers(tlon_paths=tlon_paths)
+        efficiencies = await lineage_efficiency(tlon_paths)
+        if not efficiencies or not any(efficiencies.values()):
+            return set()
+        mean = sum(efficiencies.values()) / len(efficiencies)
+        return {
+            name
+            for name, lineage in lineages.items()
+            if name in efficiencies
+            and lineage["total_tokens"] >= _MIN_SAMPLE_TOKENS
+            and efficiencies[name] < SOLVENCY_RATIO * mean
+        }
+    except Exception as e:  # fail-open: bookkeeping must never gate anyone
+        logger.warning("insolvent_lineages_failed", error=str(e))
+        return set()
+
+
+def solvency_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[bool]]:
+    """Bind the solvency derivation to a paths layout (gate input).
+
+    Returns True (solvent) for any bloodline not in
+    ``insolvent_lineages`` — including unknown ones (a bloodline with no
+    ledger is innocent by construction). Recomputed on every call, same
+    as ``tilt_provider``.
+    """
+    resolved = tlon_paths or paths
+
+    async def solvent(prototype: str) -> bool:
+        return prototype not in await insolvent_lineages(resolved)
+
+    return solvent

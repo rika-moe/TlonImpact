@@ -14,6 +14,13 @@ untouched — splitting it per bloodline would punish incumbent members of
 temporarily-inefficient lineages. Tilt 1.0 (the cold-start default, and
 every failure fallback) reproduces the untilted behavior exactly.
 
+The tilt is continuous; the solvency gate () is binary: an optional
+``solvency`` provider maps the spawn target's prototype to a bool, and
+an insolvent bloodline (long-term token spend not covered by endorsed
+output, derived in ``agents/fitness.py``) is rejected outright, right
+after the trust gate. Both fail open — fitness bookkeeping must never
+block a spawn.
+
 Of the three budgets, only the per-(spawner, session) quota is a ledger,
 and it is persisted (``TlonPaths.spawn_quota_ledger_file``, atomic
 replace): sessions themselves survive a restart via journal replay
@@ -68,6 +75,7 @@ class SpawnManager:
         max_spawn_depth: int,
         session_spawn_quota: int,
         tilt_provider: Callable[[str], Awaitable[float]] | None = None,
+        solvency: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
         self._registry = registry
         self._max_activations = max_activations
@@ -76,6 +84,9 @@ class SpawnManager:
         # Bloodline-fitness tilt (): prototype name -> quota
         # multiplier. None = always neutral 1.0 (untilted behavior).
         self._tilt_provider = tilt_provider
+        # Solvency gate (): prototype name -> solvent? None = always
+        # solvent (gate disabled).
+        self._solvency = solvency
         # (spawner_id, session_id) -> successful spawn count, persisted to
         # disk so the anti-runaway quota survives restarts (sessions do,
         # via journal replay).
@@ -157,6 +168,20 @@ class SpawnManager:
             logger.warning("spawn_tilt_failed", prototype=prototype, error=str(e))
             return 1.0
 
+    async def _solvent(self, prototype: str) -> bool:
+        """Solvency of the spawn target's bloodline (fail-open, ).
+
+        A missing provider or any provider failure yields True — same
+        discipline as ``_tilt``.
+        """
+        if self._solvency is None:
+            return True
+        try:
+            return bool(await self._solvency(prototype))
+        except Exception as e:
+            logger.warning("spawn_solvency_failed", prototype=prototype, error=str(e))
+            return True
+
     async def spawn_member(
         self,
         prototype: str,
@@ -216,6 +241,22 @@ class SpawnManager:
                 session_id=session_id,
                 prototype=prototype,
                 detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
+            )
+
+        # Solvency gate (): an insolvent bloodline (long-term token
+        # spend not covered by endorsed output) cannot spawn until it
+        # earns endorsements back — the binary counterpart of the tilt.
+        if not await self._solvent(prototype):
+            self._reject_spawn(
+                "insolvent_lineage",
+                spawner_id=spawner_id,
+                session_id=session_id,
+                prototype=prototype,
+                detail=(
+                    f"bloodline '{prototype}' is insolvent (token spend not"
+                    " covered by endorsed output); proposal/spawn eligibility"
+                    " suspended until the bloodline earns endorsements"
+                ),
             )
 
         # Budget 1: global activation cap (boot members included)

@@ -11,7 +11,15 @@ from typing import Any
 
 import pytest
 
-from tlon.agents.fitness import TILT_MAX, TILT_MIN, lineage_efficiency, tilt_for, tilt_provider
+from tlon.agents.fitness import (
+    TILT_MAX,
+    TILT_MIN,
+    insolvent_lineages,
+    lineage_efficiency,
+    solvency_provider,
+    tilt_for,
+    tilt_provider,
+)
 from tlon.base.config import AgentConfig, yaml_save
 from tlon.base.ledger import LedgerWriter
 from tlon.base.paths import TlonPaths
@@ -163,3 +171,105 @@ class TestTiltProvider:
         provider = tilt_provider(tlon_paths)
 
         assert await provider("anything") == 1.0
+
+
+async def _write_tokens(tlon_paths: TlonPaths, agent_id: str, tokens: int) -> None:
+    await LedgerWriter(tlon_paths.agent_ledger_file(agent_id)).append(
+        {
+            "ts": "2026-09-13T00:00:00+00:00",
+            "event": "llm_call",
+            "model": "openai/gpt-test",
+            "prompt_tokens": tokens,
+            "completion_tokens": 0,
+            "duration_ms": 10,
+            "cpu_ms": 1,
+            "purpose": "think",
+            "session_id": "s1",
+        }
+    )
+
+
+class TestInsolventLineages:
+    """Solvency gate (): insolvent = total_tokens >= 100k (sample
+    floor — below it the evidence is too thin to convict) AND efficiency
+    < 0.25 × society mean (long-term outgoings exceed endorsed income)."""
+
+    async def _seed(self, tlon_paths: TlonPaths) -> None:
+        """alpha: 1 member, 200k tokens, value 1 — efficiency 5e-6.
+        beta: 20 members × 5k tokens = 100k tokens, value 20 — 2e-4.
+        Mean ≈ 1.03e-4, threshold ≈ 2.6e-5: alpha is insolvent, beta is
+        not."""
+        await _seed_tokens_society(
+            tlon_paths, [("a-001", "alpha", 200_000)]
+            + [(f"b-{i:03d}", "beta", 5_000) for i in range(1, 21)]
+        )
+
+    async def test_high_spend_low_efficiency_flagged(self, tlon_paths: TlonPaths) -> None:
+        await self._seed(tlon_paths)
+
+        assert await insolvent_lineages(tlon_paths) == {"alpha"}
+
+    async def test_below_sample_floor_acquitted_even_when_least_efficient(
+        self, tlon_paths: TlonPaths
+    ) -> None:
+        """gamma is the least efficient bloodline (1e-5 vs beta's 2e-4,
+        below the 0.25×mean threshold) but spent only 99_999 tokens —
+        under the sample floor, so presumption of innocence applies."""
+        await _seed_tokens_society(
+            tlon_paths,
+            [("g-001", "gamma", 99_999)]
+            + [(f"b-{i:03d}", "beta", 5_000) for i in range(1, 21)],
+        )
+
+        assert await insolvent_lineages(tlon_paths) == set()
+
+    async def test_zero_consumption_empty(self, tlon_paths: TlonPaths) -> None:
+        """No ledgers at all: no bloodline can reach the sample floor."""
+        for agent_id, prototype in ((ALPHA_1, "alpha"), (BETA_1, "beta")):
+            yaml_save(
+                AgentConfig(id=agent_id, name=agent_id, prototype=prototype),
+                tlon_paths.tlon_home(),
+            )
+
+        assert await insolvent_lineages(tlon_paths) == set()
+
+    async def test_failure_returns_empty_fail_open(
+        self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def _boom(**kwargs: Any) -> dict[str, Any]:
+            raise OSError("corrupt home")
+
+        monkeypatch.setattr("tlon.agents.fitness.collect_lineage_ledgers", _boom)
+
+        assert await insolvent_lineages(tlon_paths) == set()
+
+
+async def _seed_tokens_society(
+    tlon_paths: TlonPaths, members: list[tuple[str, str, int]]
+) -> None:
+    """(agent_id, prototype, total_tokens) rows: one config + one ledger
+    entry each; production = member existence only (no endorsements)."""
+    for agent_id, prototype, tokens in members:
+        yaml_save(
+            AgentConfig(id=agent_id, name=agent_id, prototype=prototype),
+            tlon_paths.tlon_home(),
+        )
+        await _write_tokens(tlon_paths, agent_id, tokens)
+
+
+class TestSolvencyProvider:
+    async def test_binds_paths_and_maps_prototype(self, tlon_paths: TlonPaths) -> None:
+        await _seed_tokens_society(
+            tlon_paths, [("a-001", "alpha", 200_000)]
+            + [(f"b-{i:03d}", "beta", 5_000) for i in range(1, 21)]
+        )
+        provider = solvency_provider(tlon_paths)
+
+        assert await provider("alpha") is False
+        assert await provider("beta") is True
+
+    async def test_unknown_bloodline_is_solvent(self, tlon_paths: TlonPaths) -> None:
+        """A bloodline with no ledger is innocent by construction."""
+        provider = solvency_provider(tlon_paths)
+
+        assert await provider("ghost") is True
