@@ -352,7 +352,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 ops 中批准；先于一切预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
-| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活） |
+| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜（）：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；拒绝 detail 注明实际 tilt 与有效配额 |
 | `config_reload_failed` | 新配置未能被 config provider 加载 |
 
 prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `success=False` 返回。session 归属经 structlog contextvars 里的 `session_id` 绑定，用于配额记账。

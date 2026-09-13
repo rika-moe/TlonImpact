@@ -140,3 +140,62 @@ class TestQuotaPersistence:
             await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
         assert exc.value.reason == "session_quota"
         await manager.spawn_member("worker", "甲", "boss-2", "sess-1")
+
+
+def _const_tilt(value: float):
+    async def provider(prototype: str) -> float:
+        return value
+
+    return provider
+
+
+class TestSpawnTilt:
+    """Budget-3 quota tilt by bloodline fitness (): the effective
+    per-session quota is ceil(base * tilt); tilt 1.0 is the neutral
+    cold-start/failure fallback."""
+
+    async def test_tilt_two_widens_quota(self, tmp_path):
+        """tilt 2.0 over base quota 2 gives an effective quota of 4."""
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, tilt_provider=_const_tilt(2.0)
+        )
+        for name in "甲乙丙丁":
+            await manager.spawn_member("worker", name, "boss-1", "sess-1")
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "戊", "boss-1", "sess-1")
+        assert exc.value.reason == "session_quota"
+        assert "tilt 2.00" in str(exc.value)
+
+    async def test_tilt_half_narrows_quota(self, tmp_path):
+        """tilt 0.5 over base quota 2 gives an effective quota of 1."""
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, tilt_provider=_const_tilt(0.5)
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        assert exc.value.reason == "session_quota"
+        assert "tilt 0.50" in str(exc.value)
+
+    async def test_provider_failure_falls_back_to_neutral(self, tmp_path):
+        """A raising tilt provider is fail-open: the untilted quota (2)
+        still binds, so fitness bookkeeping never blocks a spawn."""
+
+        async def _boom(prototype: str) -> float:
+            raise OSError("fitness derivation broke")
+
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, tilt_provider=_boom
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
+        assert exc.value.reason == "session_quota"
+        assert "tilt 1.00" in str(exc.value)

@@ -79,7 +79,7 @@
 | 退休蒸馏：`AGENT_STOPPED` 触发离线记忆蒸馏 → `memory/lessons.md`（issue ；归属记账在退休成员头上，） | [agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` |
 | 退休交接：`AGENT_STOPPED` 触发离线移交盘点 → 告别信（退休成员地址发出）+ `AGENT_RETIRED` 事实（issue ） | [agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` |
 | 生命周期策略：boot/stop 裁决 + 出生欢迎信（Adam 的策略规则，数据；issue  出生社会化） | [agents/adam.py](../../src/tlon/agents/adam.py) |
-| spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制 | [agents/spawn.py](../../src/tlon/agents/spawn.py) |
+| spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制；每会话配额按血脉适应度倾斜（`ceil(quota × tilt)`，tilt ∈ [0.5, 2.0]，冷启动恒 1.0，） | [agents/spawn.py](../../src/tlon/agents/spawn.py)、[agents/fitness.py](../../src/tlon/agents/fitness.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
 | 世代通道工具：`writePrototype`（写 staging）/ `proposeBehavior`（经验入口：个体经验 → 起草 → staging 提案，）/ `spawnAgent` / `stopAgent`（排空后睡眠）；谱系查询 `getPrototypeLineage` | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |
 

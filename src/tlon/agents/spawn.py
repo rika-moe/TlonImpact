@@ -5,6 +5,15 @@ spawn depth, per-session quota) and executes the two member-derivation
 flows: ``spawn_member`` (prototype instantiation under the budget) and
 ``adopt_agent`` (hot adoption of an out-of-process creation).
 
+The per-session quota is tilted by the target bloodline's fitness
+(, ADR 0014): an optional ``tilt_provider`` maps the spawn target's
+prototype to a multiplier (clamped to [0.5, 2.0] by
+``agents/fitness.py``), and the effective quota is
+``ceil(session_spawn_quota * tilt)``. The global activation cap stays
+untouched — splitting it per bloodline would punish incumbent members of
+temporarily-inefficient lineages. Tilt 1.0 (the cold-start default, and
+every failure fallback) reproduces the untilted behavior exactly.
+
 Of the three budgets, only the per-(spawner, session) quota is a ledger,
 and it is persisted (``TlonPaths.spawn_quota_ledger_file``, atomic
 replace): sessions themselves survive a restart via journal replay
@@ -21,8 +30,10 @@ annotation only).
 """
 
 import json
+import math
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -56,11 +67,15 @@ class SpawnManager:
         max_activations: int,
         max_spawn_depth: int,
         session_spawn_quota: int,
+        tilt_provider: Callable[[str], Awaitable[float]] | None = None,
     ) -> None:
         self._registry = registry
         self._max_activations = max_activations
         self._max_spawn_depth = max_spawn_depth
         self._session_spawn_quota = session_spawn_quota
+        # Bloodline-fitness tilt (): prototype name -> quota
+        # multiplier. None = always neutral 1.0 (untilted behavior).
+        self._tilt_provider = tilt_provider
         # (spawner_id, session_id) -> successful spawn count, persisted to
         # disk so the anti-runaway quota survives restarts (sessions do,
         # via journal replay).
@@ -127,6 +142,20 @@ class SpawnManager:
             logger.error(
                 "spawn_quota_ledger_save_failed", file_path=str(self._ledger_path), error=str(e)
             )
+
+    async def _tilt(self, prototype: str) -> float:
+        """Quota tilt for the spawn target's bloodline (fail-open).
+
+        A missing provider or any provider failure yields the neutral
+        1.0 — fitness bookkeeping must never block a spawn.
+        """
+        if self._tilt_provider is None:
+            return 1.0
+        try:
+            return float(await self._tilt_provider(prototype))
+        except Exception as e:
+            logger.warning("spawn_tilt_failed", prototype=prototype, error=str(e))
+            return 1.0
 
     async def spawn_member(
         self,
@@ -212,16 +241,24 @@ class SpawnManager:
                 detail=f"depth {depth} > cap {self._max_spawn_depth}",
             )
 
-        # Budget 3: per-(spawner, session) quota
+        # Budget 3: per-(spawner, session) quota, tilted by the target
+        # bloodline's efficiency (): effective quota =
+        # ceil(base * tilt), tilt clamped to [0.5, 2.0] upstream. Tilt
+        # 1.0 (cold start / failure fallback) is the untilted behavior.
+        tilt = await self._tilt(prototype)
+        effective_quota = math.ceil(self._session_spawn_quota * tilt)
         quota_key = (spawner_id, session_id or _UNKNOWN_SESSION)
         used = self._quota.get(quota_key, 0)
-        if used >= self._session_spawn_quota:
+        if used >= effective_quota:
             self._reject_spawn(
                 "session_quota",
                 spawner_id=spawner_id,
                 session_id=session_id,
                 prototype=prototype,
-                detail=f"quota {self._session_spawn_quota} per session exhausted",
+                detail=(
+                    f"quota {effective_quota} per session exhausted"
+                    f" (base {self._session_spawn_quota} × tilt {tilt:.2f})"
+                ),
             )
 
         # Id is generated here (never caller-supplied): sanitize the

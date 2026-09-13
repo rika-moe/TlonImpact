@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any
 from tlon.agents.assembly import assemble_cognitive
 from tlon.agents.builtins import ScriptHostQueries, make_member_builtins
 from tlon.agents.cron import CronScheduler
+from tlon.agents.fitness import tilt_provider
 from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
@@ -223,7 +224,15 @@ class AgentRegistry(Component):
         # Spawn budget + idle reaper (stage 6b / scale-to-zero). The
         # per-session quota ledger is persisted (sessions survive a
         # restart via journal replay, so the anti-runaway cap must too).
-        self._spawn = SpawnManager(self, max_activations, max_spawn_depth, session_spawn_quota)
+        # The quota is tilted per spawn by the target bloodline's fitness
+        # (); the provider recomputes from raw files on every spawn.
+        self._spawn = SpawnManager(
+            self,
+            max_activations,
+            max_spawn_depth,
+            session_spawn_quota,
+            tilt_provider=tilt_provider(self._paths),
+        )
         self._reaper = IdleReaper(self)
         # Social public-health monitor (): noise detection + orphan-mail
         # scan. Facts only — no enforcement. Same ownership as the reaper.
