@@ -22,6 +22,7 @@ from tlon.agents.prototypes import (
     write_staging_prototype,
 )
 from tlon.agents.reputation import reputation_provider
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.llm_client import LLMClient
@@ -34,6 +35,7 @@ from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
+from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
@@ -237,6 +239,23 @@ async def assemble_cognitive(
     # staging area; author_id is recorded as the :author for audit.
     tool_executor.register_tool(
         WritePrototypeTool(author_id=config.id, writer=write_staging_prototype)
+    )
+    # Experience entry of the generation channel (): drafts the next
+    # generation's spec from the member's own behavior + memory, parented
+    # to its own prototype. First agents-domain tool to receive the
+    # llm_client / memory pair; the journal (agents layer) is injected as
+    # the SessionLogReader port so tlon.tools never imports tlon.agents.
+    tool_executor.register_tool(
+        ProposeBehaviorTool(
+            agent_id=config.id,
+            prototype=config.prototype,
+            author_id=config.id,
+            llm_client=llm_client,
+            memory=memory,
+            logs=SessionJournal(config.id, tlon_paths),
+            writer=write_staging_prototype,
+            tlon_paths=tlon_paths,
+        )
     )
     tool_executor.register_tool(RememberFactTool(memory))
     tool_executor.register_tool(SearchMemoriesTool(memory))

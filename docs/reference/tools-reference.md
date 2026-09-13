@@ -24,12 +24,12 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### 工具装配
 
-每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。
+每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。`proposeBehavior`（）是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`）。
 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为每个成员注册 34 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为每个成员注册 35 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -51,22 +51,23 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 16 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
 | 17 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
 | 18 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
-| 19 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
-| 20 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
-| 21 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 22 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 23 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 24 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 25 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 26 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 27 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 28 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
-| 29 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
-| 30 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
-| 31 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
-| 32 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
-| 33 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
-| 34 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
+| 19 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
+| 20 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
+| 21 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
+| 22 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
+| 23 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 24 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 25 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 26 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 27 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 28 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 29 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
+| 30 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
+| 31 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
+| 32 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
+| 33 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
+| 34 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
+| 35 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
@@ -388,6 +389,21 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | `lessons` | string | 否 | — | 随包教训文本（：退休成员蒸馏的经验），落盘为原型的 `LESSONS.md`；实例化时拷贝给新成员，由其 spec 的 `(lessons)` section 注入对话 |
 
 失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带按提交内容选择的 schema 提示（含 `:loop` 用 `_BEHAVIOR_HINT`，否则 `_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
+
+### proposeBehavior
+
+世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（摘要/事实）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、temperature 0.3、timeout 60s），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `intent` | string | 是 | — | 变更意图：想改什么、为什么（自然语言，记为 `proposal_note`） |
+| `name` | string | 是 | — | 新原型名称（字母/数字/`-`/`_`，全局唯一） |
+| `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
+| `description` | string | 否 | `""` | 行为定位一句话描述 |
+
+成功返回 `{name, parent, generation, trusted=false, status="pending_approval"}`——与 `writePrototype` 同一信任闸：人类在 mirror 批准后才能 `spawnAgent` 派生新世代。
+
+失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：起草响应剥离 ``` 代码围栏后找不到 EDN map；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；名称冲突；成员无 `behavior.tlon` 底稿。
 
 ## prototypes
 
