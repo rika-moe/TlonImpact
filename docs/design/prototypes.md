@@ -10,6 +10,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 - `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
+- `LESSONS.md`——**可选**（issue ）：随包传递的教训文本——退休成员记忆的蒸馏产物（见 [memory.md](./memory.md)「退休蒸馏」），经 `writePrototype` / `write_trusted_prototype` / `update_prototype` 的 `lessons` 参数（或 admin REST 的 `lessons` 字段）写入；详情端点（`get_prototype_detail`）把文本带回，评审提案时可见。
 
 统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件（IDENTITY.md / SOUL.md / RULES.md）是**创建时的数据**（ops 创建时填写 / 未来工具注入），不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
 
@@ -52,14 +53,14 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ### 为什么原型是目录而不是单文件
 
-原型需要打包两类异质内容：EDN 元数据、EDN 行为 spec。单文件方案要么发明新的打包格式，要么把元数据塞进行为文本。目录是零发明的答案：每种内容保持自己的格式与工具链，`behavior.tlon` 的存在与否天然成为判定谓词，「加一个原型」就是「拷一个目录」。
+原型需要打包异质内容：EDN 元数据、EDN 行为 spec、可选的 Markdown 教训文本（`LESSONS.md`，）。单文件方案要么发明新的打包格式，要么把元数据塞进行为文本。目录是零发明的答案：每种内容保持自己的格式与工具链，`behavior.tlon` 的存在与否天然成为判定谓词，「加一个原型」就是「拷一个目录」——approve 的整目录 `shutil.move` 也因此免费带走一切随包文件。
 
 ### 列出与实例化
 
 `listPrototypes` 工具（[tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool`）把库的元数据暴露给 agent（名称、显示名、描述、trusted 标志）。`instantiate` 做真正的派生，语义是**拷贝，不是引用**：
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
-2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。
+2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻，），新成员的 spec 用 `(lessons)` context section 显式声明才会把它注入对话；原型没有该文件则成员侧也不产生。
 3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。
 4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
@@ -121,11 +122,11 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 - **trusted 区**（`~/.tlon/prototypes/`）——包内播种的与人类手写的原型，`:trusted true`，可直接 spawn。手写即可信：能写文件进这个目录的人本来就有系统的完全控制权。
 - **staging 区**（`~/.tlon/prototypes-staging/`）——LLM 经 `writePrototype`（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool`）创作的原型落在这里，元数据强制 `:trusted false`、`:author` 记录作者 agent id（审计）。`spawnAgent` 拒绝 spawn 不可信原型。
 
-`write_staging_prototype`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`writePrototype` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。
+`write_staging_prototype`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`writePrototype` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。`lessons` 参数（可选，）把随包教训落盘为 `LESSONS.md`——退休成员蒸馏出的经验由此搭上下一代的出生包。
 
 晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）与 WebUI 的 PROTOTYPES 视图；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 
-人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes` → `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description` 和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
+人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes` → `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
 `writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
 

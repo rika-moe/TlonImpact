@@ -307,7 +307,7 @@ class TestAdminPrototypeManagement:
         proto = json.loads(resp.text)["prototype"]
         assert proto["description"] == "新描述"
         assert proto["trusted"] is True
-        _info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == self._TEMPLATED
 
     async def test_update_empty_body_400(self, tmp_path: Path):
@@ -333,7 +333,7 @@ class TestAdminPrototypeManagement:
 
         assert resp.status == 400
         assert json.loads(resp.text)["reason"] == "invalid_prototype"
-        _info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == self._BEHAVIOR
 
     async def test_update_unknown_404(self, tmp_path: Path):
@@ -403,6 +403,82 @@ class TestAdminPrototypeManagement:
             staging_idx = canonicals.index((method, "/admin/prototypes/staging/{name}"))
             named_idx = canonicals.index((method, "/admin/prototypes/{name}"))
             assert staging_idx < named_idx
+
+
+class TestAdminPrototypeLessons:
+    """LESSONS.md on the prototype endpoints (issue ): POST/PATCH accept
+    an optional ``lessons`` body field; the detail payload carries the text
+    back so a reviewer sees the packaged lessons."""
+
+    _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+
+    def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
+        p = TlonPaths(home=tmp_path)
+        return RESTAPIHandler(None, MagicMock(), paths=p), p
+
+    async def test_create_with_lessons_and_detail_returns_it(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+
+        resp = await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR,
+                              "lessons": "- 前辈教训\n"})
+        )
+
+        assert resp.status == 201
+        assert (p.prototypes_dir() / "hand" / "LESSONS.md").exists()
+
+        resp = await handler.handle_get_prototype(StubRequest(name="hand"))
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["lessons"] == "- 前辈教训\n"
+
+    async def test_detail_without_lessons_omits_field(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_get_prototype(StubRequest(name="hand"))
+
+        assert resp.status == 200
+        assert "lessons" not in json.loads(resp.text)["prototype"]
+
+    async def test_patch_lessons_trusted(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_update_prototype(
+            StubRequest(name="hand", body={"lessons": "- 补充教训\n"})
+        )
+
+        assert resp.status == 200
+        _info, _behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        assert lessons == "- 补充教训\n"
+
+    async def test_patch_lessons_staging(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        resp = await handler.handle_update_staging_prototype(
+            StubRequest(name="staged", body={"lessons": "- 审稿补充\n"})
+        )
+
+        assert resp.status == 200
+        _info, _behavior, lessons = get_prototype_detail("staged", staging=True, tlon_paths=p)
+        assert lessons == "- 审稿补充\n"
+
+    async def test_staging_detail_carries_lessons(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype(
+            "staged", self._BEHAVIOR, author_id="adam", lessons="- 随包\n", tlon_paths=p
+        )
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        assert json.loads(resp.text)["prototype"]["lessons"] == "- 随包\n"
 
 
 class TestAdminPrototypeLineage:

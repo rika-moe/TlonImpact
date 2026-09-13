@@ -88,6 +88,20 @@ ADR 0009 删掉了反思的 `consolidate` 操作（连同 prompt 里「工作记
 
 值得注意的是反思能改的只有记忆：它可以记事实、删事实，但碰不到 spec。这与「记忆只进 context」是同一个边界的两面（见「方向」）。
 
+## 退休蒸馏：记忆的代际出口（issue ）
+
+反思是生者的自我审计；退休蒸馏是死者的遗产整理。[agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` 是纯事件消费者（MetricsService 同款模式，但放 agents 层——它依赖 memory + agents）：订阅 `AGENT_STOPPED`（蓄意停止：`stopAgent` 工具 / DSL stop 动作 → `AgentRegistry.stop_member` 完成后发布），对退休成员做一次离线蒸馏。
+
+三个关键设计：
+
+- **离线路径**。蒸馏发生在 member runtime shutdown 之后——在飞反思已被取消（member_runtime.shutdown 的顺序保证），所以蒸馏器**离线重建**归档数据：用显式 `data_dir` 重建 `MemoryManager`、用 `SessionJournal` 满足 digest 需要的 journal 读面，不与任何活着的运行态共享对象。
+- **只挂蓄意停止**。`AGENT_SLEEPING`/`AGENT_IDLE`（drain 是日常 scale-to-zero 睡眠，反复发生）不触发蒸馏——退休才有遗产，午睡没有。
+- **失败不阻断**。非认知成员（无 `:loop` 的 spec）或 digest 为空直接跳过；LLM 失败只记日志不 raise——停止流程已经完成，这只是事后簿记。
+
+蒸馏调用沿用反思的参数先例（temperature 0.3、timeout 60 秒），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（ 的 per-member 账本自然覆盖），LLMConfig 从其 `agent.yaml` 的 `llm` 段 + settings 构造（与 `assemble_cognitive` 同一条合并路径）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
+
+`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md) 决策 9 补注）。把 lessons 自动写成提案（）与退休交接信（）是后续项。
+
 ## 一次交互的完整链路
 
 把上面各节串起来，一封邮件从进入到沉淀的全链路是：
@@ -124,5 +138,5 @@ ADR 0009 删掉了反思的 `consolidate` 操作（连同 prompt 里「工作记
 
 与愿景的差距主要有两处：
 
-- **个体学习未闭环**——记忆的出口只有 context：摘要与事实拼进 prompt 影响下一轮行为，但行为本身（spec）从不因记忆而改变。「经验沉淀为知识，知识能改写行为」目前只完成了前半；从记忆到 spec 的回流（比如反思产出原型修订、经 staging 闸进入库）尚未建设。
+- **个体学习未闭环**——记忆的出口曾只有 context； 补上了代际出口（退休蒸馏 → `lessons.md` → 原型 `LESSONS.md` → 新成员的 `(lessons)` section），经验由此能随出生包传给下一代。仍缺的一环是「经验改写行为」本身：lessons 进的是对话上下文，spec 不因它改变——从记忆/教训到 spec 修订提案的自动回流（）尚未建设。
 - **无社会级公共记忆**——每个 agent 各自摘要、各自记事实，社会层面没有可检索的公共层。邮件提供了沉淀的原材料，但「把书信提炼成社会知识」的机制（存档、共享摘要、同行评议筛选后的公共记忆）还不存在。

@@ -20,6 +20,7 @@ from typing import Any
 from tlon.agents.adam import make_adam
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.bootstrap import bootstrap_standard_team
+from tlon.agents.lessons import LessonsDistiller
 from tlon.agents.prototypes import seed_prototypes
 from tlon.agents.skills import seed_skills
 from tlon.base.config import ConfigService
@@ -203,6 +204,18 @@ class ServerApp:
         await agent_registry.initialize()
         self._components["agent_registry"] = agent_registry
         logger.info("agents_loaded", agent_count=len(agent_registry.get_all_ids()))
+
+        # 2.4a LessonsDistiller — retirement distillation (issue ).
+        # Pure event consumer like MetricsService, but layered in agents
+        # (it depends on memory + agents): on AGENT_STOPPED it rebuilds
+        # the retired member's archive offline and distills lessons to
+        # memory/lessons.md. (Registry shutdown stops members directly
+        # without publishing AGENT_STOPPED, so server shutdown never
+        # triggers distillation — only deliberate stops do.)
+        lessons_distiller = LessonsDistiller(event_bus=event_bus, tlon_paths=paths)
+        await lessons_distiller.initialize()
+        self._components["lessons_distiller"] = lessons_distiller
+        logger.info("component_initialized", component="lessons_distiller")
 
         # 2.4b Adam — built-in lifecycle policy member (PID 1; members.md 阶段 D).
         # Kernel first, PID 1 second: Adam is initialized after the registry
@@ -412,6 +425,10 @@ class ServerApp:
         agent_registry = self._components.get("agent_registry")
         if agent_registry:
             await agent_registry.shutdown()
+
+        lessons_distiller = self._components.get("lessons_distiller")
+        if lessons_distiller:
+            await lessons_distiller.shutdown()
 
         mail_delivery = self._components.get("mail_delivery")
         if mail_delivery:

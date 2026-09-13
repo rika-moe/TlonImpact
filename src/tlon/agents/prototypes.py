@@ -9,6 +9,10 @@ persona files are creation-time data, never part of the genome):
 - ``behavior.tlon`` — a complete (total) member spec, unified rules form
   (``{:version 1 :rules [...]}``, phase C — the old ``script.tlon``
   ScriptSpec file is gone)
+- ``LESSONS.md`` — optional (issue ): lessons distilled from a
+  retired member's memory, packaged with the prototype and copied to the
+  member's ``config/`` at instantiation; the DSL ``(lessons)`` context
+  section injects it
 
 A directory qualifies as a prototype when it contains ``behavior.tlon``.
 The member type (cognitive ``react`` vs deterministic ``script``) is no
@@ -69,6 +73,7 @@ logger = get_logger(__name__)
 PROTOTYPE_PACKAGE = "tlon.prototypes"
 METADATA_FILE = "prototype.edn"
 BEHAVIOR_FILE = "behavior.tlon"
+LESSONS_FILE = "LESSONS.md"
 
 
 @dataclass(frozen=True)
@@ -279,6 +284,16 @@ def instantiate(
     config_dir = p.agent_config_dir(agent_id)
     (config_dir / BEHAVIOR_FILE).write_text(behavior_text, encoding="utf-8")
 
+    # Lessons inheritance (issue ): a prototype's LESSONS.md — lessons
+    # distilled from a retired member — is copied next to the behavior file
+    # (a persona-file neighbor); the DSL ``(lessons)`` section injects it.
+    # No LESSONS.md in the prototype → no file on the member either.
+    prototype_lessons = proto_dir / LESSONS_FILE
+    if prototype_lessons.exists():
+        (config_dir / LESSONS_FILE).write_text(
+            prototype_lessons.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
     # agent.yaml via the same save path as the wizard
     agent = AgentConfig(
         id=agent_id,
@@ -392,6 +407,7 @@ def write_staging_prototype(
     author_id: str = "",
     parent: str | None = None,
     proposal_note: str | None = None,
+    lessons: str | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
@@ -427,6 +443,8 @@ def write_staging_prototype(
         parent: name of the prototype this one derives from (must exist in
             either area; None = a new root)
         proposal_note: free-text description of this generation's change
+        lessons: lessons text (issue ), written as ``LESSONS.md``
+            (None = the prototype carries no lessons file)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
@@ -453,6 +471,8 @@ def write_staging_prototype(
     staging_dir.mkdir(parents=True)
 
     (staging_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
+    if lessons:
+        (staging_dir / LESSONS_FILE).write_text(lessons, encoding="utf-8")
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
@@ -544,7 +564,7 @@ def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
 
 def get_prototype_detail(
     name: str, staging: bool = False, tlon_paths: TlonPaths | None = None
-) -> tuple[PrototypeInfo, str]:
+) -> tuple[PrototypeInfo, str, str | None]:
     """Metadata plus the full ``behavior.tlon`` text of one prototype.
 
     Args:
@@ -553,7 +573,9 @@ def get_prototype_detail(
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
-        ``(metadata, behavior_text)``.
+        ``(metadata, behavior_text, lessons)`` — ``lessons`` is the
+        ``LESSONS.md`` text (issue ), None when the prototype carries
+        no lessons file.
 
     Raises:
         PrototypeError: invalid name or no prototype under that name
@@ -567,7 +589,9 @@ def get_prototype_detail(
         raise PrototypeError(f"no prototype named '{name}' in the {where}")
     info = _read_metadata(proto_dir)
     behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
-    return info, behavior
+    lessons_file = proto_dir / LESSONS_FILE
+    lessons = lessons_file.read_text(encoding="utf-8") if lessons_file.exists() else None
+    return info, behavior, lessons
 
 
 _MAX_LINEAGE_DEPTH = 32
@@ -659,6 +683,7 @@ def write_trusted_prototype(
     description: str = "",
     parent: str | None = None,
     proposal_note: str | None = None,
+    lessons: str | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
     """Write a human-authored prototype directly into the trusted library.
@@ -678,6 +703,8 @@ def write_trusted_prototype(
         parent: name of the prototype this one derives from (must exist in
             either area; None = a new root)
         proposal_note: free-text description of this generation's change
+        lessons: lessons text (issue ), written as ``LESSONS.md``
+            (None = the prototype carries no lessons file)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
@@ -701,6 +728,8 @@ def write_trusted_prototype(
 
     proto_dir.mkdir(parents=True)
     (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
+    if lessons:
+        (proto_dir / LESSONS_FILE).write_text(lessons, encoding="utf-8")
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
@@ -727,6 +756,7 @@ def update_prototype(
     behavior_edn: str | None = None,
     parent: str | None = None,
     proposal_note: str | None = None,
+    lessons: str | None = None,
     staging: bool = False,
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
@@ -746,6 +776,8 @@ def update_prototype(
         behavior_edn: new raw EDN behavior spec (None = keep)
         parent: new lineage parent (None = keep; must exist in either area)
         proposal_note: new change note (None = keep)
+        lessons: new lessons text, rewritten as ``LESSONS.md``
+            (None = keep, issue )
         staging: update in the staging area instead of the trusted library
             (pre-approval editing of an LLM-authored prototype)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
@@ -771,10 +803,11 @@ def update_prototype(
         and behavior_edn is None
         and parent is None
         and proposal_note is None
+        and lessons is None
     ):
         raise PrototypeError(
             "nothing to update: provide display_name, description, behavior_edn, "
-            "parent or proposal_note"
+            "parent, proposal_note or lessons"
         )
 
     # Resolve everything that can fail before anything touches disk.
@@ -785,6 +818,8 @@ def update_prototype(
 
     if spec_text is not None:
         (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
+    if lessons is not None:
+        (proto_dir / LESSONS_FILE).write_text(lessons, encoding="utf-8")
 
     if (
         display_name is not None

@@ -276,7 +276,7 @@
 合法名称全集（生成自 `member_spec.py`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 - stage（`STAGE_NAMES`，5 个）：`act`、`critique`、`plan`、`revise`、`think`
-- section（`SECTION_NAMES`，7 个）：`current-task`、`knowledge`、`mail-history`、`persona`、`protocol`、`skills`、`thread-recap`
+- section（`SECTION_NAMES`，8 个）：`current-task`、`knowledge`、`lessons`、`mail-history`、`persona`、`protocol`、`skills`、`thread-recap`
 <!-- END GENERATED: dsl-loop-names -->
 
 `:loop` 是引擎执行的 ReAct 会话。所有字段均为 total 语义——**以下键全部必填，无默认值**（`_loop_from`）：
@@ -304,15 +304,16 @@
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
 
-### 6.1 `:sections`（`SECTION_NAMES`，7 种）
+### 6.1 `:sections`（`SECTION_NAMES`，8 种）
 
-`persona` 与 `protocol` 进 system prompt；`knowledge`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 按向量顺序追加到对话上下文（`ContextBuilder`）。section 名不得重复。
+`persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 按向量顺序追加到对话上下文（`ContextBuilder`）。section 名不得重复。
 
 | section | 参数 | 语义 |
 |---|---|---|
 | `(persona)` | 无 | 成员人格文件（SOUL/IDENTITY/RULES 等）进 system prompt |
 | `(protocol)` | 无 | 协作协议文本进 system prompt |
 | `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息 |
+| `(lessons)` | 无 | 成员继承的 `config/LESSONS.md`（退休成员蒸馏、随原型包传递，issue ）拼成 `[传承教训]` 用户消息；无该文件则跳过该 section（空态惯例同 knowledge/skills） |
 | `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
 | `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息（issue ）；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
 | `(thread-recap)` | 无 | 本线程最近一个已完成 session 的简报（触发、工具调用摘要、结论）拼成 `[本线程上一轮处理摘要]` 用户消息（issue ）：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随线程长度膨胀；线程首轮、上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section |

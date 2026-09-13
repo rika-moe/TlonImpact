@@ -1,10 +1,11 @@
 """Context assembly for Agent.
 
-Builds the LLM conversation context (memory knowledge blocks + skills
-index + current doing task + thread recap + mailbox history + current
-mail) and the system prompt (persona files with mtime-keyed caching).
-Extracted from the Agent god class; complements prompt_builder's pure
-SystemPromptBuilder with the agent-bound fetching/caching side.
+Builds the LLM conversation context (memory knowledge blocks + inherited
+lessons + skills index + current doing task + thread recap + mailbox
+history + current mail) and the system prompt (persona files with
+mtime-keyed caching). Extracted from the Agent god class; complements
+prompt_builder's pure SystemPromptBuilder with the agent-bound
+fetching/caching side.
 
 P4: the builder receives its dependencies (config, team members,
 mailbox, memory, task manager, rule, address) explicitly and owns the
@@ -22,7 +23,7 @@ from tlon.agents.session_journal import SessionJournal, session_id_for
 from tlon.agents.skills import Signature, render_skills_index, scan_signature, scan_skills
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
-from tlon.base.paths import paths
+from tlon.base.paths import TlonPaths, paths
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
@@ -141,6 +142,7 @@ class ContextBuilder:
         rule: MemberRule,
         address: str,
         journal: SessionJournal | None = None,
+        tlon_paths: TlonPaths | None = None,
     ):
         self._config = config
         self._team_members = team_members
@@ -155,6 +157,9 @@ class ContextBuilder:
         # Session journal (ADR 0007): read-only, feeds the thread-recap
         # section; None degrades that section to empty.
         self._journal = journal
+        # Path resolver for the lessons section's config/LESSONS.md read
+        # (issue ); defaults to the global ~/.tlon layout.
+        self._paths = tlon_paths or paths
         # Prompt cache — rebuilt when persona file mtimes change
         self._system_prompt_cache: str | None = None
         self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
@@ -193,6 +198,26 @@ class ContextBuilder:
             return self._skills_index_cache
         except Exception:
             logger.warning("skills_index_build_failed", exc_info=True)
+            return ""
+
+    def build_lessons(self) -> str:
+        """Build the ``(lessons)`` section text (issue ).
+
+        Reads the member's inherited ``config/LESSONS.md`` — lessons
+        distilled from a retired member, packaged with the prototype and
+        copied in by ``instantiate``. Empty string when the member has no
+        lessons file (the section is then skipped, same empty-state
+        convention as knowledge/skills); read failures degrade to empty —
+        a missing/corrupt file must never block context assembly.
+        """
+        try:
+            lessons_file = self._paths.agent_lessons_file(self._config.id)
+            if not lessons_file.exists():
+                return ""
+            text = lessons_file.read_text(encoding="utf-8").strip()
+            return f"[传承教训]\n\n{text}" if text else ""
+        except Exception:
+            logger.warning("lessons_context_build_failed", exc_info=True)
             return ""
 
     def build_current_task(self) -> str:
@@ -240,6 +265,10 @@ class ContextBuilder:
                 knowledge = await self.build_knowledge_context()
                 if knowledge:
                     context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
+            elif name == "lessons":
+                lessons = self.build_lessons()
+                if lessons:
+                    context.append({"role": "user", "content": lessons})
             elif name == "skills":
                 index = await self.build_skills_index()
                 if index:

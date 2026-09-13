@@ -103,6 +103,14 @@ class WritePrototypeTool(Tool):
                         "type": "string",
                         "description": "本代变更说明：相对父原型改了什么、为什么",
                     },
+                    "lessons": {
+                        "type": "string",
+                        "description": (
+                            "随包教训（issue ）：退休成员蒸馏出的经验，落盘为原型的 "
+                            "LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) "
+                            "context section 注入对话"
+                        ),
+                    },
                 },
                 "required": ["name", "behavior"],
             },
@@ -117,6 +125,7 @@ class WritePrototypeTool(Tool):
         description: str = kwargs.get("description", "")
         parent: str | None = kwargs.get("parent") or None
         proposal_note: str | None = kwargs.get("proposal_note") or None
+        lessons: str | None = kwargs.get("lessons") or None
 
         hint = _BEHAVIOR_HINT if ":loop" in behavior else _SCRIPT_HINT
         try:
@@ -128,6 +137,7 @@ class WritePrototypeTool(Tool):
                 author_id=self._author_id,
                 parent=parent,
                 proposal_note=proposal_note,
+                lessons=lessons,
             )
         except PrototypeError as e:
             return ToolResult(

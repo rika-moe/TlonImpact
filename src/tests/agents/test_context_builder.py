@@ -423,6 +423,103 @@ async def test_recap_precedes_mail_history(tmp_path: Path) -> None:
     assert context[2]["content"].endswith("\n\n新信")
 
 
+# ===== (lessons) section（issue ）=====
+
+
+def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
+    """A builder whose lessons file resolves under the isolated home."""
+    return ContextBuilder(
+        AgentConfig(id=AGENT, name=AGENT),
+        [],
+        None,
+        _MemoryStub(),  # type: ignore[arg-type]
+        TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path)),
+        _rule_with_sections(sections),
+        ADDRESS,
+        None,
+        TlonPaths(home=tmp_path),
+    )
+
+
+def test_lessons_section_accepted() -> None:
+    spec = MemberSpec.from_edn(
+        loads(
+            """\
+{:version 1
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :actions []
+          :loop {:context {:sections [(persona) (lessons) (mail-history 5)]}
+                 :stages [(think)]
+                 :until (iteration-limit-reached?)
+                 :max-iterations 1
+                 :max-consecutive-errors 1
+                 :reflect {:enabled false :interval-minutes 15}}}]}
+"""
+        )
+    )
+    validate_member_spec(spec)
+
+
+def test_lessons_section_rejects_arguments() -> None:
+    spec = MemberSpec.from_edn(
+        loads(
+            """\
+{:version 1
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :actions []
+          :loop {:context {:sections [(lessons 3)]}
+                 :stages [(think)]
+                 :until (iteration-limit-reached?)
+                 :max-iterations 1
+                 :max-consecutive-errors 1
+                 :reflect {:enabled false :interval-minutes 15}}}]}
+"""
+        )
+    )
+    with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
+        validate_member_spec(spec)
+
+
+async def test_lessons_file_injected(tmp_path: Path) -> None:
+    builder = _make_lessons_builder(tmp_path, "[(lessons)]")
+    lessons_file = TlonPaths(home=tmp_path).agent_lessons_file(AGENT)
+    lessons_file.parent.mkdir(parents=True, exist_ok=True)
+    lessons_file.write_text("- 部署前先跑八件套\n", encoding="utf-8")
+
+    context = await builder.build_context(_mail())
+
+    assert len(context) == 2  # lessons block + current mail
+    section = context[0]
+    assert section["role"] == "user"
+    assert section["content"].startswith("[传承教训]")
+    assert "- 部署前先跑八件套" in section["content"]
+    assert context[1]["content"].endswith("\n\nhello")
+
+
+async def test_no_lessons_file_injects_nothing(tmp_path: Path) -> None:
+    """A member without config/LESSONS.md simply skips the section."""
+    builder = _make_lessons_builder(tmp_path, "[(lessons)]")
+
+    context = await builder.build_context(_mail())
+
+    assert len(context) == 1
+    assert context[0]["content"].endswith("\n\nhello")
+
+
+async def test_undeclared_lessons_section_injects_nothing(tmp_path: Path) -> None:
+    """A spec without (lessons) never sees the file — 看与不看看 spec."""
+    builder = _make_lessons_builder(tmp_path, "[(persona)]")
+    lessons_file = TlonPaths(home=tmp_path).agent_lessons_file(AGENT)
+    lessons_file.parent.mkdir(parents=True, exist_ok=True)
+    lessons_file.write_text("- 教训\n", encoding="utf-8")
+
+    context = await builder.build_context(_mail())
+
+    assert len(context) == 1
+
+
 # ===== 外部来信标记（issue ）=====
 
 EXTERNAL = "notifications@github.com"

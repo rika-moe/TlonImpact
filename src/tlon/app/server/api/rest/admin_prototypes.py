@@ -22,7 +22,11 @@ from tlon.tools.prototypes.ports import PrototypeError
 from .common import RestHandlerBase
 
 
-def _prototype_payload(info: PrototypeInfo, behavior: str | None = None) -> dict[str, Any]:
+def _prototype_payload(
+    info: PrototypeInfo,
+    behavior: str | None = None,
+    lessons: str | None = None,
+) -> dict[str, Any]:
     """Serialize a PrototypeInfo for the admin API (list + detail shapes)."""
     payload: dict[str, Any] = {
         "name": info.name,
@@ -40,6 +44,8 @@ def _prototype_payload(info: PrototypeInfo, behavior: str | None = None) -> dict
     }
     if behavior is not None:
         payload["behavior"] = behavior
+    if lessons is not None:
+        payload["lessons"] = lessons
     return payload
 
 
@@ -79,7 +85,8 @@ class AdminPrototypeHandlers(RestHandlerBase):
 
     async def handle_get_prototype(self, request: web.Request) -> web.Response:
         """GET /admin/prototypes/{name} - trusted-library prototype detail:
-        metadata + parameters + the full behavior.tlon text."""
+        metadata + parameters + the full behavior.tlon text (+ LESSONS.md
+        text when the prototype carries one, issue )."""
         return self._handle_get_detail(request, staging=False)
 
     async def handle_get_staging_prototype(self, request: web.Request) -> web.Response:
@@ -94,12 +101,14 @@ class AdminPrototypeHandlers(RestHandlerBase):
             )
         name = request.match_info["name"]
         try:
-            info, behavior = get_prototype_detail(name, staging=staging, tlon_paths=self.paths)
+            info, behavior, lessons = get_prototype_detail(
+                name, staging=staging, tlon_paths=self.paths
+            )
         except PrototypeError as e:
             return self._json_response(
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
             )
-        payload = _prototype_payload(info, behavior)
+        payload = _prototype_payload(info, behavior, lessons)
         # Lineage (): the derived parent chain, including per-generation
         # diffs — first-class data on the detail endpoint.
         payload["lineage"] = get_prototype_lineage(name, tlon_paths=self.paths)
@@ -109,7 +118,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
         """POST /admin/prototypes - human-authored prototype, written
         directly into the trusted library (handwritten implies trusted).
 
-        Body: {name, behavior, display_name?, description?}. 201 on
+        Body: {name, behavior, display_name?, description?, lessons?}. 201 on
         success; 400 invalid_prototype on missing fields or a spec that
         fails the validation chain (nothing is written in that case).
         """
@@ -141,6 +150,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 proposal_note=(
                     str(body["proposal_note"]) if body.get("proposal_note") else None
                 ),
+                lessons=str(body["lessons"]) if body.get("lessons") else None,
                 tlon_paths=self.paths,
             )
         except PrototypeError as e:
@@ -185,16 +195,18 @@ class AdminPrototypeHandlers(RestHandlerBase):
         behavior = body.get("behavior")
         parent = body.get("parent")
         proposal_note = body.get("proposal_note")
+        lessons = body.get("lessons")
         if (
             display_name is None
             and description is None
             and behavior is None
             and parent is None
             and proposal_note is None
+            and lessons is None
         ):
             return self._json_response(
                 {"error": "Nothing to update: provide display_name, description, behavior, "
-                          "parent or proposal_note",
+                          "parent, proposal_note or lessons",
                  "reason": "invalid_prototype"},
                 status=400,
             )
@@ -206,6 +218,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 behavior_edn=str(behavior) if behavior is not None else None,
                 parent=str(parent) if parent else None,
                 proposal_note=str(proposal_note) if proposal_note else None,
+                lessons=str(lessons) if lessons is not None else None,
                 staging=staging,
                 tlon_paths=self.paths,
             )

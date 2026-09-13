@@ -993,6 +993,7 @@ class MemberRuntime(Member):
             rule,
             self.address,
             journal,
+            caps.tlon_paths,
         )
         self._reflection = ReflectionEngine(caps.memory, caps.llm_client, rule, journal)
         self._stage_services = StageServices(

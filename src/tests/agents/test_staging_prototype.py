@@ -15,6 +15,7 @@ from tlon.agents.prototypes import (
     write_trusted_prototype,
 )
 from tlon.base.paths import TlonPaths
+from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
 from tlon.tools.prototypes.ports import PrototypeError
 
@@ -145,3 +146,33 @@ class TestStagingLineageFields:
             write_staging_prototype(
                 "orphan", VALID_SPEC, author_id="adam", parent="../x", tlon_paths=p
             )
+
+
+class TestWritePrototypeToolLessons:
+    """writePrototype passes the optional ``lessons`` parameter through to
+    the staging writer (issue ): the prototype lands with LESSONS.md."""
+
+    async def test_lessons_passthrough(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        tool = WritePrototypeTool(
+            author_id="adam",
+            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+        )
+
+        result = await tool.execute(name="wise", behavior=VALID_SPEC, lessons="- 教训\n")
+
+        assert result.success
+        lessons_file = p.prototypes_staging_dir() / "wise" / "LESSONS.md"
+        assert lessons_file.read_text(encoding="utf-8") == "- 教训\n"
+
+    async def test_no_lessons_no_file(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        tool = WritePrototypeTool(
+            author_id="adam",
+            writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
+        )
+
+        result = await tool.execute(name="plain", behavior=VALID_SPEC)
+
+        assert result.success
+        assert not (p.prototypes_staging_dir() / "plain" / "LESSONS.md").exists()

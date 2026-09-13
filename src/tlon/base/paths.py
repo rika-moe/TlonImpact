@@ -14,11 +14,13 @@ Layout:
     │   └── spawn-quota.json
     ├── {agent_id}/
     │   ├── config/
-    │   │   └── agent.yaml
+    │   │   ├── agent.yaml
+    │   │   └── LESSONS.md
     │   ├── skills/
     │   │   └── {skill}/SKILL.md
     │   ├── memory/
     │   │   ├── config.json
+    │   │   ├── lessons.md
     │   │   └── episodic/
     │   │       ├── summaries.jsonl
     │   │       └── facts.jsonl
@@ -223,6 +225,18 @@ class TlonPaths:
         """
         return self._home / agent_id / "config" / "behavior.tlon"
 
+    def agent_lessons_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/config/LESSONS.md — lessons inherited at birth
+        (issue ).
+
+        Copied from the prototype's ``LESSONS.md`` by ``instantiate`` and
+        injected into the conversation by the DSL ``(lessons)`` context
+        section. Read-only resolution: does NOT create directories, so
+        checking ``exists()`` stays side-effect free; an absent file is
+        the normal state for a member whose prototype carries no lessons.
+        """
+        return self._home / agent_id / "config" / "LESSONS.md"
+
     # ===== Skills (ADR 0010) =====
 
     def skills_dir(self) -> Path:
@@ -272,6 +286,16 @@ class TlonPaths:
 
     def memory_config_file(self, agent_id: str) -> Path:
         return self.agent_memory_dir(agent_id) / "config.json"
+
+    def memory_lessons_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/memory/lessons.md — retirement distillation
+        output (issue ).
+
+        Written by ``agents/lessons.py``'s LessonsDistiller on
+        ``AGENT_STOPPED``: one LLM pass distills the member's episodic
+        digest into lessons for the next generation. Creates the memory
+        dir (write path)."""
+        return self.agent_memory_dir(agent_id) / "lessons.md"
 
     # ===== Shared =====
 

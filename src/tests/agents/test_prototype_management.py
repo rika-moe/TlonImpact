@@ -12,6 +12,7 @@ from tlon.agents.prototypes import (
     approve_prototype,
     delete_prototype,
     get_prototype_detail,
+    instantiate,
     update_prototype,
     write_staging_prototype,
     write_trusted_prototype,
@@ -88,8 +89,9 @@ class TestGetPrototypeDetail:
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("hand", VALID_BEHAVIOR, description="d", tlon_paths=p)
 
-        info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        info, behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
 
+        assert lessons is None
         assert info.name == "hand"
         assert info.trusted is True
         assert behavior == VALID_BEHAVIOR
@@ -98,7 +100,7 @@ class TestGetPrototypeDetail:
         p = TlonPaths(home=tmp_path)
         write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
 
-        info, _behavior = get_prototype_detail("staged", staging=True, tlon_paths=p)
+        info, _behavior, _lessons = get_prototype_detail("staged", staging=True, tlon_paths=p)
 
         assert info.trusted is False
         assert info.author == "adam"
@@ -135,7 +137,7 @@ class TestUpdatePrototype:
 
         update_prototype("hand", behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
 
-        _info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == VALID_BEHAVIOR_V2
 
     def test_invalid_behavior_update_leaves_disk_untouched(self, tmp_path):
@@ -148,7 +150,7 @@ class TestUpdatePrototype:
             )
 
         # Neither the behavior file nor the metadata was written.
-        _info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == VALID_BEHAVIOR
         metadata = (p.prototypes_dir() / "hand" / "prototype.edn").read_text(
             encoding="utf-8"
@@ -235,9 +237,97 @@ class TestApprovePreservesLineage:
         with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
             update_prototype("hand", parent="ghost", tlon_paths=p)
 
-        info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
         assert info.parent is None
         assert behavior == VALID_BEHAVIOR
+
+
+class TestLessonsFile:
+    """Prototype ``LESSONS.md`` — retirement lessons packaged with the
+    prototype (issue )."""
+
+    def test_staging_write_persists_lessons(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_staging_prototype(
+            "staged", VALID_BEHAVIOR, author_id="adam", lessons="- 教训甲\n", tlon_paths=p
+        )
+
+        lessons_file = p.prototypes_staging_dir() / "staged" / "LESSONS.md"
+        assert lessons_file.read_text(encoding="utf-8") == "- 教训甲\n"
+        _info, _behavior, lessons = get_prototype_detail(
+            "staged", staging=True, tlon_paths=p
+        )
+        assert lessons == "- 教训甲\n"
+
+    def test_trusted_write_persists_lessons(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 教训乙\n", tlon_paths=p)
+
+        lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
+        assert lessons_file.read_text(encoding="utf-8") == "- 教训乙\n"
+        _info, _behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        assert lessons == "- 教训乙\n"
+
+    def test_no_lessons_no_file(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        assert not (p.prototypes_dir() / "hand" / "LESSONS.md").exists()
+        _info, _behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        assert lessons is None
+
+    def test_update_writes_lessons(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        update_prototype("hand", lessons="- 新教训\n", tlon_paths=p)
+
+        lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
+        assert lessons_file.read_text(encoding="utf-8") == "- 新教训\n"
+
+    def test_update_none_preserves_lessons(self, tmp_path):
+        """None = keep (same semantics as parent/proposal_note)."""
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 保留我\n", tlon_paths=p)
+
+        update_prototype("hand", description="只改描述", tlon_paths=p)
+
+        lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
+        assert lessons_file.read_text(encoding="utf-8") == "- 保留我\n"
+
+    def test_approve_carries_lessons_to_trusted(self, tmp_path):
+        """Approval is a whole-directory move — LESSONS.md rides along."""
+        p = TlonPaths(home=tmp_path)
+        write_staging_prototype(
+            "staged", VALID_BEHAVIOR, author_id="adam", lessons="- 随包\n", tlon_paths=p
+        )
+
+        approve_prototype("staged", tlon_paths=p)
+
+        assert (p.prototypes_dir() / "staged" / "LESSONS.md").exists()
+        assert not (p.prototypes_staging_dir() / "staged").exists()
+
+
+class TestInstantiateLessons:
+    """``instantiate`` copies the prototype's LESSONS.md to the member's
+    config dir (issue )."""
+
+    def test_copies_lessons_next_to_behavior(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 前辈教训\n", tlon_paths=p)
+
+        instantiate("hand", "agent1", "新成员", tlon_paths=p)
+
+        lessons_file = p.agent_lessons_file("agent1")
+        assert lessons_file.read_text(encoding="utf-8") == "- 前辈教训\n"
+
+    def test_no_lessons_no_file(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        instantiate("hand", "agent1", "新成员", tlon_paths=p)
+
+        assert not (tmp_path / "agent1" / "config" / "LESSONS.md").exists()
 
 
 class TestDeletePrototype:

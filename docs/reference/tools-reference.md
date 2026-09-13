@@ -385,6 +385,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
 | `parent` | string | 否 | — | 父原型名称（谱系，；须已存在，trusted 或 staging 皆可）；`generation` 服务端推导为父代 + 1 |
 | `proposal_note` | string | 否 | — | 本代变更说明（相对父原型改了什么、为什么） |
+| `lessons` | string | 否 | — | 随包教训文本（：退休成员蒸馏的经验），落盘为原型的 `LESSONS.md`；实例化时拷贝给新成员，由其 spec 的 `(lessons)` section 注入对话 |
 
 失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带按提交内容选择的 schema 提示（含 `:loop` 用 `_BEHAVIOR_HINT`，否则 `_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
 
