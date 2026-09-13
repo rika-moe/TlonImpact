@@ -74,13 +74,13 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 DSL 的设计前提是看清哪一半在语言内、哪一半在语言外：
 
 - **机制是 Python 固定实现**：工具（发邮件、读写文件、Shell、记忆、spawn）、stage（think / act / plan / critique / revise）、section（persona / protocol / knowledge / skills / current-task / thread-recap / mail-history）、求值器本身、事件总线。这些由引擎提供，有单元测试，不随 spec 变化。
-- **策略是 spec 数据**：何时醒（`:on` + `:when`）、如何思考（`:loop` 的 stage 编排、上下文组装、`:until` 终止条件）、何时完成、完成后做什么（`:actions`）。Adam 是最纯粹的例子：作为 agent 世界的 init 进程，它的全部策略就是 [agents/adam.py](../../src/tlon/agents/adam.py) 里一段内置 spec 文本（`ADAM_SPEC_EDN`），boot 时 `start-all`、空闲时 `stop`，机制上一个普通的 `MemberRuntime` 实例。这个例子的分量在于：系统里权限最高的成员（能启停其他所有成员）恰恰是用最受限的方式写成的——它的权力不来自语言能力的豁免，只来自注入给它的宿主谓词与动作。权限是注入的，不是语法授予的。
+- **策略是 spec 数据**：何时醒（`:on` + `:when`）、如何思考（`:loop` 的 stage 编排、上下文组装、`:until` 终止条件）、何时完成、完成后做什么（`:actions`）。Adam 是最纯粹的例子：作为 agent 世界的 init 进程，它的全部策略就是 [agents/adam.py](../../src/tlon/agents/adam.py) 里一段内置 spec 文本（`ADAM_SPEC_EDN`），boot 时 `start-all`、空闲时 `stop`、新成员出生时发欢迎信（issue  出生社会化：名册由宿主查询 `member-roster` 现算，通信惯例是 spec 里的静态文本），机制上一个普通的 `MemberRuntime` 实例。这个例子的分量在于：系统里权限最高的成员（能启停其他所有成员）恰恰是用最受限的方式写成的——它的权力不来自语言能力的豁免，只来自注入给它的宿主谓词与动作。权限是注入的，不是语法授予的。
 
 由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 发明不出第六个 stage、第七种 section、第七个动作。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
 
 机制/策略的界线在认知循环内部同样清晰。`:stages` 向量决定跑哪些 stage、以什么顺序、各自带什么条件（`:if`），但每个 stage 的语义——`think` 是一次 LLM 调用、`act` 是执行本轮全部工具调用、`critique` 失败如何软降级——是 [agents/stages/](../../src/tlon/agents/stages) 下的 Python 实现。spec 里的 `act` 只声明"执行这轮的工具分发列表"，每个工具一个后台 task 的并发执行是引擎的事。更关键的是引擎保留了 spec 无法覆盖的否决权：`:max-iterations` 是迭代硬顶，在任何 `:until` 求值之前无条件生效——spec 可以声明终止条件，但声明不出"永不终止"。策略可以自由，自由有边。
 
-触发面也在机制侧收敛：认知规则（带 `:loop`）只在 `:mail-delivered` 上生效，订阅其他事件的认知规则在运行时记 warning 并跳过（`MemberRuntime`）。spec 的 `:on` 词汇表虽然覆盖全部 `EventType`（确定规则如 Adam 确实需要感知生命周期事件），但"启动一次昂贵的认知会话"的入口只有邮件一个。这与愿景的书信共和国一致：邮件是社会唯一的公共通道，也是唯一值得动用 LLM 思考的刺激源；可观测性事件可以有确定规则盯着，但不该触发认知。
+触发面也在机制侧收敛：认知规则（带 `:loop`）只在 `:mail-delivered` 上生效，订阅其他事件的认知规则在运行时记 warning 并跳过（`MemberRuntime`）。spec 的 `:on` 词汇表虽然覆盖全部 `EventType`（确定规则如 Adam 确实需要感知生命周期事件——`:on :agent-spawned` 的出生欢迎信就是一例），但"启动一次昂贵的认知会话"的入口只有邮件一个。这与愿景的书信共和国一致：邮件是社会唯一的公共通道，也是唯一值得动用 LLM 思考的刺激源；可观测性事件可以有确定规则盯着，但不该触发认知。
 
 生命周期管理也是同一个划法的示范：wake-on-mail 不是策略而是机制——注册表从 spec 派生唤醒资格（声明了 `:on :mail-delivered` 的睡眠收件人会被唤醒），唤醒动作本身是幂等的机制执行，任何 spec 都不需要写"收到邮件时叫醒我"这样的规则；反过来，空闲检测也是机制（注册表只发布 `AGENT_IDLE` 这个事实），而"空闲了要不要停"是策略——Adam 的 spec 里那条 `:on :agent-idle` 规则。事实由机制生产，后果由 spec 决定，这条线让整个社会的启停行为也可进化：换一种排空策略只是改 Adam 的 spec 文本，不动一行引擎代码。
 

@@ -1,12 +1,13 @@
 """Adam — the policy member (PID 1), now a unified MemberRuntime instance.
 
-Pins Adam's two lifecycle policy lines as data: boot (start-all for members
-whose spec declares ``:on :boot``, phase E spec-derived) and drain
-(idle-fact → stop request). Wake is no longer Adam's line — phase E moved
-it into the registry as a spec-derived mechanized policy (see
-``test_registry.py``). The registry is stubbed with its read-only
-interfaces (``get_agent`` / ``get_config`` / ``get_all`` /
-``boot_candidates`` / ``is_lazy``).
+Pins Adam's three policy lines as data: boot (start-all for members
+whose spec declares ``:on :boot``, phase E spec-derived), drain
+(idle-fact → stop request) and welcome (issue  — AGENT_SPAWNED
+triggers a birth-socialization mail to the newborn). Wake is no longer
+Adam's line — phase E moved it into the registry as a spec-derived
+mechanized policy (see ``test_registry.py``). The registry is stubbed
+with its read-only interfaces (``get_agent`` / ``get_config`` /
+``get_all`` / ``get_all_ids`` / ``boot_candidates`` / ``is_lazy``).
 """
 
 import asyncio
@@ -31,6 +32,10 @@ class _RegistryStub:
         self._configs = configs
         self._running = running or set()
         self._boot_eligible = boot_eligible or set()
+        # RegistryQueries.member_roster reads ``_paths`` for prototype
+        # metadata; None = the module singleton (never hit here — no stub
+        # config carries a prototype).
+        self._paths = None
 
     def get_agent(self, agent_id: str):
         return "running" if agent_id in self._running else None
@@ -39,6 +44,9 @@ class _RegistryStub:
         return self._configs.get(agent_id)
 
     def get_all(self) -> list[str]:
+        return list(self._configs)
+
+    def get_all_ids(self) -> list[str]:
         return list(self._configs)
 
     def boot_candidates(self) -> list[str]:
@@ -105,5 +113,42 @@ class TestAdamDecisions:
         await _wait_for(lambda: len(stops) == 1)
         assert stops[0].payload.agent_id == "worker-1"
         assert stops[0].payload.reason == "drain"
+
+        await adam.shutdown()
+
+    async def test_welcome_newborn(self, bus):
+        """Issue : AGENT_SPAWNED triggers a welcome mail to the newborn.
+
+        The recipient address is assembled in the spec (``str``) from the
+        event's agent id — emit recipients are full mail addresses, never
+        bare ids (``Mail.create`` rejects non-addresses).
+        """
+        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
+        adam = make_adam(bus, registry)
+        mails: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
+        await adam.initialize()
+
+        await bus.publish(
+            Event(
+                type=EventType.AGENT_SPAWNED,
+                payload={
+                    "agent_id": "c-xin-1a2b3c4d",
+                    "name": "小新",
+                    "prototype": "worker",
+                    "spawner_id": "worker-1",
+                    "spawn_depth": 1,
+                    "started": True,
+                },
+                source="agent_registry",
+            )
+        )
+        await _wait_for(lambda: len(mails) == 1)
+        mail = mails[0].payload
+        assert mail.from_address == "adam@tlon.internal"
+        assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
+        # Greeting names the newborn; the roster lists the society.
+        assert "小新" in mail.content
+        assert "worker-1（worker-1）" in mail.content
 
         await adam.shutdown()

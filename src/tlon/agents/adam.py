@@ -7,7 +7,7 @@ the first configuration instance of the unified MemberRuntime
 (``agents/member_runtime.py``, phase C) — a built-in MemberSpec (the
 ``ADAM_SPEC`` text below) parsed directly with the unified loader
 semantics and validated at load, plus registry query closures injected
-into the evaluator. Two lifecycle policy lines live in the spec:
+into the evaluator. Three lifecycle/social policy lines live in the spec:
 
 1. boot — after initialize(), every registered member whose spec
    declares ``:on :boot`` (phase E: spec-derived, see ``boot_candidates``)
@@ -16,6 +16,13 @@ into the evaluator. Two lifecycle policy lines live in the spec:
    never executes iteration, iteration is a builtin.
 2. drain — the registry's AGENT_IDLE fact event is turned into an
    AGENT_STOP_REQUEST{reason="drain"}.
+3. welcome (issue , birth socialization) — AGENT_SPAWNED triggers a
+   welcome mail to the newborn member: a greeting naming the new member,
+   the social roster (``member-roster``, dynamically expanded by the
+   host) and the static communication conventions. The recipient address
+   is assembled in the spec with ``str`` — emit recipients are mail
+   addresses (``Mail.create`` rejects bare ids). Adam is v1's mentor:
+   mentoring is spec-described behavior, not a dedicated mechanism.
 
 Wake is no longer Adam's line: phase E moved wake-on-mail into the
 registry as a mechanized policy — the registry derives wake eligibility
@@ -46,15 +53,25 @@ from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.events.event_bus import EventBus
 
 #: Adam's policy, as data. Parsed once per assembly by
-#: :func:`make_adam`; behavior is exactly the pre-P5a hand-written Adam's.
-ADAM_SPEC_EDN = """\
-{:version 1
+#: :func:`make_adam`. Three rules: boot (start-all), drain (idle → stop)
+#: and welcome (issue  — a birth-socialization mail to every spawned
+#: member; the roster is host-expanded, the conventions are static text).
+ADAM_SPEC_EDN = r"""{:version 1
  :rules [{:name "boot"
           :on :boot
           :actions [(start-all {:reason "boot"})]}
          {:name "drain"
           :on :agent-idle
-          :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}]}
+          :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}
+         {:name "welcome"
+          :on :agent-spawned
+          :actions [(emit (str "亲爱的 " (get event :name) "：\n\n"
+                               "欢迎出生。我是 Adam，这个世界的守护者。\n\n"
+                               "这个社会的成员：\n" (member-roster) "\n\n"
+                               "通信惯例：\n"
+                               "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
+                               "- 要广播给全体成员，写给 all@tlon.internal。\n")
+                          [(str (get event :agent_id) "@tlon.internal")])]}]}
 """
 
 

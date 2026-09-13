@@ -126,6 +126,55 @@ class TestArithmetic:
             eval_form(loads('(+ 1 "x")'), {}, _BUILTINS)
 
 
+class TestStr:
+    """Issue : variadic string concatenation for spec-side text assembly."""
+
+    def test_strings_concatenate_verbatim(self):
+        assert eval_form(loads('(str "a" "b" "c")'), {}, _BUILTINS) == "abc"
+
+    def test_non_strings_use_edn_write_form(self):
+        assert (
+            eval_form(loads('(str "id: " :foo ", n=" 3 ", " [1 2])'), {}, _BUILTINS)
+            == "id: :foo, n=3, [1 2]"
+        )
+
+    def test_nil_and_bool(self):
+        assert eval_form(loads('(str nil " " true)'), {}, _BUILTINS) == "nil true"
+
+    def test_no_args_is_empty_string(self):
+        assert eval_form(loads("(str)"), {}, _BUILTINS) == ""
+
+
+class TestMemberRoster:
+    """Issue : the host-injected social roster query (same injection
+    pattern as ``sleeping?`` — absent from the host-less registry)."""
+
+    class _Host:
+        def is_sleeping(self, agent_id: object) -> bool:
+            return False
+
+        def is_running(self, agent_id: object) -> bool:
+            return True
+
+        def is_lazy(self, agent_id: object) -> bool:
+            return False
+
+        def start_all_candidates(self) -> list[str]:
+            return []
+
+        def member_roster(self) -> str:
+            return "阿白（a-bai-1a2b3c4d）"
+
+    def test_with_host_returns_roster(self):
+        builtins = make_member_builtins(self._Host())
+        assert eval_form(loads("(member-roster)"), {}, builtins) == "阿白（a-bai-1a2b3c4d）"
+
+    def test_without_host_is_unregistered(self):
+        assert "member-roster" not in _BUILTINS
+        with pytest.raises(EvalError, match="unknown function: member-roster"):
+            eval_form(loads("(member-roster)"), {}, _BUILTINS)
+
+
 class TestWhileRecur:
     """Phase D: Clojure-style bounded loops, state through the binding vector."""
 

@@ -74,7 +74,7 @@
 | 统一装配 + 懒加载：`assemble_cognitive` | [agents/assembly.py](../../src/tlon/agents/assembly.py) |
 | 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决、谱系（`:parent`/`:generation`/`:proposal-note` 落盘，`get_prototype_lineage` 派生查询，） | [agents/prototypes.py](../../src/tlon/agents/prototypes.py) |
 | 生命周期机制：`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 幂等执行、排空=睡眠 | [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) |
-| 生命周期策略：boot/stop 裁决（Adam 的策略规则，数据） | [agents/adam.py](../../src/tlon/agents/adam.py) |
+| 生命周期策略：boot/stop 裁决 + 出生欢迎信（Adam 的策略规则，数据；issue  出生社会化） | [agents/adam.py](../../src/tlon/agents/adam.py) |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制 | [agents/spawn.py](../../src/tlon/agents/spawn.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
 | 世代通道工具：`writePrototype`（写 staging）/ `spawnAgent` / `stopAgent`（排空后睡眠）；谱系查询 `getPrototypeLineage` | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |

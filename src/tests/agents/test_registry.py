@@ -259,6 +259,45 @@ class TestRegistryQueries:
         assert queries.is_lazy(42) is False
         assert queries.start_all_candidates() == []
 
+    def test_member_roster(self, tmp_path):
+        """Issue : one pre-formatted line per registered member —
+        ``名字（id） — prototype：描述``; the prototype segment drops for
+        manual members, the description when the library lacks the
+        prototype. Sleeping members stay listed (the roster answers "who
+        is in this society", not "who is awake").
+        """
+        p = TlonPaths(home=tmp_path)
+        proto_dir = p.prototypes_dir() / "worker"
+        proto_dir.mkdir(parents=True)
+        (proto_dir / "behavior.tlon").write_text("", encoding="utf-8")
+        (proto_dir / "prototype.edn").write_text(
+            '{:name "worker" :description "干杂活的"}', encoding="utf-8"
+        )
+        configs = {
+            "a-bai-1a2b3c4d": AgentConfig(id="a-bai-1a2b3c4d", name="阿白", prototype="worker"),
+            "manual-1": AgentConfig(id="manual-1", name="手册"),
+            "ghost-1": AgentConfig(id="ghost-1", name="幽灵", prototype="missing-proto"),
+        }
+        registry = AgentRegistry(
+            event_bus=EventBus(),
+            agent_info_provider=_StaticProvider(configs),
+            paths=p,
+        )
+        roster = RegistryQueries(registry).member_roster()
+
+        assert set(roster.splitlines()) == {
+            "阿白（a-bai-1a2b3c4d） — worker：干杂活的",
+            "手册（manual-1）",
+            "幽灵（ghost-1） — missing-proto",
+        }
+
+        empty = AgentRegistry(
+            event_bus=EventBus(),
+            agent_info_provider=_StaticProvider({}),
+            paths=p,
+        )
+        assert RegistryQueries(empty).member_roster() == ""
+
 
 class TestWakeOnMail:
     """Phase E: the registry derives wake-on-mail from each member's spec.

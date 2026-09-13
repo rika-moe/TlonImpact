@@ -19,9 +19,10 @@ Everything a form head may name beyond the special forms lives here:
   the merged pure vocabularies plus the action builtins (``spawn`` /
   ``emit`` / ``start`` / ``stop`` / ``start-all`` / ``forward``,
   ``pure=False``). Host predicates that read registry state
-  (``sleeping?`` / ``running?`` / ``lazy?``) and the ``start-all``
-  candidate set are closure-injected via :class:`ScriptHostQueries`,
-  never registered module-level.
+  (``sleeping?`` / ``running?`` / ``lazy?``), the ``member-roster``
+  social roster (issue ) and the ``start-all`` candidate set are
+  closure-injected via :class:`ScriptHostQueries`, never registered
+  module-level.
 
 This module is the leaf of the evaluator pair: it imports nothing from
 ``agents/eval.py``; the kernel imports the contract types from here, so
@@ -33,6 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from tlon.agents.edn import dumps
 from tlon.organization.mail.mail import Mail, address_for_member
 
 
@@ -290,11 +292,23 @@ def _builtin_get(env: dict[str, Any], target: Any, key: Any, default: Any = None
     return target.get(key, default)
 
 
+def _builtin_str(env: dict[str, Any], *args: Any) -> str:
+    """Concatenate arguments into one string (issue ).
+
+    String arguments are inserted verbatim; anything else is rendered in
+    its EDN write form (``:foo`` → ``":foo"``, ``[1 2]`` → ``"[1 2]"``),
+    so a payload value can never smash the surrounding text unawares.
+    Pure and total; the fuel counter already bounds the argument count.
+    """
+    return "".join(arg if type(arg) is str else dumps(arg) for arg in args)
+
+
 #: Script member pure accessors/predicates (phase P5a). Pure only;
 #: evaluation is side-effect free by construction. The environment
 #: provides ``event`` (the triggering event's payload) and ``self``.
 SCRIPT_BUILTINS: dict[str, Builtin] = {
     "get": Builtin(_builtin_get, pure=True),
+    "str": Builtin(_builtin_str, pure=True),
     "contains?": Builtin(_builtin_contains, pure=True),
     "=": Builtin(_builtin_eq, pure=True),
     "not": Builtin(_builtin_not, pure=True),
@@ -395,6 +409,16 @@ class ScriptHostQueries(Protocol):
 
     def start_all_candidates(self) -> list[str]:
         """The boot set: members whose spec declares ``:on :boot``. Phase E."""
+        ...
+
+    def member_roster(self) -> str:
+        """The social roster (issue ): one pre-formatted line per
+        registered member — name, id, prototype and its description.
+
+        Formatting lives in the implementation, not the DSL: the DSL never
+        iterates, iteration is a builtin. Social public information, open
+        to every member (the same injected host serves Adam and
+        registry-spawned members)."""
         ...
 
 
@@ -498,11 +522,13 @@ def make_member_builtins(
     ``_record`` does both when a collector is given — appends *and*
     returns — so the two paths share one implementation.
 
-    Host predicates (``sleeping?`` / ``running?`` / ``lazy?``) and the
-    ``start-all`` candidate set are closure-injected via ``host`` — they
-    read registry state, so they are never registered module-level.
-    ``start-all`` without a host raises at evaluation time. Action
-    arguments may be pure expressions referencing ``event`` / ``msg`` /
+    Host predicates (``sleeping?`` / ``running?`` / ``lazy?``), the
+    ``member-roster`` social roster and the ``start-all`` candidate set
+    are closure-injected via ``host`` — they read registry state, so they
+    are never registered module-level. ``start-all`` without a host raises
+    at evaluation time; ``member-roster`` without a host is simply absent
+    from the registry (static validation rejects it), like ``sleeping?``.
+    Action arguments may be pure expressions referencing ``event`` / ``msg`` /
     ``result`` (e.g. ``(get event :recipient)``); option-map values are
     evaluated before the builtin sees them.
     """
@@ -601,4 +627,5 @@ def make_member_builtins(
         builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=True)
         builtins["running?"] = Builtin(lambda env, aid: host.is_running(aid), pure=True)
         builtins["lazy?"] = Builtin(lambda env, aid: host.is_lazy(aid), pure=True)
+        builtins["member-roster"] = Builtin(lambda env: host.member_roster(), pure=True)
     return builtins

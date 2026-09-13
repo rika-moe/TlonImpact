@@ -169,7 +169,7 @@
 
 ## 5. Builtin 完整清单
 
-模块级注册表在 [src/tlon/agents/builtins.py](../../src/tlon/agents/builtins.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。宿主谓词 `sleeping?` / `running?` / `lazy?` 读注册表状态，由调用方闭包注入（**仅 Adam 可用**），不在任何模块级注册表；普通成员的注册表里没有，使用即加载校验失败。
+模块级注册表在 [src/tlon/agents/builtins.py](../../src/tlon/agents/builtins.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
 ### 5.1 `TRIGGER_BUILTINS`（触发器谓词）
 
@@ -226,11 +226,12 @@
 环境 `{event, self}`：`event` 是触发事件的负载 map。
 
 <!-- BEGIN GENERATED: dsl-builtins-script -->
-`SCRIPT_BUILTINS`（4 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（5 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
 | `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
+| `str` | 是 | Concatenate arguments into one string (issue ). |
 | `contains?` | 是 |  |
 | `=` | 是 |  |
 | `not` | 是 |  |
@@ -266,7 +267,7 @@
 | `emit` | `(emit content [to])` | 发邮件；`content` 必填字符串，`to` 为地址字符串向量；**省略 `to` 时回复触发邮件的发件人**（无触发邮件则收件人为空、发信失败仅记日志） |
 | `start` | `(start {:agent id :reason s})` | 发布启动请求；`:agent` / `:reason` 均为必填非空字符串 |
 | `stop` | `(stop {:agent id :reason s})` | 发布停止请求；参数同上 |
-| `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；需要宿主查询注入——普通成员运行时会抛 `EvalError`（Adam 专用） |
+| `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；候选集展开依赖宿主查询注入——无宿主的注册表运行时会抛 `EvalError` |
 | `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发触发邮件：`:to` 必填非空地址向量，`:cc` 可选向量，`:subject` 可选字符串；正文取自触发邮件，新邮件以 `forward_of` 链接原邮件；无触发邮件时跳过并记 warning |
 
 ## 6. `:loop` 详解（认知会话）
@@ -412,7 +413,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :actions []}]}
 ```
 
-更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员，`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员——展示了选项 map 里嵌表达式与 Adam 专属宿主谓词的用法。
+更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`，三条规则：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员；`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员；`:on :agent-spawned` 时给新成员发出生欢迎信（issue ）——正文用 `(str ...)` 拼接待成员名字、宿主查询 `(member-roster)` 展开的名册与静态通信惯例，收件人地址也由 `(str (get event :agent_id) "@tlon.internal")` 装配（`emit` 的 `to` 必须是完整邮件地址，`Mail.create` 拒绝裸 id）。这个例子展示了选项 map 里嵌表达式、字符串拼接与宿主注入查询的用法。
 
 ## 10. 常见错误与加载失败行为
 

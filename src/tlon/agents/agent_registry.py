@@ -61,6 +61,7 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
+from tlon.agents.prototypes import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
 from tlon.base.component import Component
@@ -116,6 +117,29 @@ class RegistryQueries(ScriptHostQueries):
     def start_all_candidates(self) -> list[str]:
         """The boot set: members whose spec declares ``:on :boot`` (phase E)."""
         return self._registry.boot_candidates()
+
+    def member_roster(self) -> str:
+        """The social roster (issue ): one line per registered member.
+
+        Format: ``名字（id） — prototype：描述``; the prototype segment is
+        omitted for manual members, the description when the prototype is
+        absent from the library. Sleeping members stay on the roster — it
+        answers "who is in this society", not "who is awake". Adam is not
+        registered, so it never lists itself.
+        """
+        lines: list[str] = []
+        for agent_id in self._registry.get_all_ids():
+            config = self._registry.get_config(agent_id)
+            if config is None:
+                continue
+            line = f"{config.name}（{agent_id}）"
+            if config.prototype:
+                line += f" — {config.prototype}"
+                info = get_prototype_info(config.prototype, self._registry._paths)
+                if info is not None and info.description:
+                    line += f"：{info.description}"
+            lines.append(line)
+        return "\n".join(lines)
 
 
 class AgentRegistry(Component):

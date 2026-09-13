@@ -35,3 +35,7 @@
 - **边界靠纪律与检查维持**。"注册表不含策略"没有机器强制，依赖代码评审与 import-linter 的依赖方向契约维持；wake-on-mail 归入机制的论证（spec 派生而非自由裁量）需要随实现演进持续回看。
 - **宿主谓词是注入特权，而非 Adam 独占**。`sleeping?` / `running?` / `lazy?` 谓词与 `start-all` 动作从不注册在模块级 builtin 表，必须由调用方闭包注入宿主查询（[agents/builtins.py](../../src/tlon/agents/builtins.py) 的 `make_member_builtins` + `ScriptHostQueries`）。当前注入面有两处：Adam（`make_adam`）与注册表全体成员的 spec（`AgentRegistry._host_builtins`，D6.6 向成员开放了宿主谓词）。即特权边界画在"宿主注入 vs 默认求值环境"，而非"Adam vs 其他成员"——未来若要收紧成员侧的宿主可见性，只需收窄 `_host_builtins` 的注入。
 - **排空等决策的最终落点仍在机制侧复查**。Adam 的策略只是请求；`_drain_agent` 在 wake lock 下重新校验空闲条件，竞态窗口里新开的会话能保住成员。策略可以是陈旧的，机制必须自己兜底。
+
+## 补注
+
+- **2026-09（issue ）**：`ADAM_SPEC_EDN` 增至三条规则——新增 `:on :agent-spawned` 的出生欢迎信（出生社会化：名册经宿主查询 `member-roster` 现算，通信惯例为 spec 内静态文本；收件人地址由 `(str (get event :agent_id) "@tlon.internal")` 装配）。mentor 行为按本 ADR 的划法落在策略侧（spec 数据），未新增专门机制；宿主注入面同决策时（`make_adam` 与 `AgentRegistry._host_builtins` 两处，`member-roster` 随 `RegistryQueries` 对两方同份开放）。
