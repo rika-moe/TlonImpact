@@ -63,6 +63,6 @@
 
 - **env 变量统一定为 `LLM_*`**：`LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_TEMPERATURE` / `LLM_MAX_RETRIES` / `LLM_BASE_DELAY`，不留 `OPENAI_*` 兼容别名（项目规范 1：不保留向后兼容）。
 - **escape hatch 是 `LLM_BASE_URL`**（对应上文"`OPENAI_BASE_URL` 保留为 escape hatch"一行）：仅当 `LLM_MODEL` 为裸模型名（不含 `/`）时生效——`llm_client.py` 给裸名加 `openai/` 前缀并以 `LLM_BASE_URL` 为 api_base，用于私有部署 / 代理 / 注册表未收录的 provider。`provider/model` 形式原样传给 litellm，由其内置路由表解析 base_url。
-- **单 key 通用**：`LLM_API_KEY` 无论什么 provider 都显式以 `api_key=` 传给 `acompletion`，不要求用户按 litellm 惯例设 `DEEPSEEK_API_KEY` 等 per-provider 变量（对应上文"各家约定的 key 环境变量"一行——实施时简化为单 key）。
+- ~~**单 key 通用**：`LLM_API_KEY` 无论什么 provider 都显式以 `api_key=` 传给 `acompletion`，不要求用户按 litellm 惯例设 `DEEPSEEK_API_KEY` 等 per-provider 变量（对应上文"各家约定的 key 环境变量"一行——实施时简化为单 key）。~~ **已被 issue  修订**：多模型混居要求 per-provider key 路由——`provider/model` 形式的模型先查 `{PROVIDER}_API_KEY`（provider 段大写、`-`→`_`），未配置才回退 `LLM_API_KEY`；裸模型名路径不变。
 - **默认模型** `moonshot/kimi-k2.5`（litellm 1.98 注册表确认 Moonshot 的 provider 名为 `moonshot`，含 `kimi-k2.5` 条目）。
 - **context_window 自动填充**：`LLMConfig.context_window` 默认 `None`（= 自动），组装时解析——agent.yaml 显式值优先，其次 `litellm.get_model_info()` 的 `max_input_tokens`，查不到回退 262144；运行时消费处拿到的永远是解析后的 int。

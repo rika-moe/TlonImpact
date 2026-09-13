@@ -49,6 +49,7 @@ class TestProviderModelRouting:
     ) -> None:
         """provider/model goes to litellm untouched; no api_base override —
         litellm's routing table resolves the provider's endpoint."""
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         client = _client("deepseek/deepseek-chat", base_url="https://ignored.example/v1")
 
         params = await _call_and_capture(client, monkeypatch)
@@ -80,3 +81,49 @@ class TestProviderModelRouting:
 
         assert params["model"] == "openai/kimi-k2.5"
         assert params["api_base"] is None
+
+
+class TestProviderKeyRouting:
+    """issue : a ``provider/model`` name first checks the provider's
+    own env key (``{PROVIDER}_API_KEY``); the shared LLM_API_KEY (the
+    config's auth_token) is the fallback. Bare names never look at
+    provider env vars."""
+
+    async def test_provider_env_key_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+        client = _client("deepseek/deepseek-chat")
+
+        params = await _call_and_capture(client, monkeypatch)
+
+        assert params["api_key"] == "sk-deepseek"
+
+    async def test_provider_env_key_falls_back_to_shared_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        client = _client("deepseek/deepseek-chat")
+
+        params = await _call_and_capture(client, monkeypatch)
+
+        assert params["api_key"] == "sk-test"
+
+    async def test_provider_name_dashes_become_underscores(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "sk-azure")
+        client = _client("azure-openai/gpt-5")
+
+        params = await _call_and_capture(client, monkeypatch)
+
+        assert params["api_key"] == "sk-azure"
+
+    async def test_bare_model_ignores_provider_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-env")
+        client = _client("kimi-k2.5", base_url="https://api.moonshot.cn/v1")
+
+        params = await _call_and_capture(client, monkeypatch)
+
+        assert params["model"] == "openai/kimi-k2.5"
+        assert params["api_key"] == "sk-test"

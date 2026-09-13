@@ -7,7 +7,7 @@ from typing import Any
 from aiohttp import web
 
 from tlon.agents.prototypes import instantiate
-from tlon.base.config import yaml_load_file, yaml_save
+from tlon.base.config import LLMConfig, yaml_load_file, yaml_save
 from tlon.tools.agents.ports import StopRejectedError
 from tlon.tools.prototypes.ports import PrototypeError
 
@@ -188,13 +188,15 @@ class AdminAgentHandlers(RestHandlerBase):
         if llm:
             # model_copy preserves the untouched knobs (max_tokens / top_p /
             # an explicit context_window override); a fresh LLMConfig would
-            # silently reset them to defaults.
-            cfg.llm = cfg.llm.model_copy(
-                update={
-                    "model_name": str(llm.get("model_name") or cfg.llm.model_name),
-                    "temperature": float(llm.get("temperature") or cfg.llm.temperature),
-                }
-            )
+            # silently reset them to defaults. model_name stays None
+            # (undeclared) unless the caller sets one.
+            base = cfg.llm if cfg.llm is not None else LLMConfig()
+            update: dict[str, Any] = {
+                "temperature": float(llm.get("temperature") or base.temperature),
+            }
+            if llm.get("model_name"):
+                update["model_name"] = str(llm["model_name"])
+            cfg.llm = base.model_copy(update=update)
             yaml_save(cfg, paths.tlon_home())
             await self.agent_registry.adopt_agent(agent_id)  # reload config
 

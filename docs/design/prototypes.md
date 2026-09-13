@@ -61,7 +61,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
 2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻，），新成员的 spec 用 `(lessons)` context section 显式声明才会把它注入对话；原型没有该文件则成员侧也不产生。
-3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。
+3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。spec 顶层声明了 `:llm {:model "provider/model"}` 时（基因型的模型声明，issue ），实例的 `agent.yaml` 同时落下 `llm.model_name`——装配时文件显式声明优先于进程级 `LLM_MODEL`；未声明则不写 `llm` 段，成员回退进程级设置。
 4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
 拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。
@@ -164,7 +164,7 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 当时这个 bug 被两层兜底掩盖了：
 
 - 元数据读取不许失败：`_derive_runtime` 解析失败回退 `"react"`（恰好是正确答案），`_read_parameters` 失败回退空参数——所以 `listPrototypes` 看起来一切正常。
-- `instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。
+- ~~`instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。~~ 这层兜底已不存在：issue  起 `instantiate` 为读取 `:llm` 模型声明对渲染后 spec 做结构化解析（`MemberSpec.from_edn`），解析失败以 `PrototypeError` 拒绝实例化，坏文件不再被原样拷贝。
 
 失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。当时现有测试只覆盖了 relay（[src/tests/agents/test_relay.py](../../src/tests/agents/test_relay.py)），三个带 `:loop` 的内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
 

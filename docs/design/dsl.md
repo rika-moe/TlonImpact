@@ -113,7 +113,7 @@ spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里�
 
 唯一权威还有两层推论：
 
-- **实例化是复制，不是引用**。[agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `instantiate` 把原型的 behavior 文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件是创建时数据。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。
+- **实例化是复制，不是引用**。[agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `instantiate` 把原型的 behavior 文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件是创建时数据。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型声明也是基因型的一部分（issue ）：顶层 `:llm {:model "provider/model"}` 由原型携带，`instantiate` 解析渲染后的 spec 并把它落进实例的 `agent.yaml`（`llm.model_name`），随谱系世代遗传；机制侧（`_build_llm_config`）只负责表达这份声明——文件显式声明优先，未声明的成员回退进程级 `LLM_MODEL`。
 - **模板只存在于写侧**。behavior 文件可以声明顶层 `:parameters` 并用 `${name}` 占位（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)），但渲染发生在实例化落盘之前；运行时加载器永远见不到占位符，`:parameters` 本身也只作为未知键记 warning。运行时面对的永远是一份完全的、具体的 spec——"这份文件就是这个成员的全部行为"这个命题，不需要任何上下文就成立。
 
 ## 分层

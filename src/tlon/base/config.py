@@ -73,7 +73,11 @@ class AgentInfoProvider(ABC):
 class LLMConfig(BaseModel):
     """LLM configuration for an agent."""
 
-    model_name: str = "kimi-k2.5"
+    # None = undeclared in agent.yaml: the spec/prototype did not pin a
+    # model (issue ), so assembly falls back to the process-level
+    # LLM_MODEL setting. The runtime never sees None — _build_llm_config
+    # resolves it before constructing the client.
+    model_name: str | None = None
     temperature: float = 1.0
     max_tokens: int = 4096
     top_p: float = 0.9
@@ -140,7 +144,9 @@ class AgentConfig(BaseModel):
     id: str
     name: str
 
-    llm: LLMConfig = Field(default_factory=LLMConfig)
+    # None = no llm section in agent.yaml: nothing per-agent declared,
+    # assembly builds the whole LLM config from process settings.
+    llm: LLMConfig | None = None
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
     # Idle seconds before a lazy member is drained.

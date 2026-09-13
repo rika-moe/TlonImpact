@@ -63,11 +63,12 @@ def _record(
     duration_ms: int = 10,
     cpu_ms: int = 1,
     session_id: str | None = "s1",
+    model: str | None = "openai/gpt-test",
 ) -> dict[str, Any]:
     return {
         "ts": "2026-09-13T00:00:00+00:00",
         "event": "llm_call",
-        "model": "openai/gpt-test",
+        "model": model,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "duration_ms": duration_ms,
@@ -205,8 +206,51 @@ class TestCollectAgentLedger:
         assert summary["calls"] == 0
         assert summary["total_tokens"] == 0
         assert summary["by_purpose"] == {}
+        assert summary["by_model"] == {}
         # Read-only discipline: the query creates nothing.
         assert not (tmp_path / "ghost").exists()
+
+
+class TestCollectAgentLedgerByModel:
+    """issue : per-model split, same shape as by_purpose — observing
+    how mixed-model bloodlines perform."""
+
+    async def test_mixed_models_split(self, tmp_path: Path) -> None:
+        tlon_paths = TlonPaths(home=tmp_path)
+        await _write_records(
+            tlon_paths.agent_ledger_file("dev-001"),
+            [
+                _record(model="moonshot/kimi-k2.5", prompt_tokens=10, completion_tokens=2,
+                        duration_ms=100, cpu_ms=4),
+                _record(model="deepseek/deepseek-chat", prompt_tokens=20, completion_tokens=4,
+                        duration_ms=200, cpu_ms=8),
+                _record(model="moonshot/kimi-k2.5", prompt_tokens=5, completion_tokens=1,
+                        duration_ms=50, cpu_ms=2),
+            ],
+        )
+
+        summary = await collect_agent_ledger("dev-001", tlon_paths=tlon_paths)
+
+        assert summary["calls"] == 3
+        kimi = summary["by_model"]["moonshot/kimi-k2.5"]
+        assert kimi["calls"] == 2
+        assert kimi["prompt_tokens"] == 15
+        assert kimi["total_tokens"] == 18
+        assert kimi["duration_ms"] == 150
+        assert kimi["cpu_ms"] == 6
+        deepseek = summary["by_model"]["deepseek/deepseek-chat"]
+        assert deepseek["calls"] == 1
+        assert deepseek["total_tokens"] == 24
+
+    async def test_record_without_model_folds_into_unknown(self, tmp_path: Path) -> None:
+        tlon_paths = TlonPaths(home=tmp_path)
+        await _write_records(
+            tlon_paths.agent_ledger_file("dev-001"), [_record(model=None)]
+        )
+
+        summary = await collect_agent_ledger("dev-001", tlon_paths=tlon_paths)
+
+        assert summary["by_model"]["unknown"]["calls"] == 1
 
 
 class TestCollectLineageLedgers:
@@ -241,3 +285,29 @@ class TestCollectLineageLedgers:
         assert manual["prototype"] is None
         assert manual["members"] == ["scribe"]
         assert manual["calls"] == 0
+        assert manual["by_model"] == {}
+
+    async def test_lineage_merges_members_by_model(self, tmp_path: Path) -> None:
+        """A bloodline's by_model merges every member's per-model split."""
+        tlon_paths = TlonPaths(home=tmp_path)
+        yaml_save(AgentConfig(id="dev-001", name="Dev 1", prototype="developer"), tmp_path)
+        yaml_save(AgentConfig(id="dev-002", name="Dev 2", prototype="developer"), tmp_path)
+        await _write_records(
+            tlon_paths.agent_ledger_file("dev-001"),
+            [_record(model="moonshot/kimi-k2.5", prompt_tokens=10, completion_tokens=2)],
+        )
+        await _write_records(
+            tlon_paths.agent_ledger_file("dev-002"),
+            [
+                _record(model="moonshot/kimi-k2.5", prompt_tokens=20, completion_tokens=4),
+                _record(model="deepseek/deepseek-chat", prompt_tokens=5, completion_tokens=1),
+            ],
+        )
+
+        lineages = await collect_lineage_ledgers(tlon_paths=tlon_paths)
+
+        by_model = lineages["developer"]["by_model"]
+        assert by_model["moonshot/kimi-k2.5"]["calls"] == 2
+        assert by_model["moonshot/kimi-k2.5"]["total_tokens"] == 36
+        assert by_model["deepseek/deepseek-chat"]["calls"] == 1
+        assert by_model["deepseek/deepseek-chat"]["prompt_tokens"] == 5

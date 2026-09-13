@@ -39,6 +39,7 @@
 |---|---|---|---|
 | `:version` | int | 是 | 只支持 `1`（`MEMBER_SPEC_VERSION`），其他值加载即拒绝 |
 | `:rules` | 向量 | 是 | 规则列表，**不得为空**；每项是一个 map |
+| `:llm` | map | 否 | 模型声明 `{:model "provider/model"}`——基因型的一部分（issue ）：原型声明其成员运行的模型，`instantiate` 把它落进实例的 `agent.yaml`（`llm.model_name`），随谱系遗传；缺省或缺 `:model` 即未声明，运行时回退进程级 `LLM_MODEL` |
 | `:parameters` | map | 否 | 模板参数声明（见第 8 节），运行时加载器忽略 |
 | 其他键 | — | — | 未知键记 warning 后忽略（前向兼容） |
 

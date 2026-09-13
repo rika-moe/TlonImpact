@@ -63,7 +63,7 @@ from tlon.agents.member_spec import (
     MemberSpecValidationError,
     validate_member_spec,
 )
-from tlon.base.config import AgentConfig, yaml_exists, yaml_save
+from tlon.base.config import AgentConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 from tlon.tools.prototypes.ports import PrototypeError
@@ -294,11 +294,25 @@ def instantiate(
             prototype_lessons.read_text(encoding="utf-8"), encoding="utf-8"
         )
 
+    # Genotype inheritance (issue ): a top-level :llm {:model ...}
+    # declaration is part of the genome — the instance's agent.yaml pins
+    # llm.model_name so assembly prefers it over the process-level
+    # LLM_MODEL. Undeclared means no llm section at all (settings
+    # fallback). The parse is structural only; the loader's full
+    # validation still gates the member at boot.
+    try:
+        spec = MemberSpec.from_edn(loads(behavior_text))
+    except (EDNParseError, MemberSpecValidationError) as e:
+        raise PrototypeError(
+            f"prototype '{prototype_name}' behavior failed to parse: {e}"
+        ) from e
+
     # agent.yaml via the same save path as the wizard
     agent = AgentConfig(
         id=agent_id,
         name=agent_name,
         prototype=prototype_name,
+        llm=LLMConfig(model_name=spec.llm_model) if spec.llm_model else None,
     )
     yaml_save(agent, p.tlon_home())
     logger.info(

@@ -155,22 +155,31 @@ def _fold(summary: dict[str, Any], record: dict[str, Any]) -> None:
 async def collect_agent_ledger(agent_id: str, *, tlon_paths: TlonPaths) -> dict[str, Any]:
     """Derive one member's consumption summary from its ledger file.
 
-    Totals over every record plus a per-``purpose`` split (calls and
-    tokens). Records without a purpose fold into ``"unknown"``.
+    Totals over every record plus per-``purpose`` and per-``model``
+    splits (calls and tokens) — the by-model split observes how the
+    different model bloodlines in a mixed-model society perform (issue
+    ). Records without a purpose/model fold into ``"unknown"``.
 
     Returns:
         JSON-safe dict: agent_id, calls, prompt_tokens, completion_tokens,
-        total_tokens, duration_ms, cpu_ms, by_purpose
+        total_tokens, duration_ms, cpu_ms, by_purpose, by_model
     """
     records = await read_ledger(tlon_paths.agent_ledger_file(agent_id))
     summary = _new_summary()
     by_purpose: dict[str, dict[str, Any]] = {}
+    by_model: dict[str, dict[str, Any]] = {}
     for record in records:
         _fold(summary, record)
         purpose = str(record.get("purpose") or "unknown")
-        bucket = by_purpose.setdefault(purpose, _new_summary())
-        _fold(bucket, record)
-    return {"agent_id": agent_id, **summary, "by_purpose": by_purpose}
+        _fold(by_purpose.setdefault(purpose, _new_summary()), record)
+        model = str(record.get("model") or "unknown")
+        _fold(by_model.setdefault(model, _new_summary()), record)
+    return {
+        "agent_id": agent_id,
+        **summary,
+        "by_purpose": by_purpose,
+        "by_model": by_model,
+    }
 
 
 async def collect_lineage_ledgers(*, tlon_paths: TlonPaths) -> dict[str, Any]:
@@ -185,17 +194,23 @@ async def collect_lineage_ledgers(*, tlon_paths: TlonPaths) -> dict[str, Any]:
     Returns:
         JSON-safe dict keyed by bloodline name: prototype, members,
         calls, prompt_tokens, completion_tokens, total_tokens,
-        duration_ms, cpu_ms
+        duration_ms, cpu_ms, by_model (per-model split merged across the
+        bloodline's members, issue )
     """
     configs = yaml_load_all(tlon_paths.tlon_home())
     lineages: dict[str, dict[str, Any]] = {}
     for agent_id, config in configs.items():
         key = config.prototype or "manual"
         lineage = lineages.setdefault(
-            key, {"prototype": config.prototype, "members": [], **_new_summary()}
+            key,
+            {"prototype": config.prototype, "members": [], **_new_summary(), "by_model": {}},
         )
         summary = await collect_agent_ledger(agent_id, tlon_paths=tlon_paths)
         lineage["members"].append(agent_id)
         for field in _new_summary():
             lineage[field] += summary[field]
+        for model, bucket in summary["by_model"].items():
+            merged = lineage["by_model"].setdefault(model, _new_summary())
+            for field in _new_summary():
+                merged[field] += bucket[field]
     return lineages

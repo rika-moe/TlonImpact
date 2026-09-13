@@ -1028,11 +1028,12 @@ class MemberRuntime(Member):
             # Context pressure relief (ADR 0008): same journal, the
             # model's context window — resolved to an int at assembly
             # (ADR 0012 phase 2); the fallback covers capabilities built
-            # without assembly (tests).
+            # without assembly (tests), whose config.llm may be None.
             pressure=ContextPressure(
                 caps.llm_client,
                 journal,
-                caps.config.llm.context_window or DEFAULT_CONTEXT_WINDOW,
+                (caps.config.llm.context_window if caps.config.llm else None)
+                or DEFAULT_CONTEXT_WINDOW,
             ),
         )
         self._scheduler = SessionScheduler(

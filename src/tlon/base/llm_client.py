@@ -5,6 +5,7 @@ Supports multiple model providers with retry logic.
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -338,24 +339,38 @@ class LLMClient:
         # retry: the loop below owns all retries (no double backoff).
         # Model routing (ADR 0012 phase 2): a ``provider/model`` name is
         # passed to litellm as-is — its built-in routing table resolves the
-        # provider's base_url, and the single LLM_API_KEY is forwarded
-        # explicitly (no per-provider env vars required). A bare model name
-        # is the escape hatch: forced through the openai provider against
-        # the configured api_base (private deployments / OpenAI-compatible
-        # endpoints litellm's registry does not know).
-        if "/" in self.config.model_name:
-            model = self.config.model_name
+        # provider's base_url. Key routing (issue ): when the model
+        # names a provider, a provider-specific env var
+        # (``{PROVIDER}_API_KEY``, uppercased, ``-`` → ``_`` — e.g.
+        # DEEPSEEK_API_KEY) wins over the shared LLM_API_KEY, so members on
+        # different providers coexist in one process. A bare model name is
+        # the escape hatch: forced through the openai provider against the
+        # configured api_base with the shared key (private deployments /
+        # OpenAI-compatible endpoints litellm's registry does not know).
+        model_name = self.config.model_name
+        if model_name is None:
+            raise Exception(
+                "LLM model not configured: the member's agent.yaml declares no "
+                "llm.model_name and LLM_MODEL is unset"
+            )
+        if "/" in model_name:
+            model = model_name
             api_base = None
+            provider = model_name.split("/", 1)[0]
+            api_key = os.getenv(
+                f"{provider.upper().replace('-', '_')}_API_KEY"
+            ) or self.config.auth_token
         else:
-            model = f"openai/{self.config.model_name}"
+            model = f"openai/{model_name}"
             api_base = self.config.base_url or None
+            api_key = self.config.auth_token
         params: dict[str, Any] = {
             "model": model,
             "messages": all_messages,
             "temperature": temperature if temperature is not None else self.config.temperature,
             "timeout": timeout if timeout is not None else self.config.request_timeout,
             "api_base": api_base,
-            "api_key": self.config.auth_token,
+            "api_key": api_key,
             "num_retries": 0,
         }
 

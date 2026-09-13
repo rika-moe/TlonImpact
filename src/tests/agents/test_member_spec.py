@@ -99,6 +99,74 @@ class TestSerializationProvenance:
         assert spec.to_edn_data()["source-hash"] == "deadbeef1234"
 
 
+class TestLlmDeclaration:
+    """Top-level ``:llm {:model "provider/model"}`` — genotype model
+    declaration (issue )."""
+
+    LLM_EDN = """\
+{:version 1
+ :llm {:model "deepseek/deepseek-chat"}
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+
+    def test_llm_model_roundtrip(self):
+        spec = _parse(self.LLM_EDN)
+        assert spec.llm_model == "deepseek/deepseek-chat"
+
+        again = _parse(spec.to_edn())
+        assert again == spec
+        assert again.llm_model == "deepseek/deepseek-chat"
+
+    def test_to_dict_roundtrip(self):
+        spec = _parse(self.LLM_EDN)
+        assert spec.to_dict()["llm"] == {"model": "deepseek/deepseek-chat"}
+        assert MemberSpec.from_dict(spec.to_dict()) == spec
+
+    def test_llm_absent_defaults_none(self):
+        spec = _parse(SCRIPT_EDN)
+        assert spec.llm_model is None
+        assert "llm" not in spec.to_edn_data()
+
+    def test_llm_without_model_defaults_none(self):
+        spec = _parse(
+            """\
+{:version 1
+ :llm {}
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+        )
+        assert spec.llm_model is None
+
+    def test_llm_non_map_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match=":llm"):
+            _parse(
+                """\
+{:version 1
+ :llm "deepseek/deepseek-chat"
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+            )
+
+    def test_unknown_top_level_key_still_tolerated(self):
+        """The warn-only forward compatibility is not broken by :llm."""
+        spec = _parse(
+            """\
+{:version 1
+ :future-key 42
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+        )
+        assert spec.rules[0].name == "relay"
+
+
 class TestSingleValidator:
     """The loader's gate: unknown actions and bad shape are rejected."""
 

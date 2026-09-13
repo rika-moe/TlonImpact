@@ -208,21 +208,31 @@ class MemberSpec:
     the behavior file the spec was loaded from. The loader computes it for
     every member (phase C, previously react-only). It is serialized for
     observability events but never written back into a behavior file.
+
+    ``llm_model`` (from top-level ``:llm {:model "provider/model"}``) is
+    part of the genotype: a prototype declares the model its members run
+    on, and instantiation inherits it into the member's ``agent.yaml``
+    (issue ). None = undeclared; the member then falls back to the
+    process-level ``LLM_MODEL`` setting.
     """
 
     version: int
     rules: tuple[MemberRule, ...]
     source_hash: str | None = None
+    llm_model: str | None = None
 
     # ── Factories ──
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict (snake_case keys)."""
-        return {
+        data: dict[str, Any] = {
             "version": self.version,
             "source_hash": self.source_hash,
             "rules": [rule.to_dict() for rule in self.rules],
         }
+        if self.llm_model is not None:
+            data["llm"] = {"model": self.llm_model}
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MemberSpec":
@@ -256,6 +266,7 @@ class MemberSpec:
         return cls(
             version=MEMBER_SPEC_VERSION,
             source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
+            llm_model=_read_llm_model(data),
             rules=rules,
         )
 
@@ -284,6 +295,8 @@ class MemberSpec:
         }
         if self.source_hash is not None:
             data[Keyword("source-hash")] = self.source_hash
+        if self.llm_model is not None:
+            data[Keyword("llm")] = {Keyword("model"): self.llm_model}
         return data
 
 
@@ -604,6 +617,22 @@ def _read_optional_str(data: dict[str, Any], key: str, path: str) -> str | None:
     return value
 
 
+def _read_llm_model(data: dict[str, Any]) -> str | None:
+    """Read the top-level ``:llm {:model "provider/model"}`` declaration.
+
+    Missing ``:llm``, or an ``:llm`` map without ``:model``, yields None
+    (undeclared — the member falls back to the process-level LLM_MODEL).
+    """
+    llm = data.get("llm")
+    if llm is None:
+        return None
+    if isinstance(llm, Form) or not isinstance(llm, dict):
+        raise MemberSpecValidationError(
+            f":llm must be a map, got {_type_name(llm)}: {llm!r}"
+        )
+    return _read_optional_str(llm, "model", ":llm :model")
+
+
 def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
     known = _KNOWN_KEYS[section]
     for key in raw:
@@ -612,7 +641,7 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
-    "top": frozenset({"version", "source_hash", "rules"}),
+    "top": frozenset({"version", "source_hash", "llm", "rules"}),
     "rule": frozenset({"name", "on", "when", "loop", "actions", "fuel"}),
     "loop": frozenset(
         {

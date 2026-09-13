@@ -170,11 +170,9 @@ class StageServices:
 
     def _model_name(self) -> str:
         """The LLM model name for observability payloads."""
-        return (
-            self._llm_client.config.model_name
-            if hasattr(self._llm_client, "config")
-            else "unknown"
-        )
+        if not hasattr(self._llm_client, "config"):
+            return "unknown"
+        return self._llm_client.config.model_name or "unknown"
 
     async def distill(
         self,

@@ -60,8 +60,10 @@ def bootstrap_standard_team(tlon_paths: TlonPaths | None = None) -> list[str]:
         cfg = instantiate(
             role["prototype"], role["id"], role["name"], tlon_paths=p
         )
-        # Model identity is NOT snapshotted into agent.yaml: _build_llm_config
-        # reads model_name/temperature from settings (env/.env) at runtime,
+        # Model identity lands in agent.yaml only when the prototype's
+        # spec declares :llm {:model ...} (instantiate handles it, issue
+        # ); otherwise the member has no llm section and
+        # _build_llm_config falls back to settings (env/.env) at runtime,
         # so a later Settings-view edit takes effect without touching the
         # members' configs. max_tokens/top_p stay at their defaults.
         yaml_save(cfg, p.tlon_home())

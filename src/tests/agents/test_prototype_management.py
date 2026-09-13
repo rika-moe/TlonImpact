@@ -17,6 +17,7 @@ from tlon.agents.prototypes import (
     write_staging_prototype,
     write_trusted_prototype,
 )
+from tlon.base.config import yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
 
@@ -306,6 +307,41 @@ class TestLessonsFile:
 
         assert (p.prototypes_dir() / "staged" / "LESSONS.md").exists()
         assert not (p.prototypes_staging_dir() / "staged").exists()
+
+
+class TestInstantiateLlmModel:
+    """``instantiate`` inherits the spec's top-level ``:llm {:model ...}``
+    into the member's agent.yaml (issue )."""
+
+    BEHAVIOR_WITH_LLM = """\
+{:version 1
+ :llm {:model "deepseek/deepseek-chat"}
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+
+    def test_declared_model_lands_in_agent_yaml(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", self.BEHAVIOR_WITH_LLM, tlon_paths=p)
+
+        cfg = instantiate("hand", "agent1", "新成员", tlon_paths=p)
+
+        assert cfg.llm is not None
+        assert cfg.llm.model_name == "deepseek/deepseek-chat"
+        on_disk = yaml_load_file(p.agent_config_file("agent1"))
+        assert on_disk is not None and on_disk.llm is not None
+        assert on_disk.llm.model_name == "deepseek/deepseek-chat"
+
+    def test_undeclared_model_writes_no_llm_section(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        cfg = instantiate("hand", "agent1", "新成员", tlon_paths=p)
+
+        assert cfg.llm is None
+        raw = p.agent_config_file("agent1").read_text(encoding="utf-8")
+        assert "llm" not in raw
 
 
 class TestInstantiateLessons:

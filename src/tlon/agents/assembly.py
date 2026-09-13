@@ -108,26 +108,31 @@ def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
 def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMConfig:
     """Merge LLM config from YAML file with runtime settings.
 
-    Model identity (``model_name`` / ``temperature``) is process-level
-    config, driven by settings (env / ``{TLON_HOME}/.env``). The file's
-    values are NOT used for these: bootstrap does not snapshot them into
-    agent.yaml, so a Settings-view edit takes effect on restart. The file
-    keeps the per-agent knobs the process does not manage: ``max_tokens`` /
-    ``top_p`` / ``context_window`` (explicit override; None = auto-resolve
-    from litellm's model registry).
+    ``model_name``: an explicit declaration in agent.yaml wins (issue
+     — instantiated from a prototype whose spec declares
+    ``:llm {:model ...}``); when the file leaves it undeclared (None),
+    the process-level ``LLM_MODEL`` setting is the fallback. The returned
+    config always carries a non-None ``model_name``.
+
+    ``temperature`` stays process-level (settings-driven): the file's
+    value is NOT used — a Settings-view edit takes effect on restart.
+    The file keeps the per-agent knobs the process does not manage:
+    ``max_tokens`` / ``top_p`` / ``context_window`` (explicit override;
+    None = auto-resolve from litellm's model registry).
 
     Settings provide the runtime parameters (base_url, auth_token, ...).
     The returned config always carries a resolved ``context_window`` int.
     """
     if file_config is None:
         file_config = LLMConfig()
+    model_name = file_config.model_name or settings.llm_model_name
 
     return LLMConfig(
-        model_name=settings.llm_model_name,
+        model_name=model_name,
         temperature=settings.llm_temperature,
         max_tokens=file_config.max_tokens,
         top_p=file_config.top_p,
-        context_window=_resolve_context_window(file_config, settings.llm_model_name),
+        context_window=_resolve_context_window(file_config, model_name),
         base_url=settings.llm_base_url,
         auth_token=settings.llm_api_key,
         max_retries=settings.llm_max_retries,

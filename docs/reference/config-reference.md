@@ -15,7 +15,7 @@
 |---|---|---|---|
 | `id` | `str` | —（必填） |  |
 | `name` | `str` | —（必填） |  |
-| `llm` | `LLMConfig` | LLMConfig() |  |
+| `llm` | `LLMConfig \| None` | None |  |
 | `docker` | `DockerRuntimeConfig` | DockerRuntimeConfig() |  |
 | `tool` | `ToolConfig` | ToolConfig() |  |
 | `idle_timeout_seconds` | `int` | 600 |  |
@@ -44,7 +44,7 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `model_name` | `str` | "kimi-k2.5" |  |
+| `model_name` | `str \| None` | None |  |
 | `temperature` | `float` | 1.0 |  |
 | `max_tokens` | `int` | 4096 |  |
 | `top_p` | `float` | 0.9 |  |
@@ -56,7 +56,7 @@
 | `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
 <!-- END GENERATED: agent-yaml-fields-llm -->
 
-`model_name` / `temperature` **运行时由进程级配置驱动**（`LLM_MODEL` / `LLM_TEMPERATURE`，见第 4 节）——agent.yaml 里的值不生效（`_build_llm_config` 以 settings 为准，改 `.env` 后重启生效）；`max_tokens` / `top_p` 每 agent 可调。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout`）由进程级环境变量注入（见第 4 节），Pydantic 标注 `exclude=True`，不落盘。
+`model_name` 的默认 `null` 表示**未声明**（issue ）：agent.yaml 显式写的 `model_name` 优先生效（原型 spec 顶层 `:llm {:model ...}` 经 `instantiate` 落盘而来），未声明时 `_build_llm_config` 回退进程级 `LLM_MODEL`（见第 4 节）；`temperature` 仍由进程级 `LLM_TEMPERATURE` 驱动，文件值不生效；`max_tokens` / `top_p` 每 agent 可调。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout`）由进程级环境变量注入（见第 4 节），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 
