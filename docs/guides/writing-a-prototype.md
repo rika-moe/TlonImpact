@@ -15,8 +15,11 @@
 ```
 ~/.tlon/prototypes/{prototype_name}/
 ├── prototype.edn          # 元数据：:name / :display-name / :description / :trusted / :author
+│                          #   + 谱系（）：:parent / :generation / :proposal-note
 └── behavior.tlon          # 成员的全部行为规约（total spec，唯一权威）
 ```
+
+谱系字段（可缺省）：`:parent` 是父原型名（根原型不写）；`:generation` 是代数，根=1、子=父+1，**永远由服务端推导**，手写时不必填写（读取缺省按根处理）；`:proposal-note` 是本代变更说明的自由文本。写新原型时若它是某个既有原型的改进版，填上 `:parent :base-name` 即可挂上谱系——之后 `getPrototypeLineage` / `GET /admin/prototypes/{name}` 能展示整条代际链与每代的行为 diff。
 
 原型**不带人格文件**（统一成员模型，ADR 0006）：原型是行为的基因型；成员的人格（IDENTITY/SOUL/RULES.md）是创建时的数据，不是基因型的一部分。快速开始创建标准团队时，人格由 [base/default_team.py](../../src/tlon/base/default_team.py) 的角色卡写入。
 
@@ -111,8 +114,8 @@
 
 「agent 创造 agent」不直接落进 trusted 库，走两区制：
 
-1. **创作**：LLM 用 `writePrototype` 工具，传 `name` + `behavior`（EDN 字符串）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
-2. **审批**：人类在 ops 的 Agents 视图按 `s`（staging 列表）`a` 批准 / `x` 拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 保留，审计链不断）；`reject_prototype` 整个删除。
+1. **创作**：LLM 用 `writePrototype` 工具，传 `name` + `behavior`（EDN 字符串）；可选 `parent`（父原型名，挂谱系，服务端推导 `generation`）与 `proposal_note`（本代变更说明）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
+2. **审批**：人类在 ops 的 Agents 视图按 `s`（staging 列表）`a` 批准 / `x` 拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 与谱系字段保留，审计链不断）；`reject_prototype` 整个删除。
 3. **实例化**：批准后即可被 `spawnAgent` 使用。`spawnAgent` 对 staging 里的不可信原型直接拒绝（`untrusted_prototype`），且在一切预算检查之前——不可信原型连配额都消耗不到。
 
 ## 6. 校验与排错

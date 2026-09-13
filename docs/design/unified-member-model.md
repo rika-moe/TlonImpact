@@ -7,7 +7,7 @@
 系统里四个概念，各就各位：
 
 - **DSL** —— 受限 EDN 行为语言，语义权威是 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员 `config/behavior.tlon`。spec 是成员行为的唯一权威：boot 集合、lazy 判定、wake 资格全部由它现算，从不落盘。
-- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.edn` 元数据（`:name :display-name :description :trusted :author`）；**不带人格**——人格是成员创建时数据，不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
+- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.edn` 元数据（`:name :display-name :description :trusted :author` + 谱系字段 `:parent :generation :proposal-note`，）；**不带人格**——人格是成员创建时数据，不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
 - **Member** —— 社会成员，只有一种：`MemberRuntime` 实例 + 持久身份 = 身份（agent_id/name/地址）+ 行为（behavior.tlon，数据；不可自改，更新走世代更替，见决策 4）+ 状态（running/sleeping/retired，当前值不是类）+ 档案（home 目录，永不删除）。
 - **Agent** —— 术语收敛：agent ≡ 运行中的成员；prototype = 出生定义；DSL = 行为语言。
 
@@ -72,12 +72,12 @@
 | spec 语义权威：`MemberSpec` 加载/校验、`source_hash` 审计 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) |
 | 统一解释器：规则执行、认知引擎按 `:loop` 挂载、排空语义 | [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) |
 | 统一装配 + 懒加载：`assemble_cognitive` | [agents/assembly.py](../../src/tlon/agents/assembly.py) |
-| 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决 | [agents/prototypes.py](../../src/tlon/agents/prototypes.py) |
+| 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决、谱系（`:parent`/`:generation`/`:proposal-note` 落盘，`get_prototype_lineage` 派生查询，） | [agents/prototypes.py](../../src/tlon/agents/prototypes.py) |
 | 生命周期机制：`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 幂等执行、排空=睡眠 | [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) |
 | 生命周期策略：boot/stop 裁决（Adam 的策略规则，数据） | [agents/adam.py](../../src/tlon/agents/adam.py) |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制 | [agents/spawn.py](../../src/tlon/agents/spawn.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
-| 世代通道工具：`writePrototype`（写 staging）/ `spawnAgent` / `stopAgent`（排空后睡眠） | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |
+| 世代通道工具：`writePrototype`（写 staging）/ `spawnAgent` / `stopAgent`（排空后睡眠）；谱系查询 `getPrototypeLineage` | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |
 
 ## 后续未决项（不阻塞当前模型）
 

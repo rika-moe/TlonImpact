@@ -405,6 +405,142 @@ class TestAdminPrototypeManagement:
             assert staging_idx < named_idx
 
 
+class TestAdminPrototypeLineage:
+    """Lineage fields on the prototype endpoints (issue ): payloads carry
+    parent/generation/proposal_note, detail endpoints embed the derived
+    lineage chain with per-generation diffs."""
+
+    _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+    _BEHAVIOR_V2 = (
+        "{:version 1 :rules [{:name \"r2\" :on :boot :actions []}]}\n"
+    )
+
+    def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
+        p = TlonPaths(home=tmp_path)
+        return RESTAPIHandler(None, MagicMock(), paths=p), p
+
+    async def test_create_with_parent_derives_generation(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "base", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_create_prototype(
+            StubRequest(body={
+                "name": "child",
+                "behavior": self._BEHAVIOR_V2,
+                "parent": "base",
+                "proposal_note": "改规则名",
+            })
+        )
+
+        assert resp.status == 201
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["parent"] == "base"
+        assert proto["generation"] == 2
+        assert proto["proposal_note"] == "改规则名"
+
+    async def test_create_unknown_parent_400(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+
+        resp = await handler.handle_create_prototype(
+            StubRequest(body={"name": "orphan", "behavior": self._BEHAVIOR,
+                              "parent": "ghost"})
+        )
+
+        assert resp.status == 400
+        assert json.loads(resp.text)["reason"] == "invalid_prototype"
+
+    async def test_detail_includes_lineage_with_diff(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "base", "behavior": self._BEHAVIOR})
+        )
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "child", "behavior": self._BEHAVIOR_V2,
+                              "parent": "base", "proposal_note": "改规则名"})
+        )
+
+        resp = await handler.handle_get_prototype(StubRequest(name="child"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["generation"] == 2
+        lineage = proto["lineage"]
+        assert [e["name"] for e in lineage] == ["base", "child"]
+        assert lineage[0]["diff_from_parent"] is None
+        assert "r2" in lineage[1]["diff_from_parent"]
+
+    async def test_staging_detail_includes_lineage(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["parent"] is None
+        assert proto["generation"] == 1
+        assert proto["proposal_note"] is None
+        assert [e["name"] for e in proto["lineage"]] == ["staged"]
+
+    async def test_update_accepts_parent(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "base", "behavior": self._BEHAVIOR})
+        )
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "child", "behavior": self._BEHAVIOR_V2})
+        )
+
+        resp = await handler.handle_update_prototype(
+            StubRequest(name="child", body={"parent": "base", "proposal_note": "挂上谱系"})
+        )
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["parent"] == "base"
+        assert proto["generation"] == 2
+        assert proto["proposal_note"] == "挂上谱系"
+
+    async def test_list_payloads_carry_lineage_fields(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "base", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_list_prototypes(StubRequest())
+
+        proto = json.loads(resp.text)["prototypes"][0]
+        assert proto["parent"] is None
+        assert proto["generation"] == 1
+        assert proto["proposal_note"] is None
+
+
+class TestGetAgentLineageFields:
+    """GET /agents/{id} detail carries the same lineage fields as the list
+    (previously missing spawned_by/spawn_depth — a documented inconsistency)."""
+
+    async def test_detail_includes_spawned_by_and_depth(self, tmp_path: Path):
+        from types import SimpleNamespace
+
+        reg = MagicMock()
+        reg.get_config.return_value = SimpleNamespace(
+            name="新工程师", prototype="developer",
+            spawned_by="gu-yanxi", spawn_depth=1,
+        )
+        reg.get_agent.return_value = None
+        handler = RESTAPIHandler(None, reg, paths=TlonPaths(home=tmp_path))
+
+        resp = await handler.handle_get_agent(StubRequest(agent_id="dev-1"))
+
+        assert resp.status == 200
+        body = json.loads(resp.text)
+        assert body["config"]["prototype"] == "developer"
+        assert body["config"]["spawned_by"] == "gu-yanxi"
+        assert body["config"]["spawn_depth"] == 1
+
+
 class TestAdminSettingsEnv:
     """GET/PUT /admin/settings/env — read/write {TLON_HOME}/.env."""
 

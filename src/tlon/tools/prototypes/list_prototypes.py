@@ -39,6 +39,8 @@ class ListPrototypesTool(Tool):
                 "display_name": proto.display_name,
                 "description": proto.description,
                 "trusted": proto.trusted,
+                "parent": proto.parent,
+                "generation": proto.generation,
             }
             for proto in prototypes
         ]

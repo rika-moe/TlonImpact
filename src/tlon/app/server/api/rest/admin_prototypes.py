@@ -10,6 +10,7 @@ from tlon.agents.prototypes import (
     approve_prototype,
     delete_prototype,
     get_prototype_detail,
+    get_prototype_lineage,
     list_prototypes,
     list_staging_prototypes,
     reject_prototype,
@@ -29,6 +30,9 @@ def _prototype_payload(info: PrototypeInfo, behavior: str | None = None) -> dict
         "description": info.description,
         "trusted": info.trusted,
         "author": info.author,
+        "parent": info.parent,
+        "generation": info.generation,
+        "proposal_note": info.proposal_note,
         "parameters": [
             {"name": s.name, "type": s.type, "required": s.required}
             for s in info.parameters
@@ -95,9 +99,11 @@ class AdminPrototypeHandlers(RestHandlerBase):
             return self._json_response(
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
             )
-        return self._json_response(
-            {"status": "success", "prototype": _prototype_payload(info, behavior)}
-        )
+        payload = _prototype_payload(info, behavior)
+        # Lineage (): the derived parent chain, including per-generation
+        # diffs — first-class data on the detail endpoint.
+        payload["lineage"] = get_prototype_lineage(name, tlon_paths=self.paths)
+        return self._json_response({"status": "success", "prototype": payload})
 
     async def handle_create_prototype(self, request: web.Request) -> web.Response:
         """POST /admin/prototypes - human-authored prototype, written
@@ -131,6 +137,10 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 behavior,
                 display_name=str(body.get("display_name") or ""),
                 description=str(body.get("description") or ""),
+                parent=str(body["parent"]) if body.get("parent") else None,
+                proposal_note=(
+                    str(body["proposal_note"]) if body.get("proposal_note") else None
+                ),
                 tlon_paths=self.paths,
             )
         except PrototypeError as e:
@@ -173,9 +183,18 @@ class AdminPrototypeHandlers(RestHandlerBase):
         display_name = body.get("display_name")
         description = body.get("description")
         behavior = body.get("behavior")
-        if display_name is None and description is None and behavior is None:
+        parent = body.get("parent")
+        proposal_note = body.get("proposal_note")
+        if (
+            display_name is None
+            and description is None
+            and behavior is None
+            and parent is None
+            and proposal_note is None
+        ):
             return self._json_response(
-                {"error": "Nothing to update: provide display_name, description or behavior",
+                {"error": "Nothing to update: provide display_name, description, behavior, "
+                          "parent or proposal_note",
                  "reason": "invalid_prototype"},
                 status=400,
             )
@@ -185,6 +204,8 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 display_name=str(display_name) if display_name is not None else None,
                 description=str(description) if description is not None else None,
                 behavior_edn=str(behavior) if behavior is not None else None,
+                parent=str(parent) if parent else None,
+                proposal_note=str(proposal_note) if proposal_note else None,
                 staging=staging,
                 tlon_paths=self.paths,
             )

@@ -16,6 +16,7 @@ from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import (
+    get_prototype_lineage,
     list_prototypes,
     list_staging_prototypes,
     write_staging_prototype,
@@ -52,6 +53,7 @@ from tlon.tools.observability.mail_stats import GetMailStatsTool
 from tlon.tools.observability.reputation import GetReputationTool
 from tlon.tools.observability.social_health import GetSocialHealthTool
 from tlon.tools.observability.traces import GetTraceTool, ListTracesTool
+from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
@@ -221,6 +223,9 @@ async def assemble_cognitive(
     # trust approval — visible so a member (e.g. the scribe's digest) can
     # surface them as pending human decisions.
     tool_executor.register_tool(ListStagingPrototypesTool(lister=list_staging_prototypes))
+    # Lineage (): the prototype genealogy is first-class data — any
+    # member can walk a :parent chain and see each generation's diff.
+    tool_executor.register_tool(GetPrototypeLineageTool(lineage=get_prototype_lineage))
     # Spawn/stop lifecycle tools (stage 6b): the registry is the
     # assembler, so it injects itself (it satisfies the AgentLifecycle
     # port structurally); spawner_id binds the tool to the owning

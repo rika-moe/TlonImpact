@@ -4,7 +4,8 @@ A prototype is a directory of pure data — the behavior genome (unified
 member model, ADR 0006: prototypes carry **no persona**; a member's
 persona files are creation-time data, never part of the genome):
 
-- ``prototype.edn`` — metadata ``{:name :display-name :description :trusted :author}``
+- ``prototype.edn`` — metadata ``{:name :display-name :description
+  :trusted :author :parent :generation :proposal-note}``
 - ``behavior.tlon`` — a complete (total) member spec, unified rules form
   (``{:version 1 :rules [...]}``, phase C — the old ``script.tlon``
   ScriptSpec file is gone)
@@ -39,6 +40,7 @@ are no overrides — a spec is total, and the prototype's file is the whole
 behavior.
 """
 
+import difflib
 import shutil
 from dataclasses import dataclass
 from importlib import resources
@@ -80,6 +82,12 @@ class PrototypeInfo:
     metadata keyword anymore. ``parameters`` (phase F) is the template's
     declared ``:parameters`` (empty for a concrete behavior), so callers
     can prompt for values before instantiation.
+
+    Lineage (issue ): ``parent`` names the prototype this one was
+    derived from (None = root), ``generation`` is 1 for roots and the
+    parent's generation + 1 otherwise, ``proposal_note`` is the free-text
+    rationale for this generation's change. Files predating the field read
+    as roots (parent=None, generation=1) — no migration.
     """
 
     name: str
@@ -87,6 +95,9 @@ class PrototypeInfo:
     description: str
     trusted: bool = True
     author: str | None = None
+    parent: str | None = None
+    generation: int = 1
+    proposal_note: str | None = None
     parameters: tuple[ParameterSpec, ...] = ()
 
     @property
@@ -149,6 +160,31 @@ def _list_from(root: Path) -> list[PrototypeInfo]:
 def _is_prototype_dir(proto_dir: Path) -> bool:
     """A directory qualifies when it carries the unified behavior file."""
     return (proto_dir / BEHAVIOR_FILE).exists()
+
+
+def _find_prototype_dir(name: str, p: TlonPaths) -> Path | None:
+    """Locate a prototype by name in either area (trusted first, then staging)."""
+    for root in (p.prototypes_dir(), p.prototypes_staging_dir()):
+        proto_dir = root / name
+        if _is_prototype_dir(proto_dir):
+            return proto_dir
+    return None
+
+
+def _resolve_parent_generation(parent: str, p: TlonPaths) -> int:
+    """Validate a lineage parent and derive the child's generation.
+
+    The parent may live in either area (trusted or staging) — a staged
+    proposal can be the parent of a further proposal.
+
+    Raises:
+        PrototypeError: invalid parent name or parent not found
+    """
+    _validate_name(parent)
+    parent_dir = _find_prototype_dir(parent, p)
+    if parent_dir is None:
+        raise PrototypeError(f"parent prototype '{parent}' not found")
+    return _read_metadata(parent_dir).generation + 1
 
 
 def get_prototype_info(
@@ -295,12 +331,20 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
     try:
         data = loads(metadata_file.read_text(encoding="utf-8"))
         author = data.get("author")
+        parent = data.get("parent")
+        note = data.get("proposal-note")
+        generation = data.get("generation")
         return PrototypeInfo(
             name=str(data.get("name") or name),
             display_name=str(data.get("display-name") or data.get("display_name") or name),
             description=str(data.get("description") or ""),
             trusted=bool(data.get("trusted", True)),
             author=str(author) if author else None,
+            parent=str(parent) if parent else None,
+            generation=generation
+            if isinstance(generation, int) and not isinstance(generation, bool)
+            else 1,
+            proposal_note=str(note) if note else None,
             parameters=parameters,
         )
     except Exception as e:
@@ -346,6 +390,8 @@ def write_staging_prototype(
     display_name: str = "",
     description: str = "",
     author_id: str = "",
+    parent: str | None = None,
+    proposal_note: str | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
@@ -366,7 +412,10 @@ def write_staging_prototype(
 
     The metadata is written with ``:trusted false`` and ``:author`` recording
     the authoring agent, so ``spawnAgent`` refuses it until a human approves
-    it in the mirror.
+    it in the mirror. Lineage (issue ): ``parent`` links the proposal to
+    the prototype it was derived from (trusted or staging) and the
+    generation is derived server-side as the parent's + 1; ``proposal_note``
+    records what this generation changes.
 
     Args:
         name: prototype directory name (charset-checked, must be unique
@@ -375,15 +424,18 @@ def write_staging_prototype(
         display_name: human-facing name (falls back to ``name``)
         description: human-facing description
         author_id: id of the agent that authored the spec (audit)
+        parent: name of the prototype this one derives from (must exist in
+            either area; None = a new root)
+        proposal_note: free-text description of this generation's change
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
         Metadata of the staged prototype (``trusted=False``).
 
     Raises:
-        PrototypeError: invalid name, name conflict, or spec failed
-            template / EDN / schema validation (nothing is written in any
-            case)
+        PrototypeError: invalid name, name conflict, unknown parent, or spec
+            failed template / EDN / schema validation (nothing is written in
+            any case)
     """
     p = tlon_paths or paths
     _validate_name(name)
@@ -395,6 +447,7 @@ def write_staging_prototype(
         raise PrototypeError(f"prototype '{name}' already exists in the staging area")
 
     # Validate first: a broken spec must never reach disk.
+    generation = _resolve_parent_generation(parent, p) if parent is not None else 1
     spec_text = _validate_behavior(behavior_edn)
 
     staging_dir.mkdir(parents=True)
@@ -407,13 +460,20 @@ def write_staging_prototype(
         Keyword("description"): description,
         Keyword("trusted"): False,
         Keyword("author"): author_id,
+        Keyword("generation"): generation,
     }
+    if parent is not None:
+        metadata[Keyword("parent")] = Keyword(parent)
+    if proposal_note:
+        metadata[Keyword("proposal-note")] = proposal_note
     (staging_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
 
     logger.info(
         "staging_prototype_written",
         name=name,
         author_id=author_id,
+        parent=parent,
+        generation=generation,
     )
     return _read_metadata(staging_dir)
 
@@ -510,11 +570,95 @@ def get_prototype_detail(
     return info, behavior
 
 
+_MAX_LINEAGE_DEPTH = 32
+
+
+def get_prototype_lineage(
+    name: str, tlon_paths: TlonPaths | None = None
+) -> list[dict[str, Any]]:
+    """Walk the ``:parent`` chain up to the root (issue ).
+
+    The lineage is **derived**, never stored separately: each generation is
+    read from its own ``prototype.edn`` (trusted or staging area, whichever
+    holds it), and the diff between adjacent generations is a plain
+    ``difflib`` unified diff of the two ``behavior.tlon`` texts.
+
+    A parent that was deleted or renamed breaks the chain: the walk stops
+    there and the oldest reachable entry is marked ``broken``. Cycles and
+    runaway chains are cut at ``_MAX_LINEAGE_DEPTH`` / a visited set, also
+    marked ``broken``.
+
+    Args:
+        name: prototype directory name (either area)
+        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+
+    Returns:
+        Root-first list of generations, each
+        ``{name, generation, author, proposal_note, trusted, parent,
+        diff_from_parent, broken}``; ``diff_from_parent`` is None for the
+        root entry.
+
+    Raises:
+        PrototypeError: invalid name or no prototype under that name in
+            either area
+    """
+    p = tlon_paths or paths
+    _validate_name(name)
+    proto_dir = _find_prototype_dir(name, p)
+    if proto_dir is None:
+        raise PrototypeError(f"no prototype named '{name}'")
+
+    chain: list[dict[str, Any]] = []  # youngest first while walking up
+    visited: set[str] = set()
+    current: Path | None = proto_dir
+    while current is not None:
+        info = _read_metadata(current)
+        entry: dict[str, Any] = {
+            "name": info.name,
+            "generation": info.generation,
+            "author": info.author,
+            "proposal_note": info.proposal_note,
+            "trusted": info.trusted,
+            "parent": info.parent,
+            "broken": False,
+            "_behavior": (current / BEHAVIOR_FILE).read_text(encoding="utf-8"),
+        }
+        chain.append(entry)
+        visited.add(info.name)
+        if info.parent is None:
+            break
+        if info.parent in visited or len(chain) >= _MAX_LINEAGE_DEPTH:
+            entry["broken"] = True
+            break
+        current = _find_prototype_dir(info.parent, p)
+        if current is None:
+            entry["broken"] = True
+    chain.reverse()
+
+    for i, entry in enumerate(chain):
+        if i == 0:
+            entry["diff_from_parent"] = None
+        else:
+            entry["diff_from_parent"] = "".join(
+                difflib.unified_diff(
+                    chain[i - 1]["_behavior"].splitlines(keepends=True),
+                    entry["_behavior"].splitlines(keepends=True),
+                    fromfile=f"{chain[i - 1]['name']}/{BEHAVIOR_FILE}",
+                    tofile=f"{entry['name']}/{BEHAVIOR_FILE}",
+                )
+            )
+    for entry in chain:
+        del entry["_behavior"]
+    return chain
+
+
 def write_trusted_prototype(
     name: str,
     behavior_edn: str,
     display_name: str = "",
     description: str = "",
+    parent: str | None = None,
+    proposal_note: str | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
     """Write a human-authored prototype directly into the trusted library.
@@ -522,7 +666,8 @@ def write_trusted_prototype(
     Handwritten implies trusted (the same rule the metadata reader encodes):
     the metadata is written with ``:trusted true`` and no ``:author``.
     Validation happens **before** anything touches disk — the same
-    chain as the staging gate.
+    chain as the staging gate. Lineage fields (issue ) work exactly as
+    in the staging write path.
 
     Args:
         name: prototype directory name (charset-checked, must be unique
@@ -530,14 +675,17 @@ def write_trusted_prototype(
         behavior_edn: raw EDN text of the unified behavior spec
         display_name: human-facing name (falls back to ``name``)
         description: human-facing description
+        parent: name of the prototype this one derives from (must exist in
+            either area; None = a new root)
+        proposal_note: free-text description of this generation's change
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
         Metadata of the created prototype (``trusted=True``).
 
     Raises:
-        PrototypeError: invalid name, name conflict, or spec failed
-            validation (nothing is written in any case)
+        PrototypeError: invalid name, name conflict, unknown parent, or spec
+            failed validation (nothing is written in any case)
     """
     p = tlon_paths or paths
     _validate_name(name)
@@ -548,6 +696,7 @@ def write_trusted_prototype(
     if (p.prototypes_staging_dir() / name).exists():
         raise PrototypeError(f"prototype '{name}' already exists in the staging area")
 
+    generation = _resolve_parent_generation(parent, p) if parent is not None else 1
     spec_text = _validate_behavior(behavior_edn)
 
     proto_dir.mkdir(parents=True)
@@ -558,7 +707,12 @@ def write_trusted_prototype(
         Keyword("display-name"): display_name or name,
         Keyword("description"): description,
         Keyword("trusted"): True,
+        Keyword("generation"): generation,
     }
+    if parent is not None:
+        metadata[Keyword("parent")] = Keyword(parent)
+    if proposal_note:
+        metadata[Keyword("proposal-note")] = proposal_note
     (proto_dir / METADATA_FILE).write_text(dumps(metadata) + "\n", encoding="utf-8")
 
     logger.info("trusted_prototype_written", name=name)
@@ -571,6 +725,8 @@ def update_prototype(
     display_name: str | None = None,
     description: str | None = None,
     behavior_edn: str | None = None,
+    parent: str | None = None,
+    proposal_note: str | None = None,
     staging: bool = False,
     tlon_paths: TlonPaths | None = None,
 ) -> PrototypeInfo:
@@ -579,13 +735,17 @@ def update_prototype(
     A behavior change runs the full validation chain first — a broken spec
     raises and leaves the disk untouched. The metadata rewrite preserves
     the existing ``:trusted``/``:author`` fields (only the explicitly
-    provided fields change).
+    provided fields change). Lineage (issue ): providing ``parent``
+    re-links the prototype and re-derives its ``:generation`` server-side;
+    ``proposal_note`` records what a generation changes.
 
     Args:
         name: prototype directory name
         display_name: new display name (None = keep)
         description: new description (None = keep)
         behavior_edn: new raw EDN behavior spec (None = keep)
+        parent: new lineage parent (None = keep; must exist in either area)
+        proposal_note: new change note (None = keep)
         staging: update in the staging area instead of the trusted library
             (pre-approval editing of an LLM-authored prototype)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
@@ -594,9 +754,9 @@ def update_prototype(
         Metadata of the updated prototype.
 
     Raises:
-        PrototypeError: invalid name, prototype not found, nothing to
-            update, or the new behavior failed validation (nothing is
-            written in the last case)
+        PrototypeError: invalid name, prototype not found, unknown parent,
+            nothing to update, or the new behavior failed validation
+            (nothing is written in the last cases)
     """
     p = tlon_paths or paths
     _validate_name(name)
@@ -605,17 +765,33 @@ def update_prototype(
     if not _is_prototype_dir(proto_dir):
         where = "staging area" if staging else "trusted library"
         raise PrototypeError(f"no prototype named '{name}' in the {where}")
-    if display_name is None and description is None and behavior_edn is None:
+    if (
+        display_name is None
+        and description is None
+        and behavior_edn is None
+        and parent is None
+        and proposal_note is None
+    ):
         raise PrototypeError(
-            "nothing to update: provide display_name, description or behavior_edn"
+            "nothing to update: provide display_name, description, behavior_edn, "
+            "parent or proposal_note"
         )
 
+    # Resolve everything that can fail before anything touches disk.
+    parent_generation: int | None = None
+    if parent is not None:
+        parent_generation = _resolve_parent_generation(parent, p)
     spec_text = _validate_behavior(behavior_edn) if behavior_edn is not None else None
 
     if spec_text is not None:
         (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
 
-    if display_name is not None or description is not None:
+    if (
+        display_name is not None
+        or description is not None
+        or parent is not None
+        or proposal_note is not None
+    ):
         metadata_file = proto_dir / METADATA_FILE
         data: dict[Any, Any] = {}
         if metadata_file.exists():
@@ -626,6 +802,11 @@ def update_prototype(
             data[Keyword("display-name")] = display_name
         if description is not None:
             data[Keyword("description")] = description
+        if parent is not None:
+            data[Keyword("parent")] = Keyword(parent)
+            data[Keyword("generation")] = parent_generation
+        if proposal_note is not None:
+            data[Keyword("proposal-note")] = proposal_note
         data.setdefault(Keyword("name"), Keyword(name))
         data.setdefault(Keyword("display-name"), name)
         data.setdefault(Keyword("description"), "")

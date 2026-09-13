@@ -339,6 +339,8 @@ class RESTAPIHandler(
             "state": state,
             "config": {
                 "prototype": config.prototype,
+                "spawned_by": config.spawned_by,
+                "spawn_depth": config.spawn_depth,
             },
         }
         return self._json_response(status)

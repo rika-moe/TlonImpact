@@ -9,6 +9,7 @@ full validation chain before anything touches disk.
 import pytest
 
 from tlon.agents.prototypes import (
+    approve_prototype,
     delete_prototype,
     get_prototype_detail,
     update_prototype,
@@ -164,6 +165,79 @@ class TestUpdatePrototype:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="no prototype named 'nope'"):
             update_prototype("nope", description="d", tlon_paths=p)
+
+
+class TestApprovePreservesLineage:
+    """approve / update must keep the lineage fields (issue )."""
+
+    def test_approve_keeps_parent_generation_note(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("base", VALID_BEHAVIOR, tlon_paths=p)
+        write_staging_prototype(
+            "child",
+            VALID_BEHAVIOR_V2,
+            author_id="adam",
+            parent="base",
+            proposal_note="改转发目标",
+            tlon_paths=p,
+        )
+
+        info = approve_prototype("child", tlon_paths=p)
+
+        assert info.trusted is True
+        assert info.parent == "base"
+        assert info.generation == 2
+        assert info.proposal_note == "改转发目标"
+        # On-disk metadata round-trips too.
+        metadata = (p.prototypes_dir() / "child" / "prototype.edn").read_text(
+            encoding="utf-8"
+        )
+        assert ":parent :base" in metadata
+        assert ":generation 2" in metadata
+        assert ":proposal-note" in metadata
+
+    def test_update_keeps_lineage_fields(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("base", VALID_BEHAVIOR, tlon_paths=p)
+        write_staging_prototype(
+            "child",
+            VALID_BEHAVIOR_V2,
+            author_id="adam",
+            parent="base",
+            proposal_note="改转发目标",
+            tlon_paths=p,
+        )
+
+        info = update_prototype("child", display_name="新名字", staging=True, tlon_paths=p)
+
+        assert info.parent == "base"
+        assert info.generation == 2
+        assert info.proposal_note == "改转发目标"
+
+    def test_update_can_relink_parent(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("base", VALID_BEHAVIOR, tlon_paths=p)
+        write_trusted_prototype("base2", VALID_BEHAVIOR, parent="base", tlon_paths=p)
+        write_staging_prototype("child", VALID_BEHAVIOR_V2, author_id="adam", tlon_paths=p)
+
+        info = update_prototype(
+            "child", parent="base2", proposal_note="重新挂到 base2", staging=True, tlon_paths=p
+        )
+
+        assert info.parent == "base2"
+        assert info.generation == 3
+        assert info.proposal_note == "重新挂到 base2"
+
+    def test_update_unknown_parent_rejected_disk_untouched(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
+            update_prototype("hand", parent="ghost", tlon_paths=p)
+
+        info, behavior = get_prototype_detail("hand", tlon_paths=p)
+        assert info.parent is None
+        assert behavior == VALID_BEHAVIOR
 
 
 class TestDeletePrototype:

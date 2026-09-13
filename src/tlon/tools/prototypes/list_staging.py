@@ -40,6 +40,8 @@ class ListStagingPrototypesTool(Tool):
                 "display_name": proto.display_name,
                 "description": proto.description,
                 "author": proto.author,
+                "parent": proto.parent,
+                "generation": proto.generation,
             }
             for proto in prototypes
         ]

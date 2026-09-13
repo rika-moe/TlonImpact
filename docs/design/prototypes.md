@@ -8,7 +8,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 原型是一个**纯数据目录**，不含任何代码。判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `_is_prototype_dir`）。目录内容：
 
-- `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`。缺省时以目录名兜底（`_read_metadata`）。
+- `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
 
 统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件（IDENTITY.md / SOUL.md / RULES.md）是**创建时的数据**（ops 创建时填写 / 未来工具注入），不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
@@ -90,7 +90,7 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 1. **预算检查**（见下节）。
 2. **生成 id**——`c-{prototype}-{uuid8}`，由注册表生成、调用方无法指定，字符集收敛在 AgentConfig 允许的范围内（原型名先做字符清洗）。`c-` 前缀一眼可辨，uuid 后缀防碰撞，没有任何语义可供依赖。
 3. **`instantiate`**——拷贝落盘（行为冻结）。
-4. **血缘审计**——`spawned_by` 记录 spawner、`spawn_depth` 继承递增。不设任何角色标记：lazy/常驻由原型 spec 的 `:on :boot` 规则派生。
+4. **血缘审计**——`spawned_by` 记录 spawner、`spawn_depth` 继承递增（成员侧血缘；原型侧谱系见「谱系」一节）。不设任何角色标记：lazy/常驻由原型 spec 的 `:on :boot` 规则派生。
 5. **注册并启动**，发布 `AGENT_SPAWNED`。
 
 孤儿策略是**reparent 而非 kill**：新成员独立于 spawner 注册，spawner 睡眠或停止不影响它，回收只由它自己的空闲策略决定（sleep，不删）。理由：成员可能在为多个委托方工作（邮件寻址是开放的，任何人都能 @ 它），spawner 只是它的出生证明，不是它的所有者；所有权归注册表，生命周期归空闲事实——这与全系统「idle 是事实、drain 是策略」的分工一致。
@@ -121,7 +121,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 - **trusted 区**（`~/.tlon/prototypes/`）——包内播种的与人类手写的原型，`:trusted true`，可直接 spawn。手写即可信：能写文件进这个目录的人本来就有系统的完全控制权。
 - **staging 区**（`~/.tlon/prototypes-staging/`）——LLM 经 `writePrototype`（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool`）创作的原型落在这里，元数据强制 `:trusted false`、`:author` 记录作者 agent id（审计）。`spawnAgent` 拒绝 spawn 不可信原型。
 
-`write_staging_prototype`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。
+`write_staging_prototype`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`writePrototype` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。
 
 晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）与 WebUI 的 PROTOTYPES 视图；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 
@@ -130,6 +130,16 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 `writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
 
 信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
+
+## 谱系：原型谱系作为一等数据（）
+
+成员侧的血缘早已落盘（`agent.yaml` 的 `prototype`/`spawned_by`/`spawn_depth`），原型侧此前没有——一个原型从哪个原型派生、改了什么，只能靠人脑记。 把原型谱系提升为一等数据：
+
+- **落盘的只有三个元数据字段**：`:parent`（父原型名）、`:generation`（代数，根=1、子=父+1，永远服务端推导）、`:proposal-note`（本代变更说明）。写入点只有 `write_staging_prototype` / `write_trusted_prototype` / `update_prototype` 三处；`approve_prototype` 的晋级是目录搬迁 + 元数据改写，谱系字段原样保留（审计链不断）。
+- **谱系查询是派生的，不另落盘**：`get_prototype_lineage` 沿 `:parent` 链向上走到根，返回每一代的 `{name, generation, author, proposal_note, trusted}` 加相邻两代 `behavior.tlon` 的 unified diff（difflib 文本 diff，不做结构化 diff——模板 `${var}` 占位符会让 EDN loads 失败，而 behavior.tlon 本身已是规范化文本）。父原型被删除/改名时链断在哪就停在哪，最老可达的一代标注 `broken`；环与失控链由 visited 集合 + 链长上限（32）截断，同样标注 `broken`。
+- **两个查询面**：agent 侧有 `getPrototypeLineage` 工具（[tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py)），`listPrototypes`/`listStagingPrototypes` 的输出也带上了 `parent`/`generation`；人类侧 `GET /admin/prototypes/{name}`（含 staging 变体）的详情 payload 内嵌同一份 lineage 结果，`POST`/`PATCH` 接受 `parent`/`proposal_note`（`generation` 不接受客户端指定）。
+
+已知限制：同名原型原地 `update_prototype` 改写 behavior 不产生新代——代际只在「创建新原型」时推进，原地编辑会造成同一 `generation` 下行为混杂。这是刻意的简化：代际语义绑定在派生动作上，不绑定在编辑动作上。
 
 ## 依赖倒置
 

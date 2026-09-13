@@ -67,6 +67,7 @@ class WritePrototypeTool(Tool):
                 "新 prototype 默认不可信：需人类在 mirror 中批准后才能被 spawnAgent 使用。"
                 "behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。"
                 "无 :loop 的规则可声明 :parameters 以支持 spawn 时参数化。"
+                "可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。"
             ),
             parameters={
                 "type": "object",
@@ -90,6 +91,18 @@ class WritePrototypeTool(Tool):
                         "type": "string",
                         "description": "一句话描述这个原型的行为定位",
                     },
+                    "parent": {
+                        "type": "string",
+                        "description": (
+                            "父原型名称（本原型从哪个原型派生而来；留空表示新的根原型）。"
+                            "父原型必须已存在（trusted 库或 staging 区皆可），"
+                            "generation 由服务端自动推导为父代 + 1"
+                        ),
+                    },
+                    "proposal_note": {
+                        "type": "string",
+                        "description": "本代变更说明：相对父原型改了什么、为什么",
+                    },
                 },
                 "required": ["name", "behavior"],
             },
@@ -102,6 +115,8 @@ class WritePrototypeTool(Tool):
         behavior: str = kwargs["behavior"]
         display_name: str = kwargs.get("display_name", "")
         description: str = kwargs.get("description", "")
+        parent: str | None = kwargs.get("parent") or None
+        proposal_note: str | None = kwargs.get("proposal_note") or None
 
         hint = _BEHAVIOR_HINT if ":loop" in behavior else _SCRIPT_HINT
         try:
@@ -111,6 +126,8 @@ class WritePrototypeTool(Tool):
                 display_name=display_name,
                 description=description,
                 author_id=self._author_id,
+                parent=parent,
+                proposal_note=proposal_note,
             )
         except PrototypeError as e:
             return ToolResult(
@@ -124,6 +141,8 @@ class WritePrototypeTool(Tool):
             "name": info.name,
             "display_name": info.display_name,
             "trusted": info.trusted,
+            "parent": info.parent,
+            "generation": info.generation,
             "status": "pending_approval",
         }
         return ToolResult(

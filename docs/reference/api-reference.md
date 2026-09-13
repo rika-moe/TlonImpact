@@ -196,7 +196,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 ### GET /agents/{agent_id}
 
-单个 agent。200：`{"id", "name", "state", "config": {"prototype"}}`——形状与 `GET /agents` 的列表元素**不同**：`prototype` 嵌在 `config` 下，且无 `spawned_by`/`spawn_depth`；`state` 派生也不同，未运行时一律为 `unknown`（列表元素会区分 `waking`/`sleeping`）。404：agent 未注册（`{"error"}`，无 reason）。
+单个 agent。200：`{"id", "name", "state", "config": {"prototype", "spawned_by", "spawn_depth"}}`——形状与 `GET /agents` 的列表元素**不同**：血缘字段嵌在 `config` 下；`state` 派生也不同，未运行时一律为 `unknown`（列表元素会区分 `waking`/`sleeping`）。404：agent 未注册（`{"error"}`，无 reason）。
 
 ### GET /participants
 
@@ -237,12 +237,12 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 ### 原型管理端点（WebUI PROTOTYPES 视图）
 
-域函数在 [agents/prototypes.py](../../src/tlon/agents/prototypes.py)；原型对象形状 `{name, display_name, description, trusted, author, parameters: [{name, type, required}]}`，详情端点额外带 `behavior`（behavior.tlon 全文）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
+域函数在 [agents/prototypes.py](../../src/tlon/agents/prototypes.py)；原型对象形状 `{name, display_name, description, trusted, author, parent, generation, proposal_note, parameters: [{name, type, required}]}`（`parent`/`generation`/`proposal_note` 是谱系字段，：`parent` 为父原型名、根为 `null`，`generation` 根=1 且由服务端推导，`proposal_note` 为本代变更说明）。详情端点额外带 `behavior`（behavior.tlon 全文）与 `lineage`（`get_prototype_lineage` 的派生结果：根在前，每代 `{name, generation, author, proposal_note, trusted, parent, diff_from_parent, broken}`，`diff_from_parent` 是相邻两代 behavior.tlon 的 unified diff，根为 `null`；父原型已删/改名时链在断点截断并标 `broken`）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
 
 - `GET /admin/prototypes`、`GET /admin/prototypes/staging`——200：`{"status": "success", "prototypes": [<原型对象>]}`；503：未装配 `paths`
-- `GET /admin/prototypes/{name}`、`GET /admin/prototypes/staging/{name}`——200：`{"status": "success", "prototype": <原型对象 + behavior>}`；404：`{"error", "reason": "prototype_not_found"}`
-- `POST /admin/prototypes`——body `{name, behavior, display_name?, description?}`，手写创建直接进正式库（`:trusted true`、无 author）。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段或校验失败）
-- `PATCH /admin/prototypes/{name}`、`PATCH /admin/prototypes/staging/{name}`——body `{display_name?, description?, behavior?}`（全空 → 400 `invalid_prototype`），behavior 变更重跑校验链（失败则磁盘原样）。200：`{"status": "success", "prototype": <原型对象>}`；404：`prototype_not_found`
+- `GET /admin/prototypes/{name}`、`GET /admin/prototypes/staging/{name}`——200：`{"status": "success", "prototype": <原型对象 + behavior + lineage>}`；404：`{"error", "reason": "prototype_not_found"}`
+- `POST /admin/prototypes`——body `{name, behavior, display_name?, description?, parent?, proposal_note?}`，手写创建直接进正式库（`:trusted true`、无 author）；`parent` 须指向已存在的原型（trusted 或 staging 皆可），`generation` 服务端推导、不接受客户端指定。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段、父原型不存在或校验失败）
+- `PATCH /admin/prototypes/{name}`、`PATCH /admin/prototypes/staging/{name}`——body `{display_name?, description?, behavior?, parent?, proposal_note?}`（全空 → 400 `invalid_prototype`），behavior 变更重跑校验链（失败则磁盘原样）；给 `parent` 会重新挂谱系并重推 `generation`。200：`{"status": "success", "prototype": <原型对象>}`；404：`prototype_not_found`
 - `DELETE /admin/prototypes/{name}`——200：`{"status": "success"}`；404：`prototype_not_found`
 
 ### GET /traces（条件注册）
