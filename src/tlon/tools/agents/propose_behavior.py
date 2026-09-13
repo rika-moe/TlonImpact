@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.tools.agents.write_prototype import _BEHAVIOR_HINT, _SCRIPT_HINT
+from tlon.tools.agents.write_prototype import (
+    _BEHAVIOR_HINT,
+    _SCRIPT_HINT,
+    NearKinCheck,
+    _check_near_kin,
+)
 from tlon.tools.base import Tool, ToolResult
 from tlon.tools.prototypes.ports import PrototypeError, PrototypeSummary
 
@@ -110,6 +115,7 @@ class ProposeBehaviorTool(Tool):
         writer: Callable[..., PrototypeSummary],
         tlon_paths: TlonPaths,
         solvency: Callable[[str], Awaitable[bool]] | None = None,
+        near_kin: NearKinCheck | None = None,
     ) -> None:
         super().__init__(
             name="proposeBehavior",
@@ -156,6 +162,10 @@ class ProposeBehaviorTool(Tool):
         # Solvency gate (): an insolvent bloodline loses proposal
         # eligibility. None = always eligible.
         self._solvency = solvency
+        # Near-kin rejection (, agent side only): a reskin-level
+        # duplicate of an existing prototype is turned away. None =
+        # no check.
+        self._near_kin = near_kin
 
     async def _solvent(self, prototype: str) -> bool:
         """Proposal-eligibility check for the author's bloodline (fail-open).
@@ -232,6 +242,13 @@ class ProposeBehaviorTool(Tool):
             )
 
         hint = _BEHAVIOR_HINT if ":loop" in draft else _SCRIPT_HINT
+        # Near-kin rejection () sits after drafting: the draft text is
+        # the thing being compared, so the check cannot run earlier. The
+        # proposal's parent is always the member's own prototype, which is
+        # exempt from the comparison.
+        near_kin_rejection = _check_near_kin(self._near_kin, draft, self._prototype)
+        if near_kin_rejection is not None:
+            return near_kin_rejection
         try:
             info = self._writer(
                 name,

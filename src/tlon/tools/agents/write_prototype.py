@@ -41,6 +41,43 @@ _SCRIPT_HINT = (
     "引用时用 ${变量名}。"
 )
 
+# Signature of the injected near-kin check (): (behavior text,
+# excluded parent name) in, (closest prototype name, similarity ratio)
+# out when the proposal is a reskin-level cross-bloodline duplicate,
+# else None.
+NearKinCheck = Callable[[str, str | None], "tuple[str, float] | None"]
+
+
+def _check_near_kin(
+    near_kin: NearKinCheck | None, behavior: str, parent: str | None
+) -> ToolResult | None:
+    """Near-kin rejection (): a reskin-level duplicate is turned away.
+
+    ``parent`` is exempted from the comparison — a child resembling its
+    own parent is the generation channel working as intended; the gate
+    rejects cross-bloodline convergence. Fail-open like the solvency gate
+    (): a missing provider or any provider failure yields None (no
+    rejection) — similarity bookkeeping must never block a proposal.
+    """
+    if near_kin is None:
+        return None
+    try:
+        hit = near_kin(behavior, parent)
+    except Exception as e:
+        logger.warning("near_kin_check_failed", error=str(e))
+        return None
+    if hit is None:
+        return None
+    kin_name, ratio = hit
+    return ToolResult(
+        success=False,
+        data={},
+        error=f"near-kin of prototype '{kin_name}' (similarity {ratio:.2f})",
+        message=(
+            f"与 '{kin_name}' 相似度 {ratio:.2f}，请做出实质差异或改为提案改进它"
+        ),
+    )
+
 
 class WritePrototypeTool(Tool):
     """Tool to author a new behavior prototype (pure-data spec).
@@ -61,6 +98,7 @@ class WritePrototypeTool(Tool):
         writer: Callable[..., PrototypeSummary],
         prototype: str | None = None,
         solvency: Callable[[str], Awaitable[bool]] | None = None,
+        near_kin: NearKinCheck | None = None,
     ) -> None:
         super().__init__(
             name="writePrototype",
@@ -126,6 +164,10 @@ class WritePrototypeTool(Tool):
         # always eligible.
         self._prototype = prototype
         self._solvency = solvency
+        # Near-kin rejection (, agent side only): a reskin-level
+        # duplicate of an existing prototype is turned away. None =
+        # no check.
+        self._near_kin = near_kin
 
     async def _solvent(self, prototype: str) -> bool:
         """Proposal-eligibility check for the author's bloodline (fail-open).
@@ -162,6 +204,14 @@ class WritePrototypeTool(Tool):
         lessons: str | None = kwargs.get("lessons") or None
 
         hint = _BEHAVIOR_HINT if ":loop" in behavior else _SCRIPT_HINT
+        # Near-kin check (): the exempted parent is the explicit
+        # ``parent`` argument when given, else the author's own prototype
+        # (explicit parent > own prototype).
+        near_kin_rejection = _check_near_kin(
+            self._near_kin, behavior, parent or self._prototype
+        )
+        if near_kin_rejection is not None:
+            return near_kin_rejection
         try:
             info = self._writer(
                 name,

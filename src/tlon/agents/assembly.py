@@ -9,6 +9,7 @@ provider and paths, keeping the import direction agents → tools (the
 ports live in ``tlon.tools.agents.ports``, ).
 """
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 from tlon.agents.fitness import solvency_provider
@@ -17,6 +18,7 @@ from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import (
+    find_near_kin,
     get_prototype_lineage,
     list_prototypes,
     list_staging_prototypes,
@@ -243,12 +245,17 @@ async def assemble_cognitive(
     # proposal eligibility until it earns endorsements back. The gate
     # recomputes from raw files per call (proposals are low-frequency).
     proposal_solvency = solvency_provider(tlon_paths)
+    # Near-kin rejection (, agent side only like the solvency gate):
+    # reskin-level duplicates of an existing prototype (trusted or
+    # staging) are turned away before they reach disk.
+    near_kin_check = partial(find_near_kin, tlon_paths=tlon_paths)
     tool_executor.register_tool(
         WritePrototypeTool(
             author_id=config.id,
             writer=write_staging_prototype,
             prototype=config.prototype,
             solvency=proposal_solvency,
+            near_kin=near_kin_check,
         )
     )
     # Experience entry of the generation channel (): drafts the next
@@ -267,6 +274,7 @@ async def assemble_cognitive(
             writer=write_staging_prototype,
             tlon_paths=tlon_paths,
             solvency=proposal_solvency,
+            near_kin=near_kin_check,
         )
     )
     tool_executor.register_tool(RememberFactTool(memory))
