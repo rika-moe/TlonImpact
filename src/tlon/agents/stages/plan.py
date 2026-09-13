@@ -38,6 +38,8 @@ async def plan_stage(
                 }
             ],
             span="agent.plan",
+            purpose="plan",
+            session_id=session.id,
         )
     except ContextWindowExceededError:
         # ADR 0008: not a soft failure — the engine force-compacts and

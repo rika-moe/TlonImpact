@@ -171,6 +171,8 @@ class ContextPressure:
             response = await self._llm_client.chat(
                 system_prompt=_SUMMARY_SYSTEM_PROMPT,
                 messages=[*middle, {"role": "user", "content": _SUMMARY_INSTRUCTION}],
+                purpose="context_pressure",
+                session_id=session.id,
             )
             summary_text = (response.content or "").strip()
             if not summary_text:

@@ -154,7 +154,9 @@ async def assemble_cognitive(
 
     # Build infrastructure dependencies
     llm_config = _build_llm_config(config.llm, get_settings())
-    llm_client = LLMClient(llm_config)
+    # agent_id binds the client to the member's token ledger (issue ):
+    # every chat() carrying usage appends to {agent_id}/ledger.jsonl.
+    llm_client = LLMClient(llm_config, agent_id=config.id, tlon_paths=tlon_paths)
 
     agent_home = tlon_paths.agent_dir(config.id)
     # Single memory tuning surface: `memory/config.json` per agent
@@ -168,6 +170,7 @@ async def assemble_cognitive(
         config=memory_config,
         data_dir=agent_home,
         llm_config=llm_config,
+        tlon_paths=tlon_paths,
     )
 
     task_manager = TaskManager(

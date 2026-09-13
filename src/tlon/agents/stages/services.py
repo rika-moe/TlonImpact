@@ -177,7 +177,12 @@ class StageServices:
         )
 
     async def distill(
-        self, system_prompt: str, messages: list[dict[str, Any]], *, span: str
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        *,
+        span: str,
+        session_id: str | None = None,
     ) -> LLMResponse:
         """One auxiliary LLM call with an explicit system prompt, no tools.
 
@@ -188,10 +193,20 @@ class StageServices:
         """
         async with self.traced_span(span):
             return await self._llm_client.chat(
-                system_prompt=system_prompt, messages=messages
+                system_prompt=system_prompt,
+                messages=messages,
+                purpose="distill",
+                session_id=session_id,
             )
 
-    async def think(self, context: list[dict[str, Any]], *, span: str) -> LLMResponse:
+    async def think(
+        self,
+        context: list[dict[str, Any]],
+        *,
+        span: str,
+        purpose: str = "think",
+        session_id: str | None = None,
+    ) -> LLMResponse:
         """Call the LLM once — a read-only external query, not an effect.
 
         Emits the AGENT_THINKING_START / AGENT_LLM_REQUEST /
@@ -226,6 +241,8 @@ class StageServices:
                 system_prompt=system_prompt,
                 messages=context,
                 tools=tools if tools else None,
+                purpose=purpose,
+                session_id=session_id,
             )
             duration_ms = int((time.time() - start_time) * 1000)
 

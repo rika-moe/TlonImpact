@@ -5,7 +5,9 @@ Supports multiple model providers with retry logic.
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import litellm
@@ -23,7 +25,9 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from tlon.base.config import LLMConfig
+from tlon.base.ledger import LedgerWriter
 from tlon.base.logger import get_logger
+from tlon.base.paths import TlonPaths, paths
 from tlon.base.tracing.trace_context import start_span
 
 logger = get_logger(__name__)
@@ -154,15 +158,32 @@ class LLMClient:
         ... )
     """
 
-    def __init__(self, config: LLMConfig):
+    def __init__(
+        self,
+        config: LLMConfig,
+        agent_id: str | None = None,
+        tlon_paths: TlonPaths | None = None,
+    ):
         """Initialize the LLM client.
 
         Args:
             config: LLM configuration
+            agent_id: Owning member id for ledger attribution (issue
+                ). When set, every chat() whose response carries
+                usage appends one record to the member's
+                ``ledger.jsonl``; None = system-level client, no
+                accounting.
+            tlon_paths: Path resolver for the ledger file (tests inject
+                an isolated home); defaults to the global ``~/.tlon``
+                layout.
         """
         self.config = config
         self.max_retries = config.max_retries
         self.base_delay = config.base_delay
+        self._ledger: LedgerWriter | None = None
+        if agent_id is not None:
+            resolver = tlon_paths if tlon_paths is not None else paths
+            self._ledger = LedgerWriter(resolver.agent_ledger_file(agent_id))
 
     async def chat(
         self,
@@ -171,6 +192,8 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         temperature: float | None = None,
         timeout: float | None = None,
+        purpose: str | None = None,
+        session_id: str | None = None,
     ) -> LLMResponse:
         """Send a chat completion request with retry logic.
 
@@ -180,6 +203,9 @@ class LLMClient:
             tools: Optional list of tool definitions
             temperature: Optional temperature override
             timeout: Request timeout in seconds
+            purpose: Ledger attribution label (e.g. "think",
+                "summarize"); None = unattributed
+            session_id: Session the call belongs to, when known
 
         Returns:
             LLMResponse with content and/or tool calls
@@ -211,6 +237,8 @@ class LLMClient:
             },
         ):
             span = trace.get_current_span()
+            start_time = time.time()
+            start_cpu = time.process_time()
             try:
                 response = await self._chat_with_retries(
                     all_messages, tools, temperature, timeout
@@ -221,6 +249,9 @@ class LLMClient:
                 span.record_exception(e)
                 raise
 
+            duration_ms = int((time.time() - start_time) * 1000)
+            cpu_ms = int((time.process_time() - start_cpu) * 1000)
+
             if response.usage:
                 prompt_tokens = response.usage.get("prompt_tokens")
                 completion_tokens = response.usage.get("completion_tokens")
@@ -228,6 +259,13 @@ class LLMClient:
                     span.set_attribute("llm.usage.prompt_tokens", prompt_tokens)
                 if completion_tokens is not None:
                     span.set_attribute("llm.usage.completion_tokens", completion_tokens)
+                await self._record_usage(
+                    response,
+                    purpose=purpose,
+                    session_id=session_id,
+                    duration_ms=duration_ms,
+                    cpu_ms=cpu_ms,
+                )
 
             logger.info(
                 "llm_response",
@@ -242,6 +280,38 @@ class LLMClient:
                 else None,
             )
             return response
+
+    async def _record_usage(
+        self,
+        response: LLMResponse,
+        *,
+        purpose: str | None,
+        session_id: str | None,
+        duration_ms: int,
+        cpu_ms: int,
+    ) -> None:
+        """Append one ledger record for the call (issue ).
+
+        Best-effort: a ledger write failure is logged, never raised — a
+        bookkeeping error must not fail cognition.
+        """
+        if self._ledger is None or not response.usage:
+            return
+        record = {
+            "ts": datetime.now(UTC).isoformat(),
+            "event": "llm_call",
+            "model": self.config.model_name,
+            "prompt_tokens": response.usage.get("prompt_tokens", 0),
+            "completion_tokens": response.usage.get("completion_tokens", 0),
+            "duration_ms": duration_ms,
+            "cpu_ms": cpu_ms,
+            "purpose": purpose,
+            "session_id": session_id,
+        }
+        try:
+            await self._ledger.append(record)
+        except Exception as e:
+            logger.warning("ledger_append_failed", error=str(e))
 
     async def _chat_with_retries(
         self,

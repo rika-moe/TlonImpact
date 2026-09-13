@@ -423,6 +423,7 @@ class LoopDriver:
                 _MAX_ITERATIONS_SYSTEM_PROMPT,
                 self._distill_messages(session),
                 span="agent.distill",
+                session_id=session.id,
             )
             content = (response.content or "").strip()
             if not content:

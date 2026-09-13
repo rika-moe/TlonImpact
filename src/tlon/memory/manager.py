@@ -16,7 +16,7 @@ import aiofiles
 
 from tlon.base.config import LLMConfig
 from tlon.base.logger import get_logger
-from tlon.base.paths import paths
+from tlon.base.paths import TlonPaths, paths
 
 from .episodic_store import EpisodicMemoryStore
 from .models import (
@@ -73,6 +73,7 @@ class MemoryManager:
         config: MemoryConfig,
         data_dir: Path | None = None,
         llm_config: LLMConfig | None = None,
+        tlon_paths: TlonPaths | None = None,
     ):
         """Initialize Memory Manager.
 
@@ -85,6 +86,9 @@ class MemoryManager:
                 registry always passes an explicit data_dir (unified
                 assembly, ADR 0006), so the singleton is only a fallback.
             llm_config: Optional LLM config for summarization
+            tlon_paths: Path resolver handed to the summarizer's LLM
+                client for ledger attribution (issue ); defaults to
+                the global ``~/.tlon`` layout.
         """
         self.agent_id = agent_id
         self.config = config
@@ -108,7 +112,9 @@ class MemoryManager:
 
         # Initialize summarizer if LLM config provided
         if llm_config:
-            self.summarizer: Summarizer | None = Summarizer(llm_config)
+            self.summarizer: Summarizer | None = Summarizer(
+                llm_config, agent_id=agent_id, tlon_paths=tlon_paths
+            )
         else:
             self.summarizer = None
 

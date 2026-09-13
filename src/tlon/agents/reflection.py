@@ -144,6 +144,7 @@ class ReflectionEngine:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
                 timeout=60.0,
+                purpose="reflect",
             )
 
             if not response.content:

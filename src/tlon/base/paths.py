@@ -25,6 +25,7 @@ Layout:
     │   ├── sessions/
     │   │   └── {session_id}.jsonl
     │   ├── tasks.jsonl
+    │   ├── ledger.jsonl
     │   ├── workspace/
     │   │   └── .agents/skills/{skill}/SKILL.md
     │   └── mail/
@@ -121,6 +122,17 @@ class TlonPaths:
 
     def agent_tasks_file(self, agent_id: str) -> Path:
         return self.agent_dir(agent_id) / "tasks.jsonl"
+
+    def agent_ledger_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/ledger.jsonl — per-member token ledger (issue ).
+
+        Append-only JSONL written by ``base/ledger.py`` (one record per
+        attributed ``LLMClient.chat`` call). Read-only resolution: does
+        NOT create anything — an absent ledger is the normal state for a
+        member that has made no attributed LLM calls; the writer creates
+        the parent directory on append.
+        """
+        return self._home / agent_id / "ledger.jsonl"
 
     def agent_sessions_dir(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/sessions/ — per-session event journals (ADR 0007)."""

@@ -7,6 +7,7 @@ from typing import Any, cast
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
+from tlon.base.paths import TlonPaths
 
 from .models import SessionProjection
 
@@ -26,13 +27,22 @@ class Summarizer:
         >>> summary, facts = await summarizer.process_sessions(projections)
     """
 
-    def __init__(self, llm_config: LLMConfig):
+    def __init__(
+        self,
+        llm_config: LLMConfig,
+        agent_id: str | None = None,
+        tlon_paths: TlonPaths | None = None,
+    ):
         """Initialize summarizer.
 
         Args:
             llm_config: Configuration for LLM client
+            agent_id: Owning member id for ledger attribution (issue
+                ); None = no accounting
+            tlon_paths: Path resolver for the ledger file; defaults to
+                the global ``~/.tlon`` layout
         """
-        self.llm_client = LLMClient(llm_config)
+        self.llm_client = LLMClient(llm_config, agent_id=agent_id, tlon_paths=tlon_paths)
 
     async def generate_summary(
         self,
@@ -91,6 +101,7 @@ class Summarizer:
                 messages=messages,
                 temperature=temp,
                 timeout=30.0,
+                purpose="summarize",
             )
 
             if not response.content:
@@ -199,6 +210,7 @@ class Summarizer:
                 messages=messages,
                 temperature=temp,
                 timeout=30.0,
+                purpose="extract_facts",
             )
 
             if not response.content:
