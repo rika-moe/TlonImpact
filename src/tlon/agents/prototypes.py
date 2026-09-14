@@ -13,6 +13,10 @@ persona files are creation-time data, never part of the genome):
   retired member's memory, packaged with the prototype and copied to the
   member's ``config/`` at instantiation; the DSL ``(lessons)`` context
   section injects it
+- ``REVIEW.md`` — optional (issue , heterogeneous review): peer-review
+  records appended by ``reviewPrototype`` while the prototype is staged.
+  Metadata reading never touches it, so listing stays free; approval's
+  whole-directory move carries it into the trusted library.
 
 A directory qualifies as a prototype when it contains ``behavior.tlon``.
 The member type (cognitive ``react`` vs deterministic ``script``) is no
@@ -74,6 +78,7 @@ PROTOTYPE_PACKAGE = "tlon.prototypes"
 METADATA_FILE = "prototype.edn"
 BEHAVIOR_FILE = "behavior.tlon"
 LESSONS_FILE = "LESSONS.md"
+REVIEWS_FILE = "REVIEW.md"
 
 
 @dataclass(frozen=True)
@@ -578,7 +583,7 @@ def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
 
 def get_prototype_detail(
     name: str, staging: bool = False, tlon_paths: TlonPaths | None = None
-) -> tuple[PrototypeInfo, str, str | None]:
+) -> tuple[PrototypeInfo, str, str | None, str | None]:
     """Metadata plus the full ``behavior.tlon`` text of one prototype.
 
     Args:
@@ -587,9 +592,10 @@ def get_prototype_detail(
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
 
     Returns:
-        ``(metadata, behavior_text, lessons)`` — ``lessons`` is the
+        ``(metadata, behavior_text, lessons, reviews)`` — ``lessons`` is the
         ``LESSONS.md`` text (issue ), None when the prototype carries
-        no lessons file.
+        no lessons file; ``reviews`` is the ``REVIEW.md`` text (issue ,
+        heterogeneous review records), None when no review has landed.
 
     Raises:
         PrototypeError: invalid name or no prototype under that name
@@ -605,7 +611,44 @@ def get_prototype_detail(
     behavior = (proto_dir / BEHAVIOR_FILE).read_text(encoding="utf-8")
     lessons_file = proto_dir / LESSONS_FILE
     lessons = lessons_file.read_text(encoding="utf-8") if lessons_file.exists() else None
-    return info, behavior, lessons
+    reviews_file = proto_dir / REVIEWS_FILE
+    reviews = reviews_file.read_text(encoding="utf-8") if reviews_file.exists() else None
+    return info, behavior, lessons, reviews
+
+
+def append_staging_review(
+    name: str, entry_text: str, tlon_paths: TlonPaths | None = None
+) -> None:
+    """Append one peer-review entry to a staged prototype's ``REVIEW.md``.
+
+    The review record is advisory (issue ): it never gates approval —
+    it rides along with the directory when ``approve_prototype`` moves the
+    prototype into the trusted library, so the review trail survives
+    promotion. Multiple reviews accumulate; nothing overwrites.
+
+    Args:
+        name: staged prototype directory name
+        entry_text: one formatted review entry (timestamp, reviewer id,
+            reviewer model, verdict, rationale — assembled by the caller);
+            normalized to end with a newline
+        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+
+    Raises:
+        PrototypeError: invalid name or nothing staged under that name
+    """
+    p = tlon_paths or paths
+    _validate_name(name)
+    staging_dir = p.prototypes_staging_dir() / name
+    if not _is_prototype_dir(staging_dir):
+        raise PrototypeError(f"no staged prototype named '{name}'")
+    entry = entry_text if entry_text.endswith("\n") else entry_text + "\n"
+    review_file = staging_dir / REVIEWS_FILE
+    if review_file.exists():
+        with review_file.open("a", encoding="utf-8") as f:
+            f.write("\n" + entry)
+    else:
+        review_file.write_text("# 评审记录\n\n" + entry, encoding="utf-8")
+    logger.info("staging_review_appended", name=name)
 
 
 _MAX_LINEAGE_DEPTH = 32

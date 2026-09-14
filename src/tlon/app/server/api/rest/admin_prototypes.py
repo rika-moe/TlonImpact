@@ -26,6 +26,7 @@ def _prototype_payload(
     info: PrototypeInfo,
     behavior: str | None = None,
     lessons: str | None = None,
+    reviews: str | None = None,
 ) -> dict[str, Any]:
     """Serialize a PrototypeInfo for the admin API (list + detail shapes)."""
     payload: dict[str, Any] = {
@@ -46,6 +47,8 @@ def _prototype_payload(
         payload["behavior"] = behavior
     if lessons is not None:
         payload["lessons"] = lessons
+    if reviews is not None:
+        payload["reviews"] = reviews
     return payload
 
 
@@ -86,7 +89,8 @@ class AdminPrototypeHandlers(RestHandlerBase):
     async def handle_get_prototype(self, request: web.Request) -> web.Response:
         """GET /admin/prototypes/{name} - trusted-library prototype detail:
         metadata + parameters + the full behavior.tlon text (+ LESSONS.md
-        text when the prototype carries one, issue )."""
+        text when the prototype carries one, issue ; + REVIEW.md peer
+        review records when present, issue )."""
         return self._handle_get_detail(request, staging=False)
 
     async def handle_get_staging_prototype(self, request: web.Request) -> web.Response:
@@ -101,14 +105,14 @@ class AdminPrototypeHandlers(RestHandlerBase):
             )
         name = request.match_info["name"]
         try:
-            info, behavior, lessons = get_prototype_detail(
+            info, behavior, lessons, reviews = get_prototype_detail(
                 name, staging=staging, tlon_paths=self.paths
             )
         except PrototypeError as e:
             return self._json_response(
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
             )
-        payload = _prototype_payload(info, behavior, lessons)
+        payload = _prototype_payload(info, behavior, lessons, reviews)
         # Lineage (): the derived parent chain, including per-generation
         # diffs — first-class data on the detail endpoint.
         payload["lineage"] = get_prototype_lineage(name, tlon_paths=self.paths)

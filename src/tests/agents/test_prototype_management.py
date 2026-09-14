@@ -9,6 +9,7 @@ full validation chain before anything touches disk.
 import pytest
 
 from tlon.agents.prototypes import (
+    append_staging_review,
     approve_prototype,
     delete_prototype,
     get_prototype_detail,
@@ -90,7 +91,7 @@ class TestGetPrototypeDetail:
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("hand", VALID_BEHAVIOR, description="d", tlon_paths=p)
 
-        info, behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        info, behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
 
         assert lessons is None
         assert info.name == "hand"
@@ -101,7 +102,7 @@ class TestGetPrototypeDetail:
         p = TlonPaths(home=tmp_path)
         write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
 
-        info, _behavior, _lessons = get_prototype_detail("staged", staging=True, tlon_paths=p)
+        info, _behavior, _lessons, _reviews = get_prototype_detail("staged", staging=True, tlon_paths=p)
 
         assert info.trusted is False
         assert info.author == "adam"
@@ -112,6 +113,43 @@ class TestGetPrototypeDetail:
             get_prototype_detail("nope", tlon_paths=p)
         with pytest.raises(PrototypeError, match="no prototype named 'nope'"):
             get_prototype_detail("nope", staging=True, tlon_paths=p)
+
+
+class TestStagingReviewFile:
+    """``REVIEW.md`` peer-review records (issue ): advisory, append-only,
+    carried into the trusted library by approval's whole-directory move."""
+
+    def test_detail_without_reviews_returns_none(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        _info, _behavior, _lessons, reviews = get_prototype_detail(
+            "staged", staging=True, tlon_paths=p
+        )
+
+        assert reviews is None
+
+    def test_append_roundtrip_and_accumulate(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        append_staging_review("staged", "## t1 — r-1（m-1）：通过\n\n理由甲\n", tlon_paths=p)
+        append_staging_review("staged", "## t2 — r-2（m-2）：弃权\n\n理由乙\n", tlon_paths=p)
+
+        text = (p.prototypes_staging_dir() / "staged" / "REVIEW.md").read_text(
+            encoding="utf-8"
+        )
+        assert text.count("理由甲") == 1 and text.count("理由乙") == 1
+        assert text.index("理由甲") < text.index("理由乙")
+        _info, _behavior, _lessons, reviews = get_prototype_detail(
+            "staged", staging=True, tlon_paths=p
+        )
+        assert reviews == text
+
+    def test_append_missing_staging_raises(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        with pytest.raises(PrototypeError, match="no staged prototype named 'nope'"):
+            append_staging_review("nope", "entry\n", tlon_paths=p)
 
 
 class TestUpdatePrototype:
@@ -138,7 +176,7 @@ class TestUpdatePrototype:
 
         update_prototype("hand", behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
 
-        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == VALID_BEHAVIOR_V2
 
     def test_invalid_behavior_update_leaves_disk_untouched(self, tmp_path):
@@ -151,7 +189,7 @@ class TestUpdatePrototype:
             )
 
         # Neither the behavior file nor the metadata was written.
-        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == VALID_BEHAVIOR
         metadata = (p.prototypes_dir() / "hand" / "prototype.edn").read_text(
             encoding="utf-8"
@@ -238,7 +276,7 @@ class TestApprovePreservesLineage:
         with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
             update_prototype("hand", parent="ghost", tlon_paths=p)
 
-        info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
+        info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert info.parent is None
         assert behavior == VALID_BEHAVIOR
 
@@ -255,7 +293,7 @@ class TestLessonsFile:
 
         lessons_file = p.prototypes_staging_dir() / "staged" / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训甲\n"
-        _info, _behavior, lessons = get_prototype_detail(
+        _info, _behavior, lessons, _reviews = get_prototype_detail(
             "staged", staging=True, tlon_paths=p
         )
         assert lessons == "- 教训甲\n"
@@ -266,7 +304,7 @@ class TestLessonsFile:
 
         lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训乙\n"
-        _info, _behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        _info, _behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert lessons == "- 教训乙\n"
 
     def test_no_lessons_no_file(self, tmp_path):
@@ -274,7 +312,7 @@ class TestLessonsFile:
         write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
 
         assert not (p.prototypes_dir() / "hand" / "LESSONS.md").exists()
-        _info, _behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        _info, _behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert lessons is None
 
     def test_update_writes_lessons(self, tmp_path):

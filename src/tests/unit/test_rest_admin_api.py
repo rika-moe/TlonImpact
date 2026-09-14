@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from tlon.agents.prototypes import (
+    append_staging_review,
     get_prototype_detail,
     get_prototype_info,
     seed_prototypes,
@@ -307,7 +308,7 @@ class TestAdminPrototypeManagement:
         proto = json.loads(resp.text)["prototype"]
         assert proto["description"] == "新描述"
         assert proto["trusted"] is True
-        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == self._TEMPLATED
 
     async def test_update_empty_body_400(self, tmp_path: Path):
@@ -333,7 +334,7 @@ class TestAdminPrototypeManagement:
 
         assert resp.status == 400
         assert json.loads(resp.text)["reason"] == "invalid_prototype"
-        _info, behavior, _ = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == self._BEHAVIOR
 
     async def test_update_unknown_404(self, tmp_path: Path):
@@ -454,7 +455,7 @@ class TestAdminPrototypeLessons:
         )
 
         assert resp.status == 200
-        _info, _behavior, lessons = get_prototype_detail("hand", tlon_paths=p)
+        _info, _behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert lessons == "- 补充教训\n"
 
     async def test_patch_lessons_staging(self, tmp_path: Path):
@@ -466,7 +467,7 @@ class TestAdminPrototypeLessons:
         )
 
         assert resp.status == 200
-        _info, _behavior, lessons = get_prototype_detail("staged", staging=True, tlon_paths=p)
+        _info, _behavior, lessons, _reviews = get_prototype_detail("staged", staging=True, tlon_paths=p)
         assert lessons == "- 审稿补充\n"
 
     async def test_staging_detail_carries_lessons(self, tmp_path: Path):
@@ -479,6 +480,42 @@ class TestAdminPrototypeLessons:
 
         assert resp.status == 200
         assert json.loads(resp.text)["prototype"]["lessons"] == "- 随包\n"
+
+
+class TestAdminPrototypeReviews:
+    """REVIEW.md peer-review records on the prototype detail endpoints
+    (issue ): the payload carries the review text so the human
+    approver sees the heterogeneous reviews; absent file = no field."""
+
+    _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+
+    def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
+        p = TlonPaths(home=tmp_path)
+        return RESTAPIHandler(None, MagicMock(), paths=p), p
+
+    async def test_staging_detail_carries_reviews(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
+        append_staging_review(
+            "staged", "## t — r-1（fake/model）：通过\n\n理由\n", tlon_paths=p
+        )
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        reviews = json.loads(resp.text)["prototype"]["reviews"]
+        assert "r-1" in reviews and "理由" in reviews
+
+    async def test_detail_without_reviews_omits_field(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR})
+        )
+
+        resp = await handler.handle_get_prototype(StubRequest(name="hand"))
+
+        assert resp.status == 200
+        assert "reviews" not in json.loads(resp.text)["prototype"]
 
 
 class TestAdminPrototypeLineage:

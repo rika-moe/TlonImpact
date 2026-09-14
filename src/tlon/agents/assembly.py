@@ -18,7 +18,9 @@ from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
 from tlon.agents.prototypes import (
+    append_staging_review,
     find_near_kin,
+    get_prototype_detail,
     get_prototype_lineage,
     list_prototypes,
     list_staging_prototypes,
@@ -61,6 +63,7 @@ from tlon.tools.observability.traces import GetTraceTool, ListTracesTool
 from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
+from tlon.tools.prototypes.review_prototype import ReviewPrototypeTool
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 from tlon.tools.system.current_time import GetCurrentTimeTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
@@ -232,10 +235,29 @@ async def assemble_cognitive(
     # Staging proposals (): agent-authored prototypes awaiting human
     # trust approval — visible so a member (e.g. the scribe's digest) can
     # surface them as pending human decisions.
-    tool_executor.register_tool(ListStagingPrototypesTool(lister=list_staging_prototypes))
+    tool_executor.register_tool(
+        ListStagingPrototypesTool(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths))
+    )
     # Lineage (): the prototype genealogy is first-class data — any
     # member can walk a :parent chain and see each generation's diff.
-    tool_executor.register_tool(GetPrototypeLineageTool(lineage=get_prototype_lineage))
+    tool_executor.register_tool(
+        GetPrototypeLineageTool(lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths))
+    )
+    # Heterogeneous review (, phase 2): a member reviews a staging
+    # proposal with its own llm_client — the heterogeneity comes from the
+    # reviewer's model bloodline (config.model_name), the verdict is never
+    # caller-supplied. Records append to the proposal's REVIEW.md and ride
+    # along with approval's whole-directory move. Advisory only: approve
+    # stays a human decision.
+    tool_executor.register_tool(
+        ReviewPrototypeTool(
+            reviewer_id=config.id,
+            llm_client=llm_client,
+            detail=partial(get_prototype_detail, staging=True, tlon_paths=tlon_paths),
+            lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths),
+            append_review=partial(append_staging_review, tlon_paths=tlon_paths),
+        )
+    )
     # Spawn/stop lifecycle tools (stage 6b): the registry is the
     # assembler, so it injects itself (it satisfies the AgentLifecycle
     # port structurally); spawner_id binds the tool to the owning
