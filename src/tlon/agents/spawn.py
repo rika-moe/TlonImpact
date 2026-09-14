@@ -21,6 +21,17 @@ output, derived in ``agents/fitness.py``) is rejected outright, right
 after the trust gate. Both fail open — fitness bookkeeping must never
 block a spawn.
 
+The probation gate (, trust ladder) tightens budget 3 from the
+*spawner* side: an optional ``probation`` provider maps the spawner's
+member id to a bool, and a probationary spawner (spawned, not yet
+endorsed) gets its effective per-session quota capped at 1. Note the
+keying difference from tilt/solvency: those two judge the spawn
+*target's* bloodline (prototype name); probation judges the *spawner*
+(member id) — one spawn can therefore be tilted by one bloodline's
+fitness while capped by its spawner's trust level. Same fail-open
+discipline: a missing provider or a derivation error reads as *not*
+probation.
+
 Of the three budgets, only the per-(spawner, session) quota is a ledger,
 and it is persisted (``TlonPaths.spawn_quota_ledger_file``, atomic
 replace): sessions themselves survive a restart via journal replay
@@ -76,6 +87,7 @@ class SpawnManager:
         session_spawn_quota: int,
         tilt_provider: Callable[[str], Awaitable[float]] | None = None,
         solvency: Callable[[str], Awaitable[bool]] | None = None,
+        probation: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
         self._registry = registry
         self._max_activations = max_activations
@@ -87,6 +99,11 @@ class SpawnManager:
         # Solvency gate (): prototype name -> solvent? None = always
         # solvent (gate disabled).
         self._solvency = solvency
+        # Probation gate (, trust ladder): spawner member id -> on
+        # probation? None = never probation (gate disabled). Keyed by the
+        # spawner, not the target prototype — different dimension from
+        # tilt/solvency above.
+        self._probation = probation
         # (spawner_id, session_id) -> successful spawn count, persisted to
         # disk so the anti-runaway quota survives restarts (sessions do,
         # via journal replay).
@@ -181,6 +198,22 @@ class SpawnManager:
         except Exception as e:
             logger.warning("spawn_solvency_failed", prototype=prototype, error=str(e))
             return True
+
+    async def _probationary(self, spawner_id: str) -> bool:
+        """Whether the *spawner* is on probation (fail-open, ).
+
+        Keyed by spawner member id, unlike ``_tilt``/``_solvent`` which
+        are keyed by the spawn target's prototype. A missing provider or
+        any provider failure yields False — trust bookkeeping must never
+        tighten a quota.
+        """
+        if self._probation is None:
+            return False
+        try:
+            return bool(await self._probation(spawner_id))
+        except Exception as e:
+            logger.warning("spawn_probation_failed", spawner_id=spawner_id, error=str(e))
+            return False
 
     async def spawn_member(
         self,
@@ -286,11 +319,19 @@ class SpawnManager:
         # bloodline's efficiency (): effective quota =
         # ceil(base * tilt), tilt clamped to [0.5, 2.0] upstream. Tilt
         # 1.0 (cold start / failure fallback) is the untilted behavior.
+        # Probation cap (, trust ladder): a probationary *spawner*
+        # (spawned, not yet endorsed) is capped at 1 spawn per session
+        # regardless of the tilt — tilt judges the target bloodline,
+        # probation judges the spawner.
         tilt = await self._tilt(prototype)
         effective_quota = math.ceil(self._session_spawn_quota * tilt)
+        probationary = await self._probationary(spawner_id)
+        if probationary:
+            effective_quota = min(effective_quota, 1)
         quota_key = (spawner_id, session_id or _UNKNOWN_SESSION)
         used = self._quota.get(quota_key, 0)
         if used >= effective_quota:
+            probation_note = "; spawner on probation, capped at 1 ()" if probationary else ""
             self._reject_spawn(
                 "session_quota",
                 spawner_id=spawner_id,
@@ -299,6 +340,7 @@ class SpawnManager:
                 detail=(
                     f"quota {effective_quota} per session exhausted"
                     f" (base {self._session_spawn_quota} × tilt {tilt:.2f})"
+                    f"{probation_note}"
                 ),
             )
 

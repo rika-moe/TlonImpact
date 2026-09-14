@@ -67,6 +67,21 @@
 - **Member 是基因型的个体表达**：不可自改（决策 4）、经验不回流到自身、退休即归档（决策 8）。"个体学习"的正确形态是"经验 → 原型提案 → 新一代成员"，不是"反思 → 改写我的 spec"。
 - **信任闸按影响半径分级**：改自己是危险的 → 干脆禁止（决策 4）；提案是安全的 → 走评审（决策 5/6）。
 
+### 信任阶梯：新成员的渐进式自主权（，2026-09 落地）
+
+上述信任闸按**影响半径**分级；信任阶梯是它的补轴——按**成员**分级。两轴正交：原型轴的 staging 闸（[prototypes.md](prototypes.md)：LLM 写的原型待人类批准）管「什么行为可以出生」，成员轴的信任阶梯管「这个成员此刻能做多大动作」。阶梯**派生不落盘**（与声誉  / 谱系  / 适应度  同一纪律）：
+
+- **见习（probation）**：`spawned_by` 非 None（spawn 出生）且 `endorsements_received == 0`；
+- **正式（full）**：人类放置（`spawned_by=None`）或已获至少一次 endorse（`ENDORSEMENT_THRESHOLD = 1`，首个认可即转正；更细的阶梯等数据积累）。
+
+升级生效时机 = 下次唤醒重新装配（scale-to-zero 世界自然发生）。见习收紧三档闸门，全部 fail-open（派生异常一律按正式放行，可用性优先）：
+
+1. **spawn 配额收紧**：`SpawnManager` 第三个 provider `probation` 按 **spawner_id** 判见习（注意维度差异：tilt/solvency 按目标 prototype，probation 按 spawner）；见习 spawner 的有效每会话配额 `min(effective, 1)`。
+2. **工具子集**：装配期一次性派生信任等级，见习成员不注册四个生殖/演化工具（`spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior`，即 `trust.REPRODUCTION_TOOLS`）；`reviewPrototype` 咨询性保留。DSL 的 spawn 动作由 SpawnManager 配额闸兜底（同一漏斗）；DSL stop 不闸——已知缺口：停止请求的策略闸是 Adam 侧/未来项。
+3. **发信抄送 mentor**：见习成员的 mentor = `spawned_by`。装配期算出 `mentor_cc`（`address_for_member(spawned_by)`），注入 MemberRuntime 与 EffectExecutor 两条发信链路；mentor 已在 to/cc（含收件人即 mentor 本人）时不重复加。**forward 不抄送**——转发是既有邮件的传递，抄送是噪音。
+
+可见性：`listAgents` 不加 trust_level——status 构造是同步的，声誉派生是 async 全社会扫描，成本不合；人类可见性靠 REST 详情已有的 `spawned_by` + `getReputation` 工具。
+
 ## 代码锚点
 
 | 机制 | 位置 |
@@ -81,6 +96,7 @@
 | 生命周期策略：boot/stop 裁决 + 出生欢迎信（Adam 的策略规则，数据；issue  出生社会化） | [agents/adam.py](../../src/tlon/agents/adam.py) |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制；每会话配额按血脉适应度倾斜（`ceil(quota × tilt)`，tilt ∈ [0.5, 2.0]，冷启动恒 1.0，）；偿付门槛（）：失去偿付能力的血脉被拒绝 spawn（`insolvent_lineage`，信任门之后、预算之前）——倾斜调多调少（连续），门槛定生死（二值），两者共用同一效率派生、各自 fail-open | [agents/spawn.py](../../src/tlon/agents/spawn.py)、[agents/fitness.py](../../src/tlon/agents/fitness.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
+| 信任阶梯（）：见习/正式两级派生（`is_full_member`）、`trust_provider` / `probation_provider`（fail-open）、`REPRODUCTION_TOOLS` 工具子集常量 | [agents/trust.py](../../src/tlon/agents/trust.py) |
 | 世代通道工具：`writePrototype`（写 staging）/ `proposeBehavior`（经验入口：个体经验 → 起草 → staging 提案，）/ `reviewPrototype`（异质评审：成员评审 staging 提案，记录落 `REVIEW.md`，）/ `spawnAgent` / `stopAgent`（排空后睡眠）；谱系查询 `getPrototypeLineage` | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |
 
 ## 后续未决项（不阻塞当前模型）

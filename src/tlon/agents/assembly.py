@@ -29,6 +29,7 @@ from tlon.agents.prototypes import (
 from tlon.agents.reputation import reputation_provider
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.tool_executor import ToolExecutor
+from tlon.agents.trust import REPRODUCTION_TOOLS, trust_provider
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
@@ -38,6 +39,7 @@ from tlon.base.settings import Settings
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
+from tlon.organization.mail.mail import address_for_member
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
@@ -203,6 +205,21 @@ async def assemble_cognitive(
     # are never force-removed — a sleeping member keeps its container
     # (zero-cost wake); a re-assembly reuses it by name.
 
+    # Trust ladder (): one derivation per assembly — a member's wake
+    # re-assembles, so promotion to full takes effect on the next wake
+    # (natural in a scale-to-zero world). Fail-open: a derivation error
+    # reads as full trust (availability first). A probationary member
+    # (spawned, not yet endorsed) is assembled without the four
+    # reproduction/evolution tools (REPRODUCTION_TOOLS; reviewPrototype
+    # stays — advisory only) and gets its mentor (the spawner) cc'd on
+    # composed outbound mail.
+    is_full = await trust_provider(tlon_paths)(config.id)
+    mentor_cc = (
+        address_for_member(config.spawned_by)
+        if not is_full and config.spawned_by is not None
+        else None
+    )
+
     # Create ToolExecutor (direct execution, no EventBus)
     tool_executor = ToolExecutor()
 
@@ -261,9 +278,14 @@ async def assemble_cognitive(
     # Spawn/stop lifecycle tools (stage 6b): the registry is the
     # assembler, so it injects itself (it satisfies the AgentLifecycle
     # port structurally); spawner_id binds the tool to the owning
-    # agent for budget accounting and audit.
-    tool_executor.register_tool(SpawnAgentTool(registry=registry, spawner_id=config.id))
-    tool_executor.register_tool(StopAgentTool(registry=registry, spawner_id=config.id))
+    # agent for budget accounting and audit. Trust ladder ():
+    # probationary members don't get these (REPRODUCTION_TOOLS) — the
+    # DSL spawn action is backstopped by the SpawnManager probation
+    # quota (same funnel); the DSL stop action is not gated (known gap:
+    # the stop-request policy gate is Adam-side / future work).
+    if is_full:
+        tool_executor.register_tool(SpawnAgentTool(registry=registry, spawner_id=config.id))
+        tool_executor.register_tool(StopAgentTool(registry=registry, spawner_id=config.id))
     tool_executor.register_tool(ListAgentsTool(registry=registry))
     # Spec authoring (stage 4a): writes untrusted prototypes to the
     # staging area; author_id is recorded as the :author for audit.
@@ -276,34 +298,39 @@ async def assemble_cognitive(
     # reskin-level duplicates of an existing prototype (trusted or
     # staging) are turned away before they reach disk.
     near_kin_check = partial(find_near_kin, tlon_paths=tlon_paths)
-    tool_executor.register_tool(
-        WritePrototypeTool(
-            author_id=config.id,
-            writer=write_staging_prototype,
-            prototype=config.prototype,
-            solvency=proposal_solvency,
-            near_kin=near_kin_check,
+    # Trust ladder (): both spec-authoring tools are reproduction/
+    # evolution tools (REPRODUCTION_TOOLS) — withheld from probationary
+    # members.
+    if is_full:
+        tool_executor.register_tool(
+            WritePrototypeTool(
+                author_id=config.id,
+                writer=write_staging_prototype,
+                prototype=config.prototype,
+                solvency=proposal_solvency,
+                near_kin=near_kin_check,
+            )
         )
-    )
     # Experience entry of the generation channel (): drafts the next
     # generation's spec from the member's own behavior + memory, parented
     # to its own prototype. First agents-domain tool to receive the
     # llm_client / memory pair; the journal (agents layer) is injected as
     # the SessionLogReader port so tlon.tools never imports tlon.agents.
-    tool_executor.register_tool(
-        ProposeBehaviorTool(
-            agent_id=config.id,
-            prototype=config.prototype,
-            author_id=config.id,
-            llm_client=llm_client,
-            memory=memory,
-            logs=SessionJournal(config.id, tlon_paths),
-            writer=write_staging_prototype,
-            tlon_paths=tlon_paths,
-            solvency=proposal_solvency,
-            near_kin=near_kin_check,
+    if is_full:
+        tool_executor.register_tool(
+            ProposeBehaviorTool(
+                agent_id=config.id,
+                prototype=config.prototype,
+                author_id=config.id,
+                llm_client=llm_client,
+                memory=memory,
+                logs=SessionJournal(config.id, tlon_paths),
+                writer=write_staging_prototype,
+                tlon_paths=tlon_paths,
+                solvency=proposal_solvency,
+                near_kin=near_kin_check,
+            )
         )
-    )
     tool_executor.register_tool(RememberFactTool(memory))
     tool_executor.register_tool(SearchMemoriesTool(memory))
     tool_executor.register_tool(ForgetMemoryTool(memory))
@@ -351,6 +378,12 @@ async def assemble_cognitive(
     if trace_store is not None:
         tool_executor.register_tool(ListTracesTool(trace_store=trace_store, agent_id=config.id))
         tool_executor.register_tool(GetTraceTool(trace_store=trace_store))
+    if not is_full:
+        logger.info(
+            "probation_tools_withheld",
+            agent_name=config.name,
+            tools=sorted(REPRODUCTION_TOOLS),
+        )
     logger.debug(
         "tools_registered",
         agent_name=config.name,
@@ -383,4 +416,5 @@ async def assemble_cognitive(
         tlon_paths=tlon_paths,
         per_tool_timeout=per_tool_timeout,
         registry=registry,
+        mentor_cc=mentor_cc,
     )

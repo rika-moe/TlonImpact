@@ -1171,3 +1171,77 @@ class TestIdleAwareBackground:
         assert task.cancelled()
         assert reflection._task is None
         assert not reflection.is_running
+
+
+class TestMentorCc:
+    """Trust ladder (): a probationary member's mentor is cc'd on
+    composed outbound mail (_send_mail — the emit/completion path);
+    forwarding is NOT cc'd (passing along an existing mail is noise)."""
+
+    MENTOR = "mentor@tlon.internal"
+
+    async def test_send_mail_cc_injected(self, bus):
+        member = _make_member("rookie-1", SCRIPT_EMIT, bus)
+        member._mentor_cc = self.MENTOR
+        await member.initialize()
+        sent: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, partial(_capture, sent))
+
+        await member._send_mail(to=["user@tlon.internal"], content="进度汇报")
+
+        await _wait_for(lambda: len(sent) == 1)
+        assert sent[0].payload.cc == [self.MENTOR]
+
+        await member.shutdown()
+
+    async def test_send_mail_mentor_already_recipient_not_duplicated(self, bus):
+        member = _make_member("rookie-1", SCRIPT_EMIT, bus)
+        member._mentor_cc = self.MENTOR
+        await member.initialize()
+        sent: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, partial(_capture, sent))
+
+        await member._send_mail(to=[self.MENTOR], content="给 mentor 本人")
+
+        await _wait_for(lambda: len(sent) == 1)
+        assert sent[0].payload.cc == []
+
+        await member.shutdown()
+
+    async def test_send_mail_mentor_already_in_cc_not_duplicated(self, bus):
+        member = _make_member("rookie-1", SCRIPT_EMIT, bus)
+        member._mentor_cc = self.MENTOR
+        await member.initialize()
+        sent: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, partial(_capture, sent))
+
+        await member._send_mail(
+            to=["user@tlon.internal"], content="x", cc=[self.MENTOR, "other@tlon.internal"]
+        )
+
+        await _wait_for(lambda: len(sent) == 1)
+        assert sent[0].payload.cc == [self.MENTOR, "other@tlon.internal"]
+
+        await member.shutdown()
+
+    async def test_forward_not_cced(self, bus, mail_dir):
+        """Forward passes along an existing mail — cc'ing the mentor on
+        every relay would be noise, so it is deliberately exempt."""
+        mailbox = Mailbox(mail_dir)
+        member = _make_member("rookie-1", SCRIPT_FORWARD, bus, mailbox=mailbox)
+        member._mentor_cc = self.MENTOR
+        await member.initialize()
+        sent: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, partial(_capture, sent))
+
+        original = Mail.create(
+            from_address="alice@tlon.internal", content="hello", to=[member.address]
+        )
+        await mailbox.append_inbox(original)
+        await bus.publish(_deliver(original, member.member_id))
+
+        await _wait_for(lambda: len(sent) == 1)
+        assert sent[0].payload.forward_of == original.id
+        assert sent[0].payload.cc == []
+
+        await member.shutdown()

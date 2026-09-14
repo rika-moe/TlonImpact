@@ -41,6 +41,7 @@ class EffectExecutor:
         mailbox: Mailbox | None,
         publish: EventPublisher,
         logger: "structlog.stdlib.BoundLogger",
+        mentor_cc: str | None = None,
     ):
         """Assemble from the Agent's injected dependencies.
 
@@ -51,12 +52,28 @@ class EffectExecutor:
                 bare test setups disables mark-read
             publish: Event-bus publish closure (Device.emit)
             logger: Per-agent bound logger (agent_id already bound)
+            mentor_cc: Trust ladder (): a probationary member's
+                mentor address, cc'd on every composed mail; None for
+                full members
         """
         self.identity = identity
         self.rule = rule
         self.publish = publish
         self._mailbox = mailbox
         self._logger = logger
+        self._mentor_cc = mentor_cc
+
+    def _cc_with_mentor(self, effect: MailEffect) -> list[str]:
+        """The effect's cc plus the mentor's (), unless the mentor is
+        already a recipient (to or cc) — no duplicate copies."""
+        cc = [*(effect.cc or [])]
+        if (
+            self._mentor_cc is not None
+            and self._mentor_cc not in effect.to
+            and self._mentor_cc not in cc
+        ):
+            cc.append(self._mentor_cc)
+        return cc
 
     async def send_mail(self, effect: MailEffect) -> None:
         """Send a declared mail via the event bus, injecting the trace context.
@@ -81,7 +98,7 @@ class EffectExecutor:
             mail = Mail.create(
                 from_address=self.identity.address,
                 to=effect.to,
-                cc=effect.cc,
+                cc=self._cc_with_mentor(effect),
                 subject=effect.subject,
                 content=effect.content,
                 in_reply_to=in_reply_to,

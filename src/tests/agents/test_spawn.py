@@ -242,3 +242,73 @@ class TestSpawnSolvency:
             _FakeRegistry(p), 8, 3, 2, solvency=_boom
         )
         await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+
+
+def _const_probation(value: bool):
+    async def provider(spawner_id: str) -> bool:
+        return value
+
+    return provider
+
+
+class TestSpawnProbation:
+    """Probation quota cap (, trust ladder): keyed by *spawner id*
+    (unlike tilt/solvency, which key on the target prototype) — a
+    probationary spawner's effective per-session quota is capped at 1,
+    whatever the tilt says. Fail-open like the other two providers."""
+
+    async def test_probation_spawner_capped_at_one(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, probation=_const_probation(True)
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        assert exc.value.reason == "session_quota"
+        assert "probation" in str(exc.value)
+
+    async def test_probation_cap_wins_over_tilt(self, tmp_path):
+        """tilt 2.0 would widen the quota to 4; probation caps it at 1 —
+        the tilt judges the target bloodline, probation judges the spawner."""
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2,
+            tilt_provider=_const_tilt(2.0),
+            probation=_const_probation(True),
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        assert exc.value.reason == "session_quota"
+        assert "probation" in str(exc.value)
+
+    async def test_full_spawner_uncapped(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, probation=_const_probation(False)
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+        with pytest.raises(SpawnRejectedError) as exc:
+            await manager.spawn_member("worker", "丙", "boss-1", "sess-1")
+        assert exc.value.reason == "session_quota"
+        assert "probation" not in str(exc.value)
+
+    async def test_provider_failure_fails_open(self, tmp_path):
+        """A raising probation provider reads as *not* probation — trust
+        bookkeeping must never tighten a quota."""
+
+        async def _boom(spawner_id: str) -> bool:
+            raise OSError("trust derivation broke")
+
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p), 8, 3, 2, probation=_boom
+        )
+        await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+        await manager.spawn_member("worker", "乙", "boss-1", "sess-1")

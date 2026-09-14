@@ -71,6 +71,8 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 36 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
+上表是正式成员的满配。见习成员（，信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 32 个；`reviewPrototype`（15）咨询性保留。
+
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
 shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。容器在装配时不启动，首次 execute/read/write 时惰性拉起；Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。
@@ -336,6 +338,8 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 ### spawnAgent
 
+**见习成员不可用（，信任阶梯）**——spawn 出生且未获 endorse 的成员装配时不注册此工具；DSL 的 spawn 动作由 SpawnManager 的见习配额闸兜底（见 `session_quota` 拒绝行）。
+
 从 behavior prototype 派生一个新 agent 并立即启动（统一成员模型，ADR 0006：新 agent 是普通社会成员，永不删除——空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生）。behavior 文件原样拷贝（spec 是 total 的，无 overrides），spawn 不能授予新工具。
 
 | 参数 | 类型 | 必填 | 说明 |
@@ -354,12 +358,14 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | `insolvent_lineage` | 偿付门槛（）：目标血脉失去偿付能力（总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25，派生自 `agents/fitness.py`，fail-open），血脉靠手上成员挣回 endorse 前不能 spawn；紧随信任门、先于预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
-| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜（）：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；拒绝 detail 注明实际 tilt 与有效配额 |
+| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜（）：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；spawner 是见习成员时（，按 spawner_id 判定）再收紧为 `min(effective, 1)`；拒绝 detail 注明实际 tilt 与有效配额（见习 cap 时注明 probation） |
 | `config_reload_failed` | 新配置未能被 config provider 加载 |
 
 prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `success=False` 返回。session 归属经 structlog contextvars 里的 `session_id` 绑定，用于配额记账。
 
 ### stopAgent
+
+**见习成员不可用（，信任阶梯）**——装配时不注册；注意 DSL 的 stop 动作不走工具、目前不闸（已知缺口：停止请求的策略闸是 Adam 侧/未来项）。
 
 停止一个 agent（统一成员模型，ADR 0006）：立即关闭并使其**睡眠**——home 目录（人格、记忆、邮箱）永久保留（归档），之后可被唤醒。停止永不删除数据。
 
@@ -377,6 +383,8 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 无参数。返回全部已注册 agent 的状态列表：运行状态（running/sleeping/waking）、来源 prototype、spawner 血缘。spawn/stop 前用来确认目标。
 
 ### writePrototype
+
+**见习成员不可用（，信任阶梯）**——装配时不注册；`reviewPrototype`（咨询性）对见习成员保留。
 
 创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格是成员创建时数据，不属基因库。
 
@@ -397,6 +405,8 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 另有近亲拒绝闸（，仅 agent 侧）：`behavior` 与两区既有原型做规范化文本相似度比较（`find_near_kin`，阈值 0.9），跨血脉命中（换皮级雷同）时提案在写入前被拒（`success=False`，error 指明最相似原型名与相似度，message 指引「做出实质差异或改为提案改进它」，staging 无残留）；提案的声明父本豁免（显式 `parent` 优先，缺省回退作者自身 prototype）——沿血脉的代际微改放行；相似度扫描异常时 fail-open 放行。
 
 ### proposeBehavior
+
+**见习成员不可用（，信任阶梯）**——装配时不注册。
 
 世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（摘要/事实）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、temperature 0.3、timeout 60s），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
 

@@ -65,6 +65,7 @@ from tlon.agents.member_spec import MemberSpec
 from tlon.agents.prototypes import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
+from tlon.agents.trust import probation_provider
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -225,8 +226,9 @@ class AgentRegistry(Component):
         # per-session quota ledger is persisted (sessions survive a
         # restart via journal replay, so the anti-runaway cap must too).
         # The quota is tilted per spawn by the target bloodline's fitness
-        # () and gated by its solvency (); both providers
-        # recompute from raw files on every spawn.
+        # (), gated by its solvency (), and capped at 1 when the
+        # spawner itself is on probation (, trust ladder); all
+        # providers recompute from raw files on every spawn.
         self._spawn = SpawnManager(
             self,
             max_activations,
@@ -234,6 +236,7 @@ class AgentRegistry(Component):
             session_spawn_quota,
             tilt_provider=tilt_provider(self._paths),
             solvency=solvency_provider(self._paths),
+            probation=probation_provider(self._paths),
         )
         self._reaper = IdleReaper(self)
         # Social public-health monitor (): noise detection + orphan-mail

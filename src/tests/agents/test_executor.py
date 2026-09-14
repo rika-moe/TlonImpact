@@ -277,3 +277,56 @@ class TestEndorsementValidation:
         assert len(unread) == 1
         assert unread[0].from_address == POSTMASTER_ADDRESS
         assert own.id in unread[0].content
+
+
+class TestMentorCc:
+    """Trust ladder (): a probationary member's mentor (its spawner)
+    is cc'd on every composed mail — unless it already is a recipient."""
+
+    MENTOR = "mentor@tlon.internal"
+
+    def _make_probation_executor(
+        self, tmp_path: Path
+    ) -> tuple[EffectExecutor, Mailbox, AsyncMock]:
+        mailbox = Mailbox(TlonPaths(home=tmp_path).member_mail_dir("agent1"))
+        publish = AsyncMock()
+        executor = EffectExecutor(
+            identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
+            rule=_rule(),
+            mailbox=mailbox,
+            publish=publish,
+            logger=MagicMock(),
+            mentor_cc=self.MENTOR,
+        )
+        return executor, mailbox, publish
+
+    async def test_mentor_cc_injected(self, tmp_path: Path) -> None:
+        executor, mailbox, publish = self._make_probation_executor(tmp_path)
+        await _seed_referenced(mailbox)
+
+        await executor.send_mail(_effect())
+
+        publish.assert_awaited_once()
+        mail = publish.await_args.kwargs["payload"]
+        assert mail.cc == [self.MENTOR]
+
+    async def test_mentor_already_in_to_not_duplicated(self, tmp_path: Path) -> None:
+        """Mailing the mentor directly: no extra cc copy."""
+        executor, mailbox, publish = self._make_probation_executor(tmp_path)
+        await _seed_referenced(mailbox)
+
+        await executor.send_mail(_effect(to=[self.MENTOR]))
+
+        publish.assert_awaited_once()
+        mail = publish.await_args.kwargs["payload"]
+        assert mail.cc == []
+
+    async def test_mentor_already_in_cc_not_duplicated(self, tmp_path: Path) -> None:
+        executor, mailbox, publish = self._make_probation_executor(tmp_path)
+        await _seed_referenced(mailbox)
+
+        await executor.send_mail(_effect(cc=[self.MENTOR, "other@tlon.internal"]))
+
+        publish.assert_awaited_once()
+        mail = publish.await_args.kwargs["payload"]
+        assert mail.cc == [self.MENTOR, "other@tlon.internal"]

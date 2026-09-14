@@ -136,6 +136,9 @@ class CognitiveCapabilities:
     tlon_paths: TlonPaths
     per_tool_timeout: float = 30.0
     registry: "AgentRegistry | None" = None
+    # Trust ladder (): a probationary member's mentor address (its
+    # spawner), cc'd on composed outbound mail; None for full members.
+    mentor_cc: str | None = None
 
 
 class MemberRuntime(Member):
@@ -188,6 +191,11 @@ class MemberRuntime(Member):
         self._registry = (
             registry if registry is not None else (cognitive.registry if cognitive else None)
         )
+        # Trust ladder (): the probation mentor's address, cc'd on
+        # composed outbound mail (_send_mail; the cognitive path's
+        # EffectExecutor gets it in _assemble_cognitive). Forwarding is
+        # not cc'd — passing along an existing mail is noise to the mentor.
+        self._mentor_cc = cognitive.mentor_cc if cognitive is not None else None
         # The one cognitive rule, if any (D6.7: at most one per member).
         self._cognitive_rule = next(
             (rule for rule in self._spec.rules if rule.loop is not None), None
@@ -783,14 +791,24 @@ class MemberRuntime(Member):
     ) -> None:
         """Build a mail from this member and publish MAIL_NEW on the bus.
 
+        A probationary member's mentor () is cc'd unless already a
+        recipient (to or cc) — no duplicate copies.
+
         Never raises: a mail failure is logged, not propagated (a failing
         action must not break the bus dispatch or the session lifecycle).
         """
         try:
+            recipients_cc = [*(cc or [])]
+            if (
+                self._mentor_cc is not None
+                and self._mentor_cc not in to
+                and self._mentor_cc not in recipients_cc
+            ):
+                recipients_cc.append(self._mentor_cc)
             mail = Mail.create(
                 from_address=self.address,
                 to=to,
-                cc=cc or [],
+                cc=recipients_cc,
                 subject=subject,
                 content=content,
                 in_reply_to=in_reply_to,
@@ -1011,6 +1029,7 @@ class MemberRuntime(Member):
             mailbox=self._mailbox,
             publish=publisher,
             logger=self._logger,
+            mentor_cc=self._mentor_cc,
         )
         on_complete = OnCompleteRunner(
             identity, rule, self._logger, execute_action=self._execute_action
