@@ -93,6 +93,21 @@ def _builtin_cc_ed(env: dict[str, Any], msg: Mail | None) -> bool:
     return my_address is not None and isinstance(msg, Mail) and my_address in msg.cc
 
 
+def _builtin_from(env: dict[str, Any], msg: Mail | None, address: Any) -> bool:
+    """The mail's sender equals ``address`` (None-safe, see addressed-to-me?).
+
+    Mail field access for trigger gates — ``get`` reads dicts only, so
+    sender matching gets its own pure predicate (issue : Adam's
+    guardian-inbox rule excludes postmaster senders to never answer a
+    bounce). A non-string ``address`` never matches.
+    """
+    return (
+        isinstance(msg, Mail)
+        and isinstance(address, str)
+        and msg.from_address == address
+    )
+
+
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
     """Regex-search a Mail's content or a plain string (e.g. ``result``).
 
@@ -147,6 +162,7 @@ def _builtin_not(env: dict[str, Any], value: Any) -> bool:
 TRIGGER_BUILTINS: dict[str, Builtin] = {
     "addressed-to-me?": Builtin(_builtin_addressed_to_me, pure=True),
     "cc-ed?": Builtin(_builtin_cc_ed, pure=True),
+    "from?": Builtin(_builtin_from, pure=True),
     "content-matches?": Builtin(_builtin_content_matches, pure=True),
     "contains?": Builtin(_builtin_contains, pure=True),
     "=": Builtin(_builtin_eq, pure=True),

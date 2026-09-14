@@ -40,6 +40,7 @@ from tlon.organization.messaging.human_adapter import AdapterManager
 
 from .api.rest import WEBUI_DIST_DIR, RESTServer
 from .core.client_gateway import ClientGateway
+from .core.guardian_provider import GuardianAgentInfoProvider
 from .core.member_directory import MemberDirectory
 from .core.notification_service import NotificationService
 from .core.session_manager import SessionManager
@@ -240,6 +241,14 @@ class ServerApp:
         logger.info("component_initialized", component="adam")
 
         # 2.5 AdapterManager - human adapter lifecycle (one per username)
+        # The guardian-aware provider (issue ): a thin wrapper over
+        # ConfigService that additionally resolves "adam" so mail to the
+        # built-in guardian is deliverable. One instance feeds both the
+        # AdapterManager (speak side) and MailDelivery (delivery side) —
+        # they share one RecipientResolver, so adam@tlon.internal resolves
+        # in both directions. get_all_ids stays Adam-free: no broadcast,
+        # no roster, no enumeration-driven scan sees the guardian.
+        guardian_info = GuardianAgentInfoProvider(config_service)
         # The external gateway registry (issue  egress) is a plain
         # data component constructed here so every resolver instance on
         # the delivery path consults the same claim table; gateways
@@ -248,7 +257,7 @@ class ServerApp:
         self._components["gateway_registry"] = gateway_registry
         adapter_manager = AdapterManager(
             event_bus=event_bus,
-            agent_info_provider=config_service,
+            agent_info_provider=guardian_info,
             external_owner=gateway_registry.owner_of,
         )
         await adapter_manager.initialize()
@@ -264,11 +273,12 @@ class ServerApp:
         logger.info("component_initialized", component="member_directory")
 
         # 2.7 MailDelivery - mail persistence + per-recipient delivery
-        # Depends on EventBus, ConfigService (agent set) and AdapterManager
-        # (online humans); the router's successor (docs/design/mail.md)
+        # Depends on EventBus, the guardian-aware provider (agent set +
+        # adam, issue ) and AdapterManager (online humans); the
+        # router's successor (docs/design/mail.md)
         mail_delivery = MailDelivery(
             event_bus=event_bus,
-            agent_info_provider=config_service,
+            agent_info_provider=guardian_info,
             adapter_manager=adapter_manager,
         )
         await mail_delivery.initialize()

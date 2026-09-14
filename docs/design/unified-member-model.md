@@ -93,7 +93,7 @@
 | 生命周期机制：`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 幂等执行、排空=睡眠 | [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) |
 | 退休蒸馏：`AGENT_STOPPED` 触发离线记忆蒸馏 → `memory/lessons.md`（issue ；归属记账在退休成员头上，） | [agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` |
 | 退休交接：`AGENT_STOPPED` 触发离线移交盘点 → 告别信（退休成员地址发出）+ `AGENT_RETIRED` 事实（issue ） | [agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` |
-| 生命周期策略：boot/stop 裁决 + 出生欢迎信（Adam 的策略规则，数据；issue  出生社会化） | [agents/adam.py](../../src/tlon/agents/adam.py) |
+| 生命周期策略：boot/stop 裁决 + 出生欢迎信 + 守护者信箱（Adam 的策略规则，数据；issue  出生社会化，issue  adam 可收件——装配层 `GuardianAgentInfoProvider` 合成解析，不进广播/名册） | [agents/adam.py](../../src/tlon/agents/adam.py)、[app/server/core/guardian_provider.py](../../src/tlon/app/server/core/guardian_provider.py) |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制；每会话配额按血脉适应度倾斜（`ceil(quota × tilt)`，tilt ∈ [0.5, 2.0]，冷启动恒 1.0，）；偿付门槛（）：失去偿付能力的血脉被拒绝 spawn（`insolvent_lineage`，信任门之后、预算之前）——倾斜调多调少（连续），门槛定生死（二值），两者共用同一效率派生、各自 fail-open | [agents/spawn.py](../../src/tlon/agents/spawn.py)、[agents/fitness.py](../../src/tlon/agents/fitness.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
 | 信任阶梯（）：见习/正式两级派生（`is_full_member`）、`trust_provider` / `probation_provider`（fail-open）、`REPRODUCTION_TOOLS` 工具子集常量 | [agents/trust.py](../../src/tlon/agents/trust.py) |

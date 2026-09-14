@@ -6,14 +6,20 @@ Covers:
 - all@tlon.internal expansion (all registered agents + online humans)
 - unknown recipients collected into a postmaster bounce to the sender
 - senders without a mailbox (postmaster) skip the sent copy
+- the guardian address (adam@tlon.internal, issue ): deliverable via
+  the guardian-aware provider, excluded from the broadcast expansion
+- postmaster conventions (issue ): mail *to* postmaster is dropped
+  without a bounce; mail *from* postmaster is never bounced
 """
 
 import tempfile
 from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tlon.app.server.core.guardian_provider import GuardianAgentInfoProvider
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.paths import TlonPaths
@@ -61,9 +67,14 @@ def _make_delivery(
     configs: dict[str, AgentConfig] | None = None,
     online_humans: list[str] | None = None,
     external_owner: Callable[[str], str | None] | None = None,
+    guardian: bool = False,
 ):
     bus = _make_bus()
-    provider = MockAgentInfoProvider(configs or {})
+    provider: Any = MockAgentInfoProvider(configs or {})
+    if guardian:
+        # The production assembly shape (issue ): ServerApp wraps the
+        # ConfigService once and feeds both resolution sides.
+        provider = GuardianAgentInfoProvider(provider)
     adapter_manager = AdapterManager(
         event_bus=bus, agent_info_provider=provider, tlon_paths=temp_paths,
         external_owner=external_owner,
@@ -682,3 +693,112 @@ class TestEndorsedEvent:
         assert len(endorsed_events) == 1
         # The endorsed mail is nowhere on disk: author degrades to None.
         assert endorsed_events[0].payload["author"] is None
+
+
+class TestGuardianDelivery:
+    """Issue : adam@tlon.internal is deliverable through the
+    guardian-aware provider, yet the guardian stays out of the broadcast
+    expansion (get_all_ids delegates unchanged)."""
+
+    @pytest.mark.asyncio
+    async def test_adam_recipient_gets_inbox_and_event(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs, guardian=True)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["adam@tlon.internal"],
+            content="守护者，提案请你过目",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "adam"
+        assert events[0].payload["mail"].id == mail.id
+
+        # Delivery creates the guardian mailbox on demand
+        inbox = Mailbox(temp_paths.member_mail_dir("adam"))
+        assert [m.id for m in await inbox.unread()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_excludes_adam(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs, guardian=True)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=[ALL_ADDRESS],
+            content="全员通知",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        recipients = {e.payload["recipient"] for e in _delivered(bus)}
+        assert recipients == {"a-001"}
+        # No guardian mailbox is created by a broadcast
+        assert not (temp_paths.tlon_home() / "adam").exists()
+
+    @pytest.mark.asyncio
+    async def test_adam_unresolvable_without_the_guardian_wrap(self, temp_paths):
+        """The plain provider (no wrapper) keeps the old behavior: mail to
+        adam bounces — the wrapper is what makes the guardian reachable."""
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=["adam@tlon.internal"],
+            content="有人吗",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        events = _delivered(bus)
+        assert len(events) == 1  # only the bounce, to the sender
+        assert events[0].payload["recipient"] == "a-001"
+        assert events[0].payload["mail"].from_address == POSTMASTER_ADDRESS
+
+
+class TestPostmasterConventions:
+    """Issue : bounces must never loop — mail *to* postmaster is
+    silently dropped, and a mail *from* postmaster is never bounced."""
+
+    @pytest.mark.asyncio
+    async def test_mail_to_postmaster_is_dropped_without_bounce(self, temp_paths):
+        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+        delivery, bus = _make_delivery(temp_paths, configs)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address="a-001@tlon.internal",
+            to=[POSTMASTER_ADDRESS],
+            content="回复退信",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        assert _delivered(bus) == []  # no delivery, no bounce
+        assert not (temp_paths.tlon_home() / "postmaster").exists()
+        # The sender's own sent copy is still recorded
+        sent = Mailbox(temp_paths.member_mail_dir("a-001"))
+        assert [m.id for m in await sent.recent()] == [mail.id]
+
+    @pytest.mark.asyncio
+    async def test_postmaster_sender_unknown_recipient_is_not_bounced(
+        self, temp_paths
+    ):
+        """A system mail (e.g. a cron tick) to an unknown recipient used to
+        bounce to postmaster — the double guard keeps it silent."""
+        delivery, bus = _make_delivery(temp_paths)
+        await delivery.initialize()
+
+        mail = Mail.create(
+            from_address=POSTMASTER_ADDRESS,
+            to=["ghost@tlon.internal"],
+            content="周期任务 tick",
+        )
+        await delivery._on_mail_new(_mail_event(mail))
+
+        assert _delivered(bus) == []
+        assert not (temp_paths.tlon_home() / "postmaster").exists()

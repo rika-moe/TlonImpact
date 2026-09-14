@@ -18,6 +18,9 @@ The MailDelivery component subscribes to MAIL_NEW and, for each mail:
 Recipients that resolve to nobody are collected and answered with a
 bounce mail from ``postmaster@tlon.internal`` to the sender — the error
 lands in the sender's inbox, so an LLM can correct the address itself.
+Two postman conventions keep bounces from looping (issue ): mail
+addressed *to* postmaster is silently dropped (never answered), and a
+mail *from* postmaster is never bounced.
 
 Delivery is idempotent within the process: a republished ``MAIL_NEW``
 (for the same mail id) does not write a second inbox/sent copy or emit
@@ -154,6 +157,12 @@ class MailDelivery(Component, Device):
             unknown: list[str] = []
             delivered: list[str] = []
             for address in self._expand_recipients(mail):
+                # Postman convention: mail to postmaster is silently
+                # dropped, never bounced — a bounce of a bounce must be
+                # impossible (issue ).
+                if address == POSTMASTER_ADDRESS:
+                    logger.info("mail_to_postmaster_dropped", mail_id=mail.id)
+                    continue
                 member_id = self._resolve_address(address)
                 if member_id is None:
                     unknown.append(address)
@@ -330,7 +339,20 @@ class MailDelivery(Component, Device):
     async def _bounce(
         self, mail: Mail, unknown: list[str], sender_id: str, ctx: SpanCtx
     ) -> None:
-        """Return a bounce mail to the sender for unknown recipients."""
+        """Return a bounce mail to the sender for unknown recipients.
+
+        A mail from postmaster is never bounced (double insurance — such
+        a sender also resolves to no mailbox upstream): bouncing a bounce
+        is the classic mailer loop.
+        """
+        if mail.from_address == POSTMASTER_ADDRESS:
+            logger.info(
+                "mail_bounce_skipped",
+                mail_id=mail.id,
+                unknown=unknown,
+                reason="sender is postmaster",
+            )
+            return
         bounce = Mail.create(
             from_address=POSTMASTER_ADDRESS,
             to=[mail.from_address],

@@ -172,7 +172,8 @@ class MemberRuntime(Member):
             builtins: Evaluation registry, host predicate closures
                 included (built by the caller via make_member_builtins)
             mailbox: The member's mailbox for unread rescue scans and
-                read-marking (None for built-in instances like Adam)
+                read-marking (None only for bare test instances; Adam
+                carries ``~/.tlon/adam/mail/`` since issue )
             cognitive: The member's capability set (LLM/memory/tools).
                 The registry assembles it for every member; None is only
                 used by built-in instances like Adam. The cognitive

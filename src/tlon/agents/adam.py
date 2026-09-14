@@ -7,7 +7,7 @@ the first configuration instance of the unified MemberRuntime
 (``agents/member_runtime.py``, phase C) — a built-in MemberSpec (the
 ``ADAM_SPEC`` text below) parsed directly with the unified loader
 semantics and validated at load, plus registry query closures injected
-into the evaluator. Three lifecycle/social policy lines live in the spec:
+into the evaluator. Four policy lines live in the spec:
 
 1. boot — after initialize(), every registered member whose spec
    declares ``:on :boot`` (phase E: spec-derived, see ``boot_candidates``)
@@ -23,6 +23,14 @@ into the evaluator. Three lifecycle/social policy lines live in the spec:
    is assembled in the spec with ``str`` — emit recipients are mail
    addresses (``Mail.create`` rejects bare ids). Adam is v1's mentor:
    mentoring is spec-described behavior, not a dedicated mechanism.
+4. guardian-inbox (issue ) — MAIL_DELIVERED addressed to Adam gets a
+   fixed acknowledgement reply: the guardian's mailbox is a message box,
+   and the enforcer of the guardian rules is currently the human
+   (staging proposals are approved by humans on the admin surface;
+   retirement/stop requests go through the stopAgent flow). Mail from
+   postmaster is excluded (``from?``) so a bounce never gets answered.
+   Adam carries a real mailbox (``~/.tlon/adam/mail/``), so read-marking
+   and the boot unread replay come for free.
 
 Wake is no longer Adam's line: phase E moved wake-on-mail into the
 registry as a mechanized policy — the registry derives wake eligibility
@@ -51,11 +59,16 @@ from tlon.agents.edn import loads
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.events.event_bus import EventBus
+from tlon.base.paths import TlonPaths, paths
+from tlon.organization.mail.mailbox import Mailbox
 
 #: Adam's policy, as data. Parsed once per assembly by
-#: :func:`make_adam`. Three rules: boot (start-all), drain (idle → stop)
-#: and welcome (issue  — a birth-socialization mail to every spawned
-#: member; the roster is host-expanded, the conventions are static text).
+#: :func:`make_adam`. Four rules: boot (start-all), drain (idle → stop),
+#: welcome (issue  — a birth-socialization mail to every spawned
+#: member; the roster is host-expanded, the conventions are static text)
+#: and guardian-inbox (issue  — a fixed acknowledgement reply to mail
+#: addressed to Adam; postmaster senders are excluded so a bounce never
+#: gets an answer).
 ADAM_SPEC_EDN = r"""{:version 1
  :rules [{:name "boot"
           :on :boot
@@ -70,12 +83,22 @@ ADAM_SPEC_EDN = r"""{:version 1
                                "这个社会的成员：\n" (member-roster) "\n\n"
                                "通信惯例：\n"
                                "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
-                               "- 要广播给全体成员，写给 all@tlon.internal。\n")
-                          [(str (get event :agent_id) "@tlon.internal")])]}]}
+                               "- 要广播给全体成员，写给 all@tlon.internal。\n"
+                               "- 有事找守护者，写信到 adam@tlon.internal。\n")
+                          [(str (get event :agent_id) "@tlon.internal")])]}
+         {:name "guardian-inbox"
+          :on :mail-delivered
+          :when (and (addressed-to-me? msg)
+                     (not (from? msg "postmaster@tlon.internal")))
+          :actions [(emit "已收到你的来信。\n\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员的退休/停止请求走 stopAgent 流程。\n\n本信箱是留言箱——这封回信仅确认收讫。")]}]}
 """
 
 
-def make_adam(event_bus: EventBus, agent_registry: AgentRegistry) -> MemberRuntime:
+def make_adam(
+    event_bus: EventBus,
+    agent_registry: AgentRegistry,
+    tlon_paths: TlonPaths | None = None,
+) -> MemberRuntime:
     """Assemble Adam: the built-in spec plus registry query closures.
 
     Adam is a deterministic member (no cognitive rule → cognitive=None): it
@@ -87,6 +110,9 @@ def make_adam(event_bus: EventBus, agent_registry: AgentRegistry) -> MemberRunti
         event_bus: Event bus for subscriptions and request publishing
         agent_registry: The registry to query (read-only interfaces) and
             to address with start/stop requests
+        tlon_paths: Path resolver (tests); None uses the singleton. Adam's
+            mailbox lives at ``~/.tlon/adam/mail/`` (issue  guardian
+            inbox) — read-marking and the boot unread replay come from it.
     """
     builtins = make_member_builtins(RegistryQueries(agent_registry))
     spec = MemberSpec.from_edn(loads(ADAM_SPEC_EDN))
@@ -94,11 +120,13 @@ def make_adam(event_bus: EventBus, agent_registry: AgentRegistry) -> MemberRunti
     # ``start-all`` action needs the registry host for candidate expansion,
     # which the host-less deterministic branch would reject.
     spec = validate_member_spec(spec, builtins=builtins)
+    tlon_paths = tlon_paths or paths
     return MemberRuntime(
         member_id="adam",
         name="adam",
         event_bus=event_bus,
         spec=spec,
         builtins=builtins,
+        mailbox=Mailbox(tlon_paths.member_mail_dir("adam")),
         cognitive=None,
     )

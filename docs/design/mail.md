@@ -40,7 +40,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 两个特殊地址：
 
 - `all@tlon.internal`（`ALL_ADDRESS`）——广播地址，投递时展开为全体成员。它是社会里唯一的「一对多」原语，对应书信共和国里的公开信。
-- `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱（给它的退信无处可投，记日志丢弃，避免退信循环）。周期任务的 tick 邮件也以它为发件人（见「周期任务：tick 即邮件」）。
+- `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱。邮差惯例两条（issue ）：**寄给** postmaster 的信静默丢弃（记日志 `mail_to_postmaster_dropped`），绝不退信；**来自** postmaster 的信遇到未知收件人也不再退信（`_bounce` 的显式闸，双保险）——退信套娃因此不可能。周期任务的 tick 邮件也以它为发件人（见「周期任务：tick 即邮件」）。
 
 反方向映射 `member_id_for_address` 是有损的：裸 local part 无法区分 agent 和人类（`alice@tlon.internal` 既可能是 agent `alice` 也可能是人类 `human:alice`），消歧留给解析器（见下文「名称解析」）。
 
@@ -71,7 +71,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 ### 退信是设计意图
 
-解析不到任何人的地址会触发退信：`MailDelivery._bounce` 以 `postmaster@tlon.internal` 名义给发件人回一封信，subject 为 `Undeliverable: ...`，正文列出不存在的地址，`in_reply_to` 指向原信、`thread_id` 继承原线程。退信落在发件人的**收件箱**里，走和普通邮件完全相同的投递路径——所以一个 LLM 发件人会在自己的认知循环里读到退信，自己改正地址重发。错误不需要专门的告警通道，错误本身就是一封邮件。发件人没有邮箱时（postmaster 这类系统地址）退信无处可投，记日志丢弃——这也是退信不会无限循环的原因。
+解析不到任何人的地址会触发退信：`MailDelivery._bounce` 以 `postmaster@tlon.internal` 名义给发件人回一封信，subject 为 `Undeliverable: ...`，正文列出不存在的地址，`in_reply_to` 指向原信、`thread_id` 继承原线程。退信落在发件人的**收件箱**里，走和普通邮件完全相同的投递路径——所以一个 LLM 发件人会在自己的认知循环里读到退信，自己改正地址重发。错误不需要专门的告警通道，错误本身就是一封邮件。发件人没有邮箱时（postmaster 这类系统地址）退信无处可投，记日志丢弃；issue  再加两道闸：收件人是 postmaster 的信直接静默丢弃不进 unknown 列表，原信来自 postmaster 时 `_bounce` 也直接拒退——退信不会无限循环是显式规则，不是巧合。
 
 这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。发送侧失败（`EffectExecutor.send_mail` 的 `in_reply_to` 引用校验不通过、构造 `Mail` 被拒或 `MAIL_NEW` 发布失败）走同一风格：postmaster 名义的失败通知直接写进发件 agent 自己的收件箱（不经过 `MAIL_NEW`——通知路径不能依赖刚刚失败的那次发布），附一条 `MAIL_DELIVERED` 唤醒它。`SendEmailTool` 的受理回执明确告诉 LLM「以 postmaster 通知为唯一的失败信号」，把这条约定写进了工具语义。
 
@@ -85,6 +85,8 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 「已知人类」的规则——在线，**或**离线但有持久邮箱——只写在 `_known_human` 一处，两个方向共享。这保证了一个关键不变量：发信侧能解析出的收件人，投递侧一定能投递。`AdapterManager` 持有这个 resolver 实例，`MailDelivery` 构造时经 `adapter_manager.recipient_resolver` 取同一个实例；resolver 的在线检查闭包直接读 `_adapters` 字典，永远看到的是实时的在线集合。
 
 resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含睡眠中的已注册 agent），人类在线性查注入的 callable，邮箱布局查 `TlonPaths`。组织层只依赖 base 的契约因此不破——三个能力全部构造器注入。
+
+守护者信箱（issue ）：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。装配层（[app/server/core/guardian_provider.py](../../src/tlon/app/server/core/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（投递自动建 `~/.tlon/adam/mail/`），但不进 `all@` 广播、不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。ServerApp 包一次、AdapterManager 与 MailDelivery 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的信（退信）不回——邮差不与邮差通信。
 
 ## 外部来信与信任面
 

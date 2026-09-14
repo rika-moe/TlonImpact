@@ -1,9 +1,11 @@
 """Adam — the policy member (PID 1), now a unified MemberRuntime instance.
 
-Pins Adam's three policy lines as data: boot (start-all for members
+Pins Adam's four policy lines as data: boot (start-all for members
 whose spec declares ``:on :boot``, phase E spec-derived), drain
-(idle-fact → stop request) and welcome (issue  — AGENT_SPAWNED
-triggers a birth-socialization mail to the newborn). Wake is no longer
+(idle-fact → stop request), welcome (issue  — AGENT_SPAWNED
+triggers a birth-socialization mail to the newborn) and guardian-inbox
+(issue  — a fixed acknowledgement reply to mail addressed to Adam,
+postmaster senders excluded). Wake is no longer
 Adam's line — phase E moved it into the registry as a spec-derived
 mechanized policy (see ``test_registry.py``). The registry is stubbed
 with its read-only interfaces (``get_agent`` / ``get_config`` /
@@ -18,6 +20,9 @@ from tlon.agents.adam import make_adam
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.paths import TlonPaths
+from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mailbox import Mailbox
 
 
 class _RegistryStub:
@@ -68,6 +73,12 @@ async def bus():
     await b.shutdown()
 
 
+@pytest.fixture
+def tlon_paths(tmp_path) -> TlonPaths:
+    """Isolated tlon home — Adam's mailbox must not touch the real one."""
+    return TlonPaths(home=tmp_path)
+
+
 async def _wait_for(predicate, timeout: float = 2.0) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -83,13 +94,13 @@ def _worker(id: str = "worker-1") -> AgentConfig:
 
 
 class TestAdamDecisions:
-    async def test_boot_start_all(self, bus):
+    async def test_boot_start_all(self, bus, tlon_paths):
         registry = _RegistryStub(
             {"worker-1": _worker(), "lazy-1": _worker("lazy-1")},
             boot_eligible={"worker-1"},
         )
 
-        adam = make_adam(bus, registry)
+        adam = make_adam(bus, registry, tlon_paths)
         starts: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, lambda e: starts.append(e))
 
@@ -100,9 +111,9 @@ class TestAdamDecisions:
 
         await adam.shutdown()
 
-    async def test_drain_idle(self, bus):
+    async def test_drain_idle(self, bus, tlon_paths):
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry)
+        adam = make_adam(bus, registry, tlon_paths)
         stops: list[Event] = []
         bus.subscribe(EventType.AGENT_STOP_REQUEST, lambda e: stops.append(e))
         await adam.initialize()
@@ -116,7 +127,7 @@ class TestAdamDecisions:
 
         await adam.shutdown()
 
-    async def test_welcome_newborn(self, bus):
+    async def test_welcome_newborn(self, bus, tlon_paths):
         """Issue : AGENT_SPAWNED triggers a welcome mail to the newborn.
 
         The recipient address is assembled in the spec (``str``) from the
@@ -124,7 +135,7 @@ class TestAdamDecisions:
         bare ids (``Mail.create`` rejects non-addresses).
         """
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry)
+        adam = make_adam(bus, registry, tlon_paths)
         mails: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
         await adam.initialize()
@@ -147,8 +158,108 @@ class TestAdamDecisions:
         mail = mails[0].payload
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
-        # Greeting names the newborn; the roster lists the society.
+        # Greeting names the newborn; the roster lists the society; the
+        # conventions point at the guardian's mailbox (issue ).
         assert "小新" in mail.content
         assert "worker-1（worker-1）" in mail.content
+        assert "adam@tlon.internal" in mail.content
+
+        await adam.shutdown()
+
+
+class TestGuardianInbox:
+    """Issue : mail addressed to Adam gets a fixed acknowledgement.
+
+    The guardian-inbox rule is deterministic (``:on :mail-delivered``, no
+    ``:loop``); its ``:when`` gate restricts replies to mail addressed to
+    Adam and never answers postmaster (a bounce must not be bounced back).
+    """
+
+    def _mail_to_adam(
+        self, from_address: str = "worker-1@tlon.internal", **kwargs
+    ) -> Mail:
+        return Mail.create(
+            from_address=from_address,
+            to=["adam@tlon.internal"],
+            content="守护者，我有话说",
+            **kwargs,
+        )
+
+    async def test_mail_to_adam_gets_acknowledgement_reply(self, bus, tlon_paths):
+        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
+        adam = make_adam(bus, registry, tlon_paths)
+        mails: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
+        await adam.initialize()
+
+        incoming = self._mail_to_adam()
+        # Simulate delivery: the mail sits unread in Adam's inbox, then
+        # the MAIL_DELIVERED event arrives (docs/design/mail.md: 落盘先于通知).
+        inbox = Mailbox(tlon_paths.member_mail_dir("adam"))
+        await inbox.append_inbox(incoming)
+        assert [m.id for m in await inbox.unread()] == [incoming.id]
+        await bus.publish(
+            Event(
+                type=EventType.MAIL_DELIVERED,
+                payload={"mail": incoming, "recipient": "adam"},
+                source="mail_delivery",
+            )
+        )
+        await _wait_for(lambda: len(mails) == 1)
+        reply = mails[0].payload
+        assert reply.from_address == "adam@tlon.internal"
+        assert reply.to == ["worker-1@tlon.internal"]  # replies to the sender
+        assert reply.in_reply_to == incoming.id  # threading inherited
+        assert reply.thread_id == incoming.thread_id
+        assert "收讫" in reply.content
+
+        # The triggering mail is marked read after processing (D6.1) —
+        # Adam's mailbox is real since .
+        assert [m.id for m in await inbox.unread()] == []
+
+        await adam.shutdown()
+
+    async def test_mail_addressed_to_another_member_is_ignored(self, bus, tlon_paths):
+        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
+        adam = make_adam(bus, registry, tlon_paths)
+        mails: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
+        await adam.initialize()
+
+        incoming = Mail.create(
+            from_address="worker-1@tlon.internal",
+            to=["a-002@tlon.internal"],
+            content="不是给守护者的",
+        )
+        await bus.publish(
+            Event(
+                type=EventType.MAIL_DELIVERED,
+                payload={"mail": incoming, "recipient": "a-002"},
+                source="mail_delivery",
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert mails == []
+
+        await adam.shutdown()
+
+    async def test_postmaster_mail_gets_no_reply(self, bus, tlon_paths):
+        """A bounce landing in Adam's inbox must not be answered (loop guard)."""
+        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
+        adam = make_adam(bus, registry, tlon_paths)
+        mails: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
+        await adam.initialize()
+
+        bounce = self._mail_to_adam(from_address="postmaster@tlon.internal")
+        await bus.publish(
+            Event(
+                type=EventType.MAIL_DELIVERED,
+                payload={"mail": bounce, "recipient": "adam"},
+                source="mail_delivery",
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert mails == []
 
         await adam.shutdown()
