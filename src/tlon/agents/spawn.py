@@ -446,13 +446,18 @@ class SpawnManager:
             agent_id: id of the agent to adopt
 
         Returns:
-            One of "already-known" (running or registered — no-op; a known
-            agent's config is never reloaded here), "config-not-found" (no
-            agent.yaml on disk), "registered-lazy", "started", "start-failed"
+            One of "already-known" (running or registered — not (re)started
+            here, but the config IS reloaded from disk: the agent.yaml may
+            have been edited out-of-process, e.g. a WebUI member edit, and
+            the next start must assemble the fresh config rather than the
+            stale provider cache), "config-not-found" (no agent.yaml on
+            disk), "registered-lazy", "started", "start-failed"
             (``agent_start_failed`` already logged by ``_start_agent``).
         """
         registry = self._registry
         if agent_id in registry._agents or agent_id in registry._registered_ids:
+            await registry._agent_info.reload_agent(agent_id)
+            registry._profiles.pop(agent_id, None)  # spec may have changed (phase E)
             result = "already-known"
         elif not await registry._agent_info.reload_agent(agent_id):
             result = "config-not-found"

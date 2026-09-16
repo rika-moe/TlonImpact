@@ -38,12 +38,14 @@ class _FakeProvider:
 
     def __init__(self, model: str | None = _SPAWNER_MODEL):
         self._model = model
+        self.reloaded: list[str] = []
 
     def get_config(self, agent_id: str) -> AgentConfig | None:
         llm = LLMConfig(model_name=self._model) if self._model is not None else None
         return AgentConfig(id=agent_id, name=agent_id, llm=llm)
 
     async def reload_agent(self, agent_id: str) -> bool:
+        self.reloaded.append(agent_id)
         return True
 
 
@@ -58,6 +60,8 @@ class _FakeRegistry:
     def __init__(self, paths: TlonPaths, provider: _FakeProvider | None = None):
         self._paths: TlonPaths | None = paths
         self._agents: dict[str, object] = {}
+        self._registered_ids: set[str] = set()
+        self._profiles: dict[str, object] = {}
         self._agent_info = provider or _FakeProvider()
         self.event_bus = _FakeBus()
 
@@ -357,3 +361,26 @@ class TestModelInheritance:
 
         with pytest.raises(PrototypeError, match="model"):
             await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+
+
+class TestAdoptAgent:
+    """Hot adoption of an out-of-process creation/edit (stage 6b)."""
+
+    async def test_known_agent_config_reloaded_not_restarted(self, tmp_path):
+        """already-known: the agent is not (re)started, but an out-of-process
+        agent.yaml edit (e.g. a WebUI member edit setting llm.model_name)
+        must reach the provider cache — otherwise the next start assembles
+        the stale config and fails again (a start-failed member stays
+        registered, so this branch is exactly what its repair path hits)."""
+        p = TlonPaths(home=tmp_path)
+        provider = _FakeProvider()
+        registry = _FakeRegistry(p, provider)
+        registry._registered_ids.add("m-1")
+        registry._profiles["m-1"] = object()
+        manager = SpawnManager(registry, 8, 3, 2)  # type: ignore[arg-type]
+
+        result = await manager.adopt_agent("m-1")
+
+        assert result == "already-known"
+        assert provider.reloaded == ["m-1"]
+        assert "m-1" not in registry._profiles

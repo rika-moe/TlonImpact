@@ -219,7 +219,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 | result | 含义 |
 |---|---|
-| `already-known` | 已注册或在运行，无操作（不会重载已知 agent 的配置） |
+| `already-known` | 已注册或在运行，不重启；但会从磁盘重载配置（覆盖进程外的 agent.yaml 编辑，如 WebUI 成员编辑），下次启动按新配置组装 |
 | `config-not-found` | 磁盘上没有该 agent 的 `agent.yaml` |
 | `registered-lazy` | 已注册，lazy 激活（等首封邮件唤醒） |
 | `started` | 已注册并启动 |
