@@ -150,6 +150,60 @@ class TestLedgerRecording:
         assert response.content == "hi"
 
 
+class TestCacheTokenRecording:
+    """Prompt-cache accounting (prompt prefix caching): litellm normalizes
+    every provider's cache fields into ``prompt_tokens_details`` — the
+    ledger records them so hit rates are measurable."""
+
+    def _response_with_details(self, details: dict[str, Any] | None) -> SimpleNamespace:
+        message = SimpleNamespace(content="hi", tool_calls=None, reasoning_content=None)
+        choice = SimpleNamespace(message=message, finish_reason="stop")
+        usage = SimpleNamespace(
+            model_dump=lambda: {
+                "prompt_tokens": 200,
+                "completion_tokens": 5,
+                "prompt_tokens_details": details,
+            }
+        )
+        return SimpleNamespace(choices=[choice], usage=usage)
+
+    async def _sole_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: Any
+    ) -> dict[str, Any]:
+        tlon_paths = TlonPaths(home=tmp_path)
+        client = _client(tlon_paths)
+        _mock_litellm(monkeypatch, response)
+        await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
+        ledger_file = tmp_path / "dev-001" / "ledger.jsonl"
+        return json.loads(ledger_file.read_text().splitlines()[0])
+
+    async def test_cached_and_write_tokens_recorded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        response = self._response_with_details({"cached_tokens": 150, "cache_write_tokens": 40})
+
+        record = await self._sole_record(tmp_path, monkeypatch, response)
+
+        assert record["cached_tokens"] == 150
+        assert record["cache_write_tokens"] == 40
+
+    async def test_details_none_records_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        record = await self._sole_record(tmp_path, monkeypatch, self._response_with_details(None))
+
+        assert record["cached_tokens"] == 0
+        assert record["cache_write_tokens"] == 0
+
+    async def test_details_absent_records_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        record = await self._sole_record(tmp_path, monkeypatch, _fake_litellm_response())
+
+        assert record["cached_tokens"] == 0
+        assert record["cache_write_tokens"] == 0
+
+
 class TestReadLedger:
     async def test_torn_tail_line_is_skipped(self, tmp_path: Path) -> None:
         path = tmp_path / "dev-001" / "ledger.jsonl"

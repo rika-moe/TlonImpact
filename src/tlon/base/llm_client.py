@@ -67,6 +67,19 @@ def _is_context_length_error(error: BadRequestError) -> bool:
     return any(marker in text for marker in _CONTEXT_LENGTH_MARKERS)
 
 
+def _cache_token_counts(usage: dict[str, Any]) -> tuple[int, int]:
+    """Extract ``(cached_tokens, cache_write_tokens)`` from a usage dict.
+
+    litellm normalizes every provider's cache accounting into
+    ``prompt_tokens_details``: OpenAI's ``cached_tokens``, DeepSeek/Moonshot's
+    ``prompt_cache_hit_tokens`` and Anthropic's ``cache_read_input_tokens``
+    all land in ``cached_tokens``; Anthropic's ``cache_creation_input_tokens``
+    lands in ``cache_write_tokens``. Absent fields count as zero.
+    """
+    details = usage.get("prompt_tokens_details") or {}
+    return int(details.get("cached_tokens") or 0), int(details.get("cache_write_tokens") or 0)
+
+
 @dataclass
 class ToolCall:
     """A tool call from LLM."""
@@ -256,10 +269,13 @@ class LLMClient:
             if response.usage:
                 prompt_tokens = response.usage.get("prompt_tokens")
                 completion_tokens = response.usage.get("completion_tokens")
+                cached_tokens, cache_write_tokens = _cache_token_counts(response.usage)
                 if prompt_tokens is not None:
                     span.set_attribute("llm.usage.prompt_tokens", prompt_tokens)
                 if completion_tokens is not None:
                     span.set_attribute("llm.usage.completion_tokens", completion_tokens)
+                span.set_attribute("llm.usage.cached_tokens", cached_tokens)
+                span.set_attribute("llm.usage.cache_write_tokens", cache_write_tokens)
                 await self._record_usage(
                     response,
                     purpose=purpose,
@@ -298,12 +314,15 @@ class LLMClient:
         """
         if self._ledger is None or not response.usage:
             return
+        cached_tokens, cache_write_tokens = _cache_token_counts(response.usage)
         record = {
             "ts": datetime.now(UTC).isoformat(),
             "event": "llm_call",
             "model": self.config.model_name,
             "prompt_tokens": response.usage.get("prompt_tokens", 0),
             "completion_tokens": response.usage.get("completion_tokens", 0),
+            "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "duration_ms": duration_ms,
             "cpu_ms": cpu_ms,
             "purpose": purpose,
