@@ -80,6 +80,49 @@ def _cache_token_counts(usage: dict[str, Any]) -> tuple[int, int]:
     return int(details.get("cached_tokens") or 0), int(details.get("cache_write_tokens") or 0)
 
 
+#: Providers whose prompt caching is explicit — breakpoints must be injected
+#: as cache_control blocks or nothing is cached at all. Everyone else
+#: litellm routes to (OpenAI, DeepSeek, Moonshot, GLM, ...) does automatic
+#: prefix caching: byte-identical request prefixes hit without any marker,
+#: and foreign keys in content blocks would risk a 400.
+_EXPLICIT_CACHE_PROVIDERS = ("anthropic", "bedrock", "vertex_ai")
+
+
+def _apply_cache_breakpoints(
+    model: str, all_messages: list[dict[str, Any]], cache_prefix_len: int | None
+) -> list[dict[str, Any]]:
+    """Return request messages with cache breakpoints for explicit-caching
+    providers; the input list is returned untouched for everyone else.
+
+    Two breakpoints (Anthropic allows four): the system message — whose
+    breakpoint also covers the tool schemas in Anthropic's
+    tools → system → messages cache hierarchy — and the last message of
+    the caller-declared stable prefix (``cache_prefix_len`` counts entries
+    of the *conversation* list; index 0 here is the system message, so the
+    anchor's last message sits at index ``cache_prefix_len``). The caller's
+    messages are never mutated: marked entries are copies, keeping the
+    journaled session context marker-free.
+    """
+    if model.split("/", 1)[0] not in _EXPLICIT_CACHE_PROVIDERS:
+        return all_messages
+    indexes = [0]
+    if cache_prefix_len is not None and 0 < cache_prefix_len < len(all_messages):
+        indexes.append(cache_prefix_len)
+    marked = list(all_messages)
+    for i in indexes:
+        message = marked[i]
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        marked[i] = {
+            **message,
+            "content": [
+                {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+    return marked
+
+
 @dataclass
 class ToolCall:
     """A tool call from LLM."""
@@ -208,6 +251,7 @@ class LLMClient:
         timeout: float | None = None,
         purpose: str | None = None,
         session_id: str | None = None,
+        cache_prefix_len: int | None = None,
     ) -> LLMResponse:
         """Send a chat completion request with retry logic.
 
@@ -220,6 +264,11 @@ class LLMClient:
             purpose: Ledger attribution label (e.g. "think",
                 "summarize"); None = unattributed
             session_id: Session the call belongs to, when known
+            cache_prefix_len: How many leading entries of ``messages``
+                form the stable prefix (the session anchor). Only used by
+                explicit-caching providers (Anthropic family) to place a
+                cache breakpoint on the prefix's last message; automatic-
+                caching providers ignore it entirely
 
         Returns:
             LLMResponse with content and/or tool calls
@@ -255,7 +304,7 @@ class LLMClient:
             start_cpu = time.process_time()
             try:
                 response = await self._chat_with_retries(
-                    all_messages, tools, temperature, timeout
+                    all_messages, tools, temperature, timeout, cache_prefix_len
                 )
             except Exception as e:
                 logger.error("llm_error", model=self.config.model_name, error=str(e))
@@ -339,6 +388,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None,
         temperature: float | None,
         timeout: float | None,
+        cache_prefix_len: int | None,
     ) -> LLMResponse:
         """Send the chat completion request with exponential backoff retry.
 
@@ -347,6 +397,8 @@ class LLMClient:
             tools: Optional list of tool definitions
             temperature: Optional temperature override
             timeout: Request timeout in seconds
+            cache_prefix_len: Stable-prefix length for cache breakpoint
+                placement (explicit-caching providers only)
 
         Returns:
             LLMResponse with content and/or tool calls
@@ -385,7 +437,7 @@ class LLMClient:
             api_key = self.config.auth_token
         params: dict[str, Any] = {
             "model": model,
-            "messages": all_messages,
+            "messages": _apply_cache_breakpoints(model, all_messages, cache_prefix_len),
             "temperature": temperature if temperature is not None else self.config.temperature,
             "timeout": timeout if timeout is not None else self.config.request_timeout,
             "api_base": api_base,

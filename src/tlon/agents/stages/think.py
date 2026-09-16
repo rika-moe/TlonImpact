@@ -32,7 +32,12 @@ async def think_stage(
     and retry the stage once before the fatal path takes over.
     """
     try:
-        response = await svc.think(session.context, span="agent.think", session_id=session.id)
+        response = await svc.think(
+            session.context,
+            span="agent.think",
+            session_id=session.id,
+            cache_prefix_len=session.anchor_len,
+        )
     except ContextWindowExceededError:
         raise
     except Exception as e:

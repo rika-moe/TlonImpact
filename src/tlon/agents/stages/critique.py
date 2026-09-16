@@ -51,7 +51,11 @@ async def critique_stage(
     )
     try:
         verdict_response = await svc.think(
-            messages, span="agent.critique", purpose="critique", session_id=session.id
+            messages,
+            span="agent.critique",
+            purpose="critique",
+            session_id=session.id,
+            cache_prefix_len=session.anchor_len,
         )
     except ContextWindowExceededError:
         # ADR 0008: not a soft failure — the engine force-compacts and

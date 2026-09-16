@@ -204,6 +204,7 @@ class StageServices:
         span: str,
         purpose: str = "think",
         session_id: str | None = None,
+        cache_prefix_len: int | None = None,
     ) -> LLMResponse:
         """Call the LLM once — a read-only external query, not an effect.
 
@@ -211,6 +212,9 @@ class StageServices:
         AGENT_LLM_RESPONSE / AGENT_THINKING_END observability events
         inside the named span and returns the raw response; any
         session-state consequence is the caller's Outcome.
+        ``cache_prefix_len`` declares the stable prefix (the session
+        anchor) for cache breakpoint placement on explicit-caching
+        providers.
         """
         async with self.traced_span(span):
             system_prompt = await self._context_builder.get_system_prompt()
@@ -241,6 +245,7 @@ class StageServices:
                 tools=tools if tools else None,
                 purpose=purpose,
                 session_id=session_id,
+                cache_prefix_len=cache_prefix_len,
             )
             duration_ms = int((time.time() - start_time) * 1000)
 

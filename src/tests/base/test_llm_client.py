@@ -83,6 +83,87 @@ class TestProviderModelRouting:
         assert params["api_base"] is None
 
 
+class TestCacheBreakpoints:
+    """Explicit prompt caching (Anthropic family): breakpoints are injected
+    as cache_control content blocks; automatic-caching providers (OpenAI,
+    DeepSeek, Moonshot, GLM, ...) get the messages byte-untouched."""
+
+    def _messages(self) -> list[dict[str, Any]]:
+        return [
+            {"role": "user", "content": "m1"},
+            {"role": "assistant", "content": "m2"},
+            {"role": "user", "content": "m3"},
+        ]
+
+    async def _send(
+        self, client: LLMClient, monkeypatch: pytest.MonkeyPatch, **kwargs: Any
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        acompletion = AsyncMock(return_value=_fake_litellm_response())
+        monkeypatch.setattr("litellm.acompletion", acompletion)
+        messages = self._messages()
+        await client.chat(system_prompt="sys", messages=messages, **kwargs)
+        return acompletion.await_args.kwargs["messages"], messages
+
+    @staticmethod
+    def _cached_block(text: str) -> list[dict[str, Any]]:
+        return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+    async def test_anthropic_marks_system_and_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client("anthropic/claude-sonnet-4-5")
+
+        sent, original = await self._send(client, monkeypatch, cache_prefix_len=2)
+
+        # system breakpoint (index 0) — also covers the tool schemas in
+        # Anthropic's tools → system → messages cache hierarchy
+        assert sent[0]["content"] == self._cached_block("sys")
+        # the anchor's last message: messages[1] → sent[2]
+        assert sent[2]["content"] == self._cached_block("m2")
+        # everything else untouched
+        assert sent[1]["content"] == "m1"
+        assert sent[3]["content"] == "m3"
+        # the caller's list is never mutated — the journaled session
+        # context stays marker-free
+        assert all(isinstance(m["content"], str) for m in original)
+
+    async def test_anthropic_without_prefix_len_marks_only_system(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client("anthropic/claude-sonnet-4-5")
+
+        sent, _ = await self._send(client, monkeypatch)
+
+        assert sent[0]["content"] == self._cached_block("sys")
+        assert [m["content"] for m in sent[1:]] == ["m1", "m2", "m3"]
+
+    async def test_anthropic_out_of_range_prefix_len_marks_only_system(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client("anthropic/claude-sonnet-4-5")
+
+        # 4 > len(messages) = 3: no anchor breakpoint, system only
+        sent, _ = await self._send(client, monkeypatch, cache_prefix_len=4)
+
+        assert sent[0]["content"] == self._cached_block("sys")
+        assert [m["content"] for m in sent[1:]] == ["m1", "m2", "m3"]
+
+    @pytest.mark.parametrize(
+        "model_name",
+        ["openai/gpt-5", "deepseek/deepseek-chat", "moonshot/kimi-k2.6", "zhipu/glm-4.6"],
+    )
+    async def test_automatic_caching_providers_untouched(
+        self, model_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        client = _client(model_name)
+
+        sent, _ = await self._send(client, monkeypatch, cache_prefix_len=2)
+
+        assert sent[0]["content"] == "sys"
+        assert [m["content"] for m in sent[1:]] == ["m1", "m2", "m3"]
+
+
 class TestProviderKeyRouting:
     """issue : a ``provider/model`` name first checks the provider's
     own env key (``{PROVIDER}_API_KEY``); the shared LLM_API_KEY (the
