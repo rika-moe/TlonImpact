@@ -78,9 +78,6 @@ class LLMConfig(BaseModel):
     # runtime never sees None — _build_llm_config raises before the
     # client is constructed.
     model_name: str | None = None
-    # None = the parameter is not sent to litellm at all (provider
-    # default applies); a declared value is per-member and takes effect.
-    temperature: float | None = None
     max_tokens: int = 4096
     top_p: float = 0.9
     # Model context window (tokens); drives context-pressure management
@@ -99,13 +96,6 @@ class LLMConfig(BaseModel):
     max_retries: int = Field(default=3, exclude=True)
     base_delay: float = Field(default=1.0, exclude=True)
     request_timeout: float = Field(default=300.0, exclude=True)
-
-    @field_validator("temperature")
-    @classmethod
-    def validate_temperature(cls, v: float | None) -> float | None:
-        if v is not None and not 0 <= v <= 2:
-            raise ValueError("temperature must be between 0 and 2")
-        return v
 
 
 class DockerRuntimeConfig(BaseModel):

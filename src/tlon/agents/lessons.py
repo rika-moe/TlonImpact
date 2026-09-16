@@ -159,7 +159,6 @@ class LessonsDistiller(Component, Device):
         response = await client.chat(
             system_prompt=LESSONS_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": self._build_prompt(digest)}],
-            temperature=0.3,
             timeout=60.0,
             purpose="lessons",
         )

@@ -72,27 +72,17 @@ class TestProviderModelRouting:
         assert params["model"] == "openai/kimi-k2.5"
         assert params["api_base"] == "https://api.moonshot.cn/v1"
 
-    async def test_undeclared_temperature_not_sent(
+    async def test_temperature_never_sent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """temperature None (the default) = the parameter is not sent;
-        the provider default applies."""
+        """Sampling is not configured anywhere (ADR 0016 follow-up):
+        requests never carry temperature — the provider default applies."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
         client = _client("deepseek/deepseek-chat")
 
         params = await _call_and_capture(client, monkeypatch)
 
         assert "temperature" not in params
-
-    async def test_declared_temperature_sent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
-        client = _client("deepseek/deepseek-chat", temperature=0.3)
-
-        params = await _call_and_capture(client, monkeypatch)
-
-        assert params["temperature"] == 0.3
 
 
 class TestPreflight:

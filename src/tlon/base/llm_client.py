@@ -250,7 +250,6 @@ class LLMClient:
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        temperature: float | None = None,
         timeout: float | None = None,
         purpose: str | None = None,
         session_id: str | None = None,
@@ -262,7 +261,6 @@ class LLMClient:
             system_prompt: System prompt message
             messages: List of conversation messages
             tools: Optional list of tool definitions
-            temperature: Optional temperature override
             timeout: Request timeout in seconds
             purpose: Ledger attribution label (e.g. "think",
                 "summarize"); None = unattributed
@@ -303,7 +301,7 @@ class LLMClient:
             start_cpu = time.process_time()
             try:
                 response = await self._chat_with_retries(
-                    all_messages, tools, temperature, timeout, cache_prefix_len
+                    all_messages, tools, timeout, cache_prefix_len
                 )
             except Exception as e:
                 logger.error("llm_error", model=self.config.model_name, error=str(e))
@@ -385,7 +383,6 @@ class LLMClient:
         self,
         all_messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-        temperature: float | None,
         timeout: float | None,
         cache_prefix_len: int | None,
     ) -> LLMResponse:
@@ -394,7 +391,6 @@ class LLMClient:
         Args:
             all_messages: System prompt plus conversation messages
             tools: Optional list of tool definitions
-            temperature: Optional temperature override
             timeout: Request timeout in seconds
             cache_prefix_len: Stable-prefix length for cache breakpoint
                 placement (explicit-caching providers only)
@@ -430,8 +426,8 @@ class LLMClient:
         # Prepare request parameters. num_retries=0 disables litellm's own
         # retry: the loop below owns all retries (no double backoff). A
         # member-level ``api_base`` (ADR 0016) overrides the registry
-        # endpoint for private deployments / proxies; a None temperature
-        # is simply not sent (provider default applies).
+        # endpoint for private deployments / proxies. Sampling parameters
+        # (temperature etc.) are never sent — the provider default applies.
         params: dict[str, Any] = {
             "model": model_name,
             "messages": _apply_cache_breakpoints(model_name, all_messages, cache_prefix_len),
@@ -439,9 +435,6 @@ class LLMClient:
             "api_base": self.config.api_base or None,
             "num_retries": 0,
         }
-        effective_temperature = temperature if temperature is not None else self.config.temperature
-        if effective_temperature is not None:
-            params["temperature"] = effective_temperature
 
         if tools:
             params["tools"] = tools

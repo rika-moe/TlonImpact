@@ -771,7 +771,7 @@ function CreateFormModal({
   );
 }
 
-/** Edit persona.identity / llm.model_name / llm.temperature (PATCH). */
+/** Edit persona.identity / llm.model_name (PATCH). */
 function EditModal({
   rest,
   agentId,
@@ -785,29 +785,18 @@ function EditModal({
 }): ReactElement {
   const [identity, setIdentity] = useState("");
   const [modelName, setModelName] = useState("");
-  const [temperature, setTemperature] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async (): Promise<void> => {
     const identityTrimmed = identity.trim();
     const modelTrimmed = modelName.trim();
-    const tempTrimmed = temperature.trim();
-    if (!identityTrimmed && !modelTrimmed && !tempTrimmed) {
+    if (!identityTrimmed && !modelTrimmed) {
       setError("未填写任何修改项");
       return;
     }
-    let tempValue: number | undefined;
-    if (tempTrimmed) {
-      tempValue = Number(tempTrimmed);
-      if (Number.isNaN(tempValue)) {
-        setError("TEMPERATURE 必须是数字");
-        return;
-      }
-    }
-    const llm: { model_name?: string; temperature?: number } = {};
+    const llm: { model_name?: string } = {};
     if (modelTrimmed) llm.model_name = modelTrimmed;
-    if (tempValue !== undefined) llm.temperature = tempValue;
 
     setBusy(true);
     setError(null);
@@ -838,15 +827,6 @@ function EditModal({
         <label className="agents-form-row">
           <span className="tech-label">MODEL_NAME (留空不改)</span>
           <ModelSelect rest={rest} value={modelName} onChange={setModelName} />
-        </label>
-        <label className="agents-form-row">
-          <span className="tech-label">TEMPERATURE (留空不改)</span>
-          <input
-            className="input"
-            value={temperature}
-            inputMode="decimal"
-            onChange={(e) => setTemperature(e.target.value)}
-          />
         </label>
       </div>
       {error ? <div className="agents-error-bar">{error}</div> : null}

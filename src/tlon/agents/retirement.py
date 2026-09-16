@@ -291,7 +291,6 @@ class RetirementCeremony(Component, Device):
                         "content": self._build_prompt(name, open_tasks, open_threads, digest),
                     }
                 ],
-                temperature=0.3,
                 timeout=60.0,
                 purpose="farewell",
             )

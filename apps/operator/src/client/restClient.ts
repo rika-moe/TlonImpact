@@ -215,12 +215,12 @@ export class RestClient {
     return this.send("POST", "/admin/config/agents", body);
   }
 
-  /** Edit a member's persona / LLM knobs. */
+  /** Edit a member's persona / LLM model. */
   async updateAgent(
     agentId: string,
     body: {
       persona?: Record<string, string>;
-      llm?: { model_name?: string; temperature?: number };
+      llm?: { model_name?: string };
     },
   ): Promise<Record<string, unknown>> {
     return this.send("PATCH", `/admin/config/agents/${encodeURIComponent(agentId)}`, body);

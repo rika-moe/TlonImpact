@@ -48,7 +48,6 @@ class Summarizer:
         self,
         sessions: list[SessionProjection],
         instructions: str | None = None,
-        temperature: float | None = None,
     ) -> tuple[str, list[str], list[str]]:
         """Generate a natural language summary from session projections.
 
@@ -56,7 +55,6 @@ class Summarizer:
             sessions: List of completed-session projections
             instructions: Optional focus for the summary, e.g. topics or
                 decisions that must be preserved
-            temperature: Optional temperature override
 
         Returns:
             Tuple of (summary_text, key_decisions, action_items)
@@ -94,12 +92,9 @@ class Summarizer:
         ]
 
         try:
-            # Use provided temperature or fall back to config
-            temp = temperature if temperature is not None else self.llm_client.config.temperature
             response = await self.llm_client.chat(
                 system_prompt=system_prompt,
                 messages=messages,
-                temperature=temp,
                 timeout=30.0,
                 purpose="summarize",
             )
@@ -140,7 +135,6 @@ class Summarizer:
         self,
         sessions: list[SessionProjection],
         existing_facts: list[dict[str, Any]] | None = None,
-        temperature: float | None = None,
     ) -> list[dict[str, Any]]:
         """Extract key facts from session projections.
 
@@ -203,12 +197,9 @@ class Summarizer:
         messages = [{"role": "user", "content": user_content}]
 
         try:
-            # Use provided temperature or fall back to config
-            temp = temperature if temperature is not None else self.llm_client.config.temperature
             response = await self.llm_client.chat(
                 system_prompt=system_prompt,
                 messages=messages,
-                temperature=temp,
                 timeout=30.0,
                 purpose="extract_facts",
             )
@@ -252,7 +243,6 @@ class Summarizer:
         sessions: list[SessionProjection],
         existing_facts: list[dict[str, Any]] | None = None,
         instructions: str | None = None,
-        temperature: float | None = None,
     ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
         """Process session projections to generate a summary and extract facts.
 
@@ -263,7 +253,6 @@ class Summarizer:
             existing_facts: Optional existing facts to avoid duplicates
             instructions: Optional focus for the summary, e.g. topics or
                 decisions that must be preserved
-            temperature: Optional temperature override
 
         Returns:
             Tuple of (summary_dict, facts_list)
@@ -273,11 +262,11 @@ class Summarizer:
 
         # Generate summary
         summary_text, key_decisions, action_items = await self.generate_summary(
-            sessions, instructions=instructions, temperature=temperature
+            sessions, instructions=instructions
         )
 
         # Extract facts
-        facts = await self.extract_facts(sessions, existing_facts, temperature=temperature)
+        facts = await self.extract_facts(sessions, existing_facts)
 
         # Build summary dict
         summary_dict = {

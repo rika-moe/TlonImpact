@@ -151,7 +151,7 @@ class AdminAgentHandlers(RestHandlerBase):
         """PATCH /admin/config/agents/{agent_id} - edit persona / LLM knobs.
 
         Body: ``{"persona"?: {identity?, profile?, behavior?}, "llm"?:
-        {model_name?, temperature?}}``. Persona files take effect
+        {model_name?}}``. Persona files take effect
         immediately (the prompt cache keys on their mtimes); an LLM change
         rewrites ``agent.yaml`` and hot-reloads the config.
 
@@ -198,12 +198,9 @@ class AdminAgentHandlers(RestHandlerBase):
             # model_copy preserves the untouched knobs (max_tokens / top_p /
             # an explicit context_window override); a fresh LLMConfig would
             # silently reset them to defaults. Fields absent from the body
-            # keep their current value (temperature included — None means
-            # "not sent to litellm", ADR 0016).
+            # keep their current value.
             base = cfg.llm if cfg.llm is not None else LLMConfig()
             update: dict[str, Any] = {}
-            if llm.get("temperature") is not None:
-                update["temperature"] = float(llm["temperature"])
             if llm.get("model_name"):
                 update["model_name"] = str(llm["model_name"])
             cfg.llm = base.model_copy(update=update)

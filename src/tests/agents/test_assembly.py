@@ -1,8 +1,7 @@
 """Tests for _build_llm_config's member-level resolution (ADR 0016).
 
 There is no process-level fallback: an agent.yaml without a declared
-``llm.model_name`` is a hard error naming the member. The file's
-``temperature`` passes through (None = not sent to litellm). Context
+``llm.model_name`` is a hard error naming the member. Context
 window precedence (ADR 0012 phase 2): explicit agent.yaml value >
 litellm model registry (``get_model_info().max_input_tokens``) >
 DEFAULT_CONTEXT_WINDOW. The built config always carries a resolved int
@@ -93,29 +92,6 @@ class TestModelNameRequired:
 
 class TestFileValuesTakeEffect:
     """ADR 0016: the file's per-member knobs are the only source."""
-
-    def test_file_temperature_passes_through(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            "litellm.get_model_info", MagicMock(return_value={"max_input_tokens": 64000})
-        )
-
-        built = _build_llm_config(_file(temperature=0.3), "member-1")
-
-        assert built.temperature == 0.3
-
-    def test_undeclared_temperature_stays_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """None = the parameter is not sent to litellm (provider default)."""
-        monkeypatch.setattr(
-            "litellm.get_model_info", MagicMock(return_value={"max_input_tokens": 64000})
-        )
-
-        built = _build_llm_config(_file(), "member-1")
-
-        assert built.temperature is None
 
     def test_per_member_knobs_and_api_base_pass_through(
         self, monkeypatch: pytest.MonkeyPatch

@@ -202,7 +202,7 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
         assert payload["farewell_to"] == "spawner-1@tlon.internal"
 
         assert llm.calls[0]["purpose"] == "farewell"
-        assert llm.calls[0]["temperature"] == 0.3
+        assert "temperature" not in llm.calls[0]
         assert llm.calls[0]["timeout"] == 60.0
     finally:
         await ceremony.shutdown()

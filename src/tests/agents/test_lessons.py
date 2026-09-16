@@ -119,7 +119,7 @@ async def test_agent_stopped_distills_lessons(tmp_path: Path) -> None:
         # Attribution: the call is made in the retired member's name.
         assert seen_by_factory == ["retiree"]
         assert llm.calls[0]["purpose"] == "lessons"
-        assert llm.calls[0]["temperature"] == 0.3
+        assert "temperature" not in llm.calls[0]
         assert llm.calls[0]["timeout"] == 60.0
     finally:
         await distiller.shutdown()

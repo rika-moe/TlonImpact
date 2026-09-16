@@ -126,7 +126,7 @@ class TestAdminUpdateAgent:
         req = StubRequest(
             body={
                 "persona": {"identity": "新身份"},
-                "llm": {"model_name": "other-model", "temperature": 0.7},
+                "llm": {"model_name": "other-model"},
             },
             agent_id="dev-1",
         )
@@ -138,7 +138,6 @@ class TestAdminUpdateAgent:
         assert identity.read_text(encoding="utf-8").strip() == "新身份"
         cfg = yaml_load_all(p.tlon_home())["dev-1"]
         assert cfg.llm.model_name == "other-model"
-        assert cfg.llm.temperature == 0.7
         reg.adopt_agent.assert_awaited_once_with("dev-1")
 
     async def test_unknown_agent_404(self, tmp_path: Path):

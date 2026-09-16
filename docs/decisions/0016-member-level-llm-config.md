@@ -20,7 +20,7 @@ ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，issue  补了�
 
 - **API key**：完全交给 litellm 原生约定——`provider/model` 形式的模型由 litellm 读 `{PROVIDER}_API_KEY`（如 `DEEPSEEK_API_KEY`、`ANTHROPIC_API_KEY`）。`LLMClient` 不再显式传 `api_key`；发请求前做轻量 preflight：provider 前缀对应的 env 缺失即报指明变量名的错。
 - **base_url escape hatch 成员级化**：`LLMConfig` 新增持久化字段 `api_base`（可选）；私有部署/代理在成员 agent.yaml 配 `model_name: openai/<model>` + `api_base: <url>`。裸模型名的进程级绕行删除。
-- **temperature 回归文件值**：agent.yaml 的 `llm.temperature` 生效；未声明则不向 litellm 传该参数（供应商默认）。
+- ~~**temperature 回归文件值**：agent.yaml 的 `llm.temperature` 生效；未声明则不向 litellm 传该参数（供应商默认）。~~ **已被后续拍板覆盖**：temperature 配置项整体删除（含配置与全部调用点），请求永不携带 temperature，供应商默认生效。
 - **max_retries / base_delay / request_timeout**：不再是环境变量，用 `LLMConfig` 的代码默认值。
 
 ### 2. 模型成员级强制

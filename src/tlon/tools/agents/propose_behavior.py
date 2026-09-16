@@ -227,7 +227,6 @@ class ProposeBehaviorTool(Tool):
         response = await self._llm_client.chat(
             system_prompt=_DRAFT_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": "\n\n".join(prompt_parts)}],
-            temperature=0.3,
             timeout=60.0,
             purpose="propose",
         )

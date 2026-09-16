@@ -408,7 +408,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 **见习成员不可用（，信任阶梯）**——装配时不注册。
 
-世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（摘要/事实）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、temperature 0.3、timeout 60s），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
+世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（摘要/事实）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -439,7 +439,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### reviewPrototype
 
-评审一个 staging 区的原型提案（异质评审， 第二阶段）。调用方只点名提案——verdict 不由调用方给：工具内部用评审者自己的 `llm_client` 做一次专项评审调用（`purpose="review"`、temperature 0.3、timeout 60s），材料是提案的 behavior.tlon 全文、随包 `LESSONS.md`（如有）与谱系链（含每代 diff、`proposal_note`）；响应首行必须是 `通过`/`不通过`/`弃权` 三者之一，其后为理由。合法 verdict 追加记入提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型——`llm_client.config.model_name`，异质性来源），多次评审累积不覆盖，approve 时随整目录晋级 trusted。评审是咨询性的：不自动晋级，人类在审批详情（`reviews` 字段）里读到记录再做决定。
+评审一个 staging 区的原型提案（异质评审， 第二阶段）。调用方只点名提案——verdict 不由调用方给：工具内部用评审者自己的 `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior.tlon 全文、随包 `LESSONS.md`（如有）与谱系链（含每代 diff、`proposal_note`）；响应首行必须是 `通过`/`不通过`/`弃权` 三者之一，其后为理由。合法 verdict 追加记入提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型——`llm_client.config.model_name`，异质性来源），多次评审累积不覆盖，approve 时随整目录晋级 trusted。评审是咨询性的：不自动晋级，人类在审批详情（`reviews` 字段）里读到记录再做决定。
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|

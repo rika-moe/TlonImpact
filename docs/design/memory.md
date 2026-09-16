@@ -98,7 +98,7 @@ ADR 0009 删掉了反思的 `consolidate` 操作（连同 prompt 里「工作记
 - **只挂蓄意停止**。`AGENT_SLEEPING`/`AGENT_IDLE`（drain 是日常 scale-to-zero 睡眠，反复发生）不触发蒸馏——退休才有遗产，午睡没有。
 - **失败不阻断**。非认知成员（无 `:loop` 的 spec）或 digest 为空直接跳过；LLM 失败只记日志不 raise——停止流程已经完成，这只是事后簿记。
 
-蒸馏调用沿用反思的参数先例（temperature 0.3、timeout 60 秒），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（ 的 per-member 账本自然覆盖），LLMConfig 从其 `agent.yaml` 的 `llm` 段 + settings 构造（与 `assemble_cognitive` 同一条合并路径）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
+蒸馏调用沿用反思的参数先例（timeout 60 秒；采样参数不配置，供应商默认生效），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（ 的 per-member 账本自然覆盖），LLMConfig 从其 `agent.yaml` 的 `llm` 段构造（与 `assemble_cognitive` 同一条路径）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
 
 `lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md) 决策 9 补注）。退休交接信（）已落地为 `RetirementCeremony`（见 [mail.md](./mail.md)「退休交接信」）——蒸馏沉淀给下一代，交接信盘点给同代的接管者；把 lessons 自动写成提案（）仍是后续项。
 

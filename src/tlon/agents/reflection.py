@@ -142,7 +142,6 @@ class ReflectionEngine:
             response = await self._llm_client.chat(
                 system_prompt=self.REFLECTION_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
                 timeout=60.0,
                 purpose="reflect",
             )

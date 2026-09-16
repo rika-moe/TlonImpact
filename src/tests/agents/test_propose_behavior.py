@@ -124,7 +124,7 @@ class TestProposeBehavior:
         assert len(llm.calls) == 1
         call = llm.calls[0]
         assert call["purpose"] == "propose"
-        assert call["temperature"] == 0.3
+        assert "temperature" not in call
         assert call["timeout"] == 60.0
         prompt = call["messages"][0]["content"]
         assert _CURRENT_SPEC in prompt

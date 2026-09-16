@@ -113,11 +113,11 @@ def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig
     """Resolve the member's LLM config from its agent.yaml ``llm`` section.
 
     Member-level only (ADR 0016) — no process-level fallback anywhere:
-    ``model_name`` must be declared, ``temperature`` is the file value
-    (None = the parameter is not sent to litellm, provider default
-    applies), and the per-agent knobs ``max_tokens`` / ``top_p`` /
-    ``context_window`` pass through (context_window None = auto-resolve
-    from litellm's model registry). The returned config always carries a
+    ``model_name`` must be declared, and the per-agent knobs
+    ``max_tokens`` / ``top_p`` / ``context_window`` pass through
+    (context_window None = auto-resolve from litellm's model registry).
+    Sampling is never configured — requests carry no temperature, the
+    provider default applies. The returned config always carries a
     non-None ``model_name`` and a resolved ``context_window`` int.
 
     Raises:
@@ -132,7 +132,6 @@ def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig
 
     return LLMConfig(
         model_name=model_name,
-        temperature=file_config.temperature,
         max_tokens=file_config.max_tokens,
         top_p=file_config.top_p,
         context_window=_resolve_context_window(file_config, model_name),
