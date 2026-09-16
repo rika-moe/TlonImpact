@@ -77,10 +77,13 @@ class AdminAgentHandlers(RestHandlerBase):
     async def handle_create_agent(self, request: web.Request) -> web.Response:
         """POST /admin/config/agents - create a member from a prototype.
 
-        Body: ``{"prototype", "name", "agent_id"?, "params"?, "persona"?}``.
-        The behavior comes from the prototype (behavior genome); ``persona``
-        (identity/profile/behavior) is optional creation-time data (ADR
-        0006). The new member is hot-adopted by the registry.
+        Body: ``{"prototype", "name", "model", "agent_id"?, "params"?,
+        "persona"?}``. ``model`` is required (ADR 0016 — member-level LLM
+        config, no process-level fallback): ``provider/model`` form, e.g.
+        ``deepseek/deepseek-chat``. The behavior comes from the prototype
+        (behavior genome); ``persona`` (identity/profile/behavior) is
+        optional creation-time data (ADR 0006). The new member is
+        hot-adopted by the registry.
 
         Returns:
             200 with the created config; 400 on bad input / prototype
@@ -99,9 +102,15 @@ class AdminAgentHandlers(RestHandlerBase):
             )
         prototype: str = str(body.get("prototype") or "")
         name: str = str(body.get("name") or "")
+        model: str = str(body.get("model") or "").strip()
         if not prototype or not name:
             return self._json_response(
                 {"status": "error", "message": "prototype and name are required"},
+                status=400,
+            )
+        if not model:
+            return self._json_response(
+                {"status": "error", "message": "model is required"},
                 status=400,
             )
         agent_id = str(body.get("agent_id") or f"m-{prototype}-{uuid.uuid4().hex[:8]}")
@@ -110,7 +119,7 @@ class AdminAgentHandlers(RestHandlerBase):
 
         try:
             cfg = instantiate(
-                prototype, agent_id, name, params=params, tlon_paths=paths
+                prototype, agent_id, name, model=model, params=params, tlon_paths=paths
             )
         except PrototypeError as e:
             return self._json_response({"status": "error", "message": str(e)}, status=400)
@@ -188,12 +197,13 @@ class AdminAgentHandlers(RestHandlerBase):
         if llm:
             # model_copy preserves the untouched knobs (max_tokens / top_p /
             # an explicit context_window override); a fresh LLMConfig would
-            # silently reset them to defaults. model_name stays None
-            # (undeclared) unless the caller sets one.
+            # silently reset them to defaults. Fields absent from the body
+            # keep their current value (temperature included — None means
+            # "not sent to litellm", ADR 0016).
             base = cfg.llm if cfg.llm is not None else LLMConfig()
-            update: dict[str, Any] = {
-                "temperature": float(llm.get("temperature") or base.temperature),
-            }
+            update: dict[str, Any] = {}
+            if llm.get("temperature") is not None:
+                update["temperature"] = float(llm["temperature"])
             if llm.get("model_name"):
                 update["model_name"] = str(llm["model_name"])
             cfg.llm = base.model_copy(update=update)

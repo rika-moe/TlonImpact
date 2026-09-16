@@ -3,20 +3,6 @@ import type { ChangeEvent, ReactElement } from "react";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/settings.css";
 
-interface EnvForm {
-  base_url: string;
-  api_key: string;
-  model: string;
-  temperature: string;
-}
-
-const ENV_FIELDS: ReadonlyArray<keyof EnvForm> = [
-  "base_url",
-  "api_key",
-  "model",
-  "temperature",
-];
-
 /** Flatten nested config objects into dotted key/value display rows. */
 function flatten(obj: Record<string, unknown>, prefix = ""): Array<[string, string]> {
   const rows: Array<[string, string]> = [];
@@ -39,40 +25,25 @@ function formatAgentConfig(agent: Record<string, unknown>): string {
 }
 
 /**
- * SETTINGS — merges the TUI's config + settings views. Upper half is
- * read-only: server config (GET /config) and member configs
- * (GET /admin/config/agents). Lower half edits the LLM env
- * (GET/PUT /admin/settings/env, merge semantics). The api_key is
- * write-only: the server returns it masked (`****` + last 4) and the
- * form shows that as a placeholder — an empty field on save keeps the
- * current key, a typed value replaces it. SSE `config.updated` reloads
- * the read-only sections (the env form is left untouched).
+ * SETTINGS — merges the TUI's config + settings views. Read-only: server
+ * config (GET /config) and member configs (GET /admin/config/agents),
+ * plus the admin-token editor (ADR 0013, browser-local). The process-level
+ * LLM env editor is gone (ADR 0016): LLM config is member-level now —
+ * the model is picked when creating a member, API keys are the
+ * provider's own `{PROVIDER}_API_KEY` env vars. SSE `config.updated`
+ * reloads the read-only sections.
  */
 export function SettingsView({ rest, sse }: ViewProps): ReactElement {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [agentConfigs, setAgentConfigs] = useState<Record<string, unknown>[]>([]);
   const [configError, setConfigError] = useState<string | null>(null);
 
-  const [envPath, setEnvPath] = useState<string | null>(null);
-  const [configured, setConfigured] = useState(false);
-  const [apiKeyMasked, setApiKeyMasked] = useState("");
   // Admin token (ADR 0013): lives in localStorage, sent as Bearer on every
   // request. Never shown back — the field stays empty after save.
   const [adminTokenInput, setAdminTokenInput] = useState("");
   const [adminTokenConfigured, setAdminTokenConfigured] = useState(rest.hasAdminToken);
   const [adminTokenSaved, setAdminTokenSaved] = useState<string | null>(null);
-  const [form, setForm] = useState<EnvForm>({
-    base_url: "",
-    api_key: "",
-    model: "",
-    temperature: "",
-  });
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<string | null>(null);
-  const [envError, setEnvError] = useState<string | null>(null);
 
-  // Read-only section and env form load independently: a 503 on one
-  // (e.g. no config manager) must not break the other.
   const loadConfig = useCallback(async () => {
     try {
       const [cfg, agents] = await Promise.all([rest.config(), rest.listAgentConfigs()]);
@@ -84,34 +55,12 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
     }
   }, [rest]);
 
-  const loadEnv = useCallback(async () => {
-    try {
-      const data = await rest.getSettingsEnv();
-      setEnvPath(data.path);
-      setConfigured(data.configured);
-      // api_key comes back masked; the field stays empty until the user
-      // types a new key (empty on save = keep the current key).
-      setApiKeyMasked(data.values.api_key ?? "");
-      setForm({
-        base_url: data.values.base_url ?? "",
-        api_key: "",
-        model: data.values.model ?? "",
-        temperature: String(data.values.temperature ?? ""),
-      });
-      setEnvError(null);
-    } catch (err) {
-      setEnvError(err instanceof Error ? err.message : String(err));
-    }
-  }, [rest]);
-
   useEffect(() => {
     void loadConfig();
-    void loadEnv();
-  }, [loadConfig, loadEnv]);
+  }, [loadConfig]);
 
   // A member config change anywhere (WebUI, TUI, agent tool) reloads the
-  // read-only config sections. The env form is deliberately not reloaded —
-  // clobbering an in-progress edit would be worse than a stale display.
+  // read-only config sections.
   useEffect(() => {
     const onEvent = (ev: ServerEvent): void => {
       if (ev.eventType === "config.updated") void loadConfig();
@@ -122,34 +71,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
     };
   }, [sse, loadConfig]);
 
-  const setField =
-    (field: keyof EnvForm) =>
-    (e: ChangeEvent<HTMLInputElement>): void => {
-      setForm((prev) => ({ ...prev, [field]: e.target.value }));
-      setSaved(null);
-    };
-
-  const save = async (): Promise<void> => {
-    setSaving(true);
-    setSaved(null);
-    try {
-      const temp = Number.parseFloat(form.temperature);
-      await rest.updateSettingsEnv({
-        base_url: form.base_url.trim() || undefined,
-        api_key: form.api_key.trim() || undefined,
-        model: form.model.trim() || undefined,
-        temperature: Number.isFinite(temp) ? temp : undefined,
-      });
-      setSaved("已保存 — 重启 dream 生效");
-      setEnvError(null);
-      void loadEnv();
-    } catch (err) {
-      setEnvError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const saveAdminToken = (token: string): void => {
     rest.setAdminToken(token);
     setAdminTokenConfigured(rest.hasAdminToken);
@@ -157,7 +78,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
     setAdminTokenSaved(token.trim() ? "已保存 — 立即生效" : "已清除");
     // Panels that 401'd before the token was set get a fresh chance.
     void loadConfig();
-    void loadEnv();
   };
 
   return (
@@ -170,7 +90,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
           className="btn btn--secondary"
           onClick={() => {
             void loadConfig();
-            void loadEnv();
           }}
         >
           REFRESH
@@ -207,57 +126,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
             ))
           )}
         </div>
-      </div>
-
-      <div className="panel">
-        <h3 className="tech-label settings-section-title">
-          LLM ENV · GET/PUT /admin/settings/env
-        </h3>
-        <div className="settings-status-row">
-          <span className="tech-label">API KEY</span>
-          <span
-            className={`tech-label ${configured ? "settings-status--ok" : "settings-status--warn"}`}
-          >
-            {configured ? "CONFIGURED" : "NOT CONFIGURED — 认知成员首次调用 LLM 会失败"}
-          </span>
-        </div>
-        <div className="settings-form">
-          {ENV_FIELDS.map((field) => (
-            <div className="settings-field" key={field}>
-              <label className="tech-label" htmlFor={`env-${field}`}>
-                {field}
-              </label>
-              <input
-                id={`env-${field}`}
-                className="input"
-                type="text"
-                value={form[field]}
-                placeholder={
-                  field === "api_key"
-                    ? apiKeyMasked || "未配置 — 输入新 key 并保存"
-                    : undefined
-                }
-                onChange={setField(field)}
-                disabled={saving}
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
-          ))}
-        </div>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => void save()}
-            disabled={saving}
-          >
-            {saving ? "SAVING…" : "SAVE"}
-          </button>
-          {saved ? <span className="tech-label settings-saved">{saved}</span> : null}
-          {envError ? <span className="tech-label settings-error">{envError}</span> : null}
-        </div>
-        {envPath ? <div className="settings-path">写入: {envPath}</div> : null}
       </div>
 
       <div className="panel">

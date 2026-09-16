@@ -20,7 +20,8 @@ uv sync
 
 # 配置环境（Tlon 读 ~/.tlon/.env，.env.example 是模板）
 cp .env.example ~/.tlon/.env
-# 编辑 ~/.tlon/.env，填入 LLM_API_KEY（可选改 LLM_MODEL=provider/model）
+# 编辑 ~/.tlon/.env，按所用 provider 填 API key（{PROVIDER}_API_KEY，如 DEEPSEEK_API_KEY）
+# 模型是成员级配置（ADR 0016）：创建成员时在 WebUI 选择，落 agent.yaml 的 llm.model_name
 
 # 运行（服务端 + 客户端）
 uv run tlon dream     # 终端 1（服务端，REST + SSE，默认 127.0.0.1:8080；启动 banner 显示 WebUI 地址）

@@ -42,12 +42,12 @@ apps/webui/
 | 页面 | 对应 TUI 视图 | 功能 | 端点 / 事件 |
 |---|---|---|---|
 | MAIL | mail | 三栏：线程列表（未读 ●）｜会话内容｜写信抽屉（To/Cc 补全、回复预填 in_reply_to/thread_id） | `GET /inbox`、`GET /participants`、`POST /messages`、SSE `mail.delivered` |
-| AGENTS | agents | 成员卡片网格（状态着色 + 事件驱动实时状态行：THINKING 徽标、上次 LLM 耗时/模型、最近工具调用）+ 详情、创建（选原型→表单）、编辑、删除 | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`GET /admin/prototypes`（创建向导）、SSE `agent.*` / `tool.*` / `config.updated` |
+| AGENTS | agents | 成员卡片网格（状态着色 + 事件驱动实时状态行：THINKING 徽标、上次 LLM 耗时/模型、最近工具调用）+ 详情、创建（选原型→表单，模型必填——ADR 0016）、编辑、删除 | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`GET /admin/prototypes`（创建向导）、SSE `agent.*` / `tool.*` / `config.updated` |
 | EVENTS | events | 活动 feed：SSE 事件映射为语义条目（类型色块 + 中文短句 title + detail，未知类型原样展示），暂停/清空，点击展开原始 JSON | 纯 SSE |
 | TRACES | traces | trace 列表 + span 详情 | `GET /traces[/{id}]` |
 | METRICS | metrics | 指标仪表盘，按 mail/agent/llm/tool 分组，2s 轮询 | `GET /metrics` |
 | LOGS | —（新增） | 日志流，level/agent/trace 过滤 | `GET /logs`、`GET /agents/{id}/logs` |
-| SETTINGS | config + settings | 服务端配置只读区 + LLM env 编辑（base_url/api_key/model_name/temperature） | `GET /config`、`GET /admin/config/agents`、`GET/PUT /admin/settings/env` |
+| SETTINGS | config + settings | 服务端配置只读区 + admin token（浏览器本地）——进程级 LLM env 编辑已删除（ADR 0016：模型在创建/编辑成员时配置） | `GET /config`、`GET /admin/config/agents` |
 | PROTOTYPES | —（新增） | 原型库管理：正式库/ staging 双区列表、详情（元数据 + parameters + behavior.tlon 全文）、手写创建、编辑、删除、staging 审批 | 见下文「原型管理 API」 |
 
 staging 原型审批区从 AGENTS 视图迁至 PROTOTYPES 视图（2026-08-21 拍板：原型管理是独立职责）。

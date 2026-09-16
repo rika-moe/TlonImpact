@@ -546,7 +546,7 @@ function CreateProtoModal({
   );
 }
 
-/** Create step 2: name / agent_id? / identity? -> POST /admin/config/agents. */
+/** Create step 2: name / model / agent_id? / identity? -> POST /admin/config/agents. */
 function CreateFormModal({
   rest,
   prototype,
@@ -559,6 +559,7 @@ function CreateFormModal({
   onClose: () => void;
 }): ReactElement {
   const [name, setName] = useState("");
+  const [model, setModel] = useState("");
   const [agentIdField, setAgentIdField] = useState("");
   const [identity, setIdentity] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -569,12 +570,17 @@ function CreateFormModal({
       setError("NAME 不能为空");
       return;
     }
+    if (!model.trim()) {
+      setError("MODEL 不能为空（provider/model 形式，如 deepseek/deepseek-chat）");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       await rest.createAgent({
         prototype,
         name: name.trim(),
+        model: model.trim(),
         agent_id: agentIdField.trim() || undefined,
         persona: identity.trim() ? { identity: identity.trim() } : undefined,
       });
@@ -595,6 +601,14 @@ function CreateFormModal({
             value={name}
             autoFocus
             onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className="agents-form-row">
+          <span className="tech-label">MODEL *（provider/model，如 deepseek/deepseek-chat）</span>
+          <input
+            className="input"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
           />
         </label>
         <label className="agents-form-row">

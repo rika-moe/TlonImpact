@@ -49,7 +49,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 客户端侧有两类接入方式：`tlon ops`（[app/launcher/commands/ops.py](../src/tlon/app/launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[app/clients/sdk/](../src/tlon/app/clients/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上只依赖 `tlon.base`，不触碰服务端内部。
 
-成员配置的创建与审批走服务端管理面：空社会首启自动初始化标准团队（[agents/bootstrap.py](../src/tlon/agents/bootstrap.py)，角色卡定义在 [base/default_team.py](../src/tlon/base/default_team.py)），成员/原型管理经 ops 的管理 API（`POST/PATCH/DELETE /admin/config/agents`、`/admin/prototypes/staging` 审批），`POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
+成员配置的创建与审批走服务端管理面：首启只播种原型库与技能（[agents/bootstrap.py](../src/tlon/agents/bootstrap.py)），**空社会不再自动初始化标准团队**（ADR 0016）——成员由人类经管理面创建（创建时选模型，成员级 LLM 配置），成员/原型管理经 ops 的管理 API（`POST/PATCH/DELETE /admin/config/agents`、`/admin/prototypes/staging` 审批），`POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
 
 ## 分层与依赖方向
 

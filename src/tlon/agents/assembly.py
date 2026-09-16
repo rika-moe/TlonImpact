@@ -35,7 +35,6 @@ from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
-from tlon.base.settings import Settings
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
@@ -110,38 +109,34 @@ def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
     return DEFAULT_CONTEXT_WINDOW
 
 
-def _build_llm_config(file_config: LLMConfig | None, settings: Settings) -> LLMConfig:
-    """Merge LLM config from YAML file with runtime settings.
+def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig:
+    """Resolve the member's LLM config from its agent.yaml ``llm`` section.
 
-    ``model_name``: an explicit declaration in agent.yaml wins (issue
-     — instantiated from a prototype whose spec declares
-    ``:llm {:model ...}``); when the file leaves it undeclared (None),
-    the process-level ``LLM_MODEL`` setting is the fallback. The returned
-    config always carries a non-None ``model_name``.
+    Member-level only (ADR 0016) — no process-level fallback anywhere:
+    ``model_name`` must be declared, ``temperature`` is the file value
+    (None = the parameter is not sent to litellm, provider default
+    applies), and the per-agent knobs ``max_tokens`` / ``top_p`` /
+    ``context_window`` pass through (context_window None = auto-resolve
+    from litellm's model registry). The returned config always carries a
+    non-None ``model_name`` and a resolved ``context_window`` int.
 
-    ``temperature`` stays process-level (settings-driven): the file's
-    value is NOT used — a Settings-view edit takes effect on restart.
-    The file keeps the per-agent knobs the process does not manage:
-    ``max_tokens`` / ``top_p`` / ``context_window`` (explicit override;
-    None = auto-resolve from litellm's model registry).
-
-    Settings provide the runtime parameters (base_url, auth_token, ...).
-    The returned config always carries a resolved ``context_window`` int.
+    Raises:
+        ValueError: the member declares no ``llm.model_name``.
     """
-    if file_config is None:
-        file_config = LLMConfig()
-    model_name = file_config.model_name or settings.llm_model_name
+    if file_config is None or file_config.model_name is None:
+        raise ValueError(
+            f"member '{agent_id}' 未配置模型：在 agent.yaml 的 llm.model_name "
+            "声明 provider/model（或经 WebUI 成员编辑设置）"
+        )
+    model_name = file_config.model_name
 
     return LLMConfig(
         model_name=model_name,
-        temperature=settings.llm_temperature,
+        temperature=file_config.temperature,
         max_tokens=file_config.max_tokens,
         top_p=file_config.top_p,
         context_window=_resolve_context_window(file_config, model_name),
-        base_url=settings.llm_base_url,
-        auth_token=settings.llm_api_key,
-        max_retries=settings.llm_max_retries,
-        base_delay=settings.llm_base_delay,
+        api_base=file_config.api_base,
     )
 
 
@@ -167,10 +162,8 @@ async def assemble_cognitive(
     agent for pure conversation costs zero containers — a daemon
     failure surfaces as a tool error, not a start failure.
     """
-    from tlon.base.settings import get_settings
-
     # Build infrastructure dependencies
-    llm_config = _build_llm_config(config.llm, get_settings())
+    llm_config = _build_llm_config(config.llm, config.id)
     # agent_id binds the client to the member's token ledger (issue ):
     # every chat() carrying usage appends to {agent_id}/ledger.jsonl.
     llm_client = LLMClient(llm_config, agent_id=config.id, tlon_paths=tlon_paths)

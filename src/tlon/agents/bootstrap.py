@@ -1,88 +1,28 @@
-"""Standard-team bootstrap — first-boot initialization (wizard removal).
+"""First-boot seeding (wizard removal).
 
-When the server starts on an **empty society** (no ``agent.yaml``
-anywhere under ``~/.tlon/``), it instantiates the six standard-team
-members from their role prototypes and writes their persona files
-(creation-time data, ADR 0006). Idempotent: any existing agent skips the
-whole bootstrap. This replaces the ``tlon mirror`` quickstart path so
-installation reduces to ``uv sync && tlon dream && tlon ops``.
-
-Called by ``ServerApp.initialize`` right after ``seed_prototypes`` and
-before ``ConfigService`` reads the agent configs — the written files are
-picked up by the normal config load path, so the standard team becomes a
-society like any other.
+Seeds the built-in prototype library and skills into ``~/.tlon/``
+(idempotent). Members are NEVER seeded (ADR 0016): the first boot is an
+empty society plus the prototype library — the human creates members via
+the WebUI / admin API, picking a model per member (there is no
+process-level model fallback). Called by ``ServerApp.initialize`` before
+``ConfigService`` reads the agent configs.
 """
 
-from tlon.agents.prototypes import instantiate, seed_prototypes
+from tlon.agents.prototypes import seed_prototypes
 from tlon.agents.skills import seed_skills
-from tlon.base.config import yaml_load_all, yaml_save
-from tlon.base.default_team import STANDARD_TEAM_DICTS
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 
 logger = get_logger(__name__)
 
-#: role-card persona field -> member config filename (creation-time data)
-_PERSONA_FIELDS: tuple[tuple[str, str], ...] = (
-    ("identity", "IDENTITY.md"),
-    ("profile", "SOUL.md"),
-    ("behavior", "RULES.md"),
-)
 
-
-def bootstrap_standard_team(tlon_paths: TlonPaths | None = None) -> list[str]:
-    """Instantiate the standard team on an empty society (idempotent).
-
-    Seeds the prototype library (idempotent) and, when no agent config
-    exists yet, instantiates each standard-team member from its role
-    prototype (behavior genome) and writes the persona files (role-card
-    data). Any existing agent skips the entire bootstrap.
+def bootstrap_society(tlon_paths: TlonPaths | None = None) -> None:
+    """Seed the built-in prototypes and skills (idempotent).
 
     Args:
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
-
-    Returns:
-        The created agent ids (``[]`` when the society already has members).
     """
     p = tlon_paths or paths
-    seed_prototypes(p)
-    seed_skills(p)
-
-    existing = yaml_load_all(p.tlon_home())
-    if existing:
-        logger.info(
-            "bootstrap_skipped", reason="agents_exist", existing_count=len(existing)
-        )
-        return []
-
-    created: list[str] = []
-    for role in STANDARD_TEAM_DICTS:
-        cfg = instantiate(
-            role["prototype"], role["id"], role["name"], tlon_paths=p
-        )
-        # Model identity lands in agent.yaml only when the prototype's
-        # spec declares :llm {:model ...} (instantiate handles it, issue
-        # ); otherwise the member has no llm section and
-        # _build_llm_config falls back to settings (env/.env) at runtime,
-        # so a later Settings-view edit takes effect without touching the
-        # members' configs. max_tokens/top_p stay at their defaults.
-        yaml_save(cfg, p.tlon_home())
-
-        config_dir = p.agent_config_dir(role["id"])
-        for field, filename in _PERSONA_FIELDS:
-            content = role.get(field, "")
-            if content:
-                (config_dir / filename).write_text(content.strip() + "\n", encoding="utf-8")
-
-        created.append(cfg.id)
-        logger.info(
-            "bootstrap_agent_created",
-            agent_id=cfg.id,
-            agent_name=role["name"],
-            prototype=role["prototype"],
-        )
-
-    logger.info(
-        "bootstrap_standard_team_ready", count=len(created), agent_ids=created
-    )
-    return created
+    seeded = seed_prototypes(p)
+    seeded_skills = seed_skills(p)
+    logger.info("society_bootstrapped", prototypes=seeded, skills=seeded_skills)

@@ -40,23 +40,22 @@
 ### `llm`
 
 <!-- BEGIN GENERATED: agent-yaml-fields-llm -->
-`LLMConfig` 字段（10 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`LLMConfig` 字段（9 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `model_name` | `str \| None` | None |  |
-| `temperature` | `float` | 1.0 |  |
+| `temperature` | `float \| None` | None |  |
 | `max_tokens` | `int` | 4096 |  |
 | `top_p` | `float` | 0.9 |  |
 | `context_window` | `int \| None` | None |  |
-| `base_url` | `str` | "" | 运行时字段，不进 YAML |
-| `auth_token` | `str` | "" | 运行时字段，不进 YAML |
+| `api_base` | `str \| None` | None |  |
 | `max_retries` | `int` | 3 | 运行时字段，不进 YAML |
 | `base_delay` | `float` | 1.0 | 运行时字段，不进 YAML |
 | `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
 <!-- END GENERATED: agent-yaml-fields-llm -->
 
-`model_name` 的默认 `null` 表示**未声明**（issue ）：agent.yaml 显式写的 `model_name` 优先生效（原型 spec 顶层 `:llm {:model ...}` 经 `instantiate` 落盘而来），未声明时 `_build_llm_config` 回退进程级 `LLM_MODEL`（见第 4 节）；`temperature` 仍由进程级 `LLM_TEMPERATURE` 驱动，文件值不生效；`max_tokens` / `top_p` 每 agent 可调。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`base_url`、`auth_token`、`max_retries`、`base_delay`、`request_timeout`）由进程级环境变量注入（见第 4 节），Pydantic 标注 `exclude=True`，不落盘。
+`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。`temperature` 为 `null`（默认）表示不向 litellm 传该参数（供应商默认），显式值即生效；`max_tokens` / `top_p` 每 agent 可调。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 
@@ -93,8 +92,8 @@ agent:
   id: su-wanqing
   name: 苏晚晴
   llm:
-    model_name: kimi-k2.5
-    temperature: 1.0
+    model_name: moonshot/kimi-k2.5   # provider/model 形式（必填，ADR 0016）
+    temperature: 1.0                  # 可选；不写则不向 litellm 传该参数
   docker:
     image: ubuntu:22.04
     working_dir: /workspace
@@ -148,19 +147,13 @@ agent:
 读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 <!-- BEGIN GENERATED: env-vars -->
-`Settings` 读取的环境变量（17 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`Settings` 读取的环境变量（11 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `APP_NAME` | Tlon | App settings |
 | `LOG_LEVEL` | INFO |  |
 | `DEBUG` | false |  |
-| `LLM_BASE_URL` | https://api.openai.com/v1 | 仅裸 model 名的 escape hatch 生效；provider/model 由 litellm 路由 |
-| `LLM_API_KEY` | "" |  |
-| `LLM_MODEL` | moonshot/kimi-k2.5 | provider/model 形式，如 deepseek/deepseek-chat |
-| `LLM_TEMPERATURE` | 1.0 |  |
-| `LLM_MAX_RETRIES` | 3 |  |
-| `LLM_BASE_DELAY` | 1.0 |  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | （未设置） | Observability (OTel): optional OTLP collector, requires the `otlp` extra |
 | `TELEGRAM_BOT_TOKEN` | "" | @BotFather 颁发的 bot token；缺失则 `tlon telegram` 拒绝启动 |
 | `TELEGRAM_ALLOWED_USERS` | "" | Telegram user-id 白名单（逗号分隔）；为空则拒绝启动 |
@@ -179,9 +172,9 @@ agent:
 | `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（[base/tracing/otel.py](../../src/tlon/base/tracing/otel.py) 的 `SAMPLE_RATIO_ENV`） |
 | `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
 
-LLM 配置统一用 `LLM_` 前缀（ADR 0012 阶段 2）：`LLM_MODEL` 是 `provider/model` 形式（默认 `moonshot/kimi-k2.5`），litellm 内置路由表按 provider 前缀解析 base_url，无需手配；`LLM_BASE_URL` 是 escape hatch——仅当 `LLM_MODEL` 为裸模型名（不含 `/`）时生效，用于私有部署 / 代理 / 注册表未收录的端点。`TLON_LOG_RETENTION_DAYS` 管每日服务端日志文件保留（`~/.tlon/shared/logs/server-{date}.jsonl`）；`DEBUG` 为 `"true"` 时生效。
+LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全部删除）：成员模型为 `provider/model` 形式，litellm 原生按 provider 前缀读取 `{PROVIDER}_API_KEY`（provider 段大写、`-` 换 `_`，如 `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY`）；发请求前 LLMClient 有 preflight，缺 key 即报指明变量名的错。模型选择是成员级配置（agent.yaml `llm.model_name`），私有部署 / 代理用成员级 `llm.api_base` 覆盖端点。`TLON_LOG_RETENTION_DAYS` 管每日服务端日志文件保留（`~/.tlon/shared/logs/server-{date}.jsonl`）；`DEBUG` 为 `"true"` 时生效。
 
-可选键：`ANTHROPIC_API_KEY`、`AZURE_OPENAI_*` 等当前代码不读取；`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME` 即 `~/.tlon/`。
+可选键：`AZURE_OPENAI_*` 等当前代码不读取；`DATA_DIR` 是遗留项，数据目录一律 `$TLON_HOME` 即 `~/.tlon/`。
 
 ## 5. `~/.tlon` 目录布局
 
@@ -233,5 +226,5 @@ LLM 配置统一用 `LLM_` 前缀（ADR 0012 阶段 2）：`LLM_MODEL` 是 `prov
 ## 6. 配置相关的常用操作
 
 - **增/删 agent**：[base/config.py](../../src/tlon/base/config.py) 的 `yaml_save` / `yaml_delete`（删除即 `rm -rf ~/.tlon/{agent_id}/`）；热加载走 REST `POST /admin/config/agents/{agent_id}/reload`（条件注册，见 `reference/api-reference.md`）。
-- **交互式管理**：ops 的 Agents 视图——创建成员（`c`）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；空社会首启由服务端自动初始化标准团队（[agents/bootstrap.py](../../src/tlon/agents/bootstrap.py)）。
+- **交互式管理**：ops 的 Agents 视图——创建成员（`c`，需选模型）/ 编辑人格与模型（`e`）/ 删除（`d`）/ 原型审批（`s`）；首启只播种原型库与技能（[agents/bootstrap.py](../../src/tlon/agents/bootstrap.py)），空社会不再自动初始化成员（ADR 0016）。
 - **agent 目录结构假设**：任何新路径需求必须加进 `TlonPaths`，不许在其他模块硬编码目录结构（[base/paths.py](../../src/tlon/base/paths.py) 模块 docstring 的硬性规定）。

@@ -41,6 +41,7 @@ class TestRelayPrototype:
             "relay",
             "relay-1",
             "转发者",
+            model="openai/gpt-5",
             params={"to": ["a@tlon.internal", "b@tlon.internal"]},
             tlon_paths=p,
         )
@@ -58,7 +59,7 @@ class TestRelayPrototype:
     def test_missing_params_refused(self, tmp_path):
         p = _paths(tmp_path)
         with pytest.raises(PrototypeError, match="params"):
-            instantiate("relay", "relay-1", "转发者", tlon_paths=p)
+            instantiate("relay", "relay-1", "转发者", model="openai/gpt-5", tlon_paths=p)
 
     def test_extra_params_refused(self, tmp_path):
         p = _paths(tmp_path)
@@ -67,6 +68,7 @@ class TestRelayPrototype:
                 "relay",
                 "relay-1",
                 "转发者",
+                model="openai/gpt-5",
                 params={"to": ["a@tlon.internal"], "nope": "x"},
                 tlon_paths=p,
             )

@@ -24,7 +24,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 [src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带十个内置原型：
 
-**角色行为原型**（快速开始的标准团队从它们出生，[base/default_team.py](../../src/tlon/base/default_team.py) 角色卡记录每人的来源）：
+**角色行为原型**（快速开始的成员从它们创建——首启是空社会（ADR 0016），人类在 WebUI / ops 创建成员时选择原型与模型）：
 
 | 原型 | 规则形态 | 关键 spec 差异 |
 |---|---|---|
@@ -44,7 +44,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 | fast-responder（快速反应者） | 带 `:loop` | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
 | relay（转发者） | 无 `:loop` | `:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
 
-所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：快速开始创建标准团队时，成员的人格（IDENTITY/SOUL/RULES.md）来自 `default_team.py` 的角色卡，是创建时数据，不是基因型。
+所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 写入，是创建时数据，不是基因型。
 
 ## 生命周期：播种 → 列出 → 实例化
 
@@ -62,7 +62,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
 2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻，），新成员的 spec 用 `(lessons)` context section 显式声明才会把它注入对话；原型没有该文件则成员侧也不产生。
-3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。spec 顶层声明了 `:llm {:model "provider/model"}` 时（基因型的模型声明，issue ），实例的 `agent.yaml` 同时落下 `llm.model_name`——装配时文件显式声明优先于进程级 `LLM_MODEL`；未声明则不写 `llm` 段，成员回退进程级设置。
+3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。`llm.model_name` 来自 `instantiate` 的必填 `model` 参数（ADR 0016——模型选择是部署策略，不是基因型；spec 顶层的 `:llm {:model ...}` 声明仍被解析但不再读取，从语法中移除是后续工作）；没有进程级 `LLM_MODEL` 兜底，未声明模型的成员装配期硬报错。
 4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
 拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。

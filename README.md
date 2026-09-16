@@ -17,20 +17,21 @@
 # 1. 安装依赖
 uv sync
 
-# 2. 配置环境（首次使用，可选）
-# 起 dream 后在 ops 的 Settings 视图（数字键 7）填 LLM 参数，或：
-mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 LLM_API_KEY=...（可选 LLM_MODEL=provider/model，默认 moonshot/kimi-k2.5）
-# （或用真实环境变量，.env 仅作便捷层）
+# 2. 配置环境（首次使用）
+# 在 ~/.tlon/.env 按 provider 写 API key（用哪家的模型配哪家的）：
+mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 MOONSHOT_API_KEY=...（或 DEEPSEEK_API_KEY=... 等 {PROVIDER}_API_KEY）
+# （或用真实环境变量，.env 仅作便捷层；模型是成员级配置，创建成员时选择）
 
 # 3. 运行——两个终端
 uv run tlon dream    # 终端 1：服务端（REST + SSE，默认 127.0.0.1:8080）
-                     # 空社会首次启动自动从职位原型初始化标准团队（幂等）
+                     # 首次启动是空社会 + 原型库（ADR 0016），不自动建成员
                      # 启动 banner 会打印 WebUI 地址（http://127.0.0.1:8080/ui/）
 uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面 + 成员/原型管理）
 # 或者用浏览器 WebUI（cyberpunk 风格，功能与 TUI 对齐 + Logs 视图）：
 #   cd apps/webui && npm install && npm run build   # 首次构建，之后由 dream 托管于 /ui/
+# 在 WebUI 的 AGENTS 视图 CREATE 创建第一个成员（选原型 + 填 provider/model 模型）
 
-# 4. 发第一封信：在 TUI 的 Mail 视图按 c，给团队某成员（如「顾言蹊」）写信
+# 4. 发第一封信：在 TUI 的 Mail 视图按 c，给刚创建的成员写信
 
 # 5. Telegram 客户端（可选，手机收发邮件）
 uv sync --extra telegram
@@ -39,7 +40,7 @@ uv sync --extra telegram
 #   TELEGRAM_ALLOWED_USERS=<你的 Telegram user_id，逗号分隔；给 bot 发条消息后访问
 #     https://api.telegram.org/bot<token>/getUpdates 可查到自己的 user_id>
 uv run tlon telegram   # 白名单外消息一律忽略
-# 真机自验：手机对 bot /send 顾言蹊 <内容> → agent 收到并回信、手机收到推送 →
+# 真机自验：手机对 bot /send <成员名> <内容> → agent 收到并回信、手机收到推送 →
 #   对推送点「回复」→ agent 收到带 in_reply_to 的回信；/inbox 看未读
 ```
 

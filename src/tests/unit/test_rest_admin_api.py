@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from tlon.agents.prototypes import (
     append_staging_review,
     get_prototype_detail,
@@ -58,6 +56,7 @@ class TestAdminCreateAgent:
             body={
                 "prototype": "developer",
                 "name": "新工程师",
+                "model": "deepseek/deepseek-chat",
                 "agent_id": "dev-1",
                 "persona": {"identity": "你是新工程师", "profile": "开发", "behavior": "干活"},
             }
@@ -73,6 +72,9 @@ class TestAdminCreateAgent:
 
         configs = yaml_load_all(p.tlon_home())
         assert configs["dev-1"].prototype == "developer"
+        # member-level LLM config (ADR 0016): the model lands in agent.yaml
+        assert configs["dev-1"].llm is not None
+        assert configs["dev-1"].llm.model_name == "deepseek/deepseek-chat"
         behavior = p.agent_behavior_file("dev-1")
         assert behavior.exists() and "${" not in behavior.read_text(encoding="utf-8")
         identity = p.agent_config_dir("dev-1") / "IDENTITY.md"
@@ -85,11 +87,22 @@ class TestAdminCreateAgent:
 
         assert resp.status == 400
 
+    async def test_missing_model_rejected(self, tmp_path: Path):
+        """ADR 0016: model is required — no process-level fallback."""
+        handler, _reg, _p = _handler(tmp_path)
+
+        resp = await handler.handle_create_agent(
+            StubRequest(body={"prototype": "developer", "name": "x"})
+        )
+
+        assert resp.status == 400
+        assert json.loads(resp.text)["message"] == "model is required"
+
     async def test_unknown_prototype_rejected(self, tmp_path: Path):
         handler, _reg, _p = _handler(tmp_path)
 
         resp = await handler.handle_create_agent(
-            StubRequest(body={"prototype": "nope", "name": "x"})
+            StubRequest(body={"prototype": "nope", "name": "x", "model": "deepseek/deepseek-chat"})
         )
 
         assert resp.status == 400
@@ -109,7 +122,7 @@ class TestAdminUpdateAgent:
         handler, reg, p = _handler(tmp_path)
         from tlon.agents.prototypes import instantiate
 
-        instantiate("developer", "dev-1", "新工程师", tlon_paths=p)
+        instantiate("developer", "dev-1", "新工程师", model="openai/gpt-5", tlon_paths=p)
         req = StubRequest(
             body={
                 "persona": {"identity": "新身份"},
@@ -655,27 +668,14 @@ class TestGetAgentLineageFields:
 
 
 class TestAdminSettingsEnv:
-    """GET/PUT /admin/settings/env — read/write {TLON_HOME}/.env."""
+    """GET/PUT /admin/settings/env — read/write {TLON_HOME}/.env.
 
-    def _fake_settings(self, monkeypatch: pytest.MonkeyPatch, **values) -> None:
-        from types import SimpleNamespace
+    ADR 0016 removed the process-level LLM_* keys: the endpoint keeps the
+    generic merge-write channel but currently maps no fields, so LLM keys
+    sent by a stale client are ignored, never written.
+    """
 
-        defaults = {
-            "llm_api_key": "",
-            "llm_base_url": "https://api.openai.com/v1",
-            "llm_model_name": "kimi-k2.5",
-            "llm_temperature": 1.0,
-        }
-        defaults.update(values)
-        monkeypatch.setattr(
-            "tlon.app.server.api.rest.get_settings",
-            lambda: SimpleNamespace(**defaults),
-        )
-
-    async def test_get_reports_effective_values(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        self._fake_settings(monkeypatch, llm_api_key="sk-secret1234", llm_model_name="m")
+    async def test_get_reports_path_and_empty_values(self, tmp_path: Path):
         p = TlonPaths(home=tmp_path)
         handler = RESTAPIHandler(None, MagicMock(), paths=p)
 
@@ -684,40 +684,12 @@ class TestAdminSettingsEnv:
         assert resp.status == 200
         body = json.loads(resp.text)
         assert body["path"] == str(p.env_file())
-        assert body["configured"] is True
-        assert body["values"]["model"] == "m"
-        # masked: last 4 chars visible, plain key never returned
-        assert body["values"]["api_key"] == "****1234"
+        assert body["values"] == {}
 
-    async def test_get_masks_short_key(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        self._fake_settings(monkeypatch, llm_api_key="abc")
-        p = TlonPaths(home=tmp_path)
-        handler = RESTAPIHandler(None, MagicMock(), paths=p)
-
-        resp = await handler.handle_get_settings_env(StubRequest())
-
-        body = json.loads(resp.text)
-        assert body["values"]["api_key"] == "****"
-
-    async def test_get_unconfigured_key_flag(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        self._fake_settings(monkeypatch)
-        p = TlonPaths(home=tmp_path)
-        handler = RESTAPIHandler(None, MagicMock(), paths=p)
-
-        resp = await handler.handle_get_settings_env(StubRequest())
-
-        body = json.loads(resp.text)
-        assert body["configured"] is False
-        assert body["values"]["api_key"] == ""
-
-    async def test_put_merges_and_keeps_other_keys(self, tmp_path: Path):
+    async def test_put_ignores_llm_keys_and_keeps_file(self, tmp_path: Path):
         p = TlonPaths(home=tmp_path)
         (tmp_path / ".env").write_text(
-            "# comment\nLLM_BASE_URL=https://old.example\nCUSTOM_KEY=keep\n",
+            "# comment\nCUSTOM_KEY=keep\n",
             encoding="utf-8",
         )
         handler = RESTAPIHandler(None, MagicMock(), paths=p)
@@ -727,53 +699,18 @@ class TestAdminSettingsEnv:
                 body={
                     "base_url": "https://api.moonshot.cn/v1",
                     "api_key": "sk-new",
+                    "model": "m2",
                     "temperature": 0.7,
                 }
             )
         )
 
         assert resp.status == 200
+        assert json.loads(resp.text)["updated"] == []
         text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "LLM_BASE_URL=https://api.moonshot.cn/v1" in text
-        assert "LLM_API_KEY=sk-new" in text
-        assert "LLM_TEMPERATURE=0.7" in text
+        assert "LLM_" not in text  # LLM keys are never written
         assert "CUSTOM_KEY=keep" in text  # untouched keys preserved
         assert "# comment" in text  # comments preserved
-
-    async def test_put_masked_api_key_keeps_current(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        self._fake_settings(monkeypatch, llm_api_key="sk-secret1234")
-        p = TlonPaths(home=tmp_path)
-        (tmp_path / ".env").write_text("LLM_API_KEY=sk-secret1234\n", encoding="utf-8")
-        handler = RESTAPIHandler(None, MagicMock(), paths=p)
-
-        resp = await handler.handle_update_settings_env(
-            StubRequest(body={"api_key": "****1234", "model": "m2"})
-        )
-
-        assert resp.status == 200
-        text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "LLM_API_KEY=sk-secret1234" in text
-        assert "****" not in text
-        assert json.loads(resp.text)["updated"] == ["LLM_MODEL"]
-
-    async def test_put_empty_api_key_keeps_current(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        self._fake_settings(monkeypatch, llm_api_key="sk-secret1234")
-        p = TlonPaths(home=tmp_path)
-        (tmp_path / ".env").write_text("LLM_API_KEY=sk-secret1234\n", encoding="utf-8")
-        handler = RESTAPIHandler(None, MagicMock(), paths=p)
-
-        resp = await handler.handle_update_settings_env(
-            StubRequest(body={"api_key": ""})
-        )
-
-        assert resp.status == 200
-        text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "LLM_API_KEY=sk-secret1234" in text
-        assert json.loads(resp.text)["updated"] == []
 
     async def test_put_invalid_body_400(self, tmp_path: Path):
         p = TlonPaths(home=tmp_path)

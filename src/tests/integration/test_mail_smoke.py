@@ -11,15 +11,35 @@ The server fixture and shared helpers live in conftest.py.
 import uuid
 from pathlib import Path
 
+import aiohttp
+
 from tlon.app.clients.sdk.client import TlonClient
 
 from .conftest import _assert_delivered
 
 
 async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> None:
-    """POST /messages -> event bus -> MailDelivery -> agent inbox.jsonl."""
+    """POST /messages -> event bus -> MailDelivery -> agent inbox.jsonl.
+
+    The member is created through the admin API first (ADR 0016: first
+    boot is an empty society — no standard team is seeded anymore).
+    """
     base_url, tlon_home = tlon_server
     token = f"smoke-{uuid.uuid4().hex}"
+
+    async with (
+        aiohttp.ClientSession() as http,
+        http.post(
+            f"{base_url}/admin/config/agents",
+            json={
+                "prototype": "developer",
+                "name": "林知遥",
+                "model": "openai/gpt-test",
+                "agent_id": "lin-zhiyao",
+            },
+        ) as resp,
+    ):
+        assert resp.status == 200
 
     async with TlonClient(base_url=base_url) as client:
         accepted = await client.send_message(token, to=["lin-zhiyao"], subject="smoke")

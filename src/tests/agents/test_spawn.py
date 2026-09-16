@@ -6,6 +6,10 @@ anti-runaway spawn quota must survive it too: the ledger lives at
 SpawnManager over the same home picks up the previous process's counts.
 Corrupt ledger data warns and starts empty — a broken ledger must never
 block the server from booting.
+
+Model inheritance (ADR 0016): the child member runs the spawner's model
+(``config.llm.model_name``) — no process-level fallback exists, so a
+spawner without a declared model fails the spawn at instantiation.
 """
 
 import json
@@ -13,9 +17,10 @@ import json
 import pytest
 
 from tlon.agents.spawn import SpawnManager
-from tlon.base.config import AgentConfig
+from tlon.base.config import AgentConfig, LLMConfig, yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.ports import SpawnRejectedError
+from tlon.tools.prototypes.ports import PrototypeError
 
 ECHO_EDN = """\
 {:version 1
@@ -24,12 +29,19 @@ ECHO_EDN = """\
           :actions [(forward {:to ["sink@tlon.internal"]})]}]}
 """
 
+_SPAWNER_MODEL = "test/spawner-model"
+
 
 class _FakeProvider:
-    """Config provider stand-in: unknown spawner (depth 0), reloads fine."""
+    """Config provider stand-in: every spawner carries a declared model
+    (ADR 0016 — the child inherits it); reloads fine."""
+
+    def __init__(self, model: str | None = _SPAWNER_MODEL):
+        self._model = model
 
     def get_config(self, agent_id: str) -> AgentConfig | None:
-        return None
+        llm = LLMConfig(model_name=self._model) if self._model is not None else None
+        return AgentConfig(id=agent_id, name=agent_id, llm=llm)
 
     async def reload_agent(self, agent_id: str) -> bool:
         return True
@@ -43,10 +55,10 @@ class _FakeBus:
 class _FakeRegistry:
     """The registry surface SpawnManager touches, minus all assembly."""
 
-    def __init__(self, paths: TlonPaths):
+    def __init__(self, paths: TlonPaths, provider: _FakeProvider | None = None):
         self._paths: TlonPaths | None = paths
         self._agents: dict[str, object] = {}
-        self._agent_info = _FakeProvider()
+        self._agent_info = provider or _FakeProvider()
         self.event_bus = _FakeBus()
 
     def register(self, agent_id: str) -> None:
@@ -312,3 +324,36 @@ class TestSpawnProbation:
         )
         await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
         await manager.spawn_member("worker", "乙", "boss-1", "sess-1")
+
+
+class TestModelInheritance:
+    """ADR 0016: the child member inherits the spawner's model — the
+    cost/capability profile follows the bloodline (ADR 0014). No
+    process-level fallback: a spawner without a declared model fails the
+    spawn at instantiation."""
+
+    async def test_child_inherits_spawner_model(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
+
+        config = await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
+
+        assert config.llm is not None
+        assert config.llm.model_name == _SPAWNER_MODEL
+        # persisted: agent.yaml on disk carries the inherited model
+        on_disk = yaml_load_file(p.agent_config_file(config.id))
+        assert on_disk is not None and on_disk.llm is not None
+        assert on_disk.llm.model_name == _SPAWNER_MODEL
+
+    async def test_spawner_without_model_fails(self, tmp_path):
+        """No fallback: the spawn errors out instead of silently picking
+        a process-level default."""
+        p = TlonPaths(home=tmp_path)
+        _write_prototype(p, "worker")
+        manager = SpawnManager(  # type: ignore[arg-type]
+            _FakeRegistry(p, _FakeProvider(model=None)), 8, 3, 2
+        )
+
+        with pytest.raises(PrototypeError, match="model"):
+            await manager.spawn_member("worker", "甲", "boss-1", "sess-1")

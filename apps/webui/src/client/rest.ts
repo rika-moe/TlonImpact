@@ -482,10 +482,12 @@ export class RestClient {
     return this.send("POST", `/admin/prototypes/staging/${encodeURIComponent(name)}/reject`);
   }
 
-  /** Create a member from a prototype (persona = creation-time data). */
+  /** Create a member from a prototype (persona = creation-time data).
+   * `model` is required (ADR 0016): provider/model form, member-level. */
   async createAgent(body: {
     prototype: string;
     name: string;
+    model: string;
     agent_id?: string;
     params?: Record<string, unknown>;
     persona?: Record<string, string>;
@@ -507,37 +509,6 @@ export class RestClient {
   /** Administratively remove a member (records + home archive deleted). */
   async deleteAgent(agentId: string): Promise<Record<string, unknown>> {
     return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
-  }
-
-  /**
-   * Current LLM env configuration (Settings view). `values.api_key` is
-   * masked (`****` + last 4, "" when unset) — the plain key is never
-   * exposed.
-   */
-  async getSettingsEnv(): Promise<{
-    path: string;
-    configured: boolean;
-    values: {
-      base_url: string;
-      api_key: string;
-      model: string;
-      temperature: number;
-    };
-  }> {
-    return this.get("/admin/settings/env");
-  }
-
-  /**
-   * Write LLM env config to {TLON_HOME}/.env (merge semantics). Omit
-   * `api_key` (or echo back the masked value) to keep the current key.
-   */
-  async updateSettingsEnv(body: {
-    base_url?: string;
-    api_key?: string;
-    model?: string;
-    temperature?: number;
-  }): Promise<Record<string, unknown>> {
-    return this.send("PUT", "/admin/settings/env", body);
   }
 
   /** In-process metrics snapshot (MetricsService.snapshot()). */

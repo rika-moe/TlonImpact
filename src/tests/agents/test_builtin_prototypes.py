@@ -67,6 +67,7 @@ class TestBuiltinPrototypes:
             name,
             f"t-{name}",
             name,
+            model="openai/gpt-5",
             params=params or None,
             tlon_paths=p,
         )

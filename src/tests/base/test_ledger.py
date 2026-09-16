@@ -42,11 +42,14 @@ def _client(
     agent_id: str | None = "dev-001",
     model_name: str = "openai/gpt-test",
 ) -> LLMClient:
-    config = LLMConfig(model_name=model_name, auth_token="sk-test", max_retries=1)
+    config = LLMConfig(model_name=model_name, max_retries=1)
     return LLMClient(config, agent_id=agent_id, tlon_paths=tlon_paths)
 
 
 def _mock_litellm(monkeypatch: pytest.MonkeyPatch, response: Any) -> None:
+    # The preflight (ADR 0016) requires the provider key env var; litellm
+    # itself is mocked, so the value never leaves the test.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr("litellm.acompletion", AsyncMock(return_value=response))
 
 

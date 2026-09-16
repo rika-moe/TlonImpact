@@ -15,7 +15,7 @@ from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
 from tlon.agents.lifecycle import StartRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
-from tlon.base.config import AgentConfig, AgentInfoProvider
+from tlon.base.config import AgentConfig, AgentInfoProvider, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
@@ -119,7 +119,7 @@ class TestRegistryStart:
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
-                {"relay-1": AgentConfig(id="relay-1", name="转发者")}
+                {"relay-1": AgentConfig(id="relay-1", name="转发者", llm=LLMConfig(model_name="test/model"))}
             ),
             paths=p,
         )
@@ -313,7 +313,7 @@ class TestWakeOnMail:
         _write_behavior(p, agent_id, text)
         registry = AgentRegistry(
             event_bus=bus,
-            agent_info_provider=_StaticProvider({agent_id: AgentConfig(id=agent_id, name=agent_id)}),
+            agent_info_provider=_StaticProvider({agent_id: AgentConfig(id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model"))}),
             paths=p,
         )
         await registry.initialize()
@@ -415,7 +415,7 @@ class TestWakeOnMail:
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
-                {"gu-yanxi-9": AgentConfig(id="gu-yanxi-9", name="客服")}
+                {"gu-yanxi-9": AgentConfig(id="gu-yanxi-9", name="客服", llm=LLMConfig(model_name="test/model"))}
             ),
             paths=p,
         )
@@ -512,7 +512,7 @@ class TestMemberStopAndDrain:
         """The idle drain sleeps any member — AGENT_SLEEPING, home survives."""
         agent_id = "c-relay-a1b2c3d4"
         configs = {
-            agent_id: AgentConfig(id=agent_id, name="外包", idle_timeout_seconds=0)
+            agent_id: AgentConfig(id=agent_id, name="外包", idle_timeout_seconds=0, llm=LLMConfig(model_name="test/model"))
         }
         registry, p = await self._make_registry(
             bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
@@ -544,7 +544,7 @@ class TestPendingStop:
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
-                {agent_id: AgentConfig(id=agent_id, name=agent_id)}
+                {agent_id: AgentConfig(id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model"))}
             ),
             paths=p,
         )

@@ -230,10 +230,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 ### GET/PUT /admin/settings/env
 
-读写 `{TLON_HOME}/.env` 里的 LLM 配置（WebUI SETTINGS 的 LLM ENV 表单）。
+读写 `{TLON_HOME}/.env` 的通用 merge-write 通道。进程级 LLM 键已随 ADR 0016 全部移除（LLM 配置成员级化：模型在 agent.yaml，API key 走 litellm 原生 `{PROVIDER}_API_KEY` 环境变量），当前没有映射任何可编辑字段。
 
-- `GET`——200：`{"status": "success", "path", "configured", "values": {base_url, api_key, model_name, temperature}}`，`values` 为生效值（真实环境变量优先于 .env）。`api_key` 脱敏返回（`****` + 末 4 位，短于等于 4 位为 `****`，未配置为空串），明文永不出进程；`configured` 表示 key 是否已配置
-- `PUT`——body `{base_url?, api_key?, model_name?, temperature?}`，merge 语义：只更新出现的字段，.env 里其余行（注释、未触碰的 key）原样保留。`api_key` 为 write-only：空串或原样回传 GET 的脱敏值表示"不修改"，不会写进 .env；提交新值才覆盖。200：`{"status": "success", "path", "note", "updated": [<写入的 .env key>]}`；改动重启 dream 生效（Settings 是进程级单例）
+- `GET`——200：`{"status": "success", "path", "values": {}}`
+- `PUT`——merge 语义：只更新 body 中已映射的字段（当前无），.env 里其余行（注释、未触碰的 key）原样保留；LLM 键（`model` / `api_key` / `base_url` / `temperature`）一律忽略、绝不写入。200：`{"status": "success", "path", "note", "updated": [<写入的 .env key>]}`；改动重启 dream 生效（Settings 是进程级单例）
 
 ### 原型管理端点（WebUI PROTOTYPES 视图）
 

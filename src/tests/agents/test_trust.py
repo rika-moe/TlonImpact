@@ -23,7 +23,7 @@ from tlon.agents.trust import (
     probation_provider,
     trust_provider,
 )
-from tlon.base.config import AgentConfig, yaml_save
+from tlon.base.config import AgentConfig, LLMConfig, yaml_save
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
@@ -150,7 +150,12 @@ class TestAssemblyToolSubset:
     member gets lacks the reproduction/evolution four."""
 
     async def _assemble(self, tlon_paths: TlonPaths, *, spawned_by: str | None) -> Any:
-        config = AgentConfig(id=ROOKIE, name=ROOKIE, spawned_by=spawned_by)
+        config = AgentConfig(
+            id=ROOKIE,
+            name=ROOKIE,
+            spawned_by=spawned_by,
+            llm=LLMConfig(model_name="test/model"),
+        )
         _write_agent(tlon_paths, ROOKIE, spawned_by=spawned_by)
         return await assemble_cognitive(
             config,

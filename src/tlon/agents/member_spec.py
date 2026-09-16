@@ -210,10 +210,11 @@ class MemberSpec:
     observability events but never written back into a behavior file.
 
     ``llm_model`` (from top-level ``:llm {:model "provider/model"}``) is
-    part of the genotype: a prototype declares the model its members run
-    on, and instantiation inherits it into the member's ``agent.yaml``
-    (issue ). None = undeclared; the member then falls back to the
-    process-level ``LLM_MODEL`` setting.
+    still parsed, but no longer read anywhere (ADR 0016: model selection
+    is deployment policy, not genotype — the member's model comes from
+    ``instantiate``'s required ``model`` argument / spawn inheritance;
+    removing the ``:llm`` key from the grammar is a separate follow-up).
+    None = undeclared.
     """
 
     version: int
@@ -621,7 +622,8 @@ def _read_llm_model(data: dict[str, Any]) -> str | None:
     """Read the top-level ``:llm {:model "provider/model"}`` declaration.
 
     Missing ``:llm``, or an ``:llm`` map without ``:model``, yields None
-    (undeclared — the member falls back to the process-level LLM_MODEL).
+    (undeclared). Parsed but no longer consumed (ADR 0016 — see
+    ``MemberSpec.llm_model``).
     """
     llm = data.get("llm")
     if llm is None:

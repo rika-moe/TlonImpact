@@ -404,9 +404,7 @@ def _bad_request(message: str) -> litellm.BadRequestError:
 def _make_llm_client() -> LLMClient:
     return LLMClient(
         LLMConfig(
-            base_url="https://api.test",
-            auth_token="k",
-            model_name="m",
+            model_name="openai/m",
             max_retries=3,
             base_delay=0.0,
         )
@@ -414,6 +412,9 @@ def _make_llm_client() -> LLMClient:
 
 
 def _patch_acompletion(monkeypatch: pytest.MonkeyPatch, error: Exception) -> AsyncMock:
+    # The preflight (ADR 0016) requires the provider key env var; litellm
+    # itself is mocked, so the value never leaves the test.
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
     create = AsyncMock(side_effect=error)
     monkeypatch.setattr(litellm, "acompletion", create)
     return create

@@ -164,12 +164,13 @@ def _make_llm_client(
 ) -> LLMClient:
     """Build an LLMClient whose underlying litellm call is mocked out."""
     config = LLMConfig(
-        model_name="test-model",
-        base_url="https://example.invalid/v1",
-        auth_token="fake-key",
+        model_name="openai/test-model",
         max_retries=1,
         base_delay=0.0,
     )
+    # The preflight (ADR 0016) requires the provider key env var; litellm
+    # itself is mocked, so the value never leaves the test.
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
     monkeypatch.setattr(
         litellm,
         "acompletion",
@@ -224,7 +225,7 @@ async def test_end_to_end_propagation_chain(
     llm = think["children"][0]
     assert llm["name"] == "llm.request"
     assert llm["payload"] is not None
-    assert llm["payload"]["llm.model"] == "test-model"
+    assert llm["payload"]["llm.model"] == "openai/test-model"
     assert llm["payload"]["llm.message_count"] == 2
     assert llm["payload"]["llm.usage.prompt_tokens"] == 10
     assert llm["payload"]["llm.usage.completion_tokens"] == 5
@@ -241,7 +242,7 @@ async def test_llm_request_span_success(
     llm_span = next(s for s in spans if s.name == "llm.request")
     assert llm_span.status.status_code == StatusCode.UNSET
     attrs = dict(llm_span.attributes or {})
-    assert attrs["llm.model"] == "test-model"
+    assert attrs["llm.model"] == "openai/test-model"
     assert attrs["llm.message_count"] == 2
     assert attrs["llm.usage.prompt_tokens"] == 10
     assert attrs["llm.usage.completion_tokens"] == 5

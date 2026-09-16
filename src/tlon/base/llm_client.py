@@ -199,14 +199,17 @@ class LLMResponse:
 class LLMClient:
     """Client for LLM API calls with retry logic.
 
-    Calls go through litellm (ADR 0012): ``provider/model`` names route via
-    litellm's provider table, bare names via the openai provider + configured
-    api_base (escape hatch); retries use Tlon's own exponential backoff loop,
-    litellm's internal retry is disabled (num_retries=0) to avoid double
-    backoff.
+    Calls go through litellm (ADR 0012/0016): the model is always
+    ``provider/model`` form, routed via litellm's provider table; the API
+    key is never passed explicitly — litellm reads the provider's own
+    ``{PROVIDER}_API_KEY`` env var (a preflight check fails fast with the
+    exact variable name when it is missing). A member-level ``api_base``
+    (private deployment / proxy) overrides the registry endpoint. Retries
+    use Tlon's own exponential backoff loop, litellm's internal retry is
+    disabled (num_retries=0) to avoid double backoff.
 
     Example:
-        >>> config = LLMConfig(base_url="...", auth_token="...", model_name="gpt-4")
+        >>> config = LLMConfig(model_name="deepseek/deepseek-chat")
         >>> client = LLMClient(config)
         >>> response = await client.chat(
         ...     system_prompt="You are a helpful assistant",
@@ -276,10 +279,6 @@ class LLMClient:
         Raises:
             Exception: If all retries fail
         """
-        # Check if API key is configured
-        if not self.config.auth_token:
-            raise Exception("LLM API key not configured. Please set LLM_API_KEY in .env file")
-
         # Prepare messages
         all_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -406,44 +405,43 @@ class LLMClient:
         Raises:
             Exception: If all retries fail
         """
-        # Prepare request parameters. num_retries=0 disables litellm's own
-        # retry: the loop below owns all retries (no double backoff).
-        # Model routing (ADR 0012 phase 2): a ``provider/model`` name is
-        # passed to litellm as-is — its built-in routing table resolves the
-        # provider's base_url. Key routing (issue ): when the model
-        # names a provider, a provider-specific env var
-        # (``{PROVIDER}_API_KEY``, uppercased, ``-`` → ``_`` — e.g.
-        # DEEPSEEK_API_KEY) wins over the shared LLM_API_KEY, so members on
-        # different providers coexist in one process. A bare model name is
-        # the escape hatch: forced through the openai provider against the
-        # configured api_base with the shared key (private deployments /
-        # OpenAI-compatible endpoints litellm's registry does not know).
+        # Preflight (ADR 0016): configuration errors raise immediately,
+        # outside the retry loop — retrying can never fix them. The model
+        # must be ``provider/model`` form (bare names are gone with the
+        # process-level base_url escape hatch), and the provider's own
+        # ``{PROVIDER}_API_KEY`` env var (provider segment uppercased,
+        # ``-`` → ``_`` — e.g. DEEPSEEK_API_KEY) must be set: the key is
+        # never passed explicitly, litellm reads it natively.
         model_name = self.config.model_name
-        if model_name is None:
+        if model_name is None or "/" not in model_name:
             raise Exception(
-                "LLM model not configured: the member's agent.yaml declares no "
-                "llm.model_name and LLM_MODEL is unset"
+                f"LLM model '{model_name}' is not in provider/model form: "
+                "在成员 agent.yaml 的 llm.model_name 配置 provider/model 形式的模型"
+                "（如 deepseek/deepseek-chat）"
             )
-        if "/" in model_name:
-            model = model_name
-            api_base = None
-            provider = model_name.split("/", 1)[0]
-            api_key = os.getenv(
-                f"{provider.upper().replace('-', '_')}_API_KEY"
-            ) or self.config.auth_token
-        else:
-            model = f"openai/{model_name}"
-            api_base = self.config.base_url or None
-            api_key = self.config.auth_token
+        provider = model_name.split("/", 1)[0]
+        key_env = f"{provider.upper().replace('-', '_')}_API_KEY"
+        if not os.getenv(key_env):
+            raise Exception(
+                f"LLM API key 未配置：provider '{provider}' 需要环境变量 "
+                f"{key_env}（写入 ~/.tlon/.env 或进程环境）"
+            )
+
+        # Prepare request parameters. num_retries=0 disables litellm's own
+        # retry: the loop below owns all retries (no double backoff). A
+        # member-level ``api_base`` (ADR 0016) overrides the registry
+        # endpoint for private deployments / proxies; a None temperature
+        # is simply not sent (provider default applies).
         params: dict[str, Any] = {
-            "model": model,
-            "messages": _apply_cache_breakpoints(model, all_messages, cache_prefix_len),
-            "temperature": temperature if temperature is not None else self.config.temperature,
+            "model": model_name,
+            "messages": _apply_cache_breakpoints(model_name, all_messages, cache_prefix_len),
             "timeout": timeout if timeout is not None else self.config.request_timeout,
-            "api_base": api_base,
-            "api_key": api_key,
+            "api_base": self.config.api_base or None,
             "num_retries": 0,
         }
+        effective_temperature = temperature if temperature is not None else self.config.temperature
+        if effective_temperature is not None:
+            params["temperature"] = effective_temperature
 
         if tools:
             params["tools"] = tools

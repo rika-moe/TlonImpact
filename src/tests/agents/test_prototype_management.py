@@ -347,9 +347,11 @@ class TestLessonsFile:
         assert not (p.prototypes_staging_dir() / "staged").exists()
 
 
-class TestInstantiateLlmModel:
-    """``instantiate`` inherits the spec's top-level ``:llm {:model ...}``
-    into the member's agent.yaml (issue )."""
+class TestInstantiateModel:
+    """``instantiate`` requires the caller's ``model`` (ADR 0016): model
+    selection is deployment policy, not genotype — it lands in the
+    member's agent.yaml as ``llm.model_name``; a spec's top-level
+    ``:llm {:model ...}`` declaration is parsed but no longer read."""
 
     BEHAVIOR_WITH_LLM = """\
 {:version 1
@@ -359,27 +361,36 @@ class TestInstantiateLlmModel:
           :actions [(forward {:to ["x@tlon.internal"]})]}]}
 """
 
-    def test_declared_model_lands_in_agent_yaml(self, tmp_path):
-        p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", self.BEHAVIOR_WITH_LLM, tlon_paths=p)
-
-        cfg = instantiate("hand", "agent1", "新成员", tlon_paths=p)
-
-        assert cfg.llm is not None
-        assert cfg.llm.model_name == "deepseek/deepseek-chat"
-        on_disk = yaml_load_file(p.agent_config_file("agent1"))
-        assert on_disk is not None and on_disk.llm is not None
-        assert on_disk.llm.model_name == "deepseek/deepseek-chat"
-
-    def test_undeclared_model_writes_no_llm_section(self, tmp_path):
+    def test_model_param_lands_in_agent_yaml(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
 
-        cfg = instantiate("hand", "agent1", "新成员", tlon_paths=p)
+        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
 
-        assert cfg.llm is None
-        raw = p.agent_config_file("agent1").read_text(encoding="utf-8")
-        assert "llm" not in raw
+        assert cfg.llm is not None
+        assert cfg.llm.model_name == "openai/gpt-5"
+        on_disk = yaml_load_file(p.agent_config_file("agent1"))
+        assert on_disk is not None and on_disk.llm is not None
+        assert on_disk.llm.model_name == "openai/gpt-5"
+
+    def test_spec_llm_declaration_is_ignored(self, tmp_path):
+        """The caller's model is the only source; the spec's genotype
+        declaration no longer leaks into agent.yaml (full removal of the
+        ``:llm`` key from the grammar is a separate follow-up)."""
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", self.BEHAVIOR_WITH_LLM, tlon_paths=p)
+
+        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
+
+        assert cfg.llm is not None
+        assert cfg.llm.model_name == "openai/gpt-5"
+
+    def test_missing_model_raises(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        with pytest.raises(PrototypeError, match="model is required"):
+            instantiate("hand", "agent1", "新成员", model="", tlon_paths=p)
 
 
 class TestInstantiateLessons:
@@ -390,7 +401,7 @@ class TestInstantiateLessons:
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 前辈教训\n", tlon_paths=p)
 
-        instantiate("hand", "agent1", "新成员", tlon_paths=p)
+        instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
 
         lessons_file = p.agent_lessons_file("agent1")
         assert lessons_file.read_text(encoding="utf-8") == "- 前辈教训\n"
@@ -399,7 +410,7 @@ class TestInstantiateLessons:
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
 
-        instantiate("hand", "agent1", "新成员", tlon_paths=p)
+        instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
 
         assert not (tmp_path / "agent1" / "config" / "LESSONS.md").exists()
 

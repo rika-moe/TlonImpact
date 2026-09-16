@@ -1,8 +1,11 @@
-"""Tests for LLMClient's litellm routing (ADR 0012 phase 2).
+"""Tests for LLMClient's litellm routing (ADR 0012 phase 2 / ADR 0016).
 
-A ``provider/model`` name is passed to litellm as-is (its routing table
-resolves the provider's base_url); a bare model name is the escape hatch —
-forced through the openai provider against the configured api_base.
+The model is always ``provider/model`` form, passed to litellm as-is (its
+routing table resolves the provider's base_url); the API key is never
+passed explicitly — litellm reads ``{PROVIDER}_API_KEY`` natively, and a
+preflight check fails fast (no retry) when the model is malformed or the
+key env var is missing. A member-level ``api_base`` overrides the
+registry endpoint for private deployments / proxies.
 """
 
 from types import SimpleNamespace
@@ -23,12 +26,7 @@ def _fake_litellm_response() -> SimpleNamespace:
 
 
 def _client(model_name: str, **overrides: Any) -> LLMClient:
-    config = LLMConfig(
-        model_name=model_name,
-        auth_token="sk-test",
-        max_retries=1,
-        **overrides,
-    )
+    config = LLMConfig(model_name=model_name, **{"max_retries": 1, **overrides})
     return LLMClient(config)
 
 
@@ -48,39 +46,95 @@ class TestProviderModelRouting:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """provider/model goes to litellm untouched; no api_base override —
-        litellm's routing table resolves the provider's endpoint."""
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        client = _client("deepseek/deepseek-chat", base_url="https://ignored.example/v1")
+        litellm's routing table resolves the provider's endpoint. The key
+        is never passed: litellm reads {PROVIDER}_API_KEY natively (ADR
+        0016)."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+        client = _client("deepseek/deepseek-chat", api_base=None)
 
         params = await _call_and_capture(client, monkeypatch)
 
         assert params["model"] == "deepseek/deepseek-chat"
         assert params["api_base"] is None
-        # single LLM_API_KEY is forwarded explicitly, whatever the provider
-        assert params["api_key"] == "sk-test"
+        assert "api_key" not in params
         assert params["num_retries"] == 0
 
-    async def test_bare_model_gets_openai_prefix(
+    async def test_member_api_base_overrides_registry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Bare model name = escape hatch: openai/ prefix + configured
-        api_base (private deployment / OpenAI-compatible endpoint)."""
-        client = _client("kimi-k2.5", base_url="https://api.moonshot.cn/v1")
+        """Member-level api_base (ADR 0016): private deployment / proxy /
+        OpenAI-compatible endpoint."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        client = _client("openai/kimi-k2.5", api_base="https://api.moonshot.cn/v1")
 
         params = await _call_and_capture(client, monkeypatch)
 
         assert params["model"] == "openai/kimi-k2.5"
         assert params["api_base"] == "https://api.moonshot.cn/v1"
 
-    async def test_bare_model_without_base_url_passes_none(
+    async def test_undeclared_temperature_not_sent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client = _client("kimi-k2.5", base_url="")
+        """temperature None (the default) = the parameter is not sent;
+        the provider default applies."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+        client = _client("deepseek/deepseek-chat")
 
         params = await _call_and_capture(client, monkeypatch)
 
-        assert params["model"] == "openai/kimi-k2.5"
-        assert params["api_base"] is None
+        assert "temperature" not in params
+
+    async def test_declared_temperature_sent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+        client = _client("deepseek/deepseek-chat", temperature=0.3)
+
+        params = await _call_and_capture(client, monkeypatch)
+
+        assert params["temperature"] == 0.3
+
+
+class TestPreflight:
+    """ADR 0016 preflight: configuration errors raise immediately, outside
+    the retry loop — retrying can never fix them."""
+
+    async def test_bare_model_name_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        acompletion = AsyncMock(return_value=_fake_litellm_response())
+        monkeypatch.setattr("litellm.acompletion", acompletion)
+        client = _client("kimi-k2.5")
+
+        with pytest.raises(Exception, match="provider/model"):
+            await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
+        acompletion.assert_not_called()
+
+    async def test_missing_provider_key_rejected_with_var_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        acompletion = AsyncMock(return_value=_fake_litellm_response())
+        monkeypatch.setattr("litellm.acompletion", acompletion)
+        client = _client("deepseek/deepseek-chat", max_retries=3)
+
+        with pytest.raises(Exception, match="DEEPSEEK_API_KEY"):
+            await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
+        # no retry: the preflight raise never reaches litellm
+        acompletion.assert_not_called()
+
+    async def test_provider_name_dashes_become_underscores(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+        client = _client("azure-openai/gpt-5")
+
+        with pytest.raises(Exception, match="AZURE_OPENAI_API_KEY"):
+            await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
+
+    async def test_none_model_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _client(None)  # type: ignore[arg-type]
+
+        with pytest.raises(Exception, match="provider/model"):
+            await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
 
 
 class TestCacheBreakpoints:
@@ -111,6 +165,7 @@ class TestCacheBreakpoints:
     async def test_anthropic_marks_system_and_anchor(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
         client = _client("anthropic/claude-sonnet-4-5")
 
         sent, original = await self._send(client, monkeypatch, cache_prefix_len=2)
@@ -130,6 +185,7 @@ class TestCacheBreakpoints:
     async def test_anthropic_without_prefix_len_marks_only_system(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
         client = _client("anthropic/claude-sonnet-4-5")
 
         sent, _ = await self._send(client, monkeypatch)
@@ -140,6 +196,7 @@ class TestCacheBreakpoints:
     async def test_anthropic_out_of_range_prefix_len_marks_only_system(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
         client = _client("anthropic/claude-sonnet-4-5")
 
         # 4 > len(messages) = 3: no anchor breakpoint, system only
@@ -149,62 +206,21 @@ class TestCacheBreakpoints:
         assert [m["content"] for m in sent[1:]] == ["m1", "m2", "m3"]
 
     @pytest.mark.parametrize(
-        "model_name",
-        ["openai/gpt-5", "deepseek/deepseek-chat", "moonshot/kimi-k2.6", "zhipu/glm-4.6"],
+        ("model_name", "key_env"),
+        [
+            ("openai/gpt-5", "OPENAI_API_KEY"),
+            ("deepseek/deepseek-chat", "DEEPSEEK_API_KEY"),
+            ("moonshot/kimi-k2.6", "MOONSHOT_API_KEY"),
+            ("zhipu/glm-4.6", "ZHIPU_API_KEY"),
+        ],
     )
     async def test_automatic_caching_providers_untouched(
-        self, model_name: str, monkeypatch: pytest.MonkeyPatch
+        self, model_name: str, key_env: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv(key_env, "sk-test")
         client = _client(model_name)
 
         sent, _ = await self._send(client, monkeypatch, cache_prefix_len=2)
 
         assert sent[0]["content"] == "sys"
         assert [m["content"] for m in sent[1:]] == ["m1", "m2", "m3"]
-
-
-class TestProviderKeyRouting:
-    """issue : a ``provider/model`` name first checks the provider's
-    own env key (``{PROVIDER}_API_KEY``); the shared LLM_API_KEY (the
-    config's auth_token) is the fallback. Bare names never look at
-    provider env vars."""
-
-    async def test_provider_env_key_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
-        client = _client("deepseek/deepseek-chat")
-
-        params = await _call_and_capture(client, monkeypatch)
-
-        assert params["api_key"] == "sk-deepseek"
-
-    async def test_provider_env_key_falls_back_to_shared_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        client = _client("deepseek/deepseek-chat")
-
-        params = await _call_and_capture(client, monkeypatch)
-
-        assert params["api_key"] == "sk-test"
-
-    async def test_provider_name_dashes_become_underscores(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "sk-azure")
-        client = _client("azure-openai/gpt-5")
-
-        params = await _call_and_capture(client, monkeypatch)
-
-        assert params["api_key"] == "sk-azure"
-
-    async def test_bare_model_ignores_provider_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-env")
-        client = _client("kimi-k2.5", base_url="https://api.moonshot.cn/v1")
-
-        params = await _call_and_capture(client, monkeypatch)
-
-        assert params["model"] == "openai/kimi-k2.5"
-        assert params["api_key"] == "sk-test"

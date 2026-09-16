@@ -21,7 +21,7 @@
 
 谱系字段（可缺省）：`:parent` 是父原型名（根原型不写）；`:generation` 是代数，根=1、子=父+1，**永远由服务端推导**，手写时不必填写（读取缺省按根处理）；`:proposal-note` 是本代变更说明的自由文本。写新原型时若它是某个既有原型的改进版，填上 `:parent :base-name` 即可挂上谱系——之后 `getPrototypeLineage` / `GET /admin/prototypes/{name}` 能展示整条代际链与每代的行为 diff。
 
-原型**不带人格文件**（统一成员模型，ADR 0006）：原型是行为的基因型；成员的人格（IDENTITY/SOUL/RULES.md）是创建时的数据，不是基因型的一部分。快速开始创建标准团队时，人格由 [base/default_team.py](../../src/tlon/base/default_team.py) 的角色卡写入。
+原型**不带人格文件**（统一成员模型，ADR 0006）：原型是行为的基因型；成员的人格（IDENTITY/SOUL/RULES.md）是创建时的数据，不是基因型的一部分——创建成员时经 WebUI / admin API 的 `persona` 字段写入。
 
 两个关键约束（写之前先记住）：
 
@@ -79,7 +79,7 @@
 
 ### 2.3 人格文件：创建时数据，不进原型
 
-原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）是创建成员时的数据：服务端首启自动初始化或 ops 创建时写入（标准团队的角色卡来自 [base/default_team.py](../../src/tlon/base/default_team.py)），之后可在成员 `config/` 下随时编辑——它不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
+原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）是创建成员时的数据：创建时经 WebUI / admin API 的 `persona` 字段写入，之后可在成员 `config/` 下随时编辑——它不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
 
 ## 3. 从原型派生 agent
 
@@ -87,11 +87,11 @@
 
 ### 方法 A：ops Agents 视图（人类）
 
-`uv run tlon ops` → Agents 视图按 `c` 创建：选中你的原型 → 填姓名（可选 agent_id / identity）→ 回车提交。启动模式由 `behavior.tlon` 的 `:on :boot` 规则自动决定，无需配置。
+`uv run tlon ops` → Agents 视图按 `c` 创建：选中你的原型 → 填姓名与**模型**（`provider/model` 形式，ADR 0016 起必填——模型是成员级部署策略，没有进程级兜底；可选 agent_id / identity）→ 回车提交。启动模式由 `behavior.tlon` 的 `:on :boot` 规则自动决定，无需配置。
 
 ### 方法 B：spawnAgent（LLM）
 
-认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`。派生出的成员（`c-{prototype}-{uuid8}`）与手建成员同构（统一成员模型，ADR 0006）：永不删除，空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生。
+认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`；子成员继承 spawner 的模型（ADR 0016——成本/能力画像随谱系）。派生出的成员（`c-{prototype}-{uuid8}`）与手建成员同构（统一成员模型，ADR 0006）：永不删除，空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生。
 
 ## 4. 无 `:loop` 的原型
 

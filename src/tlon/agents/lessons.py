@@ -40,7 +40,6 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.base.settings import get_settings
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 
@@ -62,12 +61,11 @@ def build_retiree_llm_client(agent_id: str, tlon_paths: TlonPaths) -> LLMClient:
     """Build the LLM client for one final attributed call in the retired
     member's name (issue : its ledger gets this last entry).
 
-    The config merge mirrors ``assemble_cognitive``: per-member knobs from
-    the member's ``agent.yaml`` ``llm`` section, runtime parameters from
-    process settings.
+    The config comes from the member's archived ``agent.yaml`` ``llm``
+    section, same as ``assemble_cognitive`` (member-level only, ADR 0016).
     """
     agent = yaml_load_file(tlon_paths.agent_config_file(agent_id))
-    llm_config = _build_llm_config(agent.llm if agent is not None else None, get_settings())
+    llm_config = _build_llm_config(agent.llm if agent is not None else None, agent_id)
     return LLMClient(llm_config, agent_id=agent_id, tlon_paths=tlon_paths)
 
 

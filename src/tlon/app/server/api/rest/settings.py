@@ -1,16 +1,15 @@
 """Admin env settings endpoints: /admin/settings/env — read/merge-write
 {TLON_HOME}/.env (wizard removal F).
 
-``get_settings`` is resolved through the ``tlon.app.server.api.rest``
-package namespace at call time (lazily, avoiding an import cycle with the
-package ``__init__``) so tests can keep monkeypatching
-``tlon.app.server.api.rest.get_settings``.
+LLM 配置已成员级化（ADR 0016）：进程级 `LLM_*` 键全部删除，本端点不再
+接受它们——API key 走 litellm 原生的 `{PROVIDER}_API_KEY` 环境变量约定，
+模型在成员 agent.yaml / WebUI 成员编辑里配。当前没有可编辑的进程级字段，
+端点保留通用的 merge-write 通道。
 """
 
 from aiohttp import web
 
 from tlon.base.logger import get_logger
-from tlon.base.settings import Settings
 
 from .common import RestHandlerBase
 
@@ -18,85 +17,51 @@ from .common import RestHandlerBase
 logger = get_logger("tlon.app.server.api.rest")
 
 #: ops settings form fields -> .env keys (merge-write semantics: keys
-#: not edited are left untouched in the file).
-_ENV_FIELDS: dict[str, str] = {
-    "model": "LLM_MODEL",
-    "api_key": "LLM_API_KEY",
-    "base_url": "LLM_BASE_URL",
-    "temperature": "LLM_TEMPERATURE",
-}
-
-
-def _mask_api_key(api_key: str) -> str:
-    """Mask an API key for display: ``****`` + last 4 chars (``****`` when
-    shorter, ``""`` when unset). Never returns the plain key."""
-    if not api_key:
-        return ""
-    if len(api_key) <= 4:
-        return "****"
-    return f"****{api_key[-4:]}"
-
-
-def _get_settings() -> Settings:
-    """Resolve ``get_settings`` via the rest package namespace at call time.
-
-    Tests monkeypatch ``tlon.app.server.api.rest.get_settings``; the lazy
-    import also avoids an import cycle with the package ``__init__``.
-    """
-    import tlon.app.server.api.rest as rest_pkg
-
-    return rest_pkg.get_settings()
+#: not edited are left untouched in the file). Empty since ADR 0016
+#: removed the process-level LLM_* keys; add non-LLM fields here as
+#: they become editable.
+_ENV_FIELDS: dict[str, str] = {}
 
 
 class SettingsHandlers(RestHandlerBase):
     """Admin env settings route handlers, mixed into ``RESTAPIHandler``."""
 
     async def handle_get_settings_env(self, request: web.Request) -> web.Response:
-        """GET /admin/settings/env - current LLM env configuration.
+        """GET /admin/settings/env - current editable env configuration.
 
-        Returns the effective values (real environment variables win over
-        .env) with the .env file path. The API key is masked
-        (``****`` + last 4 chars, empty when unset) — the plain key never
-        leaves the process.
+        Returns the .env file path and the effective values of the
+        editable fields (``_ENV_FIELDS``; real environment variables win
+        over .env).
 
         Returns:
-            200 with ``{path, configured, values}``; 503 when the admin
-            context is unavailable.
+            200 with ``{path, values}``; 503 when the admin context is
+            unavailable.
         """
         if not self.paths:
             return self._json_response(
                 {"status": "error", "message": "Admin API not available"}, status=503
             )
-        settings = _get_settings()
         return self._json_response(
             {
                 "status": "success",
                 "path": str(self.paths.env_file()),
-                "configured": bool(settings.llm_api_key),
-                "values": {
-                    "model": settings.llm_model_name,
-                    "api_key": _mask_api_key(settings.llm_api_key),
-                    "base_url": settings.llm_base_url,
-                    "temperature": settings.llm_temperature,
-                },
+                "values": {},
             }
         )
 
     async def handle_update_settings_env(self, request: web.Request) -> web.Response:
-        """PUT /admin/settings/env - write LLM env config to {TLON_HOME}/.env.
+        """PUT /admin/settings/env - merge-write editable fields to
+        {TLON_HOME}/.env.
 
-        Merge semantics: only the fields present in the body are updated;
-        other lines (comments and untouched keys) in the .env are kept.
-        The process reads env at startup — the change takes effect after a
-        dream restart (Settings is a process-level singleton).
-
-        ``api_key`` is write-only: an empty value or the masked value
-        returned by GET (``****`` + last 4) means "keep the current key"
-        and is never written to the .env.
+        Merge semantics: only the fields present in the body and mapped
+        in ``_ENV_FIELDS`` are updated; other lines (comments and
+        untouched keys) in the .env are kept. The process reads env at
+        startup — changes take effect after a dream restart (Settings is
+        a process-level singleton).
 
         Returns:
-            200 with ``{path, note, updated}``; 400 invalid body; 503 admin
-            context unavailable.
+            200 with ``{path, note, updated}``; 400 invalid body; 503
+            admin context unavailable.
         """
         if not self.paths:
             return self._json_response(
@@ -110,15 +75,10 @@ class SettingsHandlers(RestHandlerBase):
             )
 
         # map ops field names -> .env keys; stringify non-string values
-        masked_key = _mask_api_key(_get_settings().llm_api_key)
         updates: dict[str, str] = {}
         for field, env_key in _ENV_FIELDS.items():
             if field in body and body[field] is not None:
-                value = str(body[field])
-                # api_key: empty or the echoed-back masked value = keep as is
-                if field == "api_key" and (not value.strip() or value == masked_key):
-                    continue
-                updates[env_key] = value
+                updates[env_key] = str(body[field])
 
         env_file = self.paths.env_file()
         lines: list[str] = []

@@ -22,7 +22,7 @@ async def test_agent_config_crud_lifecycle(tlon_server: tuple[str, Path]) -> Non
     async with aiohttp.ClientSession() as http:
         async with http.post(
             f"{base_url}/admin/config/agents",
-            json={"prototype": "developer", "name": name},
+            json={"prototype": "developer", "name": name, "model": "openai/gpt-test"},
         ) as resp:
             assert resp.status == 200
             created: dict[str, Any] = await resp.json()
@@ -85,7 +85,14 @@ async def test_agent_config_validation(tlon_server: tuple[str, Path]) -> None:
         # Unknown prototype -> 400 (PrototypeError from instantiate)
         async with http.post(
             f"{base_url}/admin/config/agents",
-            json={"prototype": "no-such-prototype", "name": "无名氏"},
+            json={"prototype": "no-such-prototype", "name": "无名氏", "model": "openai/gpt-test"},
+        ) as resp:
+            assert resp.status == 400
+
+        # Missing model -> 400 (ADR 0016: no process-level fallback)
+        async with http.post(
+            f"{base_url}/admin/config/agents",
+            json={"prototype": "developer", "name": "无名氏"},
         ) as resp:
             assert resp.status == 400
 

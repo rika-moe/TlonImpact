@@ -19,11 +19,9 @@ from typing import Any
 
 from tlon.agents.adam import make_adam
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.agents.bootstrap import bootstrap_standard_team
+from tlon.agents.bootstrap import bootstrap_society
 from tlon.agents.lessons import LessonsDistiller
-from tlon.agents.prototypes import seed_prototypes
 from tlon.agents.retirement import RetirementCeremony
-from tlon.agents.skills import seed_skills
 from tlon.base.config import ConfigService
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -143,24 +141,10 @@ class ServerApp:
         init_metrics()
 
         # ========== Step 1: Core Infrastructure ==========
-        # 1.0 Seed built-in behavior prototypes (idempotent; before any agent starts)
-        seeded = seed_prototypes()
-        logger.info("prototypes_ready", seeded=seeded)
-
-        # 1.0a Seed built-in skills to the global layer (idempotent; )
-        seeded_skills = seed_skills()
-        logger.info("skills_ready", seeded=seeded_skills)
-
-        # 1.0b First-boot bootstrap (wizard removal): an empty society gets
-        # the standard team from its role prototypes. Idempotent — skips
-        # when any agent already exists. Must run before ConfigService
-        # reads the agent configs below.
-        bootstrapped = bootstrap_standard_team()
-        if bootstrapped:
-            logger.info(
-                "server_bootstrapped_standard_team",
-                agent_ids=bootstrapped,
-            )
+        # 1.0 First-boot seeding (idempotent; before any agent starts):
+        # built-in prototypes + skills only — members are never seeded
+        # (ADR 0016): the human creates them via WebUI / admin API.
+        bootstrap_society()
 
         # 1.1 EventBus - event bus for inter-component communication (create first)
         event_bus = EventBus()
@@ -519,15 +503,6 @@ async def run_server(
     )
 
     logger.info("server_starting", host=host, rest_port=rest_port)
-
-    # No-key guidance: the server runs fine, but cognitive members fail on
-    # their first LLM call. Point the operator at the Settings view.
-    if not settings.llm_api_key:
-        logger.warning(
-            "llm_api_key_not_configured",
-            hint="在 ops 的 Settings 视图（数字键 7）配置 LLM 参数，"
-            "或设 LLM_API_KEY 环境变量",
-        )
 
     # Create and run server
     app = ServerApp(host=host, rest_port=rest_port)

@@ -211,6 +211,8 @@ def instantiate(
     prototype_name: str,
     agent_id: str,
     agent_name: str,
+    *,
+    model: str,
     params: dict[str, Any] | None = None,
     tlon_paths: TlonPaths | None = None,
 ) -> AgentConfig:
@@ -236,6 +238,10 @@ def instantiate(
         prototype_name: prototype directory name under ~/.tlon/prototypes/
         agent_id: new agent id (must not already exist)
         agent_name: display name of the new agent
+        model: the member's LLM in ``provider/model`` form (ADR 0016 —
+            model selection is deployment policy, not genotype; it lands
+            in agent.yaml as ``llm.model_name`` and assembly hard-fails
+            without it)
         params: template parameter values (required when the prototype
             declares ``:parameters``; must be empty otherwise)
         tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
@@ -244,10 +250,15 @@ def instantiate(
         The saved AgentConfig (with ``prototype`` recording the source).
 
     Raises:
-        PrototypeError: prototype missing, agent id already taken, or
-            required params missing / invalid.
+        PrototypeError: prototype missing, agent id already taken, model
+            empty, or required params missing / invalid.
     """
     p = tlon_paths or paths
+    if not model or not model.strip():
+        raise PrototypeError(
+            "model is required (provider/model 形式，如 deepseek/deepseek-chat)——"
+            "成员级 LLM 配置没有进程级兜底（ADR 0016）"
+        )
     proto_dir = p.prototypes_dir() / prototype_name
     if not _is_prototype_dir(proto_dir):
         raise PrototypeError(
@@ -299,14 +310,15 @@ def instantiate(
             prototype_lessons.read_text(encoding="utf-8"), encoding="utf-8"
         )
 
-    # Genotype inheritance (issue ): a top-level :llm {:model ...}
-    # declaration is part of the genome — the instance's agent.yaml pins
-    # llm.model_name so assembly prefers it over the process-level
-    # LLM_MODEL. Undeclared means no llm section at all (settings
-    # fallback). The parse is structural only; the loader's full
-    # validation still gates the member at boot.
+    # The rendered spec is parsed once here as a validation gate (the
+    # loader's full validation still gates the member at boot). The spec's
+    # top-level ``:llm`` declaration is parsed but deliberately NOT read
+    # (ADR 0016): model selection is deployment policy, not genotype —
+    # the caller's ``model`` argument is the only source, landing in
+    # agent.yaml as ``llm.model_name``. (Removing the ``:llm`` key from
+    # the spec grammar is a separate follow-up.)
     try:
-        spec = MemberSpec.from_edn(loads(behavior_text))
+        MemberSpec.from_edn(loads(behavior_text))
     except (EDNParseError, MemberSpecValidationError) as e:
         raise PrototypeError(
             f"prototype '{prototype_name}' behavior failed to parse: {e}"
@@ -317,7 +329,7 @@ def instantiate(
         id=agent_id,
         name=agent_name,
         prototype=prototype_name,
-        llm=LLMConfig(model_name=spec.llm_model) if spec.llm_model else None,
+        llm=LLMConfig(model_name=model.strip()),
     )
     yaml_save(agent, p.tlon_home())
     logger.info(

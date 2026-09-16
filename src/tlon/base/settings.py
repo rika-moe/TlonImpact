@@ -69,14 +69,6 @@ class Settings:
         self.shared_dir = paths.shared_dir()
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
 
-        # LLM client settings (secrets and endpoints, ADR 0012)
-        self.llm_base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")  # 仅裸 model 名的 escape hatch 生效；provider/model 由 litellm 路由
-        self.llm_api_key = os.getenv("LLM_API_KEY", "")
-        self.llm_model_name = os.getenv("LLM_MODEL", "moonshot/kimi-k2.5")  # provider/model 形式，如 deepseek/deepseek-chat
-        self.llm_temperature = float(os.getenv("LLM_TEMPERATURE", "1.0"))
-        self.llm_max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
-        self.llm_base_delay = float(os.getenv("LLM_BASE_DELAY", "1.0"))
-
         # Observability (OTel): optional OTLP collector, requires the `otlp` extra
         self.otel_exporter_otlp_endpoint: str | None = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 

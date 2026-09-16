@@ -258,7 +258,8 @@ class SpawnManager:
 
         Raises:
             SpawnRejectedError: a budget cap was hit (see ``.reason``)
-            PrototypeError: prototype missing
+            PrototypeError: prototype missing, or the spawner declares no
+                model for the child to inherit (ADR 0016)
         """
         registry = self._registry
         tlon_paths = registry._paths or paths
@@ -351,7 +352,19 @@ class SpawnManager:
 
         # Writes persona + behavior + agent.yaml (copy semantics; behavior
         # frozen at creation time). PrototypeError propagates to the caller.
-        config = instantiate(prototype, agent_id, name, params=params, tlon_paths=tlon_paths)
+        # Model inheritance (ADR 0016): the child runs the spawner's model —
+        # the cost/capability profile follows the bloodline (ADR 0014's
+        # selection-pressure semantics). A spawner without a declared model
+        # fails here (no process-level fallback exists anymore).
+        parent_model = (
+            spawner_config.llm.model_name
+            if spawner_config is not None and spawner_config.llm is not None
+            else None
+        )
+        config = instantiate(
+            prototype, agent_id, name, model=parent_model or "", params=params,
+            tlon_paths=tlon_paths,
+        )
 
         # Lineage audit (ADR 0006): who spawned this member and how deep.
         # No role is stamped — a spawned member is a member like any other.

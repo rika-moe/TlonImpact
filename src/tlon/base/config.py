@@ -73,12 +73,14 @@ class AgentInfoProvider(ABC):
 class LLMConfig(BaseModel):
     """LLM configuration for an agent."""
 
-    # None = undeclared in agent.yaml: the spec/prototype did not pin a
-    # model (issue ), so assembly falls back to the process-level
-    # LLM_MODEL setting. The runtime never sees None — _build_llm_config
-    # resolves it before constructing the client.
+    # None = undeclared in agent.yaml. There is no process-level fallback
+    # (ADR 0016): assembly hard-fails on an undeclared model, so the
+    # runtime never sees None — _build_llm_config raises before the
+    # client is constructed.
     model_name: str | None = None
-    temperature: float = 1.0
+    # None = the parameter is not sent to litellm at all (provider
+    # default applies); a declared value is per-member and takes effect.
+    temperature: float | None = None
     max_tokens: int = 4096
     top_p: float = 0.9
     # Model context window (tokens); drives context-pressure management
@@ -87,18 +89,21 @@ class LLMConfig(BaseModel):
     # registry lookup (fallback for missing/stale metadata). The resolved
     # int is what the runtime consumes — it is never None there.
     context_window: int | None = None
+    # Member-level endpoint override (ADR 0016): private deployments /
+    # proxies / OpenAI-compatible endpoints pair ``model_name:
+    # openai/<model>`` with this URL. None = litellm's registry routing.
+    api_base: str | None = None
 
-    # Runtime-only fields (not persisted to YAML)
-    base_url: str = Field(default="", exclude=True)
-    auth_token: str = Field(default="", exclude=True)
+    # Runtime-only fields (not persisted to YAML); code defaults only —
+    # no env source (ADR 0016).
     max_retries: int = Field(default=3, exclude=True)
     base_delay: float = Field(default=1.0, exclude=True)
     request_timeout: float = Field(default=300.0, exclude=True)
 
     @field_validator("temperature")
     @classmethod
-    def validate_temperature(cls, v: float) -> float:
-        if not 0 <= v <= 2:
+    def validate_temperature(cls, v: float | None) -> float | None:
+        if v is not None and not 0 <= v <= 2:
             raise ValueError("temperature must be between 0 and 2")
         return v
 
@@ -144,8 +149,8 @@ class AgentConfig(BaseModel):
     id: str
     name: str
 
-    # None = no llm section in agent.yaml: nothing per-agent declared,
-    # assembly builds the whole LLM config from process settings.
+    # None = no llm section in agent.yaml. Assembly requires a declared
+    # llm.model_name (ADR 0016) — a member without one fails to assemble.
     llm: LLMConfig | None = None
     docker: DockerRuntimeConfig = Field(default_factory=DockerRuntimeConfig)
     tool: ToolConfig = Field(default_factory=ToolConfig)
