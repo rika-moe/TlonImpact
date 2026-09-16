@@ -3,7 +3,7 @@
 Formerly the single-module ``api/rest.py``; split by route domain ():
 ``app`` (route table + RESTServer + core endpoints), ``common`` (shared
 base/helpers), ``mail``, ``sessions``, ``admin_agents``,
-``admin_prototypes``, ``settings``, ``observability``.
+``admin_llm``, ``admin_prototypes``, ``settings``, ``observability``.
 
 check_no_reexport bans ``from ... import`` in ``__init__.py``, so the
 public names are bound via plain module imports + attribute assignment —

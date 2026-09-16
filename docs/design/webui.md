@@ -42,7 +42,7 @@ apps/webui/
 | 页面 | 对应 TUI 视图 | 功能 | 端点 / 事件 |
 |---|---|---|---|
 | MAIL | mail | 三栏：线程列表（未读 ●）｜会话内容｜写信抽屉（To/Cc 补全、回复预填 in_reply_to/thread_id） | `GET /inbox`、`GET /participants`、`POST /messages`、SSE `mail.delivered` |
-| AGENTS | agents | 成员卡片网格（状态着色 + 事件驱动实时状态行：THINKING 徽标、上次 LLM 耗时/模型、最近工具调用）+ 详情、创建（选原型→表单，模型必填——ADR 0016）、编辑、删除 | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`GET /admin/prototypes`（创建向导）、SSE `agent.*` / `tool.*` / `config.updated` |
+| AGENTS | agents | 成员卡片网格（状态着色 + 事件驱动实时状态行：THINKING 徽标、上次 LLM 耗时/模型、最近工具调用）+ 详情、创建（选原型→表单，模型必填——ADR 0016）、编辑、删除；创建/编辑表单的模型字段是可搜索下拉（按 model/provider 子串过滤，每项带上下文窗口/输入输出价/缓存读价/cache+tools 标记；注册表未收录的值仍可手输） | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`GET /admin/prototypes`（创建向导）、`GET /admin/llm/models`（模型下拉）、SSE `agent.*` / `tool.*` / `config.updated` |
 | EVENTS | events | 活动 feed：SSE 事件映射为语义条目（类型色块 + 中文短句 title + detail，未知类型原样展示），暂停/清空，点击展开原始 JSON | 纯 SSE |
 | TRACES | traces | trace 列表 + span 详情 | `GET /traces[/{id}]` |
 | METRICS | metrics | 指标仪表盘，按 mail/agent/llm/tool 分组，2s 轮询 | `GET /metrics` |

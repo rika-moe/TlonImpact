@@ -1,7 +1,8 @@
 """REST API for Tlon Server — application assembly and server lifecycle.
 
 ``RESTAPIHandler`` aggregates the per-domain handler mixins (mail,
-sessions, admin agents, admin prototypes, settings, observability),
+sessions, admin agents, admin prototypes, admin llm, settings,
+observability),
 owns the constructor injection and the ``create_app`` route table, and
 hosts the core misc endpoints (health/config, agents listing, WebUI
 static hosting, debug test endpoints). ``RESTServer`` wraps the aiohttp
@@ -33,6 +34,7 @@ from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
 
 from .admin_agents import AdminAgentHandlers
+from .admin_llm import AdminLlmHandlers
 from .admin_prototypes import AdminPrototypeHandlers
 from .github import GitHubWebhookMixin
 from .mail import MailHandlers
@@ -53,6 +55,7 @@ class RESTAPIHandler(
     MailHandlers,
     SessionHandlers,
     AdminAgentHandlers,
+    AdminLlmHandlers,
     AdminPrototypeHandlers,
     SettingsHandlers,
     ObservabilityHandlers,
@@ -178,6 +181,8 @@ class RESTAPIHandler(
         app.router.add_post("/admin/config/agents", self.handle_create_agent)
         app.router.add_patch("/admin/config/agents/{agent_id}", self.handle_update_agent)
         app.router.add_delete("/admin/config/agents/{agent_id}", self.handle_delete_agent)
+        # Admin LLM registry (ADR 0016 §4): model metadata for the WebUI dropdown
+        app.router.add_get("/admin/llm/models", self.handle_list_llm_models)
         app.router.add_get("/admin/prototypes/staging", self.handle_list_staging)
         app.router.add_get(
             "/admin/prototypes/staging/{name}", self.handle_get_staging_prototype

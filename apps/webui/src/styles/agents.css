@@ -361,6 +361,73 @@ textarea.agents-form-textarea {
   font-family: var(--font-mono);
 }
 
+/* Model combobox (ADR 0016 §4): free-text input + searchable dropdown
+ * fed by GET /admin/llm/models. */
+.model-select {
+  position: relative;
+}
+
+.model-select .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.model-select-hint {
+  color: var(--neon-yellow);
+}
+
+.model-select-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 110;
+  max-height: 40vh;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-cyan);
+  display: flex;
+  flex-direction: column;
+}
+
+.model-select-item {
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-select-item:hover {
+  background: rgba(0, 240, 255, 0.08);
+}
+
+.model-select-item--deprecated .model-select-name {
+  color: var(--text-dim);
+}
+
+.model-select-name {
+  color: var(--text);
+  font-weight: bold;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.model-select-deprecated {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--neon-magenta);
+}
+
+.model-select-meta {
+  color: var(--text-dim);
+}
+
 .delete-warning {
   color: var(--neon-magenta);
   font-size: 13px;

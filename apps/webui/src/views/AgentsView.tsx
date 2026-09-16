@@ -2,7 +2,9 @@
  * AGENTS view — member card grid (state-colored, with lineage) +
  * structured detail panel (with the member's recent logs embedded,
  * GET /agents/{id}/logs), create (pick a prototype -> form), edit,
- * delete (confirm).
+ * delete (confirm). The model field in the create/edit forms is a
+ * searchable combobox fed by GET /admin/llm/models (ADR 0016 §4);
+ * registry-unlisted values stay allowed as free text.
  *
  * Cards carry an event-driven live status line (lib/agentLiveStatus.ts):
  * THINKING badge while agent.thinking_start is open, last LLM call
@@ -21,7 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import type { AgentDetail, AgentSummary, LogEntry, RestClient } from "../client/rest";
+import type { AgentDetail, AgentSummary, LlmModelInfo, LogEntry, RestClient } from "../client/rest";
 import { formatDurationMs } from "../lib/activity";
 import { applyEvent } from "../lib/agentLiveStatus";
 import type { AgentLiveStatus, LiveStatusMap } from "../lib/agentLiveStatus";
@@ -461,6 +463,128 @@ function MemberLogs({
   );
 }
 
+// ---- model combobox (ADR 0016 §4) ----
+
+/** Module-level cache: the registry is static for the server's lifetime. */
+let llmModelsPromise: Promise<LlmModelInfo[]> | null = null;
+
+function getLlmModels(rest: RestClient): Promise<LlmModelInfo[]> {
+  llmModelsPromise ??= rest.listLlmModels();
+  return llmModelsPromise;
+}
+
+/** Human-readable context window: 131072 -> "128K". */
+function formatContextWindow(tokens: number | null): string {
+  if (tokens === null) return "—";
+  return tokens >= 1024 ? `${Math.round(tokens / 1024)}K` : String(tokens);
+}
+
+/** Human-readable per-million-token price: 0.28 -> "$0.28". */
+function formatPrice(price: number | null): string {
+  return price === null ? "—" : `$${price.toFixed(2)}`;
+}
+
+/** Metadata summary line under a model name in the dropdown. */
+function modelMetaLine(m: LlmModelInfo): string {
+  const parts = [`CTX ${formatContextWindow(m.context_window)}`];
+  parts.push(`IN ${formatPrice(m.input_price)}/M`);
+  parts.push(`OUT ${formatPrice(m.output_price)}/M`);
+  if (m.cache_read_price !== null) parts.push(`CACHE ${formatPrice(m.cache_read_price)}/M`);
+  if (m.supports_prompt_caching) parts.push("+cache");
+  if (m.supports_function_calling) parts.push("+tools");
+  return parts.join(" · ");
+}
+
+const MODEL_DROPDOWN_LIMIT = 50;
+
+/**
+ * Searchable model combobox fed by GET /admin/llm/models. The input stays
+ * a free-text field — a value absent from the registry (private/custom
+ * model) is kept as-is; the dropdown is assistive, not a constraint.
+ */
+function ModelSelect({
+  rest,
+  value,
+  onChange,
+}: {
+  rest: RestClient;
+  value: string;
+  onChange: (model: string) => void;
+}): ReactElement {
+  const [models, setModels] = useState<LlmModelInfo[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLlmModels(rest)
+      .then((list) => {
+        if (!cancelled) setModels(list);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setFetchError(errMsg(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rest]);
+
+  const query = value.trim().toLowerCase();
+  const filtered = (models ?? [])
+    .filter(
+      (m) =>
+        m.model.toLowerCase().includes(query) || m.provider.toLowerCase().includes(query),
+    )
+    .slice(0, MODEL_DROPDOWN_LIMIT);
+  const known = models?.some((m) => m.model === value.trim()) ?? true;
+
+  return (
+    <div className="model-select">
+      <input
+        className="input"
+        value={value}
+        placeholder="provider/model，如 deepseek/deepseek-chat"
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+      />
+      {fetchError ? <div className="agents-error-bar">{fetchError}</div> : null}
+      {!known && value.trim() !== "" ? (
+        <div className="tech-label model-select-hint">注册表未收录该模型，将按自定义模型保存</div>
+      ) : null}
+      {open && filtered.length > 0 ? (
+        <div className="model-select-list">
+          {filtered.map((m) => (
+            <div
+              key={m.model}
+              className={`model-select-item${
+                m.deprecation_date ? " model-select-item--deprecated" : ""
+              }`}
+              // mousedown fires before the input's blur, so the click lands.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(m.model);
+                setOpen(false);
+              }}
+            >
+              <div className="model-select-name">
+                {m.model}
+                {m.deprecation_date ? (
+                  <span className="model-select-deprecated">DEPRECATED {m.deprecation_date}</span>
+                ) : null}
+              </div>
+              <div className="tech-label model-select-meta">{modelMetaLine(m)}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Centered modal frame (overlay click / esc closes). */
 function ModalShell({
   title,
@@ -605,11 +729,7 @@ function CreateFormModal({
         </label>
         <label className="agents-form-row">
           <span className="tech-label">MODEL *（provider/model，如 deepseek/deepseek-chat）</span>
-          <input
-            className="input"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          />
+          <ModelSelect rest={rest} value={model} onChange={setModel} />
         </label>
         <label className="agents-form-row">
           <span className="tech-label">AGENT_ID (可选)</span>
@@ -717,11 +837,7 @@ function EditModal({
         </label>
         <label className="agents-form-row">
           <span className="tech-label">MODEL_NAME (留空不改)</span>
-          <input
-            className="input"
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value)}
-          />
+          <ModelSelect rest={rest} value={modelName} onChange={setModelName} />
         </label>
         <label className="agents-form-row">
           <span className="tech-label">TEMPERATURE (留空不改)</span>

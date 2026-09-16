@@ -49,7 +49,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 41 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 42 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -70,6 +70,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | POST | `/admin/config/agents` | `handle_create_agent` | 无条件 |
 | PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
 | DELETE | `/admin/config/agents/{agent_id}` | `handle_delete_agent` | 无条件 |
+| GET | `/admin/llm/models` | `handle_list_llm_models` | 无条件 |
 | GET | `/admin/prototypes/staging` | `handle_list_staging` | 无条件 |
 | GET | `/admin/prototypes/staging/{name}` | `handle_get_staging_prototype` | 无条件 |
 | PATCH | `/admin/prototypes/staging/{name}` | `handle_update_staging_prototype` | 无条件 |
@@ -234,6 +235,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 - `GET`——200：`{"status": "success", "path", "values": {}}`
 - `PUT`——merge 语义：只更新 body 中已映射的字段（当前无），.env 里其余行（注释、未触碰的 key）原样保留；LLM 键（`model` / `api_key` / `base_url` / `temperature`）一律忽略、绝不写入。200：`{"status": "success", "path", "note", "updated": [<写入的 .env key>]}`；改动重启 dream 生效（Settings 是进程级单例）
+
+### GET /admin/llm/models
+
+模型元数据注册表（ADR 0016 §4），供 WebUI 创建/编辑成员表单的模型下拉使用。数据源是 litellm `model_cost` 注册表，只输出 `provider/model` 键形式且 `mode == "chat"` 的条目，按 provider、model 排序。200：`{"status": "success", "models": [...], "count": n}`；每条 `{model, provider, context_window, input_price, output_price, cache_read_price, supports_prompt_caching, supports_function_calling, deprecation_date}`——价格是每百万 token 美元（注册表的 per-token 值 × 1e6），注册表未收录的字段为 `null`。
 
 ### 原型管理端点（WebUI PROTOTYPES 视图）
 

@@ -144,6 +144,22 @@ export type PrototypePatch = {
 };
 
 /**
+ * LLM registry entry (GET /admin/llm/models, ADR 0016 §4). Prices are
+ * USD per million tokens; fields the registry does not carry are null.
+ */
+export type LlmModelInfo = {
+  model: string;
+  provider: string;
+  context_window: number | null;
+  input_price: number | null;
+  output_price: number | null;
+  cache_read_price: number | null;
+  supports_prompt_caching: boolean;
+  supports_function_calling: boolean;
+  deprecation_date: string | null;
+};
+
+/**
  * Prototype write rejection (POST/PATCH): like RestError but also carries
  * the server's semantic reason code (e.g. "invalid_prototype" on 400).
  */
@@ -509,6 +525,12 @@ export class RestClient {
   /** Administratively remove a member (records + home archive deleted). */
   async deleteAgent(agentId: string): Promise<Record<string, unknown>> {
     return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  /** Chat model metadata from the litellm registry (GET /admin/llm/models). */
+  async listLlmModels(): Promise<LlmModelInfo[]> {
+    const data = await this.get<{ models?: LlmModelInfo[] }>("/admin/llm/models");
+    return data.models ?? [];
   }
 
   /** In-process metrics snapshot (MetricsService.snapshot()). */
