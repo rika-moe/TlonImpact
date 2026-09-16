@@ -209,31 +209,25 @@ class MemberSpec:
     every member (phase C, previously react-only). It is serialized for
     observability events but never written back into a behavior file.
 
-    ``llm_model`` (from top-level ``:llm {:model "provider/model"}``) is
-    still parsed, but no longer read anywhere (ADR 0016: model selection
-    is deployment policy, not genotype — the member's model comes from
-    ``instantiate``'s required ``model`` argument / spawn inheritance;
-    removing the ``:llm`` key from the grammar is a separate follow-up).
-    None = undeclared.
+    Model selection is deployment policy, not genotype (ADR 0016): the
+    spec carries no model declaration; a top-level ``:llm`` key is a load
+    error. The member's model comes from ``instantiate``'s required
+    ``model`` argument / spawn inheritance, landing in agent.yaml.
     """
 
     version: int
     rules: tuple[MemberRule, ...]
     source_hash: str | None = None
-    llm_model: str | None = None
 
     # ── Factories ──
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict (snake_case keys)."""
-        data: dict[str, Any] = {
+        return {
             "version": self.version,
             "source_hash": self.source_hash,
             "rules": [rule.to_dict() for rule in self.rules],
         }
-        if self.llm_model is not None:
-            data["llm"] = {"model": self.llm_model}
-        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MemberSpec":
@@ -247,6 +241,11 @@ class MemberSpec:
         loader, never by this factory, so roundtrips of host-dependent
         deterministic rules are not rejected).
         """
+        if "llm" in data:
+            raise MemberSpecValidationError(
+                ":llm 已从 spec 语法移除（ADR 0016）：模型是部署策略不是基因型——"
+                "在成员 agent.yaml 的 llm.model_name 配置（创建成员时经 WebUI/admin API 选择）"
+            )
         _warn_unknown_keys(data, "top")
         version = _read(data, "version", path=":version", kind=int)
         if version != MEMBER_SPEC_VERSION:
@@ -267,7 +266,6 @@ class MemberSpec:
         return cls(
             version=MEMBER_SPEC_VERSION,
             source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
-            llm_model=_read_llm_model(data),
             rules=rules,
         )
 
@@ -296,8 +294,6 @@ class MemberSpec:
         }
         if self.source_hash is not None:
             data[Keyword("source-hash")] = self.source_hash
-        if self.llm_model is not None:
-            data[Keyword("llm")] = {Keyword("model"): self.llm_model}
         return data
 
 
@@ -618,23 +614,6 @@ def _read_optional_str(data: dict[str, Any], key: str, path: str) -> str | None:
     return value
 
 
-def _read_llm_model(data: dict[str, Any]) -> str | None:
-    """Read the top-level ``:llm {:model "provider/model"}`` declaration.
-
-    Missing ``:llm``, or an ``:llm`` map without ``:model``, yields None
-    (undeclared). Parsed but no longer consumed (ADR 0016 — see
-    ``MemberSpec.llm_model``).
-    """
-    llm = data.get("llm")
-    if llm is None:
-        return None
-    if isinstance(llm, Form) or not isinstance(llm, dict):
-        raise MemberSpecValidationError(
-            f":llm must be a map, got {_type_name(llm)}: {llm!r}"
-        )
-    return _read_optional_str(llm, "model", ":llm :model")
-
-
 def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
     known = _KNOWN_KEYS[section]
     for key in raw:
@@ -643,7 +622,7 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
-    "top": frozenset({"version", "source_hash", "llm", "rules"}),
+    "top": frozenset({"version", "source_hash", "rules"}),
     "rule": frozenset({"name", "on", "when", "loop", "actions", "fuel"}),
     "loop": frozenset(
         {

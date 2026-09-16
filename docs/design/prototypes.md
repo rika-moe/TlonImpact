@@ -62,7 +62,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 1. 读原型的 `behavior.tlon`；声明了 `:parameters` 则先用调用方给的 `params` 渲染（见下节），未声明则必须为空 params——参数门是双向的：该给的没给拒绝，不该给的给了也拒绝（`render_template` 对未知参数直接报错）。模板契约是精确的，没有「多给了就忽略」的宽松。
 2. 行为文件逐字写入新 agent 的 `~/.tlon/{agent_id}/config/`——行为在创建时刻**冻结**，此后改原型不影响已派生的 agent。原型携带 `LESSONS.md` 时同样逐字拷贝到同一目录（与 behavior.tlon 为邻，），新成员的 spec 用 `(lessons)` context section 显式声明才会把它注入对话；原型没有该文件则成员侧也不产生。
-3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。`llm.model_name` 来自 `instantiate` 的必填 `model` 参数（ADR 0016——模型选择是部署策略，不是基因型；spec 顶层的 `:llm {:model ...}` 声明仍被解析但不再读取，从语法中移除是后续工作）；没有进程级 `LLM_MODEL` 兜底，未声明模型的成员装配期硬报错。
+3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。`llm.model_name` 来自 `instantiate` 的必填 `model` 参数（ADR 0016——模型选择是部署策略，不是基因型；spec 语法已删除顶层 `:llm` 键，残留即加载报错）；没有进程级兜底，未声明模型的成员装配期硬报错。
 4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
 拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。
@@ -135,7 +135,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 第三道闸是近亲拒绝（，ADR 0014 的非收敛选择压，agent 侧）：提案文本与 trusted + staging 两区所有既有原型的 `behavior.tlon` 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；writePrototype 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，proposeBehavior 的父本恒为成员自己的 prototype），于是沿血脉的代际微改放行——实测锚点：scribe 底稿仅把 reflect 间隔 15→30 的微改相似度 0.996，父本豁免后放行、跨血脉仍被拦；实质重写（换谓词/动作/规则结构）实测落在 0.3 量级，不受影响。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。远期档（MAP-Elites 生态位档案）未做。
 
-三道闸之外是**同行评审记录**（ 第二阶段，异质评审）：任何成员可用 `reviewPrototype`（[tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、T=0.3、timeout 60s），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（ 第一阶段：原型 spec 可声明 `:llm {:model ...}`，实例化的成员各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
+三道闸之外是**同行评审记录**（ 第二阶段，异质评审）：任何成员可用 `reviewPrototype`（[tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、T=0.3、timeout 60s），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（成员的模型在创建时经 WebUI/admin API 选定，随 spawn 沿血脉继承，ADR 0016——不同血脉各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
 
 信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**，紧随其后是同一偿付门槛的 spawn 侧（`insolvent_lineage`：失去偿付能力的血脉连 spawn 资格也没有）。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
 
@@ -167,7 +167,7 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 当时这个 bug 被两层兜底掩盖了：
 
 - 元数据读取不许失败：`_derive_runtime` 解析失败回退 `"react"`（恰好是正确答案），`_read_parameters` 失败回退空参数——所以 `listPrototypes` 看起来一切正常。
-- ~~`instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。~~ 这层兜底已不存在：issue  起 `instantiate` 为读取 `:llm` 模型声明对渲染后 spec 做结构化解析（`MemberSpec.from_edn`），解析失败以 `PrototypeError` 拒绝实例化，坏文件不再被原样拷贝。
+- ~~`instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。~~ 这层兜底已不存在：`instantiate` 对渲染后 spec 做结构化解析（`MemberSpec.from_edn`，最初为读取 `:llm` 声明引入；ADR 0016 后 `:llm` 已从语法删除，解析保留为纯校验门），解析失败以 `PrototypeError` 拒绝实例化，坏文件不再被原样拷贝。
 
 失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。当时现有测试只覆盖了 relay（[src/tests/agents/test_relay.py](../../src/tests/agents/test_relay.py)），三个带 `:loop` 的内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
 

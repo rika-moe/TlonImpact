@@ -311,12 +311,11 @@ def instantiate(
         )
 
     # The rendered spec is parsed once here as a validation gate (the
-    # loader's full validation still gates the member at boot). The spec's
-    # top-level ``:llm`` declaration is parsed but deliberately NOT read
-    # (ADR 0016): model selection is deployment policy, not genotype —
-    # the caller's ``model`` argument is the only source, landing in
-    # agent.yaml as ``llm.model_name``. (Removing the ``:llm`` key from
-    # the spec grammar is a separate follow-up.)
+    # loader's full validation still gates the member at boot). Model
+    # selection is deployment policy, not genotype (ADR 0016): the spec
+    # grammar rejects a top-level ``:llm`` key outright — the caller's
+    # ``model`` argument is the only source, landing in agent.yaml as
+    # ``llm.model_name``.
     try:
         MemberSpec.from_edn(loads(behavior_text))
     except (EDNParseError, MemberSpecValidationError) as e:

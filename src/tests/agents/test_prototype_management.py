@@ -351,7 +351,7 @@ class TestInstantiateModel:
     """``instantiate`` requires the caller's ``model`` (ADR 0016): model
     selection is deployment policy, not genotype — it lands in the
     member's agent.yaml as ``llm.model_name``; a spec's top-level
-    ``:llm {:model ...}`` declaration is parsed but no longer read."""
+    ``:llm`` key is rejected by the grammar."""
 
     BEHAVIOR_WITH_LLM = """\
 {:version 1
@@ -373,17 +373,15 @@ class TestInstantiateModel:
         assert on_disk is not None and on_disk.llm is not None
         assert on_disk.llm.model_name == "openai/gpt-5"
 
-    def test_spec_llm_declaration_is_ignored(self, tmp_path):
-        """The caller's model is the only source; the spec's genotype
-        declaration no longer leaks into agent.yaml (full removal of the
-        ``:llm`` key from the grammar is a separate follow-up)."""
+    def test_spec_llm_declaration_rejected(self, tmp_path):
+        """A residual top-level ``:llm`` key fails validation — even the
+        trusted-prototype write path refuses it, so ``instantiate`` never
+        sees one (ADR 0016: the key is gone from the grammar, a load
+        error rather than silently ignored)."""
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", self.BEHAVIOR_WITH_LLM, tlon_paths=p)
 
-        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
-
-        assert cfg.llm is not None
-        assert cfg.llm.model_name == "openai/gpt-5"
+        with pytest.raises(PrototypeError, match=":llm"):
+            write_trusted_prototype("hand", self.BEHAVIOR_WITH_LLM, tlon_paths=p)
 
     def test_missing_model_raises(self, tmp_path):
         p = TlonPaths(home=tmp_path)

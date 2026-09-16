@@ -39,8 +39,8 @@
 |---|---|---|---|
 | `:version` | int | 是 | 只支持 `1`（`MEMBER_SPEC_VERSION`），其他值加载即拒绝 |
 | `:rules` | 向量 | 是 | 规则列表，**不得为空**；每项是一个 map |
-| `:llm` | map | 否 | 模型声明 `{:model "provider/model"}`——**仍被解析但不再读取**（ADR 0016：模型是成员级部署策略，不是基因型；成员的模型来自 `instantiate` 的 `model` 参数 / spawn 继承，不再回退进程级 `LLM_MODEL`；从语法中移除该键是后续工作） |
 | `:parameters` | map | 否 | 模板参数声明（见第 8 节），运行时加载器忽略 |
+| `:llm` | — | — | **已从语法移除**（ADR 0016：模型是部署策略不是基因型）——残留该键加载即报错；成员的模型在 agent.yaml 的 `llm.model_name` 配置（创建时经 WebUI/admin API 选择，spawn 继承父成员） |
 | 其他键 | — | — | 未知键记 warning 后忽略（前向兼容） |
 
 **total 语义**（`MemberSpec.from_dict` docstring）：缺必填字段是错误，不给默认值；类型错误同样拒绝。加载路径 `load_member_spec()`（[src/tlon/agents/loader.py](../../src/tlon/agents/loader.py)）：文件不存在抛 `FileNotFoundError`，EDN 非法抛 `EDNParseError`，校验失败抛 `MemberSpecValidationError`——任何失败都使该成员拒绝启动（注册表隔离失败，不影响其他成员）。
