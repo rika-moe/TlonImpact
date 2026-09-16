@@ -5,7 +5,7 @@
 
 ## 背景
 
-Tlon REST 面零鉴权（issue ）：包括 `POST/DELETE /admin/config/agents`（创建/删除成员）、`PUT /admin/settings/env`（改写 `{TLON_HOME}/.env`，含 LLM key）在内的全部 admin 端点对任何能到达端口的人开放。默认绑定 `127.0.0.1` 时信任边界是本机，可接受；但一旦绑定非回环地址（或经端口转发暴露），任何人可读写全部数据并触发热加载。
+Tlon REST 面零鉴权（issue ）：包括 `POST/DELETE /admin/config/agents`（创建/删除成员）在内的全部 admin 端点对任何能到达端口的人开放（决策时还有 `PUT /admin/settings/env` 改写 `{TLON_HOME}/.env`，该端点已随 ADR 0016 删除）。默认绑定 `127.0.0.1` 时信任边界是本机，可接受；但一旦绑定非回环地址（或经端口转发暴露），任何人可读写全部数据并触发热加载。
 
 非回环绑定的启动警告已在前置 PR 落地（banner + `server_exposed_non_loopback` 日志），剩下的实质防线是认证本身。
 

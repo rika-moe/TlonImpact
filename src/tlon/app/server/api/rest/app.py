@@ -1,8 +1,7 @@
 """REST API for Tlon Server — application assembly and server lifecycle.
 
 ``RESTAPIHandler`` aggregates the per-domain handler mixins (mail,
-sessions, admin agents, admin prototypes, admin llm, settings,
-observability),
+sessions, admin agents, admin prototypes, admin llm, observability),
 owns the constructor injection and the ``create_app`` route table, and
 hosts the core misc endpoints (health/config, agents listing, WebUI
 static hosting, debug test endpoints). ``RESTServer`` wraps the aiohttp
@@ -40,7 +39,6 @@ from .github import GitHubWebhookMixin
 from .mail import MailHandlers
 from .observability import ObservabilityHandlers
 from .sessions import SessionHandlers
-from .settings import SettingsHandlers
 
 # Keep the pre-split logger name so log files keep a stable "logger" field.
 logger = get_logger("tlon.app.server.api.rest")
@@ -57,7 +55,6 @@ class RESTAPIHandler(
     AdminAgentHandlers,
     AdminLlmHandlers,
     AdminPrototypeHandlers,
-    SettingsHandlers,
     ObservabilityHandlers,
     GitHubWebhookMixin,
 ):
@@ -201,10 +198,6 @@ class RESTAPIHandler(
         app.router.add_get("/admin/prototypes/{name}", self.handle_get_prototype)
         app.router.add_patch("/admin/prototypes/{name}", self.handle_update_prototype)
         app.router.add_delete("/admin/prototypes/{name}", self.handle_delete_prototype)
-
-        # Admin env settings (wizard removal F): read/write {TLON_HOME}/.env
-        app.router.add_get("/admin/settings/env", self.handle_get_settings_env)
-        app.router.add_put("/admin/settings/env", self.handle_update_settings_env)
 
         # Trace routes (only if trace_store is available)
         if self.trace_store:

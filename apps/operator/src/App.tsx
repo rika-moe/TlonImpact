@@ -8,7 +8,6 @@ import { ConfigView } from "./views/ConfigView.js";
 import { EventsView } from "./views/EventsView.js";
 import { MailView } from "./views/MailView.js";
 import { MetricsView } from "./views/MetricsView.js";
-import { SettingsView } from "./views/SettingsView.js";
 import { TracesView } from "./views/TracesView.js";
 import { VIEWS, type ConnectionStatus, type ViewName } from "./types.js";
 
@@ -29,7 +28,6 @@ export default function App({
   // global view-switch keys are off.
   const [mailEditing, setMailEditing] = useState(false);
   const [agentsEditing, setAgentsEditing] = useState(false);
-  const [settingsEditing, setSettingsEditing] = useState(false);
 
   const sse = useMemo(
     () => new SseClient({ host, port: restPort, clientType: "tui", username }),
@@ -59,7 +57,7 @@ export default function App({
       exit();
       return;
     }
-    if (mailEditing || agentsEditing || settingsEditing) return; // a form owns the keyboard
+    if (mailEditing || agentsEditing) return; // a form owns the keyboard
     if (input === "q") {
       exit();
       return;
@@ -96,12 +94,9 @@ export default function App({
         {view === "traces" ? <TracesView rest={rest} /> : null}
         {view === "config" ? <ConfigView rest={rest} /> : null}
         {view === "metrics" ? <MetricsView rest={rest} /> : null}
-        {view === "settings" ? (
-          <SettingsView rest={rest} onEditingChange={setSettingsEditing} />
-        ) : null}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>1-7 / tab / ←→ switch view · q quit</Text>
+        <Text dimColor>1-6 / tab / ←→ switch view · q quit</Text>
       </Box>
     </Box>
   );

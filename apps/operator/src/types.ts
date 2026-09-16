@@ -6,8 +6,7 @@ export type ViewName =
   | "events"
   | "traces"
   | "config"
-  | "metrics"
-  | "settings";
+  | "metrics";
 
 export const VIEWS: readonly ViewName[] = [
   "mail",
@@ -16,7 +15,6 @@ export const VIEWS: readonly ViewName[] = [
   "traces",
   "config",
   "metrics",
-  "settings",
 ];
 
 export const VIEW_TITLES: Record<ViewName, string> = {
@@ -26,7 +24,6 @@ export const VIEW_TITLES: Record<ViewName, string> = {
   traces: "Traces",
   config: "Config",
   metrics: "Metrics",
-  settings: "Settings",
 };
 
 export type ConnectionState =

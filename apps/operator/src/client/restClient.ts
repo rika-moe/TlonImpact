@@ -231,30 +231,6 @@ export class RestClient {
     return this.send("DELETE", `/admin/config/agents/${encodeURIComponent(agentId)}`);
   }
 
-  /** Current LLM env configuration (Settings view). */
-  async getSettingsEnv(): Promise<{
-    path: string;
-    configured: boolean;
-    values: {
-      model: string;
-      api_key: string;
-      base_url: string;
-      temperature: number;
-    };
-  }> {
-    return this.get("/admin/settings/env");
-  }
-
-  /** Write LLM env config to {TLON_HOME}/.env (merge semantics). */
-  async updateSettingsEnv(body: {
-    model?: string;
-    api_key?: string;
-    base_url?: string;
-    temperature?: number;
-  }): Promise<Record<string, unknown>> {
-    return this.send("PUT", "/admin/settings/env", body);
-  }
-
   /** In-process metrics snapshot (MetricsService.snapshot()). */
   async getMetrics(): Promise<MetricsSnapshot> {
     return this.get("/metrics");

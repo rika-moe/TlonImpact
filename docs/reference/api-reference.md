@@ -49,7 +49,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 42 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 40 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -81,8 +81,6 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | GET | `/admin/prototypes/{name}` | `handle_get_prototype` | 无条件 |
 | PATCH | `/admin/prototypes/{name}` | `handle_update_prototype` | 无条件 |
 | DELETE | `/admin/prototypes/{name}` | `handle_delete_prototype` | 无条件 |
-| GET | `/admin/settings/env` | `handle_get_settings_env` | 无条件 |
-| PUT | `/admin/settings/env` | `handle_update_settings_env` | 无条件 |
 | GET | `/traces` | `handle_list_traces` | trace_store |
 | GET | `/traces/{trace_id}` | `handle_get_trace` | trace_store |
 | GET | `/metrics` | `handle_metrics` | 无条件 |
@@ -228,13 +226,6 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | `start-failed` | 启动失败（细节见服务端日志） |
 
 注意：`result` 为 `config-not-found` / `start-failed` 时 HTTP 状态仍是 200，调用方须检查 `result`。
-
-### GET/PUT /admin/settings/env
-
-读写 `{TLON_HOME}/.env` 的通用 merge-write 通道。进程级 LLM 键已随 ADR 0016 全部移除（LLM 配置成员级化：模型在 agent.yaml，API key 走 litellm 原生 `{PROVIDER}_API_KEY` 环境变量），当前没有映射任何可编辑字段。
-
-- `GET`——200：`{"status": "success", "path", "values": {}}`
-- `PUT`——merge 语义：只更新 body 中已映射的字段（当前无），.env 里其余行（注释、未触碰的 key）原样保留；LLM 键（`model` / `api_key` / `base_url` / `temperature`）一律忽略、绝不写入。200：`{"status": "success", "path", "note", "updated": [<写入的 .env key>]}`；改动重启 dream 生效（Settings 是进程级单例）
 
 ### GET /admin/llm/models
 
