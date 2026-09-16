@@ -16,6 +16,7 @@ an unfinished previous session is skipped in favor of the last completed
 one, and the recap never covers more than one round.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -421,6 +422,34 @@ async def test_recap_precedes_mail_history(tmp_path: Path) -> None:
     # Then the thread's raw history (mail1) and the current mail.
     assert context[1]["content"].endswith("\n\n旧信")
     assert context[2]["content"].endswith("\n\n新信")
+
+
+async def test_followup_context_extends_previous_prefix(tmp_path: Path) -> None:
+    """Cache-friendly ordering: with thread-recap declared *after*
+    mail-history, a follow-up mail's context extends the previous
+    session's context byte for byte — provider prompt caching bills only
+    the new suffix. With the recap declared before the history (the old
+    prototype order) the common prefix stopped at the recap, which
+    changes every session."""
+    builder, mailbox, journal = _make_thread_builder(
+        tmp_path, "[(mail-history 5) (thread-recap)]"
+    )
+    mail1 = _thread_mail("第一封")
+    context1 = await builder.build_context(mail1)
+
+    await mailbox.append_inbox(mail1)
+    await _write_completed_session(journal, mail1, conclusion="第一轮结论")
+    mail2 = _thread_mail("第二封", upstream=mail1)
+    context2 = await builder.build_context(mail2)
+
+    # The whole previous context is a byte-identical prefix of the new
+    # one; the new recap lands after the grown history, before the
+    # current mail.
+    assert json.dumps(context2[: len(context1)], ensure_ascii=False) == json.dumps(
+        context1, ensure_ascii=False
+    )
+    assert context2[len(context1)]["content"].startswith("[本线程上一轮处理摘要]")
+    assert context2[-1]["content"].endswith("\n\n第二封")
 
 
 # ===== (lessons) section（issue ）=====

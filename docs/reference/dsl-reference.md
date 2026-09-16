@@ -311,6 +311,8 @@
 
 `persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 按向量顺序追加到对话上下文（`ContextBuilder`）。section 名不得重复。
 
+**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`knowledge`、`mail-history`）居中，每会话必变的段（`thread-recap`）与当前邮件靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history N) (thread-recap)`；当前邮件永远由引擎追加在最后。
+
 | section | 参数 | 语义 |
 |---|---|---|
 | `(persona)` | 无 | 成员人格文件（SOUL/IDENTITY/RULES 等）进 system prompt |
@@ -381,11 +383,12 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :on :mail-delivered                                   ; 邮件送达触发
           :when (or (addressed-to-me? msg) (cc-ed? msg))        ; 只理会在 To/CC 里点了我的邮件
           :loop {:context {:sections [(persona) (protocol)      ; system prompt：人格 + 协议
-                                      (knowledge)               ; 对话上下文：记忆块
+                                      (lessons)                 ; 对话上下文：传承教训（issue ）
                                       (skills)                  ; 对话上下文：技能索引（ADR 0010）
+                                      (knowledge)               ; 对话上下文：记忆块
                                       (current-task)            ; 对话上下文：当前 doing 任务（issue ）
-                                      (thread-recap)            ; 对话上下文：本线程上一轮处理摘要（issue ）
-                                      (mail-history 20)]}       ; 对话上下文：最近 20 封邮件
+                                      (mail-history 20)         ; 对话上下文：最近 20 封邮件
+                                      (thread-recap)]}          ; 对话上下文：本线程上一轮处理摘要（issue ）
                  :stages [(think)                                  ; 想：一次 LLM 调用
                           (critique {:if (completing?)})             ; 只在即将交卷时评审待交回复
                           (act {:if (or (not (completing?))          ; 做：评审 FAIL 时拦截本轮完成

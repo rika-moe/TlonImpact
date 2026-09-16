@@ -19,7 +19,8 @@ logger = get_logger(__name__)
 _BEHAVIOR_HINT = (
     "behavior 必须是 v1 schema 的 EDN map：:version 1 必填；"
     ":rules [{:name str :on event-keyword :when (纯谓词表达式，可选) "
-    ":loop {:context {:sections [(persona) (protocol) (knowledge) (skills) (mail-history N)]} "
+    ":loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) "
+    "(current-task) (mail-history N) (thread-recap)]} "
     ":stages [(think) (act)] "
     ":until (or (iteration-limit-reached?) (error-limit-reached?)) "
     ":max-iterations int :max-consecutive-errors int "
