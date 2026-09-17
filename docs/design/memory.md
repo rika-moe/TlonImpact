@@ -81,16 +81,17 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 两种路径的渲染一致：`- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。
 
-注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把当前邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息，按 section 顺序插入对话。是否注入知识因此是 spec 层的声明——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
+注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把当前邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动（ADR 0017 阶段 4）：knowledge 消息固定追加为整个 context 的最后一条（当前邮件之后），落在压缩锚点（anchor）之外——每 session JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它（ 的「anchor 挤死、压缩无路可退」解除），KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
 
 一个细节体现实用主义：`build_knowledge_context` 把记忆构建的异常整个兜住（记告警、返回空串），记忆损坏不阻断对话，空记忆等价于没有 `(knowledge)` 段。记忆是增强，不是依赖。
 
 ## agent 侧接口
 
-agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的三个工具读写自己的记忆，全部在 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配认知成员时注册，直接持有本 agent 的 `MemoryManager` 实例：
+agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个工具读写自己的记忆，全部在 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配认知成员时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`readSession` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
 
-- `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数只有 `fact` 文本与 `importance`；旧的三元组参数已删）。
-- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims（embedding 检索天然跨语言， 的中文分词缺陷随之消亡），每条结果带日期与 `source_session_ids` 来源引用（回读 journal 原文的工具是阶段 4）；索引不可用时降级关键词子串匹配。
+- `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数只有 `fact` 文本与 `importance`；旧的三元组参数已删）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `searchMemories` 立即可查，下个 session 进 JIT 注入。
+- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims（embedding 检索天然跨语言， 的中文分词缺陷随之消亡），每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。
+- `readSession`（`read_session.py` 的 `ReadSessionTool`，ADR 0017 阶段 4）——claim → 来源的回读通道：按 session id 读该会话的 journal，渲染为有界摘要（触发来信 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
 - `forget`（`forget_memory.py` 的 `ForgetMemoryTool`）——删除记忆；默认预览模式（只报匹配），`confirm: true` 才真正删。两步确认是给 LLM 的防误删闸门。
 
 工具的读写都只落在本 agent 的目录——`MemoryManager` 构造时绑定 `agent_id`，工具层没有跨 agent 访问的入口。记忆私有性在这一层是结构性保证，不是约定。
@@ -128,7 +129,7 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的三个�
 1. 认知循环跑完，journal 里留下完整的 session 事件流（ADR 0007：模型可见 ⇒ 已入日志）。
 2. scheduler 在回收点做两件事：`note_interaction` 喂反思计数；`maybe_distill_completed_sessions` 检查水位线 pending 窗口——满 3 个已完成 session 就从各自 journal 重建投影、批量蒸馏写 claims、推进水位线。
 3. 调度器在循环间隙另做周期检查：`check_reflection`（间隔与计数双门控通过则后台跑反思）。
-4. 下一封邮件进来时，`ContextBuilder` 按 spec 的 `(knowledge)` 段以邮件内容为 query 做 JIT 检索（或降级取最近 N 条），把选中的 active claim 拼成 `[已知信息]` 注入对话。
+4. 下一封邮件进来时，`ContextBuilder` 按 spec 的 `(knowledge)` 段以邮件内容为 query 做 JIT 检索（或降级取最近 N 条），把选中的 active claim 拼成 `[已知信息]`，作为 context 的最后一条消息注入（anchor 之外，ADR 0017 阶段 4）。
 
 整条链路里没有定时器、没有后台守护进程：蒸馏与反思全部挂在认知循环的事件节拍上。agent 不活动，记忆就不动——这与整个系统「事件驱动、睡觉零成本」的运行模型一致。
 
@@ -153,7 +154,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ## 方向
 
-整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，/ 随之消亡）与阶段 3（冲突判定 + 失效不删除的 claim 生命周期，本文描述的现状， 随之消亡）已落地；之后依次是 anchor 减肥 + journal 回读工具（阶段 4）、回归集（阶段 5）。
+整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，/ 随之消亡）、阶段 3（冲突判定 + 失效不删除的 claim 生命周期， 随之消亡）与阶段 4（anchor 减肥——knowledge 移出 anchor 固定末位 + `readSession` journal 回读工具， 的 anchor 死路随之消亡，本文描述的现状）已落地；之后是回归集（阶段 5）。
 
 与愿景的差距主要有两处：
 

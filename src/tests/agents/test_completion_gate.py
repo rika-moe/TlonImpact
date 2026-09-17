@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from tlon.agents.builtins import STAGE_COND_BUILTINS
+from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.edn import loads
 from tlon.agents.loop_driver import LoopDriver
@@ -92,7 +93,7 @@ def _make_driver(
     services.logger = MagicMock()
     services.publish_event = AsyncMock()
     services.build_context = AsyncMock(
-        return_value=[{"role": "user", "content": "hi"}]
+        return_value=BuiltContext(messages=[{"role": "user", "content": "hi"}], anchor_len=1)
     )
     services.think = AsyncMock(side_effect=list(responses))
     services.session_span = lambda session: contextlib.nullcontext()

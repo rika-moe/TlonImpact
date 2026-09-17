@@ -92,7 +92,7 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、入队）
 
 ### 上下文压力管理
 
-context 是模型可见的视图，可以在不动日志真相的前提下被压缩（ADR 0008，[agents/context_pressure.py](../../src/tlon/agents/context_pressure.py) 的 `ContextPressure`）。`LoopDriver.step_session` 在每个 step 的 stage 向量运行前做 token 估算（CJK 1 token/字、其余 4 字符/token 的字符启发式），超过阈值（`max(context_window - 40_000, 0.8w)`，`LLMConfig.context_window` 可配）时按梯度减压：先把锚点（初始构建块，`session.anchor_len`）之后、保留窗口（最近 20 条，不拆 tool_call/tool 配对）之外的 tool 结果原位换成占位符（prune，零 LLM 成本）；仍超才把中段交给 LLM 摘要成一条 `[前文摘要]` 消息（running summary 滚动折叠，摘要失败回退占位）。每次压缩先落 `context/compact` 事件（携带压缩后全量）再改内存，重放时整体替换、与运行态逐字节一致。紧急路径：`llm_client` 把 context-length 4xx 识别为 `ContextWindowExceededError` 不重试直接抛，driver 捕获后强制完整梯度压缩（窗口收紧到 10 条）并重试该 stage 一次。
+context 是模型可见的视图，可以在不动日志真相的前提下被压缩（ADR 0008，[agents/context_pressure.py](../../src/tlon/agents/context_pressure.py) 的 `ContextPressure`）。`LoopDriver.step_session` 在每个 step 的 stage 向量运行前做 token 估算（CJK 1 token/字、其余 4 字符/token 的字符启发式），超过阈值（`max(context_window - 40_000, 0.8w)`，`LLMConfig.context_window` 可配）时按梯度减压：先把锚点之后、保留窗口（最近 20 条，不拆 tool_call/tool 配对）之外的 tool 结果原位换成占位符（prune，零 LLM 成本）；仍超才把中段交给 LLM 摘要成一条 `[前文摘要]` 消息（running summary 滚动折叠，摘要失败回退占位）。锚点（`session.anchor_len`）是初始构建块减去末尾的 knowledge 消息（ADR 0017 阶段 4 修订：knowledge 固定为 context 最后一条、在 anchor 之外，可被正常压缩——它曾冻结进 anchor，记忆膨胀时中段为空、压缩无路可退，）；`session/start` 事件显式携带 `anchor_len`，重放优先读它、旧日志回退 context 全长。每次压缩先落 `context/compact` 事件（携带压缩后全量）再改内存，重放时整体替换、与运行态逐字节一致。紧急路径：`llm_client` 把 context-length 4xx 识别为 `ContextWindowExceededError` 不重试直接抛，driver 捕获后强制完整梯度压缩（窗口收紧到 10 条）并重试该 stage 一次。
 
 ### LoopDriver：循环的所有权在引擎
 

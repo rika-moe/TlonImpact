@@ -19,8 +19,10 @@ Replay rules:
 - context = ``session/start.context`` + every ``context/append.messages``
   in order; a ``context/compact`` event (ADR 0008) replaces the context
   accumulated so far with the full post-compaction snapshot it carries.
-- ``anchor_len`` (ADR 0008) = the length of ``session/start.context`` —
-  the compaction anchor, restored onto the session by the scheduler.
+- ``anchor_len`` (ADR 0008) = the explicit ``anchor_len`` field of
+  ``session/start`` (ADR 0017: the trailing knowledge message sits outside
+  the anchor); logs predating that field fall back to the length of
+  ``session/start.context`` — restored onto the session by the scheduler.
 - ``_all_tool_results`` = the ``tool/result`` events whose ids appear in
   some ``tool/collect`` (in collect order).
 - Orphaned dispatches (a ``tool/dispatch`` with no matching
@@ -237,7 +239,12 @@ class SessionJournal:
                     continue  # garbage before the start event
                 start = event
                 context = list(event.get("context") or [])
-                anchor_len = len(context)
+                # The event carries the anchor length explicitly (ADR 0017:
+                # the trailing knowledge message is outside the anchor).
+                # Logs written before that change lack the field — fall
+                # back to the whole initial context, the old behavior.
+                explicit_anchor = event.get("anchor_len")
+                anchor_len = int(explicit_anchor) if explicit_anchor is not None else len(context)
                 continue
             if event_type == "session/start":
                 continue  # a second start event is ignored; the first wins

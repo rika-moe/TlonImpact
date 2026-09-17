@@ -18,8 +18,9 @@ grades:
    the summary input, so summaries roll forward instead of stacking. A
    failing summarizer degrades to a plain placeholder message.
 
-The anchor (``session.anchor_len`` = the initial context block journaled with
-``session/start``) is never touched. Every compaction is journaled as
+The anchor (``session.anchor_len`` = the initial context block *minus* the
+trailing knowledge message, journaled explicitly with ``session/start`` —
+ADR 0017) is never touched. Every compaction is journaled as
 ``context/compact`` with the full post-compaction context *before* the
 in-memory session is mutated — the journal stays the sole truth (ADR 0007).
 """

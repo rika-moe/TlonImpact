@@ -29,7 +29,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为每个成员注册 36 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为每个成员注册 37 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -56,22 +56,23 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 21 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
 | 22 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
 | 23 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 24 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 25 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 26 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 27 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 28 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 29 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 30 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
-| 31 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
-| 32 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
-| 33 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
-| 34 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
-| 35 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
-| 36 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
+| 24 | `readSession` | [tools/memory/read_session.py](../../src/tlon/tools/memory/read_session.py) 的 `ReadSessionTool` | memory |
+| 25 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 26 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 27 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 28 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 29 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 30 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 31 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
+| 32 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
+| 33 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
+| 34 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
+| 35 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
+| 36 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
+| 37 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员（，信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 32 个；`reviewPrototype`（15）咨询性保留。
+上表是正式成员的满配。见习成员（，信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 33 个；`reviewPrototype`（15）咨询性保留。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
@@ -232,7 +233,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 ## memory
 
-三个工具都操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/claims.jsonl`（claim 模型，ADR 0017）。搜索为简单关键词匹配，不是向量检索（向量检索是 ADR 0017 阶段 2）。
+前三个工具操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/claims.jsonl`（claim 模型，ADR 0017）；`readSession` 读本 agent 的 session journal。检索为向量检索（ADR 0017 阶段 2，sqlite-vec），索引不可用时降级关键词子串匹配。
 
 ### rememberFact
 
@@ -250,7 +251,17 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | `query` | string | 是 | — | 搜索关键词 |
 | `limit` | integer | 否 | 5 | 最多返回条数 |
 
-返回拼接文本（`data.results` 与 `message` 同内容），在 active claim 文本上做子串匹配；无命中时仍 `success=True`，文本为「未找到相关记忆。」。
+返回拼接文本（`data.results` 与 `message` 同内容），向量检索 top-k active claims，每条带日期与 `source_session_ids` 来源引用（需要原文细节时用 `readSession` 回读该会话）；无命中时仍 `success=True`，文本为「未找到相关记忆。」。
+
+### readSession
+
+回读一个历史会话的 journal 原文摘要（ADR 0017 阶段 4）——claim → 来源的回读通道：`searchMemories` 结果带的 `source_session_ids` 在这里落地（ReadAgent 模式）。
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---|---|---|---|---|
+| `session_id` | string | 是 | — | 要回读的会话 id（searchMemories 结果里的 source_session_ids 之一） |
+
+返回有界摘要：触发来信 + 各轮 LLM 回复 + 工具活动计数 + 结束原因。截断策略：触发截 300 字符、每轮回复截 600 字符、最多列 12 轮回复（超出注明轮数）、整个摘要硬上限 12000 字符（防 context 爆掉）。会话不存在（无日志）返回 `success=False` 与明确错误消息，不抛异常。
 
 ### forget
 

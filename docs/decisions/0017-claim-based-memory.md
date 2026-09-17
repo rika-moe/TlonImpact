@@ -1,6 +1,6 @@
 # ADR 0017：记忆系统重设计——claim 模型 + 向量检索 + JIT 注入，整体替换旧 episodic 记忆
 
-状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入）、阶段 3（冲突判定 + 失效不删除）已实施（2026-09-17）
+状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入）、阶段 3（冲突判定 + 失效不删除）、阶段 4（anchor 减肥 + journal 回读工具）已实施（2026-09-17）
 
 修订关系：部分取代 ADR 0009（摘要流被蒸馏管线替换；journal 为唯一真相不变）；修订 ADR 0008 的 anchor 语义（knowledge 段移出 anchor）。
 
@@ -49,6 +49,7 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
 
 - `(knowledge)` 段不再冻结进 anchor。anchor 只留极小且稳定的身份/状态卡（persona 指针、当前任务），保持前缀稳定（Manus 教训：KV-cache 前缀漂移代价高）。
 - 知识注入放在 anchor 之后的普通消息位——可被 context pressure 正常压缩（ 的「anchor 挤死、压缩无路可退」解除）；或按轮 JIT 重算，实施时二选一并在设计文档注明取舍。
+- **落地（阶段 4，2026-09-17）按方案 A**：knowledge 消息固定注入到 anchor 之后的最末位（整个 context 的最后一条，当前邮件之后）；DSL `:sections` 里 `(knowledge)` 的声明只控制「是否包含」，**位置语义失效**（统一规则，不随声明位置浮动）。放弃按轮 JIT 重算——它每轮改写 journaled context、毁缓存前缀。`session/start` 事件显式携带 `anchor_len`（journaled context 仍是完整含 knowledge 的——model-visible ⇒ journaled 不变）；重放优先读显式字段，旧事件回退 `len(context)`。效果：knowledge 落在可压缩区，context pressure 的 middle 不再因 knowledge 膨胀而为空；cache 前缀（anchor）更小且跨 session 更稳定（knowledge 每 session JIT 变化，本就在毁前缀，移出后 ADR 0015 的缓存命中反而改善）。固有取舍：session 内 `rememberFact` 的新 claim 不在当前 session 重注入，但经 `searchMemories` 立即可查、下个 session 进 JIT 注入。
 
 ### 边界（不动）
 
@@ -78,6 +79,12 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
 - `ClaimStore.supersede_claim`：原地置 `status="superseded"` + `superseded_by` + `valid_to`，全量原子重写（沿用删除路径的 mutation-then-rewrite 模式）——失效不删除，旧 claim 留在 `claims.jsonl` 可审计
 - `Distiller.judge_conflicts`：整批一次 LLM 调用判定（候选旧 claim 以 id + 日期 + 文本入 prompt，verdict 用 id 引用；幻觉 id 解析层丢弃，无有效目标的 SUPERSEDE 视为 ADD），复用 `_extract_json` 容错解析；新增 `ConflictVerdict` 数据类
 - `MemoryManager._resolve_conflicts`：批量蒸馏落盘前与 `rememberFact` 写入前共用——新 claim 文本 embed → vec 检索相似度 ≥ 0.75 的 active 旧 claim 候选 → 有候选才调判定 → SUPERSEDE 应用、ADD 追加；无索引 / 无 LLM / 调用失败 / 解析失败一律退化纯追加（ 的同义事实矛盾堆积缺陷消亡）
+
+阶段 4 实际落地（2026-09-17）：
+
+- anchor 减肥（修订 ADR 0008）：`ContextBuilder.build_context` 把 knowledge 消息从 sections 顺序中摘出，锚部（其余 sections + 当前邮件）拼完后作为整个 context 的最后一条追加；返回 `BuiltContext(messages, anchor_len)`，anchor 不含 knowledge 尾消息。DSL 不动——`(knowledge)` 仍是合法 section 名，只改注入位置语义（声明只控制「是否包含」）
+- `LoopDriver` 首步：`session.anchor_len` 取 `BuiltContext.anchor_len`，`session/start` 事件显式携带 `anchor_len` 字段；重放（`SessionJournal.resume`）优先读显式字段，旧事件回退 `len(context)`
+- journal 回读工具 `readSession`（`tools/memory/read_session.py`）：按 session id 读 journal，渲染触发 + 各轮回复 + 工具活动的有界摘要（截断策略：触发 300 字、每轮回复 600 字、最多 12 轮、总量硬上限 12000 字符），闭环 searchMemories 的 `source_session_ids` → 原文回读（ReadAgent 模式）；经 `SessionLogReader` 端口注入，`tlon.tools` 不反向依赖 `tlon.agents`
 
 ### 施工顺序（最小端到端优先，每阶段独立 PR）
 

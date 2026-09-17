@@ -28,7 +28,7 @@ from tlon.base.tracing.trace_context import continue_trace, get_current_trace, s
 if TYPE_CHECKING:
     import structlog
 
-    from tlon.agents.context_builder import ContextBuilder
+    from tlon.agents.context_builder import BuiltContext, ContextBuilder
     from tlon.agents.session import AgentSession
     from tlon.organization.mail.mail import Mail
 
@@ -148,7 +148,7 @@ class StageServices:
             )
             yield
 
-    async def build_context(self, current_mail: "Mail") -> list[dict[str, Any]]:
+    async def build_context(self, current_mail: "Mail") -> "BuiltContext":
         """Build the LLM conversation context for a trigger mail."""
         return await self._context_builder.build_context(current_mail)
 

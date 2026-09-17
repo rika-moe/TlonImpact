@@ -162,7 +162,7 @@ class LoopDriver:
         # session/start event is journaled before the context lands in
         # memory and before the first stage runs (ADR 0007).
         if not session.context:
-            context = await self._services.build_context(mail)
+            built = await self._services.build_context(mail)
             await self._journal.append(
                 session.id,
                 "session/start",
@@ -170,14 +170,19 @@ class LoopDriver:
                 mail_id=mail.id,
                 trigger_content=session.trigger_content,
                 carrier=session.carrier,
-                context=context,
+                context=built.messages,
+                anchor_len=built.anchor_len,
             )
-            session.context = context
-            # The initial build block is the compaction anchor (ADR 0008) —
-            # never compressed, never dropped.
-            session.anchor_len = len(context)
+            session.context = built.messages
+            # The initial build block minus the trailing knowledge message
+            # is the compaction anchor (ADR 0008, revised by ADR 0017) —
+            # never compressed, never dropped. Knowledge sits after the
+            # anchor as ordinary compressible middle.
+            session.anchor_len = built.anchor_len
             log.debug(
-                "session_context_built", session_id=session.id, message_count=len(context)
+                "session_context_built",
+                session_id=session.id,
+                message_count=len(built.messages),
             )
 
         # Context pressure check (ADR 0008): prune/summarize the

@@ -19,6 +19,7 @@ import httpx
 import litellm
 import pytest
 
+from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import (
     PRUNED_PLACEHOLDER,
     SUMMARY_MARKER,
@@ -311,6 +312,38 @@ class TestSummary:
         assert await journal.derive_context(session.id) == session.context
 
 
+# ── ADR 0017: knowledge lives outside the anchor, so it is compressible ─
+
+
+class TestKnowledgeOutsideAnchor:
+    async def test_big_knowledge_is_summarized_away(self, journal: SessionJournal) -> None:
+        """The old layout froze knowledge into the anchor: a big knowledge
+        section made the middle empty and compaction hit the no-middle
+        dead end (). With knowledge after the anchor it is ordinary
+        middle and the summary grade relieves it."""
+        knowledge = _user("[已知信息]\n\n" + "知" * 4000)
+        context = [_user("触发邮件"), knowledge, *[_user(f"recent {i}") for i in range(20)]]
+        session = _session(context, anchor_len=1)  # anchor = the trigger mail only
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(return_value=LLMResponse(content="知识摘要"))
+        pressure = _make_pressure(journal, llm_client=llm_client)
+
+        assert await pressure.maybe_compact(session) is True
+
+        # The summary input is exactly the knowledge message (the middle).
+        summary_input = llm_client.chat.await_args.kwargs["messages"]
+        assert summary_input[:-1] == [knowledge]
+        # anchor + one [前文摘要] + keep window; the knowledge text is gone.
+        assert session.context[0] == _user("触发邮件")
+        assert session.context[1]["content"].startswith(SUMMARY_MARKER)
+        assert "知识摘要" in session.context[1]["content"]
+        assert len(session.context) == 1 + 1 + 20
+        assert not any("知" * 100 in str(m.get("content")) for m in session.context)
+        events = await _compact_events(journal, session.id)
+        assert len(events) == 1 and events[0]["kind"] == "summary"
+        assert await journal.derive_context(session.id) == session.context
+
+
 # ── Replay: the compacted log is the truth ──────────────────────────────
 
 
@@ -488,7 +521,7 @@ class TestDriverEmergency:
         services = MagicMock()
         services.logger = MagicMock()
         services.publish_event = AsyncMock()
-        services.build_context = AsyncMock(return_value=[_user("hi")])
+        services.build_context = AsyncMock(return_value=BuiltContext(messages=[_user("hi")], anchor_len=1))
         services.think = AsyncMock(
             side_effect=[ContextWindowExceededError("too long"), LLMResponse(content="hi")]
         )

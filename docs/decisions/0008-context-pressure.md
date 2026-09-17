@@ -1,6 +1,6 @@
 # ADR 0008：上下文压力管理——存储不动，视图分级减压
 
-状态：已接受（2026-08-22，方向讨论拍板；issue  记录调研报告）
+状态：已接受（2026-08-22，方向讨论拍板；issue  记录调研报告）；2026-09-17 经 ADR 0017（阶段 4）修订 anchor 语义：`(knowledge)` 段移出 anchor——knowledge 消息固定为整个 context 的最后一条（当前邮件之后），anchor 只含其余 sections + 触发邮件，`session/start` 事件显式携带 `anchor_len` 字段
 
 ## 背景
 
@@ -36,7 +36,7 @@ threshold = max(context_window - 40_000, context_window * 0.8)
 1. **prune（零 LLM 成本）**：保留窗口之外的所有 `role=tool` 消息内容原位替换为短占位符（保留 `tool_call_id`，配对不破）。重新估算，达标即停。
 2. **summary（LLM 兜底）**：把「锚点之后、保留窗口之前」的中段消息摘要成一条 `[前文摘要]` user 消息。running summary：若中段开头已有上一轮的 `[前文摘要]` 消息，其内容并入本次摘要输入，生成的新摘要原位替换——摘要滚动更新，不无限堆叠。
 
-锚点 = 初始构建块（knowledge + mail-history + 触发邮件，`session/start` 事件的 context 长度，记为 session 的 `anchor_len`）：永不压缩、永不删除。保留窗口 = 最近 20 条消息，且不切断 tool_call/tool 配对（窗口首条若是 tool 消息则向前扩展到其 assistant 消息）。
+锚点 = 初始构建块（lessons + skills + current-task + mail-history + thread-recap + 触发邮件，`session/start` 事件显式携带的 `anchor_len`，记为 session 的 `anchor_len`）：永不压缩、永不删除。**修订（ADR 0017 阶段 4，2026-09-17）**：`(knowledge)` 段不再属于锚点——它曾冻结进 anchor（本段原文「knowledge + mail-history + 触发邮件」），记忆越积 anchor 越大，超阈值时中段为空、压缩无路可退（）；现 knowledge 消息固定为整个 context 的最后一条（当前邮件之后），是普通可压缩中段。旧日志没有 `anchor_len` 字段，重放时回退为 `session/start.context` 全长（旧行为）。保留窗口 = 最近 20 条消息，且不切断 tool_call/tool 配对（窗口首条若是 tool 消息则向前扩展到其 assistant 消息）。
 
 ### 落日志（不变式不破）
 

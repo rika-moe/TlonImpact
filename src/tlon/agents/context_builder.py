@@ -13,6 +13,7 @@ system prompt cache — no back-reference to the Agent.
 """
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,23 @@ def _render_thread_recap(events: list[dict[str, Any]], external: bool = False) -
     if conclusion:
         lines.append(f"结论：{_clip(conclusion, _RECAP_CONCLUSION_MAX)}")
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+@dataclass(frozen=True)
+class BuiltContext:
+    """The assembled context plus its compaction-anchor boundary (ADR 0008).
+
+    ``anchor_len`` counts the messages that form the anchor — every section
+    except ``knowledge`` plus the current mail. The ``knowledge`` message
+    (JIT-retrieved per session, ADR 0017) is deliberately placed *after* the
+    anchor as the very last message: frozen into the anchor it made the
+    anchor grow unboundedly, leaving context pressure with nothing to
+    relieve (issue ); outside the anchor it is ordinary compressible
+    middle, and the cache prefix (ADR 0015) shrinks and stabilizes.
+    """
+
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    anchor_len: int = 0
 
 
 class ContextBuilder:
@@ -265,7 +283,7 @@ class ContextBuilder:
             logger.warning("current_task_build_failed", exc_info=True)
             return ""
 
-    async def build_context(self, current_mail: Mail) -> list[dict[str, Any]]:
+    async def build_context(self, current_mail: Mail) -> BuiltContext:
         """Build conversation context for LLM (sections interpreted in order).
 
         The ``:context`` section vector (phase 7b) is a program: each
@@ -273,14 +291,20 @@ class ContextBuilder:
         ``persona``/``protocol`` feed the system prompt instead and are
         skipped here. The current mail is always appended last — the
         engine owns this; the DSL only describes what comes before it.
+
+        ``knowledge`` is the one exception to vector order (ADR 0017 stage
+        4): its declaration only controls *whether* knowledge is injected,
+        not *where*. The knowledge message is pulled out of the section
+        sequence and appended as the very last message, after the current
+        mail — outside the compaction anchor, whose length the returned
+        :class:`BuiltContext` carries.
         """
+        knowledge_declared = False
         context: list[dict[str, Any]] = []
         for form in self._loop.context_sections:
             name = str(form[0])
             if name == "knowledge":
-                knowledge = await self.build_knowledge_context(_memory_query(current_mail))
-                if knowledge:
-                    context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
+                knowledge_declared = True
             elif name == "lessons":
                 lessons = self.build_lessons()
                 if lessons:
@@ -301,7 +325,12 @@ class ContextBuilder:
                     context.append({"role": "user", "content": recap})
 
         context.append({"role": "user", "content": _render_mail(current_mail)})
-        return context
+        anchor_len = len(context)
+        if knowledge_declared:
+            knowledge = await self.build_knowledge_context(_memory_query(current_mail))
+            if knowledge:
+                context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
+        return BuiltContext(messages=context, anchor_len=anchor_len)
 
     async def _build_mail_history(
         self, count: int, current_mail: Mail

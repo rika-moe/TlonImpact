@@ -27,7 +27,7 @@ litellm 1.98 已提供所需基础设施：各家缓存 usage 字段归一化到
 (persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history N) (thread-recap)
 ```
 
-各段变动频率（均已核实源码）：`lessons`/`skills` 几乎不变；`knowledge`/`mail-history` 尾部增长（窗口滑动才断前缀）；`current-task` 任务流转时整体替换；`thread-recap` 每会话必变；当前邮件每次必变且永远最后（引擎拥有该位置）。DSL 引擎语义不变——顺序仍是 spec 声明的向量顺序，重排是原型层的策略选择。
+各段变动频率（均已核实源码）：`lessons`/`skills` 几乎不变；`knowledge`/`mail-history` 尾部增长（窗口滑动才断前缀）；`current-task` 任务流转时整体替换；`thread-recap` 每会话必变；当前邮件每次必变。位置语义有两处引擎保留：当前邮件永远最后（引擎拥有该位置）；`knowledge` 自 ADR 0017 阶段 4（2026-09-17）起固定为整个 context 的最后一条（当前邮件之后、anchor 之外）——它在 `:sections` 向量里的声明位置不再决定注入位置，只决定是否注入。knowledge 每 session JIT 重检索、内容本就在变，冻结在 anchor 里反而每 session 毁前缀；移出后 anchor 更小且跨 session 更稳定，缓存命中改善。其余段 DSL 引擎语义不变——顺序仍是 spec 声明的向量顺序，重排是原型层的策略选择。
 
 ### 3. Anthropic 系显式断点
 

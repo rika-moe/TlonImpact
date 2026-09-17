@@ -309,15 +309,15 @@
 
 ### 6.1 `:sections`（`SECTION_NAMES`，8 种）
 
-`persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 按向量顺序追加到对话上下文（`ContextBuilder`）。section 名不得重复。
+`persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 追加到对话上下文（`ContextBuilder`）。section 名不得重复。**位置语义例外（ADR 0017 阶段 4，2026-09-17）**：`knowledge` 不随向量顺序落位——它固定注入为整个 context 的最后一条（当前邮件之后、压缩锚点 anchor 之外），声明只控制「是否包含」；其余段按向量顺序追加。
 
-**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`knowledge`、`mail-history`）居中，每会话必变的段（`thread-recap`）与当前邮件靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history N) (thread-recap)`；当前邮件永远由引擎追加在最后。
+**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`mail-history`）居中，每会话必变的段（`thread-recap`）与当前邮件靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history N) (thread-recap)`（`knowledge` 的声明位置是历史惯例，注入位置恒为最末）；当前邮件永远由引擎追加在最后（knowledge 之前）。
 
 | section | 参数 | 语义 |
 |---|---|---|
 | `(persona)` | 无 | 成员人格文件（SOUL/IDENTITY/RULES 等）进 system prompt |
 | `(protocol)` | 无 | 协作协议文本进 system prompt |
-| `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息 |
+| `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息；**固定注入为 context 最后一条**（当前邮件之后、anchor 之外，ADR 0017 阶段 4）——声明位置不决定注入位置，只决定是否注入 |
 | `(lessons)` | 无 | 成员继承的 `config/LESSONS.md`（退休成员蒸馏、随原型包传递，issue ）拼成 `[传承教训]` 用户消息；无该文件则跳过该 section（空态惯例同 knowledge/skills） |
 | `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
 | `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息（issue ）；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
@@ -385,7 +385,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :loop {:context {:sections [(persona) (protocol)      ; system prompt：人格 + 协议
                                       (lessons)                 ; 对话上下文：传承教训（issue ）
                                       (skills)                  ; 对话上下文：技能索引（ADR 0010）
-                                      (knowledge)               ; 对话上下文：记忆块
+                                      (knowledge)               ; 对话上下文：记忆块（固定注入最末位，ADR 0017 阶段 4）
                                       (current-task)            ; 对话上下文：当前 doing 任务（issue ）
                                       (mail-history 20)         ; 对话上下文：最近 20 封邮件
                                       (thread-recap)]}          ; 对话上下文：本线程上一轮处理摘要（issue ）

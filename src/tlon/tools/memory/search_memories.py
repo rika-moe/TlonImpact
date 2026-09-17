@@ -30,7 +30,10 @@ class SearchMemoriesTool(Tool):
         """
         super().__init__(
             name="searchMemories",
-            description="搜索长期记忆中的记忆条目",
+            description=(
+                "搜索长期记忆中的记忆条目；结果带来源 session id（source_session_ids），"
+                "需要原文细节时可用 readSession 回读来源会话"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

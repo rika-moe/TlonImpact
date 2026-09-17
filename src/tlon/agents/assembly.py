@@ -54,6 +54,7 @@ from tlon.tools.mail.search_mails import SearchMailsTool
 from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.mail.silence import SilenceTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
+from tlon.tools.memory.read_session import ReadSessionTool
 from tlon.tools.memory.remember_fact import RememberFactTool
 from tlon.tools.memory.search_memories import SearchMemoriesTool
 from tlon.tools.observability.get_metrics import GetMetricsTool
@@ -327,6 +328,11 @@ async def assemble_cognitive(
     tool_executor.register_tool(RememberFactTool(memory))
     tool_executor.register_tool(SearchMemoriesTool(memory))
     tool_executor.register_tool(ForgetMemoryTool(memory))
+    # Claim → source read-back (ADR 0017 stage 4): searchMemories exposes
+    # source_session_ids; this tool reads the referenced session's journal.
+    # Same SessionLogReader port as proposeBehavior — tlon.tools stays
+    # free of tlon.agents.
+    tool_executor.register_tool(ReadSessionTool(SessionJournal(config.id, tlon_paths)))
     tool_executor.register_tool(CreateTaskTool(task_manager))
     tool_executor.register_tool(ListTasksTool(task_manager))
     tool_executor.register_tool(StartTaskTool(task_manager))

@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.edn import loads
 from tlon.agents.loop_driver import LoopDriver
@@ -211,6 +212,43 @@ class TestJournalReplay:
             {"role": "tool", "content": "b"},
         ]
 
+    async def test_explicit_anchor_len_wins_on_replay(self, journal: SessionJournal) -> None:
+        """ADR 0017: session/start carries the anchor length explicitly —
+        the trailing knowledge message is outside the anchor."""
+        sid = "agent1-anchor-explicit"
+        await journal.append(
+            sid,
+            "session/start",
+            agent_id="agent1",
+            mail_id="m1",
+            trigger_content="hi",
+            carrier=None,
+            context=[
+                {"role": "user", "content": "触发邮件"},
+                {"role": "user", "content": "[已知信息]\n\nclaim"},
+            ],
+            anchor_len=1,
+        )
+
+        replay = await journal.resume(sid)
+
+        assert replay is not None
+        assert replay.anchor_len == 1
+        assert len(replay.context) == 2
+
+    async def test_missing_anchor_len_falls_back_to_context_length(
+        self, journal: SessionJournal
+    ) -> None:
+        """Logs written before the field existed (in-flight sessions):
+        the whole initial context is the anchor, the old behavior."""
+        sid = "agent1-anchor-legacy"
+        await _start(journal, sid)  # no anchor_len field
+
+        replay = await journal.resume(sid)
+
+        assert replay is not None
+        assert replay.anchor_len == 1 == len(replay.context)
+
 
 async def _read_lines(session_id: str, journal: SessionJournal) -> list[str]:
     path = journal._path(session_id)
@@ -233,7 +271,7 @@ def _make_driver(
     services.logger = MagicMock()
     services.publish_event = AsyncMock()
     services.build_context = AsyncMock(
-        return_value=[{"role": "user", "content": "hi"}]
+        return_value=BuiltContext(messages=[{"role": "user", "content": "hi"}], anchor_len=1)
     )
     services.think = AsyncMock(side_effect=list(responses))
     services.session_span = lambda session: contextlib.nullcontext()
@@ -286,6 +324,48 @@ async def _drive(driver: LoopDriver, session: AgentSession, mail: Mail) -> None:
 
 
 class TestDriverJournaling:
+    async def test_first_step_journals_explicit_anchor_len(self, tmp_path: Path) -> None:
+        """The session/start event carries the anchor length explicitly
+        (ADR 0017): the journaled context is complete (model-visible ⇒
+        journaled), but the trailing knowledge message is outside the
+        anchor."""
+        mail = _mail()
+        response = LLMResponse(
+            content="done",
+            tool_calls=[
+                _tc("c1", "sendEmail", {"content": "reply", "is_complete": True})
+            ],
+        )
+        driver, journal, _, services = _make_driver(tmp_path, [response])
+        services.build_context = AsyncMock(
+            return_value=BuiltContext(
+                messages=[
+                    {"role": "user", "content": "触发邮件"},
+                    {"role": "user", "content": "[已知信息]\n\nclaim"},
+                ],
+                anchor_len=1,
+            )
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.anchor_len == 1
+        # The initial two messages head the (grown) session context.
+        assert session.context[:2] == [
+            {"role": "user", "content": "触发邮件"},
+            {"role": "user", "content": "[已知信息]\n\nclaim"},
+        ]
+        start = next(
+            event
+            for event in await journal.read_events(session.id)
+            if event.get("type") == "session/start"
+        )
+        assert start["anchor_len"] == 1
+        assert len(start["context"]) == 2  # knowledge included — model saw it
+
     async def test_full_session_journal_matches_context(self, tmp_path: Path) -> None:
         mail = _mail()
         response = LLMResponse(
