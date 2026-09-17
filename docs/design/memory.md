@@ -1,6 +1,6 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。整体重设计的决策与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)；本文描述阶段 3（冲突判定 + 失效不删除的 claim 生命周期）落地后的真实状态。
+Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。整体重设计的决策与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)；本文描述阶段 5（记忆回归集，五阶段收官）落地后的真实状态。
 
 ## 定位：可审计的个体记忆
 
@@ -133,6 +133,20 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个�
 
 整条链路里没有定时器、没有后台守护进程：蒸馏与反思全部挂在认知循环的事件节拍上。agent 不活动，记忆就不动——这与整个系统「事件驱动、睡觉零成本」的运行模型一致。
 
+## 回归集
+
+阶段 5 补上了记忆系统的回归门禁：[scripts/eval_memory.py](../../scripts/eval_memory.py) + 场景数据集 [scripts/memory_eval/](../../scripts/memory_eval/README.md)（14 个中文邮件场景，对齐 LongMemEval 的四个维度——事实召回、知识更新、时序、拒答）。评测跑真实链路：每个场景在隔离的临时目录里重建 MemoryManager，假 journal 灌入脚本化 session（`session/start` 时间戳控制蒸馏顺序，window=1 逐 session 蒸馏），然后用场景 query 打两个检索面——JIT 注入面（`build_context_blocks`）与检索面（`search_memories`）——断言「该出现的出现、不该出现的（被取代的旧事实、无关 claim、编造内容）不出现」。知识更新与时序维度实际验证的就是冲突判定 supersede 的端到端效果：旧 claim 失效不删除、可审计，但绝不能进检索结果。
+
+定位是**动记忆系统必跑的手动门禁，不进 CI**：评测需要真实 LLM（蒸馏 + 冲突判定）与 embedding 调用——花钱、要 API key，且 LLM 产出有固有波动（脚本允许单场景重试一次再判 FAIL）。运行：
+
+```bash
+uv run python scripts/eval_memory.py \
+    --model deepseek/deepseek-chat \
+    --embedding-model openai/text-embedding-3-small
+```
+
+embedding 模型必须显式指定（JIT 检索无从降级评测，缺失直接报错）；API key 按 `{PROVIDER}_API_KEY` 约定读 `~/.tlon/.env`。逐题 PASS/FAIL、失败打印实际检索内容、按维度汇总，退出码可脚本化。场景格式与加新场景的方法见 [scripts/memory_eval/README.md](../../scripts/memory_eval/README.md)。
+
 ## 设计取舍
 
 ### 为什么是「journal + claims」而不是外挂记忆产品
@@ -154,7 +168,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ## 方向
 
-整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，/ 随之消亡）、阶段 3（冲突判定 + 失效不删除的 claim 生命周期， 随之消亡）与阶段 4（anchor 减肥——knowledge 移出 anchor 固定末位 + `readSession` journal 回读工具， 的 anchor 死路随之消亡，本文描述的现状）已落地；之后是回归集（阶段 5）。
+整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，/ 随之消亡）、阶段 3（冲突判定 + 失效不删除的 claim 生命周期， 随之消亡）、阶段 4（anchor 减肥——knowledge 移出 anchor 固定末位 + `readSession` journal 回读工具， 的 anchor 死路随之消亡）与阶段 5（记忆回归集，见上文「回归集」节）已全部落地，五阶段收官。
 
 与愿景的差距主要有两处：
 

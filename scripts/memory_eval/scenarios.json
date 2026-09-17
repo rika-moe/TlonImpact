@@ -1,0 +1,313 @@
+[
+  {
+    "name": "recall-uv-deps",
+    "dimension": "fact-recall",
+    "sessions": [
+      {
+        "ts": "2026-08-03T10:00:00",
+        "trigger": "提醒一下：我们项目的 Python 依赖统一用 uv 管理，别再往 requirements.txt 里加东西了。",
+        "responses": ["收到，项目依赖统一用 uv 管理，我记下了。"]
+      }
+    ],
+    "query": "这个项目用什么工具管理 Python 依赖？",
+    "expect": { "surface": "both", "must_contain": ["uv"] }
+  },
+  {
+    "name": "recall-desk-floor",
+    "dimension": "fact-recall",
+    "sessions": [
+      {
+        "ts": "2026-08-05T09:30:00",
+        "trigger": "同步个事：小王的工位搬到 3 楼靠窗的位置了，以后找他去那边。",
+        "responses": ["好的，已记住小王的新工位位置。"]
+      }
+    ],
+    "query": "小王的工位在几楼？",
+    "expect": { "surface": "both", "must_contain": [["3 楼", "3楼", "三楼"]] }
+  },
+  {
+    "name": "recall-release-window",
+    "dimension": "fact-recall",
+    "sessions": [
+      {
+        "ts": "2026-08-10T16:00:00",
+        "trigger": "以后发布固定在每周四下午 4 点前完成，其他时间不发生产。",
+        "responses": ["明白，发布窗口固定在每周四下午 4 点前。"]
+      }
+    ],
+    "query": "团队一般安排在什么时候发布上线？",
+    "expect": { "surface": "both", "must_contain": ["周四"] }
+  },
+  {
+    "name": "recall-docs-tool",
+    "dimension": "fact-recall",
+    "sessions": [
+      {
+        "ts": "2026-08-12T14:00:00",
+        "trigger": "项目文档站是用 mkdocs 搭的，源文件都在 docs/ 目录，改完跑构建就行。",
+        "responses": ["收到，文档站用 mkdocs 构建。"]
+      }
+    ],
+    "query": "项目文档站是用什么工具生成的？",
+    "expect": { "surface": "both", "must_contain": [["mkdocs", "MkDocs", "MKDocs"]] }
+  },
+  {
+    "name": "update-cloud-migration",
+    "dimension": "knowledge-update",
+    "sessions": [
+      {
+        "ts": "2026-07-01T10:00:00",
+        "trigger": "我们的 API 服务部署在阿里云华东机房，排查问题先看那边的控制台。",
+        "responses": ["收到，API 服务部署在阿里云。"]
+      },
+      {
+        "ts": "2026-08-15T11:00:00",
+        "trigger": "API 服务这周完成迁移了，现在跑在腾讯云上，阿里云那边的资源已经释放。",
+        "responses": ["收到，API 服务已迁移到腾讯云。"]
+      }
+    ],
+    "query": "API 服务现在部署在哪个云厂商？",
+    "expect": {
+      "surface": "both",
+      "must_contain": ["腾讯"],
+      "must_not_contain": ["阿里"]
+    }
+  },
+  {
+    "name": "update-oncall-person",
+    "dimension": "knowledge-update",
+    "sessions": [
+      {
+        "ts": "2026-07-06T09:00:00",
+        "trigger": "本周 oncall 值班是小李，线上有事直接找他。",
+        "responses": ["好的，本周 oncall 是小李。"]
+      },
+      {
+        "ts": "2026-08-03T09:00:00",
+        "trigger": "oncall 换人了，从现在起由老赵值班，联系方式我稍后发你。",
+        "responses": ["收到，现在由老赵 oncall 值班。"]
+      }
+    ],
+    "query": "现在谁在 oncall 值班？",
+    "expect": {
+      "surface": "both",
+      "must_contain": ["老赵"],
+      "must_not_contain": ["小李"]
+    }
+  },
+  {
+    "name": "update-meeting-time",
+    "dimension": "knowledge-update",
+    "sessions": [
+      {
+        "ts": "2026-07-02T10:00:00",
+        "trigger": "产品周会固定在每周一上午 10 点，3 号会议室。",
+        "responses": ["收到，产品周会每周一上午 10 点。"]
+      },
+      {
+        "ts": "2026-08-20T15:00:00",
+        "trigger": "产品周会改时间了，换成每周三下午 3 点，会议室不变。",
+        "responses": ["收到，产品周会改为每周三下午 3 点。"]
+      }
+    ],
+    "query": "产品周会现在什么时间开？",
+    "expect": {
+      "surface": "both",
+      "must_contain": [["周三", "星期三"]],
+      "must_not_contain": ["周一"]
+    }
+  },
+  {
+    "name": "update-budget",
+    "dimension": "knowledge-update",
+    "sessions": [
+      {
+        "ts": "2026-07-10T14:00:00",
+        "trigger": "二季度市场预算批下来了，50 万，先按这个做计划。",
+        "responses": ["收到，二季度市场预算 50 万。"]
+      },
+      {
+        "ts": "2026-08-25T10:00:00",
+        "trigger": "二季度市场预算调整了，上面追加到 80 万，计划可以放开做。",
+        "responses": ["收到，二季度市场预算追加到 80 万。"]
+      }
+    ],
+    "query": "二季度市场预算现在是多少？",
+    "expect": {
+      "surface": "both",
+      "must_contain": ["80"],
+      "must_not_contain": ["50"]
+    }
+  },
+  {
+    "name": "temporal-project-status",
+    "dimension": "temporal",
+    "sessions": [
+      {
+        "ts": "2026-03-02T09:00:00",
+        "trigger": "凤凰项目这周正式启动了，先做需求梳理，排期月底出。",
+        "responses": ["收到，凤凰项目已启动，处于需求梳理阶段。"]
+      },
+      {
+        "ts": "2026-06-08T10:00:00",
+        "trigger": "凤凰项目开发完了，这周开始前后端联调，预计两周。",
+        "responses": ["收到，凤凰项目进入前后端联调阶段。"]
+      },
+      {
+        "ts": "2026-08-24T11:00:00",
+        "trigger": "凤凰项目昨天已经正式上线了，目前运行稳定，观察一周。",
+        "responses": ["收到，凤凰项目已正式上线。"]
+      }
+    ],
+    "query": "凤凰项目目前进展到哪一步了？",
+    "expect": {
+      "surface": "both",
+      "must_contain": ["上线"],
+      "must_not_contain": ["联调", "需求梳理"]
+    }
+  },
+  {
+    "name": "temporal-price-change",
+    "dimension": "temporal",
+    "sessions": [
+      {
+        "ts": "2026-03-15T10:00:00",
+        "trigger": "标准版定价出来了，99 元每月，官网已经更新。",
+        "responses": ["收到，标准版定价 99 元每月。"]
+      },
+      {
+        "ts": "2026-05-20T10:00:00",
+        "trigger": "标准版涨价了，调整为 129 元每月，老用户锁价半年。",
+        "responses": ["收到，标准版调整为 129 元每月。"]
+      },
+      {
+        "ts": "2026-08-01T10:00:00",
+        "trigger": "通知一下，标准版价格调整为 149 元每月，下周一生效。",
+        "responses": ["收到，标准版最新价格 149 元每月。"]
+      }
+    ],
+    "query": "标准版现在的售价是多少？",
+    "expect": {
+      "surface": "both",
+      "must_contain": ["149"],
+      "must_not_contain": ["99", "129"]
+    }
+  },
+  {
+    "name": "temporal-owner-change",
+    "dimension": "temporal",
+    "sessions": [
+      {
+        "ts": "2026-03-10T09:00:00",
+        "trigger": "数据平台这条线以后由张楠负责，需求都提给他。",
+        "responses": ["收到，数据平台负责人是张楠。"]
+      },
+      {
+        "ts": "2026-06-01T09:00:00",
+        "trigger": "数据平台负责人换成王磊了，张楠调去带别的项目。",
+        "responses": ["收到，数据平台负责人换成王磊。"]
+      },
+      {
+        "ts": "2026-08-18T09:00:00",
+        "trigger": "再同步一下，数据平台现在由李婷负责，王磊上周离职了。",
+        "responses": ["收到，数据平台现在由李婷负责。"]
+      }
+    ],
+    "query": "数据平台现在的负责人是谁？",
+    "expect": {
+      "surface": "both",
+      "must_contain": ["李婷"],
+      "must_not_contain": ["张楠", "王磊"]
+    }
+  },
+  {
+    "name": "refusal-empty-memory",
+    "dimension": "refusal",
+    "sessions": [],
+    "query": "公司的年假政策是多少天？",
+    "expect": { "surface": "both", "expect_empty": true }
+  },
+  {
+    "name": "refusal-no-fabrication",
+    "dimension": "refusal",
+    "sessions": [
+      {
+        "ts": "2026-08-03T10:00:00",
+        "trigger": "我们项目的 Python 依赖统一用 uv 管理。",
+        "responses": ["收到，依赖用 uv 管理。"]
+      },
+      {
+        "ts": "2026-08-10T16:00:00",
+        "trigger": "发布固定在每周四下午 4 点前完成。",
+        "responses": ["明白，周四下午发布。"]
+      }
+    ],
+    "query": "请推荐三部好看的科幻电影。",
+    "expect": {
+      "surface": "both",
+      "must_not_contain": ["科幻", "电影"]
+    }
+  },
+  {
+    "name": "refusal-selectivity",
+    "dimension": "refusal",
+    "sessions": [
+      {
+        "ts": "2026-08-01T09:00:00",
+        "trigger": "生产环境的 Kubernetes 集群一共 3 个节点，都在华东。",
+        "responses": ["收到，生产 Kubernetes 集群 3 个节点。"]
+      },
+      {
+        "ts": "2026-08-02T09:00:00",
+        "trigger": "数据库备份任务每天凌晨 2 点跑，失败会告警。",
+        "responses": ["收到，数据库每天凌晨 2 点备份。"]
+      },
+      {
+        "ts": "2026-08-03T09:00:00",
+        "trigger": "线上日志统一保留 30 天，超期的自动清理。",
+        "responses": ["收到，日志保留 30 天。"]
+      },
+      {
+        "ts": "2026-08-04T09:00:00",
+        "trigger": "告警阈值定了：CPU 超过 80% 持续 5 分钟就电话告警。",
+        "responses": ["收到，CPU 80% 触发告警。"]
+      },
+      {
+        "ts": "2026-08-05T09:00:00",
+        "trigger": "发布窗口固定在每周四下午，其他时间不上生产。",
+        "responses": ["收到，周四下午发布。"]
+      },
+      {
+        "ts": "2026-08-06T09:00:00",
+        "trigger": "监控大盘用 Prometheus 搭的，Grafana 看板在内网。",
+        "responses": ["收到，监控用 Prometheus。"]
+      },
+      {
+        "ts": "2026-08-07T09:00:00",
+        "trigger": "老板只喝美式咖啡，见面前记得准备。",
+        "responses": ["收到，老板只喝美式咖啡。"]
+      },
+      {
+        "ts": "2026-08-08T09:00:00",
+        "trigger": "团队下午茶大家投票还是订奶茶，每周三一次。",
+        "responses": ["收到，下午茶订奶茶。"]
+      },
+      {
+        "ts": "2026-08-09T09:00:00",
+        "trigger": "公司附近新开了家火锅店，团建可以去试试。",
+        "responses": ["收到，团建候选火锅店。"]
+      },
+      {
+        "ts": "2026-08-10T09:00:00",
+        "trigger": "小王不吃辣，聚餐点菜注意一下。",
+        "responses": ["收到，小王不吃辣。"]
+      }
+    ],
+    "query": "生产环境的 Kubernetes 集群有几个节点？",
+    "expect": {
+      "surface": "injection",
+      "must_contain": [["3 个节点", "3个节点", "三个节点"]],
+      "must_not_contain": ["咖啡", "奶茶", "火锅"]
+    }
+  }
+]
