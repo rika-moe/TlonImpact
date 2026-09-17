@@ -174,7 +174,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 会话的收尾有两台机器，都在循环之外、由引擎在固定时点触发：
 
-- **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少完成会话数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进——task 由引擎持有：进行中计入成员活跃（`idle_seconds` 不判空闲，drain 不会打断审计），成员 shutdown 时被取消并 await，不留游离协程。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆摘要，产出 `record_fact` / `delete_fact` / `noop` 操作并应用。会话计数由调度器在 session 回收点经 `note_interaction` 喂入——只有真正完成的会话才算数（ADR 0009：摘要触发也挂在这个回收点上，pending 达 `summary_window` 即从 journal 批量压缩进 episodic，无需反思催办）。
+- **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少完成会话数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进——task 由引擎持有：进行中计入成员活跃（`idle_seconds` 不判空闲，drain 不会打断审计），成员 shutdown 时被取消并 await，不留游离协程。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆快照，产出 `record_claim` / `delete_claim` / `noop` 操作并应用。会话计数由调度器在 session 回收点经 `note_interaction` 喂入——只有真正完成的会话才算数（ADR 0017：蒸馏触发也挂在这个回收点上，pending 达 `distillation_window` 即从 journal 批量蒸馏成 claims，无需反思催办）。
 - **完成动作**（[agents/on_complete.py](../../src/tlon/agents/on_complete.py) 的 `OnCompleteRunner`）：认知会话产出最终回复后，把认知规则的 `:actions` 求值一次——环境在统一环境上追加 `result`（最终回复文本，由 act stage 经 `StageOutcome.final_reply` 声明），收集到的动作请求走 `MemberRuntime._execute_action` 统一执行，五种动作全部可用。调用时点在会话标记完成之前，仍在会话 span 内，因此 spawn 配额的会话归属（contextvars 携带 session_id）不受影响。任何求值或执行失败只记日志，不打断剩余动作与会话生命周期。
 
 两者的共同点是"挂在引擎的固定时点上，而非 stage 的程序内容"：反思与收尾是运行时服务质量的一部分，DSL 不能关掉它们，也不用知道它们存在。

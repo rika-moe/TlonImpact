@@ -1,14 +1,15 @@
 """Memory system for Agents.
 
-The working-memory layer is retired (ADR 0009): the session journal is
-the sole interaction truth, and summaries flow journal -> episodic
-directly. What remains is the episodic layer — long-term memory
-persistence and retrieval: cross-session summaries and key facts.
+The session journal is the sole interaction truth (ADR 0007); completed
+sessions are distilled in batches into claims — natural-language
+assertions with provenance — under the claim model (ADR 0017).
+Distillation progress is tracked by a scalar timestamp watermark, never
+by scanning the stored claims.
 
 Usage:
     >>> from tlon.memory import MemoryManager, MemoryConfig
     >>> config = MemoryConfig()
     >>> memory = MemoryManager(agent_id="dev-001", config=config, data_dir=Path("./data"))
     >>> await memory.load()
-    >>> await memory.maybe_summarize_completed_sessions(journal)
+    >>> await memory.maybe_distill_completed_sessions(journal)
 """

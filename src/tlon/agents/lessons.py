@@ -151,7 +151,7 @@ class LessonsDistiller(Component, Device):
         )
         journal = SessionJournal(agent_id, self._paths)
         digest = await memory.get_memory_digest(journal)
-        if digest["summary_count"] == 0 and digest["fact_count"] == 0:
+        if digest["claim_count"] == 0:
             logger.info("lessons_distill_skipped", agent_id=agent_id, reason="empty_digest")
             return
 
@@ -174,30 +174,16 @@ class LessonsDistiller(Component, Device):
     @staticmethod
     def _build_prompt(digest: dict[str, Any]) -> str:
         """Render the memory digest as the distillation input."""
-        parts = ["## 退休成员的记忆摘要\n"]
-        parts.append(f"会话摘要数：{digest['summary_count']}")
-        parts.append(f"已知事实数：{digest['fact_count']}")
+        parts = ["## 退休成员的记忆\n"]
+        parts.append(f"记忆数：{digest['claim_count']}")
         parts.append("")
 
-        if digest["summaries"]:
-            parts.append("### 会话摘要")
-            for s in digest["summaries"][-10:]:
-                text = s.get("summary_text", "")[:200]
-                ts = s.get("timestamp", "")[:19]
-                parts.append(f"- [{ts}] {text}")
-            parts.append("")
-
-        if digest["facts"]:
-            parts.append("### 已知事实")
-            for f in digest["facts"]:
-                desc = f.get("description", "")
-                if not desc:
-                    desc = (
-                        f"{f.get('subject', '')} {f.get('predicate', '')} "
-                        f"{f.get('object', '')}"
-                    )
-                ftype = f.get("fact_type", "GENERAL")
-                parts.append(f"- [{ftype}] {desc}")
+        if digest["claims"]:
+            parts.append("### 记忆")
+            for c in digest["claims"]:
+                cid = str(c.get("id", ""))[:8]
+                date = str(c.get("timestamp", ""))[:10]
+                parts.append(f"- [{cid}] [{date}] {c.get('text', '')}")
             parts.append("")
 
         parts.append("")

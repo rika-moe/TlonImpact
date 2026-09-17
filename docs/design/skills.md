@@ -7,7 +7,7 @@
 Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 agent 怎么做某一类事（工作流、领域 know-how、可执行脚本）。与相邻概念的分工：
 
 - **人格**（SOUL.md 等，`(persona)` section）：常驻 system prompt，回答"我是谁"。
-- **记忆**（episodic summaries / facts，`(knowledge)` section）：回答"发生过什么"。
+- **记忆**（claims，`(knowledge)` section）：回答"发生过什么"。
 - **技能**（`(skills)` section）：平时只有索引在上下文里，匹配到才读正文，回答"这类事该怎么做"。
 - **工具**（`read_file` 等）：确定性的"能做什么"。skill 不是工具——它是编排工具的知识。
 

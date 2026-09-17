@@ -37,9 +37,9 @@ line): each line is parsed independently and a bad line is skipped with
 a warning, same as the mailbox reader. Replay never re-executes side
 effects — mails and on-complete actions happened (or did not) in the
 previous process; replay only rebuilds data fields. Completed logs
-(``list_completed``) also feed the journal → episodic summary trigger
-(ADR 0009): the log is the sole interaction truth, so summarization
-reads it directly.
+(``list_completed``) also feed the journal → claims distillation
+trigger (ADR 0017): the log is the sole interaction truth, so
+distillation reads it directly.
 
 Writes are serialized by one asyncio lock per journal file, shared
 process-wide across SessionJournal instances (same pattern as the
@@ -363,12 +363,12 @@ class SessionJournal:
         return None
 
     async def list_completed(self) -> list[str]:
-        """Session ids whose log carries a ``session/end`` (ADR 0009).
+        """Session ids whose log carries a ``session/end``.
 
-        The summary trigger (``MemoryManager``) diffs this set against
-        the ``source_session_ids`` already recorded in episodic
-        summaries, so a session is summarized exactly once. Order is
-        stable (file name order).
+        The distillation trigger (``MemoryManager``) diffs this set
+        against the persisted watermark (a scalar timestamp — session
+        ids are uuids without temporal order), so a session is
+        distilled exactly once. Order is stable (file name order).
         """
         sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
         completed: list[str] = []

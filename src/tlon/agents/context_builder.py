@@ -317,11 +317,12 @@ class ContextBuilder:
         """Build the ``(thread-recap)`` section: a digest of the thread's
         most recent completed session.
 
-        Data source is the session journal (ADR 0007), not the episodic
-        summaries: a Summary is batch-triggered (ADR 0009, pending count
-        must reach ``summary_window``) and spans several sessions across
-        threads, so the previous round of *this* thread is usually not
-        summarized yet when the follow-up mail arrives. The journal log
+        Data source is the session journal (ADR 0007), not the
+        distilled claims: a claim batch is window-triggered (ADR 0017,
+        pending count must reach ``distillation_window``) and spans
+        several sessions across threads, so the previous round of
+        *this* thread is usually not distilled yet when the follow-up
+        mail arrives. The journal log
         is complete at session end, per-session, and reading it needs no
         LLM call — the recap is a deterministic, bounded rendering.
 

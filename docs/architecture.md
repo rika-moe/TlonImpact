@@ -148,7 +148,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### 记忆与沙箱
 
-`tlon.memory` 的 `MemoryManager`（[memory/manager.py](../src/tlon/memory/manager.py)）为每个 agent 管理两层存储：工作记忆（[memory/working_store.py](../src/tlon/memory/working_store.py)，`interactions.jsonl`）与情景记忆（[memory/episodic_store.py](../src/tlon/memory/episodic_store.py)，`summaries.jsonl` + `facts.jsonl`），摘要由 [memory/summarizer.py](../src/tlon/memory/summarizer.py) 生成。agent 侧通过 `tlon.tools.memory` 下的工具（`remember_fact`、`search_memories`、`forget_memory`、`compact`）读写自己的记忆。`tlon.sandbox` 的 `DockerRuntime`（[sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py)）封装 Docker 容器执行，供 Shell 类工具使用。
+`tlon.memory` 的 `MemoryManager`（[memory/manager.py](../src/tlon/memory/manager.py)）为每个 agent 管理长期记忆：claim 存于 [memory/claim_store.py](../src/tlon/memory/claim_store.py)（`claims.jsonl`，append-only），批量蒸馏（journal → claims）由 [memory/distiller.py](../src/tlon/memory/distiller.py) 完成，进度以标量时间戳水位线持久化在 `distillation.json`（ADR 0017）。agent 侧通过 `tlon.tools.memory` 下的工具（`rememberFact`、`searchMemories`、`forget`）读写自己的记忆。`tlon.sandbox` 的 `DockerRuntime`（[sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py)）封装 Docker 容器执行，供 Shell 类工具使用。
 
 ### 工具层与依赖倒置
 
@@ -178,8 +178,8 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 │   │   ├── IDENTITY.md / SOUL.md / RULES.md
 │   ├── memory/
 │   │   ├── config.json
-│   │   ├── working/interactions.jsonl
-│   │   └── episodic/summaries.jsonl、facts.jsonl
+│   │   ├── claims.jsonl     # 记忆 claim（ADR 0017，append-only）
+│   │   └── distillation.json # 蒸馏水位线
 │   ├── tasks.jsonl
 │   ├── workspace/
 │   └── mail/

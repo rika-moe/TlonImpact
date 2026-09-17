@@ -1095,15 +1095,13 @@ class _BlockingLLM:
 
 
 class _DigestMemoryStub(_MemoryStub):
-    """Memory stub with one fact, so a reflection proceeds to the LLM call."""
+    """Memory stub with one claim, so a reflection proceeds to the LLM call."""
 
     async def get_memory_digest(self, logs: Any) -> dict[str, Any]:
         return {
-            "unsummarized_session_count": 0,
-            "summary_count": 0,
-            "fact_count": 1,
-            "summaries": [],
-            "facts": [{"id": "fact-1", "description": "something"}],
+            "undistilled_session_count": 0,
+            "claim_count": 1,
+            "claims": [{"id": "claim-1", "text": "something", "timestamp": "2026-09-17"}],
         }
 
 

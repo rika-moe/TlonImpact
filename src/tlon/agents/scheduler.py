@@ -157,7 +157,7 @@ class SessionScheduler:
         2. ACTIVE sessions -> one think+dispatch step
         3. WAITING sessions -> collect completed background tools
         4. COMPLETED -> cleanup (+ reflection counter and the batch
-           summary trigger, ADR 0009)
+           distillation trigger, ADR 0017)
         """
         # This loop runs in its own task per agent, so binding agent_id for
         # its whole lifetime is safe and also covers logs inside session
@@ -248,10 +248,10 @@ class SessionScheduler:
                         pending_collects.pop(sid, None)
                         self._last_activity_at = datetime.now()
                         # Session completed: feed the reflection counter
-                        # and check the batch summary trigger (ADR 0009 —
-                        # journal -> episodic, threshold config.summary_window).
+                        # and check the batch distillation trigger (ADR 0017 —
+                        # journal -> claims, threshold config.distillation_window).
                         self._note_interaction()
-                        await self._check_session_summaries()
+                        await self._check_session_distillation()
 
                 # Agent state derives on read (Agent.state property) — the
                 # scheduler never calls back into the Agent.
@@ -370,20 +370,20 @@ class SessionScheduler:
         except Exception as e:
             logger.error("session_journal_end_failed", session_id=session.id, error=str(e))
 
-    async def _check_session_summaries(self) -> None:
-        """Run the batch summary trigger at the reap point (ADR 0009).
+    async def _check_session_distillation(self) -> None:
+        """Run the batch distillation trigger at the reap point (ADR 0017).
 
-        Never raises: a summarization failure (LLM outage, disk error)
+        Never raises: a distillation failure (LLM outage, disk error)
         is logged and retried at the next session's reap — the pending
-        sessions stay pending because no Summary records them.
+        sessions stay pending because the watermark never advanced.
         """
         try:
-            summary_id = await self._memory.maybe_summarize_completed_sessions(self._journal)
+            claim_count = await self._memory.maybe_distill_completed_sessions(self._journal)
         except Exception as e:
-            logger.error("session_summary_check_failed", error=str(e), exc_info=True)
+            logger.error("session_distillation_check_failed", error=str(e), exc_info=True)
             return
-        if summary_id:
-            logger.info("session_summary_generated", summary_id=summary_id)
+        if claim_count:
+            logger.info("session_distillation_completed", claim_count=claim_count)
 
     def _is_session_timed_out(self, session: AgentSession) -> bool:
         """A session idle beyond the configured timeout is considered stuck."""

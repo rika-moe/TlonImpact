@@ -1,19 +1,8 @@
-"""Data models for Memory system."""
+"""Data models for Memory system (claim model, ADR 0017)."""
 
 import uuid
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any, Literal
-
-
-class FactType(StrEnum):
-    """Types of facts that can be stored."""
-
-    USER_PREFERENCE = "USER_PREFERENCE"
-    PROJECT_STATE = "PROJECT_STATE"
-    TECH_STACK = "TECH_STACK"
-    DECISION = "DECISION"
-    GENERAL = "GENERAL"
 
 
 @dataclass
@@ -23,12 +12,9 @@ class MemoryConfig:
     Attributes:
         version: Config file version
         agent_id: Associated agent ID
-        summary_window: Completed unsummarized sessions before a batch
-            summary is generated (ADR 0009)
-        episodic_max_summaries: Maximum summaries to keep
-        episodic_max_facts: Maximum facts to keep
-        context_max_summaries: Summaries to include in context
-        context_max_facts: Facts to include in context
+        distillation_window: Completed undistilled sessions before a batch
+            distillation runs (ADR 0017)
+        context_max_claims: Claims to include in context
         reflection_min_interactions: Completed sessions before reflection
             may trigger
     """
@@ -36,16 +22,11 @@ class MemoryConfig:
     version: str = "1.0"
     agent_id: str = ""
 
-    # Summarization trigger (ADR 0009: journal -> episodic, batch by window)
-    summary_window: int = 3
-
-    # Episodic Memory settings
-    episodic_max_summaries: int = 20
-    episodic_max_facts: int = 50
+    # Distillation trigger (ADR 0017: journal -> claims, batch by window)
+    distillation_window: int = 3
 
     # Context building settings
-    context_max_summaries: int = 5
-    context_max_facts: int = 10
+    context_max_claims: int = 10
 
     # Reflection settings (agent self-driven memory audit). The on/off
     # switch and interval live in the behavior spec
@@ -57,16 +38,11 @@ class MemoryConfig:
         return {
             "version": self.version,
             "agent_id": self.agent_id,
-            "summary": {
-                "window": self.summary_window,
-            },
-            "episodic": {
-                "max_summaries": self.episodic_max_summaries,
-                "max_facts": self.episodic_max_facts,
+            "distillation": {
+                "window": self.distillation_window,
             },
             "context": {
-                "max_summaries_in_context": self.context_max_summaries,
-                "max_facts_in_context": self.context_max_facts,
+                "max_claims_in_context": self.context_max_claims,
             },
             "reflection": {
                 "min_interactions": self.reflection_min_interactions,
@@ -77,9 +53,10 @@ class MemoryConfig:
     def from_dict(cls, data: dict[str, Any]) -> "MemoryConfig":
         """Create config from dictionary.
 
-        Sections that no longer exist (``working``, ``triggers`` from the
-        retired working-memory layer) are simply not read — an old
-        ``config.json`` on disk loads as the current defaults.
+        Sections from retired designs (``summary``/``episodic``/old
+        ``context`` keys from the ADR 0009 summary model, ``working``/
+        ``triggers`` from the working-memory layer) are simply not read —
+        an old ``config.json`` on disk loads as the current defaults.
         """
         config = cls()
 
@@ -88,17 +65,11 @@ class MemoryConfig:
         if "agent_id" in data:
             config.agent_id = data["agent_id"]
 
-        if "summary" in data:
-            config.summary_window = data["summary"].get("window", 3)
-
-        if "episodic" in data:
-            config.episodic_max_summaries = data["episodic"].get("max_summaries", 20)
-            config.episodic_max_facts = data["episodic"].get("max_facts", 50)
+        if "distillation" in data:
+            config.distillation_window = data["distillation"].get("window", 3)
 
         if "context" in data:
-            ctx = data["context"]
-            config.context_max_summaries = ctx.get("max_summaries_in_context", 5)
-            config.context_max_facts = ctx.get("max_facts_in_context", 10)
+            config.context_max_claims = data["context"].get("max_claims_in_context", 10)
 
         if "reflection" in data:
             config.reflection_min_interactions = data["reflection"].get("min_interactions", 5)
@@ -108,7 +79,7 @@ class MemoryConfig:
 
 @dataclass
 class SessionProjection:
-    """One completed session's summarization view (ADR 0009).
+    """One completed session's distillation view.
 
     Rebuilt from the session's journal (the sole interaction truth):
     the trigger content plus, per round, the LLM response content and a
@@ -122,120 +93,62 @@ class SessionProjection:
 
 
 @dataclass
-class Summary:
-    """A batch summary generated from completed sessions' journals."""
+class Claim:
+    """One remembered assertion (ADR 0017).
 
-    timestamp: str
-    summary_text: str
-    source_session_ids: list[str] = field(default_factory=list)
-    interaction_count: int = 0
-    key_decisions: list[str] = field(default_factory=list)
-    action_items: list[str] = field(default_factory=list)
-    participants: list[str] = field(default_factory=list)
-    keywords: list[str] = field(default_factory=list)
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "id": self.id,
-            "timestamp": self.timestamp,
-            "summary_text": self.summary_text,
-            "source_session_ids": self.source_session_ids,
-            "interaction_count": self.interaction_count,
-            "key_decisions": self.key_decisions,
-            "action_items": self.action_items,
-            "participants": self.participants,
-            "keywords": self.keywords,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Summary":
-        """Create from dictionary.
-
-        Old ``summaries.jsonl`` lines predate ``source_session_ids``
-        (they carry ``session_id`` / ``source_interactions`` instead):
-        a missing field reads as an empty list — the old lines stay
-        loadable, and their sessions are simply never deduped against.
-        """
-        return cls(
-            id=data.get("id", str(uuid.uuid4())),
-            timestamp=data["timestamp"],
-            summary_text=data["summary_text"],
-            source_session_ids=data.get("source_session_ids", []),
-            interaction_count=data.get("interaction_count", 0),
-            key_decisions=data.get("key_decisions", []),
-            action_items=data.get("action_items", []),
-            participants=data.get("participants", []),
-            keywords=data.get("keywords", []),
-        )
-
-
-@dataclass
-class Fact:
-    """A key fact extracted from interactions.
-
-    Facts represent structured knowledge like user preferences,
-    project state, or important decisions.
+    A claim is a natural-language statement distilled from completed
+    sessions or recorded directly by the agent, with provenance
+    (``source_session_ids``) and a validity window. Claims are
+    append-only: supersession marks (``status``/``valid_to``/
+    ``superseded_by``), never deletes — the lifecycle writes land in
+    stage 3; the fields exist from stage 1 so the on-disk format is
+    stable.
     """
 
+    text: str
     timestamp: str
-    session_id: str
-    fact_type: FactType
-    subject: str
-    predicate: str
-    object: str
-    description: str = ""
-    confidence: float = 0.8
-    source_interaction: str | None = None
-    version: int = 1
+    valid_from: str
+    source_session_ids: list[str] = field(default_factory=list)
+    valid_to: str | None = None
+    status: Literal["active", "superseded"] = "active"
     superseded_by: str | None = None
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    importance: float = 0.5
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "id": self.id,
             "timestamp": self.timestamp,
-            "session_id": self.session_id,
-            "fact_type": self.fact_type.value,
-            "subject": self.subject,
-            "predicate": self.predicate,
-            "object": self.object,
-            "description": self.description,
-            "confidence": self.confidence,
-            "source_interaction": self.source_interaction,
-            "version": self.version,
+            "text": self.text,
+            "source_session_ids": self.source_session_ids,
+            "valid_from": self.valid_from,
+            "valid_to": self.valid_to,
+            "status": self.status,
             "superseded_by": self.superseded_by,
+            "importance": self.importance,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Fact":
-        """Create from dictionary."""
-        fact_type = data.get("fact_type", "GENERAL")
-        if isinstance(fact_type, str):
-            fact_type = FactType(fact_type)
+    def from_dict(cls, data: dict[str, Any]) -> "Claim":
+        """Create from dictionary.
 
+        Missing fields fall back to sane defaults so hand-written or
+        older-format lines stay loadable.
+        """
+        timestamp = data.get("timestamp", "")
+        status = data.get("status", "active")
         return cls(
-            id=data.get("id", str(uuid.uuid4())),
-            timestamp=data["timestamp"],
-            session_id=data["session_id"],
-            fact_type=fact_type,
-            subject=data["subject"],
-            predicate=data["predicate"],
-            object=data["object"],
-            description=data.get("description", ""),
-            confidence=data.get("confidence", 0.8),
-            source_interaction=data.get("source_interaction"),
-            version=data.get("version", 1),
+            id=data.get("id", uuid.uuid4().hex),
+            timestamp=timestamp,
+            text=data.get("text", ""),
+            source_session_ids=data.get("source_session_ids", []),
+            valid_from=data.get("valid_from", timestamp),
+            valid_to=data.get("valid_to"),
+            status=status if status in ("active", "superseded") else "active",
             superseded_by=data.get("superseded_by"),
+            importance=float(data.get("importance", 0.5)),
         )
-
-    def to_natural_language(self) -> str:
-        """Convert fact to natural language sentence."""
-        if self.description:
-            return self.description
-        return f"{self.subject} {self.predicate} {self.object}"
 
 
 @dataclass
@@ -246,7 +159,7 @@ class ContextBlock:
     to an OpenAI-style message for inclusion in the conversation.
     """
 
-    block_type: Literal["episodic_summaries", "key_facts"]
+    block_type: Literal["claims"]
     priority: int
     content: str
     source_ids: list[str] = field(default_factory=list)
@@ -254,8 +167,7 @@ class ContextBlock:
     def to_openai_message(self) -> dict[str, Any]:
         """Convert to OpenAI message format."""
         type_labels = {
-            "episodic_summaries": "过往会话摘要",
-            "key_facts": "已知事实",
+            "claims": "记忆",
         }
         label = type_labels.get(self.block_type, self.block_type)
 

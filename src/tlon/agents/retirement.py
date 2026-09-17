@@ -60,7 +60,7 @@ FAREWELL_SYSTEM_PROMPT = (
     "你是一位即将退休的 Agent 成员，正在写告别信。你已被永久停止运行，"
     "这封信是你留给社会的最后一份记录。\n\n"
     "信的内容必须覆盖四个部分：\n"
-    "1. 任期总结——你做过什么、记住了什么（基于给出的记忆摘要）\n"
+    "1. 任期总结——你做过什么、记住了什么（基于给出的记忆）\n"
     "2. 未竟事项——没做完的任务与没回复的邮件线程，逐条列出\n"
     "3. 移交清单——每件事项建议由谁、如何接手\n"
     "4. 给继任者的建议——从经验中提炼的简短忠告\n\n"
@@ -144,9 +144,7 @@ class RetirementCeremony(Component, Device):
         open_tasks = self._open_tasks(agent_id)
         open_threads = await self._open_threads(agent_id)
         digest = await self._memory_digest(agent_id)
-        has_digest = digest is not None and (
-            digest["summary_count"] > 0 or digest["fact_count"] > 0
-        )
+        has_digest = digest is not None and digest["claim_count"] > 0
 
         farewell_sent = False
         farewell_to: str | None = None
@@ -321,18 +319,12 @@ class RetirementCeremony(Component, Device):
         parts = [f"退休成员：{name}\n"]
 
         if digest is not None:
-            parts.append("## 记忆摘要")
-            parts.append(f"会话摘要数：{digest['summary_count']}")
-            parts.append(f"已知事实数：{digest['fact_count']}")
-            for s in digest["summaries"][-10:]:
-                text = s.get("summary_text", "")[:200]
-                ts = s.get("timestamp", "")[:19]
-                parts.append(f"- [{ts}] {text}")
-            for f in digest["facts"]:
-                desc = f.get("description", "") or (
-                    f"{f.get('subject', '')} {f.get('predicate', '')} {f.get('object', '')}"
-                )
-                parts.append(f"- [{f.get('fact_type', 'GENERAL')}] {desc}")
+            parts.append("## 记忆")
+            parts.append(f"记忆数：{digest['claim_count']}")
+            for c in digest["claims"]:
+                cid = str(c.get("id", ""))[:8]
+                date = str(c.get("timestamp", ""))[:10]
+                parts.append(f"- [{cid}] [{date}] {c.get('text', '')}")
             parts.append("")
 
         parts.append("## 未完成任务")

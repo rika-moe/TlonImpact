@@ -15,7 +15,7 @@ class SearchMemoriesTool(Tool):
     """Tool to search agent's memory.
 
     This tool allows the agent to search for previously stored
-    summaries and facts.
+    memories (claims).
 
     Example:
         >>> tool = SearchMemoriesTool(memory_manager)
@@ -30,7 +30,7 @@ class SearchMemoriesTool(Tool):
         """
         super().__init__(
             name="searchMemories",
-            description="搜索长期记忆中的摘要和事实",
+            description="搜索长期记忆中的记忆条目",
             parameters={
                 "type": "object",
                 "properties": {

@@ -21,9 +21,8 @@ Layout:
     │   ├── memory/
     │   │   ├── config.json
     │   │   ├── lessons.md
-    │   │   └── episodic/
-    │   │       ├── summaries.jsonl
-    │   │       └── facts.jsonl
+    │   │   ├── claims.jsonl
+    │   │   └── distillation.json
     │   ├── sessions/
     │   │   └── {session_id}.jsonl
     │   ├── tasks.jsonl
@@ -292,7 +291,7 @@ class TlonPaths:
         output (issue ).
 
         Written by ``agents/lessons.py``'s LessonsDistiller on
-        ``AGENT_STOPPED``: one LLM pass distills the member's episodic
+        ``AGENT_STOPPED``: one LLM pass distills the member's memory
         digest into lessons for the next generation. Creates the memory
         dir (write path)."""
         return self.agent_memory_dir(agent_id) / "lessons.md"

@@ -1,4 +1,4 @@
-"""Tool for recording facts to memory."""
+"""Tool for recording claims to memory."""
 
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 
 class RememberFactTool(Tool):
-    """Tool to record a fact to agent's memory.
+    """Tool to record a claim to agent's memory.
 
     This tool allows the agent to remember important information
     about the user, project state, decisions, etc.
@@ -21,7 +21,6 @@ class RememberFactTool(Tool):
         >>> tool = RememberFactTool(memory_manager)
         >>> result = await tool.execute(
         ...     fact="User prefers Python over JavaScript",
-        ...     fact_type="USER_PREFERENCE",
         ...     importance=0.8
         ... )
     """
@@ -34,36 +33,13 @@ class RememberFactTool(Tool):
         """
         super().__init__(
             name="rememberFact",
-            description="记录一个重要事实到长期记忆中",
+            description="记录一条重要记忆到长期记忆中",
             parameters={
                 "type": "object",
                 "properties": {
                     "fact": {
                         "type": "string",
-                        "description": "事实的自然语言描述，例如：用户喜欢使用Python",
-                    },
-                    "fact_type": {
-                        "type": "string",
-                        "enum": [
-                            "USER_PREFERENCE",
-                            "PROJECT_STATE",
-                            "TECH_STACK",
-                            "DECISION",
-                            "GENERAL",
-                        ],
-                        "description": "事实类型：USER_PREFERENCE(用户偏好), PROJECT_STATE(项目状态), TECH_STACK(技术栈), DECISION(决策), GENERAL(一般)",
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "事实主体，例如：用户",
-                    },
-                    "predicate": {
-                        "type": "string",
-                        "description": "谓词/关系，例如：喜欢使用",
-                    },
-                    "object": {
-                        "type": "string",
-                        "description": "对象，例如：Python",
+                        "description": "记忆的自然语言描述，例如：用户喜欢使用Python",
                     },
                     "importance": {
                         "type": "number",
@@ -76,40 +52,28 @@ class RememberFactTool(Tool):
         self.memory = memory_manager
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """Execute the tool to remember a fact.
+        """Execute the tool to remember a claim.
 
         Args:
-            fact: Natural language description of the fact
-            fact_type: Type of fact (USER_PREFERENCE, PROJECT_STATE, etc.)
-            subject: Subject of the fact
-            predicate: Predicate/relationship
-            object: Object of the fact
+            fact: Natural language description of what to remember
             importance: Importance score (0-1)
 
         Returns:
-            ToolResult with the fact ID
+            ToolResult with the claim ID
         """
         fact: str = kwargs["fact"]
-        fact_type: str = kwargs.get("fact_type", "GENERAL")
-        subject: str = kwargs.get("subject", "用户")
-        predicate: str = kwargs.get("predicate", "提到")
-        object: str = kwargs.get("object", "")
         importance: float = kwargs.get("importance", 0.5)
 
         try:
-            fact_id = await self.memory.remember_fact(
+            claim_id = await self.memory.remember_fact(
                 fact=fact,
-                fact_type=fact_type,
-                subject=subject,
-                predicate=predicate,
-                object=object or fact[:50],
                 importance=importance,
             )
 
             return ToolResult(
                 success=True,
-                data={"fact_id": fact_id},
-                message=f"✅ 已记录事实: {fact[:50]}...",
+                data={"claim_id": claim_id},
+                message=f"✅ 已记录记忆: {fact[:50]}...",
             )
         except Exception as e:
             logger.error("fact_remember_failed", content=fact, error=str(e), exc_info=True)
@@ -117,5 +81,5 @@ class RememberFactTool(Tool):
                 success=False,
                 data={},
                 error=str(e),
-                message=f"❌ 记录事实失败: {e}",
+                message=f"❌ 记录记忆失败: {e}",
             )

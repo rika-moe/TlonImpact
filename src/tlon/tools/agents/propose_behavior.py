@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 
 _DRAFT_SYSTEM_PROMPT = (
     "你是 behavior prototype 起草器。输入是一个成员的当前行为规约"
-    "（behavior.tlon 底稿）、它的个体经验（记忆摘要与事实、蒸馏教训）"
+    "（behavior.tlon 底稿）、它的个体经验（记忆、蒸馏教训）"
     "和一条变更意图；输出是一份**完整的新 behavior.tlon**。\n"
     "要求：\n"
     "- 只输出 spec 文本本身——一个 v1 schema 的 EDN map；不要解释、"
@@ -48,26 +48,17 @@ _DRAFT_SYSTEM_PROMPT = (
 
 
 def _render_digest(digest: dict[str, Any]) -> str:
-    """Render a memory digest as prompt text (summaries + facts)."""
+    """Render a memory digest as prompt text (claims)."""
     parts = [
-        f"未摘要会话数：{digest['unsummarized_session_count']}；"
-        f"会话摘要数：{digest['summary_count']}；"
-        f"已知事实数：{digest['fact_count']}",
+        f"未蒸馏会话数：{digest['undistilled_session_count']}；"
+        f"记忆数：{digest['claim_count']}",
     ]
-    if digest["summaries"]:
-        parts.append("### 会话摘要")
-        for s in digest["summaries"][-10:]:
-            text = s.get("summary_text", "")[:200]
-            ts = s.get("timestamp", "")[:19]
-            parts.append(f"- [{ts}] {text}")
-    if digest["facts"]:
-        parts.append("### 已知事实")
-        for f in digest["facts"]:
-            desc = f.get("description", "") or (
-                f"{f.get('subject', '')} {f.get('predicate', '')} "
-                f"{f.get('object', '')}"
-            )
-            parts.append(f"- [{f.get('fact_type', 'GENERAL')}] {desc}")
+    if digest["claims"]:
+        parts.append("### 记忆")
+        for c in digest["claims"]:
+            cid = str(c.get("id", ""))[:8]
+            date = str(c.get("timestamp", ""))[:10]
+            parts.append(f"- [{cid}] [{date}] {c.get('text', '')}")
     return "\n".join(parts)
 
 
@@ -122,7 +113,7 @@ class ProposeBehaviorTool(Tool):
             description=(
                 "基于自己的个体经验提出下一代行为原型（世代通道的经验入口，）。"
                 "只需给出变更意图与新原型名：工具内部读你当前的 behavior.tlon 与记忆"
-                "（摘要/事实/蒸馏教训），由一次独立的起草调用产出完整的新 spec，"
+                "（claims 与蒸馏教训），由一次独立的起草调用产出完整的新 spec，"
                 "并以你自己的 prototype 为父原型写入 staging 区（proposal_note 记意图、"
                 "lessons 随包）。与 writePrototype 的区别：那是裸写通道（自带全文），"
                 "这里由经验驱动起草。提案不可信：需人类在 mirror 批准后才能 spawnAgent "

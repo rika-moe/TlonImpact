@@ -232,20 +232,16 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 ## memory
 
-四个工具都操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/`。搜索均为简单关键词匹配，不是向量检索。
+三个工具都操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/claims.jsonl`（claim 模型，ADR 0017）。搜索为简单关键词匹配，不是向量检索（向量检索是 ADR 0017 阶段 2）。
 
 ### rememberFact
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `fact` | string | 是 | — | 事实的自然语言描述 |
-| `fact_type` | string | 否 | `GENERAL` | enum：`USER_PREFERENCE` / `PROJECT_STATE` / `TECH_STACK` / `DECISION` / `GENERAL`（schema 声明 enum 但不做强校验） |
-| `subject` | string | 否 | `用户` | 事实主体 |
-| `predicate` | string | 否 | `提到` | 谓词/关系 |
-| `object` | string | 否 | `fact` 前 50 字符 | 对象 |
-| `importance` | number | 否 | 0.5 | 0.0–1.0，作为置信度存入 |
+| `fact` | string | 是 | — | 记忆的自然语言描述 |
+| `importance` | number | 否 | 0.5 | 0.0–1.0，作为重要度存入 |
 
-返回 `fact_id`，事实追加进 `episodic/facts.jsonl`。
+返回 `claim_id`，记忆立即追加进 `claims.jsonl`（一条 active claim，`source_session_ids` 为空）。
 
 ### searchMemories
 
@@ -254,15 +250,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | `query` | string | 是 | — | 搜索关键词 |
 | `limit` | integer | 否 | 5 | 最多返回条数 |
 
-返回拼接文本（`data.results` 与 `message` 同内容），覆盖摘要与事实两类；无命中时仍 `success=True`，文本为「未找到相关记忆。」。
-
-### compact
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `instructions` | string | 否 | 摘要重点，如要保留的话题或决策 |
-
-把当前工作记忆强制压缩为长期摘要（`MemoryManager.generate_summary(force=True)`）。成功返回 `summary_id`；工作记忆内容不足时仍 `success=True`、`data={}`、`message="没有足够的内容生成摘要"`。采用快照+差量清除：摘要生成期间新写入的交互不会被清掉。
+返回拼接文本（`data.results` 与 `message` 同内容），在 active claim 文本上做子串匹配；无命中时仍 `success=True`，文本为「未找到相关记忆。」。
 
 ### forget
 
@@ -271,7 +259,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | `query` | string | 是 | — | 要删除内容的描述 |
 | `confirm` | boolean | 否 | false | false=只预览，true=真删 |
 
-两段式：`confirm=false` 按空格分词（长度 ≤1 的词丢弃，全丢则用整串）做关键词匹配，返回命中条数（摘要/事实分开计数）和确认提示；`confirm=true` 删除全部命中项，返回删除条数。无匹配时返回「未找到匹配 …」。删除不可撤销。
+两段式：`confirm=false` 按空格分词（长度 ≤1 的词丢弃，全丢则用整串）做关键词匹配，返回命中条数（附前几条预览）和确认提示；`confirm=true` 删除全部命中项，返回删除条数。无匹配时返回「未找到匹配 …」。删除不可撤销。
 
 ## tasks
 
@@ -408,7 +396,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 **见习成员不可用（，信任阶梯）**——装配时不注册。
 
-世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（摘要/事实）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
+世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|

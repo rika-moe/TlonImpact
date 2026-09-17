@@ -217,7 +217,7 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 
 ## 退休交接信（issue ）
 
-成员被蓄意停止（`AGENT_STOPPED`，与退休蒸馏同一触发点）时，[agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` 离线盘点它的归档：未完成任务（todo/doing/paused）、未回复的邮件线程（inbox 按 thread 分组，组内最后一封来自他人且 sent 里没有更晚的本人回复）、记忆摘要。有东西可交接或可说（digest 非空、有未完成任务或有未回复线程）时，一次 LLM 调用（`purpose="farewell"`，归属退休成员账本）写一封告别信——任期总结 + 未竟事项 + 移交清单 + 给继任者的建议。
+成员被蓄意停止（`AGENT_STOPPED`，与退休蒸馏同一触发点）时，[agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` 离线盘点它的归档：未完成任务（todo/doing/paused）、未回复的邮件线程（inbox 按 thread 分组，组内最后一封来自他人且 sent 里没有更晚的本人回复）、记忆（claims）。有东西可交接或可说（digest 非空、有未完成任务或有未回复线程）时，一次 LLM 调用（`purpose="farewell"`，归属退休成员账本）写一封告别信——任期总结 + 未竟事项 + 移交清单 + 给继任者的建议。
 
 这封信的特殊之处在于发件人：**以退休成员自己的地址发出**（退休 = 睡眠，成员仍在注册表，地址可解析，sent 副本正常落进它的归档）。收件人是它的「负责人」：`spawned_by` 指向的成员，非 spawn 成员（标准团队）则兜底给 guest 人类。无论信是否发出（LLM 失败、空移交），都发布 `AGENT_RETIRED` 事实事件携带移交清单——可见性不依赖 LLM 成败。
 

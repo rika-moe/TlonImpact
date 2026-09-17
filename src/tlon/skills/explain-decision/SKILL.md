@@ -24,7 +24,7 @@ description: 被问「你为什么这么决定」「你这么做的依据是什�
 
 ### 2. 记忆：我当时知道什么
 
-用 `searchMemories` 查相关的事实与历史摘要。记忆条目都有来源（事实记着实体的历史，摘要记着 `source_session_ids`），可以指回具体的 session。
+用 `searchMemories` 查相关的记忆。记忆条目（claim）都记着 `source_session_ids` 来源，可以指回具体的 session。
 
 ### 3. 邮件：谁让我做的、我当时回了什么
 

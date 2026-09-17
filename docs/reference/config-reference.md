@@ -126,19 +126,17 @@ agent:
 {
   "version": "1.0",
   "agent_id": "su-wanqing",
-  "summary": { "window": 3 },
-  "episodic": { "max_summaries": 20, "max_facts": 50 },
+  "distillation": { "window": 3 },
   "context": {
-    "max_summaries_in_context": 5,
-    "max_facts_in_context": 10
+    "max_claims_in_context": 10
   },
   "reflection": { "min_interactions": 5 }
 }
 ```
 
-各段与 `MemoryConfig` 字段对应：`summary.window`（批量摘要窗口——已完成且未被任何 Summary 引用的 session 数达到该值即触发批量压缩，ADR 0009）、`episodic`（情景记忆上限）、`context`（注入上下文的块数）、`reflection.min_interactions`（自驱动记忆审计的最小完成会话数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
+各段与 `MemoryConfig` 字段对应：`distillation.window`（批量蒸馏窗口——已完成且开始时间晚于蒸馏水位线（`memory/distillation.json`）的 session 数达到该值即触发批量蒸馏，ADR 0017）、`context.max_claims_in_context`（注入上下文的 claim 条数）、`reflection.min_interactions`（自驱动记忆审计的最小完成会话数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。ADR 0017 之前的 `summary`/`episodic`/旧 `context` 段与 ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
 
-> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`，随后把 `episodic` 上限应用到 store——生产装配（[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
+> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`——生产装配（[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_cognitive`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
 
 ## 4. 环境变量
 
@@ -199,9 +197,8 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
 │   ├── memory/
 │   │   ├── config.json               # 记忆调参
-│   │   └── episodic/
-│   │       ├── summaries.jsonl
-│   │       └── facts.jsonl
+│   │   ├── claims.jsonl              # 记忆 claim（ADR 0017，append-only）
+│   │   └── distillation.json         # 蒸馏水位线（last_distilled_at）
 │   ├── sessions/                     # session 事件日志（ADR 0007/0009：交互唯一真相）
 │   │   └── {session_id}.jsonl
 │   ├── tasks.jsonl                   # TaskManager 持久化

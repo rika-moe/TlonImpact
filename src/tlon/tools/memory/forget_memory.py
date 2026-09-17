@@ -30,7 +30,7 @@ class ForgetMemoryTool(Tool):
         """
         super().__init__(
             name="forget",
-            description="删除长期记忆中的摘要或事实",
+            description="删除长期记忆中的记忆条目",
             parameters={
                 "type": "object",
                 "properties": {
