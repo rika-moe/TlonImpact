@@ -12,7 +12,7 @@ ADR 0007 落地后，系统里存在两份交互真相：session journal（appen
 
 ## 决策
 
-退役 working memory 层。session journal 成为唯一交互真相；摘要流改为 journal → episodic 直连：
+退役 working memory 层。session journal 成为唯一交互真相；摘要流改为 journal → episodic 直连：（**2026-09-17 注：以下「摘要流」各条已被 ADR 0017 的蒸馏管线实际替换，具体过时点见文末演进补注；退役 working memory 的决策本身与删除清单仍然有效。**）
 
 - **触发点**：scheduler 的 session 回收点（`session.is_completed` 分支，`_ensure_session_end` 之后）。每回收一个 session，检查「已完成且未被任何 Summary 引用的 session 数」；达到 `summary_window`（MemoryConfig 新字段，默认 3）就把这批 session 全部摘要。
 - **去重**：扫 `summaries.jsonl` 最近 20 条（= `episodic_max_summaries` 上限）收集全部 `source_session_ids`，与 `SessionJournal.list_completed()`（glob sessions 目录、过滤含 `session/end` 的日志）求差集。
@@ -44,3 +44,7 @@ ADR 0007 落地后，系统里存在两份交互真相：session journal（appen
 - `rememberFact`/反思记录的事实 `session_id` 置空字符串——working memory 退役后 manager 不再持有「当前 session」概念；工具侧的会话归属如需恢复，得从执行上下文另接，当前无消费方。
 - working/interactions.jsonl 残留文件成为死数据，不读不删（不保留向后兼容的另一面：不做清理逻辑；用户可手删）。
 - 明确不做：journal 的归档/清理（沿用 ADR 0007 的留待治理）；issue  的进一步记忆调研结论另行跟进。
+
+## 演进补注
+
+- **2026-09-17（ADR 0017）**：摘要流被蒸馏管线整体替换，正文以下细节过时——去重机制（扫 summaries.jsonl 判重 → 标量时间戳水位线 `distillation.json`）；`Summary` 模型与 summaries.jsonl（整体删除，旧文件不读不迁，「旧行可加载」的后果条不再成立）；`summary_window`（改名 `distillation_window`）；批量语义（一次摘要一条 Summary → 一次蒸馏多条 claim）；`ContextBlock.block_type`（进一步收窄为单一 `claims`）；rememberFact（语义改为「立即写一条 claim」，`source_session_ids=[]`，走冲突判定）。工作/情景两层记忆的说法同时作废，现状见 docs/design/memory.md。

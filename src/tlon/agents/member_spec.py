@@ -1,6 +1,6 @@
 """MemberSpec — the unified member behavior spec (semantic authority).
 
-Per the unified DSL design (docs/design/dsl-agents.md), the two legacy
+Per the unified DSL design (docs/design/dsl.md), the two legacy
 specs — AgentSpec (``behavior.tlon``, the ReactAgent cognitive loop) and
 ScriptSpec (``script.tlon``, the ScriptMember deterministic rules) —
 converge on a single record::

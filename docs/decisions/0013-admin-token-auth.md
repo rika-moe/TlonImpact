@@ -17,7 +17,7 @@ Tlon REST 面零鉴权（issue ）：包括 `POST/DELETE /admin/config/agents`�
 - 配置后，所有 `/admin/*` 请求必须携带 `Authorization: Bearer <token>`，否则 401 `{"error", "reason": "unauthorized"}`（复用统一错误形态）。比较用 `hmac.compare_digest`（防时序侧信道）。
 - 强制点在 `RESTAPIHandler.create_app` 注册的 aiohttp middleware——单一拦截点，未来新增 admin 路由自动被保护，不依赖每个 handler 自觉。CORS 预检（OPTIONS）不携带凭证，按规范放行；`Access-Control-Allow-Headers` 增加 `Authorization`。
 - **非 admin 端点不保护**。邮件面（`/messages`、`/inbox`、`/sessions`、`/events`）的身份模型是「名字即身份」（见 server-protocol.md），加 token 不改变这一语义，只会给四个客户端增加协议负担。需要保护邮件面的场景应绑定回环地址。
-- 客户端（SDK / ops TUI / WebUI / Telegram）本期不改：默认关闭时无影响；启用 token 的用户以自带 HTTP 客户端（curl 等）调用 admin 面。客户端原生支持 token 是后续独立工作。
+- 客户端（SDK / ops TUI / WebUI / Telegram）本期不改：默认关闭时无影响；启用 token 的用户以自带 HTTP 客户端（curl 等）调用 admin 面。客户端原生支持 token 是后续独立工作。（**2026-09 注：该后续工作已落地——WebUI 已实现 admin token 透传**，token 存 localStorage、全部请求带 `Authorization: Bearer`，Settings 视图有配置 UI，见 docs/design/webui.md；SDK / ops TUI / Telegram 侧仍无 token 支持。）
 
 ### 为什么不做更完整方案
 
@@ -30,5 +30,5 @@ Tlon REST 面零鉴权（issue ）：包括 `POST/DELETE /admin/config/agents`�
 ## 后果
 
 - 默认行为不变：未配置 `TLON_ADMIN_TOKEN` 时所有端点保持开放，现有客户端、集成测试全部不受影响。
-- 配置后 WebUI 的 admin 功能（Agents/Settings 视图）会因 401 不可用——这是本期的已知取舍，已在上文声明。
+- ~~配置后 WebUI 的 admin 功能（Agents/Settings 视图）会因 401 不可用——这是本期的已知取舍，已在上文声明。~~（**2026-09 注：已被 WebUI token 透传推翻**——配置 token 后 WebUI admin 功能可用，用户在 Settings 视图填 token 即可。）
 - token 与 LLM key 同级存放（`{TLON_HOME}/.env`），泄露面相同；`.env` 文件权限与 TLON_HOME 保护不变。

@@ -112,7 +112,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 ### 停止与排空：睡，永不删
 
-统一成员模型（ADR 0006）：成员只有一种，`stopAgent`（[tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` → `stop_member`，先做 drain 检查——有 ACTIVE/WAITING session 的拒绝停）与空闲超时收割（idle reaper 走 `_drain_agent`）对**所有**成员一视同仁：停止即睡眠（`AGENT_STOPPED` / `AGENT_SLEEPING`），home 目录永不删除——人格、记忆、邮箱、workspace 全部归档，之后可被唤醒。容器也从不 force-remove（睡眠保留容器，零成本唤醒）。系统里不存在"删除成员"这条路径：成员只会"睡"，不会"蒸发"。
+统一成员模型（ADR 0006）：成员只有一种，`stopAgent`（[tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` → `stop_member`，先做 drain 检查——有 ACTIVE/WAITING session 的拒绝停）与空闲超时收割（idle reaper 走 `_drain_agent`）对**所有**成员一视同仁：停止即睡眠（`AGENT_STOPPED` / `AGENT_SLEEPING`），home 目录永不删除——人格、记忆、邮箱、workspace 全部归档，之后可被唤醒。容器也从不 force-remove（睡眠保留容器，零成本唤醒）。系统内（agent 侧与自动路径）不存在"删除成员"这条路径：成员只会"睡"，不会"蒸发"；唯一的删除通道是人类治理的显式 admin 端点（`DELETE /admin/config/agents/{agent_id}`）。
 
 配套的可观测性是 `listAgents`（[tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool`）：列出全部注册 agent 的运行状态（running/sleeping/waking）与血缘字段（来源 prototype、spawned_by）。spawn/stop 之前先 list，是工具设计上给 LLM 的标准用法——`spawnAgent` 成功回执里带回 `agent_id`、`spawn_depth` 等字段，供后续 `stopAgent` 或 @ 寻址使用。
 

@@ -7,6 +7,7 @@
 **成员只有一种。** 同时拍板九条（完整定义与模型现状见 [docs/design/unified-member-model.md](../design/unified-member-model.md)）：
 
 1. `:loop` 保留为 DSL 语法（一条规则有没有认知循环），不再是成员类型。
+2. **便宜路径是规则级策略**——无 `:loop` 的规则只跑 `:actions`，由 spec 数据推导（不启动认知引擎 → 不触发 LLM/记忆），不是成员级承诺。
 3. **懒装配**——能力对象对所有成员统一构造（对象便宜），加载按需（调用才贵）。
 4. **spec 不可直接修改，自己的也不行**——行为更新的唯一通道：创建新 prototype → 派生新 member。成员是基因型的纯表达，不反馈回基因型（世代更替，反拉马克）。
 5. **允许 member 创建新 prototype**——`writePrototype`（写 staging）通道即行为演化的主通道，现状已具备。

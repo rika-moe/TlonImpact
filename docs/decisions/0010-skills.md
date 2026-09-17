@@ -22,7 +22,7 @@ Tlon 已有"常驻人格"层（SOUL.md / IDENTITY.md / RULES.md 经 `(persona)` 
 - **加载**：模型看到索引后用现有 `read_file` 自读 SKILL.md 正文，需要跑脚本用 `execute_bash`（容器内执行）。**不加 `use_skill` 工具，不做引擎侧正文注入**——最少机制，行为对齐业界已验证模式。
 - **缓存**：索引按全部 SKILL.md 的 mtime 签名缓存（与 system prompt 的 persona mtime 缓存同手法），skill 文件一改下一 session 生效。
 - **信任面**：项目级 skill 来自 workspace（可能是 agent 自己 clone 的仓库），SKILL.md 内容视为**不可信输入**，风险与 prompt injection 同级。第一版不做任何自动执行类能力，只有"索引 + 模型自读"。
-- 标准行为模板（`behavior_templates.py`）与原型库全部 behavior.tlon 的 `:sections` 加入 `(skills)`，位置在 `(knowledge)` 之后、`(mail-history)` 之前。
+- ~~标准行为模板（`behavior_templates.py`）与原型库全部 behavior.tlon 的 `:sections` 加入 `(skills)`，位置在 `(knowledge)` 之后、`(mail-history)` 之前。~~（**2026-09 修订**：实际落地为——`(skills)` 声明在 `(knowledge)` **之前**（全认知原型统一 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20) (thread-recap)`）；并非「全部」原型——fast-responder（cost routing 刻意不带）与 relay（无 `:loop`）无 `(skills)`；`behavior_templates.py` 从未存在，写侧模板是另一物 `behavior_template.py`（单数，`${var}` 参数层，与 skill 无关）。另注意 ADR 0017 阶段 4 起 `(knowledge)` 的注入位置语义已变，见 ADR 0008 状态行。）
 
 ### 明确不做（第一版）
 
@@ -37,4 +37,8 @@ Tlon 已有"常驻人格"层（SOUL.md / IDENTITY.md / RULES.md 经 `(persona)` 
 - `(skills)` 是 DSL 显式项：不加该 section 的成员（如确定性 script 成员）完全没有 skill 开销。
 - 索引是固定上下文开销（每条 ~60 token），靠"只注入索引、正文按需自读"控制规模；索引缓存使无变更时零磁盘重读。
 - 项目级 skill 带来提示注入面，文档（design/skills.md）写明信任前提；缓解手段（白名单、确认门）留给后续决策。
-- 实现落点：`base/paths.py` 三个路径解析器、`agents/skills.py`（扫描 + frontmatter 解析 + 索引渲染 + mtime 缓存）、`member_spec.py` 的 `SECTION_NAMES` + 校验、`context_builder.py` 的 section 解释、`behavior_templates.py` 与原型库模板。
+- 实现落点：`base/paths.py` 三个路径解析器、`agents/skills.py`（扫描 + frontmatter 解析 + 索引渲染 + mtime 缓存）、`member_spec.py` 的 `SECTION_NAMES` + 校验、`context_builder.py` 的 section 解释、~~`behavior_templates.py` 与~~原型库模板。
+
+## 演进补注
+
+- **2026-09（issue ）**：内置 skill 随包发布（`src/tlon/skills/`，如 explain-decision），启动时 `seed_skills` 幂等播种到全局层——三层目录之外多了一条「出厂自带」供给通道，优先级仍按全局层规则。详见 docs/design/skills.md。

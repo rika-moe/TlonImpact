@@ -55,3 +55,9 @@ context 仅两个写入点（初始构建、`_apply_outcome`），都先 append 
 - **写放大可控**：每个事件一行 JSONL，无快照、无压缩；session 完成即不再增长。清理策略（归档/删除老日志）留待后续治理决策，与 ADR 0006 的「存储只增不减」同源。
 - **测试基建**：`derive_context` 为断言而生；崩溃恢复端到端测试用「工具派发后丢弃内存态 → resume → resume_collect 续跑」模拟 kill。
 - **引擎层签名变化**：`LoopDriver` / `SessionScheduler` 构造注入同一 `SessionJournal`（永远开启，不做可选）；`CognitiveCapabilities` 增加 `tlon_paths` 字段，由注册表装配。
+
+## 演进补注
+
+- **2026-08（ADR 0008）**：事件集新增 `context/compact`（kind, reason, tokens_before/after, 压缩后全量 context；重放时整体替换 context），上表未回填。
+- **2026-09（ADR 0017 阶段 4）**：`session/start` 的 payload 新增显式 `anchor_len` 字段（knowledge 段移出 anchor 后，重放无法再从 context 长度推导出锚界）；重放优先读显式字段，旧事件回退 `len(context)`。
+- **2026-09（ADR 0009/0017）**：「只在引擎层使用」的边界已放宽——journal 现有引擎外读者：MemoryManager 蒸馏触发（经 `SessionLogReader` Protocol 结构化注入，import-linter 约束不变）、context_builder 的 thread-recap、退休仪式。

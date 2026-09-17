@@ -17,7 +17,7 @@
 
 ### 阈值
 
-`LLMConfig` 新增 `context_window: int = 262144`（kimi-k2.5 的窗口，随 agent.yaml 持久化、可按模型覆盖）。触发阈值（token）：
+~~`LLMConfig` 新增 `context_window: int = 262144`（kimi-k2.5 的窗口，随 agent.yaml 持久化、可按模型覆盖）。~~（**2026-09 修订，ADR 0012**：现状为 `context_window: int | None = None`——None = 装配时从 litellm 模型注册表自动解析，262144 降级为查不到时的兜底常量；显式值仍可覆盖。）触发阈值（token）：
 
 ```
 threshold = max(context_window - 40_000, context_window * 0.8)
@@ -50,11 +50,11 @@ context/compact {kind: "prune"|"summary", reason, tokens_before, tokens_after, c
 
 ### 紧急路径
 
-`llm_client` 识别 context-length 错误（`BadRequestError` 且 code/消息含 context length 特征）为独立的 `ContextWindowExceededError`，**不重试**直接抛出。think/plan/critique stage 不吞此异常；`step_session` 捕获后强制执行一次完整梯度（prune + summary，保留窗口收紧到 10 条）并重试该 stage 一次；再失败才走原有 record_error 路径。
+`llm_client` 识别 context-length 错误（`BadRequestError` 且 code/消息含 context length 特征）为独立的 `ContextWindowExceededError`，**不重试**直接抛出。think/plan/critique stage 不吞此异常；`step_session` 捕获后强制执行一次完整梯度（prune + summary，保留窗口收紧到 10 条）并重试该 stage 一次；~~再失败才走原有 record_error 路径。~~（**2026-09 修订**：第二次 `ContextWindowExceededError` 在本层不再捕获，直接传播给 scheduler 的 session_error 处理器，落 `session/end reason="error"` 走终止路径——这是「stage 无法产出 outcome」的既有致命路径，并非 record_error。）
 
 ## 后果
 
 - 超长会话不再以「重试 3 次 + 报错邮件」收场；prune 一级覆盖大多数场景且零 LLM 成本。
 - journal 仍是唯一真相：压缩历史可从 `context/compact` 事件审计（tokens_before/after），重放保真。
-- 摘要质量依赖 prompt 调优，遵循 Anthropic 建议「先保 recall 再调 precision」；摘要器失败的回退是 prune 占位 + 保留窗口原文。
+- 摘要质量依赖 prompt 调优，遵循 Anthropic 建议「先保 recall 再调 precision」；~~摘要器失败的回退是 prune 占位 + 保留窗口原文。~~（**2026-09 修订**：摘要器失败时整个中段坍缩为单条占位消息 `[前文摘要]\n\n历史消息摘要失败，已省略。`——prune 后的中段不保留，留存的只有 anchor + 保留窗口原文；丢历史细节好过丢 session。）
 - 明确不做：token 精确计数（依赖不值得）、memory 层正名（PR-B 另行）、摘要触发挪到空闲时（邮件系统 idle 期利用，后续优化）。
