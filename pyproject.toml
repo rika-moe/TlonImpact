@@ -32,6 +32,7 @@ dependencies = [
     # LLM（litellm 次版本间有 breaking change，锁定次版本，ADR 0012）
     "litellm==1.98.*",
     "croniter>=6.2.4",
+    "sqlite-vec>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -101,6 +102,11 @@ disallow_untyped_calls = false
 # py.typed，按真实类型全量检查
 [[tool.mypy.overrides]]
 module = "telegram.*"
+ignore_missing_imports = true
+
+# sqlite-vec 无类型 stub（纯 C 扩展的薄 Python 绑定）
+[[tool.mypy.overrides]]
+module = "sqlite_vec.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

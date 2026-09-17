@@ -1,6 +1,6 @@
 # ADR 0017：记忆系统重设计——claim 模型 + 向量检索 + JIT 注入，整体替换旧 episodic 记忆
 
-状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）已实施（2026-09-17）
+状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入）已实施（2026-09-17）
 
 修订关系：部分取代 ADR 0009（摘要流被蒸馏管线替换；journal 为唯一真相不变）；修订 ADR 0008 的 anchor 语义（knowledge 段移出 anchor）。
 
@@ -65,6 +65,13 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
 - `search_memories` 的关键词提取与子串匹配保留到阶段 2（向量检索落地时随  一起消亡）；`build_context_blocks` 仍是最近 N 条注入（阶段 2 换 JIT 检索）
 - 冲突判定/supersede 写入逻辑未做（阶段 3）；模型字段（`status`/`valid_to`/`superseded_by`）已备好
 - 旧 `summaries.jsonl` / `facts.jsonl` 成为死数据：不读、不迁移、不写清理逻辑（同 ADR 0009 对 working memory 残留的处置，用户可手删）
+
+阶段 2 实际落地（2026-09-17）：
+
+- 新依赖 sqlite-vec：`memory/vector_index.py` 的 `VectorIndex`（`claims_vec.db`，cosine KNN），`vec_meta` 表记录 embedding 模型 + 维度，模型变更即全量重建；索引是 claims.jsonl 的纯派生视图
+- `LLMConfig` 新增成员级 `embedding_model_name`（None = 不做向量检索）；`base/embedding_client.py` 薄封装 `litellm.aembedding`，memory 层仍只依赖 base
+- `build_context_blocks(current_message)` 接线 JIT 检索：query embed → 候选池 → 复合打分 `1.0·similarity + 0.3·recency + 0.5·importance`（recency 半衰期 7 天指数衰减）取 top-k；无 query / 无索引 / 调用失败一律降级最近 N 条
+- `ContextBuilder.build_knowledge_context` 接收当前邮件主题 + 正文作为 query；`searchMemories` 改向量检索并露出 `source_session_ids`（ 的关键词分词逻辑删除）；`forget` 保持关键词匹配
 
 ### 施工顺序（最小端到端优先，每阶段独立 PR）
 

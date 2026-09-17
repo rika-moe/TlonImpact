@@ -549,6 +549,71 @@ async def test_undeclared_lessons_section_injects_nothing(tmp_path: Path) -> Non
     assert len(context) == 1
 
 
+# ===== (knowledge) 段：JIT 检索 query 传递（ADR 0017 阶段 2）=====
+
+
+class _RecordingMemory:
+    """Duck-typed MemoryManager: records the retrieval query, returns one
+    fixed claims block."""
+
+    def __init__(self) -> None:
+        self.queries: list[Any] = []
+
+    async def build_context_blocks(self, current_message: Any | None = None) -> list[Any]:
+        from tlon.memory.models import ContextBlock
+
+        self.queries.append(current_message)
+        return [
+            ContextBlock(
+                block_type="claims",
+                priority=1,
+                content="- [2026-09-17] 部署脚本在 scripts/deploy.sh",
+                source_ids=["c1"],
+            )
+        ]
+
+
+def _make_knowledge_builder(tmp_path: Path) -> tuple[ContextBuilder, _RecordingMemory]:
+    memory = _RecordingMemory()
+    builder = ContextBuilder(
+        AgentConfig(id=AGENT, name=AGENT),
+        [],
+        None,
+        memory,  # type: ignore[arg-type]
+        TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path)),
+        _rule_with_sections("[(knowledge)]"),
+        ADDRESS,
+    )
+    return builder, memory
+
+
+async def test_knowledge_section_passes_mail_text_as_query(tmp_path: Path) -> None:
+    """The current mail (subject + body) is the JIT retrieval query."""
+    builder, memory = _make_knowledge_builder(tmp_path)
+    mail = Mail.create(
+        from_address="alice@tlon.internal",
+        content="怎么部署？",
+        to=[ADDRESS],
+        subject="部署问题",
+    )
+
+    context = await builder.build_context(mail)
+
+    assert memory.queries == ["部署问题\n\n怎么部署？"]
+    section = context[0]
+    assert section["role"] == "user"
+    assert section["content"].startswith("[已知信息]")
+    assert "部署脚本在 scripts/deploy.sh" in section["content"]
+
+
+async def test_knowledge_query_without_subject_is_body(tmp_path: Path) -> None:
+    builder, memory = _make_knowledge_builder(tmp_path)
+
+    await builder.build_context(_mail())
+
+    assert memory.queries == ["hello"]
+
+
 # ===== 外部来信标记（issue ）=====
 
 EXTERNAL = "notifications@github.com"

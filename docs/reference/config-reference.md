@@ -40,7 +40,7 @@
 ### `llm`
 
 <!-- BEGIN GENERATED: agent-yaml-fields-llm -->
-`LLMConfig` 字段（8 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`LLMConfig` 字段（9 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -49,12 +49,13 @@
 | `top_p` | `float` | 0.9 |  |
 | `context_window` | `int \| None` | None |  |
 | `api_base` | `str \| None` | None |  |
+| `embedding_model_name` | `str \| None` | None |  |
 | `max_retries` | `int` | 3 | 运行时字段，不进 YAML |
 | `base_delay` | `float` | 1.0 | 运行时字段，不进 YAML |
 | `request_timeout` | `float` | 300.0 | 运行时字段，不进 YAML |
 <!-- END GENERATED: agent-yaml-fields-llm -->
 
-`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`max_tokens` / `top_p` 每 agent 可调。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
+`model_name` 是**必填**的成员级声明（ADR 0016——没有进程级兜底）：`provider/model` 形式（如 `deepseek/deepseek-chat`），创建成员时经 WebUI / admin API 的 `model` 字段落盘，未声明的成员装配期硬报错；API key 不在此配置——litellm 原生读取 `{PROVIDER}_API_KEY` 环境变量（见第 4 节）。采样参数不配置——请求从不携带 temperature，供应商默认生效。`max_tokens` / `top_p` 每 agent 可调。`api_base`（默认 `null`）是成员级的端点覆盖：私有部署 / 代理 / OpenAI 兼容端点配 `model_name: openai/<model>` + `api_base: <url>`，`null` 时走 litellm 注册表路由。`context_window` 为 `null`（默认）时启动组装自动从 litellm 模型注册表解析（ADR 0012 阶段 2），显式值作为注册表缺失/滞后时的覆盖。`embedding_model_name`（默认 `null`，ADR 0017 阶段 2）是成员级 embedding 模型声明，同为 `provider/model` 形式、同走 `{PROVIDER}_API_KEY` 约定；配置后记忆检索启用 sqlite-vec 向量索引 + JIT 相关性注入，`null`（或 provider 无 embedding 端点）时检索降级为「最近 N 条」——降级是一等行为，不影响记忆与会话。运行时字段（`max_retries`、`base_delay`、`request_timeout`）只有代码默认值（不再有环境变量来源），Pydantic 标注 `exclude=True`，不落盘。
 
 ### `docker`
 

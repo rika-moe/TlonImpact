@@ -5,10 +5,14 @@ sessions are distilled in batches into claims — natural-language
 assertions with provenance — stored append-only in ``claims.jsonl``.
 Distillation progress is a scalar timestamp watermark persisted in
 ``distillation.json`` (session ids are uuids without temporal order, so
-no id-based high-water mark is possible). The manager keeps the claim
-store, the context-block assembly for the ``(knowledge)`` section, and
-the batch distillation trigger the scheduler calls at its session reap
-point.
+no id-based high-water mark is possible). Retrieval is JIT: the current
+mail embeds into a query against a sqlite-vec index (``claims_vec.db``,
+a pure derived view of the claim store) and active claims are ranked by
+a composite similarity/recency/importance score; without an embedding
+model or on any index failure it degrades to recency order. The manager
+keeps the claim store, the index, the context-block assembly for the
+``(knowledge)`` section, and the batch distillation trigger the
+scheduler calls at its session reap point.
 """
 
 import asyncio
@@ -22,14 +26,51 @@ from typing import Any, Protocol
 import aiofiles
 
 from tlon.base.config import LLMConfig
+from tlon.base.embedding_client import EmbeddingClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 
 from .claim_store import ClaimStore
 from .distiller import Distiller
 from .models import Claim, ContextBlock, MemoryConfig, SessionProjection
+from .vector_index import VectorIndex
 
 logger = get_logger(__name__)
+
+#: JIT retrieval composite score (ADR 0017 stage 2, Generative Agents
+#: shape): ``score = α·similarity + β·recency + γ·importance``.
+#: Similarity dominates — relevance to the current mail is the whole
+#: point of JIT injection (); importance lets critical claims win
+#: near-ties; recency is deliberately the weakest factor because the
+#: recency-ordered fallback already owns "latest first" and an old but
+#: relevant claim must not drown under fresh noise.
+_SCORE_ALPHA_SIMILARITY = 1.0
+_SCORE_BETA_RECENCY = 0.3
+_SCORE_GAMMA_IMPORTANCE = 0.5
+#: Recency decays exponentially with this half-life in days (the
+#: Generative Agents decay, re-parameterized as a half-life).
+_RECENCY_HALF_LIFE_DAYS = 7.0
+#: The KNN query pulls a pool larger than k so the composite score can
+#: re-rank candidates pure similarity order would miss.
+_RETRIEVAL_POOL_FACTOR = 4
+
+
+class Embedder(Protocol):
+    """The embedding surface the retrieval layer needs.
+
+    Injected structurally so tests never touch the network — in
+    production an ``EmbeddingClient`` built from the member's
+    ``llm.embedding_model_name``.
+    """
+
+    @property
+    def model_name(self) -> str:
+        """The embedding model identity recorded in the index metadata."""
+        ...
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """One embedding vector per input text, in order."""
+        ...
 
 
 class SessionLogReader(Protocol):
@@ -74,6 +115,7 @@ class MemoryManager:
         data_dir: Path | None = None,
         llm_config: LLMConfig | None = None,
         tlon_paths: TlonPaths | None = None,
+        embedder: Embedder | None = None,
     ):
         """Initialize Memory Manager.
 
@@ -85,10 +127,15 @@ class MemoryManager:
                 None, the global ``paths`` singleton is used — the
                 registry always passes an explicit data_dir (unified
                 assembly, ADR 0006), so the singleton is only a fallback.
-            llm_config: Optional LLM config for distillation
+            llm_config: Optional LLM config for distillation; its
+                ``embedding_model_name`` (when set) also builds the
+                embedding client for vector retrieval
             tlon_paths: Path resolver handed to the distiller's LLM
                 client for ledger attribution (issue ); defaults to
                 the global ``~/.tlon`` layout.
+            embedder: Embedding client override (tests inject a fake);
+                None = build from ``llm_config.embedding_model_name``,
+                and when that is unset too, no vector retrieval at all
         """
         self.agent_id = agent_id
         self.config = config
@@ -115,6 +162,19 @@ class MemoryManager:
             )
         else:
             self.distiller = None
+
+        # Vector retrieval (ADR 0017 stage 2): an embedder plus a derived
+        # sqlite-vec index. Without an embedding model configured the
+        # manager degrades to recency-ordered retrieval — a first-class
+        # mode, not an error (some providers expose no embedding endpoint).
+        if embedder is not None:
+            self._embedder: Embedder | None = embedder
+        elif llm_config is not None and llm_config.embedding_model_name:
+            self._embedder = EmbeddingClient(llm_config)
+        else:
+            self._embedder = None
+        self._index: VectorIndex | None = None
+        self._index_lock = asyncio.Lock()
 
     # ===== Lifecycle =====
 
@@ -156,9 +216,108 @@ class MemoryManager:
 
         self._watermark = self._load_watermark()
         await self.claims.load()
+        await self._init_vector_index()
 
         self._loaded = True
         logger.info("memory_loaded", agent_id=self.agent_id)
+
+    # ===== Vector index (derived view of claims.jsonl, ADR 0017 stage 2) =====
+
+    async def _init_vector_index(self) -> None:
+        """Open the vector index; rebuild or backfill against the claims.
+
+        The index records its embedding model + dimension; a mismatch
+        against the configured model (embedding spaces are incompatible
+        across models) triggers a full rebuild from the active claims —
+        the index is a pure derived view, so rebuilding is N embedding
+        calls, never a migration. Any failure (provider down, no API
+        key) degrades to no index: retrieval falls back to recency order
+        and the next startup retries.
+        """
+        self._index = None
+        if self._embedder is None:
+            return
+        try:
+            index = VectorIndex(self.storage_path / "claims_vec.db")
+        except Exception as e:
+            logger.warning("vector_index_open_failed", error=str(e))
+            return
+        self._index = index
+
+        embedder = self._embedder
+        active = await self.claims.get_all_claims()
+        meta = index.model_meta()
+        if meta is not None and meta[0] == embedder.model_name:
+            await self._backfill_index(index, embedder, active)
+            return
+        if meta is not None:
+            logger.info(
+                "vector_index_model_changed", old_model=meta[0], new_model=embedder.model_name
+            )
+        try:
+            vectors = await embedder.embed([str(c.get("text", "")) for c in active])
+            index.rebuild(
+                embedder.model_name,
+                [
+                    (str(c["id"]), vector)
+                    for c, vector in zip(active, vectors, strict=True)
+                ],
+            )
+            logger.info("vector_index_rebuilt", claim_count=len(active))
+        except Exception as e:
+            logger.warning("vector_index_rebuild_failed", error=str(e))
+            index.close()
+            self._index = None
+
+    async def _backfill_index(
+        self, index: VectorIndex, embedder: Embedder, active: list[dict[str, Any]]
+    ) -> None:
+        """Index active claims missing vectors; prune rows of dead claims.
+
+        Covers claims written while the index was unavailable (embedding
+        outage) and rows orphaned by out-of-band claim edits — both
+        directions of drift between the store and its derived view.
+        """
+        active_ids = {str(c.get("id")) for c in active}
+        indexed = index.indexed_ids()
+        for orphan in indexed - active_ids:
+            index.delete(orphan)
+        missing = [c for c in active if str(c.get("id")) not in indexed]
+        if not missing:
+            return
+        try:
+            vectors = await embedder.embed([str(c.get("text", "")) for c in missing])
+            for c, vector in zip(missing, vectors, strict=True):
+                index.upsert(str(c["id"]), vector)
+            logger.info("vector_index_backfilled", claim_count=len(missing))
+        except Exception as e:
+            logger.warning("vector_index_backfill_failed", error=str(e))
+
+    async def _index_claims(self, claims: list[dict[str, Any]]) -> None:
+        """Best-effort: embed freshly written claims into the index.
+
+        Failures only log — an unindexed claim stays reachable via the
+        recency fallback, and the next startup's backfill retries it.
+        """
+        if self._index is None or self._embedder is None or not claims:
+            return
+        async with self._index_lock:
+            try:
+                vectors = await self._embedder.embed([str(c.get("text", "")) for c in claims])
+                entries = [
+                    (str(c["id"]), vector)
+                    for c, vector in zip(claims, vectors, strict=True)
+                    if c.get("id") is not None
+                ]
+                if self._index.model_meta() is None:
+                    # Empty memory: the first write bootstraps the table
+                    # (dimension is only known once vectors exist).
+                    self._index.rebuild(self._embedder.model_name, entries)
+                else:
+                    for claim_id, vector in entries:
+                        self._index.upsert(claim_id, vector)
+            except Exception as e:
+                logger.warning("vector_index_upsert_failed", error=str(e))
 
     async def _save_config(self) -> None:
         """Save memory config to disk."""
@@ -332,6 +491,7 @@ class MemoryManager:
             return None
 
         now = datetime.now().isoformat()
+        persisted: list[dict[str, Any]] = []
         try:
             for claim_dict in claim_dicts:
                 claim = Claim(
@@ -341,12 +501,16 @@ class MemoryManager:
                     source_session_ids=source_session_ids,
                     importance=claim_dict.get("importance", 0.5),
                 )
-                await self.claims.add_claim(claim.to_dict())
+                claim_data = claim.to_dict()
+                await self.claims.add_claim(claim_data)
+                persisted.append(claim_data)
         except Exception as e:
             # Persistence failure: the watermark stays, the next reap
             # retries the same batch.
             logger.error("distillation_persist_failed", error=str(e), exc_info=True)
             return None
+
+        await self._index_claims(persisted)
 
         known_starts = [ts for ts in started_ats if ts is not None]
         if known_starts:
@@ -365,14 +529,19 @@ class MemoryManager:
     ) -> list[ContextBlock]:
         """Build context blocks for LLM context injection.
 
-        Assembles the recent active claims (up to
-        ``config.context_max_claims``) into one dated block.
+        With a current message and a usable vector index this is JIT
+        retrieval (ADR 0017 stage 2): the message is embedded, a
+        similarity-ranked candidate pool is pulled from the index, and
+        the top ``config.context_max_claims`` active claims by the
+        composite score (α·similarity + β·recency + γ·importance) are
+        injected. Without a query, without an embedding model, or on any
+        retrieval failure the behavior degrades to the most recent
+        active claims — degradation is a first-class mode, never an
+        error.
 
         Args:
-            current_message: The current message being processed.
-                Unused in stage 1 (retrieval is still "most recent N");
-                it becomes the relevance query when vector retrieval
-                lands in stage 2 (ADR 0017).
+            current_message: The current message being processed; its
+                text is the relevance query for JIT retrieval
 
         Returns:
             List of ContextBlock objects ordered by priority
@@ -380,7 +549,14 @@ class MemoryManager:
         if not self._loaded:
             await self.load()
 
-        claims = await self.claims.get_recent_claims(self.config.context_max_claims)
+        query = str(current_message).strip() if current_message is not None else ""
+        claims = (
+            await self._retrieve_relevant(query, self.config.context_max_claims)
+            if query
+            else None
+        )
+        if claims is None:
+            claims = await self.claims.get_recent_claims(self.config.context_max_claims)
         if not claims:
             return []
 
@@ -405,6 +581,66 @@ class MemoryManager:
                 source_ids=claim_ids,
             )
         ]
+
+    async def _retrieve_relevant(self, query: str, k: int) -> list[dict[str, Any]] | None:
+        """JIT retrieval: composite-scored top-k active claims.
+
+        Returns None to signal degradation (no index, embedding failure,
+        or nothing indexed) — the caller then falls back to recency
+        order. Superseded/deleted claims are skipped even when a stale
+        index row still points at them.
+        """
+        if self._index is None or self._embedder is None or k <= 0:
+            return None
+        try:
+            (query_vector,) = await self._embedder.embed([query])
+        except Exception as e:
+            logger.warning("jit_query_embed_failed", error=str(e))
+            return None
+
+        active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
+        pool = min(len(active), max(k * _RETRIEVAL_POOL_FACTOR, k))
+        now = datetime.now()
+        scored: list[tuple[float, dict[str, Any]]] = []
+        try:
+            for claim_id, similarity in self._index.search(query_vector, pool):
+                claim = active.get(claim_id)
+                if claim is None:
+                    continue
+                score = (
+                    _SCORE_ALPHA_SIMILARITY * similarity
+                    + _SCORE_BETA_RECENCY * self._recency_score(claim, now)
+                    + _SCORE_GAMMA_IMPORTANCE * self._importance_score(claim)
+                )
+                scored.append((score, claim))
+        except Exception as e:
+            logger.warning("jit_retrieval_failed", error=str(e))
+            return None
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [claim for _score, claim in scored[:k]]
+
+    @staticmethod
+    def _importance_score(claim: dict[str, Any]) -> float:
+        """The claim's importance clamped to [0, 1]; a corrupt value reads
+        as the default (0.5) — hand-edited claims must never break JIT."""
+        try:
+            return min(1.0, max(0.0, float(claim.get("importance", 0.5))))
+        except (TypeError, ValueError):
+            return 0.5
+
+    @staticmethod
+    def _recency_score(claim: dict[str, Any], now: datetime) -> float:
+        """Exponential decay of the claim's age: 1.0 just now, halving
+        every ``_RECENCY_HALF_LIFE_DAYS``. An unparseable timestamp reads
+        as neutral (0.5) — a corrupt field must never break retrieval."""
+        try:
+            timestamp = datetime.fromisoformat(str(claim.get("timestamp", "")))
+            age_days = max(0.0, (now - timestamp).total_seconds()) / 86400.0
+        except (ValueError, TypeError):
+            return 0.5
+        return float(0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS))
 
     # ===== LLM Tool Operations =====
 
@@ -434,7 +670,9 @@ class MemoryManager:
             importance=importance,
         )
 
-        claim_id = await self.claims.add_claim(claim.to_dict())
+        claim_data = claim.to_dict()
+        claim_id = await self.claims.add_claim(claim_data)
+        await self._index_claims([claim_data])
         logger.info("claim_recorded", claim_id=claim_id, content=fact)
 
         return claim_id
@@ -446,7 +684,11 @@ class MemoryManager:
     ) -> str:
         """Search memories (called by LLM via tool).
 
-        Simple keyword-based search across claim texts.
+        Vector retrieval when the index is available (the embedding
+        query is naturally cross-lingual — the old space-split keyword
+        matching is gone with ); otherwise a keyword fallback. Each
+        hit carries its date and source session references, so the agent
+        can cite where a memory came from.
 
         Args:
             query: Search query string
@@ -458,24 +700,46 @@ class MemoryManager:
         if not self._loaded:
             await self.load()
 
-        # Simple keyword extraction (split by spaces)
-        keywords = [kw.strip() for kw in query.split() if len(kw.strip()) > 1]
-        if not keywords:
-            keywords = [query]
-
-        results = await self.claims.search_claims_by_keyword(keywords, limit)
+        results = await self._vector_search(query, limit)
+        if results is None:
+            keywords = [kw.strip() for kw in query.split() if len(kw.strip()) > 1]
+            if not keywords:
+                keywords = [query]
+            results = await self.claims.search_claims_by_keyword(keywords, limit)
 
         lines = [f"搜索结果 for '{query}':", ""]
         if results:
             lines.append("## 相关记忆")
             for c in results:
                 timestamp = str(c.get("timestamp", ""))[:10]
-                lines.append(f"- [{timestamp}] {c.get('text', '')}")
+                refs = [str(s) for s in c.get("source_session_ids") or []]
+                suffix = f"（来源 session: {', '.join(refs)}）" if refs else ""
+                lines.append(f"- [{timestamp}] {c.get('text', '')}{suffix}")
             lines.append("")
         else:
             lines.append("未找到相关记忆。")
 
         return "\n".join(lines)
+
+    async def _vector_search(self, query: str, limit: int) -> list[dict[str, Any]] | None:
+        """Similarity-ranked active claims for ``query``; None = degrade.
+
+        Ranked by similarity alone: an explicit search query is the
+        intent, and recency/importance weighting would distort it.
+        """
+        if self._index is None or self._embedder is None:
+            return None
+        try:
+            (query_vector,) = await self._embedder.embed([query])
+        except Exception as e:
+            logger.warning("memory_search_embed_failed", error=str(e))
+            return None
+        active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
+        return [
+            claim
+            for claim_id, _similarity in self._index.search(query_vector, limit)
+            if (claim := active.get(claim_id)) is not None
+        ]
 
     async def forget(
         self,
@@ -539,6 +803,7 @@ class MemoryManager:
             await self.load()
 
         if await self.claims.delete_claim(claim_id):
+            self._remove_from_index(claim_id)
             logger.info("claim_deleted", agent_id=self.agent_id, claim_id=claim_id)
             return True
 
@@ -547,6 +812,7 @@ class MemoryManager:
         if len(matches) == 1:
             resolved_id = str(matches[0]["id"])
             await self.claims.delete_claim(resolved_id)
+            self._remove_from_index(resolved_id)
             logger.info(
                 "claim_deleted",
                 agent_id=self.agent_id,
@@ -567,6 +833,15 @@ class MemoryManager:
                 "claim_delete_not_found", agent_id=self.agent_id, claim_id=claim_id
             )
         return False
+
+    def _remove_from_index(self, claim_id: str) -> None:
+        """Drop a deleted claim's vector (best-effort; a stale row is
+        otherwise harmless — retrieval skips non-active claims)."""
+        if self._index is not None:
+            try:
+                self._index.delete(claim_id)
+            except Exception as e:
+                logger.warning("vector_index_delete_failed", claim_id=claim_id, error=str(e))
 
     async def get_memory_digest(self, logs: SessionLogReader) -> dict[str, Any]:
         """Get a digest of current memory state for reflection/audit.

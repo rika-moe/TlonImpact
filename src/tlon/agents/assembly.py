@@ -136,6 +136,7 @@ def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig
         top_p=file_config.top_p,
         context_window=_resolve_context_window(file_config, model_name),
         api_base=file_config.api_base,
+        embedding_model_name=file_config.embedding_model_name,
     )
 
 

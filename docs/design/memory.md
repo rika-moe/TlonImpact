@@ -1,6 +1,6 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。整体重设计的决策与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)；本文描述阶段 1（水位线 + claim 数据模型）落地后的真实状态。
+Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。整体重设计的决策与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)；本文描述阶段 2（sqlite-vec 向量索引 + JIT 相关性注入）落地后的真实状态。
 
 ## 定位：可审计的个体记忆
 
@@ -9,9 +9,9 @@ Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部�
 - **行为即数据**——记忆也是数据。agent 能读、能写、能改自己的记忆，人类也能直接打开文件审计。
 - **书信共和国**——社会的知识在邮件里积累，个体记忆只服务个体。记忆是 agent 私有的，共享靠发信，不靠共享存储。
 
-这两条决定了记忆系统的基本形态：每个 agent 一个私有目录（`~/.tlon/{agent_id}/memory/`，路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 解析），全部内容是 JSONL/JSON 文本文件，没有数据库、没有向量索引（向量检索是 ADR 0017 阶段 2 的事）。
+这两条决定了记忆系统的基本形态：每个 agent 一个私有目录（`~/.tlon/{agent_id}/memory/`，路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 解析），内容以 JSONL/JSON 文本文件为主体，外加一个 sqlite-vec 向量索引库（`claims_vec.db`）——索引是 `claims.jsonl` 的**纯派生视图**，可删可重建，不是第二个真相（ADR 0017 阶段 2）。
 
-还有一条隐含约束来自认知循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储与蒸馏能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（spec 的 `:loop` 声明与 `ContextBuilder` / `SessionScheduler` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。也是这条约束决定了蒸馏触发入口的形状：manager 不能 import journal，于是定义 `SessionLogReader` Protocol（`list_completed` + `read_events` 两个方法），`SessionJournal` 结构化满足它，由 scheduler 在回收点注入。
+还有一条隐含约束来自认知循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储、蒸馏与检索能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（spec 的 `:loop` 声明与 `ContextBuilder` / `SessionScheduler` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。也是这条约束决定了蒸馏触发入口的形状：manager 不能 import journal，于是定义 `SessionLogReader` Protocol（`list_completed` + `read_events` 两个方法），`SessionJournal` 结构化满足它，由 scheduler 在回收点注入。
 
 ## 单一产物：claim
 
@@ -20,7 +20,7 @@ ADR 0017 之前，长期记忆分两套机制：批量会话摘要（`summaries.
 - `source_session_ids`——来源 session 引用，可回读 journal 原文核对；
 - `valid_from` / `valid_to`——有效时间窗；
 - `status`（`active` / `superseded`）与 `superseded_by`——取代即失效、不删除的生命周期字段（阶段 1 已备好，冲突判定的写入逻辑是阶段 3）；
-- `importance`——检索打分因子（阶段 2 的混合打分使用）。
+- `importance`——检索打分因子（JIT 混合打分使用，见「上下文注入」）。
 
 摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。三元组模型整个删除：自然语言断言不需要结构化三元组，精确字符串匹配的 supersede 缺陷（）随之消亡。
 
@@ -50,11 +50,26 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 与旧设计一致的两点：一是**蒸馏不删除任何输入**——journal 只增不减；二是**没有空闲触发**——蒸馏只挂在 session 完成节拍上。
 
+## 向量索引：claims 的派生视图
+
+阶段 2 引入 [memory/vector_index.py](../../src/tlon/memory/vector_index.py) 的 `VectorIndex`：嵌入式 sqlite-vec 库（`memory/claims_vec.db`），claim_id → embedding，cosine 距离 KNN。embedding 走成员级 LLM 配置的延伸——`agent.yaml` 的 `llm.embedding_model_name`（`provider/model` 形式，同 litellm 路由与 `{PROVIDER}_API_KEY` 约定），薄封装在 [base/embedding_client.py](../../src/tlon/base/embedding_client.py) 的 `EmbeddingClient`（memory 层只依赖 base，litellm 不下渗）。
+
+索引的三条不变量：
+
+- **纯派生视图**。真相只有 `claims.jsonl`；索引可整个删掉，下次启动从 active claims 全量重建。索引库的 `vec_meta` 表记录 embedding 模型标识 + 维度，`MemoryManager.load` 与当前配置比对——换模型（向量空间互不兼容）即自动全量重建，重建就是 N 次 embedding 调用，无数据迁移。
+- **降级是一等公民**。未配置 `embedding_model_name`、embedding 调用失败、索引重建失败，检索一律降级为「最近 N 条」时间序注入——部分 provider 没有 embedding 端点，记忆与会话绝不能因此挂掉。写入路径同样宽容：`add_claim` 后同步尝试 embed 入库，失败只记日志（claim 仍可被时间序检索到）；load 时对缺向量的 active claims 做 backfill、对已被删 claim 的残留向量做清理。
+- **写入即入索引**。蒸馏落盘与 `rememberFact` 之后同步 embed 入库，下一轮检索即可命中（ 的「记了看不到」不会复活）。
+
 ## 上下文注入
 
-记忆的回流通道是 `MemoryManager.build_context_blocks`：取最近 `context_max_claims` 条 active claim，渲染成 `- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。`current_message` 参数保留但在阶段 1 不使用——检索仍是「取最近 N 条」，它将在阶段 2 成为向量检索的 query（ADR 0017，）。
+记忆的回流通道是 `MemoryManager.build_context_blocks(current_message)`——阶段 2 起 `current_message` 从死参数变为核心输入（ 消亡）。两条路径：
 
-注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 调 `build_knowledge_context` 把记忆块拼成一条 `[已知信息]` 开头的 user 消息，按 section 顺序插入对话。是否注入知识因此是 spec 层的声明——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
+- **JIT 相关性检索**（有 query 且索引可用）：query（当前邮件的主题 + 正文）embed 成向量 → vec KNN 取候选池（`context_max_claims` 的 4 倍）→ 复合打分 `score = 1.0·similarity + 0.3·recency + 0.5·importance` 取 top-k active claims。similarity 由 cosine 距离归一化（`1 - distance`，截断到 [0,1]）；recency 是指数衰减（半衰期 7 天，Generative Agents 衰减的半衰期重参数化）；权重写在 [memory/manager.py](../../src/tlon/memory/manager.py) 的模块常量里——相似度占主导（JIT 的意义就是相关性），importance 让关键断言赢下近似平局，recency 最弱（「最新优先」已有降级路径兜底，旧但相关的断言不能被新鲜噪声淹掉）。
+- **时间序降级**（无 query / 未配置 embedding / 检索任何环节失败）：取最近 `context_max_claims` 条 active claims。
+
+两种路径的渲染一致：`- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。
+
+注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把当前邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息，按 section 顺序插入对话。是否注入知识因此是 spec 层的声明——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
 
 一个细节体现实用主义：`build_knowledge_context` 把记忆构建的异常整个兜住（记告警、返回空串），记忆损坏不阻断对话，空记忆等价于没有 `(knowledge)` 段。记忆是增强，不是依赖。
 
@@ -63,7 +78,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的三个工具读写自己的记忆，全部在 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配认知成员时注册，直接持有本 agent 的 `MemoryManager` 实例：
 
 - `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数只有 `fact` 文本与 `importance`；旧的三元组参数已删）。
-- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——关键词搜索 claim 文本，纯子串匹配（中文检索的局限是已知问题 ，随阶段 2 的向量检索消亡）。
+- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims（embedding 检索天然跨语言， 的中文分词缺陷随之消亡），每条结果带日期与 `source_session_ids` 来源引用（回读 journal 原文的工具是阶段 4）；索引不可用时降级关键词子串匹配。
 - `forget`（`forget_memory.py` 的 `ForgetMemoryTool`）——删除记忆；默认预览模式（只报匹配），`confirm: true` 才真正删。两步确认是给 LLM 的防误删闸门。
 
 工具的读写都只落在本 agent 的目录——`MemoryManager` 构造时绑定 `agent_id`，工具层没有跨 agent 访问的入口。记忆私有性在这一层是结构性保证，不是约定。
@@ -101,7 +116,7 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的三个�
 1. 认知循环跑完，journal 里留下完整的 session 事件流（ADR 0007：模型可见 ⇒ 已入日志）。
 2. scheduler 在回收点做两件事：`note_interaction` 喂反思计数；`maybe_distill_completed_sessions` 检查水位线 pending 窗口——满 3 个已完成 session 就从各自 journal 重建投影、批量蒸馏写 claims、推进水位线。
 3. 调度器在循环间隙另做周期检查：`check_reflection`（间隔与计数双门控通过则后台跑反思）。
-4. 下一封邮件进来时，`ContextBuilder` 按 spec 的 `(knowledge)` 段把最近的 active claim 拼成 `[已知信息]` 注入对话。
+4. 下一封邮件进来时，`ContextBuilder` 按 spec 的 `(knowledge)` 段以邮件内容为 query 做 JIT 检索（或降级取最近 N 条），把选中的 active claim 拼成 `[已知信息]` 注入对话。
 
 整条链路里没有定时器、没有后台守护进程：蒸馏与反思全部挂在认知循环的事件节拍上。agent 不活动，记忆就不动——这与整个系统「事件驱动、睡觉零成本」的运行模型一致。
 
@@ -126,7 +141,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ## 方向
 
-整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型，本文描述的现状）之后依次是 sqlite-vec 向量索引 + JIT 注入（阶段 2，/ 随之消亡）、冲突判定 + 失效不删除的 claim 生命周期（阶段 3）、anchor 减肥 + journal 回读工具（阶段 4）、回归集（阶段 5）。
+整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）与阶段 2（sqlite-vec 向量索引 + JIT 注入，本文描述的现状，/ 随之消亡）已落地；之后依次是冲突判定 + 失效不删除的 claim 生命周期（阶段 3）、anchor 减肥 + journal 回读工具（阶段 4）、回归集（阶段 5）。
 
 与愿景的差距主要有两处：
 

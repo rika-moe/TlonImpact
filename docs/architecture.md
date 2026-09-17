@@ -30,7 +30,7 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 ├────────────────────────── 基础设施层 ────────────────────────────┤
 │ base —— Component / EventBus / ConfigService / TlonPaths /        │
 │         LLMClient / tracing / metrics / logger                    │
-│ memory —— 工作记忆 + 情景记忆（MemoryManager）                     │
+│ memory —— claim 记忆（MemoryManager + sqlite-vec 索引）           │
 │ sandbox —— DockerRuntime                                          │
 └───────────────────────────────────────────────────────────────────┘
          EventBus 横贯各层：组件间通信的唯一通道（发布/订阅）
@@ -58,7 +58,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 | 包 | 职责 | 允许依赖 | 强制手段 |
 |---|---|---|---|
 | `tlon.base` | 组件基类、事件总线、配置、路径、日志、LLM 客户端、tracing/metrics | 不依赖任何上层 | import-linter「base 不依赖任何上层域」 |
-| `tlon.memory` | 工作/情景记忆存储与摘要 | 仅 base | import-linter |
+| `tlon.memory` | claim 记忆存储、蒸馏与向量检索 | 仅 base | import-linter |
 | `tlon.organization` | 邮件模型、邮箱、投递、地址解析、人类适配器 | 仅 base | import-linter |
 | `tlon.sandbox` | Docker 沙箱运行时 | 仅 base | import-linter |
 | `tlon.tools` | agent 可用工具（邮件/文件/Shell/记忆/任务/生命周期/原型） | base、sandbox；不依赖 agents/app/prototypes | import-linter；生命周期与原型工具经 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py)、[tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py) 声明端口，由装配层注入实现（依赖倒置） |
@@ -148,7 +148,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### 记忆与沙箱
 
-`tlon.memory` 的 `MemoryManager`（[memory/manager.py](../src/tlon/memory/manager.py)）为每个 agent 管理长期记忆：claim 存于 [memory/claim_store.py](../src/tlon/memory/claim_store.py)（`claims.jsonl`，append-only），批量蒸馏（journal → claims）由 [memory/distiller.py](../src/tlon/memory/distiller.py) 完成，进度以标量时间戳水位线持久化在 `distillation.json`（ADR 0017）。agent 侧通过 `tlon.tools.memory` 下的工具（`rememberFact`、`searchMemories`、`forget`）读写自己的记忆。`tlon.sandbox` 的 `DockerRuntime`（[sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py)）封装 Docker 容器执行，供 Shell 类工具使用。
+`tlon.memory` 的 `MemoryManager`（[memory/manager.py](../src/tlon/memory/manager.py)）为每个 agent 管理长期记忆：claim 存于 [memory/claim_store.py](../src/tlon/memory/claim_store.py)（`claims.jsonl`，append-only），批量蒸馏（journal → claims）由 [memory/distiller.py](../src/tlon/memory/distiller.py) 完成，进度以标量时间戳水位线持久化在 `distillation.json`（ADR 0017）。检索走 [memory/vector_index.py](../src/tlon/memory/vector_index.py) 的 sqlite-vec 索引（`claims_vec.db`，claims 的纯派生视图）+ [base/embedding_client.py](../src/tlon/base/embedding_client.py) 的 embedding 客户端（成员级 `llm.embedding_model_name` 配置；未配置或失败时降级时间序注入）。agent 侧通过 `tlon.tools.memory` 下的工具（`rememberFact`、`searchMemories`、`forget`）读写自己的记忆。`tlon.sandbox` 的 `DockerRuntime`（[sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py)）封装 Docker 容器执行，供 Shell 类工具使用。
 
 ### 工具层与依赖倒置
 

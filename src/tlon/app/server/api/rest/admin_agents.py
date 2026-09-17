@@ -151,7 +151,7 @@ class AdminAgentHandlers(RestHandlerBase):
         """PATCH /admin/config/agents/{agent_id} - edit persona / LLM knobs.
 
         Body: ``{"persona"?: {identity?, profile?, behavior?}, "llm"?:
-        {model_name?}}``. Persona files take effect
+        {model_name?, embedding_model_name?}}``. Persona files take effect
         immediately (the prompt cache keys on their mtimes); an LLM change
         rewrites ``agent.yaml`` and hot-reloads the config.
 
@@ -203,6 +203,8 @@ class AdminAgentHandlers(RestHandlerBase):
             update: dict[str, Any] = {}
             if llm.get("model_name"):
                 update["model_name"] = str(llm["model_name"])
+            if llm.get("embedding_model_name"):
+                update["embedding_model_name"] = str(llm["embedding_model_name"])
             cfg.llm = base.model_copy(update=update)
             yaml_save(cfg, paths.tlon_home())
             await self.agent_registry.adopt_agent(agent_id)  # reload config

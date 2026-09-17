@@ -68,6 +68,16 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _memory_query(mail: Mail) -> str:
+    """The JIT memory-retrieval query for a mail: subject plus body.
+
+    The subject carries intent the body often omits (short replies like
+    "那改成多少？"), so both go into the embedding query.
+    """
+    parts = [mail.subject, mail.content]
+    return "\n\n".join(p for p in parts if p).strip()
+
+
 def _render_thread_recap(events: list[dict[str, Any]], external: bool = False) -> str:
     """Render one completed session's journal events as a bounded digest.
 
@@ -168,10 +178,16 @@ class ContextBuilder:
         self._skills_index_cache: str | None = None
         self._skills_signature: Signature | None = None
 
-    async def build_knowledge_context(self) -> str:
-        """Build knowledge text from memory blocks for user prompt injection."""
+    async def build_knowledge_context(self, query: str | None = None) -> str:
+        """Build knowledge text from memory blocks for user prompt injection.
+
+        Args:
+            query: The current mail's text — the relevance query for JIT
+                memory retrieval (ADR 0017 stage 2); None degrades
+                retrieval to recency order
+        """
         try:
-            blocks = await self._memory.build_context_blocks()
+            blocks = await self._memory.build_context_blocks(query)
             if not blocks:
                 return ""
             parts = []
@@ -262,7 +278,7 @@ class ContextBuilder:
         for form in self._loop.context_sections:
             name = str(form[0])
             if name == "knowledge":
-                knowledge = await self.build_knowledge_context()
+                knowledge = await self.build_knowledge_context(_memory_query(current_mail))
                 if knowledge:
                     context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
             elif name == "lessons":

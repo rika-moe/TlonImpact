@@ -90,6 +90,12 @@ class LLMConfig(BaseModel):
     # proxies / OpenAI-compatible endpoints pair ``model_name:
     # openai/<model>`` with this URL. None = litellm's registry routing.
     api_base: str | None = None
+    # Member-level embedding model (ADR 0017 stage 2): ``provider/model``
+    # form, routed via litellm with the same ``{PROVIDER}_API_KEY`` env
+    # convention as ``model_name``. None = no vector retrieval — memory
+    # injection degrades to most-recent-N (a first-class fallback: some
+    # providers expose no embedding endpoint at all).
+    embedding_model_name: str | None = None
 
     # Runtime-only fields (not persisted to YAML); code defaults only —
     # no env source (ADR 0016).
