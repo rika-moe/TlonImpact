@@ -515,7 +515,7 @@ async def test_lessons_file_injected(tmp_path: Path) -> None:
     builder = _make_lessons_builder(tmp_path, "[(lessons)]")
     lessons_file = TlonPaths(home=tmp_path).agent_lessons_file(AGENT)
     lessons_file.parent.mkdir(parents=True, exist_ok=True)
-    lessons_file.write_text("- 部署前先跑八件套\n", encoding="utf-8")
+    lessons_file.write_text("- 部署前先跑质量门\n", encoding="utf-8")
 
     context = await builder.build_context(_mail())
 
@@ -523,7 +523,7 @@ async def test_lessons_file_injected(tmp_path: Path) -> None:
     section = context[0]
     assert section["role"] == "user"
     assert section["content"].startswith("[传承教训]")
-    assert "- 部署前先跑八件套" in section["content"]
+    assert "- 部署前先跑质量门" in section["content"]
     assert context[1]["content"].endswith("\n\nhello")
 
 

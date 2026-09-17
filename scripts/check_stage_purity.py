@@ -19,7 +19,6 @@ through StageServices stay fine.
 
 Usage:
     python scripts/check_stage_purity.py [paths...]
-    python scripts/check_stage_purity.py --ci
 
 Exit codes:
     0 - No violations
@@ -99,9 +98,6 @@ def main() -> int:
         "paths",
         nargs="*",
         help=f"Files or directories to check (default: {STAGES_DIR})",
-    )
-    parser.add_argument(
-        "--ci", action="store_true", help="Exit with error code if violations found"
     )
     args = parser.parse_args()
 

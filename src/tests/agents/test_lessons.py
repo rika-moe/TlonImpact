@@ -93,11 +93,11 @@ async def test_agent_stopped_distills_lessons(tmp_path: Path) -> None:
     """Full bus path: AGENT_STOPPED -> offline digest -> LLM -> lessons.md."""
     p = TlonPaths(home=tmp_path)
     _write_behavior(p, "retiree", _COGNITIVE_SPEC)
-    await _remember(p, "retiree", "部署前先跑八件套")
+    await _remember(p, "retiree", "部署前先跑质量门")
 
     bus = EventBus()
     await bus.initialize()
-    llm = _FakeLLM("- 部署前先跑八件套\n")
+    llm = _FakeLLM("- 部署前先跑质量门\n")
     seen_by_factory: list[str] = []
 
     def factory(agent_id: str) -> Any:
@@ -115,7 +115,7 @@ async def test_agent_stopped_distills_lessons(tmp_path: Path) -> None:
 
         lessons_file = p.memory_lessons_file("retiree")
         assert await _wait_for(lessons_file.exists)
-        assert lessons_file.read_text(encoding="utf-8") == "- 部署前先跑八件套\n"
+        assert lessons_file.read_text(encoding="utf-8") == "- 部署前先跑质量门\n"
         # Attribution: the call is made in the retired member's name.
         assert seen_by_factory == ["retiree"]
         assert llm.calls[0]["purpose"] == "lessons"

@@ -157,7 +157,7 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
     _write_behavior(p, "retiree", _COGNITIVE_SPEC)
     _write_config(p, "retiree", name="老张", spawned_by="spawner-1")
-    await _remember(p, "retiree", "部署前先跑八件套")
+    await _remember(p, "retiree", "部署前先跑质量门")
     tasks = TaskManager("retiree", data_dir=str(p.agent_dir("retiree")))
     tasks.create_task("写完退休文档")
     box = Mailbox(p.member_mail_dir("retiree"))

@@ -48,7 +48,7 @@ Tlon 现状：已有 `scripts/check_*.py` 静态检查文化（架构 DAG、re-e
 
 借鉴形态：给 tools 目录和 `EventType` 枚举写生成脚本，输出到 reference 文档，CI 加 freshness 检查。零架构改动，与现有工程文化零摩擦。
 
-**实施记录**：`scripts/gen_reference_docs.py`（AST 提取 `_assemble_cognitive` 注册序 + `Tool` 子类清单 + `EventType` 枚举），生成区块以 `<!-- BEGIN/END GENERATED -->` 标记嵌入 [reference/tools-reference.md](../reference/tools-reference.md)（注册清单）与 [reference/api-reference.md](../reference/api-reference.md)（事件枚举全集）；`--check` 为保鲜门，已接入 CI（`.github/workflows/unit-tests.yml`）并列入 AGENTS.md 验证八件套。手写叙事段落保持手写，只有易漂移的清单由源码生成。
+**实施记录**：`scripts/gen_reference_docs.py`（AST 提取 `_assemble_cognitive` 注册序 + `Tool` 子类清单 + `EventType` 枚举），生成区块以 `<!-- BEGIN/END GENERATED -->` 标记嵌入 [reference/tools-reference.md](../reference/tools-reference.md)（注册清单）与 [reference/api-reference.md](../reference/api-reference.md)（事件枚举全集）；`--check` 为保鲜门，已接入 CI（`.github/workflows/static.yml` 的静态质量门）并列入 AGENTS.md 验证质量门。手写叙事段落保持手写，只有易漂移的清单由源码生成。
 
 ## 中期，方向性借鉴（先讨论再动）
 

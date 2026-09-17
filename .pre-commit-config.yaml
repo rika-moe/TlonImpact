@@ -8,32 +8,9 @@ repos:
 
   - repo: local
     hooks:
-      - id: check-no-reexport
-        name: Check no re-export in __init__.py
-        entry: python3 scripts/check_no_reexport.py --ci
-        language: system
-        files: ^src/.*__init__\.py$
-        pass_filenames: false
-      - id: check-architecture
-        name: Check DAG Component Architecture compliance
-        entry: python3 scripts/check_architecture.py --ci
-        language: system
-        files: ^src/.*\.py$
-        pass_filenames: false
-      - id: check-stage-purity
-        name: Check stage purity (no direct session mutation, C2)
-        entry: python3 scripts/check_stage_purity.py --ci
-        language: system
-        files: ^src/tlon/agents/stages/.*\.py$
-        pass_filenames: false
-      - id: mypy
-        name: mypy (src/tlon, strict in pyproject.toml)
-        entry: uv run mypy src/tlon/
-        language: system
-        pass_filenames: false
-      - id: lint-imports
-        name: lint-imports (dependency contracts in pyproject.toml)
-        entry: uv run lint-imports
+      - id: quality-gate-static
+        name: Static quality gate (scripts/check_all.sh --static)
+        entry: scripts/check_all.sh --static
         language: system
         pass_filenames: false
 

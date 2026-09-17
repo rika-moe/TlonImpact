@@ -56,8 +56,8 @@ uv run pytest
 - 大任务拆阶段，每阶段独立提交或独立 PR；行为不变先行，能力扩张随后
 
 ### 执行
-- 大活派 subagent：brief 给精确的文件:行号、已核实的现状事实、已定稿决策、测试要求、验证命令；超时/中断用 resume 续跑；完成后必须自己复核（八件套 + 审 diff + 真实冒烟），不盲信汇报
-- 验证八件套：`uv run pytest src/tests/ -q`、`uv run ruff check src/`、`uv run python scripts/check_architecture.py`、`uv run python scripts/check_no_reexport.py`、`uv run python scripts/check_stage_purity.py`、`uv run mypy src/tlon`、`uv run lint-imports`、`uv run python scripts/gen_reference_docs.py --check`（文档保鲜门），全绿才算完
+- 大活派 subagent：brief 给精确的文件:行号、已核实的现状事实、已定稿决策、测试要求、验证命令；超时/中断用 resume 续跑；完成后必须自己复核（质量门 + 审 diff + 真实冒烟），不盲信汇报
+- 验证质量门：一条命令 `scripts/check_all.sh`（分组 `--static` 静态检查+TS 门禁 / `--unit` / `--integration`，可组合，无参全量；逐项跑完并汇总，任一失败退出码 1），全绿才算完。检查项只在脚本内定义（单一事实源），CI 三个 workflow（static / unit-test / integration-test）与 pre-commit 均调同一脚本分组；TS 门禁要求 apps 下已 `npm install`，缺失时本地跳过、CI 必跑
 - 真实冒烟：起 dream + SDK 发邮件 + 查 `~/.tlon` 收件箱验证；完事清理冒烟痕迹、释放 8080 端口
 
 ### EPIC 施工流程（AI 自服务闭环）
@@ -67,8 +67,8 @@ EPIC issue（任务清单型）的 standardized 施工法，已在 // 验证。�
 1. **拆分**：一个任务项一个 PR，严格串行。施工顺序按文件冲突邻接排（改同一区域的项相邻施工），有依赖的按依赖序。
 2. **每个 PR 的循环**：
    - `checkout main && pull`，拉新分支（`fix|feat|perf(<域>): 描述`）
-   - 派 coder subagent 实现：brief 给文件:行号、已核实事实、设计约束（边界/不做什么）、测试要求、八件套命令、**禁止 git 操作**
-   - 主会话复核：审 diff（重点抽查 subagent 声明的关键事实，如接口签名、调用方、共享可变性），亲自重跑八件套——不盲信汇报
+   - 派 coder subagent 实现：brief 给文件:行号、已核实事实、设计约束（边界/不做什么）、测试要求、质量门命令、**禁止 git 操作**
+   - 主会话复核：审 diff（重点抽查 subagent 声明的关键事实，如接口签名、调用方、共享可变性），亲自重跑质量门——不盲信汇报
    - commit（conventional 格式 + 中文描述 + `Refs #issue`）→ push → `gh pr create`（body：修复内容/实现/设计决策/测试/验证结果/偏离说明）→ `gh pr checks <N> --watch` 等 CI → 绿后 `gh pr merge <N> --squash` → 删本地分支 → 下一个
 3. **收尾**：全部合并后回 EPIC issue 勾选任务清单并标注 PR 号。
 4. **事故处理**（都是实战踩过的）：
@@ -83,7 +83,7 @@ EPIC issue（任务清单型）的 standardized 施工法，已在 // 验证。�
 - 诚实优先：review 给证据说话；发现用户指令有问题时摆数据提出，由用户定夺
 
 ### 沟通
-- 汇报带实质：改动清单、测试数、六件套结果、与计划的偏差及原因
+- 汇报带实质：改动清单、测试数、质量门结果、与计划的偏差及原因
 - 未完成/未验证的不说成完成；过程事故（subagent 超时、替换误伤等）如实记录
 
 ---

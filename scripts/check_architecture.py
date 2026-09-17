@@ -10,7 +10,6 @@ Enforces DAG Component Architecture rules:
 Usage:
     python scripts/check_architecture.py [paths...]
     python scripts/check_architecture.py src/tlon/app/server
-    python scripts/check_architecture.py --ci  # Exit with error code if violations found
 
 Exit codes:
     0 - No violations
@@ -317,9 +316,6 @@ def main():
         "paths", nargs="*", help="Files or directories to check (default: src/tlon)"
     )
     parser.add_argument(
-        "--ci", action="store_true", help="Exit with error code if violations found"
-    )
-    parser.add_argument(
         "--project-root", type=Path, default=Path.cwd(), help="Project root directory"
     )
 
@@ -343,10 +339,7 @@ def main():
 
     checker.print_report()
 
-    if args.ci and checker.violations:
-        sys.exit(1)
-
-    sys.exit(0 if not checker.violations else 0)
+    sys.exit(1 if checker.violations else 0)
 
 
 if __name__ == "__main__":

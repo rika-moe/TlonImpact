@@ -24,5 +24,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Run integration tests
-        run: uv run pytest src/tests/integration/ -v --tb=short
+      - name: Integration tests
+        run: scripts/check_all.sh --integration

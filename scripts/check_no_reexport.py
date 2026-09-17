@@ -9,7 +9,6 @@ boundaries, since re-exported names are invisible to most static analysis.
 
 Usage:
     python scripts/check_no_reexport.py [paths...]
-    python scripts/check_no_reexport.py --ci
 
 Exit codes:
     0 - No violations
@@ -77,9 +76,6 @@ def check_file(file_path: Path, root_package: str) -> list[tuple[int, str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ban re-exports in __init__.py")
     parser.add_argument("paths", nargs="*", help="Files or directories to check")
-    parser.add_argument(
-        "--ci", action="store_true", help="Exit with error code if violations found"
-    )
     parser.add_argument(
         "--root-package", default=None, help="Root package name (auto-detected by default)"
     )

@@ -59,4 +59,4 @@ PR1 已落地：`sdk/client.py`（`get_inbox()`）、`sdk/adapter.py`（Telegram
 
 ## 验收
 
-端到端冒烟：起 dream → `tlon telegram` → 手机 `/send 顾言蹊 …` → agent 收到并回信 → 手机收到推送 → 对该推送回复 → agent 收到带 `in_reply_to` 的信。另加八件套全绿。
+端到端冒烟：起 dream → `tlon telegram` → 手机 `/send 顾言蹊 …` → agent 收到并回信 → 手机收到推送 → 对该推送回复 → agent 收到带 `in_reply_to` 的信。另加质量门全绿。

@@ -139,7 +139,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 - **状态变更**：stage 永不执行，只声明。全部意图返回在 [agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py) 的 `StageOutcome` 里——context 追加、scratch 写入、迭代/错误计数、工具结果与分发、响应、邮件、最终回复（on-complete 的 `result` 输入）、on-complete、完成信号。默认全空的 Outcome 应用后是 no-op：stage 只声明它真正要改的部分。
 - **应用**：`LoopDriver._apply_outcome` 落地会话本地字段，`EffectExecutor` 执行外部效果。stage 与副作用之间隔着一层可枚举、可断言的数据。
 
-这条纯度不是约定而是强制：[scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 用 AST 静态禁止 stage 模块调用 session 的任何 mutator 方法、禁止对 session 属性赋值，纳入验证六件套，违规即构建失败。引擎与策略的边界因此是**机器可检查**的——这正是 DSL 白名单组合 stage 的安全地基，完整论证见 [docs/decisions/0004-stage-purity.md](../decisions/0004-stage-purity.md)。
+这条纯度不是约定而是强制：[scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 用 AST 静态禁止 stage 模块调用 session 的任何 mutator 方法、禁止对 session 属性赋值，纳入验证质量门，违规即构建失败。引擎与策略的边界因此是**机器可检查**的——这正是 DSL 白名单组合 stage 的安全地基，完整论证见 [docs/decisions/0004-stage-purity.md](../decisions/0004-stage-purity.md)。
 
 为什么值得付出这层间接：组合安全的前提是积木不逾矩。stage 在类型层面拿不到可变的 session 操作面，在检查层面被禁掉直写，于是 spec 作者（包括未来的 LLM 作者）写出的任何 stage 向量，最坏结果是跑出一个 no-op 或被 `max_iterations` 截停，不可能破坏引擎不变量。测试也随之简化：验证一个 stage 只需构造 session 与 fake services、断言返回的 Outcome，不需要 mock 总线或邮箱。
 

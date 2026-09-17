@@ -205,4 +205,4 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 | `uv run python scripts/check_no_reexport.py` | `__init__.py` 禁止 re-export |
 | `uv run python scripts/check_stage_purity.py` | [agents/stages/](../src/tlon/agents/stages) 下 stage 纯度：禁止直接修改 session 状态 |
 
-通用质量工具（ruff、mypy strict、pytest）见 [AGENTS.md](../AGENTS.md) 的验证六件套，不属于架构约束本身。
+通用质量工具（ruff、mypy strict、pytest）见 [AGENTS.md](../AGENTS.md) 的验证质量门，不属于架构约束本身。
