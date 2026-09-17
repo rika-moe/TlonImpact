@@ -143,6 +143,35 @@ class ClaimStore:
                 return self._claims_cache.copy()
             return [c for c in self._claims_cache if c.get("status", "active") == "active"]
 
+    async def supersede_claim(self, claim_id: str, superseded_by: str, valid_to: str) -> bool:
+        """Mark a claim superseded by a newer one.
+
+        失效不删除 (invalidation without deletion, ADR 0017 stage 3): the
+        claim stays in ``claims.jsonl`` for audit — only its
+        ``status``/``superseded_by``/``valid_to`` fields change. The
+        mutation rewrites the whole file atomically (temp file +
+        os.replace), the same pattern as ``delete_claim``.
+
+        Returns:
+            True when the claim was found and marked; an unknown id is
+            logged and returns False — never a silent no-op
+        """
+        if not self._loaded:
+            await self.load()
+
+        async with self._lock:
+            for item in self._claims_cache:
+                if item.get("id") == claim_id:
+                    item["status"] = "superseded"
+                    item["superseded_by"] = superseded_by
+                    item["valid_to"] = valid_to
+                    await self._persist()
+                    return True
+            logger.warning(
+                "claim_supersede_not_found", agent_id=self.agent_id, claim_id=claim_id
+            )
+            return False
+
     async def delete_claim(self, claim_id: str) -> bool:
         """Delete a claim by exact ID."""
         if not self._loaded:

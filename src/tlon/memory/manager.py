@@ -9,7 +9,12 @@ no id-based high-water mark is possible). Retrieval is JIT: the current
 mail embeds into a query against a sqlite-vec index (``claims_vec.db``,
 a pure derived view of the claim store) and active claims are ranked by
 a composite similarity/recency/importance score; without an embedding
-model or on any index failure it degrades to recency order. The manager
+model or on any index failure it degrades to recency order. Writes on
+both paths (batch distillation, ``remember_fact``) pass conflict
+judgment first: similar active old claims are LLM-judged, and
+contradicted ones are superseded in place — invalidated, never deleted
+(stage 3, ); every failure mode of the judgment degrades to pure
+append. The manager
 keeps the claim store, the index, the context-block assembly for the
 ``(knowledge)`` section, and the batch distillation trigger the
 scheduler calls at its session reap point.
@@ -53,6 +58,17 @@ _RECENCY_HALF_LIFE_DAYS = 7.0
 #: The KNN query pulls a pool larger than k so the composite score can
 #: re-rank candidates pure similarity order would miss.
 _RETRIEVAL_POOL_FACTOR = 4
+
+#: Conflict judgment (ADR 0017 stage 3): a new claim is only worth an
+#: LLM judgment call when a similar active old claim exists. The
+#: similarity gate is deliberately high — judgment exists to catch
+#: near-synonymous facts that contradict each other (), and at
+#: 0.75 cosine similarity two claims are almost always about the same
+#: fact; below it they are merely related topics and ADD directly.
+_CONFLICT_SIMILARITY_THRESHOLD = 0.75
+#: Candidates pulled per new claim: judgment needs the few closest
+#: matches, not a ranking exercise.
+_CONFLICT_CANDIDATE_LIMIT = 3
 
 
 class Embedder(Protocol):
@@ -491,16 +507,21 @@ class MemoryManager:
             return None
 
         now = datetime.now().isoformat()
+        new_claims = [
+            Claim(
+                text=claim_dict["text"],
+                timestamp=now,
+                valid_from=now,
+                source_session_ids=source_session_ids,
+                importance=claim_dict.get("importance", 0.5),
+            )
+            for claim_dict in claim_dicts
+        ]
+        await self._resolve_conflicts(new_claims)
+
         persisted: list[dict[str, Any]] = []
         try:
-            for claim_dict in claim_dicts:
-                claim = Claim(
-                    text=claim_dict["text"],
-                    timestamp=now,
-                    valid_from=now,
-                    source_session_ids=source_session_ids,
-                    importance=claim_dict.get("importance", 0.5),
-                )
+            for claim in new_claims:
                 claim_data = claim.to_dict()
                 await self.claims.add_claim(claim_data)
                 persisted.append(claim_data)
@@ -522,6 +543,80 @@ class MemoryManager:
             claim_count=len(claim_dicts),
         )
         return len(claim_dicts)
+
+    # ===== Conflict judgment (ADR 0017 stage 3, ) =====
+
+    async def _resolve_conflicts(self, new_claims: list[Claim]) -> None:
+        """Supersede old claims contradicted by freshly built new ones.
+
+        Both write paths (batch distillation, ``remember_fact``) run the
+        same judgment before appending: each new claim's text is embedded,
+        the index is searched for similar **active** old claims
+        (similarity at or above ``_CONFLICT_SIMILARITY_THRESHOLD``), and
+        the whole batch goes to the distiller's one-shot LLM judgment.
+        SUPERSEDE verdicts invalidate the old claims in place
+        (``status``/``superseded_by``/``valid_to`` — never deleted); the
+        new claims themselves are appended by the caller.
+
+        Every failure mode — no distiller (mechanical fallback claims
+        imply the LLM is down anyway), no index/embedder, embedding or
+        search failure, judgment failure — degrades to pure append:
+        conflict judgment is an enhancement, never a write blocker.
+        """
+        if self.distiller is None or self._index is None or self._embedder is None:
+            return
+        if not new_claims:
+            return
+
+        texts = [claim.text for claim in new_claims]
+        try:
+            vectors = await self._embedder.embed(texts)
+        except Exception as e:
+            logger.warning("conflict_candidate_embed_failed", error=str(e))
+            return
+
+        active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
+        candidates: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        try:
+            for vector in vectors:
+                for claim_id, similarity in self._index.search(
+                    vector, _CONFLICT_CANDIDATE_LIMIT
+                ):
+                    if similarity < _CONFLICT_SIMILARITY_THRESHOLD:
+                        continue
+                    if claim_id in seen or claim_id not in active:
+                        continue
+                    seen.add(claim_id)
+                    candidates.append(active[claim_id])
+        except Exception as e:
+            logger.warning("conflict_candidate_search_failed", error=str(e))
+            return
+        if not candidates:
+            return
+
+        try:
+            verdicts = await self.distiller.judge_conflicts(texts, candidates)
+        except Exception as e:
+            logger.warning("conflict_judgment_failed", error=str(e))
+            return
+        if verdicts is None:
+            return
+
+        now = datetime.now().isoformat()
+        for claim, verdict in zip(new_claims, verdicts, strict=True):
+            if verdict.action != "supersede":
+                continue
+            for old_id in verdict.superseded_ids:
+                if old_id == claim.id:
+                    continue  # never self-supersede
+                if await self.claims.supersede_claim(old_id, claim.id, now):
+                    logger.info(
+                        "claim_superseded",
+                        agent_id=self.agent_id,
+                        old_claim_id=old_id,
+                        new_claim_id=claim.id,
+                    )
 
     async def build_context_blocks(
         self,
@@ -651,6 +746,10 @@ class MemoryManager:
     ) -> str:
         """Record a claim immediately (called by LLM via tool).
 
+        The claim goes through the same conflict judgment as distilled
+        claims (ADR 0017): similar active old claims are judged, and
+        contradicted ones are superseded before the new claim appends.
+
         Args:
             fact: Natural language description of what to remember
             importance: Importance score (0-1)
@@ -669,6 +768,8 @@ class MemoryManager:
             source_session_ids=[],
             importance=importance,
         )
+
+        await self._resolve_conflicts([claim])
 
         claim_data = claim.to_dict()
         claim_id = await self.claims.add_claim(claim_data)

@@ -100,9 +100,8 @@ class Claim:
     sessions or recorded directly by the agent, with provenance
     (``source_session_ids``) and a validity window. Claims are
     append-only: supersession marks (``status``/``valid_to``/
-    ``superseded_by``), never deletes — the lifecycle writes land in
-    stage 3; the fields exist from stage 1 so the on-disk format is
-    stable.
+    ``superseded_by``), never deletes — a superseded claim stays in
+    ``claims.jsonl`` for audit.
     """
 
     text: str

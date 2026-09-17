@@ -1,6 +1,6 @@
 # ADR 0017：记忆系统重设计——claim 模型 + 向量检索 + JIT 注入，整体替换旧 episodic 记忆
 
-状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入）已实施（2026-09-17）
+状态：已接受（2026-09-17，方向讨论拍板）；阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入）、阶段 3（冲突判定 + 失效不删除）已实施（2026-09-17）
 
 修订关系：部分取代 ADR 0009（摘要流被蒸馏管线替换；journal 为唯一真相不变）；修订 ADR 0008 的 anchor 语义（knowledge 段移出 anchor）。
 
@@ -72,6 +72,12 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
 - `LLMConfig` 新增成员级 `embedding_model_name`（None = 不做向量检索）；`base/embedding_client.py` 薄封装 `litellm.aembedding`，memory 层仍只依赖 base
 - `build_context_blocks(current_message)` 接线 JIT 检索：query embed → 候选池 → 复合打分 `1.0·similarity + 0.3·recency + 0.5·importance`（recency 半衰期 7 天指数衰减）取 top-k；无 query / 无索引 / 调用失败一律降级最近 N 条
 - `ContextBuilder.build_knowledge_context` 接收当前邮件主题 + 正文作为 query；`searchMemories` 改向量检索并露出 `source_session_ids`（ 的关键词分词逻辑删除）；`forget` 保持关键词匹配
+
+阶段 3 实际落地（2026-09-17）：
+
+- `ClaimStore.supersede_claim`：原地置 `status="superseded"` + `superseded_by` + `valid_to`，全量原子重写（沿用删除路径的 mutation-then-rewrite 模式）——失效不删除，旧 claim 留在 `claims.jsonl` 可审计
+- `Distiller.judge_conflicts`：整批一次 LLM 调用判定（候选旧 claim 以 id + 日期 + 文本入 prompt，verdict 用 id 引用；幻觉 id 解析层丢弃，无有效目标的 SUPERSEDE 视为 ADD），复用 `_extract_json` 容错解析；新增 `ConflictVerdict` 数据类
+- `MemoryManager._resolve_conflicts`：批量蒸馏落盘前与 `rememberFact` 写入前共用——新 claim 文本 embed → vec 检索相似度 ≥ 0.75 的 active 旧 claim 候选 → 有候选才调判定 → SUPERSEDE 应用、ADD 追加；无索引 / 无 LLM / 调用失败 / 解析失败一律退化纯追加（ 的同义事实矛盾堆积缺陷消亡）
 
 ### 施工顺序（最小端到端优先，每阶段独立 PR）
 

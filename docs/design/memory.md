@@ -1,6 +1,6 @@
 # 记忆系统设计
 
-Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。整体重设计的决策与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)；本文描述阶段 2（sqlite-vec 向量索引 + JIT 相关性注入）落地后的真实状态。
+Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部分：session journal（ADR 0007）是交互的唯一真相，已完成的 session 成批蒸馏成 claim（自然语言断言）进入长期记忆，下一轮对话再把它们拼回上下文。本文解释这套系统为什么长现在这样，以当前实现为准（存储层在 [src/tlon/memory/](../../src/tlon/memory)，agent 侧工具在 [src/tlon/tools/memory/](../../src/tlon/tools/memory)，反思在 [src/tlon/agents/reflection.py](../../src/tlon/agents/reflection.py)）。整体重设计的决策与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)；本文描述阶段 3（冲突判定 + 失效不删除的 claim 生命周期）落地后的真实状态。
 
 ## 定位：可审计的个体记忆
 
@@ -19,7 +19,7 @@ ADR 0017 之前，长期记忆分两套机制：批量会话摘要（`summaries.
 
 - `source_session_ids`——来源 session 引用，可回读 journal 原文核对；
 - `valid_from` / `valid_to`——有效时间窗；
-- `status`（`active` / `superseded`）与 `superseded_by`——取代即失效、不删除的生命周期字段（阶段 1 已备好，冲突判定的写入逻辑是阶段 3）；
+- `status`（`active` / `superseded`）与 `superseded_by`——取代即失效、不删除的生命周期字段（写入逻辑见下文「claim 生命周期」）；
 - `importance`——检索打分因子（JIT 混合打分使用，见「上下文注入」）。
 
 摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。三元组模型整个删除：自然语言断言不需要结构化三元组，精确字符串匹配的 supersede 缺陷（）随之消亡。
@@ -49,6 +49,18 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 触发链条在 [agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的回收点：session 完成（`is_completed` 分支，`_ensure_session_end` 落盘之后），scheduler 先给反思引擎计数（`note_interaction`），再调 `MemoryManager.maybe_distill_completed_sessions(journal)`。pending 数达到 `distillation_window`（默认 3）就把整批投影交给 Distiller，产出的 claims 落盘（`source_session_ids` 记全部来源 session，`valid_from` 记蒸馏时刻），**成功后**水位线推进到本批 session 的最大开始时间；落盘失败水位线不动，下次回收点重试。整个触发永不抛进调度循环：LLM 失败回退机械 claim，其余失败记日志、下次重试。
 
 与旧设计一致的两点：一是**蒸馏不删除任何输入**——journal 只增不减；二是**没有空闲触发**——蒸馏只挂在 session 完成节拍上。
+
+### claim 生命周期：冲突判定，失效不删除
+
+阶段 3 补全了 claim 的生命周期（ 的消亡点）。旧系统的事实 supersede 只在三元组完全相等时发生，同义事实的矛盾版本无限堆积；现在**两条写入路径过同一套判定**——批量蒸馏落盘前与 `rememberFact` 写 claim 前，都先走 `MemoryManager._resolve_conflicts`：
+
+1. **候选检索**：新 claim 文本 embed 后查向量索引，只取相似度 ≥ 0.75（余弦）的 **active** 旧 claim 作为候选（每条约 3 条）。阈值刻意定高——判定要抓的是「同一事实的矛盾版本」，0.75 以上两条断言几乎必然在说同一件事；低于它就是话题相关而已，直接 ADD，不发 LLM（成本控制）。
+2. **一次批量判定**：有候选才把整批新 claim（编号）+ 全部候选旧 claim（id + 日期 + 文本）交给 `Distiller.judge_conflicts` **一次** LLM 调用判定（借鉴 Mem0 的 ADD/UPDATE 路由）——不是每条一次调用。
+3. **应用 verdict**：`ADD`（含并存）直接追加；`SUPERSEDE` 携带被取代的旧 claim id 列表，manager 调 `ClaimStore.supersede_claim` 把旧 claim 置 `status="superseded"` + `superseded_by=新claim id` + `valid_to=now`，新 claim 正常追加。
+
+**失效不删除**：被取代的 claim 留在 `claims.jsonl` 里可审计（借鉴 Zep 双时态，与「信件永存」一致）——supersede 是原地改三个生命周期字段 + 全量原子重写，与删除同模式但语义相反。所有读取面（`get_recent_claims` / `get_all_claims` / 关键词搜索 / JIT 检索 / 冲突候选）都只出 active，superseded 只在 `include_superseded=True` 的审计视角出现；向量索引里被取代 claim 的残留向量无害（检索候选本来就用 active 集合过滤），启动时的 backfill 会顺手清掉。
+
+**降级是一等公民**：无向量索引（未配 embedding）、无 LLM（`distiller=None`——此时 fallback 机械 claim 也走同一追加路径，判定自然同样不可用）、embedding/检索失败、判定调用失败、判定结果解析失败、单条 verdict 畸形——一律退化为纯追加（ADD），只记日志。冲突判定是增强，绝不能阻断写入。判定 prompt 约束模型只能引用给出的旧 claim id，幻觉 id 在解析层被丢弃（无有效目标的 SUPERSEDE 视为 ADD——绝不在猜测上失效旧记忆）。
 
 ## 向量索引：claims 的派生视图
 
@@ -141,7 +153,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ## 方向
 
-整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）与阶段 2（sqlite-vec 向量索引 + JIT 注入，本文描述的现状，/ 随之消亡）已落地；之后依次是冲突判定 + 失效不删除的 claim 生命周期（阶段 3）、anchor 减肥 + journal 回读工具（阶段 4）、回归集（阶段 5）。
+整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，/ 随之消亡）与阶段 3（冲突判定 + 失效不删除的 claim 生命周期，本文描述的现状， 随之消亡）已落地；之后依次是 anchor 减肥 + journal 回读工具（阶段 4）、回归集（阶段 5）。
 
 与愿景的差距主要有两处：
 

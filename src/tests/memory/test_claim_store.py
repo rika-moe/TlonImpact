@@ -95,6 +95,62 @@ class TestClaimLifecycle:
         assert [c["id"] for c in await reloaded.get_all_claims()] == ["c-001"]
 
 
+class TestSupersede:
+    async def test_supersede_marks_in_place_without_deleting(
+        self, tmp_path: Path
+    ) -> None:
+        """失效不删除: the old claim stays in the file for audit; only
+        its lifecycle fields change, and it drops out of active views."""
+        store = _store(tmp_path)
+        await store.load()
+        await store.add_claim(_make_claim("c-old", "用户喜欢手冲咖啡"))
+        await store.add_claim(_make_claim("c-new", "用户改喝美式"))
+
+        assert await store.supersede_claim("c-old", "c-new", "2026-09-17T12:00:00") is True
+
+        old = await store.get_claim("c-old")
+        assert old is not None
+        assert old["status"] == "superseded"
+        assert old["superseded_by"] == "c-new"
+        assert old["valid_to"] == "2026-09-17T12:00:00"
+        # Active views exclude it; the audit view keeps both.
+        assert [c["id"] for c in await store.get_all_claims()] == ["c-new"]
+        assert [c["id"] for c in await store.get_recent_claims()] == ["c-new"]
+        assert [c["id"] for c in await store.get_all_claims(include_superseded=True)] == [
+            "c-old",
+            "c-new",
+        ]
+
+    async def test_supersede_persists_across_restart(self, tmp_path: Path) -> None:
+        """The mutation rewrites the file atomically, so a fresh instance
+        replays the superseded state."""
+        store = _store(tmp_path)
+        await store.load()
+        await store.add_claim(_make_claim("c-old"))
+        await store.add_claim(_make_claim("c-new"))
+        await store.supersede_claim("c-old", "c-new", "2026-09-17T12:00:00")
+
+        reloaded = _store(tmp_path)
+        await reloaded.load()
+        old = await reloaded.get_claim("c-old")
+        assert old is not None
+        assert old["status"] == "superseded"
+        assert old["superseded_by"] == "c-new"
+        assert [c["id"] for c in await reloaded.get_all_claims()] == ["c-new"]
+
+    async def test_supersede_unknown_id_changes_nothing(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        await store.load()
+        await store.add_claim(_make_claim("c-001"))
+        original = store.claims_file.read_bytes()
+
+        assert await store.supersede_claim("no-such", "c-001", "2026-09-17T12:00:00") is False
+
+        claim = await store.get_claim("c-001")
+        assert claim is not None and claim["status"] == "active"
+        assert store.claims_file.read_bytes() == original
+
+
 class TestKeywordSearch:
     async def test_search_matches_active_claim_text(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
