@@ -22,7 +22,7 @@ from structlog.contextvars import bound_contextvars
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.llm_client import LLMClient, LLMResponse
+from tlon.base.llm_client import LLMClient, LLMResponse, _cache_token_counts
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 
 if TYPE_CHECKING:
@@ -249,6 +249,11 @@ class StageServices:
             )
             duration_ms = int((time.time() - start_time) * 1000)
 
+            usage = response.usage or {}
+            prompt_tokens = int(usage.get("prompt_tokens") or 0)
+            completion_tokens = int(usage.get("completion_tokens") or 0)
+            cached_tokens, cache_write_tokens = _cache_token_counts(usage)
+
             await self._emit_with_trace(
                 EventType.AGENT_LLM_RESPONSE,
                 {
@@ -258,6 +263,10 @@ class StageServices:
                     "finish_reason": response.finish_reason,
                     "has_tool_calls": bool(response.tool_calls),
                     "tool_call_count": len(response.tool_calls) if response.tool_calls else 0,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "cached_tokens": cached_tokens,
+                    "cache_write_tokens": cache_write_tokens,
                 },
             )
             await self._emit_with_trace(

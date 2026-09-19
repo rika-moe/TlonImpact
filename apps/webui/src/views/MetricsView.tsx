@@ -1,12 +1,42 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import { groupMetrics } from "../lib/snapshot";
-import type { MetricsSnapshot } from "../lib/snapshot";
+import { groupMetrics, summarizeLlmUsage } from "../lib/snapshot";
+import type { LlmUsageRow, MetricsSnapshot } from "../lib/snapshot";
 import type { ViewProps } from "../types";
 import "../styles/metrics.css";
 
 /** Polling interval; same convention as the TUI metrics view. */
 const POLL_INTERVAL_MS = 2_000;
+
+function formatHitRate(rate: number | null): string {
+  return rate === null ? "-" : `${(rate * 100).toFixed(1)}%`;
+}
+
+/** One LLM USAGE line: identity (agent/model or TOTAL) + the five counters. */
+function LlmUsageLine({ row, total }: { row: LlmUsageRow; total?: boolean }): ReactElement {
+  return (
+    <div className={total ? "llm-usage-row llm-usage-total" : "llm-usage-row"}>
+      <span className="llm-usage-id">
+        {total ? "TOTAL" : `${row.agentId} · ${row.model}`}
+      </span>
+      <span className="llm-usage-stat">
+        PROMPT <b>{row.promptTokens.toLocaleString()}</b>
+      </span>
+      <span className="llm-usage-stat">
+        COMPLETION <b>{row.completionTokens.toLocaleString()}</b>
+      </span>
+      <span className="llm-usage-stat">
+        CACHED <b>{row.cachedTokens.toLocaleString()}</b>
+      </span>
+      <span className="llm-usage-stat">
+        CACHE WRITE <b>{row.cacheWriteTokens.toLocaleString()}</b>
+      </span>
+      <span className="llm-usage-stat llm-usage-hit-rate">
+        HIT RATE <b>{formatHitRate(row.cacheHitRate)}</b>
+      </span>
+    </div>
+  );
+}
 
 /**
  * METRICS — dashboard of the server's in-process metrics (GET /metrics),
@@ -35,6 +65,7 @@ export function MetricsView({ rest }: ViewProps): ReactElement {
   }, [load]);
 
   const groups = groupMetrics(snapshot ?? {});
+  const llmUsage = summarizeLlmUsage(snapshot ?? {});
 
   return (
     <section className="metrics-view">
@@ -43,6 +74,15 @@ export function MetricsView({ rest }: ViewProps): ReactElement {
         <span className="tech-label">AUTO {POLL_INTERVAL_MS / 1000}S</span>
         {error ? <span className="tech-label metrics-error">{error}</span> : null}
       </div>
+      {llmUsage.rows.length > 0 ? (
+        <div className="panel llm-usage-panel">
+          <h3 className="tech-label metric-group-title">LLM USAGE</h3>
+          <LlmUsageLine row={llmUsage.total} total />
+          {llmUsage.rows.map((row) => (
+            <LlmUsageLine row={row} key={`${row.agentId}:${row.model}`} />
+          ))}
+        </div>
+      ) : null}
       <div className="metrics-grid">
         {groups.map((group) => (
           <div className="panel metric-group" key={group.name}>

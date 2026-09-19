@@ -4,6 +4,7 @@ import {
   formatAttributes,
   formatValue,
   groupMetrics,
+  summarizeLlmUsage,
   type MetricEntry,
   type MetricsSnapshot,
 } from "../src/lib/snapshot";
@@ -104,4 +105,87 @@ test("groupMetrics keeps empty families and buckets unknown prefixes into other"
     empty.map((g) => g.name),
     ["mail", "agent", "llm", "tool"],
   );
+});
+
+const TOKEN_USAGE: MetricsSnapshot = {
+  metrics: {
+    "tlon.llm.prompt_tokens": {
+      type: "counter",
+      description: "",
+      unit: "",
+      points: [
+        { attributes: { agent_id: "gu-yanxi", model: "deepseek-chat" }, value: 1000 },
+        { attributes: { agent_id: "xie-yunshu", model: "deepseek-chat" }, value: 3000 },
+      ],
+    },
+    "tlon.llm.completion_tokens": {
+      type: "counter",
+      description: "",
+      unit: "",
+      points: [
+        { attributes: { agent_id: "gu-yanxi", model: "deepseek-chat" }, value: 200 },
+        { attributes: { agent_id: "xie-yunshu", model: "deepseek-chat" }, value: 500 },
+      ],
+    },
+    "tlon.llm.cached_tokens": {
+      type: "counter",
+      description: "",
+      unit: "",
+      points: [{ attributes: { agent_id: "xie-yunshu", model: "deepseek-chat" }, value: 2100 }],
+    },
+    // gu-yanxi has no cached/cache-write points: they count as zero.
+    "tlon.llm.cache_write_tokens": {
+      type: "counter",
+      description: "",
+      unit: "",
+      points: [
+        { attributes: { agent_id: "xie-yunshu", model: "deepseek-chat" }, value: 150 },
+      ],
+    },
+  },
+};
+
+test("summarizeLlmUsage aggregates per agent/model, sorted by prompt desc", () => {
+  const summary = summarizeLlmUsage(TOKEN_USAGE);
+
+  assert.equal(summary.rows.length, 2);
+  const [first, second] = summary.rows;
+  assert.deepEqual(
+    [first!.agentId, first!.promptTokens, first!.cacheWriteTokens],
+    ["xie-yunshu", 3000, 150],
+  );
+  assert.deepEqual(
+    [second!.agentId, second!.promptTokens, second!.cachedTokens, second!.cacheWriteTokens],
+    ["gu-yanxi", 1000, 0, 0],
+  );
+  assert.ok(Math.abs(first!.cacheHitRate! - 0.7) < 1e-9);
+  assert.equal(second!.cacheHitRate, 0);
+
+  assert.deepEqual(summary.total, {
+    agentId: "all",
+    model: "all",
+    promptTokens: 4000,
+    completionTokens: 700,
+    cachedTokens: 2100,
+    cacheWriteTokens: 150,
+    cacheHitRate: 2100 / 4000,
+  });
+});
+
+test("summarizeLlmUsage reports null hit rate when prompt is zero", () => {
+  const summary = summarizeLlmUsage({
+    metrics: {
+      "tlon.llm.cached_tokens": counter(50, { agent_id: "a", model: "m" }),
+    },
+  });
+  assert.equal(summary.rows.length, 1);
+  assert.equal(summary.rows[0]!.cacheHitRate, null);
+  assert.equal(summary.total.cacheHitRate, null);
+});
+
+test("summarizeLlmUsage returns empty rows on an empty snapshot", () => {
+  const summary = summarizeLlmUsage({});
+  assert.deepEqual(summary.rows, []);
+  assert.equal(summary.total.promptTokens, 0);
+  assert.equal(summary.total.cacheHitRate, null);
 });

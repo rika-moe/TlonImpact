@@ -25,7 +25,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.metrics import MetricsService
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail
 
-ALLOWED_ATTRIBUTE_KEYS = {"agent", "kind", "agent_id", "tool_name", "endorser"}
+ALLOWED_ATTRIBUTE_KEYS = {"agent", "kind", "agent_id", "tool_name", "endorser", "model"}
 
 
 @pytest.fixture
@@ -166,6 +166,62 @@ async def test_llm_response_counts_call_and_records_duration(
     assert duration["sum"] == 200.0
     assert duration["min"] == 80.0
     assert duration["max"] == 120.0
+
+
+async def test_llm_response_adds_token_counters(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService],
+) -> None:
+    """AGENT_LLM_RESPONSE token fields accumulate per {agent_id, model}."""
+    _, service = metric_setup
+    payload = {
+        "agent_id": "gu-yanxi",
+        "model": "deepseek-chat",
+        "duration_ms": 120,
+        "prompt_tokens": 1000,
+        "completion_tokens": 200,
+        "cached_tokens": 700,
+        "cache_write_tokens": 0,
+    }
+    service._on_llm_response(Event(type=EventType.AGENT_LLM_RESPONSE, payload=payload, source="s"))
+    service._on_llm_response(
+        Event(
+            type=EventType.AGENT_LLM_RESPONSE,
+            payload={**payload, "prompt_tokens": 500, "cached_tokens": 100},
+            source="s",
+        )
+    )
+
+    snapshot = service.snapshot()
+    attrs = {"agent_id": "gu-yanxi", "model": "deepseek-chat"}
+    assert _point(snapshot, "tlon.llm.prompt_tokens", **attrs)["value"] == 1500
+    assert _point(snapshot, "tlon.llm.completion_tokens", **attrs)["value"] == 400
+    assert _point(snapshot, "tlon.llm.cached_tokens", **attrs)["value"] == 800
+    # cache_write_tokens stayed 0 across both calls: the counter stays unrecorded
+    assert "tlon.llm.cache_write_tokens" not in snapshot["metrics"]
+
+
+async def test_llm_response_without_token_fields_is_safe(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService],
+) -> None:
+    """A payload without token fields counts the call but no token counter."""
+    _, service = metric_setup
+    service._on_llm_response(
+        Event(
+            type=EventType.AGENT_LLM_RESPONSE,
+            payload={"agent_id": "gu-yanxi", "duration_ms": 42},
+            source="s",
+        )
+    )
+
+    snapshot = service.snapshot()
+    assert _point(snapshot, "tlon.llm.calls", agent_id="gu-yanxi")["value"] == 1
+    for name in (
+        "tlon.llm.prompt_tokens",
+        "tlon.llm.completion_tokens",
+        "tlon.llm.cached_tokens",
+        "tlon.llm.cache_write_tokens",
+    ):
+        assert name not in snapshot["metrics"]
 
 
 async def test_tool_counters(

@@ -74,3 +74,45 @@
   margin-top: 2px;
   word-break: break-all;
 }
+
+/* LLM USAGE panel: token totals + per agent/model rows above the grid. */
+.llm-usage-panel {
+  margin-bottom: 16px;
+}
+
+.llm-usage-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 20px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(0, 240, 255, 0.12);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.llm-usage-id {
+  color: var(--text);
+  min-width: 180px;
+}
+
+.llm-usage-stat {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.llm-usage-stat b {
+  color: var(--neon-cyan);
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: var(--glow-cyan);
+}
+
+.llm-usage-hit-rate b {
+  color: var(--neon-yellow);
+}
+
+.llm-usage-total .llm-usage-id {
+  color: var(--neon-cyan);
+  text-shadow: var(--glow-cyan);
+}

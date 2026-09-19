@@ -116,3 +116,92 @@ export function groupMetrics(snapshot: MetricsSnapshot): MetricGroup[] {
   if (other.length > 0) result.push({ name: "other", rows: other });
   return result;
 }
+
+/** One LLM token-usage row: an agent/model pair, or the grand total. */
+export interface LlmUsageRow {
+  agentId: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheWriteTokens: number;
+  /** cached / prompt; null when no prompt tokens were recorded. */
+  cacheHitRate: number | null;
+}
+
+export interface LlmUsageSummary {
+  /** Per agent/model rows, sorted by promptTokens descending. */
+  rows: LlmUsageRow[];
+  /** Sum over all rows; agentId/model are "all". */
+  total: LlmUsageRow;
+}
+
+/** Token counters emitted by MetricsService from AGENT_LLM_RESPONSE events. */
+const LLM_TOKEN_COUNTERS = {
+  promptTokens: "tlon.llm.prompt_tokens",
+  completionTokens: "tlon.llm.completion_tokens",
+  cachedTokens: "tlon.llm.cached_tokens",
+  cacheWriteTokens: "tlon.llm.cache_write_tokens",
+} as const;
+
+function makeUsageRow(agentId: string, model: string): LlmUsageRow {
+  return {
+    agentId,
+    model,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    cacheWriteTokens: 0,
+    cacheHitRate: null,
+  };
+}
+
+function withHitRate(row: LlmUsageRow): LlmUsageRow {
+  return {
+    ...row,
+    cacheHitRate: row.promptTokens > 0 ? row.cachedTokens / row.promptTokens : null,
+  };
+}
+
+/**
+ * Aggregate the four tlon.llm.*_tokens counters into per agent/model rows
+ * plus a grand total. A counter missing a point for a pair counts as zero
+ * (cache-write is zero on providers without explicit caching).
+ */
+export function summarizeLlmUsage(snapshot: MetricsSnapshot): LlmUsageSummary {
+  const metrics = snapshot.metrics ?? {};
+  const byPair = new Map<string, LlmUsageRow>();
+
+  const counterEntries = Object.entries(LLM_TOKEN_COUNTERS) as Array<
+    [keyof typeof LLM_TOKEN_COUNTERS, string]
+  >;
+  for (const [field, metricName] of counterEntries) {
+    const entry = metrics[metricName];
+    if (!entry) continue;
+    for (const point of entry.points) {
+      const agentId = point.attributes.agent_id ?? "unknown";
+      const model = point.attributes.model ?? "unknown";
+      const key = `${agentId}${model}`;
+      let row = byPair.get(key);
+      if (!row) {
+        row = makeUsageRow(agentId, model);
+        byPair.set(key, row);
+      }
+      row[field] = point.value ?? 0;
+    }
+  }
+
+  const rows = [...byPair.values()]
+    .map(withHitRate)
+    .sort((a, b) => b.promptTokens - a.promptTokens);
+
+  const total = makeUsageRow("all", "all");
+  for (const row of rows) {
+    total.promptTokens += row.promptTokens;
+    total.completionTokens += row.completionTokens;
+    total.cachedTokens += row.cachedTokens;
+    total.cacheWriteTokens += row.cacheWriteTokens;
+  }
+
+  return { rows, total: withHitRate(total) };
+}

@@ -111,6 +111,10 @@ class MetricsService(Component, Device):
         AGENT_STOPPED       -> tlon.agent.stopped {agent_id}
         AGENT_LLM_RESPONSE  -> tlon.llm.calls {agent_id}
                                + tlon.llm.duration_ms histogram {agent_id}
+                               + tlon.llm.prompt_tokens {agent_id, model}
+                               + tlon.llm.completion_tokens {agent_id, model}
+                               + tlon.llm.cached_tokens {agent_id, model}
+                               + tlon.llm.cache_write_tokens {agent_id, model}
         TOOL_EXECUTE_END    -> tlon.tool.executions {tool_name}
         TOOL_ERROR          -> tlon.tool.errors {tool_name}
         AGENT_NOISY         -> tlon.agent.noisy {agent_id}
@@ -172,6 +176,25 @@ class MetricsService(Component, Device):
             "tlon.llm.duration_ms",
             description="LLM call duration",
             unit="ms",
+        )
+        self._llm_prompt_tokens = meter.create_counter(
+            "tlon.llm.prompt_tokens",
+            description="Prompt (input) tokens consumed by LLM calls",
+        )
+        self._llm_completion_tokens = meter.create_counter(
+            "tlon.llm.completion_tokens",
+            description="Completion (output) tokens produced by LLM calls",
+        )
+        self._llm_cached_tokens = meter.create_counter(
+            "tlon.llm.cached_tokens",
+            description="Prompt tokens served from provider caches, normalized "
+            "across vendors (OpenAI cached_tokens, DeepSeek/Moonshot "
+            "prompt_cache_hit_tokens, Anthropic cache_read_input_tokens)",
+        )
+        self._llm_cache_write_tokens = meter.create_counter(
+            "tlon.llm.cache_write_tokens",
+            description="Prompt tokens written to provider caches "
+            "(Anthropic cache_creation_input_tokens; zero elsewhere)",
         )
         self._tool_executions = meter.create_counter(
             "tlon.tool.executions", description="Tool executions finished"
@@ -260,7 +283,7 @@ class MetricsService(Component, Device):
             logger.warning("metrics_event_failed", event_type=event.type.value, error=str(e))
 
     def _on_llm_response(self, event: Event) -> None:
-        """Count the LLM call and record its duration."""
+        """Count the LLM call, record its duration, and add token usage."""
         try:
             agent_id = str(_payload_value(event.payload, "agent_id") or "unknown")
             attributes = {"agent_id": agent_id}
@@ -268,6 +291,17 @@ class MetricsService(Component, Device):
             duration_ms = _payload_value(event.payload, "duration_ms")
             if isinstance(duration_ms, (int, float)):
                 self._llm_duration.record(float(duration_ms), attributes)
+            model = str(_payload_value(event.payload, "model") or "unknown")
+            token_attributes = {"agent_id": agent_id, "model": model}
+            for counter, key in (
+                (self._llm_prompt_tokens, "prompt_tokens"),
+                (self._llm_completion_tokens, "completion_tokens"),
+                (self._llm_cached_tokens, "cached_tokens"),
+                (self._llm_cache_write_tokens, "cache_write_tokens"),
+            ):
+                value = _payload_value(event.payload, key)
+                if isinstance(value, (int, float)) and value > 0:
+                    counter.add(int(value), token_attributes)
         except Exception as e:
             logger.warning("metrics_event_failed", event_type=event.type.value, error=str(e))
 

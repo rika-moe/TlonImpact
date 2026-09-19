@@ -381,7 +381,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
-| `agent.thinking_start` / `agent.thinking_end` / `agent.llm_request` / `agent.llm_response` | 成员运行时（`agents/stages/services.py`） | 各发布点自定义 dict |
+| `agent.thinking_start` / `agent.thinking_end` / `agent.llm_request` | 成员运行时（`agents/stages/services.py`） | 各发布点自定义 dict |
+| `agent.llm_response` | 成员运行时（`agents/stages/services.py`） | `agent_id`、`model`、`duration_ms`、`finish_reason`、`has_tool_calls`、`tool_call_count`、`prompt_tokens`、`completion_tokens`、`cached_tokens`、`cache_write_tokens`（token 字段在 usage 缺失时为 0，） |
 | `tool.execute_start` / `tool.execute_end` / `tool.error` | 工具执行层（`agents/loop_driver.py`、`agents/stages/act.py`） | 各发布点自定义 dict |
 | `system.startup` / `system.shutdown` | `ServerApp`（source `server`） | 如 `{"agents": n}` |
 | `config.updated` | 配置层（`ConfigManager.reload_agent`） | `{"agent_id", "action"}` |
