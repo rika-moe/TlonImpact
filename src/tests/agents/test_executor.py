@@ -16,7 +16,6 @@ instead of shipping a mail with a dangling reference.
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from tlon.agents.edn import loads
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberRule, MemberSpec, validate_member_spec
 from tlon.agents.stages.outcome import MailEffect
@@ -25,6 +24,7 @@ from tlon.base.events.event import EventType
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlosure.edn import loads
 
 EDN = """\
 {:version 1

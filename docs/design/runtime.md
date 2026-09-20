@@ -17,7 +17,7 @@
 
 ## 求值的停机与失败语义
 
-运行时要执行的数据未来可能出自 LLM 之手，因此 DSL 求值层（[agents/eval.py](../../src/tlon/agents/eval.py)）的两条性质是运行时设计的前提，而不是附加功能：
+运行时要执行的数据未来可能出自 LLM 之手，因此 DSL 求值层（[tlosure/eval.py](../../src/tlosure/eval.py)）的两条性质是运行时设计的前提，而不是附加功能：
 
 - **可停机由 fuel 保证**。每个求值都有步数预算：规则的 `:fuel` 声明时是门控与动作共享的总预算，未声明时 `:when` 门控与各动作分别使用引擎默认值（`DEFAULT_WHEN_FUEL` / `DEFAULT_FUEL`）。跑飞的表达式耗尽预算即抛 `FuelExhaustedError`，与普通的 `EvalError` 区分记日志——前者是程序失控，后者是程序写错，运维含义不同。
 - **求值永不产生副作用**。所有动作 builtin（`spawn` / `emit` / `start` / `stop` / `start-all` / `forward`）只做参数校验并产出 `ActionRequest` 数据；请求到达引擎的路径按规则形态区分——无 `:loop` 的规则收集动作表达式的返回值，on-complete 场景追加进收集器（`make_member_builtins` 的 `collector`）。「DSL 描述、引擎执行」在求值层就已经成立，不是执行层才开始的约定。

@@ -53,16 +53,8 @@ from typing import TYPE_CHECKING, Any
 
 from structlog.contextvars import bound_contextvars, get_contextvars
 
-from tlon.agents.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
 from tlon.agents.context_builder import ContextBuilder
 from tlon.agents.context_pressure import ContextPressure
-from tlon.agents.eval import (
-    DEFAULT_FUEL,
-    DEFAULT_MAX_DEPTH,
-    DEFAULT_WHEN_FUEL,
-    _Evaluator,
-    eval_form,
-)
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loop_driver import LoopDriver
@@ -89,6 +81,14 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
+from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
+from tlosure.eval import (
+    DEFAULT_FUEL,
+    DEFAULT_MAX_DEPTH,
+    DEFAULT_WHEN_FUEL,
+    _Evaluator,
+    eval_form,
+)
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry

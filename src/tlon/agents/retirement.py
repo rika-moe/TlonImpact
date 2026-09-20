@@ -31,7 +31,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from tlon.agents.edn import loads
 from tlon.agents.lessons import build_retiree_llm_client
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.session_journal import SessionJournal
@@ -49,6 +48,7 @@ from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.tasks.manager import TaskManager
 from tlon.tools.tasks.models import TaskStatus
+from tlosure.edn import loads
 
 logger = get_logger(__name__)
 

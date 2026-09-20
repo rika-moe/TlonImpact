@@ -3,7 +3,7 @@
 Everything a form head may name beyond the special forms lives here:
 
 - the shared contract types the vocabulary and the evaluator kernel
-  (``agents/eval.py``) are both written against — the :class:`EvalError`
+  (``tlosure/eval.py``) are both written against — the :class:`EvalError`
   family, :class:`Builtin` (one registry entry: ``fn`` + purity marker),
   and :class:`ActionRequest` (the side-effect *data* an action builtin
   produces; the engine executes the requests after evaluation
@@ -25,7 +25,7 @@ Everything a form head may name beyond the special forms lives here:
   module-level.
 
 This module is the leaf of the evaluator pair: it imports nothing from
-``agents/eval.py``; the kernel imports the contract types from here, so
+``tlosure/eval.py``; the kernel imports the contract types from here, so
 there is no import cycle.
 """
 
@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from tlon.agents.edn import dumps
+from tlosure.edn import dumps
 
 
 class EvalError(Exception):
@@ -416,7 +416,7 @@ class ScriptHostQueries(Protocol):
     """Host read-only queries closure-injected into the script registry.
 
     The implementation lives outside this module — ``RegistryQueries`` in
-    ``agents/agent_registry.py``, shared by registry-spawned script members
+    ``tlon.agents/agent_registry.py``, shared by registry-spawned script members
     and Adam — so the module-level registry stays free of host state.
     Query arguments may be anything an expression yields (including None
     for a missing payload key), so implementations must tolerate

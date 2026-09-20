@@ -54,7 +54,6 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from tlon.agents.assembly import assemble_cognitive
-from tlon.agents.builtins import ScriptHostQueries, make_member_builtins
 from tlon.agents.cron import CronScheduler
 from tlon.agents.fitness import solvency_provider, tilt_provider
 from tlon.agents.health import PublicHealthMonitor
@@ -77,6 +76,7 @@ from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.agents.ports import StopRejectedError
+from tlosure.builtins import ScriptHostQueries, make_member_builtins
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider

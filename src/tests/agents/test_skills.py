@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tlon.agents.edn import loads
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
@@ -26,6 +25,7 @@ from tlon.agents.skills import (
     seed_skills,
 )
 from tlon.base.paths import TlonPaths
+from tlosure.edn import loads
 
 AGENT = "agent1"
 

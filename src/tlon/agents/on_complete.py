@@ -20,16 +20,16 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from tlon.agents.builtins import (
+from tlon.agents.trigger import AgentIdentity
+from tlon.base.logger import get_logger
+from tlon.organization.mail.mail import Mail, address_for_member
+from tlosure.builtins import (
     ActionRequest,
     EvalError,
     FuelExhaustedError,
     make_member_builtins,
 )
-from tlon.agents.eval import DEFAULT_FUEL, eval_form
-from tlon.agents.trigger import AgentIdentity
-from tlon.base.logger import get_logger
-from tlon.organization.mail.mail import Mail, address_for_member
+from tlosure.eval import DEFAULT_FUEL, eval_form
 
 if TYPE_CHECKING:
     from tlon.agents.member_spec import MemberRule

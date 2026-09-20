@@ -61,7 +61,6 @@ from tlon.agents.behavior_template import (
     analyze,
     render_template,
 )
-from tlon.agents.edn import EDNParseError, Keyword, dumps, loads
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
@@ -71,6 +70,7 @@ from tlon.base.config import AgentConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths, paths
 from tlon.tools.prototypes.ports import PrototypeError
+from tlosure.edn import EDNParseError, Keyword, dumps, loads
 
 logger = get_logger(__name__)
 

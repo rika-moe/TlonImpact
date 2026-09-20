@@ -13,7 +13,7 @@ handwritten; only the drift-prone inventories are generated:
 - ``dsl-special-forms`` / ``dsl-on-events`` / ``dsl-builtins-*`` /
   ``dsl-loop-names`` in docs/reference/dsl-reference.md — the DSL
   whitelists (special forms, ``:on`` event keywords, builtin registries,
-  stage/section names) from agents/eval.py, agents/builtins.py and
+  stage/section names) from tlosure/eval.py, tlosure/builtins.py and
   agents/member_spec.py.
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
   the route table from ``RESTAPIHandler.create_app`` (with registration
@@ -44,11 +44,12 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "tlon"
+TLOSURE_SRC = REPO_ROOT / "src" / "tlosure"
 TOOLS_DIR = SRC / "tools"
 REGISTRY_FILE = SRC / "agents" / "assembly.py"
 EVENTS_FILE = SRC / "base" / "events" / "event.py"
-EVAL_FILE = SRC / "agents" / "eval.py"
-BUILTINS_FILE = SRC / "agents" / "builtins.py"
+EVAL_FILE = TLOSURE_SRC / "eval.py"
+BUILTINS_FILE = TLOSURE_SRC / "builtins.py"
 MEMBER_SPEC_FILE = SRC / "agents" / "member_spec.py"
 REST_FILE = SRC / "app" / "server" / "api" / "rest" / "app.py"
 NOTIFICATION_FILE = SRC / "app" / "server" / "core" / "notification_service.py"
@@ -280,7 +281,7 @@ class BuiltinEntry:
 
 def builtin_registry(name: str) -> list[BuiltinEntry]:
     """A ``NAME: dict[str, Builtin] = {"x": Builtin(_fn, pure=...)}`` registry
-    from agents/builtins.py, in source order."""
+    from tlosure/builtins.py, in source order."""
     tree = _parse(BUILTINS_FILE)
     value = _module_value(tree, name, BUILTINS_FILE)
     if not isinstance(value, ast.Dict):

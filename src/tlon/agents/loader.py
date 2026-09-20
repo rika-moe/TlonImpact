@@ -14,10 +14,10 @@ seam the tests monkeypatch.
 import hashlib
 from dataclasses import replace
 
-from tlon.agents.builtins import Builtin
-from tlon.agents.edn import loads
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.base.paths import paths
+from tlosure.builtins import Builtin
+from tlosure.edn import loads
 
 
 def load_member_spec(

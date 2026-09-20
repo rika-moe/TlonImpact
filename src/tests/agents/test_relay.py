@@ -8,7 +8,6 @@ concrete ``(forward ...)``, and the required-params gate.
 
 import pytest
 
-from tlon.agents.edn import loads
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.prototypes import (
     get_prototype_info,
@@ -17,6 +16,7 @@ from tlon.agents.prototypes import (
 )
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
+from tlosure.edn import loads
 
 
 def _paths(tmp_path) -> TlonPaths:

@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from tlon.agents.edn import EDNParseError, Keyword, dumps, loads
+from tlosure.edn import EDNParseError, Keyword, dumps, loads
 
 _TEMPLATE_RE = re.compile(r"\$\{(\w+)\}")
 _PARAM_KEYS = frozenset({"type", "required"})

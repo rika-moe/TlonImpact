@@ -23,10 +23,8 @@ import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from tlon.agents.builtins import STAGE_COND_BUILTINS
 from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
-from tlon.agents.edn import loads
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.session import AgentSession, SessionState
@@ -38,6 +36,8 @@ from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
+from tlosure.builtins import STAGE_COND_BUILTINS
+from tlosure.edn import loads
 
 GATED_EDN = """\
 {:version 1

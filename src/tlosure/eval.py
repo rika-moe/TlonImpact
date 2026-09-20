@@ -1,7 +1,7 @@
 """Restricted evaluator for the agent behavior DSL (L1, phase 3a).
 
-Evaluates parsed EDN Forms (``agents/edn.py``) under a fuel-bounded
-semantics (design decision 3 in ``docs/design/dsl-agents.md``, revised
+Evaluates parsed EDN Forms (``tlosure/edn.py``) under a fuel-bounded
+semantics (design decision 3 in ``docs/design/dsl.md``, revised
 in phase D — the original "deliberately non-Turing-complete" stance was
 superseded once bounded loops entered the language):
 
@@ -29,10 +29,10 @@ superseded once bounded loops entered the language):
   is capped (:class:`EvalDepthError`), so evaluation always terminates.
 
 The module is the evaluator kernel only: the builtin vocabulary and its
-registries live in ``agents/builtins.py`` (pure predicates/functions
+registries live in ``tlosure/builtins.py`` (pure predicates/functions
 only at module level, so trigger/loop/stage-condition evaluation is
 side-effect free by construction), static validation in
-``agents/validate.py`` (:func:`validate_form`,
+``tlosure/validate.py`` (:func:`validate_form`,
 :func:`validate_member_action`); both are re-exported here so existing
 imports keep working.
 
@@ -40,7 +40,7 @@ Action expressions — on-complete (phase 4b) and script rules (phase P5a)
 alike — keep the same rule: evaluation never performs side effects. The
 action builtins (``spawn`` / ``emit`` / ``start`` / ``stop`` /
 ``start-all`` / ``forward``), registered by
-:func:`tlon.agents.builtins.make_member_builtins` (phase C) with
+:func:`tlosure.builtins.make_member_builtins` (phase C) with
 ``pure=False``, validate their arguments and produce an
 :class:`ActionRequest`; the engine executes the requests after
 evaluation completes ("the DSL describes, the engine executes"). Static
@@ -54,7 +54,7 @@ them via ``make_member_builtins``.
 Environment values are opaque to expressions: there is no attribute or
 method access syntax, so a mail object in ``env`` can only be inspected
 through builtins (which see it through the structural
-:class:`tlon.agents.builtins.MailView` protocol — ADR 0018 §3). ``env``
+:class:`tlosure.builtins.MailView` protocol — ADR 0018 §3). ``env``
 also provides ``self`` (``{"id": ..., "name": ..., "address": ...}``),
 which builtins read to resolve "me"; the host pre-derives ``address`` so
 builtins never call back into the host domain.
@@ -62,7 +62,7 @@ builtins never call back into the host domain.
 
 from typing import Any
 
-from tlon.agents.builtins import (
+from tlosure.builtins import (
     ActionRequest,
     Builtin,
     EvalDepthError,
@@ -70,8 +70,8 @@ from tlon.agents.builtins import (
     FuelExhaustedError,
     make_member_builtins,
 )
-from tlon.agents.edn import Form, Symbol, dumps
-from tlon.agents.validate import _binding_names, validate_form, validate_member_action
+from tlosure.edn import Form, Symbol, dumps
+from tlosure.validate import _binding_names, validate_form, validate_member_action
 
 __all__ = [
     "DEFAULT_FUEL",

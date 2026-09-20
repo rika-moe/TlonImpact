@@ -12,21 +12,21 @@ argument inherit tail position).
 
 :func:`validate_member_action` is the phase C unified gate for a rule's
 action position: action forms (see
-:data:`tlon.agents.builtins.MEMBER_ACTION_NAMES`) under ``when`` /
+:data:`tlosure.builtins.MEMBER_ACTION_NAMES`) under ``when`` /
 ``while`` / ``map`` wrappers, whose conditions, tests, binding
 initializers and arguments are pure expressions validated against the
 pure subset of the member registry.
 
 The ``_binding_names`` helper is shared with the evaluator kernel
-(``agents/eval.py``), which uses it for ``let`` / ``while`` binding
+(``tlosure/eval.py``), which uses it for ``let`` / ``while`` binding
 vectors at evaluation time.
 """
 
 from dataclasses import dataclass
 from typing import Any
 
-from tlon.agents.builtins import MEMBER_ACTION_NAMES, Builtin, EvalError
-from tlon.agents.edn import Form, Symbol, dumps
+from tlosure.builtins import MEMBER_ACTION_NAMES, Builtin, EvalError
+from tlosure.edn import Form, Symbol, dumps
 
 
 @dataclass(frozen=True)
@@ -245,7 +245,7 @@ def validate_member_action(
     ``(start ...)`` / ``(stop ...)`` / ``(start-all ...)`` /
     ``(forward ...)``), a ``(when cond action ...)`` wrapper, or a phase D
     loop form (``while`` / ``map``) whose action-bearing positions hold
-    action forms. The purity invariant is unchanged (dsl-agents.md phase D):
+    action forms. The purity invariant is unchanged (dsl.md phase D):
     conditions, tests, binding initializers and action arguments are pure
     expressions validated against ``pure`` (the pure subset of the member
     registry) under ``scope``; only the action-carrying positions may name

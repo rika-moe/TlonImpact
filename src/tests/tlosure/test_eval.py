@@ -1,6 +1,6 @@
 """Restricted evaluator — phase D bounded loops and data transformation.
 
-The evaluator (``tlon.agents.eval``) is the DSL's semantics: a closed
+The evaluator (``tlosure.eval``) is the DSL's semantics: a closed
 special-form whitelist, fuel-metered evaluation (:class:`FuelExhaustedError`
 guarantees termination), and static validation (:func:`validate_form`).
 Phase D broke the "no loops" rule — ``while``/``recur`` (Clojure loop/recur
@@ -13,8 +13,8 @@ body's tail position.
 
 import pytest
 
-from tlon.agents.edn import Form, Keyword, loads
-from tlon.agents.eval import (
+from tlosure.edn import Form, Keyword, loads
+from tlosure.eval import (
     ActionRequest,
     Builtin,
     EvalDepthError,

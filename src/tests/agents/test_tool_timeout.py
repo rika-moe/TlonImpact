@@ -17,7 +17,6 @@ import pytest
 
 import tlon.agents.loop_driver as loop_driver_module
 from tlon.agents.context_pressure import ContextPressure
-from tlon.agents.edn import loads
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.session_journal import SessionJournal
@@ -27,6 +26,7 @@ from tlon.base.llm_client import ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.tools.base import Tool, ToolResult
 from tlon.tools.spill import ToolSpill
+from tlosure.edn import loads
 
 COGNITIVE_EDN = """\
 {:version 1

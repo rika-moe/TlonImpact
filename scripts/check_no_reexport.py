@@ -2,7 +2,8 @@
 """Lint: ban re-exports in __init__.py files.
 
 In __init__.py, relative imports (from .xxx import) and absolute imports
-from the project package (from tlon.xxx import) are forbidden.
+from any project root package (from tlon.xxx / tlosure.xxx import) are
+forbidden.
 
 This prevents IDE rename-refactor from silently breaking across package
 boundaries, since re-exported names are invisible to most static analysis.
@@ -21,19 +22,18 @@ import sys
 from pathlib import Path
 
 
-def find_root_package(src_dir: Path) -> str | None:
-    """Auto-detect root package name from src/ directory."""
+def find_root_packages(src_dir: Path) -> list[str]:
+    """Auto-detect all root package names from the src/ directory."""
     if not src_dir.exists():
-        return None
-    candidates = [
+        return []
+    return sorted(
         p.name
         for p in src_dir.iterdir()
         if p.is_dir() and not p.name.startswith(".") and p.name != "tests"
-    ]
-    return candidates[0] if len(candidates) == 1 else None
+    )
 
 
-def check_file(file_path: Path, root_package: str) -> list[tuple[int, str]]:
+def check_file(file_path: Path, root_packages: set[str]) -> list[tuple[int, str]]:
     """Return list of (line, message) violations."""
     violations = []
     try:
@@ -61,8 +61,9 @@ def check_file(file_path: Path, root_package: str) -> list[tuple[int, str]]:
             )
             continue
 
-        # Ban absolute imports from the project package (from tlon.xxx import ...)
-        if node.module and node.module.split(".")[0] == root_package:
+        # Ban absolute imports from any project root package
+        # (from tlon.xxx / tlosure.xxx import ...)
+        if node.module and node.module.split(".")[0] in root_packages:
             violations.append(
                 (
                     node.lineno,
@@ -76,16 +77,13 @@ def check_file(file_path: Path, root_package: str) -> list[tuple[int, str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ban re-exports in __init__.py")
     parser.add_argument("paths", nargs="*", help="Files or directories to check")
-    parser.add_argument(
-        "--root-package", default=None, help="Root package name (auto-detected by default)"
-    )
     args = parser.parse_args()
 
     project_root = Path.cwd()
     src_dir = project_root / "src"
-    root_package = args.root_package or find_root_package(src_dir)
-    if not root_package:
-        print("Could not auto-detect root package. Please specify --root-package.")
+    root_packages = set(find_root_packages(src_dir))
+    if not root_packages:
+        print("Could not auto-detect any root package under src/.")
         return 2
 
     paths = [src_dir] if not args.paths else [Path(p) for p in args.paths]
@@ -97,12 +95,12 @@ def main() -> int:
         if path.is_file():
             if path.name == "__init__.py":
                 checked_files += 1
-                for line, msg in check_file(path, root_package):
+                for line, msg in check_file(path, root_packages):
                     all_violations.append((path, line, msg))
         elif path.is_dir():
             for init_file in path.rglob("__init__.py"):
                 checked_files += 1
-                for line, msg in check_file(init_file, root_package):
+                for line, msg in check_file(init_file, root_packages):
                     all_violations.append((init_file, line, msg))
         else:
             print(f"Warning: {path} not found")

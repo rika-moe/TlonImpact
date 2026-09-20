@@ -27,7 +27,6 @@ from tlon.agents.context_pressure import (
     compaction_threshold,
     estimate_tokens,
 )
-from tlon.agents.edn import loads
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.session import AgentSession
@@ -38,6 +37,7 @@ from tlon.base.llm_client import ContextWindowExceededError, LLMClient, LLMRespo
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.tools.spill import ToolSpill
+from tlosure.edn import loads
 
 #: Small window for tests: threshold = max(1000 - 40000, 800) = 800.
 TEST_WINDOW = 1000

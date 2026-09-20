@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 import tlon
-from tlon.agents.edn import dumps, loads
 from tlon.agents.member_spec import MemberLoop, MemberSpec, validate_member_spec
 from tlon.agents.prototypes import (
     get_prototype_info,
@@ -23,6 +22,7 @@ from tlon.agents.prototypes import (
     seed_prototypes,
 )
 from tlon.base.paths import TlonPaths
+from tlosure.edn import dumps, loads
 
 # Every built-in prototype, with the template parameters instantiation
 # requires (relay declares a ``${to}`` placeholder; the others are

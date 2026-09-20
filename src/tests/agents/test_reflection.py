@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
-from tlon.agents.edn import Form
 from tlon.agents.member_spec import MemberLoop, MemberRule, ReflectSpec
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.session_journal import SessionJournal
@@ -21,6 +20,7 @@ from tlon.base.llm_client import LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
+from tlosure.edn import Form
 
 
 class _FakeLLM:

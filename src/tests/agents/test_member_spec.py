@@ -7,12 +7,12 @@ semantics) and the loader's single-validation gate.
 
 import pytest
 
-from tlon.agents.edn import Keyword, loads
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
     validate_member_spec,
 )
+from tlosure.edn import Keyword, loads
 
 COGNITIVE_EDN = """\
 {:version 1
@@ -50,7 +50,7 @@ def _parse(text: str) -> MemberSpec:
 
 def _action_kind(spec: MemberSpec) -> str:
     """Evaluate a rule's first action form and return its ActionRequest kind."""
-    from tlon.agents.eval import eval_form, make_member_builtins
+    from tlosure.eval import eval_form, make_member_builtins
 
     request = eval_form(
         spec.rules[0].actions[0],
@@ -243,14 +243,14 @@ class TestRuleFuel:
                 validate_member_spec(spec)
 
     def test_fuel_over_hard_cap_rejected(self):
-        from tlon.agents.eval import MAX_FUEL
+        from tlosure.eval import MAX_FUEL
 
         spec = _parse(FUELED_EDN.replace(":fuel 50", f":fuel {MAX_FUEL + 1}"))
         with pytest.raises(MemberSpecValidationError, match="hard cap"):
             validate_member_spec(spec)
 
     def test_loop_fuel_over_hard_cap_rejected(self):
-        from tlon.agents.eval import MAX_FUEL
+        from tlosure.eval import MAX_FUEL
 
         edn = COGNITIVE_EDN.replace(
             ":max-iterations 10", f":max-iterations 10 :fuel {MAX_FUEL + 1}"

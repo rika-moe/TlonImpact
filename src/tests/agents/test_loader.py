@@ -10,10 +10,10 @@ import hashlib
 import pytest
 
 from tlon.agents.behavior_template import analyze
-from tlon.agents.edn import EDNParseError, loads
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
 from tlon.base.paths import TlonPaths
+from tlosure.edn import EDNParseError, loads
 
 SCRIPT_EDN = """\
 {:version 1

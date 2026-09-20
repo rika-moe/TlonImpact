@@ -4,7 +4,7 @@
 
 ## 1. EDN 语法速览
 
-解析器：[src/tlon/agents/edn.py](../../src/tlon/agents/edn.py) 的 `loads()`。只解析数据，不求值。
+解析器：[src/tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads()`。只解析数据，不求值。
 
 | 字面量 | 例子 | 解析结果 |
 |---|---|---|
@@ -19,10 +19,10 @@
 | 映射 | `{:a 1 :b 2}` | dict；必须偶数个表单项，否则报解析错误 |
 | 注释 | `; 到行尾` | 跳过；逗号视为空白 |
 
-要点（[src/tlon/agents/edn.py](../../src/tlon/agents/edn.py) 模块 docstring）：
+要点（[src/tlosure/edn.py](../../src/tlosure/edn.py) 模块 docstring）：
 
 - `(...)` 与 `[...]` 语义不同：列表是表达式，向量是数据。`:when`、`:until`、stage、section、action 字段都必须是 `(...)` 形式。
-- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlon/agents/builtins.py](../../src/tlon/agents/builtins.py) 的 `_value_equal`）。
+- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlosure/builtins.py](../../src/tlosure/builtins.py) 的 `_value_equal`）。
 - 符号可用字符集：字母、数字及 `*+!-_?./<>=`，所以 `addressed-to-me?`、`>=`、`start-all` 都是合法符号。
 - 解析失败抛 `EDNParseError`，带 1 起始的行列号。
 
@@ -132,7 +132,7 @@
 
 ## 4. 求值器
 
-受限求值器：[src/tlon/agents/eval.py](../../src/tlon/agents/eval.py) 的 `eval_form()`。
+受限求值器：[src/tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form()`。
 
 ### 4.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
 
@@ -159,7 +159,7 @@
 ### 4.2 计量与终止
 
 - 每个求值步消耗 1 单位 **fuel**，耗尽抛 `FuelExhaustedError`；form 嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。递归不可能（无法命名函数），`while`/`recur` 表达能力等价图灵机，**终止性由 fuel 保证**。
-- fuel 默认值（[src/tlon/agents/eval.py](../../src/tlon/agents/eval.py) 顶部常量）：`:when` 门控 200（`DEFAULT_WHEN_FUEL`），动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。
+- fuel 默认值（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部常量）：`:when` 门控 200（`DEFAULT_WHEN_FUEL`），动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。
 - 声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
 
 ### 4.3 纯度约束（"DSL 描述，引擎执行"）
@@ -171,7 +171,7 @@
 
 ## 5. Builtin 完整清单
 
-模块级注册表在 [src/tlon/agents/builtins.py](../../src/tlon/agents/builtins.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
+模块级注册表在 [src/tlosure/builtins.py](../../src/tlosure/builtins.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
 ### 5.1 `TRIGGER_BUILTINS`（触发器谓词）
 

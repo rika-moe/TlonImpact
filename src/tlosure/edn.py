@@ -8,7 +8,7 @@ Parses a minimal EDN subset into plain Python data — no evaluation:
 - keywords (``:foo-bar``) -> :class:`Keyword`
 - symbols (``react``) -> :class:`Symbol`
 - vectors ``[...]`` -> list
-- lists ``(...)`` -> :class:`Form` (code, not data — evaluated by ``agents/eval.py``)
+- lists ``(...)`` -> :class:`Form` (code, not data — evaluated by ``tlosure/eval.py``)
 - maps ``{...}`` -> dict
 - ``;`` line comments; commas are treated as whitespace
 
@@ -62,7 +62,7 @@ class Form(list[Any]):
     """An EDN list form (``(...)``) — an expression, distinct from a vector.
 
     Vectors (``[...]``) parse to plain lists (data); lists (``(...)``) parse
-    to Form (code for the restricted evaluator in ``agents/eval.py``).
+    to Form (code for the restricted evaluator in ``tlosure/eval.py``).
     """
 
     def __repr__(self) -> str:

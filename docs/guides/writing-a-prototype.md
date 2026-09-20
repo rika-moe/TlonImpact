@@ -120,7 +120,7 @@
 
 ## 6. 校验与排错
 
-- **EDN 解析**：`behavior.tlon` 必须能被 `tlon.agents.edn` 的 `loads` 解析。最易踩的坑是 **map 缺闭合 `}`**——每条规则的 map 都得有自己的收口，`:loop` 的 map 闭合后还要再闭合规则 map（内置原型曾集体缺这一层——历史已修复，见 `design/prototypes.md` 已知问题；`edn` 裸解析能立刻暴露，spawn 到启动装配才暴露的是更晚的坑）。写完先本地解析验证（见下）。
+- **EDN 解析**：`behavior.tlon` 必须能被 `tlosure.edn` 的 `loads` 解析。最易踩的坑是 **map 缺闭合 `}`**——每条规则的 map 都得有自己的收口，`:loop` 的 map 闭合后还要再闭合规则 map（内置原型曾集体缺这一层——历史已修复，见 `design/prototypes.md` 已知问题；`edn` 裸解析能立刻暴露，spawn 到启动装配才暴露的是更晚的坑）。写完先本地解析验证（见下）。
 - **schema 必填项**：`:loop` 里 `:until`、`:max-iterations`、`:max-consecutive-errors`、`:reflect`（`enabled` + `interval-minutes`）都是必填，缺一个 `validate_member_spec` 直接拒。
 - **模板占位符**：带 `${var}` 的文件**不是**合法 EDN（`$` 会让裸解析报错），这是正常现象——模板只在渲染后才是 spec。用 [agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 做结构校验（把占位符替换成 stand-in 后试解析）。
 - **门控忘写**：`respond` 规则没有 `:when` 门控的话，系统里每封邮件都会唤醒这个成员。
@@ -130,7 +130,7 @@
 
 ```bash
 uv run python -c "
-from tlon.agents.edn import loads
+from tlosure.edn import loads
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 spec = MemberSpec.from_edn(loads(open('behavior.tlon').read()))
 validate_member_spec(spec)   # 无异常即通过
@@ -138,7 +138,7 @@ print('OK', any(rule.loop is not None for rule in spec.rules))
 "
 ```
 
-> 路径：`tlon.agents.edn`（`loads`）与 `tlon.agents.member_spec`（`MemberSpec` / `validate_member_spec`）是 [agents/prototypes.py](../../src/tlon/agents/prototypes.py) 里实际使用的导入。
+> 路径：`tlosure.edn`（`loads`）与 `tlon.agents.member_spec`（`MemberSpec` / `validate_member_spec`）是 [agents/prototypes.py](../../src/tlon/agents/prototypes.py) 里实际使用的导入。
 
 ## 7. 检查清单
 

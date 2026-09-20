@@ -29,7 +29,6 @@ from typing import Any
 import aiofiles
 
 from tlon.agents.assembly import _build_llm_config
-from tlon.agents.edn import loads
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.component import Component
@@ -42,6 +41,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
+from tlosure.edn import loads
 
 logger = get_logger(__name__)
 

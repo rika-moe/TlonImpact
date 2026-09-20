@@ -57,6 +57,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 | 包 | 职责 | 允许依赖 | 强制手段 |
 |---|---|---|---|
+| `tlosure` | DSL 语言核心（ADR 0018）：EDN 解析、builtin 词汇、静态校验、fuel 计量求值 | 不依赖 tlon 的任何层（最底层） | import-linter「tlosure 独立于 tlon」 |
 | `tlon.base` | 组件基类、事件总线、配置、路径、日志、LLM 客户端、tracing/metrics | 不依赖任何上层 | import-linter「base 不依赖任何上层域」 |
 | `tlon.memory` | claim 记忆存储、蒸馏与向量检索 | 仅 base | import-linter |
 | `tlon.organization` | 邮件模型、邮箱、投递、地址解析、人类适配器 | 仅 base | import-linter |

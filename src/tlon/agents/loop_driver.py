@@ -33,9 +33,7 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
-from tlon.agents.builtins import LOOP_BUILTINS, STAGE_COND_BUILTINS, EvalError
 from tlon.agents.context_pressure import ContextPressure, estimate_tokens
-from tlon.agents.eval import DEFAULT_FUEL, eval_form
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
@@ -56,6 +54,8 @@ from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
+from tlosure.builtins import LOOP_BUILTINS, STAGE_COND_BUILTINS, EvalError
+from tlosure.eval import DEFAULT_FUEL, eval_form
 
 logger = get_logger(__name__)
 

@@ -23,7 +23,6 @@ from typing import Any
 import pytest
 
 from tlon.agents.context_builder import ContextBuilder
-from tlon.agents.edn import loads
 from tlon.agents.member_spec import (
     MemberRule,
     MemberSpec,
@@ -36,6 +35,7 @@ from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.tasks.manager import TaskManager
+from tlosure.edn import loads
 
 AGENT = "agent1"
 ADDRESS = f"{AGENT}@tlon.internal"

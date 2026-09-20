@@ -21,8 +21,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tlon.agents.edn import loads
-from tlon.agents.eval import ActionRequest, FuelExhaustedError, make_member_builtins
 from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.on_complete import OnCompleteRunner
@@ -38,6 +36,8 @@ from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import Tool
+from tlosure.edn import loads
+from tlosure.eval import ActionRequest, FuelExhaustedError, make_member_builtins
 
 # ── Specs ──────────────────────────────────────────────────────────────
 
