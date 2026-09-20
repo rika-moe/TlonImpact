@@ -50,7 +50,8 @@ def _parse(text: str) -> MemberSpec:
 
 def _action_kind(spec: MemberSpec) -> str:
     """Evaluate a rule's first action form and return its ActionRequest kind."""
-    from tlosure.eval import eval_form, make_member_builtins
+    from tlon.agents.vocabulary import make_member_builtins
+    from tlosure.eval import eval_form
 
     request = eval_form(
         spec.rules[0].actions[0],

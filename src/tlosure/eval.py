@@ -28,36 +28,23 @@ superseded once bounded loops entered the language):
   *fuel* (:class:`FuelExhaustedError` when it runs out) and form nesting
   is capped (:class:`EvalDepthError`), so evaluation always terminates.
 
-The module is the evaluator kernel only: the builtin vocabulary and its
-registries live in ``tlosure/builtins.py`` (pure predicates/functions
-only at module level, so trigger/loop/stage-condition evaluation is
-side-effect free by construction), static validation in
-``tlosure/validate.py`` (:func:`validate_form`,
-:func:`validate_member_action`); both are re-exported here so existing
+The module is the evaluator kernel only: the contract types and the
+general builtin vocabulary live in ``tlosure/builtins.py``, static
+validation in ``tlosure/validate.py`` (:func:`validate_form`); the
+contract types and ``validate_form`` are re-exported here so existing
 imports keep working.
 
-Action expressions — on-complete (phase 4b) and script rules (phase P5a)
-alike — keep the same rule: evaluation never performs side effects. The
-action builtins (``spawn`` / ``emit`` / ``start`` / ``stop`` /
-``start-all`` / ``forward``), registered by
-:func:`tlosure.builtins.make_member_builtins` (phase C) with
-``pure=False``, validate their arguments and produce an
-:class:`ActionRequest`; the engine executes the requests after
-evaluation completes ("the DSL describes, the engine executes"). Static
-validation distinguishes two purity positions
-(:func:`validate_member_action`): a ``when`` condition must be pure, an
-action position must be an action form with pure arguments. Host
-predicates that read registry state (``sleeping?`` / ``running?`` /
-``lazy?``) are never registered module-level; the caller closure-injects
-them via ``make_member_builtins``.
+Action expressions keep one rule: evaluation never performs side
+effects. Action builtins are registered by the host (tlon), marked
+``pure=False``; they validate their arguments and produce an
+:class:`ActionRequest` — the engine executes the requests after
+evaluation completes ("the DSL describes, the engine executes").
 
 Environment values are opaque to expressions: there is no attribute or
-method access syntax, so a mail object in ``env`` can only be inspected
-through builtins (which see it through the structural
-:class:`tlosure.builtins.MailView` protocol — ADR 0018 §3). ``env``
-also provides ``self`` (``{"id": ..., "name": ..., "address": ...}``),
-which builtins read to resolve "me"; the host pre-derives ``address`` so
-builtins never call back into the host domain.
+method access syntax, so a host object in ``env`` can only be inspected
+through builtins the host registered. What the env provides (sections
+like ``self`` / ``msg`` / ``event``) is the host's contract, not the
+language's (ADR 0018 修订).
 """
 
 from typing import Any
@@ -68,10 +55,9 @@ from tlosure.builtins import (
     EvalDepthError,
     EvalError,
     FuelExhaustedError,
-    make_member_builtins,
 )
 from tlosure.edn import Form, Symbol, dumps
-from tlosure.validate import _binding_names, validate_form, validate_member_action
+from tlosure.validate import _binding_names, validate_form
 
 __all__ = [
     "DEFAULT_FUEL",
@@ -85,9 +71,7 @@ __all__ = [
     "EvalError",
     "FuelExhaustedError",
     "eval_form",
-    "make_member_builtins",
     "validate_form",
-    "validate_member_action",
 ]
 
 DEFAULT_FUEL = 1000

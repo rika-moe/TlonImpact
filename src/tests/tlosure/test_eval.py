@@ -9,24 +9,29 @@ so this suite pins the new semantics and the flipped assertions: ``loop`` /
 bare ``recur`` are still rejected, ``while`` is now a special form whose
 binding vector is enforced, and ``recur`` is only legal in a ``while``
 body's tail position.
+
+This suite covers the language core only (ADR 0018 修订): the registry
+is the host-agnostic general vocabulary (``CORE_BUILTINS`` +
+``ARITHMETIC_BUILTINS``). Domain vocabulary — mail predicates, the
+action family, ``make_member_builtins``, host injection,
+``validate_member_action`` — is tested in
+``src/tests/agents/test_vocabulary.py``.
 """
 
 import pytest
 
+from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin
 from tlosure.edn import Form, Keyword, loads
 from tlosure.eval import (
-    ActionRequest,
-    Builtin,
     EvalDepthError,
     EvalError,
     FuelExhaustedError,
     eval_form,
-    make_member_builtins,
     validate_form,
 )
 
-#: The unified member registry (pure predicates + arithmetic + actions).
-_BUILTINS = make_member_builtins()
+#: The general vocabulary: pure functions + arithmetic, no host domain.
+_BUILTINS = {**CORE_BUILTINS, **ARITHMETIC_BUILTINS}
 
 
 def _recorded(recorded: list) -> dict:
@@ -143,36 +148,6 @@ class TestStr:
 
     def test_no_args_is_empty_string(self):
         assert eval_form(loads("(str)"), {}, _BUILTINS) == ""
-
-
-class TestMemberRoster:
-    """Issue : the host-injected social roster query (same injection
-    pattern as ``sleeping?`` — absent from the host-less registry)."""
-
-    class _Host:
-        def is_sleeping(self, agent_id: object) -> bool:
-            return False
-
-        def is_running(self, agent_id: object) -> bool:
-            return True
-
-        def is_lazy(self, agent_id: object) -> bool:
-            return False
-
-        def start_all_candidates(self) -> list[str]:
-            return []
-
-        def member_roster(self) -> str:
-            return "阿白（a-bai-1a2b3c4d）"
-
-    def test_with_host_returns_roster(self):
-        builtins = make_member_builtins(self._Host())
-        assert eval_form(loads("(member-roster)"), {}, builtins) == "阿白（a-bai-1a2b3c4d）"
-
-    def test_without_host_is_unregistered(self):
-        assert "member-roster" not in _BUILTINS
-        with pytest.raises(EvalError, match="unknown function: member-roster"):
-            eval_form(loads("(member-roster)"), {}, _BUILTINS)
 
 
 class TestWhileRecur:
@@ -330,27 +305,6 @@ class TestMapFilterReduce:
             validate_form(loads("(reduce 1 x (+ 1 x) 0 [1 2])"), _BUILTINS, scope=set())
 
 
-class TestActionCollection:
-    """Phase D invariant: loop body actions are just more recorded requests."""
-
-    def test_while_body_collects_each_emit(self):
-        collector: list[ActionRequest] = []
-        builtins = make_member_builtins(collector=collector)
-        result = eval_form(
-            loads('(while [i 0] (< i 3) (emit "x") (recur (inc i)))'), {}, builtins
-        )
-        assert result is None
-        assert len(collector) == 3
-        assert all(request.kind == "emit" for request in collector)
-
-    def test_map_returns_request_list(self):
-        # Deterministic rules collect the action's return value: a map of
-        # emits is a list of requests, all of which reach the engine.
-        result = eval_form(loads('(map i (emit "x") [1 2 3])'), {}, make_member_builtins())
-        assert len(result) == 3
-        assert all(request.kind == "emit" for request in result)
-
-
 class TestErrors:
     def test_unknown_function(self):
         with pytest.raises(EvalError, match="unknown function: frobnicate"):
@@ -387,24 +341,21 @@ class TestFormVsVector:
 
 class TestValidateForm:
     def test_accepts_legit_expression(self):
-        form = loads('(and (addressed-to-me? msg) (content-matches? msg "hi"))')
-        validate_form(form, _BUILTINS, scope={"msg", "self"})
+        form = loads('(and (contains? msg "hi") (not flag))')
+        validate_form(form, _BUILTINS, scope={"msg", "flag"})
 
     def test_rejects_non_whitelisted_form(self):
-        # A genuinely unknown form is rejected; action names are valid
-        # (impure) expressions here — purity is enforced at the member
-        # action layer (validate_member_action), not in validate_form.
         with pytest.raises(EvalError, match="unknown function or special form: frobnicate"):
             validate_form(loads("(frobnicate msg)"), _BUILTINS, scope={"msg", "self"})
 
     def test_rejects_undefined_symbol(self):
         with pytest.raises(EvalError, match="undefined symbol: foo"):
-            validate_form(loads("(addressed-to-me? foo)"), _BUILTINS, scope={"msg", "self"})
+            validate_form(loads('(contains? foo "x")'), _BUILTINS, scope={"msg", "self"})
 
     def test_let_extends_scope(self):
-        validate_form(loads("(let [x msg] (addressed-to-me? x))"), _BUILTINS, scope={"msg"})
+        validate_form(loads('(let [x msg] (contains? x "hi"))'), _BUILTINS, scope={"msg"})
         with pytest.raises(EvalError, match="undefined symbol: y"):
-            validate_form(loads("(let [x 1] (addressed-to-me? y))"), _BUILTINS, scope={"msg"})
+            validate_form(loads('(let [x 1] (contains? y "hi"))'), _BUILTINS, scope={"msg"})
 
 
 class TestFlippedAssertions:

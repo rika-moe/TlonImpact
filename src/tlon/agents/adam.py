@@ -56,10 +56,10 @@ acyclic).
 from tlon.agents.agent_registry import AgentRegistry, RegistryQueries
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
+from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths, paths
 from tlon.organization.mail.mailbox import Mailbox
-from tlosure.builtins import make_member_builtins
 from tlosure.edn import loads
 
 #: Adam's policy, as data. Parsed once per assembly by

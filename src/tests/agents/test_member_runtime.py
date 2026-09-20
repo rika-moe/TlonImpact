@@ -27,6 +27,7 @@ from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
+from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -37,7 +38,7 @@ from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import Tool
 from tlosure.edn import loads
-from tlosure.eval import ActionRequest, FuelExhaustedError, make_member_builtins
+from tlosure.eval import ActionRequest, FuelExhaustedError
 
 # ── Specs ──────────────────────────────────────────────────────────────
 

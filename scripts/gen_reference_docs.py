@@ -13,8 +13,8 @@ handwritten; only the drift-prone inventories are generated:
 - ``dsl-special-forms`` / ``dsl-on-events`` / ``dsl-builtins-*`` /
   ``dsl-loop-names`` in docs/reference/dsl-reference.md — the DSL
   whitelists (special forms, ``:on`` event keywords, builtin registries,
-  stage/section names) from tlosure/eval.py, tlosure/builtins.py and
-  agents/member_spec.py.
+  stage/section names) from tlosure/eval.py, tlosure/builtins.py,
+  agents/vocabulary.py and agents/member_spec.py.
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
   the route table from ``RESTAPIHandler.create_app`` (with registration
   conditions) and the ``MODE_EVENT_PATTERNS`` mode semantics.
@@ -50,6 +50,7 @@ REGISTRY_FILE = SRC / "agents" / "assembly.py"
 EVENTS_FILE = SRC / "base" / "events" / "event.py"
 EVAL_FILE = TLOSURE_SRC / "eval.py"
 BUILTINS_FILE = TLOSURE_SRC / "builtins.py"
+VOCABULARY_FILE = SRC / "agents" / "vocabulary.py"
 MEMBER_SPEC_FILE = SRC / "agents" / "member_spec.py"
 REST_FILE = SRC / "app" / "server" / "api" / "rest" / "app.py"
 NOTIFICATION_FILE = SRC / "app" / "server" / "core" / "notification_service.py"
@@ -263,13 +264,25 @@ def _frozenset_strings(path: Path, name: str) -> list[str]:
     return [str(_literal(elt)) for elt in value.args[0].elts]
 
 
-def _function_doc_first_line(tree: ast.Module, fn_name: str, path: Path) -> str:
-    """First docstring line of a module-level function ("" when undocumented)."""
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn_name:
-            doc = ast.get_docstring(node)
-            return doc.splitlines()[0] if doc else ""
-    raise GenerationError(f"{path}: function {fn_name} not found")
+def _function_doc_first_line(
+    fn_name: str, sources: list[tuple[ast.Module, Path]]
+) -> str:
+    """First docstring line of a module-level function ("" when undocumented).
+
+    Searches ``sources`` in order: a registry may reference functions
+    defined in another module (the host vocabulary in
+    ``agents/vocabulary.py`` reuses tlosure's general functions).
+    """
+    for tree, _path in sources:
+        for node in tree.body:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == fn_name
+            ):
+                doc = ast.get_docstring(node)
+                return doc.splitlines()[0] if doc else ""
+    paths = ", ".join(str(path) for _tree, path in sources)
+    raise GenerationError(f"function {fn_name} not found in {paths}")
 
 
 @dataclass(frozen=True)
@@ -279,17 +292,20 @@ class BuiltinEntry:
     doc: str
 
 
-def builtin_registry(name: str) -> list[BuiltinEntry]:
+def builtin_registry(name: str, path: Path) -> list[BuiltinEntry]:
     """A ``NAME: dict[str, Builtin] = {"x": Builtin(_fn, pure=...)}`` registry
-    from tlosure/builtins.py, in source order."""
-    tree = _parse(BUILTINS_FILE)
-    value = _module_value(tree, name, BUILTINS_FILE)
+    from ``path``, in source order. Function docstrings are looked up in
+    ``path`` first, then in tlosure/builtins.py (the host vocabulary
+    reuses the general functions defined there)."""
+    tree = _parse(path)
+    doc_sources = [(tree, path), (_parse(BUILTINS_FILE), BUILTINS_FILE)]
+    value = _module_value(tree, name, path)
     if not isinstance(value, ast.Dict):
-        raise GenerationError(f"{BUILTINS_FILE}: {name} is not a dict literal")
+        raise GenerationError(f"{path}: {name} is not a dict literal")
     entries: list[BuiltinEntry] = []
     for key, val in zip(value.keys, value.values, strict=True):
         if key is None:
-            raise GenerationError(f"{BUILTINS_FILE}: {name} uses dict unpacking")
+            raise GenerationError(f"{path}: {name} uses dict unpacking")
         builtin_name = str(_literal(key))
         if not (
             isinstance(val, ast.Call)
@@ -299,7 +315,7 @@ def builtin_registry(name: str) -> list[BuiltinEntry]:
             and isinstance(val.args[0], ast.Name)
         ):
             raise GenerationError(
-                f"{BUILTINS_FILE}: {name}[{builtin_name!r}] is not Builtin(<fn>, ...)"
+                f"{path}: {name}[{builtin_name!r}] is not Builtin(<fn>, ...)"
             )
         fn_name = val.args[0].id
         pure = True
@@ -308,17 +324,17 @@ def builtin_registry(name: str) -> list[BuiltinEntry]:
                 pure = bool(_literal(kw.value))
             else:
                 raise GenerationError(
-                    f"{BUILTINS_FILE}: {name}[{builtin_name!r}] has unexpected kwarg {kw.arg}"
+                    f"{path}: {name}[{builtin_name!r}] has unexpected kwarg {kw.arg}"
                 )
         entries.append(
             BuiltinEntry(
                 name=builtin_name,
                 pure=pure,
-                doc=_function_doc_first_line(tree, fn_name, BUILTINS_FILE),
+                doc=_function_doc_first_line(fn_name, doc_sources),
             )
         )
     if not entries:
-        raise GenerationError(f"{BUILTINS_FILE}: {name} is empty")
+        raise GenerationError(f"{path}: {name} is empty")
     return entries
 
 
@@ -678,9 +694,9 @@ def render_dsl_on_events() -> str:
     return header + "\n" + "\n".join(rows)
 
 
-def render_builtin_table(registry: str) -> str:
+def render_builtin_table(registry: str, path: Path) -> str:
     """One builtin registry table for docs/reference/dsl-reference.md §5."""
-    entries = builtin_registry(registry)
+    entries = builtin_registry(registry, path)
     rows = []
     for e in entries:
         pure = "是" if e.pure else "否"
@@ -770,11 +786,19 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         (API_REF, "event-types"): render_event_types(),
         (DSL_REF, "dsl-special-forms"): render_dsl_special_forms(),
         (DSL_REF, "dsl-on-events"): render_dsl_on_events(),
-        (DSL_REF, "dsl-builtins-trigger"): render_builtin_table("TRIGGER_BUILTINS"),
-        (DSL_REF, "dsl-builtins-loop"): render_builtin_table("LOOP_BUILTINS"),
-        (DSL_REF, "dsl-builtins-stage-cond"): render_builtin_table("STAGE_COND_BUILTINS"),
-        (DSL_REF, "dsl-builtins-script"): render_builtin_table("SCRIPT_BUILTINS"),
-        (DSL_REF, "dsl-builtins-arithmetic"): render_builtin_table("ARITHMETIC_BUILTINS"),
+        (DSL_REF, "dsl-builtins-trigger"): render_builtin_table(
+            "TRIGGER_BUILTINS", VOCABULARY_FILE
+        ),
+        (DSL_REF, "dsl-builtins-loop"): render_builtin_table("LOOP_BUILTINS", VOCABULARY_FILE),
+        (DSL_REF, "dsl-builtins-stage-cond"): render_builtin_table(
+            "STAGE_COND_BUILTINS", VOCABULARY_FILE
+        ),
+        (DSL_REF, "dsl-builtins-script"): render_builtin_table(
+            "SCRIPT_BUILTINS", VOCABULARY_FILE
+        ),
+        (DSL_REF, "dsl-builtins-arithmetic"): render_builtin_table(
+            "ARITHMETIC_BUILTINS", BUILTINS_FILE
+        ),
         (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
         (API_REF, "rest-endpoints"): render_rest_endpoints(),
         (API_REF, "mode-patterns"): render_mode_patterns(),

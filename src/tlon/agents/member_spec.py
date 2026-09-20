@@ -22,18 +22,18 @@ whitelist and expression-level builtin-scope validation of ``:when`` /
 from dataclasses import dataclass
 from typing import Any
 
-from tlon.base.events.event import EventType
-from tlon.base.logger import get_logger
-from tlosure.builtins import (
+from tlon.agents.vocabulary import (
     LOOP_BUILTINS,
     STAGE_COND_BUILTINS,
-    Builtin,
-    EvalError,
     make_member_builtins,
+    validate_member_action,
 )
+from tlon.base.events.event import EventType
+from tlon.base.logger import get_logger
+from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlosure.eval import MAX_FUEL
-from tlosure.validate import validate_form, validate_member_action
+from tlosure.validate import validate_form
 
 logger = get_logger(__name__)
 
@@ -309,7 +309,7 @@ def validate_member_spec(
     member vocabulary (phase C): ``:when`` validates against the pure
     subset of the member registry under the unified env scope
     ``{msg, event, self}``; actions validate against
-    :func:`~tlosure.validate.validate_member_action` under
+    :func:`~tlon.agents.vocabulary.validate_member_action` under
     ``{msg, event, result, self}``; a cognitive rule's sections, stages
     and ``:until`` validate against the whitelisted names / loop
     builtins. The single scope superset covers both former runtimes —

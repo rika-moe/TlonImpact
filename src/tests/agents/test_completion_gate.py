@@ -31,12 +31,12 @@ from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import attempts_completion
 from tlon.agents.trigger import AgentIdentity
+from tlon.agents.vocabulary import STAGE_COND_BUILTINS
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
-from tlosure.builtins import STAGE_COND_BUILTINS
 from tlosure.edn import loads
 
 GATED_EDN = """\

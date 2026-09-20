@@ -10,22 +10,19 @@ raising :class:`EvalError` on the first violation. The ``while`` /
 branches, trailing ``when``/``let`` bodies, and the final ``and``/``or``
 argument inherit tail position).
 
-:func:`validate_member_action` is the phase C unified gate for a rule's
-action position: action forms (see
-:data:`tlosure.builtins.MEMBER_ACTION_NAMES`) under ``when`` /
-``while`` / ``map`` wrappers, whose conditions, tests, binding
-initializers and arguments are pure expressions validated against the
-pure subset of the member registry.
+Action-position validation is host business (it names the host's action
+vocabulary) and lives with the host — for tlon that is
+``tlon/agents/vocabulary.py`` (ADR 0018 修订).
 
 The ``_binding_names`` helper is shared with the evaluator kernel
 (``tlosure/eval.py``), which uses it for ``let`` / ``while`` binding
-vectors at evaluation time.
+vectors at evaluation time, and with host-side action validators.
 """
 
 from dataclasses import dataclass
 from typing import Any
 
-from tlosure.builtins import MEMBER_ACTION_NAMES, Builtin, EvalError
+from tlosure.builtins import Builtin, EvalError
 from tlosure.edn import Form, Symbol, dumps
 
 
@@ -233,97 +230,3 @@ def _validate_reduce(
     _validate(args[2], builtins, local, _non_tail(loop))
     _validate(args[3], builtins, scope, _non_tail(loop))
     _validate(args[4], builtins, scope, _non_tail(loop))
-
-
-def validate_member_action(
-    form: Any, *, pure: dict[str, Builtin], scope: set[str]
-) -> None:
-    """Statically validate one member action form (phase C unified gate).
-
-    The action position of any rule — cognitive or deterministic — is
-    either a single action form (``(spawn ...)`` / ``(emit ...)`` /
-    ``(start ...)`` / ``(stop ...)`` / ``(start-all ...)`` /
-    ``(forward ...)``), a ``(when cond action ...)`` wrapper, or a phase D
-    loop form (``while`` / ``map``) whose action-bearing positions hold
-    action forms. The purity invariant is unchanged (dsl.md phase D):
-    conditions, tests, binding initializers and action arguments are pure
-    expressions validated against ``pure`` (the pure subset of the member
-    registry) under ``scope``; only the action-carrying positions may name
-    an action.
-    """
-    if not isinstance(form, Form) or not form:
-        raise EvalError(
-            f"member action must be an action form or (when ...), got {dumps(form)}"
-        )
-    _validate_member_action_expr(form, pure, set(scope))
-
-
-def _validate_member_action_expr(
-    form: Any, pure: dict[str, Builtin], scope: set[str]
-) -> None:
-    """Validate one member action expression (a single action or a wrapper).
-
-    ``when`` wraps action forms under a pure condition; phase D ``while`` /
-    ``map`` loop over action forms. Every other head must be an action name
-    whose arguments are pure expressions.
-    """
-    if not isinstance(form, Form) or not form:
-        raise EvalError(f"action must be an action form, got {dumps(form)}")
-    head = form[0]
-    if not isinstance(head, Symbol):
-        raise EvalError(f"action head must be a symbol, got {dumps(head)}")
-    name = str(head)
-    if name in MEMBER_ACTION_NAMES:
-        for arg in form[1:]:
-            validate_form(arg, pure, set(scope))
-        return
-    if name == "when":
-        if len(form) < 3:
-            raise EvalError("when expects a condition and at least one action")
-        validate_form(form[1], pure, set(scope))
-        for action in form[2:]:
-            _validate_member_action_expr(action, pure, scope)
-        return
-    if name == "while":
-        if len(form) < 3:
-            raise EvalError("while expects a binding vector and a test")
-        names = _binding_names(form[1], "while")
-        local = set(scope)
-        for binding, init in zip(names, form[1][1::2], strict=True):
-            validate_form(init, pure, set(local))
-            local.add(binding)
-        validate_form(form[2], pure, set(local))
-        for body in form[3:]:
-            _validate_loop_body_action(body, pure, local)
-        return
-    if name == "map":
-        if len(form) != 4:
-            raise EvalError("map expects a binding, a body, and a collection")
-        binder = form[1]
-        if not isinstance(binder, Symbol):
-            raise EvalError(f"map binding must be a symbol, got {dumps(binder)}")
-        local = set(scope)
-        local.add(str(binder))
-        _validate_member_action_expr(form[2], pure, local)
-        validate_form(form[3], pure, set(scope))
-        return
-    raise EvalError(
-        f"unknown action: {dumps(head)} "
-        f"(allowed: {sorted(MEMBER_ACTION_NAMES)}, when, while, map)"
-    )
-
-
-def _validate_loop_body_action(
-    form: Any, pure: dict[str, Builtin], scope: set[str]
-) -> None:
-    """A ``while`` body position: an action expression or the loop's ``recur``."""
-    if (
-        isinstance(form, Form)
-        and form
-        and isinstance(form[0], Symbol)
-        and str(form[0]) == "recur"
-    ):
-        for arg in form[1:]:
-            validate_form(arg, pure, set(scope))
-        return
-    _validate_member_action_expr(form, pure, scope)

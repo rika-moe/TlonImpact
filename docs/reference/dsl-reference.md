@@ -171,7 +171,7 @@
 
 ## 5. Builtin 完整清单
 
-模块级注册表在 [src/tlosure/builtins.py](../../src/tlosure/builtins.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
+领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)（`ARITHMETIC_BUILTINS` 与通用词汇留在 [src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
 ### 5.1 `TRIGGER_BUILTINS`（触发器谓词）
 

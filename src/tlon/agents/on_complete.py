@@ -21,14 +21,10 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from tlon.agents.trigger import AgentIdentity
+from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail, address_for_member
-from tlosure.builtins import (
-    ActionRequest,
-    EvalError,
-    FuelExhaustedError,
-    make_member_builtins,
-)
+from tlosure.builtins import ActionRequest, EvalError, FuelExhaustedError
 from tlosure.eval import DEFAULT_FUEL, eval_form
 
 if TYPE_CHECKING:

@@ -65,6 +65,7 @@ from tlon.agents.prototypes import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
 from tlon.agents.trust import probation_provider
+from tlon.agents.vocabulary import ScriptHostQueries, make_member_builtins
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -76,7 +77,6 @@ from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.agents.ports import StopRejectedError
-from tlosure.builtins import ScriptHostQueries, make_member_builtins
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
