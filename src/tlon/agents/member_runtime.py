@@ -84,7 +84,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import get_current_trace
 from tlon.memory.manager import MemoryManager
-from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
@@ -1071,10 +1071,16 @@ class MemberRuntime(Member):
         """The unified evaluation env: always ``{msg, event, self}`` —
         ``msg`` is the payload's mail or None (non-mail events make the msg
         predicates safely return False), ``event`` is the payload, ``self``
-        carries the member's id/name."""
+        carries the member's id/name/address (the address is pre-derived
+        here so the DSL builtins read data, never call back into tlon —
+        ADR 0018 §3)."""
         mail = payload.get("mail") if isinstance(payload, dict) else None
         return {
             "msg": mail,
             "event": payload,
-            "self": {"id": self._member_id, "name": self._name},
+            "self": {
+                "id": self._member_id,
+                "name": self._name,
+                "address": address_for_member(self._member_id),
+            },
         }

@@ -29,7 +29,7 @@ from tlon.agents.builtins import (
 from tlon.agents.eval import DEFAULT_FUEL, eval_form
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.logger import get_logger
-from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mail import Mail, address_for_member
 
 if TYPE_CHECKING:
     from tlon.agents.member_spec import MemberRule
@@ -76,7 +76,11 @@ class OnCompleteRunner:
         env: dict[str, Any] = {
             "msg": session.trigger_message,
             "result": result,
-            "self": {"id": self._identity.id, "name": self._identity.name},
+            "self": {
+                "id": self._identity.id,
+                "name": self._identity.name,
+                "address": address_for_member(self._identity.id),
+            },
         }
 
         collector: list[ActionRequest] = []

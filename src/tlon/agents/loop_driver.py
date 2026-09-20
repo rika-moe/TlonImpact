@@ -53,7 +53,7 @@ from tlon.agents.trigger import AgentIdentity
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
-from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 
@@ -363,7 +363,11 @@ class LoopDriver:
         log = self._services.logger
         loop = self._loop
         env = {
-            "self": {"id": self._identity.id, "name": self._identity.name},
+            "self": {
+                "id": self._identity.id,
+                "name": self._identity.name,
+                "address": address_for_member(self._identity.id),
+            },
             "state": {"iteration": session.iteration, "error_count": session.error_count},
             "limits": {
                 "max_iterations": loop.max_iterations,

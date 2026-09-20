@@ -32,10 +32,9 @@ there is no import cycle.
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from tlon.agents.edn import dumps
-from tlon.organization.mail.mail import Mail, address_for_member
 
 
 class EvalError(Exception):
@@ -66,34 +65,49 @@ class Builtin:
 # ── Trigger builtins (pure predicates/functions only) ──
 
 
+@runtime_checkable
+class MailView(Protocol):
+    """The structural view of a mail object as the DSL predicates see it.
+
+    Dependency inversion (ADR 0018): the host's mail type (tlon's ``Mail``)
+    satisfies this protocol structurally; builtins never import it, so this
+    module stays free of host-domain imports.
+    """
+
+    to: list[str]
+    cc: list[str]
+    from_address: str
+    content: str
+
+
 def _self_map(env: dict[str, Any]) -> dict[str, Any]:
     self_map = env.get("self")
     return self_map if isinstance(self_map, dict) else {}
 
 
 def _my_address(env: dict[str, Any]) -> str | None:
-    """The evaluating agent's mail address, derived from ``self``."""
-    agent_id = _self_map(env).get("id")
-    return address_for_member(agent_id) if agent_id else None
+    """The evaluating agent's mail address, injected by the host in ``self``."""
+    address = _self_map(env).get("address")
+    return address if type(address) is str and address else None
 
 
-def _builtin_addressed_to_me(env: dict[str, Any], msg: Mail | None) -> bool:
+def _builtin_addressed_to_me(env: dict[str, Any], msg: MailView | None) -> bool:
     """My address is in the mail's To list.
 
     None-safe: the unified member env binds ``msg`` to None for non-mail
     events (phase C), and a non-mail payload is never addressed to me.
     """
     my_address = _my_address(env)
-    return my_address is not None and isinstance(msg, Mail) and my_address in msg.to
+    return my_address is not None and isinstance(msg, MailView) and my_address in msg.to
 
 
-def _builtin_cc_ed(env: dict[str, Any], msg: Mail | None) -> bool:
+def _builtin_cc_ed(env: dict[str, Any], msg: MailView | None) -> bool:
     """My address is in the mail's CC list (None-safe, see addressed-to-me?)."""
     my_address = _my_address(env)
-    return my_address is not None and isinstance(msg, Mail) and my_address in msg.cc
+    return my_address is not None and isinstance(msg, MailView) and my_address in msg.cc
 
 
-def _builtin_from(env: dict[str, Any], msg: Mail | None, address: Any) -> bool:
+def _builtin_from(env: dict[str, Any], msg: MailView | None, address: Any) -> bool:
     """The mail's sender equals ``address`` (None-safe, see addressed-to-me?).
 
     Mail field access for trigger gates — ``get`` reads dicts only, so
@@ -102,21 +116,21 @@ def _builtin_from(env: dict[str, Any], msg: Mail | None, address: Any) -> bool:
     bounce). A non-string ``address`` never matches.
     """
     return (
-        isinstance(msg, Mail)
+        isinstance(msg, MailView)
         and isinstance(address, str)
         and msg.from_address == address
     )
 
 
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
-    """Regex-search a Mail's content or a plain string (e.g. ``result``).
+    """Regex-search a mail's content or a plain string (e.g. ``result``).
 
     ``target=None`` (a non-mail event's ``msg``) safely yields False;
-    any other non-Mail non-string target is a spec bug and raises.
+    any other non-mail non-string target is a spec bug and raises.
     """
     if target is None:
         return False
-    if isinstance(target, Mail):
+    if isinstance(target, MailView):
         content = target.content
     elif type(target) is str:
         content = target

@@ -185,7 +185,7 @@
 | `addressed-to-me?` | 是 | My address is in the mail's To list. |
 | `cc-ed?` | 是 | My address is in the mail's CC list (None-safe, see addressed-to-me?). |
 | `from?` | 是 | The mail's sender equals ``address`` (None-safe, see addressed-to-me?). |
-| `content-matches?` | 是 | Regex-search a Mail's content or a plain string (e.g. ``result``). |
+| `content-matches?` | 是 | Regex-search a mail's content or a plain string (e.g. ``result``). |
 | `contains?` | 是 |  |
 | `=` | 是 |  |
 | `not` | 是 |  |

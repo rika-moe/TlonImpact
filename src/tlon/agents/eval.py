@@ -52,9 +52,12 @@ predicates that read registry state (``sleeping?`` / ``running?`` /
 them via ``make_member_builtins``.
 
 Environment values are opaque to expressions: there is no attribute or
-method access syntax, so a ``Mail`` in ``env`` can only be inspected
-through builtins. ``env`` also provides ``self`` (``{"id": ..., "name":
-...}``) which builtins read to resolve "me".
+method access syntax, so a mail object in ``env`` can only be inspected
+through builtins (which see it through the structural
+:class:`tlon.agents.builtins.MailView` protocol — ADR 0018 §3). ``env``
+also provides ``self`` (``{"id": ..., "name": ..., "address": ...}``),
+which builtins read to resolve "me"; the host pre-derives ``address`` so
+builtins never call back into the host domain.
 """
 
 from typing import Any
