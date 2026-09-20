@@ -1,7 +1,8 @@
 """Unit tests for the REST POST /webhooks/github endpoint (issue ).
 
 No HTTP server is started: handle_github_webhook is called directly with
-a stub request (raw body + headers), against a stub GitHubAdapter.
+a stub request (raw body + headers), against a stub GitHubAdapter behind
+the events facade.
 
 Covers:
 - Valid signature + mapped event: 202 accepted, adapter called
@@ -15,7 +16,9 @@ import hmac
 import json
 from typing import Any
 
+from tlon.api.events import EventsFacade
 from tlon.app.server.api.rest import RESTAPIHandler
+from tlon.base.events.event_bus import EventBus
 from tlon.organization.mail.mail import Mail
 
 SECRET = "test-secret"
@@ -62,12 +65,12 @@ def _request(
 
 
 def _handler(adapter: StubGitHubAdapter | None) -> RESTAPIHandler:
-    return RESTAPIHandler(
-        None,
-        None,
-        github_adapter=adapter,
-        github_webhook_secret=SECRET,
+    events = (
+        EventsFacade(event_bus=EventBus(), github_adapter=adapter)  # type: ignore[arg-type]
+        if adapter is not None
+        else None
     )
+    return RESTAPIHandler(None, events=events, github_webhook_secret=SECRET)
 
 
 def _accepted_mail() -> Mail:

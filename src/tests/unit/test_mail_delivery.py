@@ -19,12 +19,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tlon.app.server.core.guardian_provider import GuardianAgentInfoProvider
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
+from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
 from tlon.organization.mail.mail import (
     ALL_ADDRESS,
     POSTMASTER_ADDRESS,

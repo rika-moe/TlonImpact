@@ -40,7 +40,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 - **错误形态统一**：所有 4xx 都返回 `{"error", "reason"}`，`reason` 是机器可读的稳定枚举（`invalid_json`、`invalid_username`、`unsupported_protocol_version`、`recipient_unresolved` 等），`error` 是给人看的消息。客户端分支判 `reason`，不解析文案。
 - **快照随会话建立返回**：`POST /sessions` 的 201 响应内嵌 participants/agents 快照，省掉客户端启动时的一轮级联查询；之后的变化靠 SSE 事件增量。这是「历史 + 增量」读模型在成员目录上的复用。
 - **写少读多**：写端点只有 `POST /messages` 和会话管理三个，其余全是 GET。人类对系统能做的动作本来就只有「写信」和「调整自己的接收方式」，端点表是这个事实的直译。
-- **条件注册**：admin 路由在 config_manager 存在时才注册，traces 路由在 trace_store 存在时才注册，`/metrics` 无 metrics 服务时返回 503。装配层（`ServerApp`）决定哪些能力上线，API 层不猜测——缺失的能力以明确的 503/缺路由表达，不伪装成功。
+- **条件注册**：admin 配置路由在 configs facade 注入时才注册，traces 路由在 observability facade 注入时才注册，`/metrics` 无观测 facade 时返回 503。装配层（`ServerApp`）决定哪些能力上线，API 层不猜测——缺失的能力以明确的 503/缺路由表达，不伪装成功。
 - **热重载走管理面**：`POST /admin/config/agents/{agent_id}/reload` 让运行中的服务端注册并启动一个磁盘上已存在的 agent（或登记为 lazy）——创建类管理操作的收尾。配置的唯一权威仍是磁盘文件，端点只是触发重读。
 
 会话即存在（presence）：SSE 流建立时才把会话 attach 到对应人类的 `HumanAdapter` 并注册事件处理器；流断开（客户端断连、心跳写失败、主动 DELETE）即可靠地 detach 并关闭会话——**SSE 断开等于离线**，客户端重连需重新 `POST /sessions` 拿新 session id 和新快照。
@@ -118,7 +118,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 ## 端口与生命周期
 
-`RESTServer` 是 aiohttp 生命周期的薄封装：`start()` 建 app、起 `AppRunner` 和 `TCPSite`，`stop()` 清理。装配在 `ServerApp.initialize()` 完成（构造 `RESTAPIHandler` 并注入 ClientGateway、AgentRegistry、AdapterManager 等依赖），但**装配阶段不开端口**——监听发生在 `ServerApp.start()` 调 `RESTServer.start()` 时；关停严格反序，RESTServer 最先停。这条顺序保证两件事：装配失败时进程没有任何对外暴露；关停时不再接受新请求之后，内部组件才开始拆。
+`RESTServer` 是 aiohttp 生命周期的薄封装：`start()` 建 app、起 `AppRunner` 和 `TCPSite`，`stop()` 清理。装配在 `ServerApp.initialize()` 完成（构造 `RESTAPIHandler` 并注入 ClientGateway 与 [tlon/api/](../../src/tlon/api) 的 domain facade——members / mail / prototypes / observability / config / events，ADR 0019；handler 不直摸 runtime 内脏），但**装配阶段不开端口**——监听发生在 `ServerApp.start()` 调 `RESTServer.start()` 时；关停严格反序，RESTServer 最先停。这条顺序保证两件事：装配失败时进程没有任何对外暴露；关停时不再接受新请求之后，内部组件才开始拆。
 
 默认绑定 `127.0.0.1:8080`，对外只有这一个端口。可观测性（traces/metrics/logs）也走同一个端口的 GET 端点，不开独立的 admin 端口——本地工具场景下，第二个端口是比「端点级的条件注册」更重的隔离手段。
 

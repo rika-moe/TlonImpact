@@ -65,8 +65,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | DELETE | `/sessions/{session_id}` | `handle_delete_session` | 无条件 |
 | GET | `/events` | `handle_events` | 无条件 |
 | GET | `/participants` | `handle_list_participants` | 无条件 |
-| GET | `/admin/config/agents` | `handle_list_agent_configs` | config_manager |
-| POST | `/admin/config/agents/{agent_id}/reload` | `handle_reload_agent` | config_manager |
+| GET | `/admin/config/agents` | `handle_list_agent_configs` | configs |
+| POST | `/admin/config/agents/{agent_id}/reload` | `handle_reload_agent` | configs |
 | POST | `/admin/config/agents` | `handle_create_agent` | 无条件 |
 | PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
 | DELETE | `/admin/config/agents/{agent_id}` | `handle_delete_agent` | 无条件 |
@@ -81,10 +81,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 | GET | `/admin/prototypes/{name}` | `handle_get_prototype` | 无条件 |
 | PATCH | `/admin/prototypes/{name}` | `handle_update_prototype` | 无条件 |
 | DELETE | `/admin/prototypes/{name}` | `handle_delete_prototype` | 无条件 |
-| GET | `/traces` | `handle_list_traces` | trace_store |
-| GET | `/traces/{trace_id}` | `handle_get_trace` | trace_store |
+| GET | `/traces` | `handle_list_traces` | observability |
+| GET | `/traces/{trace_id}` | `handle_get_trace` | observability |
 | GET | `/metrics` | `handle_metrics` | 无条件 |
-| POST | `/webhooks/github` | `handle_github_webhook` | github_adapter + github_webhook_secret |
+| POST | `/webhooks/github` | `handle_github_webhook` | github_ingress + github_webhook_secret |
 | GET | `/agents/{agent_id}/logs` | `handle_get_agent_logs` | 无条件 |
 | GET | `/logs` | `handle_list_logs` | 无条件 |
 | GET | `/test/ping` | `handle_test_ping` | debug |

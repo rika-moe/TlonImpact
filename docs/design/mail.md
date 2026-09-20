@@ -86,7 +86,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含睡眠中的已注册 agent），人类在线性查注入的 callable，邮箱布局查 `TlonPaths`。组织层只依赖 base 的契约因此不破——三个能力全部构造器注入。
 
-守护者信箱（issue ）：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。装配层（[app/server/core/guardian_provider.py](../../src/tlon/app/server/core/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（投递自动建 `~/.tlon/adam/mail/`），但不进 `all@` 广播、不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。ServerApp 包一次、AdapterManager 与 MailDelivery 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的信（退信）不回——邮差不与邮差通信。
+守护者信箱（issue ）：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（投递自动建 `~/.tlon/adam/mail/`），但不进 `all@` 广播、不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 MailDelivery 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的信（退信）不回——邮差不与邮差通信。
 
 ## 外部来信与信任面
 

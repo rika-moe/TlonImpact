@@ -1,7 +1,8 @@
 """Unit tests for the REST POST /messages endpoint (protocol v2, PR-1).
 
 No HTTP server is started: handle_send_message is called directly with a
-stub request, against an AdapterManager rooted at a tmp dir.
+stub request, against a MailFacade wrapping an AdapterManager rooted at a
+tmp dir.
 
 Covers:
 - Success: 202 + mail_id, MAIL_NEW published as "human:<username>",
@@ -18,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from tlon.api.mail import MailFacade
 from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -77,8 +79,11 @@ async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManage
 
 
 @pytest.fixture
-def handler(manager: AdapterManager) -> RESTAPIHandler:
-    return RESTAPIHandler(None, None, adapter_manager=manager)
+def handler(manager: AdapterManager, tmp_path: Path) -> RESTAPIHandler:
+    return RESTAPIHandler(
+        None,
+        mail=MailFacade(adapter_manager=manager, tlon_paths=TlonPaths(home=tmp_path)),
+    )
 
 
 @pytest.fixture
@@ -236,7 +241,7 @@ class TestHandleSendMessage:
         assert json.loads(response.text)["reason"] == "invalid_json"
 
     async def test_messaging_unavailable_returns_503(self):
-        handler = RESTAPIHandler(None, None, adapter_manager=None)
+        handler = RESTAPIHandler(None, mail=None)
 
         response = await handler.handle_send_message(
             StubRequest({"username": "alice", "content": "hi", "to": ["xie-yunshu"]})

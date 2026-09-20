@@ -23,9 +23,9 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from tlon.api.members import MemberInfo
 from tlon.base.component import Component
 from tlon.base.logger import get_logger
-from tlon.organization.messaging.member_info import MemberInfo
 
 from .member_directory import MemberDirectory
 from .notification_service import EventHandler, NotificationService

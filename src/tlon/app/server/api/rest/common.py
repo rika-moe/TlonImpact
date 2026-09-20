@@ -4,20 +4,24 @@
 ``RESTAPIHandler.__init__`` in app.py) so the per-domain mixins can read
 them with mypy-checked types, and hosts the cross-domain helpers
 (``_json_response``, CORS preflight).
+
+Runtime touchpoints are the tlon.api domain facades (ADR 0019); the
+server never imports runtime internals directly.
 """
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
-from tlon.agents.agent_registry import AgentRegistry
+from tlon.api.config import ConfigFacade
+from tlon.api.events import EventsFacade
+from tlon.api.mail import MailFacade
+from tlon.api.members import MembersFacade
+from tlon.api.observability import ObservabilityFacade
+from tlon.api.prototypes import PrototypesFacade
 from tlon.app.server.core.client_gateway import ClientGateway
-from tlon.base.paths import TlonPaths
-from tlon.organization.messaging.github_adapter import GitHubAdapter
-from tlon.organization.messaging.human_adapter import AdapterManager
 
 
 class RestHandlerBase:
@@ -28,15 +32,15 @@ class RestHandlerBase:
     """
 
     client_gateway: ClientGateway
-    agent_registry: AgentRegistry
-    config_manager: Any | None
+    members: MembersFacade | None
+    mail: MailFacade | None
+    prototypes: PrototypesFacade | None
+    observability: ObservabilityFacade | None
+    configs: ConfigFacade | None
+    events: EventsFacade | None
     debug: bool
-    trace_store: Any | None
-    metrics_service: Any | None
-    logs_dir: Path | None
-    paths: TlonPaths | None
-    adapter_manager: AdapterManager | None
-    github_adapter: GitHubAdapter | None
+    admin_token: str | None
+    github_ingress: bool
     github_webhook_secret: str | None
     # Active SSE streams: session_id -> frame queue (None sentinel ends
     # the stream; see handle_events / handle_delete_session)

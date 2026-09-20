@@ -10,11 +10,10 @@ extra id: ``get_config("adam")`` returns a synthesized AgentConfig.
 broadcast expansion, the roster, and every enumeration-driven scan
 (trust/ledger/spawn), keeping those surfaces exactly as they were.
 
-The wrapper lives at the assembly layer: the resolver (organization
-domain) must not know about Adam (agents domain), so the knowledge is
-injected from here. ServerApp wraps the ConfigService once and hands the
-same instance to both the AdapterManager (speak-side resolution) and
-MailDelivery (delivery-side resolution), which share one
+The wrapper belongs to the runtime's mail side (it exists so MailDelivery
+can resolve the guardian): ``build_runtime()`` wraps the ConfigService
+once and hands the same instance to both the AdapterManager (speak-side
+resolution) and MailDelivery (delivery-side resolution), which share one
 RecipientResolver — one wrap, both directions.
 """
 

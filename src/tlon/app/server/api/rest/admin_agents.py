@@ -1,15 +1,17 @@
 """Admin agent endpoints: /admin/config/agents/* (config listing, hot-reload
-adopt, member CRUD — wizard removal, A2/ADR 0006)."""
+adopt, member CRUD — wizard removal, A2/ADR 0006).
+
+Runtime touchpoints go through the tlon.api facades (ADR 0019): members
+facade for registry operations and member creation, config facade for
+agent.yaml reads/writes.
+"""
 
 import uuid
 from typing import Any
 
 from aiohttp import web
 
-from tlon.agents.prototypes import instantiate
-from tlon.base.config import LLMConfig, yaml_load_file, yaml_save
-from tlon.tools.agents.ports import StopRejectedError
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.api.members import PrototypeError, StopRejectedError
 
 from .common import RestHandlerBase
 
@@ -23,13 +25,13 @@ class AdminAgentHandlers(RestHandlerBase):
         Returns:
             List of agent configurations (sanitized)
         """
-        if not self.config_manager:
+        if not self.configs:
             return self._json_response(
                 {"status": "error", "message": "Config manager not available"}, status=503
             )
 
         agents = []
-        for agent in self.config_manager.agents.values():
+        for agent in self.configs.list_agent_configs():
             agents.append(
                 {
                     "id": agent.id,
@@ -53,13 +55,13 @@ class AdminAgentHandlers(RestHandlerBase):
             "started", "start-failed"), or 503 if the registry is
             unavailable
         """
-        if not self.agent_registry:
+        if not self.members:
             return self._json_response(
                 {"status": "error", "message": "Agent registry not available"}, status=503
             )
 
         agent_id = request.match_info["agent_id"]
-        result = await self.agent_registry.adopt_agent(agent_id)
+        result = await self.members.adopt(agent_id)
         return self._json_response(
             {"status": "success", "agent_id": agent_id, "result": result}
         )
@@ -67,8 +69,8 @@ class AdminAgentHandlers(RestHandlerBase):
     # ---- Admin: agent CRUD + prototype approval (wizard removal, A2) ----
 
     def _require_admin_context(self) -> web.Response | None:
-        """Common guard: registry + paths must be available."""
-        if not self.agent_registry or not self.paths:
+        """Common guard: the members and configs facades must be wired."""
+        if self.members is None or self.configs is None:
             return self._json_response(
                 {"status": "error", "message": "Admin API not available"}, status=503
             )
@@ -92,8 +94,7 @@ class AdminAgentHandlers(RestHandlerBase):
         guard = self._require_admin_context()
         if guard is not None:
             return guard
-        paths = self.paths
-        assert paths is not None and self.agent_registry is not None
+        assert self.members is not None
         try:
             body = await request.json()
         except Exception:
@@ -118,25 +119,13 @@ class AdminAgentHandlers(RestHandlerBase):
         persona: dict[str, Any] = body.get("persona") or {}
 
         try:
-            cfg = instantiate(
-                prototype, agent_id, name, model=model, params=params, tlon_paths=paths
+            cfg = self.members.create(
+                prototype, agent_id, name, model, params=params, persona=persona
             )
         except PrototypeError as e:
             return self._json_response({"status": "error", "message": str(e)}, status=400)
 
-        config_dir = paths.agent_config_dir(agent_id)
-        for field, filename in (
-            ("identity", "IDENTITY.md"),
-            ("profile", "SOUL.md"),
-            ("behavior", "RULES.md"),
-        ):
-            content = persona.get(field)
-            if content:
-                (config_dir / filename).write_text(
-                    str(content).strip() + "\n", encoding="utf-8"
-                )
-
-        result = await self.agent_registry.adopt_agent(agent_id)
+        result = await self.members.adopt(agent_id)
         return self._json_response(
             {
                 "status": "success",
@@ -162,8 +151,7 @@ class AdminAgentHandlers(RestHandlerBase):
         guard = self._require_admin_context()
         if guard is not None:
             return guard
-        paths = self.paths
-        assert paths is not None and self.agent_registry is not None
+        assert self.members is not None and self.configs is not None
         agent_id = request.match_info["agent_id"]
         try:
             body = await request.json()
@@ -172,42 +160,30 @@ class AdminAgentHandlers(RestHandlerBase):
                 {"status": "error", "message": "invalid JSON body"}, status=400
             )
 
-        config_file = paths.agent_config_file(agent_id)
-        cfg = yaml_load_file(config_file)
+        cfg = self.configs.load_agent(agent_id)
         if cfg is None:
             return self._json_response(
                 {"status": "error", "message": f"Agent '{agent_id}' not found"},
                 status=404,
             )
 
-        config_dir = paths.agent_config_dir(agent_id)
         persona: dict[str, Any] = body.get("persona") or {}
-        for field, filename in (
-            ("identity", "IDENTITY.md"),
-            ("profile", "SOUL.md"),
-            ("behavior", "RULES.md"),
-        ):
-            content = persona.get(field)
-            if content:
-                (config_dir / filename).write_text(
-                    str(content).strip() + "\n", encoding="utf-8"
-                )
+        self.members.write_persona(agent_id, persona)
 
         llm: dict[str, Any] | None = body.get("llm")
         if llm:
-            # model_copy preserves the untouched knobs (max_tokens / top_p /
-            # an explicit context_window override); a fresh LLMConfig would
-            # silently reset them to defaults. Fields absent from the body
-            # keep their current value.
-            base = cfg.llm if cfg.llm is not None else LLMConfig()
-            update: dict[str, Any] = {}
-            if llm.get("model_name"):
-                update["model_name"] = str(llm["model_name"])
-            if llm.get("embedding_model_name"):
-                update["embedding_model_name"] = str(llm["embedding_model_name"])
-            cfg.llm = base.model_copy(update=update)
-            yaml_save(cfg, paths.tlon_home())
-            await self.agent_registry.adopt_agent(agent_id)  # reload config
+            updated = self.configs.update_llm(
+                agent_id,
+                model_name=str(llm["model_name"]) if llm.get("model_name") else None,
+                embedding_model_name=(
+                    str(llm["embedding_model_name"])
+                    if llm.get("embedding_model_name")
+                    else None
+                ),
+            )
+            assert updated is not None  # loaded above
+            cfg = updated
+            await self.members.adopt(agent_id)  # reload config
 
         return self._json_response(
             {
@@ -233,9 +209,10 @@ class AdminAgentHandlers(RestHandlerBase):
         guard = self._require_admin_context()
         if guard is not None:
             return guard
+        assert self.members is not None
         agent_id = request.match_info["agent_id"]
         try:
-            await self.agent_registry.remove_member(agent_id, removed_by="admin-api")
+            await self.members.remove(agent_id, removed_by="admin-api")
         except StopRejectedError as e:
             return self._json_response(
                 {"status": "error", "reason": e.reason, "message": str(e)},

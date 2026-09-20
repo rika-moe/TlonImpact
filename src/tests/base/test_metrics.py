@@ -18,6 +18,7 @@ import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
+from tlon.api.observability import ObservabilityFacade
 from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.base import metrics as metrics_module
 from tlon.base.events.event import Event, EventType
@@ -418,7 +419,12 @@ async def test_rest_metrics_200(
     """GET /metrics returns the service snapshot."""
     _, service = metric_setup
     service._on_mail_new(Event(type=EventType.MAIL_NEW, payload=_make_mail(), source="gu-yanxi"))
-    handler = RESTAPIHandler(None, None, metrics_service=service)
+    handler = RESTAPIHandler(
+        None,
+        observability=ObservabilityFacade(
+            trace_store=MagicMock(), metrics_service=service, logs_dir=MagicMock()
+        ),
+    )
 
     response = await handler.handle_metrics(MagicMock())
 
@@ -428,8 +434,8 @@ async def test_rest_metrics_200(
 
 
 async def test_rest_metrics_503_when_unavailable() -> None:
-    """GET /metrics returns 503 when no metrics service is injected."""
-    handler = RESTAPIHandler(None, None)
+    """GET /metrics returns 503 when no observability facade is injected."""
+    handler = RESTAPIHandler(None)
 
     response = await handler.handle_metrics(MagicMock())
 

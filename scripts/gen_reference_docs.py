@@ -371,10 +371,10 @@ def _route_condition(test: ast.expr) -> str:
         and test.value.id == "self"
         and test.attr
         in (
-            "config_manager",
-            "trace_store",
+            "configs",
+            "observability",
             "debug",
-            "github_adapter",
+            "github_ingress",
             "github_webhook_secret",
         )
     ):

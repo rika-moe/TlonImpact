@@ -14,11 +14,15 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 └──────────────┬───────────────────────────────┬───────────────────┘
                │ HTTP REST                     │ SSE（GET /events）
 ┌──────────────▼───────────────────────────────▼───────────────────┐
-│ 服务端装配层 app/server                                           │
-│   ServerApp —— 唯一装配者，按拓扑序构造全部组件（DI）             │
+│ 服务端装配层 app/server（ADR 0019：只经 tlon.api + tlon.base      │
+│   触达 runtime，import-linter 固话）                              │
+│   ServerApp —— serving 侧装配（session/notification/HTTP 生命周期）│
 │   api/rest/ RESTServer —— aiohttp，REST + SSE，无 WebSocket       │
 │   core/ —— ClientGateway / SessionManager / NotificationService / │
 │            MemberDirectory                                        │
+├──────────────────── runtime 北向 API（tlon/api）─────────────────┤
+│   members / mail / prototypes / observability / config / events   │
+│   六个 domain facade + build_runtime（runtime 装配，ADR 0019）    │
 ├──────────────────────────── 领域层 ──────────────────────────────┤
 │ agents —— AgentRegistry（机制）/ Adam（策略）/ MemberRuntime /    │
 │           SessionScheduler / AgentSession / LoopDriver / stages / │
@@ -65,8 +69,10 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 | `tlon.tools` | agent 可用工具（邮件/文件/Shell/记忆/任务/生命周期/原型） | base、sandbox；不依赖 agents/app/prototypes | import-linter；生命周期与原型工具经 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py)、[tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py) 声明端口，由装配层注入实现（依赖倒置） |
 | `tlon.agents` | 领域核心：注册表、成员运行时、认知循环 | base/memory/organization/tools/sandbox；不依赖 app/prototypes | import-linter |
 | `tlon.prototypes` | 内置行为原型库（随包携带，启动时播种到 `~/.tlon/prototypes/`） | —（无独立契约） | — |
+| `tlon.api` | runtime 公共北向 API（ADR 0019）：六个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 app | import-linter「api 不依赖 app」 |
 | `tlon.app.clients.sdk` | 外部客户端用的纯协议层 SDK | 仅 tlon.base | import-linter「app.clients.sdk 只依赖 tlon.base」 |
-| `tlon.app`（server/launcher） | 装配层与命令行入口 | 下层全部 | 无显式契约，靠分层惯例 |
+| `tlon.app.server` | REST/SSE handlers + 客户端连接管理 + WebUI 静态托管 | 仅 tlon.api + tlon.base（只禁直接 import） | import-linter「app.server 只依赖 tlon.api + tlon.base」 |
+| `tlon.app.launcher` | 命令行入口（composition root） | 下层全部 | 无显式契约，靠分层惯例 |
 
 除 import-linter 外，[scripts/](../scripts) 下还有三个 AST 检查脚本：
 
@@ -80,24 +86,30 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 ## 启动与装配顺序
 
-`ServerApp.initialize()`（[app/server/serverapp.py](../src/tlon/app/server/serverapp.py)）是唯一的装配点，按依赖拓扑序构造组件，此阶段不开任何网络端口：
+装配分两段（ADR 0019），此阶段不开任何网络端口：
+
+**runtime 段**——`build_runtime()`（[api/bootstrap.py](../src/tlon/api/bootstrap.py)）按依赖拓扑序构造 runtime 组件，并在其上构造六个 domain facade，返回 `Runtime` 容器：
 
 1. **可观测性先行**：`init_tracing` + `init_metrics`，先于任何 span 创建。
 2. **基础设施**：`seed_prototypes()`（幂等地把内置原型写入 `~/.tlon/prototypes/`，须在任何 agent 启动前）→ `EventBus` → `ConfigService` → `MetricsService` → `FileTraceStore`。
-3. **领域组件**：`AgentRegistry`（此时只按 ConfigService 里的配置 `register`，不启动 agent）→ Adam（[agents/adam.py](../src/tlon/agents/adam.py) 的 `make_adam`，在注册表之后初始化并随后发出 boot 启动请求）→ `AdapterManager`（人类适配器生命周期）→ `MemberDirectory`（成员通讯录）→ `MailDelivery`（邮件投递）。
-4. **客户端网关**：`SessionManager` → `NotificationService` → `ClientGateway`（协调各组件的门面）。
-5. **API 层**：构造 `RESTServer`（注入 ClientGateway 及各核心组件），尚未开始监听。
-6. 发布 `SYSTEM_STARTUP` 事件。
+3. **领域组件**：`AgentRegistry`（此时只按 ConfigService 里的配置 `register`，不启动 agent）→ Adam（[agents/adam.py](../src/tlon/agents/adam.py) 的 `make_adam`，在注册表之后初始化并随后发出 boot 启动请求）→ `AdapterManager`（人类适配器生命周期）→ `MailDelivery`（邮件投递）→ 可选 `GitHubAdapter`（配了 webhook secret 才存在）。
+4. **facade 装配**：members / mail / prototypes / observability / config / events（[api/](../src/tlon/api) 下的六个小类，构造器注入 runtime 对象，薄透传）。
 
-随后 `ServerApp.start()` 调用 `RESTServer.start()` 才真正监听端口，然后阻塞在 shutdown 信号上。`shutdown()` 严格反序：先停 RESTServer，Adam（PID 1）先于它驱动的注册表停，EventBus 几乎最后停，tracing/metrics 收尾。
+**serving 段**——`ServerApp.initialize()`（[app/server/serverapp.py](../src/tlon/app/server/serverapp.py)）只装配自己的连接管理与 HTTP 生命周期：
 
-组件实例本身就是 DI 容器：`ServerApp._components` 字典持有全部组件，没有额外的框架。装配阶段不开任何端口；装配失败时 `run_server` 返回非零退出码，并在 `finally` 里走一遍 `shutdown()` 做清理。
+5. **客户端网关**：`SessionManager` → `NotificationService`（经 events facade 订阅 runtime 事件，不直摸 EventBus）→ `MemberDirectory`（成员通讯录，经 members/events facade 聚合）→ `ClientGateway`（协调各组件的门面）。
+6. **API 层**：构造 `RESTServer`（注入 ClientGateway 及六个 facade），尚未开始监听。
+7. 发布 `SYSTEM_STARTUP` 事件。
+
+随后 `ServerApp.start()` 调用 `RESTServer.start()` 才真正监听端口，然后阻塞在 shutdown 信号上。`shutdown()` 严格反序：先停 RESTServer 与 ClientGateway，再 `Runtime.shutdown()`（Adam（PID 1）先于它驱动的注册表停，EventBus 几乎最后停，tracing/metrics 收尾）。
+
+装配阶段不开任何端口；装配失败时 `run_server` 返回非零退出码，并在 `finally` 里走一遍 `shutdown()` 做清理。
 
 ## 运行时数据流：一封邮件的全链路
 
 以「人类从客户端发一封邮件给 agent，agent 处理后回邮」为例：
 
-1. **人类发信（REST 入口）**。客户端 `POST /messages`，由 `rest/mail.py` 的 `handle_send_message` 处理，字段校验的唯一副本在 [app/server/api/send_mail.py](../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`。发件人身份取自请求体的 `username`；若该人类没有在线适配器，`AdapterManager` 会建一个临时的 `HumanAdapter`（[organization/messaging/human_adapter.py](../src/tlon/organization/messaging/human_adapter.py)）。适配器的 `speak` 要求显式 `to`/`cc`，零可解析收件人的邮件直接拒绝；合法则构造 `Mail`（[organization/mail/mail.py](../src/tlon/organization/mail/mail.py)）并向 EventBus 发布 `MAIL_NEW`。
+1. **人类发信（REST 入口）**。客户端 `POST /messages`，由 `rest/mail.py` 的 `handle_send_message` 处理，字段校验的唯一副本在 [app/server/api/send_mail.py](../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`。发件人身份取自请求体的 `username`；handler 经 mail facade（[api/mail.py](../src/tlon/api/mail.py) 的 `MailFacade.send`）转发给 `AdapterManager`——若该人类没有在线适配器，`AdapterManager` 会建一个临时的 `HumanAdapter`（[organization/messaging/human_adapter.py](../src/tlon/organization/messaging/human_adapter.py)）。适配器的 `speak` 要求显式 `to`/`cc`，零可解析收件人的邮件直接拒绝；合法则构造 `Mail`（[organization/mail/mail.py](../src/tlon/organization/mail/mail.py)）并向 EventBus 发布 `MAIL_NEW`。
 
    **agent 发信只有一个出口**：[tools/mail/send_email.py](../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`。认知循环里 act stage 把工具调用声明进 `StageOutcome`，由 `EffectExecutor`（[agents/executor.py](../src/tlon/agents/executor.py)）执行其中的 `MailEffect`——构造 `Mail`、发布 `MAIL_NEW`，与人类发信汇入同一条管道。这一步失败（`Mail` 构造被拒绝或 `MAIL_NEW` 发布失败）时，`EffectExecutor` 会把一封来自 `postmaster@tlon.internal` 的发送失败通知直接写进发件 agent 自己的收件箱并发布 `MAIL_DELIVERED`——与投递层退信同风格，但不经过 `MAIL_NEW`（通知路径不能依赖刚刚失败的那次发布），agent 在下一轮认知循环里读到它。
 

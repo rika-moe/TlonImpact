@@ -13,6 +13,7 @@ import logging
 from datetime import date
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 import structlog
@@ -20,6 +21,8 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from structlog.contextvars import bound_contextvars
 
+from tlon.api.members import MembersFacade
+from tlon.api.observability import ObservabilityFacade
 from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.tracing.trace_context import start_span
@@ -211,8 +214,13 @@ class _FakeRequest:
 def _make_handler(log_dir: Path) -> RESTAPIHandler:
     return RESTAPIHandler(
         client_gateway=None,
-        agent_registry=_FakeAgentRegistry(),
-        logs_dir=log_dir,
+        members=MembersFacade(
+            agent_registry=_FakeAgentRegistry(),  # type: ignore[arg-type]
+            tlon_paths=MagicMock(),
+        ),
+        observability=ObservabilityFacade(
+            trace_store=MagicMock(), metrics_service=MagicMock(), logs_dir=log_dir
+        ),
     )
 
 
@@ -298,6 +306,12 @@ async def test_logs_limit_and_before(handler: RESTAPIHandler) -> None:
 
 
 async def test_logs_unavailable_503(tmp_path: Path) -> None:
-    handler = RESTAPIHandler(client_gateway=None, agent_registry=_FakeAgentRegistry())
+    handler = RESTAPIHandler(
+        client_gateway=None,
+        members=MembersFacade(
+            agent_registry=_FakeAgentRegistry(),  # type: ignore[arg-type]
+            tlon_paths=MagicMock(),
+        ),
+    )
     resp = await handler.handle_list_logs(_FakeRequest())
     assert resp.status == 503

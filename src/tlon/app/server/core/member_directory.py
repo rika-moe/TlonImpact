@@ -1,18 +1,18 @@
 """Member Directory for Tlon Server.
 
 Aggregates and provides information about all members in the system:
-- Agents (from AgentRegistry, including sleeping ones)
-- Humans (from AdapterManager — one online adapter per username)
+- Agents (via the members facade, including sleeping ones)
+- Humans (via the events facade — one online adapter per username)
 
 This is the address book (通讯录用): member listing and lookup only.
 Recipient→address resolution lives in the shared RecipientResolver
-(organization/mail/resolver.py, issue ).
+(organization/mail/resolver.py, issue ); the runtime touchpoints are
+reached through the tlon.api facades (ADR 0019).
 """
 
-from tlon.agents.agent_registry import AgentRegistry
+from tlon.api.events import EventsFacade
+from tlon.api.members import MemberInfo, MembersFacade
 from tlon.base.logger import get_logger
-from tlon.organization.messaging.human_adapter import AdapterManager
-from tlon.organization.messaging.member_info import MemberInfo
 
 logger = get_logger(__name__)
 
@@ -21,15 +21,15 @@ class MemberDirectory:
     """Discovers and aggregates all Congress members.
 
     Responsibilities:
-    - Aggregate agents from AgentRegistry
-    - Aggregate online humans from AdapterManager
+    - Aggregate agents from the members facade
+    - Aggregate online humans from the events facade
     - Provide member lookup
 
     Note: This performs real-time aggregation on each call.
     If performance becomes an issue, consider adding caching.
 
     Example:
-        >>> directory = MemberDirectory(agent_registry, adapter_manager)
+        >>> directory = MemberDirectory(members=members_facade, events=events_facade)
         >>> all_members = directory.list_all()
         >>> agents = directory.list_agents()
         >>> humans = directory.list_humans()
@@ -37,31 +37,31 @@ class MemberDirectory:
 
     def __init__(
         self,
-        agent_registry: AgentRegistry,
-        adapter_manager: AdapterManager,
+        *,
+        members: MembersFacade,
+        events: EventsFacade,
     ):
         """Initialize the member directory.
 
         Args:
-            agent_registry: Registry for agent information
-            adapter_manager: Manager for online human adapters
+            members: Members facade (agent listing/lookup)
+            events: Events facade (online human presence)
         """
-        self._agent_registry = agent_registry
-        self._adapter_manager = adapter_manager
+        self._members = members
+        self._events = events
 
         logger.info("member_directory_initialized")
 
     def list_all(self) -> list[MemberInfo]:
         """Get all members (agents + online humans).
 
-        This method performs real-time aggregation from both
-        AgentRegistry and AdapterManager.
+        This method performs real-time aggregation from both facades.
 
         Returns:
             List of all members
         """
         members: list[MemberInfo] = []
-        members.extend(self._list_agents())
+        members.extend(self.list_agents())
         members.extend(self.list_humans())
         return members
 
@@ -71,7 +71,7 @@ class MemberDirectory:
         Returns:
             List of agent members
         """
-        return self._list_agents()
+        return self._members.list_agent_members()
 
     def list_humans(self) -> list[MemberInfo]:
         """Get all online human members (one per username).
@@ -79,15 +79,7 @@ class MemberDirectory:
         Returns:
             List of human members, one per online adapter
         """
-        return [
-            MemberInfo(
-                id=adapter.member_id,
-                name=adapter.username,
-                type="human",
-                metadata={"session_count": adapter.session_count},
-            )
-            for adapter in self._adapter_manager.list_online()
-        ]
+        return self._events.list_online_humans()
 
     def get_member(self, member_id: str) -> MemberInfo | None:
         """Get a specific member by ID.
@@ -99,28 +91,12 @@ class MemberDirectory:
             The member if found, None otherwise
         """
         # Online human adapter?
-        adapter = self._adapter_manager.get_adapter(
-            member_id.removeprefix("human:")
-        )
-        if adapter is not None and adapter.member_id == member_id:
-            return MemberInfo(
-                id=adapter.member_id,
-                name=adapter.username,
-                type="human",
-                metadata={"session_count": adapter.session_count},
-            )
+        human = self._events.get_online_human(member_id.removeprefix("human:"))
+        if human is not None and human.id == member_id:
+            return human
 
         # Check agents
-        config = self._agent_registry.get_config(member_id)
-        if config:
-            return MemberInfo(
-                id=member_id,
-                name=config.name,
-                type="agent",
-                metadata={},
-            )
-
-        return None
+        return self._members.get_agent_member(member_id)
 
     def get_member_names(self) -> list[str]:
         """Get names of all members.
@@ -130,35 +106,13 @@ class MemberDirectory:
         """
         return [m.name for m in self.list_all()]
 
-    def _list_agents(self) -> list[MemberInfo]:
-        """Internal: List all agent members.
-
-        Returns:
-            List of agent members
-        """
-        members: list[MemberInfo] = []
-
-        for agent_id in self._agent_registry.get_all_ids():
-            config = self._agent_registry.get_config(agent_id)
-            if config:
-                members.append(
-                    MemberInfo(
-                        id=agent_id,
-                        name=config.name,
-                        type="agent",
-                        metadata={},
-                    )
-                )
-
-        return members
-
     def count_agents(self) -> int:
         """Get the number of agents.
 
         Returns:
             Number of registered agents
         """
-        return len(self._agent_registry.get_all_ids())
+        return len(self._members.list_ids())
 
     def count_humans(self) -> int:
         """Get the number of online human members.
@@ -166,7 +120,7 @@ class MemberDirectory:
         Returns:
             Number of online human adapters (one per username)
         """
-        return len(self._adapter_manager.list_online())
+        return len(self._events.list_online_humans())
 
     def count_all(self) -> int:
         """Get the total number of members.

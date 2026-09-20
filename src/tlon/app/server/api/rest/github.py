@@ -2,10 +2,12 @@
 
 Ingress direction only: a signed GitHub webhook delivery is verified
 (HMAC-SHA256 over the raw body, ``X-Hub-Signature-256``), decoded and
-handed to the injected ``GitHubAdapter``, which maps supported events
-onto external incoming mail ( mechanism). The route is registered
-only when a webhook secret is configured (settings ``github_webhook_secret``),
-so an unconfigured server exposes no endpoint at all.
+handed to the runtime through the events facade
+(``EventsFacade.receive_github_event``), which maps supported events onto
+external incoming mail ( mechanism). The route is registered only when
+a webhook secret is configured (settings ``github_webhook_secret``) and the
+runtime ingress is enabled, so an unconfigured server exposes no endpoint
+at all.
 """
 
 import hashlib
@@ -40,8 +42,7 @@ class GitHubWebhookMixin(RestHandlerBase):
             invalid JSON body
         """
         secret = self.github_webhook_secret
-        adapter = self.github_adapter
-        if not secret or adapter is None:
+        if not secret or not self.github_ingress or self.events is None:
             # Unreachable via the route table (conditional registration);
             # defensive guard for direct handler use.
             return self._json_response(
@@ -81,9 +82,9 @@ class GitHubWebhookMixin(RestHandlerBase):
             )
 
         logger.info("github_webhook_received", event_type=event_type)
-        mail = await adapter.receive(event_type, payload)
-        if mail is None:
+        mail_id = await self.events.receive_github_event(event_type, payload)
+        if mail_id is None:
             return self._json_response({"status": "ignored"})
         return self._json_response(
-            {"status": "accepted", "mail_id": mail.id}, status=202
+            {"status": "accepted", "mail_id": mail_id}, status=202
         )

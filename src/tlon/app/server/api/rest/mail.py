@@ -5,10 +5,9 @@ import json
 
 from aiohttp import web
 
+from tlon.api.mail import DEFAULT_USERNAME
 from tlon.app.server.api.send_mail import SendMailError, parse_send_mail_fields
 from tlon.base.logger import get_logger
-from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME, HUMAN_ID_PREFIX
 
 from .common import RestHandlerBase, _parse_limit
 
@@ -31,7 +30,7 @@ class MailHandlers(RestHandlerBase):
             The member's recent mail (inbox + sent merged, chronological)
             or 400 if the username is invalid
         """
-        if not self.paths:
+        if not self.mail:
             return self._json_response(
                 {"status": "error", "message": "Mail storage not available"}, status=503
             )
@@ -49,16 +48,7 @@ class MailHandlers(RestHandlerBase):
                 )
 
         limit = _parse_limit(request, default=50, maximum=200)
-        mailbox = Mailbox(self.paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}"))
-        mails = await mailbox.recent(limit)
-        # Read semantics: an inbox mail is read when its id is in the
-        # cursor; sent mail is always read (the sender has seen it).
-        unread_ids = {m.id for m in await mailbox.unread()}
-        result = []
-        for mail in mails:
-            item = mail.to_dict()
-            item["read"] = mail.id not in unread_ids
-            result.append(item)
+        result = await self.mail.inbox(username, limit)
 
         return self._json_response(
             {
@@ -90,7 +80,7 @@ class MailHandlers(RestHandlerBase):
             {"error", "reason"} (e.g. "recipient_unresolved",
             "empty_content", "invalid_to")
         """
-        if not self.adapter_manager:
+        if not self.mail:
             return self._json_response(
                 {"status": "error", "message": "Messaging not available"}, status=503
             )
@@ -137,7 +127,7 @@ class MailHandlers(RestHandlerBase):
         )
 
         try:
-            mail = await self.adapter_manager.publish_as(
+            mail_id = await self.mail.send(
                 username,
                 parsed.content,
                 to=parsed.to,
@@ -151,4 +141,4 @@ class MailHandlers(RestHandlerBase):
                 {"error": str(e), "reason": "recipient_unresolved"}, status=400
             )
 
-        return self._json_response({"mail_id": mail.id}, status=202)
+        return self._json_response({"mail_id": mail_id}, status=202)

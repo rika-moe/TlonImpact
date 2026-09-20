@@ -1,23 +1,13 @@
 """Admin prototype endpoints: /admin/prototypes/* — trusted library CRUD,
-staging listing/editing, and the approve/reject approval flow."""
+staging listing/editing, and the approve/reject approval flow.
+
+Runtime touchpoints go through the prototypes facade (ADR 0019)."""
 
 from typing import Any
 
 from aiohttp import web
 
-from tlon.agents.prototypes import (
-    PrototypeInfo,
-    approve_prototype,
-    delete_prototype,
-    get_prototype_detail,
-    get_prototype_lineage,
-    list_prototypes,
-    list_staging_prototypes,
-    reject_prototype,
-    update_prototype,
-    write_trusted_prototype,
-)
-from tlon.tools.prototypes.ports import PrototypeError
+from tlon.api.prototypes import PrototypeError, PrototypeInfo
 
 from .common import RestHandlerBase
 
@@ -55,14 +45,22 @@ def _prototype_payload(
 class AdminPrototypeHandlers(RestHandlerBase):
     """Admin prototype route handlers, mixed into ``RESTAPIHandler``."""
 
-    async def handle_list_staging(self, request: web.Request) -> web.Response:
-        """GET /admin/prototypes/staging - list LLM-authored prototypes
-        awaiting human approval."""
-        if not self.paths:
+    def _require_prototypes(self) -> web.Response | None:
+        """Common guard: the prototypes facade must be wired."""
+        if self.prototypes is None:
             return self._json_response(
                 {"status": "error", "message": "Admin API not available"}, status=503
             )
-        protos = list_staging_prototypes(self.paths)
+        return None
+
+    async def handle_list_staging(self, request: web.Request) -> web.Response:
+        """GET /admin/prototypes/staging - list LLM-authored prototypes
+        awaiting human approval."""
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
+        protos = self.prototypes.list_staging()
         return self._json_response(
             {
                 "status": "success",
@@ -74,11 +72,11 @@ class AdminPrototypeHandlers(RestHandlerBase):
         """GET /admin/prototypes - list trusted prototypes (behavior genome)
         a member can be created from (wizard removal: ops picks one to
         instantiate)."""
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
-        protos = list_prototypes(self.paths)
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
+        protos = self.prototypes.list_trusted()
         return self._json_response(
             {
                 "status": "success",
@@ -99,14 +97,14 @@ class AdminPrototypeHandlers(RestHandlerBase):
         return self._handle_get_detail(request, staging=True)
 
     def _handle_get_detail(self, request: web.Request, staging: bool) -> web.Response:
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
         name = request.match_info["name"]
         try:
-            info, behavior, lessons, reviews = get_prototype_detail(
-                name, staging=staging, tlon_paths=self.paths
+            info, behavior, lessons, reviews = self.prototypes.get_detail(
+                name, staging=staging
             )
         except PrototypeError as e:
             return self._json_response(
@@ -115,7 +113,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
         payload = _prototype_payload(info, behavior, lessons, reviews)
         # Lineage (): the derived parent chain, including per-generation
         # diffs — first-class data on the detail endpoint.
-        payload["lineage"] = get_prototype_lineage(name, tlon_paths=self.paths)
+        payload["lineage"] = self.prototypes.get_lineage(name)
         return self._json_response({"status": "success", "prototype": payload})
 
     async def handle_create_prototype(self, request: web.Request) -> web.Response:
@@ -126,10 +124,10 @@ class AdminPrototypeHandlers(RestHandlerBase):
         success; 400 invalid_prototype on missing fields or a spec that
         fails the validation chain (nothing is written in that case).
         """
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
         try:
             body = await request.json()
         except Exception:
@@ -145,7 +143,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 status=400,
             )
         try:
-            info = write_trusted_prototype(
+            info = self.prototypes.create(
                 name,
                 behavior,
                 display_name=str(body.get("display_name") or ""),
@@ -155,7 +153,6 @@ class AdminPrototypeHandlers(RestHandlerBase):
                     str(body["proposal_note"]) if body.get("proposal_note") else None
                 ),
                 lessons=str(body["lessons"]) if body.get("lessons") else None,
-                tlon_paths=self.paths,
             )
         except PrototypeError as e:
             return self._json_response(
@@ -177,10 +174,10 @@ class AdminPrototypeHandlers(RestHandlerBase):
         return await self._handle_update(request, staging=True)
 
     async def _handle_update(self, request: web.Request, staging: bool) -> web.Response:
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
         name = request.match_info["name"]
         try:
             body = await request.json()
@@ -189,7 +186,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
             )
         try:
-            get_prototype_detail(name, staging=staging, tlon_paths=self.paths)
+            self.prototypes.get_detail(name, staging=staging)
         except PrototypeError as e:
             return self._json_response(
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
@@ -215,16 +212,15 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 status=400,
             )
         try:
-            info = update_prototype(
+            info = self.prototypes.update(
                 name,
                 display_name=str(display_name) if display_name is not None else None,
                 description=str(description) if description is not None else None,
-                behavior_edn=str(behavior) if behavior is not None else None,
+                behavior=str(behavior) if behavior is not None else None,
                 parent=str(parent) if parent else None,
                 proposal_note=str(proposal_note) if proposal_note else None,
-                lessons=str(lessons) if lessons is not None else None,
+                lessons=str(lessons) if lessons else None,
                 staging=staging,
-                tlon_paths=self.paths,
             )
         except PrototypeError as e:
             return self._json_response(
@@ -237,13 +233,13 @@ class AdminPrototypeHandlers(RestHandlerBase):
     async def handle_delete_prototype(self, request: web.Request) -> web.Response:
         """DELETE /admin/prototypes/{name} - remove a prototype from the
         trusted library (staging removal is the existing reject)."""
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
         name = request.match_info["name"]
         try:
-            delete_prototype(name, self.paths)
+            self.prototypes.delete(name)
         except PrototypeError as e:
             return self._json_response(
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
@@ -253,13 +249,13 @@ class AdminPrototypeHandlers(RestHandlerBase):
     async def handle_approve_prototype(self, request: web.Request) -> web.Response:
         """POST /admin/prototypes/staging/{name}/approve - promote a staged
         prototype to the trusted library (human approval)."""
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
         name = request.match_info["name"]
         try:
-            approve_prototype(name, self.paths)
+            self.prototypes.approve(name)
         except PrototypeError as e:
             return self._json_response({"status": "error", "message": str(e)}, status=400)
         return self._json_response({"status": "success", "name": name, "approved": True})
@@ -267,13 +263,13 @@ class AdminPrototypeHandlers(RestHandlerBase):
     async def handle_reject_prototype(self, request: web.Request) -> web.Response:
         """POST /admin/prototypes/staging/{name}/reject - delete a staged
         prototype (human rejection)."""
-        if not self.paths:
-            return self._json_response(
-                {"status": "error", "message": "Admin API not available"}, status=503
-            )
+        guard = self._require_prototypes()
+        if guard is not None:
+            return guard
+        assert self.prototypes is not None
         name = request.match_info["name"]
         try:
-            reject_prototype(name, self.paths)
+            self.prototypes.reject(name)
         except PrototypeError as e:
             return self._json_response({"status": "error", "message": str(e)}, status=400)
         return self._json_response({"status": "success", "name": name, "rejected": True})

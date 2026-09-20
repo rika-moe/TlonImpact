@@ -21,16 +21,17 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from aiohttp import web
 
-from tlon.agents.agent_registry import AgentRegistry
+from tlon.api.config import ConfigFacade
+from tlon.api.events import EventsFacade
+from tlon.api.mail import MailFacade
+from tlon.api.members import MembersFacade
+from tlon.api.observability import ObservabilityFacade
+from tlon.api.prototypes import PrototypesFacade
 from tlon.app.server.core.client_gateway import ClientGateway
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths
-from tlon.organization.messaging.github_adapter import GitHubAdapter
-from tlon.organization.messaging.human_adapter import AdapterManager
 
 from .admin_agents import AdminAgentHandlers
 from .admin_llm import AdminLlmHandlers
@@ -81,7 +82,7 @@ class RESTAPIHandler(
     - POST /webhooks/github - GitHub webhook ingress (issue ; only when configured)
 
     Example:
-        >>> handler = RESTAPIHandler(client_gateway, agent_registry)
+        >>> handler = RESTAPIHandler(client_gateway, members=runtime.members, ...)
         >>> app = handler.create_app()
         >>> runner = web.AppRunner(app)
         >>> await runner.setup()
@@ -92,48 +93,44 @@ class RESTAPIHandler(
     def __init__(
         self,
         client_gateway: ClientGateway,
-        agent_registry: AgentRegistry,
-        config_manager: Any | None = None,
-        trace_store: Any | None = None,
-        metrics_service: Any | None = None,
-        logs_dir: Path | None = None,
-        paths: TlonPaths | None = None,
-        adapter_manager: AdapterManager | None = None,
+        *,
+        members: MembersFacade | None = None,
+        mail: MailFacade | None = None,
+        prototypes: PrototypesFacade | None = None,
+        observability: ObservabilityFacade | None = None,
+        configs: ConfigFacade | None = None,
+        events: EventsFacade | None = None,
         debug: bool = False,
         admin_token: str | None = None,
-        github_adapter: GitHubAdapter | None = None,
         github_webhook_secret: str | None = None,
     ):
         """Initialize the REST API handler.
 
         Args:
             client_gateway: The ClientGateway instance
-            agent_registry: The AgentRegistry instance for agent operations
-            config_manager: Optional ConfigManager for hot-reload support
-            trace_store: Optional TraceStore for trace operations
-            metrics_service: Optional MetricsService for the /metrics snapshot
-            logs_dir: Optional directory with server-{date}.jsonl log files
-            paths: Optional TlonPaths for mailbox resolution (/inbox)
-            adapter_manager: Optional AdapterManager for sending mail (/messages)
+            members: Members facade (agent status/config, member CRUD)
+            mail: Mail facade (GET /inbox, POST /messages)
+            prototypes: Prototypes facade (/admin/prototypes/*)
+            observability: Observability facade (/traces, /metrics, logs)
+            configs: Config facade (/admin/config/agents listing, agent.yaml)
+            events: Events facade (SSE presence attach/detach, GitHub ingress)
             debug: Whether to enable debug/test endpoints (never enable in production)
             admin_token: Shared Bearer token guarding /admin/* (ADR 0013);
                 None disables authentication (default, localhost trust boundary)
-            github_adapter: Optional GitHubAdapter for /webhooks/github (issue
-                ); the route registers only together with a webhook secret
-            github_webhook_secret: HMAC secret of the GitHub webhook; None
-                means the /webhooks/github route is not registered
+            github_webhook_secret: HMAC secret of the GitHub webhook; the
+                /webhooks/github route registers only when the runtime
+                ingress is also enabled (events facade with adapter)
         """
         self.client_gateway = client_gateway
-        self.agent_registry = agent_registry
-        self.config_manager = config_manager
+        self.members = members
+        self.mail = mail
+        self.prototypes = prototypes
+        self.observability = observability
+        self.configs = configs
+        self.events = events
         self.debug = debug
-        self.trace_store = trace_store
-        self.metrics_service = metrics_service
-        self.logs_dir = logs_dir
-        self.paths = paths
-        self.adapter_manager = adapter_manager
         self.admin_token = admin_token
-        self.github_adapter = github_adapter
+        self.github_ingress = events is not None and events.github_enabled
         self.github_webhook_secret = github_webhook_secret
         # Active SSE streams: session_id -> frame queue (None sentinel ends
         # the stream; see handle_events / handle_delete_session)
@@ -165,8 +162,8 @@ class RESTAPIHandler(
         app.router.add_get("/events", self.handle_events)
         app.router.add_get("/participants", self.handle_list_participants)
 
-        # Admin routes for hot-reload (only if config_manager is available)
-        if self.config_manager:
+        # Admin routes for hot-reload (only if the configs facade is wired)
+        if self.configs:
             app.router.add_get("/admin/config/agents", self.handle_list_agent_configs)
             app.router.add_post(
                 "/admin/config/agents/{agent_id}/reload",
@@ -199,18 +196,18 @@ class RESTAPIHandler(
         app.router.add_patch("/admin/prototypes/{name}", self.handle_update_prototype)
         app.router.add_delete("/admin/prototypes/{name}", self.handle_delete_prototype)
 
-        # Trace routes (only if trace_store is available)
-        if self.trace_store:
+        # Trace routes (only if the observability facade is wired)
+        if self.observability:
             app.router.add_get("/traces", self.handle_list_traces)
             app.router.add_get("/traces/{trace_id}", self.handle_get_trace)
 
         # Metrics route (503 when the metrics service is unavailable)
         app.router.add_get("/metrics", self.handle_metrics)
 
-        # GitHub webhook ingress (issue ): registered only when both the
-        # adapter and the webhook secret are configured — an unconfigured
-        # server exposes no endpoint at all.
-        if self.github_adapter and self.github_webhook_secret:
+        # GitHub webhook ingress (issue ): registered only when the
+        # runtime ingress is enabled (adapter configured) and the webhook
+        # secret is set — an unconfigured server exposes no endpoint at all.
+        if self.github_ingress and self.github_webhook_secret:
             app.router.add_post("/webhooks/github", self.handle_github_webhook)
 
         # Agent logs route
@@ -294,7 +291,9 @@ class RESTAPIHandler(
                 "port": self.client_gateway.port,
             },
             "agents": {
-                "count": len(self.agent_registry.get_all_agent_status()),
+                "count": (
+                    len(self.members.get_all_agent_status()) if self.members else 0
+                ),
             },
             "sessions": {
                 "active": len(self.client_gateway.get_all_sessions()),
@@ -308,7 +307,11 @@ class RESTAPIHandler(
         Returns:
             List of agent statuses
         """
-        agents = self.agent_registry.get_all_agent_status()
+        if not self.members:
+            return self._json_response(
+                {"status": "error", "message": "Agent registry not available"}, status=503
+            )
+        agents = self.members.get_all_agent_status()
         return self._json_response(
             {
                 "agents": agents,
@@ -324,12 +327,15 @@ class RESTAPIHandler(
         """
         agent_id = request.match_info["agent_id"]
 
-        config = self.agent_registry.get_config(agent_id)
+        if not self.members:
+            return self._json_response(
+                {"status": "error", "message": "Agent registry not available"}, status=503
+            )
+        config = self.members.get_config(agent_id)
         if config is None:
             return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
 
-        agent = self.agent_registry.get_agent(agent_id)
-        state = agent.get_state() if agent else "unknown"
+        state = self.members.get_state(agent_id)
 
         status = {
             "id": agent_id,
@@ -374,7 +380,7 @@ class RESTServer:
     Wraps the aiohttp server with lifecycle management.
 
     Example:
-        >>> rest = RESTServer(client_gateway, agent_registry, config_manager, port=8080)
+        >>> rest = RESTServer(client_gateway, members=runtime.members, port=8080)
         >>> await rest.start()
         >>> # Server is running
         >>> await rest.stop()
@@ -383,55 +389,51 @@ class RESTServer:
     def __init__(
         self,
         client_gateway: ClientGateway,
-        agent_registry: AgentRegistry,
-        config_manager: Any | None = None,
-        trace_store: Any | None = None,
-        metrics_service: Any | None = None,
-        logs_dir: Path | None = None,
-        paths: TlonPaths | None = None,
-        adapter_manager: AdapterManager | None = None,
+        *,
+        members: MembersFacade | None = None,
+        mail: MailFacade | None = None,
+        prototypes: PrototypesFacade | None = None,
+        observability: ObservabilityFacade | None = None,
+        configs: ConfigFacade | None = None,
+        events: EventsFacade | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
         admin_token: str | None = None,
-        github_adapter: GitHubAdapter | None = None,
         github_webhook_secret: str | None = None,
     ):
         """Initialize the REST server.
 
         Args:
             client_gateway: The ClientGateway instance
-            agent_registry: The AgentRegistry instance for agent operations
-            config_manager: Optional ConfigManager for hot-reload support
-            trace_store: Optional TraceStore for trace operations
-            metrics_service: Optional MetricsService for the /metrics endpoint
-            logs_dir: Optional directory with server-{date}.jsonl log files
-            paths: Optional TlonPaths for mailbox resolution (/inbox)
-            adapter_manager: Optional AdapterManager for sending mail (/messages)
+            members: Members facade (agent status/config, member CRUD)
+            mail: Mail facade (GET /inbox, POST /messages)
+            prototypes: Prototypes facade (/admin/prototypes/*)
+            observability: Observability facade (/traces, /metrics, logs)
+            configs: Config facade (/admin/config/agents listing, agent.yaml)
+            events: Events facade (SSE presence attach/detach, GitHub ingress)
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
             admin_token: Shared Bearer token guarding /admin/* (ADR 0013)
-            github_adapter: Optional GitHubAdapter for /webhooks/github ()
-            github_webhook_secret: HMAC secret of the GitHub webhook; None
-                means the /webhooks/github route is not registered
+            github_webhook_secret: HMAC secret of the GitHub webhook; the
+                /webhooks/github route registers only when the events facade
+                also reports the ingress enabled
         """
         self.client_gateway = client_gateway
         self.host = host
         self.port = port
         self._handler = RESTAPIHandler(
             client_gateway,
-            agent_registry,
-            config_manager,
-            trace_store,
-            metrics_service,
-            logs_dir,
-            paths,
-            adapter_manager,
-            debug,
-            admin_token,
-            github_adapter,
-            github_webhook_secret,
+            members=members,
+            mail=mail,
+            prototypes=prototypes,
+            observability=observability,
+            configs=configs,
+            events=events,
+            debug=debug,
+            admin_token=admin_token,
+            github_webhook_secret=github_webhook_secret,
         )
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None

@@ -1,12 +1,15 @@
 """Tlon Server Application with full Dependency Injection.
 
-Main entry point for the server process. ServerApp acts as the component
-assembler, creating all core components and injecting them into ClientGateway.
+Main entry point for the server process. The runtime (bus, registry,
+delivery, adam, ...) is assembled by ``tlon.api.build_runtime()`` (ADR
+0019); ServerApp assembles only its own serving side — session /
+notification / client gateway / HTTP lifecycle — on top of the runtime's
+domain facades.
 
 Usage:
     >>> from tlon.app.server.serverapp import ServerApp
     >>> app = ServerApp()
-    >>> await app.initialize()  # DI assembly, load config, setup components
+    >>> await app.initialize()  # runtime + serving assembly
     >>> await app.start()       # Start servers, block until shutdown
     >>> await app.shutdown()    # Graceful shutdown
 """
@@ -15,30 +18,15 @@ import asyncio
 import functools
 import signal
 from pathlib import Path
-from typing import Any
 
-from tlon.agents.adam import make_adam
-from tlon.agents.agent_registry import AgentRegistry
-from tlon.agents.bootstrap import bootstrap_society
-from tlon.agents.lessons import LessonsDistiller
-from tlon.agents.retirement import RetirementCeremony
-from tlon.base.config import ConfigService
+from tlon.api.bootstrap import Runtime, build_runtime
 from tlon.base.events.event import Event, EventType
-from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import configure_logging, get_logger
-from tlon.base.metrics import MetricsService, init_metrics, shutdown_metrics
 from tlon.base.paths import paths
-from tlon.base.settings import get_settings, get_tlon_home
-from tlon.base.tracing.otel import init_tracing, shutdown_tracing
-from tlon.base.tracing.trace_store import FileTraceStore
-from tlon.organization.mail.delivery import MailDelivery
-from tlon.organization.mail.gateways import ExternalGatewayRegistry
-from tlon.organization.messaging.github_adapter import GitHubAdapter
-from tlon.organization.messaging.human_adapter import AdapterManager
+from tlon.base.settings import get_settings
 
 from .api.rest import WEBUI_DIST_DIR, RESTServer
 from .core.client_gateway import ClientGateway
-from .core.guardian_provider import GuardianAgentInfoProvider
 from .core.member_directory import MemberDirectory
 from .core.notification_service import NotificationService
 from .core.session_manager import SessionManager
@@ -82,7 +70,8 @@ class ServerApp:
     """Server application with full Dependency Injection.
 
     ServerApp is responsible for:
-    - Creating all core components (DI container)
+    - Bootstrapping the runtime via ``build_runtime()`` (ADR 0019)
+    - Assembling the serving side (session/notification/gateway/REST)
     - Managing component lifecycle (initialize → start → shutdown)
     - Coordinating graceful shutdown
 
@@ -110,11 +99,10 @@ class ServerApp:
         """
         self.host = host
         self.rest_port = rest_port
-        self.tlon_home = get_tlon_home()
         self.shared_dir = paths.shared_dir()
 
-        # State
-        self._components: dict[str, Any] = {}
+        # The assembled runtime (set by initialize())
+        self._runtime: Runtime | None = None
 
         # Subsystem references (for convenient access)
         self.client_gateway: ClientGateway | None = None
@@ -125,165 +113,39 @@ class ServerApp:
         self._running = False
 
     async def initialize(self) -> None:
-        """Initialize all components with full Dependency Injection.
+        """Initialize the runtime and the serving side with full DI.
 
-        This is the DI assembly phase where all components are created
-        and wired together. No network ports are opened yet.
+        The runtime assembly (bus/config/registry/delivery/adam/...) lives
+        in ``build_runtime()`` (tlon.api.bootstrap); this method assembles
+        the serving side on top of the runtime's domain facades. No
+        network ports are opened yet.
         """
         logger.info("server_initializing")
 
-        # ========== Step 0: Tracing (must precede any span creation) ==========
-        init_tracing(
-            paths.traces_dir(),
-            otlp_endpoint=get_settings().otel_exporter_otlp_endpoint,
-        )
-        # Metrics pillar: process-wide MeterProvider + in-memory reader
-        init_metrics()
+        runtime = await build_runtime()
+        self._runtime = runtime
 
-        # ========== Step 1: Core Infrastructure ==========
-        # 1.0 First-boot seeding (idempotent; before any agent starts):
-        # built-in prototypes + skills only — members are never seeded
-        # (ADR 0016): the human creates them via WebUI / admin API.
-        bootstrap_society()
-
-        # 1.1 EventBus - event bus for inter-component communication (create first)
-        event_bus = EventBus()
-        await event_bus.initialize()
-        self._components["event_bus"] = event_bus
-        logger.info("component_initialized", component="event_bus")
-
-        # 1.2 ConfigService - configuration management (needs EventBus)
-        config_service = ConfigService(
-            event_bus=event_bus,
-            tlon_home=self.tlon_home,
-        )
-        await config_service.initialize()
-        self._components["config_service"] = config_service
-
-        # 1.3 MetricsService - metrics pillar (pure event consumer, needs EventBus)
-        metrics_service = MetricsService(event_bus=event_bus)
-        await metrics_service.initialize()
-        self._components["metrics_service"] = metrics_service
-        logger.info("component_initialized", component="metrics_service")
-
-        # ========== Step 2: Other Core Components ==========
-
-        # 2.2b TraceStore - storage for traces (stateful)
-        trace_store = FileTraceStore(data_dir=paths.traces_dir())
-        self._components["trace_store"] = trace_store
-        logger.info("component_initialized", component="trace_store")
-
-        # 2.4 AgentRegistry - agent management
-        # Depends on EventBus and ConfigService (as AgentInfoProvider);
-        # the metrics/trace pillars are forwarded into each member's
-        # observability tools (read-only, )
-        agent_registry = AgentRegistry(
-            event_bus=event_bus,
-            agent_info_provider=config_service,
-            metrics_service=metrics_service,
-            trace_store=trace_store,
-        )
-        # Register initial agents (by ID, config is looked up from provider)
-        for agent_id in config_service.agents:
-            agent_registry.register(agent_id)
-
-        await agent_registry.initialize()
-        self._components["agent_registry"] = agent_registry
-        logger.info("agents_loaded", agent_count=len(agent_registry.get_all_ids()))
-
-        # 2.4a LessonsDistiller — retirement distillation (issue ).
-        # Pure event consumer like MetricsService, but layered in agents
-        # (it depends on memory + agents): on AGENT_STOPPED it rebuilds
-        # the retired member's archive offline and distills lessons to
-        # memory/lessons.md. (Registry shutdown stops members directly
-        # without publishing AGENT_STOPPED, so server shutdown never
-        # triggers distillation — only deliberate stops do.)
-        lessons_distiller = LessonsDistiller(event_bus=event_bus, tlon_paths=paths)
-        await lessons_distiller.initialize()
-        self._components["lessons_distiller"] = lessons_distiller
-        logger.info("component_initialized", component="lessons_distiller")
-
-        # 2.4aa RetirementCeremony — retirement handover (issue ).
-        # Same pure-event-consumer mold as the LessonsDistiller, on the
-        # same AGENT_STOPPED trigger: inventory the retiree's archive
-        # offline, mail a farewell letter when there is anything to hand
-        # over, and always publish the AGENT_RETIRED fact.
-        retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=paths)
-        await retirement_ceremony.initialize()
-        self._components["retirement_ceremony"] = retirement_ceremony
-        logger.info("component_initialized", component="retirement_ceremony")
-
-        # 2.4b Adam — built-in lifecycle policy member (PID 1; members.md 阶段 D).
-        # Kernel first, PID 1 second: Adam is initialized after the registry
-        # and issues the boot start requests. It is a MemberRuntime assembled
-        # from the built-in ADAM_SPEC (policy as data; phase C unified runtime).
-        # It is a bus member, not an agent — it is not registered in the agent
-        # registry or MemberDirectory.
-        adam = make_adam(event_bus=event_bus, agent_registry=agent_registry)
-        await adam.initialize()
-        self._components["adam"] = adam
-        logger.info("component_initialized", component="adam")
-
-        # 2.5 AdapterManager - human adapter lifecycle (one per username)
-        # The guardian-aware provider (issue ): a thin wrapper over
-        # ConfigService that additionally resolves "adam" so mail to the
-        # built-in guardian is deliverable. One instance feeds both the
-        # AdapterManager (speak side) and MailDelivery (delivery side) —
-        # they share one RecipientResolver, so adam@tlon.internal resolves
-        # in both directions. get_all_ids stays Adam-free: no broadcast,
-        # no roster, no enumeration-driven scan sees the guardian.
-        guardian_info = GuardianAgentInfoProvider(config_service)
-        # The external gateway registry (issue  egress) is a plain
-        # data component constructed here so every resolver instance on
-        # the delivery path consults the same claim table; gateways
-        # (github_adapter) claim their addresses at initialize.
-        gateway_registry = ExternalGatewayRegistry()
-        self._components["gateway_registry"] = gateway_registry
-        adapter_manager = AdapterManager(
-            event_bus=event_bus,
-            agent_info_provider=guardian_info,
-            external_owner=gateway_registry.owner_of,
-        )
-        await adapter_manager.initialize()
-        self._components["adapter_manager"] = adapter_manager
-        logger.info("component_initialized", component="adapter_manager")
-
-        # 2.6 Member Directory - member aggregation (address book)
-        member_directory = MemberDirectory(
-            agent_registry=agent_registry,
-            adapter_manager=adapter_manager,
-        )
-        self._components["member_directory"] = member_directory
-        logger.info("component_initialized", component="member_directory")
-
-        # 2.7 MailDelivery - mail persistence + per-recipient delivery
-        # Depends on EventBus, the guardian-aware provider (agent set +
-        # adam, issue ) and AdapterManager (online humans); the
-        # router's successor (docs/design/mail.md)
-        mail_delivery = MailDelivery(
-            event_bus=event_bus,
-            agent_info_provider=guardian_info,
-            adapter_manager=adapter_manager,
-        )
-        await mail_delivery.initialize()
-        self._components["mail_delivery"] = mail_delivery
-        logger.info("component_initialized", component="mail_delivery")
-
-        # ========== Step 3: Client Gateway Components ==========
-        # 3.1 Session Manager - session lifecycle management
+        # ========== Client Gateway Components (serving side) ==========
+        # Session Manager - session lifecycle management
         session_manager = SessionManager()
-        self._components["session_manager"] = session_manager
         logger.info("component_initialized", component="session_manager")
 
-        # 3.2 Notification Service - event pushing to clients
+        # Notification Service - event pushing to clients (subscribes to
+        # runtime events through the events facade, not the bus directly)
         notification_service = NotificationService(
-            event_bus=event_bus,
+            events=runtime.events,
             session_manager=session_manager,
         )
-        self._components["notification_service"] = notification_service
         logger.info("component_initialized", component="notification_service")
 
-        # 3.3 Client Gateway - facade coordinating all components
+        # Member Directory - member aggregation (address book)
+        member_directory = MemberDirectory(
+            members=runtime.members,
+            events=runtime.events,
+        )
+        logger.info("component_initialized", component="member_directory")
+
+        # Client Gateway - facade coordinating all components
         self.client_gateway = ClientGateway(
             session_manager=session_manager,
             notification_service=notification_service,
@@ -295,59 +157,32 @@ class ServerApp:
         await self.client_gateway.initialize()
         logger.info("component_initialized", component="client_gateway")
 
-        # ========== Step 4: API Layer (DI) ==========
+        # ========== API Layer (DI) ==========
         settings = get_settings()
-
-        # GitHub webhook ingress + egress (issue ): the adapter exists
-        # only when a webhook secret is configured; without one there is
-        # no endpoint. A missing GITHUB_TOKEN disables egress only — the
-        # address claim still routes replies into the gateway mailbox.
-        github_adapter: GitHubAdapter | None = None
-        if settings.github_webhook_secret:
-            github_adapter = GitHubAdapter(
-                event_bus=event_bus,
-                agent_info_provider=config_service,
-                gateway_registry=gateway_registry,
-                tlon_paths=paths,
-                recipient_id=settings.github_recipient or None,
-                github_token=settings.github_token or None,
-            )
-            await github_adapter.initialize()
-            self._components["github_adapter"] = github_adapter
-            logger.info(
-                "component_initialized",
-                component="github_adapter",
-                recipient=settings.github_recipient or None,
-                egress_enabled=bool(settings.github_token),
-            )
-        else:
-            logger.info("github_webhook_not_configured")
-
         self.rest = RESTServer(
             self.client_gateway,
-            agent_registry=agent_registry,  # Direct access for agent operations
-            config_manager=config_service,  # For /admin endpoints
-            trace_store=trace_store,  # For /traces endpoints
-            metrics_service=metrics_service,  # For /metrics endpoint
-            logs_dir=paths.logs_dir(),  # For /logs endpoints
-            paths=paths,  # For /inbox mailbox resolution
-            adapter_manager=adapter_manager,  # For POST /messages
+            members=runtime.members,
+            mail=runtime.mail,
+            prototypes=runtime.prototypes,
+            observability=runtime.observability,
+            configs=runtime.configs,
+            events=runtime.events,
             host=self.host,
             port=self.rest_port,
             admin_token=settings.admin_api_token or None,  # ADR 0013
-            github_adapter=github_adapter,  # For /webhooks/github
             github_webhook_secret=settings.github_webhook_secret or None,
         )
 
         self._running = False
-        await event_bus.publish(Event(
+        agent_count = len(runtime.members.list_ids())
+        await runtime.event_bus.publish(Event(
             type=EventType.SYSTEM_STARTUP,
-            payload={"agents": len(agent_registry.get_all_ids())},
+            payload={"agents": agent_count},
             source="server",
         ))
         logger.info(
             "server_initialized",
-            agent_count=len(agent_registry.get_all_ids()),
+            agent_count=agent_count,
             url=f"http://{self.host}:{self.rest_port}",
         )
 
@@ -368,12 +203,14 @@ class ServerApp:
         assert self.rest is not None
         await self.rest.start()
 
-        agent_registry = self._components.get("agent_registry")
+        agent_count = (
+            len(self._runtime.members.list_ids()) if self._runtime else 0
+        )
         logger.info(
             "server_started",
             host=self.host,
             rest_port=self.rest_port,
-            agent_count=len(agent_registry.get_all_ids()) if agent_registry else 0,
+            agent_count=agent_count,
         )
         if self.host not in _LOOPBACK_HOSTS:
             logger.warning(
@@ -396,12 +233,12 @@ class ServerApp:
 
         Stops API servers and shuts down all components in reverse order.
         """
-        if not self._running and not self._components:
+        if not self._running and self._runtime is None:
             return
 
-        event_bus = self._components.get("event_bus")
-        if event_bus:
-            await event_bus.publish(Event(
+        runtime = self._runtime
+        if runtime:
+            await runtime.event_bus.publish(Event(
                 type=EventType.SYSTEM_SHUTDOWN,
                 payload={},
                 source="server",
@@ -417,47 +254,10 @@ class ServerApp:
         if self.client_gateway:
             await self.client_gateway.shutdown()
 
-        # Shutdown core components (reverse order of creation)
-        # Adam (PID 1) stops before the registry (kernel) it drives
-        adam = self._components.get("adam")
-        if adam:
-            await adam.shutdown()
-
-        github_adapter = self._components.get("github_adapter")
-        if github_adapter:
-            await github_adapter.shutdown()
-
-        agent_registry = self._components.get("agent_registry")
-        if agent_registry:
-            await agent_registry.shutdown()
-
-        lessons_distiller = self._components.get("lessons_distiller")
-        if lessons_distiller:
-            await lessons_distiller.shutdown()
-
-        retirement_ceremony = self._components.get("retirement_ceremony")
-        if retirement_ceremony:
-            await retirement_ceremony.shutdown()
-
-        mail_delivery = self._components.get("mail_delivery")
-        if mail_delivery:
-            await mail_delivery.shutdown()
-
-        metrics_service = self._components.get("metrics_service")
-        if metrics_service:
-            await metrics_service.shutdown()
-
-        adapter_manager = self._components.get("adapter_manager")
-        if adapter_manager:
-            await adapter_manager.shutdown()
-
-        event_bus = self._components.get("event_bus")
-        if event_bus:
-            await event_bus.shutdown()
-
-        # Flush and shutdown tracing/metrics last
-        shutdown_tracing()
-        shutdown_metrics()
+        # Shutdown the runtime components (reverse order of creation;
+        # Adam (PID 1) stops before the registry (kernel) it drives)
+        if runtime:
+            await runtime.shutdown()
 
         self._running = False
         self._shutdown_event.set()

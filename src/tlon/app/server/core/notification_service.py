@@ -16,8 +16,8 @@ Clients (SDK adapters) only DECLARE their desired filters and send them to the
 server (via the auth or filter messages); they never re-filter events locally.
 
 Architecture:
-    NotificationService is a Device that depends on:
-    - EventBus (for event subscription)
+    NotificationService is a Component that depends on:
+    - EventsFacade (tlon.api.events — the runtime event subscription port)
     - SessionManager (for session lookup)
 
     All dependencies are injected via constructor (DAG rule).
@@ -27,10 +27,9 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from tlon.api.events import EventsFacade
 from tlon.base.component import Component
-from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
-from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 
 from .session_manager import ClientSession, SessionManager
@@ -57,11 +56,11 @@ MODE_EVENT_PATTERNS: dict[str, tuple[str, ...]] = {
 }
 
 
-class NotificationService(Component, Device):
+class NotificationService(Component):
     """Pushes system events to connected clients.
 
     Responsibilities:
-    - Subscribe to EventBus events
+    - Subscribe to runtime events (via the events facade)
     - Filter events per session (based on mode and filters)
     - Push events to registered handlers
 
@@ -71,12 +70,12 @@ class NotificationService(Component, Device):
     - Message storage
 
     Dependencies (constructor injected):
-        - event_bus: EventBus
+        - events: EventsFacade (runtime event subscription port)
         - session_manager: SessionManager
 
     Example:
         >>> service = NotificationService(
-        ...     event_bus=event_bus,
+        ...     events=events_facade,
         ...     session_manager=session_manager,
         ... )
         >>> await service.initialize()
@@ -86,7 +85,8 @@ class NotificationService(Component, Device):
 
     def __init__(
         self,
-        event_bus: EventBus,
+        *,
+        events: EventsFacade,
         session_manager: SessionManager,
     ):
         """Initialize the notification service.
@@ -94,17 +94,19 @@ class NotificationService(Component, Device):
         All dependencies are injected via constructor (DAG architecture).
 
         Args:
-            event_bus: Event bus to subscribe to
+            events: Runtime event subscription port (tlon.api.events)
             session_manager: Session manager for session lookup
         """
-        # Initialize both parents
         Component.__init__(self, name="NotificationService")
-        Device.__init__(self, event_bus=event_bus, name="NotificationService")
 
+        self._events = events
         self._session_manager = session_manager
 
         # session_id -> handler mapping
         self._handlers: dict[str, EventHandler] = {}
+
+        # Subscription token from the events facade (set by initialize)
+        self._subscription: str | None = None
 
         # Internal lock for handler registration
         self._lock = asyncio.Lock()
@@ -113,9 +115,7 @@ class NotificationService(Component, Device):
 
     async def initialize(self) -> None:
         """Start the service by subscribing to all event types."""
-        for event_type in EventType:
-            self.subscribe(event_type, self._on_event)
-        # Device has no async initialize, just log
+        self._subscription = self._events.subscribe_all(self._on_event)
         logger.info("notification_service_initialized")
         # Mark Component as initialized
         self._initialized = True
@@ -125,8 +125,9 @@ class NotificationService(Component, Device):
         async with self._lock:
             self._handlers.clear()
 
-        # Cleanup Device subscriptions
-        self.unsubscribe_all()
+        if self._subscription is not None:
+            self._events.unsubscribe(self._subscription)
+            self._subscription = None
         # Mark Component as shut down
         self._initialized = False
         logger.info("notification_service_shutdown")

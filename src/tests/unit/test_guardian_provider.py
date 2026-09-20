@@ -1,4 +1,4 @@
-"""Tests for the guardian-aware provider (app/server/core/guardian_provider.py).
+"""Tests for the guardian-aware provider (organization/mail/guardian_provider.py).
 
 Issue : the wrapper makes the built-in guardian resolvable —
 ``get_config("adam")`` answers a synthesized config — while
@@ -10,9 +10,9 @@ through the shared RecipientResolver on both directions (speak-side
 
 import pytest
 
-from tlon.app.server.core.guardian_provider import GuardianAgentInfoProvider
 from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
 from tlon.organization.mail.resolver import RecipientResolver
 
 

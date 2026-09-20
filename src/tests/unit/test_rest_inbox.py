@@ -1,14 +1,16 @@
 """Unit tests for the REST /inbox endpoint (mail model, R2).
 
 No HTTP server is started: handle_inbox is called directly with a stub
-request, against a TlonPaths rooted at a tmp dir.
+request, against a MailFacade rooted at a tmp dir.
 """
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from tlon.api.mail import MailFacade
 from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
@@ -29,7 +31,9 @@ def paths(tmp_path: Path) -> TlonPaths:
 
 @pytest.fixture
 def handler(paths: TlonPaths) -> RESTAPIHandler:
-    return RESTAPIHandler(None, None, paths=paths)
+    return RESTAPIHandler(
+        None, mail=MailFacade(adapter_manager=MagicMock(), tlon_paths=paths)
+    )
 
 
 async def _seed_mailbox(paths: TlonPaths, username: str, count: int = 3) -> list[Mail]:
@@ -94,8 +98,8 @@ class TestHandleInbox:
             response = await handler.handle_inbox(StubRequest({"username": bad}))
             assert response.status == 400, f"username {bad!r} must be rejected"
 
-    async def test_paths_unavailable_returns_503(self):
-        handler = RESTAPIHandler(None, None, paths=None)
+    async def test_mail_facade_unavailable_returns_503(self):
+        handler = RESTAPIHandler(None, mail=None)
 
         response = await handler.handle_inbox(StubRequest({"username": "alice"}))
 

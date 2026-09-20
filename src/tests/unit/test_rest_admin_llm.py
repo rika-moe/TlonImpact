@@ -5,7 +5,6 @@ the real litellm ``model_cost`` registry, no mocking.
 """
 
 import json
-from unittest.mock import MagicMock
 
 import litellm
 
@@ -20,7 +19,8 @@ class StubRequest:
 
 
 def _handler() -> RESTAPIHandler:
-    return RESTAPIHandler(None, MagicMock())
+    # The LLM registry endpoint touches no runtime state — no facades.
+    return RESTAPIHandler(None)
 
 
 class TestListLlmModels:

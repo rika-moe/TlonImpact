@@ -268,6 +268,32 @@ forbidden_modules = [
     "tlon.app.launcher",
 ]
 
+# tlon.app.server（未来的 tlon_server，ADR 0019）：runtime 触点是
+# tlon.api 的 domain facades；直摸 runtime 内脏被禁止（tlon.base 例外：
+# events/settings/paths 等公共地基）。只禁直接 import——facade 内部的
+# 间接传递正是收编的意义。
+[[tool.importlinter.contracts]]
+name = "app.server 只依赖 tlon.api + tlon.base"
+type = "forbidden"
+source_modules = "tlon.app.server"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.memory",
+    "tlon.sandbox",
+    "tlon.tools",
+    "tlon.prototypes",
+]
+allow_indirect_imports = true
+
+# tlon.api 是 runtime 的北向 API（ADR 0019）：可依赖 runtime 各层，
+# 不得反向依赖组装层 app
+[[tool.importlinter.contracts]]
+name = "api 不依赖 app"
+type = "forbidden"
+source_modules = "tlon.api"
+forbidden_modules = ["tlon.app"]
+
 # tlosure（DSL 语言核心，ADR 0018）：独立于 tlon，反向依赖禁止
 [[tool.importlinter.contracts]]
 name = "tlosure 独立于 tlon"

@@ -7,10 +7,10 @@ from typing import Any
 
 from aiohttp import web
 
+from tlon.api.mail import DEFAULT_USERNAME
 from tlon.app.server.core.session_manager import ClientSession
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
-from tlon.organization.messaging.human_adapter import DEFAULT_USERNAME
 
 from .common import RestHandlerBase, _validate_username
 
@@ -191,7 +191,8 @@ class SessionHandlers(RestHandlerBase):
             {"id": p.id, "name": p.name, "type": p.type}
             for p in self.client_gateway.get_all_members()
         ]
-        agents = self.agent_registry.get_all_agent_status()
+        assert self.members is not None  # wired in production
+        agents = self.members.get_all_agent_status()
 
         logger.info(
             "rest_session_created",
@@ -283,8 +284,8 @@ class SessionHandlers(RestHandlerBase):
         if queue is not None:
             queue.put_nowait(None)
 
-        if self.adapter_manager:
-            await self.adapter_manager.detach(session_id)
+        if self.events:
+            await self.events.detach_human(session_id)
         await self.client_gateway.disconnect_client(session_id)
 
         logger.info("rest_session_deleted", session_id=session_id)
@@ -343,8 +344,8 @@ class SessionHandlers(RestHandlerBase):
         # adapter, not the NotificationService — single-track delivery).
         self.client_gateway.set_event_handler(session.id, event_handler)
         username = session.metadata.get("username", DEFAULT_USERNAME)
-        if self.adapter_manager:
-            await self.adapter_manager.attach(username, session.id, event_handler)
+        if self.events:
+            await self.events.attach_human(username, session.id, event_handler)
 
         response = web.StreamResponse(
             status=200,
@@ -359,8 +360,8 @@ class SessionHandlers(RestHandlerBase):
             await response.prepare(request)
         except Exception:
             self._sse_queues.pop(session.id, None)
-            if self.adapter_manager:
-                await self.adapter_manager.detach(session.id)
+            if self.events:
+                await self.events.detach_human(session.id)
             await self.client_gateway.disconnect_client(session.id)
             raise
 
@@ -389,8 +390,8 @@ class SessionHandlers(RestHandlerBase):
             logger.debug("sse_write_error", session_id=session.id, error=str(e))
         finally:
             self._sse_queues.pop(session.id, None)
-            if self.adapter_manager:
-                await self.adapter_manager.detach(session.id)
+            if self.events:
+                await self.events.detach_human(session.id)
             await self.client_gateway.disconnect_client(session.id)
             logger.info("sse_disconnected", session_id=session.id)
 

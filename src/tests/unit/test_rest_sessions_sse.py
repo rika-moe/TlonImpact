@@ -26,6 +26,8 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from tlon.agents.lifecycle import StartRequest, StopRequest
+from tlon.api.events import EventsFacade
+from tlon.api.members import MembersFacade
 from tlon.app.server.api import rest as rest_module
 from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.app.server.core.client_gateway import ClientGateway
@@ -108,8 +110,12 @@ async def gateway(
 ) -> AsyncGenerator[ClientGateway]:
     """Provide an initialized ClientGateway with real session/notification parts."""
     session_manager = SessionManager()
-    notifications = NotificationService(event_bus=bus, session_manager=session_manager)
-    directory = MemberDirectory(agent_registry=registry, adapter_manager=manager)
+    events = EventsFacade(event_bus=bus, adapter_manager=manager)
+    notifications = NotificationService(events=events, session_manager=session_manager)
+    directory = MemberDirectory(
+        members=MembersFacade(agent_registry=registry, tlon_paths=TlonPaths(home=tmp_path)),
+        events=events,
+    )
     gw = ClientGateway(
         session_manager=session_manager,
         notification_service=notifications,
@@ -124,8 +130,15 @@ async def gateway(
 
 
 @pytest.fixture
-def handler(gateway: ClientGateway, registry: MagicMock, manager: AdapterManager) -> RESTAPIHandler:
-    return RESTAPIHandler(gateway, registry, adapter_manager=manager)
+def handler(
+    gateway: ClientGateway, registry: MagicMock, manager: AdapterManager,
+    bus: EventBus, tmp_path: Path,
+) -> RESTAPIHandler:
+    return RESTAPIHandler(
+        gateway,
+        members=MembersFacade(agent_registry=registry, tlon_paths=TlonPaths(home=tmp_path)),
+        events=EventsFacade(event_bus=bus, adapter_manager=manager),
+    )
 
 
 @pytest.fixture

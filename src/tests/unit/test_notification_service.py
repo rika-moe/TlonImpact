@@ -11,6 +11,7 @@ clients. These tests cover:
 
 import pytest
 
+from tlon.api.events import EventsFacade
 from tlon.app.server.core.notification_service import NotificationService
 from tlon.app.server.core.session_manager import ClientSession, SessionManager
 from tlon.base.events.event import Event, EventType
@@ -55,7 +56,10 @@ class TestShouldSendToSession:
     @pytest.fixture
     def service(self):
         """Create a NotificationService (no initialize needed for filtering)."""
-        return NotificationService(event_bus=EventBus(), session_manager=SessionManager())
+        return NotificationService(
+            events=EventsFacade(event_bus=EventBus()),
+            session_manager=SessionManager(),
+        )
 
     # ==================== Mode semantics ====================
 
