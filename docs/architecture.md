@@ -9,12 +9,12 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 ```
 ┌──────────────────────────── 客户端层 ────────────────────────────┐
 │  apps/operator   TypeScript/Ink TUI（tlon ops 拉起的 Node 进程）  │
-│  app/clients/sdk TlonClient —— 纯协议层 SDK，只依赖 tlon.base     │
+│  tlon_client/sdk TlonClient —— 纯协议层 SDK，只依赖 tlon.base     │
 │  任意 HTTP 客户端（REST + SSE 即可接入）                          │
 └──────────────┬───────────────────────────────┬───────────────────┘
                │ HTTP REST                     │ SSE（GET /events）
 ┌──────────────▼───────────────────────────────▼───────────────────┐
-│ 服务端装配层 app/server（ADR 0019：只经 tlon.api + tlon.base      │
+│ 服务端装配层 tlon_server（ADR 0019：只经 tlon.api + tlon.base     │
 │   触达 runtime，import-linter 固话）                              │
 │   ServerApp —— serving 侧装配（session/notification/HTTP 生命周期）│
 │   api/rest/ RESTServer —— aiohttp，REST + SSE，无 WebSocket       │
@@ -40,7 +40,7 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
          EventBus 横贯各层：组件间通信的唯一通道（发布/订阅）
 ```
 
-整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon/app/launcher/main.py](../src/tlon/app/launcher/main.py) 的 `main`，最终由 [app/server/serverapp.py](../src/tlon/app/server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [app/server/api/rest/](../src/tlon/app/server/api/rest) 包的 `RESTServer`（`rest/app.py` 的 `create_app` 注册全部路由，handler 按域拆在 `rest/` 各模块），没有 WebSocket。
+整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon_launcher/main.py](../src/tlon_launcher/main.py) 的 `main`，最终由 [tlon_server/serverapp.py](../src/tlon_server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [tlon_server/api/rest/](../src/tlon_server/api/rest) 包的 `RESTServer`（`rest/app.py` 的 `create_app` 注册全部路由，handler 按域拆在 `rest/` 各模块），没有 WebSocket。
 
 REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
@@ -51,7 +51,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 - 可观测性：`GET /traces`、`GET /traces/{trace_id}`、`GET /metrics`、`GET /agents/{agent_id}/logs`、`GET /logs`
 - 其他：`GET /health`；`GET /test/ping`、`POST /test/echo` 仅在 debug 模式注册
 
-客户端侧有两类接入方式：`tlon ops`（[app/launcher/commands/ops.py](../src/tlon/app/launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[app/clients/sdk/](../src/tlon/app/clients/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上只依赖 `tlon.base`，不触碰服务端内部。
+客户端侧有两类接入方式：`tlon ops`（[tlon_launcher/commands/ops.py](../src/tlon_launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[tlon_client/sdk/](../src/tlon_client/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上只依赖 `tlon.base`，不触碰服务端内部。
 
 成员配置的创建与审批走服务端管理面：首启只播种原型库与技能（[agents/bootstrap.py](../src/tlon/agents/bootstrap.py)），**空社会不再自动初始化标准团队**（ADR 0016）——成员由人类经管理面创建（创建时选模型，成员级 LLM 配置），成员/原型管理经 ops 的管理 API（`POST/PATCH/DELETE /admin/config/agents`、`/admin/prototypes/staging` 审批），`POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
 
@@ -69,10 +69,10 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 | `tlon.tools` | agent 可用工具（邮件/文件/Shell/记忆/任务/生命周期/原型） | base、sandbox；不依赖 agents/app/prototypes | import-linter；生命周期与原型工具经 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py)、[tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py) 声明端口，由装配层注入实现（依赖倒置） |
 | `tlon.agents` | 领域核心：注册表、成员运行时、认知循环 | base/memory/organization/tools/sandbox；不依赖 app/prototypes | import-linter |
 | `tlon.prototypes` | 内置行为原型库（随包携带，启动时播种到 `~/.tlon/prototypes/`） | —（无独立契约） | — |
-| `tlon.api` | runtime 公共北向 API（ADR 0019）：六个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 app | import-linter「api 不依赖 app」 |
-| `tlon.app.clients.sdk` | 外部客户端用的纯协议层 SDK | 仅 tlon.base | import-linter「app.clients.sdk 只依赖 tlon.base」 |
-| `tlon.app.server` | REST/SSE handlers + 客户端连接管理 + WebUI 静态托管 | 仅 tlon.api + tlon.base（只禁直接 import） | import-linter「app.server 只依赖 tlon.api + tlon.base」 |
-| `tlon.app.launcher` | 命令行入口（composition root） | 下层全部 | 无显式契约，靠分层惯例 |
+| `tlon.api` | runtime 公共北向 API（ADR 0019）：六个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 server/client/launcher | import-linter「api 不依赖 server/client/launcher」 |
+| `tlon_server` | REST/SSE handlers + 客户端连接管理 + WebUI 静态托管 | 仅 tlon.api + tlon.base（只禁直接 import） | import-linter「server 只依赖 tlon.api + tlon.base」 |
+| `tlon_client` | 客户端包：`sdk/`（外部客户端用的纯协议层 SDK）、`telegram/`（Telegram bot 客户端） | sdk 仅 tlon.base；telegram 仅 sdk/base/第三方 | import-linter「client.sdk 只依赖 tlon.base」「client.telegram 只依赖 sdk/base/第三方」 |
+| `tlon_launcher` | 命令行入口（composition root） | 仅 tlon.base + tlon_server + tlon_client | import-linter「launcher 不直摸 runtime」 |
 
 除 import-linter 外，[scripts/](../scripts) 下还有三个 AST 检查脚本：
 
@@ -95,7 +95,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 3. **领域组件**：`AgentRegistry`（此时只按 ConfigService 里的配置 `register`，不启动 agent）→ Adam（[agents/adam.py](../src/tlon/agents/adam.py) 的 `make_adam`，在注册表之后初始化并随后发出 boot 启动请求）→ `AdapterManager`（人类适配器生命周期）→ `MailDelivery`（邮件投递）→ 可选 `GitHubAdapter`（配了 webhook secret 才存在）。
 4. **facade 装配**：members / mail / prototypes / observability / config / events（[api/](../src/tlon/api) 下的六个小类，构造器注入 runtime 对象，薄透传）。
 
-**serving 段**——`ServerApp.initialize()`（[app/server/serverapp.py](../src/tlon/app/server/serverapp.py)）只装配自己的连接管理与 HTTP 生命周期：
+**serving 段**——`ServerApp.initialize()`（[tlon_server/serverapp.py](../src/tlon_server/serverapp.py)）只装配自己的连接管理与 HTTP 生命周期：
 
 5. **客户端网关**：`SessionManager` → `NotificationService`（经 events facade 订阅 runtime 事件，不直摸 EventBus）→ `MemberDirectory`（成员通讯录，经 members/events facade 聚合）→ `ClientGateway`（协调各组件的门面）。
 6. **API 层**：构造 `RESTServer`（注入 ClientGateway 及六个 facade），尚未开始监听。
@@ -109,7 +109,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 以「人类从客户端发一封邮件给 agent，agent 处理后回邮」为例：
 
-1. **人类发信（REST 入口）**。客户端 `POST /messages`，由 `rest/mail.py` 的 `handle_send_message` 处理，字段校验的唯一副本在 [app/server/api/send_mail.py](../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`。发件人身份取自请求体的 `username`；handler 经 mail facade（[api/mail.py](../src/tlon/api/mail.py) 的 `MailFacade.send`）转发给 `AdapterManager`——若该人类没有在线适配器，`AdapterManager` 会建一个临时的 `HumanAdapter`（[organization/messaging/human_adapter.py](../src/tlon/organization/messaging/human_adapter.py)）。适配器的 `speak` 要求显式 `to`/`cc`，零可解析收件人的邮件直接拒绝；合法则构造 `Mail`（[organization/mail/mail.py](../src/tlon/organization/mail/mail.py)）并向 EventBus 发布 `MAIL_NEW`。
+1. **人类发信（REST 入口）**。客户端 `POST /messages`，由 `rest/mail.py` 的 `handle_send_message` 处理，字段校验的唯一副本在 [tlon_server/api/send_mail.py](../src/tlon_server/api/send_mail.py) 的 `parse_send_mail_fields`。发件人身份取自请求体的 `username`；handler 经 mail facade（[api/mail.py](../src/tlon/api/mail.py) 的 `MailFacade.send`）转发给 `AdapterManager`——若该人类没有在线适配器，`AdapterManager` 会建一个临时的 `HumanAdapter`（[organization/messaging/human_adapter.py](../src/tlon/organization/messaging/human_adapter.py)）。适配器的 `speak` 要求显式 `to`/`cc`，零可解析收件人的邮件直接拒绝；合法则构造 `Mail`（[organization/mail/mail.py](../src/tlon/organization/mail/mail.py)）并向 EventBus 发布 `MAIL_NEW`。
 
    **agent 发信只有一个出口**：[tools/mail/send_email.py](../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`。认知循环里 act stage 把工具调用声明进 `StageOutcome`，由 `EffectExecutor`（[agents/executor.py](../src/tlon/agents/executor.py)）执行其中的 `MailEffect`——构造 `Mail`、发布 `MAIL_NEW`，与人类发信汇入同一条管道。这一步失败（`Mail` 构造被拒绝或 `MAIL_NEW` 发布失败）时，`EffectExecutor` 会把一封来自 `postmaster@tlon.internal` 的发送失败通知直接写进发件 agent 自己的收件箱并发布 `MAIL_DELIVERED`——与投递层退信同风格，但不经过 `MAIL_NEW`（通知路径不能依赖刚刚失败的那次发布），agent 在下一轮认知循环里读到它。
 
@@ -127,7 +127,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
    每封邮件开一个新 session，但同一线程的往复不是失忆重逢：`ContextBuilder`（[agents/context_builder.py](../src/tlon/agents/context_builder.py)）组装上下文时，`(thread-recap)` section 从 session journal（ADR 0007）确定性重建本线程最近一个已完成 session 的简报（触发、调了哪些工具、结论是什么），不调 LLM、不等批触发摘要；与 `mail-history` 的邮件原文互补——原文给「说了什么」，简报给「我做了什么」。只注入最近一轮，成本不随线程长度膨胀（issue ）。
 
-5. **收件人是人类：推送或拉取**。`HumanAdapter` 与其他成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的邮件 fan-out 给 attach 上来的客户端会话；客户端通过 `GET /events` 的 SSE 长连接实时收信（推送侧由 [app/server/core/notification_service.py](../src/tlon/app/server/core/notification_service.py) 的 `NotificationService` 管理），也可随时 `GET /inbox` 直接读邮箱文件。人类离线时邮件留在其持久邮箱里，上线后再读。
+5. **收件人是人类：推送或拉取**。`HumanAdapter` 与其他成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的邮件 fan-out 给 attach 上来的客户端会话；客户端通过 `GET /events` 的 SSE 长连接实时收信（推送侧由 [tlon_server/core/notification_service.py](../src/tlon_server/core/notification_service.py) 的 `NotificationService` 管理），也可随时 `GET /inbox` 直接读邮箱文件。人类离线时邮件留在其持久邮箱里，上线后再读。
 
 全链路的背压策略一致：EventBus 的 per-subscriber 队列、SessionScheduler 的邮件队列都是有界的，溢出时丢新保旧并保未读，绝不阻塞总线。
 
@@ -213,7 +213,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 | 工具 | 检查内容 |
 |---|---|
-| `uv run lint-imports` | pyproject.toml 中 import-linter 契约：各包依赖方向（base 不依赖上层、memory/organization/sandbox 只依赖 base、tools 不反向依赖 agents/app/prototypes、agents 不依赖 app/prototypes、sdk 只依赖 base） |
+| `uv run lint-imports` | pyproject.toml 中 import-linter 契约：各包依赖方向（base 不依赖上层、memory/organization/sandbox 只依赖 base、tools 不反向依赖 agents/server/client/launcher/prototypes、agents 不依赖 server/client/launcher/prototypes、sdk 只依赖 base、server 只经 api+base、launcher 不直摸 runtime） |
 | `uv run python scripts/check_architecture.py` | 组件 DAG 规则：只许构造器注入，禁止 setter/property 注入与运行时替换 |
 | `uv run python scripts/check_no_reexport.py` | `__init__.py` 禁止 re-export |
 | `uv run python scripts/check_stage_purity.py` | [agents/stages/](../src/tlon/agents/stages) 下 stage 纯度：禁止直接修改 session 状态 |

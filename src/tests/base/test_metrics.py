@@ -19,12 +19,12 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from tlon.api.observability import ObservabilityFacade
-from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.base import metrics as metrics_module
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.metrics import MetricsService
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail
+from tlon_server.api.rest import RESTAPIHandler
 
 ALLOWED_ATTRIBUTE_KEYS = {"agent", "kind", "agent_id", "tool_name", "endorser", "model"}
 

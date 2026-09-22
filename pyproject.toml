@@ -45,14 +45,14 @@ telegram = [
 ]
 
 [project.scripts]
-tlon = "tlon.app.launcher.main:main"
+tlon = "tlon_launcher.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tlon", "src/tlosure"]
+packages = ["src/tlon", "src/tlosure", "src/tlon_server", "src/tlon_client", "src/tlon_launcher"]
 
 [tool.hatch.build.targets.sdist]
 only-include = ["src", "scripts", "config", "skills", "docs", "tests", "README.md", "pyproject.toml", "uv.lock", ".python-version"]
@@ -119,7 +119,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["tlon", "tlosure"]
+source = ["tlon", "tlosure", "tlon_server", "tlon_client", "tlon_launcher"]
 omit = ["*/tests/*", "*/test_*"]
 
 [tool.coverage.report]
@@ -151,7 +151,7 @@ dev = [
 ]
 
 [tool.importlinter]
-root_packages = ["tlon", "tlosure"]
+root_packages = ["tlon", "tlosure", "tlon_server", "tlon_client", "tlon_launcher"]
 
 # base 是最底层：不依赖任何上层域
 [[tool.importlinter.contracts]]
@@ -162,7 +162,9 @@ forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
     "tlon.memory",
-    "tlon.app",
+    "tlon_server",
+    "tlon_client",
+    "tlon_launcher",
     "tlon.tools",
     "tlon.sandbox",
     "tlon.prototypes",
@@ -170,13 +172,15 @@ forbidden_modules = [
 
 # memory 只依赖 base
 [[tool.importlinter.contracts]]
-name = "memory 不依赖 agents/organization/app/tools/sandbox/prototypes"
+name = "memory 不依赖 agents/organization/server/client/launcher/tools/sandbox/prototypes"
 type = "forbidden"
 source_modules = "tlon.memory"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
-    "tlon.app",
+    "tlon_server",
+    "tlon_client",
+    "tlon_launcher",
     "tlon.tools",
     "tlon.sandbox",
     "tlon.prototypes",
@@ -184,13 +188,15 @@ forbidden_modules = [
 
 # organization(mail/messaging) 只依赖 base
 [[tool.importlinter.contracts]]
-name = "organization 不依赖 agents/memory/app/tools/sandbox/prototypes"
+name = "organization 不依赖 agents/memory/server/client/launcher/tools/sandbox/prototypes"
 type = "forbidden"
 source_modules = "tlon.organization"
 forbidden_modules = [
     "tlon.agents",
     "tlon.memory",
-    "tlon.app",
+    "tlon_server",
+    "tlon_client",
+    "tlon_launcher",
     "tlon.tools",
     "tlon.sandbox",
     "tlon.prototypes",
@@ -198,48 +204,54 @@ forbidden_modules = [
 
 # sandbox 只依赖 base
 [[tool.importlinter.contracts]]
-name = "sandbox 不依赖 agents/organization/memory/app/tools/prototypes"
+name = "sandbox 不依赖 agents/organization/memory/server/client/launcher/tools/prototypes"
 type = "forbidden"
 source_modules = "tlon.sandbox"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
     "tlon.memory",
-    "tlon.app",
+    "tlon_server",
+    "tlon_client",
+    "tlon_launcher",
     "tlon.tools",
     "tlon.prototypes",
 ]
 
 # tools 依赖 base/sandbox（tools.memory.* 对 tlon.memory 仅 TYPE_CHECKING
-# 类型引用，暂不放进去）；不得反向依赖 agents/app/prototypes。
+# 类型引用，暂不放进去）；不得反向依赖 agents/server/client/launcher/prototypes。
 #  已落地：生命周期/原型工具改为依赖倒置——端口与异常声明在
 # tools/agents/ports.py 与 tools/prototypes/ports.py，装配层注入实现。
 [[tool.importlinter.contracts]]
-name = "tools 不依赖 agents/app/prototypes"
+name = "tools 不依赖 agents/server/client/launcher/prototypes"
 type = "forbidden"
 source_modules = "tlon.tools"
 forbidden_modules = [
     "tlon.agents",
-    "tlon.app",
+    "tlon_server",
+    "tlon_client",
+    "tlon_launcher",
     "tlon.prototypes",
 ]
 
 # agents 是领域层：可依赖 base/memory/organization/tools/sandbox，
-# 不得依赖组装层 app 与 prototypes
+# 不得依赖组装层 server/client/launcher 与 prototypes
 [[tool.importlinter.contracts]]
-name = "agents 不依赖 app/prototypes"
+name = "agents 不依赖 server/client/launcher/prototypes"
 type = "forbidden"
 source_modules = "tlon.agents"
 forbidden_modules = [
-    "tlon.app",
+    "tlon_server",
+    "tlon_client",
+    "tlon_launcher",
     "tlon.prototypes",
 ]
 
 # SDK 是给外部客户端用的纯协议层：只依赖 tlon.base
 [[tool.importlinter.contracts]]
-name = "app.clients.sdk 只依赖 tlon.base"
+name = "client.sdk 只依赖 tlon.base"
 type = "forbidden"
-source_modules = "tlon.app.clients.sdk"
+source_modules = "tlon_client.sdk"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
@@ -247,16 +259,16 @@ forbidden_modules = [
     "tlon.sandbox",
     "tlon.tools",
     "tlon.prototypes",
-    "tlon.app.server",
-    "tlon.app.launcher",
+    "tlon_server",
+    "tlon_launcher",
 ]
 
 # Telegram bot 客户端：与 sdk 同层的纯客户端包，只依赖 sdk / base /
 # 第三方库（python-telegram-bot）；forbidden 清单镜像上面的 sdk 契约
 [[tool.importlinter.contracts]]
-name = "app.clients.telegram 只依赖 sdk/base/第三方"
+name = "client.telegram 只依赖 sdk/base/第三方"
 type = "forbidden"
-source_modules = "tlon.app.clients.telegram"
+source_modules = "tlon_client.telegram"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
@@ -264,18 +276,17 @@ forbidden_modules = [
     "tlon.sandbox",
     "tlon.tools",
     "tlon.prototypes",
-    "tlon.app.server",
-    "tlon.app.launcher",
+    "tlon_server",
+    "tlon_launcher",
 ]
 
-# tlon.app.server（未来的 tlon_server，ADR 0019）：runtime 触点是
-# tlon.api 的 domain facades；直摸 runtime 内脏被禁止（tlon.base 例外：
-# events/settings/paths 等公共地基）。只禁直接 import——facade 内部的
-# 间接传递正是收编的意义。
+# tlon_server（ADR 0019）：runtime 触点是 tlon.api 的 domain facades；
+# 直摸 runtime 内脏被禁止（tlon.base 例外：events/settings/paths 等公共
+# 地基）。只禁直接 import——facade 内部的间接传递正是收编的意义。
 [[tool.importlinter.contracts]]
-name = "app.server 只依赖 tlon.api + tlon.base"
+name = "server 只依赖 tlon.api + tlon.base"
 type = "forbidden"
-source_modules = "tlon.app.server"
+source_modules = "tlon_server"
 forbidden_modules = [
     "tlon.agents",
     "tlon.organization",
@@ -286,13 +297,31 @@ forbidden_modules = [
 ]
 allow_indirect_imports = true
 
-# tlon.api 是 runtime 的北向 API（ADR 0019）：可依赖 runtime 各层，
-# 不得反向依赖组装层 app
+# tlon_launcher 是 CLI 组装层：只许 tlon.base + tlon_server + tlon_client，
+# 不直摸 runtime 内脏，也不经 tlon.api 绕行。只禁直接 import——经
+# tlon_server/tlon_client 的间接传递是允许的（与 server 契约同纪律）
 [[tool.importlinter.contracts]]
-name = "api 不依赖 app"
+name = "launcher 不直摸 runtime"
+type = "forbidden"
+source_modules = "tlon_launcher"
+forbidden_modules = [
+    "tlon.agents",
+    "tlon.organization",
+    "tlon.memory",
+    "tlon.sandbox",
+    "tlon.tools",
+    "tlon.prototypes",
+    "tlon.api",
+]
+allow_indirect_imports = true
+
+# tlon.api 是 runtime 的北向 API（ADR 0019）：可依赖 runtime 各层，
+# 不得反向依赖组装层 server/client/launcher
+[[tool.importlinter.contracts]]
+name = "api 不依赖 server/client/launcher"
 type = "forbidden"
 source_modules = "tlon.api"
-forbidden_modules = ["tlon.app"]
+forbidden_modules = ["tlon_server", "tlon_client", "tlon_launcher"]
 
 # tlosure（DSL 语言核心，ADR 0018）：独立于 tlon，反向依赖禁止
 [[tool.importlinter.contracts]]

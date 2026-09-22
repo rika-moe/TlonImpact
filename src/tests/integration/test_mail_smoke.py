@@ -13,7 +13,7 @@ from pathlib import Path
 
 import aiohttp
 
-from tlon.app.clients.sdk.client import TlonClient
+from tlon_client.sdk.client import TlonClient
 
 from .conftest import _assert_delivered
 

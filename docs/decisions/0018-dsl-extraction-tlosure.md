@@ -6,7 +6,7 @@
 
 方向讨论（编程语言的 core / 类库 / 业务分层对 tlosure/tlon 的启发）拍板：
 
-1. **三层映射**：tlosure 核心 = 带 fuel 的 Lisp 风格通用语言；tlon runtime（`tlon/{base, memory, organization, sandbox, tools, agents, prototypes}`）= tlosure 的第一宿主，即 tlon agents 与社会的运行时；`tlon.app` + `apps/webui` + `apps/operator` + telegram = 基于 runtime 包装的应用软件。后两层的边界已由 import-linter DAG 固话（app 居 DAG 顶端）。**未来方向**：tlon runtime 与 tlon web server 可分离为独立分发，目前不拆。
+1. **三层映射**：tlosure 核心 = 带 fuel 的 Lisp 风格通用语言；tlon runtime（`tlon/{base, memory, organization, sandbox, tools, agents, prototypes}`）= tlosure 的第一宿主，即 tlon agents 与社会的运行时；`tlon_server` / `tlon_client` / `tlon_launcher` + `apps/webui` + `apps/operator` = 基于 runtime 包装的应用软件（ADR 0019 第二步已把原应用层物理拆为这三包）。后两层的边界已由 import-linter DAG 固话（server/client/launcher 居 DAG 顶端）。**未来方向**：tlon runtime 与 tlon web server 可分离为独立分发，目前不拆。
 2. **领域词汇迁出 tlosure**（修订 §1 的边界）：mail 谓词、loop 谓词、stage 谓词、动作族（`spawn`/`emit`/`start`/`stop`/`start-all`/`forward`）、`*_ACTION_NAMES`、`ScriptHostQueries`、`make_member_builtins`、`validate_member_action` 全部是 tlon 领域词汇，迁往 `tlon/agents/vocabulary.py`。tlosure 只留：edn reader/printer、eval 内核（special forms、fuel）、`Builtin`/`EvalError`/`ActionRequest` 契约类型、`validate_form`、通用词汇（`=`/`not`/`contains?`/`get`/`str`/算术族）。`validate_member_action` 引 `MEMBER_ACTION_NAMES` 是核心命名业务概念的漏缝，随迁移修复。
 3. **`MailView` 退役**（修订 §3）：协议倒置只在跨包边界需要；词汇迁入 tlon 后 mail 谓词直接用 `Mail` 类型。`self.address` env 数据注入保留——env-as-data 使谓词保持纯函数，与分层无关。
 4. **三条原则固化**：① 核心命名检验——一个构造能不提及 member/mail/stage 就解释清楚才配进 tlosure；② 词汇走注册表，`SPECIAL_FORMS` 冻结，宿主新能力一律以 builtin 注册；③ env 段（`self`/`state`/`limits`/`scratch`/`round`/`event`/`msg`/`result`）是 tlon 的宿主契约，不属于语言规范。

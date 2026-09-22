@@ -13,7 +13,7 @@ from typing import Any
 
 import aiohttp
 
-from tlon.app.clients.sdk.client import TlonClient
+from tlon_client.sdk.client import TlonClient
 
 SESSIONS_TIMEOUT = 10.0
 

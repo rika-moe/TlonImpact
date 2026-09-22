@@ -23,9 +23,9 @@ from structlog.contextvars import bound_contextvars
 
 from tlon.api.members import MembersFacade
 from tlon.api.observability import ObservabilityFacade
-from tlon.app.server.api.rest import RESTAPIHandler
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.tracing.trace_context import start_span
+from tlon_server.api.rest import RESTAPIHandler
 
 
 @pytest.fixture(autouse=True)

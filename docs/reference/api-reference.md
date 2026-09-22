@@ -1,6 +1,6 @@
 # API 参考（REST + SSE，协议 v2）
 
-Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/](../../src/tlon/app/server/api/rest) 包的 `RESTServer` / `RESTAPIHandler`（`rest/app.py`；路由域按模块拆分）。设计理由见 [docs/design/server-protocol.md](../design/server-protocol.md)，本文只描述当前实现。
+Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](../../src/tlon_server/api/rest) 包的 `RESTServer` / `RESTAPIHandler`（`rest/app.py`；路由域按模块拆分）。设计理由见 [docs/design/server-protocol.md](../design/server-protocol.md)，本文只描述当前实现。
 
 ## 总述
 
@@ -113,7 +113,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 
 人类成员发信，处理函数 `rest/mail.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。受理即返回 **202**，投递是异步的；解析不到的收件人地址事后以 `postmaster@tlon.internal` 退信形式回到发件人收件箱。
 
-请求体字段（校验的唯一副本在 [app/server/api/send_mail.py](../../src/tlon/app/server/api/send_mail.py) 的 `parse_send_mail_fields`）：
+请求体字段（校验的唯一副本在 [tlon_server/api/send_mail.py](../../src/tlon_server/api/send_mail.py) 的 `parse_send_mail_fields`）：
 
 | 字段 | 类型 | 必填 | 规则 |
 |---|---|---|---|
@@ -324,7 +324,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon/app/server/api/rest/
 下行推送有两条不重叠的路径，任何一个会话的任何一个事件只从一个口子进来：
 
 1. **chat 会话的 `mail.delivered`**：经 [organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter`——它订阅 `MAIL_DELIVERED`，把 `payload.recipient == 自己 member_id` 的副本 fan-out 给 attach 的会话（成员视角：你的邮箱到了一封信）。
-2. **其余事件**：经 [app/server/core/notification_service.py](../../src/tlon/app/server/core/notification_service.py) 的 `NotificationService`，订阅全部 `EventType`，按会话 mode + filters 逐个过滤后推送（观察者视角）。
+2. **其余事件**：经 [tlon_server/core/notification_service.py](../../src/tlon_server/core/notification_service.py) 的 `NotificationService`，订阅全部 `EventType`，按会话 mode + filters 逐个过滤后推送（观察者视角）。
 
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
@@ -418,7 +418,7 @@ mode 与 filters 可经 `PATCH /sessions/{id}` 在线修改。过滤只在服务
 
 ## 接入示例
 
-以下流程与 [src/tlon/app/clients/sdk/base_client.py](../../src/tlon/app/clients/sdk/base_client.py) 的 `BaseClient` 行为一致（`connect` → `authenticate` 建会话 → `_stream_events` 读流 → `rest_post` 发信 → 断连后 `_reconnect` 重建会话）。
+以下流程与 [src/tlon_client/sdk/base_client.py](../../src/tlon_client/sdk/base_client.py) 的 `BaseClient` 行为一致（`connect` → `authenticate` 建会话 → `_stream_events` 读流 → `rest_post` 发信 → 断连后 `_reconnect` 重建会话）。
 
 ### curl
 
@@ -496,4 +496,4 @@ with httpx.Client(base_url=BASE, timeout=None) as http:
     http.delete(f"/sessions/{session_id}")
 ```
 
-生产用法直接用 SDK：[app/clients/sdk/client.py](../../src/tlon/app/clients/sdk/client.py) 的 `TlonClient` 封装了以上全部（会话生命周期、SSE 重连、mode/filters 声明）。
+生产用法直接用 SDK：[tlon_client/sdk/client.py](../../src/tlon_client/sdk/client.py) 的 `TlonClient` 封装了以上全部（会话生命周期、SSE 重连、mode/filters 声明）。

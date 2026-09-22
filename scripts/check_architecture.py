@@ -9,7 +9,7 @@ Enforces DAG Component Architecture rules:
 
 Usage:
     python scripts/check_architecture.py [paths...]
-    python scripts/check_architecture.py src/tlon/app/server
+    python scripts/check_architecture.py src/tlon_server
 
 Exit codes:
     0 - No violations

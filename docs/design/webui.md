@@ -101,7 +101,7 @@ SSE 生命周期与 TUI 相同：`POST /sessions`（client_type 用 `"webui"`）
 ## 托管与运行
 
 - **开发**：`npm run dev`（vite dev server，`server.proxy` 把 REST/SSE 转发到 `127.0.0.1:8080`）。
-- **生产**：`npm run build` 出 `dist/`；`RESTServer` 增加静态托管——`GET /ui` 重定向到 `/ui/`，`/ui/` 直出 `index.html`（aiohttp 3.13 的 `add_static` 不再为目录根服务 index），`/ui/*` 映射到 `apps/webui/dist/`；`dist` 不存在时不注册该路由（条件注册，与 admin/traces 路由同一取向：能力缺失以缺路由表达，不伪装）。单端口开箱即用：`tlon dream` 的启动 banner 会打印 WebUI 地址（未构建时打印构建提示，见 [app/server/serverapp.py](../../src/tlon/app/server/serverapp.py) 的 `_startup_banner`），浏览器打开即可。
+- **生产**：`npm run build` 出 `dist/`；`RESTServer` 增加静态托管——`GET /ui` 重定向到 `/ui/`，`/ui/` 直出 `index.html`（aiohttp 3.13 的 `add_static` 不再为目录根服务 index），`/ui/*` 映射到 `apps/webui/dist/`；`dist` 不存在时不注册该路由（条件注册，与 admin/traces 路由同一取向：能力缺失以缺路由表达，不伪装）。单端口开箱即用：`tlon dream` 的启动 banner 会打印 WebUI 地址（未构建时打印构建提示，见 [tlon_server/serverapp.py](../../src/tlon_server/serverapp.py) 的 `_startup_banner`），浏览器打开即可。
 - CORS 服务端已全开，dev 跨域无障碍；生产同源无 CORS 问题。
 
 ## 边界

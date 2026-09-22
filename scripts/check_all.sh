@@ -56,7 +56,7 @@ if [ "$want_static" -eq 1 ]; then
     run "architecture"      uv run python scripts/check_architecture.py
     run "no-reexport"       uv run python scripts/check_no_reexport.py
     run "stage-purity"      uv run python scripts/check_stage_purity.py
-    run "mypy"              uv run mypy src/tlon src/tlosure
+    run "mypy"              uv run mypy src/tlon src/tlosure src/tlon_server src/tlon_client src/tlon_launcher
     run "lint-imports"      uv run lint-imports
     run "docs-freshness"    uv run python scripts/gen_reference_docs.py --check
     ts_run "webui-tests"    webui test

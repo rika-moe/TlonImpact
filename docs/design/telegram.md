@@ -16,7 +16,7 @@ Tlon 里人类是普通成员，经邮件网络与 agent 通信。现有人类�
 - bot 以 `client_type="telegram"` 建会话（服务端只校验非空字符串）；
 - chat 模式经 HumanAdapter 单轨投递，bot 只收到发给自己身份 `human:<username>` 的 `mail.delivered`；
 - 发信用 `POST /messages`，身份由 body 的 username 决定，无需活会话；
-- SDK（`src/tlon/app/clients/sdk/`）自带 SSE 断线重连；
+- SDK（`src/tlon_client/sdk/`）自带 SSE 断线重连；
 - 全链路出站连接（bot→Tlon 的 SSE/REST、bot→Telegram 的 polling），bot 无需公网 IP / webhook / 端口。
 
 ## 架构
@@ -32,7 +32,7 @@ bot 进程 = python-telegram-bot（polling）+ 官方 SDK `TlonClient`（chat �
 
 - **D1 身份模型——单用户 MVP**。bot 绑定一个 Tlon 身份（`--username` / `TLON_USERNAME`）；Telegram 侧用 user_id 白名单鉴权（`TELEGRAM_ALLOWED_USERS`，逗号分隔），白名单外消息一律忽略。多用户（每 Telegram 用户映射不同 Tlon 身份）架构上可行（每身份一条会话 + 一个 HumanAdapter），留作后续扩展。
 - **D2 发信交互——回复式为主，命令式为辅**。推送来信时记录 `telegram_message_id → mail_id` 映射（内存，重启降级）；用户对某条来信点 Telegram「回复」→ 自动带 `in_reply_to` / `thread_id` 发回该发件人；`/send <名字> <内容>` 发起新信（收件人 = 成员 local part）；`/inbox` 拉未读列表，启动时推未读摘要（离线回填）。
-- **D3 代码位置**：`src/tlon/app/clients/telegram/`（Python 客户端，与 `sdk/` 同层）。不放 `apps/`——那里是独立 TS 工程。import-linter 加一条 `app.clients.telegram` 契约（只依赖 sdk / base / python-telegram-bot）。
+- **D3 代码位置**：`src/tlon_client/telegram/`（Python 客户端，与 `sdk/` 同层）。不放 `apps/`——那里是独立 TS 工程。import-linter 加一条 `client.telegram` 契约（只依赖 sdk / base / python-telegram-bot）。
 - **D4 入口**：`tlon telegram`（launcher command，进程内直接跑，不经 subprocess）。参数复用 `--host` / `--rest-port` / `--username`。
 - **D5 配置**：`~/.tlon/.env` 新增 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_ALLOWED_USERS`，经 `tlon.base.settings` 读取。未配置时 `tlon telegram` 拒绝启动并打印配置指引。
 - **D6 依赖**：`python-telegram-bot` 走 optional extra（`uv sync --extra telegram`），不用此功能不装。
@@ -42,8 +42,8 @@ bot 进程 = python-telegram-bot（polling）+ 官方 SDK `TlonClient`（chat �
 
 新建：
 
-- `src/tlon/app/clients/telegram/`——`bot.py`（PTB 应用 + 消息路由）、`reply_map.py`（消息↔邮件映射 + 白名单校验，纯逻辑可测）；`adapter.py` 不重复——PR1 的 `sdk/adapter.py` TelegramAdapter 直接复用
-- `src/tlon/app/launcher/commands/telegram.py`
+- `src/tlon_client/telegram/`——`bot.py`（PTB 应用 + 消息路由）、`reply_map.py`（消息↔邮件映射 + 白名单校验，纯逻辑可测）；`adapter.py` 不重复——PR1 的 `sdk/adapter.py` TelegramAdapter 直接复用
+- `src/tlon_launcher/commands/telegram.py`
 - `src/tests/unit/test_telegram_bot.py`（映射 / 白名单 / 发信组包单测；收发链路参考 `test_sdk.py` 的 in-process 集成模式，PTB 侧以 deliver seam 打桩）
 
 修改（PR2）：`launcher/main.py`（注册命令）、`base/settings.py`（TELEGRAM_* 配置）、`pyproject.toml`（lint-imports 契约 + mypy override）、`README.md` / `AGENTS.md`（快速开始）。

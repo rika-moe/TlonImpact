@@ -45,7 +45,7 @@ logger = get_logger(__name__)
 class Runtime:
     """``build_runtime()`` 的装配结果：runtime 组件 + 六个 domain facade。
 
-    server（tlon.app.server）只许经 facade 字段触达 runtime；组件字段
+    server（tlon_server）只许经 facade 字段触达 runtime；组件字段
     留给生命周期管理（``shutdown``）与事件发布（``event_bus``）。
     """
 

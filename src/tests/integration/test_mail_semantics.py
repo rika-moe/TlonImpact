@@ -9,7 +9,7 @@ thread_id starts a new thread rooted at itself (Mail.create semantics).
 import uuid
 from pathlib import Path
 
-from tlon.app.clients.sdk.client import TlonClient
+from tlon_client.sdk.client import TlonClient
 
 from .conftest import _assert_delivered, _find_inbox_mail
 
