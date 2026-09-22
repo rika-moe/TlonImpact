@@ -44,9 +44,13 @@ from .sessions import SessionHandlers
 logger = get_logger("tlon_server.api.rest")
 
 # WebUI static hosting: built assets of apps/webui (npm run build).
-# Repository root: src/tlon_server/api/rest/app.py -> parents[4]
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-WEBUI_DIST_DIR = _REPO_ROOT / "apps" / "webui" / "dist"
+# Installed layout: bundled as package data at tlon_server/webui_dist/
+# (scripts/build_package.sh syncs it in before uv build).
+# Dev layout: apps/webui/dist in the repo checkout
+# (src/tlon_server/api/rest/app.py -> parents[4]).
+_PACKAGED_DIST = Path(__file__).resolve().parents[2] / "webui_dist"
+_REPO_DIST = Path(__file__).resolve().parents[4] / "apps" / "webui" / "dist"
+WEBUI_DIST_DIR = _PACKAGED_DIST if (_PACKAGED_DIST / "index.html").is_file() else _REPO_DIST
 
 
 class RESTAPIHandler(
