@@ -1,12 +1,21 @@
 """Shared fixtures and helpers for the integration suite.
 
-Each test boots a real ``tlon dream`` subprocess with an isolated
-TLON_HOME (function scope — isolation over speed). Helpers cover the
-common flows: waiting on conditions, asserting mail delivery, and
-reading a member's inbox.jsonl.
+Two server fixtures, two jobs:
+
+- ``inproc_server`` (default): drives ``ServerApp`` in-process over real
+  HTTP on an ephemeral 127.0.0.1 port, with an isolated TLON_HOME per
+  test (function scope — isolation over speed). Fast; the workhorse for
+  every protocol test.
+- ``tlon_server``: boots a real ``tlon dream`` subprocess. Kept as the
+  standing pin for the launcher/CLI path and the process boundary
+  (test_mail_smoke.py).
+
+Helpers cover the common flows: waiting on conditions, asserting mail
+delivery, and reading a member's inbox.jsonl.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import socket
@@ -19,7 +28,11 @@ from typing import Any
 import aiohttp
 import pytest
 
+from tlon.base.paths import TlonPaths
+from tlon_server.serverapp import ServerApp
+
 SERVER_STARTUP_TIMEOUT = 45.0
+SERVER_SHUTDOWN_TIMEOUT = 15.0
 DELIVERY_TIMEOUT = 10.0
 
 
@@ -129,6 +142,88 @@ async def tlon_server() -> AsyncGenerator[tuple[str, Path]]:
     Yields (base_url, tlon_home). Function scope — isolation over speed.
     """
     async with _run_server() as server:
+        yield server
+
+
+async def _wait_ready_http(base_url: str, start_task: asyncio.Task[None]) -> None:
+    """Poll GET /inbox until the in-process REST API answers 200.
+
+    ``ServerApp.start()`` returns only after the port is bound, but the
+    probe stays (milliseconds in-process): a bound socket is not proof
+    the app serves. A dead start task fails fast instead of timing out.
+    """
+    deadline = asyncio.get_running_loop().time() + SERVER_STARTUP_TIMEOUT
+    async with aiohttp.ClientSession() as session:
+        while True:
+            if start_task.done():
+                raise RuntimeError(
+                    f"ServerApp.start() exited during startup: {start_task.exception()!r}"
+                )
+            try:
+                async with session.get(f"{base_url}/inbox", params={"username": "smoke"}) as resp:
+                    if resp.status == 200:
+                        return
+            except aiohttp.ClientError:
+                pass  # Server not listening yet
+            if asyncio.get_running_loop().time() > deadline:
+                raise TimeoutError(
+                    f"in-process ServerApp not ready within {SERVER_STARTUP_TIMEOUT}s"
+                )
+            await asyncio.sleep(0.05)
+
+
+@asynccontextmanager
+async def _run_inprocess(
+    extra_env: dict[str, str] | None = None,
+) -> AsyncGenerator[tuple[str, Path]]:
+    """Boot ``ServerApp`` in-process with an isolated TLON_HOME.
+
+    Yields (base_url, tlon_home) — the same shape as ``_run_server``, so
+    tests assert against real HTTP over 127.0.0.1 on an ephemeral port,
+    unchanged. ``extra_env`` (e.g. TLON_ADMIN_TOKEN) is applied to the
+    process environment and the lazy ``tlon.base.settings`` singleton is
+    reset so the server re-resolves settings from it; both are restored
+    on teardown. Shutdown is timeout-guarded so a stuck runtime fails the
+    test instead of hanging the suite.
+    """
+    port = _free_port()
+    with (
+        tempfile.TemporaryDirectory(prefix="tlon-inproc-") as tlon_home,
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        for key, value in (extra_env or {}).items():
+            mp.setenv(key, value)
+        mp.setattr("tlon.base.settings._settings", None)
+        app = ServerApp(
+            host="127.0.0.1",
+            rest_port=port,
+            tlon_paths=TlonPaths(home=Path(tlon_home)),
+        )
+        await app.initialize()
+        # start() blocks on the shutdown event after binding, so it
+        # runs as a task; shutdown() unblocks it.
+        start_task = asyncio.create_task(app.start())
+        base_url = f"http://127.0.0.1:{port}"
+        try:
+            await _wait_ready_http(base_url, start_task)
+            yield base_url, Path(tlon_home)
+        finally:
+            try:
+                await asyncio.wait_for(app.shutdown(), timeout=SERVER_SHUTDOWN_TIMEOUT)
+            finally:
+                if not start_task.done():
+                    start_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await start_task
+
+
+@pytest.fixture
+async def inproc_server() -> AsyncGenerator[tuple[str, Path]]:
+    """Boot ``ServerApp`` in-process with an isolated TLON_HOME.
+
+    Yields (base_url, tlon_home). Function scope — isolation over speed.
+    """
+    async with _run_inprocess() as server:
         yield server
 
 

@@ -3,7 +3,7 @@
 With TLON_ADMIN_TOKEN configured, every /admin/* request must carry
 ``Authorization: Bearer <token>``; non-admin endpoints stay open. The
 default (token unset) behavior — admin endpoints open — is covered by
-test_admin_agents.py against the plain ``tlon_server`` fixture.
+test_admin_agents.py against a server without TLON_ADMIN_TOKEN.
 """
 
 import uuid
@@ -14,15 +14,15 @@ from typing import Any
 import aiohttp
 import pytest
 
-from .conftest import _run_server
+from .conftest import _run_inprocess
 
 ADMIN_TOKEN = f"test-token-{uuid.uuid4().hex}"
 
 
 @pytest.fixture
 async def authed_server() -> AsyncGenerator[tuple[str, Path]]:
-    """A dream subprocess with TLON_ADMIN_TOKEN configured."""
-    async with _run_server({"TLON_ADMIN_TOKEN": ADMIN_TOKEN}) as server:
+    """An in-process server with TLON_ADMIN_TOKEN configured."""
+    async with _run_inprocess({"TLON_ADMIN_TOKEN": ADMIN_TOKEN}) as server:
         yield server
 
 

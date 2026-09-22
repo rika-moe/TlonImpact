@@ -151,6 +151,31 @@ def _make_ceremony(
     return ceremony, retired
 
 
+async def test_removed_member_skips_ceremony(tmp_path: Path) -> None:
+    """AGENT_STOPPED with removed=True (administrative removal) skips the
+    whole ceremony: no archive resurrection on disk, no AGENT_RETIRED."""
+    p = TlonPaths(home=tmp_path)
+    bus = EventBus()
+    await bus.initialize()
+    llm = _FakeLLM("不该被调用")
+    ceremony, retired = _make_ceremony(bus, p, llm)
+    try:
+        await ceremony._on_agent_stopped(
+            Event(
+                type=EventType.AGENT_STOPPED,
+                payload={"agent_id": "gone", "stopped_by": "admin-api", "removed": True},
+                source="agent_registry",
+            )
+        )
+
+        await asyncio.sleep(0.05)  # give any misfired handler a chance
+        assert not (tmp_path / "gone").exists()
+        assert retired == []
+        assert llm.calls == []
+    finally:
+        await bus.shutdown()
+
+
 async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
     """Full bus path: AGENT_STOPPED -> inventory -> farewell letter lands
     in the spawner's inbox + AGENT_RETIRED with the handover payload."""

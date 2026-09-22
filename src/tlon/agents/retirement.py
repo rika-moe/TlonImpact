@@ -21,6 +21,10 @@ list (nothing is lost at death); picking items up is the recipient's
 
 Skip conditions (same discipline as LessonsDistiller — this is post-hoc
 bookkeeping, the stop is already done):
+- administrative removal (``removed=True`` in the payload, set by
+  ``AgentRegistry.remove_member``) — removal is not retirement: the
+  member's home is already deleted, there is no archive to inventory,
+  so the whole ceremony is skipped and no AGENT_RETIRED goes out
 - nothing to hand over (non-cognitive member with no unfinished
   tasks/threads, or an empty archive) — the event still goes out
 - LLM failure — logged, never raised; the event goes out with
@@ -121,14 +125,25 @@ class RetirementCeremony(Component, Device):
         logger.info("retirement_ceremony_shutdown")
 
     async def _on_agent_stopped(self, event: Event) -> None:
-        """Hold one stopped member's ceremony; never raised failures."""
+        """Hold one stopped member's ceremony; never raised failures.
+
+        Administrative removal is not retirement: ``removed=True`` in the
+        payload (AgentRegistry.remove_member) means the member's home was
+        already deleted, so there is no archive to inventory — the whole
+        ceremony is skipped (no inventory, no farewell, no AGENT_RETIRED).
+        """
         agent_id = ""
         stopped_by = ""
+        removed = False
         if isinstance(event.payload, dict):
             agent_id = str(event.payload.get("agent_id") or "")
             stopped_by = str(event.payload.get("stopped_by") or "")
+            removed = bool(event.payload.get("removed"))
         if not agent_id:
             logger.warning("retirement_no_agent_id")
+            return
+        if removed:
+            logger.info("retirement_skipped_removed", agent_id=agent_id)
             return
         try:
             await self._hold_ceremony(agent_id, stopped_by)

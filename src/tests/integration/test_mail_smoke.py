@@ -5,7 +5,10 @@ isolated TLON_HOME, send mail through the SDK, assert it lands in the
 recipient's inbox.jsonl. The delivery path (POST /messages -> event bus
 -> MailDelivery) touches neither LLM nor Docker, so it runs in plain CI.
 
-The server fixture and shared helpers live in conftest.py.
+Division of labor: this file deliberately keeps the ``tlon_server``
+subprocess fixture as the standing pin for the launcher/CLI entry point
+and the process boundary; every other integration test drives ServerApp
+in-process via the ``inproc_server`` fixture (see conftest.py).
 """
 
 import uuid

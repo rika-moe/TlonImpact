@@ -14,9 +14,9 @@ from tlon_client.sdk.client import TlonClient
 from .conftest import _assert_delivered, _find_inbox_mail
 
 
-async def test_cc_reaches_all_recipients(tlon_server: tuple[str, Path]) -> None:
+async def test_cc_reaches_all_recipients(inproc_server: tuple[str, Path]) -> None:
     """A mail with to + cc lands in both mailboxes with correct fields."""
-    base_url, tlon_home = tlon_server
+    base_url, tlon_home = inproc_server
     token = f"cc-{uuid.uuid4().hex}"
 
     async with TlonClient(base_url=base_url) as client:
@@ -36,9 +36,9 @@ async def test_cc_reaches_all_recipients(tlon_server: tuple[str, Path]) -> None:
     assert mail["cc"] == ["carol@tlon.internal"]
 
 
-async def test_reply_threads(tlon_server: tuple[str, Path]) -> None:
+async def test_reply_threads(inproc_server: tuple[str, Path]) -> None:
     """Replies record in_reply_to; thread_id is inherited only when passed."""
-    base_url, tlon_home = tlon_server
+    base_url, tlon_home = inproc_server
     token_a = f"thread-a-{uuid.uuid4().hex}"
     token_b = f"thread-b-{uuid.uuid4().hex}"
     token_c = f"thread-c-{uuid.uuid4().hex}"

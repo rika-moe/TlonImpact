@@ -4,7 +4,9 @@ Covers GET/POST/PATCH/DELETE /admin/config/agents: a create -> list ->
 update -> delete lifecycle over the hot-adopt path, plus the validation
 branches (missing fields, unknown prototype, unknown agent). Presence is
 asserted both through GET /admin/config/agents and on the filesystem
-(the member home under TLON_HOME).
+(the member home under TLON_HOME). The DELETE -> "home directory gone"
+assertion relies on RetirementCeremony skipping administrative removals
+(``removed=True``) instead of resurrecting the deleted home.
 """
 
 import uuid
@@ -14,9 +16,9 @@ from typing import Any
 import aiohttp
 
 
-async def test_agent_config_crud_lifecycle(tlon_server: tuple[str, Path]) -> None:
+async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> None:
     """create -> patched -> deleted -> home directory gone."""
-    base_url, tlon_home = tlon_server
+    base_url, tlon_home = inproc_server
     name = f"测试员-{uuid.uuid4().hex[:8]}"
 
     async with aiohttp.ClientSession() as http:
@@ -64,9 +66,9 @@ async def test_agent_config_crud_lifecycle(tlon_server: tuple[str, Path]) -> Non
         assert agent_id not in {a["id"] for a in after["agents"]}
 
 
-async def test_agent_config_validation(tlon_server: tuple[str, Path]) -> None:
+async def test_agent_config_validation(inproc_server: tuple[str, Path]) -> None:
     """Validation branches: missing fields, unknown prototype/agent."""
-    base_url, _ = tlon_server
+    base_url, _ = inproc_server
     bogus_id = f"m-nope-{uuid.uuid4().hex[:8]}"
 
     async with aiohttp.ClientSession() as http:

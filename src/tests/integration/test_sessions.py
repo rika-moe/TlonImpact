@@ -26,9 +26,9 @@ async def _session_ids(http: aiohttp.ClientSession, base_url: str) -> list[str]:
     return [s["id"] for s in data["sessions"]]
 
 
-async def test_sdk_session_lifecycle(tlon_server: tuple[str, Path]) -> None:
+async def test_sdk_session_lifecycle(inproc_server: tuple[str, Path]) -> None:
     """SDK authenticate -> set_mode -> disconnect drives POST/PATCH/DELETE."""
-    base_url, _ = tlon_server
+    base_url, _ = inproc_server
 
     async with TlonClient(base_url=base_url) as client:
         assert await client.authenticate(username="alice")
@@ -51,9 +51,9 @@ async def test_sdk_session_lifecycle(tlon_server: tuple[str, Path]) -> None:
             await asyncio.sleep(0.05)
 
 
-async def test_session_edge_cases(tlon_server: tuple[str, Path]) -> None:
+async def test_session_edge_cases(inproc_server: tuple[str, Path]) -> None:
     """Raw-HTTP edge cases: validation errors and idempotent delete."""
-    base_url, _ = tlon_server
+    base_url, _ = inproc_server
     suffix = uuid.uuid4().hex[:8]
 
     async with aiohttp.ClientSession() as http:

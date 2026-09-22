@@ -53,9 +53,9 @@ async def _read_event_with_token(resp: aiohttp.ClientResponse, token: str) -> di
     return await asyncio.wait_for(_scan(), timeout=EVENT_TIMEOUT)
 
 
-async def test_mail_delivered_pushed_to_sse_stream(tlon_server: tuple[str, Path]) -> None:
+async def test_mail_delivered_pushed_to_sse_stream(inproc_server: tuple[str, Path]) -> None:
     """Mail to the session's username arrives as a mail.delivered frame."""
-    base_url, _ = tlon_server
+    base_url, _ = inproc_server
     token = f"sse-{uuid.uuid4().hex}"
 
     async with aiohttp.ClientSession() as http:
@@ -90,10 +90,10 @@ async def test_mail_delivered_pushed_to_sse_stream(tlon_server: tuple[str, Path]
 
 
 async def test_duplicate_stream_rejected_and_unknown_session_404(
-    tlon_server: tuple[str, Path],
+    inproc_server: tuple[str, Path],
 ) -> None:
     """One stream per session (409 on a second open); unknown -> 404."""
-    base_url, _ = tlon_server
+    base_url, _ = inproc_server
 
     async with aiohttp.ClientSession() as http:
         async with http.get(
