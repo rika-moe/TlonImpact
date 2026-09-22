@@ -37,7 +37,8 @@
 | [design/deepseek-harness-review.md](./design/deepseek-harness-review.md) | 外部调研：dsh 对 Tlon 的可借鉴点（方向讨论输入材料，非决策） | ✅ |
 | [design/skills.md](./design/skills.md) | Skill 能力：开放标准 SKILL.md、三层目录、progressive disclosure | ✅ |
 | [design/telegram.md](./design/telegram.md) | Telegram 客户端（MVP）：单用户白名单、回复式收发、SDK 接入 | ✅ |
-| [reference/dsl-reference.md](./reference/dsl-reference.md) | EDN 语法、MemberSpec 全字段、builtin/stage/section 清单 | ✅ |
+| [reference/tlosure-reference.md](./reference/tlosure-reference.md) | tlosure 语言核心：EDN 语法、求值器、燃料计量、特殊形式、通用词汇 | ✅ |
+| [reference/dsl-reference.md](./reference/dsl-reference.md) | tlon 宿主侧：MemberSpec 全字段、领域 builtin、stage/section 清单 | ✅ |
 | [reference/config-reference.md](./reference/config-reference.md) | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
 | [reference/tools-reference.md](./reference/tools-reference.md) | 全部工具的参数与语义 | ✅ |
 | [reference/api-reference.md](./reference/api-reference.md) | REST/SSE 端点与事件帧格式 | ✅ |

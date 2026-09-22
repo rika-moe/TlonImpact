@@ -10,11 +10,15 @@ handwritten; only the drift-prone inventories are generated:
   with the ``Tool`` subclasses under src/tlon/tools/.
 - ``event-types`` in docs/reference/api-reference.md — the flat EventType
   enum table from base/events/event.py (wire value + trailing comment).
-- ``dsl-special-forms`` / ``dsl-on-events`` / ``dsl-builtins-*`` /
-  ``dsl-loop-names`` in docs/reference/dsl-reference.md — the DSL
-  whitelists (special forms, ``:on`` event keywords, builtin registries,
-  stage/section names) from tlosure/eval.py, tlosure/builtins.py,
-  agents/vocabulary.py and agents/member_spec.py.
+- ``dsl-special-forms`` / ``dsl-builtins-core`` / ``dsl-builtins-arithmetic``
+  in docs/reference/tlosure-reference.md — the language-level whitelists
+  (special forms from tlosure/eval.py, the general ``CORE_BUILTINS`` and
+  ``ARITHMETIC_BUILTINS`` vocabularies from tlosure/builtins.py).
+- ``dsl-on-events`` / ``dsl-builtins-{trigger,loop,stage-cond,script}`` /
+  ``dsl-loop-names`` in docs/reference/dsl-reference.md — the host-side
+  inventories (``:on`` event keywords, tlon's domain builtin registries
+  from agents/vocabulary.py, stage/section names from
+  agents/member_spec.py).
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
   the route table from ``RESTAPIHandler.create_app`` (with registration
   conditions) and the ``MODE_EVENT_PATTERNS`` mode semantics.
@@ -60,6 +64,7 @@ SETTINGS_FILE = SRC / "base" / "settings.py"
 TOOLS_REF = REPO_ROOT / "docs" / "reference" / "tools-reference.md"
 API_REF = REPO_ROOT / "docs" / "reference" / "api-reference.md"
 DSL_REF = REPO_ROOT / "docs" / "reference" / "dsl-reference.md"
+TLOSURE_REF = REPO_ROOT / "docs" / "reference" / "tlosure-reference.md"
 CONFIG_REF = REPO_ROOT / "docs" / "reference" / "config-reference.md"
 
 GENERATED_NOTE = (
@@ -671,14 +676,14 @@ def _cell(text: str) -> str:
 
 
 def render_dsl_special_forms() -> str:
-    """SPECIAL_FORMS whitelist for docs/reference/dsl-reference.md §4.1."""
+    """SPECIAL_FORMS whitelist for docs/reference/tlosure-reference.md §2.1."""
     forms = _frozenset_strings(EVAL_FILE, "SPECIAL_FORMS")
     names = "、".join(f"`{f}`" for f in forms)
     return f"封闭白名单（{len(forms)} 个）：{names}。{GENERATED_NOTE}"
 
 
 def render_dsl_on_events() -> str:
-    """Legal ``:on`` keywords for docs/reference/dsl-reference.md §3.1."""
+    """Legal ``:on`` keywords for docs/reference/dsl-reference.md §2.1."""
     events = event_types()
     rows = [
         "| `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |"
@@ -696,7 +701,9 @@ def render_dsl_on_events() -> str:
 
 
 def render_builtin_table(registry: str, path: Path) -> str:
-    """One builtin registry table for docs/reference/dsl-reference.md §5."""
+    """One builtin registry table for the DSL reference docs (the general
+    vocabularies land in tlosure-reference.md §3, the host registries in
+    dsl-reference.md §4)."""
     entries = builtin_registry(registry, path)
     rows = []
     for e in entries:
@@ -711,7 +718,7 @@ def render_builtin_table(registry: str, path: Path) -> str:
 
 
 def render_dsl_loop_names() -> str:
-    """STAGE_NAMES / SECTION_NAMES for docs/reference/dsl-reference.md §6."""
+    """STAGE_NAMES / SECTION_NAMES for docs/reference/dsl-reference.md §5."""
     stages = sorted(_frozenset_strings(MEMBER_SPEC_FILE, "STAGE_NAMES"))
     sections = sorted(_frozenset_strings(MEMBER_SPEC_FILE, "SECTION_NAMES"))
     stage_list = "、".join(f"`{s}`" for s in stages)
@@ -785,7 +792,13 @@ def _render_sections() -> dict[tuple[Path, str], str]:
     return {
         (TOOLS_REF, "tool-registry"): render_tool_registry(),
         (API_REF, "event-types"): render_event_types(),
-        (DSL_REF, "dsl-special-forms"): render_dsl_special_forms(),
+        (TLOSURE_REF, "dsl-special-forms"): render_dsl_special_forms(),
+        (TLOSURE_REF, "dsl-builtins-core"): render_builtin_table(
+            "CORE_BUILTINS", BUILTINS_FILE
+        ),
+        (TLOSURE_REF, "dsl-builtins-arithmetic"): render_builtin_table(
+            "ARITHMETIC_BUILTINS", BUILTINS_FILE
+        ),
         (DSL_REF, "dsl-on-events"): render_dsl_on_events(),
         (DSL_REF, "dsl-builtins-trigger"): render_builtin_table(
             "TRIGGER_BUILTINS", VOCABULARY_FILE
@@ -796,9 +809,6 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         ),
         (DSL_REF, "dsl-builtins-script"): render_builtin_table(
             "SCRIPT_BUILTINS", VOCABULARY_FILE
-        ),
-        (DSL_REF, "dsl-builtins-arithmetic"): render_builtin_table(
-            "ARITHMETIC_BUILTINS", BUILTINS_FILE
         ),
         (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
         (API_REF, "rest-endpoints"): render_rest_endpoints(),

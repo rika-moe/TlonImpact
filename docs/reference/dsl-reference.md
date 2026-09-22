@@ -2,33 +2,11 @@
 
 每个成员的行为由一份 `behavior.tlon` 描述（Lisp 风格 EDN），由统一解释器 `MemberRuntime`（[src/tlon/agents/member_runtime.py](../../src/tlon/agents/member_runtime.py)）执行。本文是该 DSL 的完整语义参考，一切以代码为准；语义权威是 [src/tlon/agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` 数据模型，EDN 只是它的序列化前端。
 
-## 1. EDN 语法速览
+**本文的定位**：tlon 宿主侧手册——MemberSpec schema 与领域词汇。语言核心（EDN 语法、求值器、燃料计量、特殊形式、通用词汇）已独立成文，见 [tlosure-reference.md](./tlosure-reference.md)；下文涉及语言机制处只给一句话与链接，不再展开。
 
-解析器：[src/tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads()`。只解析数据，不求值。
+## 1. MemberSpec 顶层结构
 
-| 字面量 | 例子 | 解析结果 |
-|---|---|---|
-| 空 / 布尔 | `nil` `true` `false` | `None` / `True` / `False` |
-| 整数 | `42` `-7` `+3` | `int`（布尔值不被接受为 int） |
-| 浮点 | `1.5` `1e3` `-2.5e-2` | `float` |
-| 字符串 | `"你好\n"` | `str`，支持转义 `\"` `\\` `\n` `\t` `\r` `\b` `\f` `\uXXXX` |
-| 关键字 | `:mail-delivered` | `Keyword`（str 子类，不含前导冒号） |
-| 符号 | `react` `=` `content-matches?` | `Symbol`（str 子类） |
-| 向量 | `[1 2 3]` | 普通 list —— **数据** |
-| 列表 | `(think)` | `Form`（list 子类）—— **代码**，由求值器解释 |
-| 映射 | `{:a 1 :b 2}` | dict；必须偶数个表单项，否则报解析错误 |
-| 注释 | `; 到行尾` | 跳过；逗号视为空白 |
-
-要点（[src/tlosure/edn.py](../../src/tlosure/edn.py) 模块 docstring）：
-
-- `(...)` 与 `[...]` 语义不同：列表是表达式，向量是数据。`:when`、`:until`、stage、section、action 字段都必须是 `(...)` 形式。
-- `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlosure/builtins.py](../../src/tlosure/builtins.py) 的 `_value_equal`）。
-- 符号可用字符集：字母、数字及 `*+!-_?./<>=`，所以 `addressed-to-me?`、`>=`、`start-all` 都是合法符号。
-- 解析失败抛 `EDNParseError`，带 1 起始的行列号。
-
-## 2. MemberSpec 顶层结构
-
-文件必须是一个顶层 map（`MemberSpec.from_edn`）：
+文件必须是一个顶层 map（`MemberSpec.from_edn`）；EDN 语法本身见 [tlosure-reference.md](./tlosure-reference.md) 第 1 节。
 
 ```clojure
 {:version 1
@@ -39,13 +17,13 @@
 |---|---|---|---|
 | `:version` | int | 是 | 只支持 `1`（`MEMBER_SPEC_VERSION`），其他值加载即拒绝 |
 | `:rules` | 向量 | 是 | 规则列表，**不得为空**；每项是一个 map |
-| `:parameters` | map | 否 | 模板参数声明（见第 8 节），运行时加载器忽略 |
+| `:parameters` | map | 否 | 模板参数声明（见第 7 节），运行时加载器忽略 |
 | `:llm` | — | — | **已从语法移除**（ADR 0016：模型是部署策略不是基因型）——残留该键加载即报错；成员的模型在 agent.yaml 的 `llm.model_name` 配置（创建时经 WebUI/admin API 选择，spawn 继承父成员） |
 | 其他键 | — | — | 未知键记 warning 后忽略（前向兼容） |
 
 **total 语义**（`MemberSpec.from_dict` docstring）：缺必填字段是错误，不给默认值；类型错误同样拒绝。加载路径 `load_member_spec()`（[src/tlon/agents/loader.py](../../src/tlon/agents/loader.py)）：文件不存在抛 `FileNotFoundError`，EDN 非法抛 `EDNParseError`，校验失败抛 `MemberSpecValidationError`——任何失败都使该成员拒绝启动（注册表隔离失败，不影响其他成员）。
 
-## 3. 规则四要素
+## 2. 规则四要素
 
 规则 = `:on` + `:when` + 可选 `:loop` + `:actions`（`MemberRule`）。
 
@@ -63,11 +41,11 @@
 | `:name` | 字符串 | 是 | 规则名，用于日志与报错 |
 | `:on` | 关键字 | 是 | 触发事件类型；`:boot` 或 `nil` 表示启动规则（见下） |
 | `:when` | 表达式 form | 否 | 纯谓词门控；缺省 = 恒真 |
-| `:loop` | map | 否 | 认知会话（见第 6 节）；有它 = 认知规则，无它 = 确定规则 |
+| `:loop` | map | 否 | 认知会话（见第 5 节）；有它 = 认知规则，无它 = 确定规则 |
 | `:actions` | 向量 | 否 | 动作 form 列表；每项必须是非空 form |
-| `:fuel` | int | 否 | 本条规则的求值预算；须为正且 ≤ 10000（`MAX_FUEL`），见第 4 节 |
+| `:fuel` | int | 否 | 本条规则的求值预算；须为正且 ≤ 10000（`MAX_FUEL`）；计量机制见 [tlosure-reference.md](./tlosure-reference.md) 第 2.2 节，多段表达式如何记账见第 3 节 |
 
-### 3.1 `:on` 可选事件
+### 2.1 `:on` 可选事件
 
 `:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（[src/tlon/base/events/event.py](../../src/tlon/base/events/event.py)，转换逻辑在 `member_spec._on_from`）。合法值：
 
@@ -116,64 +94,35 @@
 
 约束（`MemberRuntime._on_event`）：**认知规则（带 `:loop`）只在 `:mail-delivered` 上生效**，订阅其他事件会在运行时记 warning 并跳过。
 
-### 3.2 `:when` 门控
+### 2.2 `:when` 门控
 
-- 纯表达式，环境为 `{msg, event, self}`：`msg` 是事件负载中的 `Mail`（非邮件事件为 `nil`），`event` 是事件负载 map，`self` 是 `{"id" ..., "name" ...}`。
+- 纯表达式（纯度约束见第 3 节），环境为 `{msg, event, self}`：`msg` 是事件负载中的 `Mail`（非邮件事件为 `nil`），`event` 是事件负载 map，`self` 是 `{"id" ..., "name" ..., "address" ...}`（address 由宿主预派生注入，ADR 0018 §3——mail 谓词据此解析"我"）。
 - 求值失败（含 fuel 耗尽）安全降级为"不命中"（`MemberRuntime._should_respond`）。
 - 确定规则：`:when` 为假则跳过整条规则的 `:actions`。
 - 认知规则：`:when` 为假则不入队会话，且该邮件立即标记已读（D6.1）。
 
-### 3.3 命中后的执行顺序
+### 2.3 命中后的执行顺序
 
 - 认知规则：先跑 `:loop` 会话，会话完成后再跑 `:actions`（`OnCompleteRunner`，此时环境额外绑定 `result` 为最终回复文本）。
 - 确定规则：直接逐条求值 `:actions` 并执行产出的 `ActionRequest`。
 
 **同一成员至多一条认知规则**（D6.7，`validate_member_spec`）；超过一条加载即拒绝。
 
-## 4. 求值器
+## 3. 纯度约束与求值托管（宿主视角）
 
-受限求值器：[src/tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form()`。
+求值器机制本身——特殊形式白名单、fuel 计量与终止保证、求值无副作用与 `ActionRequest` 数据机制——是语言规范，见 [tlosure-reference.md](./tlosure-reference.md) 第 2 节，不在这里重复。本节只记 tlon 宿主侧的闸与记账方式（"DSL 描述，引擎执行"）：
 
-### 4.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
-
-无 `def`、无 `lambda`、无宏、无可变全局状态；除下列形式外，form 头必须是已注册的 builtin 名。
-
-<!-- BEGIN GENERATED: dsl-special-forms -->
-封闭白名单（10 个）：`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-<!-- END GENERATED: dsl-special-forms -->
-
-| 形式 | 形状 | 语义 |
-|---|---|---|
-| `if` | `(if test then [else])` | 2 或 3 参；无 else 且 test 为假时得 `nil` |
-| `when` | `(when test body...)` | test 为假得 `nil`；否则依次求值 body，返回最后一个 |
-| `let` | `(let [name init ...] body...)` | 绑定向量须偶数项；init 按序求值、后者可见前者 |
-| `and` / `or` | `(and a...)` / `(or a...)` | 短路；`and` 返回第一个假值或末值，`or` 返回第一个真值或 `nil` |
-| `while` | `(while [name init ...] test body...)` | Clojure 风格有界循环：test 为假结束（返回 `nil`），body 末值即循环值；迭代靠 `recur` |
-| `recur` | `(recur v...)` | 只能出现在**最近一层 `while` 的尾位置**（`if` 分支、`when`/`let` 末尾 body、`and`/`or` 末参数继承尾位置）；参数个数须等于 `while` 绑定数；参数先在旧环境求值再同时重绑 |
-| `map` | `(map x body coll)` | 对向量逐元素绑定 `x` 求值 body，收集结果向量。**注意参数顺序是绑定、body、集合** |
-| `filter` | `(filter x body coll)` | 同上，收集 body 为真的元素本身 |
-| `reduce` | `(reduce acc x body init coll)` | 五个参数：累加器名、元素名、body、初值、集合 |
-
-求真值按 Python 语义：`nil`/`false`/`0`/`""`/`[]` 均为假。
-
-### 4.2 计量与终止
-
-- 每个求值步消耗 1 单位 **fuel**，耗尽抛 `FuelExhaustedError`；form 嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。递归不可能（无法命名函数），`while`/`recur` 表达能力等价图灵机，**终止性由 fuel 保证**。
-- fuel 默认值（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部常量）：`:when` 门控 200（`DEFAULT_WHEN_FUEL`），动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。
-- 声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
-
-### 4.3 纯度约束（"DSL 描述，引擎执行"）
-
-- 求值永不产生副作用。动作 builtin（`pure=False`）只校验参数并产出 `ActionRequest` 数据，由引擎在求值结束后执行。
+- 动作 builtin（`pure=False`，见第 4.5 节）只校验参数并产出 `ActionRequest` 数据，由引擎在求值结束后执行；求值过程本身永不产生副作用。
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
-- **动作位置允许的包装形式只有 `when` / `while` / `map`**（`validate_member_action`）：`(when cond (spawn ...) (emit ...))`、`(while [i 0] (< i 3) (emit ...) (recur (inc i)))`、`(map x (forward {:to [x]}) ["a" "b"])`。`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。
+- **动作位置闸 `validate_member_action`**（[src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)）：`:when` 门控必须是纯表达式；动作位置允许的包装形式只有 `when` / `while` / `map`——`(when cond (spawn ...) (emit ...))`、`(while [i 0] (< i 3) (emit ...) (recur (inc i)))`、`(map x (forward {:to [x]}) ["a" "b"])`。`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。
+- fuel 记账：默认值 `:when` 门控 200（`DEFAULT_WHEN_FUEL`）、动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
 
-## 5. Builtin 完整清单
+## 4. Builtin 完整清单
 
-领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)（`ARITHMETIC_BUILTINS` 与通用词汇留在 [src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 5.6 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
+语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
-### 5.1 `TRIGGER_BUILTINS`（触发器谓词）
+### 4.1 `TRIGGER_BUILTINS`（触发器谓词）
 
 `:when` 门控可用，环境 `{msg, event, self}`。
 
@@ -191,7 +140,7 @@
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-trigger -->
 
-### 5.2 `LOOP_BUILTINS`（loop `:until` 谓词）
+### 4.2 `LOOP_BUILTINS`（loop `:until` 谓词）
 
 环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n}`（`error_count` 是**连续** think 失败数——think 成功一次即清零，不是会话累计值），`limits` = `{:max_iterations n :max_consecutive_errors n}`。键缺失安全返回 `false`，不抛错。
 
@@ -206,9 +155,9 @@
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-loop -->
 
-### 5.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
+### 4.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
 
-环境 `{state, scratch, round}`；`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 6 节）；`round` = `{:completing bool}`——响应链上的本轮响应若派发是否会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence` 调用，判定与 act 的完成/冲突规则一致）。
+环境 `{state, scratch, round}`；`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 5 节）；`round` = `{:completing bool}`——响应链上的本轮响应若派发是否会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence` 调用，判定与 act 的完成/冲突规则一致）。
 
 <!-- BEGIN GENERATED: dsl-builtins-stage-cond -->
 `STAGE_COND_BUILTINS`（7 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
@@ -224,7 +173,7 @@
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-stage-cond -->
 
-### 5.4 `SCRIPT_BUILTINS`（确定规则纯访问器）
+### 4.4 `SCRIPT_BUILTINS`（确定规则纯访问器）
 
 环境 `{event, self}`：`event` 是触发事件的负载 map。
 
@@ -240,27 +189,7 @@
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-script -->
 
-### 5.5 `ARITHMETIC_BUILTINS`（算术）
-
-任意元算术与二元数值比较；拒绝布尔与非数字。
-
-<!-- BEGIN GENERATED: dsl-builtins-arithmetic -->
-`ARITHMETIC_BUILTINS`（9 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
-
-| 名称 | pure | 说明 |
-|---|---|---|
-| `+` | 是 |  |
-| `-` | 是 |  |
-| `*` | 是 |  |
-| `inc` | 是 |  |
-| `dec` | 是 |  |
-| `<` | 是 |  |
-| `>` | 是 |  |
-| `<=` | 是 |  |
-| `>=` | 是 |  |
-<!-- END GENERATED: dsl-builtins-arithmetic -->
-
-### 5.6 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
+### 4.5 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
 
 动作 builtin 不在模块级注册表——它们由 `make_member_builtins` 以闭包定义、按调用方装配（`collector` / `host` 注入），因此本表手写维护。`:actions` 里的每个 form 头必须是这六个之一（或 `when`/`while`/`map` 包装）。
 
@@ -273,7 +202,7 @@
 | `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；候选集展开依赖宿主查询注入——无宿主的注册表运行时会抛 `EvalError` |
 | `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发触发邮件：`:to` 必填非空地址向量，`:cc` 可选向量，`:subject` 可选字符串；正文取自触发邮件，新邮件以 `forward_of` 链接原邮件；无触发邮件时跳过并记 warning |
 
-## 6. `:loop` 详解（认知会话）
+## 5. `:loop` 详解（认知会话）
 
 <!-- BEGIN GENERATED: dsl-loop-names -->
 合法名称全集（生成自 `member_spec.py`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
@@ -307,7 +236,7 @@
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
 
-### 6.1 `:sections`（`SECTION_NAMES`，8 种）
+### 5.1 `:sections`（`SECTION_NAMES`，8 种）
 
 `persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 追加到对话上下文（`ContextBuilder`）。section 名不得重复。**位置语义例外（ADR 0017 阶段 4，2026-09-17）**：`knowledge` 不随向量顺序落位——它固定注入为整个 context 的最后一条（当前邮件之后、压缩锚点 anchor 之外），声明只控制「是否包含」；其余段按向量顺序追加。
 
@@ -324,9 +253,9 @@
 | `(thread-recap)` | 无 | 本线程最近一个已完成 session 的简报（触发、工具调用摘要、结论）拼成 `[本线程上一轮处理摘要]` 用户消息（issue ）：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随线程长度膨胀；线程首轮、上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section |
 | `(mail-history n)` | 一个非负 int | 取邮箱最近 n 封邮件进对话上下文 |
 
-### 6.2 五个 stage（`STAGE_NAMES`）
+### 5.2 五个 stage（`STAGE_NAMES`）
 
-stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>`（用 5.3 的谓词；条件为假或求值失败都跳过该 stage）。仅 `plan` 额外支持 `:max-steps <正整数>`（默认 5）。其余 opts 键加载即拒绝。
+stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>`（用 4.3 的谓词；条件为假或求值失败都跳过该 stage）。仅 `plan` 额外支持 `:max-steps <正整数>`（默认 5）。其余 opts 键加载即拒绝。
 
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
@@ -338,18 +267,18 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 
 stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → on-complete 动作 → 完成标记。
 
-### 6.3 循环推进与终止（`LoopDriver.step_session`）
+### 5.3 循环推进与终止（`LoopDriver.step_session`）
 
 每一步的顺序：
 
 1. **迭代硬顶**：`iteration ≥ :max-iterations` 时直接回复触发邮件"思考时间过长，请简化您的问题。"并结束会话——在任何 `:until` 求值之前。
-2. **`:until` 求值**（5.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"，否则回复"思考时间过长，请简化您的问题。"。求值失败回退到引擎默认检查（迭代/错误上限），循环必然停止。
+2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"，否则回复"思考时间过长，请简化您的问题。"。求值失败回退到引擎默认检查（迭代/错误上限），循环必然停止。
 3. 按序解释 `:stages`；`think` 失败则本步提前返回。
 4. 若 stage 向量不含 `act`（或本轮 act 未推进迭代），引擎自行推进迭代计数，保证硬顶始终生效。
 
 正常的会话完成不经过 `:until`：由 `act` 收集到 `sendEmail is_complete=true` 事件驱动。`:until` 只是兜底。
 
-## 7. 确定性成员的 `:actions`
+## 6. 确定性成员的 `:actions`
 
 无 `:loop` 的规则即确定规则：事件命中 → 求值 `:when` → 逐条求值 `:actions` → 执行产出的 `ActionRequest`。
 
@@ -358,7 +287,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 - 求值失败（含 fuel 耗尽）跳过本条规则，不影响其他规则与总线分发。
 - 邮件语义（`MemberRuntime`）：自己发出的邮件永不处理并立即标记已读；被 `:when` 拒绝的邮件也标记已读；确定规则命中即读；队列满丢弃的邮件保持未读，留待下次启动时的未读补救扫描（`_scan_unread_mail`）重放。
 
-## 8. `:parameters` 模板（写侧专属）
+## 7. `:parameters` 模板（写侧专属）
 
 `behavior.tlon` 可声明顶层 `:parameters` map，并在规则文本里以 `${name}` 引用（[src/tlon/agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)）：
 
@@ -373,9 +302,9 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | 双向校验 | 正文出现的每个 `${var}` 必须在 `:parameters` 声明，反之亦然 |
 | 生命周期 | **写侧专属**：实例化时 `${var}` 被渲染为 EDN 字面量后才落盘；运行时加载器看不到 `:parameters`（作为未知键记 warning），也永远见不到 `${...}` |
 
-## 9. 完整示例
+## 8. 完整示例
 
-### 9.1 带 `:loop`：`deep-thinker`（[src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon)）
+### 8.1 带 `:loop`：`deep-thinker`（[src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -407,7 +336,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 > 注：仓库中 [src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon) 的规则一 map 曾少一个闭合 `}`（历史问题，已修复）；抄写时以上例的闭合层次为准。
 
-### 9.2 无 `:loop`：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
+### 8.2 无 `:loop`：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -422,7 +351,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`，四条规则：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员；`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员；`:on :agent-spawned` 时给新成员发出生欢迎信（issue ）——正文用 `(str ...)` 拼接待成员名字、宿主查询 `(member-roster)` 展开的名册与静态通信惯例，收件人地址也由 `(str (get event :agent_id) "@tlon.internal")` 装配（`emit` 的 `to` 必须是完整邮件地址，`Mail.create` 拒绝裸 id）；`:on :mail-delivered` 时对寄给 Adam 的信回固定确认信（issue  守护者信箱）——`:when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal")))` 展示门控组合：确定规则对总线上每封送达邮件都会执行，必须自带收件人门控；`from?` 排除 postmaster 发件人，退信永不回信。这个例子展示了选项 map 里嵌表达式、字符串拼接、宿主注入查询与纯谓词门控的用法。
 
-## 10. 常见错误与加载失败行为
+## 9. 常见错误与加载失败行为
 
 | 错误 | 后果（出处） |
 |---|---|

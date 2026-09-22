@@ -1,7 +1,7 @@
 # ADR 0001：用 Lisp 风格 EDN 作为行为 DSL 的语法
 
 - 状态：已接受（回溯记录，2026-08-15）
-- 相关：[../design/dsl.md](../design/dsl.md)（DSL 整体设计）、[../reference/dsl-reference.md](../reference/dsl-reference.md)（语法手册）
+- 相关：[../design/dsl.md](../design/dsl.md)（DSL 整体设计）、[../reference/tlosure-reference.md](../reference/tlosure-reference.md)（语法手册）、[../reference/dsl-reference.md](../reference/dsl-reference.md)（宿主 schema 手册）
 
 ## 背景
 

@@ -6,7 +6,7 @@
 - 用 ops 管理界面或 `spawnAgent` 从原型派生 agent；
 - 走一遍「LLM 创作 → staging → 人工审批」的完整管线。
 
-前置：先通读 `design/prototypes.md`（为什么这么设计）与 `reference/dsl-reference.md`（EDN 语法与 MemberSpec 全字段）。本文是操作手册，不重复语法。
+前置：先通读 `design/prototypes.md`（为什么这么设计）、`reference/tlosure-reference.md`（EDN 语法与求值器）与 `reference/dsl-reference.md`（MemberSpec 全字段与领域词汇）。本文是操作手册，不重复语法。
 
 ## 1. 原型长什么样
 
@@ -71,8 +71,8 @@
 - **`{:version 1}`** 顶层必须。
 - **`:rules [...]`** 是规则向量。`:name "respond"` 规则：**`:on :mail-delivered`** 触发（收到投递事件）、**`:when`** 门控（收件人含自己才响应——没有这个门，系统里每一封邮件都会唤醒它）。
 - **`:loop`** 使它挂认知引擎：
-  - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`lessons`/`skills`/`knowledge`/`current-task`/`mail-history N`/`thread-recap` 八种，见 dsl-reference §6.1）；段的排列按缓存友好原则——几乎不变的段靠前，每会话必变的段靠后；
-  - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (completing?)})` 只在即将完成时评审待交回复，FAIL 时 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §6.2）；
+  - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`lessons`/`skills`/`knowledge`/`current-task`/`mail-history N`/`thread-recap` 八种，见 dsl-reference §5.1）；段的排列按缓存友好原则——几乎不变的段靠前，每会话必变的段靠后；
+  - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (completing?)})` 只在即将完成时评审待交回复，FAIL 时 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §5.2）；
   - `:until` 停机条件 + `:max-iterations` 迭代上限（DSL 的停机性靠预算，不靠砍循环）；
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。
 - **`:on :boot` 规则**：带它的成员开机即启动；不带的按需唤醒（startup 模式由此派生，`agent.yaml` 不再控制）。
@@ -124,7 +124,7 @@
 - **schema 必填项**：`:loop` 里 `:until`、`:max-iterations`、`:max-consecutive-errors`、`:reflect`（`enabled` + `interval-minutes`）都是必填，缺一个 `validate_member_spec` 直接拒。
 - **模板占位符**：带 `${var}` 的文件**不是**合法 EDN（`$` 会让裸解析报错），这是正常现象——模板只在渲染后才是 spec。用 [agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 做结构校验（把占位符替换成 stand-in 后试解析）。
 - **门控忘写**：`respond` 规则没有 `:when` 门控的话，系统里每封邮件都会唤醒这个成员。
-- **语法对照**：builtin/stage/section 完整清单与常见加载失败行为，见 `reference/dsl-reference.md` §5–§10。
+- **语法对照**：builtin/stage/section 完整清单与常见加载失败行为，见 `reference/dsl-reference.md` §4–§9。
 
 本地验证一份 `behavior.tlon`：
 
