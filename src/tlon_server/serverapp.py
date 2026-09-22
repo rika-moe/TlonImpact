@@ -17,13 +17,14 @@ Usage:
 import asyncio
 import functools
 import signal
-from pathlib import Path
 
 from tlon.api.bootstrap import Runtime, build_runtime
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import configure_logging, get_logger
-from tlon.base.paths import paths
+from tlon.base.metrics import init_metrics, shutdown_metrics
+from tlon.base.paths import TlonPaths
 from tlon.base.settings import get_settings
+from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon_server.api.rest import WEBUI_DIST_DIR, RESTServer
 from tlon_server.core.client_gateway import ClientGateway
 from tlon_server.core.member_directory import MemberDirectory
@@ -85,20 +86,21 @@ class ServerApp:
         self,
         host: str = "127.0.0.1",
         rest_port: int = 8080,
-        data_dir: Path | None = None,
-        config_dir: Path | None = None,
+        tlon_paths: TlonPaths | None = None,
     ):
         """Initialize the server application (does not create components yet).
 
         Args:
             host: Host to bind servers to
             rest_port: Port for the HTTP API (REST + SSE)
-            data_dir: Directory for persistence
-            config_dir: Directory containing agent configs
+            tlon_paths: Path resolver for the runtime's tlon home; None
+                resolves ``$TLON_HOME`` / ``~/.tlon`` — the process entry
+                point constructs exactly one and hands it down
         """
         self.host = host
         self.rest_port = rest_port
-        self.shared_dir = paths.shared_dir()
+        self._paths = tlon_paths or TlonPaths()
+        self.shared_dir = self._paths.shared_dir()
 
         # The assembled runtime (set by initialize())
         self._runtime: Runtime | None = None
@@ -121,7 +123,17 @@ class ServerApp:
         """
         logger.info("server_initializing")
 
-        runtime = await build_runtime()
+        # Tracing / metrics pillars (process-wide, OTel providers are
+        # process singletons): initialized here at the orchestration layer,
+        # NOT inside build_runtime — a process may host several runtimes,
+        # and one runtime's shutdown must never flush another's pillars.
+        init_tracing(
+            self._paths.traces_dir(),
+            otlp_endpoint=get_settings().otel_exporter_otlp_endpoint,
+        )
+        init_metrics()
+
+        runtime = await build_runtime(self._paths)
         self._runtime = runtime
 
         # ========== Client Gateway Components (serving side) ==========
@@ -258,6 +270,10 @@ class ServerApp:
         if runtime:
             await runtime.shutdown()
 
+        # Process-wide pillars flush last (owned here, not by the runtime)
+        shutdown_tracing()
+        shutdown_metrics()
+
         self._running = False
         self._shutdown_event.set()
 
@@ -294,17 +310,18 @@ async def run_server(
     """
     # Configure logging (stdout + daily JSONL file sink under ~/.tlon/shared/logs/)
     settings = get_settings()
+    tlon_paths = TlonPaths()
     configure_logging(
         log_level=log_level,
         debug=debug,
-        log_dir=paths.logs_dir(),
+        log_dir=tlon_paths.logs_dir(),
         retention_days=settings.log_retention_days,
     )
 
     logger.info("server_starting", host=host, rest_port=rest_port)
 
     # Create and run server
-    app = ServerApp(host=host, rest_port=rest_port)
+    app = ServerApp(host=host, rest_port=rest_port, tlon_paths=tlon_paths)
 
     # Setup signal handlers
     loop = asyncio.get_event_loop()

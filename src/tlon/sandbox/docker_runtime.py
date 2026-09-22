@@ -21,7 +21,7 @@ from docker.models.containers import Container
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
-from tlon.base.paths import paths
+from tlon.base.paths import TlonPaths
 
 logger = get_logger(__name__)
 
@@ -60,21 +60,23 @@ class DockerRuntime:
 
     Example:
         >>> config = DockerRuntimeConfig(image="ubuntu:22.04")
-        >>> runtime = DockerRuntime(config, agent_id="dev-001")
+        >>> runtime = DockerRuntime(config, agent_id="dev-001", tlon_paths=paths)
         >>> await runtime.ensure_running()
         >>> result = await runtime.execute("echo Hello")
         >>> print(result.stdout)  # Hello
     """
 
-    def __init__(self, config: DockerRuntimeConfig, agent_id: str):
+    def __init__(self, config: DockerRuntimeConfig, agent_id: str, tlon_paths: TlonPaths):
         """Initialize Docker runtime.
 
         Args:
             config: Docker runtime configuration
             agent_id: Unique agent identifier (used for container naming)
+            tlon_paths: Path resolver (workspace + home bind-mount sources)
         """
         self.config = config
         self.agent_id = agent_id
+        self._paths = tlon_paths
         self.container_name = f"tlon-agent-{agent_id}"
         self.client = self._create_client()
         self.container: Container | None = None
@@ -152,11 +154,11 @@ class DockerRuntime:
             await asyncio.to_thread(self.client.images.pull, image)
             logger.info("image_pulled", image=image)
 
-        workspace = paths.agent_workspace_dir(self.agent_id)
+        workspace = self._paths.agent_workspace_dir(self.agent_id)
         # Own home read-only (issue ): the agent can inspect its behavior
         # spec, memory and mailbox through the filesystem tools; the ro mount
         # keeps writes impossible even if a whitelist were misconfigured.
-        agent_home = paths.agent_dir(self.agent_id)
+        agent_home = self._paths.agent_dir(self.agent_id)
         volumes = {
             str(workspace): {
                 "bind": self.config.working_dir,

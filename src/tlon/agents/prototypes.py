@@ -68,7 +68,7 @@ from tlon.agents.member_spec import (
 )
 from tlon.base.config import AgentConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
 from tlosure.edn import EDNParseError, Keyword, dumps, loads
 
@@ -116,7 +116,7 @@ class PrototypeInfo:
         return bool(self.parameters)
 
 
-def seed_prototypes(tlon_paths: TlonPaths | None = None) -> int:
+def seed_prototypes(tlon_paths: TlonPaths) -> int:
     """Copy built-in prototypes to ``~/.tlon/prototypes/`` (idempotent).
 
     Existing files are never overwritten: user edits and user-added
@@ -125,7 +125,7 @@ def seed_prototypes(tlon_paths: TlonPaths | None = None) -> int:
     Returns:
         Number of files copied (0 when everything already exists).
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     target_root = p.prototypes_dir()
     copied = 0
     for entry in resources.files(PROTOTYPE_PACKAGE).iterdir():
@@ -146,13 +146,13 @@ def seed_prototypes(tlon_paths: TlonPaths | None = None) -> int:
     return copied
 
 
-def list_prototypes(tlon_paths: TlonPaths | None = None) -> list[PrototypeInfo]:
+def list_prototypes(tlon_paths: TlonPaths) -> list[PrototypeInfo]:
     """List prototypes from ``~/.tlon/prototypes/`` (not the package).
 
     A directory qualifies when it contains a ``behavior.tlon``; metadata is
     read from ``prototype.edn`` when present, with a name-only fallback.
     """
-    return _list_from((tlon_paths or paths).prototypes_dir())
+    return _list_from((tlon_paths).prototypes_dir())
 
 
 def _list_from(root: Path) -> list[PrototypeInfo]:
@@ -198,10 +198,10 @@ def _resolve_parent_generation(parent: str, p: TlonPaths) -> int:
 
 
 def get_prototype_info(
-    name: str, tlon_paths: TlonPaths | None = None
+    name: str, tlon_paths: TlonPaths
 ) -> PrototypeInfo | None:
     """Metadata of a trusted-library prototype, or None when absent."""
-    proto_dir = (tlon_paths or paths).prototypes_dir() / name
+    proto_dir = (tlon_paths).prototypes_dir() / name
     if not _is_prototype_dir(proto_dir):
         return None
     return _read_metadata(proto_dir)
@@ -214,7 +214,7 @@ def instantiate(
     *,
     model: str,
     params: dict[str, Any] | None = None,
-    tlon_paths: TlonPaths | None = None,
+    tlon_paths: TlonPaths,
 ) -> AgentConfig:
     """Create an agent from a prototype: copy, no merging.
 
@@ -244,7 +244,7 @@ def instantiate(
             without it)
         params: template parameter values (required when the prototype
             declares ``:parameters``; must be empty otherwise)
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         The saved AgentConfig (with ``prototype`` recording the source).
@@ -253,7 +253,7 @@ def instantiate(
         PrototypeError: prototype missing, agent id already taken, model
             empty, or required params missing / invalid.
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     if not model or not model.strip():
         raise PrototypeError(
             "model is required (provider/model 形式，如 deepseek/deepseek-chat)——"
@@ -438,7 +438,8 @@ def write_staging_prototype(
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
-    tlon_paths: TlonPaths | None = None,
+    *,
+    tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
 
@@ -475,7 +476,7 @@ def write_staging_prototype(
         proposal_note: free-text description of this generation's change
         lessons: lessons text (issue ), written as ``LESSONS.md``
             (None = the prototype carries no lessons file)
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         Metadata of the staged prototype (``trusted=False``).
@@ -485,7 +486,7 @@ def write_staging_prototype(
             failed template / EDN / schema validation (nothing is written in
             any case)
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
 
     if (p.prototypes_dir() / name / BEHAVIOR_FILE).exists():
@@ -528,12 +529,12 @@ def write_staging_prototype(
     return _read_metadata(staging_dir)
 
 
-def list_staging_prototypes(tlon_paths: TlonPaths | None = None) -> list[PrototypeInfo]:
+def list_staging_prototypes(tlon_paths: TlonPaths) -> list[PrototypeInfo]:
     """List prototypes awaiting approval in ``~/.tlon/prototypes-staging/``."""
-    return _list_from((tlon_paths or paths).prototypes_staging_dir())
+    return _list_from((tlon_paths).prototypes_staging_dir())
 
 
-def approve_prototype(name: str, tlon_paths: TlonPaths | None = None) -> PrototypeInfo:
+def approve_prototype(name: str, tlon_paths: TlonPaths) -> PrototypeInfo:
     """Promote a staged prototype to the trusted library (human approval).
 
     Moves the directory to ``~/.tlon/prototypes/`` and rewrites its
@@ -543,7 +544,7 @@ def approve_prototype(name: str, tlon_paths: TlonPaths | None = None) -> Prototy
         PrototypeError: invalid name, nothing staged under that name, or the
             trusted library already has a prototype with that name
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     staging_dir = p.prototypes_staging_dir() / name
     if not _is_prototype_dir(staging_dir):
@@ -571,7 +572,7 @@ def approve_prototype(name: str, tlon_paths: TlonPaths | None = None) -> Prototy
     return _read_metadata(target_dir)
 
 
-def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
+def reject_prototype(name: str, tlon_paths: TlonPaths) -> None:
     """Delete a staged prototype (human rejection).
 
     Path-injection guard: the name must pass the charset check and resolve
@@ -580,7 +581,7 @@ def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
     Raises:
         PrototypeError: invalid name or nothing staged under that name
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     staging_root = p.prototypes_staging_dir().resolve()
     target = (staging_root / name).resolve()
@@ -593,14 +594,14 @@ def reject_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
 
 
 def get_prototype_detail(
-    name: str, staging: bool = False, tlon_paths: TlonPaths | None = None
+    name: str, staging: bool = False, *, tlon_paths: TlonPaths
 ) -> tuple[PrototypeInfo, str, str | None, str | None]:
     """Metadata plus the full ``behavior.tlon`` text of one prototype.
 
     Args:
         name: prototype directory name
         staging: read from the staging area instead of the trusted library
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         ``(metadata, behavior_text, lessons, reviews)`` — ``lessons`` is the
@@ -611,7 +612,7 @@ def get_prototype_detail(
     Raises:
         PrototypeError: invalid name or no prototype under that name
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     root = p.prototypes_staging_dir() if staging else p.prototypes_dir()
     proto_dir = root / name
@@ -628,7 +629,7 @@ def get_prototype_detail(
 
 
 def append_staging_review(
-    name: str, entry_text: str, tlon_paths: TlonPaths | None = None
+    name: str, entry_text: str, tlon_paths: TlonPaths
 ) -> None:
     """Append one peer-review entry to a staged prototype's ``REVIEW.md``.
 
@@ -642,12 +643,12 @@ def append_staging_review(
         entry_text: one formatted review entry (timestamp, reviewer id,
             reviewer model, verdict, rationale — assembled by the caller);
             normalized to end with a newline
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Raises:
         PrototypeError: invalid name or nothing staged under that name
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     staging_dir = p.prototypes_staging_dir() / name
     if not _is_prototype_dir(staging_dir):
@@ -666,7 +667,7 @@ _MAX_LINEAGE_DEPTH = 32
 
 
 def get_prototype_lineage(
-    name: str, tlon_paths: TlonPaths | None = None
+    name: str, tlon_paths: TlonPaths
 ) -> list[dict[str, Any]]:
     """Walk the ``:parent`` chain up to the root (issue ).
 
@@ -682,7 +683,7 @@ def get_prototype_lineage(
 
     Args:
         name: prototype directory name (either area)
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         Root-first list of generations, each
@@ -694,7 +695,7 @@ def get_prototype_lineage(
         PrototypeError: invalid name or no prototype under that name in
             either area
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     proto_dir = _find_prototype_dir(name, p)
     if proto_dir is None:
@@ -752,7 +753,8 @@ def write_trusted_prototype(
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
-    tlon_paths: TlonPaths | None = None,
+    *,
+    tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Write a human-authored prototype directly into the trusted library.
 
@@ -773,7 +775,7 @@ def write_trusted_prototype(
         proposal_note: free-text description of this generation's change
         lessons: lessons text (issue ), written as ``LESSONS.md``
             (None = the prototype carries no lessons file)
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         Metadata of the created prototype (``trusted=True``).
@@ -782,7 +784,7 @@ def write_trusted_prototype(
         PrototypeError: invalid name, name conflict, unknown parent, or spec
             failed validation (nothing is written in any case)
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
 
     proto_dir = p.prototypes_dir() / name
@@ -826,7 +828,7 @@ def update_prototype(
     proposal_note: str | None = None,
     lessons: str | None = None,
     staging: bool = False,
-    tlon_paths: TlonPaths | None = None,
+    tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Update a prototype's metadata and/or rewrite its behavior file.
 
@@ -848,7 +850,7 @@ def update_prototype(
             (None = keep, issue )
         staging: update in the staging area instead of the trusted library
             (pre-approval editing of an LLM-authored prototype)
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         Metadata of the updated prototype.
@@ -858,7 +860,7 @@ def update_prototype(
             nothing to update, or the new behavior failed validation
             (nothing is written in the last cases)
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     root = p.prototypes_staging_dir() if staging else p.prototypes_dir()
     proto_dir = root / name
@@ -925,7 +927,7 @@ def update_prototype(
     return _read_metadata(proto_dir)
 
 
-def delete_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
+def delete_prototype(name: str, tlon_paths: TlonPaths) -> None:
     """Delete a prototype from the trusted library.
 
     Deleting a staged prototype is the existing ``reject_prototype``; this
@@ -936,7 +938,7 @@ def delete_prototype(name: str, tlon_paths: TlonPaths | None = None) -> None:
     Raises:
         PrototypeError: invalid name or no trusted prototype under that name
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     _validate_name(name)
     library_root = p.prototypes_dir().resolve()
     target = (library_root / name).resolve()
@@ -990,7 +992,7 @@ def find_near_kin(
     exclude: str | None = None,
     *,
     threshold: float = NEAR_KIN_THRESHOLD,
-    tlon_paths: TlonPaths | None = None,
+    tlon_paths: TlonPaths,
 ) -> tuple[str, float] | None:
     """Find the most similar existing prototype across both areas.
 
@@ -1009,7 +1011,7 @@ def find_near_kin(
             bloodline); what the gate rejects is cross-bloodline
             convergence, not micro-evolution along a lineage.
         threshold: minimum ratio that counts as near-kin
-        tlon_paths: isolated path resolver (tests); defaults to ~/.tlon
+        tlon_paths: path resolver for the target layout
 
     Returns:
         ``(prototype_name, ratio)`` of the closest match when its ratio
@@ -1017,7 +1019,7 @@ def find_near_kin(
         an empty/blank proposal text). Unreadable prototypes are skipped —
         a broken file must never block a proposal.
     """
-    p = tlon_paths or paths
+    p = tlon_paths
     candidate = _normalize_behavior_text(behavior_text)
     if not candidate:
         return None

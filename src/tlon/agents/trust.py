@@ -40,7 +40,7 @@ from collections.abc import Awaitable, Callable
 from tlon.agents.reputation import collect_reputation
 from tlon.base.config import yaml_load_all
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 
 logger = get_logger(__name__)
 
@@ -75,7 +75,7 @@ async def is_full_member(agent_id: str, *, tlon_paths: TlonPaths) -> bool:
     return bool(report["endorsements_received"] >= ENDORSEMENT_THRESHOLD)
 
 
-def trust_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[bool]]:
+def trust_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[bool]]:
     """Bind the trust derivation to a paths layout (the is-full predicate).
 
     Keyed by **member id** — unlike the tilt/solvency providers
@@ -84,7 +84,7 @@ def trust_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[bo
     low-frequency, so no caching. Fail-open: any derivation error yields
     full trust (availability first), logged as a warning.
     """
-    resolved = tlon_paths or paths
+    resolved = tlon_paths
 
     async def is_full(agent_id: str) -> bool:
         try:
@@ -96,7 +96,7 @@ def trust_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[bo
     return is_full
 
 
-def probation_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[bool]]:
+def probation_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[bool]]:
     """The is-probation predicate, keyed by **spawner id** (SpawnManager input).
 
     The negation of :func:`trust_provider`; the fail-open direction flips

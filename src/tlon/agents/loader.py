@@ -7,15 +7,15 @@ every member carries one rules-form ``behavior.tlon`` and this loader is the
 only read path.
 
 One function reads a member's behavior file and returns the validated
-:class:`MemberSpec` with provenance attached. It keeps the ``paths`` module
-seam the tests monkeypatch.
+:class:`MemberSpec` with provenance attached. The path layout is injected
+(``tlon_paths``) — there is no module-level default.
 """
 
 import hashlib
 from dataclasses import replace
 
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
-from tlon.base.paths import paths
+from tlon.base.paths import TlonPaths
 from tlosure.builtins import Builtin
 from tlosure.edn import loads
 
@@ -23,6 +23,7 @@ from tlosure.edn import loads
 def load_member_spec(
     agent_id: str,
     *,
+    tlon_paths: TlonPaths,
     builtins: dict[str, Builtin] | None = None,
 ) -> MemberSpec:
     """Load and validate one member's unified spec — total semantics.
@@ -46,7 +47,7 @@ def load_member_spec(
         EDNParseError: file is not valid EDN
         MemberSpecValidationError: the spec fails the single validator
     """
-    behavior_file = paths.agent_behavior_file(agent_id)
+    behavior_file = tlon_paths.agent_behavior_file(agent_id)
     text = behavior_file.read_text(encoding="utf-8")
     member = MemberSpec.from_edn(loads(text))
     member = validate_member_spec(member, builtins=builtins)

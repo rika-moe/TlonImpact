@@ -54,8 +54,8 @@ class Distiller:
             llm_config: Configuration for LLM client
             agent_id: Owning member id for ledger attribution (issue
                 ); None = no accounting
-            tlon_paths: Path resolver for the ledger file; defaults to
-                the global ``~/.tlon`` layout
+            tlon_paths: Path resolver for the ledger file; required when
+                ``agent_id`` is set (enforced by ``LLMClient``)
         """
         self.llm_client = LLMClient(llm_config, agent_id=agent_id, tlon_paths=tlon_paths)
 

@@ -186,13 +186,13 @@ async def assemble_cognitive(
 
     task_manager = TaskManager(
         agent_id=config.id,
-        data_dir=str(agent_home),
+        tlon_paths=tlon_paths,
     )
 
     # Create Docker runtime (shared by shell + filesystem tools).
     docker_runtime: DockerRuntime | None = None
     try:
-        docker_runtime = DockerRuntime(config.docker, config.id)
+        docker_runtime = DockerRuntime(config.docker, config.id, tlon_paths)
     except Exception as e:
         logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
     # No registry-side container handle is kept (ADR 0006): members
@@ -242,7 +242,9 @@ async def assemble_cognitive(
     tool_executor.register_tool(
         SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=config.id)
     )
-    tool_executor.register_tool(ListPrototypesTool(lister=list_prototypes))
+    tool_executor.register_tool(
+        ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
+    )
     # Staging proposals (): agent-authored prototypes awaiting human
     # trust approval — visible so a member (e.g. the scribe's digest) can
     # surface them as pending human decisions.

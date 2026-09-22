@@ -14,8 +14,7 @@ from tlon.base.device import Device
 from tlon.base.events.event import EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
-from tlon.base.settings import get_tlon_home
+from tlon.base.paths import TlonPaths
 
 logger = get_logger(__name__)
 
@@ -205,12 +204,12 @@ def yaml_load_file(filepath: Path) -> AgentConfig | None:
         return None
 
 
-def yaml_load_all(tlon_home: Path | None = None) -> dict[str, AgentConfig]:
+def yaml_load_all(tlon_home: Path) -> dict[str, AgentConfig]:
     """Load all agents by scanning ~/.tlon/*/config/agent.yaml.
 
     Skips the 'shared' directory and non-directory entries.
     """
-    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    p = TlonPaths(home=tlon_home)
     home = p.tlon_home()
     agents: dict[str, AgentConfig] = {}
     if not home.exists():
@@ -226,13 +225,13 @@ def yaml_load_all(tlon_home: Path | None = None) -> dict[str, AgentConfig]:
     return agents
 
 
-def yaml_save(agent: AgentConfig, tlon_home: Path | None = None) -> None:
+def yaml_save(agent: AgentConfig, tlon_home: Path) -> None:
     """Save an agent to its per-agent config directory.
 
     Writes ~/.tlon/{agent.id}/config/agent.yaml and ensures
     standard subdirectories (workspace, memory) exist.
     """
-    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    p = TlonPaths(home=tlon_home)
     yaml_file = p.agent_config_file(agent.id)
     yaml_file.parent.mkdir(parents=True, exist_ok=True)
     data = {"agent": agent.model_dump(exclude_none=True)}
@@ -244,20 +243,20 @@ def yaml_save(agent: AgentConfig, tlon_home: Path | None = None) -> None:
     p.agent_memory_dir(agent.id)
 
 
-def yaml_delete(agent_id: str, tlon_home: Path | None = None) -> None:
+def yaml_delete(agent_id: str, tlon_home: Path) -> None:
     """Delete an agent entirely — removes ~/.tlon/{agent_id}/ directory."""
     import shutil
 
-    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    p = TlonPaths(home=tlon_home)
     agent_home = p.agent_dir(agent_id)
     if not agent_home.exists():
         raise ValueError(f"Agent '{agent_id}' not found")
     shutil.rmtree(agent_home)
 
 
-def yaml_exists(agent_id: str, tlon_home: Path | None = None) -> bool:
+def yaml_exists(agent_id: str, tlon_home: Path) -> bool:
     """Check if an agent config exists at ~/.tlon/{agent_id}/config/agent.yaml."""
-    p = TlonPaths(home=tlon_home) if tlon_home else paths
+    p = TlonPaths(home=tlon_home)
     return p.agent_config_file(agent_id).exists()
 
 
@@ -279,12 +278,12 @@ class ConfigService(Component, Device, AgentInfoProvider):
     def __init__(
         self,
         event_bus: EventBus,
-        tlon_home: Path | None = None,
+        tlon_home: Path,
     ):
         # Initialize both parents (MRO super() would skip Device.__init__)
         Component.__init__(self, name="ConfigService")
         Device.__init__(self, event_bus=event_bus, name="ConfigService")
-        self._tlon_home = tlon_home or get_tlon_home()
+        self._tlon_home = tlon_home
         self._agents: dict[str, AgentConfig] = {}
         logger.info("config_service_constructed")
 

@@ -24,11 +24,9 @@ SCRIPT_EDN = """\
 
 
 @pytest.fixture
-def tlon(tmp_path, monkeypatch) -> TlonPaths:
-    """Isolated ~/.tlon; the loader's ``paths`` reference is patched to it."""
-    p = TlonPaths(home=tmp_path)
-    monkeypatch.setattr("tlon.agents.loader.paths", p)
-    return p
+def tlon(tmp_path) -> TlonPaths:
+    """Isolated ~/.tlon home handed to the loader explicitly."""
+    return TlonPaths(home=tmp_path)
 
 
 def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:
@@ -40,7 +38,7 @@ def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:
 class TestLoadMemberSpec:
     def test_reads_rules_form_with_source_hash(self, tlon):
         _write_behavior(tlon, "relay-1", SCRIPT_EDN)
-        spec = load_member_spec("relay-1")
+        spec = load_member_spec("relay-1", tlon_paths=tlon)
         assert spec.version == 1
         assert spec.rules[0].name == "relay"
         assert spec.rules[0].on is not None
@@ -64,18 +62,18 @@ class TestLoadMemberSpec:
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """,
         )
-        spec = load_member_spec("thinker-1")
+        spec = load_member_spec("thinker-1", tlon_paths=tlon)
         assert spec.rules[0].loop is not None
         assert spec.source_hash is not None
 
     def test_missing_file_refuses_boot(self, tlon):
         with pytest.raises(FileNotFoundError):
-            load_member_spec("nobody")
+            load_member_spec("nobody", tlon_paths=tlon)
 
     def test_invalid_edn_refuses_boot(self, tlon):
         _write_behavior(tlon, "broken", "{:version 1 :rules [")
         with pytest.raises(EDNParseError):
-            load_member_spec("broken")
+            load_member_spec("broken", tlon_paths=tlon)
 
     def test_spec_failing_validator_refuses_boot(self, tlon):
         _write_behavior(
@@ -89,7 +87,7 @@ class TestLoadMemberSpec:
 """,
         )
         with pytest.raises(MemberSpecValidationError, match="unknown action"):
-            load_member_spec("wild")
+            load_member_spec("wild", tlon_paths=tlon)
 
     def test_ignores_top_level_parameters(self, tlon):
         """A write-side template declaration is not runtime semantics.
@@ -108,7 +106,7 @@ class TestLoadMemberSpec:
           :actions [(forward {:to ["a@tlon.internal"]})]}]}
 """,
         )
-        spec = load_member_spec("relay-2")
+        spec = load_member_spec("relay-2", tlon_paths=tlon)
         assert spec.rules[0].actions
 
     def test_parses_standin_text_when_template(self, tlon):

@@ -29,7 +29,7 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import start_span
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.resolver import RecipientResolver
@@ -284,7 +284,7 @@ class AdapterManager(Component):
         self,
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
-        tlon_paths: TlonPaths | None = None,
+        tlon_paths: TlonPaths,
         external_owner: Callable[[str], str | None] | None = None,
     ):
         """Initialize the adapter manager.
@@ -293,13 +293,13 @@ class AdapterManager(Component):
             event_bus: Event bus adapters publish on
             agent_info_provider: Provider for agent config queries
                 (recipient name → address resolution)
-            tlon_paths: Path resolver (tests); None uses the singleton
+            tlon_paths: Path resolver (persistent mailbox layout)
             external_owner: Gateway claim lookup forwarded to the shared
                 resolver (issue  egress); None = no gateway claims
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
-        self._paths = tlon_paths or paths
+        self._paths = tlon_paths
         self._adapters: dict[str, HumanAdapter] = {}  # username -> adapter
         # Single authority for recipient resolution (issue ); the
         # online check closes over ``self._adapters``, so the resolver

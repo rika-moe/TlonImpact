@@ -59,7 +59,6 @@ from tlon.agents.prototypes import get_prototype_info, instantiate
 from tlon.base.config import AgentConfig, yaml_save
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
-from tlon.base.paths import paths
 from tlon.tools.agents.ports import SpawnRejectedError
 
 if TYPE_CHECKING:
@@ -107,7 +106,7 @@ class SpawnManager:
         # (spawner_id, session_id) -> successful spawn count, persisted to
         # disk so the anti-runaway quota survives restarts (sessions do,
         # via journal replay).
-        self._ledger_path: Path = (registry._paths or paths).spawn_quota_ledger_file()
+        self._ledger_path: Path = registry._paths.spawn_quota_ledger_file()
         self._quota: dict[tuple[str, str], int] = self._load_ledger()
 
     def reset(self) -> None:
@@ -262,7 +261,7 @@ class SpawnManager:
                 model for the child to inherit (ADR 0016)
         """
         registry = self._registry
-        tlon_paths = registry._paths or paths
+        tlon_paths = registry._paths
 
         # Trust gate (stage 4a): before any budget check, an untrusted
         # prototype (LLM-authored, awaiting human approval) cannot spawn.

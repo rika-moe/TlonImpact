@@ -38,8 +38,8 @@ class _RegistryStub:
         self._running = running or set()
         self._boot_eligible = boot_eligible or set()
         # RegistryQueries.member_roster reads ``_paths`` for prototype
-        # metadata; None = the module singleton (never hit here — no stub
-        # config carries a prototype).
+        # metadata; None here (never hit — no stub config carries a
+        # prototype).
         self._paths = None
 
     def get_agent(self, agent_id: str):

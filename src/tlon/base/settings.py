@@ -2,14 +2,20 @@
 
 This module provides environment variable based configuration.
 It only handles environment variables, not YAML file configurations.
+
+Settings is process-level state (env + secrets), so it resolves the
+process Tlon home itself: one private ``TlonPaths()`` constructed from
+``$TLON_HOME`` / ``~/.tlon`` at first use. Runtime components never go
+through here — they receive an explicit ``TlonPaths`` by injection.
 """
 
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 
-from tlon.base.paths import paths
+from tlon.base.paths import TlonPaths
+
+_paths = TlonPaths()
 
 
 def _load_dotenv_files() -> None:
@@ -21,37 +27,9 @@ def _load_dotenv_files() -> None:
     only fills in variables that are not already set in the process
     environment.
     """
-    env_file = paths.env_file()
+    env_file = _paths.env_file()
     if env_file.exists():
         load_dotenv(env_file, override=False)
-
-
-def get_tlon_home() -> Path:
-    """Get the Tlon home directory (~/.tlon or $TLON_HOME).
-
-    Prefer paths.tlon_home() in new code.
-    """
-    return paths.tlon_home()
-
-
-def get_agent_home(agent_id: str) -> Path:
-    """Get per-agent directory — delegates to paths.agent_dir()."""
-    return paths.agent_dir(agent_id)
-
-
-def get_shared_dir() -> Path:
-    """Get shared data directory — delegates to paths.shared_dir()."""
-    return paths.shared_dir()
-
-
-def get_default_data_dir() -> Path:
-    """Legacy: returns tlon home root. Prefer TlonPaths directly."""
-    return paths.tlon_home()
-
-
-def get_default_config_dir() -> Path:
-    """Legacy: config is now per-agent. Returns tlon home root."""
-    return paths.tlon_home()
 
 
 class Settings:
@@ -65,8 +43,8 @@ class Settings:
         # App settings
         self.app_name = os.getenv("APP_NAME", "Tlon")
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
-        self.tlon_home = paths.tlon_home()
-        self.shared_dir = paths.shared_dir()
+        self.tlon_home = _paths.tlon_home()
+        self.shared_dir = _paths.shared_dir()
         self.debug = os.getenv("DEBUG", "false").lower() == "true"
 
         # Observability (OTel): optional OTLP collector, requires the `otlp` extra
@@ -90,10 +68,6 @@ class Settings:
         self.github_token = os.getenv("GITHUB_TOKEN", "")  # GitHub API token（出站：回信 → issue/PR comment）；空 = 出站禁用，入站不受影响
 
         self.tlon_home.mkdir(parents=True, exist_ok=True)
-
-    def get_agent_data_dir(self, agent_id: str) -> Path:
-        """Get per-agent data directory — delegates to paths.agent_dir()."""
-        return paths.agent_dir(agent_id)
 
 
 _settings: Settings | None = None

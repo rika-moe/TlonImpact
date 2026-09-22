@@ -27,10 +27,7 @@ def _manager(tmp_path: Path, disk_config: dict | None) -> MemoryManager:
         (memory_dir / "config.json").write_text(
             json.dumps(disk_config), encoding="utf-8"
         )
-    with patch("tlon.memory.manager.paths") as mock_paths:
-        mock_paths.agent_memory_dir.return_value = memory_dir
-        mock_paths.memory_config_file.return_value = memory_dir / "config.json"
-        return MemoryManager("test-agent", MemoryConfig())
+    return MemoryManager("test-agent", MemoryConfig(), data_dir=tmp_path)
 
 
 async def test_load_disk_config_is_authoritative(tmp_path: Path) -> None:

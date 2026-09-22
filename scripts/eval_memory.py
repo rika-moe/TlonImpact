@@ -47,7 +47,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from tlon.base.config import LLMConfig
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 
@@ -455,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Same env convention as the runtime: real env wins, ~/.tlon/.env fills
     # in the {PROVIDER}_API_KEY variables litellm reads natively.
-    load_dotenv(paths.env_file(), override=False)
+    load_dotenv(TlonPaths().env_file(), override=False)
 
     if not args.embedding_model:
         print(

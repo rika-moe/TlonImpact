@@ -158,7 +158,7 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
     _write_behavior(p, "retiree", _COGNITIVE_SPEC)
     _write_config(p, "retiree", name="老张", spawned_by="spawner-1")
     await _remember(p, "retiree", "部署前先跑质量门")
-    tasks = TaskManager("retiree", data_dir=str(p.agent_dir("retiree")))
+    tasks = TaskManager("retiree", p)
     tasks.create_task("写完退休文档")
     box = Mailbox(p.member_mail_dir("retiree"))
     await box.append_inbox(
@@ -243,7 +243,7 @@ async def test_farewell_falls_back_to_guest_human(tmp_path: Path) -> None:
 async def test_open_tasks_inventory(tmp_path: Path) -> None:
     """Only todo/doing/paused titles are inventoried; done is excluded."""
     p = TlonPaths(home=tmp_path)
-    tasks = TaskManager("retiree", data_dir=str(p.agent_dir("retiree")))
+    tasks = TaskManager("retiree", p)
     tasks.create_task("待办事项")
     paused = tasks.create_task("暂停事项")
     tasks.start_task(paused.id)
@@ -348,7 +348,7 @@ async def test_non_cognitive_with_open_tasks_still_writes(tmp_path: Path) -> Non
     (only 'nothing to hand over' skips it)."""
     p = TlonPaths(home=tmp_path)
     _write_behavior(p, "relay-1", _DETERMINISTIC_SPEC)
-    tasks = TaskManager("relay-1", data_dir=str(p.agent_dir("relay-1")))
+    tasks = TaskManager("relay-1", p)
     tasks.create_task("还没转完的信")
     bus = EventBus()
     await bus.initialize()

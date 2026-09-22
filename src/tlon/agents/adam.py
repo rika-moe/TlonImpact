@@ -58,7 +58,7 @@ from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event_bus import EventBus
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import loads
 
@@ -97,7 +97,7 @@ ADAM_SPEC_EDN = r"""{:version 1
 def make_adam(
     event_bus: EventBus,
     agent_registry: AgentRegistry,
-    tlon_paths: TlonPaths | None = None,
+    tlon_paths: TlonPaths,
 ) -> MemberRuntime:
     """Assemble Adam: the built-in spec plus registry query closures.
 
@@ -110,9 +110,9 @@ def make_adam(
         event_bus: Event bus for subscriptions and request publishing
         agent_registry: The registry to query (read-only interfaces) and
             to address with start/stop requests
-        tlon_paths: Path resolver (tests); None uses the singleton. Adam's
-            mailbox lives at ``~/.tlon/adam/mail/`` (issue  guardian
-            inbox) — read-marking and the boot unread replay come from it.
+        tlon_paths: Path resolver. Adam's mailbox lives at
+            ``~/.tlon/adam/mail/`` (issue  guardian inbox) —
+            read-marking and the boot unread replay come from it.
     """
     builtins = make_member_builtins(RegistryQueries(agent_registry))
     spec = MemberSpec.from_edn(loads(ADAM_SPEC_EDN))
@@ -120,7 +120,6 @@ def make_adam(
     # ``start-all`` action needs the registry host for candidate expansion,
     # which the host-less deterministic branch would reject.
     spec = validate_member_spec(spec, builtins=builtins)
-    tlon_paths = tlon_paths or paths
     return MemberRuntime(
         member_id="adam",
         name="adam",

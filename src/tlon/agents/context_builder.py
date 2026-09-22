@@ -24,7 +24,7 @@ from tlon.agents.session_journal import SessionJournal, session_id_for
 from tlon.agents.skills import Signature, render_skills_index, scan_signature, scan_skills
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
@@ -170,7 +170,8 @@ class ContextBuilder:
         rule: MemberRule,
         address: str,
         journal: SessionJournal | None = None,
-        tlon_paths: TlonPaths | None = None,
+        *,
+        tlon_paths: TlonPaths,
     ):
         self._config = config
         self._team_members = team_members
@@ -185,9 +186,8 @@ class ContextBuilder:
         # Session journal (ADR 0007): read-only, feeds the thread-recap
         # section; None degrades that section to empty.
         self._journal = journal
-        # Path resolver for the lessons section's config/LESSONS.md read
-        # (issue ); defaults to the global ~/.tlon layout.
-        self._paths = tlon_paths or paths
+        # Path resolver for the lessons/skills/persona file reads.
+        self._paths = tlon_paths
         # Prompt cache — rebuilt when persona file mtimes change
         self._system_prompt_cache: str | None = None
         self._system_prompt_mtime: tuple[tuple[str, float | None], ...] | None = None
@@ -225,9 +225,9 @@ class ContextBuilder:
         block context assembly.
         """
         try:
-            signature = scan_signature(self._config.id)
+            signature = scan_signature(self._config.id, self._paths)
             if self._skills_index_cache is None or signature != self._skills_signature:
-                self._skills_index_cache = render_skills_index(scan_skills(self._config.id))
+                self._skills_index_cache = render_skills_index(scan_skills(self._config.id, self._paths))
                 self._skills_signature = signature
             return self._skills_index_cache
         except Exception:
@@ -413,25 +413,25 @@ class ContextBuilder:
         for m in self._team_members:
             if m.id == self._config.id:
                 continue
-            soul_file = paths.agent_soul_file(m.id)
+            soul_file = self._paths.agent_soul_file(m.id)
             profile = soul_file.read_text(encoding="utf-8").strip() if soul_file.exists() else m.name
             team_profiles.append((m.name, profile))
 
         return AgentPromptContext(
             agent_name=self._config.name,
-            agent_home=str(paths.agent_dir(self._config.id)),
+            agent_home=str(self._paths.agent_dir(self._config.id)),
             team_profiles=team_profiles,
         )
 
     def persona_files(self) -> list[Path]:
         """Persona files that feed the system prompt (self + team SOUL files)."""
         files = [
-            paths.agent_identity_file(self._config.id),
-            paths.agent_soul_file(self._config.id),
-            paths.agent_rules_file(self._config.id),
+            self._paths.agent_identity_file(self._config.id),
+            self._paths.agent_soul_file(self._config.id),
+            self._paths.agent_rules_file(self._config.id),
         ]
         files.extend(
-            paths.agent_soul_file(m.id)
+            self._paths.agent_soul_file(m.id)
             for m in self._team_members
             if m.id != self._config.id
         )

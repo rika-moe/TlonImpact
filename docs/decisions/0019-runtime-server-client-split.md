@@ -50,4 +50,4 @@ facade 是小类，构造器注入 runtime 对象，由 `build_runtime()` 装配
 - 边界从惯例变强制：tlon_server 直碰 runtime 内脏会被 import-linter 打回；facade 方法群同时成为未来任何协议演进的候选操作集。
 - runtime 可独立理解/测试；webui 静态托管仍在 tlon_server（同进程便利，非架构分层）。
 - 施工分两 PR：先 facade（同包内收编触点 + 契约），后物理拆分（移包 + 打包/工具链/测试/文档）。
-- `paths` 单例留在 `tlon.base`（runtime 拥有文件系统）；tlon_server 不再直接读 mailbox/日志/agent.yaml——经 facade。
+- ~~`paths` 单例留在 `tlon.base`（runtime 拥有文件系统）；tlon_server 不再直接读 mailbox/日志/agent.yaml——经 facade。~~ 已演进：`paths` 模块级单例已删除，`TlonPaths` 全面改为显式注入（进程入口构造一次，`build_runtime(runtime_paths)` 贯穿 runtime 各层）；同进程可并存多个 runtime 实例（各有独立 tlon home），tracing/metrics 支柱上移到 ServerApp（进程编排层）。tlon_server 不直接读 mailbox/日志/agent.yaml——经 facade。

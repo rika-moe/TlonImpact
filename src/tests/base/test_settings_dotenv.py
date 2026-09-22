@@ -25,7 +25,7 @@ def _fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_env: boo
             "TLON_TEST_DOTENV_FALLBACK=from_dotenv\n",
             encoding="utf-8",
         )
-    monkeypatch.setattr("tlon.base.settings.paths", p)
+    monkeypatch.setattr("tlon.base.settings._paths", p)
     return p
 
 
@@ -77,7 +77,7 @@ class TestSettingsGitHubEnv:
     def test_reads_github_env_vars(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("tlon.base.settings.paths", TlonPaths(home=tmp_path))
+        monkeypatch.setattr("tlon.base.settings._paths", TlonPaths(home=tmp_path))
         monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "whsec")
         monkeypatch.setenv("GITHUB_RECIPIENT", "human:alice")
 
@@ -90,7 +90,7 @@ class TestSettingsGitHubEnv:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Empty secret = the /webhooks/github route is not registered."""
-        monkeypatch.setattr("tlon.base.settings.paths", TlonPaths(home=tmp_path))
+        monkeypatch.setattr("tlon.base.settings._paths", TlonPaths(home=tmp_path))
         monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)
         monkeypatch.delenv("GITHUB_RECIPIENT", raising=False)
 

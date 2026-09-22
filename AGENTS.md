@@ -37,6 +37,18 @@ uv run tlon telegram  # 手机 /send <名字> <内容> 发信；对来信推送�
 uv run pytest
 ```
 
+## 包结构（ADR 0019）
+
+| 包 | 职责 |
+| --- | --- |
+| `tlosure` | DSL 语言核心（EDN 解析、燃料计费求值、静态校验、通用词汇），不依赖任何 tlon 包 |
+| `tlon` | runtime：EventBus、注册表、成员装配、邮件组织、记忆、工具、沙箱；经 `tlon.api` 暴露 domain facade 与 `build_runtime()` |
+| `tlon_server` | serving 进程：REST/SSE、session/notification、WebUI 托管；只经 `tlon.api` 的 facade 触达 runtime |
+| `tlon_client` | 客户端 SDK（通道适配），供 TUI/Telegram 等人类端复用 |
+| `tlon_launcher` | `tlon` CLI 入口（dream/ops/telegram 子命令），装配上面各包 |
+
+依赖方向：`tlosure ← tlon ← tlon_server / tlon_client ← tlon_launcher`（单向，import-linter 固话）。文件系统路径无全局单例：`TlonPaths` 在进程入口构造一次，显式注入贯穿各层。
+
 -- 
 ## 开发规范
 - **禁止直接推送 main 分支** — 所有修改必须通过分支 + PR

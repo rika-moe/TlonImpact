@@ -8,8 +8,8 @@ The MailDelivery component subscribes to MAIL_NEW and, for each mail:
    provider, humans via the online adapters or their persistent
    mailbox);
 3. writes the mail to the sender's ``sent.jsonl`` and to every valid
-   recipient's ``inbox.jsonl`` (mailboxes are resolved via
-   ``paths.member_mail_dir`` and cached on demand);
+   recipient's ``inbox.jsonl`` (mailboxes are resolved via the injected
+   ``TlonPaths.member_mail_dir`` and cached on demand);
 4. publishes one MAIL_DELIVERED event per recipient, carrying the Mail
    and the recipient's member id; a mail carrying an ``endorsing``
    reference additionally publishes one MAIL_ENDORSED (the reputation
@@ -36,7 +36,7 @@ from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import SpanCtx, continue_trace, start_span
 from tlon.organization.mail.mail import (
     ALL_ADDRESS,
@@ -75,10 +75,10 @@ class MailDelivery(Component, Device):
         - agent_info_provider: AgentInfoProvider for agent existence and
           the ``all@`` expansion
         - adapter_manager: AdapterManager for online-human resolution
-        - tlon_paths: TlonPaths instance (defaults to module singleton)
+        - tlon_paths: TlonPaths instance (mailbox layout)
 
     Example:
-        >>> delivery = MailDelivery(event_bus, config_service, adapter_manager)
+        >>> delivery = MailDelivery(event_bus, config_service, adapter_manager, paths)
         >>> await delivery.initialize()  # Begins listening for MAIL_NEW
     """
 
@@ -87,7 +87,7 @@ class MailDelivery(Component, Device):
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
         adapter_manager: AdapterManager,
-        tlon_paths: TlonPaths | None = None,
+        tlon_paths: TlonPaths,
     ):
         """Initialize the delivery component.
 
@@ -95,7 +95,7 @@ class MailDelivery(Component, Device):
             event_bus: Event bus for subscribing and publishing
             agent_info_provider: Provider for agent configuration queries
             adapter_manager: Manager for online human adapters
-            tlon_paths: Path resolver (tests); None uses the singleton
+            tlon_paths: Path resolver (mailbox directories)
         """
         Component.__init__(self, name="MailDelivery")
         Device.__init__(self, event_bus=event_bus, name="MailDelivery")
@@ -105,7 +105,7 @@ class MailDelivery(Component, Device):
         # address -> member resolution delegates to the same instance
         # the speak side uses, so the "known human" rule exists once.
         self._resolver = adapter_manager.recipient_resolver
-        self._paths = tlon_paths or paths
+        self._paths = tlon_paths
         # member_id -> Mailbox, created lazily on first delivery;
         # bounded LRU (_MAILBOXES_CAP, least recently used evicted)
         self._mailboxes: OrderedDict[str, Mailbox] = OrderedDict()

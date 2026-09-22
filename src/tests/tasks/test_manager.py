@@ -14,7 +14,7 @@ class TestTaskManager:
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self._paths = TlonPaths(home=self.temp_dir)
-        self.manager = TaskManager(agent_id="test-agent", paths=self._paths)
+        self.manager = TaskManager(agent_id="test-agent", tlon_paths=self._paths)
 
     def teardown_method(self):
         """Clean up test fixtures."""
@@ -180,7 +180,7 @@ class TestTaskManager:
         self.manager.save()
 
         # Create new manager and load
-        new_manager = TaskManager(agent_id="test-agent", paths=self._paths)
+        new_manager = TaskManager(agent_id="test-agent", tlon_paths=self._paths)
         new_manager.load()
 
         # Verify

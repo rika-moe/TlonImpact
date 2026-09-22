@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import ALL_ADDRESS, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.observability.ports import OrphanMailProvider
@@ -191,8 +191,7 @@ class PublicHealthMonitor:
     Dependencies (constructor injected):
         - event_bus: EventBus to subscribe MAIL_NEW and publish facts
         - agent_info_provider: member enumeration (agent ids)
-        - tlon_paths: mailbox directory resolution (defaults to the module
-          singleton)
+        - tlon_paths: mailbox directory resolution
 
     The thresholds are constructor knobs (same pattern as the registry's
     spawn budget): society-wide mechanism settings, not per-member config.
@@ -205,7 +204,7 @@ class PublicHealthMonitor:
         self,
         event_bus: "EventBus",
         agent_info_provider: "AgentInfoProvider",
-        tlon_paths: TlonPaths | None = None,
+        tlon_paths: TlonPaths,
         *,
         health_scan_interval_seconds: float = 3600.0,
         orphan_mail_days: int = 3,
@@ -216,7 +215,7 @@ class PublicHealthMonitor:
     ) -> None:
         self._event_bus = event_bus
         self._agent_info = agent_info_provider
-        self._paths = tlon_paths or paths
+        self._paths = tlon_paths
 
         self._health_scan_interval_seconds = health_scan_interval_seconds
         self._orphan_mail_days = orphan_mail_days

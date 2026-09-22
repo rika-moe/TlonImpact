@@ -200,7 +200,7 @@ class RetirementCeremony(Component, Device):
 
     def _open_tasks(self, agent_id: str) -> list[str]:
         """Unfinished task titles (todo/doing/paused) from the archive."""
-        tasks = TaskManager(agent_id, data_dir=str(self._paths.agent_dir(agent_id)))
+        tasks = TaskManager(agent_id, self._paths)
         tasks.load()
         return [t.title for t in tasks.list_tasks() if t.status != TaskStatus.DONE]
 

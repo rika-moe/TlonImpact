@@ -28,7 +28,7 @@ from opentelemetry.trace import Status, StatusCode
 from tlon.base.config import LLMConfig
 from tlon.base.ledger import LedgerWriter
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import start_span
 
 logger = get_logger(__name__)
@@ -233,17 +233,18 @@ class LLMClient:
                 usage appends one record to the member's
                 ``ledger.jsonl``; None = system-level client, no
                 accounting.
-            tlon_paths: Path resolver for the ledger file (tests inject
-                an isolated home); defaults to the global ``~/.tlon``
-                layout.
+            tlon_paths: Path resolver for the ledger file; required when
+                ``agent_id`` is set (the ledger lives under that member's
+                home in the injected layout).
         """
         self.config = config
         self.max_retries = config.max_retries
         self.base_delay = config.base_delay
         self._ledger: LedgerWriter | None = None
         if agent_id is not None:
-            resolver = tlon_paths if tlon_paths is not None else paths
-            self._ledger = LedgerWriter(resolver.agent_ledger_file(agent_id))
+            if tlon_paths is None:
+                raise ValueError("tlon_paths is required when agent_id is set")
+            self._ledger = LedgerWriter(tlon_paths.agent_ledger_file(agent_id))
 
     async def chat(
         self,

@@ -31,7 +31,6 @@ import yaml
 
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.base.paths import paths as default_paths
 
 logger = get_logger(__name__)
 
@@ -63,7 +62,7 @@ class SkillInfo:
     scope: Scope
 
 
-def seed_skills(tlon_paths: TlonPaths | None = None) -> int:
+def seed_skills(tlon_paths: TlonPaths) -> int:
     """Copy built-in skills to the global layer ``~/.tlon/skills/`` (idempotent).
 
     Mirrors ``seed_prototypes`` (``tlon.agents.prototypes``): existing files
@@ -73,8 +72,7 @@ def seed_skills(tlon_paths: TlonPaths | None = None) -> int:
     Returns:
         Number of files copied (0 when everything already exists).
     """
-    p = tlon_paths or default_paths
-    target_root = p.skills_dir()
+    target_root = tlon_paths.skills_dir()
     copied = 0
     for entry in resources.files(SKILL_PACKAGE).iterdir():
         # __pycache__ appears when running from a source tree
@@ -94,16 +92,16 @@ def seed_skills(tlon_paths: TlonPaths | None = None) -> int:
     return copied
 
 
-def _layer_dirs(agent_id: str, paths: TlonPaths) -> list[tuple[Scope, Path]]:
+def _layer_dirs(agent_id: str, tlon_paths: TlonPaths) -> list[tuple[Scope, Path]]:
     """The three skill layers in precedence order (first wins)."""
     return [
-        ("project", paths.agent_workspace_skills_dir(agent_id)),
-        ("agent", paths.agent_skills_dir(agent_id)),
-        ("global", paths.skills_dir()),
+        ("project", tlon_paths.agent_workspace_skills_dir(agent_id)),
+        ("agent", tlon_paths.agent_skills_dir(agent_id)),
+        ("global", tlon_paths.skills_dir()),
     ]
 
 
-def scan_signature(agent_id: str, paths: TlonPaths = default_paths) -> Signature:
+def scan_signature(agent_id: str, tlon_paths: TlonPaths) -> Signature:
     """Stat-only signature of the skill landscape, for cache invalidation.
 
     Covers skill-dir additions/removals and SKILL.md content changes
@@ -111,7 +109,7 @@ def scan_signature(agent_id: str, paths: TlonPaths = default_paths) -> Signature
     changes — an unchanged landscape costs no file reads.
     """
     signature: list[tuple[str, tuple[tuple[str, float], ...] | None]] = []
-    for scope, root in _layer_dirs(agent_id, paths):
+    for scope, root in _layer_dirs(agent_id, tlon_paths):
         if not root.is_dir():
             signature.append((scope, None))
             continue
@@ -124,7 +122,7 @@ def scan_signature(agent_id: str, paths: TlonPaths = default_paths) -> Signature
     return tuple(signature)
 
 
-def scan_skills(agent_id: str, paths: TlonPaths = default_paths) -> list[SkillInfo]:
+def scan_skills(agent_id: str, tlon_paths: TlonPaths) -> list[SkillInfo]:
     """Scan the three layers and parse every SKILL.md frontmatter.
 
     Only direct children of each layer root are considered (no
@@ -134,7 +132,7 @@ def scan_skills(agent_id: str, paths: TlonPaths = default_paths) -> list[SkillIn
     """
     skills: list[SkillInfo] = []
     seen: set[str] = set()
-    for scope, root in _layer_dirs(agent_id, paths):
+    for scope, root in _layer_dirs(agent_id, tlon_paths):
         if not root.is_dir():
             continue
         for child in sorted(root.iterdir()):

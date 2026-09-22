@@ -171,7 +171,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ## 存储布局
 
-所有状态落盘在 `~/.tlon/`（可用 `$TLON_HOME` 覆盖），路径的唯一权威是 [base/paths.py](../src/tlon/base/paths.py) 的 `TlonPaths`（模块级单例 `paths`）；任何模块不应硬编码目录结构。仓库根目录下的 [data/](../data) 是历史遗留，当前代码不引用它。
+所有状态落盘在 `~/.tlon/`（可用 `$TLON_HOME` 覆盖），路径的唯一权威是 [base/paths.py](../src/tlon/base/paths.py) 的 `TlonPaths`——无模块级单例，实例在进程入口构造一次后显式注入贯穿各层（同进程可并存多个 runtime，各有独立 home）；任何模块不应硬编码目录结构。仓库根目录下的 [data/](../data) 是历史遗留，当前代码不引用它。
 
 `$TLON_HOME` 只在指向一个已存在的目录时才生效，否则回落到 `~/.tlon`（不存在则创建）——见 `paths.py` 的 `_resolve_tlon_home`。
 

@@ -1,9 +1,14 @@
 """Runtime 装配（ADR 0019）：``build_runtime()`` 收编原
-``ServerApp.initialize()`` 的 runtime 装配段——tracing/metrics 支柱、
-首启种子、EventBus、ConfigService、MetricsService、TraceStore、
-AgentRegistry、LessonsDistiller、RetirementCeremony、Adam、
-guardian 包装、外部网关注册表、AdapterManager、MailDelivery、可选的
-GitHubAdapter——并在其上构造六个 domain facade。
+``ServerApp.initialize()`` 的 runtime 装配段——首启种子、EventBus、
+ConfigService、MetricsService、TraceStore、AgentRegistry、
+LessonsDistiller、RetirementCeremony、Adam、guardian 包装、外部网关
+注册表、AdapterManager、MailDelivery、可选的 GitHubAdapter——并在其上
+构造六个 domain facade。
+
+``build_runtime(runtime_paths)`` 持有一个显式的 ``TlonPaths``：同一进程
+可以并存多个 runtime 实例（各有独立的 tlon home）。进程级的
+tracing/metrics 支柱（OTel provider 是进程级单例）不在此处初始化——
+那是进程编排层（``tlon_server.serverapp.ServerApp``）的职责。
 
 返回的 ``Runtime`` 是一个小 container：持有各 facade（server 的注入
 面）与 runtime 组件（shutdown 用）。server 只装配自己的
@@ -27,10 +32,9 @@ from tlon.api.prototypes import PrototypesFacade
 from tlon.base.config import ConfigService
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
-from tlon.base.metrics import MetricsService, init_metrics, shutdown_metrics
-from tlon.base.paths import paths
-from tlon.base.settings import get_settings, get_tlon_home
-from tlon.base.tracing.otel import init_tracing, shutdown_tracing
+from tlon.base.metrics import MetricsService
+from tlon.base.paths import TlonPaths
+from tlon.base.settings import get_settings
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
@@ -74,8 +78,10 @@ class Runtime:
     async def shutdown(self) -> None:
         """Shut down all runtime components in reverse order of creation.
 
-        Adam (PID 1) stops before the registry (kernel) it drives;
-        tracing/metrics pillars flush last.
+        Adam (PID 1) stops before the registry (kernel) it drives. The
+        process-wide tracing/metrics pillars are NOT touched here — they
+        belong to the process orchestrator (ServerApp), so one runtime's
+        shutdown never kills a co-resident runtime's observability.
         """
         await self.adam.shutdown()
         if self.github_adapter:
@@ -87,31 +93,28 @@ class Runtime:
         await self.metrics_service.shutdown()
         await self.adapter_manager.shutdown()
         await self.event_bus.shutdown()
-        shutdown_tracing()
-        shutdown_metrics()
         logger.info("runtime_stopped")
 
 
-async def build_runtime() -> Runtime:
+async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     """Assemble the tlon runtime: all components + domain facades.
 
     No network ports are opened here — that is the server's concern.
+    Every filesystem access flows through the injected ``runtime_paths``,
+    so multiple runtimes with distinct tlon homes can coexist in one
+    process.
+
+    Args:
+        runtime_paths: path resolver for this runtime's tlon home
 
     Returns:
         The assembled Runtime container
     """
-    # ========== Tracing / metrics pillars (process-wide) ==========
-    init_tracing(
-        paths.traces_dir(),
-        otlp_endpoint=get_settings().otel_exporter_otlp_endpoint,
-    )
-    init_metrics()
-
     # ========== Core infrastructure ==========
     # First-boot seeding (idempotent; before any agent starts):
     # built-in prototypes + skills only — members are never seeded
     # (ADR 0016): the human creates them via WebUI / admin API.
-    bootstrap_society()
+    bootstrap_society(runtime_paths)
 
     # EventBus - event bus for inter-component communication (create first)
     event_bus = EventBus()
@@ -119,7 +122,7 @@ async def build_runtime() -> Runtime:
     logger.info("component_initialized", component="event_bus")
 
     # ConfigService - configuration management (needs EventBus)
-    config_service = ConfigService(event_bus=event_bus, tlon_home=get_tlon_home())
+    config_service = ConfigService(event_bus=event_bus, tlon_home=runtime_paths.tlon_home())
     await config_service.initialize()
 
     # MetricsService - metrics pillar (pure event consumer, needs EventBus)
@@ -128,7 +131,7 @@ async def build_runtime() -> Runtime:
     logger.info("component_initialized", component="metrics_service")
 
     # TraceStore - storage for traces (stateful)
-    trace_store = FileTraceStore(data_dir=paths.traces_dir())
+    trace_store = FileTraceStore(data_dir=runtime_paths.traces_dir())
     logger.info("component_initialized", component="trace_store")
 
     # AgentRegistry - agent management.
@@ -138,6 +141,7 @@ async def build_runtime() -> Runtime:
     agent_registry = AgentRegistry(
         event_bus=event_bus,
         agent_info_provider=config_service,
+        tlon_paths=runtime_paths,
         metrics_service=metrics_service,
         trace_store=trace_store,
     )
@@ -154,7 +158,7 @@ async def build_runtime() -> Runtime:
     # memory/lessons.md. (Registry shutdown stops members directly
     # without publishing AGENT_STOPPED, so server shutdown never
     # triggers distillation — only deliberate stops do.)
-    lessons_distiller = LessonsDistiller(event_bus=event_bus, tlon_paths=paths)
+    lessons_distiller = LessonsDistiller(event_bus=event_bus, tlon_paths=runtime_paths)
     await lessons_distiller.initialize()
     logger.info("component_initialized", component="lessons_distiller")
 
@@ -163,7 +167,7 @@ async def build_runtime() -> Runtime:
     # same AGENT_STOPPED trigger: inventory the retiree's archive
     # offline, mail a farewell letter when there is anything to hand
     # over, and always publish the AGENT_RETIRED fact.
-    retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=paths)
+    retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=runtime_paths)
     await retirement_ceremony.initialize()
     logger.info("component_initialized", component="retirement_ceremony")
 
@@ -173,7 +177,7 @@ async def build_runtime() -> Runtime:
     # from the built-in ADAM_SPEC (policy as data; phase C unified runtime).
     # It is a bus member, not an agent — it is not registered in the agent
     # registry or MemberDirectory.
-    adam = make_adam(event_bus=event_bus, agent_registry=agent_registry)
+    adam = make_adam(event_bus=event_bus, agent_registry=agent_registry, tlon_paths=runtime_paths)
     await adam.initialize()
     logger.info("component_initialized", component="adam")
 
@@ -195,6 +199,7 @@ async def build_runtime() -> Runtime:
     adapter_manager = AdapterManager(
         event_bus=event_bus,
         agent_info_provider=guardian_info,
+        tlon_paths=runtime_paths,
         external_owner=gateway_registry.owner_of,
     )
     await adapter_manager.initialize()
@@ -208,6 +213,7 @@ async def build_runtime() -> Runtime:
         event_bus=event_bus,
         agent_info_provider=guardian_info,
         adapter_manager=adapter_manager,
+        tlon_paths=runtime_paths,
     )
     await mail_delivery.initialize()
     logger.info("component_initialized", component="mail_delivery")
@@ -226,7 +232,7 @@ async def build_runtime() -> Runtime:
             event_bus=event_bus,
             agent_info_provider=config_service,
             gateway_registry=gateway_registry,
-            tlon_paths=paths,
+            tlon_paths=runtime_paths,
             recipient_id=settings.github_recipient or None,
             github_token=settings.github_token or None,
         )
@@ -253,15 +259,15 @@ async def build_runtime() -> Runtime:
         adapter_manager=adapter_manager,
         mail_delivery=mail_delivery,
         github_adapter=github_adapter,
-        members=MembersFacade(agent_registry=agent_registry, tlon_paths=paths),
-        mail=MailFacade(adapter_manager=adapter_manager, tlon_paths=paths),
-        prototypes=PrototypesFacade(tlon_paths=paths),
+        members=MembersFacade(agent_registry=agent_registry, tlon_paths=runtime_paths),
+        mail=MailFacade(adapter_manager=adapter_manager, tlon_paths=runtime_paths),
+        prototypes=PrototypesFacade(tlon_paths=runtime_paths),
         observability=ObservabilityFacade(
             trace_store=trace_store,
             metrics_service=metrics_service,
-            logs_dir=paths.logs_dir(),
+            logs_dir=runtime_paths.logs_dir(),
         ),
-        configs=ConfigFacade(config_service=config_service, tlon_paths=paths),
+        configs=ConfigFacade(config_service=config_service, tlon_paths=runtime_paths),
         events=EventsFacade(
             event_bus=event_bus,
             adapter_manager=adapter_manager,

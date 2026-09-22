@@ -26,7 +26,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import (
     HUMAN_ID_PREFIX,
     address_for_member,
@@ -52,7 +52,7 @@ class RecipientResolver:
         - agent_info_provider: AgentInfoProvider for agent existence,
           display-name lookup and id enumeration
         - is_human_online: username -> True when a live adapter exists
-        - tlon_paths: TlonPaths instance (defaults to module singleton)
+        - tlon_paths: TlonPaths instance (persistent mailbox layout)
         - external_owner: external address -> claiming gateway member id
           (ExternalGatewayRegistry.owner_of; None = no gateway claims,
           external recipients always bounce)
@@ -70,7 +70,7 @@ class RecipientResolver:
         self,
         agent_info_provider: "AgentInfoProvider",
         is_human_online: Callable[[str], bool],
-        tlon_paths: TlonPaths | None = None,
+        tlon_paths: TlonPaths,
         external_owner: Callable[[str], str | None] | None = None,
     ):
         """Initialize the resolver.
@@ -78,13 +78,13 @@ class RecipientResolver:
         Args:
             agent_info_provider: Provider for agent configuration queries
             is_human_online: Online check for a human username
-            tlon_paths: Path resolver (tests); None uses the singleton
+            tlon_paths: Path resolver (persistent mailbox layout)
             external_owner: Gateway claim lookup (address -> gateway
                 member id); None keeps external recipients unresolvable
         """
         self._agent_info = agent_info_provider
         self._is_human_online = is_human_online
-        self._paths = tlon_paths or paths
+        self._paths = tlon_paths
         self._external_owner = external_owner
 
     def resolve_address(self, recipient: str) -> str | None:

@@ -40,12 +40,17 @@ Layout:
     │       └── ...
     └── ...
 
+There is no module-level instance: every consumer holds an explicit
+``TlonPaths`` (constructor injection). Process entry points (server,
+launcher) construct one from the environment (``TLON_HOME``, default
+``~/.tlon``) and hand it down; tests construct isolated ones.
+
 Usage:
-    >>> from tlon.base.paths import paths
+    >>> from tlon.base.paths import TlonPaths
+    >>> paths = TlonPaths()  # $TLON_HOME or ~/.tlon
     >>> cfg = paths.agent_config_file("dev-001")
 
     # For custom tlon_home (e.g., in tests):
-    >>> from tlon.base.paths import paths
     >>> tmp = TlonPaths(home=Path("/tmp/test-tlon"))
     >>> cfg = tmp.agent_config_file("dev-001")
 """
@@ -69,9 +74,10 @@ def _resolve_tlon_home() -> Path:
 class TlonPaths:
     """Centralized path resolver for the ~/.tlon/ filesystem layout.
 
-    Singleton-like: import ``paths`` from this module for the standard
-    ``~/.tlon`` instance. Construct your own ``TlonPaths(home=...)``
-    for isolated environments (tests, etc.).
+    Explicitly injected everywhere — construct one at the process entry
+    point (``TlonPaths()`` resolves ``$TLON_HOME`` / ``~/.tlon``) and
+    pass it down; construct your own ``TlonPaths(home=...)`` for
+    isolated environments (tests, multi-runtime embedding).
     """
 
     def __init__(self, home: Path | str | None = None):
@@ -318,7 +324,3 @@ class TlonPaths:
         an absent ledger is the normal first-run state.
         """
         return self.shared_dir() / "spawn-quota.json"
-
-
-# Module-level default instance for convenience
-paths = TlonPaths()

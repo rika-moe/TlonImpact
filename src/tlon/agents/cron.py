@@ -52,7 +52,7 @@ from croniter import croniter
 
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail, address_for_member
 
 if TYPE_CHECKING:
@@ -120,7 +120,6 @@ class CronScheduler:
         - event_bus: EventBus to publish the task mail
         - agent_info_provider: member enumeration (target existence)
         - tlon_paths: cron.yaml resolution + known-human enumeration
-          (defaults to the module singleton)
 
     ``interval_seconds`` / ``scribe_id`` configure the built-in digest
     entry (same knobs as 's DigestScheduler): society-wide mechanism
@@ -132,7 +131,7 @@ class CronScheduler:
         self,
         event_bus: "EventBus",
         agent_info_provider: "AgentInfoProvider",
-        tlon_paths: TlonPaths | None = None,
+        tlon_paths: TlonPaths,
         *,
         interval_seconds: float = 86400.0,
         scribe_id: str = "ji-shuheng",
@@ -140,7 +139,7 @@ class CronScheduler:
     ) -> None:
         self._event_bus = event_bus
         self._agent_info = agent_info_provider
-        self._paths = tlon_paths or paths
+        self._paths = tlon_paths
         if builtin_entries is not None:
             self._builtin_entries = builtin_entries
         else:

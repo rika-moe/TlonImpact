@@ -113,7 +113,6 @@ class TestRegistryStart:
     async def test_start_deterministic_member(self, bus, tmp_path, monkeypatch):
         """The unified assembler starts a loop-less member inline."""
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         _write_behavior(p, "relay-1", RELAY_EDN)
 
         registry = AgentRegistry(
@@ -121,7 +120,7 @@ class TestRegistryStart:
             agent_info_provider=_StaticProvider(
                 {"relay-1": AgentConfig(id="relay-1", name="转发者", llm=LLMConfig(model_name="test/model"))}
             ),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
 
@@ -144,18 +143,17 @@ class TestRegistryStart:
         # AGENT_STARTED carries the spec provenance.
         await _wait_for(lambda: len(started) == 1)
         assert started[0].payload["agent_id"] == "relay-1"
-        assert started[0].payload["spec_hash"] == load_member_spec("relay-1").source_hash
+        assert started[0].payload["spec_hash"] == load_member_spec("relay-1", tlon_paths=p).source_hash
 
         await registry.shutdown()
 
     async def test_unknown_agent_refused(self, bus, tmp_path, monkeypatch):
         """A start request for an unregistered id is a no-op."""
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider({}),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
 
@@ -177,13 +175,12 @@ class TestSpecDerivedLifecycle:
 
     async def _make_registry(self, bus, tmp_path, monkeypatch, configs, behaviors):
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         for agent_id, text in behaviors.items():
             _write_behavior(p, agent_id, text)
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(configs),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
         for agent_id in configs:
@@ -249,7 +246,7 @@ class TestRegistryQueries:
         registry = AgentRegistry(
             event_bus=EventBus(),
             agent_info_provider=_StaticProvider({}),
-            paths=TlonPaths(home=tmp_path),
+            tlon_paths=TlonPaths(home=tmp_path),
         )
         queries = RegistryQueries(registry)
 
@@ -281,7 +278,7 @@ class TestRegistryQueries:
         registry = AgentRegistry(
             event_bus=EventBus(),
             agent_info_provider=_StaticProvider(configs),
-            paths=p,
+            tlon_paths=p,
         )
         roster = RegistryQueries(registry).member_roster()
 
@@ -294,7 +291,7 @@ class TestRegistryQueries:
         empty = AgentRegistry(
             event_bus=EventBus(),
             agent_info_provider=_StaticProvider({}),
-            paths=p,
+            tlon_paths=p,
         )
         assert RegistryQueries(empty).member_roster() == ""
 
@@ -309,12 +306,11 @@ class TestWakeOnMail:
 
     async def _sleeping_registry(self, bus, tmp_path, monkeypatch, agent_id, text, running=False):
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         _write_behavior(p, agent_id, text)
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider({agent_id: AgentConfig(id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model"))}),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
         if running:
@@ -410,14 +406,13 @@ class TestWakeOnMail:
         woken member's unread scan runs the cheap path even though a
         cognitive rule also matches the event."""
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         _write_behavior(p, "gu-yanxi-9", MIXED_MEMBER_EDN)
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
                 {"gu-yanxi-9": AgentConfig(id="gu-yanxi-9", name="客服", llm=LLMConfig(model_name="test/model"))}
             ),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
 
@@ -453,13 +448,12 @@ class TestMemberStopAndDrain:
         self, bus, tmp_path, monkeypatch, configs: dict[str, AgentConfig], homes=()
     ):
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         for agent_id in homes:
             (p.tlon_home() / agent_id).mkdir(parents=True, exist_ok=True)
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(configs),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
         for agent_id in configs:
@@ -539,14 +533,13 @@ class TestPendingStop:
 
     async def _running_member(self, bus, tmp_path, monkeypatch, agent_id="worker-1"):
         p = TlonPaths(home=tmp_path)
-        monkeypatch.setattr("tlon.agents.loader.paths", p)
         _write_behavior(p, agent_id, RELAY_EDN)
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
                 {agent_id: AgentConfig(id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model"))}
             ),
-            paths=p,
+            tlon_paths=p,
         )
         await registry.initialize()
         await bus.publish(

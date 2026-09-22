@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.paths import TlonPaths
-from tlon.sandbox import docker_runtime as dr
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 
 
@@ -12,9 +11,8 @@ class TestCreateContainerMounts:
     async def test_agent_home_mounted_read_only(self, tmp_path, monkeypatch):
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         tlon_paths = TlonPaths(home=tmp_path)
-        monkeypatch.setattr(dr, "paths", tlon_paths)
 
-        runtime = DockerRuntime(DockerRuntimeConfig(), agent_id="dev-001")
+        runtime = DockerRuntime(DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=tlon_paths)
         runtime.client.images.get = MagicMock()
         runtime.client.containers.run = MagicMock(return_value=MagicMock())
 

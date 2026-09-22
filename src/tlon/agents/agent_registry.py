@@ -72,7 +72,7 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.organization.mail.mailbox import Mailbox
@@ -187,7 +187,7 @@ class AgentRegistry(Component):
         self,
         event_bus: EventBus,
         agent_info_provider: "AgentInfoProvider",
-        paths: "TlonPaths | None" = None,
+        tlon_paths: "TlonPaths",
         max_activations: int = 8,
         max_spawn_depth: int = 3,
         session_spawn_quota: int = 2,
@@ -201,7 +201,7 @@ class AgentRegistry(Component):
         Args:
             event_bus: Event bus for mail delivery and lifecycle events
             agent_info_provider: Provider for agent configuration queries
-            paths: TlonPaths instance (defaults to module singleton)
+            tlon_paths: Path resolver for the runtime's filesystem layout
             max_activations: spawn budget — cap on running agents total
                 (boot-set members included); spawning beyond it is rejected
             max_spawn_depth: spawn budget — a spawned member's depth is
@@ -218,7 +218,7 @@ class AgentRegistry(Component):
         super().__init__(name="AgentRegistry")
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
-        self._paths = paths  # None means use module singleton
+        self._paths = tlon_paths
         self._metrics_service = metrics_service
         self._trace_store = trace_store
 
@@ -244,7 +244,7 @@ class AgentRegistry(Component):
         self._health = PublicHealthMonitor(
             event_bus=event_bus,
             agent_info_provider=agent_info_provider,
-            tlon_paths=paths,
+            tlon_paths=tlon_paths,
         )
         # Cron scheduler (): "tick is a mail" — periodic task mails
         # from postmaster (built-in digest + declared cron.yaml entries).
@@ -252,7 +252,7 @@ class AgentRegistry(Component):
         self._cron = CronScheduler(
             event_bus=event_bus,
             agent_info_provider=agent_info_provider,
-            tlon_paths=paths,
+            tlon_paths=tlon_paths,
         )
 
         # Registered agent IDs (persona full set; may or may not be running)
@@ -348,7 +348,7 @@ class AgentRegistry(Component):
         if agent_id in self._profiles:
             return None  # cached failure
         try:
-            spec = load_member_spec(agent_id, builtins=self._host_builtins)
+            spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=self._host_builtins)
         except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning("member_spec_unreadable", agent_id=agent_id, error=str(e))
             self._profiles[agent_id] = None
@@ -512,14 +512,14 @@ class AgentRegistry(Component):
             # validation too (D6.6: host predicates open to registry
             # members).
             builtins = self._host_builtins
-            spec = load_member_spec(agent_id, builtins=builtins)
+            spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
-            mailbox = Mailbox((self._paths or paths).member_mail_dir(config.id))
+            mailbox = Mailbox(self._paths.member_mail_dir(config.id))
             capabilities = await assemble_cognitive(
                 config,
                 registry=self,
                 agent_info=self._agent_info,
-                tlon_paths=self._paths or paths,
+                tlon_paths=self._paths,
                 metrics_service=self._metrics_service,
                 trace_store=self._trace_store,
             )

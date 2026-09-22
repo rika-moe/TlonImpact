@@ -39,7 +39,7 @@ from collections.abc import Awaitable, Callable
 from tlon.agents.reputation import collect_reputation
 from tlon.base.ledger import collect_lineage_ledgers
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 
 logger = get_logger(__name__)
 
@@ -107,7 +107,7 @@ def tilt_for(efficiencies: dict[str, float], lineage: str) -> float:
     return min(max(efficiencies[lineage] / mean, TILT_MIN), TILT_MAX)
 
 
-def tilt_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[float]]:
+def tilt_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[float]]:
     """Bind the tilt derivation to a paths layout (the spawn-budget input).
 
     The bloodline key is the prototype name itself
@@ -115,7 +115,7 @@ def tilt_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[flo
     the provider's input is the spawn target's prototype. Recomputed on
     every call — spawn is a low-frequency operation, so no caching.
     """
-    resolved = tlon_paths or paths
+    resolved = tlon_paths
 
     async def tilt(prototype: str) -> float:
         return tilt_for(await lineage_efficiency(resolved), prototype)
@@ -156,7 +156,7 @@ async def insolvent_lineages(tlon_paths: TlonPaths) -> set[str]:
         return set()
 
 
-def solvency_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable[bool]]:
+def solvency_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[bool]]:
     """Bind the solvency derivation to a paths layout (gate input).
 
     Returns True (solvent) for any bloodline not in
@@ -164,7 +164,7 @@ def solvency_provider(tlon_paths: TlonPaths | None) -> Callable[[str], Awaitable
     ledger is innocent by construction). Recomputed on every call, same
     as ``tilt_provider``.
     """
-    resolved = tlon_paths or paths
+    resolved = tlon_paths
 
     async def solvent(prototype: str) -> bool:
         return prototype not in await insolvent_lineages(resolved)

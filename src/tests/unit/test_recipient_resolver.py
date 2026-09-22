@@ -145,7 +145,7 @@ class TestSharedResolver:
         await bus.shutdown()
 
     async def test_ambiguous_display_name_is_refused(
-        self, provider: MockAgentInfoProvider
+        self, provider: MockAgentInfoProvider, tmp_path
     ):
         """Two agents sharing a display name must not resolve silently to
         the first one — the addressing surface is the name (ADR 0006), so
@@ -155,6 +155,7 @@ class TestSharedResolver:
         resolver = RecipientResolver(
             agent_info_provider=provider,
             is_human_online=lambda _username: False,
+            tlon_paths=TlonPaths(home=tmp_path),
         )
 
         assert resolver.resolve_address("谢云舒") is None
@@ -163,11 +164,12 @@ class TestSharedResolver:
         assert resolver.resolve_address("xie-yunshu") == "xie-yunshu@tlon.internal"
 
     async def test_unique_display_name_still_resolves(
-        self, provider: MockAgentInfoProvider
+        self, provider: MockAgentInfoProvider, tmp_path
     ):
         resolver = RecipientResolver(
             agent_info_provider=provider,
             is_human_online=lambda _username: False,
+            tlon_paths=TlonPaths(home=tmp_path),
         )
         assert resolver.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
 

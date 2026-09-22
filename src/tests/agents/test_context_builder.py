@@ -70,7 +70,7 @@ def _rule_with_sections(sections: str) -> MemberRule:
 
 
 def _make_builder(tmp_path: Path, sections: str) -> tuple[ContextBuilder, TaskManager]:
-    task_manager = TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path))
+    task_manager = TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path))
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
         [],
@@ -79,6 +79,7 @@ def _make_builder(tmp_path: Path, sections: str) -> tuple[ContextBuilder, TaskMa
         task_manager,
         _rule_with_sections(sections),
         ADDRESS,
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     return builder, task_manager
 
@@ -95,10 +96,11 @@ def _make_thread_builder(
         [],
         mailbox,
         _MemoryStub(),  # type: ignore[arg-type]
-        TaskManager(agent_id=AGENT, paths=tlon_paths),
+        TaskManager(agent_id=AGENT, tlon_paths=tlon_paths),
         _rule_with_sections(sections),
         ADDRESS,
         journal,
+        tlon_paths=tlon_paths,
     )
     return builder, mailbox, journal
 
@@ -462,11 +464,11 @@ def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
         [],
         None,
         _MemoryStub(),  # type: ignore[arg-type]
-        TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path)),
+        TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
         _rule_with_sections(sections),
         ADDRESS,
         None,
-        TlonPaths(home=tmp_path),
+        tlon_paths=TlonPaths(home=tmp_path),
     )
 
 
@@ -580,9 +582,10 @@ def _make_knowledge_builder(tmp_path: Path) -> tuple[ContextBuilder, _RecordingM
         [],
         None,
         memory,  # type: ignore[arg-type]
-        TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path)),
+        TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
         _rule_with_sections("[(knowledge)]"),
         ADDRESS,
+        tlon_paths=TlonPaths(home=tmp_path),
     )
     return builder, memory
 
@@ -621,7 +624,7 @@ async def test_knowledge_lands_last_after_current_mail(tmp_path: Path) -> None:
     """The knowledge message is the very last message — after the current
     mail — wherever the section is declared in the vector."""
     memory = _RecordingMemory()
-    tasks = TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path))
+    tasks = TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path))
     task = tasks.create_task("进行中的任务")
     tasks.start_task(task.id)
     builder = ContextBuilder(
@@ -633,6 +636,7 @@ async def test_knowledge_lands_last_after_current_mail(tmp_path: Path) -> None:
         # knowledge declared mid-vector: its position no longer matters.
         _rule_with_sections("[(knowledge) (current-task)]"),
         ADDRESS,
+        tlon_paths=TlonPaths(home=tmp_path),
     )
 
     built = await builder.build_context(_mail())
@@ -670,9 +674,10 @@ async def test_empty_knowledge_leaves_anchor_unchanged(tmp_path: Path) -> None:
         [],
         None,
         _EmptyMemory(),  # type: ignore[arg-type]
-        TaskManager(agent_id=AGENT, paths=TlonPaths(home=tmp_path)),
+        TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
         _rule_with_sections("[(knowledge)]"),
         ADDRESS,
+        tlon_paths=TlonPaths(home=tmp_path),
     )
 
     built = await builder.build_context(_mail())

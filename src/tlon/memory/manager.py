@@ -33,7 +33,7 @@ import aiofiles
 from tlon.base.config import LLMConfig
 from tlon.base.embedding_client import EmbeddingClient
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 
 from .claim_store import ClaimStore
 from .distiller import Distiller
@@ -128,7 +128,7 @@ class MemoryManager:
         self,
         agent_id: str,
         config: MemoryConfig,
-        data_dir: Path | None = None,
+        data_dir: Path,
         llm_config: LLMConfig | None = None,
         tlon_paths: TlonPaths | None = None,
         embedder: Embedder | None = None,
@@ -139,16 +139,15 @@ class MemoryManager:
             agent_id: The agent ID
             config: Memory configuration
             data_dir: The agent's home directory (``{home}/{agent_id}``);
-                the memory dir resolves as ``{data_dir}/memory``. When
-                None, the global ``paths`` singleton is used — the
+                the memory dir resolves as ``{data_dir}/memory``. The
                 registry always passes an explicit data_dir (unified
-                assembly, ADR 0006), so the singleton is only a fallback.
+                assembly, ADR 0006).
             llm_config: Optional LLM config for distillation; its
                 ``embedding_model_name`` (when set) also builds the
                 embedding client for vector retrieval
             tlon_paths: Path resolver handed to the distiller's LLM
-                client for ledger attribution (issue ); defaults to
-                the global ``~/.tlon`` layout.
+                client for ledger attribution (issue ); required
+                when ``llm_config`` is set.
             embedder: Embedding client override (tests inject a fake);
                 None = build from ``llm_config.embedding_model_name``,
                 and when that is unset too, no vector retrieval at all
@@ -156,13 +155,9 @@ class MemoryManager:
         self.agent_id = agent_id
         self.config = config
 
-        if data_dir is not None:
-            self.storage_path = data_dir / "memory"
-            self.storage_path.mkdir(parents=True, exist_ok=True)
-            self.config_file = self.storage_path / "config.json"
-        else:
-            self.storage_path = paths.agent_memory_dir(agent_id)
-            self.config_file = paths.memory_config_file(agent_id)
+        self.storage_path = data_dir / "memory"
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.storage_path / "config.json"
 
         self.distillation_file = self.storage_path / "distillation.json"
 

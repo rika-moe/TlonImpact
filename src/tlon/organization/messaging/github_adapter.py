@@ -44,7 +44,7 @@ import aiohttp
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
-from tlon.base.paths import TlonPaths, paths
+from tlon.base.paths import TlonPaths
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import HUMAN_ID_PREFIX, Mail, address_for_member
 
@@ -121,7 +121,7 @@ class GitHubAdapter(Device):
         event_bus: "EventBus",
         agent_info_provider: "AgentInfoProvider",
         gateway_registry: ExternalGatewayRegistry,
-        tlon_paths: TlonPaths | None = None,
+        tlon_paths: TlonPaths,
         recipient_id: str | None = None,
         github_token: str | None = None,
         http_post: HttpPost | None = None,
@@ -133,7 +133,7 @@ class GitHubAdapter(Device):
             agent_info_provider: Agent existence queries (recipient check)
             gateway_registry: External address claim table; ``initialize``
                 claims ``notifications@github.com`` for ``gateway:github``
-            tlon_paths: Path resolver (tests); None uses the singleton
+            tlon_paths: Path resolver (known-humans enumeration)
             recipient_id: Default recipient member id from settings;
                 None routes GitHub mail to all known humans
             github_token: GitHub API token for egress comments; None or
@@ -144,7 +144,7 @@ class GitHubAdapter(Device):
         super().__init__(event_bus=event_bus, name="GitHubAdapter")
         self._agent_info = agent_info_provider
         self._registry = gateway_registry
-        self._paths = tlon_paths or paths
+        self._paths = tlon_paths
         self._recipient_id = recipient_id
         self._github_token = github_token
         self._http_post: HttpPost = http_post or _aiohttp_post
