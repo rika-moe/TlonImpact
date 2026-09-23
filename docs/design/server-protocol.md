@@ -94,7 +94,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 两个官方客户端，都只经 REST + SSE 与服务端通信：
 
 - [apps/operator](../../apps/operator)（TypeScript/Ink TUI）：`src/client/sseClient.ts` 的 `SseClient` 用 fetch 实现整个协议——`POST /sessions` 开流前拿快照，`GET /events` 读流，PATCH 改 mode，断线后指数退避重连（`backoffDelay`，1s 起步、30s 封顶）并**从零重建会话**（新 session id、新快照），断连期间的事件丢弃。`dispose` 中止流并尽力 DELETE 会话。整个客户端协议实现只有这一个文件、两百余行——这是协议面小的直接证据。
-- [src/tlon_client/sdk/](../../src/tlon_client/sdk)（Python SDK）：`client.py` 的 `TlonClient` = `base_client.py` 的 `BaseClient`（REST + SSE 传输、自动重连、重连后重新 `POST /sessions`）+ `adapter.py` 的 `ClientAdapter`（按客户端类型声明 client_type/mode/filters 等默认行为）。契约上只依赖 `tlon.base`，不触碰服务端内部（import-linter 强制）——SDK 能用的就是协议暴露的，没有后门。
+- [src/tlon_client/sdk/](../../src/tlon_client/sdk)（Python SDK）：`client.py` 的 `TlonClient` = `base_client.py` 的 `BaseClient`（REST + SSE 传输、自动重连、重连后重新 `POST /sessions`）+ `adapter.py` 的 `ClientAdapter`（按客户端类型声明 client_type/mode/filters 等默认行为）。契约上不依赖 `tlon` 包（import-linter 强制）——SDK 能用的就是协议暴露的，没有后门。
 
 两个客户端共同的约定值得强调：**过滤声明在服务端执行**。adapter 把想要的 mode 和 filters 随 `POST /sessions` / `PATCH` 发给服务端，本地收到什么就展示什么，不再二次过滤。这让「客户端看到什么」的语义只有一个权威实现（`NotificationService`），客户端类型再怎么增加也不会各自漂移出自己的过滤规则。
 

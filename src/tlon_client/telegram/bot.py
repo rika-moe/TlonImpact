@@ -18,16 +18,16 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import structlog
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from tlon.base.logger import get_logger
 from tlon_client.sdk.adapter import TelegramAdapter
 from tlon_client.sdk.client import TlonClient
 
 from .reply_map import ReplyMap, is_allowed, parse_send_command
 
-logger = get_logger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Telegram messages are capped at 4096 chars; keep headroom for the header.
 MAX_MESSAGE_LEN = 4000

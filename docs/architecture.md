@@ -9,7 +9,7 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 ```
 ┌──────────────────────────── 客户端层 ────────────────────────────┐
 │  apps/operator   TypeScript/Ink TUI（tlon ops 拉起的 Node 进程）  │
-│  tlon_client/sdk TlonClient —— 纯协议层 SDK，只依赖 tlon.base     │
+│  tlon_client/sdk TlonClient —— 纯协议层 SDK，不依赖 tlon 包      │
 │  任意 HTTP 客户端（REST + SSE 即可接入）                          │
 └──────────────┬───────────────────────────────┬───────────────────┘
                │ HTTP REST                     │ SSE（GET /events）
@@ -51,7 +51,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 - 可观测性：`GET /traces`、`GET /traces/{trace_id}`、`GET /metrics`、`GET /agents/{agent_id}/logs`、`GET /logs`
 - 其他：`GET /health`；`GET /test/ping`、`POST /test/echo` 仅在 debug 模式注册
 
-客户端侧有两类接入方式：`tlon ops`（[tlon_launcher/commands/ops.py](../src/tlon_launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[tlon_client/sdk/](../src/tlon_client/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上只依赖 `tlon.base`，不触碰服务端内部。
+客户端侧有两类接入方式：`tlon ops`（[tlon_launcher/commands/ops.py](../src/tlon_launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[tlon_client/sdk/](../src/tlon_client/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上不依赖 `tlon` 包（日志直接用 structlog），只经 REST + SSE 与服务端通信。
 
 成员配置的创建与审批走服务端管理面：首启只播种原型库与技能（[agents/bootstrap.py](../src/tlon/agents/bootstrap.py)），**空社会不再自动初始化标准团队**（ADR 0016）——成员由人类经管理面创建（创建时选模型，成员级 LLM 配置），成员/原型管理经 ops 的管理 API（`POST/PATCH/DELETE /admin/config/agents`、`/admin/prototypes/staging` 审批），`POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
 
@@ -71,7 +71,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 | `tlon.prototypes` | 内置行为原型库（随包携带，启动时播种到 `~/.tlon/prototypes/`） | —（无独立契约） | — |
 | `tlon.api` | runtime 公共北向 API（ADR 0019）：六个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 server/client/launcher | import-linter「api 不依赖 server/client/launcher」 |
 | `tlon_server` | REST/SSE handlers + 客户端连接管理 + WebUI 静态托管 | 仅 tlon.api + tlon.base（只禁直接 import） | import-linter「server 只依赖 tlon.api + tlon.base」 |
-| `tlon_client` | 客户端包：`sdk/`（外部客户端用的纯协议层 SDK）、`telegram/`（Telegram bot 客户端） | sdk 仅 tlon.base；telegram 仅 sdk/base/第三方 | import-linter「client.sdk 只依赖 tlon.base」「client.telegram 只依赖 sdk/base/第三方」 |
+| `tlon_client` | 客户端包：`sdk/`（外部客户端用的纯协议层 SDK）、`telegram/`（Telegram bot 客户端） | sdk 不依赖 tlon；telegram 仅 sdk/第三方 | import-linter「client.sdk 不依赖 tlon」「client.telegram 只依赖 sdk/第三方」 |
 | `tlon_launcher` | 命令行入口（composition root） | 仅 tlon.base + tlon_server + tlon_client | import-linter「launcher 不直摸 runtime」 |
 
 除 import-linter 外，[scripts/](../scripts) 下还有三个 AST 检查脚本：

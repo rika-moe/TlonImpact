@@ -9,12 +9,12 @@ from collections.abc import Callable
 from types import TracebackType
 from typing import Any
 
-from tlon.base.logger import get_logger
+import structlog
 
 from .adapter import ClientAdapter, TerminalAdapter
 from .base_client import BaseClient, ConnectionState
 
-logger = get_logger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class TlonClient:

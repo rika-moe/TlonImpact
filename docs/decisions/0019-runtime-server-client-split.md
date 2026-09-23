@@ -22,7 +22,9 @@ src/
 └── tlon_launcher/  `tlon` CLI（dream/ops/telegram），composition root
 ```
 
-依赖方向（import-linter 固话）：`tlosure` ← `tlon` ← `tlon_server`（只许 `tlon.api` + `tlon.base`）、`tlon` ← `tlon_client`（只许 `tlon.base`，沿用现 sdk 契约）← `tlon_launcher` 居顶。CLI 入口不变：`uv run tlon dream|ops|telegram`。
+依赖方向（import-linter 固话）：`tlosure` ← `tlon` ← `tlon_server`（只许 `tlon.api` + `tlon.base`）、`tlon` ← `tlon_client` ~~（只许 `tlon.base`，沿用现 sdk 契约）~~ ← `tlon_launcher` 居顶。CLI 入口不变：`uv run tlon dream|ops|telegram`。
+
+> 演进（）：`tlon_client` 对 `tlon` 的唯一依赖是 `tlon.base.logger.get_logger`（10 行 structlog 薄封装），已改为直接用 `structlog.get_logger`，契约收紧为「client 不依赖 tlon 包」——无需拆 `tlon.base`。tlon_client 现在只依赖第三方库（aiohttp / structlog / python-telegram-bot），具备独立轻量分发的前提。
 
 ### 2. 按域 facade（`tlon/api/`，六个 + bootstrap）
 

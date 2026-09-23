@@ -22,12 +22,11 @@ from enum import Enum
 from typing import Any, cast
 
 import aiohttp
-
-from tlon.base.logger import get_logger
+import structlog
 
 from .exceptions import AuthenticationError, ConnectionError, ProtocolError
 
-logger = get_logger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ConnectionState(Enum):

@@ -252,35 +252,26 @@ forbidden_modules = [
     "tlon.prototypes",
 ]
 
-# SDK 是给外部客户端用的纯协议层：只依赖 tlon.base
+# SDK 是给外部客户端用的纯协议层：不依赖 tlon 包（含 tlon.base），
+# 日志直接用 structlog。这是 tlon_client 轻量分发的前提（）
 [[tool.importlinter.contracts]]
-name = "client.sdk 只依赖 tlon.base"
+name = "client.sdk 不依赖 tlon"
 type = "forbidden"
 source_modules = "tlon_client.sdk"
 forbidden_modules = [
-    "tlon.agents",
-    "tlon.organization",
-    "tlon.memory",
-    "tlon.sandbox",
-    "tlon.tools",
-    "tlon.prototypes",
+    "tlon",
     "tlon_server",
     "tlon_launcher",
 ]
 
-# Telegram bot 客户端：与 sdk 同层的纯客户端包，只依赖 sdk / base /
-# 第三方库（python-telegram-bot）；forbidden 清单镜像上面的 sdk 契约
+# Telegram bot 客户端：与 sdk 同层的纯客户端包，只依赖 sdk / 第三方库
+#（python-telegram-bot）；forbidden 清单镜像上面的 sdk 契约
 [[tool.importlinter.contracts]]
-name = "client.telegram 只依赖 sdk/base/第三方"
+name = "client.telegram 只依赖 sdk/第三方"
 type = "forbidden"
 source_modules = "tlon_client.telegram"
 forbidden_modules = [
-    "tlon.agents",
-    "tlon.organization",
-    "tlon.memory",
-    "tlon.sandbox",
-    "tlon.tools",
-    "tlon.prototypes",
+    "tlon",
     "tlon_server",
     "tlon_launcher",
 ]
