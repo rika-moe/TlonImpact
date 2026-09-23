@@ -224,8 +224,8 @@ class RetirementCeremony(Component, Device):
         someone else and the retiree's sent file holds no later reply in
         that thread (the mirror image of the orphan-mail scan, which
         finds "I wrote and nobody answered")."""
-        mail_dir = self._paths.member_mail_dir_existing(agent_id)
-        if mail_dir is None:
+        mail_dir = self._paths.member_mail_dir(agent_id)
+        if not mail_dir.is_dir():
             return []
         mailbox = Mailbox(mail_dir)
         own_address = address_for_member(agent_id)

@@ -170,7 +170,6 @@ class TestPaths:
     def test_agent_mail_dir(self, tmp_path: Path):
         paths = TlonPaths(home=tmp_path)
         assert paths.agent_mail_dir("gu-yanxi") == tmp_path / "gu-yanxi" / "mail"
-        assert paths.agent_mail_dir("gu-yanxi").is_dir()
 
     def test_member_mail_dir_for_agent(self, tmp_path: Path):
         paths = TlonPaths(home=tmp_path)
@@ -180,27 +179,15 @@ class TestPaths:
         paths = TlonPaths(home=tmp_path)
         mail_dir = paths.member_mail_dir("human:alice")
         assert mail_dir == tmp_path / "human-alice" / "mail"
-        assert mail_dir.is_dir()
-
-    def test_member_mail_dir_existing_never_creates(self, tmp_path: Path):
-        paths = TlonPaths(home=tmp_path)
-        assert paths.member_mail_dir_existing("human:alice") is None
-        assert not (tmp_path / "human-alice").exists()
-
-        paths.member_mail_dir("human:alice")  # creates
-        assert (
-            paths.member_mail_dir_existing("human:alice")
-            == tmp_path / "human-alice" / "mail"
-        )
 
     def test_known_human_ids_lists_only_mailboxed_humans(self, tmp_path: Path):
         paths = TlonPaths(home=tmp_path)
         assert paths.known_human_ids() == []
 
-        paths.member_mail_dir("human:alice")
-        paths.member_mail_dir("human:alice")
+        paths.member_mail_dir("human:alice").mkdir(parents=True)
+        paths.member_mail_dir("human:carol").mkdir(parents=True)
         (tmp_path / "human-ghost").mkdir()  # dir without mail/ is not known
-        assert paths.known_human_ids() == ["human:alice", "human:alice"]
+        assert paths.known_human_ids() == ["human:alice", "human:carol"]
 
 
 class TestMailbox:

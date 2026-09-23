@@ -298,6 +298,7 @@ def instantiate(
     # are creation-time data (wizard role cards / future tools), not part
     # of the behavior genome.
     config_dir = p.agent_config_dir(agent_id)
+    config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / BEHAVIOR_FILE).write_text(behavior_text, encoding="utf-8")
 
     # Lessons inheritance (issue ): a prototype's LESSONS.md — lessons

@@ -322,7 +322,9 @@ class TestAdapterManagerPublish:
         adapter) is addressed, not dropped — the copy waits in their
         inbox on the delivery side (docs/design/mail.md)."""
         await manager.attach("alice", "tui-0001", _noop_sink)
-        TlonPaths(home=tmp_path).member_mail_dir("human:friend")
+        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(
+            parents=True, exist_ok=True
+        )
 
         mail = await manager.publish("tui-0001", "hi", to=["friend"])
 
@@ -374,7 +376,9 @@ class TestResolveAddress:
         """A known-but-offline human (persistent mailbox, no adapter)
         resolves — same rule as MailDelivery, the mail waits in their
         inbox (docs/design/mail.md)."""
-        TlonPaths(home=tmp_path).member_mail_dir("human:friend")
+        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(
+            parents=True, exist_ok=True
+        )
 
         assert manager.resolve_address("friend") == "friend@tlon.internal"
         assert manager.resolve_address("human:friend") == "friend@tlon.internal"

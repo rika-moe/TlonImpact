@@ -123,17 +123,19 @@ class Mailbox:
     def __init__(self, mail_dir: Path):
         """Initialize the mailbox rooted at the given directory.
 
+        Pure construction: the directory is created lazily at the first
+        write (append / mark_read), so read-only use (inbox scans,
+        stats, reputation) never materializes anything.
+
         Args:
             mail_dir: Directory holding inbox.jsonl / sent.jsonl /
-                inbox.cursor (created if missing)
+                inbox.cursor
         """
         self._dir = mail_dir
         self._inbox_path = mail_dir / "inbox.jsonl"
         self._sent_path = mail_dir / "sent.jsonl"
         self._cursor_path = mail_dir / "inbox.cursor"
         self._lock = _lock_for(mail_dir)
-
-        self._dir.mkdir(parents=True, exist_ok=True)
 
     async def append_inbox(self, mail: Mail) -> None:
         """Append a received mail to the inbox.
@@ -155,6 +157,7 @@ class Mailbox:
         """Persist a single mail to a jsonl file."""
         async with self._lock:
             try:
+                self._dir.mkdir(parents=True, exist_ok=True)
                 async with aiofiles.open(path, "a", encoding="utf-8") as f:
                     await f.write(json.dumps(mail.to_dict(), ensure_ascii=False) + "\n")
             except Exception as e:
@@ -248,6 +251,7 @@ class Mailbox:
         async with self._lock:
             if mail_id in await self._read_cursor():
                 return
+            self._dir.mkdir(parents=True, exist_ok=True)
             async with aiofiles.open(self._cursor_path, "a", encoding="utf-8") as f:
                 await f.write(mail_id + "\n")
 

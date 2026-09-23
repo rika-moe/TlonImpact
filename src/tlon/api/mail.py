@@ -57,7 +57,11 @@ class MailFacade:
         Returns:
             Mail dicts (Mail.to_dict) with an added "read" flag
         """
-        mailbox = Mailbox(self._paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}"))
+        mail_dir = self._paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}")
+        # A human becomes "known" on first inbox read (docs/design/mail.md);
+        # materialize their persistent mailbox explicitly.
+        mail_dir.mkdir(parents=True, exist_ok=True)
+        mailbox = Mailbox(mail_dir)
         mails = await mailbox.recent(limit)
         unread_ids = {m.id for m in await mailbox.unread()}
         result = []

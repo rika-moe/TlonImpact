@@ -45,7 +45,7 @@ async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
     runtime_b = await build_runtime(paths_b)
     try:
         # bob is a known human in A only (mailbox exists → deliverable).
-        paths_a.member_mail_dir("human:bob")
+        paths_a.member_mail_dir("human:bob").mkdir(parents=True, exist_ok=True)
 
         token = uuid.uuid4().hex[:12]
         # Send through instance A's mail channel (facade → adapter manager,
@@ -56,10 +56,11 @@ async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
         await _wait_for(lambda: inbox_bob.exists() and token in inbox_bob.read_text())
 
         # The mail landed in A's layout only: sender + recipient mailboxes
-        # exist under home_a (plus Adam's built-in guardian inbox), and
-        # instance B's home carries no member mail beyond its own adam.
-        assert _mail_dirs(home_a) == ["adam", "human-alice", "human-bob"]
-        assert _mail_dirs(home_b) == ["adam"]
+        # exist under home_a, and instance B's home carries no member mail
+        # at all. (Mailbox construction is side-effect free — dirs appear
+        # on first delivery, so even Adam's inbox is absent until used.)
+        assert _mail_dirs(home_a) == ["human-alice", "human-bob"]
+        assert _mail_dirs(home_b) == []
     finally:
         await runtime_a.shutdown()
         await runtime_b.shutdown()

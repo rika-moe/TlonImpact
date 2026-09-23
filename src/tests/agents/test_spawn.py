@@ -118,7 +118,9 @@ class TestQuotaPersistence:
         """An unparseable ledger warns and starts empty — never a boot blocker."""
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        p.spawn_quota_ledger_file().write_text("not json {{{", encoding="utf-8")
+        ledger = p.spawn_quota_ledger_file()
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text("not json {{{", encoding="utf-8")
 
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]  # must not raise
         await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
@@ -129,7 +131,9 @@ class TestQuotaPersistence:
         """Valid JSON with the wrong top-level shape starts empty too."""
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        p.spawn_quota_ledger_file().write_text('{"quota": {"not": "a list"}}', encoding="utf-8")
+        ledger = p.spawn_quota_ledger_file()
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text('{"quota": {"not": "a list"}}', encoding="utf-8")
 
         manager = SpawnManager(_FakeRegistry(p), 8, 3, 2)  # type: ignore[arg-type]
         await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
@@ -138,7 +142,9 @@ class TestQuotaPersistence:
         """Per-entry tolerance: bad rows are skipped, valid rows still bind."""
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
-        p.spawn_quota_ledger_file().write_text(
+        ledger = p.spawn_quota_ledger_file()
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(
             json.dumps(
                 {
                     "version": 1,

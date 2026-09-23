@@ -372,7 +372,7 @@ class AdapterManager(Component):
             adapter = HumanAdapter(username, self._event_bus, self.resolve_address)
             await adapter.initialize()
             self._adapters[username] = adapter
-            self._paths.member_mail_dir(adapter.member_id)
+            self._paths.member_mail_dir(adapter.member_id).mkdir(parents=True, exist_ok=True)
             logger.info(
                 "human_adapter_created",
                 username=username,

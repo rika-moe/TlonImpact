@@ -454,7 +454,7 @@ class TestOfflineHumans:
         delivery, bus = _make_delivery(temp_paths, configs)  # nobody online
         await delivery.initialize()
         # The human has a persistent mailbox (connected at least once)
-        temp_paths.member_mail_dir("human:alice")
+        temp_paths.member_mail_dir("human:alice").mkdir(parents=True, exist_ok=True)
 
         mail = Mail.create(
             from_address="a-001@tlon.internal",
@@ -495,7 +495,8 @@ class TestOfflineHumans:
         configs = {"a-001": AgentConfig(id="a-001", name="甲")}
         delivery, bus = _make_delivery(temp_paths, configs)  # nobody online
         await delivery.initialize()
-        temp_paths.member_mail_dir("human:alice")  # known, offline
+        temp_paths.member_mail_dir("human:alice").mkdir(parents=True, exist_ok=True)
+        # known, offline
 
         mail = Mail.create(
             from_address="a-001@tlon.internal",

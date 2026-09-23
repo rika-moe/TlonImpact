@@ -111,7 +111,7 @@ class TestSharedResolver:
         self, manager: AdapterManager, tmp_path
     ):
         # Known-but-offline: a persistent mailbox exists, no live adapter
-        manager._paths.member_mail_dir("human:friend")
+        manager._paths.member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
         resolver = manager.recipient_resolver
         address = resolver.resolve_address("friend")
         assert address == "friend@tlon.internal"

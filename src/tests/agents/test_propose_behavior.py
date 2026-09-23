@@ -90,6 +90,7 @@ class TestProposeBehavior:
         write_trusted_prototype("base", _CURRENT_SPEC, tlon_paths=p)
         _write_behavior(p, agent_id)
         lessons_file = p.memory_lessons_file(agent_id)
+        lessons_file.parent.mkdir(parents=True, exist_ok=True)
         lessons_file.write_text("- 别在深夜回信\n", encoding="utf-8")
 
         llm = _FakeLLM(f"```edn\n{_DRAFT_SPEC}```\n")

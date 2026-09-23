@@ -3,6 +3,12 @@
 All filesystem paths MUST be constructed through this module.
 No other module should hardcode directory structure assumptions.
 
+Pure resolver: every accessor on ``TlonPaths`` is side-effect free — it
+computes and returns a :class:`Path` and never touches the filesystem.
+Directory creation lives at the actual write points (each writer creates
+its own parent). The single exception is the process bootstrap in
+``_resolve_tlon_home``, which materializes the default ``~/.tlon`` root.
+
 Layout:
     ~/.tlon/
     ├── cron.yaml
@@ -60,7 +66,11 @@ from pathlib import Path
 
 
 def _resolve_tlon_home() -> Path:
-    """Resolve TLON_HOME from environment or default to ~/.tlon."""
+    """Resolve TLON_HOME from environment or default to ~/.tlon.
+
+    The one side effect in this module: a missing default ``~/.tlon``
+    root is created here (process bootstrap behavior).
+    """
     tlon_home = os.getenv("TLON_HOME")
     if tlon_home:
         path = Path(tlon_home).expanduser().resolve()
@@ -78,6 +88,9 @@ class TlonPaths:
     point (``TlonPaths()`` resolves ``$TLON_HOME`` / ``~/.tlon``) and
     pass it down; construct your own ``TlonPaths(home=...)`` for
     isolated environments (tests, multi-runtime embedding).
+
+    Pure resolver: every accessor below is side-effect free. Writers
+    create their own parent directories at the actual write point.
     """
 
     def __init__(self, home: Path | str | None = None):
@@ -98,34 +111,24 @@ class TlonPaths:
         return self._home / ".env"
 
     def shared_dir(self) -> Path:
-        d = self._home / "shared"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / "shared"
 
     # ===== Per-agent =====
 
     def agent_dir(self, agent_id: str) -> Path:
-        d = self._home / agent_id
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / agent_id
 
     def agent_config_dir(self, agent_id: str) -> Path:
-        d = self._home / agent_id / "config"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / agent_id / "config"
 
     def agent_config_file(self, agent_id: str) -> Path:
         return self.agent_config_dir(agent_id) / "agent.yaml"
 
     def agent_memory_dir(self, agent_id: str) -> Path:
-        d = self._home / agent_id / "memory"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / agent_id / "memory"
 
     def agent_workspace_dir(self, agent_id: str) -> Path:
-        d = self._home / agent_id / "workspace"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / agent_id / "workspace"
 
     def agent_tasks_file(self, agent_id: str) -> Path:
         return self.agent_dir(agent_id) / "tasks.jsonl"
@@ -134,23 +137,17 @@ class TlonPaths:
         """~/.tlon/{agent_id}/ledger.jsonl — per-member token ledger (issue ).
 
         Append-only JSONL written by ``base/ledger.py`` (one record per
-        attributed ``LLMClient.chat`` call). Read-only resolution: does
-        NOT create anything — an absent ledger is the normal state for a
-        member that has made no attributed LLM calls; the writer creates
-        the parent directory on append.
+        attributed ``LLMClient.chat`` call); the writer creates the
+        parent directory on append.
         """
         return self._home / agent_id / "ledger.jsonl"
 
     def agent_sessions_dir(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/sessions/ — per-session event journals (ADR 0007)."""
-        d = self._home / agent_id / "sessions"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / agent_id / "sessions"
 
     def agent_mail_dir(self, agent_id: str) -> Path:
-        d = self._home / agent_id / "mail"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self._home / agent_id / "mail"
 
     def member_mail_dir(self, member_id: str) -> Path:
         """Resolve the mailbox directory for any member id.
@@ -161,25 +158,8 @@ class TlonPaths:
         """
         if member_id.startswith("human:"):
             username = member_id[len("human:"):]
-            d = self._home / f"human-{username}" / "mail"
-            d.mkdir(parents=True, exist_ok=True)
-            return d
+            return self._home / f"human-{username}" / "mail"
         return self.agent_mail_dir(member_id)
-
-    def member_mail_dir_existing(self, member_id: str) -> Path | None:
-        """Like :meth:`member_mail_dir` but never creates anything.
-
-        Returns the mailbox directory when it already exists on disk,
-        ``None`` otherwise. Used for existence checks (e.g. "is this a
-        known human") where calling ``member_mail_dir`` would create the
-        directory and defeat the check.
-        """
-        if member_id.startswith("human:"):
-            username = member_id[len("human:"):]
-            d = self._home / f"human-{username}" / "mail"
-        else:
-            d = self._home / member_id / "mail"
-        return d if d.is_dir() else None
 
     def known_human_ids(self) -> list[str]:
         """List human member ids that have a persistent mailbox directory.
@@ -200,9 +180,8 @@ class TlonPaths:
     def cron_file(self) -> Path:
         """~/.tlon/cron.yaml — declared periodic task mails (issue ).
 
-        Read-only resolution: does NOT create the file — an absent file
-        is the normal state (no declared entries). Read once at
-        ``CronScheduler.initialize``; edits take effect on restart.
+        Read once at ``CronScheduler.initialize``; edits take effect on
+        restart. An absent file is the normal state (no declared entries).
         """
         return self._home / "cron.yaml"
 
@@ -223,8 +202,6 @@ class TlonPaths:
     def agent_behavior_file(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/config/behavior.tlon (unified rules-form spec).
 
-        Read-only resolution: unlike the persona helpers this does NOT
-        create directories, so checking ``exists()`` stays side-effect free.
         Every member — cognitive or deterministic — carries exactly this
         one file (phase C unified the format; ``script.tlon`` is gone).
         """
@@ -236,27 +213,19 @@ class TlonPaths:
 
         Copied from the prototype's ``LESSONS.md`` by ``instantiate`` and
         injected into the conversation by the DSL ``(lessons)`` context
-        section. Read-only resolution: does NOT create directories, so
-        checking ``exists()`` stays side-effect free; an absent file is
-        the normal state for a member whose prototype carries no lessons.
+        section; an absent file is the normal state for a member whose
+        prototype carries no lessons.
         """
         return self._home / agent_id / "config" / "LESSONS.md"
 
     # ===== Skills (ADR 0010) =====
 
     def skills_dir(self) -> Path:
-        """~/.tlon/skills/ — global skill library root (shared across agents).
-
-        Read-only resolution: does NOT create the directory, so checking
-        ``exists()`` stays side-effect free.
-        """
+        """~/.tlon/skills/ — global skill library root (shared across agents)."""
         return self._home / "skills"
 
     def agent_skills_dir(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/skills/ — agent-private skills.
-
-        Read-only resolution: does NOT create the directory.
-        """
+        """~/.tlon/{agent_id}/skills/ — agent-private skills."""
         return self._home / agent_id / "skills"
 
     def agent_workspace_skills_dir(self, agent_id: str) -> Path:
@@ -264,27 +233,18 @@ class TlonPaths:
 
         The workspace bind-mounts into the agent's container, so this is
         also the container's ``/workspace/.agents/skills/``; the engine
-        reads it from the host, never via container exec. Read-only
-        resolution: does NOT create the directory.
+        reads it from the host, never via container exec.
         """
         return self._home / agent_id / "workspace" / ".agents" / "skills"
 
     # ===== Behavior prototypes =====
 
     def prototypes_dir(self) -> Path:
-        """~/.tlon/prototypes/ — behavior prototype library root.
-
-        Read-only resolution: does NOT create the directory, so checking
-        ``exists()`` stays side-effect free.
-        """
+        """~/.tlon/prototypes/ — behavior prototype library root."""
         return self._home / "prototypes"
 
     def prototypes_staging_dir(self) -> Path:
-        """~/.tlon/prototypes-staging/ — LLM-authored prototypes awaiting approval.
-
-        Read-only resolution: does NOT create the directory, so checking
-        ``exists()`` stays side-effect free.
-        """
+        """~/.tlon/prototypes-staging/ — LLM-authored prototypes awaiting approval."""
         return self._home / "prototypes-staging"
 
     # ===== Memory =====
@@ -298,21 +258,16 @@ class TlonPaths:
 
         Written by ``agents/lessons.py``'s LessonsDistiller on
         ``AGENT_STOPPED``: one LLM pass distills the member's memory
-        digest into lessons for the next generation. Creates the memory
-        dir (write path)."""
+        digest into lessons for the next generation."""
         return self.agent_memory_dir(agent_id) / "lessons.md"
 
     # ===== Shared =====
 
     def traces_dir(self) -> Path:
-        d = self.shared_dir() / "traces"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self.shared_dir() / "traces"
 
     def logs_dir(self) -> Path:
-        d = self.shared_dir() / "logs"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return self.shared_dir() / "logs"
 
     def spawn_quota_ledger_file(self) -> Path:
         """~/.tlon/shared/spawn-quota.json — persisted spawn quota ledger.
@@ -320,7 +275,6 @@ class TlonPaths:
         The (spawner, session) spawn quota ledger (``agents/spawn.py``
         ``SpawnManager``) survives process restarts: sessions themselves
         persist via journal replay (ADR 0007), so the anti-runaway quota
-        must persist too. Read-only resolution: does NOT create the file —
-        an absent ledger is the normal first-run state.
+        must persist too.
         """
         return self.shared_dir() / "spawn-quota.json"

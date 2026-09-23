@@ -81,7 +81,7 @@ async def collect_orphan_mails(
     (they expect no per-member reply), as are the owner's own replies.
 
     Read-only: mailboxes are only opened when they already exist on disk
-    (``member_mail_dir_existing``) — a scan never creates a mailbox.
+    — a scan never creates a mailbox.
 
     Args:
         member_ids: Every society member id to scan (agents + known
@@ -101,9 +101,9 @@ async def collect_orphan_mails(
     orphans: list[dict[str, Any]] = []
     scanned_members = 0
     for member_id in member_ids:
-        mail_dir = tlon_paths.member_mail_dir_existing(member_id)
-        if mail_dir is None:
-            continue  # never create a mailbox from a read-only scan
+        mail_dir = tlon_paths.member_mail_dir(member_id)
+        if not mail_dir.is_dir():
+            continue
         scanned_members += 1
         try:
             found = await _orphans_for(member_id, Mailbox(mail_dir), now, min_age)

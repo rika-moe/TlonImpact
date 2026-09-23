@@ -177,7 +177,4 @@ class RecipientResolver:
         """
         if self._is_human_online(username):
             return True
-        return (
-            self._paths.member_mail_dir_existing(f"{HUMAN_ID_PREFIX}{username}")
-            is not None
-        )
+        return self._paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}").is_dir()

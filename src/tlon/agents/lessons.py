@@ -167,6 +167,7 @@ class LessonsDistiller(Component, Device):
             return
 
         lessons_file = self._paths.memory_lessons_file(agent_id)
+        lessons_file.parent.mkdir(parents=True, exist_ok=True)
         async with aiofiles.open(lessons_file, "w", encoding="utf-8") as f:
             await f.write(response.content)
         logger.info("lessons_distilled", agent_id=agent_id, path=str(lessons_file))

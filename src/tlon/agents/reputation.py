@@ -8,9 +8,9 @@ tools layer consumes it through the ``ReputationProvider`` port
 (``tlon.tools.observability.ports``).
 
 Read-only discipline: other members' mailboxes are only opened when
-they already exist on disk (``member_mail_dir_existing``) — a
-reputation query never creates a mailbox. The full-society scan is
-acceptable at the Republic's scale (a handful of members).
+they already exist on disk — a reputation query never creates a
+mailbox. The full-society scan is acceptable at the Republic's scale
+(a handful of members).
 """
 
 from collections.abc import Callable
@@ -59,16 +59,16 @@ async def collect_reputation(
     own_address = address_for_member(agent_id)
 
     given = 0
-    own_dir = tlon_paths.member_mail_dir_existing(agent_id)
-    if own_dir is not None:
+    own_dir = tlon_paths.member_mail_dir(agent_id)
+    if own_dir.is_dir():
         given = sum(1 for mail in await Mailbox(own_dir).sent() if mail.endorsing)
 
     received: set[tuple[str, str]] = set()  # (endorser member id, endorsed mail id)
     endorsers_by_mail: dict[str, set[str]] = {}
     subject_by_mail: dict[str, str | None] = {}
     for member_id in member_ids:
-        mail_dir = tlon_paths.member_mail_dir_existing(member_id)
-        if mail_dir is None:
+        mail_dir = tlon_paths.member_mail_dir(member_id)
+        if not mail_dir.is_dir():
             continue
         mailbox = Mailbox(mail_dir)
         for mail in await mailbox.sent():

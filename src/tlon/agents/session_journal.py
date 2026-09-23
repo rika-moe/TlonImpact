@@ -175,6 +175,7 @@ class SessionJournal:
                 **payload,
             }
             try:
+                path.parent.mkdir(parents=True, exist_ok=True)
                 async with aiofiles.open(path, "a", encoding="utf-8") as f:
                     await f.write(json.dumps(event, ensure_ascii=False) + "\n")
             except Exception as e:

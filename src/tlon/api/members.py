@@ -45,6 +45,7 @@ def _write_persona_files(
 ) -> None:
     """Write the non-empty persona fields into the member's config dir."""
     config_dir = tlon_paths.agent_config_dir(agent_id)
+    config_dir.mkdir(parents=True, exist_ok=True)
     for field, filename in _PERSONA_FILES:
         content = persona.get(field)
         if content:

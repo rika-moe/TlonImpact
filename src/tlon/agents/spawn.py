@@ -163,6 +163,7 @@ class SpawnManager:
         payload = json.dumps({"version": 1, "quota": entries}, ensure_ascii=False) + "\n"
         tmp_path = self._ledger_path.with_suffix(".tmp")
         try:
+            self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path.write_text(payload, encoding="utf-8")
             os.replace(tmp_path, self._ledger_path)
         except OSError as e:

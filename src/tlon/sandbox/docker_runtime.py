@@ -159,6 +159,8 @@ class DockerRuntime:
         # spec, memory and mailbox through the filesystem tools; the ro mount
         # keeps writes impossible even if a whitelist were misconfigured.
         agent_home = self._paths.agent_dir(self.agent_id)
+        workspace.mkdir(parents=True, exist_ok=True)
+        agent_home.mkdir(parents=True, exist_ok=True)
         volumes = {
             str(workspace): {
                 "bind": self.config.working_dir,

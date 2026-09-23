@@ -42,6 +42,7 @@ def test_existing_agent_untouched(tmp_path: Path) -> None:
     agent configs."""
     p = _paths(tmp_path)
     config_dir = p.agent_config_dir("someone")
+    config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "agent.yaml").write_text(
         "agent:\n  id: someone\n  name: 某人\n", encoding="utf-8"
     )

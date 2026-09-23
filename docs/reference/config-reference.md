@@ -175,7 +175,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 
 ## 5. `~/.tlon` 目录布局
 
-[base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 是**唯一**的路径构造入口，`paths` 是模块级默认实例。布局（docstring 原样）：
+[base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 是**唯一**的路径构造入口——无模块级单例，实例在进程入口构造一次后显式注入贯穿各层。`TlonPaths` 是**纯路径解析器**：所有访问器零副作用，目录创建在真实写入点（各写入方自建父目录）；唯一例外是进程引导的 `_resolve_tlon_home`（默认 `~/.tlon` 根）。布局（docstring 原样）：
 
 ```
 ~/.tlon/
@@ -216,7 +216,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 
 - 人类 id `human:{username}` 的邮箱映射到 `human-{username}/mail/`——冒号只在 `member_mail_dir` 里换连字符。
 - 人类一旦有邮箱目录（首次 attach 会话、首次投递或首次读 `/inbox`）即"known"；离线人类收到的信在 `inbox.jsonl` 等待。
-- `prototypes/` 与 `prototypes-staging/` 是**只读解析**，`exists()` 检查无副作用；`prototypes/` 是受信任源，`prototypes-staging/` 是信任闸（人工批准后才能被 spawn）。
+- `prototypes/` 与 `prototypes-staging/` 不存在即空（`exists()` 检查无副作用——整个 `TlonPaths` 都是纯解析）；`prototypes/` 是受信任源，`prototypes-staging/` 是信任闸（人工批准后才能被 spawn）。
 - `cron.yaml` 是声明式周期任务（`{name, to, subject, content}` + `interval_seconds` 或 5 字段 `cron` 表达式），由 [agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler` 在启动时读一次——改动需重启生效；不存在即无声明条目。格式与示例见 [design/mail.md](../design/mail.md)「周期任务：tick 即邮件」。
 
 ## 6. 配置相关的常用操作

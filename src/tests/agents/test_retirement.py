@@ -241,7 +241,7 @@ async def test_farewell_falls_back_to_guest_human(tmp_path: Path) -> None:
     _write_behavior(p, "retiree", _COGNITIVE_SPEC)
     _write_config(p, "retiree", name="老王")
     await _remember(p, "retiree", "一条事实")
-    p.member_mail_dir("human:guest")  # known human (persistent mailbox)
+    p.member_mail_dir("human:guest").mkdir(parents=True, exist_ok=True)  # known human
 
     bus = EventBus()
     await bus.initialize()

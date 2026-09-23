@@ -234,6 +234,7 @@ class TaskManager:
 
     def _write_lines(self, lines: list[str]) -> None:
         """Write lines to the storage file (blocking IO, isolated for save())."""
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._storage_path, "w", encoding="utf-8") as f:
             for line in lines:
                 f.write(line + "\n")

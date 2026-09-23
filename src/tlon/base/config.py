@@ -239,8 +239,8 @@ def yaml_save(agent: AgentConfig, tlon_home: Path) -> None:
         yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False, indent=2),
         encoding="utf-8",
     )
-    p.agent_workspace_dir(agent.id)
-    p.agent_memory_dir(agent.id)
+    p.agent_workspace_dir(agent.id).mkdir(parents=True, exist_ok=True)
+    p.agent_memory_dir(agent.id).mkdir(parents=True, exist_ok=True)
 
 
 def yaml_delete(agent_id: str, tlon_home: Path) -> None:
