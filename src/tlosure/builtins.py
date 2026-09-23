@@ -37,7 +37,15 @@ class EvalError(Exception):
 
 
 class FuelExhaustedError(EvalError):
-    """The evaluation step budget ran out."""
+    """The evaluation step budget ran out.
+
+    Carries the ``budget`` the evaluation was launched with, so hosts can
+    log/meter exhaustion structurally instead of parsing the message.
+    """
+
+    def __init__(self, message: str, *, budget: int):
+        super().__init__(message)
+        self.budget = budget
 
 
 class EvalDepthError(EvalError):

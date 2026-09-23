@@ -86,7 +86,7 @@ from tlosure.eval import (
     DEFAULT_FUEL,
     DEFAULT_MAX_DEPTH,
     DEFAULT_WHEN_FUEL,
-    _Evaluator,
+    Evaluator,
     eval_form,
 )
 
@@ -484,6 +484,7 @@ class MemberRuntime(Member):
                 "member_rule_gate_fuel_exhausted",
                 member_id=self._member_id,
                 rule=rule.name,
+                budget=e.budget,
                 error=str(e),
             )
             return False
@@ -523,6 +524,7 @@ class MemberRuntime(Member):
                 "member_rule_fuel_exhausted",
                 member_id=self._member_id,
                 rule=rule.name,
+                budget=e.budget,
                 error=str(e),
             )
             return
@@ -565,7 +567,7 @@ class MemberRuntime(Member):
         :data:`DEFAULT_FUEL`. A false gate short-circuits (no actions).
         """
         if rule.fuel is not None:
-            evaluator = _Evaluator(self._builtins, rule.fuel, DEFAULT_MAX_DEPTH)
+            evaluator = Evaluator(self._builtins, rule.fuel, DEFAULT_MAX_DEPTH)
             if rule.when is not None and not evaluator.eval(rule.when, dict(env), 0):
                 return []
             results = [evaluator.eval(action, dict(env), 0) for action in rule.actions]

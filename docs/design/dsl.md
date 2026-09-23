@@ -24,7 +24,7 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 ### fuel：停机性靠预算，不靠砍掉循环
 
-求值是计量的：每个求值步消耗 1 单位 fuel，耗尽抛 `FuelExhaustedError`；form 嵌套深度另有硬顶（`EvalDepthError`）。常量都在 [tlosure/eval.py](../../src/tlosure/eval.py) 顶部：`:when` 门控默认 200（`DEFAULT_WHEN_FUEL`），动作默认 1000（`DEFAULT_FUEL`），spec 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。两道闸各管一种失控：fuel 管时间（步数），深度顶管空间（递归嵌套）——没有深度顶，一个深度自嵌套的构造即便步数有限也可能先把宿主 Python 的调用栈打爆。
+求值是计量的：每个求值步消耗 1 单位 fuel，耗尽抛 `FuelExhaustedError`；form 嵌套深度另有硬顶（`EvalDepthError`）。常量都在 [tlosure/eval.py](../../src/tlosure/eval.py) 顶部：`:when` 门控默认 200（`DEFAULT_WHEN_FUEL`），动作默认 1000（`DEFAULT_FUEL`），spec 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝；同为求值器入口的语言级硬顶——`Evaluator` 构造器对越界预算抛 `ValueError`）。两道闸各管一种失控：fuel 管时间（步数），深度顶管空间（递归嵌套）——没有深度顶，一个深度自嵌套的构造即便步数有限也可能先把宿主 Python 的调用栈打爆。
 
 值得说明的是，这门语言**并非**靠表达能力残缺来保证停机：`while`/`recur`（Clojure 风格有界循环对）加进来之后，语言在图灵等价意义下是完备的，终止性完全由 fuel 预算保证。这是刻意的取舍——"足够弱以至于显然停机"的语言写不出真实策略（比如对一组收件人逐个 `forward`）；正确的做法是让语言够用，同时让任何求值都有一个不可逾越的步数上界。无论 LLM 写出什么样的表达式，求值都必然终止，且代价可预测。
 

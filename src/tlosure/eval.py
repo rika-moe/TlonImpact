@@ -28,6 +28,23 @@ superseded once bounded loops entered the language):
   *fuel* (:class:`FuelExhaustedError` when it runs out) and form nesting
   is capped (:class:`EvalDepthError`), so evaluation always terminates.
 
+Billing model (the precise contract):
+
+- one *step* = one evaluated node: a self-evaluating literal, a symbol
+  resolution, each element of a vector/map, a builtin call, and each
+  special-form subexpression that actually evaluates. Untaken branches
+  (``if``/``when``/``and``/``or`` short-circuit) consume nothing;
+- builtin *internals* are unmetered — a builtin's own computation is the
+  host's resource domain, not the language's;
+- the budget is a hard language-level invariant: ``fuel`` must lie in
+  ``[0, MAX_FUEL]`` (:class:`ValueError` otherwise), so no caller can
+  launch an effectively unbounded evaluation;
+- :class:`FuelExhaustedError` carries the ``budget`` the run was
+  launched with, for structured host observability;
+- one :class:`Evaluator` instance = one budget. Hosts evaluating several
+  forms under a combined budget (e.g. a rule's gate + actions) share one
+  instance; single-form evaluation goes through :func:`eval_form`.
+
 The module is the evaluator kernel only: the contract types and the
 general builtin vocabulary live in ``tlosure/builtins.py``, static
 validation in ``tlosure/validate.py`` (:func:`validate_form`); the
@@ -69,6 +86,7 @@ __all__ = [
     "Builtin",
     "EvalDepthError",
     "EvalError",
+    "Evaluator",
     "FuelExhaustedError",
     "eval_form",
     "validate_form",
@@ -111,30 +129,56 @@ def eval_form(
         form: parsed EDN data (Form/Symbol/vector/literal).
         env: symbol bindings (e.g. ``{"msg": message, "self": {...}}``).
         builtins: allowed functions, keyed by name.
-        fuel: evaluation step budget.
-        max_depth: form nesting depth cap.
+        fuel: evaluation step budget; must lie in ``[0, MAX_FUEL]``.
+        max_depth: form nesting depth cap; must be at least 1.
 
     Raises:
+        ValueError: fuel outside ``[0, MAX_FUEL]`` or max_depth < 1.
         EvalError: on any evaluation failure (unknown symbol/form,
             builtin error, fuel exhaustion, depth overflow).
     """
     try:
-        return _Evaluator(builtins, fuel, max_depth).eval(form, dict(env), 0)
+        return Evaluator(builtins, fuel, max_depth).eval(form, dict(env), 0)
     except _Recur as e:
         # Defensive: a hand-built (unvalidated) form can never let _Recur
         # escape a while; if one does, report it as a plain eval error.
         raise EvalError("recur outside while") from e
 
 
-class _Evaluator:
-    """Stateful single-run evaluator (fuel counter + depth cap)."""
+class Evaluator:
+    """Stateful single-run evaluator: one instance = one fuel budget.
+
+    Single-form evaluation normally goes through :func:`eval_form`; use
+    this class directly when several forms must share one combined
+    budget (e.g. a host rule whose gate and actions draw from the same
+    allowance) — each ``eval`` call keeps drawing down the same counter.
+
+    The constructor enforces the language-level hard caps, so the
+    invariant "no evaluation exceeds ``MAX_FUEL`` steps" holds no matter
+    which entry point a host picks.
+    """
 
     def __init__(self, builtins: dict[str, Builtin], fuel: int, max_depth: int):
+        if not 0 <= fuel <= MAX_FUEL:
+            raise ValueError(f"fuel must lie in [0, {MAX_FUEL}], got {fuel}")
+        if max_depth < 1:
+            raise ValueError(f"max_depth must be at least 1, got {max_depth}")
         self._builtins = builtins
+        self._budget = fuel
         self._fuel = fuel
         self._max_depth = max_depth
         # Frame per enclosing while: the binding names its recur rebinds.
         self._loop_stack: list[list[str]] = []
+
+    @property
+    def budget(self) -> int:
+        """The fuel budget this evaluator was launched with."""
+        return self._budget
+
+    @property
+    def fuel_remaining(self) -> int:
+        """Fuel left; negative after exhaustion (the step that ran out)."""
+        return self._fuel
 
     def eval(self, value: Any, env: dict[str, Any], depth: int) -> Any:
         if depth > self._max_depth:
@@ -143,7 +187,10 @@ class _Evaluator:
             )
         self._fuel -= 1
         if self._fuel < 0:
-            raise FuelExhaustedError(f"fuel exhausted while evaluating {dumps(value)}")
+            raise FuelExhaustedError(
+                f"fuel exhausted (budget {self._budget}) while evaluating {dumps(value)}",
+                budget=self._budget,
+            )
         if isinstance(value, Form):
             return self._eval_form(value, env, depth)
         if isinstance(value, Symbol):

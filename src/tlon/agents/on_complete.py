@@ -90,7 +90,10 @@ class OnCompleteRunner:
                 eval_form(form, env, builtins, fuel=action_fuel)
             except FuelExhaustedError as e:
                 self._logger.error(
-                    "on_complete_fuel_exhausted", session_id=session.id, error=str(e)
+                    "on_complete_fuel_exhausted",
+                    session_id=session.id,
+                    budget=e.budget,
+                    error=str(e),
                 )
             except EvalError as e:
                 self._logger.error(

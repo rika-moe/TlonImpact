@@ -23,8 +23,11 @@ import pytest
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin
 from tlosure.edn import Form, Keyword, loads
 from tlosure.eval import (
+    DEFAULT_MAX_DEPTH,
+    MAX_FUEL,
     EvalDepthError,
     EvalError,
+    Evaluator,
     FuelExhaustedError,
     eval_form,
     validate_form,
@@ -328,6 +331,62 @@ class TestErrors:
             nested = f"(if true {nested})"
         with pytest.raises(EvalDepthError, match="depth exceeds"):
             eval_form(loads(nested), {}, _BUILTINS, max_depth=5)
+
+
+class TestBillingModel:
+    """The precise fuel contract (issue ): one step per evaluated
+    node, untaken branches free, the hard cap enforced at the API
+    boundary, exhaustion carrying the budget, one Evaluator = one
+    shared counter."""
+
+    def test_builtin_call_exact_steps(self):
+        # (+ 1 2): form node + two literal args = 3 steps
+        assert eval_form(loads("(+ 1 2)"), {}, _BUILTINS, fuel=3) == 3
+        with pytest.raises(FuelExhaustedError):
+            eval_form(loads("(+ 1 2)"), {}, _BUILTINS, fuel=2)
+
+    def test_vector_exact_steps(self):
+        # [1 2]: vector node + two elements = 3 steps
+        assert eval_form(loads("[1 2]"), {}, _BUILTINS, fuel=3) == [1, 2]
+
+    def test_symbol_exact_steps(self):
+        assert eval_form(loads("x"), {"x": 7}, _BUILTINS, fuel=1) == 7
+
+    def test_untaken_branch_is_free(self):
+        # (if <test> <then> <else>): form + test + taken branch = 3 steps
+        assert eval_form(loads("(if true 1 2)"), {}, _BUILTINS, fuel=3) == 1
+        assert eval_form(loads("(if false 1 2)"), {}, _BUILTINS, fuel=3) == 2
+
+    def test_and_shortcircuit_is_free(self):
+        # (and nil ...): form + first arg = 2 steps, the rest never runs
+        assert eval_form(loads("(and nil true true)"), {}, _BUILTINS, fuel=2) is None
+        with pytest.raises(FuelExhaustedError):
+            eval_form(loads("(and true true true)"), {}, _BUILTINS, fuel=2)
+
+    def test_fuel_hard_cap(self):
+        assert eval_form(loads("1"), {}, _BUILTINS, fuel=MAX_FUEL) == 1
+        with pytest.raises(ValueError, match="fuel must lie"):
+            eval_form(loads("1"), {}, _BUILTINS, fuel=MAX_FUEL + 1)
+        with pytest.raises(ValueError, match="fuel must lie"):
+            eval_form(loads("1"), {}, _BUILTINS, fuel=-1)
+
+    def test_max_depth_floor(self):
+        with pytest.raises(ValueError, match="max_depth"):
+            eval_form(loads("1"), {}, _BUILTINS, max_depth=0)
+
+    def test_exhaustion_carries_budget(self):
+        with pytest.raises(FuelExhaustedError) as exc_info:
+            eval_form(loads("(+ 1 2)"), {}, _BUILTINS, fuel=2)
+        assert exc_info.value.budget == 2
+        assert "budget 2" in str(exc_info.value)
+
+    def test_shared_evaluator_draws_one_counter(self):
+        evaluator = Evaluator(_BUILTINS, fuel=5, max_depth=DEFAULT_MAX_DEPTH)
+        assert evaluator.eval(loads("(+ 1 2)"), {}, 0) == 3
+        assert evaluator.fuel_remaining == 2
+        with pytest.raises(FuelExhaustedError):
+            evaluator.eval(loads("(+ 1 2)"), {}, 0)  # needs 3, only 2 left
+        assert evaluator.budget == 5
 
 
 class TestFormVsVector:

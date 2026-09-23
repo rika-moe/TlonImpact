@@ -56,8 +56,24 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 ### 2.2 计量与终止
 
-- 每个求值步消耗 1 单位 **fuel**，耗尽抛 `FuelExhaustedError`；form 嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`（超出抛 `EvalDepthError`）。递归不可能（无法命名函数），`while`/`recur` 表达能力等价图灵机，**终止性由 fuel 保证**。
-- 计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；`DEFAULT_WHEN_FUEL = 200`（供宿主给门控类求值用的更紧默认值）；宿主可声明预算的硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。宿主在多段表达式间怎么分摊预算（共享计数器还是分段计量）由宿主决定。
+递归不可能（无法命名函数），`while`/`recur` 表达能力等价图灵机，**终止性由 fuel 保证**——任何表达式必然在有限步内停机。
+
+**计费模型**（一步 = 1 单位 fuel，精确定义）：
+
+- 一步 = 一次**节点求值**：字面量自求值、符号解析、向量/map 的每个元素、一次 builtin 调用、特殊形式中**实际被求值**的每个子表达式，各计 1 步；
+- 未走的分支不计费：`if`/`when` 未命中的分支、`and`/`or` 短路掉的后续参数消耗为 0；
+- builtin **内部**的计算不计费——宿主词汇自己的开销属于宿主的资源域，不属于语言计量；
+- 循环（`while`/`recur`、`map`/`filter`/`reduce`）的每次迭代都经过节点求值，因此必然被预算包住。
+
+**预算边界**：
+
+- `fuel` 必须落在 `[0, MAX_FUEL]`，越界在入口处抛 `ValueError`——`MAX_FUEL` 是语言级硬顶（由 `Evaluator` 构造器强制），任何入口都无法发起一次实质无界的求值；
+- `max_depth` 至少为 1，否则同样 `ValueError`；
+- 耗尽抛 `FuelExhaustedError`，异常携带 `budget` 属性（本次求值的启动预算）供宿主结构化记日志/打点；嵌套超顶抛 `EvalDepthError`。
+
+**预算分摊**：一个 `Evaluator` 实例 = 一个预算计数器。单表达式走 `eval_form`；宿主若要让多个表达式共用一个总预算（如 tlon 确定性规则的 `:when` 门控 + `:actions` 共享 `:fuel`），直接构造 `Evaluator` 连续 `eval`——每次调用从同一个计数器扣。共享还是分段由宿主决定。
+
+计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；`DEFAULT_WHEN_FUEL = 200`（供宿主给门控类求值用的更紧默认值）；硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
 
 ### 2.3 无副作用与 `ActionRequest`（"DSL 描述，宿主引擎执行"）
 
@@ -111,13 +127,13 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 |---|---|---|
 | `EDNParseError` | [src/tlosure/edn.py](../../src/tlosure/edn.py) | 解析失败（`ValueError` 子类，带 1 起始行列号） |
 | `EvalError` | [src/tlosure/builtins.py](../../src/tlosure/builtins.py) | 一切求值或静态校验失败（未知符号/form、builtin 报错等）的基类 |
-| `FuelExhaustedError` | 同上 | fuel 预算耗尽 |
+| `FuelExhaustedError` | 同上 | fuel 预算耗尽（携带 `budget` 属性 = 本次启动预算） |
 | `EvalDepthError` | 同上 | form 嵌套深度超顶 |
 
 静态校验器 `validate_form(form, builtins, scope)`（[src/tlosure/validate.py](../../src/tlosure/validate.py)）不执行地走遍 form：每个 form 头必须是白名单特殊形式或已注册 builtin，每个符号须在 `scope`（含 `let` / 循环绑定扩展）内可解析，特殊形式的形状必须合法，`recur` 的尾位置规则一并检查；首个违例抛 `EvalError`。**动作位置的校验是宿主业务**（它要点名宿主的动作词汇），不在语言核心里。
 
 ## 5. 宿主接入
 
-- 求值入口：`eval_form(form, env, builtins, fuel=DEFAULT_FUEL, max_depth=DEFAULT_MAX_DEPTH)`；加载期先跑 `validate_form` 静态拒绝非法表达式。
-- 宿主职责：组装 `builtins`（并入第 3 节通用词汇 + 自有领域词汇）、构造 `env`、按场景给 `fuel`、执行求值产出的 `ActionRequest`。
+- 求值入口：`eval_form(form, env, builtins, fuel=DEFAULT_FUEL, max_depth=DEFAULT_MAX_DEPTH)`；加载期先跑 `validate_form` 静态拒绝非法表达式。多表达式共享一个总预算时用公开的 `Evaluator`（见 §2.2 预算分摊）。
+- 宿主职责：组装 `builtins`（并入第 3 节通用词汇 + 自有领域词汇）、构造 `env`、按场景给 `fuel`（不得越过 `MAX_FUEL` 硬顶）、执行求值产出的 `ActionRequest`。
 - tlon 宿主的领域词汇（谓词、动作族、宿主查询注入）与 MemberSpec schema 见 [dsl-reference.md](./dsl-reference.md)。
