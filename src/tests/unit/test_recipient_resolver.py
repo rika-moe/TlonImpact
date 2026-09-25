@@ -175,7 +175,7 @@ class TestSharedResolver:
 
 
 class TestExternalGatewayClaims:
-    """External addresses resolve only via a gateway claim (issue 
+    """External addresses resolve only via a gateway claim (issue
     egress); unclaimed external recipients stay unknown and bounce."""
 
     EXTERNAL = "notifications@github.com"

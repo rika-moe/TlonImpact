@@ -147,7 +147,7 @@ class RecipientResolver:
         (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).
 
         External (foreign-domain) addresses resolve only when a gateway
-        has claimed them in the external gateway registry (issue 
+        has claimed them in the external gateway registry (issue
         egress); unclaimed external recipients stay unknown and bounce.
 
         Args:
