@@ -2,13 +2,10 @@
 
 from typing import TYPE_CHECKING, Any
 
-from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
     from tlon.memory.manager import MemoryManager
-
-logger = get_logger(__name__)
 
 
 class ForgetMemoryTool(Tool):
@@ -61,19 +58,10 @@ class ForgetMemoryTool(Tool):
         query: str = kwargs["query"]
         confirm: bool = kwargs.get("confirm", False)
 
-        try:
-            result = await self.memory.forget(query, confirm)
+        result = await self.memory.forget(query, confirm)
 
-            return ToolResult(
-                success=True,
-                data={"result": result},
-                message=result,
-            )
-        except Exception as e:
-            logger.error("memory_forget_failed", query=query, error=str(e), exc_info=True)
-            return ToolResult(
-                success=False,
-                data={},
-                error=str(e),
-                message=f"❌ 删除记忆失败: {e}",
-            )
+        return ToolResult(
+            success=True,
+            data={"result": result},
+            message=result,
+        )

@@ -100,21 +100,17 @@ class ExecuteBashTool(Tool):
         if background:
             return await self._execute_background(command, timeout)
 
-        try:
-            result = await self._docker_runtime.execute(command, timeout=timeout)
+        result = await self._docker_runtime.execute(command, timeout=timeout)
 
-            return ToolResult(
-                success=result.exit_code == 0,
-                data={
-                    "exit_code": result.exit_code,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                },
-                error=result.stderr if result.exit_code != 0 else "",
-            )
-
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to execute command: {str(e)}")
+        return ToolResult(
+            success=result.exit_code == 0,
+            data={
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+            error=result.stderr if result.exit_code != 0 else "",
+        )
 
     async def _execute_background(self, command: str, timeout: int) -> ToolResult:
         """Execute a command in the background and return immediately."""

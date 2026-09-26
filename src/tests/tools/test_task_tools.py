@@ -4,11 +4,13 @@ These test the thin Tool layer around TaskManager: argument forwarding,
 ToolResult shaping, and metadata. TaskManager's own behavior is covered by
 src/tests/tasks/test_manager.py and test_models.py and is not re-tested here.
 
-Error-path assertions pin down the *current* behavior: each tool catches
-exceptions itself and returns ``ToolResult(success=False, error="Failed to
-...")``. Issue #3 will move that fallback into ToolExecutor and delete the
-per-tool try/except; when #3 lands, the ``test_execute_*_error`` tests here
-must be updated to expect the exception to propagate instead.
+Error-path contract (issue #3): the tools no longer swallow exceptions —
+an unexpected failure inside ``execute`` propagates to ToolExecutor, whose
+single fallback turns it into ``ToolResult(success=False, error="Execution
+error: ...")`` with a stack-logged error (see
+src/tests/agents/test_tool_executor.py). Expected domain errors (task not
+found, wrong status) are still expressed as failure ToolResults and are
+asserted as such here.
 """
 
 from pathlib import Path
@@ -96,15 +98,12 @@ class TestCreateTaskTool:
 
         spy.assert_called_once_with("标题", "描述")
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.create_task = Mock(side_effect=RuntimeError("disk full"))
         tool = CreateTaskTool(manager)
 
-        result = await tool.execute(title="任务")
-
-        assert result.success is False
-        assert result.data == {}
-        assert result.error == "Failed to create task: disk full"
+        with pytest.raises(RuntimeError, match="disk full"):
+            await tool.execute(title="任务")
 
 
 class TestStartTaskTool:
@@ -143,14 +142,12 @@ class TestStartTaskTool:
         assert result.success is False
         assert result.error == "Task not found: t-999"
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.start_task = Mock(side_effect=RuntimeError("boom"))
         tool = StartTaskTool(manager)
 
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert result.error == "Failed to start task: boom"
+        with pytest.raises(RuntimeError, match="boom"):
+            await tool.execute(task_id="t-001")
 
 
 class TestPauseTaskTool:
@@ -196,16 +193,14 @@ class TestPauseTaskTool:
         assert result.success is False
         assert "Cannot pause task with status 'todo'" in result.error
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.create_task("任务A")
         manager.start_task("t-001")
         manager.pause_task = Mock(side_effect=RuntimeError("boom"))
         tool = PauseTaskTool(manager)
 
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert result.error == "Failed to pause task: boom"
+        with pytest.raises(RuntimeError, match="boom"):
+            await tool.execute(task_id="t-001")
 
 
 class TestCompleteTaskTool:
@@ -263,14 +258,12 @@ class TestCompleteTaskTool:
         assert result.success is False
         assert result.error == "Task t-001 is already completed"
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.get_task = Mock(side_effect=RuntimeError("boom"))
         tool = CompleteTaskTool(manager)
 
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert result.error == "Failed to complete task: boom"
+        with pytest.raises(RuntimeError, match="boom"):
+            await tool.execute(task_id="t-001")
 
 
 class TestRemoveTaskTool:
@@ -303,14 +296,12 @@ class TestRemoveTaskTool:
         assert result.success is False
         assert "Cannot remove task with status 'todo'" in result.error
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.get_task = Mock(side_effect=RuntimeError("boom"))
         tool = RemoveTaskTool(manager)
 
-        result = await tool.execute(task_id="t-001")
-
-        assert result.success is False
-        assert result.error == "Failed to remove task: boom"
+        with pytest.raises(RuntimeError, match="boom"):
+            await tool.execute(task_id="t-001")
 
 
 class TestGetCurrentTaskTool:
@@ -352,14 +343,12 @@ class TestGetCurrentTaskTool:
         assert result.success is True
         assert result.data["task"]["status"] == "paused"
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.get_current_task = Mock(side_effect=RuntimeError("boom"))
         tool = GetCurrentTaskTool(manager)
 
-        result = await tool.execute()
-
-        assert result.success is False
-        assert result.error == "Failed to get current task: boom"
+        with pytest.raises(RuntimeError, match="boom"):
+            await tool.execute()
 
 
 class TestListTasksTool:
@@ -420,11 +409,9 @@ class TestListTasksTool:
 
         list_spy.assert_called_once_with(None)
 
-    async def test_execute_error(self, manager: TaskManager):
+    async def test_execute_error_propagates(self, manager: TaskManager):
         manager.list_tasks = Mock(side_effect=RuntimeError("boom"))
         tool = ListTasksTool(manager)
 
-        result = await tool.execute()
-
-        assert result.success is False
-        assert result.error == "Failed to list tasks: boom"
+        with pytest.raises(RuntimeError, match="boom"):
+            await tool.execute()

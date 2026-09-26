@@ -53,34 +53,30 @@ class ListTasksTool(Tool):
         """
         filter: str = kwargs.get("filter", "all")
 
-        try:
-            status_filter = None if filter == "all" else filter
-            tasks = self.task_manager.list_tasks(status_filter)
-            stats = self.task_manager.get_stats()
+        status_filter = None if filter == "all" else filter
+        tasks = self.task_manager.list_tasks(status_filter)
+        stats = self.task_manager.get_stats()
 
-            # Format tasks for display
-            task_list = []
-            for task in tasks:
-                task_list.append(
-                    {
-                        "id": task.id,
-                        "title": task.title,
-                        "status": task.status.value,
-                    }
-                )
-
-            return ToolResult(
-                success=True,
-                data={
-                    "total": stats["total"],
-                    "doing": stats["doing"],
-                    "paused": stats["paused"],
-                    "todo": stats["todo"],
-                    "done": stats["done"],
-                    "tasks": task_list,
-                },
-                message=f"📋 任务列表 ({stats['total']}个): 进行中{stats['doing']} | 暂停{stats['paused']} | 待处理{stats['todo']} | 已完成{stats['done']}",
+        # Format tasks for display
+        task_list = []
+        for task in tasks:
+            task_list.append(
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "status": task.status.value,
+                }
             )
 
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to list tasks: {str(e)}")
+        return ToolResult(
+            success=True,
+            data={
+                "total": stats["total"],
+                "doing": stats["doing"],
+                "paused": stats["paused"],
+                "todo": stats["todo"],
+                "done": stats["done"],
+                "tasks": task_list,
+            },
+            message=f"📋 任务列表 ({stats['total']}个): 进行中{stats['doing']} | 暂停{stats['paused']} | 待处理{stats['todo']} | 已完成{stats['done']}",
+        )

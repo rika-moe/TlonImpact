@@ -2,13 +2,10 @@
 
 from typing import TYPE_CHECKING, Any
 
-from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
     from tlon.memory.manager import MemoryManager
-
-logger = get_logger(__name__)
 
 
 class SearchMemoriesTool(Tool):
@@ -64,19 +61,10 @@ class SearchMemoriesTool(Tool):
         query: str = kwargs["query"]
         limit: int = kwargs.get("limit", 5)
 
-        try:
-            results_text = await self.memory.search_memories(query, limit)
+        results_text = await self.memory.search_memories(query, limit)
 
-            return ToolResult(
-                success=True,
-                data={"results": results_text},
-                message=results_text,
-            )
-        except Exception as e:
-            logger.error("memory_search_failed", query=query, error=str(e), exc_info=True)
-            return ToolResult(
-                success=False,
-                data={},
-                error=str(e),
-                message=f"❌ 搜索记忆失败: {e}",
-            )
+        return ToolResult(
+            success=True,
+            data={"results": results_text},
+            message=results_text,
+        )
