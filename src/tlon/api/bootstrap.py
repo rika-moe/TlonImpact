@@ -1,6 +1,7 @@
 """Runtime 装配（ADR 0019）：``build_runtime()`` 收编原
 ``ServerApp.initialize()`` 的 runtime 装配段——首启种子、EventBus、
-ConfigService、MetricsService、TraceStore、AgentRegistry、
+ConfigService、ContainerResourceMonitor、MetricsService、TraceStore、
+AgentRegistry、
 LessonsDistiller、RetirementCeremony、Adam、guardian 包装、外部网关
 注册表、AdapterManager、MailDelivery、可选的 GitHubAdapter——并在其上
 构造六个 domain facade。
@@ -41,6 +42,7 @@ from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
 from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
+from tlon.sandbox.resource_monitor import ContainerResourceMonitor
 
 logger = get_logger(__name__)
 
@@ -56,6 +58,7 @@ class Runtime:
     # runtime 组件（shutdown 顺序见 Runtime.shutdown）
     event_bus: EventBus
     config_service: ConfigService
+    resource_monitor: ContainerResourceMonitor
     metrics_service: MetricsService
     trace_store: FileTraceStore
     agent_registry: AgentRegistry
@@ -91,6 +94,7 @@ class Runtime:
         await self.retirement_ceremony.shutdown()
         await self.mail_delivery.shutdown()
         await self.metrics_service.shutdown()
+        await self.resource_monitor.shutdown()
         await self.adapter_manager.shutdown()
         await self.event_bus.shutdown()
         logger.info("runtime_stopped")
@@ -125,8 +129,26 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     config_service = ConfigService(event_bus=event_bus, tlon_home=runtime_paths.tlon_home())
     await config_service.initialize()
 
-    # MetricsService - metrics pillar (pure event consumer, needs EventBus)
-    metrics_service = MetricsService(event_bus=event_bus)
+    # Process-level settings (env + secrets) — read once for the runtime
+    # components that need them (resource budget, GitHub adapter).
+    settings = get_settings()
+
+    # ContainerResourceMonitor - society-level container resource ledger
+    # (issue #24, constitution 4: budget as data). Created BEFORE
+    # MetricsService so its stats_snapshot can be constructor-injected as
+    # the metrics pull port (no setter injection). Fail-soft: without a
+    # reachable docker daemon it simply reports an empty ledger.
+    resource_monitor = ContainerResourceMonitor(
+        memory_budget=settings.container_memory_budget
+    )
+    await resource_monitor.initialize()
+    logger.info("component_initialized", component="resource_monitor")
+
+    # MetricsService - metrics pillar (event consumer + optional pull
+    # source for the container ledger)
+    metrics_service = MetricsService(
+        event_bus=event_bus, container_stats=resource_monitor.stats_snapshot
+    )
     await metrics_service.initialize()
     logger.info("component_initialized", component="metrics_service")
 
@@ -227,7 +249,6 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     # The adapter is a runtime (organization) component, so it is
     # assembled here; the server only reads ``events.github_enabled``
     # to decide whether the /webhooks/github route exists.
-    settings = get_settings()
     github_adapter: GitHubAdapter | None = None
     if settings.github_webhook_secret:
         github_adapter = GitHubAdapter(
@@ -251,6 +272,7 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     return Runtime(
         event_bus=event_bus,
         config_service=config_service,
+        resource_monitor=resource_monitor,
         metrics_service=metrics_service,
         trace_store=trace_store,
         agent_registry=agent_registry,

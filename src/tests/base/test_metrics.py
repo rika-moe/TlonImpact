@@ -442,3 +442,85 @@ async def test_rest_metrics_503_when_unavailable() -> None:
     assert response.status == 503
     body = json.loads(response.text)
     assert body["status"] == "error"
+
+
+# ── Container resource gauges (pull source, issue #24) ──
+
+_CONTAINER_STATS = {
+    "gu-yanxi": {"memory_bytes": 100.0, "memory_limit_bytes": 512.0, "cpu_percent": 25.0},
+    "xie-yunshu": {"memory_bytes": 300.0, "memory_limit_bytes": 512.0, "cpu_percent": 5.0},
+}
+
+
+@pytest.fixture
+def container_metric_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]]:
+    """MetricsService wired to a fake container-stats provider."""
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    monkeypatch.setattr(metrics_internal, "_METER_PROVIDER", provider)
+    stats = {agent: dict(fields) for agent, fields in _CONTAINER_STATS.items()}
+    service = MetricsService(
+        event_bus=EventBus(), reader=reader, container_stats=lambda: stats
+    )
+    return reader, service, stats
+
+
+async def test_container_gauges_report_per_agent_values(
+    container_metric_setup: tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]],
+) -> None:
+    """Per-container gauges carry one point per agent with the provider's values."""
+    _, service, _ = container_metric_setup
+
+    snapshot = service.snapshot()
+
+    memory = snapshot["metrics"]["tlon.container.memory_bytes"]
+    assert memory["type"] == "gauge"
+    assert _point(snapshot, "tlon.container.memory_bytes", agent_id="gu-yanxi")["value"] == 100.0
+    assert _point(snapshot, "tlon.container.memory_bytes", agent_id="xie-yunshu")["value"] == 300.0
+    assert _point(snapshot, "tlon.container.cpu_percent", agent_id="gu-yanxi")["value"] == 25.0
+
+
+async def test_society_gauges_report_totals(
+    container_metric_setup: tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]],
+) -> None:
+    """Society-level gauges aggregate: total memory + running container count."""
+    _, service, _ = container_metric_setup
+
+    snapshot = service.snapshot()
+
+    total = snapshot["metrics"]["tlon.society.container_memory_bytes"]
+    assert total["type"] == "gauge"
+    assert total["points"] == [{"attributes": {}, "value": 400.0}]
+    count = snapshot["metrics"]["tlon.society.containers"]
+    assert count["points"] == [{"attributes": {}, "value": 2}]
+
+
+async def test_container_gauges_follow_provider_state(
+    container_metric_setup: tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]],
+) -> None:
+    """Gauges pull at collection time: mutated provider state shows up on re-snapshot."""
+    _, service, stats = container_metric_setup
+    stats.clear()
+    stats["adam"] = {"memory_bytes": 42.0, "memory_limit_bytes": 512.0, "cpu_percent": 1.0}
+
+    snapshot = service.snapshot()
+
+    assert _point(snapshot, "tlon.container.memory_bytes", agent_id="adam")["value"] == 42.0
+    assert _point(snapshot, "tlon.container.memory_bytes", agent_id="gu-yanxi") is None
+    assert snapshot["metrics"]["tlon.society.containers"]["points"][0]["value"] == 1
+
+
+async def test_no_container_provider_means_no_gauges(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService],
+) -> None:
+    """Without a container_stats provider the gauges don't exist (no crash)."""
+    _, service = metric_setup
+
+    snapshot = service.snapshot()
+
+    assert "tlon.container.memory_bytes" not in snapshot["metrics"]
+    assert "tlon.container.cpu_percent" not in snapshot["metrics"]
+    assert "tlon.society.container_memory_bytes" not in snapshot["metrics"]
+    assert "tlon.society.containers" not in snapshot["metrics"]

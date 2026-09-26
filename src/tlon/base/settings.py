@@ -57,6 +57,12 @@ class Settings:
         # Logging: retention (days) for the daily server log file sink
         self.log_retention_days = int(os.getenv("TLON_LOG_RETENTION_DAYS", "7"))
 
+        # Society-level container resource budget (issue #24): total memory
+        # budget across all agent containers (e.g. "4g"); empty = no budget.
+        # Warning-only — exceeding it logs container_memory_budget_exceeded,
+        # nothing is enforced.
+        self.container_memory_budget = os.getenv("TLON_CONTAINER_MEMORY_BUDGET", "")  # 社会级容器内存总预算；空 = 不设，仅 warning 不强制
+
         # Admin API auth (ADR 0013): shared Bearer token guarding /admin/*;
         # empty = auth disabled (default, localhost trust boundary)
         self.admin_api_token = os.getenv("TLON_ADMIN_TOKEN", "")  # 配置后 /admin/* 需 Authorization: Bearer；空 = 关闭

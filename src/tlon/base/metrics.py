@@ -6,18 +6,23 @@ process-wide MeterProvider with an InMemoryMetricReader so the current
 values can be snapshotted in-process (REST / operator); attaching an OTLP
 metric exporter later needs no code change here.
 
-Metrics are derived, not instrumented: the MetricsService is a pure event
-consumer. It subscribes to the EventBus and maps existing events onto
-counters and one histogram — business code stays free of metrics calls.
+Metrics are derived, not instrumented: the MetricsService consumes
+existing signals instead of adding metrics calls to business code. The
+primary source is the EventBus — events are mapped onto counters and
+one histogram. An optional pull source (``container_stats``, issue #24)
+feeds the society's container resource usage into observable gauges;
+its callbacks are pure in-memory reads, so snapshot() never blocks.
 
 Cardinality discipline: attribute values must stay low-cardinality
 (agent id, tool name, recipient kind, event source). Never put mail ids,
 session ids or trace ids into attributes.
 """
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from opentelemetry import metrics
+from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
     Gauge,
@@ -41,6 +46,12 @@ _HUMAN_ID_PREFIX = "human:"
 
 _initialized = False
 _reader: InMemoryMetricReader | None = None
+
+#: Pull port for the container resource ledger (issue #24): a callable
+#: returning ``{agent_id: {"memory_bytes": …, "memory_limit_bytes": …,
+#: "cpu_percent": …}}``. Structured plain dicts keep the base layer free
+#: of the sandbox layer's types (dependency direction: sandbox ← base).
+ContainerStatsProvider = Callable[[], dict[str, dict[str, float]]]
 
 
 def init_metrics() -> MeterProvider:
@@ -121,16 +132,28 @@ class MetricsService(Component, Device):
         MAIL_ORPHAN_SCAN    -> tlon.mail.orphan_scans
         MAIL_ENDORSED       -> tlon.mail.endorsements {endorser}
 
+    Pull source -> gauge mapping (only when container_stats is provided;
+    callbacks read the provider's latest in-memory snapshot when the
+    reader collects, so snapshot() stays non-blocking):
+        tlon.container.memory_bytes        {agent_id}
+        tlon.container.cpu_percent         {agent_id}
+        tlon.society.container_memory_bytes  (total, no attributes)
+        tlon.society.containers              (running container count)
+
     Dependencies (constructor injected):
         - event_bus: EventBus to subscribe to
         - reader: InMemoryMetricReader to snapshot from (defaults to the
           one installed by init_metrics)
+        - container_stats: optional pull port for container resource
+          usage (ContainerStatsProvider; supplied by the sandbox layer's
+          ContainerResourceMonitor)
     """
 
     def __init__(
         self,
         event_bus: EventBus,
         reader: InMemoryMetricReader | None = None,
+        container_stats: ContainerStatsProvider | None = None,
     ):
         """Initialize the metrics service.
 
@@ -138,10 +161,13 @@ class MetricsService(Component, Device):
             event_bus: Event bus to subscribe to
             reader: In-memory reader for snapshots; falls back to the
                 module reader installed by init_metrics
+            container_stats: Optional provider of per-container resource
+                usage; when given, the container/society gauges are created
         """
         Component.__init__(self, name="MetricsService")
         Device.__init__(self, event_bus=event_bus, name="MetricsService")
         self._reader = reader if reader is not None else get_metric_reader()
+        self._container_stats = container_stats
 
         meter = metrics.get_meter("tlon")
         self._mail_sent = meter.create_counter(
@@ -211,6 +237,31 @@ class MetricsService(Component, Device):
         self._mail_endorsements = meter.create_counter(
             "tlon.mail.endorsements", description="Mail endorsements delivered ()"
         )
+
+        if container_stats is not None:
+            meter.create_observable_gauge(
+                "tlon.container.memory_bytes",
+                callbacks=[self._observe_container_memory],
+                description="Actual memory usage of agent containers",
+                unit="By",
+            )
+            meter.create_observable_gauge(
+                "tlon.container.cpu_percent",
+                callbacks=[self._observe_container_cpu],
+                description="CPU usage of agent containers (docker stats formula)",
+                unit="%",
+            )
+            meter.create_observable_gauge(
+                "tlon.society.container_memory_bytes",
+                callbacks=[self._observe_society_container_memory],
+                description="Total memory usage of all agent containers (society ledger)",
+                unit="By",
+            )
+            meter.create_observable_gauge(
+                "tlon.society.containers",
+                callbacks=[self._observe_society_containers],
+                description="Number of running agent containers",
+            )
 
         logger.info("metrics_service_constructed")
 
@@ -337,6 +388,37 @@ class MetricsService(Component, Device):
             self._mail_endorsements.add(1, {"endorser": endorser})
         except Exception as e:
             logger.warning("metrics_event_failed", event_type=event.type.value, error=str(e))
+
+    # ========== Observable gauge callbacks (pure in-memory reads) ==========
+
+    def _observe_container_memory(self, options: CallbackOptions) -> Iterable[Observation]:
+        """Per-container actual memory usage, tagged by agent_id."""
+        assert self._container_stats is not None
+        return [
+            Observation(stats["memory_bytes"], {"agent_id": agent_id})
+            for agent_id, stats in self._container_stats().items()
+        ]
+
+    def _observe_container_cpu(self, options: CallbackOptions) -> Iterable[Observation]:
+        """Per-container CPU percent, tagged by agent_id."""
+        assert self._container_stats is not None
+        return [
+            Observation(stats["cpu_percent"], {"agent_id": agent_id})
+            for agent_id, stats in self._container_stats().items()
+        ]
+
+    def _observe_society_container_memory(
+        self, options: CallbackOptions
+    ) -> Iterable[Observation]:
+        """Society-level total container memory (no attributes)."""
+        assert self._container_stats is not None
+        total = sum(s["memory_bytes"] for s in self._container_stats().values())
+        return [Observation(total)]
+
+    def _observe_society_containers(self, options: CallbackOptions) -> Iterable[Observation]:
+        """Number of running agent containers (no attributes)."""
+        assert self._container_stats is not None
+        return [Observation(len(self._container_stats()))]
 
     # ========== Snapshot ==========
 
