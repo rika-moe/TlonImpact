@@ -6,14 +6,26 @@ window precedence (ADR 0012 phase 2): explicit agent.yaml value >
 litellm model registry (``get_model_info().max_input_tokens``) >
 DEFAULT_CONTEXT_WINDOW. The built config always carries a resolved int
 and a non-None model_name.
+
+Also covers the execution-device level gate (issue #26): a member
+declaring ``docker.level: L0`` assembles without a DockerRuntime and
+without the seven device-dependent shell/filesystem tools.
 """
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from tlon.agents.assembly import _build_llm_config
-from tlon.base.config import DEFAULT_CONTEXT_WINDOW, LLMConfig
+from tlon.agents.assembly import _build_llm_config, assemble_cognitive
+from tlon.base.config import (
+    DEFAULT_CONTEXT_WINDOW,
+    AgentConfig,
+    DockerRuntimeConfig,
+    LLMConfig,
+)
+from tlon.base.paths import TlonPaths
 
 _MODEL = "moonshot/kimi-k2.5"
 
@@ -108,3 +120,81 @@ class TestFileValuesTakeEffect:
         assert built.max_tokens == 2048
         assert built.top_p == 0.5
         assert built.api_base == "https://proxy.example/v1"
+
+
+# The seven device-dependent tools (shell + filesystem), withheld from
+# members declaring docker.level: L0 (issue #26).
+DEVICE_TOOLS = frozenset(
+    {
+        "executeBashCommand",
+        "checkBashTask",
+        "readFile",
+        "writeFile",
+        "editFile",
+        "listDirectory",
+        "searchFiles",
+    }
+)
+
+
+class _FakeAgentInfo:
+    """AgentInfoProvider stand-in over a fixed config roster."""
+
+    def __init__(self, configs: dict[str, AgentConfig]):
+        self._configs = configs
+
+    def get_all_ids(self) -> list[str]:
+        return sorted(self._configs)
+
+    def get_config(self, agent_id: str) -> AgentConfig | None:
+        return self._configs.get(agent_id)
+
+
+@pytest.fixture
+def tlon_paths(tmp_path: Path) -> TlonPaths:
+    return TlonPaths(home=tmp_path)
+
+
+class TestExecutionLevelAssembly:
+    """docker.level at assembly (issue #26): L0 = 无执行装置 — no
+    DockerRuntime is constructed and none of the seven device-dependent
+    tools is registered; L2 = the status-quo full path."""
+
+    async def _assemble(self, tlon_paths: TlonPaths, level: str) -> Any:
+        config = AgentConfig(
+            id=f"member-{level.lower()}",
+            name=f"member-{level.lower()}",
+            llm=LLMConfig(model_name="test/model"),
+            docker=DockerRuntimeConfig(level=level),
+        )
+        return await assemble_cognitive(
+            config,
+            registry=None,  # type: ignore[arg-type]
+            agent_info=_FakeAgentInfo({config.id: config}),  # type: ignore[arg-type]
+            tlon_paths=tlon_paths,
+        )
+
+    async def test_l0_skips_runtime_and_device_tools(
+        self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runtime_ctor = MagicMock(side_effect=AssertionError("L0 must not construct DockerRuntime"))
+        monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", runtime_ctor)
+
+        caps = await self._assemble(tlon_paths, "L0")
+
+        runtime_ctor.assert_not_called()
+        assert caps.docker_runtime is None
+        names = set(caps.tool_executor.list_tools())
+        assert names.isdisjoint(DEVICE_TOOLS)
+        # 其余工具照常装配
+        assert {"getCurrentTime", "sendEmail", "rememberFact"} <= names
+
+        await caps.tool_executor.shutdown()
+
+    async def test_l2_registers_device_tools(self, tlon_paths: TlonPaths) -> None:
+        caps = await self._assemble(tlon_paths, "L2")
+
+        names = set(caps.tool_executor.list_tools())
+        assert names >= DEVICE_TOOLS
+
+        await caps.tool_executor.shutdown()

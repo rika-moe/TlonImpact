@@ -102,7 +102,7 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 
 **P2 阶梯成形（随真实需求驱动）**
 - ✅ ephemeral 执行单元（本 PR，issue #25，混合方案 D'）：**无菌文件柜 + 一次性执行单元**。关键洞察：get_archive/put_archive 对 created-but-never-started 的容器同样有效（真 daemon 验证），所以常驻容器可以**从不启动**——降级为只服务文件 I/O 的「文件柜」，不执行就不会被污染（#22 的漂移 reconcile 继续守护它）。`run()` 不再 exec 进常驻容器，改为每条命令创建一次性容器（命名 `tlon-agent-{agent_id}-exec-{uuid8}`）：创建参数与文件柜同源于 `_container_kwargs`（同镜像/挂载/ro rootfs/tmpfs/限额/网络），`start → wait → logs 分路取 stdout/stderr → finally remove(force=True)`；不用 auto_remove（与 wait/logs 有竞态）。双层超时保持：容器内 `timeout` + 外层 `asyncio.wait_for`（+5s 兜底，触发时 finally 强杀容器）；超时文案契约（`Command timed out after {n} seconds`，AuditedExecutionDevice 依赖）不变。已知边界：busybox `timeout`（如 alpine 镜像）作为容器 PID 1 时不触发，此类镜像靠外层兜底限时（晚 ≤5s，语义不变）；默认 ubuntu 镜像（coreutils）走 124 路径。**行为变化（目的而非 bug）**：agent 自己 nohup 的进程不再跨命令存活，后台任务走 `background=true`（host 侧 asyncio task 包一次性容器，天然兼容）；唯一持久状态是 /workspace。资源账本（#24）同步适配：exec 单元按 `-exec-` 命名标记归属到所属成员聚合计量，避免每条命令产生一个随机 uuid 指标序列。工具契约（executeBashCommand description）已告知 LLM 新语义
-- 能力声明进成员 spec/config，装配层按声明选择层级与参数（宪法一）
+- ✅ 能力声明进成员 spec/config，装配层按声明选择层级与参数（本 PR，issue #26，宪法一）：声明落在 agent.yaml 的 `docker.level`（[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig`），取值 `"L0"` | `"L2"`，**默认 `"L2"`**（行为不变先行，默认翻转待 L1 落地后另行决策）。`L0` = 无执行装置：装配层（[agents/assembly.py](../../src/tlon/agents/assembly.py)）不创建 DockerRuntime、不注册 shell/filesystem 七个装置工具，记 `execution_device_declared_none` 日志；`L2` = 现状路径不变。`"L1"` 及其他值在 config 校验即拒绝（错误信息指明 L1 调研中，issue #27）。**未动的部分**：spec（behavior.tlon）语法尚未扩展——`:execution` 段与「staging 原型声明 L2 即评审红旗」随 spec 语法扩展落地
 - L1 受限运行时调研：WASM/WASI capability 模型与 agent 工作流的匹配度
 - workspace git 化：改动即 commit，diff 即评审材料（宪法二）
 

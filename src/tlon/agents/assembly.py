@@ -161,13 +161,16 @@ async def assemble_cognitive(
     scheduler) is actually attached is derived from the spec inside
     ``MemberRuntime``; a member without a loop rule simply never uses
     these objects (lazy assembly: objects are cheap, loading is on
-    demand). No container exists here: ``run()`` spins a one-shot
-    execution unit per command (issue #25) and the file cabinet is
-    created lazily on first file I/O via ensure_running(), so waking an
-    agent for pure conversation costs zero containers — a daemon
-    failure surfaces as a tool error, not a start failure. The runtime
-    is wrapped in ``AuditedExecutionDevice`` (issue #21): exec auditing
-    lives on the interface boundary.
+    demand). Exception (issue #26): a member declaring
+    ``docker.level: L0`` gets no execution device — no DockerRuntime and
+    none of the device-dependent shell/filesystem tools. Otherwise no
+    container exists here: ``run()`` spins a one-shot execution unit per
+    command (issue #25) and the file cabinet is created lazily on first
+    file I/O via ensure_running(), so waking an agent for pure
+    conversation costs zero containers — a daemon failure surfaces as a
+    tool error, not a start failure. The runtime is wrapped in
+    ``AuditedExecutionDevice`` (issue #21): exec auditing lives on the
+    interface boundary.
     """
     # Build infrastructure dependencies
     llm_config = _build_llm_config(config.llm, config.id)
@@ -200,13 +203,18 @@ async def assemble_cognitive(
     # device.exec trace span + device_exec log. Tools and
     # CognitiveCapabilities.docker_runtime both hold the wrapped instance;
     # close() passes through, so MemberRuntime's shutdown path is unchanged.
+    # 能力阶梯（issue #26）：docker.level 声明 L0 的成员无执行装置——
+    # 不创建 DockerRuntime，下方也不注册依赖装置的工具。
     docker_runtime: ExecutionDevice | None = None
-    try:
-        docker_runtime = AuditedExecutionDevice(
-            DockerRuntime(config.docker, config.id, tlon_paths), agent_id=config.id
-        )
-    except Exception as e:
-        logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
+    if config.docker.level == "L0":
+        logger.info("execution_device_declared_none", agent_id=config.id)
+    else:
+        try:
+            docker_runtime = AuditedExecutionDevice(
+                DockerRuntime(config.docker, config.id, tlon_paths), agent_id=config.id
+            )
+        except Exception as e:
+            logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
     # No registry-side container handle is kept (ADR 0006): members
     # are never force-removed — a sleeping member keeps its container
     # (zero-cost wake); a re-assembly reuses it by name.
@@ -230,22 +238,32 @@ async def assemble_cognitive(
     tool_executor = ToolExecutor()
 
     # Register tools
-    execute_bash_tool = ExecuteBashTool(config.docker, docker_runtime)
-    tool_executor.register_tool(execute_bash_tool)
-    # checkBashTask shares this agent's task table: no cross-agent visibility.
-    tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
-    allowed_paths = config.tool.allowed_paths
-    # Read-side tools additionally see the agent's own home (behavior spec,
-    # memory, mailbox) at the read-only mount (issue : 行为即数据 —
-    # self-awareness is the precondition of self-evolution). Write/edit keep
-    # the configured whitelist: behavior changes go through the prototype
-    # channel, never direct file writes.
-    read_allowed_paths = [*allowed_paths, AGENT_HOME_CONTAINER_PATH]
-    tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, read_allowed_paths))
-    tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
-    tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
-    tool_executor.register_tool(ListDirectoryTool(config.docker, docker_runtime, read_allowed_paths))
-    tool_executor.register_tool(SearchFilesTool(config.docker, docker_runtime, read_allowed_paths))
+    # Device-dependent tools (issue #26): only L2 members get the
+    # shell/filesystem seven; L0 (无执行装置) registers none of them.
+    # Note the gate is the declared level, not docker_runtime: an L2
+    # member whose daemon is unreachable keeps the tools (they fail-soft
+    # with "Docker runtime not initialized") — 声明即数据.
+    if config.docker.level == "L2":
+        execute_bash_tool = ExecuteBashTool(config.docker, docker_runtime)
+        tool_executor.register_tool(execute_bash_tool)
+        # checkBashTask shares this agent's task table: no cross-agent visibility.
+        tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
+        allowed_paths = config.tool.allowed_paths
+        # Read-side tools additionally see the agent's own home (behavior spec,
+        # memory, mailbox) at the read-only mount (issue : 行为即数据 —
+        # self-awareness is the precondition of self-evolution). Write/edit keep
+        # the configured whitelist: behavior changes go through the prototype
+        # channel, never direct file writes.
+        read_allowed_paths = [*allowed_paths, AGENT_HOME_CONTAINER_PATH]
+        tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, read_allowed_paths))
+        tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
+        tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
+        tool_executor.register_tool(
+            ListDirectoryTool(config.docker, docker_runtime, read_allowed_paths)
+        )
+        tool_executor.register_tool(
+            SearchFilesTool(config.docker, docker_runtime, read_allowed_paths)
+        )
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())

@@ -145,6 +145,7 @@ class CognitiveCapabilities:
     # client's connection pool. Typed as the ExecutionDevice interface
     # (issue #21): assembly injects the AuditedExecutionDevice-wrapped
     # DockerRuntime; close() passes through to the Docker client. None
+    # for members declaring docker.level=L0 (无执行装置, issue #26),
     # when the daemon was unreachable at assembly time, and for
     # capability sets built without assembly (Adam, tests).
     docker_runtime: "ExecutionDevice | None" = None
