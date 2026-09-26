@@ -68,7 +68,7 @@
 | `working_dir` | `str` | "/workspace" |  |
 | `memory_limit` | `str` | "512m" |  |
 | `cpu_limit` | `float` | 1.0 |  |
-| `network_mode` | `str` | "host" |  |
+| `network_mode` | `str` | "none" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
 
 ### `tool`
@@ -98,7 +98,7 @@ agent:
     working_dir: /workspace
     memory_limit: 512m
     cpu_limit: 1.0
-    network_mode: host
+    network_mode: none   # 默认断网（issue #23）；确需外联改为 "bridge" 等显式声明
   tool:
     total_timeout: 60.0
     per_timeout: 30.0

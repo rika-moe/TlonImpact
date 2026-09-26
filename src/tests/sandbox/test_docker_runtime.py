@@ -100,7 +100,7 @@ class TestContainerMatches:
         elif dimension == "cpu":
             host_config["CpuQuota"] = 1
         elif dimension == "network_mode":
-            host_config["NetworkMode"] = "none"
+            host_config["NetworkMode"] = "host"
         elif dimension == "read_only":
             host_config["ReadonlyRootfs"] = False
         elif dimension == "tmpfs":
