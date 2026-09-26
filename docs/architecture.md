@@ -220,7 +220,7 @@ runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后
 
 人类成员 id 为 `human:<username>`，映射到目录时冒号替换为连字符（只发生在 `TlonPaths.member_mail_dir` 一处）。
 
-容器视角：`{agent_id}/workspace/` 以读写方式 bind-mount 为容器工作目录（默认 `/workspace`），整个 `{agent_id}/` 家目录再以**只读**方式挂载到容器的 `/tlon-home`（issue ，挂载定义在 [sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py) 的 `_create_container`）——agent 经 readFile/listDirectory/searchFiles 读自己的行为定义、记忆与邮箱（行为即数据，自我感知是自进化的前提），写/编辑工具的白名单不含 `/tlon-home`，行为变更走原型提案通道。每个容器只挂自己的家目录，其他成员的家目录从不进入容器，跨 agent 读取在结构上不可能。注意：容器跨睡眠/重启保留（ADR 0006），已存在的旧容器要带新挂载需先移除重建。
+容器视角：`{agent_id}/workspace/` 以读写方式 bind-mount 为容器工作目录（默认 `/workspace`），整个 `{agent_id}/` 家目录再以**只读**方式挂载到容器的 `/tlon-home`（issue ，挂载定义在 [sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py) 的 `_create_container`）——agent 经 readFile/listDirectory/searchFiles 读自己的行为定义、记忆与邮箱（行为即数据，自我感知是自进化的前提），写/编辑工具的白名单不含 `/tlon-home`，行为变更走原型提案通道。每个容器只挂自己的家目录，其他成员的家目录从不进入容器，跨 agent 读取在结构上不可能。容器 rootfs 整体只读（`read_only=True`），另有 tmpfs `/tmp`（64m）做 scratch，可写面 = `/workspace` 是内核级事实（issue #22）。容器跨睡眠/重启保留（ADR 0006），但 `ensure_running` 会做配置漂移 reconcile：实际配置与期望配置（镜像/挂载/限额/网络/ro rootfs）不符时自动移除重建，旧容器无需手工处理。
 
 `config/` 下的三个 Markdown 人格文件（`IDENTITY.md`、`SOUL.md`、`RULES.md`）在构造 prompt 时由 [agents/context_builder.py](../src/tlon/agents/context_builder.py) 的 `ContextBuilder` 读入；`behavior.tlon` 则经 [agents/loader.py](../src/tlon/agents/loader.py) 的 `load_member_spec` 解析为 `MemberSpec` 并在加载时校验。
 
