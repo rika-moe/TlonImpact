@@ -201,7 +201,9 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 ### executeBashCommand
 
-在 agent 的 Docker 容器中执行 bash 命令，支持管道、重定向、分号串接。
+在 agent 的 Docker 沙箱中执行 bash 命令，支持管道、重定向、分号串接。
+
+执行模型（issue #25）：**每条命令都在全新的一次性容器中执行**（同镜像/挂载/限额/网络加固），命令结束后容器即被删除——环境变量、已安装的软件、`/tmp` 内容、`nohup` 启动的进程都不跨命令保留；跨命令需要保留的文件只能放 `/workspace`（持久 bind mount）。需要后台运行的命令用 `background=true`（host 侧 asyncio 任务包一次性容器），不要用 `nohup`。
 
 | 参数 | 类型 | 必填 | 默认 | 约束 |
 |---|---|---|---|---|

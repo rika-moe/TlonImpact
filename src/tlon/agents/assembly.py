@@ -161,8 +161,9 @@ async def assemble_cognitive(
     scheduler) is actually attached is derived from the spec inside
     ``MemberRuntime``; a member without a loop rule simply never uses
     these objects (lazy assembly: objects are cheap, loading is on
-    demand). The container is NOT started here: DockerRuntime lazily
-    calls ensure_running() on first run/read/write, so waking an
+    demand). No container exists here: ``run()`` spins a one-shot
+    execution unit per command (issue #25) and the file cabinet is
+    created lazily on first file I/O via ensure_running(), so waking an
     agent for pure conversation costs zero containers — a daemon
     failure surfaces as a tool error, not a start failure. The runtime
     is wrapped in ``AuditedExecutionDevice`` (issue #21): exec auditing
