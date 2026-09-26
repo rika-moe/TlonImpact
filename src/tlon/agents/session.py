@@ -1,7 +1,7 @@
 """AgentSession — one active conversation / task context."""
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -26,8 +26,8 @@ class AgentSession:
         # anchor — messages before it are never compressed (ADR 0008).
         # Restored from the journal on resume; 0 until the first build.
         self.anchor_len = 0
-        self.created_at = datetime.now()
-        self.last_active_at = datetime.now()
+        self.created_at = datetime.now(UTC)
+        self.last_active_at = datetime.now(UTC)
         self.state = SessionState.ACTIVE
         self.trigger_content = trigger_content
 
@@ -82,11 +82,11 @@ class AgentSession:
 
     def mark_waiting(self) -> None:
         self.state = SessionState.WAITING
-        self.last_active_at = datetime.now()
+        self.last_active_at = datetime.now(UTC)
 
     def mark_active(self) -> None:
         self.state = SessionState.ACTIVE
-        self.last_active_at = datetime.now()
+        self.last_active_at = datetime.now(UTC)
 
     def mark_completed(self) -> None:
         self.state = SessionState.COMPLETED

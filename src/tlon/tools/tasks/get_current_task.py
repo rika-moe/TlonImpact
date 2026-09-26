@@ -50,10 +50,10 @@ class GetCurrentTaskTool(Tool):
             # Calculate elapsed time if doing
             elapsed = None
             if task.started_at:
-                from datetime import datetime
+                from datetime import UTC, datetime
 
                 start = datetime.fromisoformat(task.started_at)
-                elapsed = int((datetime.now() - start).total_seconds() / 60)
+                elapsed = int((datetime.now(UTC) - start).total_seconds() / 60)
 
             return ToolResult(
                 success=True,

@@ -1,7 +1,7 @@
 """Task data models for task planning."""
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -37,7 +37,7 @@ class Task:
     description: str = ""
     status: TaskStatus = TaskStatus.TODO
 
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     started_at: str | None = None
     paused_at: str | None = None
     completed_at: str | None = None
@@ -63,7 +63,7 @@ class Task:
     def start(self) -> None:
         """Mark task as started (doing)."""
         if self.status == TaskStatus.TODO:
-            self.started_at = datetime.now().isoformat()
+            self.started_at = datetime.now(UTC).isoformat()
         elif self.status == TaskStatus.PAUSED:
             # Resuming from paused
             pass
@@ -74,7 +74,7 @@ class Task:
         """Mark task as paused."""
         if self.status == TaskStatus.DOING:
             self.status = TaskStatus.PAUSED
-            self.paused_at = datetime.now().isoformat()
+            self.paused_at = datetime.now(UTC).isoformat()
             self.pause_count += 1
 
     def complete(self, result: str = "") -> None:
@@ -84,7 +84,7 @@ class Task:
             result: Optional task result/output
         """
         self.status = TaskStatus.DONE
-        self.completed_at = datetime.now().isoformat()
+        self.completed_at = datetime.now(UTC).isoformat()
         if result:
             self.result = result
 

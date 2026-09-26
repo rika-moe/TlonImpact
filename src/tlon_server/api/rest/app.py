@@ -19,7 +19,7 @@ import asyncio
 import hmac
 import json
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from aiohttp import web
@@ -276,7 +276,7 @@ class RESTAPIHandler(
             {
                 "status": "healthy",
                 "running": self.client_gateway.is_running(),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "version": "0.2.0",
             }
         )
@@ -358,7 +358,7 @@ class RESTAPIHandler(
             {
                 "status": "ok",
                 "pong": True,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
         )
 
@@ -370,7 +370,7 @@ class RESTAPIHandler(
                 {
                     "status": "ok",
                     "echo": body,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
             )
         except json.JSONDecodeError:

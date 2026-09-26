@@ -8,7 +8,7 @@ claims). Extracted from the Agent god class.
 import asyncio
 import contextlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from tlon.agents.member_spec import MemberRule
@@ -96,7 +96,7 @@ class ReflectionEngine:
         if self._running:
             return
 
-        now = datetime.now()
+        now = datetime.now(UTC)
         if self._last_reflection_time:
             elapsed = (now - self._last_reflection_time).total_seconds()
             if elapsed < self._interval:

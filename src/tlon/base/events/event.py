@@ -6,7 +6,7 @@ It is designed to be serialization-friendly for wire transmission (SSE).
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum, StrEnum
 from typing import Any
 
@@ -98,7 +98,7 @@ class Event:
     type: EventType
     payload: Any
     source: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     trace_id: str | None = None
     span_id: str | None = None
@@ -167,13 +167,13 @@ class Event:
                 data["timestamp"] = datetime.fromisoformat(ts)
             except ValueError:
                 # Fallback to now if invalid
-                data["timestamp"] = datetime.now()
+                data["timestamp"] = datetime.now(UTC)
         elif isinstance(ts, (int, float)):
             # Unix timestamp (seconds since epoch)
-            data["timestamp"] = datetime.fromtimestamp(ts)
+            data["timestamp"] = datetime.fromtimestamp(ts, UTC)
         elif not isinstance(ts, datetime):
             # Unknown format, default to now
-            data["timestamp"] = datetime.now()
+            data["timestamp"] = datetime.now(UTC)
 
         # Ensure tracing fields are present
         if "trace_id" not in data:

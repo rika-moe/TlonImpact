@@ -1,6 +1,6 @@
 """Tests for Task models."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from tlon.tools.tasks.manager import Task, TaskStatus
 
@@ -89,7 +89,7 @@ class TestTask:
             "title": "Test",
             "status": "doing",
             "description": "",
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "started_at": None,
             "paused_at": None,
             "completed_at": None,

@@ -16,7 +16,7 @@ threading lock.
 
 import json
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -42,8 +42,8 @@ def format_span_id(span_id: int) -> str:
 
 
 def _ns_to_iso(timestamp_ns: int | None) -> str:
-    """Convert an OTel nanosecond timestamp to a local ISO string."""
-    return datetime.fromtimestamp((timestamp_ns or 0) / 1e9).isoformat()
+    """Convert an OTel nanosecond timestamp to a UTC ISO string."""
+    return datetime.fromtimestamp((timestamp_ns or 0) / 1e9, UTC).isoformat()
 
 
 class JsonlSpanExporter(SpanExporter):
