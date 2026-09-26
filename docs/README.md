@@ -36,6 +36,7 @@
 | [design/webui.md](./design/webui.md) | WebUI（apps/webui）：React+Vite、/ui/ 静态托管、cyberpunk 视觉规范 | ✅ |
 | [design/deepseek-harness-review.md](./design/deepseek-harness-review.md) | 外部调研：dsh 对 Tlon 的可借鉴点（方向讨论输入材料，非决策） | ✅ |
 | [design/skills.md](./design/skills.md) | Skill 能力：开放标准 SKILL.md、三层目录、progressive disclosure | ✅ |
+| [design/execution-device.md](./design/execution-device.md) | Execution device 设计哲学：能力阶梯、五条宪法、DockerRuntime 现状评估与加固方向 | ✅ |
 | [design/telegram.md](./design/telegram.md) | Telegram 客户端（MVP）：单用户白名单、回复式收发、SDK 接入 | ✅ |
 | [reference/tlosure-reference.md](./reference/tlosure-reference.md) | tlosure 语言核心：EDN 语法、求值器、燃料计量、特殊形式、通用词汇 | ✅ |
 | [reference/dsl-reference.md](./reference/dsl-reference.md) | tlon 宿主侧：MemberSpec 全字段、领域 builtin、stage/section 清单 | ✅ |
