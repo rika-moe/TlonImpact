@@ -92,6 +92,7 @@ from tlosure.eval import (
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
+    from tlon.sandbox.docker_runtime import DockerRuntime
 
 logger = get_logger(__name__)
 
@@ -139,6 +140,12 @@ class CognitiveCapabilities:
     # Trust ladder (): a probationary member's mentor address (its
     # spawner), cc'd on composed outbound mail; None for full members.
     mentor_cc: str | None = None
+    # The member's Docker client holder (issue ): assembly owns it and
+    # shutdown closes it — a wake re-assembly must not leak the previous
+    # client's connection pool. None when the daemon was unreachable at
+    # assembly time, and for capability sets built without assembly
+    # (Adam, tests).
+    docker_runtime: "DockerRuntime | None" = None
 
 
 class MemberRuntime(Member):
@@ -347,7 +354,9 @@ class MemberRuntime(Member):
     async def shutdown(self) -> None:
         """Shutdown the member: cancel the background tasks (rescan,
         in-flight reflection), stop the cognitive loop, release
-        subscriptions, shut down tools (cancelling background bash tasks)."""
+        subscriptions, shut down tools (cancelling background bash tasks),
+        and close the Docker client (its connection pool must not leak
+        across sleep→wake re-assembly)."""
         with bound_contextvars(agent_id=self._member_id):
             if self._rescan_task is not None:
                 self._rescan_task.cancel()
@@ -364,6 +373,20 @@ class MemberRuntime(Member):
             self.unsubscribe_all()
             if self._cognitive is not None:
                 await self._cognitive.tool_executor.shutdown()
+                # Tools first (a background bash task may still be using
+                # the runtime), then the Docker client — its connection
+                # pool must not leak across sleep→wake re-assembly
+                # (issue ). A close failure is logged, never blocking.
+                docker_runtime = self._cognitive.docker_runtime
+                if docker_runtime is not None:
+                    try:
+                        docker_runtime.close()
+                    except Exception as e:
+                        logger.warning(
+                            "docker_runtime_close_error",
+                            member_id=self._member_id,
+                            error=str(e),
+                        )
             if self._scheduler is not None:
                 self._state = MemberState.SHUTDOWN
             self._initialized = False

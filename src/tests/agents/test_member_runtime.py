@@ -673,6 +673,47 @@ class TestToolShutdownWiring:
 
         assert recorder.shutdown_called
 
+    async def test_member_shutdown_closes_docker_runtime(self, bus, mail_dir):
+        """shutdown closes the assembled DockerRuntime (the client's
+        connection pool must not leak across sleep→wake re-assembly)."""
+        mailbox = Mailbox(mail_dir)
+        config = AgentConfig(id="thinker-y", name="thinker-y", llm=LLMConfig(model_name="test"))
+        docker_runtime = MagicMock()
+        caps = CognitiveCapabilities(
+            config=config,
+            llm_client=_StubLLM(),
+            memory=_MemoryStub(),
+            task_manager=_TaskStub(),
+            tool_executor=ToolExecutor(),
+            team_members=[],
+            tlon_paths=TlonPaths(home=mail_dir.parent),
+            docker_runtime=docker_runtime,
+        )
+        member = _make_member("thinker-y", COGNITIVE_EDN, bus, mailbox=mailbox, cognitive=caps)
+
+        await member.shutdown()
+
+        docker_runtime.close.assert_called_once()
+
+    async def test_member_shutdown_without_docker_runtime(self, bus, mail_dir):
+        """docker_runtime defaults to None (daemon unreachable at assembly,
+        or a capability set built without assembly) — shutdown must not
+        blow up."""
+        mailbox = Mailbox(mail_dir)
+        config = AgentConfig(id="thinker-z", name="thinker-z", llm=LLMConfig(model_name="test"))
+        caps = CognitiveCapabilities(
+            config=config,
+            llm_client=_StubLLM(),
+            memory=_MemoryStub(),
+            task_manager=_TaskStub(),
+            tool_executor=ToolExecutor(),
+            team_members=[],
+            tlon_paths=TlonPaths(home=mail_dir.parent),
+        )
+        member = _make_member("thinker-z", COGNITIVE_EDN, bus, mailbox=mailbox, cognitive=caps)
+
+        await member.shutdown()
+
 
 # ── Phase F: mixed member (deflection / cost routing) ──────────────────
 

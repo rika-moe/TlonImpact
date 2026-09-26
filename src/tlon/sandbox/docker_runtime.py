@@ -80,6 +80,7 @@ class DockerRuntime:
         self.container_name = f"tlon-agent-{agent_id}"
         self.client = self._create_client()
         self.container: Container | None = None
+        self._closed = False
 
     def _create_client(self) -> docker.DockerClient:
         """Create a Docker client, trying multiple connection methods.
@@ -89,12 +90,15 @@ class DockerRuntime:
         - Default Unix socket (/var/run/docker.sock)
         - macOS Colima socket (~/.colima/default/docker.sock)
         - macOS Docker Desktop socket (~/.docker/run/docker.sock)
+
+        Each probe failure is logged at debug level so a daemon connection
+        problem is diagnosable before the final raise.
         """
         # First try: environment variables (honors DOCKER_HOST set by Colima/Docker Desktop)
         try:
             return docker.from_env()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("docker_client_from_env_failed", error=str(e))
 
         # Second try: common socket paths on macOS
         socket_paths = [
@@ -111,11 +115,32 @@ class DockerRuntime:
                         base_url=f"unix://{sock_path}",
                         timeout=60,
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        "docker_client_socket_failed", socket=str(sock_path), error=str(e)
+                    )
                     continue
 
         # Last resort: let from_env raise the original error
         return docker.from_env()
+
+    def close(self) -> None:
+        """Close the underlying Docker client (its requests session and
+        connection pool). Idempotent — repeated calls are no-ops.
+
+        Ownership: whoever assembles the runtime closes it — assembly
+        (``agents/assembly.py``) creates one ``DockerRuntime`` per member
+        wake and stashes it on ``CognitiveCapabilities.docker_runtime``;
+        ``MemberRuntime.shutdown`` closes it. The container is unaffected:
+        per ADR 0006 a member's container is never removed, so the
+        sleeping member re-attaches by name on the next wake. After
+        close() the instance is semantically retired — tools holding a
+        reference must not be called again.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        self.client.close()
 
     async def ensure_running(self) -> None:
         """Ensure the container is running.

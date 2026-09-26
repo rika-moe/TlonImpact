@@ -420,4 +420,5 @@ async def assemble_cognitive(
         per_tool_timeout=per_tool_timeout,
         registry=registry,
         mentor_cc=mentor_cc,
+        docker_runtime=docker_runtime,
     )
