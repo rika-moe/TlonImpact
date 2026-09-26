@@ -18,7 +18,7 @@ server 直接从本模块取。
 from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
-from tlon.agents.prototypes import instantiate
+from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
 from tlon.organization.messaging.member_info import MemberInfo

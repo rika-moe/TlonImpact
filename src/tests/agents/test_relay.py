@@ -9,11 +9,8 @@ concrete ``(forward ...)``, and the required-params gate.
 import pytest
 
 from tlon.agents.member_spec import MemberSpec
-from tlon.agents.prototypes import (
-    get_prototype_info,
-    instantiate,
-    seed_prototypes,
-)
+from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
+from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
 from tlosure.edn import loads

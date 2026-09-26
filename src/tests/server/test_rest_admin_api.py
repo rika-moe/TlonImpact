@@ -10,11 +10,13 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from tlon.agents.prototypes import (
-    append_staging_review,
+from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
     get_prototype_info,
     seed_prototypes,
+)
+from tlon.agents.prototypes.staging import (
+    append_staging_review,
     write_staging_prototype,
 )
 from tlon.api.config import ConfigFacade
@@ -129,7 +131,7 @@ class TestAdminCreateAgent:
 class TestAdminUpdateAgent:
     async def test_update_persona_and_llm(self, tmp_path: Path):
         handler, reg, p = _handler(tmp_path)
-        from tlon.agents.prototypes import instantiate
+        from tlon.agents.prototypes.instantiate import instantiate
 
         instantiate("developer", "dev-1", "新工程师", model="openai/gpt-5", tlon_paths=p)
         req = StubRequest(

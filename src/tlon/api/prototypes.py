@@ -10,8 +10,19 @@ CRUD、staging 列表/编辑、approve/reject 审批）。``tlon_paths`` 在构�
 
 from typing import Any
 
-from tlon.agents import prototypes as _prototypes
-from tlon.agents.prototypes import PrototypeInfo
+from tlon.agents.prototypes.catalog import get_prototype_detail, list_prototypes
+from tlon.agents.prototypes.info import PrototypeInfo
+from tlon.agents.prototypes.lineage import get_prototype_lineage
+from tlon.agents.prototypes.management import (
+    delete_prototype,
+    update_prototype,
+    write_trusted_prototype,
+)
+from tlon.agents.prototypes.staging import (
+    approve_prototype,
+    list_staging_prototypes,
+    reject_prototype,
+)
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
 
@@ -37,11 +48,11 @@ class PrototypesFacade:
 
     def list_staging(self) -> list[PrototypeInfo]:
         """LLM-authored prototypes awaiting human approval."""
-        return _prototypes.list_staging_prototypes(self._paths)
+        return list_staging_prototypes(self._paths)
 
     def list_trusted(self) -> list[PrototypeInfo]:
         """Trusted prototypes a member can be created from."""
-        return _prototypes.list_prototypes(self._paths)
+        return list_prototypes(self._paths)
 
     def get_detail(
         self, name: str, *, staging: bool = False
@@ -52,13 +63,13 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or no prototype under that name
         """
-        return _prototypes.get_prototype_detail(
+        return get_prototype_detail(
             name, staging=staging, tlon_paths=self._paths
         )
 
     def get_lineage(self, name: str) -> list[dict[str, Any]]:
         """The derived parent chain with per-generation diffs ()."""
-        return _prototypes.get_prototype_lineage(name, tlon_paths=self._paths)
+        return get_prototype_lineage(name, tlon_paths=self._paths)
 
     def create(
         self,
@@ -77,7 +88,7 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or a spec that fails validation
         """
-        return _prototypes.write_trusted_prototype(
+        return write_trusted_prototype(
             name,
             behavior,
             display_name=display_name,
@@ -106,7 +117,7 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or a behavior that fails validation
         """
-        return _prototypes.update_prototype(
+        return update_prototype(
             name,
             display_name=display_name,
             description=description,
@@ -125,7 +136,7 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or no trusted prototype
         """
-        _prototypes.delete_prototype(name, self._paths)
+        delete_prototype(name, self._paths)
 
     def approve(self, name: str) -> PrototypeInfo:
         """Promote a staged prototype to the trusted library.
@@ -133,7 +144,7 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or nothing staged under that name
         """
-        return _prototypes.approve_prototype(name, self._paths)
+        return approve_prototype(name, self._paths)
 
     def reject(self, name: str) -> None:
         """Delete a staged prototype (human rejection).
@@ -141,4 +152,4 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or nothing staged under that name
         """
-        _prototypes.reject_prototype(name, self._paths)
+        reject_prototype(name, self._paths)

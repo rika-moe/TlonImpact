@@ -61,7 +61,7 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
-from tlon.agents.prototypes import get_prototype_info
+from tlon.agents.prototypes.catalog import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
 from tlon.agents.trust import probation_provider

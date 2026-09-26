@@ -10,7 +10,8 @@ for the outer ReAct loop to retry — the tool never retries internally.
 from pathlib import Path
 from typing import Any
 
-from tlon.agents.prototypes import write_staging_prototype, write_trusted_prototype
+from tlon.agents.prototypes.management import write_trusted_prototype
+from tlon.agents.prototypes.staging import write_staging_prototype
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths

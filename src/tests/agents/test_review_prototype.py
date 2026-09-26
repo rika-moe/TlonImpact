@@ -14,13 +14,13 @@ from typing import Any
 
 import pytest
 
-from tlon.agents.prototypes import (
+from tlon.agents.prototypes.catalog import get_prototype_detail
+from tlon.agents.prototypes.lineage import get_prototype_lineage
+from tlon.agents.prototypes.management import write_trusted_prototype
+from tlon.agents.prototypes.staging import (
     append_staging_review,
     approve_prototype,
-    get_prototype_detail,
-    get_prototype_lineage,
     write_staging_prototype,
-    write_trusted_prototype,
 )
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMResponse

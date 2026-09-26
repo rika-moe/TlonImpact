@@ -8,7 +8,7 @@ process-level model fallback). Called by ``ServerApp.initialize`` before
 ``ConfigService`` reads the agent configs.
 """
 
-from tlon.agents.prototypes import seed_prototypes
+from tlon.agents.prototypes.catalog import seed_prototypes
 from tlon.agents.skills import seed_skills
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths

@@ -8,15 +8,17 @@ full validation chain before anything touches disk.
 
 import pytest
 
-from tlon.agents.prototypes import (
+from tlon.agents.prototypes.catalog import get_prototype_detail
+from tlon.agents.prototypes.instantiate import instantiate
+from tlon.agents.prototypes.management import (
+    delete_prototype,
+    update_prototype,
+    write_trusted_prototype,
+)
+from tlon.agents.prototypes.staging import (
     append_staging_review,
     approve_prototype,
-    delete_prototype,
-    get_prototype_detail,
-    instantiate,
-    update_prototype,
     write_staging_prototype,
-    write_trusted_prototype,
 )
 from tlon.base.config import yaml_load_file
 from tlon.base.paths import TlonPaths
