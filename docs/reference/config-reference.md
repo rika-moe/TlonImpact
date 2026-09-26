@@ -60,16 +60,19 @@
 ### `docker`
 
 <!-- BEGIN GENERATED: agent-yaml-fields-docker -->
-`DockerRuntimeConfig` 字段（5 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`DockerRuntimeConfig` 字段（6 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
+| `level` | `str` | "L2" |  |
 | `image` | `str` | "ubuntu:22.04" |  |
 | `working_dir` | `str` | "/workspace" |  |
 | `memory_limit` | `str` | "512m" |  |
 | `cpu_limit` | `float` | 1.0 |  |
 | `network_mode` | `str` | "none" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
+
+`level`（issue #26）是执行装置能力阶梯声明：`"L0"` = 无执行装置——装配时不创建 DockerRuntime，也不注册依赖装置的 shell/filesystem 工具（executeBashCommand/checkBashTask/readFile/writeFile/editFile/listDirectory/searchFiles）；`"L2"`（默认）= Docker 完整 userland（现状）。`"L1"`（受限运行时）尚未实现（调研中，issue #27），声明即被校验拒绝，错误信息会指明。声明即数据、随原型提案一起评审。
 
 ### `tool`
 
@@ -94,6 +97,7 @@ agent:
   llm:
     model_name: deepseek/deepseek-chat   # provider/model 形式（必填，ADR 0016）
   docker:
+    level: L2   # 执行装置层级（issue #26）：L0 = 无执行装置（无容器、无 shell/filesystem 工具）；默认 L2
     image: ubuntu:22.04
     working_dir: /workspace
     memory_limit: 512m
