@@ -109,8 +109,11 @@ class DockerRuntime:
     First implementation of the ``ExecutionDevice`` interface
     (``sandbox/device.py``, design: docs/design/execution-device.md).
 
-    Each agent gets its own isolated container with full network access.
-    Containers are created on-demand and persist across sessions.
+    Each agent gets its own isolated container. Network is off by default
+    (``network_mode="none"``, issue #23 — constitution zero: mail is the
+    only channel); a member that genuinely needs egress declares it
+    explicitly in its agent.yaml. Containers are created on-demand and
+    persist across sessions.
 
     Lifecycle (unified member model, ADR 0006): containers are kept across
     sleeps and server restarts (waking is zero-cost; the next boot lazily

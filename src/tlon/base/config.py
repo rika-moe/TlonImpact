@@ -110,7 +110,10 @@ class DockerRuntimeConfig(BaseModel):
     working_dir: str = "/workspace"
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
-    network_mode: str = "host"
+    # 宪法零：邮件是唯一通道。默认断网（issue #23，实测调查：全部历史
+    # bash 调用零联网命令）；确需外联的成员在此显式声明（如 "bridge"），
+    # 声明即数据、随原型提案一起评审。
+    network_mode: str = "none"
 
 
 class ToolConfig(BaseModel):
