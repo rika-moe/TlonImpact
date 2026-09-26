@@ -1,10 +1,11 @@
 """List directory tool — operates inside the sandbox container."""
 
-import shlex
+import time
 from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+from tlon.tools.filesystem.archive import DirectoryArchive
 from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_container_path
 
 logger = get_logger(__name__)
@@ -13,14 +14,19 @@ if TYPE_CHECKING:
     from tlon.base.config import DockerRuntimeConfig
     from tlon.sandbox.device import ExecutionDevice
 
-# find -printf %y single-letter types → display names
-_TYPE_NAMES = {"d": "dir", "f": "file", "l": "symlink"}
+
+def _format_mtime(mtime: float) -> str:
+    """Entry mtime display, matching the old find %TY-%Tm-%TdT%TH:%M output
+    (container clocks are UTC)."""
+    return time.strftime("%Y-%m-%dT%H:%M", time.gmtime(mtime))
 
 
 class ListDirectoryTool(Tool):
     """Tool to list a directory's contents inside the agent's sandbox.
 
-    Runs ``find -maxdepth 1`` in the Docker container and returns a
+    Fetches the directory as a tar archive (get_archive) and unpacks it
+    host-side (issue #40) — no find/ls runs in the container, so the tool
+    works at L1 where the file cabinet never starts. Returns a
     structured, bounded entry list (name / type / size / mtime).
 
     Example:
@@ -109,44 +115,29 @@ class ListDirectoryTool(Tool):
             )
 
         limit = min(max(1, max_entries), self._MAX_ENTRIES)
-        quoted = shlex.quote(container_path)
-        # %y=type letter, %s=size, %T*=mtime, %f=basename; tab-separated for
-        # robust parsing. head bounds the listing at the shell level.
-        command = (
-            f"test -e {quoted} || {{ echo '__TLON_NOT_FOUND__' >&2; exit 1; }}; "
-            f"test -d {quoted} || {{ echo '__TLON_NOT_A_DIRECTORY__' >&2; exit 1; }}; "
-            f"find {quoted} -mindepth 1 -maxdepth 1 "
-            "-printf '%y\\t%s\\t%TY-%Tm-%TdT%TH:%TM\\t%f\\n' "
-            f"| head -n {limit + 1}"
-        )
-        result = await self._docker_runtime.run(command)
-        if result.exit_code != 0:
-            stderr = result.stderr.strip()
-            if "__TLON_NOT_FOUND__" in stderr:
-                error = f"Directory not found: {path}"
-            elif "__TLON_NOT_A_DIRECTORY__" in stderr:
-                error = f"Not a directory: {path}"
-            else:
-                logger.error("dir_list_failed", path=path, stderr=stderr)
-                error = f"Failed to list directory: {stderr}"
-            return ToolResult(success=False, data={}, error=error)
+        try:
+            tar_bytes = await self._docker_runtime.fetch_archive(container_path)
+        except FileNotFoundError:
+            return ToolResult(success=False, data={}, error=f"Directory not found: {path}")
+        except RuntimeError as e:
+            logger.error("dir_list_failed", path=path, error=str(e))
+            return ToolResult(success=False, data={}, error=f"Failed to list directory: {e}")
 
-        lines = [line for line in result.stdout.splitlines() if line]
-        truncated = len(lines) > limit
-        entries = []
-        for line in lines[:limit]:
-            parts = line.split("\t", 3)
-            if len(parts) != 4:
-                continue
-            type_char, size, modified, name = parts
-            entries.append(
-                {
-                    "name": name,
-                    "type": _TYPE_NAMES.get(type_char, type_char),
-                    "size": int(size),
-                    "modified": modified,
-                }
-            )
+        archive = DirectoryArchive(tar_bytes, container_path)
+        if not archive.root_is_dir:
+            return ToolResult(success=False, data={}, error=f"Not a directory: {path}")
+
+        children = [e for e in archive.entries if "/" not in e.rel]
+        truncated = len(children) > limit
+        entries = [
+            {
+                "name": e.name,
+                "type": e.type_name,
+                "size": e.size,
+                "modified": _format_mtime(e.mtime),
+            }
+            for e in children[:limit]
+        ]
         entries.sort(key=lambda e: (e["type"] != "dir", e["name"]))
 
         data: dict[str, Any] = {

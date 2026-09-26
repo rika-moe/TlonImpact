@@ -653,7 +653,8 @@ def render_tool_registry() -> str:
     header = (
         f"`assemble_cognitive`（agents/assembly.py）为满配成员注册 {count} 个工具"
         f"（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的"
-        f"无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具）：{GENERATED_NOTE}\n\n"
+        f"无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，"
+        f"`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：{GENERATED_NOTE}\n\n"
         "| # | 工具名 | 实现 | 域 |\n"
         "|---|---|---|---|"
     )

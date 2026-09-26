@@ -96,10 +96,9 @@ class WriteFileTool(Tool):
                 error=str(e),
             )
 
-        # Ensure parent directories exist
-        parent = "/".join(container_path.split("/")[:-1])
-        if parent:
-            await self._docker_runtime.run(f"mkdir -p {parent}")
+        # Parent directories are created by the device itself
+        # (DockerRuntime.write_file carries dir entries in the tar),
+        # so no mkdir shell-out is needed here (issue #40).
 
         try:
             existed = await self._docker_runtime.file_exists(container_path)

@@ -26,7 +26,6 @@ must be present in the base image or installed via a Dockerfile.
 
 import asyncio
 import io
-import shlex
 import tarfile
 import uuid
 from dataclasses import dataclass
@@ -379,6 +378,11 @@ class DockerRuntime:
         outer-timeout paths — no auto_remove, which races with logs()).
         The cabinet is not touched and never executes anything.
 
+        Level gate (issue #40): code execution exists only at L2. At
+        other declared levels ``run`` raises immediately — this is the
+        device-layer backstop; the normal path never reaches it because
+        assembly does not register the bash tools for non-L2 members.
+
         Timeout is enforced in two layers: the container's own
         ``timeout`` command actually kills the process (a timed-out
         thread cannot be cancelled), while ``asyncio.wait_for`` (with a
@@ -398,7 +402,17 @@ class DockerRuntime:
             ExecutionResult with exit code and output. On timeout:
             exit_code=-1, stderr="Command timed out after {n} seconds"
             (contract relied on by AuditedExecutionDevice._is_timed_out).
+
+        Raises:
+            RuntimeError: ``docker.level`` is not L2 — this member's
+                device has no code-execution capability.
         """
+        if self.config.level != "L2":
+            raise RuntimeError(
+                f"docker.level={self.config.level} 无代码执行能力：run() 仅 L2"
+                "（Docker 完整 userland）可用——L1 文件层的装置容器从不启动、"
+                "exec 单元从不存在"
+            )
         exec_name = f"tlon-agent-{self.agent_id}{EXEC_NAME_MARKER}{uuid.uuid4().hex[:8]}"
         container: Container | None = None
         try:
@@ -498,13 +512,7 @@ class DockerRuntime:
 
         logger.debug("file_read", path=path)
 
-        try:
-            tar_bytes = await asyncio.to_thread(self._fetch_archive, path)
-        except NotFound as e:
-            raise FileNotFoundError(f"File not found in container: {path}") from e
-        except APIError as e:
-            logger.error("file_read_error", path=path, error=str(e))
-            raise RuntimeError(f"get_archive failed for {path}: {e}") from e
+        tar_bytes = await self.fetch_archive(path)
 
         filename = path.rsplit("/", 1)[-1]
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
@@ -518,6 +526,64 @@ class DockerRuntime:
             if extracted is None:
                 raise RuntimeError(f"Failed to extract {filename} from archive for {path}")
             return extracted.read()
+
+    async def fetch_archive(self, path: str) -> bytes:
+        """Fetch a path from the container as raw tar bytes.
+
+        Works on files and directories alike — a directory comes back as
+        its whole subtree (verified against a live daemon, issue #40).
+        This is the archive-only read channel: list/search tools unpack
+        the tar host-side instead of running find/grep in the container,
+        so they work at L1 where the cabinet never starts.
+
+        Args:
+            path: Absolute path inside the container.
+
+        Returns:
+            The complete tar archive as bytes.
+
+        Raises:
+            FileNotFoundError: If the path does not exist in the container.
+            RuntimeError: On daemon errors.
+        """
+        if not self.container:
+            await self.ensure_running()
+
+        if not self.container:
+            raise RuntimeError("Container not available")
+
+        try:
+            return await asyncio.to_thread(self._fetch_archive, path)
+        except NotFound as e:
+            raise FileNotFoundError(f"Path not found in container: {path}") from e
+        except APIError as e:
+            logger.error("archive_fetch_error", path=path, error=str(e))
+            raise RuntimeError(f"get_archive failed for {path}: {e}") from e
+
+    def _path_stat(self, path: str) -> dict[str, Any] | None:
+        """Probe a path's existence via get_archive response headers
+        (blocking — run in a thread).
+
+        The stat dict travels in response headers, so the tar stream is
+        closed without being consumed and the probe stays cheap even for
+        a large directory.
+
+        Returns:
+            The daemon's stat dict, or None when the path does not exist.
+
+        Raises:
+            docker.errors.APIError: On daemon errors other than NotFound.
+        """
+        if self.container is None:
+            raise RuntimeError("Container not available")
+        try:
+            stream, stat = self.container.get_archive(path)
+        except NotFound:
+            return None
+        close = getattr(stream, "close", None)
+        if close is not None:
+            close()
+        return stat
 
     def _fetch_archive(self, path: str) -> bytes:
         """Fetch a path from the container as tar bytes (blocking — run in a thread).
@@ -550,6 +616,14 @@ class DockerRuntime:
         no software (python3, base64, ...) needs to exist inside the container.
         Automatically creates parent directories.
 
+        Parent creation is archive-only too (issue #40): the daemon does
+        NOT create missing parents for put_archive (404 verified against a
+        live daemon), and a tar entry for an *existing* directory clobbers
+        its mode/mtime (also verified), so the tar carries directory
+        entries for exactly the missing ancestors and is anchored at the
+        deepest existing one (probed via ``_path_stat``). When the parent
+        already exists the tar holds the file alone, exactly as before.
+
         Args:
             path: Absolute path inside the container where the file will be written.
             content: Raw file contents as bytes.
@@ -566,23 +640,31 @@ class DockerRuntime:
         if not self.container:
             raise RuntimeError("Container not available")
 
-        # Ensure parent directories exist
-        parent = path.rsplit("/", 1)[0] if "/" in path else "/"
-        if parent and parent != "/":
-            result = await self.run(f"mkdir -p {shlex.quote(parent)}")
-            if result.exit_code != 0:
-                raise RuntimeError(f"mkdir -p failed for {parent}: {result.stderr}")
+        # Anchor at the deepest existing ancestor; collect the missing
+        # parent dirs (deepest first) along the way.
+        parent, _, filename = path.rpartition("/")
+        anchor = parent or "/"
+        missing: list[str] = []
+        while anchor != "/" and await asyncio.to_thread(self._path_stat, anchor) is None:
+            missing.append(anchor)
+            anchor = anchor.rpartition("/")[0] or "/"
 
-        # Build an in-memory tar archive containing the single file
-        filename = path.rsplit("/", 1)[-1]
+        # Build an in-memory tar: missing ancestor dirs (shallowest
+        # first), then the file — all relative to the anchor.
         tar_stream = io.BytesIO()
-        info = tarfile.TarInfo(name=filename)
-        info.size = len(content)
         with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+            for directory in reversed(missing):
+                info = tarfile.TarInfo(name=directory.removeprefix(anchor).lstrip("/"))
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                tar.addfile(info)
+            name = path.removeprefix(anchor).lstrip("/") if missing else filename
+            info = tarfile.TarInfo(name=name)
+            info.size = len(content)
             tar.addfile(info, io.BytesIO(content))
 
         ok = await asyncio.to_thread(
-            self.container.put_archive, parent or "/", tar_stream.getvalue()
+            self.container.put_archive, anchor, tar_stream.getvalue()
         )
         if not ok:
             logger.error("file_write_error", path=path)
@@ -594,14 +676,25 @@ class DockerRuntime:
     async def file_exists(self, path: str) -> bool:
         """Check if a path exists in the container.
 
+        Archive-only probe (issue #40): get_archive's 404 answers the
+        question, so no ``test -e`` shell-out is needed — this works at
+        L1 where the cabinet never starts.
+
         Args:
             path: Absolute path inside the container.
 
         Returns:
             True if the path exists.
+
+        Raises:
+            RuntimeError: On daemon errors other than NotFound.
         """
         if not self.container:
             await self.ensure_running()
 
-        result = await self.run(f"test -e {shlex.quote(path)} && echo EXISTS || echo MISSING")
-        return "EXISTS" in result.stdout
+        try:
+            stat = await asyncio.to_thread(self._path_stat, path)
+        except APIError as e:
+            logger.error("file_exists_error", path=path, error=str(e))
+            raise RuntimeError(f"file_exists failed for {path}: {e}") from e
+        return stat is not None

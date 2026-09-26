@@ -1,6 +1,9 @@
 """Tests for filesystem tools (ReadFile, WriteFile, EditFile, ListDirectory,
 SearchFiles) via the ExecutionDevice interface."""
 
+import io
+import tarfile
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,8 +24,38 @@ def _make_mock_runtime():
     runtime.read_file = AsyncMock()
     runtime.write_file = AsyncMock(return_value=True)
     runtime.file_exists = AsyncMock(return_value=False)
+    runtime.fetch_archive = AsyncMock()
     runtime.run = AsyncMock(return_value=MagicMock(exit_code=0, stdout="", stderr=""))
     return runtime
+
+
+def _epoch(iso: str) -> float:
+    """'2026-09-04T09:10' (UTC, container clock) → epoch seconds."""
+    return datetime.fromisoformat(iso).replace(tzinfo=UTC).timestamp()
+
+
+def _make_dir_tar(members: list[tuple[str, bytes | str | None, float]]) -> bytes:
+    """Build a get_archive-style directory tar in memory.
+
+    Each member is (name, payload, mtime): payload None = directory,
+    bytes = file, str = symlink target.
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for name, payload, mtime in members:
+            info = tarfile.TarInfo(name=name)
+            info.mtime = mtime
+            if payload is None:
+                info.type = tarfile.DIRTYPE
+                tar.addfile(info)
+            elif isinstance(payload, str):
+                info.type = tarfile.SYMTYPE
+                info.linkname = payload
+                tar.addfile(info)
+            else:
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+    return buf.getvalue()
 
 
 class TestReadFileTool:
@@ -133,6 +166,8 @@ class TestWriteFileTool:
         )
 
     async def test_write_creates_parent_dirs(self, write_tool):
+        """父目录创建由装置层 write_file 负责（tar 里带目录条目，issue
+        #40）——工具自身不再 shell out mkdir。"""
         write_tool._docker_runtime.file_exists.return_value = False
 
         result = await write_tool.execute(
@@ -141,9 +176,11 @@ class TestWriteFileTool:
         )
 
         assert result.success is True
-        write_tool._docker_runtime.run.assert_awaited_once()
-        call_args = write_tool._docker_runtime.run.await_args[0][0]
-        assert "mkdir -p" in call_args
+        write_tool._docker_runtime.run.assert_not_awaited()
+        write_tool._docker_runtime.write_file.assert_awaited_once_with(
+            "/workspace/deep/nested/file.txt",
+            b"nested",
+        )
 
     async def test_overwrite_existing_file(self, write_tool):
         write_tool._docker_runtime.file_exists.return_value = True
@@ -246,6 +283,10 @@ class TestEditFileTool:
 
 
 class TestListDirectoryTool:
+    """listDirectory unpacks the directory's get_archive tar host-side
+    (issue #40) — the output contract (entry fields, dir-first sorting,
+    truncation) is unchanged, and no command runs in the container."""
+
     @pytest.fixture
     def list_tool(self):
         tool = ListDirectoryTool.__new__(ListDirectoryTool)
@@ -255,14 +296,13 @@ class TestListDirectoryTool:
         return tool
 
     async def test_list_success(self, list_tool):
-        list_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0,
-            stdout=(
-                "d\t4096\t2026-09-05T14:32\tsrc\n"
-                "f\t123\t2026-09-04T09:10\tREADME.md\n"
-                "l\t7\t2026-09-03T08:00\tlink\n"
-            ),
-            stderr="",
+        list_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [
+                ("workspace", None, _epoch("2026-09-01T00:00")),
+                ("workspace/src", None, _epoch("2026-09-05T14:32")),
+                ("workspace/README.md", b"x" * 123, _epoch("2026-09-04T09:10")),
+                ("workspace/link", "README.md", _epoch("2026-09-03T08:00")),
+            ]
         )
 
         result = await list_tool.execute(path=".")
@@ -281,14 +321,14 @@ class TestListDirectoryTool:
         }
         assert result.data["entries"][2]["type"] == "symlink"
 
-        command = list_tool._docker_runtime.run.await_args[0][0]
-        assert "find /workspace" in command
+        list_tool._docker_runtime.fetch_archive.assert_awaited_once_with("/workspace")
+        list_tool._docker_runtime.run.assert_not_awaited()
 
     async def test_list_truncation(self, list_tool):
-        lines = [f"f\t1\t2026-09-05T00:00\tfile{i}.txt" for i in range(6)]
-        list_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0, stdout="\n".join(lines) + "\n", stderr=""
-        )
+        members = [("workspace", None, 0.0)] + [
+            (f"workspace/file{i}.txt", b"x", _epoch("2026-09-05T00:00")) for i in range(6)
+        ]
+        list_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(members)
 
         result = await list_tool.execute(path=".", max_entries=5)
 
@@ -298,8 +338,8 @@ class TestListDirectoryTool:
         assert "hint" in result.data
 
     async def test_list_not_found(self, list_tool):
-        list_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=1, stdout="", stderr="__TLON_NOT_FOUND__\n"
+        list_tool._docker_runtime.fetch_archive.side_effect = FileNotFoundError(
+            "Path not found in container: /workspace/missing"
         )
 
         result = await list_tool.execute(path="missing")
@@ -308,8 +348,9 @@ class TestListDirectoryTool:
         assert "not found" in result.error.lower()
 
     async def test_list_not_a_directory(self, list_tool):
-        list_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=1, stdout="", stderr="__TLON_NOT_A_DIRECTORY__\n"
+        # get_archive on a plain file returns a single-file archive
+        list_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("README.md", b"content", _epoch("2026-09-04T09:10"))]
         )
 
         result = await list_tool.execute(path="README.md")
@@ -327,6 +368,13 @@ class TestListDirectoryTool:
 
 
 class TestSearchFilesTool:
+    """searchFiles fetches the search root's get_archive tar and matches
+    host-side (issue #40): filename mode = case-insensitive glob on
+    basenames (the old find -iname), content mode = regex with line
+    numbers (the old grep -rnIsE). The output contract (match fields,
+    caps, truncation, .git exclusion) is unchanged; no command runs in
+    the container."""
+
     @pytest.fixture
     def search_tool(self):
         tool = SearchFilesTool.__new__(SearchFilesTool)
@@ -336,12 +384,13 @@ class TestSearchFilesTool:
         return tool
 
     async def test_search_content_success(self, search_tool):
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0,
-            stdout=(
-                "/workspace/src/main.py\x0012:def main():\n/workspace/README.md\x003:main entry\n"
-            ),
-            stderr="",
+        main_py = ("\n" * 11) + "def main():\n"  # match at line 12
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [
+                ("src", None, 0.0),
+                ("src/main.py", main_py.encode(), 0.0),
+                ("src/README.md", b"intro\nmain entry\n", 0.0),
+            ]
         )
 
         result = await search_tool.execute(pattern="main", path="src")
@@ -354,21 +403,51 @@ class TestSearchFilesTool:
             "line": 12,
             "text": "def main():",
         }
-        assert result.data["matches"][1]["file"] == "/workspace/README.md"
+        assert result.data["matches"][1] == {
+            "file": "/workspace/src/README.md",
+            "line": 2,
+            "text": "main entry",
+        }
 
-        command = search_tool._docker_runtime.run.await_args[0][0]
-        assert "grep" in command
-        assert "/workspace/src" in command
+        search_tool._docker_runtime.fetch_archive.assert_awaited_once_with("/workspace/src")
+        search_tool._docker_runtime.run.assert_not_awaited()
+
+    async def test_search_content_skips_binary_and_dot_git(self, search_tool):
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [
+                ("src", None, 0.0),
+                ("src/blob.bin", b"\x00\x01main\x00", 0.0),
+                ("src/.git", None, 0.0),
+                ("src/.git/config", b"main\n", 0.0),
+                ("src/ok.txt", b"main\n", 0.0),
+            ]
+        )
+
+        result = await search_tool.execute(pattern="main", path="src")
+
+        assert result.success is True
+        assert [m["file"] for m in result.data["matches"]] == ["/workspace/src/ok.txt"]
+
+    async def test_search_content_file_root(self, search_tool):
+        """grep -r accepted a plain file as root; the archive path keeps that."""
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("main.py", b"def main():\n", 0.0)]
+        )
+
+        result = await search_tool.execute(pattern="main", path="src/main.py")
+
+        assert result.success is True
+        assert result.data["matches"] == [
+            {"file": "/workspace/src/main.py", "line": 1, "text": "def main():"}
+        ]
 
     async def test_search_content_line_truncation(self, search_tool):
         long_line = "x" * 500
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0,
-            stdout=f"/workspace/big.js\x001:{long_line}\n",
-            stderr="",
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("big.js", long_line.encode() + b"\n", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="x+")
+        result = await search_tool.execute(pattern="x+", path="big.js")
 
         assert result.success is True
         text = result.data["matches"][0]["text"]
@@ -376,12 +455,12 @@ class TestSearchFilesTool:
         assert text.endswith("…")
 
     async def test_search_content_truncation(self, search_tool):
-        lines = [f"/workspace/f.py\x00{i}:match" for i in range(6)]
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0, stdout="\n".join(lines) + "\n", stderr=""
+        content = b"".join(b"match\n" for _ in range(6))
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("f.py", content, 0.0)]
         )
 
-        result = await search_tool.execute(pattern="match", max_results=5)
+        result = await search_tool.execute(pattern="match", path="f.py", max_results=5)
 
         assert result.success is True
         assert result.data["count"] == 5
@@ -389,21 +468,28 @@ class TestSearchFilesTool:
         assert "hint" in result.data
 
     async def test_search_no_matches(self, search_tool):
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0, stdout="", stderr=""
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("src", None, 0.0), ("src/a.txt", b"hello\n", 0.0)]
         )
 
-        result = await search_tool.execute(pattern="nothing_here")
+        result = await search_tool.execute(pattern="nothing_here", path="src")
 
         assert result.success is True
         assert result.data["count"] == 0
         assert result.data["matches"] == []
 
     async def test_search_filename_mode(self, search_tool):
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0,
-            stdout="/workspace/src/main.py\n/workspace/src/tests/test_main.py\n",
-            stderr="",
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [
+                ("workspace", None, 0.0),
+                ("workspace/src", None, 0.0),
+                ("workspace/src/main.py", b"", 0.0),
+                ("workspace/src/tests", None, 0.0),
+                ("workspace/src/tests/test_main.py", b"", 0.0),
+                ("workspace/.git", None, 0.0),
+                ("workspace/.git/hooks", None, 0.0),
+                ("workspace/.git/hooks/x.py", b"", 0.0),
+            ]
         )
 
         result = await search_tool.execute(pattern="*.py", mode="filename")
@@ -413,29 +499,44 @@ class TestSearchFilesTool:
             "/workspace/src/main.py",
             "/workspace/src/tests/test_main.py",
         ]
-        command = search_tool._docker_runtime.run.await_args[0][0]
-        assert "find /workspace -iname" in command
+        search_tool._docker_runtime.run.assert_not_awaited()
+
+    async def test_search_filename_is_case_insensitive(self, search_tool):
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("workspace", None, 0.0), ("workspace/Main.PY", b"", 0.0)]
+        )
+
+        result = await search_tool.execute(pattern="*.py", mode="filename")
+
+        assert result.data["matches"] == ["/workspace/Main.PY"]
+
+    async def test_search_filename_requires_directory_root(self, search_tool):
+        search_tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("main.py", b"", 0.0)]
+        )
+
+        result = await search_tool.execute(pattern="*.py", mode="filename", path="src/main.py")
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
 
     async def test_search_invalid_mode(self, search_tool):
         result = await search_tool.execute(pattern="x", mode="sideways")
 
         assert result.success is False
         assert "invalid mode" in result.error.lower()
-        search_tool._docker_runtime.run.assert_not_awaited()
+        search_tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_search_bad_regex(self, search_tool):
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0, stdout="", stderr="grep: Invalid regular expression\n"
-        )
-
         result = await search_tool.execute(pattern="([")
 
         assert result.success is False
         assert "search failed" in result.error.lower()
+        search_tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_search_path_not_found(self, search_tool):
-        search_tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=1, stdout="", stderr="__TLON_NOT_FOUND__\n"
+        search_tool._docker_runtime.fetch_archive.side_effect = FileNotFoundError(
+            "Path not found in container: /workspace/missing"
         )
 
         result = await search_tool.execute(pattern="x", path="missing")
@@ -576,7 +677,7 @@ class TestFilesystemToolSandbox:
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
-        tool._docker_runtime.run.assert_not_awaited()
+        tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_search_rejects_dotdot_escape(self):
         tool = SearchFilesTool.__new__(SearchFilesTool)
@@ -588,7 +689,7 @@ class TestFilesystemToolSandbox:
 
         assert result.success is False
         assert "outside the allowed paths" in result.error
-        tool._docker_runtime.run.assert_not_awaited()
+        tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_read_allows_absolute_path_in_whitelist(self):
         tool = ReadFileTool.__new__(ReadFileTool)
@@ -656,22 +757,22 @@ class TestAgentHomeAccess:
 
     async def test_list_own_home_allowed(self):
         tool = self._make(ListDirectoryTool, self._READ_PATHS)
-        tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0, stdout="d\t4096\t2026-09-05T14:32\tconfig\n", stderr=""
+        tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [("tlon-home", None, 0.0), ("tlon-home/config", None, _epoch("2026-09-05T14:32"))]
         )
 
         result = await tool.execute(path="/tlon-home")
 
         assert result.success is True
-        command = tool._docker_runtime.run.await_args[0][0]
-        assert "find /tlon-home" in command
+        tool._docker_runtime.fetch_archive.assert_awaited_once_with("/tlon-home")
 
     async def test_search_own_home_allowed(self):
         tool = self._make(SearchFilesTool, self._READ_PATHS)
-        tool._docker_runtime.run.return_value = MagicMock(
-            exit_code=0,
-            stdout="/tlon-home/config/behavior.tlon\x001:(defrule x)\n",
-            stderr="",
+        tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
+            [
+                ("config", None, 0.0),
+                ("config/behavior.tlon", b"(defrule x)\n", 0.0),
+            ]
         )
 
         result = await tool.execute(pattern="defrule", path="/tlon-home/config")

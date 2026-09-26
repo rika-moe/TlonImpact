@@ -24,12 +24,12 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### 工具装配
 
-每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；声明 `docker.level: L0` 的成员例外（issue #26）——无执行装置，不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具。无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。`proposeBehavior`（）是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`）；`reviewPrototype`（）是第二个拿到 `llm_client` 的工具（prototypes 域）——评审调用用评审者自己的模型，异质性来自评审者的模型血统。
+每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；声明 `docker.level: L0` 的成员例外（issue #26）——无执行装置，不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具；`docker.level: L1` 的文件层成员（issue #40）创建运行时、注册 filesystem 五个工具，但不注册 shell 两个（结构性零代码执行）。无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。`proposeBehavior`（）是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`）；`reviewPrototype`（）是第二个拿到 `llm_client` 的工具（prototypes 域）——评审调用用评审者自己的模型，异质性来自评审者的模型血统。
 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为满配成员注册 37 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为满配成员注册 37 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -72,11 +72,11 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 37 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员（，信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 33 个；`reviewPrototype`（15）咨询性保留。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 37 个中的 7 个）。
+上表是正式成员的满配。见习成员（，信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 33 个；`reviewPrototype`（15）咨询性保留。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 37 个中的 7 个）；`docker.level: L1` 的成员（issue #40）不注册 1–2 的 shell 工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
-shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。容器在装配时不启动，首次 execute/read/write 时惰性拉起；Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员（issue #26）完全不装配这两域工具——无执行装置即无工具，不存在「工具有但装置为 None」的状态。
+shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）。文件柜容器创建后**从不启动**（issue #25），首次文件 I/O 时惰性创建/按名重挂；自 issue #40 起五个 filesystem 工具全部经 get_archive/put_archive 读写（list/search 把目录 tar 拉回 host 侧解包，write 把缺失父目录作为 tar 目录条目带入），容器内零命令执行。Docker daemon 不可用时这些工具返回 `error="Docker runtime not initialized"`，agent 本体照常启动。`docker.level: L0` 的成员（issue #26）完全不装配这两域工具——无执行装置即无工具，不存在「工具有但装置为 None」的状态；`docker.level: L1` 的成员（issue #40）只有 filesystem 五件，shell 工具不注册且 `run()` 由装置层直接拒绝。
 
 ## mail
 
@@ -153,7 +153,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 | `file_path` | string | 是 | — | 目标路径 |
 | `content` | string | 是 | — | 完整写入内容 |
 
-行为：文件不存在则创建，存在则整体覆盖；自动 `mkdir -p` 父目录。返回 `bytes_written`（UTF-8 字节数）、`existed_before`。失败：路径越界、容器写入错误。
+行为：文件不存在则创建，存在则整体覆盖；自动创建父目录（缺失的父目录作为目录条目随 tar 一并 put_archive，不再 shell out `mkdir -p`，issue #40）。返回 `bytes_written`（UTF-8 字节数）、`existed_before`。失败：路径越界、容器写入错误。
 
 ### editFile
 
@@ -184,7 +184,7 @@ old_string/new_string 精确替换模型。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `pattern` | string | 是 | — | content 模式是扩展正则（grep -E）；filename 模式是 glob（不区分大小写） |
+| `pattern` | string | 是 | — | content 模式是正则（host 侧 Python `re`，与 grep -E 大体兼容）；filename 模式是 glob（不区分大小写） |
 | `path` | string | 否 | `.` | 搜索起点目录 |
 | `mode` | string | 否 | `content` | enum：`content` / `filename` |
 | `max_results` | integer | 否 | 50 | 1–200 |

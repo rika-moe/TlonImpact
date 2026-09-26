@@ -418,3 +418,157 @@ class TestReadFile:
 
         with pytest.raises(RuntimeError, match="directory"):
             await runtime.read_file("/workspace/target.txt")
+
+
+class TestRunLevelGate:
+    """run() is L2-only (issue #40): the device-layer backstop makes L1's
+    zero-code-execution structural — even if a caller slipped past the
+    assembly gate, no exec unit is ever created."""
+
+    @pytest.mark.parametrize("level", ["L0", "L1"])
+    async def test_run_raises_below_l2(
+        self, level: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
+        runtime = DockerRuntime(
+            DockerRuntimeConfig(level=level), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+        )
+
+        with pytest.raises(RuntimeError, match="无代码执行能力"):
+            await runtime.run("echo hi")
+
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_run_proceeds_at_l2(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        runtime, _ = _runtime_with_exec_unit(monkeypatch, tmp_path, wait_result={"StatusCode": 0})
+
+        result = await runtime.run("echo hi")
+
+        assert result.exit_code == 0
+
+
+def _runtime_with_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    existing: set[str],
+) -> DockerRuntime:
+    """Runtime whose fake container answers get_archive probes from the
+    ``existing`` path set (NotFound otherwise) and captures put_archive."""
+    monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
+    runtime = DockerRuntime(
+        DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+    )
+    container = MagicMock()
+
+    def get_archive(path: str, *args: Any, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+        if path not in existing:
+            raise NotFound(f"no such path: {path}")
+        return iter([b""]), {"name": path.rsplit("/", 1)[-1]}
+
+    container.get_archive.side_effect = get_archive
+    runtime.container = container
+    return runtime
+
+
+class TestFileExists:
+    """file_exists probes via get_archive response headers (issue #40) —
+    no `test -e` shell-out, so it works on a never-started cabinet."""
+
+    async def test_existing_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace/notes.txt"})
+
+        assert await runtime.file_exists("/workspace/notes.txt") is True
+
+    async def test_existing_directory(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace/src"})
+
+        assert await runtime.file_exists("/workspace/src") is True
+
+    async def test_missing_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, set())
+
+        assert await runtime.file_exists("/workspace/missing.txt") is False
+
+    async def test_daemon_error_propagates_as_runtime_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        from docker.errors import APIError
+
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, set())
+        runtime.container.get_archive.side_effect = APIError("daemon exploded")  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="daemon exploded"):
+            await runtime.file_exists("/workspace/x")
+
+    async def test_never_runs_commands(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace/a"})
+        run = AsyncMock(side_effect=AssertionError("file_exists must not shell out"))
+        monkeypatch.setattr(runtime, "run", run)
+
+        await runtime.file_exists("/workspace/a")
+
+        runtime.client.containers.create.assert_not_called()
+
+
+class TestWriteFile:
+    """write_file is archive-only (issue #40): missing parent dirs ride
+    into the container as tar directory entries anchored at the deepest
+    existing ancestor — no `mkdir -p`, no exec unit."""
+
+    async def test_existing_parent_sends_file_only_tar(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace"})
+        runtime.container.put_archive.return_value = True
+
+        assert await runtime.write_file("/workspace/notes.txt", b"hi") is True
+
+        path, tar_bytes = runtime.container.put_archive.call_args.args
+        assert path == "/workspace"
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+            members = tar.getmembers()
+            assert [m.name for m in members] == ["notes.txt"]
+            assert tar.extractfile(members[0]).read() == b"hi"  # type: ignore[union-attr]
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_missing_parents_ride_in_the_tar(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace"})
+        runtime.container.put_archive.return_value = True
+
+        assert await runtime.write_file("/workspace/a/b/f.txt", b"deep") is True
+
+        path, tar_bytes = runtime.container.put_archive.call_args.args
+        assert path == "/workspace"
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+            members = tar.getmembers()
+            assert [m.name for m in members] == ["a", "a/b", "a/b/f.txt"]
+            assert members[0].isdir() and members[1].isdir()
+            assert members[2].isfile() and members[2].size == 4
+        runtime.client.containers.create.assert_not_called()
+
+    async def test_anchor_skips_existing_ancestors(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """Existing dirs are never tar entries — the daemon would clobber
+        their mode/mtime (verified against a live daemon)."""
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace", "/workspace/a"})
+        runtime.container.put_archive.return_value = True
+
+        await runtime.write_file("/workspace/a/b/f.txt", b"x")
+
+        path, tar_bytes = runtime.container.put_archive.call_args.args
+        assert path == "/workspace/a"
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+            assert [m.name for m in tar.getmembers()] == ["b", "b/f.txt"]
+
+    async def test_never_runs_commands(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, set())
+        runtime.container.put_archive.return_value = True
+        run = AsyncMock(side_effect=AssertionError("write_file must not shell out"))
+        monkeypatch.setattr(runtime, "run", run)
+
+        await runtime.write_file("/workspace/a/b/f.txt", b"x")
+
+        runtime.client.containers.create.assert_not_called()

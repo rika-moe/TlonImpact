@@ -106,11 +106,12 @@ class LLMConfig(BaseModel):
 class DockerRuntimeConfig(BaseModel):
     """Docker runtime configuration."""
 
-    # 执行装置能力阶梯（issue #26，EPIC #31 的 P2）：声明即数据、随原型
-    # 提案一起评审。L0 = 无执行装置——装配时不创建 DockerRuntime、不注册
-    # 依赖装置的 shell/filesystem 工具；L2 = Docker 完整 userland（现状）。
-    # 默认 L2 是行为不变先行，默认翻转待 L1 落地后另行决策；L1（WASM/WASI
-    # 受限运行时）调研中（issue #27），未实现——声明即拒绝。
+    # 执行装置能力阶梯（issue #26 声明落地、issue #40 L1 落地）：声明即
+    # 数据、随原型提案一起评审。L0 = 无执行装置——装配时不创建
+    # DockerRuntime、不注册依赖装置的 shell/filesystem 工具；L1 = 文件层
+    # ——archive-only，结构性零代码执行（装置容器从不启动、exec 单元从不
+    # 存在，只注册 5 个 filesystem 工具）；L2 = Docker 完整 userland
+    # （现状）。默认 L2 是行为不变先行，默认翻转待另行决策。
     level: str = "L2"
     image: str = "ubuntu:22.04"
     working_dir: str = "/workspace"
@@ -124,10 +125,10 @@ class DockerRuntimeConfig(BaseModel):
     @field_validator("level")
     @classmethod
     def validate_level(cls, v: str) -> str:
-        if v not in ("L0", "L2"):
+        if v not in ("L0", "L1", "L2"):
             raise ValueError(
-                f'docker.level 只接受 "L0"（无执行装置）或 "L2"（Docker 完整 userland），'
-                f"收到 {v!r}：L1 受限运行时尚未实现（调研中，issue #27）"
+                f'docker.level 只接受 "L0"（无执行装置）、"L1"（文件层）或 '
+                f'"L2"（Docker 完整 userland），收到 {v!r}'
             )
         return v
 

@@ -163,7 +163,9 @@ async def assemble_cognitive(
     these objects (lazy assembly: objects are cheap, loading is on
     demand). Exception (issue #26): a member declaring
     ``docker.level: L0`` gets no execution device — no DockerRuntime and
-    none of the device-dependent shell/filesystem tools. Otherwise no
+    none of the device-dependent shell/filesystem tools; L1 (issue #40,
+    文件层) gets the runtime but only the filesystem five — no bash tools,
+    and run() is refused at the device layer. Otherwise no
     container exists here: ``run()`` spins a one-shot execution unit per
     command (issue #25) and the file cabinet is created lazily on first
     file I/O via ensure_running(), so waking an agent for pure
@@ -203,8 +205,10 @@ async def assemble_cognitive(
     # device.exec trace span + device_exec log. Tools and
     # CognitiveCapabilities.docker_runtime both hold the wrapped instance;
     # close() passes through, so MemberRuntime's shutdown path is unchanged.
-    # 能力阶梯（issue #26）：docker.level 声明 L0 的成员无执行装置——
-    # 不创建 DockerRuntime，下方也不注册依赖装置的工具。
+    # 能力阶梯（issue #26/#40）：L0 无执行装置——不创建 DockerRuntime，
+    # 下方也不注册装置工具；L1（文件层）与 L2 都创建 runtime——文件 I/O
+    # 需要文件柜容器。L1 的零代码执行是结构性的：bash 工具不注册，
+    # run() 在非 L2 由装置层直接拒绝。
     docker_runtime: ExecutionDevice | None = None
     if config.docker.level == "L0":
         logger.info("execution_device_declared_none", agent_id=config.id)
@@ -238,16 +242,19 @@ async def assemble_cognitive(
     tool_executor = ToolExecutor()
 
     # Register tools
-    # Device-dependent tools (issue #26): only L2 members get the
-    # shell/filesystem seven; L0 (无执行装置) registers none of them.
-    # Note the gate is the declared level, not docker_runtime: an L2
-    # member whose daemon is unreachable keeps the tools (they fail-soft
-    # with "Docker runtime not initialized") — 声明即数据.
+    # Device-dependent tools, gated by the capability ladder
+    # (issue #26/#40): L2 registers the shell pair plus the filesystem five;
+    # L1 (文件层) registers the filesystem five only — 结构性零代码执行;
+    # L0 registers none. Note the gate is the declared level, not
+    # docker_runtime: an L1/L2 member whose daemon is unreachable keeps
+    # the tools (they fail-soft with "Docker runtime not initialized") —
+    # 声明即数据.
     if config.docker.level == "L2":
         execute_bash_tool = ExecuteBashTool(config.docker, docker_runtime)
         tool_executor.register_tool(execute_bash_tool)
         # checkBashTask shares this agent's task table: no cross-agent visibility.
         tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
+    if config.docker.level != "L0":
         allowed_paths = config.tool.allowed_paths
         # Read-side tools additionally see the agent's own home (behavior spec,
         # memory, mailbox) at the read-only mount (issue : 行为即数据 —
