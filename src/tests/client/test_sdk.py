@@ -421,6 +421,157 @@ class TestReconnect:
             await client.disconnect()
 
 
+class TestHandlerDispatch:
+    """Handler dispatch: task tracking, exception isolation, _fire convergence."""
+
+    @pytest.fixture
+    async def client(self, base_url):
+        client = BaseClient(base_url=base_url, auto_reconnect=False)
+        yield client
+        await client.disconnect()
+
+    async def test_dispatch_event_forwards_event(self):
+        client = BaseClient()
+        handler = MagicMock()
+        client.on_event(handler)
+
+        event = {"type": "mail.delivered", "payload": {}}
+        client._dispatch_event(event)
+
+        handler.assert_called_once_with(event)
+
+    async def test_dispatch_message_forwards_message(self):
+        client = BaseClient()
+        handler = MagicMock()
+        client.on_message(handler)
+
+        msg = {"type": "notice"}
+        client._dispatch_message(msg)
+
+        handler.assert_called_once_with(msg)
+
+    async def test_dispatch_error_forwards_error(self):
+        client = BaseClient()
+        handler = MagicMock()
+        client.on_error(handler)
+
+        client._dispatch_error("boom")
+
+        handler.assert_called_once_with("boom")
+
+    async def test_notify_state_change_forwards_state(self):
+        client = BaseClient()
+        handler = MagicMock()
+        client.on_state_change(handler)
+
+        client._notify_state_change(ConnectionState.CONNECTED)
+
+        handler.assert_called_once_with(ConnectionState.CONNECTED)
+
+    async def test_notify_reconnect_calls_with_no_args(self):
+        client = BaseClient()
+        handler = MagicMock()
+        client.on_reconnect(handler)
+
+        client._notify_reconnect()
+
+        handler.assert_called_once_with()
+
+    async def test_coroutine_handler_task_tracked_and_released(self, client, server):
+        """A coroutine handler's task is held in _handler_tasks (no GC) and
+        discarded once the handler completes."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handler(event: dict) -> None:
+            started.set()
+            await release.wait()
+
+        client.on_event(handler)
+        await client.connect()
+        await client.authenticate("tui")
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+
+        frame = {"type": "event", "event_type": "mail.delivered", "payload": {}}
+        server.app["sse_queues"]["tui-1"].put_nowait(f"data: {json.dumps(frame)}\n\n")
+
+        await wait_for(lambda: started.is_set())
+        assert len(client._handler_tasks) == 1
+
+        release.set()
+        await wait_for(lambda: not client._handler_tasks)
+
+    async def test_coroutine_handler_exception_logged_and_isolated(
+        self, client, server, monkeypatch
+    ):
+        """A failing coroutine handler is logged under the path's event name,
+        does not affect other handlers, and its task leaves the set."""
+        mock_logger = MagicMock()
+        monkeypatch.setattr("tlon_client.sdk.base_client.logger", mock_logger)
+        received: list[dict] = []
+
+        async def failing(event: dict) -> None:
+            raise RuntimeError("handler blew up")
+
+        client.on_event(failing)
+        client.on_event(received.append)
+        await client.connect()
+        await client.authenticate("tui")
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+
+        frame = {"type": "event", "event_type": "mail.delivered", "payload": {}}
+        server.app["sse_queues"]["tui-1"].put_nowait(f"data: {json.dumps(frame)}\n\n")
+
+        await wait_for(lambda: len(received) == 1)
+        await wait_for(lambda: not client._handler_tasks)
+        error_events = [c[0][0] for c in mock_logger.error.call_args_list]
+        assert "event_handler_error" in error_events
+
+    async def test_sync_handler_exception_logged_and_loop_continues(self, monkeypatch):
+        """A failing sync handler is logged and later handlers still run."""
+        mock_logger = MagicMock()
+        monkeypatch.setattr("tlon_client.sdk.base_client.logger", mock_logger)
+        client = BaseClient()
+        received: list[dict] = []
+
+        def failing(event: dict) -> None:
+            raise RuntimeError("sync blew up")
+
+        client.on_event(failing)
+        client.on_event(received.append)
+
+        event = {"type": "mail.delivered"}
+        client._dispatch_event(event)
+
+        assert received == [event]
+        mock_logger.error.assert_called_once()
+        assert mock_logger.error.call_args[0][0] == "event_handler_error"
+
+    async def test_disconnect_cancels_pending_handler_tasks(self, client, server):
+        """disconnect() cancels in-flight handler tasks and clears the set."""
+        started = asyncio.Event()
+
+        async def handler(event: dict) -> None:
+            started.set()
+            await asyncio.Event().wait()  # never returns on its own
+
+        client.on_event(handler)
+        await client.connect()
+        await client.authenticate("tui")
+        await wait_for(lambda: "tui-1" in server.app["sse_queues"])
+
+        frame = {"type": "event", "event_type": "mail.delivered", "payload": {}}
+        server.app["sse_queues"]["tui-1"].put_nowait(f"data: {json.dumps(frame)}\n\n")
+
+        await wait_for(lambda: started.is_set())
+        task = next(iter(client._handler_tasks))
+
+        await client.disconnect()
+
+        assert task.cancelled()
+        assert not client._handler_tasks
+
+
 class TestTerminalAdapter:
     """Tests for TerminalAdapter class."""
 
