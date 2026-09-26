@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import docker
-from docker.errors import ImageNotFound, NotFound
+from docker.errors import APIError, ImageNotFound, NotFound
 from docker.models.containers import Container
 
 from tlon.base.config import DockerRuntimeConfig
@@ -54,9 +54,9 @@ class DockerRuntime:
     server restarts (waking is zero-cost; the next boot lazily reattaches
     by name). Members are never discarded; they only sleep.
 
-    File I/O is performed via 'cat' (reads) and put_archive with an
-    in-memory tar (writes), so no software needs to be installed inside
-    the container.
+    File I/O is performed via the docker SDK's get_archive (reads) and
+    put_archive (writes) with in-memory tar archives, so no software needs
+    to be installed inside the container.
 
     Example:
         >>> config = DockerRuntimeConfig(image="ubuntu:22.04")
@@ -330,7 +330,12 @@ class DockerRuntime:
     async def read_file(self, path: str) -> bytes:
         """Read a file from the container.
 
-        Uses 'cat' inside the container — symlinks are followed automatically.
+        Uses the docker SDK's get_archive (symmetric with write_file's
+        put_archive), so no software (cat, python3, ...) needs to exist
+        inside the container and arbitrary bytes round-trip losslessly —
+        the payload never passes through text decoding. The daemon follows
+        symlinks server-side (stat reports ``linkTarget``), matching the
+        old 'cat' behavior.
 
         Args:
             path: Absolute path inside the container.
@@ -340,22 +345,61 @@ class DockerRuntime:
 
         Raises:
             FileNotFoundError: If the file does not exist in the container.
-            RuntimeError: If the read operation fails.
+            RuntimeError: If the path is a directory / not a regular file,
+                or the read operation fails.
         """
         if not self.container:
             await self.ensure_running()
 
+        if not self.container:
+            raise RuntimeError("Container not available")
+
         logger.debug("file_read", path=path)
 
-        result = await self.execute(f"cat {shlex.quote(path)}")
+        try:
+            tar_bytes = await asyncio.to_thread(self._fetch_archive, path)
+        except NotFound as e:
+            raise FileNotFoundError(f"File not found in container: {path}") from e
+        except APIError as e:
+            logger.error("file_read_error", path=path, error=str(e))
+            raise RuntimeError(f"get_archive failed for {path}: {e}") from e
 
-        if result.exit_code != 0:
-            if "No such file" in result.stderr or "not found" in result.stderr.lower():
-                raise FileNotFoundError(f"File not found in container: {path}")
-            logger.error("file_read_error", path=path, stderr=result.stderr)
-            raise RuntimeError(f"cat failed: {result.stderr}")
+        filename = path.rsplit("/", 1)[-1]
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
+            member = next(
+                (m for m in tar.getmembers() if m.name.removeprefix("./") == filename),
+                None,
+            )
+            if member is None or not member.isfile():
+                raise RuntimeError(f"Path is a directory or not a regular file: {path}")
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                raise RuntimeError(f"Failed to extract {filename} from archive for {path}")
+            return extracted.read()
 
-        return result.stdout.encode("utf-8")
+    def _fetch_archive(self, path: str) -> bytes:
+        """Fetch a path from the container as tar bytes (blocking — run in a thread).
+
+        get_archive returns a lazy chunk generator; it must be fully consumed
+        inside the same thread that opened it, so collection happens here.
+
+        Args:
+            path: Absolute path inside the container.
+
+        Returns:
+            The complete tar archive as bytes.
+
+        Raises:
+            docker.errors.NotFound: If the path does not exist.
+            docker.errors.APIError: On other daemon errors.
+        """
+        if self.container is None:
+            raise RuntimeError("Container not available")
+        stream, _stat = self.container.get_archive(path)
+        buf = io.BytesIO()
+        for chunk in stream:
+            buf.write(chunk)
+        return buf.getvalue()
 
     async def write_file(self, path: str, content: bytes) -> bool:
         """Write a file into the container.
