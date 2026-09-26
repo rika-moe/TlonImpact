@@ -33,6 +33,29 @@ class TestCreateContainerMounts:
         }
 
 
+class TestClose:
+    def test_close_closes_underlying_client(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
+        runtime = DockerRuntime(
+            DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+        )
+
+        runtime.close()
+
+        runtime.client.close.assert_called_once()
+
+    def test_close_is_idempotent(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
+        runtime = DockerRuntime(
+            DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+        )
+
+        runtime.close()
+        runtime.close()
+
+        runtime.client.close.assert_called_once()
+
+
 def _make_tar(members: list[tuple[str, bytes | None]]) -> bytes:
     """Build a tar archive in memory; content None means a directory member."""
     buf = io.BytesIO()
