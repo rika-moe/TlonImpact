@@ -60,9 +60,11 @@ from tlosure.eval import DEFAULT_FUEL, eval_form
 
 logger = get_logger(__name__)
 
-#: Fallback reply when max_iterations is hit and the distillation call
-#: itself fails — the termination path must never fail.
-_MAX_ITERATIONS_FALLBACK = "思考时间过长，请简化您的问题。"
+#: User-facing fixed termination replies — the single definition site,
+#: referenced by _terminate_loop / _distill_reply / send_failure_reply.
+_ITERATION_LIMIT_REPLY = "思考时间过长，请简化您的问题。"
+_ERROR_REPLY = "抱歉，处理邮件时出现了错误。"
+_TIMEOUT_REPLY = "抱歉，处理这封邮件超时了，请稍后重试。"
 
 #: Distillation prompt for the max-iterations reply: the engine's hard
 #: ceiling fired mid-work, so one extra LLM call condenses the session's
@@ -396,7 +398,7 @@ class LoopDriver:
         loop = self._loop
         if session.error_count >= loop.max_consecutive_errors:
             reason = "error_limit"
-            content = "抱歉，处理邮件时出现了错误。"
+            content = _ERROR_REPLY
             log.warning(
                 "session_max_errors",
                 session_id=session.id,
@@ -405,7 +407,7 @@ class LoopDriver:
             )
         else:
             reason = "iteration_limit"
-            content = "思考时间过长，请简化您的问题。"
+            content = _ITERATION_LIMIT_REPLY
         log.info("loop_until_reached", session_id=session.id, reason=reason)
         await self._executor.send_mail(
             MailEffect(
@@ -443,7 +445,7 @@ class LoopDriver:
             log.warning(
                 "max_iterations_distill_failed", session_id=session.id, error=str(e)
             )
-            return _MAX_ITERATIONS_FALLBACK
+            return _ITERATION_LIMIT_REPLY
 
     @staticmethod
     def _distill_messages(session: AgentSession) -> list[dict[str, Any]]:
@@ -477,10 +479,7 @@ class LoopDriver:
         same MailEffect -> EffectExecutor pipeline every other engine mail
         uses (send_mail never raises).
         """
-        if reason == "timeout":
-            content = "抱歉，处理这封邮件超时了，请稍后重试。"
-        else:
-            content = "抱歉，处理邮件时出现了错误。"
+        content = _TIMEOUT_REPLY if reason == "timeout" else _ERROR_REPLY
         await self._executor.send_mail(
             MailEffect(
                 to=[mail.from_address],
