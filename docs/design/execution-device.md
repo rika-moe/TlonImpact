@@ -82,7 +82,7 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 4. docker client 从不关闭，sleep→wake 重复装配泄漏连接；socket 探测失败完全静默（issue #4）。
 5. 执行依赖镜像内 `bash` 与 `timeout`，与文件 I/O「不假设镜像有软件」的哲学自相矛盾；错误语义靠 stderr 字符串匹配（换 locale 即碎）。
 6. ~~容器配置漂移无 reconcile~~ → 已解决（issue #22）：`ensure_running` 比对期望配置与实际配置，不符自动重建。
-7. 只有数量闸（`max_activations=8`）没有资源闸——8×512m 是暗账（违反宪法四）。
+7. 只有数量闸（`max_activations=8`）没有资源闸——8×512m 是暗账（违反宪法四）。→ 暗账已变明账（issue #24）：实际占用进 metrics，`TLON_CONTAINER_MEMORY_BUDGET` 超预算记 warning；强制型资源闸仍是后续决策
 
 ## 方向
 
@@ -96,7 +96,7 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 - ✅ ExecutionDevice 抽象接口，`DockerRuntime` 改造为首个实现（本 PR，issue #21）：接口落 [sandbox/device.py](../../src/tlon/sandbox/device.py)（`ExecutionResult` 迁入、`DockerRuntime.execute` 改名 `run`）；exec 审计经接口边界进 trace/log——装配层用 `AuditedExecutionDevice` 包装，每次 `run` 发 `device.exec` span + `device_exec` structlog 日志（命令截断前 200 字符、耗时、退出码、timed_out；资源消耗计量随完整形态 budget/outcome 一起推迟）（宪法二）。**刻意的最小化**：完整形态 `run(program, inputs, budget)` 推迟到第二个实现出现时（见「抽象接口」加注）
 - ✅ 容器加固（本 PR，issue #22）：rootfs 只读（`read_only=True`）+ `/workspace` rw + `/tlon-home` ro + tmpfs `/tmp`（64m）——把「可写面 = 工作区」变成内核事实；写侧 symlink 逃逸封死（经真 daemon 冒烟验证：put_archive 的 daemon 端 tar 解包**替换** symlink 为普通文件而不跟随，`/etc/passwd` 未被触及——机制不是「跟随后被 ro 拒」，而是「根本不跟随」）。配置漂移 reconcile 落地为 `ensure_running` 里的 `_container_mismatches` 比对（image / binds / mem_limit / cpu quota / network_mode / read_only+tmpfs 七维），不符记 `container_config_drift` 日志后 remove + 重建——workspace 在 bind-mount 上状态不丢，与 ADR 0006 不冲突。**行为变化**：加固前创建的存量容器在下次 wake 时被自动重建一次，这正是加固触达存量的机制（真 daemon 冒烟：改 mem_limit 触发重建、workspace 内容保留）
 - ✅ 网络宪法（本 PR，issue #23）：**现状调查先行**——全部历史工具调用 154 条中 bash 仅 8 条、联网命令 0 条（7 条 sleep/echo 冒烟 + 1 条容器内 ls），7 个成员 workspace 全空，仓内原型 spec 与工具描述零网络引导——默认断网不破坏任何现有工作流（潜在影响仅是开发/运维角色尚未发生的预期场景）。据此 `network_mode` 默认 `"host"` → `"none"`（[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig`）；**外联的口子保留**：成员在 agent.yaml 的 `docker.network_mode` 显式声明（如 `"bridge"`），声明即数据、随原型提案一起评审。存量容器经 #22 的漂移 reconcile 在下次 wake 自动重建为断网，无迁移负担。egress 代理是远期，等第一个真实外联需求，不做预防性抽象
-- 社会级资源账本：全局容器内存/CPU 占用进 metrics（宪法四）
+- ✅ 社会级资源账本（本 PR，issue #24）：全局容器内存/CPU 实际占用进 metrics（宪法四）。`sandbox/resource_monitor.py` 的 `ContainerResourceMonitor` 每 30 秒枚举 `tlon-agent-*` 容器收集 `container.stats`（内存 usage/limit + docker stats 标准公式的 cpu_percent），经 `stats_snapshot()` 纯内存端口喂给 `MetricsService` 的 observable gauge（`tlon.container.memory_bytes`/`tlon.container.cpu_percent` 按 agent_id，`tlon.society.container_memory_bytes`/`tlon.society.containers` 社会级总量）——`GET /metrics` 的同步 snapshot 路径永不阻塞在 docker 调用上。fail-soft：daemon 不可达只记 warning、账本为空。docker client 探测链提取为 `sandbox/docker_client.py` 共用。**边界**：社会级内存预算 `TLON_CONTAINER_MEMORY_BUDGET`（如 "4g"）是 warning-only——超预算记 `container_memory_budget_exceeded` 日志，不做激活拒绝等强制（强制策略是后续决策）
 
 **P2 阶梯成形（随真实需求驱动）**
 - ephemeral 执行单元：per-session 一次性容器或预热池，告别宠物容器（宪法三）

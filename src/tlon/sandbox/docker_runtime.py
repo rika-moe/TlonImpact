@@ -25,6 +25,7 @@ from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.sandbox.device import ExecutionResult
+from tlon.sandbox.docker_client import create_docker_client
 
 logger = get_logger(__name__)
 
@@ -155,44 +156,13 @@ class DockerRuntime:
         self._closed = False
 
     def _create_client(self) -> docker.DockerClient:
-        """Create a Docker client, trying multiple connection methods.
+        """Create a Docker client via the shared sandbox probe chain
+        (``sandbox/docker_client.create_docker_client``).
 
-        Supports:
-        - DOCKER_HOST env var (Colima, Docker Desktop, custom setups)
-        - Default Unix socket (/var/run/docker.sock)
-        - macOS Colima socket (~/.colima/default/docker.sock)
-        - macOS Docker Desktop socket (~/.docker/run/docker.sock)
-
-        Each probe failure is logged at debug level so a daemon connection
-        problem is diagnosable before the final raise.
+        Kept as a method so tests can monkeypatch the creation point on
+        the class; behavior is identical to calling the shared function.
         """
-        # First try: environment variables (honors DOCKER_HOST set by Colima/Docker Desktop)
-        try:
-            return docker.from_env()
-        except Exception as e:
-            logger.debug("docker_client_from_env_failed", error=str(e))
-
-        # Second try: common socket paths on macOS
-        socket_paths = [
-            Path.home() / ".colima" / "default" / "docker.sock",
-            Path.home() / ".docker" / "run" / "docker.sock",
-            Path("/var/run/docker.sock"),
-            Path.home() / ".colima" / "docker.sock",
-        ]
-
-        for sock_path in socket_paths:
-            if sock_path.exists():
-                try:
-                    return docker.DockerClient(
-                        base_url=f"unix://{sock_path}",
-                        timeout=60,
-                    )
-                except Exception as e:
-                    logger.debug("docker_client_socket_failed", socket=str(sock_path), error=str(e))
-                    continue
-
-        # Last resort: let from_env raise the original error
-        return docker.from_env()
+        return create_docker_client()
 
     def close(self) -> None:
         """Close the underlying Docker client (its requests session and

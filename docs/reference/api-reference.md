@@ -258,6 +258,15 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 200：`MetricsService.snapshot()`（[base/metrics.py](../../src/tlon/base/metrics.py)），形状 `{"metrics": {name: {"type": "counter"|"histogram"|"gauge", "description", "unit", "points": [...]}}}`；counter/gauge 的 point 为 `{"attributes", "value"}`，histogram 的 point 为 `{"attributes", "count", "sum", "min", "max"}`。503：未装配 metrics 服务。
 
+容器资源账本指标（issue #24，仅当装配了 `ContainerResourceMonitor` 时存在；observable gauge，collection 时从 monitor 的最新快照拉取）：
+
+| 指标 | 类型 | attributes | 含义 |
+|---|---|---|---|
+| `tlon.container.memory_bytes` | gauge | `agent_id` | 成员容器实际内存占用（By） |
+| `tlon.container.cpu_percent` | gauge | `agent_id` | 成员容器 CPU 占用（docker stats 公式，%） |
+| `tlon.society.container_memory_bytes` | gauge | 无 | 全社容器内存占用总量（By，社会级暗账变明账） |
+| `tlon.society.containers` | gauge | 无 | 运行中的成员容器数 |
+
 ### GET /logs
 
 读 `logs_dir` 下**今天和昨天**的 `server-{date}.jsonl`（更早的文件不读），合并过滤后按时间序返回末尾 N 条。
