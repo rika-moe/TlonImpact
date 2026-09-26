@@ -52,6 +52,8 @@ run(program, inputs, budget) -> outcome
 - `budget`：时间 / 内存 / CPU / 输出上限
 - `outcome`：结构化结果——exit code、stdout/stderr、**文件系统变更 diff**、资源消耗计量
 
+> **当前形态（P1，issue #21）**：接口已落地为 [sandbox/device.py](../../src/tlon/sandbox/device.py) 的 `ExecutionDevice`（`typing.Protocol` + `@runtime_checkable`），但签名是**刻意的最小化**——`run(program, timeout, workdir) -> ExecutionResult`（对齐 `DockerRuntime` 现状，outcome 即 `exit_code/stdout/stderr`），外加 `read_file` / `write_file` / `file_exists` / `close`。inputs/budget dataclass 与带资源计量的 outcome 推迟到第二个实现出现时再引入：现在只有一个实现，不做预防性抽象。
+
 `DockerRuntime` 是这个接口的第一个实现（L2 层）。接口化的直接收益：能力声明可以进成员 config，装配层按声明选择实现与参数；exec 审计、资源账本挂在接口边界上，对所有实现一刀切。
 
 ## 能力阶梯
@@ -91,7 +93,7 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 - issue #4：docker client 生命周期管理 + 探测失败日志
 
 **P1 接口化与加固（全部落在现有实现上，不扩能力）**
-- ExecutionDevice 抽象接口，`DockerRuntime` 改造为首个实现；exec 审计（命令、耗时、退出码、资源消耗）经接口边界进 journal/trace（宪法二）
+- ✅ ExecutionDevice 抽象接口，`DockerRuntime` 改造为首个实现（本 PR，issue #21）：接口落 [sandbox/device.py](../../src/tlon/sandbox/device.py)（`ExecutionResult` 迁入、`DockerRuntime.execute` 改名 `run`）；exec 审计经接口边界进 trace/log——装配层用 `AuditedExecutionDevice` 包装，每次 `run` 发 `device.exec` span + `device_exec` structlog 日志（命令截断前 200 字符、耗时、退出码、timed_out；资源消耗计量随完整形态 budget/outcome 一起推迟）（宪法二）。**刻意的最小化**：完整形态 `run(program, inputs, budget)` 推迟到第二个实现出现时（见「抽象接口」加注）
 - 容器加固：rootfs 只读 + `/workspace` rw + `/tlon-home` ro + tmpfs `/tmp`——把「可写面 = 工作区」变成内核事实，压缩 symlink 逃逸面；配置漂移 reconcile（sleep/wake 比对期望配置，不符重建——workspace 在 bind-mount 上状态不丢，与 ADR 0006 不冲突）
 - 网络宪法第一步：现状调查（agent 实际用网络干什么）→ `network_mode` 默认 `none`，外联改为成员 config 的显式声明（egress 代理是远期，等第一个真实外联需求，不做预防性抽象）
 - 社会级资源账本：全局容器内存/CPU 占用进 metrics（宪法四）

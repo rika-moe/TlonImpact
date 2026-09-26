@@ -12,7 +12,6 @@ import asyncio
 import io
 import shlex
 import tarfile
-from dataclasses import dataclass
 from pathlib import Path
 
 import docker
@@ -22,6 +21,7 @@ from docker.models.containers import Container
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.sandbox.device import ExecutionResult
 
 logger = get_logger(__name__)
 
@@ -34,17 +34,11 @@ logger = get_logger(__name__)
 AGENT_HOME_CONTAINER_PATH = "/tlon-home"
 
 
-@dataclass
-class ExecutionResult:
-    """Result of a command execution."""
-
-    exit_code: int
-    stdout: str
-    stderr: str
-
-
 class DockerRuntime:
     """Docker runtime for agent command execution.
+
+    First implementation of the ``ExecutionDevice`` interface
+    (``sandbox/device.py``, design: docs/design/execution-device.md).
 
     Each agent gets its own isolated container with full network access.
     Containers are created on-demand and persist across sessions.
@@ -62,7 +56,7 @@ class DockerRuntime:
         >>> config = DockerRuntimeConfig(image="ubuntu:22.04")
         >>> runtime = DockerRuntime(config, agent_id="dev-001", tlon_paths=paths)
         >>> await runtime.ensure_running()
-        >>> result = await runtime.execute("echo Hello")
+        >>> result = await runtime.run("echo Hello")
         >>> print(result.stdout)  # Hello
     """
 
@@ -218,13 +212,15 @@ class DockerRuntime:
 
         logger.info("container_created", container_name=self.container_name)
 
-    async def execute(
-        self, command: str, timeout: int = 60, workdir: str | None = None
+    async def run(
+        self, program: str, timeout: int = 60, workdir: str | None = None
     ) -> ExecutionResult:
-        """Execute a command in the container.
+        """Run a program (shell command) in the container.
+
+        Implements ``ExecutionDevice.run``.
 
         Args:
-            command: The command to execute
+            program: The command to execute
             timeout: Maximum execution time in seconds
             workdir: Optional working directory override
 
@@ -247,14 +243,14 @@ class DockerRuntime:
                 exec_result = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.container.exec_run,
-                        cmd=["timeout", str(timeout), "bash", "-c", command],
+                        cmd=["timeout", str(timeout), "bash", "-c", program],
                         workdir=workdir or self.config.working_dir,
                         demux=True,  # Separate stdout/stderr
                     ),
                     timeout=timeout + 5,
                 )
             except TimeoutError:
-                logger.warning("command_timeout", timeout=timeout, command=command)
+                logger.warning("command_timeout", timeout=timeout, command=program)
                 return ExecutionResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout} seconds"
                 )
@@ -277,7 +273,7 @@ class DockerRuntime:
 
             # `timeout` kills the command with exit code 124
             if exit_code == 124:
-                logger.warning("command_timeout", timeout=timeout, command=command)
+                logger.warning("command_timeout", timeout=timeout, command=program)
                 return ExecutionResult(
                     exit_code=-1,
                     stdout=stdout,
@@ -452,7 +448,7 @@ class DockerRuntime:
         # Ensure parent directories exist
         parent = path.rsplit("/", 1)[0] if "/" in path else "/"
         if parent and parent != "/":
-            result = await self.execute(f"mkdir -p {shlex.quote(parent)}")
+            result = await self.run(f"mkdir -p {shlex.quote(parent)}")
             if result.exit_code != 0:
                 raise RuntimeError(f"mkdir -p failed for {parent}: {result.stderr}")
 
@@ -486,5 +482,5 @@ class DockerRuntime:
         if not self.container:
             await self.ensure_running()
 
-        result = await self.execute(f"test -e {shlex.quote(path)} && echo EXISTS || echo MISSING")
+        result = await self.run(f"test -e {shlex.quote(path)} && echo EXISTS || echo MISSING")
         return "EXISTS" in result.stdout

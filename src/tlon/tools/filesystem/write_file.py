@@ -7,7 +7,7 @@ from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_cont
 
 if TYPE_CHECKING:
     from tlon.base.config import DockerRuntimeConfig
-    from tlon.sandbox.docker_runtime import DockerRuntime
+    from tlon.sandbox.device import ExecutionDevice
 
 
 class WriteFileTool(Tool):
@@ -27,14 +27,14 @@ class WriteFileTool(Tool):
     def __init__(
         self,
         docker_config: "DockerRuntimeConfig",
-        docker_runtime: "DockerRuntime | None",
+        docker_runtime: "ExecutionDevice | None",
         allowed_paths: list[str] | None = None,
     ):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration.
-            docker_runtime: DockerRuntime instance (shared across tools)
+            docker_runtime: ExecutionDevice instance (shared across tools)
             allowed_paths: Whitelisted absolute container paths the tool may
                 access. Defaults to the container working directory.
         """
@@ -99,7 +99,7 @@ class WriteFileTool(Tool):
         # Ensure parent directories exist
         parent = "/".join(container_path.split("/")[:-1])
         if parent:
-            await self._docker_runtime.execute(f"mkdir -p {parent}")
+            await self._docker_runtime.run(f"mkdir -p {parent}")
 
         try:
             existed = await self._docker_runtime.file_exists(container_path)

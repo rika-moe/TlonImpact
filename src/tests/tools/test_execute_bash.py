@@ -14,32 +14,32 @@ import pytest
 import tlon.tools.shell.execute_bash as execute_bash_module
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.config import DockerRuntimeConfig
-from tlon.sandbox.docker_runtime import ExecutionResult
+from tlon.sandbox.device import ExecutionResult
 from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
 
 
 class _GatedRuntime:
-    """Duck-typed DockerRuntime: execute() blocks until released."""
+    """Duck-typed ExecutionDevice: run() blocks until released."""
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
         self.started = asyncio.Event()
 
-    async def execute(self, command: str, timeout: int = 60) -> ExecutionResult:
+    async def run(self, program: str, timeout: int = 60) -> ExecutionResult:
         self.started.set()
         await self.release.wait()
-        return ExecutionResult(exit_code=0, stdout=command, stderr="")
+        return ExecutionResult(exit_code=0, stdout=program, stderr="")
 
 
 class _StaticRuntime:
-    """Duck-typed DockerRuntime: execute() completes immediately."""
+    """Duck-typed ExecutionDevice: run() completes immediately."""
 
     def __init__(self, exit_code: int = 0, stdout: str = "", stderr: str = "") -> None:
         self._exit_code = exit_code
         self._stdout = stdout
         self._stderr = stderr
 
-    async def execute(self, command: str, timeout: int = 60) -> ExecutionResult:
+    async def run(self, program: str, timeout: int = 60) -> ExecutionResult:
         return ExecutionResult(exit_code=self._exit_code, stdout=self._stdout, stderr=self._stderr)
 
 

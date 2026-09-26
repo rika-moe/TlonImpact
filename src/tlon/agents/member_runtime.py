@@ -92,7 +92,7 @@ from tlosure.eval import (
 
 if TYPE_CHECKING:
     from tlon.agents.agent_registry import AgentRegistry
-    from tlon.sandbox.docker_runtime import DockerRuntime
+    from tlon.sandbox.device import ExecutionDevice
 
 logger = get_logger(__name__)
 
@@ -140,12 +140,14 @@ class CognitiveCapabilities:
     # Trust ladder (): a probationary member's mentor address (its
     # spawner), cc'd on composed outbound mail; None for full members.
     mentor_cc: str | None = None
-    # The member's Docker client holder (issue ): assembly owns it and
+    # The member's execution device (issue ): assembly owns it and
     # shutdown closes it — a wake re-assembly must not leak the previous
-    # client's connection pool. None when the daemon was unreachable at
-    # assembly time, and for capability sets built without assembly
-    # (Adam, tests).
-    docker_runtime: "DockerRuntime | None" = None
+    # client's connection pool. Typed as the ExecutionDevice interface
+    # (issue #21): assembly injects the AuditedExecutionDevice-wrapped
+    # DockerRuntime; close() passes through to the Docker client. None
+    # when the daemon was unreachable at assembly time, and for
+    # capability sets built without assembly (Adam, tests).
+    docker_runtime: "ExecutionDevice | None" = None
 
 
 class MemberRuntime(Member):
