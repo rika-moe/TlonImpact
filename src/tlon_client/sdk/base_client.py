@@ -17,7 +17,7 @@ This is an internal class used by TlonClient, not intended for direct use.
 import asyncio
 import contextlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum
 from typing import Any, cast
 
@@ -120,6 +120,9 @@ class BaseClient:
         self._sse_task: asyncio.Task[None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._reconnect_count = 0
+        # Strong references to in-flight handler tasks (asyncio only holds
+        # weak references, so untracked tasks could be GC'd mid-run)
+        self._handler_tasks: set[asyncio.Task[None]] = set()
 
         # Params of the last authenticate() call, used by _reconnect() to
         # re-establish the session automatically after a reconnect.
@@ -220,6 +223,16 @@ class BaseClient:
 
     async def _cleanup(self) -> None:
         """Clean up resources."""
+        # Cancel pending handler tasks (done callbacks may mutate the set,
+        # so iterate over a snapshot)
+        pending_handlers = list(self._handler_tasks)
+        for task in pending_handlers:
+            task.cancel()
+        for task in pending_handlers:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._handler_tasks.clear()
+
         # Stop the SSE stream
         if self._sse_task:
             self._sse_task.cancel()
@@ -564,77 +577,73 @@ class BaseClient:
                     "span_id": msg.get("span_id"),
                     "parent_span_id": msg.get("parent_span_id"),
                 }
-                await self._dispatch_event(event)
+                self._dispatch_event(event)
                 return
 
             # Handle errors
             if msg_type == "error":
                 error_msg = msg.get("message", "Unknown error")
-                await self._dispatch_error(error_msg)
+                self._dispatch_error(error_msg)
                 return
 
             # Pass to message handlers for other types
-            await self._dispatch_message(msg)
+            self._dispatch_message(msg)
 
         except json.JSONDecodeError:
             logger.error("invalid_json_received", data=data)
         except Exception as e:
             logger.error("frame_handling_failed", error=str(e), exc_info=True)
 
-    async def _dispatch_event(self, event: dict[str, Any]) -> None:
+    def _fire(
+        self, handlers: Sequence[Callable[..., Any]], log_event: str, *args: Any
+    ) -> None:
+        """Dispatch to registered handlers (sync inline, coroutine as a task)."""
+        for handler in handlers:
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    self._spawn_handler_task(handler, log_event, *args)
+                else:
+                    handler(*args)
+            except Exception as e:
+                logger.error(log_event, error=str(e), exc_info=True)
+
+    def _spawn_handler_task(
+        self, handler: Callable[..., Any], log_event: str, *args: Any
+    ) -> None:
+        """Run a coroutine handler as a tracked task; failures are logged."""
+        task = asyncio.create_task(handler(*args))
+        self._handler_tasks.add(task)
+
+        def _on_done(completed: asyncio.Task[None]) -> None:
+            self._handler_tasks.discard(completed)
+            # task.exception() raises CancelledError for cancelled tasks
+            if completed.cancelled():
+                return
+            exc = completed.exception()
+            if exc is not None:
+                logger.error(log_event, error=str(exc), exc_info=exc)
+
+        task.add_done_callback(_on_done)
+
+    def _dispatch_event(self, event: dict[str, Any]) -> None:
         """Dispatch event to registered handlers."""
-        for handler in self._event_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler(event))
-                else:
-                    handler(event)
-            except Exception as e:
-                logger.error("event_handler_error", error=str(e), exc_info=True)
+        self._fire(self._event_handlers, "event_handler_error", event)
 
-    async def _dispatch_message(self, msg: dict[str, Any]) -> None:
+    def _dispatch_message(self, msg: dict[str, Any]) -> None:
         """Dispatch message to registered handlers."""
-        for handler in self._message_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler(msg))
-                else:
-                    handler(msg)
-            except Exception as e:
-                logger.error("message_handler_error", error=str(e), exc_info=True)
+        self._fire(self._message_handlers, "message_handler_error", msg)
 
-    async def _dispatch_error(self, error_msg: str) -> None:
+    def _dispatch_error(self, error_msg: str) -> None:
         """Dispatch error to registered handlers."""
-        for handler in self._error_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler(error_msg))
-                else:
-                    handler(error_msg)
-            except Exception as e:
-                logger.error("error_handler_error", error=str(e), exc_info=True)
+        self._fire(self._error_handlers, "error_handler_error", error_msg)
 
     def _notify_state_change(self, state: ConnectionState) -> None:
         """Notify state change handlers."""
-        for handler in self._state_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler(state))
-                else:
-                    handler(state)
-            except Exception as e:
-                logger.error("state_handler_error", error=str(e), exc_info=True)
+        self._fire(self._state_handlers, "state_handler_error", state)
 
     def _notify_reconnect(self) -> None:
         """Notify reconnect handlers after a successful auto-reconnect."""
-        for handler in self._reconnect_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    asyncio.create_task(handler())
-                else:
-                    handler()
-            except Exception as e:
-                logger.error("reconnect_handler_error", error=str(e), exc_info=True)
+        self._fire(self._reconnect_handlers, "reconnect_handler_error")
 
     # ==================== Handler Registration ====================
 
