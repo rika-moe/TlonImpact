@@ -41,6 +41,7 @@ from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import address_for_member
+from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
@@ -161,9 +162,11 @@ async def assemble_cognitive(
     ``MemberRuntime``; a member without a loop rule simply never uses
     these objects (lazy assembly: objects are cheap, loading is on
     demand). The container is NOT started here: DockerRuntime lazily
-    calls ensure_running() on first execute/read/write, so waking an
+    calls ensure_running() on first run/read/write, so waking an
     agent for pure conversation costs zero containers — a daemon
-    failure surfaces as a tool error, not a start failure.
+    failure surfaces as a tool error, not a start failure. The runtime
+    is wrapped in ``AuditedExecutionDevice`` (issue #21): exec auditing
+    lives on the interface boundary.
     """
     # Build infrastructure dependencies
     llm_config = _build_llm_config(config.llm, config.id)
@@ -191,10 +194,16 @@ async def assemble_cognitive(
         tlon_paths=tlon_paths,
     )
 
-    # Create Docker runtime (shared by shell + filesystem tools).
-    docker_runtime: DockerRuntime | None = None
+    # Create Docker runtime (shared by shell + filesystem tools), wrapped
+    # in the interface-level exec audit (issue #21): every run() emits a
+    # device.exec trace span + device_exec log. Tools and
+    # CognitiveCapabilities.docker_runtime both hold the wrapped instance;
+    # close() passes through, so MemberRuntime's shutdown path is unchanged.
+    docker_runtime: ExecutionDevice | None = None
     try:
-        docker_runtime = DockerRuntime(config.docker, config.id, tlon_paths)
+        docker_runtime = AuditedExecutionDevice(
+            DockerRuntime(config.docker, config.id, tlon_paths), agent_id=config.id
+        )
     except Exception as e:
         logger.warning("docker_unavailable", agent_name=config.name, error=str(e))
     # No registry-side container handle is kept (ADR 0006): members

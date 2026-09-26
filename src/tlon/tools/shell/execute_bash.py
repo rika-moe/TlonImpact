@@ -6,7 +6,7 @@ from typing import Any
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
-from tlon.sandbox.docker_runtime import DockerRuntime, ExecutionResult
+from tlon.sandbox.device import ExecutionDevice, ExecutionResult
 from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -18,12 +18,12 @@ _MAX_FINISHED_TASKS = 50
 class ExecuteBashTool(Tool):
     """Tool to execute bash commands in the agent's Docker container."""
 
-    def __init__(self, docker_config: DockerRuntimeConfig, docker_runtime: DockerRuntime | None):
+    def __init__(self, docker_config: DockerRuntimeConfig, docker_runtime: ExecutionDevice | None):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration
-            docker_runtime: DockerRuntime instance (shared across tools)
+            docker_runtime: ExecutionDevice instance (shared across tools)
         """
         super().__init__(
             name="executeBashCommand",
@@ -100,7 +100,7 @@ class ExecuteBashTool(Tool):
         if background:
             return await self._execute_background(command, timeout)
 
-        result = await self._docker_runtime.execute(command, timeout=timeout)
+        result = await self._docker_runtime.run(command, timeout=timeout)
 
         return ToolResult(
             success=result.exit_code == 0,
@@ -129,7 +129,7 @@ class ExecuteBashTool(Tool):
         assert docker_runtime is not None
 
         async def _run() -> ExecutionResult:
-            return await docker_runtime.execute(command, timeout=timeout)
+            return await docker_runtime.run(command, timeout=timeout)
 
         task = asyncio.create_task(_run())
         self._background_tasks[task_id] = task

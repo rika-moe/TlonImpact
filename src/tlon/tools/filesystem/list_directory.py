@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from tlon.base.config import DockerRuntimeConfig
-    from tlon.sandbox.docker_runtime import DockerRuntime
+    from tlon.sandbox.device import ExecutionDevice
 
 # find -printf %y single-letter types → display names
 _TYPE_NAMES = {"d": "dir", "f": "file", "l": "symlink"}
@@ -34,14 +34,14 @@ class ListDirectoryTool(Tool):
     def __init__(
         self,
         docker_config: "DockerRuntimeConfig",
-        docker_runtime: "DockerRuntime | None",
+        docker_runtime: "ExecutionDevice | None",
         allowed_paths: list[str] | None = None,
     ):
         """Initialize the tool.
 
         Args:
             docker_config: Docker runtime configuration.
-            docker_runtime: DockerRuntime instance (shared across tools)
+            docker_runtime: ExecutionDevice instance (shared across tools)
             allowed_paths: Whitelisted absolute container paths the tool may
                 access. Defaults to the container working directory.
         """
@@ -119,7 +119,7 @@ class ListDirectoryTool(Tool):
             "-printf '%y\\t%s\\t%TY-%Tm-%TdT%TH:%TM\\t%f\\n' "
             f"| head -n {limit + 1}"
         )
-        result = await self._docker_runtime.execute(command)
+        result = await self._docker_runtime.run(command)
         if result.exit_code != 0:
             stderr = result.stderr.strip()
             if "__TLON_NOT_FOUND__" in stderr:
