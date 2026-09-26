@@ -24,7 +24,7 @@ import asyncio
 import contextlib
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -501,7 +501,7 @@ class MemoryManager:
             logger.warning("distillation_no_claims", session_count=len(projections))
             return None
 
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
         new_claims = [
             Claim(
                 text=claim_dict["text"],
@@ -598,7 +598,7 @@ class MemoryManager:
         if verdicts is None:
             return
 
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
         for claim, verdict in zip(new_claims, verdicts, strict=True):
             if verdict.action != "supersede":
                 continue
@@ -690,7 +690,7 @@ class MemoryManager:
 
         active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
         pool = min(len(active), max(k * _RETRIEVAL_POOL_FACTOR, k))
-        now = datetime.now()
+        now = datetime.now(UTC)
         scored: list[tuple[float, dict[str, Any]]] = []
         try:
             for claim_id, similarity in self._index.search(query_vector, pool):
@@ -755,7 +755,7 @@ class MemoryManager:
         if not self._loaded:
             await self.load()
 
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
         claim = Claim(
             text=fact,
             timestamp=now,

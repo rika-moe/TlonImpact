@@ -6,7 +6,7 @@ Extracted from the original ClientGateway to follow SRP.
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from tlon.base.logger import get_logger
@@ -87,7 +87,7 @@ class SessionManager:
             session = ClientSession(
                 id=session_id,
                 client_type=client_type,
-                connected_at=datetime.now().isoformat(),
+                connected_at=datetime.now(UTC).isoformat(),
                 filters=dict(filters) if filters else {},
                 metadata=metadata or {},
             )

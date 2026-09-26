@@ -13,7 +13,7 @@ construction, so the routing logic under test never dereferences them.
 
 import asyncio
 import inspect
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -1125,7 +1125,7 @@ class TestIdleAwareBackground:
         assert scheduler is not None and reflection is not None
 
         # No sessions for a long while: the member reads idle.
-        scheduler._last_activity_at = datetime.now() - timedelta(seconds=999)
+        scheduler._last_activity_at = datetime.now(UTC) - timedelta(seconds=999)
         assert member.idle_seconds > 600
 
         # An in-flight reflection is real activity — not idle.

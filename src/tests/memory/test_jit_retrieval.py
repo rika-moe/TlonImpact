@@ -8,7 +8,7 @@ write-path indexing). All embedding goes through an injected fake — no
 network.
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +57,7 @@ def _claim(
     age_days: float = 0,
     importance: float = 0.5,
 ) -> dict[str, Any]:
-    timestamp = (datetime.now() - timedelta(days=age_days)).isoformat()
+    timestamp = (datetime.now(UTC) - timedelta(days=age_days)).isoformat()
     return {
         "id": claim_id,
         "text": text,

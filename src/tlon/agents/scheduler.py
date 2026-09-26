@@ -22,7 +22,7 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import UTC, datetime
 
 from structlog.contextvars import bound_contextvars
 
@@ -74,7 +74,7 @@ class SessionScheduler:
         self._sessions: dict[str, AgentSession] = {}
         # Floor for last activity: loop start time, bumped on session
         # creation and session completion (see run()).
-        self._last_activity_at: datetime = datetime.now()
+        self._last_activity_at: datetime = datetime.now(UTC)
         # Inbound mail queue (bounded: a full queue drops new mail rather
         # than blocking the EventBus dispatch — see Agent._enqueue_mail)
         # and the worker lifecycle, both owned here (R2).
@@ -144,7 +144,7 @@ class SessionScheduler:
     @property
     def idle_seconds(self) -> float:
         """Seconds since the last session activity (see last_activity_at)."""
-        return (datetime.now() - self.last_activity_at).total_seconds()
+        return (datetime.now(UTC) - self.last_activity_at).total_seconds()
 
     async def run(self) -> None:
         """Agent's continuous main loop with multi-session scheduling.
@@ -170,7 +170,7 @@ class SessionScheduler:
             # fed to LoopDriver.resume_collect once, then back to normal.
             pending_collects: dict[str, list[tuple[ToolCall, ToolResult]]] = {}
             self._sessions = sessions
-            self._last_activity_at = datetime.now()
+            self._last_activity_at = datetime.now(UTC)
 
             while self._worker_running:
                 # ── 0. Reflection trigger (timer-driven, no mail needed) ──
@@ -207,7 +207,7 @@ class SessionScheduler:
                             session_id=sid,
                             state=session.state.value,
                             idle_seconds=int(
-                                (datetime.now() - session.last_active_at).total_seconds()
+                                (datetime.now(UTC) - session.last_active_at).total_seconds()
                             ),
                         )
                         await self._end_session(session, "timeout")
@@ -246,7 +246,7 @@ class SessionScheduler:
                         del sessions[sid]
                         session_mails.pop(sid, None)
                         pending_collects.pop(sid, None)
-                        self._last_activity_at = datetime.now()
+                        self._last_activity_at = datetime.now(UTC)
                         # Session completed: feed the reflection counter
                         # and check the batch distillation trigger (ADR 0017 —
                         # journal -> claims, threshold config.distillation_window).
@@ -300,7 +300,7 @@ class SessionScheduler:
             if replay.pending_collect:
                 pending_collects[sid] = replay.pending_collect
         session_mails[sid] = mail
-        self._last_activity_at = datetime.now()
+        self._last_activity_at = datetime.now(UTC)
 
     def _restore_session(
         self, replay: SessionReplay, mail: Mail, carrier: dict[str, str | None]
@@ -388,5 +388,5 @@ class SessionScheduler:
     def _is_session_timed_out(self, session: AgentSession) -> bool:
         """A session idle beyond the configured timeout is considered stuck."""
         timeout = self._config.session_timeout_seconds
-        idle = (datetime.now() - session.last_active_at).total_seconds()
+        idle = (datetime.now(UTC) - session.last_active_at).total_seconds()
         return idle > timeout
