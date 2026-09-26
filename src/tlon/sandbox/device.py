@@ -63,6 +63,15 @@ class ExecutionDevice(Protocol):
         """Read a file's raw bytes from inside the device."""
         ...
 
+    async def fetch_archive(self, path: str) -> bytes:
+        """Fetch a path (file or directory subtree) as raw tar bytes.
+
+        The archive-only read channel (issue #40): list/search tools
+        unpack the tar host-side, so they need no code execution inside
+        the device and work at L1.
+        """
+        ...
+
     async def write_file(self, path: str, content: bytes) -> bool:
         """Write raw bytes to a file inside the device."""
         ...
@@ -152,6 +161,10 @@ class AuditedExecutionDevice:
     async def read_file(self, path: str) -> bytes:
         """Pass through to the inner device (audit scope is exec only)."""
         return await self._inner.read_file(path)
+
+    async def fetch_archive(self, path: str) -> bytes:
+        """Pass through to the inner device (audit scope is exec only)."""
+        return await self._inner.fetch_archive(path)
 
     async def write_file(self, path: str, content: bytes) -> bool:
         """Pass through to the inner device (audit scope is exec only)."""

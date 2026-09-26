@@ -7,9 +7,10 @@ litellm model registry (``get_model_info().max_input_tokens``) >
 DEFAULT_CONTEXT_WINDOW. The built config always carries a resolved int
 and a non-None model_name.
 
-Also covers the execution-device level gate (issue #26): a member
-declaring ``docker.level: L0`` assembles without a DockerRuntime and
-without the seven device-dependent shell/filesystem tools.
+Also covers the execution-device level gate (issue #26, L1 in #40): a member
+declaring ``docker.level: L0`` assembles without a DockerRuntime and without
+the seven device-dependent shell/filesystem tools; ``L1`` assembles the
+runtime and the filesystem five, but not the bash pair.
 """
 
 from pathlib import Path
@@ -122,12 +123,12 @@ class TestFileValuesTakeEffect:
         assert built.api_base == "https://proxy.example/v1"
 
 
-# The seven device-dependent tools (shell + filesystem), withheld from
-# members declaring docker.level: L0 (issue #26).
-DEVICE_TOOLS = frozenset(
+# The device-dependent tools: the bash pair is L2-only, the filesystem
+# five are also registered at L1 (文件层, issue #40); all seven are
+# withheld from members declaring docker.level: L0 (issue #26).
+BASH_TOOLS = frozenset({"executeBashCommand", "checkBashTask"})
+FILE_TOOLS = frozenset(
     {
-        "executeBashCommand",
-        "checkBashTask",
         "readFile",
         "writeFile",
         "editFile",
@@ -135,6 +136,7 @@ DEVICE_TOOLS = frozenset(
         "searchFiles",
     }
 )
+DEVICE_TOOLS = BASH_TOOLS | FILE_TOOLS
 
 
 class _FakeAgentInfo:
@@ -156,9 +158,10 @@ def tlon_paths(tmp_path: Path) -> TlonPaths:
 
 
 class TestExecutionLevelAssembly:
-    """docker.level at assembly (issue #26): L0 = 无执行装置 — no
-    DockerRuntime is constructed and none of the seven device-dependent
-    tools is registered; L2 = the status-quo full path."""
+    """docker.level at assembly (issue #26, L1 in #40): L0 = 无执行装置 —
+    no DockerRuntime is constructed and none of the seven device-dependent
+    tools is registered; L1 = 文件层 — runtime exists, the filesystem five
+    are registered, the bash pair is not; L2 = the status-quo full path."""
 
     async def _assemble(self, tlon_paths: TlonPaths, level: str) -> Any:
         config = AgentConfig(
@@ -188,6 +191,21 @@ class TestExecutionLevelAssembly:
         assert names.isdisjoint(DEVICE_TOOLS)
         # 其余工具照常装配
         assert {"getCurrentTime", "sendEmail", "rememberFact"} <= names
+
+        await caps.tool_executor.shutdown()
+
+    async def test_l1_registers_file_tools_without_bash(
+        self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("tlon.agents.assembly.DockerRuntime", MagicMock())
+
+        caps = await self._assemble(tlon_paths, "L1")
+
+        # 文件 I/O 需要文件柜容器，L1 照常装配 runtime（经审计包装）
+        assert caps.docker_runtime is not None
+        names = set(caps.tool_executor.list_tools())
+        assert names >= FILE_TOOLS
+        assert names.isdisjoint(BASH_TOOLS)
 
         await caps.tool_executor.shutdown()
 

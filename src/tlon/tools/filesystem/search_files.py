@@ -1,10 +1,12 @@
 """Search files tool — filename glob and content grep inside the sandbox."""
 
-import shlex
+import fnmatch
+import re
 from typing import TYPE_CHECKING, Any
 
 from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
+from tlon.tools.filesystem.archive import DirectoryArchive
 from tlon.tools.filesystem.path_guard import DEFAULT_ALLOWED_PATHS, resolve_container_path
 
 logger = get_logger(__name__)
@@ -14,12 +16,21 @@ if TYPE_CHECKING:
     from tlon.sandbox.device import ExecutionDevice
 
 
+def _under_dot_git(rel: str) -> bool:
+    """True if a root-relative path lives under a ``.git`` directory
+    (the old ``-not -path '*/.git/*'`` / ``--exclude-dir=.git`` filter)."""
+    return ".git" in rel.split("/")
+
+
 class SearchFilesTool(Tool):
     """Tool to search files inside the agent's sandbox.
 
-    Two modes: ``filename`` (find -iname glob) and ``content`` (recursive
-    extended-regex grep with line numbers). Both run in the Docker container
-    and return bounded results: a match cap plus per-line truncation.
+    Two modes: ``filename`` (case-insensitive glob on basenames) and
+    ``content`` (regex with line numbers). Both fetch the search root as
+    a tar archive (get_archive) and match host-side (issue #40) — no
+    find/grep runs in the container, so the tool works at L1 where the
+    file cabinet never starts. Results stay bounded: a match cap plus
+    per-line truncation.
 
     Example:
         >>> tool = SearchFilesTool(docker_config, docker_runtime)
@@ -28,11 +39,8 @@ class SearchFilesTool(Tool):
 
     _DEFAULT_MAX_RESULTS = 50
     _MAX_RESULTS = 200
-    # Per-line display cap; the shell additionally hard-caps lines at
-    # _SHELL_LINE_CAP chars so minified/binary-ish lines cannot blow up
-    # the exec result before Python sees it.
+    # Per-line display cap.
     _MAX_LINE_CHARS = 200
-    _SHELL_LINE_CAP = 1000
 
     def __init__(
         self,
@@ -51,7 +59,7 @@ class SearchFilesTool(Tool):
         super().__init__(
             name="searchFiles",
             description=(
-                "在沙箱中搜索文件。mode=content（默认）按内容做正则检索（grep -E 语法），"
+                "在沙箱中搜索文件。mode=content（默认）按内容做正则检索，"
                 "返回匹配的文件、行号和行内容；mode=filename 按文件名 glob 查找（如 *.py，不区分大小写）。"
                 "搜索文件优先用此工具，不要用 executeBashCommand 跑 grep/find。"
                 "结果有界：匹配数上限 + 每行长度截断，超出会注明。"
@@ -63,7 +71,7 @@ class SearchFilesTool(Tool):
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "搜索模式：content 模式是扩展正则（grep -E），filename 模式是 glob（如 *.log）",
+                        "description": "搜索模式：content 模式是正则，filename 模式是 glob（如 *.log）",
                     },
                     "path": {
                         "type": "string",
@@ -95,7 +103,7 @@ class SearchFilesTool(Tool):
         """Search files in the sandbox container.
 
         Args:
-            pattern: Extended regex (content mode) or glob (filename mode).
+            pattern: Regex (content mode) or glob (filename mode).
             path: Search root (relative to container working dir).
             mode: "content" or "filename".
             max_results: Maximum number of matches to return.
@@ -134,58 +142,34 @@ class SearchFilesTool(Tool):
                 error=str(e),
             )
 
-        limit = min(max(1, max_results), self._MAX_RESULTS)
-        quoted_path = shlex.quote(container_path)
-        quoted_pattern = shlex.quote(pattern)
-        # -s silences per-file noise (unreadable files), so anything left on
-        # stderr is a real error (e.g. invalid regex). grep --null separates
-        # filename from "lineno:text" with NUL, safe against colons in names.
+        regex: re.Pattern[str] | None = None
         if mode == "content":
-            command = (
-                f"test -e {quoted_path} || {{ echo '__TLON_NOT_FOUND__' >&2; exit 1; }}; "
-                f"grep -rnIsE --null --exclude-dir=.git -- {quoted_pattern} {quoted_path} "
-                f"| head -n {limit + 1} | cut -c 1-{self._SHELL_LINE_CAP}"
-            )
-        else:
-            command = (
-                f"test -d {quoted_path} || {{ echo '__TLON_NOT_FOUND__' >&2; exit 1; }}; "
-                f"find {quoted_path} -iname {quoted_pattern} -not -path '*/.git/*' "
-                f"| head -n {limit + 1}"
-            )
+            try:
+                regex = re.compile(pattern)
+            except re.error as e:
+                return ToolResult(success=False, data={}, error=f"Search failed: {e}")
 
-        result = await self._docker_runtime.run(command)
-        stderr = result.stderr.strip()
-        if result.exit_code != 0 or stderr:
-            if "__TLON_NOT_FOUND__" in stderr:
-                error = f"Path not found: {path}"
-            else:
-                logger.error("search_failed", pattern=pattern, path=path, stderr=stderr)
-                error = f"Search failed: {stderr}"
-            return ToolResult(success=False, data={}, error=error)
+        limit = min(max(1, max_results), self._MAX_RESULTS)
+        try:
+            tar_bytes = await self._docker_runtime.fetch_archive(container_path)
+        except FileNotFoundError:
+            return ToolResult(success=False, data={}, error=f"Path not found: {path}")
+        except RuntimeError as e:
+            logger.error("search_failed", pattern=pattern, path=path, error=str(e))
+            return ToolResult(success=False, data={}, error=f"Search failed: {e}")
 
-        lines = [line for line in result.stdout.splitlines() if line]
-        truncated = len(lines) > limit
-        lines = lines[:limit]
+        archive = DirectoryArchive(tar_bytes, container_path)
+        if mode == "filename" and not archive.root_is_dir:
+            # find required a directory root (test -d) — keep the contract
+            return ToolResult(success=False, data={}, error=f"Path not found: {path}")
 
         matches: list[Any]
-        if mode == "content":
-            matches = []
-            for raw in lines:
-                if "\0" not in raw:
-                    continue
-                file, _, rest = raw.partition("\0")
-                line_no, _, text = rest.partition(":")
-                if len(text) > self._MAX_LINE_CHARS:
-                    text = text[: self._MAX_LINE_CHARS] + "…"
-                matches.append(
-                    {
-                        "file": file,
-                        "line": int(line_no) if line_no.isdigit() else 0,
-                        "text": text,
-                    }
-                )
+        truncated: bool
+        if mode == "filename":
+            matches, truncated = self._match_filenames(archive, pattern, limit)
         else:
-            matches = lines
+            assert regex is not None
+            matches, truncated = self._match_contents(archive, regex, limit)
 
         data: dict[str, Any] = {
             "mode": mode,
@@ -205,3 +189,43 @@ class SearchFilesTool(Tool):
                 f"🔍 {len(matches)} matches" + (f" (truncated at {limit})" if truncated else "")
             ),
         )
+
+    def _match_filenames(
+        self, archive: DirectoryArchive, pattern: str, limit: int
+    ) -> tuple[list[str], bool]:
+        """Case-insensitive glob over basenames (the old find -iname),
+        .git subtrees excluded."""
+        glob = pattern.lower()
+        matches: list[str] = []
+        for entry in archive.entries:
+            if _under_dot_git(entry.rel):
+                continue
+            if fnmatch.fnmatch(entry.name.lower(), glob):
+                matches.append(entry.path)
+                if len(matches) > limit:
+                    return matches[:limit], True
+        return matches, False
+
+    def _match_contents(
+        self, archive: DirectoryArchive, regex: re.Pattern[str], limit: int
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Regex search with line numbers (the old grep -rnIsE):
+        .git subtrees and binary (NUL-containing) files excluded."""
+        matches: list[dict[str, Any]] = []
+        for entry in archive.entries:
+            if entry.is_dir or entry.is_symlink or _under_dot_git(entry.rel):
+                continue
+            data = archive.read(entry)
+            if b"\x00" in data:
+                continue
+            for lineno, line in enumerate(
+                data.decode("utf-8", errors="replace").splitlines(), start=1
+            ):
+                if not regex.search(line):
+                    continue
+                if len(line) > self._MAX_LINE_CHARS:
+                    line = line[: self._MAX_LINE_CHARS] + "…"
+                matches.append({"file": entry.path, "line": lineno, "text": line})
+                if len(matches) > limit:
+                    return matches[:limit], True
+        return matches, False
