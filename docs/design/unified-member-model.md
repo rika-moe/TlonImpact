@@ -89,7 +89,7 @@
 | spec 语义权威：`MemberSpec` 加载/校验、`source_hash` 审计 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) |
 | 统一解释器：规则执行、认知引擎按 `:loop` 挂载、排空语义 | [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) |
 | 统一装配 + 懒加载：`assemble_cognitive` | [agents/assembly.py](../../src/tlon/agents/assembly.py) |
-| 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决、谱系（`:parent`/`:generation`/`:proposal-note` 落盘，`get_prototype_lineage` 派生查询，） | [agents/prototypes.py](../../src/tlon/agents/prototypes.py) |
+| 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决、谱系（`:parent`/`:generation`/`:proposal-note` 落盘，`get_prototype_lineage` 派生查询，） | [agents/prototypes/](../../src/tlon/agents/prototypes) |
 | 生命周期机制：`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 幂等执行、排空=睡眠 | [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) |
 | 退休蒸馏：`AGENT_STOPPED` 触发离线记忆蒸馏 → `memory/lessons.md`（issue ；归属记账在退休成员头上，） | [agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` |
 | 退休交接：`AGENT_STOPPED` 触发离线移交盘点 → 告别信（退休成员地址发出）+ `AGENT_RETIRED` 事实（issue ） | [agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` |

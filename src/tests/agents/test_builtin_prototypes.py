@@ -16,11 +16,8 @@ import pytest
 
 import tlon
 from tlon.agents.member_spec import MemberLoop, MemberSpec, validate_member_spec
-from tlon.agents.prototypes import (
-    get_prototype_info,
-    instantiate,
-    seed_prototypes,
-)
+from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
+from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 from tlosure.edn import dumps, loads
 

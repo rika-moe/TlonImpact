@@ -10,7 +10,7 @@
 
 ## 1. 原型长什么样
 
-原型是一个**纯数据目录**，判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `_is_prototype_dir`）。
+原型是一个**纯数据目录**，判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes/info.py](../../src/tlon/agents/prototypes/info.py) 的 `_is_prototype_dir`）。
 
 ```
 ~/.tlon/prototypes/{prototype_name}/
@@ -138,7 +138,7 @@ print('OK', any(rule.loop is not None for rule in spec.rules))
 "
 ```
 
-> 路径：`tlosure.edn`（`loads`）与 `tlon.agents.member_spec`（`MemberSpec` / `validate_member_spec`）是 [agents/prototypes.py](../../src/tlon/agents/prototypes.py) 里实际使用的导入。
+> 路径：`tlosure.edn`（`loads`）与 `tlon.agents.member_spec`（`MemberSpec` / `validate_member_spec`）是 [agents/prototypes/](../../src/tlon/agents/prototypes) 包里实际使用的导入。
 
 ## 7. 检查清单
 

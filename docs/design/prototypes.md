@@ -6,7 +6,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ## 原型是什么
 
-原型是一个**纯数据目录**，不含任何代码。判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py) 的 `_is_prototype_dir`）。目录内容：
+原型是一个**纯数据目录**，不含任何代码。判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes/info.py](../../src/tlon/agents/prototypes/info.py) 的 `_is_prototype_dir`）。目录内容：
 
 - `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
@@ -123,7 +123,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 - **trusted 区**（`~/.tlon/prototypes/`）——包内播种的与人类手写的原型，`:trusted true`，可直接 spawn。手写即可信：能写文件进这个目录的人本来就有系统的完全控制权。
 - **staging 区**（`~/.tlon/prototypes-staging/`）——LLM 经 `writePrototype`（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool`）创作的原型落在这里，元数据强制 `:trusted false`、`:author` 记录作者 agent id（审计）。`spawnAgent` 拒绝 spawn 不可信原型。
 
-`write_staging_prototype`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`writePrototype` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。`lessons` 参数（可选，）把随包教训落盘为 `LESSONS.md`——退休成员蒸馏出的经验由此搭上下一代的出生包。
+`write_staging_prototype`（[agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py)）的铁律是**校验先于落盘**：模板声明校验 → EDN 解析 → `validate_member_spec` schema 校验（用无 host 谓词的默认注册表——host 谓词是 Adam 的词汇表，不许过闸），任何一步失败则什么都不写，错误原文返回给 LLM 让它改了重试。名称做字符集检查（字母数字加 `-`/`_`），且在两个区里都须唯一；`reject_prototype` 删除时还有路径穿越防护（resolve 后必须严格落在 staging 根下）。`writePrototype` 可带可选的 `parent`/`proposal_note` 参数记录谱系（见下节）：给了 `parent` 时校验父原型存在（trusted 或 staging 皆可——staging 提案可以继续派生提案），`:generation` 由服务端推导为父代 + 1，客户端无权指定。`lessons` 参数（可选，）把随包教训落盘为 `LESSONS.md`——退休成员蒸馏出的经验由此搭上下一代的出生包。
 
 晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）与 WebUI 的 PROTOTYPES 视图；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 

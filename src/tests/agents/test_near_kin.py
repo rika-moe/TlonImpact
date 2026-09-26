@@ -3,7 +3,7 @@ duplicates of an existing prototype (trusted library or staging area) are
 turned away before they reach disk — ADR 0014's non-convergence selection
 pressure.
 
-``find_near_kin`` (agents/prototypes.py) is pure stdlib text similarity
+``find_near_kin`` (agents/prototypes/near_kin.py) is pure stdlib text similarity
 (``difflib.SequenceMatcher.ratio`` on normalized text: comment lines and
 whitespace stripped); the two proposal tools (``writePrototype`` /
 ``proposeBehavior``) receive it as an injected callable, fail-open like
@@ -12,11 +12,9 @@ the  solvency gate. The human direct-write channel is never gated.
 
 from pathlib import Path
 
-from tlon.agents.prototypes import (
-    find_near_kin,
-    write_staging_prototype,
-    write_trusted_prototype,
-)
+from tlon.agents.prototypes.management import write_trusted_prototype
+from tlon.agents.prototypes.near_kin import find_near_kin
+from tlon.agents.prototypes.staging import write_staging_prototype
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager

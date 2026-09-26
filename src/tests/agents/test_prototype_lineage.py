@@ -5,13 +5,15 @@ broken links (deleted/renamed parent) or cycles. Also covers the
 
 import pytest
 
-from tlon.agents.prototypes import (
-    approve_prototype,
+from tlon.agents.prototypes.lineage import get_prototype_lineage
+from tlon.agents.prototypes.management import (
     delete_prototype,
-    get_prototype_lineage,
     update_prototype,
-    write_staging_prototype,
     write_trusted_prototype,
+)
+from tlon.agents.prototypes.staging import (
+    approve_prototype,
+    write_staging_prototype,
 )
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.write_prototype import WritePrototypeTool

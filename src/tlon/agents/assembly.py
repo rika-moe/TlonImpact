@@ -17,12 +17,14 @@ from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
-from tlon.agents.prototypes import (
-    append_staging_review,
-    find_near_kin,
+from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
-    get_prototype_lineage,
     list_prototypes,
+)
+from tlon.agents.prototypes.lineage import get_prototype_lineage
+from tlon.agents.prototypes.near_kin import find_near_kin
+from tlon.agents.prototypes.staging import (
+    append_staging_review,
     list_staging_prototypes,
     write_staging_prototype,
 )

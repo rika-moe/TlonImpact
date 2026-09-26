@@ -55,7 +55,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from tlon.agents.prototypes import get_prototype_info, instantiate
+from tlon.agents.prototypes.catalog import get_prototype_info
+from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.config import AgentConfig, yaml_save
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger

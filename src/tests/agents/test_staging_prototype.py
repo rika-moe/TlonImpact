@@ -9,10 +9,10 @@ proposals an agent's digest can surface as pending human decisions.
 
 import pytest
 
-from tlon.agents.prototypes import (
+from tlon.agents.prototypes.management import write_trusted_prototype
+from tlon.agents.prototypes.staging import (
     list_staging_prototypes,
     write_staging_prototype,
-    write_trusted_prototype,
 )
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.write_prototype import WritePrototypeTool
