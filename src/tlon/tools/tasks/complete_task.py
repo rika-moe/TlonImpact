@@ -63,43 +63,37 @@ class CompleteTaskTool(Tool):
         task_id: str = kwargs["task_id"]
         result: str = kwargs.get("result", "")
 
-        try:
-            task = self.task_manager.get_task(task_id)
+        task = self.task_manager.get_task(task_id)
 
-            if not task:
-                return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
+        if not task:
+            return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
 
-            if task.status.value == "done":
-                return ToolResult(
-                    success=False, data={}, error=f"Task {task_id} is already completed"
-                )
+        if task.status.value == "done":
+            return ToolResult(success=False, data={}, error=f"Task {task_id} is already completed")
 
-            if task.status.value == "todo":
-                return ToolResult(
-                    success=False,
-                    data={},
-                    error="Cannot complete task that hasn't been started. Use startTask first.",
-                )
+        if task.status.value == "todo":
+            return ToolResult(
+                success=False,
+                data={},
+                error="Cannot complete task that hasn't been started. Use startTask first.",
+            )
 
-            completed_task = self.task_manager.complete_task(task_id, result)
+        completed_task = self.task_manager.complete_task(task_id, result)
 
-            if completed_task:
-                duration = completed_task.get_duration_minutes()
+        if completed_task:
+            duration = completed_task.get_duration_minutes()
 
-                return ToolResult(
-                    success=True,
-                    data={
-                        "task_id": completed_task.id,
-                        "title": completed_task.title,
-                        "status": completed_task.status.value,
-                        "duration_minutes": duration,
-                        "pause_count": completed_task.pause_count,
-                    },
-                    message=f"✅ 已完成任务: {completed_task.title}"
-                    + (f" (用时{duration}分钟)" if duration else ""),
-                )
+            return ToolResult(
+                success=True,
+                data={
+                    "task_id": completed_task.id,
+                    "title": completed_task.title,
+                    "status": completed_task.status.value,
+                    "duration_minutes": duration,
+                    "pause_count": completed_task.pause_count,
+                },
+                message=f"✅ 已完成任务: {completed_task.title}"
+                + (f" (用时{duration}分钟)" if duration else ""),
+            )
 
-            return ToolResult(success=False, data={}, error="Failed to complete task")
-
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to complete task: {str(e)}")
+        return ToolResult(success=False, data={}, error="Failed to complete task")

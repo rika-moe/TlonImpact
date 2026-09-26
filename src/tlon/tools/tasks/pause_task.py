@@ -63,41 +63,35 @@ class PauseTaskTool(Tool):
         task_id: str = kwargs["task_id"]
         reason: str = kwargs.get("reason", "")
 
-        try:
-            task = self.task_manager.get_task(task_id)
+        task = self.task_manager.get_task(task_id)
 
-            if not task:
-                return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
+        if not task:
+            return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
 
-            if task.status.value != "doing":
-                return ToolResult(
-                    success=False,
-                    data={},
-                    error=f"Cannot pause task with status '{task.status.value}'. Only 'doing' tasks can be paused.",
-                )
+        if task.status.value != "doing":
+            return ToolResult(
+                success=False,
+                data={},
+                error=f"Cannot pause task with status '{task.status.value}'. Only 'doing' tasks can be paused.",
+            )
 
-            paused_task = self.task_manager.pause_task(task_id)
+        paused_task = self.task_manager.pause_task(task_id)
 
-            if paused_task:
-                # Update description with progress note if provided
-                if reason:
-                    paused_task.description = (
-                        f"{paused_task.description}\n[Paused] {reason}".strip()
-                    )
-                    self.task_manager.save()
+        if paused_task:
+            # Update description with progress note if provided
+            if reason:
+                paused_task.description = f"{paused_task.description}\n[Paused] {reason}".strip()
+                self.task_manager.save()
 
-                return ToolResult(
-                    success=True,
-                    data={
-                        "task_id": paused_task.id,
-                        "title": paused_task.title,
-                        "status": paused_task.status.value,
-                        "pause_count": paused_task.pause_count,
-                    },
-                    message=f"⏸️ 已暂停任务: {paused_task.title}\n当前进度: {reason or '未记录'}",
-                )
+            return ToolResult(
+                success=True,
+                data={
+                    "task_id": paused_task.id,
+                    "title": paused_task.title,
+                    "status": paused_task.status.value,
+                    "pause_count": paused_task.pause_count,
+                },
+                message=f"⏸️ 已暂停任务: {paused_task.title}\n当前进度: {reason or '未记录'}",
+            )
 
-            return ToolResult(success=False, data={}, error="Failed to pause task")
-
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to pause task: {str(e)}")
+        return ToolResult(success=False, data={}, error="Failed to pause task")

@@ -62,18 +62,14 @@ class CreateTaskTool(Tool):
         title: str = kwargs["title"]
         description: str = kwargs.get("description", "")
 
-        try:
-            task = self.task_manager.create_task(title, description)
+        task = self.task_manager.create_task(title, description)
 
-            return ToolResult(
-                success=True,
-                data={
-                    "task_id": task.id,
-                    "title": task.title,
-                    "status": task.status.value,
-                },
-                message=f"✅ 任务已创建: {task.title} ({task.id})",
-            )
-
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to create task: {str(e)}")
+        return ToolResult(
+            success=True,
+            data={
+                "task_id": task.id,
+                "title": task.title,
+                "status": task.status.value,
+            },
+            message=f"✅ 任务已创建: {task.title} ({task.id})",
+        )

@@ -52,28 +52,24 @@ class StartTaskTool(Tool):
         """
         task_id: str = kwargs["task_id"]
 
-        try:
-            started_task, paused_task = self.task_manager.start_task(task_id)
+        started_task, paused_task = self.task_manager.start_task(task_id)
 
-            if not started_task:
-                return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
+        if not started_task:
+            return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
 
-            data: dict[str, Any] = {
-                "task_id": started_task.id,
-                "title": started_task.title,
-                "status": started_task.status.value,
+        data: dict[str, Any] = {
+            "task_id": started_task.id,
+            "title": started_task.title,
+            "status": started_task.status.value,
+        }
+
+        message = f"🔄 已开始任务: {started_task.title}"
+
+        if paused_task:
+            data["auto_paused"] = {
+                "task_id": paused_task.id,
+                "title": paused_task.title,
             }
+            message = f"⏸️ 自动暂停: {paused_task.title}\n🔄 开始: {started_task.title}"
 
-            message = f"🔄 已开始任务: {started_task.title}"
-
-            if paused_task:
-                data["auto_paused"] = {
-                    "task_id": paused_task.id,
-                    "title": paused_task.title,
-                }
-                message = f"⏸️ 自动暂停: {paused_task.title}\n🔄 开始: {started_task.title}"
-
-            return ToolResult(success=True, data=data, message=message)
-
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to start task: {str(e)}")
+        return ToolResult(success=True, data=data, message=message)

@@ -2,13 +2,10 @@
 
 from typing import TYPE_CHECKING, Any
 
-from tlon.base.logger import get_logger
 from tlon.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
     from tlon.memory.manager import MemoryManager
-
-logger = get_logger(__name__)
 
 
 class RememberFactTool(Tool):
@@ -64,22 +61,13 @@ class RememberFactTool(Tool):
         fact: str = kwargs["fact"]
         importance: float = kwargs.get("importance", 0.5)
 
-        try:
-            claim_id = await self.memory.remember_fact(
-                fact=fact,
-                importance=importance,
-            )
+        claim_id = await self.memory.remember_fact(
+            fact=fact,
+            importance=importance,
+        )
 
-            return ToolResult(
-                success=True,
-                data={"claim_id": claim_id},
-                message=f"✅ 已记录记忆: {fact[:50]}...",
-            )
-        except Exception as e:
-            logger.error("fact_remember_failed", content=fact, error=str(e), exc_info=True)
-            return ToolResult(
-                success=False,
-                data={},
-                error=str(e),
-                message=f"❌ 记录记忆失败: {e}",
-            )
+        return ToolResult(
+            success=True,
+            data={"claim_id": claim_id},
+            message=f"✅ 已记录记忆: {fact[:50]}...",
+        )

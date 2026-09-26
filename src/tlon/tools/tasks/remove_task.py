@@ -53,32 +53,28 @@ class RemoveTaskTool(Tool):
         """
         task_id: str = kwargs["task_id"]
 
-        try:
-            task = self.task_manager.get_task(task_id)
+        task = self.task_manager.get_task(task_id)
 
-            if not task:
-                return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
+        if not task:
+            return ToolResult(success=False, data={}, error=f"Task not found: {task_id}")
 
-            if task.status.value != "done":
-                return ToolResult(
-                    success=False,
-                    data={},
-                    error=f"Cannot remove task with status '{task.status.value}'. Only completed tasks can be removed. Use completeTask first.",
-                )
+        if task.status.value != "done":
+            return ToolResult(
+                success=False,
+                data={},
+                error=f"Cannot remove task with status '{task.status.value}'. Only completed tasks can be removed. Use completeTask first.",
+            )
 
-            removed_task = self.task_manager.remove_task(task_id)
+        removed_task = self.task_manager.remove_task(task_id)
 
-            if removed_task:
-                return ToolResult(
-                    success=True,
-                    data={
-                        "task_id": removed_task.id,
-                        "title": removed_task.title,
-                    },
-                    message=f"🗑️ 已移除任务: {removed_task.title}",
-                )
+        if removed_task:
+            return ToolResult(
+                success=True,
+                data={
+                    "task_id": removed_task.id,
+                    "title": removed_task.title,
+                },
+                message=f"🗑️ 已移除任务: {removed_task.title}",
+            )
 
-            return ToolResult(success=False, data={}, error="Failed to remove task")
-
-        except Exception as e:
-            return ToolResult(success=False, data={}, error=f"Failed to remove task: {str(e)}")
+        return ToolResult(success=False, data={}, error="Failed to remove task")
