@@ -62,7 +62,7 @@ run(program, inputs, budget) -> outcome
 |---|---|---|---|---|
 | L0 | tlosure 求值器 | 纯计算、数据变换 | 已有（[tlosure/eval.py](../../src/tlosure/eval.py)） | ✅ |
 | L1 | 受限运行时 | 运行 agent 编写的程序，无 syscall 自由 | WASM/WASI（capability 安全模型：授权即数据，guest 默认什么都摸不到） | 调研中 |
-| L2 | 完整 Linux userland | 真正需要真实机器的声明者（bash/gcc/python） | Docker（现 `DockerRuntime`）；gVisor/microVM 为升级位 | ✅（待加固） |
+| L2 | 完整 Linux userland | 真正需要真实机器的声明者（bash/gcc/python） | Docker（现 `DockerRuntime`）；gVisor/microVM 为升级位 | ✅（已加固，issue #22） |
 
 L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能直接跑（coreutils 有 WASI 移植但工作流摩擦真实存在）。L1 是「运行程序」的层，不是 bash 的替代品。gVisor/Firecracker 是「需要更强隔离时」的升级位，不是现在的需求——别为了哲学换轮子。
 
@@ -77,11 +77,11 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 **欠账**（按严重度，前两项已立案）：
 
 1. `network_mode: "host"` 默认——容器共享宿主机网络命名空间，agent 可直连服务端 REST（`/messages` 的 username 取自请求体）、内网与外网。「邮件是唯一通道」目前只靠工具层自觉，结构上是筛子。**违反宪法零**。
-2. path_guard 白名单是字符串级，容器内 symlink 可逃逸（`/workspace/x -> /etc/passwd` 后 readFile 跟随）。
+2. path_guard 白名单是字符串级，容器内 symlink 可逃逸（`/workspace/x -> /etc/passwd` 后 readFile 跟随）。写侧已被 ro rootfs 内核级封死（issue #22，见「方向」P1），读侧残留。
 3. `read_file` 用 `cat` 经 stdout 回传，`decode(errors="replace")` 损坏二进制（issue #1）——写入用 put_archive、读取却不用 get_archive，不对称。
 4. docker client 从不关闭，sleep→wake 重复装配泄漏连接；socket 探测失败完全静默（issue #4）。
 5. 执行依赖镜像内 `bash` 与 `timeout`，与文件 I/O「不假设镜像有软件」的哲学自相矛盾；错误语义靠 stderr 字符串匹配（换 locale 即碎）。
-6. 容器配置漂移无 reconcile：容器永存但 image/limits/挂载会演进，旧容器带旧配置（architecture.md 承认需手动重建）。
+6. ~~容器配置漂移无 reconcile~~ → 已解决（issue #22）：`ensure_running` 比对期望配置与实际配置，不符自动重建。
 7. 只有数量闸（`max_activations=8`）没有资源闸——8×512m 是暗账（违反宪法四）。
 
 ## 方向
@@ -94,7 +94,7 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 
 **P1 接口化与加固（全部落在现有实现上，不扩能力）**
 - ✅ ExecutionDevice 抽象接口，`DockerRuntime` 改造为首个实现（本 PR，issue #21）：接口落 [sandbox/device.py](../../src/tlon/sandbox/device.py)（`ExecutionResult` 迁入、`DockerRuntime.execute` 改名 `run`）；exec 审计经接口边界进 trace/log——装配层用 `AuditedExecutionDevice` 包装，每次 `run` 发 `device.exec` span + `device_exec` structlog 日志（命令截断前 200 字符、耗时、退出码、timed_out；资源消耗计量随完整形态 budget/outcome 一起推迟）（宪法二）。**刻意的最小化**：完整形态 `run(program, inputs, budget)` 推迟到第二个实现出现时（见「抽象接口」加注）
-- 容器加固：rootfs 只读 + `/workspace` rw + `/tlon-home` ro + tmpfs `/tmp`——把「可写面 = 工作区」变成内核事实，压缩 symlink 逃逸面；配置漂移 reconcile（sleep/wake 比对期望配置，不符重建——workspace 在 bind-mount 上状态不丢，与 ADR 0006 不冲突）
+- ✅ 容器加固（本 PR，issue #22）：rootfs 只读（`read_only=True`）+ `/workspace` rw + `/tlon-home` ro + tmpfs `/tmp`（64m）——把「可写面 = 工作区」变成内核事实；写侧 symlink 逃逸封死（经真 daemon 冒烟验证：put_archive 的 daemon 端 tar 解包**替换** symlink 为普通文件而不跟随，`/etc/passwd` 未被触及——机制不是「跟随后被 ro 拒」，而是「根本不跟随」）。配置漂移 reconcile 落地为 `ensure_running` 里的 `_container_mismatches` 比对（image / binds / mem_limit / cpu quota / network_mode / read_only+tmpfs 七维），不符记 `container_config_drift` 日志后 remove + 重建——workspace 在 bind-mount 上状态不丢，与 ADR 0006 不冲突。**行为变化**：加固前创建的存量容器在下次 wake 时被自动重建一次，这正是加固触达存量的机制（真 daemon 冒烟：改 mem_limit 触发重建、workspace 内容保留）
 - 网络宪法第一步：现状调查（agent 实际用网络干什么）→ `network_mode` 默认 `none`，外联改为成员 config 的显式声明（egress 代理是远期，等第一个真实外联需求，不做预防性抽象）
 - 社会级资源账本：全局容器内存/CPU 占用进 metrics（宪法四）
 

@@ -12,11 +12,14 @@ import asyncio
 import io
 import shlex
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import docker
 from docker.errors import APIError, ImageNotFound, NotFound
 from docker.models.containers import Container
+from docker.utils import parse_bytes
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.logger import get_logger
@@ -33,6 +36,72 @@ logger = get_logger(__name__)
 #: structurally impossible.
 AGENT_HOME_CONTAINER_PATH = "/tlon-home"
 
+#: Scratch space inside the container: with a read-only rootfs most programs
+#: still need a writable /tmp. tmpfs is RAM-backed and dies with the container.
+TMPFS_MOUNTS: dict[str, str] = {"/tmp": "rw,nosuid,nodev,size=64m"}
+
+#: cpu_period (microseconds) paired with cpu_quota at container creation.
+CPU_PERIOD = 100000
+
+
+@dataclass(frozen=True)
+class _ContainerSpec:
+    """Expected container configuration, mirroring ``_create_container``'s parameters.
+
+    ``binds`` are in docker inspect form (``"host:container:mode"``).
+    """
+
+    image: str
+    binds: frozenset[str]
+    memory_bytes: int
+    cpu_period: int
+    cpu_quota: int
+    network_mode: str
+    read_only: bool
+    tmpfs: dict[str, str]
+
+
+def _container_mismatches(attrs: dict[str, Any], expected: _ContainerSpec) -> list[str]:
+    """Return the names of the dimensions where actual config differs from expected.
+
+    Pure function over the docker inspect payload (``container.attrs``) so it
+    is unit-testable without a daemon. Field sources:
+
+    - image: ``Config.Image`` — the reference passed at creation time, immune
+      to later tag re-resolution (unlike ``container.image.tags``)
+    - binds / mem_limit / cpu / network_mode / read_only / tmpfs:
+      ``HostConfig.Binds`` / ``.Memory`` / ``.CpuPeriod``+``.CpuQuota`` /
+      ``.NetworkMode`` / ``.ReadonlyRootfs`` / ``.Tmpfs``
+
+    Missing keys (containers created before a dimension existed) count as
+    mismatch via their zero value.
+    """
+    config = attrs.get("Config") or {}
+    host_config = attrs.get("HostConfig") or {}
+    mismatches: list[str] = []
+    if config.get("Image") != expected.image:
+        mismatches.append("image")
+    if set(host_config.get("Binds") or []) != expected.binds:
+        mismatches.append("binds")
+    if (host_config.get("Memory") or 0) != expected.memory_bytes:
+        mismatches.append("mem_limit")
+    if (host_config.get("CpuPeriod") or 0) != expected.cpu_period or (
+        host_config.get("CpuQuota") or 0
+    ) != expected.cpu_quota:
+        mismatches.append("cpu")
+    if host_config.get("NetworkMode") != expected.network_mode:
+        mismatches.append("network_mode")
+    if bool(host_config.get("ReadonlyRootfs")) != expected.read_only:
+        mismatches.append("read_only")
+    if (host_config.get("Tmpfs") or {}) != expected.tmpfs:
+        mismatches.append("tmpfs")
+    return mismatches
+
+
+def _container_matches(attrs: dict[str, Any], expected: _ContainerSpec) -> bool:
+    """True if the container's actual config matches the expected spec on every dimension."""
+    return not _container_mismatches(attrs, expected)
+
 
 class DockerRuntime:
     """Docker runtime for agent command execution.
@@ -43,10 +112,16 @@ class DockerRuntime:
     Each agent gets its own isolated container with full network access.
     Containers are created on-demand and persist across sessions.
 
-    Lifecycle (unified member model, ADR 0006): containers are never
-    force-removed — every member's container is kept across sleeps and
-    server restarts (waking is zero-cost; the next boot lazily reattaches
-    by name). Members are never discarded; they only sleep.
+    Lifecycle (unified member model, ADR 0006): containers are kept across
+    sleeps and server restarts (waking is zero-cost; the next boot lazily
+    reattaches by name). Members are never discarded; they only sleep.
+    The one exception is configuration drift: ``ensure_running`` compares
+    the existing container's actual config against the expected spec
+    (image, mounts, limits, network, rootfs hardening) and rebuilds it on
+    mismatch — workspace state lives on the bind mount, so nothing is
+    lost. Containers created before a hardening/config change are rebuilt
+    exactly once on their next wake; that one-time rebuild is how new
+    hardening reaches existing containers.
 
     File I/O is performed via the docker SDK's get_archive (reads) and
     put_archive (writes) with in-memory tar archives, so no software needs
@@ -110,9 +185,7 @@ class DockerRuntime:
                         timeout=60,
                     )
                 except Exception as e:
-                    logger.debug(
-                        "docker_client_socket_failed", socket=str(sock_path), error=str(e)
-                    )
+                    logger.debug("docker_client_socket_failed", socket=str(sock_path), error=str(e))
                     continue
 
         # Last resort: let from_env raise the original error
@@ -126,9 +199,9 @@ class DockerRuntime:
         (``agents/assembly.py``) creates one ``DockerRuntime`` per member
         wake and stashes it on ``CognitiveCapabilities.docker_runtime``;
         ``MemberRuntime.shutdown`` closes it. The container is unaffected:
-        per ADR 0006 a member's container is never removed, so the
-        sleeping member re-attaches by name on the next wake. After
-        close() the instance is semantically retired — tools holding a
+        per ADR 0006 a member's container survives sleep (removed only on
+        config drift — see ``ensure_running``), so the sleeping member
+        re-attaches by name on the next wake. After close() the instance is semantically retired — tools holding a
         reference must not be called again.
         """
         if self._closed:
@@ -140,28 +213,101 @@ class DockerRuntime:
         """Ensure the container is running.
 
         Creates the container if it doesn't exist, starts it if stopped.
+        If an existing container's actual config has drifted from the
+        expected spec (``_expected_spec`` / ``_container_mismatches``), it
+        is removed and recreated — workspace state survives on the bind
+        mount, so the rebuild is transparent to the member.
         """
         try:
             # Try to get existing container (blocking docker SDK call → thread)
             container = await asyncio.to_thread(self.client.containers.get, self.container_name)
-            self.container = container
-
-            if container.status != "running":
-                logger.info("container_start", container_name=self.container_name)
-                await asyncio.to_thread(container.start)
-                # Wait a moment for container to be ready
-                await asyncio.sleep(1)
-
         except NotFound:
             # Container doesn't exist, create it
             logger.info("container_creation", container_name=self.container_name)
             await self._create_container()
+            return
+
+        mismatches = _container_mismatches(container.attrs, self._expected_spec())
+        if mismatches:
+            logger.info(
+                "container_config_drift",
+                container_name=self.container_name,
+                dimensions=mismatches,
+            )
+            await asyncio.to_thread(container.remove, force=True)
+            self.container = None
+            await self._create_container()
+            return
+
+        self.container = container
+        if container.status != "running":
+            logger.info("container_start", container_name=self.container_name)
+            await asyncio.to_thread(container.start)
+            # Wait a moment for container to be ready
+            await asyncio.sleep(1)
+
+    def _expected_spec(self) -> _ContainerSpec:
+        """Build the expected container spec from config + paths.
+
+        Kept in lockstep with ``_create_container``'s parameters — the drift
+        reconcile in ``ensure_running`` compares against this.
+        """
+        binds = frozenset(
+            f"{host}:{mount['bind']}:{mount['mode']}" for host, mount in self._bind_mounts().items()
+        )
+        return _ContainerSpec(
+            image=self.config.image,
+            binds=binds,
+            memory_bytes=int(parse_bytes(self.config.memory_limit)),
+            cpu_period=CPU_PERIOD,
+            cpu_quota=int(self.config.cpu_limit * CPU_PERIOD),
+            network_mode=self.config.network_mode,
+            read_only=True,
+            tmpfs=dict(TMPFS_MOUNTS),
+        )
+
+    def _bind_mounts(self) -> dict[str, dict[str, str]]:
+        """Bind-mount declaration in docker SDK ``volumes`` form (single source
+        of truth for both container creation and drift comparison)."""
+        workspace = self._paths.agent_workspace_dir(self.agent_id)
+        # Own home read-only (issue ): the agent can inspect its behavior
+        # spec, memory and mailbox through the filesystem tools; the ro mount
+        # keeps writes impossible even if a whitelist were misconfigured.
+        agent_home = self._paths.agent_dir(self.agent_id)
+        return {
+            str(workspace): {
+                "bind": self.config.working_dir,
+                "mode": "rw",
+            },
+            str(agent_home): {
+                "bind": AGENT_HOME_CONTAINER_PATH,
+                "mode": "ro",
+            },
+        }
 
     async def _create_container(self) -> None:
         """Create a new container from the configured image.
 
         Image is pulled if not cached locally. No software is installed —
         the image is used as-is.
+
+        The rootfs is mounted read-only (``read_only=True``) with a small
+        tmpfs at ``/tmp`` for scratch (many programs need a writable /tmp);
+        the only persistent writable surface is the ``/workspace`` bind
+        mount — ``/tlon-home`` stays read-only, so programs that need to
+        persist anything must write under ``/workspace``. This makes
+        "writable surface = workspace" a kernel-level fact and closes the
+        write-side symlink escape: an agent can plant a symlink in
+        ``/workspace`` pointing at e.g. ``/etc/passwd`` via bash, but
+        ``put_archive`` does not follow it — daemon-side tar extraction
+        *replaces* the symlink with a regular file, leaving the target
+        untouched (verified by live-daemon smoke: ``/etc/passwd`` md5
+        unchanged, ``/workspace/evil-link`` becomes a regular file).
+        Defense chain: path_guard (string level) → ro rootfs (kernel
+        level). The kernel-level half cannot be unit-tested (the suite
+        has no real Docker daemon); it is verified by smoke test against
+        a live daemon. Read-side symlink resolution is unaffected and by
+        design (the container filesystem is readable; see ``read_file``).
         """
         image = self.config.image
 
@@ -173,23 +319,9 @@ class DockerRuntime:
             await asyncio.to_thread(self.client.images.pull, image)
             logger.info("image_pulled", image=image)
 
-        workspace = self._paths.agent_workspace_dir(self.agent_id)
-        # Own home read-only (issue ): the agent can inspect its behavior
-        # spec, memory and mailbox through the filesystem tools; the ro mount
-        # keeps writes impossible even if a whitelist were misconfigured.
-        agent_home = self._paths.agent_dir(self.agent_id)
-        workspace.mkdir(parents=True, exist_ok=True)
-        agent_home.mkdir(parents=True, exist_ok=True)
-        volumes = {
-            str(workspace): {
-                "bind": self.config.working_dir,
-                "mode": "rw",
-            },
-            str(agent_home): {
-                "bind": AGENT_HOME_CONTAINER_PATH,
-                "mode": "ro",
-            },
-        }
+        volumes = self._bind_mounts()
+        for host_dir in volumes:
+            Path(host_dir).mkdir(parents=True, exist_ok=True)
 
         logger.info("container_run", container_name=self.container_name, image=image)
 
@@ -201,13 +333,15 @@ class DockerRuntime:
             working_dir=self.config.working_dir,
             volumes=volumes,
             mem_limit=self.config.memory_limit,
-            cpu_period=100000,
-            cpu_quota=int(self.config.cpu_limit * 100000),
+            cpu_period=CPU_PERIOD,
+            cpu_quota=int(self.config.cpu_limit * CPU_PERIOD),
             detach=True,
             network_mode=self.config.network_mode,
             auto_remove=False,
             stdin_open=True,
             tty=True,
+            read_only=True,
+            tmpfs=dict(TMPFS_MOUNTS),
         )
 
         logger.info("container_created", container_name=self.container_name)
