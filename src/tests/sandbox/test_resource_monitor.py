@@ -126,6 +126,32 @@ def test_container_usage_missing_memory_stats_defaults_zero() -> None:
     assert usage.memory_limit_bytes == 0
 
 
+def test_exec_unit_name_is_attributed_to_owning_agent() -> None:
+    """Ephemeral exec units (issue #25) roll up under their member —
+    no per-command uuid metric series."""
+    usage = _container_usage("tlon-agent-gu-yanxi-exec-a1b2c3d4", _stats(mem_usage=64))
+    assert usage.agent_id == "gu-yanxi"
+    assert usage.memory_bytes == 64
+
+
+async def test_collect_aggregates_concurrent_exec_units_of_one_agent() -> None:
+    """Several exec units of the same agent sum usage under one key."""
+    client = _client_with(
+        [
+            _container("tlon-agent-a-exec-11111111", _stats(mem_usage=100, mem_limit=1024)),
+            _container("tlon-agent-a-exec-22222222", _stats(mem_usage=50, mem_limit=1024)),
+        ]
+    )
+    monitor = ContainerResourceMonitor()
+    monitor._client = client
+
+    usage = await monitor._collect()
+
+    assert set(usage) == {"a"}
+    assert usage["a"].memory_bytes == 150
+    assert usage["a"].memory_limit_bytes == 1024
+
+
 # ── Collect cycle ──
 
 

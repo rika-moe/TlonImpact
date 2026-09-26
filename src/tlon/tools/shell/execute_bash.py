@@ -16,7 +16,7 @@ _MAX_FINISHED_TASKS = 50
 
 
 class ExecuteBashTool(Tool):
-    """Tool to execute bash commands in the agent's Docker container."""
+    """Tool to execute bash commands in one-shot Docker containers."""
 
     def __init__(self, docker_config: DockerRuntimeConfig, docker_runtime: ExecutionDevice | None):
         """Initialize the tool.
@@ -27,7 +27,13 @@ class ExecuteBashTool(Tool):
         """
         super().__init__(
             name="executeBashCommand",
-            description="在 Docker 容器中执行 bash 命令。用于运行 shell 命令、安装软件包、检查系统状态等。",
+            description=(
+                "在 Docker 容器中执行 bash 命令。用于运行 shell 命令、安装软件包、检查系统状态等。"
+                "每条命令都在全新的一次性容器中执行，命令结束后容器即被删除：环境变量、"
+                "已安装的软件、/tmp 内容、nohup 启动的进程都不会保留；"
+                "跨命令需要保留的文件只能放在 /workspace（持久 bind mount）。"
+                "需要后台运行请用 background=true，不要用 nohup。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {

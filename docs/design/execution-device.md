@@ -25,7 +25,9 @@ Tlon 已有的两个执行环境位于光谱的两端：
 
 ### 3. Ephemerality：试验要便宜，失败要无聊
 
-现在的模型是「一个常驻宠物容器，反复往里 exec」——状态跨 session 累积、环境污染、实例珍贵所以不敢动，这是反进化的。正确的模型是把执行当成 tlosure 求值那样的东西：**输入 → 有界执行 → 输出，效果显式声明，其余蒸发**。持久的东西只有 workspace（bind mount 出来的那部分）。容器是 cattle 不是 pet——ADR 0006 说成员不死，但成员的「鞋」可以每穿一次就扔。
+正确的模型是把执行当成 tlosure 求值那样的东西：**输入 → 有界执行 → 输出，效果显式声明，其余蒸发**。持久的东西只有 workspace（bind mount 出来的那部分）。容器是 cattle 不是 pet——ADR 0006 说成员不死，但成员的「鞋」可以每穿一次就扔。
+
+**已落地**（issue #25，混合方案 D'）：`run()` 每条命令创建一个一次性执行单元（同镜像/挂载/ro rootfs/tmpfs/限额/网络，跑完读输出即删），常驻容器降级为「无菌文件柜」——只服务文件 I/O，从不执行任何命令。详见「方向」P2。
 
 ### 4. 预算即数据，像 fuel 一样
 
@@ -62,7 +64,7 @@ run(program, inputs, budget) -> outcome
 |---|---|---|---|---|
 | L0 | tlosure 求值器 | 纯计算、数据变换 | 已有（[tlosure/eval.py](../../src/tlosure/eval.py)） | ✅ |
 | L1 | 受限运行时 | 运行 agent 编写的程序，无 syscall 自由 | WASM/WASI（capability 安全模型：授权即数据，guest 默认什么都摸不到） | 调研中 |
-| L2 | 完整 Linux userland | 真正需要真实机器的声明者（bash/gcc/python） | Docker（现 `DockerRuntime`）；gVisor/microVM 为升级位 | ✅（已加固，issue #22） |
+| L2 | 完整 Linux userland | 真正需要真实机器的声明者（bash/gcc/python） | Docker（现 `DockerRuntime`）；gVisor/microVM 为升级位 | ✅（加固 #22 + 一次性执行单元 #25） |
 
 L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能直接跑（coreutils 有 WASI 移植但工作流摩擦真实存在）。L1 是「运行程序」的层，不是 bash 的替代品。gVisor/Firecracker 是「需要更强隔离时」的升级位，不是现在的需求——别为了哲学换轮子。
 
@@ -99,7 +101,7 @@ L1 要诚实定位：WASI 里没有「shell」，agent 写的 bash 命令不能�
 - ✅ 社会级资源账本（本 PR，issue #24）：全局容器内存/CPU 实际占用进 metrics（宪法四）。`sandbox/resource_monitor.py` 的 `ContainerResourceMonitor` 每 30 秒枚举 `tlon-agent-*` 容器收集 `container.stats`（内存 usage/limit + docker stats 标准公式的 cpu_percent），经 `stats_snapshot()` 纯内存端口喂给 `MetricsService` 的 observable gauge（`tlon.container.memory_bytes`/`tlon.container.cpu_percent` 按 agent_id，`tlon.society.container_memory_bytes`/`tlon.society.containers` 社会级总量）——`GET /metrics` 的同步 snapshot 路径永不阻塞在 docker 调用上。fail-soft：daemon 不可达只记 warning、账本为空。docker client 探测链提取为 `sandbox/docker_client.py` 共用。**边界**：社会级内存预算 `TLON_CONTAINER_MEMORY_BUDGET`（如 "4g"）是 warning-only——超预算记 `container_memory_budget_exceeded` 日志，不做激活拒绝等强制（强制策略是后续决策）
 
 **P2 阶梯成形（随真实需求驱动）**
-- ephemeral 执行单元：per-session 一次性容器或预热池，告别宠物容器（宪法三）
+- ✅ ephemeral 执行单元（本 PR，issue #25，混合方案 D'）：**无菌文件柜 + 一次性执行单元**。关键洞察：get_archive/put_archive 对 created-but-never-started 的容器同样有效（真 daemon 验证），所以常驻容器可以**从不启动**——降级为只服务文件 I/O 的「文件柜」，不执行就不会被污染（#22 的漂移 reconcile 继续守护它）。`run()` 不再 exec 进常驻容器，改为每条命令创建一次性容器（命名 `tlon-agent-{agent_id}-exec-{uuid8}`）：创建参数与文件柜同源于 `_container_kwargs`（同镜像/挂载/ro rootfs/tmpfs/限额/网络），`start → wait → logs 分路取 stdout/stderr → finally remove(force=True)`；不用 auto_remove（与 wait/logs 有竞态）。双层超时保持：容器内 `timeout` + 外层 `asyncio.wait_for`（+5s 兜底，触发时 finally 强杀容器）；超时文案契约（`Command timed out after {n} seconds`，AuditedExecutionDevice 依赖）不变。已知边界：busybox `timeout`（如 alpine 镜像）作为容器 PID 1 时不触发，此类镜像靠外层兜底限时（晚 ≤5s，语义不变）；默认 ubuntu 镜像（coreutils）走 124 路径。**行为变化（目的而非 bug）**：agent 自己 nohup 的进程不再跨命令存活，后台任务走 `background=true`（host 侧 asyncio task 包一次性容器，天然兼容）；唯一持久状态是 /workspace。资源账本（#24）同步适配：exec 单元按 `-exec-` 命名标记归属到所属成员聚合计量，避免每条命令产生一个随机 uuid 指标序列。工具契约（executeBashCommand description）已告知 LLM 新语义
 - 能力声明进成员 spec/config，装配层按声明选择层级与参数（宪法一）
 - L1 受限运行时调研：WASM/WASI capability 模型与 agent 工作流的匹配度
 - workspace git 化：改动即 commit，diff 即评审材料（宪法二）

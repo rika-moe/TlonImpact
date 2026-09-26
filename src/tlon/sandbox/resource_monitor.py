@@ -32,10 +32,14 @@ from docker.utils import parse_bytes
 from tlon.base.component import Component
 from tlon.base.logger import get_logger
 from tlon.sandbox.docker_client import create_docker_client
+from tlon.sandbox.docker_runtime import EXEC_NAME_MARKER
 
 logger = get_logger(__name__)
 
-#: Agent containers are named ``tlon-agent-{agent_id}`` (docker_runtime.py).
+#: Agent containers are named ``tlon-agent-{agent_id}`` (the file cabinet)
+#: and ephemeral exec units ``tlon-agent-{agent_id}-exec-{uuid8}``
+#: (docker_runtime.py, issue #25). Cabinets never start (they serve file
+#: I/O only), so only exec units ever appear in this usage ledger.
 CONTAINER_NAME_PREFIX = "tlon-agent-"
 
 
@@ -74,10 +78,17 @@ def _cpu_percent(stats: dict[str, Any]) -> float:
 
 
 def _container_usage(container_name: str, stats: dict[str, Any]) -> ContainerUsage:
-    """Extract one ContainerUsage from a docker stats payload."""
+    """Extract one ContainerUsage from a docker stats payload.
+
+    Ephemeral exec units (``tlon-agent-{agent_id}-exec-{uuid8}``, issue
+    #25) are attributed to their owning member — without the marker cut,
+    every command would spawn a fresh metric series with a random uuid
+    label.
+    """
     memory_stats: dict[str, Any] = stats.get("memory_stats") or {}
+    agent_id = container_name.removeprefix(CONTAINER_NAME_PREFIX).partition(EXEC_NAME_MARKER)[0]
     return ContainerUsage(
-        agent_id=container_name.removeprefix(CONTAINER_NAME_PREFIX),
+        agent_id=agent_id,
         memory_bytes=memory_stats.get("usage") or 0,
         memory_limit_bytes=memory_stats.get("limit") or 0,
         cpu_percent=_cpu_percent(stats),
@@ -192,7 +203,22 @@ class ContainerResourceMonitor(Component):
                     dict[str, Any],
                     await asyncio.to_thread(container.stats, stream=False),
                 )
-                usage[name.removeprefix(CONTAINER_NAME_PREFIX)] = _container_usage(name, stats)
+                entry = _container_usage(name, stats)
+                # An agent can have several exec units running at once
+                # (issue #25); aggregate their usage under the owning
+                # agent_id (limits are identical per agent, so the
+                # latest wins instead of being summed).
+                prev = usage.get(entry.agent_id)
+                usage[entry.agent_id] = (
+                    entry
+                    if prev is None
+                    else ContainerUsage(
+                        agent_id=entry.agent_id,
+                        memory_bytes=prev.memory_bytes + entry.memory_bytes,
+                        memory_limit_bytes=entry.memory_limit_bytes,
+                        cpu_percent=prev.cpu_percent + entry.cpu_percent,
+                    )
+                )
             self._check_budget(usage)
             return usage
         except Exception as e:
