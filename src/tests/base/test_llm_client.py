@@ -94,7 +94,7 @@ class TestPreflight:
         monkeypatch.setattr("litellm.acompletion", acompletion)
         client = _client("kimi-k2.5")
 
-        with pytest.raises(Exception, match="provider/model"):
+        with pytest.raises(ValueError, match="provider/model"):
             await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
         acompletion.assert_not_called()
 
@@ -106,7 +106,7 @@ class TestPreflight:
         monkeypatch.setattr("litellm.acompletion", acompletion)
         client = _client("deepseek/deepseek-chat", max_retries=3)
 
-        with pytest.raises(Exception, match="DEEPSEEK_API_KEY"):
+        with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
             await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
         # no retry: the preflight raise never reaches litellm
         acompletion.assert_not_called()
@@ -117,13 +117,13 @@ class TestPreflight:
         monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
         client = _client("azure-openai/gpt-5")
 
-        with pytest.raises(Exception, match="AZURE_OPENAI_API_KEY"):
+        with pytest.raises(ValueError, match="AZURE_OPENAI_API_KEY"):
             await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
 
     async def test_none_model_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = _client(None)  # type: ignore[arg-type]
 
-        with pytest.raises(Exception, match="provider/model"):
+        with pytest.raises(ValueError, match="provider/model"):
             await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
 
 

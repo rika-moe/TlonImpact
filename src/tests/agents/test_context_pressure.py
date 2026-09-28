@@ -498,16 +498,18 @@ class TestClientEmergency:
         with pytest.raises(ContextWindowExceededError):
             await client.chat(system_prompt="s", messages=[_user("hi")])
 
-    async def test_other_bad_requests_keep_retrying(
+    async def test_other_bad_requests_fail_fast(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Permanent 4xx (bad params, balance, ...) can never succeed on
+        retry: the client raises without retrying."""
         client = _make_llm_client()
         create = _patch_acompletion(monkeypatch, _bad_request("invalid argument: temperature"))
 
         with pytest.raises(litellm.BadRequestError):
             await client.chat(system_prompt="s", messages=[_user("hi")])
 
-        assert create.await_count == 3  # unchanged retry policy
+        assert create.await_count == 1  # fail fast, no retry
 
 
 class TestDriverEmergency:
