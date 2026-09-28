@@ -185,6 +185,17 @@ class TlonPaths:
         """
         return self._home / "cron.yaml"
 
+    def policy_file(self) -> Path:
+        """~/.tlon/policy.tlon — the society policy spec (ADR 0022).
+
+        Human-written only: the file lives at the society root, outside
+        every member's ``allowed_paths`` and the prototype staging
+        channel. Read on each policy evaluation (spawn/assembly are
+        low-frequency); an absent file means the built-in default policy
+        (``agents/policy.py`` ``DEFAULT_POLICY_EDN``) — the normal state.
+        """
+        return self._home / "policy.tlon"
+
     # ===== Agent persona files =====
 
     def agent_identity_file(self, agent_id: str) -> Path:
