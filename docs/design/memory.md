@@ -54,7 +54,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 阶段 3 补全了 claim 的生命周期（ 的消亡点）。旧系统的事实 supersede 只在三元组完全相等时发生，同义事实的矛盾版本无限堆积；现在**两条写入路径过同一套判定**——批量蒸馏落盘前与 `rememberFact` 写 claim 前，都先走 `MemoryManager._resolve_conflicts`：
 
-1. **候选检索**：新 claim 文本 embed 后查向量索引，只取相似度 ≥ 0.75（余弦）的 **active** 旧 claim 作为候选（每条约 3 条）。阈值刻意定高——判定要抓的是「同一事实的矛盾版本」，0.75 以上两条断言几乎必然在说同一件事；低于它就是话题相关而已，直接 ADD，不发 LLM（成本控制）。
+1. **候选检索**：新 claim 文本 embed 后查向量索引，只取相似度 ≥ 0.75（余弦）的 **active** 旧 claim 作为候选（每条约 3 条）。阈值刻意定高——判定要抓的是「同一事实的矛盾版本」，0.75 以上两条断言几乎必然在说同一件事；低于它就是话题相关而已，直接 ADD，不发 LLM（成本控制）。阈值与候选数是 `memory/config.json` 的 `conflict` 段调参（`similarity_threshold` / `candidate_limit`，默认值 0.75 / 3 即上述数字）。
 2. **一次批量判定**：有候选才把整批新 claim（编号）+ 全部候选旧 claim（id + 日期 + 文本）交给 `Distiller.judge_conflicts` **一次** LLM 调用判定（借鉴 Mem0 的 ADD/UPDATE 路由）——不是每条一次调用。
 3. **应用 verdict**：`ADD`（含并存）直接追加；`SUPERSEDE` 携带被取代的旧 claim id 列表，manager 调 `ClaimStore.supersede_claim` 把旧 claim 置 `status="superseded"` + `superseded_by=新claim id` + `valid_to=now`，新 claim 正常追加。
 
@@ -76,7 +76,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 记忆的回流通道是 `MemoryManager.build_context_blocks(current_message)`——阶段 2 起 `current_message` 从死参数变为核心输入（ 消亡）。两条路径：
 
-- **JIT 相关性检索**（有 query 且索引可用）：query（当前邮件的主题 + 正文）embed 成向量 → vec KNN 取候选池（`context_max_claims` 的 4 倍）→ 复合打分 `score = 1.0·similarity + 0.3·recency + 0.5·importance` 取 top-k active claims。similarity 由 cosine 距离归一化（`1 - distance`，截断到 [0,1]）；recency 是指数衰减（半衰期 7 天，Generative Agents 衰减的半衰期重参数化）；权重写在 [memory/manager.py](../../src/tlon/memory/manager.py) 的模块常量里——相似度占主导（JIT 的意义就是相关性），importance 让关键断言赢下近似平局，recency 最弱（「最新优先」已有降级路径兜底，旧但相关的断言不能被新鲜噪声淹掉）。
+- **JIT 相关性检索**（有 query 且索引可用）：query（当前邮件的主题 + 正文）embed 成向量 → vec KNN 取候选池（`context_max_claims` 的 4 倍）→ 复合打分 `score = 1.0·similarity + 0.3·recency + 0.5·importance` 取 top-k active claims。similarity 由 cosine 距离归一化（`1 - distance`，截断到 [0,1]）；recency 是指数衰减（半衰期 7 天，Generative Agents 衰减的半衰期重参数化）；三个权重、半衰期与候选池倍数都是 `memory/config.json` 的 `retrieval` 段调参（默认值 1.0/0.3/0.5、7 天、4 倍，同原 [memory/manager.py](../../src/tlon/memory/manager.py) 模块常量）——相似度占主导（JIT 的意义就是相关性），importance 让关键断言赢下近似平局，recency 最弱（「最新优先」已有降级路径兜底，旧但相关的断言不能被新鲜噪声淹掉）。
 - **时间序降级**（无 query / 未配置 embedding / 检索任何环节失败）：取最近 `context_max_claims` 条 active claims。
 
 两种路径的渲染一致：`- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。

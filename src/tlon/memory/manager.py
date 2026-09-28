@@ -42,34 +42,6 @@ from .vector_index import VectorIndex
 
 logger = get_logger(__name__)
 
-#: JIT retrieval composite score (ADR 0017 stage 2, Generative Agents
-#: shape): ``score = α·similarity + β·recency + γ·importance``.
-#: Similarity dominates — relevance to the current mail is the whole
-#: point of JIT injection (); importance lets critical claims win
-#: near-ties; recency is deliberately the weakest factor because the
-#: recency-ordered fallback already owns "latest first" and an old but
-#: relevant claim must not drown under fresh noise.
-_SCORE_ALPHA_SIMILARITY = 1.0
-_SCORE_BETA_RECENCY = 0.3
-_SCORE_GAMMA_IMPORTANCE = 0.5
-#: Recency decays exponentially with this half-life in days (the
-#: Generative Agents decay, re-parameterized as a half-life).
-_RECENCY_HALF_LIFE_DAYS = 7.0
-#: The KNN query pulls a pool larger than k so the composite score can
-#: re-rank candidates pure similarity order would miss.
-_RETRIEVAL_POOL_FACTOR = 4
-
-#: Conflict judgment (ADR 0017 stage 3): a new claim is only worth an
-#: LLM judgment call when a similar active old claim exists. The
-#: similarity gate is deliberately high — judgment exists to catch
-#: near-synonymous facts that contradict each other (), and at
-#: 0.75 cosine similarity two claims are almost always about the same
-#: fact; below it they are merely related topics and ADD directly.
-_CONFLICT_SIMILARITY_THRESHOLD = 0.75
-#: Candidates pulled per new claim: judgment needs the few closest
-#: matches, not a ranking exercise.
-_CONFLICT_CANDIDATE_LIMIT = 3
-
 
 class Embedder(Protocol):
     """The embedding surface the retrieval layer needs.
@@ -547,8 +519,8 @@ class MemoryManager:
         Both write paths (batch distillation, ``remember_fact``) run the
         same judgment before appending: each new claim's text is embedded,
         the index is searched for similar **active** old claims
-        (similarity at or above ``_CONFLICT_SIMILARITY_THRESHOLD``), and
-        the whole batch goes to the distiller's one-shot LLM judgment.
+        (similarity at or above ``config.conflict_similarity_threshold``),
+        and the whole batch goes to the distiller's one-shot LLM judgment.
         SUPERSEDE verdicts invalidate the old claims in place
         (``status``/``superseded_by``/``valid_to`` — never deleted); the
         new claims themselves are appended by the caller.
@@ -576,9 +548,9 @@ class MemoryManager:
         try:
             for vector in vectors:
                 for claim_id, similarity in self._index.search(
-                    vector, _CONFLICT_CANDIDATE_LIMIT
+                    vector, self.config.conflict_candidate_limit
                 ):
-                    if similarity < _CONFLICT_SIMILARITY_THRESHOLD:
+                    if similarity < self.config.conflict_similarity_threshold:
                         continue
                     if claim_id in seen or claim_id not in active:
                         continue
@@ -689,7 +661,7 @@ class MemoryManager:
             return None
 
         active = {str(c.get("id")): c for c in await self.claims.get_all_claims()}
-        pool = min(len(active), max(k * _RETRIEVAL_POOL_FACTOR, k))
+        pool = min(len(active), max(k * self.config.retrieval_pool_factor, k))
         now = datetime.now(UTC)
         scored: list[tuple[float, dict[str, Any]]] = []
         try:
@@ -698,9 +670,9 @@ class MemoryManager:
                 if claim is None:
                     continue
                 score = (
-                    _SCORE_ALPHA_SIMILARITY * similarity
-                    + _SCORE_BETA_RECENCY * self._recency_score(claim, now)
-                    + _SCORE_GAMMA_IMPORTANCE * self._importance_score(claim)
+                    self.config.retrieval_alpha_similarity * similarity
+                    + self.config.retrieval_beta_recency * self._recency_score(claim, now)
+                    + self.config.retrieval_gamma_importance * self._importance_score(claim)
                 )
                 scored.append((score, claim))
         except Exception as e:
@@ -720,17 +692,17 @@ class MemoryManager:
         except (TypeError, ValueError):
             return 0.5
 
-    @staticmethod
-    def _recency_score(claim: dict[str, Any], now: datetime) -> float:
+    def _recency_score(self, claim: dict[str, Any], now: datetime) -> float:
         """Exponential decay of the claim's age: 1.0 just now, halving
-        every ``_RECENCY_HALF_LIFE_DAYS``. An unparseable timestamp reads
-        as neutral (0.5) — a corrupt field must never break retrieval."""
+        every ``config.retrieval_recency_half_life_days``. An unparseable
+        timestamp reads as neutral (0.5) — a corrupt field must never
+        break retrieval."""
         try:
             timestamp = datetime.fromisoformat(str(claim.get("timestamp", "")))
             age_days = max(0.0, (now - timestamp).total_seconds()) / 86400.0
         except (ValueError, TypeError):
             return 0.5
-        return float(0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS))
+        return float(0.5 ** (age_days / self.config.retrieval_recency_half_life_days))
 
     # ===== LLM Tool Operations =====
 

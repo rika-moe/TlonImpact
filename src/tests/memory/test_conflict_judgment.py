@@ -259,6 +259,29 @@ class TestRememberFactConflicts:
         assert fake.judge_calls == []
         assert len(await manager.claims.get_all_claims()) == 2
 
+    async def test_config_threshold_gates_judgment(self, tmp_path: Path) -> None:
+        """conflict.similarity_threshold is a live tuning knob: a pair at
+        0.8 similarity is judged under the default 0.75 but ADDs directly
+        once the threshold is raised to 0.9."""
+        old_text = "项目部署在东京"
+        new_text = "项目部署在大阪"
+
+        async def judge_call_count(threshold: float, sub_dir: str) -> int:
+            embedder = FakeEmbedder({old_text: [1.0, 0, 0, 0], new_text: [0.8, 0.6, 0, 0]})
+            manager = _manager(tmp_path / sub_dir, embedder)
+            manager.config.conflict_similarity_threshold = threshold
+            await _seed(
+                manager,
+                [{"id": "c-old", "text": old_text, "timestamp": "2026-09-10T08:00:00"}],
+            )
+            fake = FakeDistiller([], verdicts=[ConflictVerdict()])
+            manager.distiller = fake  # type: ignore[assignment]
+            await manager.remember_fact(new_text)
+            return len(fake.judge_calls)
+
+        assert await judge_call_count(0.75, "default-threshold") == 1
+        assert await judge_call_count(0.9, "raised-threshold") == 0
+
 
 # ===== Manager: batch distillation conflict path =====
 
