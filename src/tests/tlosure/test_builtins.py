@@ -65,7 +65,7 @@ class TestRegistries:
         assert set(CORE_BUILTINS) == {"=", "not", "contains?", "get", "str"}
 
     def test_arithmetic_vocabulary_names(self):
-        assert set(ARITHMETIC_BUILTINS) == {"+", "-", "*", "inc", "dec", "<", ">", "<=", ">="}
+        assert set(ARITHMETIC_BUILTINS) == {"+", "-", "*", "/", "inc", "dec", "<", ">", "<=", ">="}
 
     def test_general_vocabulary_is_pure(self):
         for registry in (CORE_BUILTINS, ARITHMETIC_BUILTINS):
@@ -173,6 +173,18 @@ class TestArithmetic:
         assert _call("-", 5, 2) == 3
         assert _call("-", -3) == 3
 
+    def test_divide(self):
+        assert _call("/", 7, 2) == 3.5  # always float division
+        assert _call("/", 4, 2) == 2.0
+        assert _call("/", 24, 2, 3) == 4.0  # left fold: 24 / 2 / 3
+        assert _call("/", 1, 4) == 0.25
+
+    def test_divide_by_zero_rejected(self):
+        with pytest.raises(EvalError, match="division by zero"):
+            _call("/", 1, 0)
+        with pytest.raises(EvalError, match="division by zero"):
+            _call("/", 1, 2, 0)
+
     def test_inc_dec(self):
         assert _call("inc", 4) == 5
         assert _call("dec", 4) == 3
@@ -192,7 +204,7 @@ class TestArithmetic:
 class TestNumCoercion:
     """``_num`` rejects bool (an int subclass) and every non-number."""
 
-    @pytest.mark.parametrize("name", ["+", "-", "*", "<", ">", "<=", ">="])
+    @pytest.mark.parametrize("name", ["+", "-", "*", "/", "<", ">", "<=", ">="])
     def test_bool_is_not_a_number(self, name: str):
         with pytest.raises(EvalError, match="expected a number, got bool"):
             _call(name, True, 1)

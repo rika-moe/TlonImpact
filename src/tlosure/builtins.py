@@ -13,7 +13,7 @@ naming a host business concept):
 - the general vocabulary: pure, total functions any host composes into
   its own registries — :data:`CORE_BUILTINS` (``=`` / ``not`` /
   ``contains?`` / ``get`` / ``str``) and :data:`ARITHMETIC_BUILTINS`
-  (``+`` / ``-`` / ``*`` / ``inc`` / ``dec`` / comparisons). Pure only,
+  (``+`` / ``-`` / ``*`` / ``/`` / ``inc`` / ``dec`` / comparisons). Pure only,
   so evaluation against either registry is side-effect free by
   construction.
 
@@ -165,6 +165,21 @@ def builtin_mul(env: dict[str, Any], *args: Any) -> int | float:
     return total
 
 
+def builtin_div(env: dict[str, Any], a: Any, b: Any, *rest: Any) -> float:
+    """Left-fold float division: ``(/ a b c)`` = ``a / b / c``.
+
+    Always float division (no ratio type in the language); a zero divisor
+    is a spec bug and raises.
+    """
+    result = _num(a)
+    for divisor in (b, *rest):
+        divisor = _num(divisor)
+        if divisor == 0:
+            raise EvalError("division by zero")
+        result /= divisor
+    return result
+
+
 def builtin_sub(env: dict[str, Any], a: Any, b: Any | None = None) -> int | float:
     return -_num(a) if b is None else _num(a) - _num(b)
 
@@ -199,6 +214,7 @@ ARITHMETIC_BUILTINS: dict[str, Builtin] = {
     "+": Builtin(builtin_add, pure=True),
     "-": Builtin(builtin_sub, pure=True),
     "*": Builtin(builtin_mul, pure=True),
+    "/": Builtin(builtin_div, pure=True),
     "inc": Builtin(builtin_inc, pure=True),
     "dec": Builtin(builtin_dec, pure=True),
     "<": Builtin(builtin_lt, pure=True),
