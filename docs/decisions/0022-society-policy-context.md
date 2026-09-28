@@ -1,6 +1,6 @@
 # ADR 0022：社会政策语境——policy.tlon 与 pull 型求值点
 
-状态：待拍板（EPIC #62，随 docs/design/society-policy.md 一同评审）
+状态：已接受（2026-09-28 拍板）
 
 ## 背景
 

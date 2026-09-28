@@ -1,6 +1,6 @@
 # 社会政策语境：fitness / trust 政策数据化（policy.tlon）
 
-> 状态：设计待拍板（EPIC #62）。拍板后按文末施工顺序实施。
+> 状态：已拍板（2026-09-28），施工见 EPIC #62 与文末顺序。
 > 上游：ADR 0020（Bridge API）、ADR 0021（tlosure 完整函数能力）、docs/design/bridge-api.md。
 
 ## 定位
