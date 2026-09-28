@@ -34,6 +34,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import Tool
@@ -192,7 +193,7 @@ class _MemoryStub:
     path never calls the memory methods.
     """
 
-    config: Any = None
+    config: Any = MemoryConfig()
 
     async def load(self) -> None: ...
 

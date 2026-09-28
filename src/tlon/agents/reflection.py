@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import json
 from datetime import UTC, datetime
+from importlib import resources
 from typing import Any, cast
 
 from tlon.agents.member_spec import MemberRule
@@ -19,6 +20,16 @@ from tlon.memory.manager import MemoryManager
 
 logger = get_logger(__name__)
 
+#: The reflection audit's system prompt — policy text, kept as a readable
+#: package data file (``tlon/agents/prompts/reflection_system.md``) instead
+#: of a code constant; loaded once at import, fail-fast if missing.
+REFLECTION_SYSTEM_PROMPT = (
+    resources.files("tlon.agents")
+    .joinpath("prompts/reflection_system.md")
+    .read_text(encoding="utf-8")
+    .strip()
+)
+
 
 class ReflectionEngine:
     """Runs background memory reflections for an agent.
@@ -28,28 +39,10 @@ class ReflectionEngine:
     loop (``rule.loop.reflect``, projected from the legacy ``:on-complete``
     section); ``enabled`` stays a runtime switch.
 
-    P4: the engine receives its services (memory, LLM client, session
+    The engine receives its services (memory, LLM client, session
     journal) and the cognitive rule directly — no back-reference to the
-    Agent.
+    owning member runtime.
     """
-
-    REFLECTION_SYSTEM_PROMPT = (
-        "你是一个记忆梳理助手。你的任务是审视一个 Agent 的持久记忆，"
-        "发现冗余、矛盾、过时或遗漏的信息，并决定需要执行的操作。\n\n"
-        "可用的操作类型：\n"
-        '- record_claim: 记录从对话中推断出的新记忆。需要提供 description（自然语言描述）、'
-        "importance（0.0-1.0）。\n"
-        "- delete_claim: 删除过时、冗余或矛盾的记忆。需要提供 claim_id 或 description 用于匹配。\n"
-        "- noop: 当前记忆状态良好，无需操作。\n\n"
-        "原则：\n"
-        "1. 只记录明确、重要的信息，不要推测\n"
-        "2. 发现两条记忆描述相同内容时，只保留更完整的一条\n"
-        "3. 发现记忆互相矛盾时，删除更不可信的一条\n"
-        "4. 多数情况下不需要操作，noop 是正常的\n\n"
-        "请用 JSON 格式返回："
-        '{"analysis": "对当前记忆状态的简要分析", '
-        '"operations": [{"action": "...", ...}]}'
-    )
 
     def __init__(
         self,
@@ -67,9 +60,7 @@ class ReflectionEngine:
         reflect = rule.loop.reflect
         self.enabled: bool = reflect.enabled
         self._interval: float = reflect.interval_minutes * 60
-        self._min_interactions: int = getattr(
-            memory.config, "reflection_min_interactions", 5
-        )
+        self._min_interactions: int = memory.config.reflection_min_interactions
         self._last_reflection_time: datetime | None = None
         self._session_count_since_reflection = 0
         self._running = False
@@ -139,7 +130,7 @@ class ReflectionEngine:
 
             prompt = self._build_prompt(digest)
             response = await self._llm_client.chat(
-                system_prompt=self.REFLECTION_SYSTEM_PROMPT,
+                system_prompt=REFLECTION_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
                 timeout=60.0,
                 purpose="reflect",
