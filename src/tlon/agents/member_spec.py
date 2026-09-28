@@ -13,10 +13,9 @@ the semantics authority. The legacy specs and their projections
 (``agents/spec_mapping.py``) were deleted in phase C: the loader parses
 the single rules-form ``behavior.tlon`` directly into MemberSpec, the two
 runtimes converge on one interpreter (``agents/member_runtime.py``). The EDN front
-performs structural validation (types, form shapes); the action-head
-whitelist and expression-level builtin-scope validation of ``:when`` /
-``:until`` / stage and section forms live in the single validator
-:func:`validate_member_spec`.
+performs structural validation (types, form shapes); the builtin-scope
+validation of ``:when`` / ``:actions`` / ``:until`` / stage and section
+forms lives in the single validator :func:`validate_member_spec`.
 """
 
 from dataclasses import dataclass, field
@@ -28,7 +27,7 @@ from tlon.agents.vocabulary import (
     RULE_SCOPE,
     STAGE_COND_BUILTINS,
     make_member_builtins,
-    validate_member_action,
+    validate_member_actions,
 )
 from tlon.base.events.event import EventType
 from tlon.base.logger import get_logger
@@ -325,11 +324,12 @@ def validate_member_spec(
     Every expression field of every rule is checked against the unified
     member vocabulary: ``:when`` validates against the pure subset of the
     member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
-    actions validate against
-    :func:`~tlon.agents.vocabulary.validate_member_action` under
-    :data:`~tlon.agents.vocabulary.ACTION_SCOPE`; a cognitive rule's
-    sections, stages and ``:until`` validate against the whitelisted
-    names / loop builtins.
+    actions validate as a sequence against the *full* member registry
+    under :data:`~tlon.agents.vocabulary.ACTION_SCOPE` via
+    :func:`~tlon.agents.vocabulary.validate_member_actions` (ADR 0021:
+    no syntax partition, sequential ``defn`` threading); a cognitive
+    rule's sections, stages and ``:until`` validate against the
+    whitelisted names / loop builtins.
 
     ``builtins`` is the registry to validate against (host predicates
     included, e.g. Adam's ``sleeping?``); it defaults to the host-less
@@ -353,7 +353,7 @@ def validate_member_spec(
         _validate_when(rule, label, pure)
         if rule.loop is not None:
             _validate_cognitive(rule, label)
-        _validate_actions(rule, label, pure)
+        _validate_actions(rule, label, registry)
         _validate_fuel(rule, label)
     return member
 
@@ -397,13 +397,17 @@ def _validate_when(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> No
         ) from e
 
 
-def _validate_actions(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> None:
-    """Validate every action form against the unified action vocabulary."""
-    for form in rule.actions:
-        try:
-            validate_member_action(form, pure=pure, scope=set(ACTION_SCOPE))
-        except EvalError as e:
-            raise MemberSpecValidationError(f"{label}: invalid action: {e}") from e
+def _validate_actions(rule: MemberRule, label: str, registry: dict[str, Builtin]) -> None:
+    """Validate the rule's action forms against the full member registry.
+
+    ADR 0021: no syntax-level purity partition — any expression may sit
+    in action position; ``defn`` names thread forward across the form
+    sequence (define-before-use).
+    """
+    try:
+        validate_member_actions(rule.actions, registry=registry, scope=set(ACTION_SCOPE))
+    except EvalError as e:
+        raise MemberSpecValidationError(f"{label}: invalid action: {e}") from e
 
 
 def _validate_cognitive(rule: MemberRule, label: str) -> None:
@@ -871,8 +875,9 @@ def _reflect_from(value: Any, rule_name: str) -> ReflectSpec:
 def _actions_from(value: Any, rule_name: str) -> tuple[Form, ...]:
     """Read the optional :actions vector; every item a non-empty form.
 
-    Shape only — action-head whitelist and argument purity are the single
-    validator's job (:func:`validate_member_spec`), not the EDN front's.
+    Shape only — vocabulary/scope validation and ``defn`` threading are
+    the single validator's job (:func:`validate_member_spec`), not the
+    EDN front's.
     """
     if value is None:
         return ()

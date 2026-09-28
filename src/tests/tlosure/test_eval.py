@@ -17,7 +17,7 @@ This suite covers the language core only (ADR 0018 修订): the registry
 is the host-agnostic general vocabulary (``CORE_BUILTINS`` +
 ``ARITHMETIC_BUILTINS``). Domain vocabulary — mail predicates, the
 action family, ``make_member_builtins``, host injection,
-``validate_member_action`` — is tested in
+``validate_member_actions`` — is tested in
 ``src/tests/agents/test_vocabulary.py``.
 """
 

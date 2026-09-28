@@ -26,9 +26,16 @@ module is their single source of truth:
   ends (``MemberRuntime._execute_action``). :func:`make_member_builtins`
   builds the unified member registry — the merged pure vocabularies plus
   the action builtins plus any host-injected queries.
-- **Static gate** — :func:`validate_member_action`, the purity partition
-  for a rule's action position: wrappers limited to ``when`` / ``while`` /
-  ``map``, every action argument a pure expression.
+- **Static gate** — :func:`validate_member_actions`, the load-time check
+  for a rule's action forms (ADR 0021): the syntax-level purity
+  partition is abandoned (a function body can carry actions, so "where
+  actions may occur" is no longer statically enumerable); what remains
+  is full-registry validation — unregistered vocabulary and undefined
+  symbols are still rejected at load — plus sequential ``defn``
+  threading across the form sequence (define-before-use), mirroring the
+  runtime's shared env dict. The collector (on-complete) and
+  return-value collection (deterministic rules) are the actual
+  action-convergence mechanism.
 
 Environment contracts: typed, with a single construction point — see
 the ``*Env`` TypedDicts and builders in the "Environment contracts"
@@ -70,8 +77,8 @@ from tlosure.builtins import (
     builtin_str,
     builtin_substring,
 )
-from tlosure.edn import Form, Symbol, dumps
-from tlosure.validate import _binding_names, validate_form
+from tlosure.edn import Form
+from tlosure.validate import _is_defn, _validate_defn, validate_form
 
 # ── Environment contracts (the data each context may see) ──
 #
@@ -694,98 +701,29 @@ def make_member_builtins(
     return builtins
 
 
-# ── Static gate: action-position purity partition ──
+# ── Static gate: full-registry validation with defn threading ──
 
 
-def validate_member_action(
-    form: Any, *, pure: dict[str, Builtin], scope: set[str]
+def validate_member_actions(
+    forms: tuple[Form, ...], *, registry: dict[str, Builtin], scope: set[str]
 ) -> None:
-    """Statically validate one member action form.
+    """Statically validate a rule's action-form sequence (ADR 0021).
 
-    The action position of any rule — cognitive or deterministic — is
-    either a single action form (``(spawn ...)`` / ``(emit ...)`` /
-    ``(start ...)`` / ``(stop ...)`` / ``(start-all ...)`` /
-    ``(forward ...)``), a ``(when cond action ...)`` wrapper, or a loop
-    form (``while`` / ``map``) whose action-bearing positions hold action
-    forms. The purity invariant (docs/design/dsl.md): conditions, tests,
-    binding initializers and action arguments are pure expressions
-    validated against ``pure`` (the pure subset of the member registry)
-    under ``scope``; only the action-carrying positions may name an
-    action.
+    The action position is no longer syntax-partitioned: any expression
+    validates here, and a function body may carry actions — "where
+    actions may occur" is not statically enumerable, so convergence is a
+    runtime fact (the on-complete collector and the deterministic rules'
+    return-value collection). What remains is full-registry validation:
+    every form is checked by :func:`tlosure.validate.validate_form`
+    against the *full* member registry (action builtins included) under
+    ``scope``, so unregistered vocabulary and undefined symbols are
+    still rejected at load — plus sequential ``defn`` threading: a
+    ``defn`` head form adds its name to the scope the *following* forms
+    see (define-before-use), mirroring the runtime's shared env dict.
     """
-    if not isinstance(form, Form) or not form:
-        raise EvalError(
-            f"member action must be an action form or (when ...), got {dumps(form)}"
-        )
-    _validate_member_action_expr(form, pure, set(scope))
-
-
-def _validate_member_action_expr(
-    form: Any, pure: dict[str, Builtin], scope: set[str]
-) -> None:
-    """Validate one member action expression (a single action or a wrapper).
-
-    ``when`` wraps action forms under a pure condition; ``while`` /
-    ``map`` loop over action forms. Every other head must be an action name
-    whose arguments are pure expressions.
-    """
-    if not isinstance(form, Form) or not form:
-        raise EvalError(f"action must be an action form, got {dumps(form)}")
-    head = form[0]
-    if not isinstance(head, Symbol):
-        raise EvalError(f"action head must be a symbol, got {dumps(head)}")
-    name = str(head)
-    if name in MEMBER_ACTION_NAMES:
-        for arg in form[1:]:
-            validate_form(arg, pure, set(scope))
-        return
-    if name == "when":
-        if len(form) < 3:
-            raise EvalError("when expects a condition and at least one action")
-        validate_form(form[1], pure, set(scope))
-        for action in form[2:]:
-            _validate_member_action_expr(action, pure, scope)
-        return
-    if name == "while":
-        if len(form) < 3:
-            raise EvalError("while expects a binding vector and a test")
-        names = _binding_names(form[1], "while")
-        local = set(scope)
-        for binding, init in zip(names, form[1][1::2], strict=True):
-            validate_form(init, pure, set(local))
-            local.add(binding)
-        validate_form(form[2], pure, set(local))
-        for body in form[3:]:
-            _validate_loop_body_action(body, pure, local)
-        return
-    if name == "map":
-        if len(form) != 4:
-            raise EvalError("map expects a binding, a body, and a collection")
-        binder = form[1]
-        if not isinstance(binder, Symbol):
-            raise EvalError(f"map binding must be a symbol, got {dumps(binder)}")
-        local = set(scope)
-        local.add(str(binder))
-        _validate_member_action_expr(form[2], pure, local)
-        validate_form(form[3], pure, set(scope))
-        return
-    raise EvalError(
-        f"unknown action: {dumps(head)} "
-        f"(allowed: {sorted(MEMBER_ACTION_NAMES)}, when, while, map)"
-    )
-
-
-def _validate_loop_body_action(
-    form: Any, pure: dict[str, Builtin], scope: set[str]
-) -> None:
-    """A ``while`` body position: an action expression or the loop's ``recur``."""
-    if (
-        isinstance(form, Form)
-        and form
-        and isinstance(form[0], Symbol)
-        and str(form[0]) == "recur"
-    ):
-        for arg in form[1:]:
-            validate_form(arg, pure, set(scope))
-        return
-    _validate_member_action_expr(form, pure, scope)
+    local = set(scope)
+    for form in forms:
+        if _is_defn(form):
+            local.add(_validate_defn(form, registry, local, None))
+            continue
+        validate_form(form, registry, local)

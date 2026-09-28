@@ -86,7 +86,9 @@ class TestLoadMemberSpec:
           :actions [(jump {:to ["x@tlon.internal"]})]}]}
 """,
         )
-        with pytest.raises(MemberSpecValidationError, match="unknown action"):
+        with pytest.raises(
+            MemberSpecValidationError, match="unknown function or special form: jump"
+        ):
             load_member_spec("wild", tlon_paths=tlon)
 
     def test_ignores_top_level_parameters(self, tlon):

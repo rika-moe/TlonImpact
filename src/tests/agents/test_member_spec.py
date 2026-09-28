@@ -146,7 +146,8 @@ class TestSingleValidator:
     """The loader's gate: unknown actions and bad shape are rejected."""
 
     def test_unknown_action_rejected_by_validator(self):
-        """Unknown action heads are rejected by the single validator."""
+        """Unregistered vocabulary in action position is rejected by the
+        single validator (ADR 0021: full-registry validation)."""
         spec = _parse(
             """\
 {:version 1
@@ -155,7 +156,9 @@ class TestSingleValidator:
           :actions [(jump {:to ["x@tlon.internal"]})]}]}
 """
         )
-        with pytest.raises(MemberSpecValidationError, match="unknown action"):
+        with pytest.raises(
+            MemberSpecValidationError, match="unknown function or special form: jump"
+        ):
             validate_member_spec(spec)
 
     def test_unknown_when_builtin_rejected_by_validator(self):
@@ -330,7 +333,11 @@ class TestLoopReplies:
 
 
 class TestPhaseDActions:
-    """Phase D: loop forms are valid action positions; the purity gate holds."""
+    """Phase D: loop forms are valid action positions.
+
+    ADR 0021 dropped the syntax purity partition: the action position
+    accepts any expression the full member registry validates.
+    """
 
     def test_while_action_loads(self):
         """The canonical form — a while of emits — is a loadable action."""
@@ -357,9 +364,10 @@ class TestPhaseDActions:
         )
         validate_member_spec(spec)
 
-    def test_action_in_loop_test_rejected(self):
-        """Purity invariant: a loop's test position must be pure, so an
-        action there is rejected at validation."""
+    def test_action_in_loop_test_loads(self):
+        """ADR 0021: no purity partition — an action inside a loop's test
+        position validates like any other expression (action convergence
+        is a runtime fact, not a static one)."""
         spec = _parse(
             """\
 {:version 1
@@ -368,5 +376,37 @@ class TestPhaseDActions:
           :actions [(while [i 0] (emit "x") (recur (inc i)))]}]}
 """
         )
-        with pytest.raises(MemberSpecValidationError, match="unknown function"):
+        validate_member_spec(spec)
+
+
+class TestDefnThreading:
+    """ADR 0021: defn names thread across a rule's :actions sequence
+    (define-before-use), at load validation and in evaluation order."""
+
+    DEFN_EDN = """\
+{:version 1
+ :rules [{:name "notify"
+          :on :mail-delivered
+          :actions [(defn notify [x] (emit x ["sink@tlon.internal"]))
+                    (notify "hi")]}]}
+"""
+
+    def test_defn_define_before_use_loads(self):
+        spec = _parse(self.DEFN_EDN)
+        validate_member_spec(spec)
+        assert len(spec.rules[0].actions) == 2
+
+    def test_defn_use_before_define_rejected(self):
+        spec = _parse(
+            """\
+{:version 1
+ :rules [{:name "notify"
+          :on :mail-delivered
+          :actions [(notify "hi")
+                    (defn notify [x] (emit x))]}]}
+"""
+        )
+        with pytest.raises(
+            MemberSpecValidationError, match="unknown function or special form: notify"
+        ):
             validate_member_spec(spec)

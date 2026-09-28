@@ -112,6 +112,42 @@ LOOP_EMIT = """\
           :actions [(map i (emit "x" ["sink@tlon.internal"]) [1 2 3])]}]}
 """
 
+#: ADR 0021: a defn helper defined in one action form is called from a
+#: later form; the emit inside the function body is collected (return
+#: value on the deterministic path).
+SCRIPT_DEFN = """\
+{:version 1
+ :rules [{:name "notify"
+          :on :mail-delivered
+          :when (addressed-to-me? msg)
+          :actions [(defn notify [text] (emit (str "note: " text) ["sink@tlon.internal"]))
+                    (notify "hello")]}]}
+"""
+
+SCRIPT_DEFN_FUELED = """\
+{:version 1
+ :rules [{:name "notify"
+          :on :mail-delivered
+          :fuel 500
+          :actions [(defn notify [text] (emit (str "note: " text) ["sink@tlon.internal"]))
+                    (notify "hello")]}]}
+"""
+
+COGNITIVE_DEFN_ACTIONS = """\
+{:version 1
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :when (addressed-to-me? msg)
+          :loop {:context {:sections [(persona) (protocol)]}
+                 :stages [(think) (act)]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :max-iterations 10
+                 :max-consecutive-errors 3
+                 :reflect {:enabled false :interval-minutes 5}}
+          :actions [(defn notify [text] (emit (str "done: " text) ["sink@tlon.internal"]))
+                    (notify result)]}]}
+"""
+
 COGNITIVE_LOOP_ACTIONS = """\
 {:version 1
  :rules [{:name "respond"
@@ -412,6 +448,70 @@ class TestPhaseDFuel:
         assert all(event.payload.content == "x" for event in emitted)
 
         await member.shutdown()
+
+
+class TestDefnAcrossActionForms:
+    """ADR 0021: defn names thread across a rule's action forms.
+
+    Load-time validation (define-before-use) is pinned in
+    ``test_member_spec.TestDefnThreading``; here the runtime side: the
+    forms of one rule share one env dict, so a defn helper is callable
+    from later forms, and an ``emit`` inside the function body converges
+    — by return value on the deterministic path, by collector on the
+    on-complete path.
+    """
+
+    async def test_defn_helper_sends_mail(self, bus):
+        member = _make_member("notifier-2", SCRIPT_DEFN, bus)
+        await member.initialize()
+        emitted: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
+
+        mail = Mail.create(
+            from_address="alice@tlon.internal", content="hi", to=[member.address]
+        )
+        await bus.publish(_deliver(mail, member.member_id))
+        await _wait_for(lambda: len(emitted) == 1)
+        assert emitted[0].payload.content == "note: hello"
+        assert emitted[0].payload.to == ["sink@tlon.internal"]
+
+        await member.shutdown()
+
+    def test_defn_helper_under_shared_fuel(self, bus):
+        """The :fuel path shares the same env: the defn is visible to the
+        later form, and its body's emit lands in the collected requests."""
+        member = _make_member("notifier-3", SCRIPT_DEFN_FUELED, bus)
+        rule = member._spec.rules[0]
+        env = member._env({"mail": None, "recipient": member.member_id})
+        requests = member._evaluate_rule(rule, env)
+        assert [r.kind for r in requests] == ["emit"]
+        assert requests[0].data["content"] == "note: hello"
+
+    async def test_defn_helper_on_complete_collector(self):
+        """On-complete forms share one env too: a defn defined in the
+        first action form is callable in the second, and the body's emit
+        is recorded into the collector mid-evaluation."""
+        spec = MemberSpec.from_edn(loads(COGNITIVE_DEFN_ACTIONS))
+        validate_member_spec(spec)
+        rule = spec.rules[0]
+
+        executed: list[ActionRequest] = []
+
+        async def _execute(request: ActionRequest, mail: Mail | None) -> None:
+            executed.append(request)
+
+        runner = OnCompleteRunner(
+            identity=AgentIdentity(
+                id="thinker-9", name="thinker-9", address="thinker-9@tlon.internal"
+            ),
+            rule=rule,
+            logger=get_logger("test"),
+            execute_action=_execute,
+        )
+        session = AgentSession(session_id="s-1", trigger_content="hi")
+        await runner.run(session, "the reply")
+        assert [r.kind for r in executed] == ["emit"]
+        assert executed[0].data["content"] == "done: the reply"
 
 
 class TestOnCompleteLoopActions:

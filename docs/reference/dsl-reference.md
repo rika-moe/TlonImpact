@@ -115,7 +115,7 @@
 - 动作 builtin（`pure=False`，见第 4.5 节）只校验参数并产出 `ActionRequest` 数据，由引擎在求值结束后执行；求值过程本身永不产生副作用。
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
-- **动作位置闸 `validate_member_action`**（[src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)）：`:when` 门控必须是纯表达式；动作位置允许的包装形式只有 `when` / `while` / `map`——`(when cond (spawn ...) (emit ...))`、`(while [i 0] (< i 3) (emit ...) (recur (inc i)))`、`(map x (forward {:to [x]}) ["a" "b"])`。`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。
+- **动作位置校验 `validate_member_actions`**（[src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)，ADR 0021 修订）：`:when` 门控仍必须是纯表达式（对纯子集注册表校验）；动作位置的语法纯度分区已放弃——任何对**全量成员注册表**校验通过的表达式都可作动作位置（`if` / `let` / 函数调用均可，函数体内可含动作），如 `(when cond (spawn ...) (emit ...))`、`(while [i 0] (< i 3) (emit ...) (recur (inc i)))`、`(map x (forward {:to [x]}) ["a" "b"])` 以及 `(defn notify [x] (emit x))` 后的 `(notify "...")`。剩下的加载期保证：未注册词汇与未定义符号仍拒载；`defn` 名字按序穿线给后续 form（先定义后使用），镜像运行期共享 env。动作汇聚是运行时事实——确定规则取各 form 求值返回值里的 `ActionRequest`，on-complete 路径由 collector 收集。
 - fuel 记账：默认值 `:when` 门控 `DEFAULT_WHEN_FUEL`、动作 `DEFAULT_FUEL`，规则/loop 自声明上限 `MAX_FUEL`（超过即加载拒绝；常量取值见下表）。声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
 
 <!-- BEGIN GENERATED: dsl-fuel-defaults -->
@@ -235,7 +235,7 @@
 
 ### 4.5 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
 
-动作 builtin 不在模块级注册表——它们由 `make_member_builtins` 以闭包定义、按调用方装配（`collector` / `host` 注入），因此本表手写维护。`:actions` 里的每个 form 头必须是这六个之一（或 `when`/`while`/`map` 包装）。
+动作 builtin 不在模块级注册表——它们由 `make_member_builtins` 以闭包定义、按调用方装配（`collector` / `host` 注入），因此本表手写维护。这六个是全部效果词汇（能力白名单即 `MEMBER_ACTION_NAMES`）；ADR 0021 后动作位置按全量成员注册表校验、语法上不再分区——它们可以出现在任意表达式深度，包括用户函数体内。
 
 | 名称 | 签名 | 语义 |
 |---|---|---|
@@ -356,6 +356,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 无 `:loop` 的规则即确定规则：事件命中 → 求值 `:when` → 逐条求值 `:actions` → 执行产出的 `ActionRequest`。
 
 - 环境为 `{msg, event, self}`；**`result` 只在认知规则的完成动作里绑定**——确定规则里引用 `result` 能通过加载校验（作用域含它）但运行时抛"undefined symbol"，整条规则跳过并记 warning。
+- 规则的 `:when` 门控与全部 `:actions` form 共享同一 env（ADR 0021）：一个 form 里的 `(defn notify [x] ...)` 对后续 form 可见（先定义后使用，加载校验与运行期镜像）；函数体内的动作照常产出 `ActionRequest` 并被收集。
 - 每个动作 form 的求值结果是请求数据：`start-all` 返回请求列表，`while`/`map` 可收集多个请求；非 `ActionRequest` 的值被忽略。
 - 求值失败（含 fuel 耗尽）跳过本条规则，不影响其他规则与总线分发。
 - 邮件语义（`MemberRuntime`）：自己发出的邮件永不处理并立即标记已读；被 `:when` 拒绝的邮件也标记已读；确定规则命中即读；队列满丢弃的邮件保持未读，留待下次启动时的未读补救扫描（`_scan_unread_mail`）重放。

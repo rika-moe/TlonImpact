@@ -5,22 +5,20 @@ The host layer over the tlosure language core: the mail predicates
 the action family and the unified member registry
 (:func:`make_member_builtins`), host query injection
 (:class:`ScriptHostQueries`), and the action-position static gate
-(:func:`validate_member_action`). The pure language semantics are tested
-in ``src/tests/tlosure/test_eval.py``.
+(:func:`validate_member_actions`, ADR 0021). The pure language semantics
+are tested in ``src/tests/tlosure/test_eval.py``.
 """
 
 import pytest
 
-from tlon.agents.vocabulary import make_member_builtins, validate_member_action
+from tlon.agents.vocabulary import make_member_builtins, validate_member_actions
 from tlon.organization.mail.mail import Mail
 from tlosure.edn import loads
 from tlosure.eval import ActionRequest, EvalError, eval_form, validate_form
 
-#: The unified member registry (pure predicates + arithmetic + actions).
+#: The unified member registry (pure predicates + arithmetic + actions) —
+#: the full registry the ADR 0021 action gate validates against.
 _BUILTINS = make_member_builtins()
-
-#: The pure subset, as ``member_spec.validate_member_spec`` derives it.
-_PURE = {name: builtin for name, builtin in _BUILTINS.items() if builtin.pure}
 
 
 def _mail(
@@ -128,28 +126,70 @@ class TestActionCollection:
         assert all(request.kind == "emit" for request in result)
 
 
-class TestValidateMemberAction:
-    """The phase C action-position gate, in its host-layer home."""
+class TestValidateMemberActions:
+    """The ADR 0021 action-position gate, in its host-layer home.
 
-    def test_single_action_with_pure_args(self):
-        validate_member_action(
-            loads('(emit "x" ["sink@tlon.internal"])'), pure=_PURE, scope={"msg", "self"}
+    The syntax purity partition is gone: any expression may sit in
+    action position (a function body can carry actions, so "where
+    actions may occur" is not statically enumerable). What remains is
+    full-registry validation — unregistered vocabulary and undefined
+    symbols are still rejected at load — plus sequential ``defn``
+    threading across the form sequence (define-before-use).
+    """
+
+    def test_direct_action_form_passes(self):
+        validate_member_actions(
+            (loads('(emit "x" ["sink@tlon.internal"])'),),
+            registry=_BUILTINS,
+            scope={"msg", "self"},
         )
 
-    def test_when_wraps_actions_under_pure_condition(self):
-        validate_member_action(
-            loads('(when (= 1 1) (emit "x") (spawn "proto"))'), pure=_PURE, scope=set()
+    def test_any_expression_is_a_valid_action_position(self):
+        # if / let / pure computation — everything the full member
+        # registry validates is legal in action position now (the old
+        # partition admitted only when/while/map wrappers).
+        validate_member_actions(
+            (
+                loads('(if (addressed-to-me? msg) (emit "a") (emit "b"))'),
+                loads('(let [x "hi"] (emit x))'),
+                loads('(str "just" " compute")'),
+            ),
+            registry=_BUILTINS,
+            scope={"msg", "self"},
         )
 
-    def test_impure_condition_rejected(self):
-        with pytest.raises(EvalError, match="unknown function or special form: spawn"):
-            validate_member_action(
-                loads('(when (spawn "proto") (emit "x"))'), pure=_PURE, scope=set()
+    def test_unregistered_vocabulary_still_rejected(self):
+        with pytest.raises(EvalError, match="unknown function or special form: frobnicate"):
+            validate_member_actions(
+                (loads("(frobnicate 1)"),), registry=_BUILTINS, scope=set()
             )
 
-    def test_unknown_action_rejected(self):
-        with pytest.raises(EvalError, match="unknown action"):
-            validate_member_action(loads("(frobnicate 1)"), pure=_PURE, scope=set())
+    def test_undefined_symbol_still_rejected(self):
+        with pytest.raises(EvalError, match="undefined symbol: foo"):
+            validate_member_actions(
+                (loads("(emit foo)"),), registry=_BUILTINS, scope=set()
+            )
+
+    def test_defn_threads_to_later_forms(self):
+        validate_member_actions(
+            (
+                loads('(defn notify [x] (emit x ["sink@tlon.internal"]))'),
+                loads('(notify "hi")'),
+            ),
+            registry=_BUILTINS,
+            scope=set(),
+        )
+
+    def test_defn_use_before_define_rejected(self):
+        with pytest.raises(EvalError, match="unknown function or special form: notify"):
+            validate_member_actions(
+                (
+                    loads('(notify "hi")'),
+                    loads('(defn notify [x] (emit x))'),
+                ),
+                registry=_BUILTINS,
+                scope=set(),
+            )
 
 
 class TestValidateForm:
@@ -162,8 +202,9 @@ class TestValidateForm:
 
     def test_rejects_non_whitelisted_form(self):
         # A genuinely unknown form is rejected; action names are valid
-        # (impure) expressions here — purity is enforced at the member
-        # action layer (validate_member_action), not in validate_form.
+        # (impure) expressions here — action position is validated
+        # against the full registry (validate_member_actions, ADR 0021),
+        # which is validate_form plus defn threading.
         with pytest.raises(EvalError, match="unknown function or special form: frobnicate"):
             validate_form(loads("(frobnicate msg)"), _BUILTINS, scope={"msg", "self"})
 

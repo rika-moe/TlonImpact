@@ -24,7 +24,7 @@ from tlon.agents.vocabulary import make_member_builtins, on_complete_env
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import Mail
 from tlosure.builtins import ActionRequest, EvalError, FuelExhaustedError
-from tlosure.eval import DEFAULT_FUEL, eval_form
+from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, Evaluator
 
 if TYPE_CHECKING:
     from tlon.agents.member_spec import MemberRule
@@ -81,11 +81,14 @@ class OnCompleteRunner:
         builtins = make_member_builtins(collector=collector)
         # The rule's :fuel caps the completion actions' evaluation; the
         # cognitive gate and completion are temporally separated, so each
-        # is capped at the same declared budget.
+        # is capped at the same declared budget. Every form gets its own
+        # budget, but all share one env dict (ADR 0021): a defn in one
+        # form is visible to the forms after it — hence a bare Evaluator
+        # per form, not eval_form (whose entry copies the env).
         action_fuel = self._rule.fuel if self._rule.fuel is not None else DEFAULT_FUEL
         for form in forms:
             try:
-                eval_form(form, env, builtins, fuel=action_fuel)
+                Evaluator(builtins, action_fuel, DEFAULT_MAX_DEPTH).eval(form, env, 0)
             except FuelExhaustedError as e:
                 self._logger.error(
                     "on_complete_fuel_exhausted",
