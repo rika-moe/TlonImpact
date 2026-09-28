@@ -453,9 +453,10 @@ class ScriptHostQueries(Protocol):
         ...
 
     def is_lazy(self, agent_id: Any) -> bool:
-        """A member that can sleep / be drained: its spec has no ``:on :boot``
-        rule (or the spec is unreadable). Unified member model (ADR 0006):
-        laziness is spec-derived, never a birth marker."""
+        """A member that can sleep / be drained: no ``:on :boot`` rule.
+
+        Unified member model (ADR 0006): laziness is spec-derived (a
+        missing or unreadable spec also counts), never a birth marker."""
         ...
 
     def start_all_candidates(self) -> list[str]:
@@ -463,13 +464,15 @@ class ScriptHostQueries(Protocol):
         ...
 
     def member_roster(self) -> str:
-        """The social roster: one pre-formatted line per registered
-        member — name, id, prototype and its description.
+        """The social roster: one pre-formatted line per registered member.
 
-        Formatting lives in the implementation, not the DSL: the DSL never
-        iterates, iteration is a builtin. Social public information, open
-        to every member (the same injected host serves Adam and
-        registry-spawned members)."""
+        Each line is ``name (id) — prototype: description`` (the prototype
+        segment and description are omitted when absent). Formatting lives
+        in the implementation, not the DSL: the DSL never iterates,
+        iteration is a builtin. Social public information, open to every
+        member (the same injected host serves Adam and registry-spawned
+        members); sleeping members stay listed, Adam itself is not
+        registered and so not listed."""
         ...
 
 

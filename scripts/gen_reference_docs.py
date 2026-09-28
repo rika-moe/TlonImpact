@@ -19,6 +19,13 @@ handwritten; only the drift-prone inventories are generated:
   inventories (``:on`` event keywords, tlon's domain builtin registries
   from agents/vocabulary.py, stage/section names from
   agents/member_spec.py).
+- ``dsl-fuel-defaults`` / ``bridge-env-contracts`` / ``dsl-action-kinds`` /
+  ``bridge-query-ports`` in docs/reference/dsl-reference.md — the Bridge
+  API inventories (ADR 0020): the fuel/depth constants from
+  tlosure/eval.py, and from agents/vocabulary.py the ``*Env`` TypedDict
+  environment contracts, the ``ActionRequest`` kind/data shapes produced
+  by the action builtins, and the closure-injected host query ports
+  (joined with the ``ScriptHostQueries`` protocol docstrings).
 - ``rest-endpoints`` / ``mode-patterns`` in docs/reference/api-reference.md —
   the route table from ``RESTAPIHandler.create_app`` (with registration
   conditions) and the ``MODE_EVENT_PATTERNS`` mode semantics.
@@ -790,6 +797,282 @@ def render_env_vars() -> str:
     return header + "\n" + "\n".join(rows)
 
 
+# ==================== Bridge API sections (ADR 0020) ====================
+
+
+#: Purpose of each language-level evaluation-budget constant (generator
+#: configuration — the source defines the value, the doc defines why).
+_FUEL_CONSTANT_PURPOSES = {
+    "DEFAULT_WHEN_FUEL": "`:when` 门控的默认预算",
+    "DEFAULT_FUEL": "`:actions` / `:loop` 求值的默认预算",
+    "MAX_FUEL": "`:fuel` 自声明的硬顶（超过即加载拒绝）",
+    "DEFAULT_MAX_DEPTH": "form 嵌套深度上限",
+}
+
+
+def render_dsl_fuel_defaults() -> str:
+    """Fuel/depth constants from tlosure/eval.py for dsl-reference.md §3."""
+    tree = _parse(EVAL_FILE)
+    rows: list[str] = []
+    for name, purpose in _FUEL_CONSTANT_PURPOSES.items():
+        value = _literal(_module_value(tree, name, EVAL_FILE))
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise GenerationError(f"{EVAL_FILE}: {name} is not an int literal")
+        rows.append(f"| `{name}` | {value} | {purpose} |")
+    header = (
+        f"语言级求值预算常量（`tlosure/eval.py`，{len(rows)} 个；"
+        f"上文的默认值/上限数字以此表为准）：{GENERATED_NOTE}\n\n"
+        "| 常量 | 值 | 用途 |\n"
+        "|---|---|---|"
+    )
+    return header + "\n" + "\n".join(rows)
+
+
+#: Top-level environment contract -> its single construction point.
+_ENV_CONTRACT_BUILDERS = {
+    "RuleEnv": "rule_env",
+    "OnCompleteEnv": "on_complete_env",
+    "LoopEnv": "loop_until_env",
+    "StageCondEnv": "stage_cond_env",
+}
+
+
+def _typed_dicts(tree: ast.Module, path: Path) -> dict[str, list[tuple[str, str]]]:
+    """All ``class X(TypedDict)`` field lists (name, unparsed annotation)."""
+    contracts: dict[str, list[tuple[str, str]]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not any(
+            (isinstance(b, ast.Name) and b.id == "TypedDict")
+            or (isinstance(b, ast.Attribute) and b.attr == "TypedDict")
+            for b in node.bases
+        ):
+            continue
+        fields = [
+            (stmt.target.id, ast.unparse(stmt.annotation))
+            for stmt in node.body
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+        ]
+        if not fields:
+            raise GenerationError(f"{path}: TypedDict {node.name} has no annotated fields")
+        contracts[node.name] = fields
+    return contracts
+
+
+def render_bridge_env_contracts() -> str:
+    """Environment contract tables for dsl-reference.md §3.1."""
+    contracts = _typed_dicts(_parse(VOCABULARY_FILE), VOCABULARY_FILE)
+    missing = [name for name in _ENV_CONTRACT_BUILDERS if name not in contracts]
+    if missing:
+        raise GenerationError(f"{VOCABULARY_FILE}: env contracts not found: {missing}")
+    rows: list[str] = []
+    nested_names: list[str] = []
+    for contract, builder in _ENV_CONTRACT_BUILDERS.items():
+        for field_name, type_str in contracts[contract]:
+            if (
+                type_str in contracts
+                and type_str not in _ENV_CONTRACT_BUILDERS
+                and type_str not in nested_names
+            ):
+                nested_names.append(type_str)
+            rows.append(
+                f"| `{contract}` | `{builder}()` | `{field_name}` | `{_cell(type_str)}` |"
+            )
+    header = (
+        f"每个求值语境绑定一组固定符号、固定形状的数据（{len(_ENV_CONTRACT_BUILDERS)} 个"
+        f"顶层契约，`vocabulary.py` 的 `*Env` TypedDict 是形状的单一事实源，"
+        f"构建器函数是唯一构造点——引擎调用点全部委托到这里）：{GENERATED_NOTE}\n\n"
+        "| 环境契约 | 构建器 | 字段 | 类型 |\n"
+        "|---|---|---|---|"
+    )
+    body = header + "\n" + "\n".join(rows)
+    if nested_names:
+        notes = "\n".join(
+            f"- `{name}`："
+            + "、".join(f"`{fname}: {_cell(ftype)}`" for fname, ftype in contracts[name])
+            for name in nested_names
+        )
+        body += f"\n\n嵌套类型的字段：\n\n{notes}"
+    return body
+
+
+def action_request_kinds() -> dict[str, list[str]]:
+    """``kind`` -> ``data`` keys of every ``ActionRequest(kind=..., data={...})``
+    call in vocabulary.py, merged per kind in source order."""
+    tree = _parse(VOCABULARY_FILE)
+    found: list[tuple[int, str, list[str]]] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ActionRequest"
+        ):
+            continue
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        if node.args or set(kwargs) != {"kind", "data"}:
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} ActionRequest() is not "
+                "ActionRequest(kind=..., data=...) — teach the generator"
+            )
+        kind = _literal(kwargs["kind"])
+        if not isinstance(kind, str):
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} ActionRequest kind is not a string"
+            )
+        data = kwargs["data"]
+        if not isinstance(data, ast.Dict):
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} ActionRequest data is not a dict literal"
+            )
+        keys: list[str] = []
+        for key in data.keys:
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                raise GenerationError(
+                    f"{VOCABULARY_FILE}:{node.lineno} ActionRequest data key is not a "
+                    "string literal — teach the generator"
+                )
+            keys.append(key.value)
+        found.append((node.lineno, kind, keys))
+    if not found:
+        raise GenerationError(f"{VOCABULARY_FILE}: no ActionRequest() calls found")
+    merged: dict[str, list[str]] = {}
+    for _lineno, kind, keys in sorted(found):
+        bucket = merged.setdefault(kind, [])
+        for key in keys:
+            if key not in bucket:
+                bucket.append(key)
+    return merged
+
+
+def render_dsl_action_kinds() -> str:
+    """ActionRequest kind/data shapes for dsl-reference.md §4.5."""
+    kinds = action_request_kinds()
+    rows = [
+        f"| `{kind}` | {'、'.join(f'`{key}`' for key in keys)} |"
+        for kind, keys in kinds.items()
+    ]
+    header = (
+        f"六个动作 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
+        f"生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——"
+        f"它按宿主查询 `start_all_candidates` 的候选集展开为多个 "
+        f'`kind="start"` 请求）：{GENERATED_NOTE}\n\n'
+        "| kind | data 字段 |\n"
+        "|---|---|"
+    )
+    return header + "\n" + "\n".join(rows)
+
+
+@dataclass(frozen=True)
+class HostQueryPort:
+    word: str
+    method: str
+    doc: str
+
+
+def host_query_ports() -> list[HostQueryPort]:
+    """Closure-injected host queries: the ``builtins["<word>"] = Builtin(
+    lambda ..., pure=True)`` assignments inside ``make_member_builtins``,
+    joined with the method docstrings of the ``ScriptHostQueries``
+    protocol."""
+    tree = _parse(VOCABULARY_FILE)
+    fn = next(
+        (
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "make_member_builtins"
+        ),
+        None,
+    )
+    if fn is None:
+        raise GenerationError(f"{VOCABULARY_FILE}: make_member_builtins not found")
+    protocol = next(
+        (n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ScriptHostQueries"),
+        None,
+    )
+    if protocol is None:
+        raise GenerationError(f"{VOCABULARY_FILE}: class ScriptHostQueries not found")
+    found: list[tuple[int, HostQueryPort]] = []
+    for node in ast.walk(fn):
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Subscript)
+            and isinstance(node.targets[0].value, ast.Name)
+            and node.targets[0].value.id == "builtins"
+        ):
+            continue
+        key = node.targets[0].slice
+        if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} builtins[...] key is not a string literal"
+            )
+        word = key.value
+        call = node.value
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "Builtin"
+            and len(call.args) == 1
+            and isinstance(call.args[0], ast.Lambda)
+        ):
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] is not "
+                "Builtin(lambda ...) — teach the generator"
+            )
+        pure_kwargs = [kw for kw in call.keywords if kw.arg == "pure"]
+        if len(pure_kwargs) != 1 or _literal(pure_kwargs[0].value) is not True:
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] lacks pure=True"
+            )
+        body = call.args[0].body
+        if not (
+            isinstance(body, ast.Call)
+            and isinstance(body.func, ast.Attribute)
+            and isinstance(body.func.value, ast.Name)
+            and body.func.value.id == "host"
+        ):
+            raise GenerationError(
+                f"{VOCABULARY_FILE}:{node.lineno} builtins[{word!r}] lambda body is not "
+                "host.<method>(...) — teach the generator"
+            )
+        method = body.func.attr
+        for stmt in protocol.body:
+            if (
+                isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and stmt.name == method
+            ):
+                doc = ast.get_docstring(stmt)
+                first_line = doc.splitlines()[0] if doc else ""
+                found.append((node.lineno, HostQueryPort(word, method, first_line)))
+                break
+        else:
+            raise GenerationError(
+                f"{VOCABULARY_FILE}: ScriptHostQueries.{method} not found "
+                f"(referenced by builtins[{word!r}])"
+            )
+    if not found:
+        raise GenerationError(
+            f"{VOCABULARY_FILE}: no builtins[...] host-query assignments in "
+            "make_member_builtins"
+        )
+    return [port for _lineno, port in sorted(found)]
+
+
+def render_bridge_query_ports() -> str:
+    """Host query port table for dsl-reference.md §4.6."""
+    ports = host_query_ports()
+    rows = [f"| `{p.word}` | `host.{p.method}` | {_cell(p.doc)} |" for p in ports]
+    header = (
+        f"`make_member_builtins` 在调用方注入 `host` 时追加 {len(ports)} 个宿主查询"
+        f"（`pure=True`，全部读注册表状态、无宿主即不在注册表；说明取自 "
+        f"`ScriptHostQueries` 协议方法的 docstring）：{GENERATED_NOTE}\n\n"
+        "| DSL 词 | 宿主方法 | 说明 |\n"
+        "|---|---|---|"
+    )
+    return header + "\n" + "\n".join(rows)
+
+
 def _render_sections() -> dict[tuple[Path, str], str]:
     return {
         (TOOLS_REF, "tool-registry"): render_tool_registry(),
@@ -813,6 +1096,10 @@ def _render_sections() -> dict[tuple[Path, str], str]:
             "SCRIPT_BUILTINS", VOCABULARY_FILE
         ),
         (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
+        (DSL_REF, "dsl-fuel-defaults"): render_dsl_fuel_defaults(),
+        (DSL_REF, "bridge-env-contracts"): render_bridge_env_contracts(),
+        (DSL_REF, "dsl-action-kinds"): render_dsl_action_kinds(),
+        (DSL_REF, "bridge-query-ports"): render_bridge_query_ports(),
         (API_REF, "rest-endpoints"): render_rest_endpoints(),
         (API_REF, "mode-patterns"): render_mode_patterns(),
         (CONFIG_REF, "agent-yaml-fields-agent"): render_model_table("AgentConfig"),
