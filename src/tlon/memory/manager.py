@@ -37,7 +37,7 @@ from tlon.base.paths import TlonPaths
 
 from .claim_store import ClaimStore
 from .distiller import Distiller
-from .models import Claim, ContextBlock, MemoryConfig, SessionProjection
+from .models import Claim, ContextBlock, MemoryConfig, SessionProjection, build_session_projection
 from .vector_index import VectorIndex
 
 logger = get_logger(__name__)
@@ -406,47 +406,11 @@ class MemoryManager:
             return None
 
         projections = [
-            self._build_projection(session_id, events)
+            build_session_projection(events, session_id)
             for session_id, _started_at, events in pending
         ]
         return await self._distill_sessions(
             projections, [started_at for _sid, started_at, _events in pending]
-        )
-
-    @staticmethod
-    def _build_projection(session_id: str, events: list[dict[str, Any]]) -> SessionProjection:
-        """Rebuild one session's distillation view from its journal events.
-
-        The projection is: the real trigger content (from
-        ``session/start``), every round's LLM response content, and a
-        one-line digest per tool result.
-        """
-        trigger_content = ""
-        llm_responses: list[str] = []
-        tool_results: list[str] = []
-        for event in events:
-            event_type = event.get("type")
-            if event_type == "session/start":
-                trigger_content = str(event.get("trigger_content") or "")
-            elif event_type == "llm/response":
-                content = (event.get("response") or {}).get("content") or ""
-                if content:
-                    llm_responses.append(str(content))
-            elif event_type == "tool/result":
-                tool_call = event.get("tool_call") or {}
-                name = (tool_call.get("function") or {}).get("name", "unknown")
-                result = event.get("result") or {}
-                text = (
-                    result.get("message")
-                    or result.get("error")
-                    or json.dumps(result.get("data") or {}, ensure_ascii=False)
-                )
-                tool_results.append(f"{name}: {text}")
-        return SessionProjection(
-            session_id=session_id,
-            trigger_content=trigger_content,
-            llm_responses=llm_responses,
-            tool_results=tool_results,
         )
 
     async def _distill_sessions(

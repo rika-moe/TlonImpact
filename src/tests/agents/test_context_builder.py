@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from tlon.agents.context_builder import ContextBuilder
+from tlon.agents.context_builder import ContextBuilder, _render_thread_recap
 from tlon.agents.member_spec import (
     MemberRule,
     MemberSpec,
@@ -767,3 +767,32 @@ async def test_thread_recap_internal_trigger_unmarked(tmp_path: Path) -> None:
     recap = context[0]["content"]
     assert "触发来信：内部触发" in recap
     assert "外部来信" not in recap
+
+
+def test_render_thread_recap_renders_projection() -> None:
+    """Direct render check: trigger, end reason, one clipped line per
+    tool result, the last LLM response as the conclusion."""
+    events = [
+        {"type": "session/start", "trigger_content": "查一下磁盘"},
+        {
+            "type": "tool/result",
+            "tool_call": {"function": {"name": "executeBashCommand"}},
+            "result": {"message": "ran ok"},
+        },
+        {"type": "llm/response", "response": {"content": "先看一眼"}},
+        {"type": "llm/response", "response": {"content": "磁盘正常"}},
+        {"type": "session/end", "reason": "complete"},
+    ]
+
+    recap = _render_thread_recap(events)
+
+    assert recap.startswith("[本线程上一轮处理摘要]")
+    assert "触发来信：查一下磁盘" in recap
+    assert "处理结果：complete" in recap
+    assert "- executeBashCommand: ran ok" in recap
+    assert "结论：磁盘正常" in recap
+    assert "先看一眼" not in recap
+
+
+def test_render_thread_recap_empty_events_returns_empty() -> None:
+    assert _render_thread_recap([]) == ""

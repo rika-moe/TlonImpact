@@ -1,5 +1,6 @@
 """Data models for Memory system (claim model, ADR 0017)."""
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -145,13 +146,58 @@ class SessionProjection:
 
     Rebuilt from the session's journal (the sole interaction truth):
     the trigger content plus, per round, the LLM response content and a
-    one-line digest of each tool result.
+    one-line digest of each tool result, and the ``session/end`` reason.
     """
 
     session_id: str
     trigger_content: str
     llm_responses: list[str] = field(default_factory=list)
     tool_results: list[str] = field(default_factory=list)
+    end_reason: str = ""
+
+
+def build_session_projection(
+    events: list[dict[str, Any]], session_id: str = ""
+) -> SessionProjection:
+    """Rebuild one session's distillation view from its journal events.
+
+    The projection is: the real trigger content (from
+    ``session/start``), every round's LLM response content, a one-line
+    digest per tool result, and the ``session/end`` reason. Shared by the
+    distillation trigger (memory) and the thread recap (agents) — the
+    journal's event vocabulary is parsed here and only here.
+    """
+    trigger_content = ""
+    llm_responses: list[str] = []
+    tool_results: list[str] = []
+    end_reason = ""
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "session/start":
+            trigger_content = str(event.get("trigger_content") or "")
+        elif event_type == "llm/response":
+            content = (event.get("response") or {}).get("content") or ""
+            if content:
+                llm_responses.append(str(content))
+        elif event_type == "tool/result":
+            tool_call = event.get("tool_call") or {}
+            name = (tool_call.get("function") or {}).get("name", "unknown")
+            result = event.get("result") or {}
+            text = (
+                result.get("message")
+                or result.get("error")
+                or json.dumps(result.get("data") or {}, ensure_ascii=False)
+            )
+            tool_results.append(f"{name}: {text}")
+        elif event_type == "session/end":
+            end_reason = str(event.get("reason") or "")
+    return SessionProjection(
+        session_id=session_id,
+        trigger_content=trigger_content,
+        llm_responses=llm_responses,
+        tool_results=tool_results,
+        end_reason=end_reason,
+    )
 
 
 @dataclass

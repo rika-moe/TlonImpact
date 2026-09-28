@@ -12,7 +12,6 @@ mailbox, memory, task manager, rule, address) explicitly and owns the
 system prompt cache — no back-reference to the Agent.
 """
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +25,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
+from tlon.memory.models import build_session_projection
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.tasks.manager import TaskManager
@@ -84,39 +84,20 @@ def _render_thread_recap(events: list[dict[str, Any]], external: bool = False) -
 
     The recap complements ``mail-history`` (raw correspondence) with what
     the correspondence does not show: the previous round's tool activity
-    and conclusion. Same event vocabulary as
-    ``MemoryManager._build_projection`` — trigger from ``session/start``,
-    one line per ``tool/result``, the last ``llm/response`` content as
-    the conclusion.
+    and conclusion. Event parsing is shared with distillation via
+    :func:`build_session_projection` — this function only renders the
+    projection: the trigger, one clipped line per tool result, the last
+    LLM response as the conclusion, and the ``session/end`` reason.
 
     ``external`` marks a trigger mail from an external (untrusted)
     address (issue ): the trigger line carries the same warning as
     the envelope header marker.
     """
-    trigger = ""
-    end_reason = ""
-    tool_lines: list[str] = []
-    conclusion = ""
-    for event in events:
-        event_type = event.get("type")
-        if event_type == "session/start":
-            trigger = str(event.get("trigger_content") or "")
-        elif event_type == "tool/result":
-            tool_call = event.get("tool_call") or {}
-            name = (tool_call.get("function") or {}).get("name", "unknown")
-            result = event.get("result") or {}
-            text = (
-                result.get("message")
-                or result.get("error")
-                or json.dumps(result.get("data") or {}, ensure_ascii=False)
-            )
-            tool_lines.append(_clip(f"{name}: {text}", _RECAP_TOOL_MAX))
-        elif event_type == "llm/response":
-            content = (event.get("response") or {}).get("content") or ""
-            if content:
-                conclusion = str(content)
-        elif event_type == "session/end":
-            end_reason = str(event.get("reason") or "")
+    projection = build_session_projection(events)
+    trigger = projection.trigger_content
+    end_reason = projection.end_reason
+    tool_lines = [_clip(line, _RECAP_TOOL_MAX) for line in projection.tool_results]
+    conclusion = projection.llm_responses[-1] if projection.llm_responses else ""
 
     lines = ["[本线程上一轮处理摘要]"]
     if trigger:
