@@ -18,7 +18,7 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.memory.distiller import Distiller
 from tlon.memory.manager import MemoryManager
-from tlon.memory.models import Claim, MemoryConfig, SessionProjection
+from tlon.memory.models import Claim, MemoryConfig, SessionProjection, build_session_projection
 from tlon.tools.base import ToolResult
 
 
@@ -105,7 +105,7 @@ class TestProjection:
         await _completed_session(journal, "agent1-p", "帮我查一下磁盘", reply="已经查完")
 
         events = await journal.read_events("agent1-p")
-        projection = MemoryManager._build_projection("agent1-p", events)
+        projection = build_session_projection(events, "agent1-p")
 
         assert projection.session_id == "agent1-p"
         # The real trigger — not the agent's own reply (the retired
@@ -113,6 +113,7 @@ class TestProjection:
         assert projection.trigger_content == "帮我查一下磁盘"
         assert projection.llm_responses == ["已经查完"]
         assert projection.tool_results == ["executeBashCommand: ran ok"]
+        assert projection.end_reason == "complete"
 
 
 # ── Batch trigger threshold ─────────────────────────────────────────────
