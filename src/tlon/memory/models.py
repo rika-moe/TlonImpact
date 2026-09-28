@@ -17,6 +17,14 @@ class MemoryConfig:
         context_max_claims: Claims to include in context
         reflection_min_interactions: Completed sessions before reflection
             may trigger
+        retrieval_alpha_similarity / retrieval_beta_recency /
+            retrieval_gamma_importance: JIT retrieval composite score
+            weights (ADR 0017 stage 2)
+        retrieval_recency_half_life_days: Recency decay half-life
+        retrieval_pool_factor: KNN candidate pool size multiplier
+        conflict_similarity_threshold: Similarity gate for conflict
+            judgment (ADR 0017 stage 3)
+        conflict_candidate_limit: Judgment candidates pulled per new claim
     """
 
     version: str = "1.0"
@@ -33,6 +41,34 @@ class MemoryConfig:
     # (:on-complete/:reflect); only the interaction threshold stays here.
     reflection_min_interactions: int = 5
 
+    # JIT retrieval composite score (ADR 0017 stage 2, Generative Agents
+    # shape): ``score = α·similarity + β·recency + γ·importance``.
+    # Similarity dominates — relevance to the current mail is the whole
+    # point of JIT injection (); importance lets critical claims win
+    # near-ties; recency is deliberately the weakest factor because the
+    # recency-ordered fallback already owns "latest first" and an old but
+    # relevant claim must not drown under fresh noise.
+    retrieval_alpha_similarity: float = 1.0
+    retrieval_beta_recency: float = 0.3
+    retrieval_gamma_importance: float = 0.5
+    # Recency decays exponentially with this half-life in days (the
+    # Generative Agents decay, re-parameterized as a half-life).
+    retrieval_recency_half_life_days: float = 7.0
+    # The KNN query pulls a pool larger than k so the composite score can
+    # re-rank candidates pure similarity order would miss.
+    retrieval_pool_factor: int = 4
+
+    # Conflict judgment (ADR 0017 stage 3): a new claim is only worth an
+    # LLM judgment call when a similar active old claim exists. The
+    # similarity gate is deliberately high — judgment exists to catch
+    # near-synonymous facts that contradict each other (), and at
+    # 0.75 cosine similarity two claims are almost always about the same
+    # fact; below it they are merely related topics and ADD directly.
+    conflict_similarity_threshold: float = 0.75
+    # Candidates pulled per new claim: judgment needs the few closest
+    # matches, not a ranking exercise.
+    conflict_candidate_limit: int = 3
+
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary."""
         return {
@@ -46,6 +82,17 @@ class MemoryConfig:
             },
             "reflection": {
                 "min_interactions": self.reflection_min_interactions,
+            },
+            "retrieval": {
+                "alpha_similarity": self.retrieval_alpha_similarity,
+                "beta_recency": self.retrieval_beta_recency,
+                "gamma_importance": self.retrieval_gamma_importance,
+                "recency_half_life_days": self.retrieval_recency_half_life_days,
+                "pool_factor": self.retrieval_pool_factor,
+            },
+            "conflict": {
+                "similarity_threshold": self.conflict_similarity_threshold,
+                "candidate_limit": self.conflict_candidate_limit,
             },
         }
 
@@ -73,6 +120,21 @@ class MemoryConfig:
 
         if "reflection" in data:
             config.reflection_min_interactions = data["reflection"].get("min_interactions", 5)
+
+        if "retrieval" in data:
+            retrieval = data["retrieval"]
+            config.retrieval_alpha_similarity = retrieval.get("alpha_similarity", 1.0)
+            config.retrieval_beta_recency = retrieval.get("beta_recency", 0.3)
+            config.retrieval_gamma_importance = retrieval.get("gamma_importance", 0.5)
+            config.retrieval_recency_half_life_days = retrieval.get(
+                "recency_half_life_days", 7.0
+            )
+            config.retrieval_pool_factor = retrieval.get("pool_factor", 4)
+
+        if "conflict" in data:
+            conflict = data["conflict"]
+            config.conflict_similarity_threshold = conflict.get("similarity_threshold", 0.75)
+            config.conflict_candidate_limit = conflict.get("candidate_limit", 3)
 
         return config
 

@@ -81,6 +81,63 @@ async def test_load_tolerates_retired_episodic_sections(tmp_path: Path) -> None:
     assert manager.config.context_max_claims == 10
 
 
+# ── retrieval / conflict sections (memory/config.json tuning) ──
+
+
+def test_retrieval_conflict_sections_roundtrip() -> None:
+    """to_dict/from_dict are symmetric for the retrieval and conflict
+    sections: a tuned config survives the disk round-trip unchanged."""
+    config = MemoryConfig()
+    config.retrieval_alpha_similarity = 0.8
+    config.retrieval_beta_recency = 0.1
+    config.retrieval_gamma_importance = 1.5
+    config.retrieval_recency_half_life_days = 30.0
+    config.retrieval_pool_factor = 8
+    config.conflict_similarity_threshold = 0.9
+    config.conflict_candidate_limit = 5
+
+    restored = MemoryConfig.from_dict(config.to_dict())
+
+    assert restored == config
+
+
+async def test_load_disk_config_reads_retrieval_and_conflict(tmp_path: Path) -> None:
+    manager = _manager(
+        tmp_path,
+        {
+            "retrieval": {"pool_factor": 2, "gamma_importance": 2.5},
+            "conflict": {"similarity_threshold": 0.9, "candidate_limit": 5},
+        },
+    )
+
+    await manager.load()
+
+    assert manager.config.retrieval_pool_factor == 2
+    assert manager.config.retrieval_gamma_importance == 2.5
+    assert manager.config.conflict_similarity_threshold == 0.9
+    assert manager.config.conflict_candidate_limit == 5
+    # Untouched keys keep the defaults (缺省即现状).
+    assert manager.config.retrieval_alpha_similarity == 1.0
+    assert manager.config.retrieval_beta_recency == 0.3
+    assert manager.config.retrieval_recency_half_life_days == 7.0
+
+
+async def test_load_default_config_matches_retired_constants(tmp_path: Path) -> None:
+    """缺省即现状: the defaults equal the retired module constants."""
+    manager = _manager(tmp_path, None)
+
+    await manager.load()
+
+    config = manager.config
+    assert config.retrieval_alpha_similarity == 1.0
+    assert config.retrieval_beta_recency == 0.3
+    assert config.retrieval_gamma_importance == 0.5
+    assert config.retrieval_recency_half_life_days == 7.0
+    assert config.retrieval_pool_factor == 4
+    assert config.conflict_similarity_threshold == 0.75
+    assert config.conflict_candidate_limit == 3
+
+
 # ── delete_claim: ID resolution for the reflection engine (issue ) ──
 
 

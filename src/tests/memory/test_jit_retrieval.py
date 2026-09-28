@@ -128,6 +128,29 @@ async def test_jit_importance_breaks_similarity_tie(tmp_path: Path) -> None:
     assert weak in lines[1]
 
 
+async def test_config_weights_change_jit_ranking(tmp_path: Path) -> None:
+    """The composite score weights are live config: cranking
+    retrieval.gamma_importance lets a maximally important but orthogonal
+    claim outrank the query-aligned one."""
+    query = "部署脚本在哪里？"
+    relevant = "部署脚本在 scripts/deploy.sh"
+    important = "生产环境禁止直接改库"
+    embedder = FakeEmbedder({query: _axis(0), relevant: _axis(0), important: _axis(1)})
+    manager = _manager(tmp_path, embedder, max_claims=1)
+    manager.config.retrieval_gamma_importance = 3.0
+    manager = await _load_with_claims(
+        manager,
+        [
+            _claim("c-relevant", relevant, importance=0.0),
+            _claim("c-important", important, importance=1.0),
+        ],
+    )
+
+    blocks = await manager.build_context_blocks(query)
+
+    assert blocks[0].source_ids == ["c-important"]
+
+
 # ===== Degradation ladder =====
 
 
