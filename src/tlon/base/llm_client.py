@@ -276,7 +276,9 @@ class LLMClient:
             LLMResponse with content and/or tool calls
 
         Raises:
-            Exception: If all retries fail
+            ValueError: If the model is not in provider/model form or the
+                provider's API key env var is missing (preflight)
+            Exception: If all retries fail or a permanent 4xx is returned
         """
         # Prepare messages
         all_messages = [{"role": "system", "content": system_prompt}] + messages
@@ -400,7 +402,12 @@ class LLMClient:
             LLMResponse with content and/or tool calls
 
         Raises:
-            Exception: If all retries fail
+            ValueError: If the model is not in provider/model form or the
+                provider's API key env var is missing (preflight)
+            ContextWindowExceededError: If the provider rejects the request
+                for context length (ADR 0008)
+            Exception: If all retries fail, or a permanent 4xx (other than
+                context-length) is returned
         """
         # Preflight (ADR 0016): configuration errors raise immediately,
         # outside the retry loop — retrying can never fix them. The model
@@ -411,7 +418,7 @@ class LLMClient:
         # never passed explicitly, litellm reads it natively.
         model_name = self.config.model_name
         if model_name is None or "/" not in model_name:
-            raise Exception(
+            raise ValueError(
                 f"LLM model '{model_name}' is not in provider/model form: "
                 "在成员 agent.yaml 的 llm.model_name 配置 provider/model 形式的模型"
                 "（如 deepseek/deepseek-chat）"
@@ -419,7 +426,7 @@ class LLMClient:
         provider = model_name.split("/", 1)[0]
         key_env = f"{provider.upper().replace('-', '_')}_API_KEY"
         if not os.getenv(key_env):
-            raise Exception(
+            raise ValueError(
                 f"LLM API key 未配置：provider '{provider}' 需要环境变量 "
                 f"{key_env}（写入 ~/.tlon/.env 或进程环境）"
             )
@@ -484,19 +491,15 @@ class LLMClient:
             except BadRequestError as e:
                 # Context-length 4xx: retrying can never succeed — surface it
                 # as ContextWindowExceededError so the engine force-compacts
-                # and retries once (ADR 0008). Other 4xx keep the existing
-                # retry policy (must come before APIError, its parent class).
+                # and retries once (ADR 0008). Every other 4xx is permanent
+                # (bad model name, invalid params, insufficient balance) and
+                # can never succeed on retry either — fail fast (must come
+                # before APIError, its parent class).
                 if _is_context_length_error(e):
                     logger.error("llm_context_window_exceeded", error=str(e))
                     raise ContextWindowExceededError(str(e)) from e
-                last_error = e
-                logger.warning(
-                    "llm_retry",
-                    reason="api_error",
-                    attempt=attempt + 1,
-                    max_retries=self.max_retries,
-                    error=str(e),
-                )
+                logger.error("llm_error", error=str(e))
+                raise
 
             except APIError as e:
                 # API error - may be transient, retry
