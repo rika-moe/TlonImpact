@@ -64,8 +64,11 @@ from tlosure.builtins import (
     builtin_contains,
     builtin_eq,
     builtin_get,
+    builtin_join,
     builtin_not,
+    builtin_split,
     builtin_str,
+    builtin_substring,
 )
 from tlosure.edn import Form, Symbol, dumps
 from tlosure.validate import _binding_names, validate_form
@@ -424,6 +427,9 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 SCRIPT_BUILTINS: dict[str, Builtin] = {
     "get": Builtin(builtin_get, pure=True),
     "str": Builtin(builtin_str, pure=True),
+    "split": Builtin(builtin_split, pure=True),
+    "join": Builtin(builtin_join, pure=True),
+    "substring": Builtin(builtin_substring, pure=True),
     "contains?": Builtin(builtin_contains, pure=True),
     "=": Builtin(builtin_eq, pure=True),
     "not": Builtin(builtin_not, pure=True),

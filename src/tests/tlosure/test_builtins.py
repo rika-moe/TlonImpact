@@ -62,7 +62,16 @@ class TestContractTypes:
 
 class TestRegistries:
     def test_core_vocabulary_names(self):
-        assert set(CORE_BUILTINS) == {"=", "not", "contains?", "get", "str"}
+        assert set(CORE_BUILTINS) == {
+            "=",
+            "not",
+            "contains?",
+            "get",
+            "str",
+            "split",
+            "join",
+            "substring",
+        }
 
     def test_arithmetic_vocabulary_names(self):
         assert set(ARITHMETIC_BUILTINS) == {"+", "-", "*", "/", "inc", "dec", "<", ">", "<=", ">="}
@@ -156,6 +165,45 @@ class TestStr:
 
     def test_no_args_is_empty_string(self):
         assert _call("str") == ""
+
+
+class TestStringVocabulary:
+    """``split`` / ``join`` / ``substring`` — pure, strict on types."""
+
+    def test_split(self):
+        assert _call("split", "a,b,c", ",") == ["a", "b", "c"]
+        assert _call("split", "no-sep", ",") == ["no-sep"]
+        assert _call("split", "", ",") == [""]
+
+    def test_split_rejects_empty_separator_and_non_strings(self):
+        with pytest.raises(EvalError, match="separator must be non-empty"):
+            _call("split", "abc", "")
+        with pytest.raises(EvalError, match="split expects a string"):
+            _call("split", Keyword("a,b"), ",")
+        with pytest.raises(EvalError, match="split expects a string"):
+            _call("split", "a,b", None)
+
+    def test_join(self):
+        assert _call("join", ", ", ["a", "b"]) == "a, b"
+        assert _call("join", "-", []) == ""
+
+    def test_join_rejects_non_vector_and_non_string_items(self):
+        with pytest.raises(EvalError, match="join expects a vector"):
+            _call("join", ",", "abc")
+        with pytest.raises(EvalError, match="join expects a string"):
+            _call("join", ",", ["a", 1])
+
+    def test_substring(self):
+        assert _call("substring", "hello world", 6) == "world"
+        assert _call("substring", "hello", 0, 2) == "he"
+        assert _call("substring", "hello", -2) == "lo"  # negative from the end
+        assert _call("substring", "hi", 0, 99) == "hi"  # out-of-range clamps
+
+    def test_substring_rejects_non_int_bounds(self):
+        with pytest.raises(EvalError, match="substring start must be an int"):
+            _call("substring", "hello", True)
+        with pytest.raises(EvalError, match="substring end must be an int"):
+            _call("substring", "hello", 0, 1.5)
 
 
 class TestArithmetic:

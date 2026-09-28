@@ -219,12 +219,15 @@
 环境 `{event, self}`：`event` 是触发事件的负载 map。
 
 <!-- BEGIN GENERATED: dsl-builtins-script -->
-`SCRIPT_BUILTINS`（5 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（8 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
 | `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
 | `str` | 是 | Concatenate arguments into one string (issue ). |
+| `split` | 是 | Split a string on a separator into a vector of strings. |
+| `join` | 是 | Join a vector of strings with a separator into one string. |
+| `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
 | `contains?` | 是 |  |
 | `=` | 是 |  |
 | `not` | 是 |  |
