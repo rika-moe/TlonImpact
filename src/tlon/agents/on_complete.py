@@ -1,12 +1,11 @@
-"""On-complete action execution for the unified MemberRuntime (DSL 4b).
+"""On-complete action execution for the unified MemberRuntime.
 
 When a cognitive session completes with a final reply, the action forms
 declared on the cognitive rule (``rule.actions``) are evaluated once —
-purely: ``spawn`` / ``emit`` builtins record :class:`ActionRequest` data
-into a collector (see ``agents/builtins.py``) — and the collected requests are
+purely: action builtins record :class:`ActionRequest` data into a
+collector (see ``agents/vocabulary.py``) — and the collected requests are
 then executed by the runtime's unified action executor, one by one. All
-five action kinds are accepted (D6.2: the react rule's completion actions
-no longer restrict to spawn/emit).
+action kinds are accepted.
 
 The runner is assembled from capabilities — identity, rule, logger and an
 ``execute_action`` delegate (the MemberRuntime's unified executor) — with
@@ -21,9 +20,9 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from tlon.agents.trigger import AgentIdentity
-from tlon.agents.vocabulary import make_member_builtins
+from tlon.agents.vocabulary import make_member_builtins, on_complete_env
 from tlon.base.logger import get_logger
-from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.mail import Mail
 from tlosure.builtins import ActionRequest, EvalError, FuelExhaustedError
 from tlosure.eval import DEFAULT_FUEL, eval_form
 
@@ -69,21 +68,20 @@ class OnCompleteRunner:
         if not forms:
             return
 
-        env: dict[str, Any] = {
-            "msg": session.trigger_message,
-            "result": result,
-            "self": {
-                "id": self._identity.id,
-                "name": self._identity.name,
-                "address": address_for_member(self._identity.id),
-            },
-        }
+        env: dict[str, Any] = dict(
+            on_complete_env(
+                session.trigger_message,
+                result,
+                member_id=self._identity.id,
+                name=self._identity.name,
+            )
+        )
 
         collector: list[ActionRequest] = []
         builtins = make_member_builtins(collector=collector)
-        # The rule's :fuel caps the completion actions' evaluation (phase D);
-        # the cognitive gate and completion are temporally separated, so each
-        # phase is capped at the same declared budget.
+        # The rule's :fuel caps the completion actions' evaluation; the
+        # cognitive gate and completion are temporally separated, so each
+        # is capped at the same declared budget.
         action_fuel = self._rule.fuel if self._rule.fuel is not None else DEFAULT_FUEL
         for form in forms:
             try:

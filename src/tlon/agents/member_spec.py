@@ -23,7 +23,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from tlon.agents.vocabulary import (
+    ACTION_SCOPE,
     LOOP_BUILTINS,
+    RULE_SCOPE,
     STAGE_COND_BUILTINS,
     make_member_builtins,
     validate_member_action,
@@ -306,14 +308,13 @@ def validate_member_spec(
     """Statically validate a MemberSpec at load time (no execution).
 
     Every expression field of every rule is checked against the unified
-    member vocabulary (phase C): ``:when`` validates against the pure
-    subset of the member registry under the unified env scope
-    ``{msg, event, self}``; actions validate against
+    member vocabulary: ``:when`` validates against the pure subset of the
+    member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
+    actions validate against
     :func:`~tlon.agents.vocabulary.validate_member_action` under
-    ``{msg, event, result, self}``; a cognitive rule's sections, stages
-    and ``:until`` validate against the whitelisted names / loop
-    builtins. The single scope superset covers both former runtimes —
-    no existing spec references a symbol the old scopes rejected (D6.3).
+    :data:`~tlon.agents.vocabulary.ACTION_SCOPE`; a cognitive rule's
+    sections, stages and ``:until`` validate against the whitelisted
+    names / loop builtins.
 
     ``builtins`` is the registry to validate against (host predicates
     included, e.g. Adam's ``sleeping?``); it defaults to the host-less
@@ -374,7 +375,7 @@ def _validate_when(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> No
     if rule.when is None:
         return
     try:
-        validate_form(rule.when, pure, scope={"msg", "event", "self"})
+        validate_form(rule.when, pure, scope=set(RULE_SCOPE))
     except EvalError as e:
         raise MemberSpecValidationError(
             f"{label}: invalid :when expression: {e}"
@@ -385,7 +386,7 @@ def _validate_actions(rule: MemberRule, label: str, pure: dict[str, Builtin]) ->
     """Validate every action form against the unified action vocabulary."""
     for form in rule.actions:
         try:
-            validate_member_action(form, pure=pure, scope={"msg", "event", "result", "self"})
+            validate_member_action(form, pure=pure, scope=set(ACTION_SCOPE))
         except EvalError as e:
             raise MemberSpecValidationError(f"{label}: invalid action: {e}") from e
 

@@ -48,11 +48,16 @@ from tlon.agents.stages.services import StageServices
 from tlon.agents.stages.think import think_stage
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
-from tlon.agents.vocabulary import LOOP_BUILTINS, STAGE_COND_BUILTINS
+from tlon.agents.vocabulary import (
+    LOOP_BUILTINS,
+    STAGE_COND_BUILTINS,
+    loop_until_env,
+    stage_cond_env,
+)
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
 from tlon.base.logger import get_logger
-from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.builtins import EvalError
@@ -365,18 +370,16 @@ class LoopDriver:
         """
         log = self._services.logger
         loop = self._loop
-        env = {
-            "self": {
-                "id": self._identity.id,
-                "name": self._identity.name,
-                "address": address_for_member(self._identity.id),
-            },
-            "state": {"iteration": session.iteration, "error_count": session.error_count},
-            "limits": {
-                "max_iterations": loop.max_iterations,
-                "max_consecutive_errors": loop.max_consecutive_errors,
-            },
-        }
+        env = dict(
+            loop_until_env(
+                member_id=self._identity.id,
+                name=self._identity.name,
+                iteration=session.iteration,
+                error_count=session.error_count,
+                max_iterations=loop.max_iterations,
+                max_consecutive_errors=loop.max_consecutive_errors,
+            )
+        )
         try:
             result = eval_form(loop.until, env, LOOP_BUILTINS, fuel=self._loop_fuel)
         except EvalError as e:
@@ -509,11 +512,14 @@ class LoopDriver:
         if condition is None:
             return True
         log = self._services.logger
-        env = {
-            "state": {"iteration": session.iteration, "error_count": session.error_count},
-            "scratch": session.loop_scratch,
-            "round": {"completing": attempts_completion(response)},
-        }
+        env = dict(
+            stage_cond_env(
+                iteration=session.iteration,
+                error_count=session.error_count,
+                scratch=session.loop_scratch,
+                completing=attempts_completion(response),
+            )
+        )
         try:
             result = eval_form(
                 condition, env, STAGE_COND_BUILTINS, fuel=self._loop_fuel
