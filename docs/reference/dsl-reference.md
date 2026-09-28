@@ -161,6 +161,8 @@
 
 语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入），清单见第 4.6 节。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
+**版本纪律**（ADR 0020，[docs/design/bridge-api.md](../design/bridge-api.md)）：本节清单是 spec 作者面对的稳定界面。spec 是落盘数据，因此桥上词汇**只增不删、语义只紧不松**——既有 builtin 的名字、元数、返回形状不可变；修复式收紧（原来放行的坏输入改为加载拒绝）允许。新增词汇必须声明所属语境注册表，不存在"所有语境可见"的词；加载期校验（`validate_member_spec`）是引用错误的唯一守门人，运行期不存在"未定义词汇"这一类错误。
+
 ### 4.1 `TRIGGER_BUILTINS`（触发器谓词）
 
 `:when` 门控可用，环境 `{msg, event, self}`。
