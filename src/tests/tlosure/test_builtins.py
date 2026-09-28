@@ -71,6 +71,7 @@ class TestRegistries:
             "split",
             "join",
             "substring",
+            "count",
         }
 
     def test_arithmetic_vocabulary_names(self):
@@ -204,6 +205,19 @@ class TestStringVocabulary:
             _call("substring", "hello", True)
         with pytest.raises(EvalError, match="substring end must be an int"):
             _call("substring", "hello", 0, 1.5)
+
+    def test_count(self):
+        assert _call("count", [1, 2, 3]) == 3
+        assert _call("count", []) == 0
+        assert _call("count", "hello") == 5
+        assert _call("count", {"a": 1, "b": 2}) == 2
+        assert _call("count", None) == 0  # Clojure semantics: (count nil) → 0
+
+    def test_count_rejects_non_collections(self):
+        with pytest.raises(EvalError, match="count expects a vector, map or string"):
+            _call("count", 42)
+        with pytest.raises(EvalError, match="count expects a vector, map or string"):
+            _call("count", True)
 
 
 class TestArithmetic:
