@@ -7,9 +7,10 @@ naming a host business concept):
 - the shared contract types the vocabulary and the evaluator kernel
   (``tlosure/eval.py``) are both written against — the :class:`EvalError`
   family, :class:`Builtin` (one registry entry: ``fn`` + purity marker),
-  and :class:`ActionRequest` (the side-effect *data* an action builtin
-  produces; the host engine executes the requests after evaluation
-  completes — "the DSL describes, the engine executes");
+  :class:`Closure` (the user function value ``defn`` / ``fn`` produce,
+  ADR 0021), and :class:`ActionRequest` (the side-effect *data* an action
+  builtin produces; the host engine executes the requests after
+  evaluation completes — "the DSL describes, the engine executes");
 - the general vocabulary: pure, total functions any host composes into
   its own registries — :data:`CORE_BUILTINS` (``=`` / ``not`` /
   ``contains?`` / ``get`` / ``str`` / ``split`` / ``join`` /
@@ -64,6 +65,26 @@ class Builtin:
 
     fn: Callable[..., Any]
     pure: bool = True
+
+
+@dataclass(frozen=True)
+class Closure:
+    """A user function value (ADR 0021) — what ``defn`` / ``fn`` evaluate to.
+
+    A language-core value, host-agnostic like the rest of this module:
+    ``params`` are the fixed parameter names, ``rest`` the variadic
+    collector name (``[a b & rest]``), ``body`` the unevaluated forms,
+    and ``env`` the definition-time environment captured **by reference**
+    (recursion depends on it: ``defn`` writes the closure into the same
+    dict object, so the body's self-reference resolves). ``name`` is the
+    ``defn`` name, for error messages only.
+    """
+
+    params: list[str]
+    rest: str | None
+    body: list[Any]
+    env: dict[str, Any]
+    name: str | None = None
 
 
 @dataclass(frozen=True)

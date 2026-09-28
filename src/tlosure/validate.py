@@ -1,22 +1,32 @@
 """Static validation for the agent behavior DSL (split out of ``eval.py``).
 
 :func:`validate_form` walks a parsed EDN form without executing it:
-every form head must be a whitelisted special form or a registered
-:class:`Builtin`, every symbol must resolve in ``scope`` (extended by
-``let`` / loop bindings), and special-form shapes must be well-formed —
-raising :class:`EvalError` on the first violation. The ``while`` /
-``recur`` tail-position rules are tracked through :class:`_WhileCtx`:
-``recur`` is only legal in a ``while`` body's tail position (``if``
-branches, trailing ``when``/``let`` bodies, and the final ``and``/``or``
-argument inherit tail position).
+every form head must be a whitelisted special form, a registered
+:class:`Builtin`, or a name in ``scope`` (a user function defined by
+``defn`` — ADR 0021); every symbol must resolve in ``scope`` (extended
+by ``let`` / loop bindings and ``defn`` / ``fn`` parameters), and
+special-form shapes must be well-formed — raising :class:`EvalError` on
+the first violation. The ``while`` / ``recur`` tail-position rules are
+tracked through :class:`_WhileCtx`: ``recur`` is only legal in a
+``while`` body's tail position (``if`` branches, trailing
+``when``/``let`` bodies, and the final ``and``/``or`` argument inherit
+tail position), and never crosses a function boundary — ``fn`` /
+``defn`` bodies are validated with no enclosing loop.
+
+``defn`` scope threading is sequential (define-before-use): a body is
+validated form by form, and each ``defn`` adds its name to the scope of
+the *following* sibling forms — referencing a function before its
+``defn`` is rejected even though evaluation (by-reference env capture)
+would resolve it.
 
 Action-position validation is host business (it names the host's action
 vocabulary) and lives with the host — for tlon that is
 ``tlon/agents/vocabulary.py`` (ADR 0018 修订).
 
-The ``_binding_names`` helper is shared with the evaluator kernel
-(``tlosure/eval.py``), which uses it for ``let`` / ``while`` binding
-vectors at evaluation time, and with host-side action validators.
+The ``_binding_names`` / ``_params`` helpers are shared with the
+evaluator kernel (``tlosure/eval.py``), which uses them for ``let`` /
+``while`` binding vectors and ``defn`` / ``fn`` parameter vectors at
+evaluation time, and with host-side action validators.
 """
 
 from dataclasses import dataclass
@@ -58,11 +68,28 @@ def _non_tail(loop: _WhileCtx | None) -> _WhileCtx | None:
 def _validate_seq(
     forms: list[Any], builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None
 ) -> None:
-    """Validate a body: only its final form may carry the loop's tail slot."""
+    """Validate a body: only its final form may carry the loop's tail slot.
+
+    Threads ``defn`` names forward (define-before-use): each ``defn``
+    adds its name to the scope the *following* sibling forms see.
+    """
+    local = set(scope)
     n = len(forms)
     for i, form in enumerate(forms):
         sub = loop if (loop is not None and i == n - 1) else _non_tail(loop)
-        _validate(form, builtins, scope, sub)
+        if _is_defn(form):
+            local.add(_validate_defn(form, builtins, local, sub))
+            continue
+        _validate(form, builtins, local, sub)
+
+
+def _is_defn(value: Any) -> bool:
+    return (
+        isinstance(value, Form)
+        and bool(value)
+        and isinstance(value[0], Symbol)
+        and str(value[0]) == "defn"
+    )
 
 
 def _binding_names(bindings: Any, what: str) -> list[str]:
@@ -83,6 +110,33 @@ def _binding_names(bindings: Any, what: str) -> list[str]:
     return names
 
 
+def _params(params: Any, what: str) -> tuple[list[str], str | None]:
+    """Parse a function parameter vector: ``[a b]`` or ``[a b & rest]``.
+
+    ``what`` names the construct in error messages ("defn" / "fn").
+    Returns the fixed parameter names and the variadic collector name
+    (``None`` when absent). ``&`` must sit exactly in the penultimate
+    position, followed by one symbol.
+    """
+    if isinstance(params, Form) or not isinstance(params, list):
+        raise EvalError(f"{what} parameters must be a vector, got {dumps(params)}")
+    items = list(params)
+    rest: str | None = None
+    if Symbol("&") in items:
+        if items.count(Symbol("&")) > 1 or len(items) < 2 or items[-2] != Symbol("&"):
+            raise EvalError(f"{what} parameters: & must precede the final parameter")
+        if not isinstance(items[-1], Symbol):
+            raise EvalError(f"{what} parameters: & must be followed by a symbol")
+        rest = str(items[-1])
+        items = items[:-2]
+    names: list[str] = []
+    for item in items:
+        if not isinstance(item, Symbol):
+            raise EvalError(f"{what} parameter name must be a symbol, got {dumps(item)}")
+        names.append(str(item))
+    return names, rest
+
+
 def _validate(
     value: Any,
     builtins: dict[str, Builtin],
@@ -94,7 +148,15 @@ def _validate(
             raise EvalError("empty form () is not a valid expression")
         head = value[0]
         if not isinstance(head, Symbol):
-            raise EvalError(f"form head must be a symbol, got {dumps(head)}")
+            # A Form head is a function-valued expression applied to the
+            # arguments (e.g. ``((fn [x] (inc x)) 5)``); anything else
+            # stays a shape error.
+            if not isinstance(head, Form):
+                raise EvalError(f"form head must be a symbol, got {dumps(head)}")
+            _validate(head, builtins, scope, _non_tail(loop))
+            for arg in value[1:]:
+                _validate(arg, builtins, scope, _non_tail(loop))
+            return
         name = str(head)
         if name == "let":
             _validate_let(value, builtins, scope, loop)
@@ -104,6 +166,12 @@ def _validate(
             return
         if name == "recur":
             _validate_recur(value, builtins, scope, loop)
+            return
+        if name == "defn":
+            _validate_defn(value, builtins, scope, loop)
+            return
+        if name == "fn":
+            _validate_fn(value, builtins, scope, loop)
             return
         if name in ("map", "filter"):
             _validate_map_like(value, builtins, scope, loop)
@@ -130,6 +198,13 @@ def _validate(
             # Only the final argument may carry the loop's tail slot.
             _validate_seq(value[1:], builtins, scope, loop)
             return
+        if name in scope:
+            # A name bound in scope heads a user function call (the
+            # evaluator resolves env before builtins, mirroring this);
+            # arguments are validated as ordinary non-tail expressions.
+            for arg in value[1:]:
+                _validate(arg, builtins, scope, _non_tail(loop))
+            return
         if name not in builtins:
             raise EvalError(
                 f"unknown function or special form: {name} (in form {dumps(value)})"
@@ -150,6 +225,48 @@ def _validate(
         # map keys stay literal; values must be valid expressions
         for item in value.values():
             _validate(item, builtins, scope, _non_tail(loop))
+
+
+def _validate_defn(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None = None
+) -> str:
+    """Validate ``(defn name [params] body...)``; return the defined name.
+
+    The body sees the definition scope plus the parameters, the variadic
+    collector, and the function's own name (recursion). It is validated
+    with no enclosing loop: ``recur`` never crosses a function boundary.
+    """
+    args = form[1:]
+    if len(args) < 3:
+        raise EvalError("defn expects a name, a parameter vector, and at least one body form")
+    name = args[0]
+    if not isinstance(name, Symbol):
+        raise EvalError(f"defn name must be a symbol, got {dumps(name)}")
+    params, rest = _params(args[1], "defn")
+    local = set(scope) | set(params) | {str(name)}
+    if rest is not None:
+        local.add(rest)
+    _validate_seq(args[2:], builtins, local, None)
+    return str(name)
+
+
+def _validate_fn(
+    form: Form, builtins: dict[str, Builtin], scope: set[str], loop: _WhileCtx | None = None
+) -> None:
+    """Validate ``(fn [params] body...)``: an anonymous closure value.
+
+    The body sees the definition scope plus the parameters (and the
+    variadic collector); ``recur`` inside is rejected (no enclosing
+    loop crosses a function boundary).
+    """
+    args = form[1:]
+    if len(args) < 2:
+        raise EvalError("fn expects a parameter vector and at least one body form")
+    params, rest = _params(args[0], "fn")
+    local = set(scope) | set(params)
+    if rest is not None:
+        local.add(rest)
+    _validate_seq(args[1:], builtins, local, None)
 
 
 def _validate_let(
@@ -183,6 +300,11 @@ def _validate_while(
     arity = len(names)
     for body_form in args[2:]:
         # Every direct body form is a tail position of this while.
+        # defn names thread forward like any other body (_validate_seq),
+        # mirroring the evaluator's shared per-iteration env dict.
+        if _is_defn(body_form):
+            local.add(_validate_defn(body_form, builtins, local, _WhileCtx(arity, True)))
+            continue
         _validate(body_form, builtins, local, _WhileCtx(arity, True))
 
 

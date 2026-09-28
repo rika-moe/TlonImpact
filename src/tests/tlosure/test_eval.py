@@ -8,7 +8,10 @@ style) and ``map``/``filter``/``reduce`` iterate under the same fuel bound —
 so this suite pins the new semantics and the flipped assertions: ``loop`` /
 bare ``recur`` are still rejected, ``while`` is now a special form whose
 binding vector is enforced, and ``recur`` is only legal in a ``while``
-body's tail position.
+body's tail position. ADR 0021 added full function capability (``defn`` /
+``fn`` / closures / variadic parameters / recursion / first-class
+functions), pinned in ``TestFunctions`` below; the constraint levers stay
+the same fuel budget and depth cap.
 
 This suite covers the language core only (ADR 0018 修订): the registry
 is the host-agnostic general vocabulary (``CORE_BUILTINS`` +
@@ -20,7 +23,7 @@ action family, ``make_member_builtins``, host injection,
 
 import pytest
 
-from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin
+from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin, Closure
 from tlosure.edn import Form, Keyword, loads
 from tlosure.eval import (
     DEFAULT_MAX_DEPTH,
@@ -417,6 +420,180 @@ class TestValidateForm:
             validate_form(loads('(let [x 1] (contains? y "hi"))'), _BUILTINS, scope={"msg"})
 
 
+class TestFunctions:
+    """ADR 0021: defn / fn / closures / variadic parameters / recursion /
+    first-class functions — bounded by the same fuel and depth levers."""
+
+    def test_defn_defines_and_calls(self):
+        assert eval_form(
+            loads("(when true (defn f [x] (inc x)) (f 41))"), {}, _BUILTINS
+        ) == 42
+
+    def test_defn_returns_the_closure(self):
+        result = eval_form(loads("(defn f [x] x)"), {}, _BUILTINS)
+        assert isinstance(result, Closure)
+        assert result.name == "f"
+
+    def test_fn_immediate_application(self):
+        assert eval_form(loads("((fn [x] (inc x)) 5)"), {}, _BUILTINS) == 6
+
+    def test_closure_captures_let_binding(self):
+        # The closure captures the definition-time environment.
+        assert eval_form(
+            loads("(let [base 10] ((fn [x] (+ base x)) 5))"), {}, _BUILTINS
+        ) == 15
+        assert eval_form(
+            loads("(let [base 10] (defn add-base [x] (+ base x)) (add-base 5))"),
+            {},
+            _BUILTINS,
+        ) == 15
+
+    def test_variadic_rest_collects_extra_arguments(self):
+        assert eval_form(
+            loads("(when true (defn f [a & rest] rest) (f 1 2 3))"), {}, _BUILTINS
+        ) == [2, 3]
+
+    def test_variadic_rest_empty_vector(self):
+        assert eval_form(
+            loads("(when true (defn f [a & rest] rest) (f 1))"), {}, _BUILTINS
+        ) == []
+
+    def test_variadic_only_rest(self):
+        assert eval_form(
+            loads("(when true (defn f [& xs] xs) (f 1 2))"), {}, _BUILTINS
+        ) == [1, 2]
+
+    def test_recursion_factorial(self):
+        assert eval_form(
+            loads("(when true (defn fact [n] (if (< n 2) 1 (* n (fact (dec n))))) (fact 5))"),
+            {},
+            _BUILTINS,
+        ) == 120
+
+    def test_recursion_fibonacci(self):
+        assert eval_form(
+            loads(
+                "(when true (defn fib [n] (if (< n 2) n"
+                " (+ (fib (- n 1)) (fib (- n 2))))) (fib 8))"
+            ),
+            {},
+            _BUILTINS,
+        ) == 21
+
+    def test_first_class_function_as_argument(self):
+        assert eval_form(
+            loads("(when true (defn apply2 [f x] (f (f x))) (apply2 (fn [x] (* x 2)) 3))"),
+            {},
+            _BUILTINS,
+        ) == 12
+
+    def test_first_class_function_as_return_value(self):
+        assert eval_form(
+            loads("(when true (defn make-adder [n] (fn [x] (+ x n))) ((make-adder 3) 4))"),
+            {},
+            _BUILTINS,
+        ) == 7
+
+    def test_defn_sibling_forms_see_the_definition(self):
+        # defn binds into the current env dict, so later forms of the
+        # same body resolve the name.
+        assert eval_form(
+            loads("(when true (defn f [x] (inc x)) (defn g [x] (f (f x))) (g 0))"),
+            {},
+            _BUILTINS,
+        ) == 2
+
+    def test_arity_error_fixed_params(self):
+        with pytest.raises(EvalError, match="f expects 2 arguments, got 1"):
+            eval_form(loads("(when true (defn f [a b] a) (f 1))"), {}, _BUILTINS)
+
+    def test_arity_error_variadic(self):
+        with pytest.raises(EvalError, match="f expects at least 1 arguments, got 0"):
+            eval_form(loads("(when true (defn f [a & r] a) (f))"), {}, _BUILTINS)
+
+    def test_anonymous_arity_error_names_anonymous_fn(self):
+        with pytest.raises(EvalError, match="anonymous fn expects 1 arguments, got 0"):
+            eval_form(loads("((fn [x] x))"), {}, _BUILTINS)
+
+    def test_infinite_recursion_hits_the_depth_cap(self):
+        # Termination is guaranteed by the depth/fuel levers, not by the
+        # absence of recursion (ADR 0021).
+        with pytest.raises(EvalDepthError, match="depth exceeds"):
+            eval_form(
+                loads("(when true (defn f [x] (f (inc x))) (f 0))"), {}, _BUILTINS
+            )
+
+    def test_wide_recursion_hits_the_fuel_budget(self):
+        with pytest.raises(FuelExhaustedError, match="fuel exhausted"):
+            eval_form(
+                loads(
+                    "(when true (defn f [n] (if (< n 1) 0"
+                    " (+ (f (- n 1)) (f (- n 1))))) (f 20))"
+                ),
+                {},
+                _BUILTINS,
+            )
+
+    def test_recur_does_not_cross_a_function_boundary(self):
+        # Clojure semantics: applying a closure clears the enclosing loop
+        # context, so recur inside a function body is "outside while".
+        with pytest.raises(EvalError, match="recur outside while"):
+            eval_form(
+                loads(
+                    "(when true (defn f [] (recur 1))"
+                    " (while [i 0] (< i 1) (f) (recur (inc i))))"
+                ),
+                {},
+                _BUILTINS,
+            )
+
+    def test_loop_stack_survives_a_function_call(self):
+        # ...and the enclosing loop keeps working after the call returns.
+        recorded: list = []
+        eval_form(
+            loads(
+                "(when true (defn emit [x] (record x))"
+                " (while [i 0] (< i 3) (emit i) (recur (inc i))))"
+            ),
+            {},
+            _recorded(recorded),
+        )
+        assert recorded == [0, 1, 2]
+
+    def test_env_value_is_not_callable(self):
+        with pytest.raises(EvalError, match="msg is not callable"):
+            eval_form(loads("(msg 1)"), {"msg": "hello"}, _BUILTINS)
+
+    def test_form_head_must_evaluate_to_a_closure(self):
+        with pytest.raises(EvalError, match="form head is not callable"):
+            eval_form(loads("((+ 1 2) 3)"), {}, _BUILTINS)
+
+    def test_str_on_a_closure_is_an_eval_error(self):
+        # dumps() has no Closure case: the TypeError surfaces through the
+        # builtin-call wrapper as a plain EvalError (spec bug).
+        with pytest.raises(EvalError, match="str failed: cannot dump Closure as EDN"):
+            eval_form(loads("(str (fn [x] x))"), {}, _BUILTINS)
+
+    def test_defn_shape_errors(self):
+        with pytest.raises(EvalError, match="defn name must be a symbol"):
+            eval_form(loads("(defn 1 [x] x)"), {}, _BUILTINS)
+        with pytest.raises(EvalError, match="defn parameters must be a vector"):
+            eval_form(loads("(defn f (x) x)"), {}, _BUILTINS)
+        with pytest.raises(
+            EvalError,
+            match="defn expects a name, a parameter vector, and at least one body form",
+        ):
+            eval_form(loads("(defn f [x])"), {}, _BUILTINS)
+
+    def test_fn_shape_errors(self):
+        with pytest.raises(
+            EvalError, match="fn expects a parameter vector and at least one body form"
+        ):
+            eval_form(loads("(fn [x])"), {}, _BUILTINS)
+        with pytest.raises(EvalError, match="fn parameters: & must precede the final"):
+            eval_form(loads("(fn [a & b c] a)"), {}, _BUILTINS)
+
+
 class TestFlippedAssertions:
     """Phase D: loops are legal now — but still bounded and guarded.
 
@@ -433,9 +610,18 @@ class TestFlippedAssertions:
             eval_form(loads("(loop [x 1] x)"), {}, _BUILTINS)
 
     def test_def_lambda_still_unknown(self):
+        # ADR 0021 added defn/fn as special forms, but ``def`` and
+        # ``lambda`` remain outside the language.
         for source in ("(def x 1)", "(lambda (x) x)"):
             with pytest.raises(EvalError, match="unknown"):
                 eval_form(loads(source), {}, _BUILTINS)
+
+    def test_defn_fn_are_special_forms_now(self):
+        # The flipped side of ADR 0021: defn/fn evaluate to closures.
+        assert eval_form(
+            loads("(when true (defn f [x] (inc x)) (f 1))"), {}, _BUILTINS
+        ) == 2
+        assert eval_form(loads("((fn [x] (inc x)) 1)"), {}, _BUILTINS) == 2
 
     def test_recur_alone_still_rejected(self):
         with pytest.raises(EvalError, match="recur outside while"):

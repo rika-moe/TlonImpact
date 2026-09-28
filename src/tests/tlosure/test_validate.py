@@ -4,8 +4,10 @@ Complements ``TestValidateForm`` in ``test_eval.py``: that class pins the
 happy path plus the head/scope basics; this suite covers the recursive
 validation of nested data literals, the special-form shape errors not
 already asserted there, the while/recur tail-position rules (the reverse
-direction — every non-tail position rejects ``recur``), and the scoping
-semantics of each binding construct.
+direction — every non-tail position rejects ``recur``), the scoping
+semantics of each binding construct, and the ADR 0021 function forms
+(``defn`` / ``fn``: scope threading, parameter shapes, the ``recur``
+function boundary).
 """
 
 import pytest
@@ -218,3 +220,101 @@ class TestScope:
             validate_form(loads("(reduce acc x (+ acc x) acc [1])"), _BUILTINS, scope=set())
         with pytest.raises(EvalError, match="undefined symbol: x"):
             validate_form(loads("(reduce acc x (+ acc x) 0 x)"), _BUILTINS, scope=set())
+class TestFunctionValidation:
+    """ADR 0021 validate mirror: scope threading, recur boundaries, shapes."""
+
+    def test_fn_body_undefined_symbol_rejected(self):
+        with pytest.raises(EvalError, match="undefined symbol: y"):
+            validate_form(loads("(fn [x] (+ x y))"), _BUILTINS, scope=set())
+
+    def test_fn_params_and_rest_enter_body_scope(self):
+        validate_form(loads("(fn [x & xs] (contains? xs x))"), _BUILTINS, scope=set())
+
+    def test_defn_use_before_define_rejected(self):
+        with pytest.raises(EvalError, match="unknown function or special form: f"):
+            validate_form(loads("(when true (f 1) (defn f [x] x))"), _BUILTINS, scope=set())
+
+    def test_defn_define_before_use_passes(self):
+        validate_form(
+            loads("(when true (defn f [x] (inc x)) (f 1))"), _BUILTINS, scope=set()
+        )
+
+    def test_defn_forward_reference_rejected(self):
+        # Even though by-reference env capture would resolve g at
+        # evaluation time, validation enforces define-before-use.
+        with pytest.raises(EvalError, match="unknown function or special form: g"):
+            validate_form(
+                loads("(when true (defn f [x] (g x)) (defn g [x] x))"),
+                _BUILTINS,
+                scope=set(),
+            )
+
+    def test_defn_recursion_validates(self):
+        validate_form(
+            loads("(defn fact [n] (if (< n 2) 1 (* n (fact (dec n)))))"),
+            _BUILTINS,
+            scope=set(),
+        )
+
+    def test_recur_in_fn_body_rejected(self):
+        with pytest.raises(EvalError, match="recur outside while"):
+            validate_form(loads("(fn [x] (recur x))"), _BUILTINS, scope=set())
+
+    def test_recur_in_fn_inside_while_rejected(self):
+        # The enclosing while does not reach into the function body.
+        with pytest.raises(EvalError, match="recur outside while"):
+            validate_form(
+                loads("(while [i 0] (< i 3) ((fn [] (recur (inc i)))))"),
+                _BUILTINS,
+                scope=set(),
+            )
+
+    def test_parameter_vector_shape_errors(self):
+        with pytest.raises(EvalError, match="fn parameters: & must precede the final"):
+            validate_form(loads("(fn [a & b c] a)"), _BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="fn parameters: & must precede the final"):
+            validate_form(loads("(fn [&] 1)"), _BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="fn parameter name must be a symbol"):
+            validate_form(loads("(fn [1] 1)"), _BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="defn parameters must be a vector"):
+            validate_form(loads("(defn f (x) x)"), _BUILTINS, scope=set())
+
+    def test_defn_shape_errors(self):
+        with pytest.raises(EvalError, match="defn name must be a symbol"):
+            validate_form(loads("(defn 1 [x] x)"), _BUILTINS, scope=set())
+        with pytest.raises(EvalError, match="defn expects a name"):
+            validate_form(loads("(defn f [x])"), _BUILTINS, scope=set())
+
+    def test_form_head_is_validated(self):
+        validate_form(loads("((fn [x] (inc x)) 5)"), _BUILTINS, scope=set())
+        # The head expression itself is validated recursively.
+        with pytest.raises(EvalError, match="undefined symbol: y"):
+            validate_form(loads("((fn [x] (+ x y)) 5)"), _BUILTINS, scope=set())
+        # Non-symbol, non-form heads stay shape errors.
+        with pytest.raises(EvalError, match="form head must be a symbol"):
+            validate_form(loads("(1 2)"), _BUILTINS, scope=set())
+
+    def test_defn_does_not_leak_out_of_its_body(self):
+        with pytest.raises(EvalError, match="undefined symbol: f"):
+            validate_form(
+                loads("(= (when true (defn f [x] x) (f 1)) f)"), _BUILTINS, scope=set()
+            )
+
+
+
+    def test_defn_threads_through_while_body(self):
+        """Mirror check: the evaluator shares one env dict across a while
+        body, so a defn is visible to later sibling forms — the validator
+        must admit exactly what the evaluator runs."""
+        validate_form(
+            loads("(while [i 0] (< i 2) (defn f [x] (+ x 1)) (f i) (recur (inc i)))"),
+            _BUILTINS,
+            scope=set(),
+        )
+        # Use before def in the same while body is still rejected.
+        with pytest.raises(EvalError, match="unknown function or special form: f"):
+            validate_form(
+                loads("(while [i 0] (< i 2) (f i) (defn f [x] (+ x 1)) (recur (inc i)))"),
+                _BUILTINS,
+                scope=set(),
+            )
