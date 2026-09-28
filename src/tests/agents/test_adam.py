@@ -1,12 +1,13 @@
 """Adam — the policy member (PID 1), now a unified MemberRuntime instance.
 
-Pins Adam's four policy lines as data: boot (start-all for members
-whose spec declares ``:on :boot``, phase E spec-derived), drain
-(idle-fact → stop request), welcome (issue  — AGENT_SPAWNED
+Pins Adam's five policy lines as data: boot (start-all for members
+whose spec declares ``:on :boot``), drain
+(idle-fact → stop request), noisy-circuit-breaker (AGENT_NOISY → stop
+the flooding member), welcome (issue  — AGENT_SPAWNED
 triggers a birth-socialization mail to the newborn) and guardian-inbox
 (issue  — a fixed acknowledgement reply to mail addressed to Adam,
 postmaster senders excluded). Wake is no longer
-Adam's line — phase E moved it into the registry as a spec-derived
+Adam's line — wake-on-mail lives in the registry as a spec-derived
 mechanized policy (see ``test_registry.py``). The registry is stubbed
 with its read-only interfaces (``get_agent`` / ``get_config`` /
 ``get_all`` / ``get_all_ids`` / ``boot_candidates`` / ``is_lazy``).
@@ -124,6 +125,52 @@ class TestAdamDecisions:
         await _wait_for(lambda: len(stops) == 1)
         assert stops[0].payload.agent_id == "worker-1"
         assert stops[0].payload.reason == "drain"
+
+        await adam.shutdown()
+
+    async def test_noisy_circuit_breaker(self, bus, tlon_paths):
+        """AGENT_NOISY (PublicHealthMonitor's fact) → stop the flooding member."""
+        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
+        adam = make_adam(bus, registry, tlon_paths)
+        stops: list[Event] = []
+        bus.subscribe(EventType.AGENT_STOP_REQUEST, lambda e: stops.append(e))
+        await adam.initialize()
+
+        await bus.publish(
+            Event(
+                type=EventType.AGENT_NOISY,
+                payload={
+                    "agent_id": "worker-1",
+                    "window_seconds": 60.0,
+                    "mail_count": 25,
+                    "broadcast_count": 0,
+                },
+                source="public_health_monitor",
+            )
+        )
+        await _wait_for(lambda: len(stops) == 1)
+        assert stops[0].payload.agent_id == "worker-1"
+        assert stops[0].payload.reason == "noisy-circuit-breaker"
+
+        await adam.shutdown()
+
+    async def test_noisy_fact_without_agent_id_is_skipped(self, bus, tlon_paths):
+        """A malformed fact fails safe: the action raises, the rule is skipped."""
+        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
+        adam = make_adam(bus, registry, tlon_paths)
+        stops: list[Event] = []
+        bus.subscribe(EventType.AGENT_STOP_REQUEST, lambda e: stops.append(e))
+        await adam.initialize()
+
+        await bus.publish(
+            Event(
+                type=EventType.AGENT_NOISY,
+                payload={"mail_count": 25},
+                source="public_health_monitor",
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert stops == []
 
         await adam.shutdown()
 
