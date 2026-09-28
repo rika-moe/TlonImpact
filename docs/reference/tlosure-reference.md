@@ -103,7 +103,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 ### 3.1 `CORE_BUILTINS`（通用谓词与访问器）
 
 <!-- BEGIN GENERATED: dsl-builtins-core -->
-`CORE_BUILTINS`（8 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`CORE_BUILTINS`（9 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -115,6 +115,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `split` | 是 | Split a string on a separator into a vector of strings. |
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
+| `count` | 是 | Item count of a vector / map / string; ``nil`` counts as 0. |
 <!-- END GENERATED: dsl-builtins-core -->
 
 `=` 是任意元比较，按 `_value_equal` 判定：`Keyword` / `Symbol` / `str` 三种字符串类型互不相等。`get` 是 total 的——目标不是 dict 也返回 `default`，永不对畸形负载抛错；`contains?` 对非向量/字符串目标抛 `EvalError`。

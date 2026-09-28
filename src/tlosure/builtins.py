@@ -196,6 +196,20 @@ def builtin_substring(env: dict[str, Any], s: Any, start: Any, end: Any = None) 
     return text[start:end]
 
 
+def builtin_count(env: dict[str, Any], coll: Any) -> int:
+    """Item count of a vector / map / string; ``nil`` counts as 0.
+
+    Clojure semantics (ADR 0011): ``(count nil)`` is 0, a map counts its
+    entries, a string its characters. Any other type is a spec bug and
+    raises.
+    """
+    if coll is None:
+        return 0
+    if isinstance(coll, (list, dict, str)):
+        return len(coll)
+    raise EvalError(f"count expects a vector, map or string, got {type(coll).__name__}")
+
+
 #: General-purpose pure vocabulary: host-agnostic building blocks any
 #: host registry may include verbatim. Pure only; evaluation against it
 #: is side-effect free by construction.
@@ -208,6 +222,7 @@ CORE_BUILTINS: dict[str, Builtin] = {
     "split": Builtin(builtin_split, pure=True),
     "join": Builtin(builtin_join, pure=True),
     "substring": Builtin(builtin_substring, pure=True),
+    "count": Builtin(builtin_count, pure=True),
 }
 
 
