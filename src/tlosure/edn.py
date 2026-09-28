@@ -25,9 +25,9 @@ files).
 from typing import Any
 
 _SYMBOL_CHARS = set(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*+!-_?./<>="
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*+!-_?./<>=&"
 )
-_SYMBOL_START_EXTRA = set("*+!_?./<>=")
+_SYMBOL_START_EXTRA = set("*+!_?./<>=&")
 _WHITESPACE = set(" \t\n\r\f,")
 _ESCAPES = {
     '"': '"',

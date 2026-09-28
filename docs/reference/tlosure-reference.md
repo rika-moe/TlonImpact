@@ -25,7 +25,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 - `(...)` 与 `[...]` 语义不同：列表是表达式，向量是数据。宿主 schema 中所有表达式位置都必须写成 `(...)` 形式。
 - `Keyword`、`Symbol`、普通字符串是三种不同类型：`:mode :react` 与 `:mode "react"` 下游可区分；`=` 比较时 `:a` ≠ `"a"`（[src/tlosure/builtins.py](../../src/tlosure/builtins.py) 的 `_value_equal`）。
-- 符号可用字符集：字母、数字及 `*+!-_?./<>=`，所以 `contains?`、`>=`、`start-all` 都是合法符号。
+- 符号可用字符集：字母、数字及 `*+!-_?./<>=&`（`&` 为变长参数标记，[ADR 0021](../decisions/0021-tlosure-full-functions.md)），所以 `contains?`、`>=`、`start-all` 都是合法符号。
 - 解析失败抛 `EDNParseError`，带 1 起始的行列号。
 
 ## 2. 求值器
@@ -34,10 +34,10 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 ### 2.1 特殊形式（封闭白名单 `SPECIAL_FORMS`）
 
-无 `def`、无 `lambda`、无宏、无可变全局状态；除下列形式外，form 头必须是已注册的 builtin 名。
+无 `def`、无宏、无可变全局状态；除下列形式外，form 头必须解析为环境中的闭包（用户函数）或已注册的 builtin 名（分辨顺序：特殊形式 → env → builtin）。`defn` / `fn` 是 [ADR 0021](../decisions/0021-tlosure-full-functions.md) 引入的完整函数能力，语义见 §2.1.1。
 
 <!-- BEGIN GENERATED: dsl-special-forms -->
-封闭白名单（10 个）：`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+封闭白名单（12 个）：`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`、`defn`、`fn`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 <!-- END GENERATED: dsl-special-forms -->
 
 | 形式 | 形状 | 语义 |
@@ -51,19 +51,34 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `map` | `(map x body coll)` | 对向量逐元素绑定 `x` 求值 body，收集结果向量。**注意参数顺序是绑定、body、集合** |
 | `filter` | `(filter x body coll)` | 同上，收集 body 为真的元素本身 |
 | `reduce` | `(reduce acc x body init coll)` | 五个参数：累加器名、元素名、body、初值、集合 |
+| `defn` | `(defn name [params] body...)` | 在当前环境定义命名函数（任意 body 位置，不限顶层），返回闭包本身；详见 §2.1.1 |
+| `fn` | `(fn [params] body...)` | 匿名闭包值，不绑定名字；详见 §2.1.1 |
 
 求真值按 Python 语义：`nil`/`false`/`0`/`""`/`[]` 均为假。
 
+### 2.1.1 函数：`defn` / `fn`（ADR 0021）
+
+语言有完整函数能力：函数是一等值（可作参数传递、作返回值返回），闭包按**引用**捕获定义时环境，支持变长参数与递归。约束不新增任何专门限制——统一由 fuel 与深度顶承担（§2.2）。
+
+- **定义**：`(defn name [params] body...)` 把闭包绑定进当前环境 dict——名字在定义体内立即可见（递归由此成立），同一 body 的后续兄弟 form 也可见（`let`/`when`/`while` body 同理）。`defn` 表达式的值是闭包本身。
+- **闭包捕获**：`(fn [params] body...)` 求值为 `Closure` 值，按引用捕获定义处环境。`(let [base 10] ((fn [x] (+ base x)) 5))` → `15`。函数体引用宿主 env 的 `msg`/`event`/`self` 等绑定与在顶层无异。
+- **应用**：Symbol 头按「特殊形式 → env → builtin」顺序分辨，env 里的闭包优先于同名 builtin；头也可以是 Form（先求值，必须是闭包）：`((fn [x] (inc x)) 5)` → `6`。env 里解析到非闭包值报 `... is not callable`。
+- **参数向量**：`[a b]` 定参，应用时实参个数必须恰等；`[a b & rest]` 变长，`&` 恰在倒数第二位、后随一个符号，多余实参收进 `rest` 向量（无多余时是 `[]`），实参数不得少于定参数。元数不符报 `EvalError`（带函数名）。
+- **递归**：直接自引用（`(defn fact [n] (if (< n 2) 1 (* n (fact (dec n)))))`）。深层递归撞 `max_depth`（`EvalDepthError`），指数扇出撞 fuel（`FuelExhaustedError`）——终止性仍由两道闸保证。
+- **`recur` 不跨函数边界**（Clojure 语义）：进入函数应用时保存并清空 enclosing loop 上下文，退出时恢复；函数体内的 `recur` 报「recur outside while」，外层 `while` 在函数返回后继续正常工作。静态校验镜像同一规则（fn/defn body 以无 enclosing loop 校验）。
+- **静态校验的作用域规则是「先定义后使用」**：body 按序穿线，`defn` 的名字只对其后的兄弟 form 可见；`defn` 体内引用后定义的兄弟函数在加载期被拒（尽管按引用捕获在运行期能解析）。
+- **函数体不受纯度限制**：动作 builtin 在函数体内被调用时照常产出 `ActionRequest` 数据（effects-as-data 不变），由宿主引擎在求值结束后执行。
+
 ### 2.2 计量与终止
 
-递归不可能（无法命名函数），`while`/`recur` 表达能力等价图灵机，**终止性由 fuel 保证**——任何表达式必然在有限步内停机。
+递归与有界循环表达能力等价图灵机（ADR 0021 起函数可命名、可递归），**终止性由 fuel + 深度顶保证**——任何表达式必然在有限步内停机。
 
 **计费模型**（一步 = 1 单位 fuel，精确定义）：
 
 - 一步 = 一次**节点求值**：字面量自求值、符号解析、向量/map 的每个元素、一次 builtin 调用、特殊形式中**实际被求值**的每个子表达式，各计 1 步；
 - 未走的分支不计费：`if`/`when` 未命中的分支、`and`/`or` 短路掉的后续参数消耗为 0；
 - builtin **内部**的计算不计费——宿主词汇自己的开销属于宿主的资源域，不属于语言计量；
-- 循环（`while`/`recur`、`map`/`filter`/`reduce`）的每次迭代都经过节点求值，因此必然被预算包住。
+- 循环（`while`/`recur`、`map`/`filter`/`reduce`）的每次迭代、函数应用的每个 body form 与嵌套调用，都经过节点求值，因此必然被预算包住。
 
 **预算边界**：
 
@@ -134,7 +149,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `FuelExhaustedError` | 同上 | fuel 预算耗尽（携带 `budget` 属性 = 本次启动预算） |
 | `EvalDepthError` | 同上 | form 嵌套深度超顶 |
 
-静态校验器 `validate_form(form, builtins, scope)`（[src/tlosure/validate.py](../../src/tlosure/validate.py)）不执行地走遍 form：每个 form 头必须是白名单特殊形式或已注册 builtin，每个符号须在 `scope`（含 `let` / 循环绑定扩展）内可解析，特殊形式的形状必须合法，`recur` 的尾位置规则一并检查；首个违例抛 `EvalError`。**动作位置的校验是宿主业务**（它要点名宿主的动作词汇），不在语言核心里。
+静态校验器 `validate_form(form, builtins, scope)`（[src/tlosure/validate.py](../../src/tlosure/validate.py)）不执行地走遍 form：每个 form 头必须是白名单特殊形式、已注册 builtin 或 `scope` 内的用户函数名，每个符号须在 `scope`（含 `let` / 循环绑定、`defn`/`fn` 参数与按序穿线的 `defn` 名字扩展）内可解析，特殊形式的形状必须合法，`recur` 的尾位置规则与「不跨函数边界」一并检查；首个违例抛 `EvalError`。**动作位置的校验是宿主业务**（它要点名宿主的动作词汇），不在语言核心里。
 
 ## 5. 宿主接入
 
