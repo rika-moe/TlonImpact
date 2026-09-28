@@ -86,6 +86,7 @@ Bridge API 由四类端口组成，全部集中定义、集中编目。前两类
 - **记忆参数数据化**：[memory/manager.py](../../src/tlon/memory/manager.py) 的检索权重 α/β/γ、冲突阈值 0.75、蒸馏窗口，从模块常量迁为配置数据。
 - **反思参数数据化**：[agents/reflection.py](../../src/tlon/agents/reflection.py) 的触发阈值与 prompt 文本，阈值进 spec（`:reflect` 已是先例），prompt 落为可读文件。
 - ~~**终止文案数据化**~~（已完成，2026-09-28）：[agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的三条固定终止回信措辞进 spec——落地形态是 `:loop` 内的 `:replies` 纯数据 map（键 `:iteration-limit` / `:error` / `:timeout`，加载期 total 校验），而非设想中的 `:on-limit` 动作。终止路径必须永不失败：措辞原文直接使用（不求值、不渲染），引擎内置常量保留为未声明键的兜底——DSL 化的是"默认措辞可被覆盖"，不是"措辞只能来自 spec"。
+- ~~**社会政策数据化（fitness/trust 公式）**~~（已完成，2026-09-28，EPIC #62 / ADR 0022）：fitness 的 tilt/偿付公式与 trust 见习判定从 Python 迁入第五个求值语境（社会政策语境，第一种 pull 型）——`~/.tlon/policy.tlon` 的 `tilt` / `solvent?` / `full-member?` hook，宿主在 spawn/提案/装配求值点物化社会数据注入调用；fitness.py / trust.py 删除，公式语义由内嵌默认政策精确复刻。见 [design/society-policy.md](society-policy.md)。
 - 原则：迁移的正当性是"这部分逻辑该可进化/该由 LLM 写"，不是减少 Python 行数；机制层一行不动。
 
 ### 阶段 3：语言能力扩展（评估驱动，逐项拍板）

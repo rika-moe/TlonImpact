@@ -14,7 +14,7 @@ handwritten; only the drift-prone inventories are generated:
   in docs/reference/tlosure-reference.md — the language-level whitelists
   (special forms from tlosure/eval.py, the general ``CORE_BUILTINS`` and
   ``ARITHMETIC_BUILTINS`` vocabularies from tlosure/builtins.py).
-- ``dsl-on-events`` / ``dsl-builtins-{trigger,loop,stage-cond,script}`` /
+- ``dsl-on-events`` / ``dsl-builtins-{trigger,loop,stage-cond,script,policy}`` /
   ``dsl-loop-names`` in docs/reference/dsl-reference.md — the host-side
   inventories (``:on`` event keywords, tlon's domain builtin registries
   from agents/vocabulary.py, stage/section names from
@@ -318,7 +318,14 @@ def builtin_registry(name: str, path: Path) -> list[BuiltinEntry]:
     entries: list[BuiltinEntry] = []
     for key, val in zip(value.keys, value.values, strict=True):
         if key is None:
-            raise GenerationError(f"{path}: {name} uses dict unpacking")
+            # ``**OTHER_REGISTRY`` unpacking (e.g. POLICY_BUILTINS =
+            # {**CORE_BUILTINS, **ARITHMETIC_BUILTINS}): expand the named
+            # registry's entries inline, resolved in ``path`` first, then
+            # in tlosure/builtins.py.
+            if not isinstance(val, ast.Name):
+                raise GenerationError(f"{path}: {name} uses non-name dict unpacking")
+            entries.extend(_resolve_unpacked_registry(val.id, path))
+            continue
         builtin_name = str(_literal(key))
         if not (
             isinstance(val, ast.Call)
@@ -349,6 +356,18 @@ def builtin_registry(name: str, path: Path) -> list[BuiltinEntry]:
     if not entries:
         raise GenerationError(f"{path}: {name} is empty")
     return entries
+
+
+def _resolve_unpacked_registry(name: str, path: Path) -> list[BuiltinEntry]:
+    """The entries of a registry named in a ``**NAME`` unpacking, looked up
+    in ``path`` first, then in tlosure/builtins.py."""
+    for candidate in (path, BUILTINS_FILE):
+        try:
+            _module_value(_parse(candidate), name, candidate)
+        except GenerationError:
+            continue
+        return builtin_registry(name, candidate)
+    raise GenerationError(f"{path}: unpacks unknown registry {name!r}")
 
 
 @dataclass(frozen=True)
@@ -1094,6 +1113,9 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         ),
         (DSL_REF, "dsl-builtins-script"): render_builtin_table(
             "SCRIPT_BUILTINS", VOCABULARY_FILE
+        ),
+        (DSL_REF, "dsl-builtins-policy"): render_builtin_table(
+            "POLICY_BUILTINS", VOCABULARY_FILE
         ),
         (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
         (DSL_REF, "dsl-fuel-defaults"): render_dsl_fuel_defaults(),

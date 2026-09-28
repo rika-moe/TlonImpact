@@ -446,3 +446,50 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | 认知规则订阅非 `:mail-delivered` 事件 | 运行时记 warning 并跳过（加载不拦） |
 
 加载总原则（`load_member_spec` 与 `validate_member_spec`）：EDN 前端只做结构校验（类型、形状），builtin 作用域校验全在单一校验器 `validate_member_spec`；**任何失败都是整体拒绝启动**，没有"部分可用"的中间态。
+
+## 10. 社会政策文件（`~/.tlon/policy.tlon`，ADR 0022）
+
+MemberSpec 之外还有一种 DSL 文件：society 级政策文件 `policy.tlon`（`paths.policy_file()`），由**人类直接编辑**（不进任何成员的 `allowed_paths`，不走原型/staging 通道）。它属于第五个求值语境——社会政策语境，也是唯一的 pull 型语境：宿主在固定求值点（spawn 前、staging 提案前、装配前）主动调用政策 hook，而非事件触发。设计与机制/策略切分见 [design/society-policy.md](../design/society-policy.md)。
+
+```clojure
+{:version 1
+ :policy [(defn helper [x] ...)            ; 共享定义向后穿线（ADR 0021）
+          (defn tilt [subject lineages] ...)       ; spawn 配额乘数（float）
+          (defn solvent? [subject lineages] ...)   ; 血缘偿付门（bool）
+          (defn full-member? [member] ...)]}       ; 信任阶梯（bool）
+```
+
+- **hook 契约是保留函数名**：宿主求值完 `:policy` 序列后按名调用 `tilt` / `solvent?` / `full-member?`（`POLICY_HOOK_NAMES`）。政策文件的 form 序列穿线进**内嵌默认政策**（`agents/policy.py` 的 `DEFAULT_POLICY_EDN`）的 env——未覆盖的 hook 保持默认实现，覆盖方可以复用默认 helper（`lineage-value` / `efficiency` / `society-mean-efficiency`）。文件缺失、解析/校验/求值失败 → 整体回退默认政策。
+- **数据物化注入**：hook 收到的是宿主预先收集的原始事实（无回调端口）——`subject` 是目标血缘 `{:name str :total_tokens int :members [{:id str :endorsements_received int}]}`（无数据为 nil），`lineages` 是全社会血缘 vector（同形状），`member` 是 `{:id str :spawned_by str|nil :endorsements_received int}`。
+- **fail-open**：任何 hook 求值异常（含 fuel 耗尽）回落安全默认——`tilt` 1.0、`solvent?` true、`full-member?` true；政策簿记永不阻塞 spawn 或装配。
+- 加载与求值共用语境级 fuel 顶（`POLICY_FUEL` = `MAX_FUEL`），无 per-hook 自声明。
+
+### 10.1 `POLICY_BUILTINS`（政策语境词汇）
+
+政策语境注册表是成员注册表的**纯子集**（语言核心通用词汇 + 算术）：无动作词、无宿主查询回调——求值副作用自由由构造保证。特殊形式（`if` / `let` / `and` / `or` / `defn` / `fn` / `map` / `filter` / `reduce` 等）由求值器提供，不在注册表内。
+
+<!-- BEGIN GENERATED: dsl-builtins-policy -->
+`POLICY_BUILTINS`（19 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 名称 | pure | 说明 |
+|---|---|---|
+| `=` | 是 |  |
+| `not` | 是 |  |
+| `contains?` | 是 |  |
+| `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
+| `str` | 是 | Concatenate arguments into one string (issue ). |
+| `split` | 是 | Split a string on a separator into a vector of strings. |
+| `join` | 是 | Join a vector of strings with a separator into one string. |
+| `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
+| `count` | 是 | Item count of a vector / map / string; ``nil`` counts as 0. |
+| `+` | 是 |  |
+| `-` | 是 |  |
+| `*` | 是 |  |
+| `/` | 是 | Left-fold float division: ``(/ a b c)`` = ``a / b / c``. |
+| `inc` | 是 |  |
+| `dec` | 是 |  |
+| `<` | 是 |  |
+| `>` | 是 |  |
+| `<=` | 是 |  |
+| `>=` | 是 |  |
+<!-- END GENERATED: dsl-builtins-policy -->
