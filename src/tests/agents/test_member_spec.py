@@ -261,6 +261,74 @@ class TestRuleFuel:
             validate_member_spec(spec)
 
 
+class TestLoopReplies:
+    """:loop/:replies：成员可覆盖三条面向用户的终止回信措辞（纯数据，
+    引擎内置文案兜底）。加载期 total 校验（同 stage opts 的严格先例）：
+    未知键、非字符串、空串均拒载。"""
+
+    REPLIES = (
+        ':replies {:iteration-limit "想太久了，简单说。" '
+        ':error "出错了。" :timeout "超时了。"}'
+    )
+
+    @staticmethod
+    def _with_replies(replies: str) -> str:
+        return COGNITIVE_EDN.replace(
+            ":reflect {:enabled false :interval-minutes 5}",
+            f":reflect {{:enabled false :interval-minutes 5}} {replies}",
+        )
+
+    def test_replies_roundtrip(self):
+        spec = _parse(self._with_replies(self.REPLIES))
+        loop = spec.rules[0].loop
+        assert loop is not None
+        assert loop.replies == {
+            "iteration_limit": "想太久了，简单说。",
+            "error": "出错了。",
+            "timeout": "超时了。",
+        }
+        again = _parse(spec.to_edn())
+        assert again == spec
+        assert again.rules[0].loop is not None
+        assert again.rules[0].loop.replies == loop.replies
+
+    def test_replies_undeclared_defaults_empty(self):
+        spec = _parse(COGNITIVE_EDN)
+        assert spec.rules[0].loop is not None
+        assert spec.rules[0].loop.replies == {}
+        assert (
+            Keyword("replies") not in spec.to_edn_data()["rules"][0]["loop"]
+        )
+
+    def test_replies_partial_override_roundtrip(self):
+        spec = _parse(self._with_replies(':replies {:timeout "超时了。"}'))
+        loop = spec.rules[0].loop
+        assert loop is not None
+        assert loop.replies == {"timeout": "超时了。"}
+        assert _parse(spec.to_edn()) == spec
+
+    def test_replies_non_map_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match=":replies must be a map"):
+            _parse(self._with_replies(':replies "出错了。"'))
+
+    def test_replies_unknown_key_rejected(self):
+        with pytest.raises(
+            MemberSpecValidationError, match="unknown :loop/:replies key"
+        ):
+            _parse(self._with_replies(':replies {:on-limit "x"}'))
+
+    def test_replies_empty_string_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="non-empty string"):
+            _parse(self._with_replies(':replies {:error ""}'))
+
+    def test_replies_non_string_value_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="non-empty string"):
+            _parse(self._with_replies(":replies {:error 42}"))
+
+    def test_replies_valid_spec_passes_validator(self):
+        validate_member_spec(_parse(self._with_replies(self.REPLIES)))
+
+
 class TestPhaseDActions:
     """Phase D: loop forms are valid action positions; the purity gate holds."""
 

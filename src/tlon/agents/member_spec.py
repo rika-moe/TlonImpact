@@ -19,7 +19,7 @@ whitelist and expression-level builtin-scope validation of ``:when`` /
 :func:`validate_member_spec`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from tlon.agents.vocabulary import (
@@ -80,6 +80,11 @@ class ReflectSpec:
     interval_minutes: int
 
 
+#: ``:loop/:replies`` 允许的键（加载期 total 校验，未知键拒载）：三条面向
+#: 用户的终止回信措辞。引擎内置文案（``loop_driver`` 的常量）是未声明键的兜底。
+REPLY_KINDS = frozenset({"iteration_limit", "error", "timeout"})
+
+
 class MemberSpecValidationError(ValueError):
     """A member spec failed structural (EDN-level) validation."""
 
@@ -96,7 +101,10 @@ class MemberLoop:
     budget of the iron-law revision (docs/design/dsl-agents.md): it caps
     the DSL evaluation of the loop's ``:until`` and stage conditions
     (``None`` = the engine default). Bounded above by
-    :data:`tlosure.eval.MAX_FUEL`.
+    :data:`tlosure.eval.MAX_FUEL`. ``replies`` overrides the user-facing
+    termination reply wording per kind (snake_case keys, see
+    :data:`REPLY_KINDS`); undeclared kinds fall back to the engine's
+    built-in texts.
     """
 
     context_sections: tuple[Form, ...]
@@ -106,6 +114,7 @@ class MemberLoop:
     max_consecutive_errors: int
     reflect: ReflectSpec
     fuel: int | None = None
+    replies: dict[str, str] = field(default_factory=dict)
 
     # ── Serialization ──
 
@@ -122,6 +131,7 @@ class MemberLoop:
                 "interval_minutes": self.reflect.interval_minutes,
             },
             "fuel": self.fuel,
+            "replies": dict(self.replies),
         }
 
     def to_edn_data(self) -> dict[Keyword, Any]:
@@ -139,6 +149,11 @@ class MemberLoop:
         }
         if self.fuel is not None:
             data[Keyword("fuel")] = self.fuel
+        if self.replies:
+            data[Keyword("replies")] = {
+                Keyword(kind.replace("_", "-")): text
+                for kind, text in self.replies.items()
+            }
         return data
 
 
@@ -634,6 +649,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
             "max_consecutive_errors",
             "reflect",
             "fuel",
+            "replies",
         }
     ),
     "context": frozenset({"sections"}),
@@ -797,7 +813,39 @@ def _loop_from(value: Any, rule_name: str) -> "MemberLoop | None":
             rule_name,
         ),
         fuel=_read_optional_int(value, "fuel", f"rule {rule_name!r}: :loop/:fuel"),
+        replies=_replies_from(value.get("replies"), rule_name),
     )
+
+
+def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
+    """Optional :loop/:replies map — termination reply wording overrides.
+
+    Total semantics (strict like stage opts): unknown kinds and non-string
+    or empty values reject the spec at load. The texts are plain data,
+    used verbatim at termination — no evaluation, no templating.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, Form) or not isinstance(value, dict):
+        raise MemberSpecValidationError(
+            f"rule {rule_name!r}: :loop/:replies must be a map, "
+            f"got {_type_name(value)}: {value!r}"
+        )
+    replies: dict[str, str] = {}
+    for key, text in value.items():
+        if key not in REPLY_KINDS:
+            allowed = sorted(k.replace("_", "-") for k in REPLY_KINDS)
+            raise MemberSpecValidationError(
+                f"rule {rule_name!r}: unknown :loop/:replies key "
+                f":{str(key).replace('_', '-')} (allowed: {allowed})"
+            )
+        if not isinstance(text, str) or not text:
+            raise MemberSpecValidationError(
+                f"rule {rule_name!r}: :loop/:replies/:{str(key).replace('_', '-')} "
+                f"must be a non-empty string, got {_type_name(text)}: {text!r}"
+            )
+        replies[str(key)] = text
+    return replies
 
 
 def _reflect_from(value: Any, rule_name: str) -> ReflectSpec:

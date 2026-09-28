@@ -65,8 +65,9 @@ from tlosure.eval import DEFAULT_FUEL, eval_form
 
 logger = get_logger(__name__)
 
-#: User-facing fixed termination replies — the single definition site,
-#: referenced by _terminate_loop / _distill_reply / send_failure_reply.
+#: User-facing fixed termination replies — the engine's built-in fallback
+#: wording, used for any kind the member's ``:loop/:replies`` does not
+#: override (replies are load-time-validated plain data, used verbatim).
 _ITERATION_LIMIT_REPLY = "思考时间过长，请简化您的问题。"
 _ERROR_REPLY = "抱歉，处理邮件时出现了错误。"
 _TIMEOUT_REPLY = "抱歉，处理这封邮件超时了，请稍后重试。"
@@ -391,6 +392,13 @@ class LoopDriver:
         log.debug("loop_until_evaluated", session_id=session.id, reached=reached)
         return reached
 
+    def _termination_reply(self, kind: str, default: str) -> str:
+        """The member's ``:loop/:replies`` override for ``kind``, or the
+        engine's built-in fallback. Pure data lookup — the termination
+        path must never fail, so no evaluation or templating happens here.
+        """
+        return self._loop.replies.get(kind, default)
+
     async def _terminate_loop(self, session: AgentSession, mail: Mail) -> None:
         """Terminate a session whose until expression fired.
 
@@ -401,7 +409,7 @@ class LoopDriver:
         loop = self._loop
         if session.error_count >= loop.max_consecutive_errors:
             reason = "error_limit"
-            content = _ERROR_REPLY
+            content = self._termination_reply("error", _ERROR_REPLY)
             log.warning(
                 "session_max_errors",
                 session_id=session.id,
@@ -410,7 +418,7 @@ class LoopDriver:
             )
         else:
             reason = "iteration_limit"
-            content = _ITERATION_LIMIT_REPLY
+            content = self._termination_reply("iteration_limit", _ITERATION_LIMIT_REPLY)
         log.info("loop_until_reached", session_id=session.id, reason=reason)
         await self._executor.send_mail(
             MailEffect(
@@ -430,7 +438,8 @@ class LoopDriver:
         rounds (thoughts, tool results) into a reply saying what was
         done, how far it got, and why it stopped. Fully defensive: any
         failure (LLM error, timeout, empty answer) falls back to the
-        fixed text — the termination path itself must never fail.
+        fixed text (or the member's `:replies` override of it) — the
+        termination path itself must never fail.
         """
         log = self._services.logger
         try:
@@ -448,7 +457,7 @@ class LoopDriver:
             log.warning(
                 "max_iterations_distill_failed", session_id=session.id, error=str(e)
             )
-            return _ITERATION_LIMIT_REPLY
+            return self._termination_reply("iteration_limit", _ITERATION_LIMIT_REPLY)
 
     @staticmethod
     def _distill_messages(session: AgentSession) -> list[dict[str, Any]]:
@@ -482,7 +491,11 @@ class LoopDriver:
         same MailEffect -> EffectExecutor pipeline every other engine mail
         uses (send_mail never raises).
         """
-        content = _TIMEOUT_REPLY if reason == "timeout" else _ERROR_REPLY
+        content = (
+            self._termination_reply("timeout", _TIMEOUT_REPLY)
+            if reason == "timeout"
+            else self._termination_reply("error", _ERROR_REPLY)
+        )
         await self._executor.send_mail(
             MailEffect(
                 to=[mail.from_address],
