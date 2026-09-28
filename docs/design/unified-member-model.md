@@ -96,7 +96,7 @@
 | 生命周期策略：boot/stop 裁决 + 出生欢迎信 + 守护者信箱（Adam 的策略规则，数据；issue  出生社会化，issue  adam 可收件——装配层 `GuardianAgentInfoProvider` 合成解析，不进广播/名册） | [agents/adam.py](../../src/tlon/agents/adam.py)、[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) |
 | spawn 预算（`max_activations` / `max_spawn_depth` / `session_spawn_quota`）：纯资源硬顶，机制；每会话配额按血脉适应度倾斜（`ceil(quota × tilt)`，tilt ∈ [0.5, 2.0]，冷启动恒 1.0，）；偿付门槛（）：失去偿付能力的血脉被拒绝 spawn（`insolvent_lineage`，信任门之后、预算之前）——倾斜调多调少（连续），门槛定生死（二值），两者共用同一效率派生、各自 fail-open；tilt/偿付的公式是社会政策数据（ADR 0022，`policy.tlon` 的 `tilt` / `solvent?` hook） | [agents/spawn.py](../../src/tlon/agents/spawn.py)、[agents/policy.py](../../src/tlon/agents/policy.py) |
 | 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
-| 信任阶梯（）：见习/正式两级派生（`is_full_member`）、`trust_provider` / `probation_provider`（fail-open）、`REPRODUCTION_TOOLS` 工具子集常量 | [agents/trust.py](../../src/tlon/agents/trust.py) |
+| 信任阶梯（）：见习/正式两级是社会政策（`full-member?` hook，ADR 0022，可在 `policy.tlon` 调整）；`policy_trust_provider` / `policy_probation_provider`（fail-open）、`REPRODUCTION_TOOLS` 工具子集常量（机制，assembly 侧） | [agents/policy.py](../../src/tlon/agents/policy.py)、[agents/assembly.py](../../src/tlon/agents/assembly.py) |
 | 世代通道工具：`writePrototype`（写 staging）/ `proposeBehavior`（经验入口：个体经验 → 起草 → staging 提案，）/ `reviewPrototype`（异质评审：成员评审 staging 提案，记录落 `REVIEW.md`，）/ `spawnAgent` / `stopAgent`（排空后睡眠）；谱系查询 `getPrototypeLineage` | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |
 
 ## 后续未决项（不阻塞当前模型）

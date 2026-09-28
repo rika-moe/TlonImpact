@@ -354,3 +354,18 @@ def policy_trust_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[bo
             return True
 
     return is_full
+
+
+def policy_probation_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[bool]]:
+    """The is-probation predicate, keyed by **spawner id** (SpawnManager input).
+
+    The negation of :func:`policy_trust_provider`; the fail-open
+    direction flips with it — a derivation error reads as *not*
+    probation, so a broken policy never tightens anyone's quota.
+    """
+    is_full = policy_trust_provider(tlon_paths)
+
+    async def probation(agent_id: str) -> bool:
+        return not await is_full(agent_id)
+
+    return probation

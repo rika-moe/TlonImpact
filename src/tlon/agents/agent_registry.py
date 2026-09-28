@@ -60,11 +60,14 @@ from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
-from tlon.agents.policy import policy_solvency_provider, policy_tilt_provider
+from tlon.agents.policy import (
+    policy_probation_provider,
+    policy_solvency_provider,
+    policy_tilt_provider,
+)
 from tlon.agents.prototypes.catalog import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
-from tlon.agents.trust import probation_provider
 from tlon.agents.vocabulary import ScriptHostQueries, make_member_builtins
 from tlon.base.component import Component
 from tlon.base.config import AgentConfig
@@ -236,7 +239,7 @@ class AgentRegistry(Component):
             session_spawn_quota,
             tilt_provider=policy_tilt_provider(self._paths),
             solvency=policy_solvency_provider(self._paths),
-            probation=probation_provider(self._paths),
+            probation=policy_probation_provider(self._paths),
         )
         self._reaper = IdleReaper(self)
         # Social public-health monitor (): noise detection + orphan-mail
