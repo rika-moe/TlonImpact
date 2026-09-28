@@ -7,9 +7,9 @@ flows: ``spawn_member`` (prototype instantiation under the budget) and
 
 The per-session quota is tilted by the target bloodline's fitness
 (, ADR 0014): an optional ``tilt_provider`` maps the spawn target's
-prototype to a multiplier (clamped to [0.5, 2.0] by
-``agents/fitness.py``), and the effective quota is
-``ceil(session_spawn_quota * tilt)``. The global activation cap stays
+prototype to a multiplier (clamped to [0.5, 2.0] by the society policy's
+``tilt`` hook, ``agents/policy.py`` — ADR 0022), and the effective quota
+is ``ceil(session_spawn_quota * tilt)``. The global activation cap stays
 untouched — splitting it per bloodline would punish incumbent members of
 temporarily-inefficient lineages. Tilt 1.0 (the cold-start default, and
 every failure fallback) reproduces the untilted behavior exactly.
@@ -17,9 +17,9 @@ every failure fallback) reproduces the untilted behavior exactly.
 The tilt is continuous; the solvency gate () is binary: an optional
 ``solvency`` provider maps the spawn target's prototype to a bool, and
 an insolvent bloodline (long-term token spend not covered by endorsed
-output, derived in ``agents/fitness.py``) is rejected outright, right
-after the trust gate. Both fail open — fitness bookkeeping must never
-block a spawn.
+output, judged by the policy's ``solvent?`` hook) is rejected outright,
+right after the trust gate. Both fail open — fitness bookkeeping must
+never block a spawn.
 
 The probation gate (, trust ladder) tightens budget 3 from the
 *spawner* side: an optional ``probation`` provider maps the spawner's

@@ -356,7 +356,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | reason | 含义 |
 |---|---|
 | `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 ops 中批准；先于一切预算检查 |
-| `insolvent_lineage` | 偿付门槛（）：目标血脉失去偿付能力（总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25，派生自 `agents/fitness.py`，fail-open），血脉靠手上成员挣回 endorse 前不能 spawn；紧随信任门、先于预算检查 |
+| `insolvent_lineage` | 偿付门槛（）：目标血脉失去偿付能力（默认政策：总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25，由 `agents/policy.py` 的 `solvent?` 政策 hook 判定，阈值可在 `~/.tlon/policy.tlon` 调整，fail-open），血脉靠手上成员挣回 endorse 前不能 spawn；紧随信任门、先于预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
 | `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜（）：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；spawner 是见习成员时（，按 spawner_id 判定）再收紧为 `min(effective, 1)`；拒绝 detail 注明实际 tilt 与有效配额（见习 cap 时注明 probation） |
