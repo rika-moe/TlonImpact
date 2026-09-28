@@ -100,7 +100,7 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个�
 
 [agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine` 是 agent 对自己记忆的定期审计。触发门控是双条件：距上次反思超过 `rule.loop.reflect.interval_minutes`（来自 spec 的 `:reflect` 段），**且**期间新完成的 session 数达到 `reflection_min_interactions`（默认 5，在 memory config 里）。计数由 `SessionScheduler` 在 session 回收点喂给 `note_interaction`。
 
-审计本身是「快照 → LLM 分析 → 应用操作」三步：`get_memory_digest` 取记忆状态快照（未蒸馏 session 数——基于水位线、最近 50 条 active claim），交给 LLM 按 `REFLECTION_SYSTEM_PROMPT` 分析（60 秒超时），返回的操作列表（`record_claim` / `delete_claim` / `noop`）逐个应用回 `MemoryManager`。反思的开关与间隔来自 spec 的 `:reflect` 段（`rule.loop.reflect`），因此它是行为数据的一部分——原型可以声明不同的反思频率，但最小 session 数阈值仍在 memory config 里。
+审计本身是「快照 → LLM 分析 → 应用操作」三步：`get_memory_digest` 取记忆状态快照（未蒸馏 session 数——基于水位线、最近 50 条 active claim），交给 LLM 按 `REFLECTION_SYSTEM_PROMPT` 分析（60 秒超时；prompt 文本是包数据文件 [agents/prompts/reflection_system.md](../../src/tlon/agents/prompts/reflection_system.md)，非代码常量），返回的操作列表（`record_claim` / `delete_claim` / `noop`）逐个应用回 `MemoryManager`。反思的开关与间隔来自 spec 的 `:reflect` 段（`rule.loop.reflect`），因此它是行为数据的一部分——原型可以声明不同的反思频率，但最小 session 数阈值仍在 memory config 里。
 
 应用操作时单个失败只记日志不影响其余；整个过程跑在后台 task 里（`_running` 标志防重入），不阻塞认知循环。原则写进了 prompt：多数情况下 `noop` 是正常的。
 

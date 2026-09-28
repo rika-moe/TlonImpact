@@ -203,3 +203,27 @@ class TestLifecycle:
 
         assert engine._task is None
         assert not engine.is_running
+
+
+class TestPromptDataFile:
+    """The reflection system prompt is a package data file, not a code
+    constant (policy text, readable and editable without touching the
+    engine)."""
+
+    def test_prompt_loaded_from_data_file(self) -> None:
+        from importlib import resources
+
+        from tlon.agents.reflection import REFLECTION_SYSTEM_PROMPT
+
+        on_disk = (
+            resources.files("tlon.agents")
+            .joinpath("prompts/reflection_system.md")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+        assert on_disk == REFLECTION_SYSTEM_PROMPT
+        # The operation vocabulary the parser understands must be named
+        # in the prompt — a drift here means the LLM is asked for
+        # operations the engine cannot apply.
+        for action in ("record_claim", "delete_claim", "noop"):
+            assert action in REFLECTION_SYSTEM_PROMPT
