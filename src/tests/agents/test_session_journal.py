@@ -44,6 +44,15 @@ COGNITIVE_EDN = """\
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
+#: Same cognitive rule with all three :loop/:replies overrides declared.
+REPLIES_EDN = COGNITIVE_EDN.replace(
+    ":reflect {:enabled false :interval-minutes 5}",
+    ":reflect {:enabled false :interval-minutes 5}\n"
+    '                 :replies {:iteration-limit "想太久了，简单说。"\n'
+    '                           :error "出错了。"\n'
+    '                           :timeout "超时了。"}',
+)
+
 
 @pytest.fixture
 def tlon(tmp_path: Path) -> TlonPaths:
@@ -262,8 +271,9 @@ def _make_driver(
     tmp_path: Path,
     responses: list[LLMResponse],
     tool_execute: object = None,
+    edn: str = COGNITIVE_EDN,
 ) -> tuple[LoopDriver, SessionJournal, MagicMock, MagicMock]:
-    spec = MemberSpec.from_edn(loads(COGNITIVE_EDN))
+    spec = MemberSpec.from_edn(loads(edn))
     validate_member_spec(spec)
     rule = spec.rules[0]
 
@@ -643,6 +653,23 @@ class TestFailureReply:
         assert effect.in_reply_to == mail.id
         assert "错误" in effect.content
 
+    async def test_send_failure_reply_uses_member_replies(
+        self, tmp_path: Path
+    ) -> None:
+        """A member declaring :loop/:replies gets its own wording on the
+        abnormal-termination paths (timeout / stage error)."""
+        driver, _, executor, _ = _make_driver(tmp_path, [], edn=REPLIES_EDN)
+        mail = _mail()
+
+        await driver.send_failure_reply(mail, "timeout")
+
+        assert executor.send_mail.await_args.args[0].content == "超时了。"
+
+        executor.send_mail.reset_mock()
+        await driver.send_failure_reply(mail, "error")
+
+        assert executor.send_mail.await_args.args[0].content == "出错了。"
+
 
 # ── Max-iterations exhaustion: the reply distills the work done ─────────
 
@@ -703,6 +730,27 @@ class TestMaxIterationsDistillReply:
         executor.send_mail.assert_awaited_once()
         effect = executor.send_mail.await_args.args[0]
         assert effect.content == "思考时间过长，请简化您的问题。"
+
+    async def test_distill_failure_falls_back_to_member_reply(
+        self, tmp_path: Path
+    ) -> None:
+        """The fixed-text fallback honors the member's :iteration-limit
+        override — the reply override, not the distillation, is data."""
+        mail = _mail()
+        driver, _, executor, services = _make_driver(
+            tmp_path, self._responses(10), edn=REPLIES_EDN
+        )
+        services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        executor.send_mail.assert_awaited_once()
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.content == "想太久了，简单说。"
 
 
 class TestConsecutiveErrorLimit:
@@ -778,6 +826,50 @@ class TestConsecutiveErrorLimit:
         assert effect.to == ["user@tlon.internal"]
         assert effect.in_reply_to == mail.id
         assert "错误" in effect.content
+
+
+class TestTerminationReplyOverrides:
+    """`:loop/:replies` overrides the `_terminate_loop` wording per kind;
+    undeclared kinds keep the engine's built-in texts."""
+
+    async def test_error_limit_uses_member_reply(self, tmp_path: Path) -> None:
+        mail = _mail()
+        driver, journal, executor, _ = _make_driver(
+            tmp_path,
+            [RuntimeError("llm down")] * 3,
+            edn=REPLIES_EDN,
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert session.error_count == 3
+        assert await journal.end_reason(session.id) == "until"
+        executor.send_mail.assert_awaited_once()
+        assert executor.send_mail.await_args.args[0].content == "出错了。"
+
+    async def test_iteration_limit_uses_member_reply(self, tmp_path: Path) -> None:
+        """An until that fires below the hard ceiling terminates via
+        `_terminate_loop`'s iteration-limit branch — custom wording."""
+        mail = _mail()
+        edn = REPLIES_EDN.replace(
+            ":until (or (iteration-limit-reached?) (error-limit-reached?))",
+            ":until (not (iteration-limit-reached?))",
+        )
+        driver, journal, executor, _ = _make_driver(tmp_path, [], edn=edn)
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "until"
+        executor.send_mail.assert_awaited_once()
+        assert executor.send_mail.await_args.args[0].content == "想太久了，简单说。"
 
 
 class TestSchedulerFailureReply:

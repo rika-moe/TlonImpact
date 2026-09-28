@@ -289,7 +289,10 @@
        :max-iterations 25
        :max-consecutive-errors 3
        :reflect {:enabled true :interval-minutes 10}
-       :fuel 1000}                  ; 可选
+       :fuel 1000                   ; 可选
+       :replies {:iteration-limit "想太久了，简单说。"   ; 可选：终止回信措辞覆盖
+                 :error "出错了。"
+                 :timeout "超时了。"}}
 ```
 
 | 键 | 类型 | 语义 |
@@ -301,6 +304,7 @@
 | `:max-consecutive-errors` | int | 连续错误上限（think 成功一次即清零重计；散布的错误不累计） |
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
+| `:replies` | map | 可选；三条面向用户的终止回信措辞覆盖，键只允许 `:iteration-limit` / `:error` / `:timeout`，值必须是非空字符串（未知键、非字符串、空串均加载拒载）。纯数据原文使用——不求值、不渲染模板；未声明的键回落引擎内置文案（`loop_driver.py` 的三条常量） |
 
 ### 5.1 `:sections`（`SECTION_NAMES`，8 种）
 
@@ -337,8 +341,8 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 每一步的顺序：
 
-1. **迭代硬顶**：`iteration ≥ :max-iterations` 时直接回复触发邮件"思考时间过长，请简化您的问题。"并结束会话——在任何 `:until` 求值之前。
-2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"，否则回复"思考时间过长，请简化您的问题。"。求值失败回退到引擎默认检查（迭代/错误上限），循环必然停止。
+1. **迭代硬顶**：`iteration ≥ :max-iterations` 时直接回复触发邮件并结束会话——在任何 `:until` 求值之前。回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖）。
+2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。
 3. 按序解释 `:stages`；`think` 失败则本步提前返回。
 4. 若 stage 向量不含 `act`（或本轮 act 未推进迭代），引擎自行推进迭代计数，保证硬顶始终生效。
 
@@ -428,6 +432,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | 类型错误（int 位置写 bool/string 等） | 同上（bool 永不被接受为 int） |
 | 未知 section / stage 名，section 重复，`mail-history` 参数不是非负 int | 同上（`_validate_sections` / `_validate_stages`） |
 | stage opts 键非 `:if`（`plan` 可加 `:max-steps`） | 同上（`_validate_stage_opts`） |
+| `:loop/:replies` 键超出 `:iteration-limit` / `:error` / `:timeout`，或值不是非空字符串 | 同上（`_replies_from`） |
 | `:when` / `:until` / `:if` 引用未注册 builtin 或作用域外符号 | 同上（`validate_member_spec` 统一静态校验） |
 | 一个成员声明多条带 `:loop` 的规则 | 同上（D6.7：至多一条认知规则） |
 | `:fuel` 非正数或超过 10000 | 同上（`MAX_FUEL` 硬顶） |
