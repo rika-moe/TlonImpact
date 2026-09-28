@@ -55,12 +55,12 @@ from typing import TYPE_CHECKING, Any
 
 from tlon.agents.assembly import assemble_cognitive
 from tlon.agents.cron import CronScheduler
-from tlon.agents.fitness import solvency_provider, tilt_provider
 from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec
+from tlon.agents.policy import policy_solvency_provider, policy_tilt_provider
 from tlon.agents.prototypes.catalog import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
@@ -234,8 +234,8 @@ class AgentRegistry(Component):
             max_activations,
             max_spawn_depth,
             session_spawn_quota,
-            tilt_provider=tilt_provider(self._paths),
-            solvency=solvency_provider(self._paths),
+            tilt_provider=policy_tilt_provider(self._paths),
+            solvency=policy_solvency_provider(self._paths),
             probation=probation_provider(self._paths),
         )
         self._reaper = IdleReaper(self)

@@ -12,11 +12,11 @@ ports live in ``tlon.tools.agents.ports``, ).
 from functools import partial
 from typing import TYPE_CHECKING
 
-from tlon.agents.fitness import solvency_provider
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
+from tlon.agents.policy import policy_solvency_provider
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
     list_prototypes,
@@ -326,7 +326,7 @@ async def assemble_cognitive(
     # write channel is never gated): an insolvent bloodline loses
     # proposal eligibility until it earns endorsements back. The gate
     # recomputes from raw files per call (proposals are low-frequency).
-    proposal_solvency = solvency_provider(tlon_paths)
+    proposal_solvency = policy_solvency_provider(tlon_paths)
     # Near-kin rejection (, agent side only like the solvency gate):
     # reskin-level duplicates of an existing prototype (trusted or
     # staging) are turned away before they reach disk.

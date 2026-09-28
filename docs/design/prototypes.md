@@ -131,7 +131,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 `writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
 
-提案资格还有第二道闸——血脉偿付门槛（，agent 侧）：`writePrototype` / `proposeBehavior` 在执行开头检查作者血脉的偿付能力（`agents/fitness.py` 的 `insolvent_lineages`：总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25 才算失去偿付能力——样本不足无罪推定，阈值保守宁可放过），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
+提案资格还有第二道闸——血脉偿付门槛（，agent 侧）：`writePrototype` / `proposeBehavior` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认政策：总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25 才算失去偿付能力，样本不足无罪推定，阈值保守宁可放过；公式与阈值可在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
 
 第三道闸是近亲拒绝（，ADR 0014 的非收敛选择压，agent 侧）：提案文本与 trusted + staging 两区所有既有原型的 `behavior.tlon` 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；writePrototype 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，proposeBehavior 的父本恒为成员自己的 prototype），于是沿血脉的代际微改放行——实测锚点：scribe 底稿仅把 reflect 间隔 15→30 的微改相似度 0.996，父本豁免后放行、跨血脉仍被拦；实质重写（换谓词/动作/规则结构）实测落在 0.3 量级，不受影响。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。远期档（MAP-Elites 生态位档案）未做。
 
