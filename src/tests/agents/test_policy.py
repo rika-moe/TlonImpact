@@ -12,16 +12,18 @@ from typing import Any
 
 import pytest
 
+from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_cognitive
 from tlon.agents.policy import (
     TILT_NEUTRAL,
     PolicyValidationError,
     _parse_policy,
     load_policy,
+    policy_probation_provider,
     policy_solvency_provider,
     policy_tilt_provider,
     policy_trust_provider,
 )
-from tlon.base.config import AgentConfig, yaml_save
+from tlon.base.config import AgentConfig, LLMConfig, yaml_save
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
@@ -266,3 +268,94 @@ class TestProviders:
 
         monkeypatch.setattr("tlon.agents.policy.collect_reputation", _boom)
         assert await policy_trust_provider(tlon_paths)("rookie") is True
+
+
+class TestProbationProvider:
+    """The SpawnManager-side predicate: negated trust, fail-open flips."""
+
+    async def test_probation_negates_trust(self, tlon_paths: TlonPaths) -> None:
+        yaml_save(
+            AgentConfig(id="rookie", name="rookie", spawned_by="mentor"),
+            tlon_paths.tlon_home(),
+        )
+        assert await policy_probation_provider(tlon_paths)("rookie") is True
+
+    async def test_derivation_failure_reads_as_not_probation(
+        self, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        yaml_save(
+            AgentConfig(id="rookie", name="rookie", spawned_by="mentor"),
+            tlon_paths.tlon_home(),
+        )
+
+        async def _boom(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise OSError("mail scan broke")
+
+        monkeypatch.setattr("tlon.agents.policy.collect_reputation", _boom)
+        assert await policy_probation_provider(tlon_paths)("rookie") is False
+
+
+class TestReproductionTools:
+    def test_reproduction_tools_inventory(self) -> None:
+        expected = frozenset({"spawnAgent", "stopAgent", "writePrototype", "proposeBehavior"})
+        assert expected == REPRODUCTION_TOOLS
+        # reviewPrototype stays available to probationary members
+        # (advisory only — approve remains a human decision).
+        assert "reviewPrototype" not in REPRODUCTION_TOOLS
+
+
+class _FakeAgentInfo:
+    """AgentInfoProvider stand-in over a fixed config roster."""
+
+    def __init__(self, configs: dict[str, AgentConfig]):
+        self._configs = configs
+
+    def get_all_ids(self) -> list[str]:
+        return sorted(self._configs)
+
+    def get_config(self, agent_id: str) -> AgentConfig | None:
+        return self._configs.get(agent_id)
+
+
+class TestAssemblyToolSubset:
+    """The probation gate at assembly (driven by the policy's
+    ``full-member?`` hook): a probationary member's tool executor lacks
+    the reproduction/evolution four."""
+
+    async def _assemble(self, tlon_paths: TlonPaths, *, spawned_by: str | None) -> Any:
+        config = AgentConfig(
+            id="rookie",
+            name="rookie",
+            spawned_by=spawned_by,
+            llm=LLMConfig(model_name="test/model"),
+        )
+        yaml_save(config, tlon_paths.tlon_home())
+        return await assemble_cognitive(
+            config,
+            registry=None,  # type: ignore[arg-type]
+            agent_info=_FakeAgentInfo({"rookie": config}),  # type: ignore[arg-type]
+            tlon_paths=tlon_paths,
+        )
+
+    async def test_probation_member_lacks_reproduction_tools(
+        self, tlon_paths: TlonPaths
+    ) -> None:
+        caps = await self._assemble(tlon_paths, spawned_by="mentor")
+
+        names = set(caps.tool_executor.list_tools())
+        assert names.isdisjoint(REPRODUCTION_TOOLS)
+        assert "reviewPrototype" in names
+        assert "listAgents" in names
+        # The probation mentor cc rides along for the send paths.
+        assert caps.mentor_cc == "mentor@tlon.internal"
+
+        await caps.tool_executor.shutdown()
+
+    async def test_full_member_gets_everything(self, tlon_paths: TlonPaths) -> None:
+        caps = await self._assemble(tlon_paths, spawned_by=None)
+
+        names = set(caps.tool_executor.list_tools())
+        assert names >= REPRODUCTION_TOOLS
+        assert caps.mentor_cc is None
+
+        await caps.tool_executor.shutdown()

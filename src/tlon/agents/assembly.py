@@ -16,7 +16,7 @@ from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
-from tlon.agents.policy import policy_solvency_provider
+from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
     list_prototypes,
@@ -31,7 +31,6 @@ from tlon.agents.prototypes.staging import (
 from tlon.agents.reputation import reputation_provider
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.tool_executor import ToolExecutor
-from tlon.agents.trust import REPRODUCTION_TOOLS, trust_provider
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig, LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
@@ -85,6 +84,16 @@ if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
+
+#: The reproduction/evolution tools withheld from probationary members at
+#: assembly time (). The trust *level* is policy (the ``full-member?``
+#: hook, ``agents/policy.py``, ADR 0022); this tool subset is the
+#: execution-side mechanism the level drives. ``reviewPrototype`` is
+#: deliberately absent: reviewing a staging proposal is advisory (approve
+#: stays human).
+REPRODUCTION_TOOLS: frozenset[str] = frozenset(
+    {"spawnAgent", "stopAgent", "writePrototype", "proposeBehavior"}
+)
 
 
 def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
@@ -225,13 +234,14 @@ async def assemble_cognitive(
 
     # Trust ladder (): one derivation per assembly — a member's wake
     # re-assembles, so promotion to full takes effect on the next wake
-    # (natural in a scale-to-zero world). Fail-open: a derivation error
-    # reads as full trust (availability first). A probationary member
-    # (spawned, not yet endorsed) is assembled without the four
+    # (natural in a scale-to-zero world). The level is the society
+    # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
+    # trust (availability first). A probationary member (spawned, not yet
+    # endorsed, per the default policy) is assembled without the four
     # reproduction/evolution tools (REPRODUCTION_TOOLS; reviewPrototype
     # stays — advisory only) and gets its mentor (the spawner) cc'd on
     # composed outbound mail.
-    is_full = await trust_provider(tlon_paths)(config.id)
+    is_full = await policy_trust_provider(tlon_paths)(config.id)
     mentor_cc = (
         address_for_member(config.spawned_by)
         if not is_full and config.spawned_by is not None
