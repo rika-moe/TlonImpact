@@ -7,7 +7,7 @@ the first configuration instance of the unified MemberRuntime
 (``agents/member_runtime.py``, phase C) — a built-in MemberSpec (the
 ``ADAM_SPEC`` text below) parsed directly with the unified loader
 semantics and validated at load, plus registry query closures injected
-into the evaluator. Four policy lines live in the spec:
+into the evaluator. Five policy lines live in the spec:
 
 1. boot — after initialize(), every registered member whose spec
    declares ``:on :boot`` (phase E: spec-derived, see ``boot_candidates``)
@@ -31,6 +31,16 @@ into the evaluator. Four policy lines live in the spec:
    postmaster is excluded (``from?``) so a bounce never gets answered.
    Adam carries a real mailbox (``~/.tlon/adam/mail/``), so read-marking
    and the boot unread replay come for free.
+5. noisy-circuit-breaker — the PublicHealthMonitor's AGENT_NOISY fact
+   (a sender crossing the mail-rate or broadcast threshold) is turned
+   into an AGENT_STOP_REQUEST: a member flooding the society is put to
+   sleep (never deleted — wake-on-mail can revive it). The monitor's
+   per-sender cooldown keeps repeated facts from repeated stops; the
+   registry executes stop requests idempotently. MAIL_ORPHAN_SCAN, the
+   monitor's other fact, is deliberately *not* consumed: it is periodic,
+   and any stateless reaction to a periodic fact would itself become
+   periodic noise — a correct consumer needs hysteresis state or a human
+   digest channel, neither of which the DSL offers today.
 
 Wake is no longer Adam's line: phase E moved wake-on-mail into the
 registry as a mechanized policy — the registry derives wake eligibility
@@ -63,12 +73,13 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import loads
 
 #: Adam's policy, as data. Parsed once per assembly by
-#: :func:`make_adam`. Four rules: boot (start-all), drain (idle → stop),
+#: :func:`make_adam`. Five rules: boot (start-all), drain (idle → stop),
 #: welcome (issue  — a birth-socialization mail to every spawned
-#: member; the roster is host-expanded, the conventions are static text)
-#: and guardian-inbox (issue  — a fixed acknowledgement reply to mail
+#: member; the roster is host-expanded, the conventions are static text),
+#: guardian-inbox (issue  — a fixed acknowledgement reply to mail
 #: addressed to Adam; postmaster senders are excluded so a bounce never
-#: gets an answer).
+#: gets an answer) and noisy-circuit-breaker (AGENT_NOISY → stop the
+#: flooding member; sleep, never delete).
 ADAM_SPEC_EDN = r"""{:version 1
  :rules [{:name "boot"
           :on :boot
@@ -76,6 +87,9 @@ ADAM_SPEC_EDN = r"""{:version 1
          {:name "drain"
           :on :agent-idle
           :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}
+         {:name "noisy-circuit-breaker"
+          :on :agent-noisy
+          :actions [(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})]}
          {:name "welcome"
           :on :agent-spawned
           :actions [(emit (str "亲爱的 " (get event :name) "：\n\n"

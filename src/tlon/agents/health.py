@@ -15,7 +15,9 @@ Backpressure (bounded bus queues, session schedulers) protects the
 Mechanism/policy split (same分工 as IdleReaper → Adam): the monitor only
 publishes facts — it never stops a noisy agent and never notifies an
 orphan's recipients. Deciding what to do with a fact is policy, not this
-component's job.
+component's job: Adam's spec consumes AGENT_NOISY (noisy-circuit-breaker
+→ stop the flooding member), while MAIL_ORPHAN_SCAN deliberately has no
+consumer yet (see adam.py's module docstring for the rationale).
 
 Owned by ``AgentRegistry`` (like ``IdleReaper``): the registry constructs
 it with the event bus, the agent info provider (member enumeration) and
