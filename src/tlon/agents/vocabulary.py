@@ -30,11 +30,15 @@ module is their single source of truth:
   for a rule's action position: wrappers limited to ``when`` / ``while`` /
   ``map``, every action argument a pure expression.
 
-Environment contracts (construction sites in parentheses): rule
-evaluation binds ``{msg, event, self}`` (``MemberRuntime._env``),
-on-complete bodies add ``result`` (``on_complete``), ``:until`` binds
+Environment contracts: typed, with a single construction point — see
+the ``*Env`` TypedDicts and builders in the "Environment contracts"
+section below. Rule evaluation binds ``{msg, event, self}``
+(:data:`RULE_SCOPE`; ``MemberRuntime._env``), on-complete bodies add
+``result`` (:data:`ACTION_SCOPE`; ``on_complete``), ``:until`` binds
 ``{self, state, limits}`` and stage ``:if`` binds
-``{state, scratch, round}`` (both ``loop_driver``).
+``{state, scratch, round}`` (both ``loop_driver``); the latter two
+expose no *symbols* — their builtins read the env directly, so load-time
+validation passes an empty scope.
 
 Bridge versioning discipline (ADR 0020): vocabulary only grows, semantics
 only tighten — spec files are on-disk data, so a breaking change to a
@@ -49,9 +53,9 @@ and the general vocabulary (``=`` / ``not`` / ``contains?`` / ``get`` /
 """
 
 import re
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 
-from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
     ActionRequest,
@@ -66,6 +70,155 @@ from tlosure.builtins import (
 from tlosure.edn import Form, Symbol, dumps
 from tlosure.validate import _binding_names, validate_form
 
+# ── Environment contracts (the data each context may see) ──
+#
+# Every evaluation context binds a fixed set of symbols with a fixed
+# shape; these TypedDicts are those shapes and the builders below are the
+# single construction point (the engine call sites delegate here).
+# Load-time validation mirrors them: RULE_SCOPE / ACTION_SCOPE are the
+# symbol scopes of member_spec.validate_member_spec; the loop and
+# stage-cond contexts expose no symbols at all — their builtins read the
+# env directly — so validation passes an empty scope for them.
+
+
+class SelfEnv(TypedDict):
+    """The ``self`` binding: the evaluating member's identity.
+
+    ``address`` is pre-derived at construction so DSL builtins read data,
+    never call back into tlon (ADR 0018).
+    """
+
+    id: str
+    name: str
+    address: str
+
+
+class RuleEnv(TypedDict):
+    """Rule evaluation context (``:when`` gates, deterministic ``:actions``).
+
+    ``msg`` is the payload's mail, or None for non-mail events (every mail
+    predicate is None-safe); ``event`` is the raw event payload — a dict
+    whose shape is not fully controlled, so builtins default safely on
+    malformed input.
+    """
+
+    msg: Mail | None
+    event: Any
+    self: SelfEnv
+
+
+class OnCompleteEnv(TypedDict):
+    """Cognitive-rule completion actions (``on_complete``).
+
+    ``msg`` is the session's trigger mail, ``result`` the session's final
+    reply text. ``event`` is *not* bound on this path: ACTION_SCOPE is the
+    union of the two action evaluation paths (deterministic actions run
+    under RuleEnv, completion actions under this one).
+    """
+
+    msg: Mail | None
+    result: str
+    self: SelfEnv
+
+
+class LoopStateEnv(TypedDict):
+    """The ``state`` binding: live loop counters."""
+
+    iteration: int
+    error_count: int
+
+
+class LoopLimitsEnv(TypedDict):
+    """The ``limits`` binding: the loop's declared caps."""
+
+    max_iterations: int
+    max_consecutive_errors: int
+
+
+class LoopEnv(TypedDict):
+    """``:loop`` ``:until`` context (``loop_driver``)."""
+
+    self: SelfEnv
+    state: LoopStateEnv
+    limits: LoopLimitsEnv
+
+
+class RoundEnv(TypedDict):
+    """The ``round`` binding: facts about the round being gated."""
+
+    completing: bool
+
+
+class StageCondEnv(TypedDict):
+    """Stage ``:if`` context (``loop_driver``): loop state, the session's
+    loop scratchpad, and the round's completion flag."""
+
+    state: LoopStateEnv
+    scratch: dict[str, Any]
+    round: RoundEnv
+
+
+#: Load-time validation scope for ``:when`` gates (mirrors RuleEnv).
+RULE_SCOPE: frozenset[str] = frozenset({"msg", "event", "self"})
+
+#: Load-time validation scope for ``:actions`` — the union of RuleEnv
+#: (deterministic rules) and OnCompleteEnv (cognitive completion).
+ACTION_SCOPE: frozenset[str] = frozenset({"msg", "event", "result", "self"})
+
+
+def self_env(member_id: str, name: str) -> SelfEnv:
+    """The ``self`` binding for any context."""
+    return {"id": member_id, "name": name, "address": address_for_member(member_id)}
+
+
+def rule_env(payload: Any, *, member_id: str, name: str) -> RuleEnv:
+    """The rule evaluation env (``MemberRuntime._env`` delegates here)."""
+    mail = payload.get("mail") if isinstance(payload, dict) else None
+    return {"msg": mail, "event": payload, "self": self_env(member_id, name)}
+
+
+def on_complete_env(
+    msg: Mail | None, result: str, *, member_id: str, name: str
+) -> OnCompleteEnv:
+    """The completion-actions env (``on_complete`` delegates here)."""
+    return {"msg": msg, "result": result, "self": self_env(member_id, name)}
+
+
+def loop_until_env(
+    *,
+    member_id: str,
+    name: str,
+    iteration: int,
+    error_count: int,
+    max_iterations: int,
+    max_consecutive_errors: int,
+) -> LoopEnv:
+    """The ``:until`` env (``loop_driver`` delegates here)."""
+    return {
+        "self": self_env(member_id, name),
+        "state": {"iteration": iteration, "error_count": error_count},
+        "limits": {
+            "max_iterations": max_iterations,
+            "max_consecutive_errors": max_consecutive_errors,
+        },
+    }
+
+
+def stage_cond_env(
+    *,
+    iteration: int,
+    error_count: int,
+    scratch: dict[str, Any],
+    completing: bool,
+) -> StageCondEnv:
+    """The stage ``:if`` env (``loop_driver`` delegates here)."""
+    return {
+        "state": {"iteration": iteration, "error_count": error_count},
+        "scratch": scratch,
+        "round": {"completing": completing},
+    }
+
+
 # ── Context registries (pure vocabulary, one per evaluation context) ──
 #
 # Every registry below is pure functions only: evaluation against any of
@@ -75,7 +228,7 @@ from tlosure.validate import _binding_names, validate_form
 
 
 # ── Trigger context: rule ``:when`` gates ──
-# Environment contract: ``{msg, event, self}`` (``MemberRuntime._env``);
+# Environment contract: :class:`RuleEnv`, built by :func:`rule_env`;
 # ``msg`` is None for non-mail events and every mail predicate is
 # None-safe.
 
@@ -160,9 +313,7 @@ TRIGGER_BUILTINS: dict[str, Builtin] = {
 
 
 # ── Loop context: ``:loop`` ``:until`` termination ──
-# Environment contract: ``{self, state, limits}`` (``loop_driver``);
-# ``state`` carries ``iteration`` / ``error_count``, ``limits`` carries
-# ``max_iterations`` / ``max_consecutive_errors``.
+# Environment contract: :class:`LoopEnv`, built by :func:`loop_until_env`.
 
 
 def _loop_state_int(env: dict[str, Any], section: str, key: str) -> int | None:
@@ -205,10 +356,8 @@ LOOP_BUILTINS: dict[str, Builtin] = {
 
 
 # ── Stage-cond context: stage ``:if`` conditions ──
-# Environment contract: ``{state, scratch, round}`` (``loop_driver``);
-# ``scratch`` is the session's loop scratchpad, ``round`` carries
-# ``completing`` (whether the response currently on the round's chain
-# would end the session).
+# Environment contract: :class:`StageCondEnv`, built by
+# :func:`stage_cond_env`.
 
 
 def _scratch_map(env: dict[str, Any]) -> dict[str, Any]:
@@ -265,9 +414,9 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 
 
 # ── Script pure accessors ──
-# Environment contract: ``{msg, event, self}`` (deterministic rules) plus
-# ``result`` for on-complete bodies. Merged into the unified member
-# registry by ``make_member_builtins``.
+# Environment contract: :class:`RuleEnv` (deterministic rules) /
+# :class:`OnCompleteEnv` (cognitive completion actions). Merged into the
+# unified member registry by :func:`make_member_builtins`.
 
 
 #: Pure accessors available to every rule kind. Pure only; evaluation is
