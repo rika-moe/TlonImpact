@@ -12,7 +12,8 @@ naming a host business concept):
   completes — "the DSL describes, the engine executes");
 - the general vocabulary: pure, total functions any host composes into
   its own registries — :data:`CORE_BUILTINS` (``=`` / ``not`` /
-  ``contains?`` / ``get`` / ``str``) and :data:`ARITHMETIC_BUILTINS`
+  ``contains?`` / ``get`` / ``str`` / ``split`` / ``join`` /
+  ``substring``) and :data:`ARITHMETIC_BUILTINS`
   (``+`` / ``-`` / ``*`` / ``/`` / ``inc`` / ``dec`` / comparisons). Pure only,
   so evaluation against either registry is side-effect free by
   construction.
@@ -129,6 +130,51 @@ def builtin_str(env: dict[str, Any], *args: Any) -> str:
     return "".join(arg if type(arg) is str else dumps(arg) for arg in args)
 
 
+def _str_arg(name: str, value: Any) -> str:
+    """Coerce to a plain string; everything else is a spec bug."""
+    if type(value) is not str:
+        raise EvalError(f"{name} expects a string, got {type(value).__name__}")
+    return value
+
+
+def builtin_split(env: dict[str, Any], s: Any, sep: Any) -> list[str]:
+    """Split a string on a separator into a vector of strings.
+
+    An empty separator is rejected (Python raises ``ValueError`` there);
+    a non-string argument is a spec bug and raises.
+    """
+    text = _str_arg("split", s)
+    separator = _str_arg("split", sep)
+    if not separator:
+        raise EvalError("split separator must be non-empty")
+    return text.split(separator)
+
+
+def builtin_join(env: dict[str, Any], sep: Any, coll: Any) -> str:
+    """Join a vector of strings with a separator into one string.
+
+    The collection must be a vector of plain strings — a non-string item
+    is a spec bug (use ``str`` first to render EDN values) and raises.
+    """
+    separator = _str_arg("join", sep)
+    if not isinstance(coll, list):
+        raise EvalError(f"join expects a vector, got {type(coll).__name__}")
+    return separator.join(_str_arg("join", item) for item in coll)
+
+
+def builtin_substring(env: dict[str, Any], s: Any, start: Any, end: Any = None) -> str:
+    """``s[start:end]`` — Python slice semantics, total by construction.
+
+    Out-of-range bounds clamp, negative indices count from the end; only
+    non-int bounds (bool included) raise.
+    """
+    text = _str_arg("substring", s)
+    for name, bound in (("start", start), ("end", end)):
+        if bound is not None and (not isinstance(bound, int) or isinstance(bound, bool)):
+            raise EvalError(f"substring {name} must be an int, got {type(bound).__name__}")
+    return text[start:end]
+
+
 #: General-purpose pure vocabulary: host-agnostic building blocks any
 #: host registry may include verbatim. Pure only; evaluation against it
 #: is side-effect free by construction.
@@ -138,6 +184,9 @@ CORE_BUILTINS: dict[str, Builtin] = {
     "contains?": Builtin(builtin_contains, pure=True),
     "get": Builtin(builtin_get, pure=True),
     "str": Builtin(builtin_str, pure=True),
+    "split": Builtin(builtin_split, pure=True),
+    "join": Builtin(builtin_join, pure=True),
+    "substring": Builtin(builtin_substring, pure=True),
 }
 
 
