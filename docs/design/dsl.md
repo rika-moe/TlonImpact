@@ -44,7 +44,7 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 
 > **修订（ADR 0021）**：上面的论证被拍板放弃——语言获得完整函数能力：`defn`（任意位置定义）、`fn`、闭包、变长参数、递归、一等函数。总原则是**尽可能不限制语言能力，agent 的消耗统一由 fuel（+ 深度顶）约束**。
 >
-> 修订后信任模型的承重墙换成四道：**fuel/depth**（任何求值必然终止且代价有界，递归由深度顶兜住）；**effects-as-data**（动作 builtin 在函数体内被调用也仍只产 `ActionRequest` 数据，引擎在求值结束后执行，配额与信任闸不可绕过）；**语境注册表**（动作词只在成员注册表语境可见，纯语境的函数体里写了也加载拒载）；**staging + 人工批准**。被放弃的保证如实记录：动作位置不再可静态枚举（`validate_member_action` 的语法分区对函数调用失效，运行时 collector 是动作汇聚的实际机制），"加载时看清全部行为"降级为"加载时可静态校验 + 运行时有界"。
+> 修订后信任模型的承重墙换成四道：**fuel/depth**（任何求值必然终止且代价有界，递归由深度顶兜住）；**effects-as-data**（动作 builtin 在函数体内被调用也仍只产 `ActionRequest` 数据，引擎在求值结束后执行，配额与信任闸不可绕过）；**语境注册表**（动作词只在成员注册表语境可见，纯语境的函数体里写了也加载拒载）；**staging + 人工批准**。被放弃的保证如实记录：动作位置不再可静态枚举（语法分区已随 tlon 集成删除，运行时 collector 与返回值收集是动作汇聚的实际机制），"加载时看清全部行为"降级为"加载时可静态校验 + 运行时有界"。
 >
 > 仍然禁止：`eval`（无自反求值——spec 文本仍是行为的全部）、宏、可变全局状态、并发原语。`map`/`filter`/`reduce` 的显式绑定形式保留。
 
@@ -61,9 +61,9 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 
 参数校验同样前置在纯求值期完成：动作 builtin 在产出请求前就把参数查完（`spawn` 的 prototype 必须是字符串、`start`/`stop` 的 `:reason` 必须非空、`forward` 的 `:to` 必须是非空地址向量），引擎执行侧拿到的 `ActionRequest` 是已验证的数据，执行路径因此不必重复防御。校验集中在描述侧、执行保持简单——这是"DSL 描述，引擎执行"的另一半：描述侧把错都挑完，执行侧只管照做。
 
-纯度约束还细化到了语法位置（[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `validate_member_action`）：动作位置允许的包装形式只有 `when` / `while` / `map`，`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。也就是说"计算"与"产生意图"在语法上是分区的——一个 spec 里哪里可能有动作意图，校验器一眼就能数清，不存在藏在深层计算里的副作用声明。
+~~纯度约束还细化到了语法位置（[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `validate_member_action`）：动作位置允许的包装形式只有 `when` / `while` / `map`，`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。也就是说"计算"与"产生意图"在语法上是分区的——一个 spec 里哪里可能有动作意图，校验器一眼就能数清，不存在藏在深层计算里的副作用声明。~~
 
-> 修订（ADR 0021）：函数能力引入后，动作可以藏在用户函数体里，上面的语法分区对函数调用不再可静态判定。`validate_member_action` 对直接动作形式继续生效，但"哪里可能有动作"不再是可枚举性质；动作的汇聚机制改为运行时事实——on-complete 路径的 collector 与确定规则路径的返回值收集。词汇级分区（动作词只在成员注册表语境）不受影响。
+> 修订（ADR 0021）：函数能力引入后，动作可以藏在用户函数体里，上面的语法分区对函数调用不再可静态判定，已随 tlon 集成整体删除——`validate_member_actions` 只做全量成员注册表校验（未注册词汇/未定义符号仍加载拒载）加 `defn` 跨 form 穿线（先定义后使用），"哪里可能有动作"不再是可枚举性质；动作的汇聚机制改为运行时事实——on-complete 路径的 collector 与确定规则路径的返回值收集。词汇级分区（动作词只在成员注册表语境）不受影响。
 
 数据与计算之间留了一座受控的桥：map 字面量的键保持字面（实际中都是关键字），值会被求值。于是动作的选项 map 可以内嵌表达式——`(stop {:agent (get event :agent_id) :reason "drain"})` 里目标成员 id 取自触发事件。桥是单向的：数据位置可以引入计算，计算的结果再回流成请求数据；反向（表达式产出新的表达式再执行）不存在，语言没有 `eval`。这条"无自反求值"的禁令配合无宏，保证了 spec 文本就是行为的全部——不存在运行时生成的、加载时看不见的行为。
 
@@ -133,7 +133,7 @@ DSL 的实现分五层，各层职责单一、失败模式明确。语言核心�
 | EDN 解析（L0） | [tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
 | 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `MemberLoop` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
 | 受限求值器（L1） | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
-| 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_action` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
+| 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_actions` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |
 
 L0 不求值这一点值得单独说：解析的产物是惰性、安全、可流转的数据。正因为如此，模板分析（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 在文本/数据层提取 `:parameters`）、`source_hash` 对原文字节做哈希、原型元数据读取失败时安全回退（`_read_metadata` 对一个坏掉的 `prototype.edn` 只记 warning 返回名字兜底）都可以在完全不触碰求值器的前提下工作。求值被推迟到 L1 且永远由引擎发起——数据在系统里流动的每一站都不承担"执行"的风险。

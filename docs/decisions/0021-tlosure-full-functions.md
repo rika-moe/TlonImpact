@@ -30,7 +30,7 @@ EPIC #44 的 defn 评估：初议（主会话建议）是受限形态——只�
 
 ### 3. 被放弃的保证（如实记录）
 
-- **动作位置的语法纯度分区弱化**：`validate_member_action` 的「包装形式只允许 `when`/`while`/`map`、参数必须纯表达式」在函数调用面前失去静态可判定性——函数体可以藏动作。该门禁对直接动作形式继续生效，但"加载时枚举全部动作点"不再是系统性质；运行时 collector（on-complete 路径）与返回值收集（确定规则路径）是动作汇聚的实际机制。
+- **动作位置的语法纯度分区弱化**：`validate_member_action` 的「包装形式只允许 `when`/`while`/`map`、参数必须纯表达式」在函数调用面前失去静态可判定性——函数体可以藏动作。~~该门禁对直接动作形式继续生效~~（施工注记：tlon 集成时进一步拍板为**整体删除**——`validate_member_actions` 只做全量注册表校验 + `defn` 跨 form 穿线，对直接动作形式也不再保留分区），但"加载时枚举全部动作点"不再是系统性质；运行时 collector（on-complete 路径）与返回值收集（确定规则路径）是动作汇聚的实际机制。
 - **控制流加载时可枚举**：被「加载时可静态校验 + 运行时有界」替代。
 
 ### 4. 不变量（本次不动）
@@ -40,7 +40,7 @@ EPIC #44 的 defn 评估：初议（主会话建议）是受限形态——只�
 ## 后果
 
 - tlosure 从「规则描述语言」升级为「受限宿主资源下的通用语言」；这是 dsl.md 信任模型的一次重大修订（相应章节同步改写，废止段删除线保留）。
-- `tlosure/eval.py` 与 `tlosure/validate.py` 镜像扩展（闭包值、defn/fn 特殊形式、应用规则、作用域与元数检查）；`validate_member_action` 的分区语义弱化并在文档中如实标注。
+- `tlosure/eval.py` 与 `tlosure/validate.py` 镜像扩展（闭包值、defn/fn 特殊形式、应用规则、作用域与元数检查）；`validate_member_action` 的分区语义弱化并在文档中如实标注（施工注记：tlon 集成落地为 `validate_member_actions`——分区删除，序列级全量注册表校验 + defn 穿线）。
 - 生成文档（tlosure-reference）列出新的特殊形式与语义；spec 作者（含 LLM）获得抽象能力，spec 重复片段可收敛。
 - 风险与缓解：深层递归/spec 复杂度上限由 fuel/depth 兜底；动作藏匿的可审计性损失由 staging 审批与运行时 ActionRequest 日志（执行侧可观测）补偿。
 - ADR 0011（SCI 兼容子集）：函数能力的语义选择应向 SCI/Clojure 看齐（`defn`/`fn`/变长的形状），为未来迁移留路。

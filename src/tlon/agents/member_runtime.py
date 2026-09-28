@@ -592,19 +592,26 @@ class MemberRuntime(Member):
         it the ``:when`` gate runs under the independent
         :data:`DEFAULT_WHEN_FUEL` and each action under
         :data:`DEFAULT_FUEL`. A false gate short-circuits (no actions).
+
+        All forms — gate included — share one env dict (ADR 0021): a
+        ``defn`` in any form is visible to the forms after it. Evaluation
+        goes through bare :class:`Evaluator` instances rather than
+        :func:`eval_form` (whose entry copies the env) so definitions
+        persist across forms; the two paths differ only in how many fuel
+        budgets the forms draw from.
         """
         if rule.fuel is not None:
             evaluator = Evaluator(self._builtins, rule.fuel, DEFAULT_MAX_DEPTH)
-            if rule.when is not None and not evaluator.eval(rule.when, dict(env), 0):
+            if rule.when is not None and not evaluator.eval(rule.when, env, 0):
                 return []
-            results = [evaluator.eval(action, dict(env), 0) for action in rule.actions]
+            results = [evaluator.eval(action, env, 0) for action in rule.actions]
             return self._collect_results(results)
-        if rule.when is not None and not eval_form(
-            rule.when, env, self._builtins, fuel=DEFAULT_WHEN_FUEL
-        ):
+        if rule.when is not None and not Evaluator(
+            self._builtins, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH
+        ).eval(rule.when, env, 0):
             return []
         results = [
-            eval_form(action, env, self._builtins, fuel=DEFAULT_FUEL)
+            Evaluator(self._builtins, DEFAULT_FUEL, DEFAULT_MAX_DEPTH).eval(action, env, 0)
             for action in rule.actions
         ]
         return self._collect_results(results)

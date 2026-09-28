@@ -171,7 +171,7 @@ class TestProposeBehavior:
         result = await tool.execute(intent="改", name="wild")
 
         assert not result.success
-        assert "unknown action" in result.error
+        assert "unknown function or special form: jump" in result.error
         assert "hint" in result.data
         assert not (p.prototypes_staging_dir() / "wild").exists()
 

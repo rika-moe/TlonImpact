@@ -23,7 +23,7 @@ from tlon.tools.prototypes.ports import PrototypeError
 class TestWriteStagingValidation:
     def test_unknown_action_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        with pytest.raises(PrototypeError, match="unknown action"):
+        with pytest.raises(PrototypeError, match="unknown function or special form: jump"):
             write_staging_prototype(
                 "wild",
                 """\
