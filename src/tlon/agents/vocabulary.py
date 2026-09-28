@@ -1,32 +1,51 @@
-"""tlon's DSL domain vocabulary — the host layer over tlosure (ADR 0018 修订).
+"""The Bridge API — tlon's host vocabulary over the tlosure language core.
+
+Design: ``docs/design/bridge-api.md`` (ADR 0020). The bridge between the
+Python mechanism layer and tlosure policy data is four port kinds; this
+module is their single source of truth:
+
+- **Context registries** — which vocabulary each evaluation context may
+  name: :data:`TRIGGER_BUILTINS` (rule ``:when`` gates),
+  :data:`LOOP_BUILTINS` (``:loop`` ``:until``), :data:`STAGE_COND_BUILTINS`
+  (stage ``:if``) and :data:`SCRIPT_BUILTINS` (pure accessors merged into
+  the member registry). All pure, so evaluation against any of them is
+  side-effect free by construction; each registry's comment states its
+  environment contract (the symbols the engine binds for that context).
+- **Query ports** (host → DSL, read-only) — :class:`ScriptHostQueries`, a
+  protocol of host read-only queries closure-injected by
+  :func:`make_member_builtins` (``sleeping?`` / ``running?`` / ``lazy?`` /
+  ``member-roster`` / the ``start-all`` candidate set). They read registry
+  state, so they are never registered module-level; the implementation
+  (``RegistryQueries`` in ``tlon.agents/agent_registry.py``) is injected at
+  assembly time.
+- **Effect ports** (DSL → host, effects-as-data) — the action family
+  (``spawn`` / ``emit`` / ``start`` / ``stop`` / ``start-all`` /
+  ``forward``, ``pure=False``, names in :data:`MEMBER_ACTION_NAMES`):
+  each validates its arguments and produces :class:`ActionRequest` data
+  without side effects; the engine executes the requests after evaluation
+  ends (``MemberRuntime._execute_action``). :func:`make_member_builtins`
+  builds the unified member registry — the merged pure vocabularies plus
+  the action builtins plus any host-injected queries.
+- **Static gate** — :func:`validate_member_action`, the purity partition
+  for a rule's action position: wrappers limited to ``when`` / ``while`` /
+  ``map``, every action argument a pure expression.
+
+Environment contracts (construction sites in parentheses): rule
+evaluation binds ``{msg, event, self}`` (``MemberRuntime._env``),
+on-complete bodies add ``result`` (``on_complete``), ``:until`` binds
+``{self, state, limits}`` and stage ``:if`` binds
+``{state, scratch, round}`` (both ``loop_driver``).
+
+Bridge versioning discipline (ADR 0020): vocabulary only grows, semantics
+only tighten — spec files are on-disk data, so a breaking change to a
+bridge word corrupts every stored behavior file. New words declare which
+context registries they belong to; no word is visible everywhere.
 
 The language core (``tlosure``) provides the contract types
 (:class:`EvalError` family, :class:`Builtin`, :class:`ActionRequest`),
 the evaluator kernel, static validation (:func:`tlosure.validate.validate_form`)
 and the general vocabulary (``=`` / ``not`` / ``contains?`` / ``get`` /
-``str`` / arithmetic). Everything a tlon member's spec may name beyond
-that lives here:
-
-- the mail predicates (``addressed-to-me?`` / ``cc-ed?`` / ``from?`` /
-  ``content-matches?``), reading the ``msg`` mail object and the
-  host-injected ``self.address``;
-- the loop termination predicates (phase 7a) over ``state`` / ``limits``
-  and the stage ``:if`` condition predicates (phase 7c) over ``state`` /
-  ``scratch`` / ``round``;
-- the pure module-level registries — :data:`TRIGGER_BUILTINS` (trigger
-  expressions), :data:`LOOP_BUILTINS`, :data:`STAGE_COND_BUILTINS`,
-  :data:`SCRIPT_BUILTINS` — pure predicates and functions only, so
-  evaluation against any of them is side-effect free by construction;
-- the action family (``spawn`` / ``emit`` / ``start`` / ``stop`` /
-  ``start-all`` / ``forward``, ``pure=False``) and
-  :func:`make_member_builtins` (phase C): the unified member registry —
-  the merged pure vocabularies plus the action builtins. Host predicates
-  that read registry state (``sleeping?`` / ``running?`` / ``lazy?``),
-  the ``member-roster`` social roster (issue ) and the ``start-all``
-  candidate set are closure-injected via :class:`ScriptHostQueries`,
-  never registered module-level;
-- :func:`validate_member_action`, the phase C unified static gate for a
-  rule's action position.
+``str`` / arithmetic).
 """
 
 import re
@@ -47,7 +66,18 @@ from tlosure.builtins import (
 from tlosure.edn import Form, Symbol, dumps
 from tlosure.validate import _binding_names, validate_form
 
-# ── Trigger builtins (pure predicates/functions only) ──
+# ── Context registries (pure vocabulary, one per evaluation context) ──
+#
+# Every registry below is pure functions only: evaluation against any of
+# them is side-effect free by construction. A word absent from a context's
+# registry is rejected at load-time validation — "the author misspoke" is
+# a static error, never a runtime surprise.
+
+
+# ── Trigger context: rule ``:when`` gates ──
+# Environment contract: ``{msg, event, self}`` (``MemberRuntime._env``);
+# ``msg`` is None for non-mail events and every mail predicate is
+# None-safe.
 
 
 def _self_map(env: dict[str, Any]) -> dict[str, Any]:
@@ -64,8 +94,8 @@ def _my_address(env: dict[str, Any]) -> str | None:
 def _builtin_addressed_to_me(env: dict[str, Any], msg: Mail | None) -> bool:
     """My address is in the mail's To list.
 
-    None-safe: the unified member env binds ``msg`` to None for non-mail
-    events (phase C), and a non-mail payload is never addressed to me.
+    None-safe: the member env binds ``msg`` to None for non-mail events,
+    and a non-mail payload is never addressed to me.
     """
     my_address = _my_address(env)
     return my_address is not None and isinstance(msg, Mail) and my_address in msg.to
@@ -81,9 +111,9 @@ def _builtin_from(env: dict[str, Any], msg: Mail | None, address: Any) -> bool:
     """The mail's sender equals ``address`` (None-safe, see addressed-to-me?).
 
     Mail field access for trigger gates — ``get`` reads dicts only, so
-    sender matching gets its own pure predicate (issue : Adam's
-    guardian-inbox rule excludes postmaster senders to never answer a
-    bounce). A non-string ``address`` never matches.
+    sender matching gets its own pure predicate (Adam's guardian-inbox
+    rule excludes postmaster senders to never answer a bounce). A
+    non-string ``address`` never matches.
     """
     return (
         isinstance(msg, Mail)
@@ -129,7 +159,10 @@ TRIGGER_BUILTINS: dict[str, Builtin] = {
 }
 
 
-# ── Loop until builtins (phase 7a, pure predicates only) ──
+# ── Loop context: ``:loop`` ``:until`` termination ──
+# Environment contract: ``{self, state, limits}`` (``loop_driver``);
+# ``state`` carries ``iteration`` / ``error_count``, ``limits`` carries
+# ``max_iterations`` / ``max_consecutive_errors``.
 
 
 def _loop_state_int(env: dict[str, Any], section: str, key: str) -> int | None:
@@ -161,10 +194,8 @@ def _builtin_error_limit_reached(env: dict[str, Any]) -> bool:
     return error_count >= max_errors
 
 
-#: Loop termination predicates (phase 7a). Pure only; evaluation is
-#: side-effect free by construction. The environment provides ``self``,
-#: ``state`` (iteration / error_count) and ``limits`` (max_iterations /
-#: max_consecutive_errors); missing keys safely yield False, never raise.
+#: Loop termination predicates. Pure only; evaluation is side-effect free
+#: by construction. Missing keys safely yield False, never raise.
 LOOP_BUILTINS: dict[str, Builtin] = {
     "iteration-limit-reached?": Builtin(_builtin_iteration_limit_reached, pure=True),
     "error-limit-reached?": Builtin(_builtin_error_limit_reached, pure=True),
@@ -173,7 +204,11 @@ LOOP_BUILTINS: dict[str, Builtin] = {
 }
 
 
-# ── Stage condition builtins (phase 7c, pure predicates only) ──
+# ── Stage-cond context: stage ``:if`` conditions ──
+# Environment contract: ``{state, scratch, round}`` (``loop_driver``);
+# ``scratch`` is the session's loop scratchpad, ``round`` carries
+# ``completing`` (whether the response currently on the round's chain
+# would end the session).
 
 
 def _scratch_map(env: dict[str, Any]) -> dict[str, Any]:
@@ -215,11 +250,8 @@ def _builtin_completing(env: dict[str, Any]) -> bool:
     return isinstance(round_map, dict) and round_map.get("completing") is True
 
 
-#: Stage ``:if`` condition predicates (phase 7c). Pure only; evaluation is
-#: side-effect free by construction. The environment provides ``state``
-#: (iteration / error_count), ``scratch`` (the session's loop scratchpad)
-#: and ``round`` (``completing`` — whether the response currently on the
-#: round's chain would end the session); missing keys safely yield False,
+#: Stage ``:if`` condition predicates. Pure only; evaluation is
+#: side-effect free by construction. Missing keys safely yield False,
 #: never raise.
 STAGE_COND_BUILTINS: dict[str, Builtin] = {
     "critique-failed?": Builtin(_builtin_critique_failed, pure=True),
@@ -232,17 +264,14 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 }
 
 
-# ── Member action names (phase C unified vocabulary) ──
-
-ACTION_NAMES = frozenset({"spawn", "emit"})
-
-
-# ── Script member builtins (phase P5a) ──
+# ── Script pure accessors ──
+# Environment contract: ``{msg, event, self}`` (deterministic rules) plus
+# ``result`` for on-complete bodies. Merged into the unified member
+# registry by ``make_member_builtins``.
 
 
-#: Script member pure accessors/predicates (phase P5a). Pure only;
-#: evaluation is side-effect free by construction. The environment
-#: provides ``event`` (the triggering event's payload) and ``self``.
+#: Pure accessors available to every rule kind. Pure only; evaluation is
+#: side-effect free by construction.
 SCRIPT_BUILTINS: dict[str, Builtin] = {
     "get": Builtin(builtin_get, pure=True),
     "str": Builtin(builtin_str, pure=True),
@@ -252,12 +281,15 @@ SCRIPT_BUILTINS: dict[str, Builtin] = {
 }
 
 
+# ── Query ports (host → DSL, read-only) ──
+
+
 class ScriptHostQueries(Protocol):
-    """Host read-only queries closure-injected into the script registry.
+    """Host read-only queries closure-injected into the member registry.
 
     The implementation lives outside this module — ``RegistryQueries`` in
-    ``tlon.agents/agent_registry.py``, shared by registry-spawned script members
-    and Adam — so the module-level registry stays free of host state.
+    ``tlon.agents/agent_registry.py``, shared by registry-spawned members
+    and Adam — so the module-level registries stay free of host state.
     Query arguments may be anything an expression yields (including None
     for a missing payload key), so implementations must tolerate
     non-string input.
@@ -278,12 +310,12 @@ class ScriptHostQueries(Protocol):
         ...
 
     def start_all_candidates(self) -> list[str]:
-        """The boot set: members whose spec declares ``:on :boot``. Phase E."""
+        """The boot set: members whose spec declares ``:on :boot``."""
         ...
 
     def member_roster(self) -> str:
-        """The social roster (issue ): one pre-formatted line per
-        registered member — name, id, prototype and its description.
+        """The social roster: one pre-formatted line per registered
+        member — name, id, prototype and its description.
 
         Formatting lives in the implementation, not the DSL: the DSL never
         iterates, iteration is a builtin. Social public information, open
@@ -292,12 +324,17 @@ class ScriptHostQueries(Protocol):
         ...
 
 
-#: Lifecycle action names a script rule may use (phase P5a; P5b adds ``forward``).
-SCRIPT_ACTION_NAMES = frozenset({"start", "stop", "start-all", "forward"})
+# ── Effect ports (DSL → host, effects-as-data) ──
+#
+# Action builtins validate their arguments during pure evaluation and
+# produce ActionRequest data; execution happens in the engine after
+# evaluation ends (``MemberRuntime._execute_action``), so a spec can never
+# reach past the engine's quotas and trust gates.
 
-#: The unified action vocabulary (phase C): every rule kind — cognitive or
-#: deterministic — may use any of these five actions in its ``:actions``.
-MEMBER_ACTION_NAMES = frozenset(ACTION_NAMES | SCRIPT_ACTION_NAMES)
+
+#: The unified action vocabulary: every rule kind — cognitive or
+#: deterministic — may use any of these actions in its ``:actions``.
+MEMBER_ACTION_NAMES = frozenset({"spawn", "emit", "start", "stop", "start-all", "forward"})
 
 
 def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[str, str]:
@@ -370,15 +407,13 @@ def make_member_builtins(
     host: ScriptHostQueries | None = None,
     collector: list[ActionRequest] | None = None,
 ) -> dict[str, Builtin]:
-    """Build the unified member registry (phase C).
+    """Build the unified member registry.
 
-    Replaces the three legacy registries (``make_actions_builtins`` /
-    ``make_script_builtins`` and the module-level pure sets) with one:
-    the pure predicates/accessors of the trigger and script vocabularies
-    are merged, and all five action builtins (``spawn`` / ``emit`` /
-    ``start`` / ``stop`` / ``start-all`` / ``forward``) validate their
-    arguments and produce :class:`ActionRequest` data without side
-    effects.
+    The pure predicates/accessors of the trigger and script vocabularies
+    are merged with the arithmetic vocabulary, plus all six action
+    builtins (``spawn`` / ``emit`` / ``start`` / ``stop`` / ``start-all``
+    / ``forward``) which validate their arguments and produce
+    :class:`ActionRequest` data without side effects.
 
     How a request reaches the engine depends on the rule kind:
 
@@ -501,24 +536,24 @@ def make_member_builtins(
     return builtins
 
 
-# ── Action-position static validation (phase C unified gate) ──
+# ── Static gate: action-position purity partition ──
 
 
 def validate_member_action(
     form: Any, *, pure: dict[str, Builtin], scope: set[str]
 ) -> None:
-    """Statically validate one member action form (phase C unified gate).
+    """Statically validate one member action form.
 
     The action position of any rule — cognitive or deterministic — is
     either a single action form (``(spawn ...)`` / ``(emit ...)`` /
     ``(start ...)`` / ``(stop ...)`` / ``(start-all ...)`` /
-    ``(forward ...)``), a ``(when cond action ...)`` wrapper, or a phase D
-    loop form (``while`` / ``map``) whose action-bearing positions hold
-    action forms. The purity invariant is unchanged (dsl.md phase D):
-    conditions, tests, binding initializers and action arguments are pure
-    expressions validated against ``pure`` (the pure subset of the member
-    registry) under ``scope``; only the action-carrying positions may name
-    an action.
+    ``(forward ...)``), a ``(when cond action ...)`` wrapper, or a loop
+    form (``while`` / ``map``) whose action-bearing positions hold action
+    forms. The purity invariant (docs/design/dsl.md): conditions, tests,
+    binding initializers and action arguments are pure expressions
+    validated against ``pure`` (the pure subset of the member registry)
+    under ``scope``; only the action-carrying positions may name an
+    action.
     """
     if not isinstance(form, Form) or not form:
         raise EvalError(
@@ -532,7 +567,7 @@ def _validate_member_action_expr(
 ) -> None:
     """Validate one member action expression (a single action or a wrapper).
 
-    ``when`` wraps action forms under a pure condition; phase D ``while`` /
+    ``when`` wraps action forms under a pure condition; ``while`` /
     ``map`` loop over action forms. Every other head must be an action name
     whose arguments are pure expressions.
     """
