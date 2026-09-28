@@ -38,6 +38,7 @@
 | [design/skills.md](./design/skills.md) | Skill 能力：开放标准 SKILL.md、三层目录、progressive disclosure | ✅ |
 | [design/execution-device.md](./design/execution-device.md) | Execution device 设计哲学：能力阶梯、五条宪法、DockerRuntime 现状评估与加固方向 | ✅ |
 | [design/telegram.md](./design/telegram.md) | Telegram 客户端（MVP）：单用户白名单、回复式收发、SDK 接入 | ✅ |
+| [design/bridge-api.md](./design/bridge-api.md) | Bridge API：Python 机制底座 ↔ tlosure 策略层的桥——四类端口、版本纪律、四阶段迁移路线 | ✅ |
 | [reference/tlosure-reference.md](./reference/tlosure-reference.md) | tlosure 语言核心：EDN 语法、求值器、燃料计量、特殊形式、通用词汇 | ✅ |
 | [reference/dsl-reference.md](./reference/dsl-reference.md) | tlon 宿主侧：MemberSpec 全字段、领域 builtin、stage/section 清单 | ✅ |
 | [reference/config-reference.md](./reference/config-reference.md) | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
@@ -45,6 +46,6 @@
 | [reference/api-reference.md](./reference/api-reference.md) | REST/SSE 端点与事件帧格式 | ✅ |
 | [guides/quickstart.md](./guides/quickstart.md) | uv sync → dream → ops → 第一封信 | ✅ |
 | [guides/writing-a-prototype.md](./guides/writing-a-prototype.md) | 手写一个 prototype 的完整走查 | ✅ |
-| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力、0011 SCI 兼容子集、0012 litellm 传输层、0013 admin token 鉴权、0014 环境-agent 协同演化 | ✅ |
+| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力、0011 SCI 兼容子集、0012 litellm 传输层、0013 admin token 鉴权、0014 环境-agent 协同演化、0015 prompt 缓存、0016 成员级 LLM 配置、0017 claim 记忆、0018 DSL 抽包 tlosure、0019 runtime/server/client 拆分、0020 Bridge API | ✅ |
 
 ✅ = 已写并与代码同步；📝 = 计划内未写。新增文档先登记进本表。
