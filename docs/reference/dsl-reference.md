@@ -116,11 +116,50 @@
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
 - **动作位置闸 `validate_member_action`**（[src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)）：`:when` 门控必须是纯表达式；动作位置允许的包装形式只有 `when` / `while` / `map`——`(when cond (spawn ...) (emit ...))`、`(while [i 0] (< i 3) (emit ...) (recur (inc i)))`、`(map x (forward {:to [x]}) ["a" "b"])`。`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。
-- fuel 记账：默认值 `:when` 门控 200（`DEFAULT_WHEN_FUEL`）、动作 1000（`DEFAULT_FUEL`），规则/loop 自声明上限 10000（`MAX_FUEL`，超过即加载拒绝）。声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
+- fuel 记账：默认值 `:when` 门控 `DEFAULT_WHEN_FUEL`、动作 `DEFAULT_FUEL`，规则/loop 自声明上限 `MAX_FUEL`（超过即加载拒绝；常量取值见下表）。声明了 `:fuel` 的确定规则：`:when` 与所有 `:actions` 共享一个计数器；认知规则的门控与完成动作分阶段，各按 `:fuel` 计。`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。
+
+<!-- BEGIN GENERATED: dsl-fuel-defaults -->
+语言级求值预算常量（`tlosure/eval.py`，4 个；上文的默认值/上限数字以此表为准）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 常量 | 值 | 用途 |
+|---|---|---|
+| `DEFAULT_WHEN_FUEL` | 200 | `:when` 门控的默认预算 |
+| `DEFAULT_FUEL` | 1000 | `:actions` / `:loop` 求值的默认预算 |
+| `MAX_FUEL` | 10000 | `:fuel` 自声明的硬顶（超过即加载拒绝） |
+| `DEFAULT_MAX_DEPTH` | 100 | form 嵌套深度上限 |
+<!-- END GENERATED: dsl-fuel-defaults -->
+
+### 3.1 环境契约（求值语境的可见数据）
+
+<!-- BEGIN GENERATED: bridge-env-contracts -->
+每个求值语境绑定一组固定符号、固定形状的数据（4 个顶层契约，`vocabulary.py` 的 `*Env` TypedDict 是形状的单一事实源，构建器函数是唯一构造点——引擎调用点全部委托到这里）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| 环境契约 | 构建器 | 字段 | 类型 |
+|---|---|---|---|
+| `RuleEnv` | `rule_env()` | `msg` | `Mail \| None` |
+| `RuleEnv` | `rule_env()` | `event` | `Any` |
+| `RuleEnv` | `rule_env()` | `self` | `SelfEnv` |
+| `OnCompleteEnv` | `on_complete_env()` | `msg` | `Mail \| None` |
+| `OnCompleteEnv` | `on_complete_env()` | `result` | `str` |
+| `OnCompleteEnv` | `on_complete_env()` | `self` | `SelfEnv` |
+| `LoopEnv` | `loop_until_env()` | `self` | `SelfEnv` |
+| `LoopEnv` | `loop_until_env()` | `state` | `LoopStateEnv` |
+| `LoopEnv` | `loop_until_env()` | `limits` | `LoopLimitsEnv` |
+| `StageCondEnv` | `stage_cond_env()` | `state` | `LoopStateEnv` |
+| `StageCondEnv` | `stage_cond_env()` | `scratch` | `dict[str, Any]` |
+| `StageCondEnv` | `stage_cond_env()` | `round` | `RoundEnv` |
+
+嵌套类型的字段：
+
+- `SelfEnv`：`id: str`、`name: str`、`address: str`
+- `LoopStateEnv`：`iteration: int`、`error_count: int`
+- `LoopLimitsEnv`：`max_iterations: int`、`max_consecutive_errors: int`
+- `RoundEnv`：`completing: bool`
+<!-- END GENERATED: bridge-env-contracts -->
 
 ## 4. Builtin 完整清单
 
-语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入）：谓词 `sleeping?` / `running?` / `lazy?` 与社会名册 `member-roster`（issue ，零参数，返回预格式化的名册字符串，每行一个成员 `名字（id） — prototype：描述`，prototype 段与描述按需省略；睡眠成员仍在册，Adam 自身不进注册表故不在册）。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
+语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入），清单见第 4.6 节。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
 ### 4.1 `TRIGGER_BUILTINS`（触发器谓词）
 
@@ -201,6 +240,31 @@
 | `stop` | `(stop {:agent id :reason s})` | 发布停止请求；参数同上 |
 | `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；候选集展开依赖宿主查询注入——无宿主的注册表运行时会抛 `EvalError` |
 | `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发触发邮件：`:to` 必填非空地址向量，`:cc` 可选向量，`:subject` 可选字符串；正文取自触发邮件，新邮件以 `forward_of` 链接原邮件；无触发邮件时跳过并记 warning |
+
+<!-- BEGIN GENERATED: dsl-action-kinds -->
+六个动作 builtin 实际产出的 `ActionRequest` 形状（5 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| kind | data 字段 |
+|---|---|
+| `spawn` | `prototype`、`name` |
+| `emit` | `content`、`to` |
+| `start` | `agent_id`、`reason` |
+| `stop` | `agent_id`、`reason` |
+| `forward` | `to`、`cc`、`subject` |
+<!-- END GENERATED: dsl-action-kinds -->
+
+### 4.6 宿主查询端口（闭包注入）
+
+<!-- BEGIN GENERATED: bridge-query-ports -->
+`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=True`，全部读注册表状态、无宿主即不在注册表；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+| DSL 词 | 宿主方法 | 说明 |
+|---|---|---|
+| `sleeping?` | `host.is_sleeping` | Registered (config known) but not running. |
+| `running?` | `host.is_running` | Currently in the run table. |
+| `lazy?` | `host.is_lazy` | A member that can sleep / be drained: no ``:on :boot`` rule. |
+| `member-roster` | `host.member_roster` | The social roster: one pre-formatted line per registered member. |
+<!-- END GENERATED: bridge-query-ports -->
 
 ## 5. `:loop` 详解（认知会话）
 
