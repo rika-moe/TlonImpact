@@ -12,6 +12,7 @@ import asyncio
 import uuid
 from pathlib import Path
 
+from tlon.api.arena import ArenaFacade
 from tlon.api.bootstrap import build_runtime
 from tlon.base.paths import TlonPaths
 
@@ -44,6 +45,9 @@ async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
     runtime_a = await build_runtime(paths_a)
     runtime_b = await build_runtime(paths_b)
     try:
+        # Arena facade is wired into every runtime (issue #29 切片 3/3).
+        assert isinstance(runtime_a.arena, ArenaFacade)
+        assert isinstance(runtime_b.arena, ArenaFacade)
         # bob is a known human in A only (mailbox exists → deliverable).
         paths_a.member_mail_dir("human:bob").mkdir(parents=True, exist_ok=True)
 

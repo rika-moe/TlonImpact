@@ -15,6 +15,7 @@ from typing import Any
 
 from aiohttp import web
 
+from tlon.api.arena import ArenaFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
@@ -38,6 +39,7 @@ class RestHandlerBase:
     observability: ObservabilityFacade | None
     configs: ConfigFacade | None
     events: EventsFacade | None
+    arena: ArenaFacade | None
     debug: bool
     admin_token: str | None
     github_ingress: bool

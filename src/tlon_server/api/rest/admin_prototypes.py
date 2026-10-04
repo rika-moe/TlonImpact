@@ -123,6 +123,11 @@ class AdminPrototypeHandlers(RestHandlerBase):
         # Lineage (see docs/design/prototypes.md): the derived parent chain, including per-generation
         # diffs — first-class data on the detail endpoint.
         payload["lineage"] = self.prototypes.get_lineage(name)
+        # 演武场（docs/design/arena.md）：staging 详情携带最新 run 摘要 +
+        # 报告红旗（与 execution-level 的 red_flags 分开字段，不混）；
+        # 无报告或 facade 未接线时为 None。证据呈现，不进 approve 逻辑。
+        if staging:
+            payload["arena"] = self.arena.latest_report(name) if self.arena else None
         return self._json_response({"status": "success", "prototype": payload})
 
     async def handle_create_prototype(self, request: web.Request) -> web.Response:

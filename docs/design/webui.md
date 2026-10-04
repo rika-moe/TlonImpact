@@ -71,6 +71,8 @@ staging 原型审批区从 AGENTS 视图迁至 PROTOTYPES 视图（2026-08-21 �
 
 `PROTOTYPES` 视图：左栏双区列表（TRUSTED LIBRARY 青卡片 / STAGING 黄描边卡片），右侧详情面板（元信息 + parameters 徽章 + behavior.tlon 终端面板全文）；操作：NEW（手写表单，behavior 大文本域）、EDIT（元数据 + behavior）、DELETE（确认框，品红）、staging 的 APPROVE（青）/ REJECT（品红）。导航位于 AGENTS 之后。
 
+staging 详情另带「演武场」面板（docs/design/arena.md，issue #29）：触发按钮 + 可选 model 输入框（留空用 `TLON_ARENA_MODEL`），有活跃 run 时按钮禁用并轮询 `GET /admin/arena-runs/{run_id}` 显示状态，终态后停轮询并重拉详情；报告红旗复用 red_flags 徽章呈现，ARENA.md 以 `<pre>` 原文展示。报告是证据不是判决——面板只呈现，不接 approve 逻辑。
+
 SSE 生命周期与 TUI 相同：`POST /sessions`（client_type 用 `"webui"`）→ 立即 `PATCH` 切 `event` 模式 → `GET /events?session_id=` 开 `EventSource`；断线指数退避（1s→30s）后**从零重建会话**。顶栏常驻连接状态徽章（connected / reconnecting / down）。
 
 ## 视觉规范（cyberpunk）

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from tlon.api.arena import ArenaFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
@@ -34,6 +35,7 @@ from tlon.base.logger import get_logger
 from tlon_server.core.client_gateway import ClientGateway
 
 from .admin_agents import AdminAgentHandlers
+from .admin_arena import AdminArenaHandlers
 from .admin_llm import AdminLlmHandlers
 from .admin_prototypes import AdminPrototypeHandlers
 from .github import GitHubWebhookMixin
@@ -59,6 +61,7 @@ class RESTAPIHandler(
     AdminAgentHandlers,
     AdminLlmHandlers,
     AdminPrototypeHandlers,
+    AdminArenaHandlers,
     ObservabilityHandlers,
     GitHubWebhookMixin,
 ):
@@ -103,6 +106,7 @@ class RESTAPIHandler(
         observability: ObservabilityFacade | None = None,
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
+        arena: ArenaFacade | None = None,
         debug: bool = False,
         admin_token: str | None = None,
         github_webhook_secret: str | None = None,
@@ -117,6 +121,7 @@ class RESTAPIHandler(
             observability: Observability facade (/traces, /metrics, logs)
             configs: Config facade (/admin/config/agents listing, agent.yaml)
             events: Events facade (SSE presence attach/detach, GitHub ingress)
+            arena: Arena facade (/admin/arena-runs, staging 演武触发/报告)
             debug: Whether to enable debug/test endpoints (never enable in production)
             admin_token: Shared Bearer token guarding /admin/* (ADR 0013);
                 None disables authentication (default, localhost trust boundary)
@@ -131,6 +136,7 @@ class RESTAPIHandler(
         self.observability = observability
         self.configs = configs
         self.events = events
+        self.arena = arena
         self.debug = debug
         self.admin_token = admin_token
         self.github_ingress = events is not None and events.github_enabled
@@ -198,6 +204,19 @@ class RESTAPIHandler(
         app.router.add_get("/admin/prototypes/{name}", self.handle_get_prototype)
         app.router.add_patch("/admin/prototypes/{name}", self.handle_update_prototype)
         app.router.add_delete("/admin/prototypes/{name}", self.handle_delete_prototype)
+
+        # Admin arena routes (docs/design/arena.md): human-only trigger +
+        # status polling + archived report. Registered unconditionally like
+        # the prototype routes; handlers 503 when the facade is not wired.
+        app.router.add_post(
+            "/admin/prototypes/staging/{name}/arena-runs", self.handle_start_arena_run
+        )
+        app.router.add_get("/admin/arena-runs", self.handle_list_arena_runs)
+        app.router.add_get("/admin/arena-runs/{run_id}", self.handle_get_arena_run)
+        app.router.add_get(
+            "/admin/prototypes/staging/{name}/arena-runs/{run_id}/report",
+            self.handle_get_arena_report,
+        )
 
         # Trace routes (only if the observability facade is wired)
         if self.observability:
@@ -400,6 +419,7 @@ class RESTServer:
         observability: ObservabilityFacade | None = None,
         configs: ConfigFacade | None = None,
         events: EventsFacade | None = None,
+        arena: ArenaFacade | None = None,
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
@@ -416,6 +436,7 @@ class RESTServer:
             observability: Observability facade (/traces, /metrics, logs)
             configs: Config facade (/admin/config/agents listing, agent.yaml)
             events: Events facade (SSE presence attach/detach, GitHub ingress)
+            arena: Arena facade (/admin/arena-runs, staging 演武触发/报告)
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
@@ -435,6 +456,7 @@ class RESTServer:
             observability=observability,
             configs=configs,
             events=events,
+            arena=arena,
             debug=debug,
             admin_token=admin_token,
             github_webhook_secret=github_webhook_secret,

@@ -1,6 +1,6 @@
 # 演武场（arena）：staging 原型的动态行为评估
 
-> 本文是演武场的设计拍板（issue #29，EPIC #31 P3 项，2026-10-05 讨论拍板）。现状：未实现，本文是施工依据。演武场把 staging 原型的信任闸从「代码审查」升级为「行为审查」——评审看的不是「它写了什么」，而是「它在围墙里做了什么」。
+> 本文是演武场的设计拍板（issue #29，EPIC #31 P3 项，2026-10-05 讨论拍板）。现状：三个施工切片全部落地（见文末「施工切片」）。演武场把 staging 原型的信任闸从「代码审查」升级为「行为审查」——评审看的不是「它写了什么」，而是「它在围墙里做了什么」。
 
 ## 问题：静态可读 ≠ 行为可测
 
@@ -88,6 +88,6 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 
 1. **runner 核心**：`tlon.arena` 域（隔离家园/拷原型/语料/有界运行/拆除与容器 GC）+ `tlon.api` facade ✅（2026-10-05，issue #29 切片 1/3）：`tlon.arena.runner.ArenaRunner` 状态机 preparing → running → collecting → done/timed_out/failed；模型解析 run 参数 → `TLON_ARENA_MODEL` → 拒绝；语料（内置 5 封对抗套件 + LLM 典型场景，fail-soft 记 note）先落盘后喂信；证据归档在 staging 原型目录内 `arena/<run-id>/`（corpus.json / sessions/ / run.json），归档后拆除（shutdown → 容器 GC → 删隔离家园）；进程内单并发；`tlon.api.arena.ArenaFacade` 薄透传，start_run 后后台 task 推进
 2. **报告生成器**：journal → ARENA.md / report.json + 红旗派生 ✅（2026-10-05，issue #29 切片 2/3）：`tlon.arena.report.generate_report` 纯函数式读归档目录（不碰隔离家园——家园已拆）；归档补全三样原料（ledger.jsonl / sent.jsonl / inbox.jsonl）+ run.json 带 `fed` 映射（mail_id ↔ 语料，经 `session_id_for` 精确对应 session 文件）；`report.json` 写回归档目录，`ARENA.md` 双落点（归档目录 + staging 原型根目录，根目录为最新 run 的人读入口，覆盖旧版）；八类自动红旗各带证据指针（session 文件 + seq / sent.jsonl 行号），特征锚定具体报错文案出处；runner 在归档后自动调报告，fail-soft——报告失败只记 error 日志 + run.json 加 `report_error`，不毁证据不跳过拆除
-3. **admin 端点 + 呈现**：触发（异步）/状态/结果端点，staging detail payload 携带报告，WebUI 评审界面呈现
+3. **admin 端点 + 呈现**：触发（异步）/状态/结果端点，staging detail payload 携带报告，WebUI 评审界面呈现 ✅（2026-10-05，issue #29 切片 3/3）：`Runtime` 装配第七个 facade `arena`（`ArenaFacade(tlon_paths=runtime_paths)`，无自持资源不进 shutdown——v1 语义：进程重启丢失进行中的 run 记录，磁盘证据不受影响）；`rest/admin_arena.py` 四个端点——`POST /admin/prototypes/staging/{name}/arena-runs`（202 触发，body 全可选，`ArenaError` → 400）、`GET /admin/arena-runs[/{run_id}]`（状态/list，未知 id 404）、`GET /admin/prototypes/staging/{name}/arena-runs/{run_id}/report`（归档 report.json + ARENA.md，缺失 404），全部走 ADR 0013 admin token 同一罩；staging detail payload 加 `arena` 字段（最新 run 摘要 + 报告红旗，与 execution-level `red_flags` 分开字段）；facade 增 `get_report`/`latest_report` 读侧方法直读归档目录；WebUI PROTOTYPES staging 详情加「演武场」面板（触发按钮 + 可选 model 输入、活跃 run 轮询、红旗徽章复用 red_flags 呈现、ARENA.md `<pre>` 原文）
 
 后续（非本文范围）：Adam 侧自助申请演武、token 硬熔断、并发 run、典型场景语料的人工 review 环节。
