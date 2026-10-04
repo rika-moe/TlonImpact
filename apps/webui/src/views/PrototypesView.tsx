@@ -11,6 +11,9 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { PrototypeError } from "../client/rest";
 import type {
+  ArenaLatest,
+  ArenaRun,
+  ArenaRunReport,
   PrototypeDetail,
   PrototypeParameter,
   PrototypePatch,
@@ -42,6 +45,12 @@ function writeErrMsg(err: unknown): string {
   }
   return errMsg(err);
 }
+
+/** Arena run terminal statuses (the runner's TERMINAL_STATUSES). */
+const ARENA_TERMINAL = new Set(["done", "timed_out", "failed"]);
+
+/** Poll interval for an in-flight arena run. */
+const ARENA_POLL_MS = 4000;
 
 export function PrototypesView({ rest }: ViewProps): ReactElement {
   const [trusted, setTrusted] = useState<PrototypeSummary[]>([]);
@@ -104,6 +113,11 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
     setSelected(sel);
     void fetchDetail(sel);
   };
+
+  /** Stable detail refetch for the arena panel (post-run refresh). */
+  const refreshDetail = useCallback(() => {
+    if (selected) void fetchDetail(selected);
+  }, [selected, fetchDetail]);
 
   const approve = async (name: string, accept: boolean): Promise<void> => {
     setBusy(true);
@@ -317,6 +331,14 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
                     </div>
                   ) : null}
                   <pre className="terminal proto-behavior">{detail.behavior}</pre>
+                  {selected.staging ? (
+                    <ArenaPanel
+                      rest={rest}
+                      protoName={selected.name}
+                      arena={detail.arena ?? null}
+                      onRefreshDetail={refreshDetail}
+                    />
+                  ) : null}
                 </>
               ) : (
                 <p className="prototypes-empty">NO DETAIL</p>
@@ -699,5 +721,156 @@ function DeleteModal({
         </button>
       </div>
     </ModalShell>
+  );
+}
+
+/**
+ * 演武场面板（staging 详情专属，docs/design/arena.md）：触发一次 run、
+ * 轮询到终态、展示最新报告（ARENA.md 原文）与报告红旗。报告是证据不是
+ * 判决——面板只呈现，不接 approve 逻辑。
+ */
+function ArenaPanel({
+  rest,
+  protoName,
+  arena,
+  onRefreshDetail,
+}: {
+  rest: RestClient;
+  protoName: string;
+  arena: ArenaLatest | null;
+  onRefreshDetail: () => void;
+}): ReactElement {
+  const [model, setModel] = useState("");
+  const [activeRun, setActiveRun] = useState<ArenaRun | null>(null);
+  const [report, setReport] = useState<ArenaRunReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const running = activeRun !== null && !ARENA_TERMINAL.has(activeRun.status);
+
+  // Pick up an in-flight run for this prototype (triggered elsewhere, or
+  // the panel remounted mid-run).
+  useEffect(() => {
+    setActiveRun(null);
+    let cancelled = false;
+    rest
+      .listArenaRuns()
+      .then((runs) => {
+        if (cancelled) return;
+        const active = runs.find(
+          (r) => r.prototype === protoName && !ARENA_TERMINAL.has(r.status),
+        );
+        if (active) setActiveRun(active);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [rest, protoName]);
+
+  // Poll the active run; on a terminal status refresh the detail (arena
+  // field) — the report effect below then loads the fresh ARENA.md.
+  useEffect(() => {
+    if (!activeRun || ARENA_TERMINAL.has(activeRun.status)) return;
+    const timer = setInterval(() => {
+      rest
+        .getArenaRun(activeRun.run_id)
+        .then((run) => {
+          setActiveRun(run);
+          if (ARENA_TERMINAL.has(run.status)) onRefreshDetail();
+        })
+        .catch(() => undefined);
+    }, ARENA_POLL_MS);
+    return () => clearInterval(timer);
+  }, [rest, activeRun, onRefreshDetail]);
+
+  // The run whose report is shown: the just-finished active run wins, else
+  // the latest archived run carried by the detail payload.
+  const reportRunId =
+    activeRun && ARENA_TERMINAL.has(activeRun.status)
+      ? activeRun.run_id
+      : (arena?.latest_run?.run_id ?? null);
+  useEffect(() => {
+    setReport(null);
+    if (!reportRunId) return;
+    let cancelled = false;
+    rest
+      .getArenaReport(protoName, reportRunId)
+      .then((r) => {
+        if (!cancelled) setReport(r);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [rest, protoName, reportRunId]);
+
+  const start = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const run = await rest.startArenaRun(
+        protoName,
+        model.trim() ? { model: model.trim() } : {},
+      );
+      setActiveRun(run);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const flags = arena?.red_flags ?? [];
+  return (
+    <section className="proto-arena">
+      <span className="tech-label">ARENA // 演武场</span>
+      <div className="proto-arena-controls">
+        <input
+          className="input proto-arena-model"
+          placeholder="留空用 TLON_ARENA_MODEL"
+          value={model}
+          spellCheck={false}
+          disabled={busy || running}
+          onChange={(e) => setModel(e.target.value)}
+        />
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={busy || running}
+          onClick={() => void start()}
+        >
+          {running ? "RUNNING…" : busy ? "STARTING…" : "启动演武"}
+        </button>
+      </div>
+      {activeRun ? (
+        <div className="tech-label proto-arena-status">
+          RUN {activeRun.run_id} // {activeRun.status.toUpperCase()}
+          {activeRun.fed_count > 0
+            ? ` // SESSION ${activeRun.completed_count}/${activeRun.fed_count}`
+            : ""}
+          {activeRun.error ? ` // ${activeRun.error}` : ""}
+        </div>
+      ) : null}
+      {error ? <div className="prototypes-error-bar">{error}</div> : null}
+      {flags.length > 0 ? (
+        <div className="proto-redflags">
+          {flags.map((flag, index) => (
+            <span
+              className="proto-redflag"
+              key={`${flag.kind}-${index}`}
+              title={flag.evidence}
+            >
+              ARENA // {flag.kind}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {report ? (
+        <pre className="terminal proto-behavior proto-arena-report">
+          {report.arena_md}
+        </pre>
+      ) : null}
+    </section>
   );
 }

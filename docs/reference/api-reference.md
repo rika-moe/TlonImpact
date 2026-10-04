@@ -49,7 +49,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 40 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 44 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -81,6 +81,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/admin/prototypes/{name}` | `handle_get_prototype` | 无条件 |
 | PATCH | `/admin/prototypes/{name}` | `handle_update_prototype` | 无条件 |
 | DELETE | `/admin/prototypes/{name}` | `handle_delete_prototype` | 无条件 |
+| POST | `/admin/prototypes/staging/{name}/arena-runs` | `handle_start_arena_run` | 无条件 |
+| GET | `/admin/arena-runs` | `handle_list_arena_runs` | 无条件 |
+| GET | `/admin/arena-runs/{run_id}` | `handle_get_arena_run` | 无条件 |
+| GET | `/admin/prototypes/staging/{name}/arena-runs/{run_id}/report` | `handle_get_arena_report` | 无条件 |
 | GET | `/traces` | `handle_list_traces` | observability |
 | GET | `/traces/{trace_id}` | `handle_get_trace` | observability |
 | GET | `/metrics` | `handle_metrics` | 无条件 |
@@ -240,6 +244,16 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 - `POST /admin/prototypes`——body `{name, behavior, display_name?, description?, parent?, proposal_note?, lessons?}`，手写创建直接进正式库（`:trusted true`、无 author）；`parent` 须指向已存在的原型（trusted 或 staging 皆可），`generation` 服务端推导、不接受客户端指定；`lessons` 落盘为 `LESSONS.md`。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段、父原型不存在或校验失败）
 - `PATCH /admin/prototypes/{name}`、`PATCH /admin/prototypes/staging/{name}`——body `{display_name?, description?, behavior?, parent?, proposal_note?, lessons?}`（全空 → 400 `invalid_prototype`），behavior 变更重跑校验链（失败则磁盘原样）；给 `parent` 会重新挂谱系并重推 `generation`；`lessons` 重写 `LESSONS.md`、不传则保留。200：`{"status": "success", "prototype": <原型对象>}`；404：`prototype_not_found`
 - `DELETE /admin/prototypes/{name}`——200：`{"status": "success"}`；404：`prototype_not_found`
+
+### 演武场端点（docs/design/arena.md，WebUI PROTOTYPES staging 详情的演武场面板）
+
+演武场由**人类专属触发**（ADR 0013 admin token 同一罩），run 在后台推进，证据归档在 staging 原型目录 `arena/<run-id>/`。facade 未装配时全部 503。
+
+- `POST /admin/prototypes/staging/{name}/arena-runs`——触发一次 run（后台 task 推进）；body 全可选 `{model?, params?, corpus_size?, time_box_seconds?}`（`model` 留空走 `TLON_ARENA_MODEL`，两者皆无则拒绝）。202：`{"status": "success", "run": <ArenaRun.to_dict()>}`；400：`{"error", "reason": "arena_rejected"}`（staging 原型缺失/模型双缺/语料或时间盒超硬上限/已有活跃 run——v1 全局单并发）或 `"invalid_arena_request"`（字段类型错）
+- `GET /admin/arena-runs`——全部 run 记录（最旧在前）。200：`{"status": "success", "runs": [<ArenaRun.to_dict()>]}`
+- `GET /admin/arena-runs/{run_id}`——单个 run 实时状态（WebUI 轮询到终态 done/timed_out/failed）。200：`{"status": "success", "run": <ArenaRun.to_dict()>}`；404：`run_not_found`
+- `GET /admin/prototypes/staging/{name}/arena-runs/{run_id}/report`——归档的 report.json + ARENA.md 全文。200：`{"status": "success", "report": <report.json 对象>, "arena_md": "<ARENA.md 全文>"}`；404：`report_not_found`（run 进行中或报告生成失败时同理）
+- staging 详情（`GET /admin/prototypes/staging/{name}`）payload 另带 `arena` 字段：最新 run 目录有 report.json 时 `{"latest_run": <run.json 对象>, "red_flags": [<报告红旗 {kind, detail, evidence}>]}`，否则 `null`——与 execution-level 的 `red_flags` 是分开字段，不混。报告是证据不是判决，不进 approve 逻辑
 
 ### GET /traces（条件注册）
 

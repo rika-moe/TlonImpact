@@ -132,6 +132,50 @@ export type PrototypeDetail = PrototypeSummary & {
   execution_level: string | null;
   /** Server-derived review red flags (e.g. staging + L2 declaration). */
   red_flags: string[];
+  /** 演武场（staging 详情才有）：最新 run 摘要 + 报告红旗；无报告为 null。 */
+  arena?: ArenaLatest | null;
+};
+
+/**
+ * Arena run record (ArenaRun.to_dict(), docs/design/arena.md). Terminal
+ * statuses: done / timed_out / failed.
+ */
+export type ArenaRun = {
+  run_id: string;
+  prototype: string;
+  model: string;
+  params: Record<string, unknown> | null;
+  status: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  corpus_limit: number;
+  time_box_seconds: number;
+  fed_count: number;
+  completed_count: number;
+  timed_out: boolean;
+  error: string | null;
+  fed: Record<string, unknown>[];
+  report_error: string | null;
+};
+
+/** One automatic red flag from the arena report (report.json). */
+export type ArenaRedFlag = {
+  kind: string;
+  detail: string;
+  evidence: string;
+};
+
+/** Staging detail's arena field: latest archived run + its red flags. */
+export type ArenaLatest = {
+  latest_run: ArenaRun | null;
+  red_flags: ArenaRedFlag[];
+};
+
+/** GET .../arena-runs/{run_id}/report response: report.json + ARENA.md text. */
+export type ArenaRunReport = {
+  report: Record<string, unknown>;
+  arena_md: string;
 };
 
 /** Handwritten prototype creation body (POST /admin/prototypes). */
@@ -502,6 +546,43 @@ export class RestClient {
 
   async rejectPrototype(name: string): Promise<Record<string, unknown>> {
     return this.send("POST", `/admin/prototypes/staging/${encodeURIComponent(name)}/reject`);
+  }
+
+  // ---- Arena (docs/design/arena.md): human-only trigger + polling + report ----
+
+  /**
+   * Trigger an arena run for a staging prototype (202; the run advances in
+   * a background task — poll `getArenaRun` until a terminal status). Body
+   * is all-optional; an empty model falls back to TLON_ARENA_MODEL server-side.
+   */
+  async startArenaRun(name: string, opts: { model?: string } = {}): Promise<ArenaRun> {
+    const data = await this.send<{ run: ArenaRun }>(
+      "POST",
+      `/admin/prototypes/staging/${encodeURIComponent(name)}/arena-runs`,
+      opts,
+    );
+    return data.run;
+  }
+
+  /** All arena run records, oldest first (GET /admin/arena-runs). */
+  async listArenaRuns(): Promise<ArenaRun[]> {
+    const data = await this.get<{ runs?: ArenaRun[] }>("/admin/arena-runs");
+    return data.runs ?? [];
+  }
+
+  /** One run's live status (GET /admin/arena-runs/{run_id}). */
+  async getArenaRun(runId: string): Promise<ArenaRun> {
+    const data = await this.get<{ run: ArenaRun }>(
+      `/admin/arena-runs/${encodeURIComponent(runId)}`,
+    );
+    return data.run;
+  }
+
+  /** The archived report.json + ARENA.md of one run. */
+  async getArenaReport(name: string, runId: string): Promise<ArenaRunReport> {
+    return this.get(
+      `/admin/prototypes/staging/${encodeURIComponent(name)}/arena-runs/${encodeURIComponent(runId)}/report`,
+    );
   }
 
   /** Create a member from a prototype (persona = creation-time data).

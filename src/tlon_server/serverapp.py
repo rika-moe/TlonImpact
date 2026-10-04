@@ -178,6 +178,7 @@ class ServerApp:
             observability=runtime.observability,
             configs=runtime.configs,
             events=runtime.events,
+            arena=runtime.arena,
             host=self.host,
             port=self.rest_port,
             admin_token=settings.admin_api_token or None,  # ADR 0013
