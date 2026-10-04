@@ -421,7 +421,7 @@ class TestInstantiateExecutionLevel:
     """``instantiate`` projects the spec's ``:execution`` declaration once
     into agent.yaml's ``docker.level`` (constitution 1,
     docs/design/execution-device.md); without the section the config
-    default ("L2") applies unchanged."""
+    default ("L1") applies unchanged."""
 
     L1_BEHAVIOR = """\
 {:version 1
@@ -448,7 +448,7 @@ class TestInstantiateExecutionLevel:
 
         cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
 
-        assert cfg.docker.level == "L2"
+        assert cfg.docker.level == "L1"
 
 
 class TestDeletePrototype:

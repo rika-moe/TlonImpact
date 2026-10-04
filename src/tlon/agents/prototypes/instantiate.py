@@ -141,7 +141,7 @@ def instantiate(
     # proposal; it is projected once here into agent.yaml's ``docker.level``.
     # The runtime authority stays agent.yaml — a member editing its own
     # behavior file afterwards does not re-project (no self-escalation).
-    # Without the section the config default ("L2") applies unchanged.
+    # Without the section the config default ("L1") applies unchanged.
     docker = DockerRuntimeConfig()
     if spec.execution_level is not None:
         docker = DockerRuntimeConfig(level=spec.execution_level)

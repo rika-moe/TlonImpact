@@ -3,7 +3,9 @@
 The execution-device capability ladder is declared data: ``L0`` = no
 execution device (no DockerRuntime, no device-dependent tools), ``L1`` =
 文件层 (archive-only file I/O, structurally zero code execution), ``L2``
-= full Docker userland (the status quo, and the default — 行为不变先行).
+= full Docker userland. The default is ``L1`` (flipped in issue #31,
+2026-10-05): members without an ``:execution`` declaration get the
+lowest sufficient file layer.
 """
 
 import pytest
@@ -13,8 +15,8 @@ from tlon.base.config import DockerRuntimeConfig
 
 
 class TestExecutionLevel:
-    def test_default_is_l2(self) -> None:
-        assert DockerRuntimeConfig().level == "L2"
+    def test_default_is_l1(self) -> None:
+        assert DockerRuntimeConfig().level == "L1"
 
     @pytest.mark.parametrize("level", ["L0", "L1", "L2"])
     def test_accepts_declared_levels(self, level: str) -> None:
