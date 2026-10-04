@@ -274,7 +274,8 @@ def _const_probation(value: bool):
 
 
 class TestSpawnProbation:
-    """Probation quota cap (, trust ladder): keyed by *spawner id*
+    """Probation quota cap (trust ladder,
+    docs/design/unified-member-model.md): keyed by *spawner id*
     (unlike tilt/solvency, which key on the target prototype) — a
     probationary spawner's effective per-session quota is capped at 1,
     whatever the tilt says. Fail-open like the other two providers."""

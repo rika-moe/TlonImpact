@@ -1,5 +1,5 @@
-"""Tool timeout authority (issue ): the schema the model sees must be
-honored.
+"""Tool timeout authority (docs/reference/tools-reference.md): the schema
+the model sees must be honored.
 
 A tool declaring a ``timeout`` parameter self-limits at that value, so the
 engine's ``wait_for`` waits the declared value plus a small grace — the

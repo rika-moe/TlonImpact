@@ -1,4 +1,4 @@
-"""Metabolic ledger — append-only per-member token accounting (issue ).
+"""Metabolic ledger — append-only per-member token accounting (ADR 0014).
 
 Write side: ``LLMClient.chat`` (the only LLM exit) appends one record per
 successful call carrying usage to ``~/.tlon/{agent_id}/ledger.jsonl``.
@@ -157,8 +157,8 @@ async def collect_agent_ledger(agent_id: str, *, tlon_paths: TlonPaths) -> dict[
 
     Totals over every record plus per-``purpose`` and per-``model``
     splits (calls and tokens) — the by-model split observes how the
-    different model bloodlines in a mixed-model society perform (issue
-    ). Records without a purpose/model fold into ``"unknown"``.
+    different model bloodlines in a mixed-model society perform (ADR
+    0014). Records without a purpose/model fold into ``"unknown"``.
 
     Returns:
         JSON-safe dict: agent_id, calls, prompt_tokens, completion_tokens,

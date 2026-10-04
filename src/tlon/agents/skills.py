@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 #: The file that anchors a skill directory.
 SKILL_FILE = "SKILL.md"
 
-#: Resource package carrying the built-in skills (issue ).
+#: Resource package carrying the built-in skills (ADR 0010).
 SKILL_PACKAGE = "tlon.skills"
 
 Scope = Literal["project", "agent", "global"]

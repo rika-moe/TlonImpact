@@ -1,4 +1,5 @@
-"""Pre-submission critique gate (issue ): the lightweight default loop.
+"""Pre-submission critique gate (docs/design/runtime.md): the lightweight
+default loop.
 
 The default cognitive stage vector gates the completing act on a critique
 of the pending draft:

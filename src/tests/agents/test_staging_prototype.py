@@ -111,7 +111,8 @@ class TestListStagingPrototypesTool:
 
 
 class TestStagingLineageFields:
-    """write_staging_prototype lineage fields (issue ): :parent links a
+    """write_staging_prototype lineage fields (docs/design/prototypes.md):
+    :parent links a
     proposal to the prototype it derives from; :generation is derived
     server-side as the parent's + 1."""
 
@@ -168,7 +169,8 @@ class TestStagingLineageFields:
 
 class TestWritePrototypeToolLessons:
     """writePrototype passes the optional ``lessons`` parameter through to
-    the staging writer (issue ): the prototype lands with LESSONS.md."""
+    the staging writer (docs/design/prototypes.md): the prototype lands
+    with LESSONS.md."""
 
     async def test_lessons_passthrough(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -197,7 +199,8 @@ class TestWritePrototypeToolLessons:
 
 
 class TestWritePrototypeSolvency:
-    """Proposal solvency gate (, agent side): an insolvent bloodline
+    """Proposal solvency gate (docs/design/prototypes.md, agent side): an
+    insolvent bloodline
     loses proposal eligibility; the check fails open."""
 
     async def test_insolvent_bloodline_rejected_nothing_on_disk(self, tmp_path):

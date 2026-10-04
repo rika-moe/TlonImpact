@@ -40,8 +40,8 @@ def is_mail_address(value: str) -> bool:
 def is_external_address(address: str) -> bool:
     """Check whether an address belongs to an external (untrusted) sender.
 
-    This is the single source of truth for the trust boundary (issue
-    ): ``tlon.internal`` is the internal domain (members, humans,
+    This is the single source of truth for the trust boundary:
+    ``tlon.internal`` is the internal domain (members, humans,
     system addresses); every other address — including malformed ones —
     is external. External senders keep their real-world addresses (e.g.
     ``notifications@github.com``); no internal id is invented for them,

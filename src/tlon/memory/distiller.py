@@ -52,7 +52,7 @@ class Distiller:
 
         Args:
             llm_config: Configuration for LLM client
-            agent_id: Owning member id for ledger attribution (issue
+            agent_id: Owning member id for ledger attribution (ADR 0014
                 ); None = no accounting
             tlon_paths: Path resolver for the ledger file; required when
                 ``agent_id`` is set (enforced by ``LLMClient``)

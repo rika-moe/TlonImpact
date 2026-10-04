@@ -1,9 +1,9 @@
-"""Mailbox reader for the searchMails tool (issue ).
+"""Mailbox reader for the searchMails tool.
 
 Reading the mailbox touches the organization mail domain, so it lives in
 the agents layer; the tools layer consumes it through the
 ``MailboxMailsProvider`` port (``tlon.tools.mail.ports``) — same pattern
-as ``tlon.agents.mail_stats`` (). Read-only: only the subject agent's
+as ``tlon.agents.mail_stats``. Read-only: only the subject agent's
 own mailbox is read (``Mailbox.inbox`` / ``Mailbox.sent``); no other
 member's mailbox is reachable through this provider.
 """
@@ -21,8 +21,9 @@ async def read_own_mails(agent_id: str, *, tlon_paths: TlonPaths) -> list[dict[s
 
     Each dict is ``Mail.to_dict()`` plus a ``box`` marker
     (``"inbox"`` / ``"sent"``) so callers can tell which side of the
-    correspondence a mail belongs to, plus an ``external`` flag (issue
-    ) derived from the sender address domain — the trust marker
+    correspondence a mail belongs to, plus an ``external`` flag
+    (docs/design/mail.md 「外部来信与信任面」) derived from the sender
+    address domain — the trust marker
     travels with the data into tool results.
     """
     mailbox = Mailbox(tlon_paths.member_mail_dir(agent_id))
@@ -40,7 +41,7 @@ async def read_own_mails(agent_id: str, *, tlon_paths: TlonPaths) -> list[dict[s
 
 
 def mailbox_mails_provider(tlon_paths: TlonPaths) -> MailboxMailsProvider:
-    """Bind the mailbox reader to a paths layout ().
+    """Bind the mailbox reader to a paths layout.
 
     Returns:
         A ``MailboxMailsProvider`` reading any agent's own mailbox against

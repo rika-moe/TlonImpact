@@ -111,7 +111,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 | `not` | 是 |  |
 | `contains?` | 是 |  |
 | `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
-| `str` | 是 | Concatenate arguments into one string (issue ). |
+| `str` | 是 | Concatenate arguments into one string. |
 | `split` | 是 | Split a string on a separator into a vector of strings. |
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |

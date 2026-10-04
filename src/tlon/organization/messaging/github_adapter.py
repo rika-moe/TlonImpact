@@ -1,6 +1,7 @@
-"""GitHub Adapter: GitHub webhook events as external mail (issue ).
+"""GitHub Adapter: GitHub webhook events as external mail (see
+docs/design/mail.md).
 
-The first external gateway of the "外部来信" mechanism (, see
+The first external gateway of the "外部来信" mechanism (see
 docs/design/mail.md 「外部来信与信任面」), covering both directions:
 
 - **Ingress**: the REST endpoint ``POST /webhooks/github`` verifies the

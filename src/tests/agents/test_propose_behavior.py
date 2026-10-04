@@ -203,7 +203,7 @@ class TestProposeBehavior:
 
 
 class TestProposeSolvency:
-    """提案偿付闸（）：失去偿付能力的血脉不能提案；闸 fail-open。"""
+    """提案偿付闸：失去偿付能力的血脉不能提案；闸 fail-open。"""
 
     async def test_insolvent_bloodline_rejected_before_drafting(
         self, tmp_path: Path

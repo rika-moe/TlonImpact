@@ -1,4 +1,5 @@
-"""Tests for the reputation derivation (agents/reputation.py, ).
+"""Tests for the reputation derivation (agents/reputation.py,
+docs/design/mail.md).
 
 Reputation is derived, never stored: every number is recomputed from
 the society's mail files. Covered: endorsements given/received across

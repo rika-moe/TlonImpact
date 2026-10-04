@@ -159,7 +159,7 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     # AgentRegistry - agent management.
     # Depends on EventBus and ConfigService (as AgentInfoProvider);
     # the metrics/trace pillars are forwarded into each member's
-    # observability tools (read-only, )
+    # observability tools (read-only)
     agent_registry = AgentRegistry(
         event_bus=event_bus,
         agent_info_provider=config_service,
@@ -173,7 +173,8 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     await agent_registry.initialize()
     logger.info("agents_loaded", agent_count=len(agent_registry.get_all_ids()))
 
-    # LessonsDistiller — retirement distillation (issue ).
+    # LessonsDistiller — retirement distillation (docs/design/memory.md
+    # 「退休蒸馏」).
     # Pure event consumer like MetricsService, but layered in agents
     # (it depends on memory + agents): on AGENT_STOPPED it rebuilds
     # the retired member's archive offline and distills lessons to
@@ -184,7 +185,8 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     await lessons_distiller.initialize()
     logger.info("component_initialized", component="lessons_distiller")
 
-    # RetirementCeremony — retirement handover (issue ).
+    # RetirementCeremony — retirement handover (docs/design/mail.md
+    # 「退休交接信」).
     # Same pure-event-consumer mold as the LessonsDistiller, on the
     # same AGENT_STOPPED trigger: inventory the retiree's archive
     # offline, mail a farewell letter when there is anything to hand
@@ -205,7 +207,8 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     await adam.initialize()
     logger.info("component_initialized", component="adam")
 
-    # The guardian-aware provider (issue ): a thin wrapper over
+    # The guardian-aware provider (docs/design/mail.md 「守护者信箱」): a
+    # thin wrapper over
     # ConfigService that additionally resolves "adam" so mail to the
     # built-in guardian is deliverable. One instance feeds both the
     # AdapterManager (speak side) and MailDelivery (delivery side) —
@@ -213,7 +216,8 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     # in both directions. get_all_ids stays Adam-free: no broadcast,
     # no roster, no enumeration-driven scan sees the guardian.
     guardian_info = GuardianAgentInfoProvider(config_service)
-    # The external gateway registry (issue  egress) is a plain
+    # The external gateway registry (egress, docs/design/mail.md) is a
+    # plain
     # data component constructed here so every resolver instance on
     # the delivery path consults the same claim table; gateways
     # (github_adapter) claim their addresses at initialize.
@@ -231,7 +235,7 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
 
     # MailDelivery - mail persistence + per-recipient delivery
     # Depends on EventBus, the guardian-aware provider (agent set +
-    # adam, issue ) and AdapterManager (online humans); the
+    # adam) and AdapterManager (online humans); the
     # router's successor (docs/design/mail.md)
     mail_delivery = MailDelivery(
         event_bus=event_bus,
@@ -242,7 +246,8 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     await mail_delivery.initialize()
     logger.info("component_initialized", component="mail_delivery")
 
-    # GitHub webhook ingress + egress (issue ): the adapter exists
+    # GitHub webhook ingress + egress (docs/design/mail.md): the adapter
+    # exists
     # only when a webhook secret is configured; without one there is
     # no endpoint. A missing GITHUB_TOKEN disables egress only — the
     # address claim still routes replies into the gateway mailbox.

@@ -1,4 +1,4 @@
-"""Tests for the metabolic ledger (issue ).
+"""Tests for the metabolic ledger (ADR 0014).
 
 Write side: ``LLMClient.chat`` with an ``agent_id`` appends one record
 per usage-carrying response to ``{agent_id}/ledger.jsonl``. Read side:

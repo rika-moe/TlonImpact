@@ -46,7 +46,8 @@ from tlon.sandbox.docker_client import create_docker_client
 logger = get_logger(__name__)
 
 #: Container path where the agent's own home directory (``~/.tlon/{agent_id}``)
-#: is bind-mounted read-only (issue ): readFile/listDirectory/searchFiles
+#: is bind-mounted read-only (see docs/design/execution-device.md 「纵深防御」):
+#: readFile/listDirectory/searchFiles
 #: whitelist it (agents/assembly.py), writeFile/editFile do not, and the ``ro``
 #: mount is the kernel-level guarantee. Only the agent's own home is mounted —
 #: other members' homes never enter the container, so cross-agent reads are
@@ -275,7 +276,8 @@ class DockerRuntime:
         """Bind-mount declaration in docker SDK ``volumes`` form (single source
         of truth for both container creation and drift comparison)."""
         workspace = self._paths.agent_workspace_dir(self.agent_id)
-        # Own home read-only (issue ): the agent can inspect its behavior
+        # Own home read-only (see docs/design/execution-device.md 「纵深防御」):
+        # the agent can inspect its behavior
         # spec, memory and mailbox through the filesystem tools; the ro mount
         # keeps writes impossible even if a whitelist were misconfigured.
         agent_home = self._paths.agent_dir(self.agent_id)

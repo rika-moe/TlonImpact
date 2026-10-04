@@ -1,4 +1,4 @@
-"""Social public-health monitor (issue ).
+"""Social public-health monitor.
 
 Backpressure (bounded bus queues, session schedulers) protects the
 *plumbing*; this monitor watches the *society*:
@@ -166,7 +166,7 @@ def orphan_mail_provider(
     member_ids: Callable[[], list[str]],
     orphan_mail_days: int = 3,
 ) -> OrphanMailProvider:
-    """Bind the orphan scan to a paths layout and a live roster ().
+    """Bind the orphan scan to a paths layout and a live roster.
 
     The roster callable is re-read per query so the report always sees
     the current society (same pattern as the reputation provider).
@@ -354,7 +354,7 @@ class PublicHealthMonitor:
 
         The scan itself is the module-level pure collector
         (:func:`collect_orphan_mails` — shared with the ``getSocialHealth``
-        observability tool, ); this method supplies the roster and the
+        observability tool); this method supplies the roster and the
         monitor's thresholds. See there for the orphan definition.
 
         Returns:

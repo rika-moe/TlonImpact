@@ -1,4 +1,4 @@
-"""RetirementCeremony — farewell letter and task handover (issue ).
+"""RetirementCeremony — farewell letter and task handover (docs/design/mail.md).
 
 Pins the closed loop: publishing AGENT_STOPPED for a member with
 unfinished business takes the offline inventory (unfinished tasks,

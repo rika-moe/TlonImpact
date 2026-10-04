@@ -120,7 +120,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
             )
         payload = _prototype_payload(info, behavior, lessons, reviews)
-        # Lineage (): the derived parent chain, including per-generation
+        # Lineage (see docs/design/prototypes.md): the derived parent chain, including per-generation
         # diffs — first-class data on the detail endpoint.
         payload["lineage"] = self.prototypes.get_lineage(name)
         return self._json_response({"status": "success", "prototype": payload})

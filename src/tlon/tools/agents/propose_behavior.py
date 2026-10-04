@@ -1,4 +1,5 @@
-"""Propose a next-generation behavior from lived experience (issue ).
+"""Propose a next-generation behavior from lived experience (see
+docs/design/prototypes.md).
 
 ``proposeBehavior`` is the experience entry of the generation channel:
 unlike ``writePrototype`` (a bare write channel where the caller supplies
@@ -111,7 +112,7 @@ class ProposeBehaviorTool(Tool):
         super().__init__(
             name="proposeBehavior",
             description=(
-                "基于自己的个体经验提出下一代行为原型（世代通道的经验入口，）。"
+                "基于自己的个体经验提出下一代行为原型（世代通道的经验入口）。"
                 "只需给出变更意图与新原型名：工具内部读你当前的 behavior.tlon 与记忆"
                 "（claims 与蒸馏教训），由一次独立的起草调用产出完整的新 spec，"
                 "并以你自己的 prototype 为父原型写入 staging 区（proposal_note 记意图、"

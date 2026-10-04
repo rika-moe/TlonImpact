@@ -228,7 +228,7 @@ class LLMClient:
 
         Args:
             config: LLM configuration
-            agent_id: Owning member id for ledger attribution (issue
+            agent_id: Owning member id for ledger attribution (ADR 0014
                 ). When set, every chat() whose response carries
                 usage appends one record to the member's
                 ``ledger.jsonl``; None = system-level client, no
@@ -356,7 +356,7 @@ class LLMClient:
         duration_ms: int,
         cpu_ms: int,
     ) -> None:
-        """Append one ledger record for the call (issue ).
+        """Append one ledger record for the call (ADR 0014).
 
         Best-effort: a ledger write failure is logged, never raised — a
         bookkeeping error must not fail cognition.

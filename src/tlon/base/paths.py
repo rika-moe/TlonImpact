@@ -134,7 +134,7 @@ class TlonPaths:
         return self.agent_dir(agent_id) / "tasks.jsonl"
 
     def agent_ledger_file(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/ledger.jsonl — per-member token ledger (issue ).
+        """~/.tlon/{agent_id}/ledger.jsonl — per-member token ledger (ADR 0014).
 
         Append-only JSONL written by ``base/ledger.py`` (one record per
         attributed ``LLMClient.chat`` call); the writer creates the
@@ -178,7 +178,8 @@ class TlonPaths:
     # ===== Society-level config =====
 
     def cron_file(self) -> Path:
-        """~/.tlon/cron.yaml — declared periodic task mails (issue ).
+        """~/.tlon/cron.yaml — declared periodic task mails
+        (docs/design/mail.md 「周期任务：tick 即邮件」).
 
         Read once at ``CronScheduler.initialize``; edits take effect on
         restart. An absent file is the normal state (no declared entries).
@@ -220,7 +221,7 @@ class TlonPaths:
 
     def agent_lessons_file(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/config/LESSONS.md — lessons inherited at birth
-        (issue ).
+        (see docs/design/prototypes.md).
 
         Copied from the prototype's ``LESSONS.md`` by ``instantiate`` and
         injected into the conversation by the DSL ``(lessons)`` context
@@ -265,7 +266,7 @@ class TlonPaths:
 
     def memory_lessons_file(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/memory/lessons.md — retirement distillation
-        output (issue ).
+        output (docs/design/memory.md 「退休蒸馏」).
 
         Written by ``agents/lessons.py``'s LessonsDistiller on
         ``AGENT_STOPPED``: one LLM pass distills the member's memory

@@ -1,4 +1,5 @@
-"""TlonPaths purity contract (issue ): every accessor resolves a path
+"""TlonPaths purity contract (docs/reference/config-reference.md): every
+accessor resolves a path
 and never touches the filesystem — directory creation lives at the write
 points. A read intent (retirement inventory, reputation scan, recipient
 resolution) must never resurrect a deleted member's directory."""

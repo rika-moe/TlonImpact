@@ -1,6 +1,6 @@
 /**
  * Shared structlog entry rendering helpers — used by the LOGS view and
- * the AGENTS detail panel's recent-logs section (issue ).
+ * the AGENTS detail panel's recent-logs section.
  */
 
 import type { LogEntry } from "../client/rest";

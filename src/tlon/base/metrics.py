@@ -193,7 +193,7 @@ class MetricsService(Component, Device):
             "tlon.agent.stopped", description="Agent stops"
         )
         self._agent_retired = meter.create_counter(
-            "tlon.agent.retired", description="Retirement ceremonies held ()"
+            "tlon.agent.retired", description="Retirement ceremonies held"
         )
         self._llm_calls = meter.create_counter(
             "tlon.llm.calls", description="Completed LLM calls"
@@ -235,7 +235,7 @@ class MetricsService(Component, Device):
             "tlon.mail.orphan_scans", description="Orphan-mail scans completed"
         )
         self._mail_endorsements = meter.create_counter(
-            "tlon.mail.endorsements", description="Mail endorsements delivered ()"
+            "tlon.mail.endorsements", description="Mail endorsements delivered"
         )
 
         if container_stats is not None:

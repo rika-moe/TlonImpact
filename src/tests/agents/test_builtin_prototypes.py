@@ -82,8 +82,8 @@ class TestBuiltinPrototypes:
         assert sum(rule.loop is not None for rule in spec.rules) <= 1
 
 
-#: The default cognitive loop (issue ): a lightweight pre-submission
-#: review. critique fires only when the round's pending response would
+#: The default cognitive loop (docs/design/runtime.md): a lightweight
+#: pre-submission review. critique fires only when the round's pending response would
 #: end the session (``completing?``) — one review per completion attempt,
 #: independent of the round count; a FAIL blocks act and revise feeds the
 #: feedback back for the next think.

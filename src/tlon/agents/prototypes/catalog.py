@@ -95,9 +95,10 @@ def get_prototype_detail(
 
     Returns:
         ``(metadata, behavior_text, lessons, reviews)`` — ``lessons`` is the
-        ``LESSONS.md`` text (issue ), None when the prototype carries
-        no lessons file; ``reviews`` is the ``REVIEW.md`` text (issue ,
-        heterogeneous review records), None when no review has landed.
+        ``LESSONS.md`` text (see docs/design/prototypes.md), None when the
+        prototype carries no lessons file; ``reviews`` is the ``REVIEW.md``
+        text (heterogeneous review records, see docs/design/prototypes.md),
+        None when no review has landed.
 
     Raises:
         PrototypeError: invalid name or no prototype under that name

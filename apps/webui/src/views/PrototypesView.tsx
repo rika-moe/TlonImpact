@@ -401,7 +401,7 @@ function ProtoCard({
 
 /**
  * Parameter chips: `name: type` pills, `*` marks required.
- * Shared by the list cards and the detail panel (issue ).
+ * Shared by the list cards and the detail panel (docs/design/webui.md).
  */
 function ProtoParams({
   parameters,

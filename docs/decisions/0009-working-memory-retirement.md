@@ -43,7 +43,7 @@ ADR 0007 落地后，系统里存在两份交互真相：session journal（appen
 - 旧 summaries.jsonl 行可加载（缺 `source_session_ids` 按空集处理），但这些旧摘要覆盖的 session 不参与去重——极端情况下对应 session 会被重新摘要一次，可接受。
 - `rememberFact`/反思记录的事实 `session_id` 置空字符串——working memory 退役后 manager 不再持有「当前 session」概念；工具侧的会话归属如需恢复，得从执行上下文另接，当前无消费方。
 - working/interactions.jsonl 残留文件成为死数据，不读不删（不保留向后兼容的另一面：不做清理逻辑；用户可手删）。
-- 明确不做：journal 的归档/清理（沿用 ADR 0007 的留待治理）；issue  的进一步记忆调研结论另行跟进。
+- 明确不做：journal 的归档/清理（沿用 ADR 0007 的留待治理）；进一步的记忆调研结论另行跟进。
 
 ## 演进补注
 

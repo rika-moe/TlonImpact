@@ -6,9 +6,11 @@ Covers:
 - all@tlon.internal expansion (all registered agents + online humans)
 - unknown recipients collected into a postmaster bounce to the sender
 - senders without a mailbox (postmaster) skip the sent copy
-- the guardian address (adam@tlon.internal, issue ): deliverable via
-  the guardian-aware provider, excluded from the broadcast expansion
-- postmaster conventions (issue ): mail *to* postmaster is dropped
+- the guardian address (adam@tlon.internal, docs/design/mail.md):
+  deliverable via the guardian-aware provider, excluded from the
+  broadcast expansion
+- postmaster conventions (docs/design/mail.md): mail *to* postmaster is
+  dropped
   without a bounce; mail *from* postmaster is never bounced
 """
 
@@ -72,7 +74,8 @@ def _make_delivery(
     bus = _make_bus()
     provider: Any = MockAgentInfoProvider(configs or {})
     if guardian:
-        # The production assembly shape (issue ): ServerApp wraps the
+        # The production assembly shape (docs/design/mail.md): ServerApp
+        # wraps the
         # ConfigService once and feeds both resolution sides.
         provider = GuardianAgentInfoProvider(provider)
     adapter_manager = AdapterManager(
@@ -302,7 +305,8 @@ class TestBounce:
 
 
 class TestExternalSender:
-    """External senders (real-world addresses, issue ): an external
+    """External senders (real-world addresses, docs/design/mail.md): an
+    external
     address resolves to no member, so the mail delivers to recipients
     normally but the sender gets no sent copy and no bounce."""
 
@@ -381,7 +385,8 @@ class TestExternalSender:
 
 
 class TestExternalGatewayRecipient:
-    """Egress direction (issue ): an external recipient claimed by a
+    """Egress direction (docs/design/mail.md): an external recipient
+    claimed by a
     gateway resolves to the gateway member id and delivers normally —
     the gateway mailbox is the outbound audit trail. Unclaimed external
     recipients keep bouncing."""
@@ -604,7 +609,7 @@ class TestMailboxCacheLRU:
 
 class TestEndorsedEvent:
     """A delivered mail carrying an `endorsing` reference publishes one
-    MAIL_ENDORSED reputation fact (issue )."""
+    MAIL_ENDORSED reputation fact (docs/design/mail.md)."""
 
     @pytest.mark.asyncio
     async def test_endorsement_publishes_mail_endorsed(self, temp_paths):

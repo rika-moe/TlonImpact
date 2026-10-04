@@ -1,4 +1,4 @@
-"""Tests for the observability tools (tools/observability/, ).
+"""Tests for the observability tools (tools/observability/, docs/design/mail.md).
 
 All four tools are strictly read-only: metrics come from an injected
 snapshot callable, traces from the read-only ``TraceStore`` ABC, and the

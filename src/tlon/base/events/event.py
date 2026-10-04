@@ -20,7 +20,7 @@ class EventType(StrEnum):
     # Mail events (Republic of Letters, see docs/design/mail.md)
     MAIL_NEW = "mail.new"  # A mail was sent (pre-delivery)
     MAIL_DELIVERED = "mail.delivered"  # A mail landed in one recipient's inbox
-    MAIL_ENDORSED = "mail.endorsed"  # A delivered mail endorses another mail (reputation signal, )
+    MAIL_ENDORSED = "mail.endorsed"  # A delivered mail endorses another mail (reputation signal, see docs/design/mail.md)
 
     # Agent events
     AGENT_JOIN = "agent.join"
@@ -29,7 +29,7 @@ class EventType(StrEnum):
     AGENT_RESPONSE = "agent.response"
     AGENT_STARTED = "agent.started"
     AGENT_STOPPED = "agent.stopped"
-    AGENT_RETIRED = "agent.retired"  # Retirement ceremony fact: handover inventory + farewell outcome ()
+    AGENT_RETIRED = "agent.retired"  # Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」)
     AGENT_ERROR = "agent.error"
     AGENT_STATE_CHANGED = "agent.state_changed"
     # Dynamic registry (wake/sleep) lifecycle events
@@ -46,7 +46,7 @@ class EventType(StrEnum):
     # Dynamic registry (spawn) lifecycle events
     AGENT_SPAWNED = "agent.spawned"
 
-    # Public health facts (issue ): detection only, never enforcement —
+    # Public health facts (ADR 0003): detection only, never enforcement —
     # the monitor publishes facts; acting on them is policy (Adam/operator)
     AGENT_NOISY = "agent.noisy"  # A member is generating social noise (mail burst / broadcast storm)
     MAIL_ORPHAN_SCAN = "mail.orphan_scan"  # Periodic orphan-mail (unanswered thread root) scan statistics

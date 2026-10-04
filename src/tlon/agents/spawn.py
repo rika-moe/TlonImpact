@@ -1,4 +1,4 @@
-"""Spawn budget and derivation logic (split from agent_registry, ).
+"""Spawn budget and derivation logic (split from agent_registry).
 
 ``SpawnManager`` owns the stage-6b spawn budget (global activation cap,
 spawn depth, per-session quota) and executes the two member-derivation
@@ -6,7 +6,7 @@ flows: ``spawn_member`` (prototype instantiation under the budget) and
 ``adopt_agent`` (hot adoption of an out-of-process creation).
 
 The per-session quota is tilted by the target bloodline's fitness
-(, ADR 0014): an optional ``tilt_provider`` maps the spawn target's
+(ADR 0014): an optional ``tilt_provider`` maps the spawn target's
 prototype to a multiplier (clamped to [0.5, 2.0] by the society policy's
 ``tilt`` hook, ``agents/policy.py`` — ADR 0022), and the effective quota
 is ``ceil(session_spawn_quota * tilt)``. The global activation cap stays
@@ -14,14 +14,15 @@ untouched — splitting it per bloodline would punish incumbent members of
 temporarily-inefficient lineages. Tilt 1.0 (the cold-start default, and
 every failure fallback) reproduces the untilted behavior exactly.
 
-The tilt is continuous; the solvency gate () is binary: an optional
+The tilt is continuous; the solvency gate (ADR 0014) is binary: an optional
 ``solvency`` provider maps the spawn target's prototype to a bool, and
 an insolvent bloodline (long-term token spend not covered by endorsed
 output, judged by the policy's ``solvent?`` hook) is rejected outright,
 right after the trust gate. Both fail open — fitness bookkeeping must
 never block a spawn.
 
-The probation gate (, trust ladder) tightens budget 3 from the
+The probation gate (trust ladder, docs/design/unified-member-model.md)
+tightens budget 3 from the
 *spawner* side: an optional ``probation`` provider maps the spawner's
 member id to a bool, and a probationary spawner (spawned, not yet
 endorsed) gets its effective per-session quota capped at 1. Note the
@@ -93,16 +94,16 @@ class SpawnManager:
         self._max_activations = max_activations
         self._max_spawn_depth = max_spawn_depth
         self._session_spawn_quota = session_spawn_quota
-        # Bloodline-fitness tilt (): prototype name -> quota
+        # Bloodline-fitness tilt (ADR 0014): prototype name -> quota
         # multiplier. None = always neutral 1.0 (untilted behavior).
         self._tilt_provider = tilt_provider
-        # Solvency gate (): prototype name -> solvent? None = always
-        # solvent (gate disabled).
+        # Solvency gate (ADR 0014): prototype name -> solvent? None =
+        # always solvent (gate disabled).
         self._solvency = solvency
-        # Probation gate (, trust ladder): spawner member id -> on
-        # probation? None = never probation (gate disabled). Keyed by the
-        # spawner, not the target prototype — different dimension from
-        # tilt/solvency above.
+        # Probation gate (trust ladder, docs/design/unified-member-model.md):
+        # spawner member id -> on probation? None = never probation (gate
+        # disabled). Keyed by the spawner, not the target prototype —
+        # different dimension from tilt/solvency above.
         self._probation = probation
         # (spawner_id, session_id) -> successful spawn count, persisted to
         # disk so the anti-runaway quota survives restarts (sessions do,
@@ -187,7 +188,7 @@ class SpawnManager:
             return 1.0
 
     async def _solvent(self, prototype: str) -> bool:
-        """Solvency of the spawn target's bloodline (fail-open, ).
+        """Solvency of the spawn target's bloodline (fail-open, ADR 0014).
 
         A missing provider or any provider failure yields True — same
         discipline as ``_tilt``.
@@ -201,7 +202,8 @@ class SpawnManager:
             return True
 
     async def _probationary(self, spawner_id: str) -> bool:
-        """Whether the *spawner* is on probation (fail-open, ).
+        """Whether the *spawner* is on probation (fail-open,
+        docs/design/unified-member-model.md).
 
         Keyed by spawner member id, unlike ``_tilt``/``_solvent`` which
         are keyed by the spawn target's prototype. A missing provider or
@@ -278,7 +280,7 @@ class SpawnManager:
                 detail=f"prototype '{prototype}' is untrusted (staged, awaiting approval)",
             )
 
-        # Solvency gate (): an insolvent bloodline (long-term token
+        # Solvency gate (ADR 0014): an insolvent bloodline (long-term token
         # spend not covered by endorsed output) cannot spawn until it
         # earns endorsements back — the binary counterpart of the tilt.
         if not await self._solvent(prototype):
@@ -318,13 +320,13 @@ class SpawnManager:
             )
 
         # Budget 3: per-(spawner, session) quota, tilted by the target
-        # bloodline's efficiency (): effective quota =
+        # bloodline's efficiency (ADR 0014): effective quota =
         # ceil(base * tilt), tilt clamped to [0.5, 2.0] upstream. Tilt
         # 1.0 (cold start / failure fallback) is the untilted behavior.
-        # Probation cap (, trust ladder): a probationary *spawner*
-        # (spawned, not yet endorsed) is capped at 1 spawn per session
-        # regardless of the tilt — tilt judges the target bloodline,
-        # probation judges the spawner.
+        # Probation cap (trust ladder, docs/design/unified-member-model.md):
+        # a probationary *spawner* (spawned, not yet endorsed) is capped
+        # at 1 spawn per session regardless of the tilt — tilt judges the
+        # target bloodline, probation judges the spawner.
         tilt = await self._tilt(prototype)
         effective_quota = math.ceil(self._session_spawn_quota * tilt)
         probationary = await self._probationary(spawner_id)
@@ -333,7 +335,7 @@ class SpawnManager:
         quota_key = (spawner_id, session_id or _UNKNOWN_SESSION)
         used = self._quota.get(quota_key, 0)
         if used >= effective_quota:
-            probation_note = "; spawner on probation, capped at 1 ()" if probationary else ""
+            probation_note = "; spawner on probation, capped at 1" if probationary else ""
             self._reject_spawn(
                 "session_quota",
                 spawner_id=spawner_id,

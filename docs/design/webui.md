@@ -45,7 +45,7 @@ apps/webui/
 | AGENTS | agents | 成员卡片网格（状态着色 + 事件驱动实时状态行：THINKING 徽标、上次 LLM 耗时/模型、最近工具调用）+ 详情、创建（选原型→表单，模型必填——ADR 0016）、编辑、删除；创建/编辑表单的模型字段是可搜索下拉（按 model/provider 子串过滤，每项带上下文窗口/输入输出价/缓存读价/cache+tools 标记；注册表未收录的值仍可手输） | `GET /agents[/{id}]`、`/admin/config/agents` 增删改、`GET /admin/prototypes`（创建向导）、`GET /admin/llm/models`（模型下拉）、SSE `agent.*` / `tool.*` / `config.updated` |
 | EVENTS | events | 活动 feed：SSE 事件映射为语义条目（类型色块 + 中文短句 title + detail，未知类型原样展示），暂停/清空，点击展开原始 JSON | 纯 SSE |
 | TRACES | traces | trace 列表 + span 详情 | `GET /traces[/{id}]` |
-| METRICS | metrics | 指标仪表盘，按 mail/agent/llm/tool 分组，2s 轮询；顶部 LLM USAGE 面板按 agent/model 汇总 token 用量与缓存命中率（） | `GET /metrics` |
+| METRICS | metrics | 指标仪表盘，按 mail/agent/llm/tool 分组，2s 轮询；顶部 LLM USAGE 面板按 agent/model 汇总 token 用量与缓存命中率 | `GET /metrics` |
 | LOGS | —（新增） | 日志流，level/agent/trace 过滤 | `GET /logs`、`GET /agents/{id}/logs` |
 | SETTINGS | config + settings | 服务端配置只读区 + admin token（浏览器本地）——进程级 LLM env 编辑已删除（ADR 0016：模型在创建/编辑成员时配置） | `GET /config`、`GET /admin/config/agents` |
 | PROTOTYPES | —（新增） | 原型库管理：正式库/ staging 双区列表、详情（元数据 + parameters + behavior.tlon 全文）、手写创建、编辑、删除、staging 审批 | 见下文「原型管理 API」 |

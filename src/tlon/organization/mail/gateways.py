@@ -1,4 +1,5 @@
-"""External gateway registry: claimed external mail addresses (issue ).
+"""External gateway registry: claimed external mail addresses (see
+docs/design/mail.md).
 
 The egress half of the "外部来信" mechanism (docs/design/mail.md
 「外部收件人与出口方向」). An external recipient address is normally
@@ -10,7 +11,7 @@ gateway's ``MAIL_DELIVERED`` handler performs the actual egress.
 
 Unclaimed external recipients keep bouncing — the claim table is the
 one controlled exception, consulted by the same single-authority
-resolver (), not a parallel resolution track.
+resolver, not a parallel resolution track.
 
 A plain data component (no dependencies): the registry is constructed
 at assembly time and its ``owner_of`` is constructor-injected wherever

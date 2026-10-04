@@ -22,13 +22,13 @@ ADR 0017 之前，长期记忆分两套机制：批量会话摘要（`summaries.
 - `status`（`active` / `superseded`）与 `superseded_by`——取代即失效、不删除的生命周期字段（写入逻辑见下文「claim 生命周期」）；
 - `importance`——检索打分因子（JIT 混合打分使用，见「上下文注入」）。
 
-摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。三元组模型整个删除：自然语言断言不需要结构化三元组，精确字符串匹配的 supersede 缺陷（）随之消亡。
+摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。三元组模型整个删除：自然语言断言不需要结构化三元组，精确字符串匹配的 supersede 缺陷随之消亡。
 
 [memory/manager.py](../../src/tlon/memory/manager.py) 的 `MemoryManager` 是统一入口，持有唯一的存储 [memory/claim_store.py](../../src/tlon/memory/claim_store.py) 的 `ClaimStore`：`memory/claims.jsonl`，每行一条 claim。
 
 记忆有两个入口：系统自动批量蒸馏（`maybe_distill_completed_sessions`）与 agent 主动记录（`rememberFact`，立即写一条 claim）与反思补记（`record_claim`）——长期层允许多方填充，因为它本来就是筛选后的判断而不是原始记录。
 
-存储格式是 JSONL。写入策略是**追加优先**：`add_claim` 只追加新行，整文件重写（临时文件 + `os.replace` 原子替换）只发生在删除（`forget` / 反思的 `delete_claim`）或追加失败后的兜底。追加优先的理由：JSONL 追加是崩溃安全的最低成本形态，进程死在两次写之间最多损失最后半行（加载时逐行解析、坏行跳过告警），而全量重写一旦中途崩溃就丢整个文件——所以重写必须走原子替换。claims **没有容量上限**：append-only，失效不删除，与 journal 的存储哲学一致——旧系统的容量淘汰正是断链 bug（）的温床。
+存储格式是 JSONL。写入策略是**追加优先**：`add_claim` 只追加新行，整文件重写（临时文件 + `os.replace` 原子替换）只发生在删除（`forget` / 反思的 `delete_claim`）或追加失败后的兜底。追加优先的理由：JSONL 追加是崩溃安全的最低成本形态，进程死在两次写之间最多损失最后半行（加载时逐行解析、坏行跳过告警），而全量重写一旦中途崩溃就丢整个文件——所以重写必须走原子替换。claims **没有容量上限**：append-only，失效不删除，与 journal 的存储哲学一致——旧系统的容量淘汰正是断链 bug 的温床。
 
 store 一把 `asyncio.Lock`，缓存即真相，磁盘是缓存的持久化。`MemoryManager.load` 还有一层配置加载语义：`memory/config.json` 是**唯一的**记忆调参面——存在时以磁盘文件为准（绑定 `agent_id`），不存在时用构造传入的 `MemoryConfig`（生产装配传默认值）落盘初始化。ADR 0017 之前的 `summary`/`episodic`/旧 `context` 段在读取时自然忽略（未知段不读），无 migration。
 
@@ -44,7 +44,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 「哪些 session 待蒸馏」由**标量时间戳水位线**判定：持久化在 `memory/distillation.json`（`{"last_distilled_at": "..."}`）。session id 是 `{agent_id}-{uuid}`，无时间序，不能按 id 做水位线；判定规则是 completed session 的 `session/start` 事件时间戳 > 水位线者为 pending，取不到时间戳的一律视为 pending（安全方向，绝不静默跳过）。
 
-旧系统的进度判定是「扫描存留摘要里的 `source_session_ids` 求差集」——摘要被容量淘汰，进度就断链重摘要（）。水位线独立持久化后，产物（claims）被淘汰与否都不影响进度；且 claims 本就不淘汰。
+旧系统的进度判定是「扫描存留摘要里的 `source_session_ids` 求差集」——摘要被容量淘汰，进度就断链重摘要。水位线独立持久化后，产物（claims）被淘汰与否都不影响进度；且 claims 本就不淘汰。
 
 触发链条在 [agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的回收点：session 完成（`is_completed` 分支，`_ensure_session_end` 落盘之后），scheduler 先给反思引擎计数（`note_interaction`），再调 `MemoryManager.maybe_distill_completed_sessions(journal)`。pending 数达到 `distillation_window`（默认 3）就把整批投影交给 Distiller，产出的 claims 落盘（`source_session_ids` 记全部来源 session，`valid_from` 记蒸馏时刻），**成功后**水位线推进到本批 session 的最大开始时间；落盘失败水位线不动，下次回收点重试。整个触发永不抛进调度循环：LLM 失败回退机械 claim，其余失败记日志、下次重试。
 
@@ -52,7 +52,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 ### claim 生命周期：冲突判定，失效不删除
 
-阶段 3 补全了 claim 的生命周期（ 的消亡点）。旧系统的事实 supersede 只在三元组完全相等时发生，同义事实的矛盾版本无限堆积；现在**两条写入路径过同一套判定**——批量蒸馏落盘前与 `rememberFact` 写 claim 前，都先走 `MemoryManager._resolve_conflicts`：
+阶段 3 补全了 claim 的生命周期。旧系统的事实 supersede 只在三元组完全相等时发生，同义事实的矛盾版本无限堆积；现在**两条写入路径过同一套判定**——批量蒸馏落盘前与 `rememberFact` 写 claim 前，都先走 `MemoryManager._resolve_conflicts`：
 
 1. **候选检索**：新 claim 文本 embed 后查向量索引，只取相似度 ≥ 0.75（余弦）的 **active** 旧 claim 作为候选（每条约 3 条）。阈值刻意定高——判定要抓的是「同一事实的矛盾版本」，0.75 以上两条断言几乎必然在说同一件事；低于它就是话题相关而已，直接 ADD，不发 LLM（成本控制）。阈值与候选数是 `memory/config.json` 的 `conflict` 段调参（`similarity_threshold` / `candidate_limit`，默认值 0.75 / 3 即上述数字）。
 2. **一次批量判定**：有候选才把整批新 claim（编号）+ 全部候选旧 claim（id + 日期 + 文本）交给 `Distiller.judge_conflicts` **一次** LLM 调用判定（借鉴 Mem0 的 ADD/UPDATE 路由）——不是每条一次调用。
@@ -70,18 +70,18 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 - **纯派生视图**。真相只有 `claims.jsonl`；索引可整个删掉，下次启动从 active claims 全量重建。索引库的 `vec_meta` 表记录 embedding 模型标识 + 维度，`MemoryManager.load` 与当前配置比对——换模型（向量空间互不兼容）即自动全量重建，重建就是 N 次 embedding 调用，无数据迁移。
 - **降级是一等公民**。未配置 `embedding_model_name`、embedding 调用失败、索引重建失败，检索一律降级为「最近 N 条」时间序注入——部分 provider 没有 embedding 端点，记忆与会话绝不能因此挂掉。写入路径同样宽容：`add_claim` 后同步尝试 embed 入库，失败只记日志（claim 仍可被时间序检索到）；load 时对缺向量的 active claims 做 backfill、对已被删 claim 的残留向量做清理。
-- **写入即入索引**。蒸馏落盘与 `rememberFact` 之后同步 embed 入库，下一轮检索即可命中（ 的「记了看不到」不会复活）。
+- **写入即入索引**。蒸馏落盘与 `rememberFact` 之后同步 embed 入库，下一轮检索即可命中，「记了看不到」不会复活。
 
 ## 上下文注入
 
-记忆的回流通道是 `MemoryManager.build_context_blocks(current_message)`——阶段 2 起 `current_message` 从死参数变为核心输入（ 消亡）。两条路径：
+记忆的回流通道是 `MemoryManager.build_context_blocks(current_message)`——阶段 2 起 `current_message` 从死参数变为核心输入。两条路径：
 
 - **JIT 相关性检索**（有 query 且索引可用）：query（当前邮件的主题 + 正文）embed 成向量 → vec KNN 取候选池（`context_max_claims` 的 4 倍）→ 复合打分 `score = 1.0·similarity + 0.3·recency + 0.5·importance` 取 top-k active claims。similarity 由 cosine 距离归一化（`1 - distance`，截断到 [0,1]）；recency 是指数衰减（半衰期 7 天，Generative Agents 衰减的半衰期重参数化）；三个权重、半衰期与候选池倍数都是 `memory/config.json` 的 `retrieval` 段调参（默认值 1.0/0.3/0.5、7 天、4 倍，同原 [memory/manager.py](../../src/tlon/memory/manager.py) 模块常量）——相似度占主导（JIT 的意义就是相关性），importance 让关键断言赢下近似平局，recency 最弱（「最新优先」已有降级路径兜底，旧但相关的断言不能被新鲜噪声淹掉）。
 - **时间序降级**（无 query / 未配置 embedding / 检索任何环节失败）：取最近 `context_max_claims` 条 active claims。
 
 两种路径的渲染一致：`- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。
 
-注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把当前邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动（ADR 0017 阶段 4）：knowledge 消息固定追加为整个 context 的最后一条（当前邮件之后），落在压缩锚点（anchor）之外——每 session JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它（ 的「anchor 挤死、压缩无路可退」解除），KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
+注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把当前邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动（ADR 0017 阶段 4）：knowledge 消息固定追加为整个 context 的最后一条（当前邮件之后），落在压缩锚点（anchor）之外——每 session JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它，KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
 
 一个细节体现实用主义：`build_knowledge_context` 把记忆构建的异常整个兜住（记告警、返回空串），记忆损坏不阻断对话，空记忆等价于没有 `(knowledge)` 段。记忆是增强，不是依赖。
 
@@ -104,11 +104,11 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个�
 
 应用操作时单个失败只记日志不影响其余；整个过程跑在后台 task 里（`_running` 标志防重入），不阻塞认知循环。原则写进了 prompt：多数情况下 `noop` 是正常的。
 
-`delete_claim` 的删除按 claim id 定点执行：prompt 里 claim 以 id 前 8 位列出，模型回传的 `claim_id` 交给 `MemoryManager.delete_claim`，先精确匹配、再退到唯一前缀解析，未命中或歧义都记 warning、不删任何东西——删除失败必须可见，不允许静默 no-op（issue ）。模型只给 `description` 时回退到 `forget` 的关键词匹配路径。
+`delete_claim` 的删除按 claim id 定点执行：prompt 里 claim 以 id 前 8 位列出，模型回传的 `claim_id` 交给 `MemoryManager.delete_claim`，先精确匹配、再退到唯一前缀解析，未命中或歧义都记 warning、不删任何东西——删除失败必须可见，不允许静默 no-op。模型只给 `description` 时回退到 `forget` 的关键词匹配路径。
 
-值得注意的是反思能改的只有记忆：它可以记 claim、删 claim，但碰不到 spec——行为变更走的是另一条通道：成员经 `proposeBehavior`（）把经验交给独立的起草调用产出新 spec，落到 staging 信任闸等人类批准，反思本身仍不直接改写行为。
+值得注意的是反思能改的只有记忆：它可以记 claim、删 claim，但碰不到 spec——行为变更走的是另一条通道：成员经 `proposeBehavior` 把经验交给独立的起草调用产出新 spec，落到 staging 信任闸等人类批准，反思本身仍不直接改写行为。
 
-## 退休蒸馏：记忆的代际出口（issue ）
+## 退休蒸馏：记忆的代际出口
 
 反思是生者的自我审计；退休蒸馏是死者的遗产整理。[agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` 是纯事件消费者：订阅 `AGENT_STOPPED`（蓄意停止），对退休成员做一次离线蒸馏。
 
@@ -118,9 +118,9 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个�
 - **只挂蓄意停止**。`AGENT_SLEEPING`/`AGENT_IDLE`（drain 是日常 scale-to-zero 睡眠，反复发生）不触发蒸馏——退休才有遗产，午睡没有。
 - **失败不阻断**。非认知成员（无 `:loop` 的 spec）或 digest 为空直接跳过；LLM 失败只记日志不 raise——停止流程已经完成，这只是事后簿记。
 
-蒸馏调用沿用反思的参数先例（timeout 60 秒；采样参数不配置，供应商默认生效），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（ 的 per-member 账本自然覆盖）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
+蒸馏调用沿用反思的参数先例（timeout 60 秒；采样参数不配置，供应商默认生效），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（per-member 账本自然覆盖）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
 
-`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md) 决策 9 补注）。退休交接信（）已落地为 `RetirementCeremony`（见 [mail.md](./mail.md)「退休交接信」）——蒸馏沉淀给下一代，交接信盘点给同代的接管者。
+`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md) 决策 9 补注）。退休交接信已落地为 `RetirementCeremony`（见 [mail.md](./mail.md)「退休交接信」）——蒸馏沉淀给下一代，交接信盘点给同代的接管者。
 
 ## 一次交互的完整链路
 
@@ -172,5 +172,5 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 与愿景的差距主要有两处：
 
-- **个体学习已闭环（，2026-09）**——记忆的出口曾只有 context； 补上了代际出口（退休蒸馏 → `lessons.md` → 原型 `LESSONS.md` → 新成员的 `(lessons)` section）， 补上了同代出口（退休交接信把未竟事项送达接管者）， 补上了「经验改写行为」本身：`proposeBehavior` 把成员自己的 `behavior.tlon` + 记忆 digest + 蒸馏教训喂给一次独立的起草 LLM 调用，产出完整新 spec 并以成员自己的 prototype 为父写入 staging 信任闸——从记忆/教训到 spec 修订提案的回流通道已通（人类批准后 `spawnAgent` 派生新世代）。
+- **个体学习已闭环（2026-09）**——记忆的出口曾只有 context；代际出口由退休蒸馏补上（`lessons.md` → 原型 `LESSONS.md` → 新成员的 `(lessons)` section），同代出口由退休交接信补上（把未竟事项送达接管者），「经验改写行为」本身由 `proposeBehavior` 补上：它把成员自己的 `behavior.tlon` + 记忆 digest + 蒸馏教训喂给一次独立的起草 LLM 调用，产出完整新 spec 并以成员自己的 prototype 为父写入 staging 信任闸——从记忆/教训到 spec 修订提案的回流通道已通（人类批准后 `spawnAgent` 派生新世代）。
 - **无社会级公共记忆**——每个 agent 各自蒸馏、各自记 claim，社会层面没有可检索的公共层。邮件提供了沉淀的原材料，但「把书信提炼成社会知识」的机制（存档、共享摘要、同行评议筛选后的公共记忆）还不存在。

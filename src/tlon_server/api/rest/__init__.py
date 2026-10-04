@@ -1,6 +1,6 @@
 """REST API package (HTTP endpoints + SSE event stream).
 
-Formerly the single-module ``api/rest.py``; split by route domain ():
+Formerly the single-module ``api/rest.py``; split by route domain:
 ``app`` (route table + RESTServer + core endpoints), ``common`` (shared
 base/helpers), ``mail``, ``sessions``, ``admin_agents``,
 ``admin_llm``, ``admin_prototypes``, ``observability``.

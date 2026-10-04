@@ -149,7 +149,7 @@ class WritePrototypeTool(Tool):
                     "lessons": {
                         "type": "string",
                         "description": (
-                            "随包教训（issue ）：退休成员蒸馏出的经验，落盘为原型的 "
+                            "随包教训：退休成员蒸馏出的经验，落盘为原型的 "
                             "LESSONS.md；实例化时拷贝给新成员，由 spec 的 (lessons) "
                             "context section 注入对话"
                         ),

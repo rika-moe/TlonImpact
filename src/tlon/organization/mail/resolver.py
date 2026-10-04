@@ -1,9 +1,10 @@
 """Recipient resolution: the single authority for name/address mapping.
 
-Both directions of recipient resolution live here (issue  — the
-adapter-side ``AdapterManager.resolve_address`` and the delivery-side
-``MailDelivery._resolve_address`` used to be two tracks whose rules had
-to be kept in sync by hand;  was a drift bug):
+Both directions of recipient resolution live here (see
+docs/design/mail.md — the adapter-side ``AdapterManager.resolve_address``
+and the delivery-side ``MailDelivery._resolve_address`` used to be two
+tracks whose rules had to be kept in sync by hand; the split was a drift
+bug):
 
 - ``resolve_address``: raw recipient (agent id, agent display name,
   human username, ``human:<username>`` or full address) -> mail address.
@@ -147,8 +148,8 @@ class RecipientResolver:
         (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).
 
         External (foreign-domain) addresses resolve only when a gateway
-        has claimed them in the external gateway registry (issue
-        egress); unclaimed external recipients stay unknown and bounce.
+        has claimed them in the external gateway registry (docs/design/
+        mail.md egress); unclaimed external recipients stay unknown and bounce.
 
         Args:
             address: A mail address, internal or external

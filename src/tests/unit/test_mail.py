@@ -59,7 +59,8 @@ class TestAddresses:
         assert not is_mail_address("")
 
     def test_is_external_address(self):
-        """The trust boundary derives from the address domain (issue )."""
+        """The trust boundary derives from the address domain
+        (docs/design/mail.md)."""
         # Internal: members, humans, system addresses
         assert not is_external_address(GU)
         assert not is_external_address(ALICE)
@@ -136,7 +137,7 @@ class TestMailSerialization:
 
 
 class TestMailEndorsing:
-    """The endorsement signal field (issue )."""
+    """The endorsement signal field (docs/design/mail.md)."""
 
     def test_create_accepts_endorsing(self):
         mail = _mail(endorsing="m-helpful")

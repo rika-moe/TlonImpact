@@ -1,10 +1,12 @@
-"""GitHub webhook endpoint: POST /webhooks/github (issue ).
+"""GitHub webhook endpoint: POST /webhooks/github
+(docs/design/mail.md 「外部来信与信任面」).
 
 Ingress direction only: a signed GitHub webhook delivery is verified
 (HMAC-SHA256 over the raw body, ``X-Hub-Signature-256``), decoded and
 handed to the runtime through the events facade
 (``EventsFacade.receive_github_event``), which maps supported events onto
-external incoming mail ( mechanism). The route is registered only when
+external incoming mail (the external-mail mechanism of
+docs/design/mail.md). The route is registered only when
 a webhook secret is configured (settings ``github_webhook_secret``) and the
 runtime ingress is enabled, so an unconfigured server exposes no endpoint
 at all.

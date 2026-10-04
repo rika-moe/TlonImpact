@@ -755,7 +755,8 @@ class TestMaxIterationsDistillReply:
 
 class TestConsecutiveErrorLimit:
     """error_count counts *consecutive* think failures, not a lifetime
-    total: a successful think resets it (issue ). Scattered LLM
+    total: a successful think resets it (docs/design/runtime.md).
+    Scattered LLM
     errors across a long session must not kill it; only an unbroken
     streak of max_consecutive_errors failures terminates via until."""
 
@@ -949,7 +950,7 @@ class TestSchedulerFailureReply:
         mark_read.assert_awaited_once_with(mail)
 
 
-# ── Session concurrency cap (backlog throttling, issue ) ──────────────
+# ── Session concurrency cap (backlog throttling, docs/design/runtime.md) ──
 
 
 class TestSessionConcurrencyCap:

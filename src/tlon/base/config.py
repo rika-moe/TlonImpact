@@ -184,9 +184,10 @@ class AgentConfig(BaseModel):
     # Inbound message queue capacity; overflow drops new messages
     message_queue_size: int = 100
     # Live sessions advanced concurrently; excess mail waits in the
-    # bounded queue (backlog throttling, issue )
+    # bounded queue (backlog throttling, docs/design/mail.md 「队列满丢新保未读」)
     max_concurrent_sessions: int = Field(default=4, ge=1)
-    # Running members re-scan unread mail on this cadence (issue ):
+    # Running members re-scan unread mail on this cadence
+    # (docs/design/mail.md 「队列满丢新保未读」):
     # live mail a full bounded queue dropped stays unread, and a
     # boot member never reboots — the periodic rescan picks it up.
     mail_rescan_interval_seconds: float = Field(default=900.0, gt=0)

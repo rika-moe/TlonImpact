@@ -1,4 +1,4 @@
-"""Built-in skill package data (issue ).
+"""Built-in skill package data (ADR 0010).
 
 Each subdirectory is a skill: a ``SKILL.md`` (Agent Skills open standard,
 see docs/design/skills.md) plus any ``scripts/`` / ``references/`` it

@@ -82,7 +82,7 @@ class RESTAPIHandler(
     - GET /agents/{id}/logs - Agent log entries
     - GET /logs - All log entries with combined filters
     - GET /metrics - In-process metrics snapshot
-    - POST /webhooks/github - GitHub webhook ingress (issue ; only when configured)
+    - POST /webhooks/github - GitHub webhook ingress (only when configured)
 
     Example:
         >>> handler = RESTAPIHandler(client_gateway, members=runtime.members, ...)
@@ -207,7 +207,8 @@ class RESTAPIHandler(
         # Metrics route (503 when the metrics service is unavailable)
         app.router.add_get("/metrics", self.handle_metrics)
 
-        # GitHub webhook ingress (issue ): registered only when the
+        # GitHub webhook ingress (docs/design/mail.md 「外部来信与信任面」):
+        # registered only when the
         # runtime ingress is enabled (adapter configured) and the webhook
         # secret is set — an unconfigured server exposes no endpoint at all.
         if self.github_ingress and self.github_webhook_secret:

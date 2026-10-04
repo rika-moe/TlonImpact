@@ -1,4 +1,5 @@
-"""Unit tests for the REST POST /webhooks/github endpoint (issue ).
+"""Unit tests for the REST POST /webhooks/github endpoint
+(docs/design/mail.md).
 
 No HTTP server is started: handle_github_webhook is called directly with
 a stub request (raw body + headers), against a stub GitHubAdapter behind

@@ -1,4 +1,4 @@
-"""PublicHealthMonitor — social public-health facts (issue ).
+"""PublicHealthMonitor — social public-health facts (docs/design/mail.md).
 
 Pins the two fact lines: noise detection (AGENT_NOISY sliding window +
 cooldown, broadcast path) and the periodic orphan-mail scan

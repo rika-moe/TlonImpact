@@ -1,4 +1,4 @@
-"""Near-kin rejection (issue ): cross-bloodline duplicate detection via
+"""Near-kin rejection (ADR 0014): cross-bloodline duplicate detection via
 stdlib text similarity.
 """
 
@@ -11,7 +11,7 @@ from tlon.base.paths import TlonPaths
 logger = get_logger(__name__)
 
 
-# ==================== Near-kin rejection (issue ) ====================
+# ==================== Near-kin rejection (ADR 0014) ==================
 
 NEAR_KIN_THRESHOLD = 0.9
 """Similarity cutoff for near-kin rejection — deliberately high: only

@@ -1,4 +1,4 @@
-"""Cognitive capability assembly for members (split from agent_registry, ).
+"""Cognitive capability assembly for members (split from agent_registry).
 
 ``assemble_cognitive`` builds the full capability set one member gets —
 LLM client, memory, task manager, Docker runtime, and the tool list —
@@ -6,7 +6,7 @@ and returns it as ``CognitiveCapabilities`` for ``MemberRuntime``. It is
 a pure function of its parameters: the registry injects itself (it
 satisfies the ``AgentLifecycle`` port structurally) plus the config
 provider and paths, keeping the import direction agents → tools (the
-ports live in ``tlon.tools.agents.ports``, ).
+ports live in ``tlon.tools.agents.ports``).
 """
 
 from functools import partial
@@ -86,7 +86,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 #: The reproduction/evolution tools withheld from probationary members at
-#: assembly time (). The trust *level* is policy (the ``full-member?``
+#: assembly time (trust ladder, docs/design/unified-member-model.md). The
+#: trust *level* is policy (the ``full-member?``
 #: hook, ``agents/policy.py``, ADR 0022); this tool subset is the
 #: execution-side mechanism the level drives. ``reviewPrototype`` is
 #: deliberately absent: reviewing a staging proposal is advisory (approve
@@ -185,7 +186,7 @@ async def assemble_cognitive(
     """
     # Build infrastructure dependencies
     llm_config = _build_llm_config(config.llm, config.id)
-    # agent_id binds the client to the member's token ledger (issue ):
+    # agent_id binds the client to the member's token ledger (ADR 0014):
     # every chat() carrying usage appends to {agent_id}/ledger.jsonl.
     llm_client = LLMClient(llm_config, agent_id=config.id, tlon_paths=tlon_paths)
 
@@ -232,7 +233,8 @@ async def assemble_cognitive(
     # are never force-removed — a sleeping member keeps its container
     # (zero-cost wake); a re-assembly reuses it by name.
 
-    # Trust ladder (): one derivation per assembly — a member's wake
+    # Trust ladder (docs/design/unified-member-model.md): one derivation
+    # per assembly — a member's wake
     # re-assembles, so promotion to full takes effect on the next wake
     # (natural in a scale-to-zero world). The level is the society
     # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
@@ -267,7 +269,8 @@ async def assemble_cognitive(
     if config.docker.level != "L0":
         allowed_paths = config.tool.allowed_paths
         # Read-side tools additionally see the agent's own home (behavior spec,
-        # memory, mailbox) at the read-only mount (issue : 行为即数据 —
+        # memory, mailbox) at the read-only mount (docs/design/execution-device.md:
+        # 行为即数据 —
         # self-awareness is the precondition of self-evolution). Write/edit keep
         # the configured whitelist: behavior changes go through the prototype
         # channel, never direct file writes.
@@ -284,7 +287,8 @@ async def assemble_cognitive(
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())
-    # searchMails (): read-only structured query over the agent's own
+    # searchMails (docs/design/skills.md): read-only structured query over
+    # the agent's own
     # mailbox — the mail evidence source of the explain-decision skill.
     tool_executor.register_tool(
         SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=config.id)
@@ -292,18 +296,21 @@ async def assemble_cognitive(
     tool_executor.register_tool(
         ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
     )
-    # Staging proposals (): agent-authored prototypes awaiting human
+    # Staging proposals (docs/design/prototypes.md): agent-authored
+    # prototypes awaiting human
     # trust approval — visible so a member (e.g. the scribe's digest) can
     # surface them as pending human decisions.
     tool_executor.register_tool(
         ListStagingPrototypesTool(lister=partial(list_staging_prototypes, tlon_paths=tlon_paths))
     )
-    # Lineage (): the prototype genealogy is first-class data — any
+    # Lineage (docs/design/prototypes.md): the prototype genealogy is
+    # first-class data — any
     # member can walk a :parent chain and see each generation's diff.
     tool_executor.register_tool(
         GetPrototypeLineageTool(lineage=partial(get_prototype_lineage, tlon_paths=tlon_paths))
     )
-    # Heterogeneous review (, phase 2): a member reviews a staging
+    # Heterogeneous review (docs/design/prototypes.md, phase 2): a member
+    # reviews a staging
     # proposal with its own llm_client — the heterogeneity comes from the
     # reviewer's model bloodline (config.model_name), the verdict is never
     # caller-supplied. Records append to the proposal's REVIEW.md and ride
@@ -321,7 +328,8 @@ async def assemble_cognitive(
     # Spawn/stop lifecycle tools (stage 6b): the registry is the
     # assembler, so it injects itself (it satisfies the AgentLifecycle
     # port structurally); spawner_id binds the tool to the owning
-    # agent for budget accounting and audit. Trust ladder ():
+    # agent for budget accounting and audit. Trust ladder
+    # (docs/design/unified-member-model.md):
     # probationary members don't get these (REPRODUCTION_TOOLS) — the
     # DSL spawn action is backstopped by the SpawnManager probation
     # quota (same funnel); the DSL stop action is not gated (known gap:
@@ -332,16 +340,19 @@ async def assemble_cognitive(
     tool_executor.register_tool(ListAgentsTool(registry=registry))
     # Spec authoring (stage 4a): writes untrusted prototypes to the
     # staging area; author_id is recorded as the :author for audit.
-    # Proposal solvency gate (, agent side only — the human direct
+    # Proposal solvency gate (docs/design/prototypes.md, agent side only
+    # — the human direct
     # write channel is never gated): an insolvent bloodline loses
     # proposal eligibility until it earns endorsements back. The gate
     # recomputes from raw files per call (proposals are low-frequency).
     proposal_solvency = policy_solvency_provider(tlon_paths)
-    # Near-kin rejection (, agent side only like the solvency gate):
+    # Near-kin rejection (docs/design/prototypes.md, agent side only like
+    # the solvency gate):
     # reskin-level duplicates of an existing prototype (trusted or
     # staging) are turned away before they reach disk.
     near_kin_check = partial(find_near_kin, tlon_paths=tlon_paths)
-    # Trust ladder (): both spec-authoring tools are reproduction/
+    # Trust ladder (docs/design/unified-member-model.md): both
+    # spec-authoring tools are reproduction/
     # evolution tools (REPRODUCTION_TOOLS) — withheld from probationary
     # members.
     if is_full:
@@ -354,7 +365,8 @@ async def assemble_cognitive(
                 near_kin=near_kin_check,
             )
         )
-    # Experience entry of the generation channel (): drafts the next
+    # Experience entry of the generation channel
+    # (docs/design/unified-member-model.md): drafts the next
     # generation's spec from the member's own behavior + memory, parented
     # to its own prototype. First agents-domain tool to receive the
     # llm_client / memory pair; the journal (agents layer) is injected as
@@ -389,14 +401,15 @@ async def assemble_cognitive(
     tool_executor.register_tool(CompleteTaskTool(task_manager))
     tool_executor.register_tool(RemoveTaskTool(task_manager))
     tool_executor.register_tool(GetCurrentTaskTool(task_manager))
-    # Observability (read-only, ): the agent can read the society's
+    # Observability (read-only): the agent can read the society's
     # health report but never write it. Metrics/traces pillars are
     # optional here so tests can assemble without the OTel pipeline; the
     # server always injects both.
     tool_executor.register_tool(
         GetMailStatsTool(provider=mail_stats_provider(tlon_paths), agent_id=config.id)
     )
-    # Reputation (): derived, never stored — the member enumeration
+    # Reputation (docs/design/mail.md): derived, never stored — the member
+    # enumeration
     # is re-read per query so the report always sees the current roster.
     tool_executor.register_tool(
         GetReputationTool(
@@ -408,7 +421,8 @@ async def assemble_cognitive(
             agent_id=config.id,
         )
     )
-    # Social health (): the orphan-mail scan is the same collector the
+    # Social health (docs/design/mail.md): the orphan-mail scan is the
+    # same collector the
     # PublicHealthMonitor publishes as MAIL_ORPHAN_SCAN, here on demand;
     # the roster is re-read per query so the report sees the current
     # society.

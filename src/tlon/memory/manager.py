@@ -13,7 +13,7 @@ model or on any index failure it degrades to recency order. Writes on
 both paths (batch distillation, ``remember_fact``) pass conflict
 judgment first: similar active old claims are LLM-judged, and
 contradicted ones are superseded in place — invalidated, never deleted
-(stage 3, ); every failure mode of the judgment degrades to pure
+(ADR 0017 stage 3); every failure mode of the judgment degrades to pure
 append. The manager
 keeps the claim store, the index, the context-block assembly for the
 ``(knowledge)`` section, and the batch distillation trigger the
@@ -118,7 +118,7 @@ class MemoryManager:
                 ``embedding_model_name`` (when set) also builds the
                 embedding client for vector retrieval
             tlon_paths: Path resolver handed to the distiller's LLM
-                client for ledger attribution (issue ); required
+                client for ledger attribution (ADR 0014); required
                 when ``llm_config`` is set.
             embedder: Embedding client override (tests inject a fake);
                 None = build from ``llm_config.embedding_model_name``,
@@ -475,7 +475,7 @@ class MemoryManager:
         )
         return len(claim_dicts)
 
-    # ===== Conflict judgment (ADR 0017 stage 3, ) =====
+    # ===== Conflict judgment (ADR 0017 stage 3) =====
 
     async def _resolve_conflicts(self, new_claims: list[Claim]) -> None:
         """Supersede old claims contradicted by freshly built new ones.

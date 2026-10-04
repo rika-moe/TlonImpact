@@ -889,7 +889,7 @@ class TestMixedMemberDeflection:
         await member.shutdown()
 
 
-# ── Boot-scan throttling (issue ) ────────────────────────────────────
+# ── Boot-scan throttling (docs/design/runtime.md) ─────────────────────
 
 
 class TestBootScanThrottle:
@@ -1053,7 +1053,8 @@ class TestBootScanThrottle:
 
 
 class TestPeriodicRescan:
-    """The one background rescan task also sweeps periodically (issue ).
+    """The one background rescan task also sweeps periodically
+    (docs/design/runtime.md).
 
     A boot member (``:on :boot``) never sleeps and never reboots, so
     live mail the full bounded queue dropped would wait for a process
@@ -1208,7 +1209,7 @@ class TestPeriodicRescan:
         assert await mailbox.unread() == []
 
 
-# ── Idle-aware background tasks (issue ) ────────────────────────────
+# ── Idle-aware background tasks (docs/design/runtime.md) ─────────────
 
 COGNITIVE_REFLECT_EDN = """\
 {:version 1
@@ -1250,7 +1251,7 @@ class _DigestMemoryStub(_MemoryStub):
 
 class TestIdleAwareBackground:
     """Background activity feeds the idle accounting; shutdown cancels it
-    (issue ).
+    (docs/design/runtime.md).
 
     An in-flight reflection (memory digest + LLM audit) is real work:
     ``idle_seconds`` must not report the member idle mid-audit, and

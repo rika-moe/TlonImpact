@@ -1,5 +1,5 @@
-"""EffectExecutor.send_mail failure visibility (issue ) and reply
-header resolution (issue ).
+"""EffectExecutor.send_mail failure visibility (docs/design/mail.md) and
+reply header resolution (docs/design/mail.md).
 
 A failed send (bad Mail declaration, an unresolvable in_reply_to
 reference, or a failing MAIL_NEW publish) must not vanish into a log
@@ -213,7 +213,8 @@ class TestSendMailFailureNotice:
 
 class TestEndorsementValidation:
     """The endorsing reference gets the same mailbox validation as
-    in_reply_to (issue ): hallucinated ids and self-endorsement
+    in_reply_to (docs/design/mail.md): hallucinated ids and
+    self-endorsement
     fail the send with a postmaster notice."""
 
     async def _seed_endorsed(self, mailbox: Mailbox, mail_id: str = "m-helpful") -> Mail:

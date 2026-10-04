@@ -1,4 +1,4 @@
-"""LessonsDistiller — retirement lessons distillation (issue ).
+"""LessonsDistiller — retirement lessons distillation (docs/design/memory.md).
 
 Pins the closed loop: publishing AGENT_STOPPED for a cognitive member
 distills its archived memory into ``memory/lessons.md`` via one LLM call

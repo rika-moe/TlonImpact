@@ -141,7 +141,7 @@ def builtin_get(env: dict[str, Any], target: Any, key: Any, default: Any = None)
 
 
 def builtin_str(env: dict[str, Any], *args: Any) -> str:
-    """Concatenate arguments into one string (issue ).
+    """Concatenate arguments into one string.
 
     String arguments are inserted verbatim; anything else is rendered in
     its EDN write form (``:foo`` → ``":foo"``, ``[1 2]`` → ``"[1 2]"``),
