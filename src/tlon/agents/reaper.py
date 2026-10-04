@@ -1,4 +1,4 @@
-"""Idle reclamation loop (split from agent_registry, ).
+"""Idle reclamation loop (split from agent_registry).
 
 ``IdleReaper`` runs the registry's idle-*fact* monitor: every
 ``IDLE_CHECK_INTERVAL_SECONDS`` it publishes an AGENT_IDLE fact for each
