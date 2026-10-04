@@ -110,9 +110,11 @@ class DockerRuntimeConfig(BaseModel):
     # 数据、随原型提案一起评审。L0 = 无执行装置——装配时不创建
     # DockerRuntime、不注册依赖装置的 shell/filesystem 工具；L1 = 文件层
     # ——archive-only，结构性零代码执行（装置容器从不启动、exec 单元从不
-    # 存在，只注册 5 个 filesystem 工具）；L2 = Docker 完整 userland
-    # （现状）。默认 L2 是行为不变先行，默认翻转待另行决策。
-    level: str = "L2"
+    # 存在，只注册 5 个 filesystem 工具）；L2 = Docker 完整 userland。
+    # 默认 L1（issue #31，2026-10-05 拍板翻转）：spec 未声明 :execution
+    # 的新成员拿最低够用的文件层（L0 太紧会逼显式声明），需要代码执行的
+    # 原型在 spec 显式声明 L2。
+    level: str = "L1"
     image: str = "ubuntu:22.04"
     working_dir: str = "/workspace"
     memory_limit: str = "512m"

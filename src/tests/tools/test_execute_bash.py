@@ -44,7 +44,7 @@ class _StaticRuntime:
 
 
 def _make_tool(runtime: _GatedRuntime | _StaticRuntime) -> ExecuteBashTool:
-    return ExecuteBashTool(DockerRuntimeConfig(), runtime)  # type: ignore[arg-type]
+    return ExecuteBashTool(DockerRuntimeConfig(level="L2"), runtime)  # type: ignore[arg-type]
 
 
 async def test_task_tables_are_isolated_between_instances():

@@ -25,7 +25,7 @@ from tlon.sandbox.docker_runtime import (
 def _make_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> DockerRuntime:
     monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
     return DockerRuntime(
-        DockerRuntimeConfig(), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+        DockerRuntimeConfig(level="L2"), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
     )
 
 

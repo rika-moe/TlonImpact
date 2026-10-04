@@ -34,7 +34,7 @@
 
 执行装置能力声明（宪法一，[design/execution-device.md](../design/execution-device.md)）：声明进基因组、随原型提案一起被评审。`:level` 取关键字 `:L0`（无执行装置）/`:L1`（文件层，结构性零代码执行）/`:L2`（Docker 完整 userland），语义同 agent.yaml 的 `docker.level`（见 [config-reference.md](./config-reference.md) 的 `docker` 节）。
 
-**投影语义**：`instantiate`（[src/tlon/agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py)）在实例化时把声明一次性投影进 agent.yaml 的 `docker.level`；此后运行时权威是 agent.yaml——成员事后自改 behavior.tlon 的 `:execution` 不会重新投影（这正是防自提权的语义）。spec 不带 `:execution` 段时不投影，agent.yaml 保持默认（当前 `"L2"`，行为不变先行）。
+**投影语义**：`instantiate`（[src/tlon/agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py)）在实例化时把声明一次性投影进 agent.yaml 的 `docker.level`；此后运行时权威是 agent.yaml——成员事后自改 behavior.tlon 的 `:execution` 不会重新投影（这正是防自提权的语义）。spec 不带 `:execution` 段时不投影，agent.yaml 保持默认（当前 `"L1"`，issue #31 于 2026-10-05 拍板翻转——未声明的新成员拿最低够用的文件层，需要代码执行的原型显式声明 `:L2`）。
 
 段本身是 total 的：必须是 map、`:level` 必填且取值合法，违反即加载拒绝；段内未知键记 warning 后忽略（前向兼容，与其他 map 同款容错）。staging 原型声明 `:L2` 是评审红旗——详情 payload 派生 `red_flags`，评审 prompt 含对应角度（见 [design/prototypes.md](../design/prototypes.md)）。
 
