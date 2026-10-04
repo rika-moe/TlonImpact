@@ -37,6 +37,24 @@ class TestWriteStagingValidation:
         # Nothing reached disk.
         assert not (p.prototypes_staging_dir() / "wild").exists()
 
+    def test_invalid_execution_level_rejected(self, tmp_path):
+        """The write gate inherits the spec grammar: an illegal
+        ``:execution/:level`` fails validation before anything hits disk."""
+        p = TlonPaths(home=tmp_path)
+        with pytest.raises(PrototypeError, match=":execution/:level"):
+            write_staging_prototype(
+                "overreaching",
+                """\
+{:version 1
+ :execution {:level :L9}
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+""",
+                tlon_paths=p,
+            )
+        assert not (p.prototypes_staging_dir() / "overreaching").exists()
+
 
 VALID_SPEC = """\
 {:version 1

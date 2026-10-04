@@ -144,6 +144,26 @@
   box-shadow: none;
 }
 
+/* Detail-panel review red flags (e.g. staging + L2 execution declaration);
+ * same warning tone as the staging badges. */
+.proto-redflags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.proto-redflag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  color: var(--neon-yellow);
+}
+
 .proto-card-name {
   font-family: var(--font-mono);
   font-size: 11px;

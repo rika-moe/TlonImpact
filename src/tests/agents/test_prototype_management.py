@@ -415,6 +415,40 @@ class TestInstantiateLessons:
         assert not (tmp_path / "agent1" / "config" / "LESSONS.md").exists()
 
 
+class TestInstantiateExecutionLevel:
+    """``instantiate`` projects the spec's ``:execution`` declaration once
+    into agent.yaml's ``docker.level`` (constitution 1,
+    docs/design/execution-device.md); without the section the config
+    default ("L2") applies unchanged."""
+
+    L1_BEHAVIOR = """\
+{:version 1
+ :execution {:level :L1}
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+
+    def test_execution_section_projects_docker_level(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", self.L1_BEHAVIOR, tlon_paths=p)
+
+        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
+
+        assert cfg.docker.level == "L1"
+        on_disk = yaml_load_file(p.agent_config_file("agent1"))
+        assert on_disk is not None
+        assert on_disk.docker.level == "L1"
+
+    def test_absent_section_keeps_default(self, tmp_path):
+        p = TlonPaths(home=tmp_path)
+        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+
+        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
+
+        assert cfg.docker.level == "L2"
+
+
 class TestDeletePrototype:
     def test_deletes_trusted_directory(self, tmp_path):
         p = TlonPaths(home=tmp_path)

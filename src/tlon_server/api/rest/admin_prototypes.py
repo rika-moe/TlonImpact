@@ -7,7 +7,7 @@ from typing import Any
 
 from aiohttp import web
 
-from tlon.api.prototypes import PrototypeError, PrototypeInfo
+from tlon.api.prototypes import PrototypeError, PrototypeInfo, parse_execution_level
 
 from .common import RestHandlerBase
 
@@ -35,6 +35,15 @@ def _prototype_payload(
     }
     if behavior is not None:
         payload["behavior"] = behavior
+        # Derived review data (constitution 1, docs/design/execution-device.md):
+        # the declared execution level, plus red flags for the human
+        # approver — a staging proposal declaring L2 (full Linux userland)
+        # is a red flag by itself.
+        level = parse_execution_level(behavior)
+        payload["execution_level"] = level
+        payload["red_flags"] = (
+            ["execution-level-l2"] if not info.trusted and level == "L2" else []
+        )
     if lessons is not None:
         payload["lessons"] = lessons
     if reviews is not None:
