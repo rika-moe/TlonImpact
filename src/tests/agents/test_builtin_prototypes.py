@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 import tlon
+from tlon.agents.behavior_template import analyze
 from tlon.agents.member_spec import MemberLoop, MemberSpec, validate_member_spec
 from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
 from tlon.agents.prototypes.instantiate import instantiate
@@ -38,6 +39,24 @@ BUILTIN_PARAMS: dict[str, dict] = {
     "product": {},
     "data-analyst": {},
     "scribe": {},
+}
+
+#: Execution-device level of every built-in prototype (issue #31, the
+#: settled table; docs/design/execution-device.md 「能力阶梯」). Least-
+#: privilege assignment: an L0 member keeps the mail/memory/task/prototype
+#: observation tools — only workspace file I/O and code execution are cut.
+EXPECTED_LEVELS: dict[str, str] = {
+    "archivist": "L0",
+    "deep-thinker": "L0",
+    "fast-responder": "L0",
+    "relay": "L0",
+    "scribe": "L0",
+    "support": "L0",
+    "pm": "L1",
+    "product": "L1",
+    "data-analyst": "L2",
+    "developer": "L2",
+    "ops": "L2",
 }
 
 
@@ -81,6 +100,11 @@ class TestBuiltinPrototypes:
         assert any(rule.on is None for rule in spec.rules)
         assert sum(rule.loop is not None for rule in spec.rules) <= 1
 
+        # The :execution declaration (genotype) is projected once into
+        # agent.yaml's docker.level by instantiate — the runtime authority.
+        assert spec.execution_level == EXPECTED_LEVELS[name]
+        assert cfg.docker.level == EXPECTED_LEVELS[name]
+
 
 #: The default cognitive loop (docs/design/runtime.md): a lightweight
 #: pre-submission review. critique fires only when the round's pending response would
@@ -120,10 +144,32 @@ class TestDefaultStageVector:
         assert [dumps(form) for form in loop.stages] == ["(think)", "(act)"]
 
 
+class TestExecutionLevels:
+    def test_level_table_covers_every_builtin(self) -> None:
+        assert set(EXPECTED_LEVELS) == set(BUILTIN_PARAMS)
+
+    @pytest.mark.parametrize(
+        ("name", "level"), EXPECTED_LEVELS.items(), ids=EXPECTED_LEVELS.keys()
+    )
+    def test_builtin_prototype_declares_its_level(self, name: str, level: str) -> None:
+        spec = _prototype_spec(name)
+        assert spec.execution_level == level
+
+
+def _prototype_spec(name: str) -> MemberSpec:
+    """The validated spec of a package-carried prototype.
+
+    Template prototypes (relay) carry ``${var}`` placeholders that are not
+    parseable EDN; the stand-in text substitutes type-appropriate
+    placeholders, exactly as instantiation's structural validation does.
+    """
+    path = Path(tlon.__file__).parent / "prototypes" / name / "behavior.tlon"
+    text = analyze(path.read_text(encoding="utf-8")).standin_text
+    return validate_member_spec(MemberSpec.from_edn(loads(text)))
+
+
 def _prototype_loop(name: str) -> MemberLoop:
     """The validated cognitive loop of a package-carried prototype."""
-    path = Path(tlon.__file__).parent / "prototypes" / name / "behavior.tlon"
-    spec = validate_member_spec(MemberSpec.from_edn(loads(path.read_text(encoding="utf-8"))))
-    loop = spec.rules[0].loop
+    loop = _prototype_spec(name).rules[0].loop
     assert loop is not None
     return loop

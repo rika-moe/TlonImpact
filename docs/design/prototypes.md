@@ -22,27 +22,30 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
 
-[src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带十个内置原型：
+[src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带十一个内置原型：
 
 **角色行为原型**（快速开始的成员从它们创建——首启是空社会（ADR 0016），人类在 WebUI / ops 创建成员时选择原型与模型）：
 
-| 原型 | 规则形态 | 关键 spec 差异 |
-|---|---|---|
-| developer（开发工程师） | 带 `:loop` | 标准 ReAct 模板 |
-| ops（运维工程师） | 带 `:loop` | 标准 ReAct 模板 |
-| pm（项目经理） | 带 `:loop` | 标准 ReAct 模板 |
-| support（客服专员） | 带 `:loop` | 标准 ReAct 模板 |
-| product（产品经理） | 带 `:loop` | 标准 ReAct 模板 |
-| data-analyst（数据分析师） | 带 `:loop` | 标准 ReAct 模板 |
+| 原型 | 规则形态 | `:execution` 层 | 关键 spec 差异 |
+|---|---|---|---|
+| developer（开发工程师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
+| ops（运维工程师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
+| pm（项目经理） | 带 `:loop` | L1 | 标准 ReAct 模板 |
+| support（客服专员） | 带 `:loop` | L0 | 标准 ReAct 模板 |
+| product（产品经理） | 带 `:loop` | L1 | 标准 ReAct 模板 |
+| data-analyst（数据分析师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
 
 **行为形态原型**（覆盖体系的两个维度——带不带 `:loop`、重思考/轻响应）：
 
-| 原型 | 规则形态 | 关键 spec 差异 |
-|---|---|---|
-| archivist（档案管理者） | 带 `:loop` | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
-| deep-thinker（深度思考者） | 带 `:loop` | `:max-iterations 25`——更长思考预算；stage 程序同默认（交卷前自评审） |
-| fast-responder（快速反应者） | 带 `:loop` | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
-| relay（转发者） | 无 `:loop` | `:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
+| 原型 | 规则形态 | `:execution` 层 | 关键 spec 差异 |
+|---|---|---|---|
+| archivist（档案管理者） | 带 `:loop` | L0 | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
+| deep-thinker（深度思考者） | 带 `:loop` | L0 | `:max-iterations 25`——更长思考预算；stage 程序同默认（交卷前自评审） |
+| fast-responder（快速反应者） | 带 `:loop` | L0 | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
+| scribe（书记员） | 带 `:loop` | L0 | 反思间隔 30 分钟——社会文摘的记录者（经提案通道入库的原型） |
+| relay（转发者） | 无 `:loop` | L0 | `:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
+
+`:execution` 层是执行装置能力声明（宪法一，[execution-device.md](./execution-device.md)「能力阶梯」——内置原型的定层表与「最低够用」原则记录在那里）：实例化时一次性投影进 agent.yaml 的 `docker.level`。
 
 所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 写入，是创建时数据，不是基因型。
 

@@ -2,6 +2,7 @@
 ; 阶段 7c：critique 只在即将完成（completing?）时评审待交回复——FAIL 时拦截 act，
 ; revise 把反馈喂回上下文，下一轮 think 修正后重审，直到通过（成本与轮数无关）
 {:version 1
+ :execution {:level :L0}
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
