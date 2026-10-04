@@ -40,6 +40,7 @@
 | [design/telegram.md](./design/telegram.md) | Telegram 客户端（MVP）：单用户白名单、回复式收发、SDK 接入 | ✅ |
 | [design/bridge-api.md](./design/bridge-api.md) | Bridge API：Python 机制底座 ↔ tlosure 策略层的桥——四类端口、版本纪律、四阶段迁移路线 | ✅ |
 | [design/society-policy.md](./design/society-policy.md) | 社会政策语境：policy.tlon、pull 型求值点、数据物化注入、fitness/trust 政策数据化 | ✅ |
+| [design/arena.md](./design/arena.md) | 演武场：staging 原型的动态行为评估——隔离宇宙架构、运行协议、语料、报告、成本界 | ✅ |
 | [reference/tlosure-reference.md](./reference/tlosure-reference.md) | tlosure 语言核心：EDN 语法、求值器、燃料计量、特殊形式、通用词汇 | ✅ |
 | [reference/dsl-reference.md](./reference/dsl-reference.md) | tlon 宿主侧：MemberSpec 全字段、领域 builtin、stage/section 清单 | ✅ |
 | [reference/config-reference.md](./reference/config-reference.md) | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
