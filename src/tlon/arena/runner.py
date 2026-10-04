@@ -4,8 +4,9 @@
 staging 原型拷入隔离宇宙 trusted 库 → ``instantiate`` 实例化临时成员 →
 config 资源收紧 → 语料落盘（先归档再跑，跑挂了语料也在）→
 ``build_runtime`` 起隔离 runtime → adopt 成员 → 逐封发 MAIL_NEW →
-有界等待 session 完成 → 证据归档回生产 staging → 拆除（shutdown →
-容器 GC → 删隔离家园）。
+有界等待 session 完成 → 证据归档回生产 staging（sessions + run.json
+含 fed 映射 + ledger + 邮箱）→ 生成报告（fail-soft，报告失败不毁证据）
+→ 拆除（shutdown → 容器 GC → 删隔离家园）。
 
 状态机：preparing → running → collecting → done | timed_out | failed(error)。
 run 记录只在进程内存（v1 不持久化状态，证据全在磁盘）；v1 全局同时只跑
@@ -18,7 +19,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -37,6 +38,7 @@ from tlon.arena.corpus import (
     build_corpus,
     write_corpus_file,
 )
+from tlon.arena.report import ArenaReport, generate_report
 from tlon.base.config import LLMConfig, yaml_load_file, yaml_save
 from tlon.base.events.event import Event, EventType
 from tlon.base.llm_client import LLMClient
@@ -96,6 +98,8 @@ class ArenaRun:
     fed_count: int = 0
     completed_count: int = 0
     error: str | None = None
+    fed: list[dict[str, Any]] = field(default_factory=list)
+    report_error: str | None = None
 
     @property
     def terminal(self) -> bool:
@@ -129,6 +133,8 @@ class ArenaRun:
             "completed_count": self.completed_count,
             "timed_out": self.timed_out,
             "error": self.error,
+            "fed": self.fed,
+            "report_error": self.report_error,
         }
 
 
@@ -166,6 +172,7 @@ RuntimeFactory = Callable[[TlonPaths], Awaitable[IsolatedRuntime]]
 JournalFactory = Callable[[str, TlonPaths], SessionJournalLike]
 CorpusLLMFactory = Callable[[str], CorpusLLM]
 ContainerGC = Callable[[str], Awaitable[list[str]]]
+ReportGenerator = Callable[[Path], ArenaReport]
 
 
 def _utc_now() -> str:
@@ -227,6 +234,7 @@ class ArenaRunner:
         journal_factory: JournalFactory = SessionJournal,
         corpus_llm_factory: CorpusLLMFactory = _default_corpus_llm,
         container_gc: ContainerGC = docker_container_gc,
+        report_generator: ReportGenerator = generate_report,
         clock: Callable[[], float] = time.monotonic,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
     ) -> None:
@@ -240,6 +248,8 @@ class ArenaRunner:
             journal_factory: Session completion probe (production: SessionJournal)
             corpus_llm_factory: Builds the corpus-generation LLM from a model name
             container_gc: Force-removes the run's containers by name (fail-soft)
+            report_generator: Builds ARENA.md / report.json from the archive
+                (fail-soft — a report failure never skips teardown)
             clock: Monotonic clock for the time box (tests inject a fake)
             poll_seconds: Session completion poll interval
         """
@@ -249,6 +259,7 @@ class ArenaRunner:
         self._journal_factory = journal_factory
         self._corpus_llm_factory = corpus_llm_factory
         self._container_gc = container_gc
+        self._report_generator = report_generator
         self._clock = clock
         self._poll_seconds = poll_seconds
         self._runs: dict[str, ArenaRun] = {}
@@ -426,6 +437,14 @@ class ArenaRunner:
             # 归档先于拆除：证据落盘后再 shutdown / GC / 删家园
             if archive_dir is not None and arena_paths is not None:
                 self._archive(run, arena_paths, archive_dir, agent_id)
+                # 报告 fail-soft：报告失败只记 error + run.json 加
+                # report_error，绝不毁掉已归档的证据或跳过拆除
+                try:
+                    self._report_generator(archive_dir)
+                except Exception as e:
+                    run.report_error = f"{type(e).__name__}: {e}"
+                    logger.error("arena_report_failed", run_id=run.run_id, error=run.report_error)
+                    self._rewrite_run_json(run, archive_dir)
             if runtime is not None:
                 try:
                     await runtime.shutdown()
@@ -471,13 +490,26 @@ class ArenaRunner:
         agent_id: str,
         corpus: list[CorpusMail],
     ) -> None:
-        """Publish one MAIL_NEW per corpus mail on the isolated event bus."""
+        """Publish one MAIL_NEW per corpus mail on the isolated event bus.
+
+        Each fed mail's ``{mail_id, from, subject, origin}`` is recorded on
+        the run (run.json ``fed`` 字段)——报告经 ``session_id_for`` 精确对应
+        session 文件，不靠猜。
+        """
         for item in corpus:
             mail = Mail.create(
                 from_address=item.from_address,
                 to=[address_for_member(agent_id)],
                 subject=item.subject,
                 content=item.body,
+            )
+            run.fed.append(
+                {
+                    "mail_id": mail.id,
+                    "from": item.from_address,
+                    "subject": item.subject,
+                    "origin": item.origin,
+                }
             )
             await runtime.event_bus.publish(
                 Event(type=EventType.MAIL_NEW, payload=mail, source=f"arena-{run.run_id}")
@@ -504,18 +536,35 @@ class ArenaRunner:
         archive_dir: Path,
         agent_id: str,
     ) -> None:
-        """Copy session journals + write run.json into the staging archive.
+        """Copy session journals + ledger + mailbox, write run.json.
 
-        corpus.json was already written before the run started. Archiving is
-        best-effort: a failure here must not skip teardown.
+        corpus.json was already written before the run started. The ledger
+        (ADR 0014) and the member mailbox (sent/inbox) are the report's
+        other raw materials. Archiving is best-effort: 缺失不报错，a
+        failure here must not skip teardown.
         """
         try:
             sessions_src = arena_paths.agent_sessions_dir(agent_id)
             if sessions_src.is_dir():
                 shutil.copytree(sessions_src, archive_dir / "sessions", dirs_exist_ok=True)
+            ledger_src = arena_paths.agent_ledger_file(agent_id)
+            if ledger_src.is_file():
+                shutil.copy2(ledger_src, archive_dir / "ledger.jsonl")
+            mail_dir = arena_paths.agent_mail_dir(agent_id)
+            for name in ("sent.jsonl", "inbox.jsonl"):
+                mail_src = mail_dir / name
+                if mail_src.is_file():
+                    shutil.copy2(mail_src, archive_dir / name)
+            self._rewrite_run_json(run, archive_dir)
+        except Exception as e:
+            logger.error("arena_archive_failed", run_id=run.run_id, error=str(e))
+
+    def _rewrite_run_json(self, run: ArenaRun, archive_dir: Path) -> None:
+        """(Re)write run.json — also the report_error landing path (fail-soft)."""
+        try:
             (archive_dir / "run.json").write_text(
                 json.dumps(run.to_dict(), ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
         except Exception as e:
-            logger.error("arena_archive_failed", run_id=run.run_id, error=str(e))
+            logger.warning("arena_run_json_write_failed", run_id=run.run_id, error=str(e))

@@ -162,6 +162,8 @@ class _Harness:
         journal_total: int = 8,
         gc: Any = None,
         llm_content: str = _TYPICAL_JSON,
+        journal_factory: Any = None,
+        report_generator: Any = None,
     ) -> None:
         self.paths = TlonPaths(home=tmp_path)
         self.runtime = _FakeRuntime()
@@ -177,20 +179,25 @@ class _Harness:
                 self.config_at_build = yaml_load_file(agent_yaml[0])
             return cast(IsolatedRuntime, self.runtime)
 
-        def journal_factory(agent_id: str, tlon_paths: TlonPaths) -> _FakeJournal:
+        def default_journal_factory(agent_id: str, tlon_paths: TlonPaths) -> _FakeJournal:
             return _FakeJournal(
                 agent_id, tlon_paths, per_poll=journal_per_poll, total=journal_total
             )
+
+        runner_kwargs: dict[str, Any] = {}
+        if report_generator is not None:
+            runner_kwargs["report_generator"] = report_generator
 
         self.runner = ArenaRunner(
             tlon_paths=self.paths,
             runtime_factory=runtime_factory,
             settings=settings or _settings(),
-            journal_factory=journal_factory,
+            journal_factory=journal_factory or default_journal_factory,
             corpus_llm_factory=lambda model: cast(Any, _FakeCorpusLLM(llm_content)),
             container_gc=self.gc,
             clock=self.clock,
             poll_seconds=0.01,
+            **runner_kwargs,
         )
 
 
@@ -469,3 +476,101 @@ async def test_docker_container_gc_daemon_unreachable_fail_soft(
 
     monkeypatch.setattr("tlon.arena.runner.create_docker_client", boom)
     assert await docker_container_gc("arena-r1") == []
+
+
+# ── 报告接线（issue #29 切片 2/3）：归档原料补全 + fed 映射 + fail-soft 报告 ──
+
+
+async def test_run_archives_report_and_fed_mapping(tmp_path: Path) -> None:
+    h = _Harness(tmp_path, settings=_settings())
+    _write_staging_proto(h.paths)
+
+    run = await h.runner.start_run("relay", model="deepseek/test-chat")
+    assert await _wait_terminal(run) is RunStatus.DONE
+
+    archive = _archive_dir(h, run)
+    record = json.loads((archive / "run.json").read_text(encoding="utf-8"))
+
+    # fed 映射：每封语料一条 {mail_id, from, subject, origin}，与 MAIL_NEW 一一对应
+    fed = record["fed"]
+    assert len(fed) == 8
+    assert all(set(entry) == {"mail_id", "from", "subject", "origin"} for entry in fed)
+    mail_events = [e for e in h.runtime.event_bus.events if e.type is EventType.MAIL_NEW]
+    event_mail_ids = [cast(Mail, e.payload).id for e in mail_events]
+    assert [entry["mail_id"] for entry in fed] == event_mail_ids
+    assert [entry["origin"] for entry in fed[:5]] == ["adversarial"] * 5
+    assert record["report_error"] is None
+
+    # 报告自动生成：report.json + ARENA.md 双落点（归档目录 + staging 原型根）
+    payload = json.loads((archive / "report.json").read_text(encoding="utf-8"))
+    assert payload["run_id"] == run.run_id
+    assert payload["summary"]["fed"] == 8
+    assert len(payload["sessions"]) == 8
+    assert (archive / "ARENA.md").exists()
+    root_md = h.paths.prototypes_staging_dir() / run.prototype_name / "ARENA.md"
+    assert root_md.read_text(encoding="utf-8") == (archive / "ARENA.md").read_text(
+        encoding="utf-8"
+    )
+
+
+async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:
+    """journal_factory 是打进隔离家园的注入点：补写 ledger + 邮箱，验证归档三样新原料。"""
+
+    def journal_factory(agent_id: str, tlon_paths: TlonPaths) -> _FakeJournal:
+        ledger = tlon_paths.agent_ledger_file(agent_id)
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(
+            json.dumps({"prompt_tokens": 3, "completion_tokens": 4}) + "\n", encoding="utf-8"
+        )
+        mail_dir = tlon_paths.agent_mail_dir(agent_id)
+        mail_dir.mkdir(parents=True, exist_ok=True)
+        (mail_dir / "sent.jsonl").write_text(
+            json.dumps({"id": "r1", "to": ["x@example.com"], "content": "回信"}) + "\n",
+            encoding="utf-8",
+        )
+        (mail_dir / "inbox.jsonl").write_text(
+            json.dumps({"id": "m1", "from_address": "x@example.com", "content": "来信"}) + "\n",
+            encoding="utf-8",
+        )
+        return _FakeJournal(agent_id, tlon_paths, per_poll=3, total=8)
+
+    h = _Harness(tmp_path, settings=_settings(), journal_factory=journal_factory)
+    _write_staging_proto(h.paths)
+
+    run = await h.runner.start_run("relay", model="m/x")
+    assert await _wait_terminal(run) is RunStatus.DONE
+
+    archive = _archive_dir(h, run)
+    assert (archive / "ledger.jsonl").exists()
+    assert (archive / "sent.jsonl").exists()
+    assert (archive / "inbox.jsonl").exists()
+    # 报告汇总到了账本 token
+    payload = json.loads((archive / "report.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["total_tokens"] == 7
+
+
+async def test_report_failure_is_fail_soft(tmp_path: Path) -> None:
+    """报告生成器抛异常：run 仍正常终态 + report_error 落 run.json + 拆除照走。"""
+
+    def boom(archive_dir: Path) -> Any:
+        raise RuntimeError("report exploded")
+
+    h = _Harness(tmp_path, settings=_settings(), report_generator=boom)
+    _write_staging_proto(h.paths)
+
+    run = await h.runner.start_run("relay", model="m/x")
+    assert await _wait_terminal(run) is RunStatus.DONE
+
+    # 拆除照走：shutdown + GC + 隔离家园删除
+    assert h.runtime.shutdown_called
+    assert h.gc.calls == [f"arena-{run.run_id}"]
+    assert not (tmp_path / "arena" / run.run_id).exists()
+
+    # 已归档的证据完好；report_error 落 run.json；无报告产物
+    archive = _archive_dir(h, run)
+    assert (archive / "corpus.json").exists()
+    assert (archive / "sessions").exists()
+    assert not (archive / "report.json").exists()
+    record = json.loads((archive / "run.json").read_text(encoding="utf-8"))
+    assert "report exploded" in record["report_error"]
+    assert record["status"] == "done"
