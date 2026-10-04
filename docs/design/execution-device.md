@@ -68,6 +68,16 @@ run(program, inputs, budget) -> outcome
 
 L1 的定位在 2026-09-26 拍板重定义：最初规划里 L1 是 WASM/WASI 受限运行时（「运行 agent 编写的程序，无 syscall 自由」），该路线经讨论**否决**（issue #27 随之关闭）——它的前提是「加固前的 L2 有洞」，而 #22（ro rootfs + 写侧 symlink 封死）/#23（默认断网）/#25（无菌文件柜 + 一次性执行单元）落地后边际收益消失；且 WASI 里没有「shell」，agent 的 bash 工作流与之结构性不匹配（coreutils 有 WASI 移植但工作流摩擦真实存在）。重定义后的 L1 不再发明新运行时，而是把既有文件柜的使用面收窄成一层能力：装置还在（文件 I/O 需要容器），但代码执行通道从结构上不存在——bash 工具不注册是装配闸，`run()` 在非 L2 直接 raise 是装置层兜底。gVisor/Firecracker 是「需要更强隔离时」的升级位，不是现在的需求——别为了哲学换轮子。
 
+**内置原型定层**（issue #31 拍板，behavior.tlon 顶层 `:execution {:level :LX}`）：按「最低够用」原则逐个声明——
+
+| 层 | 原型 |
+|---|---|
+| L0 | relay, fast-responder, scribe, deep-thinker, support, archivist |
+| L1 | pm, product |
+| L2 | data-analyst, developer, ops |
+
+L0 成员仍保留邮件/记忆/任务/原型观测工具，砍掉的只是 workspace 文件 I/O 与代码执行——读写信件、整理记忆本就不需要一台机器。真正声明要真实机器的只有数据/开发/运维三个工程角色（L2），协调型角色（pm/product）落在文件层（L1）。
+
 ## 现状评估：DockerRuntime 的优点与欠账
 
 **做对了的**（详见 [architecture.md](../architecture.md)「存储布局」容器视角）：
