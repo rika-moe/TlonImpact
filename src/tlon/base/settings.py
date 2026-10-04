@@ -63,6 +63,10 @@ class Settings:
         # nothing is enforced.
         self.container_memory_budget = os.getenv("TLON_CONTAINER_MEMORY_BUDGET", "")  # 社会级容器内存总预算；空 = 不设，仅 warning 不强制
 
+        # 演武场（docs/design/arena.md 「成本界」）：run 请求未带 model 时的缺省；
+        # 空 = 未配置，run 必须显式指定模型（显式优于静默错默认）
+        self.arena_model = os.getenv("TLON_ARENA_MODEL", "")  # 演武场 run 的缺省模型（provider/model）；空 = run 必须显式指定 model
+
         # Admin API auth (ADR 0013): shared Bearer token guarding /admin/*;
         # empty = auth disabled (default, localhost trust boundary)
         self.admin_api_token = os.getenv("TLON_ADMIN_TOKEN", "")  # 配置后 /admin/* 需 Authorization: Bearer；空 = 关闭

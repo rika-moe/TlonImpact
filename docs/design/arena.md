@@ -73,7 +73,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 - **全局时间盒**：默认 10 分钟；超时即拆除，报告标 `timed_out` 并保留已采集证据（部分轨迹也是数据）
 - **token**：隔离宇宙里 arena 成员有自己的账本（ADR 0014，`ledger.jsonl`），报告汇总总 token——**先观测、后熔断**：硬性 token 上限留待真实消耗数据回来再定，不做预防性闸门
 - **模型**：run 请求参数 `model` 可选；缺省取环境变量 `TLON_ARENA_MODEL`；两者皆无则拒绝运行——显式优于静默错默认。建议配便宜模型：行为形态评估看的是工具使用与动作选择，不需要旗舰推理
-- **并发**：v1 全局同时只跑一个 run（排队而非并行），避免容器与 token 双重放大
+- **并发**：v1 全局同时只跑一个 run——活跃 run 期间新请求显式拒绝（调用方稍后重试），避免容器与 token 双重放大
 
 ## 信任边界（不做什么）
 
@@ -84,7 +84,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 
 ## 施工切片
 
-1. **runner 核心**：`tlon.arena` 域（隔离家园/拷原型/语料/有界运行/拆除与容器 GC）+ `tlon.api` facade
+1. **runner 核心**：`tlon.arena` 域（隔离家园/拷原型/语料/有界运行/拆除与容器 GC）+ `tlon.api` facade ✅（2026-10-05，issue #29 切片 1/3）：`tlon.arena.runner.ArenaRunner` 状态机 preparing → running → collecting → done/timed_out/failed；模型解析 run 参数 → `TLON_ARENA_MODEL` → 拒绝；语料（内置 5 封对抗套件 + LLM 典型场景，fail-soft 记 note）先落盘后喂信；证据归档在 staging 原型目录内 `arena/<run-id>/`（corpus.json / sessions/ / run.json），归档后拆除（shutdown → 容器 GC → 删隔离家园）；进程内单并发；`tlon.api.arena.ArenaFacade` 薄透传，start_run 后后台 task 推进
 2. **报告生成器**：journal → ARENA.md / report.json + 红旗派生
 3. **admin 端点 + 呈现**：触发（异步）/状态/结果端点，staging detail payload 携带报告，WebUI 评审界面呈现
 
