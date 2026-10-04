@@ -126,7 +126,13 @@ export type PrototypeSummary = {
 };
 
 /** Prototype detail: list metadata + full behavior.tlon source. */
-export type PrototypeDetail = PrototypeSummary & { behavior: string };
+export type PrototypeDetail = PrototypeSummary & {
+  behavior: string;
+  /** Derived from the spec's :execution section; null when undeclared or unparseable. */
+  execution_level: string | null;
+  /** Server-derived review red flags (e.g. staging + L2 declaration). */
+  red_flags: string[];
+};
 
 /** Handwritten prototype creation body (POST /admin/prototypes). */
 export type PrototypeCreate = {

@@ -83,6 +83,11 @@ class ReflectSpec:
 #: 用户的终止回信措辞。引擎内置文案（``loop_driver`` 的常量）是未声明键的兜底。
 REPLY_KINDS = frozenset({"iteration_limit", "error", "timeout"})
 
+#: ``:execution/:level`` 允许的层级——执行装置能力阶梯（宪法一，
+#: docs/design/execution-device.md）：声明进基因组、随原型提案一起评审；
+#: 实例化时一次性投影进 agent.yaml 的 ``docker.level``，运行时权威仍是后者。
+EXECUTION_LEVELS = frozenset({"L0", "L1", "L2"})
+
 
 class MemberSpecValidationError(ValueError):
     """A member spec failed structural (EDN-level) validation."""
@@ -229,11 +234,20 @@ class MemberSpec:
     spec carries no model declaration; a top-level ``:llm`` key is a load
     error. The member's model comes from ``instantiate``'s required
     ``model`` argument / spawn inheritance, landing in agent.yaml.
+
+    ``execution_level`` is the optional ``:execution`` section — the
+    execution-device capability declaration (constitution 1,
+    docs/design/execution-device.md): one of ``"L0"`` / ``"L1"`` /
+    ``"L2"``, ``None`` when the section is absent. It is genotype, reviewed
+    with the prototype proposal; ``instantiate`` projects it once into
+    agent.yaml's ``docker.level`` — the runtime authority stays agent.yaml,
+    so a member editing its own behavior file cannot escalate itself.
     """
 
     version: int
     rules: tuple[MemberRule, ...]
     source_hash: str | None = None
+    execution_level: str | None = None
 
     # ── Factories ──
 
@@ -242,6 +256,11 @@ class MemberSpec:
         return {
             "version": self.version,
             "source_hash": self.source_hash,
+            "execution": (
+                {"level": self.execution_level}
+                if self.execution_level is not None
+                else None
+            ),
             "rules": [rule.to_dict() for rule in self.rules],
         }
 
@@ -282,6 +301,7 @@ class MemberSpec:
         return cls(
             version=MEMBER_SPEC_VERSION,
             source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
+            execution_level=_execution_from(data.get("execution")),
             rules=rules,
         )
 
@@ -310,6 +330,10 @@ class MemberSpec:
         }
         if self.source_hash is not None:
             data[Keyword("source-hash")] = self.source_hash
+        if self.execution_level is not None:
+            data[Keyword("execution")] = {
+                Keyword("level"): Keyword(self.execution_level)
+            }
         return data
 
 
@@ -642,7 +666,7 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
-    "top": frozenset({"version", "source_hash", "rules"}),
+    "top": frozenset({"version", "source_hash", "execution", "rules"}),
     "rule": frozenset({"name", "on", "when", "loop", "actions", "fuel"}),
     "loop": frozenset(
         {
@@ -658,7 +682,33 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     ),
     "context": frozenset({"sections"}),
     "reflect": frozenset({"enabled", "interval_minutes"}),
+    "execution": frozenset({"level"}),
 }
+
+
+def _execution_from(value: Any) -> str | None:
+    """Optional top-level ``:execution`` section — the execution-device
+    capability declaration (constitution 1, docs/design/execution-device.md).
+
+    Total semantics: when the section is present it must be a map carrying
+    ``:level``, one of :data:`EXECUTION_LEVELS`. Unknown keys inside the
+    section are warn-only (forward compatibility, same as every other map).
+    ``None`` = section absent — the config default applies at instantiation.
+    """
+    if value is None:
+        return None
+    if isinstance(value, Form) or not isinstance(value, dict):
+        raise MemberSpecValidationError(
+            f":execution must be a map, got {_type_name(value)}: {value!r}"
+        )
+    _warn_unknown_keys(value, "execution")
+    level = _require(value, "level", ":execution/:level")
+    if not isinstance(level, str) or str(level) not in EXECUTION_LEVELS:
+        raise MemberSpecValidationError(
+            f":execution/:level must be one of :L0/:L1/:L2, "
+            f"got {_type_name(level)}: {level!r}"
+        )
+    return str(level)
 
 
 def _rule_from(item: Any, rule_name: str) -> MemberRule:

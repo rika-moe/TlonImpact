@@ -9,7 +9,7 @@ from tlon.agents.behavior_template import (
 )
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
 from tlon.agents.prototypes.info import BEHAVIOR_FILE, LESSONS_FILE, _is_prototype_dir
-from tlon.base.config import AgentConfig, LLMConfig, yaml_exists, yaml_save
+from tlon.base.config import AgentConfig, DockerRuntimeConfig, LLMConfig, yaml_exists, yaml_save
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
@@ -129,11 +129,21 @@ def instantiate(
     # ``model`` argument is the only source, landing in agent.yaml as
     # ``llm.model_name``.
     try:
-        MemberSpec.from_edn(loads(behavior_text))
+        spec = MemberSpec.from_edn(loads(behavior_text))
     except (EDNParseError, MemberSpecValidationError) as e:
         raise PrototypeError(
             f"prototype '{prototype_name}' behavior failed to parse: {e}"
         ) from e
+
+    # Execution capability (constitution 1, docs/design/execution-device.md):
+    # the spec's ``:execution`` declaration is genotype, reviewed with the
+    # proposal; it is projected once here into agent.yaml's ``docker.level``.
+    # The runtime authority stays agent.yaml — a member editing its own
+    # behavior file afterwards does not re-project (no self-escalation).
+    # Without the section the config default ("L2") applies unchanged.
+    docker = DockerRuntimeConfig()
+    if spec.execution_level is not None:
+        docker = DockerRuntimeConfig(level=spec.execution_level)
 
     # agent.yaml via the same save path as the wizard
     agent = AgentConfig(
@@ -141,6 +151,7 @@ def instantiate(
         name=agent_name,
         prototype=prototype_name,
         llm=LLMConfig(model_name=model.strip()),
+        docker=docker,
     )
     yaml_save(agent, p.tlon_home())
     logger.info(

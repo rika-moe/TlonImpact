@@ -17,11 +17,26 @@
 |---|---|---|---|
 | `:version` | int | 是 | 只支持 `1`（`MEMBER_SPEC_VERSION`），其他值加载即拒绝 |
 | `:rules` | 向量 | 是 | 规则列表，**不得为空**；每项是一个 map |
+| `:execution` | map | 否 | 执行装置能力声明（见 1.1 节）；缺失时实例化沿用 agent.yaml 默认 |
 | `:parameters` | map | 否 | 模板参数声明（见第 7 节），运行时加载器忽略 |
 | `:llm` | — | — | **已从语法移除**（ADR 0016：模型是部署策略不是基因型）——残留该键加载即报错；成员的模型在 agent.yaml 的 `llm.model_name` 配置（创建时经 WebUI/admin API 选择，spawn 继承父成员） |
 | 其他键 | — | — | 未知键记 warning 后忽略（前向兼容） |
 
 **total 语义**（`MemberSpec.from_dict` docstring）：缺必填字段是错误，不给默认值；类型错误同样拒绝。加载路径 `load_member_spec()`（[src/tlon/agents/loader.py](../../src/tlon/agents/loader.py)）：文件不存在抛 `FileNotFoundError`，EDN 非法抛 `EDNParseError`，校验失败抛 `MemberSpecValidationError`——任何失败都使该成员拒绝启动（注册表隔离失败，不影响其他成员）。
+
+### 1.1 `:execution` 段
+
+```clojure
+{:version 1
+ :execution {:level :L1}
+ :rules [...]}
+```
+
+执行装置能力声明（宪法一，[design/execution-device.md](../design/execution-device.md)）：声明进基因组、随原型提案一起被评审。`:level` 取关键字 `:L0`（无执行装置）/`:L1`（文件层，结构性零代码执行）/`:L2`（Docker 完整 userland），语义同 agent.yaml 的 `docker.level`（见 [config-reference.md](./config-reference.md) 的 `docker` 节）。
+
+**投影语义**：`instantiate`（[src/tlon/agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py)）在实例化时把声明一次性投影进 agent.yaml 的 `docker.level`；此后运行时权威是 agent.yaml——成员事后自改 behavior.tlon 的 `:execution` 不会重新投影（这正是防自提权的语义）。spec 不带 `:execution` 段时不投影，agent.yaml 保持默认（当前 `"L2"`，行为不变先行）。
+
+段本身是 total 的：必须是 map、`:level` 必填且取值合法，违反即加载拒绝；段内未知键记 warning 后忽略（前向兼容，与其他 map 同款容错）。staging 原型声明 `:L2` 是评审红旗——详情 payload 派生 `red_flags`，评审 prompt 含对应角度（见 [design/prototypes.md](../design/prototypes.md)）。
 
 ## 2. 规则四要素
 
@@ -433,6 +448,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | 顶层不是 map、`:rules` 缺失/为空/不是向量 | `MemberSpecValidationError`，拒绝启动（`MemberSpec.from_dict`） |
 | `:version` 不是 1 | 同上（仅支持 `MEMBER_SPEC_VERSION = 1`） |
 | 缺必填字段（`:name`、`:on`、`:loop` 的全部子键等） | 同上——total 语义，无默认值 |
+| `:execution` 不是 map、缺 `:level`、`:level` 非 `:L0`/`:L1`/`:L2` | 同上（`_execution_from`） |
 | 类型错误（int 位置写 bool/string 等） | 同上（bool 永不被接受为 int） |
 | 未知 section / stage 名，section 重复，`mail-history` 参数不是非负 int | 同上（`_validate_sections` / `_validate_stages`） |
 | stage opts 键非 `:if`（`plan` 可加 `:max-steps`） | 同上（`_validate_stage_opts`） |
@@ -440,7 +456,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | `:when` / `:until` / `:if` 引用未注册 builtin 或作用域外符号 | 同上（`validate_member_spec` 统一静态校验） |
 | 一个成员声明多条带 `:loop` 的规则 | 同上（D6.7：至多一条认知规则） |
 | `:fuel` 非正数或超过 10000 | 同上（`MAX_FUEL` 硬顶） |
-| 未知顶层/规则/loop 键 | **不报错**，记 warning 忽略（前向兼容） |
+| 未知顶层/规则/loop/`:execution` 段内键 | **不报错**，记 warning 忽略（前向兼容） |
 | `:when` 求值失败 / fuel 耗尽 | 运行时按"不命中"处理，邮件标记已读 |
 | 动作求值失败（如确定规则引用 `result`、普通成员用 `start-all`） | 运行时跳过该规则/动作，记日志，不影响其他成员 |
 | 认知规则订阅非 `:mail-delivered` 事件 | 运行时记 warning 并跳过（加载不拦） |

@@ -72,7 +72,7 @@
 | `network_mode` | `str` | "none" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
 
-`level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——装配时不创建 DockerRuntime，也不注册依赖装置的 shell/filesystem 工具（executeBashCommand/checkBashTask/readFile/writeFile/editFile/listDirectory/searchFiles）；`"L1"` = 文件层——archive-only，创建文件柜容器并注册 5 个 filesystem 工具，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"`（默认）= Docker 完整 userland（现状）。声明即数据、随原型提案一起评审。
+`level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——装配时不创建 DockerRuntime，也不注册依赖装置的 shell/filesystem 工具（executeBashCommand/checkBashTask/readFile/writeFile/editFile/listDirectory/searchFiles）；`"L1"` = 文件层——archive-only，创建文件柜容器并注册 5 个 filesystem 工具，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"`（默认）= Docker 完整 userland（现状）。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
 
 ### `tool`
 

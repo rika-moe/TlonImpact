@@ -10,6 +10,8 @@ CRUD、staging 列表/编辑、approve/reject 审批）。``tlon_paths`` 在构�
 
 from typing import Any
 
+from tlon.agents.behavior_template import BehaviorTemplateError, analyze
+from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
 from tlon.agents.prototypes.catalog import get_prototype_detail, list_prototypes
 from tlon.agents.prototypes.info import PrototypeInfo
 from tlon.agents.prototypes.lineage import get_prototype_lineage
@@ -25,8 +27,26 @@ from tlon.agents.prototypes.staging import (
 )
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
+from tlosure.edn import EDNParseError, loads
 
-__all__ = ["PrototypeError", "PrototypeInfo", "PrototypesFacade"]
+__all__ = ["PrototypeError", "PrototypeInfo", "PrototypesFacade", "parse_execution_level"]
+
+
+def parse_execution_level(behavior: str) -> str | None:
+    """Derive the ``:execution`` level declared in a behavior text.
+
+    Templates are analyzed with type stand-ins first (same as the write-side
+    validation chain), so a parameterized prototype's declaration still
+    resolves. ``None`` when the spec declares no ``:execution`` section (the
+    agent.yaml default then applies) or when the text fails to parse — a
+    broken spec must never 500 the detail endpoint.
+    """
+    try:
+        template = analyze(behavior)
+        spec = MemberSpec.from_edn(loads(template.standin_text))
+    except (BehaviorTemplateError, EDNParseError, MemberSpecValidationError):
+        return None
+    return spec.execution_level
 
 
 class PrototypesFacade:

@@ -307,6 +307,15 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
                     <p className="prototypes-empty">NO PARAMETERS</p>
                   )}
                   <span className="tech-label">BEHAVIOR.TLON</span>
+                  {detail.red_flags.length > 0 ? (
+                    <div className="proto-redflags">
+                      {detail.red_flags.map((flag) => (
+                        <span className="proto-redflag" key={flag}>
+                          RED FLAG // {flag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   <pre className="terminal proto-behavior">{detail.behavior}</pre>
                 </>
               ) : (

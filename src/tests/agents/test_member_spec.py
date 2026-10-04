@@ -142,6 +142,56 @@ class TestLlmKeyRejected:
         assert spec.rules[0].name == "relay"
 
 
+class TestExecutionSection:
+    """Top-level ``:execution`` — the execution-device capability declaration
+    (constitution 1, docs/design/execution-device.md): genotype, reviewed
+    with the proposal, projected once into agent.yaml at instantiation."""
+
+    RULES = """\
+ :rules [{:name "relay"
+          :on :mail-delivered
+          :actions [(forward {:to ["x@tlon.internal"]})]}]}
+"""
+
+    @pytest.mark.parametrize("level", ["L0", "L1", "L2"])
+    def test_levels_parse(self, level: str):
+        spec = _parse(f"{{:version 1\n :execution {{:level :{level}}}\n" + self.RULES)
+        assert spec.execution_level == level
+
+    def test_absent_section_is_none(self):
+        assert _parse(SCRIPT_EDN).execution_level is None
+
+    def test_edn_roundtrip_preserves_section(self):
+        spec = _parse("{:version 1\n :execution {:level :L1}\n" + self.RULES)
+        again = _parse(spec.to_edn())
+        assert again == spec
+        assert again.execution_level == "L1"
+
+    def test_dict_roundtrip_preserves_section(self):
+        spec = _parse("{:version 1\n :execution {:level :L0}\n" + self.RULES)
+        assert spec.to_dict()["execution"] == {"level": "L0"}
+        assert MemberSpec.from_dict(spec.to_dict()) == spec
+
+    def test_invalid_level_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match=":execution/:level"):
+            _parse("{:version 1\n :execution {:level :L3}\n" + self.RULES)
+
+    def test_non_map_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match=":execution must be a map"):
+            _parse("{:version 1\n :execution :L1\n" + self.RULES)
+
+    def test_missing_level_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match=":execution/:level"):
+            _parse("{:version 1\n :execution {}\n" + self.RULES)
+
+    def test_unknown_key_inside_section_tolerated(self):
+        """Warn-only forward compatibility holds inside :execution too."""
+        spec = _parse(
+            "{:version 1\n :execution {:level :L2 :future-key 42}\n" + self.RULES
+        )
+        assert spec.execution_level == "L2"
+
+
 class TestSingleValidator:
     """The loader's gate: unknown actions and bad shape are rejected."""
 

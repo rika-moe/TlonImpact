@@ -137,6 +137,8 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 三道闸之外是**同行评审记录**（ 第二阶段，异质评审）：任何成员可用 `reviewPrototype`（[tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（成员的模型在创建时经 WebUI/admin API 选定，随 spawn 沿血脉继承，ADR 0016——不同血脉各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
 
+评审材料还包括执行能力声明的派生红旗（宪法一，[execution-device.md](./execution-device.md)）：spec 顶层 `:execution` 段声明的层级随提案一起评审——staging 提案声明 `:L2`（Docker 完整 Linux userland）本身就是红旗，详情 payload 派生 `execution_level` + `red_flags`（`execution-level-l2`），WebUI PROTOTYPES 视图渲染为警示徽章；`reviewPrototype` 的评审 prompt 角度清单也含对应一条（L0/L1 足以满足却声明 L2 是红旗）。
+
 信任门与预算检查的顺序也是设计：`spawn_member` 里 `untrusted_prototype` 的拒绝排在一切预算检查**之前**，紧随其后是同一偿付门槛的 spawn 侧（`insolvent_lineage`：失去偿付能力的血脉连 spawn 资格也没有）。不可信原型连预算都消耗不到——否则 LLM 可以用不存在的权限反复试探配额边界，把拒绝回执当成预算状态的探针。
 
 ## 谱系：原型谱系作为一等数据（）

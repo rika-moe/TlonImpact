@@ -316,6 +316,69 @@ class TestAdminPrototypeManagement:
         assert proto["trusted"] is False
         assert proto["author"] == "adam"
 
+    _L2_BEHAVIOR = (
+        "{:version 1 :execution {:level :L2}"
+        " :rules [{:name \"r\" :on :boot :actions []}]}\n"
+    )
+    _L1_BEHAVIOR = (
+        "{:version 1 :execution {:level :L1}"
+        " :rules [{:name \"r\" :on :boot :actions []}]}\n"
+    )
+
+    async def test_staging_l2_detail_raises_red_flag(self, tmp_path: Path):
+        """Constitution 1: a staging proposal declaring L2 (full Linux
+        userland) is a review red flag by itself — derived into the detail
+        payload for the human approver."""
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._L2_BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["execution_level"] == "L2"
+        assert proto["red_flags"] == ["execution-level-l2"]
+
+    async def test_trusted_l2_detail_has_no_red_flag(self, tmp_path: Path):
+        handler, _p = self._handler(tmp_path)
+        await handler.handle_create_prototype(
+            StubRequest(body={"name": "hand", "behavior": self._L2_BEHAVIOR})
+        )
+
+        resp = await handler.handle_get_prototype(StubRequest(name="hand"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["execution_level"] == "L2"
+        assert proto["red_flags"] == []
+
+    async def test_staging_l1_detail_has_no_red_flag(self, tmp_path: Path):
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._L1_BEHAVIOR, author_id="adam", tlon_paths=p)
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["execution_level"] == "L1"
+        assert proto["red_flags"] == []
+
+    async def test_unparseable_behavior_detail_does_not_500(self, tmp_path: Path):
+        """A broken spec on disk (e.g. hand-edited behind the write gate)
+        degrades the derived fields, never the endpoint."""
+        handler, p = self._handler(tmp_path)
+        write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
+        (p.prototypes_staging_dir() / "staged" / "behavior.tlon").write_text(
+            "{:version 1 :rules [", encoding="utf-8"
+        )
+
+        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+
+        assert resp.status == 200
+        proto = json.loads(resp.text)["prototype"]
+        assert proto["execution_level"] is None
+        assert proto["red_flags"] == []
+
     async def test_update_metadata_and_behavior(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         await handler.handle_create_prototype(
