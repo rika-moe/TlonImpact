@@ -16,14 +16,15 @@ into the evaluator. Five policy lines live in the spec:
    never executes iteration, iteration is a builtin.
 2. drain — the registry's AGENT_IDLE fact event is turned into an
    AGENT_STOP_REQUEST{reason="drain"}.
-3. welcome (issue , birth socialization) — AGENT_SPAWNED triggers a
+3. welcome (birth socialization, ADR 0003) — AGENT_SPAWNED triggers a
    welcome mail to the newborn member: a greeting naming the new member,
    the social roster (``member-roster``, dynamically expanded by the
    host) and the static communication conventions. The recipient address
    is assembled in the spec with ``str`` — emit recipients are mail
    addresses (``Mail.create`` rejects bare ids). Adam is v1's mentor:
    mentoring is spec-described behavior, not a dedicated mechanism.
-4. guardian-inbox (issue ) — MAIL_DELIVERED addressed to Adam gets a
+4. guardian-inbox (docs/design/mail.md 「守护者信箱」) — MAIL_DELIVERED
+   addressed to Adam gets a
    fixed acknowledgement reply: the guardian's mailbox is a message box,
    and the enforcer of the guardian rules is currently the human
    (staging proposals are approved by humans on the admin surface;
@@ -74,9 +75,10 @@ from tlosure.edn import loads
 
 #: Adam's policy, as data. Parsed once per assembly by
 #: :func:`make_adam`. Five rules: boot (start-all), drain (idle → stop),
-#: welcome (issue  — a birth-socialization mail to every spawned
+#: welcome (ADR 0003 — a birth-socialization mail to every spawned
 #: member; the roster is host-expanded, the conventions are static text),
-#: guardian-inbox (issue  — a fixed acknowledgement reply to mail
+#: guardian-inbox (docs/design/mail.md 「守护者信箱」 — a fixed
+#: acknowledgement reply to mail
 #: addressed to Adam; postmaster senders are excluded so a bounce never
 #: gets an answer) and noisy-circuit-breaker (AGENT_NOISY → stop the
 #: flooding member; sleep, never delete).
@@ -125,7 +127,7 @@ def make_adam(
         agent_registry: The registry to query (read-only interfaces) and
             to address with start/stop requests
         tlon_paths: Path resolver. Adam's mailbox lives at
-            ``~/.tlon/adam/mail/`` (issue  guardian inbox) —
+            ``~/.tlon/adam/mail/`` (docs/design/mail.md 「守护者信箱」) —
             read-marking and the boot unread replay come from it.
     """
     builtins = make_member_builtins(RegistryQueries(agent_registry))

@@ -1,4 +1,4 @@
-"""Reflection delete_claim operations (issue , ADR 0017).
+"""Reflection delete_claim operations (ADR 0017).
 
 Pins the fix: a reflection ``delete_claim`` carrying a ``claim_id`` must
 delete that claim by ID — exact, or the unique ID prefix the reflection
@@ -153,7 +153,8 @@ class _BlockingLLM:
 
 
 class TestLifecycle:
-    """The reflection task is tracked, not free-floating (issue ).
+    """The reflection task is tracked, not free-floating
+    (docs/design/runtime.md).
 
     An in-flight reflection reports itself as running (the member
     runtime's idle accounting reads this), and ``shutdown`` cancels it

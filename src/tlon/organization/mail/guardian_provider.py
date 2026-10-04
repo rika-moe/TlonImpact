@@ -1,4 +1,5 @@
-"""Guardian-aware agent info provider (issue  — Adam can receive mail).
+"""Guardian-aware agent info provider (see docs/design/mail.md — Adam can
+receive mail).
 
 Adam is a built-in member with no config file (``~/.tlon/adam/config/
 agent.yaml`` does not exist), so the plain ConfigService cannot resolve

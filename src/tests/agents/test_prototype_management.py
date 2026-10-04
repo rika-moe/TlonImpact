@@ -118,7 +118,8 @@ class TestGetPrototypeDetail:
 
 
 class TestStagingReviewFile:
-    """``REVIEW.md`` peer-review records (issue ): advisory, append-only,
+    """``REVIEW.md`` peer-review records (docs/design/prototypes.md):
+    advisory, append-only,
     carried into the trusted library by approval's whole-directory move."""
 
     def test_detail_without_reviews_returns_none(self, tmp_path):
@@ -211,7 +212,8 @@ class TestUpdatePrototype:
 
 
 class TestApprovePreservesLineage:
-    """approve / update must keep the lineage fields (issue )."""
+    """approve / update must keep the lineage fields
+    (docs/design/prototypes.md)."""
 
     def test_approve_keeps_parent_generation_note(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -285,7 +287,7 @@ class TestApprovePreservesLineage:
 
 class TestLessonsFile:
     """Prototype ``LESSONS.md`` — retirement lessons packaged with the
-    prototype (issue )."""
+    prototype (docs/design/prototypes.md)."""
 
     def test_staging_write_persists_lessons(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -395,7 +397,7 @@ class TestInstantiateModel:
 
 class TestInstantiateLessons:
     """``instantiate`` copies the prototype's LESSONS.md to the member's
-    config dir (issue )."""
+    config dir (docs/design/prototypes.md)."""
 
     def test_copies_lessons_next_to_behavior(self, tmp_path):
         p = TlonPaths(home=tmp_path)

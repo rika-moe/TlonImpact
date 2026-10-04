@@ -4,7 +4,7 @@ Pins the three-layer scan (project > agent > global), the frontmatter
 validation rules, name-conflict shadowing, the mtime signature used for
 caching, and the ``[可用技能]`` index format. Also pins the DSL side
 (``(skills)`` is a valid no-argument section), the built-in skill
-seeding (``seed_skills``, issue ), and the repo-carried
+seeding (``seed_skills``), and the repo-carried
 ``explain-decision`` skill's frontmatter/body contract.
 """
 
@@ -230,7 +230,7 @@ def test_skills_section_rejects_arguments() -> None:
         validate_member_spec(spec)
 
 
-# ===== 内置 skill 播种与 pin（）=====
+# ===== 内置 skill 播种与 pin =====
 
 
 def _builtin_skill_file() -> Path:

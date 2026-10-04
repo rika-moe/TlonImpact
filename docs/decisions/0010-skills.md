@@ -41,4 +41,4 @@ Tlon 已有"常驻人格"层（SOUL.md / IDENTITY.md / RULES.md 经 `(persona)` 
 
 ## 演进补注
 
-- **2026-09（issue ）**：内置 skill 随包发布（`src/tlon/skills/`，如 explain-decision），启动时 `seed_skills` 幂等播种到全局层——三层目录之外多了一条「出厂自带」供给通道，优先级仍按全局层规则。详见 docs/design/skills.md。
+- **2026-09**：内置 skill 随包发布（`src/tlon/skills/`，如 explain-decision），启动时 `seed_skills` 幂等播种到全局层——三层目录之外多了一条「出厂自带」供给通道，优先级仍按全局层规则。详见 docs/design/skills.md。

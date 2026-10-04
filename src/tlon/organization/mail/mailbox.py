@@ -191,7 +191,7 @@ class Mailbox:
 
         Backed by the incremental scan cache (see :meth:`_read_inbox`),
         so repeat scans only parse the appended tail. Used by the
-        mail-stats provider (issue ).
+        mail-stats provider.
 
         Returns:
             Every parseable mail in inbox.jsonl, oldest first
@@ -202,7 +202,7 @@ class Mailbox:
         """List all mails in the sent file, in file order.
 
         Full scan (no incremental cache — sent volumes are small). Used by
-        the public-health monitor's orphan-mail scan (issue ).
+        the public-health monitor's orphan-mail scan.
 
         Returns:
             Every parseable mail in sent.jsonl, oldest first

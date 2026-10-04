@@ -5,7 +5,7 @@
 
 ## 背景
 
-Tlon REST 面零鉴权（issue ）：包括 `POST/DELETE /admin/config/agents`（创建/删除成员）在内的全部 admin 端点对任何能到达端口的人开放（决策时还有 `PUT /admin/settings/env` 改写 `{TLON_HOME}/.env`，该端点已随 ADR 0016 删除）。默认绑定 `127.0.0.1` 时信任边界是本机，可接受；但一旦绑定非回环地址（或经端口转发暴露），任何人可读写全部数据并触发热加载。
+Tlon REST 面零鉴权：包括 `POST/DELETE /admin/config/agents`（创建/删除成员）在内的全部 admin 端点对任何能到达端口的人开放（决策时还有 `PUT /admin/settings/env` 改写 `{TLON_HOME}/.env`，该端点已随 ADR 0016 删除）。默认绑定 `127.0.0.1` 时信任边界是本机，可接受；但一旦绑定非回环地址（或经端口转发暴露），任何人可读写全部数据并触发热加载。
 
 非回环绑定的启动警告已在前置 PR 落地（banner + `server_exposed_non_loopback` 日志），剩下的实质防线是认证本身。
 
@@ -25,7 +25,7 @@ Tlon REST 面零鉴权（issue ）：包括 `POST/DELETE /admin/config/agents`�
 - **多用户 / RBAC**：Tlon 成员模型没有「用户权限」概念，预防性抽象（项目规范 2）。
 - **mTLS / IP 白名单**：运维成本高，超出当前需求。
 
-共享 token 是「能满足当前需求的最简单实现」：一个环境变量、一个 middleware，把 issue  最危险的面（admin 写操作 + `.env` 读写）守住。
+共享 token 是「能满足当前需求的最简单实现」：一个环境变量、一个 middleware，把最危险的面（admin 写操作 + `.env` 读写）守住。
 
 ## 后果
 

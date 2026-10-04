@@ -1,4 +1,4 @@
-"""Conflict judgment + invalidation without deletion (ADR 0017 stage 3, ).
+"""Conflict judgment + invalidation without deletion (ADR 0017 stage 3).
 
 Pins the claim lifecycle: both write paths (batch distillation and
 ``remember_fact``) judge new claims against similar active old claims;

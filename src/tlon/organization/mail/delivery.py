@@ -13,12 +13,13 @@ The MailDelivery component subscribes to MAIL_NEW and, for each mail:
 4. publishes one MAIL_DELIVERED event per recipient, carrying the Mail
    and the recipient's member id; a mail carrying an ``endorsing``
    reference additionally publishes one MAIL_ENDORSED (the reputation
-   signal, issue ).
+   signal, see docs/design/mail.md).
 
 Recipients that resolve to nobody are collected and answered with a
 bounce mail from ``postmaster@tlon.internal`` to the sender — the error
 lands in the sender's inbox, so an LLM can correct the address itself.
-Two postman conventions keep bounces from looping (issue ): mail
+Two postman conventions keep bounces from looping (see
+docs/design/mail.md): mail
 addressed *to* postmaster is silently dropped (never answered), and a
 mail *from* postmaster is never bounced.
 
@@ -159,7 +160,7 @@ class MailDelivery(Component, Device):
             for address in self._expand_recipients(mail):
                 # Postman convention: mail to postmaster is silently
                 # dropped, never bounced — a bounce of a bounce must be
-                # impossible (issue ).
+                # impossible (see docs/design/mail.md).
                 if address == POSTMASTER_ADDRESS:
                     logger.info("mail_to_postmaster_dropped", mail_id=mail.id)
                     continue
@@ -180,9 +181,10 @@ class MailDelivery(Component, Device):
                 unknown=unknown,
             )
 
-            # Endorsement signal (issue ): a mail carrying an
-            # `endorsing` reference is a public reputation fact; publish
-            # it once per mail, independent of the recipient fan-out.
+            # Endorsement signal (see docs/design/mail.md): a mail
+            # carrying an `endorsing` reference is a public reputation
+            # fact; publish it once per mail, independent of the
+            # recipient fan-out.
             if mail.endorsing and not self._seen_before(f"{mail.id}|endorsed"):
                 await self._publish_endorsed(mail, sender_id, ctx)
 
@@ -238,8 +240,9 @@ class MailDelivery(Component, Device):
     def _resolve_address(self, address: str) -> str | None:
         """Resolve a mail address to a member id, or None if unknown.
 
-        Delegates to the shared RecipientResolver (issue ): agents
-        (registered, sleeping included) win over humans on a colliding
+        Delegates to the shared RecipientResolver (see
+        docs/design/mail.md): agents (registered, sleeping included) win
+        over humans on a colliding
         local part; a human resolves when they are online or have a
         persistent mailbox — mail to a known-but-offline human waits in
         their inbox (docs/design/mail.md 人类侧: 离线时邮件留在邮箱).

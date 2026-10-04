@@ -15,7 +15,7 @@
 ```
 ~/.tlon/prototypes/{prototype_name}/
 ├── prototype.edn          # 元数据：:name / :display-name / :description / :trusted / :author
-│                          #   + 谱系（）：:parent / :generation / :proposal-note
+│                          #   + 谱系：:parent / :generation / :proposal-note
 └── behavior.tlon          # 成员的全部行为规约（total spec，唯一权威）
 ```
 

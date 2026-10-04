@@ -112,8 +112,9 @@ def instantiate(
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / BEHAVIOR_FILE).write_text(behavior_text, encoding="utf-8")
 
-    # Lessons inheritance (issue ): a prototype's LESSONS.md — lessons
-    # distilled from a retired member — is copied next to the behavior file
+    # Lessons inheritance (see docs/design/prototypes.md): a prototype's
+    # LESSONS.md — lessons distilled from a retired member — is copied
+    # next to the behavior file
     # (a persona-file neighbor); the DSL ``(lessons)`` section injects it.
     # No LESSONS.md in the prototype → no file on the member either.
     prototype_lessons = proto_dir / LESSONS_FILE

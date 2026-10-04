@@ -41,7 +41,7 @@
 
 ### 无工作者模型
 
-`MemberRuntime` 的规则派发全部发生在 EventBus 的派发上下文里（总线已经隔离了处理器异常），认知工作只是入队，由调度器的主循环 task 消费。这带来两个性质：一是成员不在派发上下文里跑长任务，派发慢的代价由有界队列的背压吸收而不是拖垮总线；二是关闭语义收敛——`shutdown` 依次停掉成员的后台 task 与认知循环（重扫、调度器主循环、进行中的反思，全部 cancel + await），再退订、关工具，不留游离协程。运行时里长住的 task 只有少数几类显式声明的后台工作：每成员的调度器主循环、邮件重扫（issue ）、反思。
+`MemberRuntime` 的规则派发全部发生在 EventBus 的派发上下文里（总线已经隔离了处理器异常），认知工作只是入队，由调度器的主循环 task 消费。这带来两个性质：一是成员不在派发上下文里跑长任务，派发慢的代价由有界队列的背压吸收而不是拖垮总线；二是关闭语义收敛——`shutdown` 依次停掉成员的后台 task 与认知循环（重扫、调度器主循环、进行中的反思，全部 cancel + await），再退订、关工具，不留游离协程。运行时里长住的 task 只有少数几类显式声明的后台工作：每成员的调度器主循环、邮件重扫、反思。
 
 ### 运行时不做什么
 
@@ -92,7 +92,7 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、入队）
 
 ### 上下文压力管理
 
-context 是模型可见的视图，可以在不动日志真相的前提下被压缩（ADR 0008，[agents/context_pressure.py](../../src/tlon/agents/context_pressure.py) 的 `ContextPressure`）。`LoopDriver.step_session` 在每个 step 的 stage 向量运行前做 token 估算（CJK 1 token/字、其余 4 字符/token 的字符启发式），超过阈值（`max(context_window - 40_000, 0.8w)`，`LLMConfig.context_window` 可配）时按梯度减压：先把锚点之后、保留窗口（最近 20 条，不拆 tool_call/tool 配对）之外的 tool 结果原位换成占位符（prune，零 LLM 成本）；仍超才把中段交给 LLM 摘要成一条 `[前文摘要]` 消息（running summary 滚动折叠，摘要失败回退占位）。锚点（`session.anchor_len`）是初始构建块减去末尾的 knowledge 消息（ADR 0017 阶段 4 修订：knowledge 固定为 context 最后一条、在 anchor 之外，可被正常压缩——它曾冻结进 anchor，记忆膨胀时中段为空、压缩无路可退，）；`session/start` 事件显式携带 `anchor_len`，重放优先读它、旧日志回退 context 全长。每次压缩先落 `context/compact` 事件（携带压缩后全量）再改内存，重放时整体替换、与运行态逐字节一致。紧急路径：`llm_client` 把 context-length 4xx 识别为 `ContextWindowExceededError` 不重试直接抛，driver 捕获后强制完整梯度压缩（窗口收紧到 10 条）并重试该 stage 一次。
+context 是模型可见的视图，可以在不动日志真相的前提下被压缩（ADR 0008，[agents/context_pressure.py](../../src/tlon/agents/context_pressure.py) 的 `ContextPressure`）。`LoopDriver.step_session` 在每个 step 的 stage 向量运行前做 token 估算（CJK 1 token/字、其余 4 字符/token 的字符启发式），超过阈值（`max(context_window - 40_000, 0.8w)`，`LLMConfig.context_window` 可配）时按梯度减压：先把锚点之后、保留窗口（最近 20 条，不拆 tool_call/tool 配对）之外的 tool 结果原位换成占位符（prune，零 LLM 成本）；仍超才把中段交给 LLM 摘要成一条 `[前文摘要]` 消息（running summary 滚动折叠，摘要失败回退占位）。锚点（`session.anchor_len`）是初始构建块减去末尾的 knowledge 消息（ADR 0017 阶段 4 修订：knowledge 固定为 context 最后一条、在 anchor 之外，可被正常压缩——它曾冻结进 anchor，记忆膨胀时中段为空、压缩无路可退）；`session/start` 事件显式携带 `anchor_len`，重放优先读它、旧日志回退 context 全长。每次压缩先落 `context/compact` 事件（携带压缩后全量）再改内存，重放时整体替换、与运行态逐字节一致。紧急路径：`llm_client` 把 context-length 4xx 识别为 `ContextWindowExceededError` 不重试直接抛，driver 捕获后强制完整梯度压缩（窗口收紧到 10 条）并重试该 stage 一次。
 
 ### LoopDriver：循环的所有权在引擎
 
@@ -116,7 +116,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 - `revise`：把评审反馈写回 context，并清除已消费的 verdict；
 - `act`：工具执行。它按 asyncio 的"分发后收割"模型拆成两半——`act_stage_step` 声明分发列表，`act_stage_collect` 声明收割结果的含义；两半都是纯变换，并发与收割本身是引擎的。
 
-默认循环是 think + act，外加一道**交卷前自查**（issue ）：`(critique {:if (completing?)})` 只在本轮响应会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence`，判定与 act 的完成/冲突规则一致）时评审待交草稿；FAIL 则 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截本轮派发、`(revise {:if (critique-failed?)})` 把反馈喂回上下文让下一轮 think 修正后重审。评审成本与轮数无关（每次交卷尝试一次全量评审），不随长 session 平方放大；plan 与更密的 critique 排布仍是 spec 可选插入的自省积木。把自省拆成独立 stage 而不是做进 think 的理由：自省是**程序级的选择**——一个成员要不要规划、要不要自我评审、评审几次，应该写在 spec 里可审计、可改写，而不是埋在 prompt 工程里。拆成积木后，"带自我评审的 ReAct"与"朴素 ReAct"是同一个引擎跑两份不同的 stage 向量，引擎零改动。
+默认循环是 think + act，外加一道**交卷前自查**：`(critique {:if (completing?)})` 只在本轮响应会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence`，判定与 act 的完成/冲突规则一致）时评审待交草稿；FAIL 则 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截本轮派发、`(revise {:if (critique-failed?)})` 把反馈喂回上下文让下一轮 think 修正后重审。评审成本与轮数无关（每次交卷尝试一次全量评审），不随长 session 平方放大；plan 与更密的 critique 排布仍是 spec 可选插入的自省积木。把自省拆成独立 stage 而不是做进 think 的理由：自省是**程序级的选择**——一个成员要不要规划、要不要自我评审、评审几次，应该写在 spec 里可审计、可改写，而不是埋在 prompt 工程里。拆成积木后，"带自我评审的 ReAct"与"朴素 ReAct"是同一个引擎跑两份不同的 stage 向量，引擎零改动。
 
 ### 认知规则的唯一性
 
@@ -183,7 +183,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `AgentRegistry` 是纯机制组件（策略在 Adam，论证见 ADR 0003）。它持有的机制：
 
-- **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；统一装配（ADR 0006）——每个成员都经 `_assemble_cognitive` 得到全套能力对象（LLM 客户端、双层记忆、任务管理器、Docker 运行时、全套工具），是否装配认知引擎（调度器/循环）由 spec 是否有 `:loop` 规则派生，加载按需（懒装配：对象便宜，调用才贵）。例外（issue #26）：声明 `docker.level: L0` 的成员无执行装置——不创建 Docker 运行时、不注册 shell/filesystem 装置工具；`docker.level: L1` 的成员（issue #40，文件层）创建运行时、注册 filesystem 五个工具，但 shell 两个不注册、`run()` 由装置层直接拒绝（结构性零代码执行）。装配期还派生一次信任等级（，信任阶梯——判定是社会政策数据：`agents/policy.py` 的 `full-member?` hook（ADR 0022），可在 `~/.tlon/policy.tlon` 调整，fail-open 按正式放行）：见习成员（spawn 出生且未获 endorse）不注册四个生殖/演化工具（`spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior`），且其撰写发出的邮件抄送 mentor（= spawner；转发不抄送）——升级在下次唤醒重新装配时生效。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
+- **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；统一装配（ADR 0006）——每个成员都经 `_assemble_cognitive` 得到全套能力对象（LLM 客户端、双层记忆、任务管理器、Docker 运行时、全套工具），是否装配认知引擎（调度器/循环）由 spec 是否有 `:loop` 规则派生，加载按需（懒装配：对象便宜，调用才贵）。例外（issue #26）：声明 `docker.level: L0` 的成员无执行装置——不创建 Docker 运行时、不注册 shell/filesystem 装置工具；`docker.level: L1` 的成员（issue #40，文件层）创建运行时、注册 filesystem 五个工具，但 shell 两个不注册、`run()` 由装置层直接拒绝（结构性零代码执行）。装配期还派生一次信任等级（信任阶梯——判定是社会政策数据：`agents/policy.py` 的 `full-member?` hook（ADR 0022），可在 `~/.tlon/policy.tlon` 调整，fail-open 按正式放行）：见习成员（spawn 出生且未获 endorse）不注册四个生殖/演化工具（`spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior`），且其撰写发出的邮件抄送 mentor（= spawner；转发不抄送）——升级在下次唤醒重新装配时生效。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
 - **幂等的生命周期执行**。注册表订阅 `AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 并幂等执行：`_waking` 集合在派发上下文里同步去重（背靠背请求折叠为一次装配）；每个 persona 一把 wake lock 串行化启动与排空；装配有 60 秒超时兜底——挂起的启动不能永远占住锁。
 - **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。空闲计时含 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，成员不会在审计中途被判空闲。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。统一成员模型（ADR 0006）：排空一律是睡眠——home 目录永不删除，只发 `AGENT_SLEEPING`。
 - **spawn 预算**。三道防失控闸门：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本落盘 `~/.tlon/shared/spawn-quota.json`（原子替换），跨重启存活——会话本身经 journal 回放存活，纯内存配额会让重启变成配额重置器。每会话配额按血脉适应度倾斜（，ADR 0014）：每次 spawn 现算目标血脉的效率（社会政策语境，ADR 0022——`agents/policy.py` 的 `tilt` 政策 hook，默认政策：血脉价值 = Σ_成员 (1 + endorsements_received)，效率 = 价值 / max(total_tokens, 1)；公式可在 `~/.tlon/policy.tlon` 调整），tilt = clamp(效率 / 全体均值, 0.5, 2.0)，有效配额 = `ceil(quota × tilt)`——高效血脉配额放宽、低效收紧；冷启动与一切计算故障回落中性 1.0（与现状无行为差异）。见习配额（，信任阶梯）：spawner 自身是见习成员（spawn 出生且未获 endorse，按 **spawner_id** 判定——注意与 tilt 按目标血脉判定的维度差异）时，有效配额再收紧为 `min(effective, 1)`，fail-open 同 tilt。全局激活上限不按血脉拆分，避免误伤暂时低效血脉的现役成员。spawn 前还有信任闸：未受信的（LLM 撰写、待审批）原型不能实例化。预算与信任闸是纯机制；"谁可以造新成员、一次造几个"是策略（可数据化，见 `design/unified-member-model.md`）。

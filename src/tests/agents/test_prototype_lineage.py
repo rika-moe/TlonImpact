@@ -1,4 +1,5 @@
-"""Prototype lineage (issue ): get_prototype_lineage walks the :parent
+"""Prototype lineage (docs/design/prototypes.md): get_prototype_lineage
+walks the :parent
 chain, derives per-generation unified diffs of behavior.tlon, and marks
 broken links (deleted/renamed parent) or cycles. Also covers the
 ``getPrototypeLineage`` tool."""
@@ -159,7 +160,7 @@ class TestGetPrototypeLineageTool:
 
 class TestWritePrototypeToolLineage:
     """writePrototype passes parent / proposal_note through to the staging
-    writer (issue )."""
+    writer (docs/design/prototypes.md)."""
 
     async def test_parent_and_note_passed_through(self, tmp_path):
         p = TlonPaths(home=tmp_path)

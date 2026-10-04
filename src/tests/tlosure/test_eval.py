@@ -337,7 +337,7 @@ class TestErrors:
 
 
 class TestBillingModel:
-    """The precise fuel contract (issue ): one step per evaluated
+    """The precise fuel contract (ADR 0001): one step per evaluated
     node, untaken branches free, the hard cap enforced at the API
     boundary, exhaustion carrying the budget, one Evaluator = one
     shared counter."""

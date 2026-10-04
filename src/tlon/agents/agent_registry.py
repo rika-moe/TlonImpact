@@ -16,11 +16,12 @@ policy/mechanism split):
   spawn depth, per-session quota — ``agents/spawn.py`` ``SpawnManager``);
   spawned members connect to the registry directly (= fork) and are
   never discarded — they sleep
-- Social public-health facts (issue ): the monitor
+- Social public-health facts: the monitor
   (``agents/health.py`` ``PublicHealthMonitor``) detects noisy senders
   (AGENT_NOISY) and scans for orphan mail (MAIL_ORPHAN_SCAN) — facts
   only, no enforcement
-- Cron scheduling (issue , "tick is a mail"): the scheduler
+- Cron scheduling ("tick is a mail", docs/design/mail.md 「周期任务：tick
+  即邮件」): the scheduler
   (``agents/cron.py`` ``CronScheduler``) periodically mails members a
   task from postmaster — built-in entries (the daily digest) plus
   entries declared in ``~/.tlon/cron.yaml``; the mail itself carries the
@@ -124,7 +125,7 @@ class RegistryQueries(ScriptHostQueries):
         return self._registry.boot_candidates()
 
     def member_roster(self) -> str:
-        """The social roster (issue ): one line per registered member.
+        """The social roster (ADR 0003): one line per registered member.
 
         Format: ``名字（id） — prototype：描述``; the prototype segment is
         omitted for manual members, the description when the prototype is
@@ -212,10 +213,10 @@ class AgentRegistry(Component):
             session_spawn_quota: spawn budget — max spawns per
                 (spawner, session) pair
             metrics_service: Metrics pillar injected into each member's
-                observability tools (read-only snapshot, ); None
+                observability tools (read-only snapshot); None
                 skips the getMetrics tool
             trace_store: Trace pillar injected into each member's
-                observability tools (read-only, ); None skips the
+                observability tools (read-only); None skips the
                 listTraces/getTrace tools
         """
         super().__init__(name="AgentRegistry")
@@ -229,8 +230,9 @@ class AgentRegistry(Component):
         # per-session quota ledger is persisted (sessions survive a
         # restart via journal replay, so the anti-runaway cap must too).
         # The quota is tilted per spawn by the target bloodline's fitness
-        # (), gated by its solvency (), and capped at 1 when the
-        # spawner itself is on probation (, trust ladder); all
+        # (ADR 0014), gated by its solvency (ADR 0014), and capped at 1
+        # when the spawner itself is on probation (trust ladder,
+        # docs/design/unified-member-model.md); all
         # providers recompute from raw files on every spawn.
         self._spawn = SpawnManager(
             self,
@@ -242,14 +244,15 @@ class AgentRegistry(Component):
             probation=policy_probation_provider(self._paths),
         )
         self._reaper = IdleReaper(self)
-        # Social public-health monitor (): noise detection + orphan-mail
+        # Social public-health monitor: noise detection + orphan-mail
         # scan. Facts only — no enforcement. Same ownership as the reaper.
         self._health = PublicHealthMonitor(
             event_bus=event_bus,
             agent_info_provider=agent_info_provider,
             tlon_paths=tlon_paths,
         )
-        # Cron scheduler (): "tick is a mail" — periodic task mails
+        # Cron scheduler (docs/design/mail.md 「周期任务：tick 即邮件」):
+        # "tick is a mail" — periodic task mails
         # from postmaster (built-in digest + declared cron.yaml entries).
         # Same ownership.
         self._cron = CronScheduler(
@@ -423,7 +426,7 @@ class AgentRegistry(Component):
         # Public-health monitor (noise subscription + orphan scan task)
         await self._health.initialize()
 
-        # Cron scheduler (periodic task mails, )
+        # Cron scheduler (periodic task mails)
         await self._cron.initialize()
 
         self._initialized = True
@@ -447,7 +450,7 @@ class AgentRegistry(Component):
         # Stop the public-health monitor (scan task + MAIL_NEW subscription)
         await self._health.shutdown()
 
-        # Stop the cron scheduler ()
+        # Stop the cron scheduler
         await self._cron.shutdown()
 
         # Pending stops die with the process (in-memory one-shot intents)

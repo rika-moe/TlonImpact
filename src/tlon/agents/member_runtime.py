@@ -34,7 +34,7 @@ periodic sweep, without waiting for a reboot (a boot member with
 ``:on :boot`` never gets a second boot scan). Own mail (sent by this
 member) is never processed.
 
-Boot-scan throttling (issue ): the unread rescue scan merges one
+Boot-scan throttling (docs/design/runtime.md): the unread rescue scan merges one
 thread into one session (the thread's latest unread mail is the
 representative; earlier siblings are marked read as covered — the
 session's mail-history context renders the whole thread), and overflow
@@ -101,7 +101,7 @@ logger = get_logger(__name__)
 Carrier = tuple[str | None, str | None, str | None]
 
 #: Poll interval of the deferred rescan that trickles boot-scan overflow
-#: into the scheduler as sessions drain (issue ).
+#: into the scheduler as sessions drain (docs/design/runtime.md).
 _RESCAN_POLL_SECONDS = 5.0
 
 
@@ -138,10 +138,12 @@ class CognitiveCapabilities:
     tlon_paths: TlonPaths
     per_tool_timeout: float = 30.0
     registry: "AgentRegistry | None" = None
-    # Trust ladder (): a probationary member's mentor address (its
-    # spawner), cc'd on composed outbound mail; None for full members.
+    # Trust ladder (docs/design/unified-member-model.md): a probationary
+    # member's mentor address (its spawner), cc'd on composed outbound
+    # mail; None for full members.
     mentor_cc: str | None = None
-    # The member's execution device (issue ): assembly owns it and
+    # The member's execution device (docs/design/execution-device.md):
+    # assembly owns it and
     # shutdown closes it — a wake re-assembly must not leak the previous
     # client's connection pool. Typed as the ExecutionDevice interface
     # (issue #21): assembly injects the AuditedExecutionDevice-wrapped
@@ -184,7 +186,8 @@ class MemberRuntime(Member):
                 included (built by the caller via make_member_builtins)
             mailbox: The member's mailbox for unread rescue scans and
                 read-marking (None only for bare test instances; Adam
-                carries ``~/.tlon/adam/mail/`` since issue )
+                carries ``~/.tlon/adam/mail/`` — docs/design/mail.md
+                「守护者信箱」)
             cognitive: The member's capability set (LLM/memory/tools).
                 The registry assembles it for every member; None is only
                 used by built-in instances like Adam. The cognitive
@@ -203,8 +206,9 @@ class MemberRuntime(Member):
         self._registry = (
             registry if registry is not None else (cognitive.registry if cognitive else None)
         )
-        # Trust ladder (): the probation mentor's address, cc'd on
-        # composed outbound mail (_send_mail; the cognitive path's
+        # Trust ladder (docs/design/unified-member-model.md): the
+        # probation mentor's address, cc'd on composed outbound mail
+        # (_send_mail; the cognitive path's
         # EffectExecutor gets it in _assemble_cognitive). Forwarding is
         # not cc'd — passing along an existing mail is noise to the mentor.
         self._mentor_cc = cognitive.mentor_cc if cognitive is not None else None
@@ -225,7 +229,8 @@ class MemberRuntime(Member):
         self._context_builder: ContextBuilder | None = None
         self._logger = logger.bind(agent_id=member_id)
         self._state: MemberState | None = None
-        # Boot-scan throttle state (issue ): mails a scan enqueued
+        # Boot-scan throttle state (docs/design/runtime.md): mails a scan
+        # enqueued
         # whose sessions have not yet marked them read, whether the last
         # scan left overflow unread (bounded queue full), and the one
         # rescan task that both trickles overflow in as the scheduler
@@ -340,7 +345,8 @@ class MemberRuntime(Member):
                 assert self._scheduler is not None
                 self._scheduler.start()
                 self._state = MemberState.ACTIVE
-                # One rescan task per member (issue ): it trickles
+                # One rescan task per member (docs/design/runtime.md): it
+                # trickles
                 # boot-scan overflow in as the scheduler drains and, on a
                 # longer cadence, re-scans unread mail so live mail the
                 # full queue dropped is picked up while the member runs —
@@ -380,7 +386,8 @@ class MemberRuntime(Member):
                 # Tools first (a background bash task may still be using
                 # the runtime), then the Docker client — its connection
                 # pool must not leak across sleep→wake re-assembly
-                # (issue ). A close failure is logged, never blocking.
+                # (docs/design/execution-device.md). A close failure is
+                # logged, never blocking.
                 docker_runtime = self._cognitive.docker_runtime
                 if docker_runtime is not None:
                     try:
@@ -828,7 +835,8 @@ class MemberRuntime(Member):
     ) -> None:
         """Build a mail from this member and publish MAIL_NEW on the bus.
 
-        A probationary member's mentor () is cc'd unless already a
+        A probationary member's mentor (trust ladder,
+        docs/design/unified-member-model.md) is cc'd unless already a
         recipient (to or cc) — no duplicate copies.
 
         Never raises: a mail failure is logged, not propagated (a failing
@@ -897,7 +905,8 @@ class MemberRuntime(Member):
         Runs at boot (mail that arrived while the member slept) and from
         the rescan task (deferred overflow trickle and the periodic
         sweep). Cognitive members gate and enqueue unread mail (a
-        rejected mail is marked read now, D6.1) under two throttles (issue ): one
+        rejected mail is marked read now, D6.1) under two throttles
+        (docs/design/runtime.md): one
         thread merges into one session — the thread's latest unread mail
         is the representative, its earlier siblings are marked read as
         covered (the session's mail-history context renders the whole
@@ -989,7 +998,7 @@ class MemberRuntime(Member):
         return {mail.id for mail in mails if mail.id != representative[mail.thread_id]}
 
     async def _rescan_loop(self) -> None:
-        """The member's one background mail-rescan task (issue ).
+        """The member's one background mail-rescan task (docs/design/runtime.md).
 
         Two cadences, never two tasks: while the last scan deferred
         overflow (bounded queue full), poll every

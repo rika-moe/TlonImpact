@@ -295,13 +295,15 @@ class AdapterManager(Component):
                 (recipient name → address resolution)
             tlon_paths: Path resolver (persistent mailbox layout)
             external_owner: Gateway claim lookup forwarded to the shared
-                resolver (issue  egress); None = no gateway claims
+                resolver (docs/design/mail.md egress); None = no gateway
+                claims
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
         self._paths = tlon_paths
         self._adapters: dict[str, HumanAdapter] = {}  # username -> adapter
-        # Single authority for recipient resolution (issue ); the
+        # Single authority for recipient resolution (see
+        # docs/design/mail.md); the
         # online check closes over ``self._adapters``, so the resolver
         # always sees the live adapter set. MailDelivery delegates to
         # the same instance via ``recipient_resolver``.

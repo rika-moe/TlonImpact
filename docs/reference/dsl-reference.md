@@ -72,14 +72,14 @@
 | `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |
 | `:mail-new` | `mail.new` | A mail was sent (pre-delivery) |
 | `:mail-delivered` | `mail.delivered` | A mail landed in one recipient's inbox |
-| `:mail-endorsed` | `mail.endorsed` | A delivered mail endorses another mail (reputation signal, ) |
+| `:mail-endorsed` | `mail.endorsed` | A delivered mail endorses another mail (reputation signal, see docs/design/mail.md) |
 | `:agent-join` | `agent.join` |  |
 | `:agent-leave` | `agent.leave` |  |
 | `:agent-thinking` | `agent.thinking` |  |
 | `:agent-response` | `agent.response` |  |
 | `:agent-started` | `agent.started` |  |
 | `:agent-stopped` | `agent.stopped` |  |
-| `:agent-retired` | `agent.retired` | Retirement ceremony fact: handover inventory + farewell outcome () |
+| `:agent-retired` | `agent.retired` | Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」) |
 | `:agent-error` | `agent.error` |  |
 | `:agent-state-changed` | `agent.state_changed` |  |
 | `:agent-waking` | `agent.waking` |  |
@@ -239,7 +239,7 @@
 | 名称 | pure | 说明 |
 |---|---|---|
 | `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
-| `str` | 是 | Concatenate arguments into one string (issue ). |
+| `str` | 是 | Concatenate arguments into one string. |
 | `split` | 是 | Split a string on a separator into a vector of strings. |
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
@@ -335,10 +335,10 @@
 | `(persona)` | 无 | 成员人格文件（SOUL/IDENTITY/RULES 等）进 system prompt |
 | `(protocol)` | 无 | 协作协议文本进 system prompt |
 | `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息；**固定注入为 context 最后一条**（当前邮件之后、anchor 之外，ADR 0017 阶段 4）——声明位置不决定注入位置，只决定是否注入 |
-| `(lessons)` | 无 | 成员继承的 `config/LESSONS.md`（退休成员蒸馏、随原型包传递，issue ）拼成 `[传承教训]` 用户消息；无该文件则跳过该 section（空态惯例同 knowledge/skills） |
+| `(lessons)` | 无 | 成员继承的 `config/LESSONS.md`（退休成员蒸馏、随原型包传递，见 [design/memory.md](../design/memory.md)「退休蒸馏」）拼成 `[传承教训]` 用户消息；无该文件则跳过该 section（空态惯例同 knowledge/skills） |
 | `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
-| `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息（issue ）；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
-| `(thread-recap)` | 无 | 本线程最近一个已完成 session 的简报（触发、工具调用摘要、结论）拼成 `[本线程上一轮处理摘要]` 用户消息（issue ）：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随线程长度膨胀；线程首轮、上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section |
+| `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
+| `(thread-recap)` | 无 | 本线程最近一个已完成 session 的简报（触发、工具调用摘要、结论）拼成 `[本线程上一轮处理摘要]` 用户消息：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随线程长度膨胀；线程首轮、上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section |
 | `(mail-history n)` | 一个非负 int | 取邮箱最近 n 封邮件进对话上下文 |
 
 ### 5.2 五个 stage（`STAGE_NAMES`）
@@ -401,12 +401,12 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :on :mail-delivered                                   ; 邮件送达触发
           :when (or (addressed-to-me? msg) (cc-ed? msg))        ; 只理会在 To/CC 里点了我的邮件
           :loop {:context {:sections [(persona) (protocol)      ; system prompt：人格 + 协议
-                                      (lessons)                 ; 对话上下文：传承教训（issue ）
+                                      (lessons)                 ; 对话上下文：传承教训
                                       (skills)                  ; 对话上下文：技能索引（ADR 0010）
                                       (knowledge)               ; 对话上下文：记忆块（固定注入最末位，ADR 0017 阶段 4）
-                                      (current-task)            ; 对话上下文：当前 doing 任务（issue ）
+                                      (current-task)            ; 对话上下文：当前 doing 任务
                                       (mail-history 20)         ; 对话上下文：最近 20 封邮件
-                                      (thread-recap)]}          ; 对话上下文：本线程上一轮处理摘要（issue ）
+                                      (thread-recap)]}          ; 对话上下文：本线程上一轮处理摘要
                  :stages [(think)                                  ; 想：一次 LLM 调用
                           (critique {:if (completing?)})             ; 只在即将交卷时评审待交回复
                           (act {:if (or (not (completing?))          ; 做：评审 FAIL 时拦截本轮完成
@@ -438,7 +438,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :actions []}]}
 ```
 
-更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`，五条规则：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员；`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员；`:on :agent-noisy` 时 `(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})` 熔断刷屏成员（事件负载取自 `:agent_id`，与 drain 同一形态——健康监控器只发事实，后果由 spec 决定）；`:on :agent-spawned` 时给新成员发出生欢迎信（issue ）——正文用 `(str ...)` 拼接待成员名字、宿主查询 `(member-roster)` 展开的名册与静态通信惯例，收件人地址也由 `(str (get event :agent_id) "@tlon.internal")` 装配（`emit` 的 `to` 必须是完整邮件地址，`Mail.create` 拒绝裸 id）；`:on :mail-delivered` 时对寄给 Adam 的信回固定确认信（issue  守护者信箱）——`:when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal")))` 展示门控组合：确定规则对总线上每封送达邮件都会执行，必须自带收件人门控；`from?` 排除 postmaster 发件人，退信永不回信。这个例子展示了选项 map 里嵌表达式、字符串拼接、宿主注入查询与纯谓词门控的用法。
+更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`，五条规则：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员；`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员；`:on :agent-noisy` 时 `(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})` 熔断刷屏成员（事件负载取自 `:agent_id`，与 drain 同一形态——健康监控器只发事实，后果由 spec 决定）；`:on :agent-spawned` 时给新成员发出生欢迎信（出生社会化，见 [design/dsl.md](../design/dsl.md)）——正文用 `(str ...)` 拼接待成员名字、宿主查询 `(member-roster)` 展开的名册与静态通信惯例，收件人地址也由 `(str (get event :agent_id) "@tlon.internal")` 装配（`emit` 的 `to` 必须是完整邮件地址，`Mail.create` 拒绝裸 id）；`:on :mail-delivered` 时对寄给 Adam 的信回固定确认信（守护者信箱，见 [design/mail.md](../design/mail.md)）——`:when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal")))` 展示门控组合：确定规则对总线上每封送达邮件都会执行，必须自带收件人门控；`from?` 排除 postmaster 发件人，退信永不回信。这个例子展示了选项 map 里嵌表达式、字符串拼接、宿主注入查询与纯谓词门控的用法。
 
 ## 9. 常见错误与加载失败行为
 
@@ -493,7 +493,7 @@ MemberSpec 之外还有一种 DSL 文件：society 级政策文件 `policy.tlon`
 | `not` | 是 |  |
 | `contains?` | 是 |  |
 | `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
-| `str` | 是 | Concatenate arguments into one string (issue ). |
+| `str` | 是 | Concatenate arguments into one string. |
 | `split` | 是 | Split a string on a separator into a vector of strings. |
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |

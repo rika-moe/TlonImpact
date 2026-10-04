@@ -3,9 +3,9 @@
 Pins Adam's five policy lines as data: boot (start-all for members
 whose spec declares ``:on :boot``), drain
 (idle-fact → stop request), noisy-circuit-breaker (AGENT_NOISY → stop
-the flooding member), welcome (issue  — AGENT_SPAWNED
+the flooding member), welcome (AGENT_SPAWNED
 triggers a birth-socialization mail to the newborn) and guardian-inbox
-(issue  — a fixed acknowledgement reply to mail addressed to Adam,
+(a fixed acknowledgement reply to mail addressed to Adam,
 postmaster senders excluded). Wake is no longer
 Adam's line — wake-on-mail lives in the registry as a spec-derived
 mechanized policy (see ``test_registry.py``). The registry is stubbed
@@ -206,7 +206,7 @@ class TestAdamDecisions:
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
         # Greeting names the newborn; the roster lists the society; the
-        # conventions point at the guardian's mailbox (issue ).
+        # conventions point at the guardian's mailbox (docs/design/mail.md).
         assert "小新" in mail.content
         assert "worker-1（worker-1）" in mail.content
         assert "adam@tlon.internal" in mail.content

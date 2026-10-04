@@ -5,7 +5,7 @@ exists it is authoritative (the constructor config is defaults in
 production). Guards the wiring in agents/agent_registry.py +
 memory/manager.py.
 
-``delete_claim`` (issue , renamed under ADR 0017) is the reflection
+``delete_claim`` (renamed under ADR 0017) is the reflection
 engine's deletion path: exact ID first, then unique-prefix (the
 reflection prompt shows IDs truncated); unknown or ambiguous IDs delete
 nothing and log a warning.
@@ -138,7 +138,7 @@ async def test_load_default_config_matches_retired_constants(tmp_path: Path) -> 
     assert config.conflict_candidate_limit == 3
 
 
-# ── delete_claim: ID resolution for the reflection engine (issue ) ──
+# ── delete_claim: ID resolution for the reflection engine (ADR 0017) ──
 
 
 async def test_delete_claim_exact_id(tmp_path: Path) -> None:

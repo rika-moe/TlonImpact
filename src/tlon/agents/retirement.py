@@ -1,4 +1,5 @@
-"""Retirement ceremony: farewell letter and task handover (issue ).
+"""Retirement ceremony: farewell letter and task handover
+(docs/design/mail.md 「退休交接信」).
 
 When a member is deliberately stopped (``AGENT_STOPPED``, same trigger as
 the LessonsDistiller — never the scale-to-zero ``AGENT_SLEEPING`` drain),
@@ -84,7 +85,8 @@ def _parse_timestamp(value: str) -> datetime | None:
 
 
 class RetirementCeremony(Component, Device):
-    """Hands over a retired member's unfinished business (issue ).
+    """Hands over a retired member's unfinished business
+    (docs/design/mail.md 「退休交接信」).
 
     A pure event consumer in the LessonsDistiller mold: subscribes to
     ``AGENT_STOPPED`` in ``initialize()``, unsubscribes in ``shutdown()``.

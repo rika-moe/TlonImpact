@@ -24,7 +24,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### 工具装配
 
-每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；声明 `docker.level: L0` 的成员例外（issue #26）——无执行装置，不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具；`docker.level: L1` 的文件层成员（issue #40）创建运行时、注册 filesystem 五个工具，但不注册 shell 两个（结构性零代码执行）。无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。`proposeBehavior`（）是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`）；`reviewPrototype`（）是第二个拿到 `llm_client` 的工具（prototypes 域）——评审调用用评审者自己的模型，异质性来自评审者的模型血统。
+每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；声明 `docker.level: L0` 的成员例外（issue #26）——无执行装置，不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具；`docker.level: L1` 的文件层成员（issue #40）创建运行时、注册 filesystem 五个工具，但不注册 shell 两个（结构性零代码执行）。无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。`proposeBehavior` 是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`）；`reviewPrototype` 是第二个拿到 `llm_client` 的工具（prototypes 域）——评审调用用评审者自己的模型，异质性来自评审者的模型血统。
 
 ### 注册清单
 
@@ -72,7 +72,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 37 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员（，信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 33 个；`reviewPrototype`（15）咨询性保留。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 37 个中的 7 个）；`docker.level: L1` 的成员（issue #40）不注册 1–2 的 shell 工具。
+上表是正式成员的满配。见习成员（信任阶梯：spawn 出生且未获 endorse）装配时不注册四个生殖/演化工具——`spawnAgent`（16）、`stopAgent`（17）、`writePrototype`（19）、`proposeBehavior`（20），实装 33 个；`reviewPrototype`（15）咨询性保留。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 37 个中的 7 个）；`docker.level: L1` 的成员（issue #40）不注册 1–2 的 shell 工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
@@ -118,7 +118,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 ### searchMails
 
-检索自己邮箱（inbox + sent）的只读工具（issue ），补的是「agent 没有任何结构化邮箱查询手段」的缺口——此前只能靠 `(mail-history)` section 被动带入或 `read_file` 读原始 JSONL。它是内置 skill `explain-decision`（见 docs/design/skills.md）的邮件证据源。邮箱读取走依赖倒置：端口 `MailboxMailsProvider` 声明在 [tools/mail/ports.py](../../src/tlon/tools/mail/ports.py)，实现在 [agents/mail_search.py](../../src/tlon/agents/mail_search.py)（只读 `Mailbox.inbox()`/`sent()`），装配时按 owner agent 注入——只查自己的邮箱，碰不到他人邮件。
+检索自己邮箱（inbox + sent）的只读工具，补的是「agent 没有任何结构化邮箱查询手段」的缺口——此前只能靠 `(mail-history)` section 被动带入或 `read_file` 读原始 JSONL。它是内置 skill `explain-decision`（见 docs/design/skills.md）的邮件证据源。邮箱读取走依赖倒置：端口 `MailboxMailsProvider` 声明在 [tools/mail/ports.py](../../src/tlon/tools/mail/ports.py)，实现在 [agents/mail_search.py](../../src/tlon/agents/mail_search.py)（只读 `Mailbox.inbox()`/`sent()`），装配时按 owner agent 注入——只查自己的邮箱，碰不到他人邮件。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -133,7 +133,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 五个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [tools/filesystem/path_guard.py](../../src/tlon/tools/filesystem/path_guard.py) 的 `resolve_container_path` 校验：
 
 - 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
-- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（readFile/listDirectory/searchFiles）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（issue ），可读取自己的行为定义、记忆与邮箱；writeFile/editFile 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
+- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（readFile/listDirectory/searchFiles）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（见 docs/design/execution-device.md 的纵深防御），可读取自己的行为定义、记忆与邮箱；writeFile/editFile 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
 - 空路径直接拒绝。全部是纯字符串处理，不做宿主机路径解析。
 
 ### readFile
@@ -356,10 +356,10 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | reason | 含义 |
 |---|---|
 | `untrusted_prototype` | 信任闸：staging 区未批准的 prototype 不能 spawn，需人类在 ops 中批准；先于一切预算检查 |
-| `insolvent_lineage` | 偿付门槛（）：目标血脉失去偿付能力（默认政策：总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25，由 `agents/policy.py` 的 `solvent?` 政策 hook 判定，阈值可在 `~/.tlon/policy.tlon` 调整，fail-open），血脉靠手上成员挣回 endorse 前不能 spawn；紧随信任门、先于预算检查 |
+| `insolvent_lineage` | 偿付门槛：目标血脉失去偿付能力（默认政策：总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25，由 `agents/policy.py` 的 `solvent?` 政策 hook 判定，阈值可在 `~/.tlon/policy.tlon` 调整，fail-open），血脉靠手上成员挣回 endorse 前不能 spawn；紧随信任门、先于预算检查 |
 | `max_activations` | 全局同时运行 agent 数到顶（默认 8） |
 | `max_spawn_depth` | spawn 链深度超限（默认 3，非 spawn 成员深度 0） |
-| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜（）：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；spawner 是见习成员时（，按 spawner_id 判定）再收紧为 `min(effective, 1)`；拒绝 detail 注明实际 tilt 与有效配额（见习 cap 时注明 probation） |
+| `session_quota` | 同一 (spawner, session) 配额耗尽（默认 2；账本落盘 `~/.tlon/shared/spawn-quota.json`，跨重启存活）。配额按目标血脉适应度倾斜：有效配额 = `ceil(quota × tilt)`，tilt ∈ [0.5, 2.0] 由血脉效率（价值/总 token）相对全体均值派生，冷启动恒 1.0；spawner 是见习成员时（按 spawner_id 判定）再收紧为 `min(effective, 1)`；拒绝 detail 注明实际 tilt 与有效配额（见习 cap 时注明 probation） |
 | `config_reload_failed` | 新配置未能被 config provider 加载 |
 
 prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `success=False` 返回。session 归属经 structlog contextvars 里的 `session_id` 绑定，用于配额记账。
@@ -409,7 +409,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 **见习成员不可用（，信任阶梯）**——装配时不注册。
 
-世代通道的经验入口（issue ）：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
+世代通道的经验入口：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -426,11 +426,11 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### listPrototypes
 
-无参数。列出 `~/.tlon/prototypes/`（启动时播种、用户可编辑的原型库）里的全部 behavior prototype，返回每项的 `name`/`display_name`/`description`/`trusted`/`parent`/`generation`（后两个是谱系字段，）。空库时 `success=True, data=[]`。
+无参数。列出 `~/.tlon/prototypes/`（启动时播种、用户可编辑的原型库）里的全部 behavior prototype，返回每项的 `name`/`display_name`/`description`/`trusted`/`parent`/`generation`（后两个是谱系字段）。空库时 `success=True, data=[]`。
 
 ### getPrototypeLineage
 
-查询一个 prototype 的谱系（）：沿 `:parent` 链向上走到根，谱系是派生的、不另落盘。
+查询一个 prototype 的谱系：沿 `:parent` 链向上走到根，谱系是派生的、不另落盘。
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|

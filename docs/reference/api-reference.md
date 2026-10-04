@@ -233,11 +233,11 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### 原型管理端点（WebUI PROTOTYPES 视图）
 
-域函数在 [agents/prototypes/](../../src/tlon/agents/prototypes) 包；原型对象形状 `{name, display_name, description, trusted, author, parent, generation, proposal_note, parameters: [{name, type, required}]}`（`parent`/`generation`/`proposal_note` 是谱系字段，：`parent` 为父原型名、根为 `null`，`generation` 根=1 且由服务端推导，`proposal_note` 为本代变更说明）。详情端点额外带 `behavior`（behavior.tlon 全文）、`lessons`（`LESSONS.md` 全文，仅原型携带该文件时出现，）、`reviews`（`REVIEW.md` 同行评审记录全文，仅原型携带该文件时出现，——staging 提案经 `reviewPrototype` 评审累积，approve 后随目录晋级 trusted）与 `lineage`（`get_prototype_lineage` 的派生结果：根在前，每代 `{name, generation, author, proposal_note, trusted, parent, diff_from_parent, broken}`，`diff_from_parent` 是相邻两代 behavior.tlon 的 unified diff，根为 `null`；父原型已删/改名时链在断点截断并标 `broken`）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
+域函数在 [agents/prototypes/](../../src/tlon/agents/prototypes) 包；原型对象形状 `{name, display_name, description, trusted, author, parent, generation, proposal_note, parameters: [{name, type, required}]}`（`parent`/`generation`/`proposal_note` 是谱系字段：`parent` 为父原型名、根为 `null`，`generation` 根=1 且由服务端推导，`proposal_note` 为本代变更说明）。详情端点额外带 `behavior`（behavior.tlon 全文）、`lessons`（`LESSONS.md` 全文，仅原型携带该文件时出现）、`reviews`（`REVIEW.md` 同行评审记录全文，仅原型携带该文件时出现——staging 提案经 `reviewPrototype` 评审累积，approve 后随目录晋级 trusted）与 `lineage`（`get_prototype_lineage` 的派生结果：根在前，每代 `{name, generation, author, proposal_note, trusted, parent, diff_from_parent, broken}`，`diff_from_parent` 是相邻两代 behavior.tlon 的 unified diff，根为 `null`；父原型已删/改名时链在断点截断并标 `broken`）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
 
 - `GET /admin/prototypes`、`GET /admin/prototypes/staging`——200：`{"status": "success", "prototypes": [<原型对象>]}`；503：未装配 `paths`
 - `GET /admin/prototypes/{name}`、`GET /admin/prototypes/staging/{name}`——200：`{"status": "success", "prototype": <原型对象 + behavior + lessons? + reviews? + lineage>}`；404：`{"error", "reason": "prototype_not_found"}`
-- `POST /admin/prototypes`——body `{name, behavior, display_name?, description?, parent?, proposal_note?, lessons?}`，手写创建直接进正式库（`:trusted true`、无 author）；`parent` 须指向已存在的原型（trusted 或 staging 皆可），`generation` 服务端推导、不接受客户端指定；`lessons` 落盘为 `LESSONS.md`（）。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段、父原型不存在或校验失败）
+- `POST /admin/prototypes`——body `{name, behavior, display_name?, description?, parent?, proposal_note?, lessons?}`，手写创建直接进正式库（`:trusted true`、无 author）；`parent` 须指向已存在的原型（trusted 或 staging 皆可），`generation` 服务端推导、不接受客户端指定；`lessons` 落盘为 `LESSONS.md`。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段、父原型不存在或校验失败）
 - `PATCH /admin/prototypes/{name}`、`PATCH /admin/prototypes/staging/{name}`——body `{display_name?, description?, behavior?, parent?, proposal_note?, lessons?}`（全空 → 400 `invalid_prototype`），behavior 变更重跑校验链（失败则磁盘原样）；给 `parent` 会重新挂谱系并重推 `generation`；`lessons` 重写 `LESSONS.md`、不传则保留。200：`{"status": "success", "prototype": <原型对象>}`；404：`prototype_not_found`
 - `DELETE /admin/prototypes/{name}`——200：`{"status": "success"}`；404：`prototype_not_found`
 
@@ -344,14 +344,14 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 |---|---|---|
 | `mail.new` | `MAIL_NEW` | A mail was sent (pre-delivery) |
 | `mail.delivered` | `MAIL_DELIVERED` | A mail landed in one recipient's inbox |
-| `mail.endorsed` | `MAIL_ENDORSED` | A delivered mail endorses another mail (reputation signal, ) |
+| `mail.endorsed` | `MAIL_ENDORSED` | A delivered mail endorses another mail (reputation signal, see docs/design/mail.md) |
 | `agent.join` | `AGENT_JOIN` |  |
 | `agent.leave` | `AGENT_LEAVE` |  |
 | `agent.thinking` | `AGENT_THINKING` |  |
 | `agent.response` | `AGENT_RESPONSE` |  |
 | `agent.started` | `AGENT_STARTED` |  |
 | `agent.stopped` | `AGENT_STOPPED` |  |
-| `agent.retired` | `AGENT_RETIRED` | Retirement ceremony fact: handover inventory + farewell outcome () |
+| `agent.retired` | `AGENT_RETIRED` | Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」) |
 | `agent.error` | `AGENT_ERROR` |  |
 | `agent.state_changed` | `AGENT_STATE_CHANGED` |  |
 | `agent.waking` | `AGENT_WAKING` |  |
@@ -386,12 +386,12 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `mail.new` | `HumanAdapter.speak` / `SendEmailTool` | Mail 对象（发信、投递前） |
 | `mail.delivered` | `MailDelivery`（source `mail_delivery`，每收件人一条） | `mail`（Mail）、`recipient`（成员 id） |
 | `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
-| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`，） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
+| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
 | `agent.thinking_start` / `agent.thinking_end` / `agent.llm_request` | 成员运行时（`agents/stages/services.py`） | 各发布点自定义 dict |
-| `agent.llm_response` | 成员运行时（`agents/stages/services.py`） | `agent_id`、`model`、`duration_ms`、`finish_reason`、`has_tool_calls`、`tool_call_count`、`prompt_tokens`、`completion_tokens`、`cached_tokens`、`cache_write_tokens`（token 字段在 usage 缺失时为 0，） |
+| `agent.llm_response` | 成员运行时（`agents/stages/services.py`） | `agent_id`、`model`、`duration_ms`、`finish_reason`、`has_tool_calls`、`tool_call_count`、`prompt_tokens`、`completion_tokens`、`cached_tokens`、`cache_write_tokens`（token 字段在 usage 缺失时为 0） |
 | `tool.execute_start` / `tool.execute_end` / `tool.error` | 工具执行层（`agents/loop_driver.py`、`agents/stages/act.py`） | 各发布点自定义 dict |
 | `system.startup` / `system.shutdown` | `ServerApp`（source `server`） | 如 `{"agents": n}` |
 | `config.updated` | 配置层（`ConfigManager.reload_agent`） | `{"agent_id", "action"}` |

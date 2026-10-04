@@ -34,8 +34,9 @@ class PrototypeInfo:
     declared ``:parameters`` (empty for a concrete behavior), so callers
     can prompt for values before instantiation.
 
-    Lineage (issue ): ``parent`` names the prototype this one was
-    derived from (None = root), ``generation`` is 1 for roots and the
+    Lineage (see docs/design/prototypes.md): ``parent`` names the
+    prototype this one was derived from (None = root), ``generation`` is
+    1 for roots and the
     parent's generation + 1 otherwise, ``proposal_note`` is the free-text
     rationale for this generation's change. Files predating the field read
     as roots (parent=None, generation=1) — no migration.

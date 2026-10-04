@@ -52,9 +52,9 @@ class EffectExecutor:
                 bare test setups disables mark-read
             publish: Event-bus publish closure (Device.emit)
             logger: Per-agent bound logger (agent_id already bound)
-            mentor_cc: Trust ladder (): a probationary member's
-                mentor address, cc'd on every composed mail; None for
-                full members
+            mentor_cc: Trust ladder (docs/design/unified-member-model.md):
+                a probationary member's mentor address, cc'd on every
+                composed mail; None for full members
         """
         self.identity = identity
         self.rule = rule
@@ -64,7 +64,7 @@ class EffectExecutor:
         self._mentor_cc = mentor_cc
 
     def _cc_with_mentor(self, effect: MailEffect) -> list[str]:
-        """The effect's cc plus the mentor's (), unless the mentor is
+        """The effect's cc plus the mentor's address, unless the mentor is
         already a recipient (to or cc) — no duplicate copies."""
         cc = [*(effect.cc or [])]
         if (
@@ -146,7 +146,7 @@ class EffectExecutor:
         return effect.in_reply_to, referenced.thread_id
 
     async def _resolve_endorsing(self, effect: MailEffect) -> str | None:
-        """Validate the endorsement reference (issue ).
+        """Validate the endorsement reference (docs/design/mail.md).
 
         Same hallucination guard as the reply reference: the endorsed
         mail must exist in the agent's own mailbox, and it must not be
@@ -172,7 +172,8 @@ class EffectExecutor:
         return effect.endorsing
 
     async def _notify_send_failure(self, effect: MailEffect, error: Exception) -> None:
-        """Land a send-failure notice in the agent's own inbox (issue ).
+        """Land a send-failure notice in the agent's own inbox
+        (docs/design/mail.md 「退信是设计意图」).
 
         Same style as MailDelivery's postmaster bounce: a direct inbox
         append plus one MAIL_DELIVERED, never MAIL_NEW — the notice

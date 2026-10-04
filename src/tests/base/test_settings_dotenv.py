@@ -72,7 +72,7 @@ class TestLoadDotenvFiles:
 
 
 class TestSettingsGitHubEnv:
-    """Settings reads the GitHub webhook ingress variables (issue )."""
+    """Settings reads the GitHub webhook ingress variables (docs/design/mail.md)."""
 
     def test_reads_github_env_vars(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

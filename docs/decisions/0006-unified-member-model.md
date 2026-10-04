@@ -1,6 +1,6 @@
 # ADR 0006：统一成员模型——一类成员 + 世代更替
 
-状态：已接受（2026-08-16，方向讨论拍板）；阶段 1–3 已实施（2026-08，统一装配、档案归档），阶段 4（世代通道 `proposeBehavior`）已实施（2026-09，）——进度见 [docs/design/unified-member-model.md](../design/unified-member-model.md)。后续：选择压（代谢经济学）与审批社会化的具体形态由 [ADR 0014](0014-environment-agent-coevolution.md) 拍板。
+状态：已接受（2026-08-16，方向讨论拍板）；阶段 1–3 已实施（2026-08，统一装配、档案归档），阶段 4（世代通道 `proposeBehavior`）已实施（2026-09）——进度见 [docs/design/unified-member-model.md](../design/unified-member-model.md)。后续：选择压（代谢经济学）与审批社会化的具体形态由 [ADR 0014](0014-environment-agent-coevolution.md) 拍板。
 
 ## 决策
 

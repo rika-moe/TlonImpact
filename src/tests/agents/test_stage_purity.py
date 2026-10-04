@@ -136,7 +136,8 @@ class TestStagePurity:
         """The model's explicit in_reply_to (reply to a non-trigger
         mail) is declared on the MailEffect. The stage cannot read the
         mailbox, so thread_id stays the trigger-derived fallback — the
-        engine re-derives it from the referenced mail (issue )."""
+        engine re-derives it from the referenced mail
+        (docs/design/mail.md)."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         trigger = Mail.create(

@@ -384,7 +384,7 @@ def _delivered_event(mail: Mail, recipient: str = GATEWAY_MEMBER_ID) -> Event:
 
 
 class TestEgress:
-    """Reply → GitHub comment (issue , outbound direction)."""
+    """Reply → GitHub comment (docs/design/mail.md, outbound direction)."""
 
     async def _inbound(self, bus: EventBus, adapter: GitHubAdapter) -> Mail:
         mail = await adapter.receive(

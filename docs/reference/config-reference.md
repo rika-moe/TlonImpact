@@ -35,7 +35,7 @@
 - `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
 - `session_timeout_seconds`：ACTIVE/WAITING 的会话空闲超时即取消。
 - `message_queue_size`：入站消息队列容量，溢出丢弃新消息。
-- `mail_rescan_interval_seconds`：运行中周期重扫未读邮件的间隔（issue ）；被满队列丢弃、保持未读的邮件由这个重扫拾起，不用等重启。
+- `mail_rescan_interval_seconds`：运行中周期重扫未读邮件的间隔；被满队列丢弃、保持未读的邮件由这个重扫拾起，不用等重启。
 
 ### `llm`
 

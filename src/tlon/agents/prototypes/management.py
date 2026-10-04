@@ -38,8 +38,8 @@ def write_trusted_prototype(
     Handwritten implies trusted (the same rule the metadata reader encodes):
     the metadata is written with ``:trusted true`` and no ``:author``.
     Validation happens **before** anything touches disk — the same
-    chain as the staging gate. Lineage fields (issue ) work exactly as
-    in the staging write path.
+    chain as the staging gate. Lineage fields (see
+    docs/design/prototypes.md) work exactly as in the staging write path.
 
     Args:
         name: prototype directory name (charset-checked, must be unique
@@ -50,8 +50,8 @@ def write_trusted_prototype(
         parent: name of the prototype this one derives from (must exist in
             either area; None = a new root)
         proposal_note: free-text description of this generation's change
-        lessons: lessons text (issue ), written as ``LESSONS.md``
-            (None = the prototype carries no lessons file)
+        lessons: lessons text (see docs/design/prototypes.md), written as
+            ``LESSONS.md`` (None = the prototype carries no lessons file)
         tlon_paths: path resolver for the target layout
 
     Returns:
@@ -112,9 +112,10 @@ def update_prototype(
     A behavior change runs the full validation chain first — a broken spec
     raises and leaves the disk untouched. The metadata rewrite preserves
     the existing ``:trusted``/``:author`` fields (only the explicitly
-    provided fields change). Lineage (issue ): providing ``parent``
-    re-links the prototype and re-derives its ``:generation`` server-side;
-    ``proposal_note`` records what a generation changes.
+    provided fields change). Lineage (see docs/design/prototypes.md):
+    providing ``parent`` re-links the prototype and re-derives its
+    ``:generation`` server-side; ``proposal_note`` records what a
+    generation changes.
 
     Args:
         name: prototype directory name
@@ -124,7 +125,7 @@ def update_prototype(
         parent: new lineage parent (None = keep; must exist in either area)
         proposal_note: new change note (None = keep)
         lessons: new lessons text, rewritten as ``LESSONS.md``
-            (None = keep, issue )
+            (None = keep)
         staging: update in the staging area instead of the trusted library
             (pre-approval editing of an LLM-authored prototype)
         tlon_paths: path resolver for the target layout

@@ -1,8 +1,9 @@
-"""CronScheduler — "tick is a mail" periodic task mails (issue ).
+"""CronScheduler — "tick is a mail" periodic task mails
+(docs/design/mail.md).
 
 Pins the generalized tick semantics: one MAIL_NEW per entry per schedule
 from postmaster to the entry's target member; the built-in digest entry
-behaves exactly as 's DigestScheduler did (self-contained work
+behaves exactly as the old DigestScheduler did (self-contained work
 instructions + human recipient list, skipped when the scribe is
 unregistered or no human is known); declared entries load from cron.yaml
 (interval or cron schedule), invalid entries are isolated, unknown

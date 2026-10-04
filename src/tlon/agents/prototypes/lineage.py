@@ -21,7 +21,8 @@ _MAX_LINEAGE_DEPTH = 32
 def get_prototype_lineage(
     name: str, tlon_paths: TlonPaths
 ) -> list[dict[str, Any]]:
-    """Walk the ``:parent`` chain up to the root (issue ).
+    """Walk the ``:parent`` chain up to the root (see
+    docs/design/prototypes.md).
 
     The lineage is **derived**, never stored separately: each generation is
     read from its own ``prototype.edn`` (trusted or staging area, whichever

@@ -1,4 +1,4 @@
-"""Near-kin rejection (issue ): proposals that are reskin-level
+"""Near-kin rejection (ADR 0014): proposals that are reskin-level
 duplicates of an existing prototype (trusted library or staging area) are
 turned away before they reach disk — ADR 0014's non-convergence selection
 pressure.
@@ -7,7 +7,7 @@ pressure.
 (``difflib.SequenceMatcher.ratio`` on normalized text: comment lines and
 whitespace stripped); the two proposal tools (``writePrototype`` /
 ``proposeBehavior``) receive it as an injected callable, fail-open like
-the  solvency gate. The human direct-write channel is never gated.
+the solvency gate. The human direct-write channel is never gated.
 """
 
 from pathlib import Path
@@ -152,7 +152,8 @@ class TestFindNearKin:
     def test_generational_micro_tweak_released_by_parent_exemption(
         self, tmp_path: Path
     ) -> None:
-        """边界实测（ 冒烟案例形态）：reflect 间隔 15→30 的代际微改。
+        """边界实测（docs/design/prototypes.md 冒烟案例形态）：reflect
+        间隔 15→30 的代际微改。
 
         真实数据：内置 scribe 原型的 behavior.tlon 仅把
         ``:interval-minutes 15`` 改为 ``30``，规范化文本的
@@ -197,7 +198,7 @@ class TestFindNearKin:
 
 
 class TestWritePrototypeNearKin:
-    """writePrototype 的近亲闸（）：跨血脉命中 → success=False 且
+    """writePrototype 的近亲闸：跨血脉命中 → success=False 且
     staging 无残留；父本豁免（显式 parent > 自身 prototype）→ 放行；
     检查异常 → fail-open 放行。"""
 
@@ -296,7 +297,7 @@ class _FakeLLM:
 
 
 class TestProposeBehaviorNearKin:
-    """proposeBehavior 的近亲闸（）：闸排在起草之后（被比较的是
+    """proposeBehavior 的近亲闸：闸排在起草之后（被比较的是
     草稿文本）；父本恒为成员自己的 prototype，豁免后沿血脉微改放行，
     跨血脉命中 → success=False 且 staging 无残留；fail-open。"""
 

@@ -1,4 +1,4 @@
-"""Retirement lessons distillation (issue ).
+"""Retirement lessons distillation (docs/design/memory.md 「退休蒸馏」).
 
 When a member is deliberately stopped (``AGENT_STOPPED`` — the stopAgent
 tool / DSL stop action path through ``AgentRegistry.stop_member``, never
@@ -11,7 +11,7 @@ lessons for the next generation, and writes
 ``~/.tlon/{agent_id}/memory/lessons.md``.
 
 The distillation call is attributed to the retired member itself
-(``agent_id`` on the LLM client — its last ledger entry, ). The
+(``agent_id`` on the LLM client — its last ledger entry, ADR 0014). The
 lessons file is raw material: packaging it into a prototype's
 ``LESSONS.md`` (the inheritance channel) is a separate, human/agent
 decision via ``writePrototype`` / the admin API.
@@ -59,7 +59,7 @@ LESSONS_SYSTEM_PROMPT = (
 
 def build_retiree_llm_client(agent_id: str, tlon_paths: TlonPaths) -> LLMClient:
     """Build the LLM client for one final attributed call in the retired
-    member's name (issue : its ledger gets this last entry).
+    member's name (ADR 0014: its ledger gets this last entry).
 
     The config comes from the member's archived ``agent.yaml`` ``llm``
     section, same as ``assemble_cognitive`` (member-level only, ADR 0016).

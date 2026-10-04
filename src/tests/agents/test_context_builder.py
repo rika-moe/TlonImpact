@@ -1,5 +1,5 @@
-"""ContextBuilder — the ``(current-task)`` section (issue ) and the
-``(thread-recap)`` section (issue ).
+"""ContextBuilder — the ``(current-task)`` section (ADR 0008) and the
+``(thread-recap)`` section (ADR 0008).
 
 Pins the section semantics: the doing task (at most one) is rendered as
 a ``[当前任务]`` user message in vector order; no doing task (including
@@ -454,7 +454,7 @@ async def test_followup_context_extends_previous_prefix(tmp_path: Path) -> None:
     assert context2[-1]["content"].endswith("\n\n第二封")
 
 
-# ===== (lessons) section（issue ）=====
+# ===== (lessons) section（docs/design/prototypes.md）=====
 
 
 def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
@@ -686,7 +686,7 @@ async def test_empty_knowledge_leaves_anchor_unchanged(tmp_path: Path) -> None:
     assert built.anchor_len == 1
 
 
-# ===== 外部来信标记（issue ）=====
+# ===== 外部来信标记（docs/design/mail.md）=====
 
 EXTERNAL = "notifications@github.com"
 MARKER = "X-External: true"

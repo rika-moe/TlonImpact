@@ -14,7 +14,7 @@
 -  记忆与上下文时间轴错开 + anchor 超阈值时压缩无路可退
 -  事实 supersede 只在三元组完全相等时发生，矛盾事实堆积
 
-业界调研（2026-09-17，记录于 issue  评论区）结论：主流现成 memory 产品无可直接引入者（Letta 已弃 Python、Memobase 停更、Zep/Graphiti 需外挂图数据库、Mem0 开源/平台分化、框架模块绑死各自生态）；且 Anthropic/Manus/LangChain 三家独立收敛的共识是「文件 + 笔记 + 周期摘要 + 选择性注入」——Tlon 的范式方向没错，缺的是检索层与事实生命周期。拍板：**整体替换自研，不留兼容层**（项目原则 1），借机制不引库。
+业界调研（2026-09-17）结论：主流现成 memory 产品无可直接引入者（Letta 已弃 Python、Memobase 停更、Zep/Graphiti 需外挂图数据库、Mem0 开源/平台分化、框架模块绑死各自生态）；且 Anthropic/Manus/LangChain 三家独立收敛的共识是「文件 + 笔记 + 周期摘要 + 选择性注入」——Tlon 的范式方向没错，缺的是检索层与事实生命周期。拍板：**整体替换自研，不留兼容层**（项目原则 1），借机制不引库。
 
 ## 决策
 
@@ -31,7 +31,7 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
   - `valid_from` / `valid_to`——有效时间窗
   - `status: active | superseded`——取代即失效，**不删除**（借鉴 Zep 双时态：历史可审计，与书信共和国「信件永存」一致）
   - `importance`——检索打分因子
-- **废三元组**：`(subject, predicate, object)` 模型整个删除。自然语言断言 + embedding 检索不需要结构化三元组；精确字符串匹配的 supersede 缺陷（）随之消亡。摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。
+- **废三元组**：`(subject, predicate, object)` 模型整个删除。自然语言断言 + embedding 检索不需要结构化三元组；精确字符串匹配的 supersede 缺陷随之消亡。摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。
 - **进度水位线独立持久化**：标量时间戳水位线 `last_distilled_at` 存独立小文件 `memory/distillation.json`——session id 为 uuid 无序，不能按 id 做水位线；「哪些 session 待蒸馏」只查水位线（session 的 `session/start` 时间戳 > 水位线者，取不到时间戳的一律视为 pending），不扫描存留产物——产物被淘汰不影响进度（ 消亡）。
 - **冲突判定在蒸馏时做**：新 claim 与向量检索到的相似旧 claim 一起交 LLM 判定 新增 / 取代 / 并存（借鉴 Mem0 的 ADD/UPDATE/DELETE 路由，机制公开、不引库）。
 - **rememberFact 语义改为「立即蒸馏一条 claim」**：走同一套冲突判定与索引，不再是绕过 journal 时间轴的旁路写；写入即入索引，下一轮检索即可命中（ 的「记了看不到」解除）。
@@ -53,7 +53,7 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
 
 ### 边界（不动）
 
-记忆仍是成员生命周期内的经验；退休时蒸馏为 LESSONS.md 归原型（世代更替，ADR 0006 / issue  已划界）。记忆层不参与进化层。
+记忆仍是成员生命周期内的经验；退休时蒸馏为 LESSONS.md 归原型（世代更替，ADR 0006 已划界）。记忆层不参与进化层。
 
 ### 删除清单
 

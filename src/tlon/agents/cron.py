@@ -1,4 +1,5 @@
-"""Cron scheduler — declarative periodic task mails (issue ).
+"""Cron scheduler — declarative periodic task mails (docs/design/mail.md
+「周期任务：tick 即邮件」).
 
 "Tick is a mail", generalized: instead of a new timer event type or any
 change to the cognitive runtime, each periodic task is one mail from the
@@ -13,7 +14,7 @@ Entries come from two sources, merged and managed uniformly:
 1. **Built-in entries** (registered in code, content may be generated
    dynamically at tick time). The daily digest is the instance: its
    content factory computes the human recipient list from
-   ``known_human_ids()`` at each tick — behavior unchanged from 's
+   ``known_human_ids()`` at each tick — behavior unchanged from the
    ``DigestScheduler``, which this module replaces.
 2. **Declared entries** (``~/.tlon/cron.yaml``, read once at initialize —
    edits take effect on restart). Each entry is

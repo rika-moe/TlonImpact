@@ -227,7 +227,8 @@ class TestSearchMailsTool:
 
     @pytest.mark.asyncio
     async def test_external_flag_marks_untrusted_senders(self, tlon_paths: TlonPaths, mailbox: Mailbox):
-        """searchMails results carry the derived trust flag (issue ):
+        """searchMails results carry the derived trust flag
+        (docs/design/mail.md):
         external senders are marked, internal ones are not."""
         await mailbox.append_inbox(
             _mail("ext1", "notifications@github.com", [OWN], "CI 红了", "2026-09-06T10:00:00")

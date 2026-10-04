@@ -9,11 +9,12 @@ persona files are creation-time data, never part of the genome):
 - ``behavior.tlon`` — a complete (total) member spec, unified rules form
   (``{:version 1 :rules [...]}``, phase C — the old ``script.tlon``
   ScriptSpec file is gone)
-- ``LESSONS.md`` — optional (issue ): lessons distilled from a
-  retired member's memory, packaged with the prototype and copied to the
-  member's ``config/`` at instantiation; the DSL ``(lessons)`` context
-  section injects it
-- ``REVIEW.md`` — optional (issue , heterogeneous review): peer-review
+- ``LESSONS.md`` — optional (see docs/design/prototypes.md): lessons
+  distilled from a retired member's memory, packaged with the prototype
+  and copied to the member's ``config/`` at instantiation; the DSL
+  ``(lessons)`` context section injects it
+- ``REVIEW.md`` — optional (heterogeneous review, see
+  docs/design/prototypes.md): peer-review
   records appended by ``reviewPrototype`` while the prototype is staged.
   Metadata reading never touches it, so listing stays free; approval's
   whole-directory move carries it into the trusted library.

@@ -1,4 +1,4 @@
-"""critique stage verdict semantics (issue ).
+"""critique stage verdict semantics (docs/design/runtime.md).
 
 A legal PASS/FAIL verdict is declared to the loop scratchpad as before.
 An unparseable verdict is "we don't know the review outcome": it is NOT

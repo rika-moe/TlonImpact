@@ -493,7 +493,8 @@ class TestAdminPrototypeManagement:
 
 
 class TestAdminPrototypeLessons:
-    """LESSONS.md on the prototype endpoints (issue ): POST/PATCH accept
+    """LESSONS.md on the prototype endpoints (docs/design/prototypes.md):
+    POST/PATCH accept
     an optional ``lessons`` body field; the detail payload carries the text
     back so a reviewer sees the packaged lessons."""
 
@@ -570,7 +571,8 @@ class TestAdminPrototypeLessons:
 
 class TestAdminPrototypeReviews:
     """REVIEW.md peer-review records on the prototype detail endpoints
-    (issue ): the payload carries the review text so the human
+    (docs/design/prototypes.md): the payload carries the review text so
+    the human
     approver sees the heterogeneous reviews; absent file = no field."""
 
     _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
@@ -605,7 +607,8 @@ class TestAdminPrototypeReviews:
 
 
 class TestAdminPrototypeLineage:
-    """Lineage fields on the prototype endpoints (issue ): payloads carry
+    """Lineage fields on the prototype endpoints (docs/design/prototypes.md):
+    payloads carry
     parent/generation/proposal_note, detail endpoints embed the derived
     lineage chain with per-generation diffs."""
 

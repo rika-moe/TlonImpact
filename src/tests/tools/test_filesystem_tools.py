@@ -723,7 +723,8 @@ class TestFilesystemToolSandbox:
 
 
 class TestAgentHomeAccess:
-    """Agent home read access (issue ): the agent's own home is mounted
+    """Agent home read access (docs/reference/tools-reference.md): the
+    agent's own home is mounted
     read-only at /tlon-home; read/list/search whitelist it, write/edit don't."""
 
     _READ_PATHS = ["/workspace", "/tlon-home"]

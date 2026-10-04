@@ -93,10 +93,10 @@ def write_staging_prototype(
 
     The metadata is written with ``:trusted false`` and ``:author`` recording
     the authoring agent, so ``spawnAgent`` refuses it until a human approves
-    it in the mirror. Lineage (issue ): ``parent`` links the proposal to
-    the prototype it was derived from (trusted or staging) and the
-    generation is derived server-side as the parent's + 1; ``proposal_note``
-    records what this generation changes.
+    it in the mirror. Lineage (see docs/design/prototypes.md): ``parent``
+    links the proposal to the prototype it was derived from (trusted or
+    staging) and the generation is derived server-side as the parent's + 1;
+    ``proposal_note`` records what this generation changes.
 
     Args:
         name: prototype directory name (charset-checked, must be unique
@@ -108,8 +108,8 @@ def write_staging_prototype(
         parent: name of the prototype this one derives from (must exist in
             either area; None = a new root)
         proposal_note: free-text description of this generation's change
-        lessons: lessons text (issue ), written as ``LESSONS.md``
-            (None = the prototype carries no lessons file)
+        lessons: lessons text (see docs/design/prototypes.md), written as
+            ``LESSONS.md`` (None = the prototype carries no lessons file)
         tlon_paths: path resolver for the target layout
 
     Returns:
@@ -232,8 +232,9 @@ def append_staging_review(
 ) -> None:
     """Append one peer-review entry to a staged prototype's ``REVIEW.md``.
 
-    The review record is advisory (issue ): it never gates approval —
-    it rides along with the directory when ``approve_prototype`` moves the
+    The review record is advisory (see docs/design/prototypes.md): it
+    never gates approval — it rides along with the directory when
+    ``approve_prototype`` moves the
     prototype into the trusted library, so the review trail survives
     promotion. Multiple reviews accumulate; nothing overwrites.
 

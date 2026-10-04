@@ -4,7 +4,7 @@
 
 ## 背景
 
-ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，issue  补了成员级 `llm.model_name` 覆盖与 per-provider key 路由。运行一段时间后暴露三个问题：
+ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，后续迭代补了成员级 `llm.model_name` 覆盖与 per-provider key 路由。运行一段时间后暴露三个问题：
 
 1. **进程级默认是静默兜底**：`LLM_MODEL` 默认值是已退役型号；成员没配模型时不报错、悄悄用它跑——掩盖配置缺失。
 2. **进程级 temperature 制造假功能**：admin API 与 WebUI 都把 `llm.temperature` 写进 agent.yaml，但装配时明确丢弃文件值（`_build_llm_config`），改了不生效。
@@ -31,13 +31,13 @@ ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，issue  补了�
 - spawn 的子成员默认继承父成员的模型（成本/能力画像随谱系，ADR 0014 的选择压语义）；
 - **bootstrap 不再自动播种标准团队成员**（首次启动由人类经 WebUI/admin API 创建成员并选模型——模型下拉来自第 4 点的注册表端点）；`default_team.py` 角色卡随之退役删除；原型播种（`seed_prototypes`）保留。
 
-### 3. spec 删除 `:llm` 声明（独立后续 PR）
+### 3. spec 删除 `:llm` 声明
 
-`behavior.tlon` 顶层 `:llm` 键从合法键集中移除，加载即报错（显式失败，不静默忽略）；`MemberSpec.llm_model` 字段与 `instantiate` 的基因型传递链删除。
+`behavior.tlon` 顶层 `:llm` 键从合法键集中移除，加载即报错（显式失败，不静默忽略）；`MemberSpec.llm_model` 字段与 `instantiate` 的基因型传递链删除。**已落地**：`MemberSpec.from_dict` 对顶层 `:llm` 残留直接抛 `MemberSpecValidationError`（[member_spec.py](../../src/tlon/agents/member_spec.py)），仓内原型与文档已同步清理。
 
-### 4. 模型元数据端点 + WebUI 下拉（独立后续 PR）
+### 4. 模型元数据端点 + WebUI 下拉
 
-新增 `GET /admin/llm/models`：从 litellm `model_cost` 注册表（4000+ 条目）输出 chat 模型的 provider、上下文窗口、输入/输出/缓存读价、`supports_prompt_caching`、`supports_function_calling`。WebUI 成员编辑表单的模型输入改为可搜索下拉，展示上述元数据；SettingsView 的 LLM 区块删除（进程级 LLM 设置已不存在）。
+新增 `GET /admin/llm/models`：从 litellm `model_cost` 注册表（4000+ 条目）输出 chat 模型的 provider、上下文窗口、输入/输出/缓存读价、`supports_prompt_caching`、`supports_function_calling`。WebUI 成员编辑表单的模型输入改为可搜索下拉，展示上述元数据；SettingsView 的 LLM 区块删除（进程级 LLM 设置已不存在）。**已落地**：端点见 [admin_llm.py](../../src/tlon_server/api/rest/admin_llm.py)，WebUI 创建成员时的模型选择即走该注册表。
 
 ## 后果
 

@@ -1,4 +1,5 @@
-"""Heterogeneous peer review of staging proposals (issue , phase 2).
+"""Heterogeneous peer review of staging proposals (see
+docs/design/prototypes.md).
 
 ``reviewPrototype`` lets a member review a staged proposal: the caller
 only names the proposal — the verdict is NOT caller-supplied. The tool
@@ -90,7 +91,7 @@ class ReviewPrototypeTool(Tool):
         super().__init__(
             name="reviewPrototype",
             description=(
-                "评审一个 staging 区的原型提案（异质评审，）。只点名提案——"
+                "评审一个 staging 区的原型提案（异质评审）。只点名提案——"
                 "结论不由你当场给：工具内部用你自己的模型做一次专项评审调用，"
                 "读取提案的 behavior 全文、随包教训与谱系链（含每代 diff）后产出"
                 " verdict（通过/不通过/弃权）与理由，追加记入提案目录的 REVIEW.md"

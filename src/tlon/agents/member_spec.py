@@ -49,8 +49,8 @@ STAGE_NAMES = frozenset({"think", "act", "plan", "critique", "revise"})
 #: Section names the engine implements (phase 7b). ``persona`` and
 #: ``protocol`` feed the system prompt; ``knowledge``, ``lessons``,
 #: ``skills``, ``current-task``, ``thread-recap`` and ``mail-history``
-#: feed the conversation context, in vector order. ``lessons`` (issue
-#: ) injects the member's inherited ``config/LESSONS.md``.
+#: feed the conversation context, in vector order. ``lessons`` (see
+#: docs/design/memory.md) injects the member's inherited ``config/LESSONS.md``.
 #: Relocated from the legacy ``agents/spec.py`` in phase C.
 SECTION_NAMES = frozenset(
     {
