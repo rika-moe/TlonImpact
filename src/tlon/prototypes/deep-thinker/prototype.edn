@@ -1,4 +1,4 @@
 {:name :deep-thinker
  :display-name "深度思考者"
- :description "严谨深思的分析型 Agent：更多思考迭代、知识注入全开、反思更频繁。适合复杂问题分析、方案评审与深入研究。"
+ :description "深思型认知骨架：更多思考迭代、知识注入全开、反思更频繁，适合复杂问题分析、方案评审与深入研究。行为模板，不代表社会身份。"
  :trusted true}

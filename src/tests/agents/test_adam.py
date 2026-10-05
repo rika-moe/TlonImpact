@@ -205,10 +205,12 @@ class TestAdamDecisions:
         mail = mails[0].payload
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
-        # Greeting names the newborn; the roster lists the society; the
-        # conventions point at the guardian's mailbox (docs/design/mail.md).
+        # Greeting names the newborn and points it at its own discovery
+        # channels (team section in the system prompt, listAgents); the
+        # roster is no longer embedded (docs/design/mail.md).
         assert "小新" in mail.content
-        assert "worker-1（worker-1）" in mail.content
+        assert "worker-1（worker-1）" not in mail.content
+        assert "listAgents" in mail.content
         assert "adam@tlon.internal" in mail.content
 
         await adam.shutdown()

@@ -1,5 +1,5 @@
 ; 产品经理原型——纯行为原型（统一成员模型，ADR 0006：原型=行为基因型，无人格）
 {:name :product
  :display-name "产品经理原型"
- :description "标准 ReAct 认知成员：产品经理行为模板（需求分析、功能规划、方案评审）。"
+ :description "标准 ReAct 认知骨架，预置需求分析、功能规划、方案评审类的行为倾向。行为模板，不代表社会身份。"
  :trusted true}
