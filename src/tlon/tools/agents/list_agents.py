@@ -10,8 +10,9 @@ class ListAgentsTool(Tool):
     """Tool to list every registered agent.
 
     Covers the persona full set (running, sleeping, waking), each with its
-    identity fields: source prototype and lineage (spawner / depth).
-    Useful before spawnAgent/stopAgent to see who exists.
+    source prototype (behavioral-scaffold origin — a technical fact, not a
+    social identity) and lineage (spawner / depth). Useful before
+    spawnAgent/stopAgent to see who exists.
     """
 
     def __init__(self, registry: AgentLifecycle) -> None:
@@ -20,6 +21,9 @@ class ListAgentsTool(Tool):
             description=(
                 "列出全部 Agent：运行状态（running/sleeping/waking）、来源 "
                 "prototype、由谁 spawn。spawn 或 stop 前可用它确认目标。"
+                "注意：prototype 是认知骨架（行为模板）的技术来源，不代表成员的"
+                "社会身份——成员的身份、职位、人设以系统提示词「团队成员」段的"
+                "人设自述为准。"
             ),
             parameters={
                 "type": "object",

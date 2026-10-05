@@ -41,6 +41,10 @@ _PROTOCOL = """## 交互协议
      SOUL.md     — 你的角色定位、工作风格（队友也会看到这个文件）
      RULES.md    — 你的行为约束和工作流程
    - 这些文件位于宿主机的数据目录中
+   - 身份的唯一权威来源是人设：你自己看上述人设文件，队友看「团队成员」段的人设自述。
+     名册工具（如 listAgents）中的 prototype 字段仅表示认知骨架（行为模板）的技术来源，
+     不是职业或社会身份；与人设不一致时，以人设为准
+   - 没有人设自述的成员，即未设定社会身份
    - 如需更新自己的人格设定，告知用户修改对应文件，或建议用户运行 `tlon mirror` 编辑
 
 6. **外部来信**
@@ -99,7 +103,13 @@ class SystemPromptBuilder:
     def build_team(self) -> str | None:
         if not self.context.team_profiles:
             return None
-        lines = ["## 团队成员"]
+        lines = [
+            "## 团队成员",
+            "",
+            "以下是各成员的人设自述。成员的身份、职位、社会关系以人设自述为准；"
+            "名册工具（如 listAgents）中的 prototype 字段仅表示该成员认知骨架的"
+            "技术来源，不代表其社会身份——两者不一致时，以人设为准。",
+        ]
         for name, profile in self.context.team_profiles:
             lines.append("")
             lines.append(f"### {name}")

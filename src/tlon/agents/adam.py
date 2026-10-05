@@ -76,8 +76,9 @@ from tlosure.edn import loads
 #: Adam's policy, as data. Parsed once per assembly by
 #: :func:`make_adam`. Five rules: boot (start-all), drain (idle → stop),
 #: welcome (ADR 0003 — a birth-socialization mail to every spawned
-#: member; the roster is host-expanded, the conventions are static text),
-#: guardian-inbox (docs/design/mail.md 「守护者信箱」 — a fixed
+#: member; it points the newborn at its system prompt's team section and
+#: the listAgents tool for discovering peers, the conventions are static
+#: text), guardian-inbox (docs/design/mail.md 「守护者信箱」 — a fixed
 #: acknowledgement reply to mail
 #: addressed to Adam; postmaster senders are excluded so a bounce never
 #: gets an answer) and noisy-circuit-breaker (AGENT_NOISY → stop the
@@ -96,7 +97,9 @@ ADAM_SPEC_EDN = r"""{:version 1
           :on :agent-spawned
           :actions [(emit (str "亲爱的 " (get event :name) "：\n\n"
                                "欢迎出生。我是 Adam，这个世界的守护者。\n\n"
-                               "这个社会的成员：\n" (member-roster) "\n\n"
+                               "认识其他成员：你的系统提示词「团队成员」一节有各成员的人设自述——"
+                               "成员的身份、职位、社会关系以人设为准；"
+                               "运行时名册可用 listAgents 工具查看。\n\n"
                                "通信惯例：\n"
                                "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
                                "- 要广播给全体成员，写给 all@tlon.internal。\n"
