@@ -36,7 +36,7 @@
 - **`:impl` 是能力行为的全部**——tlosure 表达式，全文可读、加载期静态校验、fuel 有界。能力文本即行为全部，与 spec 同一套审计
 - **`:args` 是显式声明的位置参数 schema**。类型注解（`:string` / `:number` / `:boolean` / `:list` / `:map`）是**评审材料不是静态保证**——tlosure 无类型系统，元数由 fn 应用在运行时兜住（与 builtin 同）。写清楚是为了评审时能判断「这个词的契约是什么」
 - **`:pure` 是准入声明**，不是作者自觉——加载期校验强制（见「语境可见性」）
-- v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计
+- v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计。落地口径（切片 1）：纯词注册表 = `CORE_BUILTINS` + `ARITHMETIC_BUILTINS`（19 词，逐词核实不读 env，与 `POLICY_BUILTINS` 同组成同契约）；非纯词注册表 = 纯词 + 六个动作词。**不含** trigger/loop/stage-cond 语境谓词（`addressed-to-me?`、`iteration-limit-reached?` 等直接读 env 的 `self`/`state`/`scratch` 段）与 host 查询词（`sleeping?` 等读注册表状态）——它们依赖隐式上下文，在零注入 env 下会静默退化；需要上下文一律调用点显式传参
 
 ## env 契约：只见 args
 
@@ -87,7 +87,7 @@
 
 ## 施工清单（对应 issue #45）
 
-1. **artifact 格式 + 加载/校验链**：`capability.edn` schema、staging 区读写、纯度强制、命名空间拒载（对齐 `agents/prototypes/staging.py` 模式）
+1. **artifact 格式 + 加载/校验链**：`capability.edn` schema、staging 区读写、纯度强制、命名空间拒载（对齐 `agents/prototypes/staging.py` 模式） ✅（2026-10-05，issue #45 切片 1/3）：新包 `tlon.agents.capabilities`——`spec.py`（`CapabilitySpec` from_edn/to_edn roundtrip + 结构校验：version==1、name 合法词标识符（字母起头）、args 形状与五类 `:type`、impl 必须 `(fn [...] ...)` 字面且定长（拒 `& rest`）、args 数 == fn 参数数、pure 是 bool；`validate_capability` 准入闸 = 命名空间拒载（特殊形式/builtin/受信能力遮蔽即拒，`taken_names` 注入）+ 纯度强制（`:pure true` 的 impl 只对 `CAPABILITY_PURE_BUILTINS` 过静态校验，动作词按未注册词汇拒；非纯对 `CAPABILITY_FULL_BUILTINS`）+ 空 scope 校验（`msg`/`self` 等隐式符号一律 undefined））；校验注册表逐词核实不读 env——纯注册表 = CORE+ARITHMETIC 19 词（同 `POLICY_BUILTINS` 组成），动作词六枚经 `make_member_builtins()` 提取，env-free 用 AST 静态锚定测试固话；`info.py`/`catalog.py`/`staging.py` 全量对齐原型通道（先校验后落盘、`:trusted false`、approve 整目录 move 翻 trusted 携带 REVIEW.md、reject 路径注入防护）；`TlonPaths` 加 `capabilities_dir()`/`capabilities_staging_dir()`（纯解析器，目录创建在写入点）
 2. **词汇桥**：受信能力库 → 成员注册表（loader 注入，纯度分区进语境可见集）
 3. **staging 通道接线**：admin 端点 + detail payload + WebUI 呈现（对齐原型通道）
 4. **dsl.md 边界修订**：「能力不可进化」→「复合可进化、原语不可进化」（本设计文档落地即同步）

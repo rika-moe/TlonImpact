@@ -259,6 +259,17 @@ class TlonPaths:
         """~/.tlon/prototypes-staging/ — LLM-authored prototypes awaiting approval."""
         return self._home / "prototypes-staging"
 
+    # ===== Capability library =====
+
+    def capabilities_dir(self) -> Path:
+        """~/.tlon/capabilities/ — trusted capability library root
+        (docs/design/capabilities.md)."""
+        return self._home / "capabilities"
+
+    def capabilities_staging_dir(self) -> Path:
+        """~/.tlon/capabilities-staging/ — LLM-authored capabilities awaiting approval."""
+        return self._home / "capabilities-staging"
+
     # ===== Memory =====
 
     def memory_config_file(self, agent_id: str) -> Path:
