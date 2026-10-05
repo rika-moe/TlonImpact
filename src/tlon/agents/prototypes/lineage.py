@@ -25,7 +25,7 @@ def get_prototype_lineage(
     docs/design/prototypes.md).
 
     The lineage is **derived**, never stored separately: each generation is
-    read from its own ``prototype.edn`` (trusted or staging area, whichever
+    read from its own ``prototype.tlon`` (trusted or staging area, whichever
     holds it), and the diff between adjacent generations is a plain
     ``difflib`` unified diff of the two ``behavior.tlon`` texts.
 

@@ -72,7 +72,7 @@ def _write_trusted(p: TlonPaths, name: str, text: str, metadata: str | None = No
     cap_dir.mkdir(parents=True)
     (cap_dir / "capability.tlon").write_text(text, encoding="utf-8")
     if metadata is not None:
-        (cap_dir / "capability.edn").write_text(metadata, encoding="utf-8")
+        (cap_dir / "meta.tlon").write_text(metadata, encoding="utf-8")
 
 
 def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:

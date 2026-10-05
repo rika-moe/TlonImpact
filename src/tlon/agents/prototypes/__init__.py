@@ -4,7 +4,7 @@ A prototype is a directory of pure data — the behavior genome (unified
 member model, ADR 0006: prototypes carry **no persona**; a member's
 persona files are creation-time data, never part of the genome):
 
-- ``prototype.edn`` — metadata ``{:name :display-name :description
+- ``prototype.tlon`` — metadata ``{:name :display-name :description
   :trusted :author :parent :generation :proposal-note}``
 - ``behavior.tlon`` — a complete (total) member spec, unified rules form
   (``{:version 1 :rules [...]}``, phase C — the old ``script.tlon``
@@ -22,7 +22,7 @@ persona files are creation-time data, never part of the genome):
 A directory qualifies as a prototype when it contains ``behavior.tlon``.
 The member type (cognitive ``react`` vs deterministic ``script``) is no
 longer a metadata keyword — it is **derived** from the spec's rules
-(any rule with a ``:loop`` ⇒ react), so ``prototype.edn`` never declares
+(any rule with a ``:loop`` ⇒ react), so ``prototype.tlon`` never declares
 a runtime.
 
 Built-in prototypes ship inside the package (``tlon/prototypes/``) and are

@@ -71,7 +71,7 @@ class TestWriteStaging:
         assert info.pure is True
         cap_dir = p.capabilities_staging_dir() / "thread-digest"
         assert (cap_dir / "capability.tlon").read_text(encoding="utf-8") == VALID_CAPABILITY
-        metadata = (cap_dir / "capability.edn").read_text(encoding="utf-8")
+        metadata = (cap_dir / "meta.tlon").read_text(encoding="utf-8")
         assert ":trusted false" in metadata
         assert ':author "adam"' in metadata
         assert ":proposal-note" in metadata
@@ -182,7 +182,7 @@ class TestApprove:
         assert (cap_dir / "capability.tlon").exists()
         # The review trail rides along with the whole-directory move.
         assert (cap_dir / "REVIEW.md").exists()
-        metadata = (cap_dir / "capability.edn").read_text(encoding="utf-8")
+        metadata = (cap_dir / "meta.tlon").read_text(encoding="utf-8")
         assert ":trusted true" in metadata
         assert ':author "adam"' in metadata
         assert [c.name for c in list_trusted_capabilities(p)] == ["thread-digest"]

@@ -13,7 +13,7 @@ from tlosure.edn import loads
 
 logger = get_logger(__name__)
 
-METADATA_FILE = "capability.edn"
+METADATA_FILE = "meta.tlon"
 CAPABILITY_FILE = "capability.tlon"
 REVIEWS_FILE = "REVIEW.md"
 
@@ -76,7 +76,7 @@ def _read_artifact(cap_dir: Path) -> tuple[str, bool | None]:
 
 
 def _read_metadata(cap_dir: Any) -> CapabilityInfo:
-    """Read ``capability.edn`` metadata, falling back to the directory name."""
+    """Read ``meta.tlon`` metadata, falling back to the directory name."""
     name = cap_dir.name
     description, pure = _read_artifact(cap_dir)
     metadata_file = cap_dir / METADATA_FILE

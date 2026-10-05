@@ -16,7 +16,7 @@ from tlosure.edn import loads
 logger = get_logger(__name__)
 
 PROTOTYPE_PACKAGE = "tlon.prototypes"
-METADATA_FILE = "prototype.edn"
+METADATA_FILE = "prototype.tlon"
 BEHAVIOR_FILE = "behavior.tlon"
 LESSONS_FILE = "LESSONS.md"
 REVIEWS_FILE = "REVIEW.md"
@@ -113,7 +113,7 @@ def _read_parameters(proto_dir: Any) -> tuple[ParameterSpec, ...]:
 
 
 def _read_metadata(proto_dir: Any) -> PrototypeInfo:
-    """Read ``prototype.edn`` metadata, falling back to the directory name.
+    """Read ``prototype.tlon`` metadata, falling back to the directory name.
 
     No runtime is derived or declared (ADR 0006, unified member model):
     a prototype is a behavior template, not a member class — whether a

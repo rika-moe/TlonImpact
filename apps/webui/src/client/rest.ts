@@ -104,7 +104,7 @@ export type AgentDetail = {
   config: { prototype: string | null } & Record<string, unknown>;
 };
 
-/** A declared parameter of a prototype (from prototype.edn). */
+/** A declared parameter of a prototype (from prototype.tlon). */
 export type PrototypeParameter = {
   name: string;
   type: string;

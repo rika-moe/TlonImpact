@@ -117,7 +117,7 @@ spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里�
 - **lazy 资格**：`AgentRegistry.is_lazy`——spec 没有 `:on :boot` 规则（或 spec 不可读）的成员可以被排空。
 - **wake 资格**：`AgentRegistry._on_mail_delivered`——睡眠收件人的 spec 声明了 `:on :mail-delivered` 才发唤醒请求。
 
-不存储的原因是消除双源真相：如果 boot 集合存了一份缓存，spec 改动后就要考虑失效与迁移，而 spec 文件本身就是那盘——改文件即改行为，热重载（`POST /admin/config/agents/{agent_id}/reload`）只是重新走一遍加载链。派生也让原型库自然继承同一语义：`prototype.edn` 元数据里永远没有 `:runtime` 字段。
+不存储的原因是消除双源真相：如果 boot 集合存了一份缓存，spec 改动后就要考虑失效与迁移，而 spec 文件本身就是那盘——改文件即改行为，热重载（`POST /admin/config/agents/{agent_id}/reload`）只是重新走一遍加载链。派生也让原型库自然继承同一语义：`prototype.tlon` 元数据里永远没有 `:runtime` 字段。
 
 唯一权威还有两层推论：
 
@@ -136,7 +136,7 @@ DSL 的实现分五层，各层职责单一、失败模式明确。语言核心�
 | 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_actions` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |
 
-L0 不求值这一点值得单独说：解析的产物是惰性、安全、可流转的数据。正因为如此，模板分析（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 在文本/数据层提取 `:parameters`）、`source_hash` 对原文字节做哈希、原型元数据读取失败时安全回退（`_read_metadata` 对一个坏掉的 `prototype.edn` 只记 warning 返回名字兜底）都可以在完全不触碰求值器的前提下工作。求值被推迟到 L1 且永远由引擎发起——数据在系统里流动的每一站都不承担"执行"的风险。
+L0 不求值这一点值得单独说：解析的产物是惰性、安全、可流转的数据。正因为如此，模板分析（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 在文本/数据层提取 `:parameters`）、`source_hash` 对原文字节做哈希、原型元数据读取失败时安全回退（`_read_metadata` 对一个坏掉的 `prototype.tlon` 只记 warning 返回名字兜底）都可以在完全不触碰求值器的前提下工作。求值被推迟到 L1 且永远由引擎发起——数据在系统里流动的每一站都不承担"执行"的风险。
 
 三条边界值得强调：
 

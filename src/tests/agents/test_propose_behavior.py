@@ -117,7 +117,7 @@ class TestProposeBehavior:
         staging = p.prototypes_staging_dir() / "base-gen2"
         assert (staging / "behavior.tlon").read_text(encoding="utf-8") == _DRAFT_SPEC
         assert (staging / "LESSONS.md").read_text(encoding="utf-8") == "- 别在深夜回信\n"
-        metadata = (staging / "prototype.edn").read_text(encoding="utf-8")
+        metadata = (staging / "prototype.tlon").read_text(encoding="utf-8")
         assert ":parent :base" in metadata
         assert ":generation 2" in metadata
         assert ":proposal-note" in metadata and "把转发目标换成 y" in metadata

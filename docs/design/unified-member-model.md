@@ -7,7 +7,7 @@
 系统里四个概念，各就各位：
 
 - **DSL** —— 受限 EDN 行为语言，语义权威是 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员 `config/behavior.tlon`。spec 是成员行为的唯一权威：boot 集合、lazy 判定、wake 资格全部由它现算，从不落盘。
-- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.edn` 元数据（`:name :display-name :description :trusted :author` + 谱系字段 `:parent :generation :proposal-note`）+ 可选 `LESSONS.md`（随包教训：退休成员蒸馏的经验，实例化时拷贝给新成员、由 `(lessons)` section 注入）；**不带人格**——人格是成员创建时数据，不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
+- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.tlon` 元数据（`:name :display-name :description :trusted :author` + 谱系字段 `:parent :generation :proposal-note`）+ 可选 `LESSONS.md`（随包教训：退休成员蒸馏的经验，实例化时拷贝给新成员、由 `(lessons)` section 注入）；**不带人格**——人格是成员创建时数据，不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
 - **Member** —— 社会成员，只有一种：`MemberRuntime` 实例 + 持久身份 = 身份（agent_id/name/地址）+ 行为（behavior.tlon，数据；不可自改，更新走世代更替，见决策 4）+ 状态（running/sleeping/retired，当前值不是类）+ 档案（home 目录，永不删除）。
 - **Agent** —— 术语收敛：agent ≡ 运行中的成员；prototype = 出生定义；DSL = 行为语言。
 

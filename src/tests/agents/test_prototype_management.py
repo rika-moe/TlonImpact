@@ -60,7 +60,7 @@ class TestWriteTrustedPrototype:
         assert info.author is None
         proto_dir = p.prototypes_dir() / "hand"
         assert (proto_dir / "behavior.tlon").read_text(encoding="utf-8") == VALID_BEHAVIOR
-        metadata = (proto_dir / "prototype.edn").read_text(encoding="utf-8")
+        metadata = (proto_dir / "prototype.tlon").read_text(encoding="utf-8")
         assert ":trusted true" in metadata
         assert ":author" not in metadata
 
@@ -194,7 +194,7 @@ class TestUpdatePrototype:
         # Neither the behavior file nor the metadata was written.
         _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == VALID_BEHAVIOR
-        metadata = (p.prototypes_dir() / "hand" / "prototype.edn").read_text(
+        metadata = (p.prototypes_dir() / "hand" / "prototype.tlon").read_text(
             encoding="utf-8"
         )
         assert "orig" in metadata and "changed" not in metadata
@@ -234,7 +234,7 @@ class TestApprovePreservesLineage:
         assert info.generation == 2
         assert info.proposal_note == "改转发目标"
         # On-disk metadata round-trips too.
-        metadata = (p.prototypes_dir() / "child" / "prototype.edn").read_text(
+        metadata = (p.prototypes_dir() / "child" / "prototype.tlon").read_text(
             encoding="utf-8"
         )
         assert ":parent :base" in metadata

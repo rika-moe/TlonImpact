@@ -267,7 +267,7 @@ class TestRegistryQueries:
         proto_dir = p.prototypes_dir() / "worker"
         proto_dir.mkdir(parents=True)
         (proto_dir / "behavior.tlon").write_text("", encoding="utf-8")
-        (proto_dir / "prototype.edn").write_text(
+        (proto_dir / "prototype.tlon").write_text(
             '{:name "worker" :description "干杂活的"}', encoding="utf-8"
         )
         configs = {

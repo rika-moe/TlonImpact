@@ -14,7 +14,7 @@
 
 ```
 ~/.tlon/prototypes/{prototype_name}/
-├── prototype.edn          # 元数据：:name / :display-name / :description / :trusted / :author
+├── prototype.tlon          # 元数据：:name / :display-name / :description / :trusted / :author
 │                          #   + 谱系：:parent / :generation / :proposal-note
 └── behavior.tlon          # 成员的全部行为规约（total spec，唯一权威）
 ```
@@ -32,7 +32,7 @@
 
 带 `:loop` = 有 LLM 参与、跑认知循环的成员。我们写一个「简报员」：收到点名自己的邮件就做一轮简短的认知循环（think/act + 交卷前自评审），最多 3 轮。
 
-### 2.1 prototype.edn
+### 2.1 prototype.tlon
 
 ```edn
 {:name :briefing-agent
@@ -145,7 +145,7 @@ print('OK', any(rule.loop is not None for rule in spec.rules))
 写完一个原型，过一遍：
 
 - [ ] 目录在 `~/.tlon/prototypes/{name}/`，有 `behavior.tlon`（判定标准）；
-- [ ] `prototype.edn` 含 `:name`（缺省兜底目录名）、`:display-name`、`:description`；
+- [ ] `prototype.tlon` 含 `:name`（缺省兜底目录名）、`:display-name`、`:description`；
 - [ ] `behavior.tlon` 是合法 EDN，能 `loads` + `validate_member_spec`；
 - [ ] 带 `:loop` 的规则写全了 `:until` + 迭代上限 + `:reflect`；无 `:loop` 的规则纯 `:actions`；
 - [ ] 每个 `respond` 规则都写了 `:when` 门控；
