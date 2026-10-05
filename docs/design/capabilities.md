@@ -98,7 +98,7 @@
 - **动态验证走 `:examples` 断言最小版**（见「信任通道」节）；演武场行为验证留作后续独立项
 - **版本演进：同名即拒、改进走新名**——「vocabulary only grows」延伸到词义不可变；淘汰仍走 deprecated → 零引用物理删（见「退役纪律」）
 
-#30 施工清单（详见 issue #30）：设计文档回填（本节）✅ → `:examples` 动态验证 ✅（2026-10-05：`ExampleSpec` schema（pure-only、args 字面数据、数量对齐声明）+ `evaluate_capability_examples`（纯注册表 + 零注入 env + DEFAULT_FUEL 沙盒求值，EvalError 记录不抛出）挂进 `validate_capability` 加载闸末段（staging 写路径自动强制），facade `run_examples` fail-soft + admin detail payload `examples` 键（EDN 值渲染为 EDN 文本）+ WebUI detail 面板 PASS/FAIL 呈现）→ `proposeCapability` 工具。
+#30 施工清单（详见 issue #30）：设计文档回填（本节）✅ → `:examples` 动态验证 ✅（2026-10-05：`ExampleSpec` schema（pure-only、args 字面数据、数量对齐声明）+ `evaluate_capability_examples`（纯注册表 + 零注入 env + DEFAULT_FUEL 沙盒求值，EvalError 记录不抛出）挂进 `validate_capability` 加载闸末段（staging 写路径自动强制），facade `run_examples` fail-soft + admin detail payload `examples` 键（EDN 值渲染为 EDN 文本）+ WebUI detail 面板 PASS/FAIL 呈现）→ `proposeCapability` 工具 ✅（2026-10-05）：`tools/agents/propose_capability.py` 的 `ProposeCapabilityTool`，严格对齐 `ProposeBehaviorTool` 模式——血脉偿付闸（fail-open，排在起草前）→ 读记忆 digest + lessons（**不读 behavior.tlon 底稿**）→ 一次起草 LLM 调用（`purpose="propose"`、60s）→ `_extract_edn` 提取 + 词名一致性核对（起草产物 `:name` 必须恰好是指定词名，不一致回喂重起草）→ `write_staging_capability` 闸（校验错误原文回喂 + `data.hint` artifact schema 提示，外层 ReAct 重试）；起草 hint 的 19 纯词从 tlosure 注册表代码枚举、六动作词名单有测试锚定 `CAPABILITY_PURE_BUILTINS`/`MEMBER_ACTION_NAMES` 防漂移；既有受信词清单由 assembly 侧渲染成 prompt 文本以零参 callable 注入（防重复造词 + 风格示范）；`CapabilityError` 改继承 tools 层端口 `CapabilityProposalError`（`tools/agents/ports.py`，`PrototypeError` 先例——`tlon.tools` 不反向依赖 `tlon.agents`）；**不做 near-kin**（几十词小词汇表 + 同名硬拒 + 评审见全文与断言，相似度子系统是预防性抽象）；注册进 `REPRODUCTION_TOOLS`（见习成员不注册），单工具 v1 无 writeCapability 裸写通道（人类裸写已有 WebUI 表单）。
 
 ## 施工清单（对应 issue #45）
 

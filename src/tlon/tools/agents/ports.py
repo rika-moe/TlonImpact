@@ -26,6 +26,30 @@ class SpawnRejectedError(ValueError):
         self.reason = reason
 
 
+class CapabilityProposalError(ValueError):
+    """Capability staging-write rejection (parse / validation / name conflict).
+
+    Raised by ``tlon.agents.capabilities`` (its ``CapabilityError``
+    subclasses this) and caught by the capability tools; declared here so
+    ``tlon.tools`` stays free of ``tlon.agents`` imports — the
+    ``PrototypeError`` precedent (``tools/prototypes/ports.py``).
+    """
+
+
+class CapabilitySummary(Protocol):
+    """Read-only view of a staged capability's metadata used by the tools.
+
+    ``agents.capabilities.info.CapabilityInfo`` satisfies it structurally;
+    the assembler injects ``write_staging_capability`` as a plain callable.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def trusted(self) -> bool: ...
+
+
 class StopRejectedError(ValueError):
     """Stop refused by a precondition check.
 
