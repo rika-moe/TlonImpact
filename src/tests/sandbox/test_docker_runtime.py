@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from docker.errors import NotFound
+from docker.errors import APIError, NotFound
 
 from tlon.base.config import DockerRuntimeConfig
 from tlon.base.paths import TlonPaths
@@ -492,8 +492,6 @@ class TestFileExists:
     async def test_daemon_error_propagates_as_runtime_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
-        from docker.errors import APIError
-
         runtime = _runtime_with_probe(monkeypatch, tmp_path, set())
         runtime.container.get_archive.side_effect = APIError("daemon exploded")  # type: ignore[assignment]
 
@@ -572,3 +570,114 @@ class TestWriteFile:
         await runtime.write_file("/workspace/a/b/f.txt", b"x")
 
         runtime.client.containers.create.assert_not_called()
+
+
+def _api_error(explanation: str, status_code: int) -> APIError:
+    """A docker APIError carrying a daemon status code (bare ``APIError(msg)``
+    has ``status_code=None`` and never triggers the cabinet retry)."""
+    response = MagicMock(status_code=status_code, url="http://daemon", reason="err")
+    return APIError("daemon error", response=response, explanation=explanation)
+
+
+class TestCabinetIoRetry:
+    """Issue #87: a config-drift rebuild (``container.remove(force=True)``)
+    can race an in-flight cabinet call holding the old container reference,
+    surfacing as a daemon 404/409 — retried once after re-attaching via
+    ensure_running."""
+
+    async def test_fetch_archive_retries_once_on_409(self, monkeypatch, tmp_path: Path):
+        tar_bytes = _make_tar([("notes.txt", b"hi")])
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        container = MagicMock()
+        container.get_archive.side_effect = [
+            _api_error("removal of container is already in progress", 409),
+            (iter([tar_bytes]), {"name": "notes.txt"}),
+        ]
+        runtime.container = container
+        ensure = AsyncMock()
+        monkeypatch.setattr(DockerRuntime, "ensure_running", ensure)
+
+        assert await runtime.fetch_archive("/workspace/notes.txt") == tar_bytes
+
+        ensure.assert_awaited_once()
+        assert container.get_archive.call_count == 2
+
+    async def test_fetch_archive_404_triggers_retry_then_file_not_found(
+        self, monkeypatch, tmp_path: Path
+    ):
+        """A container-gone 404 is indistinguishable from a path-missing 404;
+        only the post-retry NotFound (container known to exist) maps to
+        FileNotFoundError."""
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        container = MagicMock()
+        container.get_archive.side_effect = [
+            NotFound("no such container", response=MagicMock(status_code=404)),
+            NotFound("no such file"),
+        ]
+        runtime.container = container
+        ensure = AsyncMock()
+        monkeypatch.setattr(DockerRuntime, "ensure_running", ensure)
+
+        with pytest.raises(FileNotFoundError):
+            await runtime.fetch_archive("/workspace/missing.txt")
+
+        ensure.assert_awaited_once()
+        assert container.get_archive.call_count == 2
+
+    async def test_fetch_archive_500_is_not_retried(self, monkeypatch, tmp_path: Path):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        container = MagicMock()
+        container.get_archive.side_effect = _api_error("daemon exploded", 500)
+        runtime.container = container
+        ensure = AsyncMock()
+        monkeypatch.setattr(DockerRuntime, "ensure_running", ensure)
+
+        with pytest.raises(RuntimeError, match="daemon exploded"):
+            await runtime.fetch_archive("/workspace/x")
+
+        ensure.assert_not_awaited()
+        assert container.get_archive.call_count == 1
+
+    async def test_file_exists_retries_once_on_409(self, monkeypatch, tmp_path: Path):
+        runtime = _make_runtime(monkeypatch, tmp_path)
+        container = MagicMock()
+        container.get_archive.side_effect = [
+            _api_error("removal of container is already in progress", 409),
+            (iter([b""]), {"name": "notes.txt"}),
+        ]
+        runtime.container = container
+        ensure = AsyncMock()
+        monkeypatch.setattr(DockerRuntime, "ensure_running", ensure)
+
+        assert await runtime.file_exists("/workspace/notes.txt") is True
+
+        ensure.assert_awaited_once()
+        assert container.get_archive.call_count == 2
+
+    async def test_write_file_retries_once_on_409(self, monkeypatch, tmp_path: Path):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace"})
+        runtime.container.put_archive.side_effect = [
+            _api_error("removal of container is already in progress", 409),
+            True,
+        ]
+        ensure = AsyncMock()
+        monkeypatch.setattr(DockerRuntime, "ensure_running", ensure)
+
+        assert await runtime.write_file("/workspace/notes.txt", b"hi") is True
+
+        ensure.assert_awaited_once()
+        assert runtime.container.put_archive.call_count == 2
+
+    async def test_write_file_api_error_after_retry_is_runtime_error(
+        self, monkeypatch, tmp_path: Path
+    ):
+        runtime = _runtime_with_probe(monkeypatch, tmp_path, {"/workspace"})
+        runtime.container.put_archive.side_effect = _api_error("still conflicted", 409)
+        ensure = AsyncMock()
+        monkeypatch.setattr(DockerRuntime, "ensure_running", ensure)
+
+        with pytest.raises(RuntimeError, match="still conflicted"):
+            await runtime.write_file("/workspace/notes.txt", b"hi")
+
+        ensure.assert_awaited_once()
+        assert runtime.container.put_archive.call_count == 2

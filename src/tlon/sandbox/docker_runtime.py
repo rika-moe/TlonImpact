@@ -28,9 +28,10 @@ import asyncio
 import io
 import tarfile
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import docker
 from docker.errors import APIError, ImageNotFound, NotFound
@@ -44,6 +45,8 @@ from tlon.sandbox.device import ExecutionResult
 from tlon.sandbox.docker_client import create_docker_client
 
 logger = get_logger(__name__)
+
+_T = TypeVar("_T")
 
 #: Container path where the agent's own home directory (``~/.tlon/{agent_id}``)
 #: is bind-mounted read-only (see docs/design/execution-device.md 「纵深防御」):
@@ -485,6 +488,39 @@ class DockerRuntime:
     # File I/O APIs (sandbox-only — Agent never touches host filesystem)
     # ------------------------------------------------------------------
 
+    async def _cabinet_io_retry(self, path: str, call: Callable[[], _T]) -> _T:
+        """Run a blocking cabinet I/O call, recovering once from a stale
+        container reference.
+
+        The wake lock only serializes assembly, not the session lifecycle
+        (issue #87): a config-drift rebuild in ``ensure_running``
+        (``container.remove(force=True)``) can race with an in-flight call
+        holding the old ``self.container``, surfacing as a daemon 404
+        (container already gone) or 409 (removal in progress). Both are
+        retried exactly once after re-running ``ensure_running`` to
+        reattach to the rebuilt cabinet. A NotFound raised by the retry
+        is therefore genuinely a missing path — the container is known to
+        exist. Any other APIError propagates unchanged.
+
+        Args:
+            path: Container path being accessed (for logging).
+            call: Blocking callable run via ``asyncio.to_thread``; it must
+                read ``self.container`` at call time so the retry picks up
+                the refreshed reference.
+
+        Raises:
+            docker.errors.APIError: When the first attempt fails with a
+                non-404/409 status, or the retry fails.
+        """
+        try:
+            return await asyncio.to_thread(call)
+        except APIError as e:
+            if e.status_code not in (404, 409):
+                raise
+            logger.warning("cabinet_io_retry", path=path, error=str(e))
+            await self.ensure_running()
+            return await asyncio.to_thread(call)
+
     async def read_file(self, path: str) -> bytes:
         """Read a file from the container.
 
@@ -555,7 +591,7 @@ class DockerRuntime:
             raise RuntimeError("Container not available")
 
         try:
-            return await asyncio.to_thread(self._fetch_archive, path)
+            return await self._cabinet_io_retry(path, lambda: self._fetch_archive(path))
         except NotFound as e:
             raise FileNotFoundError(f"Path not found in container: {path}") from e
         except APIError as e:
@@ -571,17 +607,15 @@ class DockerRuntime:
         a large directory.
 
         Returns:
-            The daemon's stat dict, or None when the path does not exist.
+            The daemon's stat dict.
 
         Raises:
-            docker.errors.APIError: On daemon errors other than NotFound.
+            docker.errors.NotFound: If the path does not exist.
+            docker.errors.APIError: On other daemon errors.
         """
         if self.container is None:
             raise RuntimeError("Container not available")
-        try:
-            stream, stat = self.container.get_archive(path)
-        except NotFound:
-            return None
+        stream, stat = self.container.get_archive(path)
         close = getattr(stream, "close", None)
         if close is not None:
             close()
@@ -616,15 +650,7 @@ class DockerRuntime:
 
         Uses the docker SDK's put_archive with an in-memory tar archive, so
         no software (python3, base64, ...) needs to exist inside the container.
-        Automatically creates parent directories.
-
-        Parent creation is archive-only too (issue #40): the daemon does
-        NOT create missing parents for put_archive (404 verified against a
-        live daemon), and a tar entry for an *existing* directory clobbers
-        its mode/mtime (also verified), so the tar carries directory
-        entries for exactly the missing ancestors and is anchored at the
-        deepest existing one (probed via ``_path_stat``). When the parent
-        already exists the tar holds the file alone, exactly as before.
+        Automatically creates parent directories (see ``_write_archive``).
 
         Args:
             path: Absolute path inside the container where the file will be written.
@@ -642,14 +668,56 @@ class DockerRuntime:
         if not self.container:
             raise RuntimeError("Container not available")
 
+        try:
+            ok = await self._cabinet_io_retry(path, lambda: self._write_archive(path, content))
+        except APIError as e:
+            logger.error("file_write_error", path=path, error=str(e))
+            raise RuntimeError(f"write_file failed for {path}: {e}") from e
+        if not ok:
+            logger.error("file_write_error", path=path)
+            raise RuntimeError(f"write_file failed: put_archive returned False for {path}")
+
+        logger.debug("file_written", path=path, size=len(content))
+        return True
+
+    def _write_archive(self, path: str, content: bytes) -> bool:
+        """Write a file via put_archive with an in-memory tar (blocking —
+        run in a thread).
+
+        Parent creation is archive-only (issue #40): the daemon does
+        NOT create missing parents for put_archive (404 verified against a
+        live daemon), and a tar entry for an *existing* directory clobbers
+        its mode/mtime (also verified), so the tar carries directory
+        entries for exactly the missing ancestors and is anchored at the
+        deepest existing one (probed via ``_path_stat``). When the parent
+        already exists the tar holds the file alone.
+
+        Args:
+            path: Absolute path inside the container where the file will be written.
+            content: Raw file contents as bytes.
+
+        Returns:
+            The daemon's put_archive success flag.
+
+        Raises:
+            docker.errors.NotFound: If the anchor probe races a removal.
+            docker.errors.APIError: On other daemon errors.
+        """
+        if self.container is None:
+            raise RuntimeError("Container not available")
+
         # Anchor at the deepest existing ancestor; collect the missing
         # parent dirs (deepest first) along the way.
         parent, _, filename = path.rpartition("/")
         anchor = parent or "/"
         missing: list[str] = []
-        while anchor != "/" and await asyncio.to_thread(self._path_stat, anchor) is None:
-            missing.append(anchor)
-            anchor = anchor.rpartition("/")[0] or "/"
+        while anchor != "/":
+            try:
+                self._path_stat(anchor)
+                break
+            except NotFound:
+                missing.append(anchor)
+                anchor = anchor.rpartition("/")[0] or "/"
 
         # Build an in-memory tar: missing ancestor dirs (shallowest
         # first), then the file — all relative to the anchor.
@@ -665,15 +733,7 @@ class DockerRuntime:
             info.size = len(content)
             tar.addfile(info, io.BytesIO(content))
 
-        ok = await asyncio.to_thread(
-            self.container.put_archive, anchor, tar_stream.getvalue()
-        )
-        if not ok:
-            logger.error("file_write_error", path=path)
-            raise RuntimeError(f"write_file failed: put_archive returned False for {path}")
-
-        logger.debug("file_written", path=path, size=len(content))
-        return True
+        return bool(self.container.put_archive(anchor, tar_stream.getvalue()))
 
     async def file_exists(self, path: str) -> bool:
         """Check if a path exists in the container.
@@ -695,8 +755,10 @@ class DockerRuntime:
             await self.ensure_running()
 
         try:
-            stat = await asyncio.to_thread(self._path_stat, path)
+            await self._cabinet_io_retry(path, lambda: self._path_stat(path))
+        except NotFound:
+            return False
         except APIError as e:
             logger.error("file_exists_error", path=path, error=str(e))
             raise RuntimeError(f"file_exists failed for {path}: {e}") from e
-        return stat is not None
+        return True
