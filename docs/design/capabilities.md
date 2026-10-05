@@ -51,7 +51,7 @@
 
 - **存储**：受信库 `~/.tlon/capabilities/` + staging 区 `~/.tlon/capabilities-staging/`，目录布局、元数据（`capability.edn`）、REVIEW.md、批准移动（staging → 受信库）全部对齐原型通道（[prototypes.md](./prototypes.md)、`agents/prototypes/staging.py` 模式）
 - **信任模型同构**：受信是默认（人类手写进受信库即可信），staging 写入显式 `:trusted false`；approve/reject 是纯人类决定
-- **动态验证复用演武场**（[arena.md](./arena.md)）：能力词不能独立运行，它的行为验证方式是**携带该能力的 staging 原型进演武场**——原型在围墙里调用这个词，轨迹即证据。这回答了能力评审的「它到底会做什么」：和能力本身一样，证据不是判决
+- **动态验证 = `:examples` 断言**（2026-10-05 随 #30 拍板）：artifact 携带 `{:args [...] :expect ...}` 输入/输出对，准入校验时在沙盒求值器跑断言（纯词 + fuel 计量，天然安全）——评审看到的不只是「它声称做什么」，还有「它做到了什么」。更重的行为验证（携带该能力的 staging 原型进演武场，轨迹即证据，见 [arena.md](./arena.md)）留作后续独立项
 - **异质评审**可复用 reviewPrototype 的模式（独立模型血线的评审意见，advisory）
 
 ## 语境可见性与纯度
@@ -87,6 +87,17 @@
 - **v1 能力词只在 DSL 语境**（spec 的 rules/actions），不进 LLM 工具面——ToolExecutor 注册（LLM 可动态调用的工具）需要 参数 schema → tool schema 的映射设计，是独立后续决策。这收窄了 issue #45 原清单的「ToolExecutor 从 artifact 注册」一项：DSL 词汇先行，对齐宪法五「全社会每个成员都能在自己的 **spec** 里组合它」的原始表述
 - 能力引能力（`:impl` 引用其他能力词）v1 不做
 
+## #30：突变晋升通道（全面 tlosure，2026-10-05 拍板）
+
+#30（突变晋升通道，宪法五）与本通道的关系重新定位：~~workspace 程序 → 重表达为 tlosure → 演武场 → staging~~ 的 workspace 起源**正式废止**。新口径：**突变出生即 tlosure artifact**——agent 从意图与自身经验直接起草 `:impl`（`proposeBehavior` 的能力版），经同一条 staging 闸投递。device 不再是突变发生器；tlosure 的受限表达力从「晋升前必须跨越的围墙」变成「突变的天生形态」——静态准入校验器（19 词注册表 + `:pure` 强制 + 遮蔽即拒）就是唯一判据，写不出来的能力不配晋升。
+
+随动的两个机制拍板：
+
+- **动态验证走 `:examples` 断言最小版**（见「信任通道」节）；演武场行为验证留作后续独立项
+- **版本演进：同名即拒、改进走新名**——「vocabulary only grows」延伸到词义不可变；淘汰仍走 deprecated → 零引用物理删（见「退役纪律」）
+
+#30 施工清单（详见 issue #30）：设计文档回填（本节）→ `:examples` 动态验证 → `proposeCapability` 工具。
+
 ## 施工清单（对应 issue #45）
 
 1. **artifact 格式 + 加载/校验链**：`capability.edn` schema、staging 区读写、纯度强制、命名空间拒载（对齐 `agents/prototypes/staging.py` 模式） ✅（2026-10-05，issue #45 切片 1/3）：新包 `tlon.agents.capabilities`——`spec.py`（`CapabilitySpec` from_edn/to_edn roundtrip + 结构校验：version==1、name 合法词标识符（字母起头）、args 形状与五类 `:type`、impl 必须 `(fn [...] ...)` 字面且定长（拒 `& rest`）、args 数 == fn 参数数、pure 是 bool；`validate_capability` 准入闸 = 命名空间拒载（特殊形式/builtin/受信能力遮蔽即拒，`taken_names` 注入）+ 纯度强制（`:pure true` 的 impl 只对 `CAPABILITY_PURE_BUILTINS` 过静态校验，动作词按未注册词汇拒；非纯对 `CAPABILITY_FULL_BUILTINS`）+ 空 scope 校验（`msg`/`self` 等隐式符号一律 undefined））；校验注册表逐词核实不读 env——纯注册表 = CORE+ARITHMETIC 19 词（同 `POLICY_BUILTINS` 组成），动作词六枚经 `make_member_builtins()` 提取，env-free 用 AST 静态锚定测试固话；`info.py`/`catalog.py`/`staging.py` 全量对齐原型通道（先校验后落盘、`:trusted false`、approve 整目录 move 翻 trusted 携带 REVIEW.md、reject 路径注入防护）；`TlonPaths` 加 `capabilities_dir()`/`capabilities_staging_dir()`（纯解析器，目录创建在写入点）
@@ -94,4 +105,4 @@
 3. **staging 通道接线**：admin 端点 + detail payload + WebUI 呈现（对齐原型通道） ✅（2026-10-05，issue #45 切片 3/3）：`tlon.api.capabilities.CapabilitiesFacade`（薄透传 catalog/staging 函数族，`CapabilityError`/`CapabilityInfo` 经 `__all__` 对 server 可见）+ `Runtime` 第八个 facade；REST 新 mixin `admin_capabilities.py`——`GET /admin/capabilities[/staging]`（列表）、`GET /admin/capabilities/{name}` 与 `GET /admin/capabilities/staging/{name}`（详情：元数据 + artifact 全文 + REVIEW.md）、`POST /admin/capabilities/staging`（创建提案，加载闸不过 400 `invalid_capability` 不落盘）、`POST .../staging/{name}/approve|reject`（语义对齐原型通道，approve 后成员下次 wake 经词汇桥可用）；WebUI 新 `CAPABILITIES` 视图（受信库/staging 双区列表、纯度标记、deprecated 划线 + 徽章、详情面板 artifact/REVIEW.md 终端全文、APPROVE 直按 / REJECT 确认框、新建提案表单——v1 人类写能力的主入口）
 4. **dsl.md 边界修订**：「能力不可进化」→「复合可进化、原语不可进化」（本设计文档落地即同步）
 
-后续（非本文范围）：ToolExecutor 注册（LLM 工具面）、能力引能力、#30 的 workspace 起源晋升流程（agent 把 workspace 程序重写为 `:impl` → 演武场 → staging）。
+后续（非本文范围）：ToolExecutor 注册（LLM 工具面）、能力引能力、#30 的施工项（见上节）。
