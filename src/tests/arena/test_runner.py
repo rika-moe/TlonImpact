@@ -52,7 +52,7 @@ def _write_staging_proto(paths: TlonPaths, name: str = "relay") -> Path:
     proto_dir = paths.prototypes_staging_dir() / name
     proto_dir.mkdir(parents=True, exist_ok=True)
     (proto_dir / "behavior.tlon").write_text(_RELAY_SPEC, encoding="utf-8")
-    (proto_dir / "prototype.edn").write_text(
+    (proto_dir / "prototype.tlon").write_text(
         f'{{:name "{name}" :display-name "{name}" :description "转发邮件的中继成员"'
         " :trusted false}",
         encoding="utf-8",

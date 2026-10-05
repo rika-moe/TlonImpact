@@ -123,7 +123,7 @@ class TestProposeCapability:
 
         staging = p.capabilities_staging_dir() / "thread-digest"
         assert (staging / "capability.tlon").read_text(encoding="utf-8") == _DRAFT_ARTIFACT
-        metadata = (staging / "capability.edn").read_text(encoding="utf-8")
+        metadata = (staging / "meta.tlon").read_text(encoding="utf-8")
         assert ":trusted false" in metadata
         assert f':author "{agent_id}"' in metadata
         assert ":proposal-note" in metadata and "把线程主题蒸成一行" in metadata

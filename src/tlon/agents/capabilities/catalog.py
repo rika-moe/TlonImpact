@@ -29,7 +29,7 @@ def list_trusted_capabilities(tlon_paths: TlonPaths) -> list[CapabilityInfo]:
     """List capabilities from ``~/.tlon/capabilities/`` (the trusted library).
 
     A directory qualifies when it contains a ``capability.tlon``;
-    metadata is read from ``capability.edn`` when present, with a
+    metadata is read from ``meta.tlon`` when present, with a
     name-only fallback.
     """
     return _list_from(tlon_paths.capabilities_dir())

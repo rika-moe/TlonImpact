@@ -56,7 +56,7 @@ def list_prototypes(tlon_paths: TlonPaths) -> list[PrototypeInfo]:
     """List prototypes from ``~/.tlon/prototypes/`` (not the package).
 
     A directory qualifies when it contains a ``behavior.tlon``; metadata is
-    read from ``prototype.edn`` when present, with a name-only fallback.
+    read from ``prototype.tlon`` when present, with a name-only fallback.
     """
     return _list_from((tlon_paths).prototypes_dir())
 

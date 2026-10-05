@@ -206,13 +206,13 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │       └── server-{date}.jsonl       # 每日服务端日志
 ├── prototypes/                       # 行为原型库（只读解析，不自动创建）
 │   └── {prototype_name}/
-│       ├── prototype.edn             # 原型元数据（:name / :display-name / :description / :trusted）
+│       ├── prototype.tlon             # 原型元数据（:name / :display-name / :description / :trusted）
 │       └── behavior.tlon             # 行为规约（total spec；原型无人格，ADR 0006）
 ├── prototypes-staging/               # LLM 创作、待人类批准的原型（闸门）
 ├── capabilities/                     # 受信能力库（能力数据化，design/capabilities.md；一词一目录）
 │   └── {capability_name}/
 │       ├── capability.tlon           # artifact 本体（{:version 1 :name :args :impl (fn ...) :pure :examples?}）
-│       └── capability.edn            # 元数据（:name / :trusted / :author / :proposal-note / :deprecated）
+│       └── meta.tlon            # 元数据（:name / :trusted / :author / :proposal-note / :deprecated）
 ├── capabilities-staging/             # LLM 创作、待人类批准的能力（与原型同一信任闸模式）
 ├── {agent_id}/
 │   ├── config/

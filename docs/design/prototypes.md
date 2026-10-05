@@ -8,7 +8,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 原型是一个**纯数据目录**，不含任何代码。判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes/info.py](../../src/tlon/agents/prototypes/info.py) 的 `_is_prototype_dir`）。目录内容：
 
-- `prototype.edn`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
+- `prototype.tlon`——元数据 map：`:name`、`:display-name`、`:description`、`:trusted`、`:author`，以及谱系字段 `:parent`（父原型名，根缺省）、`:generation`（int，根=1，子=父+1，服务端推导）、`:proposal-note`（本代变更说明，自由文本，可缺省）。缺省时以目录名兜底（`_read_metadata`）；无谱系字段的旧文件读取时按根处理（parent=None、generation=1），不做落盘迁移。
 - `behavior.tlon`——一份**完整**的 MemberSpec（统一 rules 形态 `{:version 1 :rules [...]}`）。文件即全部行为，没有第二个来源。
 - `LESSONS.md`——**可选**：随包传递的教训文本——退休成员记忆的蒸馏产物（见 [memory.md](./memory.md)「退休蒸馏」），经 `writePrototype` / `write_trusted_prototype` / `update_prototype` 的 `lessons` 参数（或 admin REST 的 `lessons` 字段）写入；详情端点（`get_prototype_detail`）把文本带回，评审提案时可见。
 - `REVIEW.md`——**可选**：staging 提案的同行评审记录，`reviewPrototype` 工具每次评审追加一条（时间、评审者 id、评审者模型、verdict、理由）；元数据读取不碰它（listing 零成本），approve 的整目录 `shutil.move` 把它免费带进 trusted 库；详情端点以 `reviews` 字段带回文本。
@@ -70,7 +70,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。
 
-列出路径还有一条刻意的容错原则：**元数据读取不许失败**。`_read_metadata` 对坏 `prototype.edn` 回退目录名兜底；`_read_parameters` 对解析不了的 `behavior.tlon` 回退空参数。理由是 listing 是发现入口——一个坏原型不该让整个库列表消失。代价是坏原型在列表里看起来正常（回退值恰好合理时），失败被推迟到实例化或启动——这不是假设，是已经发生的事实（见「已知问题」）。
+列出路径还有一条刻意的容错原则：**元数据读取不许失败**。`_read_metadata` 对坏 `prototype.tlon` 回退目录名兜底；`_read_parameters` 对解析不了的 `behavior.tlon` 回退空参数。理由是 listing 是发现入口——一个坏原型不该让整个库列表消失。代价是坏原型在列表里看起来正常（回退值恰好合理时），失败被推迟到实例化或启动——这不是假设，是已经发生的事实（见「已知问题」）。
 
 ## 模板：写侧专属的参数化
 

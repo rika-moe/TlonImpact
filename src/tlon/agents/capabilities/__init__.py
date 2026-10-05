@@ -6,7 +6,7 @@ host code. A capability directory is pure data:
 - ``capability.tlon`` — the artifact itself (``{:version 1 :name
   :description :args :impl (fn [args] ...) :pure bool}``): the whole
   behavior, statically validated at load, fuel-bounded at evaluation
-- ``capability.edn`` — metadata ``{:name :trusted :author
+- ``meta.tlon`` — metadata ``{:name :trusted :author
   :proposal-note :deprecated}`` (prototype-channel key conventions)
 - ``REVIEW.md`` — optional heterogeneous peer-review records, advisory;
   the approval move carries the file into the trusted library
