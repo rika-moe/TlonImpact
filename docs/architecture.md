@@ -199,6 +199,8 @@ runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后
 │       └── server-{date}.jsonl
 ├── prototypes/              # 行为原型库（启动时从 tlon.prototypes 播种）
 ├── prototypes-staging/      # LLM 撰写、待审批的原型
+├── capabilities/            # 受信能力库（能力数据化，design/capabilities.md）
+├── capabilities-staging/    # LLM 撰写、待审批的能力（与原型同一信任闸模式）
 ├── {agent_id}/
 │   ├── config/
 │   │   ├── agent.yaml
