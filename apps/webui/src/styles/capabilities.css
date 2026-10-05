@@ -1,0 +1,298 @@
+/**
+ * CAPABILITIES view styles. Colors come from tokens.css variables only
+ * (same discipline as prototypes.css).
+ */
+
+.capabilities-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.capabilities-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.capabilities-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.capabilities-spacer {
+  flex: 1;
+}
+
+.capabilities-empty {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-yellow);
+}
+
+/* Operation feedback. */
+.capabilities-notice {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--neon-cyan);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.capabilities-error-bar {
+  color: var(--neon-magenta);
+  border: 1px solid rgba(255, 0, 229, 0.6);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  box-shadow: var(--glow-magenta);
+  font-size: 12px;
+}
+
+/* ---------- two-pane body: lists | detail ---------- */
+
+.capabilities-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.capabilities-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cap-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cap-section-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.cap-section-title--staging {
+  color: var(--neon-yellow);
+}
+
+/* ---------- capability cards ---------- */
+
+.cap-card {
+  background: var(--bg-2);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: var(--radius);
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cap-card:hover {
+  border-color: rgba(0, 240, 255, 0.5);
+}
+
+.cap-card--staging {
+  border: 1px solid rgba(255, 230, 0, 0.4);
+}
+
+.cap-card--staging:hover {
+  border-color: rgba(255, 230, 0, 0.7);
+}
+
+.cap-card--selected {
+  border: var(--border-neon);
+  box-shadow: var(--glow-cyan);
+}
+
+/* Card head: word name + purity marker + TRUSTED/STAGING badge. */
+.cap-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cap-card-name {
+  font-family: var(--font-mono);
+  color: var(--text);
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cap-card-name--deprecated {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+/* Purity marker (cyan = pure, yellow = impure — impure words compose
+ * action vocabulary and are :actions-only). */
+.cap-purity {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  color: var(--neon-cyan);
+}
+
+.cap-purity--impure {
+  color: var(--neon-yellow);
+}
+
+/* List-card trust badge; same tone language as the prototype cards. */
+.cap-card-badge {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.cap-card-badge--staging {
+  color: var(--neon-yellow);
+  box-shadow: none;
+}
+
+/* Retirement marker (vocabulary only grows; display only). */
+.cap-deprecated-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  color: var(--neon-magenta);
+  align-self: flex-start;
+}
+
+.cap-card-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* ---------- detail panel ---------- */
+
+.cap-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cap-detail--empty {
+  align-items: flex-start;
+}
+
+.cap-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cap-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cap-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.cap-meta-row .tech-label {
+  min-width: 120px;
+}
+
+.cap-meta-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.cap-artifact {
+  max-height: 50vh;
+  margin: 0;
+  overflow: auto;
+}
+
+/* ---------- modals ---------- */
+
+.cap-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 18, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.cap-modal {
+  width: 560px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cap-modal-title {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.cap-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Proposal form. */
+.cap-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cap-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cap-form-row .input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+textarea.cap-form-artifact {
+  min-height: 240px;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
+.cap-reject-warning {
+  color: var(--neon-magenta);
+  font-size: 13px;
+  margin: 0;
+}
