@@ -38,6 +38,7 @@ from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import Tool
+from tlosure.builtins import Builtin
 from tlosure.edn import loads
 from tlosure.eval import ActionRequest, FuelExhaustedError
 
@@ -266,15 +267,17 @@ def _make_member(
     mailbox: Mailbox | None = None,
     cognitive: CognitiveCapabilities | None = None,
     registry: Any = None,
+    builtins: dict[str, Builtin] | None = None,
 ) -> MemberRuntime:
     spec = MemberSpec.from_edn(loads(edn))
-    validate_member_spec(spec)
+    registry_builtins = builtins if builtins is not None else make_member_builtins()
+    validate_member_spec(spec, builtins=registry_builtins)
     return MemberRuntime(
         member_id=member_id,
         name=member_id,
         event_bus=event_bus,
         spec=spec,
-        builtins=make_member_builtins(),
+        builtins=registry_builtins,
         mailbox=mailbox,
         cognitive=cognitive,
         registry=registry,
@@ -391,6 +394,55 @@ class TestDeterministicDispatch:
         assert registry.calls[0][0] == "developer"
         assert registry.calls[0][2] == "admin-2"  # spawner_id
         assert registry.calls[0][3] is None  # no session context
+
+        await member.shutdown()
+
+
+class TestCapabilityWordDispatch:
+    """The vocabulary bridge end to end (issue #45 slice 2/3): a trusted
+    capability word composed in a deterministic rule's actions evaluates
+    to its ActionRequest data and the engine executes it."""
+
+    CAPABILITY = """\
+{:version 1
+ :name "notify-sink"
+ :description "给 sink 发一封带前缀的通知邮件"
+ :args [{:name "text" :type :string :doc "通知正文"}]
+ :impl (fn [text] (emit (str "note: " text) ["sink@tlon.internal"]))
+ :pure false}
+"""
+
+    SPEC = """\
+{:version 1
+ :rules [{:name "notify"
+          :on :mail-delivered
+          :when (addressed-to-me? msg)
+          :actions [(notify-sink "hello")]}]}
+"""
+
+    async def test_capability_word_produces_action_request(self, bus, tmp_path):
+        from tlon.agents.capabilities.bridge import load_capability_builtins
+
+        paths = TlonPaths(home=tmp_path)
+        cap_dir = paths.capabilities_dir() / "notify-sink"
+        cap_dir.mkdir(parents=True)
+        (cap_dir / "capability.tlon").write_text(self.CAPABILITY, encoding="utf-8")
+
+        host = make_member_builtins()
+        builtins = {**host, **load_capability_builtins(paths, reserved=host)}
+        member = _make_member("notifier-2", self.SPEC, bus, builtins=builtins)
+        await member.initialize()
+
+        emitted: list[Event] = []
+        bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
+        mail = Mail.create(
+            from_address="alice@tlon.internal", content="ping", to=[member.address]
+        )
+        await bus.publish(_deliver(mail, member.member_id))
+
+        await _wait_for(lambda: len(emitted) == 1)
+        assert emitted[0].payload.content == "note: hello"
+        assert "sink@tlon.internal" in emitted[0].payload.to
 
         await member.shutdown()
 

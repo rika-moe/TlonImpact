@@ -6,7 +6,8 @@ naming a host business concept):
 
 - the shared contract types the vocabulary and the evaluator kernel
   (``tlosure/eval.py``) are both written against — the :class:`EvalError`
-  family, :class:`Builtin` (one registry entry: ``fn`` + purity marker),
+  family, :class:`Builtin` (one registry entry: a purity marker plus
+  either a host ``fn`` or a data-defined :class:`Closure`),
   :class:`Closure` (the user function value ``defn`` / ``fn`` produce,
   ADR 0021), and :class:`ActionRequest` (the side-effect *data* an action
   builtin produces; the host engine executes the requests after
@@ -55,19 +56,6 @@ class EvalDepthError(EvalError):
 
 
 @dataclass(frozen=True)
-class Builtin:
-    """A registered builtin function with a purity marker.
-
-    ``fn`` receives ``(env, *evaluated_args)``; ``pure`` marks absence of
-    side effects. Hosts that reserve an evaluation context for pure
-    functions enforce that at registration time, via this marker.
-    """
-
-    fn: Callable[..., Any]
-    pure: bool = True
-
-
-@dataclass(frozen=True)
 class Closure:
     """A user function value (ADR 0021) — what ``defn`` / ``fn`` evaluate to.
 
@@ -85,6 +73,45 @@ class Closure:
     body: list[Any]
     env: dict[str, Any]
     name: str | None = None
+
+
+@dataclass(frozen=True)
+class Builtin:
+    """A registry entry with a purity marker — two implementation shapes.
+
+    Host shape (``fn`` set): ``fn`` receives ``(env, *evaluated_args)``;
+    its internals are **unmetered** — a host builtin's own computation
+    is the host's resource domain, not the language's.
+
+    Closure-backed shape (``closure`` set): a data-defined word — the
+    entry carries a :class:`Closure` instead of host code, and the
+    evaluator applies it like any closure application: the body
+    evaluates through the kernel, so **fuel draw-down and the depth cap
+    count into the caller's budget** (the substantive semantic
+    difference from the host shape). The body sees exactly the closure's
+    captured ``env`` plus its parameter bindings — registering an empty
+    env means the body sees its arguments and nothing else (zero
+    injection); words inside the body resolve through the *caller's*
+    registry like any other form head.
+
+    Exactly one of ``fn`` / ``closure`` must be set. ``pure`` marks
+    absence of side effects; hosts that reserve an evaluation context
+    for pure functions enforce that at registration time, via this
+    marker.
+    """
+
+    fn: Callable[..., Any] | None = None
+    pure: bool = True
+    closure: Closure | None = None
+
+    def __post_init__(self) -> None:
+        if (self.fn is None) == (self.closure is None):
+            raise ValueError("Builtin needs exactly one of fn / closure")
+
+    @staticmethod
+    def from_closure(closure: Closure, *, pure: bool = True) -> "Builtin":
+        """A closure-backed (data-defined) registry entry."""
+        return Builtin(pure=pure, closure=closure)
 
 
 @dataclass(frozen=True)

@@ -71,6 +71,8 @@
 
 机制答案：**受信能力库 → 成员注册表**。加载期（loader 唯一读盘路径）把受信库里每个 artifact 的 `:impl` 校验（结构 + 纯度 + 命名空间）后注册进成员 spec 的校验/求值注册表——从此全社会每个成员都能在自己的 spec 里组合它。这座桥同时是 #30（突变晋升通道）的受信词汇库机制：一次建设，两个 EPIC 共用。
 
+落地形状（切片 2/3）：`Builtin` 注册表条目从「只有宿主 fn」扩成两形——宿主 fn（内部不计费）或 **closure-backed**（携带 `Closure`，求值器命中时走 closure 应用，body 计入调用方 fuel/depth）；captured env 为空，body 只见自己的参数绑定，body 内的词经调用方注册表解析。桥本身（`agents/capabilities/bridge.py` 的 `load_capability_builtins`）在**每次 `load_member_spec` 时重算**（受信库是小数据，无缓存失效问题）——新批准的词在成员下次 wake 自然生效。单个坏 artifact 只排除该词（fail-soft），引用者在 own 加载校验处报 unknown word。
+
 ## 退役纪律
 
 对齐既有「vocabulary only grows, semantics only tighten」：
@@ -88,7 +90,7 @@
 ## 施工清单（对应 issue #45）
 
 1. **artifact 格式 + 加载/校验链**：`capability.edn` schema、staging 区读写、纯度强制、命名空间拒载（对齐 `agents/prototypes/staging.py` 模式） ✅（2026-10-05，issue #45 切片 1/3）：新包 `tlon.agents.capabilities`——`spec.py`（`CapabilitySpec` from_edn/to_edn roundtrip + 结构校验：version==1、name 合法词标识符（字母起头）、args 形状与五类 `:type`、impl 必须 `(fn [...] ...)` 字面且定长（拒 `& rest`）、args 数 == fn 参数数、pure 是 bool；`validate_capability` 准入闸 = 命名空间拒载（特殊形式/builtin/受信能力遮蔽即拒，`taken_names` 注入）+ 纯度强制（`:pure true` 的 impl 只对 `CAPABILITY_PURE_BUILTINS` 过静态校验，动作词按未注册词汇拒；非纯对 `CAPABILITY_FULL_BUILTINS`）+ 空 scope 校验（`msg`/`self` 等隐式符号一律 undefined））；校验注册表逐词核实不读 env——纯注册表 = CORE+ARITHMETIC 19 词（同 `POLICY_BUILTINS` 组成），动作词六枚经 `make_member_builtins()` 提取，env-free 用 AST 静态锚定测试固话；`info.py`/`catalog.py`/`staging.py` 全量对齐原型通道（先校验后落盘、`:trusted false`、approve 整目录 move 翻 trusted 携带 REVIEW.md、reject 路径注入防护）；`TlonPaths` 加 `capabilities_dir()`/`capabilities_staging_dir()`（纯解析器，目录创建在写入点）
-2. **词汇桥**：受信能力库 → 成员注册表（loader 注入，纯度分区进语境可见集）
+2. **词汇桥**：受信能力库 → 成员注册表（loader 注入，纯度分区进语境可见集） ✅（2026-10-05，issue #45 切片 2/3）：`Builtin` 扩为两形——宿主 fn（内部不计费）或 closure-backed（`Builtin.from_closure`，携带 `Closure`，evaluator 命中走 `_apply`，body 计入调用方 fuel/depth，fuel 计量差有回归锚定测试）；captured env 为空 = 零注入的运行时面，body 内词经调用方注册表解析；`capabilities/bridge.py` 的 `load_capability_builtins(tlon_paths, reserved=...)` 扫受信库 → 逐 artifact `from_edn` + `validate_capability`（taken = 宿主词 + 已接受受信词）→ 构造 closure-backed 条目（pure 按声明）；坏 artifact fail-soft（structlog error + 排除该词，引用者在 own 加载处报 unknown word）；`AgentRegistry._member_builtins()` 每次 `load_member_spec` 重算能力部分并与宿主词合并（profile loader 与 `_start_agent` 同一注册表，MemberRuntime 求值侧同一份），新批准的词成员下次 wake 生效；顺带补 `count` 进 `SCRIPT_BUILTINS`（成员注册表原是准入注册表 19 词缺 `count` 的子集——不修则含 `count` 的 artifact 批准后在每个成员运行时炸，子集关系有回归测试固话）
 3. **staging 通道接线**：admin 端点 + detail payload + WebUI 呈现（对齐原型通道）
 4. **dsl.md 边界修订**：「能力不可进化」→「复合可进化、原语不可进化」（本设计文档落地即同步）
 
