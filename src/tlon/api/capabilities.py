@@ -9,12 +9,15 @@ docs/design/capabilities.md）。
 作为本模块 API 面的一部分对 server 可见。
 """
 
+from typing import Any
+
 from tlon.agents.capabilities.catalog import (
     get_capability_detail,
     list_trusted_capabilities,
+    run_capability_examples,
 )
 from tlon.agents.capabilities.info import CapabilityInfo
-from tlon.agents.capabilities.spec import CapabilityError
+from tlon.agents.capabilities.spec import CapabilityError, ExampleResult
 from tlon.agents.capabilities.staging import (
     approve_capability,
     list_staging_capabilities,
@@ -22,8 +25,40 @@ from tlon.agents.capabilities.staging import (
     write_staging_capability,
 )
 from tlon.base.paths import TlonPaths
+from tlosure.edn import dumps
 
-__all__ = ["CapabilitiesFacade", "CapabilityError", "CapabilityInfo"]
+__all__ = [
+    "CapabilitiesFacade",
+    "CapabilityError",
+    "CapabilityInfo",
+    "ExampleResult",
+    "example_result_payload",
+]
+
+
+def example_result_payload(result: ExampleResult) -> dict[str, Any]:
+    """Serialize one :class:`ExampleResult` for the admin detail endpoint.
+
+    EDN values are rendered as EDN text (``tlosure.edn.dumps``) — a
+    string that stays unambiguous for keywords / symbols / forms, which
+    plain JSON typing cannot distinguish. ``actual`` is present only
+    when the example evaluated; ``error`` only when it did not.
+    """
+    payload: dict[str, Any] = {
+        "args": dumps(list(result.args)),
+        "expect": dumps(result.expect),
+        "passed": result.passed,
+    }
+    if result.error is not None:
+        payload["error"] = result.error
+    else:
+        try:
+            payload["actual"] = dumps(result.actual)
+        except TypeError:
+            # A non-EDN return value (e.g. a Closure) has no EDN literal;
+            # render it readably instead of failing the detail endpoint.
+            payload["actual"] = repr(result.actual)
+    return payload
 
 
 class CapabilitiesFacade:
@@ -62,6 +97,15 @@ class CapabilitiesFacade:
             CapabilityError: invalid name or no capability under that name
         """
         return get_capability_detail(name, staging=staging, tlon_paths=self._paths)
+
+    def run_examples(self, name: str, *, staging: bool = False) -> list[ExampleResult]:
+        """Run the capability's ``:examples`` assertions (review material:
+        the artifact's claims verified in the sandbox evaluator).
+
+        Fail-soft: no capability under that name or an unparseable
+        artifact returns an empty list.
+        """
+        return run_capability_examples(name, staging=staging, tlon_paths=self._paths)
 
     def create_staging(
         self,

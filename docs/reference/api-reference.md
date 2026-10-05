@@ -264,10 +264,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### 能力端点（docs/design/capabilities.md，WebUI CAPABILITIES 视图）
 
-域函数在 [agents/capabilities/](../../src/tlon/agents/capabilities) 包；能力对象形状 `{name, description, pure, trusted, author, proposal_note, deprecated}`（`pure` 为 `null` = artifact 解析失败软降级，列表永不失败；`deprecated` 是退役标记，只展示不可编辑）。详情端点额外带 `artifact`（capability.tlon 全文）与 `reviews`（`REVIEW.md` 评审记录全文，仅存在时出现）。staging 写路径先跑完整加载闸（结构校验 → 命名空间拒载 → 纯度准入），失败不落盘。facade 未装配时全部 503。
+域函数在 [agents/capabilities/](../../src/tlon/agents/capabilities) 包；能力对象形状 `{name, description, pure, trusted, author, proposal_note, deprecated}`（`pure` 为 `null` = artifact 解析失败软降级，列表永不失败；`deprecated` 是退役标记，只展示不可编辑）。详情端点额外带 `artifact`（capability.tlon 全文）、`reviews`（`REVIEW.md` 评审记录全文，仅存在时出现）与 `examples`（`:examples` 断言逐条结果 `[{args, expect, passed, actual?, error?}]`——EDN 值渲染为 EDN 文本；`actual` 求值成功时出现，`error` 求值失败时出现；无断言或 artifact 解析失败为空列表）。staging 写路径先跑完整加载闸（结构校验 → 命名空间拒载 → 纯度准入 → `:examples` 断言），失败不落盘。facade 未装配时全部 503。
 
 - `GET /admin/capabilities`、`GET /admin/capabilities/staging`——200：`{"status": "success", "capabilities": [<能力对象>]}`
-- `GET /admin/capabilities/{name}`、`GET /admin/capabilities/staging/{name}`——200：`{"status": "success", "capability": <能力对象 + artifact + reviews?>}`；404：`{"error", "reason": "capability_not_found"}`
+- `GET /admin/capabilities/{name}`、`GET /admin/capabilities/staging/{name}`——200：`{"status": "success", "capability": <能力对象 + artifact + examples + reviews?>}`；404：`{"error", "reason": "capability_not_found"}`
 - `POST /admin/capabilities/staging`——body `{artifact, proposal_note?}`（artifact 的 `:name` 即能力身份，staging 目录以它命名）。201：`{"status": "success", "capability": <能力对象>}`；400：`{"error", "reason": "invalid_capability"}`（缺字段、与受信库/staging 重名或加载闸拒载——不落盘）
 - `POST /admin/capabilities/staging/{name}/approve`——晋级受信库（整目录 move + `:trusted true`，成员下次 wake 经词汇桥可用）。200：`{"status": "success", "name", "approved": true}`；400：`{"status": "error", "message"}`（staging 无此名/受信库重名）
 - `POST /admin/capabilities/staging/{name}/reject`——删除 staging 提案。200：`{"status": "success", "name", "rejected": true}`；400：同上

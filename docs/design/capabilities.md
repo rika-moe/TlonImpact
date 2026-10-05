@@ -30,12 +30,14 @@
  :description "把邮件线程蒸馏成三段式摘要文本"
  :args [{:name "mails" :type :list :doc "按时间升序的邮件列表"}]
  :impl (fn [mails] ...)
- :pure true}
+ :pure true
+ :examples [{:args [[mail-a mail-b]] :expect "digest:2"}]}
 ```
 
 - **`:impl` 是能力行为的全部**——tlosure 表达式，全文可读、加载期静态校验、fuel 有界。能力文本即行为全部，与 spec 同一套审计
 - **`:args` 是显式声明的位置参数 schema**。类型注解（`:string` / `:number` / `:boolean` / `:list` / `:map`）是**评审材料不是静态保证**——tlosure 无类型系统，元数由 fn 应用在运行时兜住（与 builtin 同）。写清楚是为了评审时能判断「这个词的契约是什么」
 - **`:pure` 是准入声明**，不是作者自觉——加载期校验强制（见「语境可见性」）
+- **`:examples` 是可选的输入/输出断言**（仅 `:pure true` 可携带——非纯 impl 产出 ActionRequest 宿主对象，无法与 EDN 值比对）：`{:args [...] :expect <值>}` 列表，`:args` 是**字面数据不求值**，数量须等于 `:args` 声明数。准入校验时在沙盒求值器跑断言（纯注册表 + 零注入 env + DEFAULT_FUEL 计量），任一失败即拒载；detail 端点同步呈现逐条 PASS/FAIL 与实际值/错误（见「信任通道」）
 - v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计。落地口径（切片 1）：纯词注册表 = `CORE_BUILTINS` + `ARITHMETIC_BUILTINS`（19 词，逐词核实不读 env，与 `POLICY_BUILTINS` 同组成同契约）；非纯词注册表 = 纯词 + 六个动作词。**不含** trigger/loop/stage-cond 语境谓词（`addressed-to-me?`、`iteration-limit-reached?` 等直接读 env 的 `self`/`state`/`scratch` 段）与 host 查询词（`sleeping?` 等读注册表状态）——它们依赖隐式上下文，在零注入 env 下会静默退化；需要上下文一律调用点显式传参
 
 ## env 契约：只见 args
@@ -96,7 +98,7 @@
 - **动态验证走 `:examples` 断言最小版**（见「信任通道」节）；演武场行为验证留作后续独立项
 - **版本演进：同名即拒、改进走新名**——「vocabulary only grows」延伸到词义不可变；淘汰仍走 deprecated → 零引用物理删（见「退役纪律」）
 
-#30 施工清单（详见 issue #30）：设计文档回填（本节）→ `:examples` 动态验证 → `proposeCapability` 工具。
+#30 施工清单（详见 issue #30）：设计文档回填（本节）✅ → `:examples` 动态验证 ✅（2026-10-05：`ExampleSpec` schema（pure-only、args 字面数据、数量对齐声明）+ `evaluate_capability_examples`（纯注册表 + 零注入 env + DEFAULT_FUEL 沙盒求值，EvalError 记录不抛出）挂进 `validate_capability` 加载闸末段（staging 写路径自动强制），facade `run_examples` fail-soft + admin detail payload `examples` 键（EDN 值渲染为 EDN 文本）+ WebUI detail 面板 PASS/FAIL 呈现）→ `proposeCapability` 工具。
 
 ## 施工清单（对应 issue #45）
 

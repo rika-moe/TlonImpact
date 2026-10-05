@@ -8,7 +8,7 @@ from typing import Any
 
 from aiohttp import web
 
-from tlon.api.capabilities import CapabilityError, CapabilityInfo
+from tlon.api.capabilities import CapabilityError, CapabilityInfo, example_result_payload
 
 from .common import RestHandlerBase
 
@@ -17,6 +17,7 @@ def _capability_payload(
     info: CapabilityInfo,
     artifact: str | None = None,
     reviews: str | None = None,
+    examples: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Serialize a CapabilityInfo for the admin API (list + detail shapes)."""
     payload: dict[str, Any] = {
@@ -32,6 +33,8 @@ def _capability_payload(
         payload["artifact"] = artifact
     if reviews is not None:
         payload["reviews"] = reviews
+    if examples is not None:
+        payload["examples"] = examples
     return payload
 
 
@@ -72,7 +75,7 @@ class AdminCapabilityHandlers(RestHandlerBase):
     async def handle_get_capability(self, request: web.Request) -> web.Response:
         """GET /admin/capabilities/{name} - trusted-library capability
         detail: metadata + the full capability.tlon artifact text
-        (+ REVIEW.md records when present)."""
+        (+ :examples assertion outcomes + REVIEW.md records when present)."""
         return self._handle_get_capability_detail(request, staging=False)
 
     async def handle_get_staging_capability(self, request: web.Request) -> web.Response:
@@ -92,8 +95,11 @@ class AdminCapabilityHandlers(RestHandlerBase):
             return self._json_response(
                 {"error": str(e), "reason": "capability_not_found"}, status=404
             )
+        examples = [
+            example_result_payload(r) for r in self.capabilities.run_examples(name, staging=staging)
+        ]
         return self._json_response(
-            {"status": "success", "capability": _capability_payload(info, artifact, reviews)}
+            {"status": "success", "capability": _capability_payload(info, artifact, reviews, examples)}
         )
 
     async def handle_create_staging_capability(self, request: web.Request) -> web.Response:
