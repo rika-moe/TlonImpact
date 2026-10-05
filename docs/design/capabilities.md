@@ -1,6 +1,6 @@
 # 能力数据化：复合能力成为可审批的数据 artifact
 
-> 本文是能力数据化的设计拍板（issue #45，愿景路线第三步「开放」）。方向共识 2026-09-28，机制五点 2026-10-05 拍板。现状：未实现，本文是施工依据。能力数据化把「行为即数据」推广到能力层：工具/能力描述成为数据 artifact，复用 spec 的 staging + 人工批准通道，从社会内部生长。
+> 本文是能力数据化的设计拍板（issue #45，愿景路线第三步「开放」）。方向共识 2026-09-28，机制五点 2026-10-05 拍板。现状：三个施工切片全部落地（见文末「施工清单」；第 4 项 dsl.md 边界修订随本文档同步）。能力数据化把「行为即数据」推广到能力层：工具/能力描述成为数据 artifact，复用 spec 的 staging + 人工批准通道，从社会内部生长。
 
 ## 问题：能力层不可进化
 
@@ -91,7 +91,7 @@
 
 1. **artifact 格式 + 加载/校验链**：`capability.edn` schema、staging 区读写、纯度强制、命名空间拒载（对齐 `agents/prototypes/staging.py` 模式） ✅（2026-10-05，issue #45 切片 1/3）：新包 `tlon.agents.capabilities`——`spec.py`（`CapabilitySpec` from_edn/to_edn roundtrip + 结构校验：version==1、name 合法词标识符（字母起头）、args 形状与五类 `:type`、impl 必须 `(fn [...] ...)` 字面且定长（拒 `& rest`）、args 数 == fn 参数数、pure 是 bool；`validate_capability` 准入闸 = 命名空间拒载（特殊形式/builtin/受信能力遮蔽即拒，`taken_names` 注入）+ 纯度强制（`:pure true` 的 impl 只对 `CAPABILITY_PURE_BUILTINS` 过静态校验，动作词按未注册词汇拒；非纯对 `CAPABILITY_FULL_BUILTINS`）+ 空 scope 校验（`msg`/`self` 等隐式符号一律 undefined））；校验注册表逐词核实不读 env——纯注册表 = CORE+ARITHMETIC 19 词（同 `POLICY_BUILTINS` 组成），动作词六枚经 `make_member_builtins()` 提取，env-free 用 AST 静态锚定测试固话；`info.py`/`catalog.py`/`staging.py` 全量对齐原型通道（先校验后落盘、`:trusted false`、approve 整目录 move 翻 trusted 携带 REVIEW.md、reject 路径注入防护）；`TlonPaths` 加 `capabilities_dir()`/`capabilities_staging_dir()`（纯解析器，目录创建在写入点）
 2. **词汇桥**：受信能力库 → 成员注册表（loader 注入，纯度分区进语境可见集） ✅（2026-10-05，issue #45 切片 2/3）：`Builtin` 扩为两形——宿主 fn（内部不计费）或 closure-backed（`Builtin.from_closure`，携带 `Closure`，evaluator 命中走 `_apply`，body 计入调用方 fuel/depth，fuel 计量差有回归锚定测试）；captured env 为空 = 零注入的运行时面，body 内词经调用方注册表解析；`capabilities/bridge.py` 的 `load_capability_builtins(tlon_paths, reserved=...)` 扫受信库 → 逐 artifact `from_edn` + `validate_capability`（taken = 宿主词 + 已接受受信词）→ 构造 closure-backed 条目（pure 按声明）；坏 artifact fail-soft（structlog error + 排除该词，引用者在 own 加载处报 unknown word）；`AgentRegistry._member_builtins()` 每次 `load_member_spec` 重算能力部分并与宿主词合并（profile loader 与 `_start_agent` 同一注册表，MemberRuntime 求值侧同一份），新批准的词成员下次 wake 生效；顺带补 `count` 进 `SCRIPT_BUILTINS`（成员注册表原是准入注册表 19 词缺 `count` 的子集——不修则含 `count` 的 artifact 批准后在每个成员运行时炸，子集关系有回归测试固话）
-3. **staging 通道接线**：admin 端点 + detail payload + WebUI 呈现（对齐原型通道）
+3. **staging 通道接线**：admin 端点 + detail payload + WebUI 呈现（对齐原型通道） ✅（2026-10-05，issue #45 切片 3/3）：`tlon.api.capabilities.CapabilitiesFacade`（薄透传 catalog/staging 函数族，`CapabilityError`/`CapabilityInfo` 经 `__all__` 对 server 可见）+ `Runtime` 第八个 facade；REST 新 mixin `admin_capabilities.py`——`GET /admin/capabilities[/staging]`（列表）、`GET /admin/capabilities/{name}` 与 `GET /admin/capabilities/staging/{name}`（详情：元数据 + artifact 全文 + REVIEW.md）、`POST /admin/capabilities/staging`（创建提案，加载闸不过 400 `invalid_capability` 不落盘）、`POST .../staging/{name}/approve|reject`（语义对齐原型通道，approve 后成员下次 wake 经词汇桥可用）；WebUI 新 `CAPABILITIES` 视图（受信库/staging 双区列表、纯度标记、deprecated 划线 + 徽章、详情面板 artifact/REVIEW.md 终端全文、APPROVE 直按 / REJECT 确认框、新建提案表单——v1 人类写能力的主入口）
 4. **dsl.md 边界修订**：「能力不可进化」→「复合可进化、原语不可进化」（本设计文档落地即同步）
 
 后续（非本文范围）：ToolExecutor 注册（LLM 工具面）、能力引能力、#30 的 workspace 起源晋升流程（agent 把 workspace 程序重写为 `:impl` → 演武场 → staging）。

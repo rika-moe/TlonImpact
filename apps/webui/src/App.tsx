@@ -8,6 +8,7 @@ import { VIEWS, VIEW_TITLES } from "./types";
 import { MailView } from "./views/MailView";
 import { AgentsView } from "./views/AgentsView";
 import { PrototypesView } from "./views/PrototypesView";
+import { CapabilitiesView } from "./views/CapabilitiesView";
 import { EventsView } from "./views/EventsView";
 import { TracesView } from "./views/TracesView";
 import { MetricsView } from "./views/MetricsView";
@@ -85,6 +86,7 @@ const VIEW_COMPONENTS: Record<ViewName, (props: {
   mail: MailView,
   agents: AgentsView,
   prototypes: PrototypesView,
+  capabilities: CapabilitiesView,
   events: EventsView,
   traces: TracesView,
   metrics: MetricsView,

@@ -4,7 +4,7 @@ ConfigService、ContainerResourceMonitor、MetricsService、TraceStore、
 AgentRegistry、
 LessonsDistiller、RetirementCeremony、Adam、guardian 包装、外部网关
 注册表、AdapterManager、MailDelivery、可选的 GitHubAdapter——并在其上
-构造七个 domain facade。
+构造八个 domain facade。
 
 ``build_runtime(runtime_paths)`` 持有一个显式的 ``TlonPaths``：同一进程
 可以并存多个 runtime 实例（各有独立的 tlon home）。进程级的
@@ -25,6 +25,7 @@ from tlon.agents.lessons import LessonsDistiller
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.retirement import RetirementCeremony
 from tlon.api.arena import ArenaFacade
+from tlon.api.capabilities import CapabilitiesFacade
 from tlon.api.config import ConfigFacade
 from tlon.api.events import EventsFacade
 from tlon.api.mail import MailFacade
@@ -50,7 +51,7 @@ logger = get_logger(__name__)
 
 @dataclass
 class Runtime:
-    """``build_runtime()`` 的装配结果：runtime 组件 + 七个 domain facade。
+    """``build_runtime()`` 的装配结果：runtime 组件 + 八个 domain facade。
 
     server（tlon_server）只许经 facade 字段触达 runtime；组件字段
     留给生命周期管理（``shutdown``）与事件发布（``event_bus``）。
@@ -81,6 +82,8 @@ class Runtime:
     # 演武场 facade 不进 shutdown：无自持资源，后台 run task 随进程退出
     # （v1 语义：进程重启丢失进行中的 run 记录，磁盘证据不受影响）
     arena: ArenaFacade
+    # 能力 facade 同 arena：纯 TlonPaths 透传，无自持资源
+    capabilities: CapabilitiesFacade
 
     async def shutdown(self) -> None:
         """Shut down all runtime components in reverse order of creation.
@@ -307,4 +310,5 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
             github_adapter=github_adapter,
         ),
         arena=ArenaFacade(tlon_paths=runtime_paths),
+        capabilities=CapabilitiesFacade(tlon_paths=runtime_paths),
     )

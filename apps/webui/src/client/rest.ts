@@ -210,6 +210,51 @@ export type LlmModelInfo = {
 };
 
 /**
+ * Capability write rejection (POST staging): like RestError but also carries
+ * the server's semantic reason code (400 invalid_capability on a failed
+ * validation chain — nothing was written in that case).
+ */
+export class CapabilityError extends Error {
+  constructor(
+    message: string,
+    readonly reason?: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = "CapabilityError";
+  }
+}
+
+/**
+ * Capability list entry (GET /admin/capabilities[/staging],
+ * docs/design/capabilities.md). `pure` is null when the artifact failed
+ * fail-soft parsing (listing never fails); `deprecated` is the retirement
+ * marker (vocabulary only grows — display only, no edit operation).
+ */
+export type CapabilitySummary = {
+  name: string;
+  description: string;
+  pure: boolean | null;
+  trusted: boolean;
+  author: string | null;
+  proposal_note: string | null;
+  deprecated: boolean;
+};
+
+/** Capability detail: list metadata + full capability.tlon artifact text. */
+export type CapabilityDetail = CapabilitySummary & {
+  artifact: string;
+  /** REVIEW.md advisory review records (present only when any landed). */
+  reviews?: string;
+};
+
+/** Staging proposal creation body (POST /admin/capabilities/staging). */
+export type CapabilityCreate = {
+  artifact: string;
+  proposal_note?: string;
+};
+
+/**
  * Prototype write rejection (POST/PATCH): like RestError but also carries
  * the server's semantic reason code (e.g. "invalid_prototype" on 400).
  */
@@ -582,6 +627,103 @@ export class RestClient {
   async getArenaReport(name: string, runId: string): Promise<ArenaRunReport> {
     return this.get(
       `/admin/prototypes/staging/${encodeURIComponent(name)}/arena-runs/${encodeURIComponent(runId)}/report`,
+    );
+  }
+
+  // ---- Capabilities (docs/design/capabilities.md): trusted library + staging channel ----
+
+  /**
+   * Like send(), but rejects with a CapabilityError carrying the server's
+   * semantic reason code (staging writes report 400 invalid_capability).
+   */
+  private async capabilitySend<T>(
+    method: "POST",
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers: {
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...this.authHeaders(),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch (err) {
+      throw new CapabilityError(
+        `REST request failed: ${method} ${path} (${String(err)})`,
+      );
+    }
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+      reason?: string;
+    } & T;
+    if (!response.ok) {
+      throw new CapabilityError(
+        RestClient.withAuthHint(
+          data.error ?? data.message ?? `REST ${method} ${path} returned ${String(response.status)}`,
+          response.status,
+        ),
+        data.reason,
+        response.status,
+      );
+    }
+    return data;
+  }
+
+  /** Trusted capability words (the library every member may compose). */
+  async listCapabilities(): Promise<CapabilitySummary[]> {
+    const data = await this.get<{ capabilities?: CapabilitySummary[] }>(
+      "/admin/capabilities",
+    );
+    return data.capabilities ?? [];
+  }
+
+  /** Staged capability proposals awaiting human approval. */
+  async listStagingCapabilities(): Promise<CapabilitySummary[]> {
+    const data = await this.get<{ capabilities?: CapabilitySummary[] }>(
+      "/admin/capabilities/staging",
+    );
+    return data.capabilities ?? [];
+  }
+
+  /** Trusted capability detail: metadata + full capability.tlon source. */
+  async getCapability(name: string): Promise<CapabilityDetail> {
+    const data = await this.get<{ capability: CapabilityDetail }>(
+      `/admin/capabilities/${encodeURIComponent(name)}`,
+    );
+    return data.capability;
+  }
+
+  /** Staged capability detail, same shape as getCapability. */
+  async getStagingCapability(name: string): Promise<CapabilityDetail> {
+    const data = await this.get<{ capability: CapabilityDetail }>(
+      `/admin/capabilities/staging/${encodeURIComponent(name)}`,
+    );
+    return data.capability;
+  }
+
+  /** Stage a capability artifact (201; 400 invalid_capability writes nothing). */
+  async createStagingCapability(body: CapabilityCreate): Promise<Record<string, unknown>> {
+    return this.capabilitySend("POST", "/admin/capabilities/staging", body);
+  }
+
+  /** Promote a staged capability to the trusted library. */
+  async approveCapability(name: string): Promise<Record<string, unknown>> {
+    return this.capabilitySend(
+      "POST",
+      `/admin/capabilities/staging/${encodeURIComponent(name)}/approve`,
+    );
+  }
+
+  /** Delete a staged capability (human rejection). */
+  async rejectCapability(name: string): Promise<Record<string, unknown>> {
+    return this.capabilitySend(
+      "POST",
+      `/admin/capabilities/staging/${encodeURIComponent(name)}/reject`,
     );
   }
 

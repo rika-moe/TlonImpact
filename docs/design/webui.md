@@ -30,8 +30,9 @@ apps/webui/
 │   │   ├── tokens.css    # cyberpunk 设计 token（CSS 变量）
 │   │   └── components.css# 面板/按钮/徽章/终端面板等基础组件类
 │   └── views/
-│       ├── MailView.tsx  AgentsView.tsx  EventsView.tsx  TracesView.tsx
-│       ├── MetricsView.tsx  LogsView.tsx  SettingsView.tsx
+│       ├── MailView.tsx  AgentsView.tsx  PrototypesView.tsx  CapabilitiesView.tsx
+│       ├── EventsView.tsx  TracesView.tsx  MetricsView.tsx  SessionsView.tsx
+│       ├── LogsView.tsx  SettingsView.tsx
 └── test/                 # 纯逻辑模块测试（tsx --test，与 operator 同）
 ```
 
@@ -49,6 +50,7 @@ apps/webui/
 | LOGS | —（新增） | 日志流，level/agent/trace 过滤 | `GET /logs`、`GET /agents/{id}/logs` |
 | SETTINGS | config + settings | 服务端配置只读区 + admin token（浏览器本地）——进程级 LLM env 编辑已删除（ADR 0016：模型在创建/编辑成员时配置） | `GET /config`、`GET /admin/config/agents` |
 | PROTOTYPES | —（新增） | 原型库管理：正式库/ staging 双区列表、详情（元数据 + parameters + behavior.tlon 全文）、手写创建、编辑、删除、staging 审批 | 见下文「原型管理 API」 |
+| CAPABILITIES | —（新增） | 能力库管理（docs/design/capabilities.md）：受信库/staging 双区列表（纯度标记、deprecated 划线 + 徽章）、详情（元数据 + capability.tlon 全文 + REVIEW.md 记录）、staging 审批、新建提案（v1 人类写能力的主入口） | `GET /admin/capabilities[/staging[/{name}]]`、`POST /admin/capabilities/staging`、`POST .../staging/{name}/approve|reject` |
 
 staging 原型审批区从 AGENTS 视图迁至 PROTOTYPES 视图（2026-08-21 拍板：原型管理是独立职责）。
 
@@ -72,6 +74,8 @@ staging 原型审批区从 AGENTS 视图迁至 PROTOTYPES 视图（2026-08-21 �
 `PROTOTYPES` 视图：左栏双区列表（TRUSTED LIBRARY 青卡片 / STAGING 黄描边卡片），右侧详情面板（元信息 + parameters 徽章 + behavior.tlon 终端面板全文）；操作：NEW（手写表单，behavior 大文本域）、EDIT（元数据 + behavior）、DELETE（确认框，品红）、staging 的 APPROVE（青）/ REJECT（品红）。导航位于 AGENTS 之后。
 
 staging 详情另带「演武场」面板（docs/design/arena.md，issue #29）：触发按钮 + 可选 model 输入框（留空用 `TLON_ARENA_MODEL`），有活跃 run 时按钮禁用并轮询 `GET /admin/arena-runs/{run_id}` 显示状态，终态后停轮询并重拉详情；报告红旗复用 red_flags 徽章呈现，ARENA.md 以 `<pre>` 原文展示。报告是证据不是判决——面板只呈现，不接 approve 逻辑。
+
+`CAPABILITIES` 视图（docs/design/capabilities.md，issue #45 切片 3/3，导航位于 PROTOTYPES 之后）：左栏双区列表——受信库青卡片（词名 + PURE/IMPURE 纯度标记 + TRUSTED 徽章，deprecated 词名划线 + 品红 DEPRECATED 徽章）与 STAGING 黄描边卡片；右侧详情面板（元信息 + capability.tlon 终端面板全文 + REVIEW.md 评审记录全文，仅存在时呈现）。操作：NEW PROPOSAL（artifact EDN 大文本域 + proposal_note 输入，提交 `POST /admin/capabilities/staging`，校验失败展示 400 的 reason + message——这是 v1 人类写能力的主入口，没有 agent 侧工具）、staging 的 APPROVE（青，直按）/ REJECT（品红，确认框——reject 永久删除提案）。deprecated 只有展示，没有编辑操作。
 
 SSE 生命周期与 TUI 相同：`POST /sessions`（client_type 用 `"webui"`）→ 立即 `PATCH` 切 `event` 模式 → `GET /events?session_id=` 开 `EventSource`；断线指数退避（1s→30s）后**从零重建会话**。顶栏常驻连接状态徽章（connected / reconnecting / down）。
 
