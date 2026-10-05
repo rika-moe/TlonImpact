@@ -55,6 +55,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from tlon.agents.assembly import assemble_cognitive
+from tlon.agents.capabilities.bridge import load_capability_builtins
 from tlon.agents.cron import CronScheduler
 from tlon.agents.health import PublicHealthMonitor
 from tlon.agents.lifecycle import StartRequest, StopRequest
@@ -81,6 +82,7 @@ from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.agents.ports import StopRejectedError
+from tlosure.builtins import Builtin
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
@@ -303,10 +305,27 @@ class AgentRegistry(Component):
 
         # Host builtins validated against — shared by the profile loader and
         # ``_start_agent`` so a member's spec passes the same gate whether
-        # loaded for derivation or for assembly.
+        # loaded for derivation or for assembly. The trusted capability
+        # words are merged on top per load (``_member_builtins``).
         self._host_builtins = make_member_builtins(RegistryQueries(self))
 
         logger.info("agent_registry_constructed")
+
+    def _member_builtins(self) -> dict[str, Builtin]:
+        """The full member registry: host builtins + trusted capability words.
+
+        The capability part (the vocabulary bridge, issue #45 slice 2/3)
+        is recomputed on every call — the trusted library is small (a
+        directory scan plus a few small artifacts), so this stays cheap
+        and carries no cache-invalidation problem. The semantics align
+        with the loader being the only disk-read path and the trust
+        ladder's wake reassembly: a newly approved word takes effect at
+        the member's next spec load (next wake), no server restart. The
+        host words are reserved in the bridge, so the merge never
+        shadows them.
+        """
+        capabilities = load_capability_builtins(self._paths, reserved=self._host_builtins)
+        return {**self._host_builtins, **capabilities}
 
     def register(self, agent_id: str) -> None:
         """Register an agent to be started.
@@ -354,7 +373,7 @@ class AgentRegistry(Component):
         if agent_id in self._profiles:
             return None  # cached failure
         try:
-            spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=self._host_builtins)
+            spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=self._member_builtins())
         except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning("member_spec_unreadable", agent_id=agent_id, error=str(e))
             self._profiles[agent_id] = None
@@ -517,7 +536,7 @@ class AgentRegistry(Component):
             # from the spec inside MemberRuntime. Host builtins gate
             # validation too (D6.6: host predicates open to registry
             # members).
-            builtins = self._host_builtins
+            builtins = self._member_builtins()
             spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox(self._paths.member_mail_dir(config.id))

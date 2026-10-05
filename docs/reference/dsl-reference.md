@@ -234,7 +234,7 @@
 环境 `{event, self}`：`event` 是触发事件的负载 map。
 
 <!-- BEGIN GENERATED: dsl-builtins-script -->
-`SCRIPT_BUILTINS`（8 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（9 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -244,6 +244,7 @@
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
 | `contains?` | 是 |  |
+| `count` | 是 | Item count of a vector / map / string; ``nil`` counts as 0. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-script -->
@@ -285,6 +286,16 @@
 | `lazy?` | `host.is_lazy` | A member that can sleep / be drained: no ``:on :boot`` rule. |
 | `member-roster` | `host.member_roster` | The social roster: one pre-formatted line per registered member. |
 <!-- END GENERATED: bridge-query-ports -->
+
+### 4.7 数据定义的能力词（受信能力库）
+
+第 4.1–4.6 节全是 Python 侧注册的宿主词汇；成员注册表还并入**数据定义的词**——受信能力库 `~/.tlon/capabilities/` 里每个受信 artifact（`capability.tlon`，一个 artifact 一个词，设计与评审通道见 [../design/capabilities.md](../design/capabilities.md)）经词汇桥（`agents/capabilities/bridge.py`）校验后注册为一个 closure-backed builtin（机制见 [tlosure-reference.md](./tlosure-reference.md) §2.1.2）：
+
+- **纯度分区与宿主词同构**：artifact 声明 `:pure true` 且 impl 只对纯注册表过静态校验的词进一切求值语境（`:when` 门控、`:actions` 等）；非纯词（组合动作词、产出 `ActionRequest`）仅 `:actions`。校验器按词的 `.pure` 标记切语境可见集，不区分词是代码还是数据。
+- **生效时机**：能力词在**每次成员 spec 加载时重算**（loader 唯一读盘路径，受信库是小数据）——新批准（staging → 受信库）的词在成员**下次 wake** 自然生效，不需要重启 server；反之一个被删除/损坏的 artifact 只会让引用它的 spec 在自己的加载校验处报 unknown word。
+- **求值语义**：调用能力词 = 闭包应用——body 只见声明的位置参数（零注入），body 的每一步**计入调用规则的 fuel 预算**（与宿主 builtin 的免计量内部不同）。
+- **命名空间**：词名与既有 builtin、特殊形式、宿主查询词、其他受信词同名即拒载（遮蔽即拒）。
+- 能力词**不出现在本节 GENERATED 的 builtin 清单里**——它们是数据不是代码常量，清单生成器扫的是 Python 注册表；在册能力词以 `list_trusted_capabilities`（`agents/capabilities/catalog.py`）/ 受信库目录为准。
 
 ## 5. `:loop` 详解（认知会话）
 

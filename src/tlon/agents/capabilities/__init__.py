@@ -28,7 +28,11 @@ positional arguments, zero injection — no ``msg``, no memory, no
 the admission gate: the validation registries contain only words
 verified to never read ``env``.
 
-Not in this package (later slices of issue #45): the vocabulary bridge
-(trusted library → member registries, loader injection), admin
-endpoints / WebUI presentation, capability-referencing-capability.
+The vocabulary bridge (``bridge.py``, slice 2/3) loads the trusted
+library into member spec validation/evaluation registries as
+closure-backed builtins — recomputed on every member-spec load, so a
+newly approved word takes effect at the member's next wake.
+
+Not in this package (later slices of issue #45): admin endpoints / WebUI
+presentation, capability-referencing-capability.
 """

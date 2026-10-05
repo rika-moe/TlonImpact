@@ -70,6 +70,7 @@ from tlosure.builtins import (
     Builtin,
     EvalError,
     builtin_contains,
+    builtin_count,
     builtin_eq,
     builtin_get,
     builtin_join,
@@ -431,7 +432,12 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 
 
 #: Pure accessors available to every rule kind. Pure only; evaluation is
-#: side-effect free by construction.
+#: side-effect free by construction. Kept a superset of the capability
+#: admission registry (``CAPABILITY_PURE_BUILTINS`` = CORE + ARITHMETIC,
+#: ``agents/capabilities/spec.py``) so every word a capability ``:impl``
+#: may compose resolves in the caller's registry at runtime — the
+#: vocabulary bridge's runtime contract (a regression test in
+#: ``tests/agents/capabilities/test_bridge.py`` pins the subset relation).
 SCRIPT_BUILTINS: dict[str, Builtin] = {
     "get": Builtin(builtin_get, pure=True),
     "str": Builtin(builtin_str, pure=True),
@@ -439,6 +445,7 @@ SCRIPT_BUILTINS: dict[str, Builtin] = {
     "join": Builtin(builtin_join, pure=True),
     "substring": Builtin(builtin_substring, pure=True),
     "contains?": Builtin(builtin_contains, pure=True),
+    "count": Builtin(builtin_count, pure=True),
     "=": Builtin(builtin_eq, pure=True),
     "not": Builtin(builtin_not, pure=True),
 }

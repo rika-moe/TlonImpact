@@ -47,7 +47,11 @@ Billing model (the precise contract):
   special-form subexpression that actually evaluates. Untaken branches
   (``if``/``when``/``and``/``or`` short-circuit) consume nothing;
 - builtin *internals* are unmetered — a builtin's own computation is the
-  host's resource domain, not the language's;
+  host's resource domain, not the language's. A closure-backed registry
+  entry (a data-defined word, :class:`Builtin` with ``closure`` set) is
+  the opposite: the entry is applied like any closure, so its body
+  evaluates through the kernel and draws fuel and depth from the
+  caller's budget;
 - the budget is a hard language-level invariant: ``fuel`` must lie in
   ``[0, MAX_FUEL]`` (:class:`ValueError` otherwise), so no caller can
   launch an effectively unbounded evaluation;
@@ -253,8 +257,15 @@ class Evaluator:
         if builtin is None:
             raise EvalError(f"unknown function: {name} (in form {dumps(form)})")
         args = [self.eval(arg, env, depth + 1) for arg in form[1:]]
+        if builtin.closure is not None:
+            # Data-defined word (closure-backed entry): applied like any
+            # closure — the body draws fuel and depth from this run,
+            # unlike a host builtin's unmetered internals.
+            return self._apply(builtin.closure, args, depth)
+        fn = builtin.fn
+        assert fn is not None  # Builtin.__post_init__: exactly one of fn / closure
         try:
-            return builtin.fn(env, *args)
+            return fn(env, *args)
         except EvalError:
             raise
         except Exception as e:
