@@ -211,7 +211,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ├── prototypes-staging/               # LLM 创作、待人类批准的原型（闸门）
 ├── capabilities/                     # 受信能力库（能力数据化，design/capabilities.md；一词一目录）
 │   └── {capability_name}/
-│       ├── capability.tlon           # artifact 本体（{:version 1 :name :args :impl (fn ...) :pure}）
+│       ├── capability.tlon           # artifact 本体（{:version 1 :name :args :impl (fn ...) :pure :examples?}）
 │       └── capability.edn            # 元数据（:name / :trusted / :author / :proposal-note / :deprecated）
 ├── capabilities-staging/             # LLM 创作、待人类批准的能力（与原型同一信任闸模式）
 ├── {agent_id}/

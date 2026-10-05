@@ -54,7 +54,18 @@ Structural rules enforced by :func:`CapabilitySpec.from_edn`:
   not any other form; variadic parameters (``& rest``) are rejected
   (v1: fixed arity only), and the declared ``:args`` count must equal
   the fn's fixed parameter count;
-- ``:pure`` must be a bool.
+- ``:pure`` must be a bool;
+- ``:examples`` is optional and **pure-only** (a non-pure impl produces
+  ActionRequest host objects, which cannot be compared against EDN
+  values): a vector of ``{:args [...] :expect <value>}`` maps — data
+  assertions, not programs (``:args`` are literal EDN values, never
+  evaluated), each carrying exactly as many args as the artifact
+  declares.
+
+:func:`evaluate_capability_examples` runs the assertions in the sandbox
+evaluator (pure registry, zero-injection env, fuel-bounded) — the
+reviewer sees not just "what it claims to do" but "what it did"
+(docs/design/capabilities.md 「信任通道」, issue #30).
 
 :func:`validate_capability` is the load gate (called by the staging
 write path now, and by the trusted-library loader when the vocabulary
@@ -72,7 +83,7 @@ from typing import Any
 from tlon.agents.vocabulary import MEMBER_ACTION_NAMES, make_member_builtins
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin, EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
-from tlosure.eval import SPECIAL_FORMS
+from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, SPECIAL_FORMS, Evaluator
 from tlosure.validate import _params, validate_form
 
 #: The arg ``:type`` keywords a capability may declare (review material,
@@ -115,6 +126,35 @@ class ArgSpec:
 
 
 @dataclass(frozen=True)
+class ExampleSpec:
+    """One input/output assertion (``{:args [...] :expect <value>}``).
+
+    ``args`` are literal EDN data — bound to the fn parameters as-is,
+    never evaluated; ``expect`` is the EDN value the impl must return
+    (Python ``==`` comparison).
+    """
+
+    args: tuple[Any, ...]
+    expect: Any
+
+
+@dataclass(frozen=True)
+class ExampleResult:
+    """The outcome of running one :class:`ExampleSpec` in the sandbox.
+
+    On an evaluation failure ``error`` carries the message and
+    ``actual`` is None; otherwise ``actual`` holds the impl's return
+    value and ``passed`` records the ``==`` comparison with ``expect``.
+    """
+
+    args: tuple[Any, ...]
+    expect: Any
+    passed: bool
+    actual: Any = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class CapabilitySpec:
     """One capability artifact (``capability.tlon``), one word.
 
@@ -129,6 +169,7 @@ class CapabilitySpec:
     args: tuple[ArgSpec, ...]
     impl: Form
     pure: bool
+    examples: tuple[ExampleSpec, ...] = ()
 
     @staticmethod
     def from_edn(text: str) -> "CapabilitySpec":
@@ -167,6 +208,8 @@ class CapabilitySpec:
         if not isinstance(pure, bool):
             raise CapabilityError(f"capability :pure must be a bool, got {pure!r}")
 
+        examples = _parse_examples(data.get("examples"), arg_count=len(args), pure=pure)
+
         return CapabilitySpec(
             version=1,
             name=name,
@@ -174,6 +217,7 @@ class CapabilitySpec:
             args=args,
             impl=impl,
             pure=pure,
+            examples=examples,
         )
 
     def to_edn(self) -> str:
@@ -193,6 +237,11 @@ class CapabilitySpec:
             Keyword("impl"): self.impl,
             Keyword("pure"): self.pure,
         }
+        if self.examples:
+            data[Keyword("examples")] = [
+                {Keyword("args"): list(example.args), Keyword("expect"): example.expect}
+                for example in self.examples
+            ]
         return dumps(data) + "\n"
 
 
@@ -276,8 +325,84 @@ def _parse_impl(raw: Any, *, arg_count: int) -> Form:
     return raw
 
 
+def _parse_examples(raw: Any, *, arg_count: int, pure: bool) -> tuple[ExampleSpec, ...]:
+    """Validate the optional ``:examples`` vector of ``{:args [...] :expect <v>}`` maps.
+
+    Pure-only: a non-pure impl produces ActionRequest host objects,
+    which cannot be compared against EDN values — carrying ``:examples``
+    on a ``:pure false`` artifact is rejected outright. ``:args`` are
+    data, not programs (bound as-is, never evaluated); each example must
+    carry exactly ``arg_count`` of them.
+    """
+    if raw is None:
+        return ()
+    if not pure:
+        raise CapabilityError(
+            "capability :examples is only allowed on :pure true artifacts "
+            "(a non-pure impl yields ActionRequest data, not comparable EDN values)"
+        )
+    if isinstance(raw, Form) or not isinstance(raw, list):
+        raise CapabilityError("capability :examples must be a vector")
+    examples: list[ExampleSpec] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise CapabilityError(f"capability :examples[{i}] must be a map, got {item!r}")
+        ex_args = item.get("args")
+        if isinstance(ex_args, Form) or not isinstance(ex_args, list):
+            raise CapabilityError(f"capability :examples[{i}] :args must be a vector")
+        if len(ex_args) != arg_count:
+            raise CapabilityError(
+                f"capability :examples[{i}] carries {len(ex_args)} arg(s) but :args "
+                f"declares {arg_count}"
+            )
+        if "expect" not in item:
+            raise CapabilityError(f"capability :examples[{i}] must declare :expect")
+        examples.append(ExampleSpec(args=tuple(ex_args), expect=item["expect"]))
+    return tuple(examples)
+
+
+def evaluate_capability_examples(spec: CapabilitySpec) -> list[ExampleResult]:
+    """Run the artifact's ``:examples`` assertions in the sandbox evaluator.
+
+    Each example binds its literal ``:args`` to the fn parameters (zero
+    injection — the env holds the parameter bindings and nothing else)
+    and evaluates the impl body forms in order under one shared fuel
+    budget (:data:`tlosure.eval.DEFAULT_FUEL`) against the pure
+    registry; the last form's value is compared with ``:expect`` via
+    Python ``==``. Evaluation failures (EvalError, fuel exhaustion) are
+    recorded, not raised.
+    """
+    if not spec.examples:
+        return []
+    params, _ = _params(spec.impl[1], "fn")  # fixed arity, validated by from_edn
+    body = list(spec.impl[2:])
+    results: list[ExampleResult] = []
+    for example in spec.examples:
+        env = dict(zip(params, example.args, strict=True))
+        evaluator = Evaluator(CAPABILITY_PURE_BUILTINS, DEFAULT_FUEL, DEFAULT_MAX_DEPTH)
+        try:
+            actual: Any = None
+            for form in body:
+                actual = evaluator.eval(form, env, 0)
+        except EvalError as e:
+            results.append(
+                ExampleResult(args=example.args, expect=example.expect, passed=False, error=str(e))
+            )
+            continue
+        results.append(
+            ExampleResult(
+                args=example.args,
+                expect=example.expect,
+                passed=bool(actual == example.expect),
+                actual=actual,
+            )
+        )
+    return results
+
+
 def validate_capability(spec: CapabilitySpec, *, taken_names: Iterable[str] = ()) -> None:
-    """The load gate: namespace rejection + purity admission + impl validation.
+    """The load gate: namespace rejection + purity admission + impl validation
+    + ``:examples`` assertions.
 
     Namespace (shadowing is rejected, never prefixed): the word name
     must not collide with a special form, a builtin of the capability
@@ -292,8 +417,13 @@ def validate_capability(spec: CapabilitySpec, *, taken_names: Iterable[str] = ()
     the impl sees its fn parameters and nothing else (the env contract,
     enforced statically).
 
+    Examples: every ``:examples`` assertion must pass in the sandbox
+    evaluator (:func:`evaluate_capability_examples`) — the first failure
+    rejects the artifact.
+
     Raises:
-        CapabilityError: namespace collision or impl validation failure
+        CapabilityError: namespace collision, impl validation failure,
+            or a failed ``:examples`` assertion
     """
     if spec.name in SPECIAL_FORMS:
         raise CapabilityError(f"capability name '{spec.name}' collides with a special form")
@@ -308,3 +438,12 @@ def validate_capability(spec: CapabilitySpec, *, taken_names: Iterable[str] = ()
     except EvalError as e:
         which = "pure" if spec.pure else "impure"
         raise CapabilityError(f"capability :impl failed {which} validation: {e}") from e
+
+    for i, result in enumerate(evaluate_capability_examples(spec)):
+        if result.passed:
+            continue
+        if result.error is not None:
+            detail = f"evaluation failed: {result.error}"
+        else:
+            detail = f"expected {dumps(result.expect)}, got {dumps(result.actual)}"
+        raise CapabilityError(f"capability :examples[{i}] failed: {detail}")

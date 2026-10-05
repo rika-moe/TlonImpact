@@ -34,6 +34,26 @@ INVALID_CAPABILITY = """\
  :pure false}
 """
 
+CAPABILITY_WITH_EXAMPLES = """\
+{:version 1
+ :name "shout"
+ :description "加感叹号"
+ :args [{:name "s" :type :string :doc "原字符串"}]
+ :impl (fn [s] (str s "!"))
+ :pure true
+ :examples [{:args ["hey"] :expect "hey!"}]}
+"""
+
+CAPABILITY_WITH_FAILING_EXAMPLE = """\
+{:version 1
+ :name "shout"
+ :description "断言故意不符——受信库手写不走加载闸，detail 软降级呈现"
+ :args [{:name "s" :type :number :doc "原数"}]
+ :impl (fn [s] (inc s))
+ :pure true
+ :examples [{:args [1] :expect 3} {:args ["a"] :expect 1}]}
+"""
+
 
 class StubRequest:
     """Minimal stand-in for aiohttp.web.Request."""
@@ -63,9 +83,9 @@ def _stage(p: TlonPaths, text: str = VALID_CAPABILITY) -> None:
     write_staging_capability(text, author_id="adam", proposal_note="新增摘要词", tlon_paths=p)
 
 
-def _write_trusted(p: TlonPaths, text: str = VALID_CAPABILITY) -> None:
+def _write_trusted(p: TlonPaths, text: str = VALID_CAPABILITY, name: str = "thread-digest") -> None:
     """Handwrite a capability directly into the trusted library."""
-    cap_dir = p.capabilities_dir() / "thread-digest"
+    cap_dir = p.capabilities_dir() / name
     cap_dir.mkdir(parents=True)
     (cap_dir / "capability.tlon").write_text(text, encoding="utf-8")
 
@@ -165,6 +185,67 @@ class TestCapabilityDetail:
         assert (
             await handler.handle_get_staging_capability(StubRequest(name="x"))
         ).status == 503
+
+    async def test_detail_includes_passing_examples(self, tmp_path: Path):
+        handler, p = _handler(tmp_path)
+        _write_trusted(p, CAPABILITY_WITH_EXAMPLES, name="shout")
+
+        resp = await handler.handle_get_capability(StubRequest(name="shout"))
+
+        assert resp.status == 200
+        cap = json.loads(resp.text)["capability"]
+        assert cap["examples"] == [
+            {"args": '["hey"]', "expect": '"hey!"', "passed": True, "actual": '"hey!"'}
+        ]
+
+    async def test_detail_includes_failed_examples(self, tmp_path: Path):
+        """A handwritten trusted artifact with failing assertions (the
+        bridge would exclude the word at load; detail stays fail-soft and
+        shows the failure as review material): value mismatch carries
+        ``actual``, an eval error carries ``error``."""
+        handler, p = _handler(tmp_path)
+        _write_trusted(p, CAPABILITY_WITH_FAILING_EXAMPLE, name="shout")
+
+        resp = await handler.handle_get_capability(StubRequest(name="shout"))
+
+        assert resp.status == 200
+        [mismatch, eval_error] = json.loads(resp.text)["capability"]["examples"]
+        assert mismatch["passed"] is False
+        assert mismatch["expect"] == "3"
+        assert mismatch["actual"] == "2"
+        assert "error" not in mismatch
+        assert eval_error["passed"] is False
+        assert "actual" not in eval_error
+        assert "expected a number" in eval_error["error"]
+
+    async def test_detail_without_examples_has_empty_list(self, tmp_path: Path):
+        handler, p = _handler(tmp_path)
+        _write_trusted(p)
+
+        resp = await handler.handle_get_capability(StubRequest(name="thread-digest"))
+
+        assert json.loads(resp.text)["capability"]["examples"] == []
+
+
+class TestRunExamplesFacade:
+    def test_missing_capability_returns_empty(self, tmp_path: Path):
+        facade = CapabilitiesFacade(tlon_paths=TlonPaths(home=tmp_path))
+        assert facade.run_examples("nope") == []
+
+    def test_unparseable_artifact_returns_empty(self, tmp_path: Path):
+        p = TlonPaths(home=tmp_path)
+        _write_trusted(p, "{:version 1 broken", name="broken")
+        assert CapabilitiesFacade(tlon_paths=p).run_examples("broken") == []
+
+    def test_examples_evaluated(self, tmp_path: Path):
+        p = TlonPaths(home=tmp_path)
+        _write_trusted(p, CAPABILITY_WITH_EXAMPLES, name="shout")
+        [result] = CapabilitiesFacade(tlon_paths=p).run_examples("shout")
+        assert result.passed is True
+        assert result.args == ("hey",)
+        assert result.expect == "hey!"
+        assert result.actual == "hey!"
+        assert result.error is None
 
 
 class TestCreateStagingCapability:

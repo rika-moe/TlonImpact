@@ -281,6 +281,48 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                   </div>
                   <span className="tech-label">CAPABILITY.TLON</span>
                   <pre className="terminal cap-artifact">{detail.artifact}</pre>
+                  {detail.examples && detail.examples.length > 0 ? (
+                    <>
+                      <span className="tech-label">EXAMPLES ({detail.examples.length})</span>
+                      <div className="cap-examples">
+                        {detail.examples.map((ex, i) => (
+                          <div key={i} className="cap-example">
+                            <div className="cap-example-head">
+                              <span className="tech-label">#{i}</span>
+                              <span
+                                className={`cap-example-badge${
+                                  ex.passed ? "" : " cap-example-badge--fail"
+                                }`}
+                              >
+                                {ex.passed ? "PASS" : "FAIL"}
+                              </span>
+                            </div>
+                            <div className="cap-meta-row">
+                              <span className="tech-label">ARGS</span>
+                              <span className="cap-meta-value">{ex.args}</span>
+                            </div>
+                            <div className="cap-meta-row">
+                              <span className="tech-label">EXPECT</span>
+                              <span className="cap-meta-value">{ex.expect}</span>
+                            </div>
+                            {ex.error !== undefined ? (
+                              <div className="cap-meta-row">
+                                <span className="tech-label">ERROR</span>
+                                <span className="cap-meta-value cap-example-error">
+                                  {ex.error}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="cap-meta-row">
+                                <span className="tech-label">ACTUAL</span>
+                                <span className="cap-meta-value">{ex.actual}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
                   {detail.reviews ? (
                     <>
                       <span className="tech-label">REVIEW.MD</span>

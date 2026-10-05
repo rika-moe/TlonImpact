@@ -246,6 +246,22 @@ export type CapabilityDetail = CapabilitySummary & {
   artifact: string;
   /** REVIEW.md advisory review records (present only when any landed). */
   reviews?: string;
+  /**
+   * `:examples` assertion outcomes (EDN values rendered as EDN text;
+   * `actual` present when the example evaluated, `error` when it did
+   * not). Empty when the artifact declares no examples or failed
+   * fail-soft parsing.
+   */
+  examples?: CapabilityExample[];
+};
+
+/** One `:examples` assertion outcome (see CapabilityDetail.examples). */
+export type CapabilityExample = {
+  args: string;
+  expect: string;
+  passed: boolean;
+  actual?: string;
+  error?: string;
 };
 
 /** Staging proposal creation body (POST /admin/capabilities/staging). */

@@ -236,6 +236,48 @@
   overflow: auto;
 }
 
+/* ---------- :examples assertion outcomes ---------- */
+
+.cap-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cap-example {
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cap-example-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cap-example-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  color: var(--neon-cyan);
+}
+
+.cap-example-badge--fail {
+  color: var(--neon-magenta);
+}
+
+.cap-example-error {
+  color: var(--neon-magenta);
+}
+
 /* ---------- modals ---------- */
 
 .cap-modal-overlay {

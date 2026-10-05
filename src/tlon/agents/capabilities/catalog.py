@@ -16,7 +16,12 @@ from tlon.agents.capabilities.info import (
     _read_metadata,
     _validate_name,
 )
-from tlon.agents.capabilities.spec import CapabilityError
+from tlon.agents.capabilities.spec import (
+    CapabilityError,
+    CapabilitySpec,
+    ExampleResult,
+    evaluate_capability_examples,
+)
 from tlon.base.paths import TlonPaths
 
 
@@ -75,3 +80,22 @@ def get_capability_detail(
     reviews_file = cap_dir / REVIEWS_FILE
     reviews = reviews_file.read_text(encoding="utf-8") if reviews_file.exists() else None
     return info, capability, reviews
+
+
+def run_capability_examples(
+    name: str, staging: bool = False, *, tlon_paths: TlonPaths
+) -> list[ExampleResult]:
+    """Run one capability's ``:examples`` assertions (review material).
+
+    Fail-soft: no capability under that name or an unparseable artifact
+    yields an empty list — the detail endpoint never fails on example
+    evaluation.
+    """
+    try:
+        _info, artifact, _reviews = get_capability_detail(
+            name, staging=staging, tlon_paths=tlon_paths
+        )
+        spec = CapabilitySpec.from_edn(artifact)
+    except CapabilityError:
+        return []
+    return evaluate_capability_examples(spec)
