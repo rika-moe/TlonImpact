@@ -12,6 +12,8 @@ ports live in ``tlon.tools.agents.ports``).
 from functools import partial
 from typing import TYPE_CHECKING
 
+from tlon.agents.capabilities.catalog import list_trusted_capabilities
+from tlon.agents.capabilities.staging import write_staging_capability
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
@@ -44,6 +46,7 @@ from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
+from tlon.tools.agents.propose_capability import ProposeCapabilityTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
@@ -93,8 +96,24 @@ logger = get_logger(__name__)
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
 REPRODUCTION_TOOLS: frozenset[str] = frozenset(
-    {"spawnAgent", "stopAgent", "writePrototype", "proposeBehavior"}
+    {"spawnAgent", "stopAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
 )
+
+
+def _render_trusted_capability_words(tlon_paths: TlonPaths) -> str:
+    """Render the trusted capability library as prompt text for the
+    ``proposeCapability`` drafting call (anti-duplication + style sample).
+    An empty library renders as ``""`` (the tool then omits the section)."""
+    lines = []
+    for cap in list_trusted_capabilities(tlon_paths):
+        if cap.pure is True:
+            purity = "纯"
+        elif cap.pure is False:
+            purity = "非纯"
+        else:
+            purity = "纯度未知"
+        lines.append(f"- {cap.name}（{purity}）：{cap.description}")
+    return "\n".join(lines)
 
 
 def _resolve_context_window(file_config: LLMConfig, model_name: str) -> int:
@@ -239,7 +258,7 @@ async def assemble_cognitive(
     # (natural in a scale-to-zero world). The level is the society
     # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
     # trust (availability first). A probationary member (spawned, not yet
-    # endorsed, per the default policy) is assembled without the four
+    # endorsed, per the default policy) is assembled without the five
     # reproduction/evolution tools (REPRODUCTION_TOOLS; reviewPrototype
     # stays — advisory only) and gets its mentor (the spawner) cc'd on
     # composed outbound mail.
@@ -384,6 +403,32 @@ async def assemble_cognitive(
                 tlon_paths=tlon_paths,
                 solvency=proposal_solvency,
                 near_kin=near_kin_check,
+            )
+        )
+    # Experience entry of the capability channel (issue #30,
+    # docs/design/capabilities.md): drafts a capability word's tlosure
+    # artifact from the member's own memory + lessons, through the
+    # write_staging_capability gate. No near-kin check (unlike
+    # proposeBehavior): the vocabulary is a few dozen words, same-name is
+    # a hard structural rejection, and reviewers see the full artifact
+    # plus its :examples assertions — a similarity subsystem would be a
+    # preventive abstraction. The solvency gate is reused (proposal
+    # eligibility follows bloodline solvency). The trusted-library
+    # listing is rendered here (agents side) and injected as a zero-arg
+    # callable, keeping tlon.tools free of tlon.agents.
+    if is_full:
+        tool_executor.register_tool(
+            ProposeCapabilityTool(
+                agent_id=config.id,
+                prototype=config.prototype,
+                author_id=config.id,
+                llm_client=llm_client,
+                memory=memory,
+                logs=SessionJournal(config.id, tlon_paths),
+                writer=partial(write_staging_capability, tlon_paths=tlon_paths),
+                tlon_paths=tlon_paths,
+                solvency=proposal_solvency,
+                trusted_words=partial(_render_trusted_capability_words, tlon_paths),
             )
         )
     tool_executor.register_tool(RememberFactTool(memory))

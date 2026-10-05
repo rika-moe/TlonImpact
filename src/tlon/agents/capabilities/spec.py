@@ -81,6 +81,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tlon.agents.vocabulary import MEMBER_ACTION_NAMES, make_member_builtins
+from tlon.tools.agents.ports import CapabilityProposalError
 from tlosure.builtins import ARITHMETIC_BUILTINS, CORE_BUILTINS, Builtin, EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, SPECIAL_FORMS, Evaluator
@@ -91,7 +92,7 @@ from tlosure.validate import _params, validate_form
 ARG_TYPES = frozenset({"string", "number", "boolean", "list", "map"})
 
 
-class CapabilityError(ValueError):
+class CapabilityError(CapabilityProposalError):
     """Capability artifact parse, validation, or staging-flow failure."""
 
 
