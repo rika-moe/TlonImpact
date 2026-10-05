@@ -1,0 +1,95 @@
+# 能力数据化：复合能力成为可审批的数据 artifact
+
+> 本文是能力数据化的设计拍板（issue #45，愿景路线第三步「开放」）。方向共识 2026-09-28，机制五点 2026-10-05 拍板。现状：未实现，本文是施工依据。能力数据化把「行为即数据」推广到能力层：工具/能力描述成为数据 artifact，复用 spec 的 staging + 人工批准通道，从社会内部生长。
+
+## 问题：能力层不可进化
+
+[dsl.md](./dsl.md) 的信任边界长期划在**行为重组**：LLM 可以组合已有机制写出新行为，但工具清单、动作词汇表都是 Python 侧的白名单常量，新增能力只能人类改代码发版。愿景第三步「开放」要求能力也能从社会内部生长——而「能自己定义工具的 DSL」曾经是信任模型的禁区。
+
+开闸的钥匙在**形态选择**：能力不是宿主代码，而是 tlosure 表达式。tlosure 求值器是被故意阉割到极点的执行环境（可停机、无副作用、fuel 计量），安全到可以交给 agent 自己书写——把能力限制在这个形态里，开闸就不等于抽掉地基。
+
+## 已拍板总表
+
+| 决策点 | 结论 | 拍板 |
+|---|---|---|
+| 数据形态 | **tlosure 函数 artifact**（`{:name :args :impl (fn ...)}`），非宿主代码、非 WASM | 2026-09-28 方向共识，2026-10-05 机制拍板 |
+| 信任通道 | **staging + 人工批准**原样套用（与原型同一模式） | 同上 |
+| 权限 | **不放大**：能力产出 ActionRequest 数据，引擎按**调用者**的配额与信任级执行 | 2026-09-28 |
+| 能力天花板 | **复合可进化、原语不可进化**：组合既有词汇的能力走本通道；新原语（LLM 调用、新 IO、Docker、异步）永远 Python + 人类写 + 发版 | 2026-09-28 |
+| env 契约 | **最小化：只见 args**，零注入 | 2026-10-05 |
+| artifact 粒度 | **一个 artifact 一个词** | 2026-10-05 |
+| 语境可见性 | 准入声明纯度；纯词可进门控语境，非纯词仅 `:actions` | 2026-10-05 |
+| 命名空间 | **遮蔽即拒**（与既有 builtin/特殊形式同名拒载），不加前缀机制 | 2026-10-05 |
+| 退役 | vocabulary only grows；deprecated → 全仓零引用才物理删 | 2026-10-05 |
+
+## artifact 形态
+
+```clojure
+{:version 1
+ :name "thread-digest"
+ :description "把邮件线程蒸馏成三段式摘要文本"
+ :args [{:name "mails" :type :list :doc "按时间升序的邮件列表"}]
+ :impl (fn [mails] ...)
+ :pure true}
+```
+
+- **`:impl` 是能力行为的全部**——tlosure 表达式，全文可读、加载期静态校验、fuel 有界。能力文本即行为全部，与 spec 同一套审计
+- **`:args` 是显式声明的位置参数 schema**。类型注解（`:string` / `:number` / `:boolean` / `:list` / `:map`）是**评审材料不是静态保证**——tlosure 无类型系统，元数由 fn 应用在运行时兜住（与 builtin 同）。写清楚是为了评审时能判断「这个词的契约是什么」
+- **`:pure` 是准入声明**，不是作者自觉——加载期校验强制（见「语境可见性」）
+- v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计
+
+## env 契约：只见 args
+
+能力求值的 env = 调用方传入的位置参数，**零注入**：没有 `msg`、没有记忆、没有 `self`、没有任何隐式上下文。
+
+- 需要上下文？**调用点显式传参**：`(thread-digest (mail-history 20))`——能看见什么全写在调用点上，评审不用猜隐式依赖
+- 推论一：能力词在所有成员、所有 spec 里语义一致——可静态推理、可缓存、可 Diff 评审
+- 推论二：这是数据能力与 Python builtin 的本质差异。builtin 有各自的 env 契约（TypedDict，如 `RuleEnv`/`OnCompleteEnv`）；数据能力没有家——这正是它比 builtin 更安全的原因
+- **fuel**：`:impl` 体求值**计入调用方的 fuel 预算**（Closure 应用照计，与 Python builtin 的「宿主资源域」豁免不同）。晋升的词不会成为预算黑洞——这是特性：能力留在 fuel 纪律内，和「tlosure 是 L0」的宪法一致
+
+## 信任通道：staging 复用
+
+- **存储**：受信库 `~/.tlon/capabilities/` + staging 区 `~/.tlon/capabilities-staging/`，目录布局、元数据（`capability.edn`）、REVIEW.md、批准移动（staging → 受信库）全部对齐原型通道（[prototypes.md](./prototypes.md)、`agents/prototypes/staging.py` 模式）
+- **信任模型同构**：受信是默认（人类手写进受信库即可信），staging 写入显式 `:trusted false`；approve/reject 是纯人类决定
+- **动态验证复用演武场**（[arena.md](./arena.md)）：能力词不能独立运行，它的行为验证方式是**携带该能力的 staging 原型进演武场**——原型在围墙里调用这个词，轨迹即证据。这回答了能力评审的「它到底会做什么」：和能力本身一样，证据不是判决
+- **异质评审**可复用 reviewPrototype 的模式（独立模型血线的评审意见，advisory）
+
+## 语境可见性与纯度
+
+准入时声明 `:pure`，加载期校验强制：
+
+- **纯词**（`:impl` 只对纯注册表通过静态校验）：所有求值语境可用——`:when` 门控、`:until`、stage `:if`、`:actions`
+- **非纯词**（组合动作词、产出 ActionRequest）：仅 `:actions` 与 on-complete 语境
+
+分区机制与既有 builtin 的 `pure` 标记完全同构（`vocabulary.py` 的语境注册表切分）——校验器按词声明的纯度把它放进对应语境的可见集。
+
+**命名空间**：词名与既有 builtin、特殊形式、其他受信能力同名即**拒载**（遮蔽即拒）。不加前缀机制——约定优于机制：词汇表总共几十个词，碰撞人眼可查；词的出处（哪个提案引入）记录在 artifact 元数据里。
+
+## 词汇桥（机制缺口）
+
+现状缺口：tlosure 的 `defn` 产物活在单次求值的 env dict 里，对一个 spec 之外的世界不可见；builtin 注册表全是 Python 模块级 dict，数据定义的 Closure 不会被 `validate_form` 认作已注册词汇。
+
+机制答案：**受信能力库 → 成员注册表**。加载期（loader 唯一读盘路径）把受信库里每个 artifact 的 `:impl` 校验（结构 + 纯度 + 命名空间）后注册进成员 spec 的校验/求值注册表——从此全社会每个成员都能在自己的 spec 里组合它。这座桥同时是 #30（突变晋升通道）的受信词汇库机制：一次建设，两个 EPIC 共用。
+
+## 退役纪律
+
+对齐既有「vocabulary only grows, semantics only tighten」：
+
+- 词**只增不删**；要退役先 `:deprecated true`（元数据标记 + detail 呈现 + 评审警告）
+- **物理删除的唯一前提：全仓成员 spec 与受信能力 `:impl` 零引用**（grep 可证）。删除是显式的人类动作——加载期校验是守门人：删掉仍被引用的词 = 引用者全部拒载，所以这条纪律不是约定而是结构
+
+## 信任边界（不做什么）
+
+- **权限不放大**：能力产出的是 ActionRequest **数据**，引擎按调用者身份执行——一个能力词做不到调用者本人做不到的事
+- **能力碰不到原语**：LLM 调用、新 IO、Docker、异步永不在 `:impl` 的表达力内（fuel 限得住步数限不住钱——LLM 类能力留在 Python 层的根本原因）
+- **v1 能力词只在 DSL 语境**（spec 的 rules/actions），不进 LLM 工具面——ToolExecutor 注册（LLM 可动态调用的工具）需要 参数 schema → tool schema 的映射设计，是独立后续决策。这收窄了 issue #45 原清单的「ToolExecutor 从 artifact 注册」一项：DSL 词汇先行，对齐宪法五「全社会每个成员都能在自己的 **spec** 里组合它」的原始表述
+- 能力引能力（`:impl` 引用其他能力词）v1 不做
+
+## 施工清单（对应 issue #45）
+
+1. **artifact 格式 + 加载/校验链**：`capability.edn` schema、staging 区读写、纯度强制、命名空间拒载（对齐 `agents/prototypes/staging.py` 模式）
+2. **词汇桥**：受信能力库 → 成员注册表（loader 注入，纯度分区进语境可见集）
+3. **staging 通道接线**：admin 端点 + detail payload + WebUI 呈现（对齐原型通道）
+4. **dsl.md 边界修订**：「能力不可进化」→「复合可进化、原语不可进化」（本设计文档落地即同步）
+
+后续（非本文范围）：ToolExecutor 注册（LLM 工具面）、能力引能力、#30 的 workspace 起源晋升流程（agent 把 workspace 程序重写为 `:impl` → 演武场 → staging）。
