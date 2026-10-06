@@ -148,7 +148,8 @@ class RESTAPIHandler(
         self.github_ingress = events is not None and events.github_enabled
         self.github_webhook_secret = github_webhook_secret
         # Active SSE streams: session_id -> frame queue (None sentinel ends
-        # the stream; see handle_events / handle_delete_session)
+        # the stream; see handle_events / handle_delete_session /
+        # close_sse_streams)
         self._sse_queues: dict[str, asyncio.Queue[str | None]] = {}
 
     def create_app(self) -> web.Application:
@@ -521,6 +522,12 @@ class RESTServer:
             return
 
         logger.info("rest_api_server_stop")
+
+        # End active SSE streams first: their handlers run until the
+        # client disconnects, and runner.cleanup() would otherwise block
+        # for the full shutdown_timeout waiting on these in-flight
+        # requests before force-closing them.
+        self._handler.close_sse_streams()
 
         if self._runner:
             await self._runner.cleanup()
