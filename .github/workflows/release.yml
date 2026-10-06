@@ -11,6 +11,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write # OIDC：换取 PyPI 短期令牌，免存 API token
+      contents: read  # actions/checkout 拉取仓库所需（显式 permissions 会把未列出的降为 none）
 
     steps:
       - uses: actions/checkout@v4
