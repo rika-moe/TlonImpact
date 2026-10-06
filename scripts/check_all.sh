@@ -63,7 +63,7 @@ if [ "$want_static" -eq 1 ]; then
     ts_run "webui-build"    webui build
     ts_run "operator-tests" operator test
     ts_run "operator-build" operator build
-    run "build-package"     bash scripts/build_package.sh
+    run "verify-package"    bash scripts/verify_package.sh
 fi
 
 if [ "$want_unit" -eq 1 ]; then
