@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
 
 from tlon.agents.lifecycle import StartRequest, StopRequest
@@ -35,7 +36,7 @@ from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.messaging.human_adapter import AdapterManager
 from tlon_server.api import rest as rest_module
-from tlon_server.api.rest import RESTAPIHandler
+from tlon_server.api.rest import RESTAPIHandler, RESTServer
 from tlon_server.core.client_gateway import ClientGateway
 from tlon_server.core.member_directory import MemberDirectory
 from tlon_server.core.notification_service import NotificationService
@@ -560,3 +561,75 @@ class TestEventsStream:
         assert start["payload"] == {"agent_id": "xie-yunshu", "reason": "wake"}
         assert stop["event_type"] == "agent.stop_request"
         assert stop["payload"] == {"agent_id": "xie-yunshu", "reason": "drain"}
+
+    async def test_close_sse_streams_winds_down_all_streams(
+        self,
+        client: TestClient,
+        handler: RESTAPIHandler,
+        gateway: ClientGateway,
+        manager: AdapterManager,
+    ):
+        first = await _create_session(client)
+        second = await _create_session(client, username="bob")
+        resp_first = await client.get("/events", params={"session_id": first["session_id"]})
+        resp_second = await client.get("/events", params={"session_id": second["session_id"]})
+        assert resp_first.status == 200
+        assert resp_second.status == 200
+        await _wait_for(lambda: manager.get_adapter("alice") is not None)
+        await _wait_for(lambda: manager.get_adapter("bob") is not None)
+
+        handler.close_sse_streams()
+
+        # Both loops exit through the normal disconnect path: session
+        # closed, adapter detached, queue removed.
+        await _wait_for(lambda: gateway.get_session(first["session_id"]) is None)
+        await _wait_for(lambda: gateway.get_session(second["session_id"]) is None)
+        assert manager.get_adapter("alice") is None
+        assert manager.get_adapter("bob") is None
+        assert handler._sse_queues == {}
+        resp_first.close()
+        resp_second.close()
+
+
+class TestRestServerShutdown:
+    """RESTServer.stop() with an active SSE stream (regression: a client
+    holding /events open blocked graceful shutdown for ~2x aiohttp's
+    shutdown_timeout — Ctrl+C appeared to do nothing)."""
+
+    async def test_stop_ends_active_sse_streams_promptly(
+        self,
+        gateway: ClientGateway,
+        registry: MagicMock,
+        bus: EventBus,
+        manager: AdapterManager,
+        tmp_path: Path,
+    ):
+        rest = RESTServer(
+            gateway,
+            members=MembersFacade(agent_registry=registry, tlon_paths=TlonPaths(home=tmp_path)),
+            events=EventsFacade(event_bus=bus, adapter_manager=manager),
+            host="127.0.0.1",
+            port=0,
+        )
+        await rest.start()
+        assert rest._runner is not None
+        host, port = rest._runner.addresses[0][:2]
+        base = f"http://{host}:{port}"
+
+        async with ClientSession() as http:
+            async with http.post(f"{base}/sessions", json=_session_body()) as created:
+                assert created.status == 201
+                session_id = (await created.json())["session_id"]
+            stream = await http.get(f"{base}/events", params={"session_id": session_id})
+            assert stream.status == 200
+            await _wait_for(lambda: manager.get_adapter("alice") is not None)
+
+            # Previously this blocked ~120s (2x the 60s shutdown_timeout).
+            await asyncio.wait_for(rest.stop(), timeout=5.0)
+
+            # The stream ended server-side through the normal disconnect
+            # path: session closed and adapter detached before stop()
+            # returned.
+            assert gateway.get_session(session_id) is None
+            assert manager.get_adapter("alice") is None
+            await asyncio.wait_for(stream.read(), timeout=5.0)

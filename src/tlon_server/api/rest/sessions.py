@@ -299,9 +299,10 @@ class SessionHandlers(RestHandlerBase):
         and session filters — lives unchanged in NotificationService)
         and attaches the session to its HumanAdapter (human presence +
         mail fan-out). Closing the stream (client disconnect, failed
-        heartbeat write, or DELETE /sessions/{id}) reliably detaches and
-        closes the session: SSE disconnect means offline, and clients
-        re-POST /sessions to reconnect.
+        heartbeat write, DELETE /sessions/{id}, or server shutdown via
+        close_sse_streams) reliably detaches and closes the session:
+        SSE disconnect means offline, and clients re-POST /sessions to
+        reconnect.
 
         Event frames are JSON
         ({"type": "event", "event_type", "payload", ...}), one per SSE
@@ -395,6 +396,19 @@ class SessionHandlers(RestHandlerBase):
             logger.info("sse_disconnected", session_id=session.id)
 
         return response
+
+    def close_sse_streams(self) -> None:
+        """End all active SSE streams (server shutdown).
+
+        Pushes the None sentinel into every stream's queue so each
+        handle_events loop exits promptly through its normal finally
+        path (queue pop, adapter detach, session close). Without this,
+        aiohttp's runner cleanup would wait the full shutdown_timeout
+        (60s default) for these never-ending requests before
+        force-closing them.
+        """
+        for queue in list(self._sse_queues.values()):
+            queue.put_nowait(None)
 
     async def handle_list_participants(self, request: web.Request) -> web.Response:
         """GET /participants - List connected members.
