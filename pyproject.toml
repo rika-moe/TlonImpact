@@ -1,6 +1,6 @@
 [project]
 name = "tlon-impact"
-version = "0.1.0"
+version = "0.0.1-alpha"
 description = "Self-evolving agents, towards AGI"
 readme = "README.md"
 requires-python = ">=3.11"
