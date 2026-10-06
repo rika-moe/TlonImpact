@@ -1,5 +1,5 @@
 [project]
-name = "tlon"
+name = "tlon-impact"
 version = "0.1.0"
 description = "Self-evolving agents, towards AGI"
 readme = "README.md"
