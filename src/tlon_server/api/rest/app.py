@@ -49,7 +49,7 @@ logger = get_logger("tlon_server.api.rest")
 
 # WebUI static hosting: built assets of apps/webui (npm run build).
 # Installed layout: bundled as package data at tlon_server/webui_dist/
-# (scripts/build_package.sh syncs it in before uv build).
+# (scripts/build_package.sh / verify_package.sh sync it in before uv build).
 # Dev layout: apps/webui/dist in the repo checkout
 # (src/tlon_server/api/rest/app.py -> parents[4]).
 _PACKAGED_DIST = Path(__file__).resolve().parents[2] / "webui_dist"

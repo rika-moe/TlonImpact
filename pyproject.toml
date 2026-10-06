@@ -53,8 +53,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tlon", "src/tlosure", "src/tlon_server", "src/tlon_client", "src/tlon_launcher"]
-# webui_dist 是构建期生成的包数据（scripts/build_package.sh 从 apps/webui/dist
-# 同步），被 .gitignore 排除；artifacts 把它拉回文件选择，不存在时不报错
+# webui_dist 是构建期生成的包数据（scripts/build_package.sh 正式打包、
+# scripts/verify_package.sh 质量门验证，均从 apps/webui/dist 同步），
+# 被 .gitignore 排除；artifacts 把它拉回文件选择，不存在时不报错
 artifacts = ["src/tlon_server/webui_dist/**"]
 
 [tool.hatch.build.targets.sdist]
