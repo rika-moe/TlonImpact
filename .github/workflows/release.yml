@@ -11,7 +11,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write # OIDC：换取 PyPI 短期令牌，免存 API token
-      contents: read  # actions/checkout 拉取仓库所需（显式 permissions 会把未列出的降为 none）
+      contents: write # actions/checkout 拉取 + gh release create 建 Release（显式 permissions 会把未列出的降为 none）
 
     steps:
       - uses: actions/checkout@v4
@@ -45,3 +45,9 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      # runner 预装 gh；--prerelease：当前版本线都是预发布（alpha）
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --prerelease

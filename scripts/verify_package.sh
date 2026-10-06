@@ -27,6 +27,10 @@ if [ -z "$wheel" ]; then
     cleanup() { rm -rf dist "$WEBUI_PKG"; }
     trap cleanup EXIT
 
+    # build_package.sh 会保留 dist/（正式产物），这里先清掉再构建，
+    # 保证 wheel 定位无歧义（ls dist/*.whl 只能命中一个）
+    rm -rf dist
+
     if [ -f "$WEBUI_SRC/index.html" ]; then
         rm -rf "$WEBUI_PKG"
         cp -R "$WEBUI_SRC" "$WEBUI_PKG"
