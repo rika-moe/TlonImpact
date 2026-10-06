@@ -13,38 +13,41 @@
 
 ## 快速开始
 
+### 1. 安装
+
+需要 [uv](https://docs.astral.sh/uv/)（Python ≥3.11 由 uv 自动提供）：
+
 ```bash
-# 1. 安装依赖
-uv sync
-
-# 2. 配置环境（首次使用）
-# 在 ~/.tlon/.env 按 provider 写 API key（用哪家的模型配哪家的）：
-mkdir -p ~/.tlon && 在 ~/.tlon/.env 写 MOONSHOT_API_KEY=...（或 DEEPSEEK_API_KEY=... 等 {PROVIDER}_API_KEY）
-# （或用真实环境变量，.env 仅作便捷层；模型是成员级配置，创建成员时选择）
-
-# 3. 运行——两个终端
-uv run tlon dream    # 终端 1：服务端（REST + SSE，默认 127.0.0.1:8080）
-                     # 首次启动是空社会 + 原型库（ADR 0016），不自动建成员
-                     # 启动 banner 会打印 WebUI 地址（http://127.0.0.1:8080/ui/）
-uv run tlon ops      # 终端 2：Operator TUI（人类邮件主界面 + 成员/原型管理）
-# 或者用浏览器 WebUI（cyberpunk 风格，功能与 TUI 对齐 + Logs 视图）：
-#   cd apps/webui && npm install && npm run build   # 首次构建，之后由 dream 托管于 /ui/
-# 在 WebUI 的 AGENTS 视图 CREATE 创建第一个成员（选原型 + 填 provider/model 模型）
-
-# 4. 发第一封信：在 TUI 的 Mail 视图按 c，给刚创建的成员写信
-
-# 5. Telegram 客户端（可选，手机收发邮件）
-uv sync --extra telegram
-# ~/.tlon/.env 配置：
-#   TELEGRAM_BOT_TOKEN=<@BotFather 颁发的 token>
-#   TELEGRAM_ALLOWED_USERS=<你的 Telegram user_id，逗号分隔；给 bot 发条消息后访问
-#     https://api.telegram.org/bot<token>/getUpdates 可查到自己的 user_id>
-uv run tlon telegram   # 白名单外消息一律忽略
-# 真机自验：手机对 bot /send <成员名> <内容> → agent 收到并回信、手机收到推送 →
-#   对推送点「回复」→ agent 收到带 in_reply_to 的回信；/inbox 看未读
+uv tool install tlon-impact
 ```
 
-完整走查（含常见问题排查）见 [docs/guides/quickstart.md](./docs/guides/quickstart.md)。
+升级用 `uv tool upgrade tlon-impact`。另外，agent 的沙箱类工具（执行代码等）依赖本机 Docker daemon，需要这些工具请先装 Docker。
+
+### 2. 配置 LLM API key
+
+Tlon 只读 `~/.tlon/.env`（也可用真实环境变量，优先级更高）：
+
+```bash
+mkdir -p ~/.tlon
+echo 'DEEPSEEK_API_KEY=sk-...' >> ~/.tlon/.env
+```
+
+用哪家的模型就配哪家的 key，变量名规则是 provider 段大写、`-` 换 `_`、加 `_API_KEY` 后缀：`DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等。模型是成员级配置，创建成员时在 WebUI 里选。完整配置项（admin token、GitHub 集成等）见 [.env.example](./.env.example)。
+
+### 3. 启动
+
+```bash
+tlon dream
+```
+
+浏览器打开 **http://127.0.0.1:8080/ui/** ，两步让社会跑起来：
+
+1. **AGENTS 视图 → CREATE**：创建第一个成员（选原型、选 provider/模型）
+2. **Mail 视图**：给他写第一封信
+
+所有数据落 `~/.tlon/`；Ctrl+C 停止。服务端默认只绑 `127.0.0.1`；如需绑定非回环地址，务必先在 `.env` 配置 `TLON_ADMIN_TOKEN`。
+
+> 开发者从源码运行（`uv sync` / `uv run tlon dream`）见 [AGENTS.md](./AGENTS.md)；完整走查与常见问题见 [docs/guides/quickstart.md](./docs/guides/quickstart.md)。
 
 ## 架构速览
 
