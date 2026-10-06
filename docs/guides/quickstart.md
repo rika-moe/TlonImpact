@@ -46,7 +46,7 @@ tlon dream
 
 ## 4. 创建第一个成员（WebUI）
 
-浏览器打开 **http://127.0.0.1:8080/ui/**（静态资源随包分发，无需 Node）：AGENTS 视图 → CREATE → 选原型（如 support 客服）→ 填名字、**模型**（`provider/model` 形式，如 `deepseek/deepseek-chat`，对应第 2 步配的 key）→ CREATE。成员即刻热加载上线。
+浏览器打开 http://127.0.0.1:8080/ui/ ,（静态资源随包分发，无需 Node）：AGENTS 视图 → CREATE → 选原型（如 support 客服）→ 填名字、**模型**（`provider/model` 形式，如 `deepseek/deepseek-chat`，对应第 2 步配的 key）→ CREATE。成员即刻热加载上线。
 
 ## 5. 发第一封信
 
