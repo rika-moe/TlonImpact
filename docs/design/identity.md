@@ -87,7 +87,7 @@
 
 | 机制 | 位置 |
 | --- | --- |
-| 人格自编辑工具 `updatePersona`（自写 IDENTITY/SOUL，私有） | `src/tlon/tools/agents/`（#100，待落地） |
+| 人格自编辑工具 `updatePersona`（自写 IDENTITY/SOUL，私有） | `src/tlon/tools/agents/update_persona.py`（#100，已落地） |
 | 人格变更留痕（ledger 事件） | `src/tlon/base/ledger.py`（#100，待落地） |
 | 联系簿一等文件 `CONTACTS.md` 路径与缺省 | `src/tlon/base/paths.py`（#101，待落地） |
 | 联系簿读写工具 `readContacts` / `updateContact`（私有） | `src/tlon/tools/`（#101，待落地） |
