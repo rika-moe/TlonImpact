@@ -82,8 +82,9 @@ def write_staging_prototype(
     Both rule forms are accepted (a cognitive rule carrying a ``:loop``,
     or loop-less deterministic rules); the output is a single unified
     rules-form ``behavior.tlon`` — prototypes carry no persona (unified
-    member model, ADR 0006); a member's persona files are creation-time
-    data, not part of the behavior genome.
+    member model, ADR 0006); a member's persona files are seeded at
+    creation and member-owned afterwards (self-editable via
+    ``updatePersona``, ADR 0024), never part of the behavior genome.
 
     The behavior text may be a write-side template: when it declares
     ``:parameters`` and references ``${var}`` placeholders, the declaration

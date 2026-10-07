@@ -121,7 +121,7 @@ spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里�
 
 唯一权威还有两层推论：
 
-- **实例化是复制，不是引用**。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型的 behavior 文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件是创建时数据。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型不是基因型（ADR 0016——机制/策略分离，模型选择是部署/资源策略）：成员的 `llm.model_name` 来自 `instantiate` 的必填 `model` 参数（spawn 时继承 spawner 的模型）；spec 语法已删除顶层 `:llm` 键，残留即加载报错；未声明模型的成员装配期硬报错，没有进程级兜底。执行能力声明则相反——它是基因型（宪法一）：spec 的可选顶层段 `:execution {:level :L0|:L1|:L2}` 随原型提案一起评审，`instantiate` 把它一次性投影进 agent.yaml 的 `docker.level`，此后运行时权威是 agent.yaml——成员自改自己 spec 的 `:execution` 不生效，防自提权。
+- **实例化是复制，不是引用**。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型的 behavior 文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件在创建时播种，之后 IDENTITY/SOUL 是成员自主数据（`updatePersona` 自改，ADR 0024）。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型不是基因型（ADR 0016——机制/策略分离，模型选择是部署/资源策略）：成员的 `llm.model_name` 来自 `instantiate` 的必填 `model` 参数（spawn 时继承 spawner 的模型）；spec 语法已删除顶层 `:llm` 键，残留即加载报错；未声明模型的成员装配期硬报错，没有进程级兜底。执行能力声明则相反——它是基因型（宪法一）：spec 的可选顶层段 `:execution {:level :L0|:L1|:L2}` 随原型提案一起评审，`instantiate` 把它一次性投影进 agent.yaml 的 `docker.level`，此后运行时权威是 agent.yaml——成员自改自己 spec 的 `:execution` 不生效，防自提权。
 - **模板只存在于写侧**。behavior 文件可以声明顶层 `:parameters` 并用 `${name}` 占位（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)），但渲染发生在实例化落盘之前；运行时加载器永远见不到占位符，`:parameters` 本身也只作为未知键记 warning。运行时面对的永远是一份完全的、具体的 spec——"这份文件就是这个成员的全部行为"这个命题，不需要任何上下文就成立。
 
 ## 分层

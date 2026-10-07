@@ -204,7 +204,9 @@ export class RestClient {
     return this.send("POST", `/admin/prototypes/staging/${encodeURIComponent(name)}/reject`);
   }
 
-  /** Create a member from a prototype (persona = creation-time data). */
+  /** Create a member from a prototype. `persona` is seeded here at creation;
+   * afterwards it is member-owned (self-editable via updatePersona, ADR 0024) —
+   * humans can still edit via REST PATCH or `tlon mirror`. */
   async createAgent(body: {
     prototype: string;
     name: string;

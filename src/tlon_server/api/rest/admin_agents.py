@@ -84,8 +84,9 @@ class AdminAgentHandlers(RestHandlerBase):
         config, no process-level fallback): ``provider/model`` form, e.g.
         ``deepseek/deepseek-chat``. The behavior comes from the prototype
         (behavior genome); ``persona`` (identity/profile/behavior) is
-        optional creation-time data (ADR 0006). The new member is
-        hot-adopted by the registry.
+        optional creation-time seed data (ADR 0006) — afterwards persona
+        is member-owned (self-editable via ``updatePersona``, ADR 0024).
+        The new member is hot-adopted by the registry.
 
         Returns:
             200 with the created config; 400 on bad input / prototype

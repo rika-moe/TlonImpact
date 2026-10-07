@@ -3,8 +3,9 @@
 Supports both rule forms — cognitive rules carrying a ``:loop`` session
 and loop-less deterministic rules — in one unified rules-form format
 (phase C). Unified member model (ADR 0006): prototypes carry no persona —
-a member's persona files are creation-time data, never part of the
-behavior genome.
+a member's persona files are seeded at creation and member-owned
+afterwards (self-editable via ``updatePersona``, ADR 0024), never part of
+the behavior genome.
 """
 
 from collections.abc import Awaitable, Callable
