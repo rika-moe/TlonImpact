@@ -41,3 +41,9 @@
 2026-08 拍板：**成员只有一种**；成员是基因型的**不可变表达**，行为更新不走"改自己的 spec"，而走**世代更替**——创建新 prototype → 派生新成员。进化发生在原型（物种）层面，学习的成果归种群不归个体；退休成员档案归档、永不删除。完整决策集（9 条）与模型现状见 [docs/design/unified-member-model.md](./design/unified-member-model.md)，决策记录见 [docs/decisions/0006-unified-member-model.md](./decisions/0006-unified-member-model.md)。
 
 这条基线把"闭环"一步的含义校准为：经验沉淀为知识（记忆，已有），知识经反思与总结产出**原型提案**（staging），评审后派生新一代成员——行为更新与"新成员从社会内部产生"走同一条通道，而不是为个体单开一条热更新旁路。
+
+### 当前阶段的结构基线：主观身份与自组织社会
+
+2026-10 拍板：**社会没有身份登记处**。成员可自由修改自己的叙事人格（`IDENTITY.md` / `SOUL.md`，私有、留痕可问责）；系统维护的客观层只剩**地址**（不可伪造）与**事实**（ledger、邮件存档、谱系）；社会身份 = 朋友们在各自联系簿中认识的总和——主观、分布式、无需一致；组织无 schema、无注册处——**组织即共识**，邮件列表是社会角色而非机制；`all@` 全员广播退役。完整设计见 [docs/design/identity.md](./design/identity.md)，决策记录见 [docs/decisions/0024-subjective-identity.md](./decisions/0024-subjective-identity.md)。
+
+这条基线校准"开放"一步的另一面：新组织、新社会结构不从机制里长出来，而从成员的共识与通信里长出来——机制的退场本身就是自主权扩张的一种。
