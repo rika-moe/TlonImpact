@@ -94,8 +94,13 @@ export interface MailItem {
   thread_id: string;
   forward_of: string | null;
   timestamp: string;
-  /** Whether the recipient has read this mail (inbox cursor semantics). */
-  read: boolean;
+  /**
+   * Whether the recipient has read this mail (inbox cursor semantics).
+   * Absent when the payload has no per-recipient read state: the observer
+   * endpoint (`GET /members/{id}/mail`) and `mail.delivered` SSE events
+   * never carry it.
+   */
+  read?: boolean;
 }
 
 /** A conversation thread: mails sharing one `thread_id`. */

@@ -455,6 +455,19 @@ export class RestClient {
   }
 
   /**
+   * Any member's mailbox, read-only observer view
+   * (GET /members/{member_id}/mail). Same merge semantics as getInbox,
+   * but the payloads carry no `read` flag. Rejects with a RestError
+   * (status 404) when the member does not exist.
+   */
+  async getMemberMail(memberId: string, limit = 100): Promise<MailItem[]> {
+    const data = await this.get<{ mails?: MailItem[] }>(
+      `/members/${encodeURIComponent(memberId)}/mail?limit=${limit}`,
+    );
+    return data.mails ?? [];
+  }
+
+  /**
    * Send a mail as the given human user (POST /messages). Recipients in
    * `to`/`cc` may be display names, member ids or full addresses — the
    * server resolves them. Resolves with the new mail id; rejects with a

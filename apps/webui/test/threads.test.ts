@@ -73,6 +73,13 @@ test("groupByThread falls back to the mail id when thread_id is empty", () => {
   assert.equal(threads[0]?.threadId, "solo");
 });
 
+test("groupByThread treats mails without a read flag as read (observer payloads)", () => {
+  const observed = mail({ id: "m1" });
+  delete observed.read;
+  const threads = groupByThread([observed], ME);
+  assert.equal(threads[0]?.unread, false);
+});
+
 test("groupByThread collects participants across from/to/cc", () => {
   const m = mail({
     from_address: AGENT,

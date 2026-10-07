@@ -2,6 +2,12 @@
  * MAIL view — three columns: thread list (unread ●) | conversation cards |
  * compose modal (To/Cc autocomplete, reply pre-fills in_reply_to/thread_id).
  *
+ * The toolbar observation picker switches whose mailbox is being viewed:
+ * myself (GET /inbox — read flags shown, compose/reply enabled) or any
+ * member (GET /members/{member_id}/mail — read-only: no unread markers,
+ * no compose/reply). SSE mail.delivered increments are filtered to the
+ * observed member's address.
+ *
  * Each conversation card shows the mail's metadata: an unread marker for
  * unread mail, a "↩ RE" reference line resolving in_reply_to against the
  * loaded mails (silently dropped when the parent is not in the inbox), and
@@ -17,6 +23,7 @@ import type { KeyboardEvent, ReactElement } from "react";
 import { MailSendError } from "../client/rest";
 import type { RestClient } from "../client/rest";
 import { groupByThread, involvesMe, localPart, mergeMails } from "../lib/threads";
+import { memberAddress, selfMemberId } from "../lib/members";
 import type {
   MailItem,
   ParticipantInfo,
@@ -68,6 +75,9 @@ interface ComposeRequest {
 
 export function MailView({ rest, sse, username }: ViewProps): ReactElement {
   const myAddress = `${username}@tlon.internal`;
+  const selfId = selfMemberId(username);
+  // Whose mailbox is being observed; defaults to myself.
+  const [observedId, setObservedId] = useState<string>(selfId);
   const [mails, setMails] = useState<MailItem[]>([]);
   const [participants, setParticipants] = useState<ParticipantInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -76,21 +86,12 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
   const [notice, setNotice] = useState<string | null>(null);
   const [compose, setCompose] = useState<ComposeRequest | null>(null);
 
-  // Initial inbox + address book load.
+  const readOnly = observedId !== selfId;
+  const observedAddress = memberAddress(observedId);
+
+  // Address book load (once; it also feeds the observation picker).
   useEffect(() => {
     let cancelled = false;
-    rest
-      .getInbox(username)
-      .then((inbox) => {
-        if (cancelled) return;
-        setMails((prev) => mergeMails(prev, inbox));
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setNotice(`INBOX 加载失败: ${err instanceof Error ? err.message : String(err)}`);
-        setLoading(false);
-      });
     rest
       .listParticipants()
       .then((list) => {
@@ -100,26 +101,57 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [rest, username]);
+  }, [rest]);
+
+  // Mailbox load for the observed member: my own inbox (with read flags)
+  // or the read-only observer endpoint. Switching the observation target
+  // clears everything loaded for the previous one.
+  useEffect(() => {
+    let cancelled = false;
+    setMails([]);
+    setSelectedId(null);
+    setFilter("");
+    setNotice(null);
+    setCompose(null);
+    setLoading(true);
+    const load = observedId === selfId ? rest.getInbox(username) : rest.getMemberMail(observedId);
+    load
+      .then((inbox) => {
+        if (cancelled) return;
+        setMails(inbox);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setNotice(`MAIL 加载失败: ${err instanceof Error ? err.message : String(err)}`);
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rest, username, observedId, selfId]);
 
   // Live delivery events (deduplicated by mail id — the server emits one
-  // event per recipient).
+  // event per recipient): keep only mail involving the observed member.
   useEffect(() => {
     const onEvent = (ev: ServerEvent): void => {
       if (ev.eventType !== "mail.delivered") return;
       const payload = ev.payload as { mail?: MailItem } | undefined;
       const mail = payload?.mail;
       if (!mail || typeof mail.id !== "string") return;
-      if (!involvesMe(mail, myAddress)) return;
+      if (!involvesMe(mail, observedAddress)) return;
       setMails((prev) => mergeMails(prev, [mail]));
     };
     sse.on("event", onEvent);
     return () => {
       sse.off("event", onEvent);
     };
-  }, [sse, myAddress]);
+  }, [sse, observedAddress]);
 
-  const threads = useMemo(() => groupByThread(mails, myAddress), [mails, myAddress]);
+  const threads = useMemo(
+    () => groupByThread(mails, observedAddress),
+    [mails, observedAddress],
+  );
 
   /** Display name of a participant id (fallback: the id itself). */
   const displayName = (id: string): string =>
@@ -162,17 +194,25 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
     <div className="mail-view">
       <div className="mail-toolbar">
         <h2 className="tech-label mail-title">MAIL</h2>
-        <span className="tech-label">{myAddress}</span>
+        <ObserverPicker
+          username={username}
+          participants={participants}
+          value={observedId}
+          onChange={setObservedId}
+        />
+        <span className="tech-label">{observedAddress}</span>
         <span className="tech-label">{visibleThreads.length} THREADS</span>
         <span className="mail-spacer" />
         {notice ? <span className="mail-notice">{notice}</span> : null}
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={() => setCompose({ kind: "compose", to: "", subject: "" })}
-        >
-          ✉ COMPOSE
-        </button>
+        {readOnly ? null : (
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => setCompose({ kind: "compose", to: "", subject: "" })}
+          >
+            ✉ COMPOSE
+          </button>
+        )}
       </div>
       <div className="mail-layout">
         <section className="panel mail-threads-panel">
@@ -194,6 +234,7 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
                   thread={thread}
                   active={selectedThread?.threadId === thread.threadId}
                   displayName={displayName}
+                  showUnread={!readOnly}
                   onSelect={() => {
                     setSelectedId(thread.threadId);
                     setNotice(null);
@@ -207,8 +248,9 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
           <Conversation
             thread={selectedThread}
             mails={mails}
-            myAddress={myAddress}
+            myAddress={observedAddress}
             displayName={displayName}
+            readOnly={readOnly}
             onReply={openReply}
           />
         </section>
@@ -228,27 +270,101 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
   );
 }
 
+/** Observation-target picker: myself first, then every participant. */
+function ObserverPicker({
+  username,
+  participants,
+  value,
+  onChange,
+}: {
+  username: string;
+  participants: ParticipantInfo[];
+  /** Member id currently observed ("human:<username>" or a bare agent id). */
+  value: string;
+  onChange: (memberId: string) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  const selfId = selfMemberId(username);
+  // Self is always a candidate, even when the session list lags behind.
+  const candidates: ParticipantInfo[] = [
+    { id: selfId, name: username, type: "human" },
+    ...participants.filter((p) => p.id !== selfId),
+  ];
+  const current = candidates.find((c) => c.id === value) ?? (candidates[0] as ParticipantInfo);
+
+  const labelOf = (c: ParticipantInfo): string =>
+    c.id === selfId ? `${c.name ?? c.id} · ME` : (c.name ?? c.id);
+  const badgeOf = (c: ParticipantInfo): ReactElement => (
+    <span className={`tech-label mail-suggest-type mail-suggest-type--${c.type ?? "agent"}`}>
+      {(c.type ?? "agent").toUpperCase()}
+    </span>
+  );
+
+  return (
+    <div className="mail-observer">
+      <button
+        type="button"
+        className="btn btn--secondary mail-observer-btn"
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setOpen(false)}
+      >
+        <span className="mail-observer-label">{labelOf(current)}</span>
+        {badgeOf(current)}
+        <span className="mail-observer-caret">▾</span>
+      </button>
+      {open ? (
+        <div className="mail-suggest mail-observer-list">
+          {candidates.map((c) => (
+            <div
+              key={c.id}
+              className={`mail-suggest-item${c.id === value ? " mail-suggest-item--active" : ""}`}
+              // onMouseDown fires before the button's blur closes the list.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(c.id);
+                setOpen(false);
+              }}
+            >
+              <span className="mail-suggest-label">{labelOf(c)}</span>
+              <span className="mail-suggest-badges">
+                {isOnlineHuman(c) ? (
+                  <span className="tech-label mail-online">● ONLINE</span>
+                ) : null}
+                {badgeOf(c)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ThreadItem({
   thread,
   active,
   displayName,
+  showUnread,
   onSelect,
 }: {
   thread: ThreadGroup;
   active: boolean;
   displayName: (id: string) => string;
+  /** False in observer mode (read state is the member's own, not shown). */
+  showUnread: boolean;
   onSelect: () => void;
 }): ReactElement {
   const who = thread.participants.map(displayName).join(", ") || "(me)";
   const snippet = thread.latest.subject ?? thread.latest.content.slice(0, 24);
+  const unread = showUnread && thread.unread;
   return (
     <div
       className={`mail-thread-item${active ? " mail-thread-item--active" : ""}`}
       onClick={onSelect}
     >
       <div className="mail-thread-line">
-        {thread.unread ? <span className="unread-dot">●</span> : null}
-        <span className={`mail-thread-who${thread.unread ? " mail-thread-who--unread" : ""}`}>
+        {unread ? <span className="unread-dot">●</span> : null}
+        <span className={`mail-thread-who${unread ? " mail-thread-who--unread" : ""}`}>
           {who}
         </span>
         <span className="mail-thread-meta">
@@ -267,6 +383,7 @@ function Conversation({
   mails,
   myAddress,
   displayName,
+  readOnly,
   onReply,
 }: {
   thread: ThreadGroup | null;
@@ -274,6 +391,8 @@ function Conversation({
   mails: MailItem[];
   myAddress: string;
   displayName: (id: string) => string;
+  /** True when observing another member: no unread markers, no REPLY. */
+  readOnly: boolean;
   onReply: (mail: MailItem) => void;
 }): ReactElement {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -307,13 +426,17 @@ function Conversation({
         // forward_of falls back to the id prefix.
         const parent = mail.in_reply_to ? byId.get(mail.in_reply_to) : undefined;
         const forwardSource = mail.forward_of ? byId.get(mail.forward_of) : undefined;
+        // Observer payloads carry no read flag — treat "read only when
+        // explicitly false", and suppress the marker entirely when
+        // observing another member (their read cursor is not ours).
+        const unread = !readOnly && mail.read === false;
         return (
           <article
             key={mail.id}
-            className={`mail-card${own ? " mail-card--own" : ""}${mail.read ? "" : " mail-card--unread"}`}
+            className={`mail-card${own ? " mail-card--own" : ""}${unread ? " mail-card--unread" : ""}`}
           >
             <div className="mail-card-head">
-              {!mail.read ? (
+              {unread ? (
                 <span className="tech-label mail-card-unread">● UNREAD</span>
               ) : null}
               <span className="tech-label mail-card-from">
@@ -338,7 +461,7 @@ function Conversation({
             ) : null}
             {mail.subject ? <div className="mail-card-subject">{mail.subject}</div> : null}
             <div className="mail-card-body">{mail.content}</div>
-            {!own ? (
+            {!own && !readOnly ? (
               <div className="mail-card-actions">
                 <button
                   type="button"
