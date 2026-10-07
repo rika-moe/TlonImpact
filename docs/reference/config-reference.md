@@ -182,7 +182,7 @@ agent:
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `TLON_HOME` | `~/.tlon` | 数据根目录；只认已存在且是目录的值，否则回落 `~/.tlon`（见 [base/paths.py](../../src/tlon/base/paths.py) 的 `_resolve_tlon_home`） |
+| `TLON_HOME` | `~/.tlon` | 数据根目录；显式设置但指向不存在/非目录时**报错拒绝启动**（fail-fast，绝不静默回落真实数据根）；缺省 `~/.tlon` 不存在时自动创建（见 [base/paths.py](../../src/tlon/base/paths.py) 的 `_resolve_tlon_home`） |
 | `TLON_TRACE_SAMPLE_RATIO` | 恒采样 | 采样率 `[0, 1]`；非法值拒绝（[base/tracing/otel.py](../../src/tlon/base/tracing/otel.py) 的 `SAMPLE_RATIO_ENV`） |
 | `TLON_USERNAME` | `guest` | `tlon ops` 的默认邮件身份用户名 |
 

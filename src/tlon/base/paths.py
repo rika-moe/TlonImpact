@@ -68,14 +68,22 @@ from pathlib import Path
 def _resolve_tlon_home() -> Path:
     """Resolve TLON_HOME from environment or default to ~/.tlon.
 
-    The one side effect in this module: a missing default ``~/.tlon``
-    root is created here (process bootstrap behavior).
+    An explicitly set ``TLON_HOME`` must be honored or fail loudly:
+    a missing/non-directory value raises instead of silently falling
+    back to ``~/.tlon`` — the fallback direction is *into* the real
+    data root, so a typo would run against the live society. The one
+    side effect in this module: a missing default ``~/.tlon`` root is
+    created here (process bootstrap behavior).
     """
     tlon_home = os.getenv("TLON_HOME")
     if tlon_home:
         path = Path(tlon_home).expanduser().resolve()
-        if path.exists() and path.is_dir():
-            return path
+        if not path.is_dir():
+            raise RuntimeError(
+                f"TLON_HOME={tlon_home!r} 指向的目录不存在或不是目录；"
+                f"显式设置的环境变量不会被静默忽略（请先创建该目录，或取消设置以使用默认 ~/.tlon）"
+            )
+        return path
     default = Path.home() / ".tlon"
     default.mkdir(parents=True, exist_ok=True)
     return default
