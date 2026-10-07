@@ -146,7 +146,9 @@ class MembersFacade:
         """Create a member from a prototype (config + persona on disk).
 
         Writes the instance's behavior/config (instantiate), then the
-        creation-time persona files (ADR 0006). The caller hot-adopts the
+        persona seed files (creation-time seeding, ADR 0006; persona is
+        member-owned afterwards — self-editable via ``updatePersona``,
+        ADR 0024). The caller hot-adopts the
         new member separately (``adopt``) so it can report the adopt
         result.
 

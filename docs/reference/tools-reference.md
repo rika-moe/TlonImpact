@@ -389,7 +389,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 **见习成员不可用（，信任阶梯）**——装配时不注册；`reviewPrototype`（咨询性）对见习成员保留。
 
-创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格是成员创建时数据，不属基因库。
+创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格在成员创建时播种、之后是成员自主数据（`updatePersona` 自改，ADR 0024），不属基因库。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|

@@ -78,9 +78,9 @@
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。
 - **`:on :boot` 规则**：带它的成员开机即启动；不带的按需唤醒（startup 模式由此派生，`agent.yaml` 不再控制）。
 
-### 2.3 人格文件：创建时数据，不进原型
+### 2.3 人格文件：创建时播种，不进原型
 
-原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）是创建成员时的数据：创建时经 WebUI / admin API 的 `persona` 字段写入，之后可在成员 `config/` 下随时编辑——它不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
+原型**不带人格文件**（统一成员模型，ADR 0006）。成员的人格（`IDENTITY.md` / `SOUL.md` / `RULES.md`）在创建成员时播种：创建时经 WebUI / admin API 的 `persona` 字段写入，之后 `IDENTITY.md` / `SOUL.md` 是**成员自主数据**——成员可经 `updatePersona` 工具全文自改（ADR 0024，留痕可问责），`RULES.md` 仍由人类编辑（成员 `config/` 下直接改或 `tlon mirror`）——人格不进基因库，不随 spawn 遗传。成员无人格文件也安全：`(persona)` section 读到空，prompt 里没有身份段，成员照常运行。
 
 ## 3. 从原型派生 agent
 

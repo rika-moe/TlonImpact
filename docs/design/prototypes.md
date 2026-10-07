@@ -47,7 +47,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 `:execution` 层是执行装置能力声明（宪法一，[execution-device.md](./execution-device.md)「能力阶梯」——内置原型的定层表与「最低够用」原则记录在那里）：实例化时一次性投影进 agent.yaml 的 `docker.level`。「标准 ReAct 模板」指同一套 stage 程序（think + 交卷前 critique + act + revise）与 `:max-iterations 10 :max-tokens 1000000`（ADR 0023）。
 
-所有原型的差异全部写在 spec 数据里：迭代上限、token 预算、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 写入，是创建时数据，不是基因型。
+所有原型的差异全部写在 spec 数据里：迭代上限、token 预算、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 播种写入，之后 IDENTITY/SOUL 是成员自主数据（成员可经 `updatePersona` 自改，ADR 0024），RULES 仍由人类编辑——都不是基因型。
 
 ## 生命周期：播种 → 列出 → 实例化
 
