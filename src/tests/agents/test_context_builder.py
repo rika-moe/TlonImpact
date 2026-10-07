@@ -142,6 +142,13 @@ def _thread_mail(content: str, upstream: Mail | None = None) -> Mail:
     )
 
 
+def _timed_mail(content: str, timestamp: str) -> Mail:
+    """A mail from the human with a fixed timestamp (ordering is explicit)."""
+    mail = Mail.create(from_address="alice@tlon.internal", content=content, to=[ADDRESS])
+    mail.timestamp = timestamp
+    return mail
+
+
 def _mail() -> Mail:
     return Mail.create(from_address="alice@tlon.internal", content="hello", to=[ADDRESS])
 
@@ -516,6 +523,90 @@ async def test_followup_context_extends_previous_prefix(tmp_path: Path) -> None:
     )
     assert context2[len(context1)]["content"].startswith("[本线程上一轮处理摘要]")
     assert context2[-1]["content"].endswith("\n\n第二封")
+
+
+# ===== (mail-history F R) 两段式（ADR 0025）=====
+
+
+async def test_two_tier_frozen_plus_recent(tmp_path: Path) -> None:
+    """The frozen segment is the earliest F mails of the merged timeline,
+    the sliding segment the most recent R — chronological order overall,
+    with the same role mapping (own mail -> assistant)."""
+    builder, mailbox, _journal = _make_thread_builder(tmp_path, "[(mail-history 2 2)]")
+    await mailbox.append_inbox(_timed_mail("第1封", "2026-10-01T00:00:00+00:00"))
+    own = Mail.create(from_address=ADDRESS, content="第2封", to=["alice@tlon.internal"])
+    own.timestamp = "2026-10-02T00:00:00+00:00"
+    await mailbox.append_sent(own)
+    for i in range(3, 7):
+        await mailbox.append_inbox(_timed_mail(f"第{i}封", f"2026-10-0{i}T00:00:00+00:00"))
+
+    context = (await builder.build_context(_mail())).messages
+
+    history = context[:-1]
+    assert [m["role"] for m in history] == ["user", "assistant", "user", "user"]
+    assert "第1封" in history[0]["content"]
+    assert "第2封" in history[1]["content"]
+    assert "第5封" in history[2]["content"]
+    assert "第6封" in history[3]["content"]
+    assert all("第3封" not in m["content"] and "第4封" not in m["content"] for m in history)
+
+
+async def test_two_tier_dedups_overlap(tmp_path: Path) -> None:
+    """Total below F + R: the overlapping mails render exactly once."""
+    builder, mailbox, _journal = _make_thread_builder(tmp_path, "[(mail-history 2 2)]")
+    for i in range(1, 4):
+        await mailbox.append_inbox(_timed_mail(f"第{i}封", f"2026-10-0{i}T00:00:00+00:00"))
+
+    context = (await builder.build_context(_mail())).messages
+
+    history = [m["content"] for m in context[:-1]]
+    assert len(history) == 3
+    assert "第1封" in history[0]
+    assert "第2封" in history[1]
+    assert "第3封" in history[2]
+
+
+async def test_two_tier_excludes_current_mail(tmp_path: Path) -> None:
+    """The current mail is excluded even when it sits inside the frozen
+    segment (the engine appends it last, once)."""
+    builder, mailbox, _journal = _make_thread_builder(tmp_path, "[(mail-history 2 1)]")
+    mail1 = _timed_mail("最早一封", "2026-10-01T00:00:00+00:00")
+    await mailbox.append_inbox(mail1)
+    await mailbox.append_inbox(_timed_mail("中间一封", "2026-10-02T00:00:00+00:00"))
+    await mailbox.append_inbox(_timed_mail("最新一封", "2026-10-03T00:00:00+00:00"))
+
+    context = (await builder.build_context(mail1)).messages
+
+    history = [m["content"] for m in context[:-1]]
+    assert len(history) == 2
+    assert "中间一封" in history[0]
+    assert "最新一封" in history[1]
+    assert context[-1]["content"].endswith("\n\n最早一封")
+
+
+async def test_two_tier_frozen_segment_byte_stable_across_new_mail(tmp_path: Path) -> None:
+    """Once filled, the frozen segment never moves: a new mail only slides
+    the recent window, so the previous session's context head stays a
+    byte-identical prefix of the next one (provider prompt caching bills
+    only the moved suffix)."""
+    builder, mailbox, _journal = _make_thread_builder(tmp_path, "[(mail-history 2 1)]")
+    for i in range(1, 4):
+        await mailbox.append_inbox(_timed_mail(f"第{i}封", f"2026-10-0{i}T00:00:00+00:00"))
+    context1 = (await builder.build_context(_timed_mail("当前一", "2026-10-04T00:00:00+00:00"))).messages
+
+    await mailbox.append_inbox(_timed_mail("第四封", "2026-10-05T00:00:00+00:00"))
+    context2 = (await builder.build_context(_timed_mail("当前二", "2026-10-06T00:00:00+00:00"))).messages
+
+    # Frozen segment (第1封/第2封) byte-identical; only the sliding tail
+    # and the current mail moved.
+    assert json.dumps(context2[:2], ensure_ascii=False) == json.dumps(
+        context1[:2], ensure_ascii=False
+    )
+    assert "第1封" in context2[0]["content"]
+    assert "第2封" in context2[1]["content"]
+    assert "第四封" in context2[2]["content"]
+    assert "第三封" not in context2[2]["content"]
+    assert context2[-1]["content"].endswith("\n\n当前二")
 
 
 # ===== (lessons) section（docs/design/prototypes.md）=====

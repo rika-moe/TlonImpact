@@ -482,3 +482,46 @@ class TestDefnThreading:
             MemberSpecValidationError, match="unknown function or special form: notify"
         ):
             validate_member_spec(spec)
+
+
+class TestMailHistorySection:
+    """``(mail-history N)``（滑动窗口）与 ``(mail-history F R)``（两段式，
+    ADR 0025）均合法；参数个数、负数、bool、非 int 一律加载拒载。"""
+
+    @staticmethod
+    def _spec_with_sections(sections: str) -> MemberSpec:
+        return _parse(COGNITIVE_EDN.replace("[(persona) (protocol)]", sections))
+
+    def test_sliding_form_accepted(self):
+        validate_member_spec(self._spec_with_sections("[(mail-history 20)]"))
+
+    def test_two_tier_form_accepted(self):
+        validate_member_spec(self._spec_with_sections("[(mail-history 20 10)]"))
+
+    def test_zero_counts_accepted(self):
+        """Zero is a legal non-negative count (renders nothing)."""
+        validate_member_spec(self._spec_with_sections("[(mail-history 0 0)]"))
+
+    def test_no_argument_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="one or two"):
+            validate_member_spec(self._spec_with_sections("[(mail-history)]"))
+
+    def test_three_arguments_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="one or two"):
+            validate_member_spec(self._spec_with_sections("[(mail-history 20 10 5)]"))
+
+    def test_negative_count_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="non-negative int"):
+            validate_member_spec(self._spec_with_sections("[(mail-history -1)]"))
+
+    def test_negative_recent_count_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="non-negative int"):
+            validate_member_spec(self._spec_with_sections("[(mail-history 20 -1)]"))
+
+    def test_bool_count_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="non-negative int"):
+            validate_member_spec(self._spec_with_sections("[(mail-history true)]"))
+
+    def test_non_int_count_rejected(self):
+        with pytest.raises(MemberSpecValidationError, match="non-negative int"):
+            validate_member_spec(self._spec_with_sections('[(mail-history "20")]'))
