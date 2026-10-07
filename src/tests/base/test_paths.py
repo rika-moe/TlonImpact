@@ -6,6 +6,8 @@ resolution) must never resurrect a deleted member's directory."""
 
 from pathlib import Path
 
+import pytest
+
 from tlon.base.paths import TlonPaths
 
 
@@ -69,3 +71,30 @@ def test_agent_contacts_file_default_is_empty_book(tmp_path: Path) -> None:
     # No eager creation: resolving the path touches nothing.
     assert not contacts.exists()
     assert not contacts.parent.exists()
+
+
+class TestTlonHomeResolution:
+    """显式设置的 TLON_HOME 必须被尊重或大声失败：指向不存在/非目录时
+    报错，绝不静默回落到真实数据根 ~/.tlon（回落方向是 live 社会）。"""
+
+    def test_valid_tlon_home_is_honored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TLON_HOME", str(tmp_path))
+        assert TlonPaths().tlon_home() == tmp_path
+
+    def test_missing_tlon_home_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TLON_HOME", str(tmp_path / "不存在的目录"))
+        with pytest.raises(RuntimeError, match="TLON_HOME"):
+            TlonPaths()
+
+    def test_tlon_home_pointing_at_file_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        file_path = tmp_path / "a-file"
+        file_path.touch()
+        monkeypatch.setenv("TLON_HOME", str(file_path))
+        with pytest.raises(RuntimeError, match="TLON_HOME"):
+            TlonPaths()
