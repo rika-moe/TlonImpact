@@ -1,26 +1,35 @@
 """Metabolic ledger — append-only per-member token accounting (ADR 0014).
 
-Write side: ``LLMClient.chat`` (the only LLM exit) appends one record per
-successful call carrying usage to ``~/.tlon/{agent_id}/ledger.jsonl``.
-Only the base layer writes; agents have no write path. A client built
-without an ``agent_id`` (system-level) records nothing.
+Write side: ``LLMClient.chat`` (the only LLM exit) appends one ``llm_call``
+record per successful call carrying usage to
+``~/.tlon/{agent_id}/ledger.jsonl``; ``UpdatePersonaTool`` (tools layer)
+appends one ``persona_update`` audit record per persona rewrite (ADR 0024
+决策 2: accountability, not approval). A client built without an
+``agent_id`` (system-level) records nothing.
 
-Record shape (one JSON object per line)::
+Record shapes (one JSON object per line)::
 
     {"ts", "event": "llm_call", "model", "prompt_tokens",
      "completion_tokens", "duration_ms", "cpu_ms", "purpose",
      "session_id"}
+    {"ts", "event": "persona_update", "agent_id", "file",
+     "sha256", "bytes"}
 
 ``duration_ms`` is the wall time of the whole chat call (retries
 included); ``cpu_ms`` is the ``time.process_time()`` delta, best-effort.
 ``purpose`` / ``session_id`` are attribution labels from the call site
-(``None`` when unknown).
+(``None`` when unknown). The ``persona_update`` record carries the owning
+``agent_id``, the logical persona ``file`` (``identity`` / ``soul``), and
+the ``sha256`` / byte size of the new content — the content hash makes a
+persona history verifiable without storing the text itself.
 
 Read side: derived queries, never stored (the reputation.py precedent) —
 ``collect_agent_ledger`` summarizes one member (totals + per-purpose
 split), ``collect_lineage_ledgers`` aggregates members by bloodline
 (``AgentConfig.prototype`` in each member's ``config/agent.yaml``). Both
-recompute from the raw files on every call.
+recompute from the raw files on every call. The ledger is multi-event:
+metabolic folds consider only ``event == "llm_call"`` records, so audit
+records never pollute the consumption accounting.
 
 Writes are serialized by one asyncio lock per ledger file, shared
 process-wide (bounded LRU — same pattern as the session journal and the
@@ -155,10 +164,13 @@ def _fold(summary: dict[str, Any], record: dict[str, Any]) -> None:
 async def collect_agent_ledger(agent_id: str, *, tlon_paths: TlonPaths) -> dict[str, Any]:
     """Derive one member's consumption summary from its ledger file.
 
-    Totals over every record plus per-``purpose`` and per-``model``
-    splits (calls and tokens) — the by-model split observes how the
-    different model bloodlines in a mixed-model society perform (ADR
-    0014). Records without a purpose/model fold into ``"unknown"``.
+    Totals over every ``event == "llm_call"`` record plus per-``purpose``
+    and per-``model`` splits (calls and tokens) — the by-model split
+    observes how the different model bloodlines in a mixed-model society
+    perform (ADR 0014). Records without a purpose/model fold into
+    ``"unknown"``. Non-consumption records (e.g. the ``persona_update``
+    audit trail, ADR 0024) are skipped — a persona rewrite is not an LLM
+    call and must not pollute the metabolic accounting.
 
     Returns:
         JSON-safe dict: agent_id, calls, prompt_tokens, completion_tokens,
@@ -169,6 +181,8 @@ async def collect_agent_ledger(agent_id: str, *, tlon_paths: TlonPaths) -> dict[
     by_purpose: dict[str, dict[str, Any]] = {}
     by_model: dict[str, dict[str, Any]] = {}
     for record in records:
+        if record.get("event") != "llm_call":
+            continue
         _fold(summary, record)
         purpose = str(record.get("purpose") or "unknown")
         _fold(by_purpose.setdefault(purpose, _new_summary()), record)
