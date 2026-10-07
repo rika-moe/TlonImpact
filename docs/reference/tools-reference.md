@@ -385,7 +385,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### listAgents
 
-无参数。返回全部已注册 agent 的状态列表：运行状态（running/sleeping/waking）、来源 prototype、spawner 血缘。spawn/stop 前用来确认目标。
+无参数。返回全部已注册 agent 的**寻址黄页**（ADR 0024 决策 3）：每项恰为 `id` / `name` / `address`（`id@tlon.internal`）三字段，按 id 排序——只回答「给谁写信能到」，不携带身份内容（prototype、血缘、运行状态都不在成员面向的输出里；人类管理端的 REST 详情仍是完整 status）。给成员写信前查地址、spawn/stop 前确认目标 id 存在用它；你对成员的认识以你自己的联系簿与通信为准。
 
 ### writePrototype
 
