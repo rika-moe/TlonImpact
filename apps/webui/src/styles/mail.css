@@ -320,3 +320,33 @@ textarea.mail-content {
   align-items: center;
   gap: 10px;
 }
+
+/* ---------- toolbar: observation-target picker ---------- */
+
+.mail-observer {
+  position: relative;
+}
+
+.mail-observer-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mail-observer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-observer-caret {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* Reuses the recipient dropdown's look, anchored under the button. */
+.mail-observer-list {
+  min-width: 240px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
