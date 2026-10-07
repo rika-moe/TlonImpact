@@ -31,7 +31,12 @@ def paths(tmp_path: Path) -> TlonPaths:
 
 @pytest.fixture
 def handler(paths: TlonPaths) -> RESTAPIHandler:
-    return RESTAPIHandler(None, mail=MailFacade(adapter_manager=MagicMock(), tlon_paths=paths))
+    return RESTAPIHandler(
+        None,
+        mail=MailFacade(
+            adapter_manager=MagicMock(), agent_registry=MagicMock(), tlon_paths=paths
+        ),
+    )
 
 
 async def _seed_mailbox(paths: TlonPaths, username: str, count: int = 3) -> list[Mail]:

@@ -1,5 +1,7 @@
-"""Mail endpoints: GET /inbox (member mailbox) and POST /messages
-(send a mail as a human member, protocol v2 PR-1)."""
+"""Mail endpoints: GET /inbox (human member mailbox), GET
+/members/{member_id}/mail (read-only observer view of any member's
+mailbox) and POST /messages (send a mail as a human member, protocol v2
+PR-1)."""
 
 import json
 
@@ -48,6 +50,49 @@ class MailHandlers(RestHandlerBase):
 
         limit = _parse_limit(request, default=50, maximum=200)
         result = await self.mail.inbox(username, limit)
+
+        return self._json_response(
+            {
+                "mails": result,
+                "count": len(result),
+            }
+        )
+
+    async def handle_member_mail(self, request: web.Request) -> web.Response:
+        """GET /members/{member_id}/mail - Any member's mailbox, read-only.
+
+        Observer view: same merge semantics as GET /inbox (inbox + sent,
+        chronological), but no ``read`` flag — the read cursor is the
+        member's own state. No side effects (no mailbox mkdir).
+
+        Path Parameters:
+            member_id: Agent id (``gu-yanxi``) or human id
+                (``human:<username>``)
+
+        Query Parameters:
+            limit: Maximum number of mails (default: 50, max: 200)
+
+        Returns:
+            The member's recent mail, 404 when the member does not exist,
+            400 when the member id is invalid
+        """
+        if not self.mail:
+            return self._json_response(
+                {"status": "error", "message": "Mail storage not available"}, status=503
+            )
+
+        member_id = request.match_info["member_id"].strip()
+        # The id becomes a directory name — reject empty and anything
+        # carrying a path separator (traversal guard)
+        if not member_id or "/" in member_id or "\\" in member_id:
+            return self._json_response(
+                {"error": f"Invalid member_id: {member_id!r}"}, status=400
+            )
+
+        limit = _parse_limit(request, default=50, maximum=200)
+        result = await self.mail.member_inbox(member_id, limit)
+        if result is None:
+            return self._json_response({"error": f"Member '{member_id}' not found"}, status=404)
 
         return self._json_response(
             {

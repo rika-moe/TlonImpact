@@ -7,6 +7,8 @@
   序列化的 dict
 - 发信：``AdapterManager.publish_as``（无会话身份发信，首次接触建
   持久邮箱）—— 收进 :meth:`MailFacade.send`
+- 成员观测：任意成员（agent 或人类）邮箱的只读视图 —— 收进
+  :meth:`MailFacade.member_inbox`（无 read 合成、无任何副作用）
 
 ``DEFAULT_USERNAME`` 是协议常量（请求缺省用户名），作为本模块 API
 面的一部分对 server 可见。
@@ -14,6 +16,7 @@
 
 from typing import Any
 
+from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.human_adapter import (
@@ -26,22 +29,31 @@ __all__ = ["DEFAULT_USERNAME", "MailFacade"]
 
 
 class MailFacade:
-    """邮件域北向 API。构造器注入 AdapterManager + TlonPaths，薄透传。
+    """邮件域北向 API。构造器注入 AdapterManager + AgentRegistry +
+    TlonPaths，薄透传。
 
     Example:
-        >>> mail = MailFacade(adapter_manager=am, tlon_paths=paths)
+        >>> mail = MailFacade(adapter_manager=am, agent_registry=reg, tlon_paths=paths)
         >>> mails = await mail.inbox("alice", limit=50)
         >>> mail_id = await mail.send("alice", "你好", to=["谢云舒"])
     """
 
-    def __init__(self, *, adapter_manager: AdapterManager, tlon_paths: TlonPaths):
+    def __init__(
+        self,
+        *,
+        adapter_manager: AdapterManager,
+        agent_registry: AgentRegistry,
+        tlon_paths: TlonPaths,
+    ):
         """Initialize the facade.
 
         Args:
             adapter_manager: Human adapter lifecycle (speak side)
+            agent_registry: Agent existence lookup (member observation)
             tlon_paths: Path resolver (member mailbox directories)
         """
         self._adapter_manager = adapter_manager
+        self._registry = agent_registry
         self._paths = tlon_paths
 
     async def inbox(self, username: str, limit: int = 50) -> list[dict[str, Any]]:
@@ -70,6 +82,30 @@ class MailFacade:
             item["read"] = mail.id not in unread_ids
             result.append(item)
         return result
+
+    async def member_inbox(self, member_id: str, limit: int = 50) -> list[dict[str, Any]] | None:
+        """Any member's mailbox for observers (inbox + sent merged, chronological).
+
+        Read-only observation (``GET /members/{member_id}/mail``): unlike
+        :meth:`inbox` it materializes nothing (no mailbox mkdir) and
+        synthesizes no ``read`` flag — the read cursor is the member's
+        own state, not the observer's business.
+
+        Args:
+            member_id: Agent id (``gu-yanxi``) or human id (``human:<username>``)
+            limit: Maximum number of mails
+
+        Returns:
+            Mail dicts (Mail.to_dict), or None when the member does not
+            exist (agent not in the registry / human without a mailbox)
+        """
+        if member_id.startswith(HUMAN_ID_PREFIX):
+            if member_id not in self._paths.known_human_ids():
+                return None
+        elif self._registry.get_config(member_id) is None:
+            return None
+        mailbox = Mailbox(self._paths.member_mail_dir(member_id))
+        return [mail.to_dict() for mail in await mailbox.recent(limit)]
 
     async def send(
         self,
