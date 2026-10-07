@@ -7,7 +7,7 @@
 系统里四个概念，各就各位：
 
 - **DSL** —— 受限 EDN 行为语言，语义权威是 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员 `config/behavior.tlon`。spec 是成员行为的唯一权威：boot 集合、lazy 判定、wake 资格全部由它现算，从不落盘。
-- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.tlon` 元数据（`:name :display-name :description :trusted :author` + 谱系字段 `:parent :generation :proposal-note`）+ 可选 `LESSONS.md`（随包教训：退休成员蒸馏的经验，实例化时拷贝给新成员、由 `(lessons)` section 注入）；**不带人格**——人格是成员创建时数据，不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
+- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.tlon` 元数据（`:name :display-name :description :trusted :author` + 谱系字段 `:parent :generation :proposal-note`）+ 可选 `LESSONS.md`（随包教训：退休成员蒸馏的经验，实例化时拷贝给新成员、由 `(lessons)` section 注入）；**不带人格**——~~人格是成员创建时数据~~人格是**成员自主数据**（ADR 0024：成员可自由自改自己的 `IDENTITY.md` / `SOUL.md`，见 [identity.md](identity.md)），不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
 - **Member** —— 社会成员，只有一种：`MemberRuntime` 实例 + 持久身份 = 身份（agent_id/name/地址）+ 行为（behavior.tlon，数据；不可自改，更新走世代更替，见决策 4）+ 状态（running/sleeping/retired，当前值不是类）+ 档案（home 目录，永不删除）。
 - **Agent** —— 术语收敛：agent ≡ 运行中的成员；prototype = 出生定义；DSL = 行为语言。
 
@@ -27,6 +27,8 @@
 
 **决策 4：spec 不可直接修改，自己的也不行。** 行为更新的唯一通道：**创建新 prototype → 派生新 member**。成员是基因型的纯表达（phenotype），不反馈回基因型——进化完全发生在原型（物种）层面。这绕开运行中热更新行为的所有一致性问题（并发会话读新旧混合、回滚、审计），也把进化的单位分清：原型（可变的基因型）与成员（不可变的表达）在两个时间尺度上各自演化。反拉马克、达尔文式：学习的成果归种群，不归个体。
 
+> **边界澄清（ADR 0024，2026-10）**：「spec」仅指 `behavior.tlon`。人格文件 `IDENTITY.md` / `SOUL.md` 是叙事不是行为规则——成员可自主修改，不走世代更替；`RULES.md` 是行为约束的自然语言版，与 spec 同侧，仍不可自改。
+
 **决策 5：member 可以创建新 prototype。** `writePrototype` 写 staging 区（`:trusted false`，记 `:author` 供审计）——这是行为演化的主通道；人类批准后由 `spawnAgent` 派生新成员。
 
 **决策 6：不能修改别人的 spec。** 改他人行为只走提案通道（新 prototype → 评审），默认禁止直写。
@@ -39,7 +41,7 @@
 
 ### 暂不引入
 
-**决策 9：原型种子知识不引入。** 原型不带初始 knowledge（也无人格——人格是成员创建时数据，不是基因型的一部分）。知识继承通道（跨成员读取）尚不存在，种子知识没有落地形态；待个体学习环接上后再议。
+**决策 9：原型种子知识不引入。** 原型不带初始 knowledge（也无人格——~~人格是成员创建时数据~~人格是成员自主数据（ADR 0024），不是基因型的一部分）。知识继承通道（跨成员读取）尚不存在，种子知识没有落地形态；待个体学习环接上后再议。
 
 > **补注（2026-09 落地）**：知识继承通道已有第一形态——不是原案设想的「出生种子知识」，而是**退休后蒸馏的教训附件**（生物层机制，ADR 0014 环境-成员共演化）：成员退休（蓄意停止）时，`LessonsDistiller` 离线重建其归档记忆、一次 LLM 蒸馏产出 `memory/lessons.md`；该文本经 `writePrototype` / admin API 的 `lessons` 参数包装进原型的 `LESSONS.md` 随包传递；`instantiate` 拷贝到新成员的 `config/LESSONS.md`，由 spec 的 `(lessons)` context section 显式声明注入。种子知识（原型自带初始 knowledge）原案形态仍不引入。
 
