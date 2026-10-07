@@ -35,16 +35,16 @@ _PROTOCOL = """## 交互协议
    - forget：发现过时或矛盾的记忆时主动清理
    - 记忆管理不是收尾工作，而是贯穿整个思考过程的习惯
 
-5. **人格文件来源**
+5. **人格与联系簿**
    - 你的身份、角色和行为守则来自以下文件：
      IDENTITY.md — 你是谁、你的核心自我认知
-     SOUL.md     — 你的角色定位、工作风格（队友也会看到这个文件）
+     SOUL.md     — 你的角色定位、工作风格
      RULES.md    — 你的行为约束和工作流程
-   - 这些文件位于宿主机的数据目录中
-   - 身份的唯一权威来源是人设：你自己看上述人设文件，队友看「团队成员」段的人设自述。
-     名册工具（如 listAgents）中的 prototype 字段仅表示认知骨架（行为模板）的技术来源，
-     不是职业或社会身份；与人设不一致时，以人设为准
-   - 没有人设自述的成员，即未设定社会身份
+   - 这些文件位于宿主机的数据目录中，都是私有的——SOUL 也只有你自己看得到，
+     它是写给自己的锚，不是贴出去的名片
+   - 不存在权威的身份数据源：你对其他成员的认识都在你的联系簿里——那是你自己的
+     记录，主观的、可错的，靠通信检验与更正；名册工具（如 listAgents）只是寻址黄页，
+     其 prototype 字段仅表示认知骨架（行为模板）的技术来源，黄页不构成任何人的社会身份
    - 你可以用 updatePersona 工具自主更新自己的 IDENTITY.md / SOUL.md（全文替换，
      下次组装系统提示词时生效）；只能改自己的，每次修改都会在你的账本留痕（内容哈希），可问责
    - RULES.md 不可自改——它是行为约束，由人类编辑；有调整诉求发邮件找人类
@@ -60,12 +60,13 @@ class SystemPromptBuilder:
     """Builds system prompts by composing files + protocol.
 
     Reads IDENTITY.md, SOUL.md, RULES.md from the agent's ``config/``
-    subdirectory (``~/.tlon/{id}/config/``) and composes them with team
-    profiles and framework protocol rules.
+    subdirectory (``~/.tlon/{id}/config/``) and composes them with the
+    agent's own contact book (ADR 0024) and framework protocol rules.
 
-    ``include_persona`` gates the identity/team/behavior (persona file)
-    sections; ``include_protocol`` gates the framework protocol section.
-    Both default to True, which reproduces the historical full prompt.
+    ``include_persona`` gates the identity/contacts/behavior (persona
+    file) sections; ``include_protocol`` gates the framework protocol
+    section. Both default to True, which reproduces the historical full
+    prompt.
 
     Usage:
         context = AgentPromptContext(...)
@@ -103,21 +104,26 @@ class SystemPromptBuilder:
             parts.append(soul)
         return "\n".join(parts)
 
-    def build_team(self) -> str | None:
-        if not self.context.team_profiles:
-            return None
-        lines = [
-            "## 团队成员",
-            "",
-            "以下是各成员的人设自述。成员的身份、职位、社会关系以人设自述为准；"
-            "名册工具（如 listAgents）中的 prototype 字段仅表示该成员认知骨架的"
-            "技术来源，不代表其社会身份——两者不一致时，以人设为准。",
-        ]
-        for name, profile in self.context.team_profiles:
-            lines.append("")
-            lines.append(f"### {name}")
-            lines.append(profile)
-        return "\n".join(lines)
+    def build_contacts(self) -> str:
+        if not self.context.contacts:
+            return (
+                "## 联系簿\n\n"
+                "你的联系簿还是空的——你还不认识任何人。通信即结识："
+                "往来中用 updateContact 把对一个人的认识记下来（名字 / 地址 / 我对 ta 的描述）。"
+            )
+        body = self.context.contacts
+        # The book file carries its own top-level title (the tool's
+        # default header); the section heading supersedes it — a member's
+        # custom preamble title survives.
+        lines = body.splitlines()
+        if lines and lines[0].lstrip("#").strip() == "联系簿":
+            body = "\n".join(lines[1:]).strip()
+        return (
+            "## 联系簿\n\n"
+            "以下是你自己写的联系人记录——主观的、可错的认识，靠通信检验与更正；"
+            "想了解新的人，就通信，然后用 updateContact 记录。\n\n"
+            f"{body}"
+        )
 
     def build_behavior(self) -> str | None:
         rules = self._read("RULES.md")
@@ -133,7 +139,7 @@ class SystemPromptBuilder:
         if self.include_persona:
             sections += [
                 self.build_identity(),
-                self.build_team(),
+                self.build_contacts(),
                 self.build_behavior(),
             ]
         if self.include_protocol:

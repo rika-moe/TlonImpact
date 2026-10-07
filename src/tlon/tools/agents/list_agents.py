@@ -21,9 +21,9 @@ class ListAgentsTool(Tool):
             description=(
                 "列出全部 Agent：运行状态（running/sleeping/waking）、来源 "
                 "prototype、由谁 spawn。spawn 或 stop 前可用它确认目标。"
-                "注意：prototype 是认知骨架（行为模板）的技术来源，不代表成员的"
-                "社会身份——成员的身份、职位、人设以系统提示词「团队成员」段的"
-                "人设自述为准。"
+                "注意：名册只是寻址黄页，不代表任何人的社会身份——prototype "
+                "是认知骨架（行为模板）的技术来源；你对成员的认识以你自己的"
+                "联系簿与通信为准。"
             ),
             parameters={
                 "type": "object",

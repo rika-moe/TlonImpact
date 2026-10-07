@@ -58,7 +58,7 @@ class UpdatePersonaTool(Tool):
             description=(
                 "全文替换你自己的人格文件（IDENTITY.md / SOUL.md），用于自主更新自我认知。\n"
                 "- file=identity：IDENTITY.md —— 你是谁、你的核心自我认知。\n"
-                "- file=soul：SOUL.md —— 你的角色定位、工作风格（队友也会看到这个文件）。\n"
+                "- file=soul：SOUL.md —— 你的角色定位、工作风格（写给自己的锚，只有你自己看得到）。\n"
                 "使用纪律：\n"
                 "- content 是全文替换，不是追加——先想清楚完整新文本再写，去空白后为空会被拒绝。\n"
                 "- 只能改你自己的文件；想改 RULES.md（行为约束）不行，那是人类编辑的，"

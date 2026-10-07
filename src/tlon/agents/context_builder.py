@@ -146,7 +146,6 @@ class ContextBuilder:
     def __init__(
         self,
         config: AgentConfig,
-        team_members: list[AgentConfig],
         mailbox: Mailbox | None,
         memory: MemoryManager,
         task_manager: TaskManager,
@@ -157,7 +156,6 @@ class ContextBuilder:
         tlon_paths: TlonPaths,
     ):
         self._config = config
-        self._team_members = team_members
         self._mailbox = mailbox
         self._memory = memory
         self._task_manager = task_manager
@@ -388,34 +386,30 @@ class ContextBuilder:
             return ""
 
     async def build_prompt_context(self) -> AgentPromptContext:
-        """Build AgentPromptContext by pre-fetching team SOUL.md files."""
-        team_profiles: list[tuple[str, str]] = []
-        for m in self._team_members:
-            if m.id == self._config.id:
-                continue
-            soul_file = self._paths.agent_soul_file(m.id)
-            profile = (
-                soul_file.read_text(encoding="utf-8").strip() if soul_file.exists() else m.name
-            )
-            team_profiles.append((m.name, profile))
+        """Build AgentPromptContext with the agent's own contact book.
+
+        ADR 0024: the team-wide SOUL roster is gone — a member only ever
+        sees its own CONTACTS.md (absent file = empty book).
+        """
+        contacts_file = self._paths.agent_contacts_file(self._config.id)
+        contacts = (
+            contacts_file.read_text(encoding="utf-8").strip() if contacts_file.exists() else ""
+        )
 
         return AgentPromptContext(
             agent_name=self._config.name,
             agent_home=str(self._paths.agent_dir(self._config.id)),
-            team_profiles=team_profiles,
+            contacts=contacts,
         )
 
     def persona_files(self) -> list[Path]:
-        """Persona files that feed the system prompt (self + team SOUL files)."""
-        files = [
+        """Persona files that feed the system prompt (all the agent's own)."""
+        return [
             self._paths.agent_identity_file(self._config.id),
             self._paths.agent_soul_file(self._config.id),
             self._paths.agent_rules_file(self._config.id),
+            self._paths.agent_contacts_file(self._config.id),
         ]
-        files.extend(
-            self._paths.agent_soul_file(m.id) for m in self._team_members if m.id != self._config.id
-        )
-        return files
 
     @staticmethod
     def persona_mtime_signature(files: list[Path]) -> tuple[tuple[str, float | None], ...]:
@@ -431,9 +425,10 @@ class ContextBuilder:
     async def get_system_prompt(self) -> str:
         """Get system prompt, rebuilding the cache when persona files change.
 
-        The cache is keyed on the mtime signature of all persona files
-        (own IDENTITY/SOUL/RULES plus team SOUL files), so editing any of
-        them takes effect without restarting the process.
+        The cache is keyed on the mtime signature of the agent's own
+        persona files (IDENTITY/SOUL/RULES plus the contact book), so
+        editing any of them — including an ``updateContact`` write —
+        takes effect without restarting the process.
         """
         signature = self.persona_mtime_signature(self.persona_files())
         if self._system_prompt_cache is None or signature != self._system_prompt_mtime:
