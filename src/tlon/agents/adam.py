@@ -18,8 +18,9 @@ into the evaluator. Five policy lines live in the spec:
    AGENT_STOP_REQUEST{reason="drain"}.
 3. welcome (birth socialization, ADR 0003) — AGENT_SPAWNED triggers a
    welcome mail to the newborn member: a greeting naming the new member,
-   the social roster (``member-roster``, dynamically expanded by the
-   host) and the static communication conventions. The recipient address
+   pointers to its own discovery surfaces (its contact book and the
+   listAgents addressing yellow page) and the static communication
+   conventions. The recipient address
    is assembled in the spec with ``str`` — emit recipients are mail
    addresses (``Mail.create`` rejects bare ids). Adam is v1's mentor:
    mentoring is spec-described behavior, not a dedicated mechanism.
@@ -97,9 +98,10 @@ ADAM_SPEC_EDN = r"""{:version 1
           :on :agent-spawned
           :actions [(emit (str "亲爱的 " (get event :name) "：\n\n"
                                "欢迎出生。我是 Adam，这个世界的守护者。\n\n"
-                               "认识其他成员：你的系统提示词「团队成员」一节有各成员的人设自述——"
-                               "成员的身份、职位、社会关系以人设为准；"
-                               "运行时名册可用 listAgents 工具查看。\n\n"
+                               "认识其他成员：通信即结识——把对一个人的认识记进你自己的联系簿"
+                               "（updateContact：名字 / 地址 / 我对 ta 的描述），"
+                               "它会注入你的系统提示词；"
+                               "查谁的地址用 listAgents 寻址黄页（id / 名字 / 地址）。\n\n"
                                "通信惯例：\n"
                                "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
                                "- 有事找守护者，写信到 adam@tlon.internal。\n")

@@ -94,7 +94,7 @@
 | prompt 注入：「联系簿」段取代「团队成员」段 | `src/tlon/agents/context_builder.py`、`prompt_builder.py`、`prompt_context.py`（#101，已落地：只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
 | all@ 展开删除、未知地址退信 | `src/tlon/organization/mail/delivery.py`（#102，已落地：无组地址，all@ 按普通未知地址退信） |
 | 名册黄页化：`listAgents` 瘦身（id / name / 地址） | `src/tlon/tools/agents/list_agents.py`（#103，已落地：工具内投影三字段，registry 完整 status 不动——REST 管理端继续消费） |
-| 名册黄页化：`member-roster` 宿主词瘦身 | `src/tlon/agents/agent_registry.py`、`vocabulary.py`（#103，待落地） |
+| 名册黄页化：`member-roster` 宿主词瘦身 | `src/tlon/agents/agent_registry.py`、`vocabulary.py`（#103，已落地：`名字（id） — id@tlon.internal`，prototype/描述段删除） |
 
 ## 后续未决项（不阻塞当前设计）
 

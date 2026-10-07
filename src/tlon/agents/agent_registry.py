@@ -67,7 +67,6 @@ from tlon.agents.policy import (
     policy_solvency_provider,
     policy_tilt_provider,
 )
-from tlon.agents.prototypes.catalog import get_prototype_info
 from tlon.agents.reaper import IdleReaper
 from tlon.agents.spawn import SpawnManager
 from tlon.agents.vocabulary import ScriptHostQueries, make_member_builtins
@@ -80,6 +79,7 @@ from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
+from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.agents.ports import StopRejectedError
 from tlosure.builtins import Builtin
@@ -127,26 +127,21 @@ class RegistryQueries(ScriptHostQueries):
         return self._registry.boot_candidates()
 
     def member_roster(self) -> str:
-        """The social roster (ADR 0003): one line per registered member.
+        """The addressing yellow page (ADR 0024 决策 3): one line per
+        registered member.
 
-        Format: ``名字（id） — prototype：描述``; the prototype segment is
-        omitted for manual members, the description when the prototype is
-        absent from the library. Sleeping members stay on the roster — it
-        answers "who is in this society", not "who is awake". Adam is not
-        registered, so it never lists itself.
+        Format: ``名字（id） — id@tlon.internal`` — exactly the three
+        yellow-page fields (id / name / address), no identity content.
+        Sleeping members stay listed — the page answers "who can be
+        reached by letter", not "who is awake". Adam is not registered,
+        so it never lists itself.
         """
         lines: list[str] = []
         for agent_id in self._registry.get_all_ids():
             config = self._registry.get_config(agent_id)
             if config is None:
                 continue
-            line = f"{config.name}（{agent_id}）"
-            if config.prototype:
-                line += f" — {config.prototype}"
-                info = get_prototype_info(config.prototype, self._registry._paths)
-                if info is not None and info.description:
-                    line += f"：{info.description}"
-            lines.append(line)
+            lines.append(f"{config.name}（{agent_id}） — {address_for_member(agent_id)}")
         return "\n".join(lines)
 
 

@@ -551,12 +551,12 @@ class ScriptHostQueries(Protocol):
         ...
 
     def member_roster(self) -> str:
-        """The social roster: one pre-formatted line per registered member.
+        """The addressing yellow page: one pre-formatted line per member.
 
-        Each line is ``name (id) — prototype: description`` (the prototype
-        segment and description are omitted when absent). Formatting lives
+        Each line is ``name (id) — id@tlon.internal`` (ADR 0024 决策 3:
+        id / name / address, no identity content). Formatting lives
         in the implementation, not the DSL: the DSL never iterates,
-        iteration is a builtin. Social public information, open to every
+        iteration is a builtin. Public routing information, open to every
         member (the same injected host serves Adam and registry-spawned
         members); sleeping members stay listed, Adam itself is not
         registered and so not listed."""
@@ -662,7 +662,8 @@ def make_member_builtins(
     returns — so the two paths share one implementation.
 
     Host predicates (``sleeping?`` / ``running?`` / ``lazy?``), the
-    ``member-roster`` social roster and the ``start-all`` candidate set
+    ``member-roster`` addressing yellow page and the ``start-all``
+    candidate set
     are closure-injected via ``host`` — they read registry state, so they
     are never registered module-level. ``start-all`` without a host raises
     at evaluation time; ``member-roster`` without a host is simply absent

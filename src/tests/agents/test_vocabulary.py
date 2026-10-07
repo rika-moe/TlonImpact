@@ -88,11 +88,14 @@ class TestMemberRoster:
             return []
 
         def member_roster(self) -> str:
-            return "阿白（a-bai-1a2b3c4d）"
+            return "阿白（a-bai-1a2b3c4d） — a-bai-1a2b3c4d@tlon.internal"
 
     def test_with_host_returns_roster(self):
         builtins = make_member_builtins(self._Host())
-        assert eval_form(loads("(member-roster)"), {}, builtins) == "阿白（a-bai-1a2b3c4d）"
+        assert (
+            eval_form(loads("(member-roster)"), {}, builtins)
+            == "阿白（a-bai-1a2b3c4d） — a-bai-1a2b3c4d@tlon.internal"
+        )
 
     def test_without_host_is_unregistered(self):
         assert "member-roster" not in _BUILTINS
