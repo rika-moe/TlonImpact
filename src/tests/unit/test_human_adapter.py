@@ -341,7 +341,7 @@ class TestResolveAddress:
         assert manager.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
 
     async def test_full_address_passthrough(self, manager: AdapterManager):
-        assert manager.resolve_address("all@tlon.internal") == "all@tlon.internal"
+        assert manager.resolve_address("someone@tlon.internal") == "someone@tlon.internal"
 
     async def test_online_human(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001", _noop_sink)

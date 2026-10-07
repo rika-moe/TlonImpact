@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import ALL_ADDRESS, address_for_member
+from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.observability.ports import MailStatsProvider
 
@@ -44,8 +44,7 @@ async def collect_mail_stats(agent_id: str, *, tlon_paths: TlonPaths) -> dict[st
 
     Aggregation rules:
     - A correspondent is any address the agent mailed (to/cc) or received
-      from; the broadcast address ``all@tlon.internal`` and the agent
-      itself are excluded.
+      from, excluding the agent itself.
     - A thread is "initiated" by the agent when the thread root
       (``mail.id == mail.thread_id``) sits in the agent's sent file.
     - A thread is "replied" when the inbox holds a mail in that thread
@@ -61,9 +60,7 @@ async def collect_mail_stats(agent_id: str, *, tlon_paths: TlonPaths) -> dict[st
     # thread_id -> (root send time, root recipient addresses)
     roots: dict[str, tuple[datetime, set[str]]] = {}
     for mail in sent:
-        recipients = {
-            address for address in [*mail.to, *mail.cc] if address not in (ALL_ADDRESS, own_address)
-        }
+        recipients = {address for address in [*mail.to, *mail.cc] if address != own_address}
         for address in recipients:
             _correspondent(stats, address)["sent"] += 1
         if mail.id == mail.thread_id and recipients:
@@ -75,7 +72,7 @@ async def collect_mail_stats(agent_id: str, *, tlon_paths: TlonPaths) -> dict[st
     first_replies: dict[str, dict[str, datetime]] = {}
     for mail in inbox:
         sender = mail.from_address
-        if sender in (ALL_ADDRESS, own_address):
+        if sender == own_address:
             continue
         _correspondent(stats, sender)["received"] += 1
         root = roots.get(mail.thread_id)

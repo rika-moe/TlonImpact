@@ -678,7 +678,7 @@ class TestMarkReadSemantics:
 
         await _wait_for(_no_unread)
         assert delivered == []  # own mail never processed
-        # …but marked read immediately (an all@ self-copy must not linger)
+        # …but marked read immediately (a self-copy must not linger)
         assert await mailbox.unread() == []
 
         await member.shutdown()

@@ -3,12 +3,13 @@
 Covers:
 - delivery to valid agent / online-human recipients (inbox + sent files,
   one MAIL_DELIVERED per recipient)
-- all@tlon.internal expansion (all registered agents + online humans)
+- all@tlon.internal retirement (ADR 0024 决策 6): no expansion — the
+  address resolves to nobody, every member gets zero copies, and the
+  sender gets a postmaster bounce
 - unknown recipients collected into a postmaster bounce to the sender
 - senders without a mailbox (postmaster) skip the sent copy
 - the guardian address (adam@tlon.internal, docs/design/mail.md):
-  deliverable via the guardian-aware provider, excluded from the
-  broadcast expansion
+  deliverable via the guardian-aware provider
 - postmaster conventions (docs/design/mail.md): mail *to* postmaster is
   dropped
   without a bounce; mail *from* postmaster is never bounced
@@ -28,7 +29,6 @@ from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
 from tlon.organization.mail.mail import (
-    ALL_ADDRESS,
     POSTMASTER_ADDRESS,
     Mail,
     address_for_member,
@@ -93,7 +93,6 @@ def _make_delivery(
         )
     delivery = MailDelivery(
         event_bus=bus,
-        agent_info_provider=provider,
         adapter_manager=adapter_manager,
         tlon_paths=temp_paths,
     )
@@ -197,9 +196,15 @@ class TestValidDelivery:
         assert recipients == {"a-001", "a-002"}
 
 
-class TestAllExpansion:
+class TestAllAddressRetirement:
+    """ADR 0024 决策 6: all@tlon.internal is retired — no expansion, no
+    special-casing. It is an ordinary unknown address: zero fan-out, and
+    the sender learns it from a postmaster bounce."""
+
+    ALL = "all@tlon.internal"
+
     @pytest.mark.asyncio
-    async def test_all_address_expands_to_every_member(self, temp_paths):
+    async def test_all_address_delivers_to_nobody_and_bounces(self, temp_paths):
         configs = {
             "a-001": AgentConfig(id="a-001", name="甲"),
             "a-002": AgentConfig(id="a-002", name="乙"),
@@ -209,34 +214,54 @@ class TestAllExpansion:
 
         mail = Mail.create(
             from_address="a-001@tlon.internal",
-            to=[ALL_ADDRESS],
-            content="全员通知",
+            to=[self.ALL],
+            subject="全员通知",
+            content="还有人吗",
         )
         await delivery._on_mail_new(_mail_event(mail))
 
-        recipients = {e.payload["recipient"] for e in _delivered(bus)}
-        assert recipients == {"a-001", "a-002", "human:alice"}
+        # Exactly one MAIL_DELIVERED: the bounce, to the sender — zero
+        # fan-out to any member.
+        events = _delivered(bus)
+        assert len(events) == 1
+        assert events[0].payload["recipient"] == "a-001"
+        bounce: Mail = events[0].payload["mail"]
+        assert bounce.from_address == POSTMASTER_ADDRESS
+        assert bounce.subject == f"Undeliverable: {mail.subject}"
+        assert self.ALL in bounce.content
 
-        # Every member's inbox got the mail
-        for member_id in ("a-001", "a-002", "human:alice"):
+        # No member inbox got the mail (sender's own copy is sent-only;
+        # the sender's inbox holds just the bounce).
+        sender_inbox = Mailbox(temp_paths.member_mail_dir("a-001"))
+        assert [m.id for m in await sender_inbox.unread()] == [bounce.id]
+        for member_id in ("a-002", "human:alice"):
             inbox = Mailbox(temp_paths.member_mail_dir(member_id))
-            assert [m.id for m in await inbox.unread()] == [mail.id]
+            assert await inbox.unread() == []
 
     @pytest.mark.asyncio
-    async def test_all_mixed_with_direct_recipient_dedupes(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
+    async def test_all_mixed_with_direct_recipient_partial_bounce(self, temp_paths):
+        configs = {
+            "a-001": AgentConfig(id="a-001", name="甲"),
+            "a-002": AgentConfig(id="a-002", name="乙"),
+        }
         delivery, bus = _make_delivery(temp_paths, configs)
         await delivery.initialize()
 
         mail = Mail.create(
-            from_address="alice@tlon.internal",
-            to=[ALL_ADDRESS, "a-001@tlon.internal"],
-            content="去重",
+            from_address="a-002@tlon.internal",
+            to=[self.ALL, "a-001@tlon.internal"],
+            content="一部分能到",
         )
         await delivery._on_mail_new(_mail_event(mail))
 
-        recipients = [e.payload["recipient"] for e in _delivered(bus)]
-        assert recipients == ["a-001"]
+        # The direct recipient is delivered; the retired group address
+        # bounces back to the sender.
+        events = _delivered(bus)
+        by_recipient = {e.payload["recipient"]: e.payload["mail"] for e in events}
+        assert set(by_recipient) == {"a-001", "a-002"}
+        assert by_recipient["a-001"].id == mail.id
+        assert by_recipient["a-002"].from_address == POSTMASTER_ADDRESS
+        assert self.ALL in by_recipient["a-002"].content
 
 
 class TestBounce:
@@ -491,27 +516,6 @@ class TestOfflineHumans:
         assert events[0].payload["recipient"] == "a-001"
         assert events[0].payload["mail"].from_address == POSTMASTER_ADDRESS
 
-    @pytest.mark.asyncio
-    async def test_all_includes_offline_known_human(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
-        delivery, bus = _make_delivery(temp_paths, configs)  # nobody online
-        await delivery.initialize()
-        temp_paths.member_mail_dir("human:alice").mkdir(parents=True, exist_ok=True)
-        # known, offline
-
-        mail = Mail.create(
-            from_address="a-001@tlon.internal",
-            to=[ALL_ADDRESS],
-            content="全员通知",
-        )
-        await delivery._on_mail_new(_mail_event(mail))
-
-        recipients = {e.payload["recipient"] for e in _delivered(bus)}
-        assert recipients == {"a-001", "human:alice"}
-
-        inbox = Mailbox(temp_paths.member_mail_dir("human:alice"))
-        assert [m.id for m in await inbox.unread()] == [mail.id]
-
 
 class TestIdempotentDelivery:
     """A republished MAIL_NEW must not duplicate inbox/sent copies or events."""
@@ -699,8 +703,7 @@ class TestEndorsedEvent:
 
 class TestGuardianDelivery:
     """Issue : adam@tlon.internal is deliverable through the
-    guardian-aware provider, yet the guardian stays out of the broadcast
-    expansion (get_all_ids delegates unchanged)."""
+    guardian-aware provider."""
 
     @pytest.mark.asyncio
     async def test_adam_recipient_gets_inbox_and_event(self, temp_paths):
@@ -723,24 +726,6 @@ class TestGuardianDelivery:
         # Delivery creates the guardian mailbox on demand
         inbox = Mailbox(temp_paths.member_mail_dir("adam"))
         assert [m.id for m in await inbox.unread()] == [mail.id]
-
-    @pytest.mark.asyncio
-    async def test_broadcast_excludes_adam(self, temp_paths):
-        configs = {"a-001": AgentConfig(id="a-001", name="甲")}
-        delivery, bus = _make_delivery(temp_paths, configs, guardian=True)
-        await delivery.initialize()
-
-        mail = Mail.create(
-            from_address="a-001@tlon.internal",
-            to=[ALL_ADDRESS],
-            content="全员通知",
-        )
-        await delivery._on_mail_new(_mail_event(mail))
-
-        recipients = {e.payload["recipient"] for e in _delivered(bus)}
-        assert recipients == {"a-001"}
-        # No guardian mailbox is created by a broadcast
-        assert not (temp_paths.tlon_home() / "adam").exists()
 
     @pytest.mark.asyncio
     async def test_adam_unresolvable_without_the_guardian_wrap(self, temp_paths):

@@ -203,7 +203,7 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
         }
     )
     adapter_manager = AdapterManager(event_bus=bus, agent_info_provider=provider, tlon_paths=p)
-    delivery = MailDelivery(bus, provider, adapter_manager, tlon_paths=p)
+    delivery = MailDelivery(bus, adapter_manager, tlon_paths=p)
     await delivery.initialize()
     llm = _FakeLLM("# 告别信\n各位再见。")
     ceremony, retired = _make_ceremony(bus, p, llm)
@@ -250,7 +250,7 @@ async def test_farewell_falls_back_to_guest_human(tmp_path: Path) -> None:
     await bus.initialize()
     provider = _StaticAgentInfo({"retiree": AgentConfig(id="retiree", name="老王")})
     adapter_manager = AdapterManager(event_bus=bus, agent_info_provider=provider, tlon_paths=p)
-    delivery = MailDelivery(bus, provider, adapter_manager, tlon_paths=p)
+    delivery = MailDelivery(bus, adapter_manager, tlon_paths=p)
     await delivery.initialize()
     ceremony, retired = _make_ceremony(bus, p, _FakeLLM("告别。"))
     await ceremony.initialize()

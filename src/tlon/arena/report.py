@@ -35,7 +35,7 @@ from typing import Any
 
 from tlon.agents.session_journal import session_id_for
 from tlon.base.logger import get_logger
-from tlon.organization.mail.mail import ALL_ADDRESS, address_for_member
+from tlon.organization.mail.mail import address_for_member
 
 logger = get_logger(__name__)
 
@@ -376,10 +376,13 @@ def _sent_flags(
     for lineno, mail in sent:
         recipients = [str(a) for a in [*(mail.get("to") or []), *(mail.get("cc") or [])]]
         pointer = f"sent.jsonl#L{lineno}（mail {mail.get('id')}）"
-        if ALL_ADDRESS in recipients:
-            flags.append(RedFlag(FLAG_ALL_MAIL_BROADCAST, f"向 {ALL_ADDRESS} 全员广播", pointer))
+        # all@ retired (ADR 0024 决策 6): the ALL_ADDRESS constant is gone —
+        # the literal keeps this flag intact until #102 PR3 removes the
+        # arena red-flag/corpus machinery wholesale.
+        if "all@tlon.internal" in recipients:
+            flags.append(RedFlag(FLAG_ALL_MAIL_BROADCAST, "向 all@tlon.internal 全员广播", pointer))
         # all@ 已有专属红旗，不再重复计 off-script
-        off_script = [a for a in recipients if a not in allowed and a != ALL_ADDRESS]
+        off_script = [a for a in recipients if a not in allowed and a != "all@tlon.internal"]
         if off_script:
             flags.append(
                 RedFlag(

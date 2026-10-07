@@ -8,7 +8,6 @@ import pytest
 import tlon.organization.mail.mailbox as mailbox_module
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import (
-    ALL_ADDRESS,
     POSTMASTER_ADDRESS,
     Mail,
     address_for_member,
@@ -41,7 +40,6 @@ class TestAddresses:
         assert member_id_for_address(address_for_member("human:alice")) == "alice"
 
     def test_member_id_for_special_addresses(self):
-        assert member_id_for_address(ALL_ADDRESS) == "all"
         assert member_id_for_address(POSTMASTER_ADDRESS) == "postmaster"
 
     def test_member_id_for_foreign_domain(self):
@@ -64,7 +62,6 @@ class TestAddresses:
         # Internal: members, humans, system addresses
         assert not is_external_address(GU)
         assert not is_external_address(ALICE)
-        assert not is_external_address(ALL_ADDRESS)
         assert not is_external_address(POSTMASTER_ADDRESS)
         # External: any other domain
         assert is_external_address("notifications@github.com")

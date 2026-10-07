@@ -230,7 +230,8 @@ async def _seed_mailbox(mailbox: Mailbox) -> None:
     await mailbox.append_inbox(_mail("m3", BOB, [OWN], "2026-09-06T11:00:00", thread_id="m3"))
     # Thread the agent initiated with Carol; never answered.
     await mailbox.append_sent(_mail("m4", OWN, [CAROL], "2026-09-06T12:00:00", thread_id="m4"))
-    # Broadcast: not a correspondent.
+    # The retired group address (ADR 0024 决策 6): no special-casing — it
+    # counts as an ordinary address that never replies.
     await mailbox.append_sent(
         _mail("m5", OWN, ["all@tlon.internal"], "2026-09-06T13:00:00", thread_id="m5")
     )
@@ -262,16 +263,18 @@ class TestCollectMailStats:
         assert carol["avg_first_reply_seconds"] is None
 
     @pytest.mark.asyncio
-    async def test_never_replied_and_broadcast_excluded(
+    async def test_never_replied_includes_retired_all_address(
         self, tlon_paths: TlonPaths, mailbox: Mailbox
     ):
+        """all@ is retired (ADR 0024 决策 6): no exclusion logic — a
+        historical mail to it is just an ordinary address that never
+        replies."""
         await _seed_mailbox(mailbox)
 
         stats = await collect_mail_stats(AGENT_ID, tlon_paths=tlon_paths)
 
-        assert stats["never_replied"] == [CAROL]
-        assert stats["never_replied_total"] == 1
-        assert "all@tlon.internal" not in stats["correspondents"]
+        assert stats["never_replied"] == ["all@tlon.internal", CAROL]
+        assert stats["never_replied_total"] == 2
 
     @pytest.mark.asyncio
     async def test_empty_mailbox(self, tlon_paths: TlonPaths, mailbox: Mailbox):
@@ -293,7 +296,7 @@ class TestGetMailStatsTool:
 
         assert result.success
         assert result.data["correspondents"][BOB]["avg_first_reply_seconds"] == 300.0
-        assert result.data["never_replied"] == [CAROL]
+        assert result.data["never_replied"] == ["all@tlon.internal", CAROL]
 
     @pytest.mark.asyncio
     async def test_tool_binds_owner_id(self):

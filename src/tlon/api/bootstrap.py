@@ -239,12 +239,10 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     logger.info("component_initialized", component="adapter_manager")
 
     # MailDelivery - mail persistence + per-recipient delivery
-    # Depends on EventBus, the guardian-aware provider (agent set +
-    # adam) and AdapterManager (online humans); the
-    # router's successor (docs/design/mail.md)
+    # Depends on EventBus and AdapterManager (online humans + the shared
+    # recipient resolver); the router's successor (docs/design/mail.md)
     mail_delivery = MailDelivery(
         event_bus=event_bus,
-        agent_info_provider=guardian_info,
         adapter_manager=adapter_manager,
         tlon_paths=runtime_paths,
     )

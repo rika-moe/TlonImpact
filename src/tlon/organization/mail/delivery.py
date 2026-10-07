@@ -2,19 +2,19 @@
 
 The MailDelivery component subscribes to MAIL_NEW and, for each mail:
 
-1. expands ``all@tlon.internal`` into every registered agent plus every
-   known human (online, or offline with a persistent mailbox);
-2. resolves each recipient address to a member (agents via the config
+1. resolves each recipient address to a member (agents via the config
    provider, humans via the online adapters or their persistent
    mailbox);
-3. writes the mail to the sender's ``sent.jsonl`` and to every valid
+2. writes the mail to the sender's ``sent.jsonl`` and to every valid
    recipient's ``inbox.jsonl`` (mailboxes are resolved via the injected
    ``TlonPaths.member_mail_dir`` and cached on demand);
-4. publishes one MAIL_DELIVERED event per recipient, carrying the Mail
+3. publishes one MAIL_DELIVERED event per recipient, carrying the Mail
    and the recipient's member id; a mail carrying an ``endorsing``
    reference additionally publishes one MAIL_ENDORSED (the reputation
    signal, see docs/design/mail.md).
 
+There is no group address (ADR 0024 决策 6: ``all@tlon.internal`` is
+retired) — a group address is just an address nobody resolves, and
 Recipients that resolve to nobody are collected and answered with a
 bounce mail from ``postmaster@tlon.internal`` to the sender — the error
 lands in the sender's inbox, so an LLM can correct the address itself.
@@ -30,7 +30,7 @@ a second ``MAIL_DELIVERED`` — the component remembers recently handled
 """
 
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from tlon.base.component import Component
 from tlon.base.device import Device
@@ -40,16 +40,11 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import SpanCtx, continue_trace, start_span
 from tlon.organization.mail.mail import (
-    ALL_ADDRESS,
     POSTMASTER_ADDRESS,
     Mail,
-    address_for_member,
 )
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.human_adapter import AdapterManager
-
-if TYPE_CHECKING:
-    from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
 
@@ -67,26 +62,24 @@ class MailDelivery(Component, Device):
     """Delivers mail from the bus into per-member mailboxes.
 
     Stateless apart from the on-demand Mailbox cache: all routing
-    information comes from the injected AgentInfoProvider (registered
-    agents, including sleeping ones), the AdapterManager (online
-    humans), and the persistent mailbox layout (known humans).
+    information comes from the shared RecipientResolver (registered
+    agents, sleeping included; online humans; known humans with a
+    persistent mailbox).
 
     Dependencies (constructor injected):
         - event_bus: EventBus for subscription/publishing
-        - agent_info_provider: AgentInfoProvider for agent existence and
-          the ``all@`` expansion
-        - adapter_manager: AdapterManager for online-human resolution
+        - adapter_manager: AdapterManager (its recipient resolver is the
+          single address → member authority)
         - tlon_paths: TlonPaths instance (mailbox layout)
 
     Example:
-        >>> delivery = MailDelivery(event_bus, config_service, adapter_manager, paths)
+        >>> delivery = MailDelivery(event_bus, adapter_manager, paths)
         >>> await delivery.initialize()  # Begins listening for MAIL_NEW
     """
 
     def __init__(
         self,
         event_bus: EventBus,
-        agent_info_provider: "AgentInfoProvider",
         adapter_manager: AdapterManager,
         tlon_paths: TlonPaths,
     ):
@@ -94,13 +87,12 @@ class MailDelivery(Component, Device):
 
         Args:
             event_bus: Event bus for subscribing and publishing
-            agent_info_provider: Provider for agent configuration queries
-            adapter_manager: Manager for online human adapters
+            adapter_manager: Manager for online human adapters (and the
+                shared recipient resolver)
             tlon_paths: Path resolver (mailbox directories)
         """
         Component.__init__(self, name="MailDelivery")
         Device.__init__(self, event_bus=event_bus, name="MailDelivery")
-        self._agent_info = agent_info_provider
         self._adapter_manager = adapter_manager
         # Shared recipient resolver (single authority, issue ):
         # address -> member resolution delegates to the same instance
@@ -156,7 +148,9 @@ class MailDelivery(Component, Device):
 
             unknown: list[str] = []
             delivered: list[str] = []
-            for address in self._expand_recipients(mail):
+            # No group addresses (ADR 0024 决策 6): dedup to+cc preserving
+            # order — a recipient gets one copy.
+            for address in dict.fromkeys([*mail.to, *mail.cc]):
                 # Postman convention: mail to postmaster is silently
                 # dropped, never bounced — a bounce of a bounce must be
                 # impossible (see docs/design/mail.md).
@@ -204,33 +198,6 @@ class MailDelivery(Component, Device):
                 error=str(e),
                 exc_info=True,
             )
-
-    def _expand_recipients(self, mail: Mail) -> list[str]:
-        """Expand to+cc into concrete addresses (all@ -> every member)."""
-        addresses: list[str] = []
-        for address in [*mail.to, *mail.cc]:
-            if address == ALL_ADDRESS:
-                addresses.extend(self._expand_all())
-            else:
-                addresses.append(address)
-        # Dedup preserving order; a recipient gets one copy
-        return list(dict.fromkeys(addresses))
-
-    def _expand_all(self) -> list[str]:
-        """all@tlon.internal: all registered agents + all known humans.
-
-        Known humans = online adapters ∪ humans with a persistent
-        mailbox (docs/design/mail.md: "有邮箱的人类") — offline humans
-        are included; their copy waits in their inbox.
-        """
-        addresses = [
-            address_for_member(agent_id) for agent_id in sorted(self._agent_info.get_all_ids())
-        ]
-        addresses.extend(
-            address_for_member(adapter.member_id) for adapter in self._adapter_manager.list_online()
-        )
-        addresses.extend(address_for_member(human_id) for human_id in self._paths.known_human_ids())
-        return addresses
 
     def _resolve_address(self, address: str) -> str | None:
         """Resolve a mail address to a member id, or None if unknown.

@@ -143,7 +143,6 @@ class TestAdamDecisions:
                     "agent_id": "worker-1",
                     "window_seconds": 60.0,
                     "mail_count": 25,
-                    "broadcast_count": 0,
                 },
                 source="public_health_monitor",
             )
