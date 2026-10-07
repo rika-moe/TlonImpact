@@ -49,6 +49,7 @@ from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.propose_capability import ProposeCapabilityTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.stop_agent import StopAgentTool
+from tlon.tools.agents.update_persona import UpdatePersonaTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.filesystem.edit_file import EditFileTool
 from tlon.tools.filesystem.list_directory import ListDirectoryTool
@@ -306,6 +307,13 @@ async def assemble_cognitive(
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
     tool_executor.register_tool(SilenceTool())
+    # Persona self-edit (ADR 0024, docs/design/identity.md): the member
+    # rewrites its own IDENTITY.md / SOUL.md on the host (outside the
+    # container /workspace). agent_id binds at construction — touching
+    # another member's persona files is structurally impossible. Not a
+    # reproduction/evolution tool: registered unconditionally (probationary
+    # members included).
+    tool_executor.register_tool(UpdatePersonaTool(tlon_paths=tlon_paths, agent_id=config.id))
     # searchMails (docs/design/skills.md): read-only structured query over
     # the agent's own
     # mailbox — the mail evidence source of the explain-decision skill.
