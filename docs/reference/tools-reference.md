@@ -86,7 +86,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 ### sendEmail
 
-发送邮件，agent 唯一的邮件出口。工具本身不投递：它把参数打包进 `ToolResult.data`（`action="send_email"`），由 act stage 收割后声明 `MailEffect`，`EffectExecutor` 构造 `Mail` 并发布 `MAIL_NEW` 进入投递管道（见 docs/design/mail.md）。所有地址都在 `tlon.internal` 域：`<agent-id>@tlon.internal`、`<username>@tlon.internal`，广播用 `all@tlon.internal`。
+发送邮件，agent 唯一的邮件出口。工具本身不投递：它把参数打包进 `ToolResult.data`（`action="send_email"`），由 act stage 收割后声明 `MailEffect`，`EffectExecutor` 构造 `Mail` 并发布 `MAIL_NEW` 进入投递管道（见 docs/design/mail.md）。所有地址都在 `tlon.internal` 域：`<agent-id>@tlon.internal`、`<username>@tlon.internal`；不存在组地址（all@ 已退役，ADR 0024）——多人就把每个地址逐个列进 to/cc。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|

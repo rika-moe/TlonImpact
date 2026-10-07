@@ -37,9 +37,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 所有地址都住在 `tlon.internal` 域（`MAIL_DOMAIN`）。成员 id 到地址的映射由 `address_for_member` 完成：agent 用裸 id（`gu-yanxi` → `gu-yanxi@tlon.internal`），人类成员 id 是 `human:<username>`，映射时剥掉前缀（`human:alice` → `alice@tlon.internal`）。`is_mail_address` 只校验 `local@domain` 形态，域白名单在反解时才查——地址格式故意宽松，把「合不合法」和「投不投得到」分成两步，前者在构造时挡，后者在投递时以退信回答。
 
-两个特殊地址：
-
-- `all@tlon.internal`（`ALL_ADDRESS`）——广播地址，投递时展开为全体成员。**已拍板退役**（ADR 0024，2026-10；施工 EPIC #102）：全员广播是「全员互认」的制度化，大社会里既是噪音源（arena 已有广播风暴红旗用例）也无社会意义。退役后社会不再有「一对多」原语——组织内部通信由**社会角色**承担：某成员担任「邮件列表秘书」，收信转发给组织成员；组地址不做机制（设计见 [identity.md](identity.md)「组织即共识」）。本节与全文中 all@ 的现役描述随 #102 施工删除。
+特殊地址只有一个：
 - `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱。邮差惯例两条：**寄给** postmaster 的信静默丢弃（记日志 `mail_to_postmaster_dropped`），绝不退信；**来自** postmaster 的信遇到未知收件人也不再退信（`_bounce` 的显式闸，双保险）——退信套娃因此不可能。周期任务的 tick 邮件也以它为发件人（见「周期任务：tick 即邮件」）。
 
 反方向映射 `member_id_for_address` 是有损的：裸 local part 无法区分 agent 和人类（`alice@tlon.internal` 既可能是 agent `alice` 也可能是人类 `human:alice`），消歧留给解析器（见下文「名称解析」）。
@@ -52,16 +50,15 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 ## 投递管线
 
-投递由 [organization/mail/delivery.py](../../src/tlon/organization/mail/delivery.py) 的 `MailDelivery` 承担。它订阅 EventBus 上的 `MAIL_NEW`，对每封邮件依次做四件事：
+投递由 [organization/mail/delivery.py](../../src/tlon/organization/mail/delivery.py) 的 `MailDelivery` 承担。它订阅 EventBus 上的 `MAIL_NEW`，对每封邮件依次做三件事：
 
-1. **展开**：`_expand_recipients` 把 `all@tlon.internal` 展开为全部已注册 agent（含睡眠中的，经 `AgentInfoProvider.get_all_ids`）加全部已知人类（在线适配器 ∪ 有持久邮箱的离线人类，经 `TlonPaths.known_human_ids`），to+cc 合并去重，一个收件人只收一份。广播因此不需要成员维护任何订阅关系——「全体成员」在每次投递时从注册表和邮箱布局现算。（all@ 展开已拍板退役，ADR 0024 / EPIC #102；退役后发往 all@ 的邮件按未知地址退信，本步骤随之简化。）
-2. **解析**：每个地址经 `RecipientResolver.resolve_member` 解析成成员 id；解析不到的收集进 unknown 列表，留到最后统一退信。
-3. **落盘**：写发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths.member_mail_dir` 解析，`Mailbox` 实例按需建立、有界 LRU 缓存，`_MAILBOXES_CAP = 4096`）。
-4. **通知**：按收件人逐个发布 `MAIL_DELIVERED`，payload 携带邮件本体和收件人成员 id。唤醒、入队、推送都挂在这个事件上，投递组件自己不知道收件人是 agent 还是人类。
+1. **解析**：to+cc 合并去重（一个收件人只收一份），每个地址经 `RecipientResolver.resolve_member` 解析成成员 id；解析不到的收集进 unknown 列表，留到最后统一退信。社会没有组地址（all@ 已退役，ADR 0024 / #102）——发往 all@ 这类不存在成员的地址就按普通未知地址退信；一对多通信由发件人逐个列出收件人，组织内部通信由**社会角色**承担（某成员担任「邮件列表秘书」收信转发，设计见 [identity.md](identity.md)「组织即共识」）。
+2. **落盘**：写发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths.member_mail_dir` 解析，`Mailbox` 实例按需建立、有界 LRU 缓存，`_MAILBOXES_CAP = 4096`）。
+3. **通知**：按收件人逐个发布 `MAIL_DELIVERED`，payload 携带邮件本体和收件人成员 id。唤醒、入队、推送都挂在这个事件上，投递组件自己不知道收件人是 agent 还是人类。
 
 `MAIL_NEW` 与 `MAIL_DELIVERED` 分成两个事件是刻意的：`MAIL_NEW` 表达「有一封信进入系统」（每封一次，发件视角），`MAIL_DELIVERED` 表达「这封信到达了某个成员的邮箱」（每收件人一次，收件视角）。落盘发生在这两者之间——订阅 `MAIL_DELIVERED` 的任何一方都可以假设邮件已在磁盘上。这也让投递本身成为总线上可观察的一环：运维模式的事件流能看到每一跳。
 
-`MailDelivery` 除两个有界缓存外无状态：路由信息全部来自注入的 `AgentInfoProvider`（已注册 agent，含睡眠）、`AdapterManager`（在线人类）和持久邮箱布局（已知离线人类）。投递失败只记日志不抛出——EventBus 的处理器约定如此，一封信的失败不能阻塞总线上其他订阅者。
+`MailDelivery` 除两个有界缓存外无状态：路由信息全部来自共享的 `RecipientResolver`（已注册 agent 含睡眠、在线人类、有持久邮箱的已知离线人类——同一份解析权威，发言侧与投递侧共用）。投递失败只记日志不抛出——EventBus 的处理器约定如此，一封信的失败不能阻塞总线上其他订阅者。
 
 ### 进程内幂等
 
@@ -86,7 +83,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含睡眠中的已注册 agent），人类在线性查注入的 callable，邮箱布局查 `TlonPaths`。组织层只依赖 base 的契约因此不破——三个能力全部构造器注入。
 
-守护者信箱：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（投递自动建 `~/.tlon/adam/mail/`），但不进 `all@` 广播、不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 MailDelivery 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的信（退信）不回——邮差不与邮差通信。
+守护者信箱：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（投递自动建 `~/.tlon/adam/mail/`），但不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 MailDelivery 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的信（退信）不回——邮差不与邮差通信。
 
 ## 外部来信与信任面
 
@@ -162,11 +159,11 @@ agent 收信的入口是 [agents/member_runtime.py](../../src/tlon/agents/member
 - **拒绝**（`rejected`）：`:when` 门控不通过，或邮件并非发给本成员——立即标记已读。这是有意为之（D6.1）：拒绝意味着「我看到了，选择不回应」，不回应不等于没收到；否则「永不回应」的 agent 会把邮件永远挂在未读上，每次启动都被同一封信唤醒一次。
 - **丢弃**（`dropped`）：队列满——保持未读，等下次启动扫描。
 
-自己发给自己的邮件（own-mail guard）直接标记已读、永不处理：广播到 `all@` 的邮件也会投一份给发件人自己（all@ 已拍板退役，但守卫本身保留——抄送自寄、误投自寄同样需要不回声），不回声是避免自激循环的基本卫生。没有这个守卫，一个听广播的 agent 会对自己的广播再回一封广播，社会会在一封邮件上无限震荡。
+自己发给自己的邮件（own-mail guard）直接标记已读、永不处理：抄送自寄、误投自寄同样需要不回声，不回声是避免自激循环的基本卫生。没有这个守卫，一个抄送了自己的 agent 会对自己的邮件再回一封，社会会在一封邮件上无限震荡。
 
 收件人未在运行时走唤醒路径：`AgentRegistry` 收到 `MAIL_DELIVERED` 后检查其 spec 是否声明了 `:on :mail-delivered`，是则发布启动请求将其唤醒——唤醒资格从 spec 派生，是机制不是策略（Adam 不参与）。唤醒请求续接投递的 trace，启动后的未读扫描与触发它的那封信在同一棵 trace 树下，可观测性贯穿「投递 → 唤醒 → 处理 → 回复」全程。
 
-为什么收信要过 `:when` 门控而不是有信必回：邮箱是开放寻址的，广播、抄送、误投都会到一个成员的收件箱；门控是成员对注意力的自主控制，spec 声明「哪些信值得一个 session」。这和认知循环的燃料预算（`:fuel`）是同一层设计——开放社会里每个成员都必须能自我保护。
+为什么收信要过 `:when` 门控而不是有信必回：邮箱是开放寻址的，抄送、误投、退信都会到一个成员的收件箱；门控是成员对注意力的自主控制，spec 声明「哪些信值得一个 session」。这和认知循环的燃料预算（`:fuel`）是同一层设计——开放社会里每个成员都必须能自我保护。
 
 ### 发信：唯一出口
 
@@ -269,4 +266,4 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 
 - 幂等集合、邮箱缓存、锁表都是进程内有界结构，重启后回退为「可能重复投递」——追加写模型容忍，跨进程部署是另一个量级的问题，届时再议。
 - 没有邮件级检索与分页：`Mailbox.recent` 按条数截取，`GET /inbox` 同理。社会规模小、邮箱不大时够用；检索是公共层建设的一部分，不在当前范围。
-- ~~`all@` 广播按「已知人类」展开，从未连接过的人不在其列——广播的边界是「社会已知成员」，不是「全世界」。~~ 随 all@ 退役（ADR 0024）消解：不再存在需要定义的全员集合；「我认识谁」由每个成员自己的联系簿回答，主观、分布式、无需一致（[identity.md](identity.md)）。
+- all@ 已退役（ADR 0024 / #102）：社会无组地址，组织通信由社会角色承担；「我认识谁」由每个成员自己的联系簿回答，主观、分布式、无需一致（[identity.md](identity.md)）。
