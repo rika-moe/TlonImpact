@@ -10,9 +10,10 @@ back-reference — the Agent <-> LoopDriver runtime cycle is broken.
 
 ``LoopSpec.stages`` is a vector of whitelisted stage forms executed in
 order by the stage registry; ``LoopSpec.until`` is a pure termination
-expression evaluated pre-think. The engine owns the loop, including an
-unconditional ``max_iterations`` hard ceiling that no ``until`` can
-override; stage run policy lives in the program (``:if``), not the engine.
+expression evaluated pre-think. The engine owns the loop, including two
+unconditional hard ceilings no ``until`` can override — ``max_iterations``
+and the session token budget ``max_tokens`` (ADR 0023), whichever fires
+first; stage run policy lives in the program (``:if``), not the engine.
 
 This module keeps the interpreter skeleton: registry, step/collect
 scheduling shells, until/:if evaluators, the tool execution primitive,
@@ -72,11 +73,12 @@ _ITERATION_LIMIT_REPLY = "思考时间过长，请简化您的问题。"
 _ERROR_REPLY = "抱歉，处理邮件时出现了错误。"
 _TIMEOUT_REPLY = "抱歉，处理这封邮件超时了，请稍后重试。"
 
-#: Distillation prompt for the max-iterations reply: the engine's hard
-#: ceiling fired mid-work, so one extra LLM call condenses the session's
-#: intermediate results into the reply instead of a bare apology.
+#: Distillation prompt for the resource-ceiling reply: an engine hard
+#: ceiling (iteration count or token budget, ADR 0023) fired mid-work, so
+#: one extra LLM call condenses the session's intermediate results into
+#: the reply instead of a bare apology.
 _MAX_ITERATIONS_SYSTEM_PROMPT = (
-    "你是通过邮件工作的智能体。你处理一封来信时达到了内部迭代上限，任务未能彻底完成。"
+    "你是通过邮件工作的智能体。你处理一封来信时达到了内部资源上限（迭代轮数或 token 预算），任务未能彻底完成。"
     "请根据给出的工作记录，给来信人写一封简短的中文回信：说明已经做了什么、"
     "进展到哪一步、为什么没能完成。语气诚恳简洁，只输出回信正文。"
 )
@@ -201,16 +203,27 @@ class LoopDriver:
 
         loop = self._loop
 
-        # Engine hard ceiling: max_iterations is an infrastructure cap,
-        # enforced no matter what the until expression says. Exhaustion
+        # Engine hard ceilings (ADR 0023): max_iterations and max_tokens
+        # are infrastructure caps, enforced no matter what the until
+        # expression says — either one firing ends the session. Exhaustion
         # is not failure — the session's intermediate work is distilled
         # into the reply by one extra LLM call (fixed-text fallback).
-        if session.iteration >= loop.max_iterations:
-            log.warning(
-                "session_max_iterations",
-                session_id=session.id,
-                max_iterations=loop.max_iterations,
-            )
+        iteration_capped = session.iteration >= loop.max_iterations
+        token_capped = session.token_usage >= loop.max_tokens
+        if iteration_capped or token_capped:
+            if token_capped:
+                log.warning(
+                    "session_max_tokens",
+                    session_id=session.id,
+                    token_usage=session.token_usage,
+                    max_tokens=loop.max_tokens,
+                )
+            else:
+                log.warning(
+                    "session_max_iterations",
+                    session_id=session.id,
+                    max_iterations=loop.max_iterations,
+                )
             await self._executor.send_mail(
                 MailEffect(
                     to=[mail.from_address],
@@ -219,7 +232,8 @@ class LoopDriver:
                     thread_id=mail.thread_id,
                 )
             )
-            await self._journal.append(session.id, "session/end", reason="max_iterations")
+            reason = "max_tokens" if token_capped else "max_iterations"
+            await self._journal.append(session.id, "session/end", reason=reason)
             session.mark_completed()
             return
 
@@ -317,6 +331,14 @@ class LoopDriver:
             # "errors" value is absolute, so replay restores the reset.
             await self._journal.append(session.id, "errors", value=0)
             session.reset_errors()
+        if outcome.token_usage > 0:
+            # Session token budget (ADR 0023): the journaled "tokens"
+            # value is the post-accumulation absolute total, same pattern
+            # as iteration/errors.
+            await self._journal.append(
+                session.id, "tokens", value=session.token_usage + outcome.token_usage
+            )
+            session.add_tokens(outcome.token_usage)
         if outcome.advance_iteration:
             await self._journal.append(session.id, "iteration", value=session.iteration + 1)
             session.advance_iteration()
@@ -377,16 +399,20 @@ class LoopDriver:
                 name=self._identity.name,
                 iteration=session.iteration,
                 error_count=session.error_count,
+                token_usage=session.token_usage,
                 max_iterations=loop.max_iterations,
                 max_consecutive_errors=loop.max_consecutive_errors,
+                max_tokens=loop.max_tokens,
             )
         )
         try:
             result = eval_form(loop.until, env, LOOP_BUILTINS, fuel=self._loop_fuel)
         except EvalError as e:
             log.warning("loop_until_eval_failed", session_id=session.id, error=str(e))
-            return session.iteration >= loop.max_iterations or (
-                session.error_count >= loop.max_consecutive_errors
+            return (
+                session.iteration >= loop.max_iterations
+                or session.error_count >= loop.max_consecutive_errors
+                or session.token_usage >= loop.max_tokens
             )
         reached = bool(result)
         log.debug("loop_until_evaluated", session_id=session.id, reached=reached)
@@ -432,11 +458,12 @@ class LoopDriver:
         session.mark_completed()
 
     async def _distill_reply(self, session: AgentSession) -> str:
-        """Distill the session's intermediate work into the max-iterations reply.
+        """Distill the session's intermediate work into the ceiling reply.
 
         One extra LLM call over the context tail turns the completed
         rounds (thoughts, tool results) into a reply saying what was
-        done, how far it got, and why it stopped. Fully defensive: any
+        done, how far it got, and why it stopped (iteration count or
+        token budget, ADR 0023). Fully defensive: any
         failure (LLM error, timeout, empty answer) falls back to the
         fixed text (or the member's `:replies` override of it) — the
         termination path itself must never fail.
@@ -529,6 +556,7 @@ class LoopDriver:
             stage_cond_env(
                 iteration=session.iteration,
                 error_count=session.error_count,
+                token_usage=session.token_usage,
                 scratch=session.loop_scratch,
                 completing=attempts_completion(response),
             )

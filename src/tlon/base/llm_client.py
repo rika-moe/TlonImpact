@@ -80,6 +80,23 @@ def _cache_token_counts(usage: dict[str, Any]) -> tuple[int, int]:
     return int(details.get("cached_tokens") or 0), int(details.get("cache_write_tokens") or 0)
 
 
+def usage_total_tokens(usage: dict[str, int] | None) -> int:
+    """Total tokens consumed by one LLM call, from its usage dict.
+
+    ``total_tokens`` wins; when absent the sum of
+    ``prompt_tokens + completion_tokens`` stands in; ``None`` (or a usage
+    dict without any of the three fields) counts as zero.
+    """
+    if usage is None:
+        return 0
+    total = usage.get("total_tokens")
+    if isinstance(total, int) and not isinstance(total, bool):
+        return total
+    prompt = usage.get("prompt_tokens") or 0
+    completion = usage.get("completion_tokens") or 0
+    return prompt + completion
+
+
 #: Providers whose prompt caching is explicit — breakpoints must be injected
 #: as cache_control blocks or nothing is cached at all. Everyone else
 #: litellm routes to (OpenAI, DeepSeek, Moonshot, GLM, ...) does automatic

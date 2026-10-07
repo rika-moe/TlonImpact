@@ -187,7 +187,8 @@ class StageServices:
         Unlike :meth:`think` this is not a round of the cognitive loop:
         the caller supplies the prompt and messages outright, and no tool
         schemas are attached (a tool-emitting answer is useless here).
-        Used by the engine for the max-iterations reply distillation.
+        Used by the engine for the resource-ceiling reply distillation
+        (max_iterations / max_tokens, ADR 0023).
         """
         async with self.traced_span(span):
             return await self._llm_client.chat(

@@ -11,7 +11,7 @@ are tested in ``src/tests/tlosure/test_eval.py``.
 
 import pytest
 
-from tlon.agents.vocabulary import make_member_builtins, validate_member_actions
+from tlon.agents.vocabulary import LOOP_BUILTINS, make_member_builtins, validate_member_actions
 from tlon.organization.mail.mail import Mail
 from tlosure.edn import loads
 from tlosure.eval import ActionRequest, EvalError, eval_form, validate_form
@@ -216,3 +216,35 @@ class TestValidateForm:
         validate_form(loads("(let [x msg] (addressed-to-me? x))"), _BUILTINS, scope={"msg"})
         with pytest.raises(EvalError, match="undefined symbol: y"):
             validate_form(loads("(let [x 1] (addressed-to-me? y))"), _BUILTINS, scope={"msg"})
+
+
+class TestTokenLimitPredicate:
+    """``token-limit-reached?`` (ADR 0023): the loop ``:until`` predicate
+    over the session token budget — true at/over the cap, false below,
+    and safely false when the env keys are absent."""
+
+    def test_reached_at_and_over_cap(self):
+        env = {"state": {"token_usage": 1000}, "limits": {"max_tokens": 1000}}
+        assert eval_form(loads("(token-limit-reached?)"), env, LOOP_BUILTINS) is True
+        env = {"state": {"token_usage": 1500}, "limits": {"max_tokens": 1000}}
+        assert eval_form(loads("(token-limit-reached?)"), env, LOOP_BUILTINS) is True
+
+    def test_not_reached_below_cap(self):
+        env = {"state": {"token_usage": 999}, "limits": {"max_tokens": 1000}}
+        assert eval_form(loads("(token-limit-reached?)"), env, LOOP_BUILTINS) is False
+
+    def test_missing_keys_safely_false(self):
+        assert (
+            eval_form(
+                loads("(token-limit-reached?)"),
+                {"state": {}, "limits": {}},
+                LOOP_BUILTINS,
+            )
+            is False
+        )
+        assert eval_form(loads("(token-limit-reached?)"), {}, LOOP_BUILTINS) is False
+
+    def test_validates_in_loop_registry(self):
+        """The word is registered loop vocabulary — load-time validation
+        of an ``:until`` using it passes (empty scope, as the engine does)."""
+        validate_form(loads("(token-limit-reached?)"), LOOP_BUILTINS, scope=set())

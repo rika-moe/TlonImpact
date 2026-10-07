@@ -5,7 +5,7 @@ from typing import Any
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
-from tlon.base.llm_client import ContextWindowExceededError, LLMResponse
+from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, usage_total_tokens
 
 
 async def plan_stage(
@@ -54,4 +54,5 @@ async def plan_stage(
         response=response,
         context_appends=[{"role": "user", "content": f"[执行计划]\n\n{plan_text}"}],
         scratch_updates={"plan": plan_text},
+        token_usage=usage_total_tokens(plan_response.usage),
     )

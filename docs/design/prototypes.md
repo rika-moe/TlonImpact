@@ -28,26 +28,26 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 | 原型 | 规则形态 | `:execution` 层 | 关键 spec 差异 |
 |---|---|---|---|
-| developer（开发工程师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
+| developer（开发工程师） | 带 `:loop` | L2 | 标准 ReAct 模板；`:max-iterations 100 :max-tokens 8000000`——研究类任务的迭代轮数退为安全网，token 预算是真实约束线（ADR 0023） |
 | ops（运维工程师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
 | pm（项目经理） | 带 `:loop` | L1 | 标准 ReAct 模板 |
 | support（客服专员） | 带 `:loop` | L0 | 标准 ReAct 模板 |
 | product（产品经理） | 带 `:loop` | L1 | 标准 ReAct 模板 |
-| data-analyst（数据分析师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
+| data-analyst（数据分析师） | 带 `:loop` | L2 | 标准 ReAct 模板；数值同 developer |
 
 **行为形态原型**（覆盖体系的两个维度——带不带 `:loop`、重思考/轻响应）：
 
 | 原型 | 规则形态 | `:execution` 层 | 关键 spec 差异 |
 |---|---|---|---|
-| archivist（档案管理者） | 带 `:loop` | L0 | `:max-iterations 10`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
-| deep-thinker（深度思考者） | 带 `:loop` | L0 | `:max-iterations 25`——更长思考预算；stage 程序同默认（交卷前自评审） |
-| fast-responder（快速反应者） | 带 `:loop` | L0 | `:max-iterations 3`，`:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
+| archivist（档案管理者） | 带 `:loop` | L0 | `:max-iterations 10 :max-tokens 1000000`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
+| deep-thinker（深度思考者） | 带 `:loop` | L0 | `:max-iterations 300 :max-tokens 10000000`——更长思考预算；stage 程序同默认（交卷前自评审） |
+| fast-responder（快速反应者） | 带 `:loop` | L0 | `:max-iterations 10 :max-tokens 1000000`（同默认成员），差异在 `:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
 | scribe（书记员） | 带 `:loop` | L0 | 反思间隔 30 分钟——社会文摘的记录者（经提案通道入库的原型） |
 | relay（转发者） | 无 `:loop` | L0 | `:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
 
-`:execution` 层是执行装置能力声明（宪法一，[execution-device.md](./execution-device.md)「能力阶梯」——内置原型的定层表与「最低够用」原则记录在那里）：实例化时一次性投影进 agent.yaml 的 `docker.level`。
+`:execution` 层是执行装置能力声明（宪法一，[execution-device.md](./execution-device.md)「能力阶梯」——内置原型的定层表与「最低够用」原则记录在那里）：实例化时一次性投影进 agent.yaml 的 `docker.level`。「标准 ReAct 模板」指同一套 stage 程序（think + 交卷前 critique + act + revise）与 `:max-iterations 10 :max-tokens 1000000`（ADR 0023）。
 
-所有原型的差异全部写在 spec 数据里：迭代上限、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 写入，是创建时数据，不是基因型。
+所有原型的差异全部写在 spec 数据里：迭代上限、token 预算、stage 程序、上下文段、反思频率、规则形态。没有一行 Python 区分它们——这正是「行为即数据」的演示：行为差异 = 数据差异，新成员形态就是新的一份 spec。原型不带人格（ADR 0006）：成员的人格（IDENTITY/SOUL/RULES.md）在创建成员时经 WebUI / admin API 写入，是创建时数据，不是基因型。
 
 ## 生命周期：播种 → 列出 → 实例化
 

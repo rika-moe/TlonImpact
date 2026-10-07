@@ -44,6 +44,7 @@ def _rule() -> MemberRule:
             until=Form(),
             max_iterations=1,
             max_consecutive_errors=1,
+            max_tokens=1000000,
             reflect=ReflectSpec(enabled=True, interval_minutes=0),
         ),
         actions=(),

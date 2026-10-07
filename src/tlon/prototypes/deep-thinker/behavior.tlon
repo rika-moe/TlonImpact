@@ -11,9 +11,10 @@
                           (critique {:if (completing?)})
                           (act {:if (or (not (completing?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 25
+                 :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
+                 :max-iterations 300
                  :max-consecutive-errors 3
+                 :max-tokens 10000000
                  :reflect {:enabled true :interval-minutes 10}}}
          {:name "boot"
           :on :boot
