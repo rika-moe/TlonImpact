@@ -32,7 +32,11 @@ quirk). A mail that a full bounded queue drops stays unread for the
 rescan — the member's one background rescan task picks it up on its
 periodic sweep, without waiting for a reboot (a boot member with
 ``:on :boot`` never gets a second boot scan). Own mail (sent by this
-member) is never processed.
+member) is never processed. Live delivery merges like the boot scan
+(ADR 0026): a delivered mail whose thread already has a pending
+(enqueued, not yet admitted) mail replaces it as the thread's
+representative — the displaced mail is marked read, no second session
+is created; running sessions are never merged retroactively.
 
 Boot-scan throttling (docs/design/runtime.md): the unread rescue scan merges one
 thread into one session (the thread's latest unread mail is the
@@ -460,6 +464,12 @@ class MemberRuntime(Member):
     ) -> str:
         """Gate a delivered mail and enqueue a session for it.
 
+        Enqueueing merges same-thread pending mail (ADR 0026): a thread
+        already waiting in the queue gets no second session — the new
+        mail replaces the pending sibling as the representative and the
+        displaced sibling is marked read now (covered by the session's
+        mail-history context), logged as ``mail_merged``.
+
         Returns "queued" | "rejected" | "dropped". "rejected" (the ``:when``
         gate failed, or the mail is not addressed to this member) marks the
         mail read now (D6.1); "dropped" (bounded queue full) leaves it
@@ -471,7 +481,7 @@ class MemberRuntime(Member):
             "trace_id": trigger_event.trace_id if trigger_event else None,
             "span_id": trigger_event.span_id if trigger_event else None,
         }
-        if self._scheduler is None or not self._scheduler.enqueue(mail, carrier):
+        if self._scheduler is None:
             logger.warning(
                 "mail_dropped",
                 member_id=self._member_id,
@@ -479,6 +489,25 @@ class MemberRuntime(Member):
                 mail_id=mail.id,
             )
             return "dropped"
+        result, displaced = self._scheduler.enqueue_merging_thread(mail, carrier)
+        if result == "dropped":
+            logger.warning(
+                "mail_dropped",
+                member_id=self._member_id,
+                sender=mail.from_address,
+                mail_id=mail.id,
+            )
+            return "dropped"
+        if result == "merged":
+            assert displaced is not None
+            logger.info(
+                "mail_merged",
+                member_id=self._member_id,
+                merged_mail_id=displaced.id,
+                representative_mail_id=mail.id,
+                thread_id=mail.thread_id,
+            )
+            await self._mark_read(displaced)
         logger.debug("mail_queued", sender=mail.from_address, mail_id=mail.id)
         return "queued"
 
