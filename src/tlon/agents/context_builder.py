@@ -302,7 +302,7 @@ class ContextBuilder:
                 if current_task:
                     context.append({"role": "user", "content": current_task})
             elif name == "mail-history":
-                context.extend(await self._build_mail_history(form[1], current_mail))
+                context.extend(await self._build_mail_history(form[1:], current_mail))
             elif name == "thread-recap":
                 recap = await self.build_thread_recap(current_mail)
                 if recap:
@@ -316,19 +316,41 @@ class ContextBuilder:
                 context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
         return BuiltContext(messages=context, anchor_len=anchor_len)
 
-    async def _build_mail_history(self, count: int, current_mail: Mail) -> list[dict[str, Any]]:
-        """Render up to ``count`` mailbox history mails as context messages.
+    async def _build_mail_history(
+        self, counts: list[int], current_mail: Mail
+    ) -> list[dict[str, Any]]:
+        """Render mailbox history mails as context messages.
 
-        The history is the agent's own correspondence (mailbox inbox +
-        sent), never a shared room log: my own mail maps to the
-        assistant role, everyone else's to the user role.
+        One count is the sliding window of the most recent mails; two
+        counts (ADR 0025) add a frozen segment — the earliest ``F`` mails
+        of the merged timeline — ahead of the sliding window of the
+        recent ``R``, deduplicated by mail id so each mail renders once
+        when the total is below ``F + R``. The frozen segment is
+        byte-stable once filled, so a new mail only breaks the provider
+        cache prefix at the sliding tail. The history is the agent's own
+        correspondence (mailbox inbox + sent), never a shared room log:
+        my own mail maps to the assistant role, everyone else's to the
+        user role.
         """
         if self._mailbox is None:
             logger.warning("mailbox_missing")
             return []
-        if count <= 0:
-            return []
-        history = await self._mailbox.recent(limit=count)
+        if len(counts) == 1:
+            if counts[0] <= 0:
+                return []
+            history = await self._mailbox.recent(limit=counts[0])
+        else:
+            frozen_count, recent_count = counts
+            if frozen_count <= 0 and recent_count <= 0:
+                return []
+            frozen = (
+                await self._mailbox.earliest(limit=frozen_count) if frozen_count > 0 else []
+            )
+            frozen_ids = {mail.id for mail in frozen}
+            recent = (
+                await self._mailbox.recent(limit=recent_count) if recent_count > 0 else []
+            )
+            history = frozen + [mail for mail in recent if mail.id not in frozen_ids]
         logger.debug("context_history_retrieved", mail_count=len(history))
         messages: list[dict[str, Any]] = []
         for mail in history:

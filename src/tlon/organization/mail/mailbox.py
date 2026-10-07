@@ -268,10 +268,29 @@ class Mailbox:
             Merged inbox + sent mail in chronological order, capped at
             the most recent ``limit`` entries
         """
+        return (await self._merged())[-limit:]
+
+    async def earliest(self, limit: int = 50) -> list[Mail]:
+        """List the earliest mail across inbox and sent.
+
+        Used by the context builder's two-tier mail-history (ADR 0025):
+        the frozen segment is the head of the merged timeline, stable
+        once filled.
+
+        Args:
+            limit: Maximum number of mails to return
+
+        Returns:
+            Merged inbox + sent mail in chronological order, capped at
+            the earliest ``limit`` entries
+        """
+        return (await self._merged())[:limit]
+
+    async def _merged(self) -> list[Mail]:
+        """Merge inbox and sent into one chronologically ordered list."""
         inbox = await self._read_mails(self._inbox_path)
         sent = await self._read_mails(self._sent_path)
-        merged = sorted(inbox + sent, key=lambda mail: mail.timestamp)
-        return merged[-limit:]
+        return sorted(inbox + sent, key=lambda mail: mail.timestamp)
 
     async def _read_inbox(self) -> list[Mail]:
         """Read inbox mails, parsing only the appended tail when possible.

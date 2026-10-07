@@ -463,17 +463,17 @@ def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
             raise MemberSpecValidationError(f"{label}: duplicate section {name!r} in :sections")
         seen.add(name)
         if name == "mail-history":
-            if len(form) != 2:
+            if len(form) not in (2, 3):
                 raise MemberSpecValidationError(
-                    f"{label}: section 'mail-history' takes exactly one count "
-                    f"argument, got {dumps(form)}"
+                    f"{label}: section 'mail-history' takes one or two count "
+                    f"arguments, got {dumps(form)}"
                 )
-            count = form[1]
-            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                raise MemberSpecValidationError(
-                    f"{label}: section 'mail-history' count must be a "
-                    f"non-negative int, got {dumps(count)}"
-                )
+            for count in form[1:]:
+                if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                    raise MemberSpecValidationError(
+                        f"{label}: section 'mail-history' count must be a "
+                        f"non-negative int, got {dumps(count)}"
+                    )
         elif len(form) != 1:
             raise MemberSpecValidationError(
                 f"{label}: section {name!r} takes no arguments, got {dumps(form)}"

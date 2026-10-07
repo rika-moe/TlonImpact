@@ -4,7 +4,7 @@
           :on :mail-delivered
           :actions []
           :when (or (addressed-to-me? msg) (cc-ed? msg))
-          :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20) (thread-recap)]}
+          :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
                  :stages [(think)
                           (critique {:if (completing?)})
                           (act {:if (or (not (completing?)) (not (critique-failed?)))})

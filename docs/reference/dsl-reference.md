@@ -342,7 +342,7 @@
 
 `persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 追加到对话上下文（`ContextBuilder`）。section 名不得重复。**位置语义例外（ADR 0017 阶段 4，2026-09-17）**：`knowledge` 不随向量顺序落位——它固定注入为整个 context 的最后一条（当前邮件之后、压缩锚点 anchor 之外），声明只控制「是否包含」；其余段按向量顺序追加。
 
-**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`mail-history`）居中，每会话必变的段（`thread-recap`）与当前邮件靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history N) (thread-recap)`（`knowledge` 的声明位置是历史惯例，注入位置恒为最末）；当前邮件永远由引擎追加在最后（knowledge 之前）。
+**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`mail-history`）居中，每会话必变的段（`thread-recap`）与当前邮件靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history F R) (thread-recap)`（`knowledge` 的声明位置是历史惯例，注入位置恒为最末）；当前邮件永远由引擎追加在最后（knowledge 之前）。两段式 `(mail-history F R)`（ADR 0025）让 mail-history 内部的前段（冻结段 = 最早 F 封）写满后逐字节稳定——新邮件到来时前缀断裂点收缩到滑动段的 R 封内。
 
 | section | 参数 | 语义 |
 |---|---|---|
@@ -353,7 +353,8 @@
 | `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
 | `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
 | `(thread-recap)` | 无 | 本线程最近一个已完成 session 的简报（触发、工具调用摘要、结论）拼成 `[本线程上一轮处理摘要]` 用户消息：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随线程长度膨胀；线程首轮、上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section |
-| `(mail-history n)` | 一个非负 int | 取邮箱最近 n 封邮件进对话上下文 |
+| `(mail-history n)` | 一个非负 int | 滑动窗口：取邮箱（inbox+sent 按时间正序合并）最近 n 封邮件进对话上下文 |
+| `(mail-history f r)` | 两个非负 int | 两段式（ADR 0025）：冻结段 = 合并时间序列表的最早 f 封（写满后逐字节稳定、永驻 prompt 前缀）+ 滑动段 = 最近 r 封；总量不足 f+r 时重叠部分按 mail id 去重只渲染一次；渲染保持时间正序（冻结段在前）。排除当前邮件与空正文邮件等规则与一段式相同 |
 
 ### 5.2 五个 stage（`STAGE_NAMES`）
 
@@ -421,7 +422,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
                                       (skills)                  ; 对话上下文：技能索引（ADR 0010）
                                       (knowledge)               ; 对话上下文：记忆块（固定注入最末位，ADR 0017 阶段 4）
                                       (current-task)            ; 对话上下文：当前 doing 任务
-                                      (mail-history 20)         ; 对话上下文：最近 20 封邮件
+                                      (mail-history 20 10)      ; 对话上下文：最早 20 封（冻结段）+ 最近 10 封（滑动段，ADR 0025）
                                       (thread-recap)]}          ; 对话上下文：本线程上一轮处理摘要
                  :stages [(think)                                  ; 想：一次 LLM 调用
                           (critique {:if (completing?)})             ; 只在即将交卷时评审待交回复
@@ -468,7 +469,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | 缺必填字段（`:name`、`:on`、`:loop` 的全部子键等） | 同上——total 语义，无默认值 |
 | `:execution` 不是 map、缺 `:level`、`:level` 非 `:L0`/`:L1`/`:L2` | 同上（`_execution_from`） |
 | 类型错误（int 位置写 bool/string 等） | 同上（bool 永不被接受为 int） |
-| 未知 section / stage 名，section 重复，`mail-history` 参数不是非负 int | 同上（`_validate_sections` / `_validate_stages`） |
+| 未知 section / stage 名，section 重复，`mail-history` 参数个数不是 1~2 个或参数不是非负 int | 同上（`_validate_sections` / `_validate_stages`） |
 | stage opts 键非 `:if`（`plan` 可加 `:max-steps`） | 同上（`_validate_stage_opts`） |
 | `:loop/:replies` 键超出 `:iteration-limit` / `:error` / `:timeout`，或值不是非空字符串 | 同上（`_replies_from`） |
 | `:when` / `:until` / `:if` 引用未注册 builtin 或作用域外符号 | 同上（`validate_member_spec` 统一静态校验） |
