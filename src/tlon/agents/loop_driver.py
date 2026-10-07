@@ -503,6 +503,15 @@ class LoopDriver:
             tail.append(message)
             tokens += cost
         tail.reverse()
+        # The budget cut must not split a tool_call/tool pair: a tail
+        # starting with a tool message is rejected by providers (DeepSeek
+        # 400 — a tool message must follow an assistant message carrying
+        # its tool_calls). The orphan results belong to an assistant
+        # message before the tail, so dropping them keeps every remaining
+        # pair intact (an assistant's tool results always follow it inside
+        # the tail).
+        while tail and tail[0].get("role") == "tool":
+            tail.pop(0)
         instruction = (
             "以上是你处理来信时的工作记录（可能不完整）。原始来信内容：\n\n"
             f"{session.trigger_content}\n\n请写回信正文。"

@@ -320,7 +320,8 @@ class LLMClient:
                     all_messages, tools, timeout, cache_prefix_len
                 )
             except Exception as e:
-                logger.error("llm_error", model=self.config.model_name, error=str(e))
+                # _chat_with_retries already logged the failure (llm_error);
+                # logging here too would double-report every failure.
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
                 raise

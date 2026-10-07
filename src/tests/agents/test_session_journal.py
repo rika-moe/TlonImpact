@@ -818,6 +818,60 @@ class TestTokenBudget:
         assert executor.send_mail.await_args.args[0].content == "思考时间过长，请简化您的问题。"
 
 
+class TestDistillTailToolPairs:
+    """``_distill_messages`` 的预算截取不得切断 tool_call/tool 配对
+    （#128）：切断点落在 tool 消息上时，tail 首条是孤儿 tool 消息，
+    DeepSeek 400 拒收（"tool must follow a message with tool_calls"），
+    触顶蒸馏回信因此必然失败。"""
+
+    @staticmethod
+    def _session_with_tool_rounds() -> AgentSession:
+        session = AgentSession(session_id="s1", trigger_content="原始任务")
+        session.context = [
+            {"role": "user", "content": "锚点来信"},
+            {
+                "role": "assistant",
+                "content": "",
+                # 超大的 tool_calls 载荷：反推预算截取时停在这条之前，
+                # 使 tail 以孤儿 tool 消息开头
+                "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "search", "arguments": "垫" * 500}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "结果一"},
+            {"role": "assistant", "content": "结论"},
+        ]
+        return session
+
+    @staticmethod
+    def _assert_pairs_intact(messages: list[dict]) -> None:
+        for i, m in enumerate(messages):
+            if m.get("role") == "tool":
+                assert i > 0 and messages[i - 1].get("tool_calls"), (
+                    f"孤儿 tool 消息 at {i}"
+                )
+
+    def test_budget_cut_drops_orphan_tool_head(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("tlon.agents.loop_driver._DISTILL_TOKEN_BUDGET", 100)
+        session = self._session_with_tool_rounds()
+
+        messages = LoopDriver._distill_messages(session)
+
+        assert messages[0]["role"] != "tool"
+        self._assert_pairs_intact(messages)
+        assert messages[-1]["role"] == "user"  # 指令消息仍在末尾
+        assert "原始任务" in messages[-1]["content"]
+
+    def test_no_cut_keeps_pairs_together(self) -> None:
+        session = self._session_with_tool_rounds()
+
+        messages = LoopDriver._distill_messages(session)
+
+        assert messages[0]["content"] == "锚点来信"
+        self._assert_pairs_intact(messages)
+
+
 class TestConsecutiveErrorLimit:
     """error_count counts *consecutive* think failures, not a lifetime
     total: a successful think resets it (docs/design/runtime.md).
