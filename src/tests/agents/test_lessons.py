@@ -31,6 +31,7 @@ _COGNITIVE_SPEC = """\
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
 

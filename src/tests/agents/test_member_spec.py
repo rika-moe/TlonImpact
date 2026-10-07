@@ -24,6 +24,7 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -71,6 +72,7 @@ class TestRoundtrip:
         assert rule.name == "respond"
         assert rule.loop is not None
         assert rule.loop.max_iterations == 10
+        assert rule.loop.max_tokens == 1000000
         assert rule.loop.reflect.enabled is False
         assert rule.actions == ()
 
@@ -247,6 +249,7 @@ class TestSingleValidator:
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 5
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}
          {:name "second-brain"
           :on :mail-delivered
@@ -256,6 +259,7 @@ class TestSingleValidator:
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 5
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
         )
@@ -312,6 +316,31 @@ class TestRuleFuel:
         spec = _parse(edn)
         with pytest.raises(MemberSpecValidationError, match="hard cap"):
             validate_member_spec(spec)
+
+
+class TestLoopMaxTokens:
+    """:loop/:max-tokens (ADR 0023): session token budget — required int,
+    rejected at load when missing or mistyped."""
+
+    def test_max_tokens_missing_rejected(self):
+        edn = COGNITIVE_EDN.replace("                 :max-tokens 1000000\n", "")
+        with pytest.raises(MemberSpecValidationError, match=":max-tokens"):
+            _parse(edn)
+
+    def test_max_tokens_non_int_rejected(self):
+        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ':max-tokens "many"')
+        with pytest.raises(MemberSpecValidationError, match=":max-tokens"):
+            _parse(edn)
+
+    def test_max_tokens_bool_rejected(self):
+        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens true")
+        with pytest.raises(MemberSpecValidationError, match=":max-tokens"):
+            _parse(edn)
+
+    def test_max_tokens_roundtrip(self):
+        spec = _parse(COGNITIVE_EDN)
+        assert spec.to_dict()["rules"][0]["loop"]["max_tokens"] == 1000000
+        assert _parse(spec.to_edn()) == spec
 
 
 class TestLoopReplies:

@@ -42,6 +42,10 @@ class AgentSession:
         # ReAct loop state
         self._iteration = 0
         self._error_count = 0
+        # Session-level cumulative token budget consumption (ADR 0023):
+        # the sum over the session's stage LLM calls (think/critique/plan;
+        # compaction summaries and the termination distill are excluded).
+        self._token_usage = 0
         self._last_llm_response: Any = None
         self._all_tool_results: list[dict[str, Any]] = []
 
@@ -101,6 +105,15 @@ class AgentSession:
     def reset_errors(self) -> None:
         """Zero the consecutive error count (a think call succeeded)."""
         self._error_count = 0
+
+    @property
+    def token_usage(self) -> int:
+        """Cumulative tokens spent by this session's stage LLM calls."""
+        return self._token_usage
+
+    def add_tokens(self, n: int) -> None:
+        """Add one stage LLM call's token consumption to the session total."""
+        self._token_usage += n
 
     def set_last_llm_response(self, response: Any) -> None:
         self._last_llm_response = response

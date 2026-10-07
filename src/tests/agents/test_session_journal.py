@@ -41,6 +41,7 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -139,6 +140,23 @@ class TestJournalReplay:
 
     async def test_resume_without_log_returns_none(self, journal: SessionJournal) -> None:
         assert await journal.resume("agent1-nope") is None
+
+    async def test_tokens_event_replays_absolute_total(self, journal: SessionJournal) -> None:
+        """ADR 0023: ``tokens`` events carry the post-accumulation absolute
+        total (same pattern as iteration/errors), so replay restores the
+        session's token budget consumption."""
+        sid = "agent1-tokens"
+        await _start(journal, sid)
+        await journal.append(sid, "tokens", value=150)
+        await journal.append(sid, "tokens", value=850)
+
+        replay = await journal.resume(sid)
+
+        assert replay is not None
+        assert replay.token_usage == 850
+        scheduler, _ = _make_scheduler(journal)
+        session = scheduler._restore_session(replay, _mail(), {})
+        assert session.token_usage == 850
 
     async def test_completed_log_marks_session_done(self, journal: SessionJournal) -> None:
         sid = "agent1-done"
@@ -751,6 +769,107 @@ class TestMaxIterationsDistillReply:
         executor.send_mail.assert_awaited_once()
         effect = executor.send_mail.await_args.args[0]
         assert effect.content == "想太久了，简单说。"
+
+
+class TestTokenBudget:
+    """Session token budget (ADR 0023): every stage LLM call's usage is
+    journaled (absolute total) and accumulated on the session; the
+    engine's second hard ceiling ends the session via the same
+    distillation path as max_iterations, with reason ``max_tokens``."""
+
+    async def test_stage_llm_usage_accumulates(self, tmp_path: Path) -> None:
+        mail = _mail()
+        # Round 1: usage missing entirely -> counts as zero, no event.
+        # Round 2: prompt+completion fallback (no total_tokens field).
+        # Round 3: total_tokens wins, and completes the session.
+        round1 = LLMResponse(content="working")
+        round2 = LLMResponse(
+            content="still working",
+            usage={"prompt_tokens": 100, "completion_tokens": 50},
+        )
+        round3 = LLMResponse(
+            content="done",
+            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            usage={"prompt_tokens": 600, "completion_tokens": 100, "total_tokens": 700},
+        )
+
+        async def tool_execute(name: str, args: dict) -> ToolResult:
+            return ToolResult(
+                success=True, data={"content": args["content"], "is_complete": True}
+            )
+
+        driver, journal, _, _ = _make_driver(
+            tmp_path, [round1, round2, round3], tool_execute=tool_execute
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert session.token_usage == 850
+        # Journaled values are the post-accumulation absolute totals; the
+        # usage-less first round produced no event at all.
+        token_events = [
+            json.loads(line)["value"]
+            for line in await _read_lines(session.id, journal)
+            if json.loads(line)["type"] == "tokens"
+        ]
+        assert token_events == [150, 850]
+        replay = await journal.resume(session.id)
+        assert replay is not None and replay.token_usage == 850
+
+    async def test_max_tokens_sends_distilled_reply(self, tmp_path: Path) -> None:
+        mail = _mail()
+        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens 1000")
+        driver, journal, executor, services = _make_driver(
+            tmp_path,
+            [LLMResponse(content="working", usage={"total_tokens": 1500})],
+            edn=edn,
+        )
+        services.distill = AsyncMock(
+            return_value=LLMResponse(content="已查到三份资料，但 token 预算用尽。")
+        )
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        # One round blew the budget; the next step's hard ceiling fired
+        # before any further LLM call.
+        assert services.think.await_count == 1
+        assert session.token_usage == 1500
+        assert await journal.end_reason(session.id) == "max_tokens"
+        executor.send_mail.assert_awaited_once()
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.to == ["user@tlon.internal"]
+        assert effect.in_reply_to == mail.id
+        assert effect.content == "已查到三份资料，但 token 预算用尽。"
+
+    async def test_max_tokens_distill_failure_falls_back(self, tmp_path: Path) -> None:
+        """A failed distillation falls back to the iteration-limit fixed
+        text — the token ceiling reuses that wording (ADR 0023)."""
+        mail = _mail()
+        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens 1000")
+        driver, journal, executor, services = _make_driver(
+            tmp_path,
+            [LLMResponse(content="working", usage={"total_tokens": 1500})],
+            edn=edn,
+        )
+        services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
+        session = AgentSession(
+            session_id=f"agent1-{mail.id}", trigger_content=mail.content
+        )
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "max_tokens"
+        executor.send_mail.assert_awaited_once()
+        assert executor.send_mail.await_args.args[0].content == "思考时间过长，请简化您的问题。"
 
 
 class TestConsecutiveErrorLimit:

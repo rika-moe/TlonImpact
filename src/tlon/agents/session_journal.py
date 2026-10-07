@@ -10,9 +10,9 @@ session by replaying the log.
 One event per line: ``{seq, ts, type, ...payload}`` — ``seq`` is a
 per-file increasing sequence number, ``ts`` an ISO 8601 timestamp. Event
 types: ``session/start``, ``context/append``, ``context/compact``,
-``scratch/update``, ``iteration``, ``errors``, ``llm/response``,
-``tool/dispatch``, ``tool/result``, ``tool/collect``, ``state``,
-``session/end``.
+``scratch/update``, ``iteration``, ``errors``, ``tokens``,
+``llm/response``, ``tool/dispatch``, ``tool/result``, ``tool/collect``,
+``state``, ``session/end``.
 
 Replay rules:
 
@@ -120,6 +120,7 @@ class SessionReplay:
     anchor_len: int = 0
     iteration: int = 0
     error_count: int = 0
+    token_usage: int = 0
     last_llm_response: LLMResponse | None = None
     all_tool_results: list[dict[str, Any]] = field(default_factory=list)
     loop_scratch: dict[str, Any] = field(default_factory=dict)
@@ -225,6 +226,7 @@ class SessionJournal:
         scratch: dict[str, Any] = {}
         iteration = 0
         error_count = 0
+        token_usage = 0
         last_response: LLMResponse | None = None
         state = SessionState.ACTIVE
         dispatched: dict[str, ToolCall] = {}  # dispatched, not yet collected (ordered)
@@ -262,6 +264,8 @@ class SessionJournal:
                 iteration = int(event.get("value", iteration))
             elif event_type == "errors":
                 error_count = int(event.get("value", error_count))
+            elif event_type == "tokens":
+                token_usage = int(event.get("value", token_usage))
             elif event_type == "llm/response":
                 raw = event.get("response")
                 last_response = LLMResponse.from_dict(raw) if raw else None
@@ -341,6 +345,7 @@ class SessionJournal:
             anchor_len=anchor_len,
             iteration=iteration,
             error_count=error_count,
+            token_usage=token_usage,
             last_llm_response=last_response,
             all_tool_results=all_tool_results,
             loop_scratch=scratch,

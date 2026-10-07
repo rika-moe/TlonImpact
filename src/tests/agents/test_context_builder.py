@@ -58,6 +58,7 @@ def _rule_with_sections(sections: str) -> MemberRule:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """.replace(
                 "SECTIONS", sections
@@ -170,6 +171,7 @@ def test_current_task_section_accepted() -> None:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
         )
@@ -188,6 +190,7 @@ def test_current_task_section_rejects_arguments() -> None:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
     spec = MemberSpec.from_edn(loads(rule_spec))
@@ -285,6 +288,7 @@ def test_thread_recap_section_accepted() -> None:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
         )
@@ -303,6 +307,7 @@ def test_thread_recap_section_rejects_arguments() -> None:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
     spec = MemberSpec.from_edn(loads(rule_spec))
@@ -485,6 +490,7 @@ def test_lessons_section_accepted() -> None:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
         )
@@ -505,6 +511,7 @@ def test_lessons_section_rejects_arguments() -> None:
                  :until (iteration-limit-reached?)
                  :max-iterations 1
                  :max-consecutive-errors 1
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
 """
         )

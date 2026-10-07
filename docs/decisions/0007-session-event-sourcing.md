@@ -23,12 +23,13 @@
 | `scratch/update` | updates | `_apply_outcome` |
 | `iteration` | value（绝对值） | `_apply_outcome` 的 advance_iteration；无 act 程序的引擎代推进 |
 | `errors` | value | `_apply_outcome` 的 record_error |
+| `tokens` | value（累加后绝对值，ADR 0023） | `_apply_outcome` 的 outcome.token_usage > 0 时 |
 | `llm/response` | response dict | `_apply_outcome` 的 outcome.response 非 None 时 |
 | `tool/dispatch` | tool_calls | `_apply_outcome` dispatch 分支，创建后台 task 前 |
 | `tool/result` | tool_call, result（每个工具一条） | `execute_one_tool` 拿到结果即写（在后台 task 内） |
 | `tool/collect` | tool_call_ids | `collect_session_results` / `resume_collect` 收割时 |
 | `state` | state 值 | mark_waiting / mark_active 经 `_apply_outcome` |
-| `session/end` | reason: complete / max_iterations / until / error / timeout | 各完成路径（until 的 detail 带 error_limit / iteration_limit） |
+| `session/end` | reason: complete / max_iterations / max_tokens / until / error / timeout | 各完成路径（until 的 detail 带 error_limit / iteration_limit） |
 
 ### 不变式：模型可见 ⇒ 已入日志
 
@@ -61,3 +62,4 @@ context 仅两个写入点（初始构建、`_apply_outcome`），都先 append 
 - **2026-08（ADR 0008）**：事件集新增 `context/compact`（kind, reason, tokens_before/after, 压缩后全量 context；重放时整体替换 context），上表未回填。
 - **2026-09（ADR 0017 阶段 4）**：`session/start` 的 payload 新增显式 `anchor_len` 字段（knowledge 段移出 anchor 后，重放无法再从 context 长度推导出锚界）；重放优先读显式字段，旧事件回退 `len(context)`。
 - **2026-09（ADR 0009/0017）**：「只在引擎层使用」的边界已放宽——journal 现有引擎外读者：MemoryManager 蒸馏触发（经 `SessionLogReader` Protocol 结构化注入，import-linter 约束不变）、context_builder 的 thread-recap、退休仪式。
+- **2026-10（ADR 0023）**：事件集新增 `tokens`（session 级 token 预算消耗，绝对值）；`session/end` reason 新增 `max_tokens`。上表已回填。

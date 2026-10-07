@@ -62,6 +62,12 @@ class StageOutcome:
     clear_errors: bool = False
     """Reset the session's consecutive error count to zero (think succeeded)."""
 
+    token_usage: int = 0
+    """Tokens consumed by this stage's LLM call (session budget, ADR 0023).
+
+    Zero = nothing to declare (no call happened, or the call failed
+    before producing a response)."""
+
     tool_results: list[tuple[ToolCall, ToolResult]] = field(default_factory=list)
     """Harvested tool results to record on the session (C2)."""
 

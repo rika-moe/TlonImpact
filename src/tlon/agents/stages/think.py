@@ -5,7 +5,7 @@ from typing import Any
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
-from tlon.base.llm_client import ContextWindowExceededError, LLMResponse
+from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, usage_total_tokens
 
 
 async def think_stage(
@@ -29,7 +29,9 @@ async def think_stage(
 
     A ContextWindowExceededError (ADR 0008) is NOT swallowed into the
     record_error fallback: it re-raises so the engine can force-compact
-    and retry the stage once before the fatal path takes over.
+    and retry the stage once before the fatal path takes over. A
+    successful call declares its token usage for the session budget
+    (ADR 0023); the failure path has no response, so nothing to declare.
     """
     try:
         response = await svc.think(
@@ -43,4 +45,8 @@ async def think_stage(
     except Exception as e:
         svc.logger.error("session_llm_error", session_id=session.id, error=str(e), exc_info=True)
         return StageOutcome(record_error=True, advance_iteration=True)
-    return StageOutcome(response=response, clear_errors=True)
+    return StageOutcome(
+        response=response,
+        clear_errors=True,
+        token_usage=usage_total_tokens(response.usage),
+    )

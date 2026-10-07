@@ -55,9 +55,10 @@
                           (critique {:if (completing?)})
                           (act {:if (or (not (completing?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
                  :max-iterations 3
                  :max-consecutive-errors 2
+                 :max-tokens 200000
                  :reflect {:enabled true :interval-minutes 10}}}
          {:name "boot"
           :on :boot
@@ -73,7 +74,7 @@
 - **`:loop`** 使它挂认知引擎：
   - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`lessons`/`skills`/`knowledge`/`current-task`/`mail-history N`/`thread-recap` 八种，见 dsl-reference §5.1）；段的排列按缓存友好原则——几乎不变的段靠前，每会话必变的段靠后；
   - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (completing?)})` 只在即将完成时评审待交回复，FAIL 时 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §5.2）；
-  - `:until` 停机条件 + `:max-iterations` 迭代上限（DSL 的停机性靠预算，不靠砍循环）；
+  - `:until` 停机条件 + `:max-iterations` 迭代上限 + `:max-tokens` token 预算（ADR 0023：两条引擎硬顶取或、先到先停；DSL 的停机性靠预算，不靠砍循环）；
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。
 - **`:on :boot` 规则**：带它的成员开机即启动；不带的按需唤醒（startup 模式由此派生，`agent.yaml` 不再控制）。
 
@@ -121,7 +122,7 @@
 ## 6. 校验与排错
 
 - **EDN 解析**：`behavior.tlon` 必须能被 `tlosure.edn` 的 `loads` 解析。最易踩的坑是 **map 缺闭合 `}`**——每条规则的 map 都得有自己的收口，`:loop` 的 map 闭合后还要再闭合规则 map（内置原型曾集体缺这一层——历史已修复，见 `design/prototypes.md` 已知问题；`edn` 裸解析能立刻暴露，spawn 到启动装配才暴露的是更晚的坑）。写完先本地解析验证（见下）。
-- **schema 必填项**：`:loop` 里 `:until`、`:max-iterations`、`:max-consecutive-errors`、`:reflect`（`enabled` + `interval-minutes`）都是必填，缺一个 `validate_member_spec` 直接拒。
+- **schema 必填项**：`:loop` 里 `:until`、`:max-iterations`、`:max-consecutive-errors`、`:max-tokens`、`:reflect`（`enabled` + `interval-minutes`）都是必填，缺一个 `validate_member_spec` 直接拒。
 - **模板占位符**：带 `${var}` 的文件**不是**合法 EDN（`$` 会让裸解析报错），这是正常现象——模板只在渲染后才是 spec。用 [agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 做结构校验（把占位符替换成 stand-in 后试解析）。
 - **门控忘写**：`respond` 规则没有 `:when` 门控的话，系统里每封邮件都会唤醒这个成员。
 - **语法对照**：builtin/stage/section 完整清单与常见加载失败行为，见 `reference/dsl-reference.md` §4–§9。
@@ -147,7 +148,7 @@ print('OK', any(rule.loop is not None for rule in spec.rules))
 - [ ] 目录在 `~/.tlon/prototypes/{name}/`，有 `behavior.tlon`（判定标准）；
 - [ ] `prototype.tlon` 含 `:name`（缺省兜底目录名）、`:display-name`、`:description`；
 - [ ] `behavior.tlon` 是合法 EDN，能 `loads` + `validate_member_spec`；
-- [ ] 带 `:loop` 的规则写全了 `:until` + 迭代上限 + `:reflect`；无 `:loop` 的规则纯 `:actions`；
+- [ ] 带 `:loop` 的规则写全了 `:until` + 迭代上限 + `:max-tokens` + `:reflect`；无 `:loop` 的规则纯 `:actions`；
 - [ ] 每个 `respond` 规则都写了 `:when` 门控；
 - [ ] 参数化原型：`:parameters` 声明与 `${var}` 引用闭合，参数类型只用 `:string` / `:string-list`；
 - [ ] LLM 创作走 staging + 人类审批，不直接写 trusted 库。

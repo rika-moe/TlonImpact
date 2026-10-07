@@ -320,6 +320,7 @@ class SessionScheduler:
         session.anchor_len = replay.anchor_len
         session._iteration = replay.iteration
         session._error_count = replay.error_count
+        session._token_usage = replay.token_usage
         session._last_llm_response = replay.last_llm_response
         session._all_tool_results = replay.all_tool_results
         session.loop_scratch = replay.loop_scratch

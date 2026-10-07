@@ -93,6 +93,7 @@ COGNITIVE_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -144,6 +145,7 @@ COGNITIVE_DEFN_ACTIONS = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(defn notify [text] (emit (str "done: " text) ["sink@tlon.internal"]))
                     (notify result)]}]}
@@ -159,6 +161,7 @@ COGNITIVE_LOOP_ACTIONS = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(while [i 0] (< i 3) (emit "done" ["sink@tlon.internal"]) (recur (inc i)))]}]}
 """
@@ -174,6 +177,7 @@ COGNITIVE_EXHAUSTED = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(while [i 0] (< i 1000) (emit "never" ["sink@tlon.internal"]) (recur (inc i)))]}]}
 """
@@ -188,6 +192,7 @@ COGNITIVE_WITH_ACTIONS = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}
           :actions [(emit "done" ["sink@tlon.internal"])]}]}
 """
@@ -209,6 +214,7 @@ MIXED_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 
@@ -1273,6 +1279,7 @@ COGNITIVE_REFLECT_EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled true :interval-minutes 0}}}]}
 """
 

@@ -98,7 +98,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver` 把 loop 规则（`MemberLoop`）解释为逐步执行。关键边界：
 
-- **`max_iterations` 是引擎的硬上限**，任何 `:until` 表达式都无法越过。终止表达式求值失败时回落到引擎默认检查（迭代数/错误数），保证循环必然停机。这是"DSL 必须可停机"这条愿景承诺在循环层的工程兜底：程序可以写错，引擎不能不停。
+- **双停机线是引擎的硬上限**（ADR 0023）：`max_iterations`（迭代轮数）与 `max_tokens`（session 级累计 stage LLM token 预算）任一到顶即终止，先到先停，任何 `:until` 表达式都无法越过。token 计量走 effects-as-data——stage 在 `StageOutcome.token_usage` 声明自己那次 LLM 调用的用量，引擎先落 `tokens` 事件（累加后绝对值）再改内存；compaction 摘要与终止蒸馏调用不计入。终止表达式求值失败时回落到引擎默认检查（迭代数/错误数/token 用量），保证循环必然停机。这是"DSL 必须可停机"这条愿景承诺在循环层的工程兜底：程序可以写错，引擎不能不停。
 - **stage 向量是白名单组合**。跑哪些 stage、什么顺序，由 spec 的 `LoopSpec.stages` 决定；每个 stage 可选带 `:if` 条件（纯谓词，求值失败一律跳过——安全默认是"不跑"）。DSL 只能选择与排序既有积木，不能发明新 stage。
 - **响应链由引擎串接**。think 产出本轮 LLM 响应，act 消费它，辅助 stage（plan / critique / revise）原样透传。
 - **终止判定只在轮首发生**。`:until` 在每轮 think 之前求值一次，不在 stage 向量中途检查——循环要么完整地跑完一轮声明的 stage，要么整轮不开始，不存在"跑到一半的轮"这种需要定义语义的中间态。think 失败也只记错误并提前结束本轮，留给下一轮的 until 走统一终止路径收口。
@@ -141,7 +141,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 这条纯度不是约定而是强制：[scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 用 AST 静态禁止 stage 模块调用 session 的任何 mutator 方法、禁止对 session 属性赋值，纳入验证质量门，违规即构建失败。引擎与策略的边界因此是**机器可检查**的——这正是 DSL 白名单组合 stage 的安全地基，完整论证见 [docs/decisions/0004-stage-purity.md](../decisions/0004-stage-purity.md)。
 
-为什么值得付出这层间接：组合安全的前提是积木不逾矩。stage 在类型层面拿不到可变的 session 操作面，在检查层面被禁掉直写，于是 spec 作者（包括未来的 LLM 作者）写出的任何 stage 向量，最坏结果是跑出一个 no-op 或被 `max_iterations` 截停，不可能破坏引擎不变量。测试也随之简化：验证一个 stage 只需构造 session 与 fake services、断言返回的 Outcome，不需要 mock 总线或邮箱。
+为什么值得付出这层间接：组合安全的前提是积木不逾矩。stage 在类型层面拿不到可变的 session 操作面，在检查层面被禁掉直写，于是 spec 作者（包括未来的 LLM 作者）写出的任何 stage 向量，最坏结果是跑出一个 no-op 或被引擎硬顶（迭代/token，ADR 0023）截停，不可能破坏引擎不变量。测试也随之简化：验证一个 stage 只需构造 session 与 fake services、断言返回的 Outcome，不需要 mock 总线或邮箱。
 
 ## 无反向引用：能力装配原则
 

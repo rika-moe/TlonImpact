@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tlon.base.config import LLMConfig
-from tlon.base.llm_client import LLMClient
+from tlon.base.llm_client import LLMClient, usage_total_tokens
 
 
 def _fake_litellm_response() -> SimpleNamespace:
@@ -125,6 +125,23 @@ class TestPreflight:
 
         with pytest.raises(ValueError, match="provider/model"):
             await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
+
+
+class TestUsageTotalTokens:
+    """``usage_total_tokens`` (ADR 0023): the session-budget metering
+    rule — total_tokens wins, prompt+completion is the fallback, None
+    counts as zero."""
+
+    def test_total_tokens_wins(self) -> None:
+        usage = {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 42}
+        assert usage_total_tokens(usage) == 42
+
+    def test_prompt_plus_completion_fallback(self) -> None:
+        assert usage_total_tokens({"prompt_tokens": 100, "completion_tokens": 50}) == 150
+
+    def test_none_and_empty_count_zero(self) -> None:
+        assert usage_total_tokens(None) == 0
+        assert usage_total_tokens({}) == 0
 
 
 class TestCacheBreakpoints:

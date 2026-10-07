@@ -35,6 +35,7 @@ EDN = """\
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
+                 :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 5}}}]}
 """
 

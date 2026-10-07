@@ -138,6 +138,7 @@ class LoopStateEnv(TypedDict):
 
     iteration: int
     error_count: int
+    token_usage: int
 
 
 class LoopLimitsEnv(TypedDict):
@@ -145,6 +146,7 @@ class LoopLimitsEnv(TypedDict):
 
     max_iterations: int
     max_consecutive_errors: int
+    max_tokens: int
 
 
 class LoopEnv(TypedDict):
@@ -202,16 +204,23 @@ def loop_until_env(
     name: str,
     iteration: int,
     error_count: int,
+    token_usage: int,
     max_iterations: int,
     max_consecutive_errors: int,
+    max_tokens: int,
 ) -> LoopEnv:
     """The ``:until`` env (``loop_driver`` delegates here)."""
     return {
         "self": self_env(member_id, name),
-        "state": {"iteration": iteration, "error_count": error_count},
+        "state": {
+            "iteration": iteration,
+            "error_count": error_count,
+            "token_usage": token_usage,
+        },
         "limits": {
             "max_iterations": max_iterations,
             "max_consecutive_errors": max_consecutive_errors,
+            "max_tokens": max_tokens,
         },
     }
 
@@ -220,12 +229,17 @@ def stage_cond_env(
     *,
     iteration: int,
     error_count: int,
+    token_usage: int,
     scratch: dict[str, Any],
     completing: bool,
 ) -> StageCondEnv:
     """The stage ``:if`` env (``loop_driver`` delegates here)."""
     return {
-        "state": {"iteration": iteration, "error_count": error_count},
+        "state": {
+            "iteration": iteration,
+            "error_count": error_count,
+            "token_usage": token_usage,
+        },
         "scratch": scratch,
         "round": {"completing": completing},
     }
@@ -357,11 +371,21 @@ def _builtin_error_limit_reached(env: dict[str, Any]) -> bool:
     return error_count >= max_errors
 
 
+def _builtin_token_limit_reached(env: dict[str, Any]) -> bool:
+    """``state.token_usage`` (session-cumulative stage LLM tokens, ADR 0023) has reached ``limits.max_tokens``."""
+    token_usage = _loop_state_int(env, "state", "token_usage")
+    max_tokens = _loop_state_int(env, "limits", "max_tokens")
+    if token_usage is None or max_tokens is None:
+        return False
+    return token_usage >= max_tokens
+
+
 #: Loop termination predicates. Pure only; evaluation is side-effect free
 #: by construction. Missing keys safely yield False, never raise.
 LOOP_BUILTINS: dict[str, Builtin] = {
     "iteration-limit-reached?": Builtin(_builtin_iteration_limit_reached, pure=True),
     "error-limit-reached?": Builtin(_builtin_error_limit_reached, pure=True),
+    "token-limit-reached?": Builtin(_builtin_token_limit_reached, pure=True),
     "=": Builtin(builtin_eq, pure=True),
     "not": Builtin(builtin_not, pure=True),
 }

@@ -6,7 +6,7 @@ from typing import Any
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
-from tlon.base.llm_client import ContextWindowExceededError, LLMResponse
+from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, usage_total_tokens
 
 
 async def critique_stage(
@@ -85,10 +85,14 @@ async def critique_stage(
             stage="critique",
             raw=text[:200],
         )
-        return StageOutcome(response=response)
+        return StageOutcome(
+            response=response,
+            token_usage=usage_total_tokens(verdict_response.usage),
+        )
     return StageOutcome(
         response=response,
         scratch_updates={"critique": {"passed": passed, "feedback": feedback}},
+        token_usage=usage_total_tokens(verdict_response.usage),
     )
 
 

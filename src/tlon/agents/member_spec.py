@@ -99,7 +99,10 @@ class MemberLoop:
 
     ``context_sections`` is the section vector the engine assembles into the
     LLM context; ``stages`` the stage vector and ``until`` the termination
-    expression of the engine-executed loop. ``reflect`` is the
+    expression of the engine-executed loop. ``max_iterations`` and
+    ``max_tokens`` are the engine's two hard ceilings (ADR 0023): the
+    iteration count and the session-cumulative stage-LLM token budget,
+    whichever is exhausted first ends the session. ``reflect`` is the
     session-completion reflection setting, folded here from the
     legacy ``OnCompleteSpec``. ``fuel`` (phase D) is the self-declared
     budget of the iron-law revision (docs/design/dsl-agents.md): it caps
@@ -116,6 +119,7 @@ class MemberLoop:
     until: Form
     max_iterations: int
     max_consecutive_errors: int
+    max_tokens: int
     reflect: ReflectSpec
     fuel: int | None = None
     replies: dict[str, str] = field(default_factory=dict)
@@ -130,6 +134,7 @@ class MemberLoop:
             "until": dumps(self.until),
             "max_iterations": self.max_iterations,
             "max_consecutive_errors": self.max_consecutive_errors,
+            "max_tokens": self.max_tokens,
             "reflect": {
                 "enabled": self.reflect.enabled,
                 "interval_minutes": self.reflect.interval_minutes,
@@ -146,6 +151,7 @@ class MemberLoop:
             Keyword("until"): self.until,
             Keyword("max-iterations"): self.max_iterations,
             Keyword("max-consecutive-errors"): self.max_consecutive_errors,
+            Keyword("max-tokens"): self.max_tokens,
             Keyword("reflect"): {
                 Keyword("enabled"): self.reflect.enabled,
                 Keyword("interval-minutes"): self.reflect.interval_minutes,
@@ -675,6 +681,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
             "until",
             "max_iterations",
             "max_consecutive_errors",
+            "max_tokens",
             "reflect",
             "fuel",
             "replies",
@@ -860,6 +867,12 @@ def _loop_from(value: Any, rule_name: str) -> "MemberLoop | None":
             value,
             "max_consecutive_errors",
             f"rule {rule_name!r}: :loop/:max-consecutive-errors",
+            kind=int,
+        ),
+        max_tokens=_read(
+            value,
+            "max_tokens",
+            f"rule {rule_name!r}: :loop/:max-tokens",
             kind=int,
         ),
         reflect=_reflect_from(

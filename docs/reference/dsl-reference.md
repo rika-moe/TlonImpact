@@ -167,8 +167,8 @@
 嵌套类型的字段：
 
 - `SelfEnv`：`id: str`、`name: str`、`address: str`
-- `LoopStateEnv`：`iteration: int`、`error_count: int`
-- `LoopLimitsEnv`：`max_iterations: int`、`max_consecutive_errors: int`
+- `LoopStateEnv`：`iteration: int`、`error_count: int`、`token_usage: int`
+- `LoopLimitsEnv`：`max_iterations: int`、`max_consecutive_errors: int`、`max_tokens: int`
 - `RoundEnv`：`completing: bool`
 <!-- END GENERATED: bridge-env-contracts -->
 
@@ -198,15 +198,16 @@
 
 ### 4.2 `LOOP_BUILTINS`（loop `:until` 谓词）
 
-环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n}`（`error_count` 是**连续** think 失败数——think 成功一次即清零，不是会话累计值），`limits` = `{:max_iterations n :max_consecutive_errors n}`。键缺失安全返回 `false`，不抛错。
+环境 `{self, state, limits}`：`state` = `{:iteration n :error_count n :token_usage n}`（`error_count` 是**连续** think 失败数——think 成功一次即清零，不是会话累计值；`token_usage` 是 session 级累计 stage LLM token 消耗，ADR 0023），`limits` = `{:max_iterations n :max_consecutive_errors n :max_tokens n}`。键缺失安全返回 `false`，不抛错。
 
 <!-- BEGIN GENERATED: dsl-builtins-loop -->
-`LOOP_BUILTINS`（4 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`LOOP_BUILTINS`（5 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
 | `iteration-limit-reached?` | 是 | ``state.iteration`` has reached ``limits.max_iterations``. |
 | `error-limit-reached?` | 是 | ``state.error_count`` (consecutive think failures; a successful think resets it to 0) has reached ``limits.max_consecutive_errors``. |
+| `token-limit-reached?` | 是 | ``state.token_usage`` (session-cumulative stage LLM tokens, ADR 0023) has reached ``limits.max_tokens``. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-loop -->
@@ -314,9 +315,10 @@
                 (critique {:if (completing?)})
                 (act {:if (or (not (completing?)) (not (critique-failed?)))})
                 (revise {:if (critique-failed?)})]
-       :until (or (iteration-limit-reached?) (error-limit-reached?))
-       :max-iterations 25
+       :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
+       :max-iterations 300
        :max-consecutive-errors 3
+       :max-tokens 10000000
        :reflect {:enabled true :interval-minutes 10}
        :fuel 1000                   ; 可选
        :replies {:iteration-limit "想太久了，简单说。"   ; 可选：终止回信措辞覆盖
@@ -331,6 +333,7 @@
 | `:until` | 表达式 form | 终止谓词，每步 pre-think 求值 |
 | `:max-iterations` | int | 迭代硬顶（引擎无条件执行，`:until` 无法覆盖） |
 | `:max-consecutive-errors` | int | 连续错误上限（think 成功一次即清零重计；散布的错误不累计） |
+| `:max-tokens` | int | session 级累计 token 预算硬顶（ADR 0023；引擎无条件执行，与 `:max-iterations` 取或、先到先停；计量口径见 5.3 节） |
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
 | `:replies` | map | 可选；三条面向用户的终止回信措辞覆盖，键只允许 `:iteration-limit` / `:error` / `:timeout`，值必须是非空字符串（未知键、非字符串、空串均加载拒载）。纯数据原文使用——不求值、不渲染模板；未声明的键回落引擎内置文案（`loop_driver.py` 的三条常量） |
@@ -370,10 +373,12 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 每一步的顺序：
 
-1. **迭代硬顶**：`iteration ≥ :max-iterations` 时直接回复触发邮件并结束会话——在任何 `:until` 求值之前。回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖）。
-2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。
+1. **引擎硬顶（双停机线，ADR 0023）**：`iteration ≥ :max-iterations` 或 `token_usage ≥ :max-tokens` 任一到顶即直接回复触发邮件并结束会话（先到先停，`session/end` reason 分别为 `max_iterations` / `max_tokens`）——在任何 `:until` 求值之前。回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖，token 到顶复用同一措辞）。
+2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误/token 上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。
 3. 按序解释 `:stages`；`think` 失败则本步提前返回。
 4. 若 stage 向量不含 `act`（或本轮 act 未推进迭代），引擎自行推进迭代计数，保证硬顶始终生效。
+
+**token 计量口径（ADR 0023）**：session 内每次经 `StageServices.think` 的 stage LLM 调用（think / critique / plan）计入 `token_usage`——取 `response.usage.total_tokens`，缺失回落 `prompt_tokens + completion_tokens`，无 usage 计 0。stage 在 `StageOutcome.token_usage` 声明用量，引擎先 journal（`tokens` 事件，累加后绝对值）再改内存。compaction 摘要调用与终止蒸馏调用不计入。
 
 正常的会话完成不经过 `:until`：由 `act` 收集到 `sendEmail is_complete=true` 事件驱动。`:until` 只是兜底。
 
@@ -423,10 +428,12 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
                           (act {:if (or (not (completing?))          ; 做：评审 FAIL 时拦截本轮完成
                                         (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]         ; FAIL 时把反馈喂回，下轮修正后重审
-                 :until (or (iteration-limit-reached?)          ; 兜底终止：迭代或错误到顶
-                            (error-limit-reached?))
-                 :max-iterations 25                             ; 引擎硬顶（先于 :until 生效）
+                 :until (or (iteration-limit-reached?)          ; 兜底终止：迭代/错误/token 到顶
+                            (error-limit-reached?)
+                            (token-limit-reached?))
+                 :max-iterations 300                            ; 引擎硬顶（先于 :until 生效）
                  :max-consecutive-errors 3
+                 :max-tokens 10000000                           ; token 预算硬顶（ADR 0023，与迭代取或）
                  :reflect {:enabled true :interval-minutes 10}}  ; 每 10 分钟级后台记忆审计
          }                                                      ; ← 注意：此处必须有 } 闭合规则 map
          {:name "boot"
