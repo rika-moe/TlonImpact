@@ -292,7 +292,11 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
         mail_delivery=mail_delivery,
         github_adapter=github_adapter,
         members=MembersFacade(agent_registry=agent_registry, tlon_paths=runtime_paths),
-        mail=MailFacade(adapter_manager=adapter_manager, tlon_paths=runtime_paths),
+        mail=MailFacade(
+            adapter_manager=adapter_manager,
+            agent_registry=agent_registry,
+            tlon_paths=runtime_paths,
+        ),
         prototypes=PrototypesFacade(tlon_paths=runtime_paths),
         observability=ObservabilityFacade(
             trace_store=trace_store,

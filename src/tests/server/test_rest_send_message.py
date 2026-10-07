@@ -16,6 +16,7 @@ import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -82,7 +83,9 @@ async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManage
 def handler(manager: AdapterManager, tmp_path: Path) -> RESTAPIHandler:
     return RESTAPIHandler(
         None,
-        mail=MailFacade(adapter_manager=manager, tlon_paths=TlonPaths(home=tmp_path)),
+        mail=MailFacade(
+            adapter_manager=manager, agent_registry=MagicMock(), tlon_paths=TlonPaths(home=tmp_path)
+        ),
     )
 
 

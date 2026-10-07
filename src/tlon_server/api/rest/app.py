@@ -74,6 +74,7 @@ class RESTAPIHandler(
     - GET /health - Health check
     - GET /config - Server configuration
     - GET /inbox - Member inbox (mail model)
+    - GET /members/{member_id}/mail - Any member's mailbox, read-only observer view
     - POST /messages - Send a mail as a human member (protocol v2, PR-1)
     - POST /sessions - Establish a client session (protocol v2, PR-2)
     - PATCH /sessions/{id} - Update session mode/filters (protocol v2, PR-2)
@@ -120,7 +121,7 @@ class RESTAPIHandler(
         Args:
             client_gateway: The ClientGateway instance
             members: Members facade (agent status/config, member CRUD)
-            mail: Mail facade (GET /inbox, POST /messages)
+            mail: Mail facade (GET /inbox, GET /members/{member_id}/mail, POST /messages)
             prototypes: Prototypes facade (/admin/prototypes/*)
             observability: Observability facade (/traces, /metrics, logs)
             configs: Config facade (/admin/config/agents listing, agent.yaml)
@@ -167,6 +168,7 @@ class RESTAPIHandler(
         app.router.add_get("/health", self.handle_health)
         app.router.add_get("/config", self.handle_config)
         app.router.add_get("/inbox", self.handle_inbox)
+        app.router.add_get("/members/{member_id}/mail", self.handle_member_mail)
         app.router.add_post("/messages", self.handle_send_message)
         app.router.add_get("/agents", self.handle_list_agents)
         app.router.add_get("/agents/{agent_id}", self.handle_get_agent)
@@ -451,7 +453,7 @@ class RESTServer:
         Args:
             client_gateway: The ClientGateway instance
             members: Members facade (agent status/config, member CRUD)
-            mail: Mail facade (GET /inbox, POST /messages)
+            mail: Mail facade (GET /inbox, GET /members/{member_id}/mail, POST /messages)
             prototypes: Prototypes facade (/admin/prototypes/*)
             observability: Observability facade (/traces, /metrics, logs)
             configs: Config facade (/admin/config/agents listing, agent.yaml)
