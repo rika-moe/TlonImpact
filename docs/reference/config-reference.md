@@ -218,6 +218,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   ├── config/
 │   │   ├── agent.yaml                # 本 agent 配置
 │   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 人格（创建时播种，之后成员自主数据 ADR 0024，非基因型）
+│   │   ├── CONTACTS.md               # 联系簿（成员自写、私有，缺省即空；ADR 0024 / EPIC #101）
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
 │   ├── memory/
 │   │   ├── config.json               # 记忆调参

@@ -89,7 +89,7 @@
 | --- | --- |
 | 人格自编辑工具 `updatePersona`（自写 IDENTITY/SOUL，私有） | `src/tlon/tools/agents/update_persona.py`（#100，已落地） |
 | 人格变更留痕（ledger 事件） | `src/tlon/base/ledger.py`（`persona_update` 记录）+ `src/tlon/tools/agents/update_persona.py` 写侧（#100，已落地） |
-| 联系簿一等文件 `CONTACTS.md` 路径与缺省 | `src/tlon/base/paths.py`（#101，待落地） |
+| 联系簿一等文件 `CONTACTS.md` 路径与缺省 | `src/tlon/base/paths.py` `agent_contacts_file`（#101，已落地；缺省语义：文件不存在即空联系簿，不 eager 创建） |
 | 联系簿读写工具 `readContacts` / `updateContact`（私有） | `src/tlon/tools/`（#101，待落地） |
 | prompt 注入：「联系簿」段取代「团队成员」段 | `src/tlon/agents/context_builder.py`、`prompt_builder.py`（#101，待落地） |
 | all@ 展开删除、未知地址退信 | `src/tlon/organization/mail/delivery.py`（#102，待落地） |

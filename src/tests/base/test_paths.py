@@ -28,6 +28,7 @@ def _call_every_accessor(paths: TlonPaths, agent_id: str = "dev-001") -> None:
     paths.agent_identity_file(agent_id)
     paths.agent_soul_file(agent_id)
     paths.agent_rules_file(agent_id)
+    paths.agent_contacts_file(agent_id)
     paths.agent_behavior_file(agent_id)
     paths.agent_lessons_file(agent_id)
     paths.skills_dir()
@@ -55,3 +56,16 @@ def test_member_mail_dir_maps_human_id(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
     assert paths.member_mail_dir("human:x") == tmp_path / "human-x" / "mail"
     assert paths.member_mail_dir("dev-001") == tmp_path / "dev-001" / "mail"
+
+
+def test_agent_contacts_file_default_is_empty_book(tmp_path: Path) -> None:
+    """CONTACTS.md default semantics (ADR 0024, docs/design/identity.md):
+    an absent file IS an empty contact book. The helper only resolves the
+    path — nothing is seeded eagerly; the read side treats a missing file
+    as empty and the write side creates it (with parents) on first write."""
+    paths = TlonPaths(home=tmp_path)
+    contacts = paths.agent_contacts_file("dev-001")
+    assert contacts == tmp_path / "dev-001" / "config" / "CONTACTS.md"
+    # No eager creation: resolving the path touches nothing.
+    assert not contacts.exists()
+    assert not contacts.parent.exists()

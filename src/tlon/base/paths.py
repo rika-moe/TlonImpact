@@ -211,6 +211,19 @@ class TlonPaths:
         """~/.tlon/{agent_id}/config/RULES.md"""
         return self.agent_config_dir(agent_id) / "RULES.md"
 
+    def agent_contacts_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/config/CONTACTS.md — the member's private
+        contact book (ADR 0024, docs/design/identity.md).
+
+        Self-written and private: a member reads/writes only its own
+        book (entries: 名字 / 地址 / 我对 ta 的描述). Default semantics:
+        an absent file IS an empty contact book — the read side treats a
+        missing file as empty; the write side creates it (with parents)
+        on first write. Nothing seeds it eagerly, same as the persona
+        files.
+        """
+        return self.agent_config_dir(agent_id) / "CONTACTS.md"
+
     def agent_behavior_file(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/config/behavior.tlon (unified rules-form spec).
 
