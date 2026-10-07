@@ -99,6 +99,40 @@ class SessionScheduler:
             return False
         return True
 
+    def enqueue_merging_thread(
+        self, mail: Mail, carrier: dict[str, str | None]
+    ) -> tuple[str, Mail | None]:
+        """Enqueue a mail, merging into a pending same-thread sibling (ADR 0026).
+
+        A thread with mail already waiting in the queue does not get a
+        second session: the new mail replaces the pending one in place —
+        the latest mail represents the thread, matching the boot scan's
+        ``_merged_thread_ids`` — and the displaced mail goes back to the
+        caller for read-marking (its content is covered by the session's
+        mail-history context). The replacement keeps the queue slot (the
+        FIFO position belongs to the burst, not to the individual mail),
+        so a full queue still merges — one out, one in — and only a mail
+        of a *new* thread can be dropped. All synchronous, no await: the
+        scan-and-replace is atomic against the event loop.
+
+        Returns:
+            ("queued", None) when enqueued as a new pending trigger;
+            ("merged", displaced) when a pending same-thread mail was
+            replaced; ("dropped", None) when the bounded queue is full
+            (the caller logs the drop — same contract as :meth:`enqueue`).
+        """
+        # The queue's item deque is not in typeshed; the scheduler owns
+        # the queue, and the in-place replacement (one out, one in)
+        # keeps qsize/unfinished-tasks accounting exact.
+        pending = self._mail_queue._queue  # type: ignore[attr-defined]
+        for index, (queued_mail, _carrier) in enumerate(pending):
+            if queued_mail.thread_id == mail.thread_id:
+                pending[index] = (mail, carrier)
+                return "merged", queued_mail
+        if self.enqueue(mail, carrier):
+            return "queued", None
+        return "dropped", None
+
     def start(self) -> None:
         """Start the main-loop worker task."""
         self._worker_running = True

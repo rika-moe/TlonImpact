@@ -1092,6 +1092,122 @@ class TestBootScanThrottle:
         await member.shutdown()
 
 
+class TestRuntimeThreadMerge:
+    """Runtime same-thread merging (ADR 0026): the live delivery path
+    merges like the boot scan.
+
+    A delivered mail whose thread already has a pending (enqueued, not
+    yet admitted) mail replaces it as the thread's representative — the
+    displaced sibling is marked read now, no second session is queued.
+    Merging is a replacement, not an addition: a full bounded queue still
+    merges same-thread mail and only drops mail of a *new* thread. The
+    scheduler is never started here; the tests drive ``_on_event`` and
+    the queue directly, the same way TestBootScanThrottle does.
+    """
+
+    @staticmethod
+    def _thread_mails(member: MemberRuntime, count: int) -> list[Mail]:
+        """A chain of ``count`` replies on one thread, latest last."""
+        root = Mail.create(
+            from_address="alice@tlon.internal", content="turn 0", to=[member.address]
+        )
+        mails = [root]
+        for i in range(1, count):
+            mails.append(
+                Mail.create(
+                    from_address="alice@tlon.internal",
+                    content=f"turn {i}",
+                    to=[member.address],
+                    in_reply_to=mails[-1].id,
+                    thread_id=root.thread_id,
+                )
+            )
+        return mails
+
+    async def test_same_thread_pending_mail_replaced_by_latest(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-m1", COGNITIVE_EDN, bus, mailbox)
+        scheduler = member._scheduler
+        assert scheduler is not None
+        first, second = self._thread_mails(member, 2)
+
+        assert scheduler.enqueue_merging_thread(first, {}) == ("queued", None)
+        result, displaced = scheduler.enqueue_merging_thread(second, {})
+
+        assert result == "merged"
+        assert displaced is not None and displaced.id == first.id
+        assert [mail.id for mail, _ in scheduler._mail_queue._queue] == [second.id]
+
+    async def test_different_threads_do_not_merge(self, bus, mail_dir):
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-m2", COGNITIVE_EDN, bus, mailbox)
+        scheduler = member._scheduler
+        assert scheduler is not None
+        first, second = self._thread_mails(member, 2)
+        other = Mail.create(
+            from_address="alice@tlon.internal", content="separate", to=[member.address]
+        )
+
+        assert scheduler.enqueue_merging_thread(first, {}) == ("queued", None)
+        assert scheduler.enqueue_merging_thread(other, {}) == ("queued", None)
+        result, _displaced = scheduler.enqueue_merging_thread(second, {})
+
+        assert result == "merged"
+        # The replacement keeps the burst's FIFO slot; the other thread
+        # is untouched.
+        assert [mail.id for mail, _ in scheduler._mail_queue._queue] == [second.id, other.id]
+
+    async def test_full_queue_still_merges_same_thread(self, bus, mail_dir):
+        """A full queue drops only a *new* thread; merging is a
+        replacement (one out, one in), so it succeeds regardless."""
+        mailbox = Mailbox(mail_dir)
+        member = TestBootScanThrottle._make_throttled_member(
+            "thinker-m3", bus, mailbox, queue_size=1
+        )
+        scheduler = member._scheduler
+        assert scheduler is not None
+        first, second = self._thread_mails(member, 2)
+        new_thread = Mail.create(
+            from_address="alice@tlon.internal", content="new thread", to=[member.address]
+        )
+
+        assert scheduler.enqueue_merging_thread(first, {}) == ("queued", None)
+        assert scheduler.enqueue_merging_thread(new_thread, {}) == ("dropped", None)
+        result, displaced = scheduler.enqueue_merging_thread(second, {})
+
+        assert result == "merged"
+        assert displaced is not None and displaced.id == first.id
+        assert [mail.id for mail, _ in scheduler._mail_queue._queue] == [second.id]
+
+    async def test_two_same_thread_deliveries_one_pending_session(self, bus, mail_dir):
+        """End to end on the live path: two MAIL_DELIVERED of one thread
+        leave one pending session trigger; the displaced mail is marked
+        read and logged."""
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-m4", COGNITIVE_EDN, bus, mailbox)
+        first, second = self._thread_mails(member, 2)
+        for mail in (first, second):
+            await mailbox.append_inbox(mail)
+
+        with patch("tlon.agents.member_runtime.logger") as mock_logger:
+            await member._on_event(_deliver(first, member.member_id))
+            await member._on_event(_deliver(second, member.member_id))
+
+        merged_events = [
+            call.kwargs
+            for call in mock_logger.info.call_args_list
+            if call.args[0] == "mail_merged"
+        ]
+        assert len(merged_events) == 1
+        assert merged_events[0]["merged_mail_id"] == first.id
+        assert merged_events[0]["representative_mail_id"] == second.id
+        assert merged_events[0]["thread_id"] == first.thread_id
+        # One pending trigger (the latest mail); the displaced one is
+        # read, the representative's read defers to session completion.
+        assert [mail.id for mail in TestBootScanThrottle._drain_queue(member)] == [second.id]
+        assert [m.id for m in await mailbox.unread()] == [second.id]
+
+
 class TestPeriodicRescan:
     """The one background rescan task also sweeps periodically
     (docs/design/runtime.md).
