@@ -102,7 +102,6 @@ ADAM_SPEC_EDN = r"""{:version 1
                                "运行时名册可用 listAgents 工具查看。\n\n"
                                "通信惯例：\n"
                                "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
-                               "- 要广播给全体成员，写给 all@tlon.internal。\n"
                                "- 有事找守护者，写信到 adam@tlon.internal。\n")
                           [(str (get event :agent_id) "@tlon.internal")])]}
          {:name "guardian-inbox"

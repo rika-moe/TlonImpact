@@ -11,7 +11,8 @@ class SendEmailTool(Tool):
     This is the unified mail outlet for agents (docs/design/mail.md).
     Every recipient address lives in the ``tlon.internal`` domain:
     ``<agent-id>@tlon.internal`` for agents, ``<username>@tlon.internal``
-    for humans, and ``all@tlon.internal`` for the whole Congress.
+    for humans. There are no group addresses (ADR 0024): one-to-many
+    communication lists every recipient in ``to`` / ``cc``.
 
     Use ``is_complete`` to control whether the thinking loop terminates:
 
@@ -47,7 +48,7 @@ class SendEmailTool(Tool):
             description=(
                 "发送邮件。这是 Agent 唯一的邮件出口。\n"
                 "- to：收件人地址列表（必填），如 'gu-yanxi@tlon.internal'；"
-                "广播用 'all@tlon.internal'。\n"
+                "多人就把每个地址逐个列进 to 或 cc（不存在组地址）。\n"
                 "- is_complete=false：发送中间进度/阶段性发现，发送后 Agent 继续思考。\n"
                 "- is_complete=true：发送最终回复，发送后结束本轮思考。\n"
                 "注意：当 is_complete=true 时，本轮只能调用 sendEmail，不能同时调用其他工具。"

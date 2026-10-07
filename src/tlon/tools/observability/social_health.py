@@ -27,7 +27,7 @@ class GetSocialHealthTool(Tool):
             description=(
                 "查询全社会的孤儿邮件清单（只读）：当前有哪些发出多天仍无回复的"
                 "邮件线程（orphan = 发出 orphan_mail_days 天无人回复的线程根邮件，"
-                "广播与自己的跟帖不算回复）。\n"
+                "自己的跟帖不算回复）。\n"
                 "返回 scanned_members（扫描的成员数）、orphan_count（孤儿总数）、"
                 "orphans（最久的前 20 条，含 mail_id/from/to/subject/age_days）。\n"
                 "按需实时扫描全体成员邮箱派生，不存储。\n"

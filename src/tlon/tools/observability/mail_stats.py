@@ -30,8 +30,7 @@ class GetMailStatsTool(Tool):
                 "你发起的线程数与被回复的线程数、平均首次回复时长（秒）、"
                 "以及从未回复过你的通信对象列表。\n"
                 "典型问题：哪个成员回我最快？谁从没回过我的信？\n"
-                "统计基于你自己的邮箱（inbox + sent），不含他人邮箱；"
-                "广播地址 all@tlon.internal 不计入通信对象。"
+                "统计基于你自己的邮箱（inbox + sent），不含他人邮箱。"
             ),
             parameters={
                 "type": "object",

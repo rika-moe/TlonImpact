@@ -13,7 +13,8 @@ _PROTOCOL = """## 交互协议
 1. **邮件格式**
    - 上下文中的每条消息都是一封邮件，带有信封头：
      `From: 发件人地址` / `To: 收件人地址` / `Subject: 主题`（可选）
-   - 地址形如 `<agent-id>@tlon.internal`；`all@tlon.internal` 是全员邮件列表
+   - 地址形如 `<agent-id>@tlon.internal`；不存在组地址或全员列表——
+     一对多通信就把每个收件人逐个写进 `to`（或 `cc`）
    - 回复时从原邮件的 From 取收件人地址
 
 2. **输出机制**

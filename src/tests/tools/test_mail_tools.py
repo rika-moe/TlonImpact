@@ -37,7 +37,7 @@ class TestSendEmailTool:
     @pytest.mark.asyncio
     async def test_defaults(self):
         tool = SendEmailTool()
-        result = await tool.execute(to=["all@tlon.internal"], content="进度", is_complete=False)
+        result = await tool.execute(to=["b-002@tlon.internal"], content="进度", is_complete=False)
 
         assert result.success
         assert result.data["cc"] == []
