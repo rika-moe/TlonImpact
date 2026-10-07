@@ -267,6 +267,37 @@ class TestCollectAgentLedger:
         # Read-only discipline: the query creates nothing.
         assert not (tmp_path / "ghost").exists()
 
+    async def test_non_llm_call_records_are_skipped(self, tmp_path: Path) -> None:
+        """The ledger is multi-event (ADR 0024 persona_update audit trail
+        shares the file); metabolic folds count only llm_call records."""
+        tlon_paths = TlonPaths(home=tmp_path)
+        persona_record = {
+            "ts": "2026-10-07T00:00:00+00:00",
+            "event": "persona_update",
+            "agent_id": "dev-001",
+            "file": "identity",
+            "sha256": "ab" * 32,
+            "bytes": 42,
+        }
+        await _write_records(
+            tlon_paths.agent_ledger_file("dev-001"),
+            [
+                _record(purpose="think", prompt_tokens=10, completion_tokens=2, duration_ms=100),
+                persona_record,
+                _record(purpose="summarize", prompt_tokens=5, completion_tokens=1, duration_ms=50),
+            ],
+        )
+
+        summary = await collect_agent_ledger("dev-001", tlon_paths=tlon_paths)
+
+        assert summary["calls"] == 2
+        assert summary["prompt_tokens"] == 15
+        assert summary["completion_tokens"] == 3
+        assert summary["total_tokens"] == 18
+        assert summary["duration_ms"] == 150
+        assert list(summary["by_purpose"]) == ["think", "summarize"]
+        assert "unknown" not in summary["by_model"]
+
 
 class TestCollectAgentLedgerByModel:
     """issue : per-model split, same shape as by_purpose — observing
