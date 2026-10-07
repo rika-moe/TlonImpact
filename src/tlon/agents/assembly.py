@@ -44,6 +44,7 @@ from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import address_for_member
 from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
+from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
 from tlon.tools.agents.list_agents import ListAgentsTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.propose_capability import ProposeCapabilityTool
@@ -314,6 +315,13 @@ async def assemble_cognitive(
     # reproduction/evolution tool: registered unconditionally (probationary
     # members included).
     tool_executor.register_tool(UpdatePersonaTool(tlon_paths=tlon_paths, agent_id=config.id))
+    # Contact book (ADR 0024, docs/design/identity.md): the member's
+    # private CONTACTS.md — full-text read + entry-level upsert. Same
+    # host-side binding as updatePersona (agent_id at construction —
+    # structurally private); not reproduction/evolution, registered
+    # unconditionally.
+    tool_executor.register_tool(ReadContactsTool(tlon_paths=tlon_paths, agent_id=config.id))
+    tool_executor.register_tool(UpdateContactTool(tlon_paths=tlon_paths, agent_id=config.id))
     # searchMails (docs/design/skills.md): read-only structured query over
     # the agent's own
     # mailbox — the mail evidence source of the explain-decision skill.
