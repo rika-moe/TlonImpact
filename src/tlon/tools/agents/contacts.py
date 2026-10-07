@@ -110,6 +110,12 @@ def _upsert_entry_body(body: list[str], address: str, description: str) -> list[
     return missing + result
 
 
+#: Success-message suffix: the contact book feeds the system prompt, whose
+#: cache only rebuilds at the next assembly — the current session still
+#: thinks with the old book.
+_STALE_PROMPT_NOTE = "（注意：本次会话注入的联系簿仍是旧版本，改动在下一次组装生效）"
+
+
 class ReadContactsTool(Tool):
     """Tool to read the owning member's own private contact book (full text)."""
 
@@ -244,7 +250,7 @@ class UpdateContactTool(Tool):
                 return ToolResult(
                     success=True,
                     data={"name": name, "address": address, "action": "updated"},
-                    message=f"已更新条目「{name}」",
+                    message=f"已更新条目「{name}」{_STALE_PROMPT_NOTE}",
                 )
         sections.append(
             (name, [f"{_ADDRESS_PREFIX}{address}", f"{_DESCRIPTION_PREFIX}{description}"])
@@ -253,7 +259,7 @@ class UpdateContactTool(Tool):
         return ToolResult(
             success=True,
             data={"name": name, "address": address, "action": "added"},
-            message=f"已添加条目「{name}」",
+            message=f"已添加条目「{name}」{_STALE_PROMPT_NOTE}",
         )
 
     def _delete(
@@ -270,7 +276,7 @@ class UpdateContactTool(Tool):
                 return ToolResult(
                     success=True,
                     data={"name": name, "action": "deleted"},
-                    message=f"已删除条目「{name}」",
+                    message=f"已删除条目「{name}」{_STALE_PROMPT_NOTE}",
                 )
         return ToolResult(
             success=False,

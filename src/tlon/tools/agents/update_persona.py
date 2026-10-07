@@ -119,7 +119,11 @@ class UpdatePersonaTool(Tool):
         return ToolResult(
             success=True,
             data={"file": file, "path": display_name, "bytes": len(content_bytes)},
-            message=f"已更新你的 {display_name}（{len(content)} 字符），下次组装生效{ledger_note}",
+            message=(
+                f"已更新你的 {display_name}（{len(content)} 字符）。"
+                f"注意：本次会话的系统提示仍是旧版本——你此刻仍带着旧人格思考，"
+                f"改动在下一次组装生效{ledger_note}"
+            ),
         )
 
     async def _record_audit(self, file: str, content_bytes: bytes) -> str:
