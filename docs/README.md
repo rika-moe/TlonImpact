@@ -49,6 +49,6 @@
 | [reference/api-reference.md](./reference/api-reference.md) | REST/SSE 端点与事件帧格式 | ✅ |
 | [guides/quickstart.md](./guides/quickstart.md) | uv sync → dream → ops → 第一封信 | ✅ |
 | [guides/writing-a-prototype.md](./guides/writing-a-prototype.md) | 手写一个 prototype 的完整走查 | ✅ |
-| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力、0011 SCI 兼容子集、0012 litellm 传输层、0013 admin token 鉴权、0014 环境-agent 协同演化、0015 prompt 缓存、0016 成员级 LLM 配置、0017 claim 记忆、0018 DSL 抽包 tlosure、0019 runtime/server/client 拆分、0020 Bridge API、0021 tlosure 完整函数能力、0022 社会政策语境、0023 token 预算停机线 | ✅ |
+| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力、0011 SCI 兼容子集、0012 litellm 传输层、0013 admin token 鉴权、0014 环境-agent 协同演化、0015 prompt 缓存、0016 成员级 LLM 配置、0017 claim 记忆、0018 DSL 抽包 tlosure、0019 runtime/server/client 拆分、0020 Bridge API、0021 tlosure 完整函数能力、0022 社会政策语境、0023 token 预算停机线、0024 主观身份、0025 mail-history 两段式、0026 运行时来信合并 | ✅ |
 
 ✅ = 已写并与代码同步；📝 = 计划内未写。新增文档先登记进本表。
