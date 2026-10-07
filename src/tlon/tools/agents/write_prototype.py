@@ -75,9 +75,7 @@ def _check_near_kin(
         success=False,
         data={},
         error=f"near-kin of prototype '{kin_name}' (similarity {ratio:.2f})",
-        message=(
-            f"与 '{kin_name}' 相似度 {ratio:.2f}，请做出实质差异或改为提案改进它"
-        ),
+        message=(f"与 '{kin_name}' 相似度 {ratio:.2f}，请做出实质差异或改为提案改进它"),
     )
 
 
@@ -209,9 +207,7 @@ class WritePrototypeTool(Tool):
         # Near-kin check (): the exempted parent is the explicit
         # ``parent`` argument when given, else the author's own prototype
         # (explicit parent > own prototype).
-        near_kin_rejection = _check_near_kin(
-            self._near_kin, behavior, parent or self._prototype
-        )
+        near_kin_rejection = _check_near_kin(self._near_kin, behavior, parent or self._prototype)
         if near_kin_rejection is not None:
             return near_kin_rejection
         try:

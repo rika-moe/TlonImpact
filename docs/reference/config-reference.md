@@ -167,15 +167,15 @@ agent:
 | `LOG_LEVEL` | INFO |  |
 | `DEBUG` | false |  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | （未设置） | Observability (OTel): optional OTLP collector, requires the `otlp` extra |
-| `TELEGRAM_BOT_TOKEN` | "" | @BotFather 颁发的 bot token；缺失则 `tlon telegram` 拒绝启动 |
-| `TELEGRAM_ALLOWED_USERS` | "" | Telegram user-id 白名单（逗号分隔）；为空则拒绝启动 |
+| `TELEGRAM_BOT_TOKEN` | "" | Telegram bot client (optional `telegram` extra) |
+| `TELEGRAM_ALLOWED_USERS` | "" |  |
 | `TLON_LOG_RETENTION_DAYS` | 7 | Logging: retention (days) for the daily server log file sink |
-| `TLON_CONTAINER_MEMORY_BUDGET` | "" | 社会级容器内存总预算；空 = 不设，仅 warning 不强制 |
-| `TLON_ARENA_MODEL` | "" | 演武场 run 的缺省模型（provider/model）；空 = run 必须显式指定 model |
-| `TLON_ADMIN_TOKEN` | "" | 配置后 /admin/* 需 Authorization: Bearer；空 = 关闭 |
-| `GITHUB_WEBHOOK_SECRET` | "" | GitHub webhook 配置的 secret；空 = 端点不注册 |
-| `GITHUB_RECIPIENT` | "" | GitHub 来信的默认收件人 member id；空 = 发给全体已知人类 |
-| `GITHUB_TOKEN` | "" | GitHub API token（出站：回信 → issue/PR comment）；空 = 出站禁用，入站不受影响 |
+| `TLON_CONTAINER_MEMORY_BUDGET` | "" | Society-level container resource budget (issue #24): total memory budget across all agent containers (e.g. "4g"); empty = no budget. Warning-only — exceeding it logs container_memory_budget_exceeded, nothing is enforced. |
+| `TLON_ARENA_MODEL` | "" | 演武场（docs/design/arena.md 「成本界」）：run 请求未带 model 时的缺省； 空 = 未配置，run 必须显式指定模型（显式优于静默错默认） |
+| `TLON_ADMIN_TOKEN` | "" | Admin API auth (ADR 0013): shared Bearer token guarding /admin/*; empty = auth disabled (default, localhost trust boundary) |
+| `GITHUB_WEBHOOK_SECRET` | "" | GitHub webhook ingress (see docs/design/mail.md 「外部来信与信任面」): HMAC secret of the webhook; empty = POST /webhooks/github is not registered at all |
+| `GITHUB_RECIPIENT` | "" |  |
+| `GITHUB_TOKEN` | "" |  |
 <!-- END GENERATED: env-vars -->
 
 上表是 `Settings` 的全部读取点；另有三个环境变量由其他模块读取（手写维护）：

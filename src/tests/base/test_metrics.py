@@ -89,7 +89,9 @@ async def test_mail_new_counts_sent_and_bounce(
     _, service = metric_setup
     service._on_mail_new(Event(type=EventType.MAIL_NEW, payload=_make_mail(), source="gu-yanxi"))
     service._on_mail_new(
-        Event(type=EventType.MAIL_NEW, payload=_make_mail(POSTMASTER_ADDRESS), source="mail_delivery")
+        Event(
+            type=EventType.MAIL_NEW, payload=_make_mail(POSTMASTER_ADDRESS), source="mail_delivery"
+        )
     )
 
     snapshot = service.snapshot()
@@ -461,14 +463,14 @@ def container_metric_setup(
     provider = MeterProvider(metric_readers=[reader])
     monkeypatch.setattr(metrics_internal, "_METER_PROVIDER", provider)
     stats = {agent: dict(fields) for agent, fields in _CONTAINER_STATS.items()}
-    service = MetricsService(
-        event_bus=EventBus(), reader=reader, container_stats=lambda: stats
-    )
+    service = MetricsService(event_bus=EventBus(), reader=reader, container_stats=lambda: stats)
     return reader, service, stats
 
 
 async def test_container_gauges_report_per_agent_values(
-    container_metric_setup: tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]],
+    container_metric_setup: tuple[
+        InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]
+    ],
 ) -> None:
     """Per-container gauges carry one point per agent with the provider's values."""
     _, service, _ = container_metric_setup
@@ -483,7 +485,9 @@ async def test_container_gauges_report_per_agent_values(
 
 
 async def test_society_gauges_report_totals(
-    container_metric_setup: tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]],
+    container_metric_setup: tuple[
+        InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]
+    ],
 ) -> None:
     """Society-level gauges aggregate: total memory + running container count."""
     _, service, _ = container_metric_setup
@@ -498,7 +502,9 @@ async def test_society_gauges_report_totals(
 
 
 async def test_container_gauges_follow_provider_state(
-    container_metric_setup: tuple[InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]],
+    container_metric_setup: tuple[
+        InMemoryMetricReader, MetricsService, dict[str, dict[str, float]]
+    ],
 ) -> None:
     """Gauges pull at collection time: mutated provider state shows up on re-snapshot."""
     _, service, stats = container_metric_setup

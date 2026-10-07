@@ -83,9 +83,7 @@ class PrototypesFacade:
         Raises:
             PrototypeError: invalid name or no prototype under that name
         """
-        return get_prototype_detail(
-            name, staging=staging, tlon_paths=self._paths
-        )
+        return get_prototype_detail(name, staging=staging, tlon_paths=self._paths)
 
     def get_lineage(self, name: str) -> list[dict[str, Any]]:
         """The derived parent chain with per-generation diffs ()."""

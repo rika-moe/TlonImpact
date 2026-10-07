@@ -468,8 +468,7 @@ async def assemble_cognitive(
         GetReputationTool(
             provider=reputation_provider(
                 tlon_paths,
-                member_ids=lambda: sorted(agent_info.get_all_ids())
-                + tlon_paths.known_human_ids(),
+                member_ids=lambda: sorted(agent_info.get_all_ids()) + tlon_paths.known_human_ids(),
             ),
             agent_id=config.id,
         )
@@ -483,8 +482,7 @@ async def assemble_cognitive(
         GetSocialHealthTool(
             provider=orphan_mail_provider(
                 tlon_paths,
-                member_ids=lambda: sorted(agent_info.get_all_ids())
-                + tlon_paths.known_human_ids(),
+                member_ids=lambda: sorted(agent_info.get_all_ids()) + tlon_paths.known_human_ids(),
             )
         )
     )

@@ -744,9 +744,7 @@ class TestAgentHomeAccess:
         result = await tool.execute(file_path="/tlon-home/config/behavior.tlon")
 
         assert result.success is True
-        tool._docker_runtime.read_file.assert_awaited_once_with(
-            "/tlon-home/config/behavior.tlon"
-        )
+        tool._docker_runtime.read_file.assert_awaited_once_with("/tlon-home/config/behavior.tlon")
 
     async def test_read_own_mailbox_allowed(self):
         tool = self._make(ReadFileTool, self._READ_PATHS)
@@ -784,9 +782,7 @@ class TestAgentHomeAccess:
     async def test_write_own_home_rejected(self):
         tool = self._make(WriteFileTool, self._WRITE_PATHS)
 
-        result = await tool.execute(
-            file_path="/tlon-home/config/behavior.tlon", content="x"
-        )
+        result = await tool.execute(file_path="/tlon-home/config/behavior.tlon", content="x")
 
         assert result.success is False
         assert "outside the allowed paths" in result.error

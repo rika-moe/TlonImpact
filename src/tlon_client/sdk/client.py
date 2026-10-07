@@ -282,7 +282,9 @@ class TlonClient:
 
     # ==================== Event Handling ====================
 
-    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
+    def on_event(
+        self, handler: Callable[[dict[str, Any]], None]
+    ) -> Callable[[dict[str, Any]], None]:
         """Register an event handler.
 
         Events are pre-filtered by the server (the single filtering point)
@@ -306,7 +308,9 @@ class TlonClient:
             except Exception as e:
                 logger.error("user_event_handler_error", error=str(e), exc_info=True)
 
-    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
+    def on_message(
+        self, handler: Callable[[dict[str, Any]], None]
+    ) -> Callable[[dict[str, Any]], None]:
         """Register a message handler.
 
         Args:
@@ -328,7 +332,9 @@ class TlonClient:
         """
         return self._base.on_error(handler)
 
-    def on_state_change(self, handler: Callable[[ConnectionState], None]) -> Callable[[ConnectionState], None]:
+    def on_state_change(
+        self, handler: Callable[[ConnectionState], None]
+    ) -> Callable[[ConnectionState], None]:
         """Register a state change handler.
 
         Args:

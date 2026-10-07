@@ -146,15 +146,20 @@ class SessionHandlers(RestHandlerBase):
         username = _validate_username(body.get("username", DEFAULT_USERNAME))
         if username is None:
             return self._json_response(
-                {"error": f"Invalid username: {body.get('username')!r}", "reason": "invalid_username"},
+                {
+                    "error": f"Invalid username: {body.get('username')!r}",
+                    "reason": "invalid_username",
+                },
                 status=400,
             )
 
         client_type = body.get("client_type", "unknown")
         if not isinstance(client_type, str) or not client_type.strip():
             return self._json_response(
-                {"error": "Field 'client_type' must be a non-empty string",
-                 "reason": "invalid_client_type"},
+                {
+                    "error": "Field 'client_type' must be a non-empty string",
+                    "reason": "invalid_client_type",
+                },
                 status=400,
             )
 
@@ -226,9 +231,7 @@ class SessionHandlers(RestHandlerBase):
         session_id = request.match_info["session_id"]
         session = self.client_gateway.get_session(session_id)
         if session is None:
-            return self._json_response(
-                {"error": f"Session '{session_id}' not found"}, status=404
-            )
+            return self._json_response({"error": f"Session '{session_id}' not found"}, status=404)
 
         try:
             body = await request.json()
@@ -316,9 +319,7 @@ class SessionHandlers(RestHandlerBase):
         session_id = request.query.get("session_id") or request.headers.get("X-Session-Id")
         session = self.client_gateway.get_session(session_id) if session_id else None
         if session is None:
-            return self._json_response(
-                {"error": f"Session '{session_id}' not found"}, status=404
-            )
+            return self._json_response({"error": f"Session '{session_id}' not found"}, status=404)
         if session.id in self._sse_queues:
             return self._json_response(
                 {
@@ -375,9 +376,7 @@ class SessionHandlers(RestHandlerBase):
         try:
             while True:
                 try:
-                    frame = await asyncio.wait_for(
-                        queue.get(), timeout=heartbeat
-                    )
+                    frame = await asyncio.wait_for(queue.get(), timeout=heartbeat)
                 except TimeoutError:
                     frame = ": ping\n\n"
                 if frame is None:

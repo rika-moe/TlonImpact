@@ -62,9 +62,7 @@ class HumanAdapter(Member):
     username share one adapter (refcount semantics).
     """
 
-    def __init__(
-        self, username: str, event_bus: EventBus, address_resolver: AddressResolver
-    ):
+    def __init__(self, username: str, event_bus: EventBus, address_resolver: AddressResolver):
         """Initialize the human adapter.
 
         Args:
@@ -169,9 +167,7 @@ class HumanAdapter(Member):
             else:
                 sink(event)
         except Exception as e:
-            logger.error(
-                "human_mail_sink_error", username=self._username, error=str(e)
-            )
+            logger.error("human_mail_sink_error", username=self._username, error=str(e))
 
     async def speak(
         self,
@@ -210,9 +206,7 @@ class HumanAdapter(Member):
         resolved_cc = self._resolve_recipients(cc or [])
 
         if not resolved_to and not resolved_cc:
-            raise ValueError(
-                "没有可送达的收件人：请在 to 中指定至少一个收件人"
-            )
+            raise ValueError("没有可送达的收件人：请在 to 中指定至少一个收件人")
 
         mail = Mail.create(
             from_address=self.address,
@@ -263,9 +257,7 @@ class HumanAdapter(Member):
         for name in raw:
             address = self._address_resolver(name)
             if address is None:
-                logger.warning(
-                    "recipient_unresolved", username=self._username, recipient=name
-                )
+                logger.warning("recipient_unresolved", username=self._username, recipient=name)
                 continue
             if address not in resolved:
                 resolved.append(address)
@@ -330,9 +322,7 @@ class AdapterManager(Component):
         self._initialized = False
         logger.info("adapter_manager_shutdown")
 
-    async def attach(
-        self, username: str, session_id: str, sink: EventHandler
-    ) -> HumanAdapter:
+    async def attach(self, username: str, session_id: str, sink: EventHandler) -> HumanAdapter:
         """Attach a session to the user's adapter, creating it if needed.
 
         Serialized by a lock: two concurrent first-attaches for the same
@@ -492,9 +482,7 @@ class AdapterManager(Component):
             existing = self._adapters.get(username)
             transient = existing is None
             adapter = (
-                existing
-                if existing is not None
-                else await self._get_or_create_adapter(username)
+                existing if existing is not None else await self._get_or_create_adapter(username)
             )
 
         try:

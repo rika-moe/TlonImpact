@@ -127,9 +127,7 @@ class MemoryConfig:
             config.retrieval_alpha_similarity = retrieval.get("alpha_similarity", 1.0)
             config.retrieval_beta_recency = retrieval.get("beta_recency", 0.3)
             config.retrieval_gamma_importance = retrieval.get("gamma_importance", 0.5)
-            config.retrieval_recency_half_life_days = retrieval.get(
-                "recency_half_life_days", 7.0
-            )
+            config.retrieval_recency_half_life_days = retrieval.get("recency_half_life_days", 7.0)
             config.retrieval_pool_factor = retrieval.get("pool_factor", 4)
 
         if "conflict" in data:

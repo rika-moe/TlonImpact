@@ -34,11 +34,7 @@ class ListAgentsTool(Tool):
         self._registry = registry
 
     async def execute(self, **kwargs: Any) -> ToolResult:
-        agents = [
-            status
-            for status in self._registry.get_all_agent_status()
-            if status is not None
-        ]
+        agents = [status for status in self._registry.get_all_agent_status() if status is not None]
         return ToolResult(
             success=True,
             data=agents,

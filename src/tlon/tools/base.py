@@ -166,15 +166,11 @@ class Tool(ABC):
                 py_type = type_map.get(expected_type)
                 if py_type and not isinstance(value, py_type):
                     actual = type(value).__name__
-                    errors.append(
-                        f"Parameter '{field}': expected {expected_type}, got {actual}"
-                    )
+                    errors.append(f"Parameter '{field}': expected {expected_type}, got {actual}")
                     continue
                 # Numeric bounds declared in the schema are real limits —
                 # the model can only pass values the tool will honor.
-                if expected_type in ("integer", "number") and isinstance(
-                    value, (int, float)
-                ):
+                if expected_type in ("integer", "number") and isinstance(value, (int, float)):
                     minimum = props[field].get("minimum")
                     maximum = props[field].get("maximum")
                     if minimum is not None and value < minimum:

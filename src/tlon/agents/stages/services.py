@@ -67,6 +67,7 @@ def make_event_publisher(event_bus: EventBus, default_source: str) -> EventPubli
 
     return publish
 
+
 # Zero-arg provider of the tool schemas for the LLM call
 # (ToolExecutor.get_tool_definitions).
 ToolDefinitions = Callable[[], "list[dict[str, Any]]"]
@@ -130,9 +131,7 @@ class StageServices:
             # session_id is also bound so tools executing within this round
             # (background tasks inherit contextvars) can attribute their
             # work to the session — e.g. spawnAgent's per-session quota.
-            stack.enter_context(
-                bound_contextvars(agent_id=self.identity.id, session_id=session.id)
-            )
+            stack.enter_context(bound_contextvars(agent_id=self.identity.id, session_id=session.id))
             if trace_id:
                 stack.enter_context(continue_trace(trace_id, carrier.get("span_id")))
             stack.enter_context(

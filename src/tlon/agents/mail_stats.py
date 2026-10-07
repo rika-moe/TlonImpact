@@ -26,9 +26,7 @@ def _parse_timestamp(value: str) -> datetime:
     return ts
 
 
-def _correspondent(
-    stats: dict[str, dict[str, Any]], address: str
-) -> dict[str, Any]:
+def _correspondent(stats: dict[str, dict[str, Any]], address: str) -> dict[str, Any]:
     return stats.setdefault(
         address,
         {
@@ -64,9 +62,7 @@ async def collect_mail_stats(agent_id: str, *, tlon_paths: TlonPaths) -> dict[st
     roots: dict[str, tuple[datetime, set[str]]] = {}
     for mail in sent:
         recipients = {
-            address
-            for address in [*mail.to, *mail.cc]
-            if address not in (ALL_ADDRESS, own_address)
+            address for address in [*mail.to, *mail.cc] if address not in (ALL_ADDRESS, own_address)
         }
         for address in recipients:
             _correspondent(stats, address)["sent"] += 1
@@ -107,14 +103,10 @@ async def collect_mail_stats(agent_id: str, *, tlon_paths: TlonPaths) -> dict[st
             "received": entry["received"],
             "threads_initiated": entry["threads_initiated"],
             "threads_replied": entry["threads_replied"],
-            "avg_first_reply_seconds": (
-                sum(latencies) / len(latencies) if latencies else None
-            ),
+            "avg_first_reply_seconds": (sum(latencies) / len(latencies) if latencies else None),
         }
 
-    never_replied = sorted(
-        address for address, entry in stats.items() if entry["received"] == 0
-    )
+    never_replied = sorted(address for address, entry in stats.items() if entry["received"] == 0)
     return {
         "agent_id": agent_id,
         "address": own_address,

@@ -23,9 +23,7 @@ async def test_cc_reaches_all_recipients(inproc_server: tuple[str, Path]) -> Non
         # First contact creates the mailboxes, making both known humans.
         await client.get_inbox(username="bob")
         await client.get_inbox(username="carol")
-        accepted = await client.send_message(
-            token, to=["bob"], cc=["carol"], subject="cc smoke"
-        )
+        accepted = await client.send_message(token, to=["bob"], cc=["carol"], subject="cc smoke")
 
     assert accepted
     await _assert_delivered(tlon_home, "human-bob", token)

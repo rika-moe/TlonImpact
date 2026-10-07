@@ -144,8 +144,7 @@ async def _orphans_for(
             continue
         thread = await mailbox.thread_incoming(mail.thread_id)
         answered = any(
-            reply.in_reply_to is not None and reply.from_address != own_address
-            for reply in thread
+            reply.in_reply_to is not None and reply.from_address != own_address for reply in thread
         )
         if answered:
             continue
@@ -237,9 +236,7 @@ class PublicHealthMonitor:
     async def initialize(self) -> None:
         """Subscribe to MAIL_NEW and start the periodic orphan scan."""
         if self._subscription_id is None:
-            self._subscription_id = self._event_bus.subscribe(
-                EventType.MAIL_NEW, self._on_mail_new
-            )
+            self._subscription_id = self._event_bus.subscribe(EventType.MAIL_NEW, self._on_mail_new)
         if self._scan_task is None:
             self._scan_task = asyncio.create_task(self.run())
         logger.info("public_health_monitor_initialized")

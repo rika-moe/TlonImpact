@@ -117,8 +117,18 @@ MAX_FUEL = 10000
 
 SPECIAL_FORMS = frozenset(
     {
-        "if", "when", "let", "and", "or", "while", "recur",
-        "map", "filter", "reduce", "defn", "fn",
+        "if",
+        "when",
+        "let",
+        "and",
+        "or",
+        "while",
+        "recur",
+        "map",
+        "filter",
+        "reduce",
+        "defn",
+        "fn",
     }
 )
 
@@ -203,9 +213,7 @@ class Evaluator:
 
     def eval(self, value: Any, env: dict[str, Any], depth: int) -> Any:
         if depth > self._max_depth:
-            raise EvalDepthError(
-                f"evaluation depth exceeds {self._max_depth} at {dumps(value)}"
-            )
+            raise EvalDepthError(f"evaluation depth exceeds {self._max_depth} at {dumps(value)}")
         self._fuel -= 1
         if self._fuel < 0:
             raise FuelExhaustedError(
@@ -287,9 +295,7 @@ class Evaluator:
             if len(args) != n_fixed:
                 raise EvalError(f"{label} expects {n_fixed} arguments, got {len(args)}")
         elif len(args) < n_fixed:
-            raise EvalError(
-                f"{label} expects at least {n_fixed} arguments, got {len(args)}"
-            )
+            raise EvalError(f"{label} expects at least {n_fixed} arguments, got {len(args)}")
         local = dict(closure.env)
         for param, arg in zip(closure.params, args, strict=False):
             local[param] = arg
@@ -364,9 +370,7 @@ class Evaluator:
                 raise EvalError("recur outside while")
             names = self._loop_stack[-1]
             if len(args) != len(names):
-                raise EvalError(
-                    f"recur expects {len(names)} arguments, got {len(args)}"
-                )
+                raise EvalError(f"recur expects {len(names)} arguments, got {len(args)}")
             # All recur arguments evaluate in the old env, then rebind
             # simultaneously (Clojure semantics).
             new_vals = [self.eval(arg, env, depth + 1) for arg in args]
@@ -419,9 +423,7 @@ class Evaluator:
             return out
         if name == "reduce":
             if len(args) != 5:
-                raise EvalError(
-                    "reduce expects accumulator, element, body, init, and collection"
-                )
+                raise EvalError("reduce expects accumulator, element, body, init, and collection")
             acc_name, x_name = args[0], args[1]
             if not isinstance(acc_name, Symbol) or not isinstance(x_name, Symbol):
                 raise EvalError("reduce bindings must be symbols")

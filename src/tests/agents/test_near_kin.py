@@ -136,8 +136,8 @@ class TestFindNearKin:
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("base", _EXISTING_SPEC, tlon_paths=p)
         reformatted = (
-            "{:version 1 :rules [{:name \"respond\" :on :mail-delivered "
-            ":actions [(forward {:to [\"x@tlon.internal\"]})]}]}\n"
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered '
+            ':actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
         )
 
         hit = find_near_kin(reformatted, tlon_paths=p)
@@ -150,9 +150,7 @@ class TestFindNearKin:
         # 一次只换一个字符的文本相似度约 0.99：阈值 0.99 之上不命中。
         assert find_near_kin(_RESKIN_SPEC, threshold=0.999, tlon_paths=p) is None
 
-    def test_generational_micro_tweak_released_by_parent_exemption(
-        self, tmp_path: Path
-    ) -> None:
+    def test_generational_micro_tweak_released_by_parent_exemption(self, tmp_path: Path) -> None:
         """边界实测（docs/design/prototypes.md 冒烟案例形态）：reflect
         间隔 15→30 的代际微改。
 
@@ -220,9 +218,7 @@ class TestWritePrototypeNearKin:
             near_kin=near_kin,  # type: ignore[arg-type]
         )
 
-    async def test_cross_bloodline_hit_rejected_nothing_on_disk(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_cross_bloodline_hit_rejected_nothing_on_disk(self, tmp_path: Path) -> None:
         """无父提案（新根）与既有原型换皮级雷同 → 被拦。"""
         p = TlonPaths(home=tmp_path)
         write_trusted_prototype("base", _EXISTING_SPEC, tlon_paths=p)
@@ -246,9 +242,7 @@ class TestWritePrototypeNearKin:
 
         assert result.success, result.error
 
-    async def test_explicit_parent_takes_priority_over_own_prototype(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_explicit_parent_takes_priority_over_own_prototype(self, tmp_path: Path) -> None:
         """显式 parent > 自身 prototype：作者血脉是 base，但显式声明
         parent=other → 豁免 other 而非 base，与 base 雷同仍被拦。"""
         p = TlonPaths(home=tmp_path)
@@ -256,9 +250,7 @@ class TestWritePrototypeNearKin:
         write_trusted_prototype("other", _DISTINCT_SPEC, tlon_paths=p)
         tool = self._make_tool(p, prototype="base")
 
-        result = await tool.execute(
-            name="clone", behavior=_RESKIN_SPEC, parent="other"
-        )
+        result = await tool.execute(name="clone", behavior=_RESKIN_SPEC, parent="other")
 
         assert not result.success
         assert "base" in result.error
@@ -347,9 +339,7 @@ class TestProposeBehaviorNearKin:
         assert result.success, result.error
         assert (p.prototypes_staging_dir() / "base-gen2" / "behavior.tlon").exists()
 
-    async def test_cross_bloodline_hit_rejected_nothing_on_disk(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_cross_bloodline_hit_rejected_nothing_on_disk(self, tmp_path: Path) -> None:
         """草稿与别人的血脉换皮级雷同 → 豁免自己的父本也救不了，被拦。"""
         p = TlonPaths(home=tmp_path)
         agent_id = "c-other-00000001"

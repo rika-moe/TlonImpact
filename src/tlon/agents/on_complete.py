@@ -97,9 +97,7 @@ class OnCompleteRunner:
                     error=str(e),
                 )
             except EvalError as e:
-                self._logger.error(
-                    "on_complete_eval_failed", session_id=session.id, error=str(e)
-                )
+                self._logger.error("on_complete_eval_failed", session_id=session.id, error=str(e))
             except Exception as e:
                 self._logger.error(
                     "on_complete_eval_failed",

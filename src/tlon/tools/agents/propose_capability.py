@@ -187,11 +187,7 @@ class ProposeCapabilityTool(Tool):
 
         digest = await self._memory.get_memory_digest(self._logs)
         lessons_file = self._paths.memory_lessons_file(self._agent_id)
-        lessons = (
-            lessons_file.read_text(encoding="utf-8")
-            if lessons_file.exists()
-            else None
-        )
+        lessons = lessons_file.read_text(encoding="utf-8") if lessons_file.exists() else None
 
         prompt_parts = ["## 个体经验\n" + _render_digest(digest)]
         if lessons:

@@ -97,9 +97,7 @@ def _session(context: list[dict[str, Any]], anchor_len: int) -> AgentSession:
     return session
 
 
-async def _compact_events(
-    journal: SessionJournal, session_id: str
-) -> list[dict[str, Any]]:
+async def _compact_events(journal: SessionJournal, session_id: str) -> list[dict[str, Any]]:
     return [
         event
         for event in await journal.read_events(session_id)
@@ -204,9 +202,7 @@ class TestPrune:
         # The log re-derives exactly the compacted context.
         assert await journal.derive_context(session.id) == session.context
 
-    async def test_tool_pair_never_split_at_window_edge(
-        self, journal: SessionJournal
-    ) -> None:
+    async def test_tool_pair_never_split_at_window_edge(self, journal: SessionJournal) -> None:
         # The natural window start lands ON a tool message: the window
         # extends back to its assistant, so this pair is kept whole.
         anchor = [_user("knowledge"), _user("触发邮件")]
@@ -226,9 +222,7 @@ class TestPrune:
         assert session.context[2]["tool_calls"][0]["id"] == "c1"
         assert session.context[3]["content"] == PRUNED_PLACEHOLDER
 
-    async def test_anchor_only_context_is_left_alone(
-        self, journal: SessionJournal
-    ) -> None:
+    async def test_anchor_only_context_is_left_alone(self, journal: SessionJournal) -> None:
         context = [_user("k" * 4000)]  # over threshold, but all anchor
         session = _session(context, anchor_len=1)
 
@@ -247,9 +241,7 @@ class TestSummary:
         window = [_user(f"recent {i}") for i in range(20)]
         return [_user("knowledge"), _user("触发邮件"), *middle, *window]
 
-    async def test_summary_when_prune_is_not_enough(
-        self, journal: SessionJournal
-    ) -> None:
+    async def test_summary_when_prune_is_not_enough(self, journal: SessionJournal) -> None:
         context = self._context_without_tools()
         window = [dict(m) for m in context[-20:]]
         session = _session(context, anchor_len=2)
@@ -273,9 +265,7 @@ class TestSummary:
         assert len(events) == 1 and events[0]["kind"] == "summary"
         assert await journal.derive_context(session.id) == session.context
 
-    async def test_running_summary_folds_previous_summary(
-        self, journal: SessionJournal
-    ) -> None:
+    async def test_running_summary_folds_previous_summary(self, journal: SessionJournal) -> None:
         context = self._context_without_tools()
         context[2] = _user(f"{SUMMARY_MARKER}\n\n旧摘要内容")
         session = _session(context, anchor_len=2)
@@ -290,9 +280,7 @@ class TestSummary:
         assert any("旧摘要内容" in str(m.get("content")) for m in summary_input)
         # ...and the result holds exactly one summary message (no stacking).
         summaries = [
-            m
-            for m in session.context
-            if str(m.get("content", "")).startswith(SUMMARY_MARKER)
+            m for m in session.context if str(m.get("content", "")).startswith(SUMMARY_MARKER)
         ]
         assert len(summaries) == 1
         assert "新摘要" in summaries[0]["content"]
@@ -349,9 +337,7 @@ class TestKnowledgeOutsideAnchor:
 
 
 class TestReplay:
-    async def test_compact_event_replaces_context_on_replay(
-        self, journal: SessionJournal
-    ) -> None:
+    async def test_compact_event_replaces_context_on_replay(self, journal: SessionJournal) -> None:
         sid = "agent1-compacted"
         start_context = [_user("knowledge"), _user("触发邮件")]
         await journal.append(
@@ -499,9 +485,7 @@ class TestClientEmergency:
         with pytest.raises(ContextWindowExceededError):
             await client.chat(system_prompt="s", messages=[_user("hi")])
 
-    async def test_other_bad_requests_fail_fast(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_other_bad_requests_fail_fast(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Permanent 4xx (bad params, balance, ...) can never succeed on
         retry: the client raises without retrying."""
         client = _make_llm_client()
@@ -524,7 +508,9 @@ class TestDriverEmergency:
         services = MagicMock()
         services.logger = MagicMock()
         services.publish_event = AsyncMock()
-        services.build_context = AsyncMock(return_value=BuiltContext(messages=[_user("hi")], anchor_len=1))
+        services.build_context = AsyncMock(
+            return_value=BuiltContext(messages=[_user("hi")], anchor_len=1)
+        )
         services.think = AsyncMock(
             side_effect=[ContextWindowExceededError("too long"), LLMResponse(content="hi")]
         )

@@ -183,8 +183,7 @@ class GitHubAdapter(Device):
 
         to = self._recipient_addresses()
         if not to:
-            logger.warning("github_event_skipped", reason="no_recipient",
-                           event_type=event_type)
+            logger.warning("github_event_skipped", reason="no_recipient", event_type=event_type)
             return None
 
         mail = Mail.create(
@@ -199,8 +198,7 @@ class GitHubAdapter(Device):
         anchor = self._parse_anchor(mail.subject)
         if anchor is not None:
             self._threads[mail.id] = anchor
-        logger.info("github_mail_published", event_type=event_type,
-                    mail_id=mail.id, to=mail.to)
+        logger.info("github_mail_published", event_type=event_type, mail_id=mail.id, to=mail.to)
         return mail
 
     # ==================== Egress (reply -> GitHub comment) ====================
@@ -223,17 +221,12 @@ class GitHubAdapter(Device):
         if not self._github_token:
             logger.warning("github_egress_skipped", reason="no_token", mail_id=mail.id)
             return
-        if not any(
-            self._registry.owner_of(a) == GATEWAY_MEMBER_ID
-            for a in [*mail.to, *mail.cc]
-        ):
-            logger.warning("github_egress_skipped", reason="no_claimed_recipient",
-                           mail_id=mail.id)
+        if not any(self._registry.owner_of(a) == GATEWAY_MEMBER_ID for a in [*mail.to, *mail.cc]):
+            logger.warning("github_egress_skipped", reason="no_claimed_recipient", mail_id=mail.id)
             return
         target = self._thread_target(mail)
         if target is None:
-            logger.error("github_egress_unmapped", mail_id=mail.id,
-                         subject=mail.subject)
+            logger.error("github_egress_unmapped", mail_id=mail.id, subject=mail.subject)
             return
         repo, number = target
         url = f"{_GITHUB_API}/repos/{repo}/issues/{number}/comments"
@@ -244,12 +237,14 @@ class GitHubAdapter(Device):
         try:
             status = await self._http_post(url, headers, {"body": mail.content})
         except Exception as e:
-            logger.error("github_egress_failed", mail_id=mail.id, repo=repo,
-                         number=number, error=str(e))
+            logger.error(
+                "github_egress_failed", mail_id=mail.id, repo=repo, number=number, error=str(e)
+            )
             return
         if not 200 <= status < 300:
-            logger.error("github_egress_failed", mail_id=mail.id, repo=repo,
-                         number=number, status=status)
+            logger.error(
+                "github_egress_failed", mail_id=mail.id, repo=repo, number=number, status=status
+            )
             return
         logger.info("github_egress_sent", mail_id=mail.id, repo=repo, number=number)
 
@@ -278,17 +273,14 @@ class GitHubAdapter(Device):
 
     # ==================== Event mapping ====================
 
-    def _map_event(
-        self, event_type: str, payload: dict[str, Any]
-    ) -> tuple[str, str] | None:
+    def _map_event(self, event_type: str, payload: dict[str, Any]) -> tuple[str, str] | None:
         """Map an event to ``(subject, content)``; None = skip."""
         repository = payload.get("repository")
         repo = _str(repository.get("full_name")) if isinstance(repository, dict) else ""
         if not repo:
             # Ping events carry no repository; other repo-less payloads are
             # malformed for our purposes — either way, skip quietly.
-            logger.debug("github_event_skipped", reason="no_repository",
-                         event_type=event_type)
+            logger.debug("github_event_skipped", reason="no_repository", event_type=event_type)
             return None
 
         action = _str(payload.get("action"))
@@ -301,16 +293,19 @@ class GitHubAdapter(Device):
         if event_type == "check_run":
             return self._map_check_run(repo, action, payload)
 
-        logger.debug("github_event_skipped", reason="unsupported_event",
-                     event_type=event_type)
+        logger.debug("github_event_skipped", reason="unsupported_event", event_type=event_type)
         return None
 
     def _map_issues(
         self, repo: str, action: str, payload: dict[str, Any]
     ) -> tuple[str, str] | None:
         if action not in ("opened", "assigned"):
-            logger.debug("github_event_skipped", reason="unsupported_action",
-                         event_type="issues", action=action)
+            logger.debug(
+                "github_event_skipped",
+                reason="unsupported_action",
+                event_type="issues",
+                action=action,
+            )
             return None
         issue = payload.get("issue")
         if not isinstance(issue, dict):
@@ -321,9 +316,7 @@ class GitHubAdapter(Device):
             return self._bad_payload("issues", "issue.number/title")
         author = _str(self._user_login(issue))
         assignee_obj = payload.get("assignee")
-        assignee = _str(
-            assignee_obj.get("login") if isinstance(assignee_obj, dict) else None
-        )
+        assignee = _str(assignee_obj.get("login") if isinstance(assignee_obj, dict) else None)
         url = _str(issue.get("html_url"))
         if action == "opened":
             summary = f"新 issue: {title}"
@@ -331,8 +324,13 @@ class GitHubAdapter(Device):
             summary = f"issue 指派给 {assignee or '?'}: {title}"
         content = self._content(
             f"GitHub issue 事件（{action}）。",
-            [("仓库", repo), ("标题", title), ("作者", author),
-             ("指派给", assignee), ("链接", url)],
+            [
+                ("仓库", repo),
+                ("标题", title),
+                ("作者", author),
+                ("指派给", assignee),
+                ("链接", url),
+            ],
             issue.get("body"),
         )
         return f"[{repo}#{number}] {summary}", content
@@ -341,8 +339,12 @@ class GitHubAdapter(Device):
         self, repo: str, action: str, payload: dict[str, Any]
     ) -> tuple[str, str] | None:
         if action != "created":
-            logger.debug("github_event_skipped", reason="unsupported_action",
-                         event_type="issue_comment", action=action)
+            logger.debug(
+                "github_event_skipped",
+                reason="unsupported_action",
+                event_type="issue_comment",
+                action=action,
+            )
             return None
         issue = payload.get("issue")
         comment = payload.get("comment")
@@ -357,8 +359,7 @@ class GitHubAdapter(Device):
         title = _str(issue.get("title"))
         content = self._content(
             f"GitHub {kind} 新评论。",
-            [("仓库", repo), (f"{kind} 标题", title), ("评论者", author),
-             ("链接", url)],
+            [("仓库", repo), (f"{kind} 标题", title), ("评论者", author), ("链接", url)],
             comment.get("body"),
         )
         return f"[{repo}#{number}] {kind} 新评论 ({author})", content
@@ -367,8 +368,12 @@ class GitHubAdapter(Device):
         self, repo: str, action: str, payload: dict[str, Any]
     ) -> tuple[str, str] | None:
         if action != "submitted":
-            logger.debug("github_event_skipped", reason="unsupported_action",
-                         event_type="pull_request_review", action=action)
+            logger.debug(
+                "github_event_skipped",
+                reason="unsupported_action",
+                event_type="pull_request_review",
+                action=action,
+            )
             return None
         pr = payload.get("pull_request")
         review = payload.get("review")
@@ -383,8 +388,13 @@ class GitHubAdapter(Device):
         title = _str(pr.get("title"))
         content = self._content(
             "GitHub PR review 提交。",
-            [("仓库", repo), ("PR 标题", title), ("review 状态", state),
-             ("reviewer", author), ("链接", url)],
+            [
+                ("仓库", repo),
+                ("PR 标题", title),
+                ("review 状态", state),
+                ("reviewer", author),
+                ("链接", url),
+            ],
             review.get("body"),
         )
         return f"[{repo}#{number}] PR review {state or 'submitted'} ({author})", content
@@ -397,9 +407,13 @@ class GitHubAdapter(Device):
             return self._bad_payload("check_run", "check_run")
         conclusion = _str(check_run.get("conclusion"))
         if action != "completed" or conclusion not in _FAILURE_CONCLUSIONS:
-            logger.debug("github_event_skipped", reason="not_a_failure",
-                         event_type="check_run", action=action,
-                         conclusion=conclusion)
+            logger.debug(
+                "github_event_skipped",
+                reason="not_a_failure",
+                event_type="check_run",
+                action=action,
+                conclusion=conclusion,
+            )
             return None
         name = _str(check_run.get("name"))
         url = _str(check_run.get("html_url"))
@@ -408,8 +422,13 @@ class GitHubAdapter(Device):
         summary = output.get("summary") if isinstance(output, dict) else None
         content = self._content(
             "GitHub CI check 失败。",
-            [("仓库", repo), ("check", name), ("结论", conclusion),
-             ("分支", branch), ("链接", url)],
+            [
+                ("仓库", repo),
+                ("check", name),
+                ("结论", conclusion),
+                ("分支", branch),
+                ("链接", url),
+            ],
             summary,
         )
         return f"[{repo}] CI 失败: {name or '?'} ({conclusion})", content
@@ -421,13 +440,9 @@ class GitHubAdapter(Device):
         if self._recipient_id:
             if self._member_exists(self._recipient_id):
                 return [address_for_member(self._recipient_id)]
-            logger.warning("github_recipient_not_found",
-                           recipient=self._recipient_id)
+            logger.warning("github_recipient_not_found", recipient=self._recipient_id)
             return []
-        return [
-            address_for_member(human_id)
-            for human_id in self._paths.known_human_ids()
-        ]
+        return [address_for_member(human_id) for human_id in self._paths.known_human_ids()]
 
     def _member_exists(self, member_id: str) -> bool:
         """Recipient existence: agent ids from the registry, humans from disk."""
@@ -456,14 +471,13 @@ class GitHubAdapter(Device):
     @staticmethod
     def _bad_payload(event_type: str, field: str) -> tuple[str, str] | None:
         """Log a malformed payload; callers return its None right away."""
-        logger.warning("github_event_skipped", reason="bad_payload",
-                       event_type=event_type, field=field)
+        logger.warning(
+            "github_event_skipped", reason="bad_payload", event_type=event_type, field=field
+        )
         return None
 
     @staticmethod
-    def _content(
-        lead: str, fields: list[tuple[str, str]], body: Any
-    ) -> str:
+    def _content(lead: str, fields: list[tuple[str, str]], body: Any) -> str:
         """Assemble the mail body: lead line, key fields, body excerpt."""
         lines = [lead, "这是 GitHub webhook 的外部来信。", ""]
         lines.extend(f"{label}: {value}" for label, value in fields if value)

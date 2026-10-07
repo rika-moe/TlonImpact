@@ -298,7 +298,10 @@ class TestSpawnProbation:
         p = TlonPaths(home=tmp_path)
         _write_prototype(p, "worker")
         manager = SpawnManager(  # type: ignore[arg-type]
-            _FakeRegistry(p), 8, 3, 2,
+            _FakeRegistry(p),
+            8,
+            3,
+            2,
             tilt_provider=_const_tilt(2.0),
             probation=_const_probation(True),
         )

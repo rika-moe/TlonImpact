@@ -99,7 +99,10 @@ class AdminCapabilityHandlers(RestHandlerBase):
             example_result_payload(r) for r in self.capabilities.run_examples(name, staging=staging)
         ]
         return self._json_response(
-            {"status": "success", "capability": _capability_payload(info, artifact, reviews, examples)}
+            {
+                "status": "success",
+                "capability": _capability_payload(info, artifact, reviews, examples),
+            }
         )
 
     async def handle_create_staging_capability(self, request: web.Request) -> web.Response:
@@ -124,8 +127,10 @@ class AdminCapabilityHandlers(RestHandlerBase):
         artifact = body.get("artifact") if isinstance(body, dict) else None
         if not artifact or not isinstance(artifact, str):
             return self._json_response(
-                {"error": "Field 'artifact' (capability EDN text) is required",
-                 "reason": "invalid_capability"},
+                {
+                    "error": "Field 'artifact' (capability EDN text) is required",
+                    "reason": "invalid_capability",
+                },
                 status=400,
             )
         proposal_note = body.get("proposal_note")

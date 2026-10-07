@@ -40,18 +40,14 @@ _PERSONA_FILES = (
 )
 
 
-def _write_persona_files(
-    tlon_paths: TlonPaths, agent_id: str, persona: dict[str, Any]
-) -> None:
+def _write_persona_files(tlon_paths: TlonPaths, agent_id: str, persona: dict[str, Any]) -> None:
     """Write the non-empty persona fields into the member's config dir."""
     config_dir = tlon_paths.agent_config_dir(agent_id)
     config_dir.mkdir(parents=True, exist_ok=True)
     for field, filename in _PERSONA_FILES:
         content = persona.get(field)
         if content:
-            (config_dir / filename).write_text(
-                str(content).strip() + "\n", encoding="utf-8"
-            )
+            (config_dir / filename).write_text(str(content).strip() + "\n", encoding="utf-8")
 
 
 class MembersFacade:
@@ -100,9 +96,7 @@ class MembersFacade:
         for agent_id in self._registry.get_all_ids():
             config = self._registry.get_config(agent_id)
             if config:
-                members.append(
-                    MemberInfo(id=agent_id, name=config.name, type="agent", metadata={})
-                )
+                members.append(MemberInfo(id=agent_id, name=config.name, type="agent", metadata={}))
         return members
 
     def get_agent_member(self, agent_id: str) -> MemberInfo | None:
@@ -167,7 +161,11 @@ class MembersFacade:
             PrototypeError: prototype missing, id taken, bad model/params
         """
         cfg = instantiate(
-            prototype, agent_id, name, model=model, params=params,
+            prototype,
+            agent_id,
+            name,
+            model=model,
+            params=params,
             tlon_paths=self._paths,
         )
         if persona:

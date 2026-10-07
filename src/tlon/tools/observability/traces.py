@@ -27,9 +27,7 @@ def _trace_summary(trace: TraceRecord) -> dict[str, Any]:
     }
     if trace.end_time:
         summary["end_time"] = trace.end_time.isoformat()
-        summary["duration_ms"] = (
-            trace.end_time - trace.start_time
-        ).total_seconds() * 1000
+        summary["duration_ms"] = (trace.end_time - trace.start_time).total_seconds() * 1000
     return summary
 
 

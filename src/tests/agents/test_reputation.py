@@ -85,14 +85,10 @@ async def _seed_society(tlon_paths: TlonPaths) -> None:
 
 
 class TestCollectReputation:
-    async def test_given_and_received_across_members(
-        self, tlon_paths: TlonPaths
-    ) -> None:
+    async def test_given_and_received_across_members(self, tlon_paths: TlonPaths) -> None:
         await _seed_society(tlon_paths)
 
-        report = await collect_reputation(
-            TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS
-        )
+        report = await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS)
 
         assert report["agent_id"] == TARGET
         assert report["address"] == TARGET_ADDR
@@ -105,30 +101,22 @@ class TestCollectReputation:
     ) -> None:
         await _seed_society(tlon_paths)
 
-        report = await collect_reputation(
-            TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS
-        )
+        report = await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS)
 
         assert report["top_endorsed_mails"] == [
             {"mail_id": "m1", "subject": "m1主题", "endorsers": 2}
         ]
 
-        bob_report = await collect_reputation(
-            BOB, tlon_paths=tlon_paths, member_ids=MEMBERS
-        )
+        bob_report = await collect_reputation(BOB, tlon_paths=tlon_paths, member_ids=MEMBERS)
         assert bob_report["endorsements_received"] == 1
         assert bob_report["top_endorsed_mails"] == [
             {"mail_id": "m2", "subject": None, "endorsers": 1}
         ]
 
-    async def test_mail_behavior_summary_embedded(
-        self, tlon_paths: TlonPaths
-    ) -> None:
+    async def test_mail_behavior_summary_embedded(self, tlon_paths: TlonPaths) -> None:
         await _seed_society(tlon_paths)
 
-        report = await collect_reputation(
-            TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS
-        )
+        report = await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS)
 
         behavior = report["mail_behavior"]
         assert behavior["total_sent"] == 2  # m1 + the endorsement mail
@@ -143,23 +131,15 @@ class TestCollectReputation:
             mail = _mail(f"m{i:02d}", TARGET_ADDR, [BOB_ADDR], subject=f"s{i}")
             await target.append_sent(mail)
             await bob.append_inbox(mail)
-            await bob.append_sent(
-                _mail(f"e{i:02d}", BOB_ADDR, [TARGET_ADDR], endorsing=mail.id)
-            )
+            await bob.append_sent(_mail(f"e{i:02d}", BOB_ADDR, [TARGET_ADDR], endorsing=mail.id))
 
-        report = await collect_reputation(
-            TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS
-        )
+        report = await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS)
 
         assert len(report["top_endorsed_mails"]) == TOP_ENDORSED_CAP
         assert report["endorsements_received"] == TOP_ENDORSED_CAP + 3
 
-    async def test_memberless_society_is_all_zero(
-        self, tlon_paths: TlonPaths
-    ) -> None:
-        report = await collect_reputation(
-            TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS
-        )
+    async def test_memberless_society_is_all_zero(self, tlon_paths: TlonPaths) -> None:
+        report = await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS)
 
         assert report["endorsements_given"] == 0
         assert report["endorsements_received"] == 0
@@ -168,9 +148,7 @@ class TestCollectReputation:
     async def test_read_only_scan_never_creates_mailboxes(
         self, tlon_paths: TlonPaths, tmp_path: Path
     ) -> None:
-        await collect_reputation(
-            TARGET, tlon_paths=tlon_paths, member_ids=[*MEMBERS, "ghost"]
-        )
+        await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=[*MEMBERS, "ghost"])
 
         # The scan opens only mailboxes that already exist on disk.
         assert not (tmp_path / "ghost").exists()
@@ -178,9 +156,7 @@ class TestCollectReputation:
 
 
 class TestReputationProvider:
-    async def test_provider_binds_paths_and_member_enumeration(
-        self, tlon_paths: TlonPaths
-    ) -> None:
+    async def test_provider_binds_paths_and_member_enumeration(self, tlon_paths: TlonPaths) -> None:
         await _seed_society(tlon_paths)
         provider = reputation_provider(tlon_paths, member_ids=lambda: MEMBERS)
 

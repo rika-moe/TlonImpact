@@ -58,9 +58,7 @@ GATED_EDN = """\
 
 
 def _mail() -> Mail:
-    return Mail.create(
-        from_address="user@tlon.internal", content="hi", to=["agent1@tlon.internal"]
-    )
+    return Mail.create(from_address="user@tlon.internal", content="hi", to=["agent1@tlon.internal"])
 
 
 def _tc(tc_id: str, name: str = "someTool", arguments: dict | None = None) -> ToolCall:
@@ -196,9 +194,7 @@ class TestCompletionGate:
         driver, _, executor, services = _make_driver(
             tmp_path, [_completing("reply"), LLMResponse(content="PASS")]
         )
-        session = AgentSession(
-            session_id=f"agent1-{mail.id}", trigger_content=mail.content
-        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         await _drive(driver, session, mail)
 
@@ -221,18 +217,14 @@ class TestCompletionGate:
                 LLMResponse(content="PASS"),
             ],
         )
-        session = AgentSession(
-            session_id=f"agent1-{mail.id}", trigger_content=mail.content
-        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         # Round 1: the FAILed draft must never reach act's dispatch.
         await driver.step_session(session, mail)
         assert session.state == SessionState.ACTIVE  # not WAITING: nothing dispatched
         executor.send_mail.assert_not_awaited()
         # revise fed the feedback into context and consumed the verdict.
-        assert any(
-            "没有回答来信的问题" in str(m.get("content")) for m in session.context
-        )
+        assert any("没有回答来信的问题" in str(m.get("content")) for m in session.context)
         assert session.loop_scratch.get("critique") is None
 
         # Round 2: the revised draft is reviewed again and passes.
@@ -249,15 +241,11 @@ class TestCompletionGate:
 
     async def test_working_rounds_pay_no_critique(self, tmp_path: Path) -> None:
         mail = _mail()
-        working = LLMResponse(
-            content="working", tool_calls=[_tc("c1", "someTool", {"a": 1})]
-        )
+        working = LLMResponse(content="working", tool_calls=[_tc("c1", "someTool", {"a": 1})])
         driver, _, executor, services = _make_driver(
             tmp_path, [working, _completing("final"), LLMResponse(content="PASS")]
         )
-        session = AgentSession(
-            session_id=f"agent1-{mail.id}", trigger_content=mail.content
-        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         await _drive(driver, session, mail)
 
@@ -278,9 +266,7 @@ class TestCompletionGate:
         driver, _, _, services = _make_driver(
             tmp_path, [conflict, _completing("final"), LLMResponse(content="PASS")]
         )
-        session = AgentSession(
-            session_id=f"agent1-{mail.id}", trigger_content=mail.content
-        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         await _drive(driver, session, mail)
 
@@ -291,15 +277,13 @@ class TestCompletionGate:
         assert len(_calls_by_span(services, "agent.critique")) == 1
 
     async def test_unparseable_verdict_leaves_the_gate_open(self, tmp_path: Path) -> None:
-        """ semantics under the gate: an unknown review outcome is a
+        """semantics under the gate: an unknown review outcome is a
         skipped review, not a block — the reply still goes out."""
         mail = _mail()
         driver, _, executor, _ = _make_driver(
             tmp_path, [_completing("reply"), LLMResponse(content="我觉得还行")]
         )
-        session = AgentSession(
-            session_id=f"agent1-{mail.id}", trigger_content=mail.content
-        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         await _drive(driver, session, mail)
 
@@ -315,9 +299,7 @@ class TestCompletionGate:
         driver, _, executor, services = _make_driver(
             tmp_path, [silent, LLMResponse(content="FAIL\n不应沉默，应回复确认收到")]
         )
-        session = AgentSession(
-            session_id=f"agent1-{mail.id}", trigger_content=mail.content
-        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         await driver.step_session(session, mail)
 

@@ -18,7 +18,9 @@ class SessionState(Enum):
 class AgentSession:
     """A single conversation or task that the agent is working on."""
 
-    def __init__(self, session_id: str, trigger_content: str, carrier: dict[str, str | None] | None = None):
+    def __init__(
+        self, session_id: str, trigger_content: str, carrier: dict[str, str | None] | None = None
+    ):
         self.id = session_id
         self.context: list[dict[str, Any]] = []
         # Length of the initial context block (knowledge + mail history +
@@ -159,7 +161,11 @@ class AgentSession:
                     still_pending[tc.id] = task
 
         self._pending_tasks = still_pending
-        self._pending_tool_calls = [tc for tc in self._pending_tool_calls if not (self._pending_tasks.get(tc.id) and self._pending_tasks[tc.id].done())]
+        self._pending_tool_calls = [
+            tc
+            for tc in self._pending_tool_calls
+            if not (self._pending_tasks.get(tc.id) and self._pending_tasks[tc.id].done())
+        ]
         return completed
 
     @property

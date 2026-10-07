@@ -209,9 +209,7 @@ class TestJudgeConflicts:
 
 
 class TestRememberFactConflicts:
-    async def test_contradicted_old_claim_is_superseded_not_deleted(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_contradicted_old_claim_is_superseded_not_deleted(self, tmp_path: Path) -> None:
         """rememberFact goes through the same conflict judgment: the old
         claim is invalidated in place (auditable), the new one appends."""
         old_text = "用户喜欢手冲咖啡"
@@ -291,9 +289,7 @@ class TestDistillationConflicts:
         old_text = "部署脚本在 scripts/deploy.sh"
         moved_text = "部署脚本已迁移到 scripts/release.sh"
         fresh_text = "用户偏好深色主题"
-        embedder = FakeEmbedder(
-            {old_text: _axis(0), moved_text: _axis(0), fresh_text: _axis(1)}
-        )
+        embedder = FakeEmbedder({old_text: _axis(0), moved_text: _axis(0), fresh_text: _axis(1)})
         manager = await _seed(
             _manager(tmp_path, embedder),
             [{"id": "c-old", "text": old_text, "timestamp": "2026-09-10T08:00:00"}],

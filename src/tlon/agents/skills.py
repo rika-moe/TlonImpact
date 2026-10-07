@@ -143,9 +143,7 @@ def scan_skills(agent_id: str, tlon_paths: TlonPaths) -> list[SkillInfo]:
             if info is None:
                 continue
             if info.name in seen:
-                logger.warning(
-                    "skill_shadowed", name=info.name, scope=scope, path=str(skill_file)
-                )
+                logger.warning("skill_shadowed", name=info.name, scope=scope, path=str(skill_file))
                 continue
             seen.add(info.name)
             skills.append(info)
@@ -158,9 +156,7 @@ def render_skills_index(skills: list[SkillInfo]) -> str:
         return ""
     lines = ["[可用技能]", ""]
     for skill in skills:
-        lines.append(
-            f"- {skill.name} ({skill.scope}): {skill.description} — {skill.path}"
-        )
+        lines.append(f"- {skill.name} ({skill.scope}): {skill.description} — {skill.path}")
     lines.append("")
     lines.append("需要某个技能时，用 read_file 读取其 SKILL.md 获取完整指令。")
     return "\n".join(lines)

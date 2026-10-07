@@ -310,7 +310,9 @@ class RetirementCeremony(Component, Device):
                 purpose="farewell",
             )
             if not response.content:
-                logger.info("retirement_farewell_skipped", agent_id=agent_id, reason="empty_response")
+                logger.info(
+                    "retirement_farewell_skipped", agent_id=agent_id, reason="empty_response"
+                )
                 return False
             mail = Mail.create(
                 from_address=address_for_member(agent_id),
@@ -353,9 +355,7 @@ class RetirementCeremony(Component, Device):
 
         parts.append("## 未回复的邮件线程")
         if open_threads:
-            parts.extend(
-                f"- 「{t['subject']}」（来自 {t['from']}）" for t in open_threads
-            )
+            parts.extend(f"- 「{t['subject']}」（来自 {t['from']}）" for t in open_threads)
         else:
             parts.append("（无）")
         parts.append("")

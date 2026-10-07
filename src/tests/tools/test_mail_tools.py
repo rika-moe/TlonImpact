@@ -37,9 +37,7 @@ class TestSendEmailTool:
     @pytest.mark.asyncio
     async def test_defaults(self):
         tool = SendEmailTool()
-        result = await tool.execute(
-            to=["all@tlon.internal"], content="进度", is_complete=False
-        )
+        result = await tool.execute(to=["all@tlon.internal"], content="进度", is_complete=False)
 
         assert result.success
         assert result.data["cc"] == []
@@ -108,9 +106,7 @@ def mailbox(tlon_paths: TlonPaths) -> Mailbox:
 
 
 def _search_tool(tlon_paths: TlonPaths) -> SearchMailsTool:
-    return SearchMailsTool(
-        provider=mailbox_mails_provider(tlon_paths), agent_id=AGENT_ID
-    )
+    return SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=AGENT_ID)
 
 
 async def _seed_mailbox(mailbox: Mailbox) -> None:
@@ -118,7 +114,14 @@ async def _seed_mailbox(mailbox: Mailbox) -> None:
         _mail("m1", BOB, [OWN], "请分析一下季度数据", "2026-09-06T10:00:00", subject="季度汇报")
     )
     await mailbox.append_sent(
-        _mail("m2", OWN, [BOB], "季度数据分析完成，结论如下", "2026-09-06T10:05:00", subject="Re: 季度汇报")
+        _mail(
+            "m2",
+            OWN,
+            [BOB],
+            "季度数据分析完成，结论如下",
+            "2026-09-06T10:05:00",
+            subject="Re: 季度汇报",
+        )
     )
     await mailbox.append_inbox(
         _mail("m3", BOB, [OWN], "周报别忘了", "2026-09-06T11:00:00", subject="周报提醒")
@@ -153,9 +156,7 @@ class TestSearchMailsTool:
     @pytest.mark.asyncio
     async def test_mail_id_returns_full_content(self, tlon_paths: TlonPaths, mailbox: Mailbox):
         long_content = "长" * (CONTENT_EXCERPT_LENGTH + 100)
-        await mailbox.append_inbox(
-            _mail("m-long", BOB, [OWN], long_content, "2026-09-06T12:00:00")
-        )
+        await mailbox.append_inbox(_mail("m-long", BOB, [OWN], long_content, "2026-09-06T12:00:00"))
         tool = _search_tool(tlon_paths)
 
         result = await tool.execute(mail_id="m-long")
@@ -195,9 +196,7 @@ class TestSearchMailsTool:
     async def test_only_own_mailbox(self, tlon_paths: TlonPaths, tmp_path):
         # Bob 的邮箱里有命中邮件，但工具绑定的是 a-001 的邮箱。
         bobs = Mailbox(tlon_paths.member_mail_dir("b-002"))
-        await bobs.append_inbox(
-            _mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00")
-        )
+        await bobs.append_inbox(_mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00"))
         tool = _search_tool(tlon_paths)
 
         result = await tool.execute(query="季度")
@@ -226,16 +225,16 @@ class TestSearchMailsTool:
         assert "至少传一个" in result.error
 
     @pytest.mark.asyncio
-    async def test_external_flag_marks_untrusted_senders(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+    async def test_external_flag_marks_untrusted_senders(
+        self, tlon_paths: TlonPaths, mailbox: Mailbox
+    ):
         """searchMails results carry the derived trust flag
         (docs/design/mail.md):
         external senders are marked, internal ones are not."""
         await mailbox.append_inbox(
             _mail("ext1", "notifications@github.com", [OWN], "CI 红了", "2026-09-06T10:00:00")
         )
-        await mailbox.append_inbox(
-            _mail("int1", BOB, [OWN], "内部来信", "2026-09-06T11:00:00")
-        )
+        await mailbox.append_inbox(_mail("int1", BOB, [OWN], "内部来信", "2026-09-06T11:00:00"))
         tool = _search_tool(tlon_paths)
 
         external = await tool.execute(query="CI")
@@ -251,7 +250,9 @@ class TestSearchMailsTool:
     @pytest.mark.asyncio
     async def test_excerpt_truncated(self, tlon_paths: TlonPaths, mailbox: Mailbox):
         await mailbox.append_inbox(
-            _mail("m-long", BOB, [OWN], "长" * (CONTENT_EXCERPT_LENGTH + 100), "2026-09-06T12:00:00")
+            _mail(
+                "m-long", BOB, [OWN], "长" * (CONTENT_EXCERPT_LENGTH + 100), "2026-09-06T12:00:00"
+            )
         )
         tool = _search_tool(tlon_paths)
 

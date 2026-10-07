@@ -60,9 +60,7 @@ def _rule_with_sections(sections: str) -> MemberRule:
                  :max-consecutive-errors 1
                  :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
-""".replace(
-                "SECTIONS", sections
-            )
+""".replace("SECTIONS", sections)
         )
     )
     rule = spec.rules[0]
@@ -415,9 +413,7 @@ async def test_undeclared_thread_recap_injects_nothing(tmp_path: Path) -> None:
 async def test_recap_precedes_mail_history(tmp_path: Path) -> None:
     """Declared before mail-history, the recap lands ahead of the raw
     correspondence in vector order."""
-    builder, mailbox, journal = _make_thread_builder(
-        tmp_path, "[(thread-recap) (mail-history 5)]"
-    )
+    builder, mailbox, journal = _make_thread_builder(tmp_path, "[(thread-recap) (mail-history 5)]")
     mail1 = _thread_mail("旧信")
     await mailbox.append_inbox(mail1)
     await _write_completed_session(journal, mail1, conclusion="旧结论")
@@ -438,9 +434,7 @@ async def test_followup_context_extends_previous_prefix(tmp_path: Path) -> None:
     the new suffix. With the recap declared before the history (the old
     prototype order) the common prefix stopped at the recap, which
     changes every session."""
-    builder, mailbox, journal = _make_thread_builder(
-        tmp_path, "[(mail-history 5) (thread-recap)]"
-    )
+    builder, mailbox, journal = _make_thread_builder(tmp_path, "[(mail-history 5) (thread-recap)]")
     mail1 = _thread_mail("第一封")
     context1 = (await builder.build_context(mail1)).messages
 

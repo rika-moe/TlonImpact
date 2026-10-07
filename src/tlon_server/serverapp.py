@@ -49,19 +49,11 @@ def _startup_banner(host: str, rest_port: int) -> str:
     if (WEBUI_DIST_DIR / "index.html").is_file():
         lines.append(f"   WebUI      : {base}/ui/")
     else:
-        lines.append(
-            "   WebUI      : not built (cd apps/webui && npm install && npm run build)"
-        )
+        lines.append("   WebUI      : not built (cd apps/webui && npm install && npm run build)")
     if host not in _LOOPBACK_HOSTS:
-        lines.append(
-            "   ⚠️  Security  : non-loopback bind — Tlon has NO authentication;"
-        )
-        lines.append(
-            "                 anyone who can reach this port can read mail"
-        )
-        lines.append(
-            "                 and call admin endpoints"
-        )
+        lines.append("   ⚠️  Security  : non-loopback bind — Tlon has NO authentication;")
+        lines.append("                 anyone who can reach this port can read mail")
+        lines.append("                 and call admin endpoints")
     lines.append("")
     return "\n".join(lines)
 
@@ -188,11 +180,13 @@ class ServerApp:
 
         self._running = False
         agent_count = len(runtime.members.list_ids())
-        await runtime.event_bus.publish(Event(
-            type=EventType.SYSTEM_STARTUP,
-            payload={"agents": agent_count},
-            source="server",
-        ))
+        await runtime.event_bus.publish(
+            Event(
+                type=EventType.SYSTEM_STARTUP,
+                payload={"agents": agent_count},
+                source="server",
+            )
+        )
         logger.info(
             "server_initialized",
             agent_count=agent_count,
@@ -216,9 +210,7 @@ class ServerApp:
         assert self.rest is not None
         await self.rest.start()
 
-        agent_count = (
-            len(self._runtime.members.list_ids()) if self._runtime else 0
-        )
+        agent_count = len(self._runtime.members.list_ids()) if self._runtime else 0
         logger.info(
             "server_started",
             host=self.host,
@@ -251,11 +243,13 @@ class ServerApp:
 
         runtime = self._runtime
         if runtime:
-            await runtime.event_bus.publish(Event(
-                type=EventType.SYSTEM_SHUTDOWN,
-                payload={},
-                source="server",
-            ))
+            await runtime.event_bus.publish(
+                Event(
+                    type=EventType.SYSTEM_SHUTDOWN,
+                    payload={},
+                    source="server",
+                )
+            )
 
         logger.info("server_stopping")
 

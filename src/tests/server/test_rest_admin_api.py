@@ -31,7 +31,9 @@ from tlon_server.api.rest import RESTAPIHandler
 class StubRequest:
     """Minimal stand-in for aiohttp.web.Request."""
 
-    def __init__(self, body: dict | None = None, agent_id: str | None = None, name: str | None = None):
+    def __init__(
+        self, body: dict | None = None, agent_id: str | None = None, name: str | None = None
+    ):
         self._body = body or {}
         self.match_info = {}
         if agent_id is not None:
@@ -43,7 +45,9 @@ class StubRequest:
         return self._body
 
 
-def _handler(tmp_path: Path, registry: MagicMock | None = None) -> tuple[RESTAPIHandler, MagicMock, TlonPaths]:
+def _handler(
+    tmp_path: Path, registry: MagicMock | None = None
+) -> tuple[RESTAPIHandler, MagicMock, TlonPaths]:
     p = TlonPaths(home=tmp_path)
     seed_prototypes(p)
     reg = registry
@@ -122,8 +126,7 @@ class TestAdminCreateAgent:
         handler, _reg, _p = _handler(tmp_path)
         app = handler.create_app()
         assert any(
-            route.method == "POST"
-            and route.resource.canonical == "/admin/config/agents"
+            route.method == "POST" and route.resource.canonical == "/admin/config/agents"
             for route in app.router.routes()
         )
 
@@ -154,9 +157,7 @@ class TestAdminUpdateAgent:
     async def test_unknown_agent_404(self, tmp_path: Path):
         handler, _reg, _p = _handler(tmp_path)
 
-        resp = await handler.handle_update_agent(
-            StubRequest(body={}, agent_id="nobody")
-        )
+        resp = await handler.handle_update_agent(StubRequest(body={}, agent_id="nobody"))
 
         assert resp.status == 404
 
@@ -172,9 +173,7 @@ class TestAdminDeleteAgent:
 
     async def test_live_sessions_conflict(self, tmp_path: Path):
         reg = MagicMock()
-        reg.remove_member = AsyncMock(
-            side_effect=StopRejectedError("active_sessions", "busy")
-        )
+        reg.remove_member = AsyncMock(side_effect=StopRejectedError("active_sessions", "busy"))
         handler, _reg, _p = _handler(tmp_path, reg)
 
         resp = await handler.handle_delete_agent(StubRequest(agent_id="dev-1"))
@@ -189,7 +188,7 @@ class TestAdminStaging:
         seed_prototypes(p)
         write_staging_prototype(
             "llm-idea",
-            "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n",
+            '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n',
             display_name="LLM 创意",
             description="由 agent 创作",
             author_id="gu-yanxi",
@@ -229,18 +228,16 @@ class TestAdminPrototypeManagement:
     """Prototype management endpoints (WebUI PROTOTYPES view): detail,
     human-authored create, edit, delete."""
 
-    _BEHAVIOR = (
-        "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
-    )
+    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
     _TEMPLATED = (
         "{:version 1\n"
         " :parameters {:to {:type :string-list :required true}}\n"
-        " :rules [{:name \"relay\" :on :mail-delivered"
+        ' :rules [{:name "relay" :on :mail-delivered'
         " :actions [(forward {:to ${to}})]}]}\n"
     )
     _INVALID = (
-        "{:version 1 :rules [{:name \"w\" :on :mail-delivered"
-        " :actions [(jump {:to [\"x@tlon.internal\"]})]}]}\n"
+        '{:version 1 :rules [{:name "w" :on :mail-delivered'
+        ' :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
     )
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
@@ -251,8 +248,7 @@ class TestAdminPrototypeManagement:
         handler, p = self._handler(tmp_path)
 
         resp = await handler.handle_create_prototype(
-            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR,
-                              "display_name": "手写"})
+            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR, "display_name": "手写"})
         )
 
         assert resp.status == 201
@@ -293,9 +289,7 @@ class TestAdminPrototypeManagement:
         assert resp.status == 200
         proto = json.loads(resp.text)["prototype"]
         assert proto["behavior"] == self._TEMPLATED
-        assert proto["parameters"] == [
-            {"name": "to", "type": "string-list", "required": True}
-        ]
+        assert proto["parameters"] == [{"name": "to", "type": "string-list", "required": True}]
 
     async def test_detail_unknown_404(self, tmp_path: Path):
         handler, _p = self._handler(tmp_path)
@@ -317,12 +311,10 @@ class TestAdminPrototypeManagement:
         assert proto["author"] == "adam"
 
     _L2_BEHAVIOR = (
-        "{:version 1 :execution {:level :L2}"
-        " :rules [{:name \"r\" :on :boot :actions []}]}\n"
+        '{:version 1 :execution {:level :L2} :rules [{:name "r" :on :boot :actions []}]}\n'
     )
     _L1_BEHAVIOR = (
-        "{:version 1 :execution {:level :L1}"
-        " :rules [{:name \"r\" :on :boot :actions []}]}\n"
+        '{:version 1 :execution {:level :L1} :rules [{:name "r" :on :boot :actions []}]}\n'
     )
 
     async def test_staging_l2_detail_raises_red_flag(self, tmp_path: Path):
@@ -386,8 +378,7 @@ class TestAdminPrototypeManagement:
         )
 
         resp = await handler.handle_update_prototype(
-            StubRequest(name="hand",
-                        body={"description": "新描述", "behavior": self._TEMPLATED})
+            StubRequest(name="hand", body={"description": "新描述", "behavior": self._TEMPLATED})
         )
 
         assert resp.status == 200
@@ -476,16 +467,12 @@ class TestAdminPrototypeManagement:
 
         assert resp.status == 200
         protos = json.loads(resp.text)["prototypes"]
-        assert protos[0]["parameters"] == [
-            {"name": "to", "type": "string-list", "required": True}
-        ]
+        assert protos[0]["parameters"] == [{"name": "to", "type": "string-list", "required": True}]
 
     def test_staging_routes_precede_named_routes(self, tmp_path: Path):
         handler, _p = self._handler(tmp_path)
         app = handler.create_app()
-        canonicals = [
-            (route.method, route.resource.canonical) for route in app.router.routes()
-        ]
+        canonicals = [(route.method, route.resource.canonical) for route in app.router.routes()]
         for method in ("GET", "PATCH"):
             staging_idx = canonicals.index((method, "/admin/prototypes/staging/{name}"))
             named_idx = canonicals.index((method, "/admin/prototypes/{name}"))
@@ -498,7 +485,7 @@ class TestAdminPrototypeLessons:
     an optional ``lessons`` body field; the detail payload carries the text
     back so a reviewer sees the packaged lessons."""
 
-    _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -508,8 +495,9 @@ class TestAdminPrototypeLessons:
         handler, p = self._handler(tmp_path)
 
         resp = await handler.handle_create_prototype(
-            StubRequest(body={"name": "hand", "behavior": self._BEHAVIOR,
-                              "lessons": "- 前辈教训\n"})
+            StubRequest(
+                body={"name": "hand", "behavior": self._BEHAVIOR, "lessons": "- 前辈教训\n"}
+            )
         )
 
         assert resp.status == 201
@@ -554,7 +542,9 @@ class TestAdminPrototypeLessons:
         )
 
         assert resp.status == 200
-        _info, _behavior, lessons, _reviews = get_prototype_detail("staged", staging=True, tlon_paths=p)
+        _info, _behavior, lessons, _reviews = get_prototype_detail(
+            "staged", staging=True, tlon_paths=p
+        )
         assert lessons == "- 审稿补充\n"
 
     async def test_staging_detail_carries_lessons(self, tmp_path: Path):
@@ -575,7 +565,7 @@ class TestAdminPrototypeReviews:
     the human
     approver sees the heterogeneous reviews; absent file = no field."""
 
-    _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -584,9 +574,7 @@ class TestAdminPrototypeReviews:
     async def test_staging_detail_carries_reviews(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
         write_staging_prototype("staged", self._BEHAVIOR, author_id="adam", tlon_paths=p)
-        append_staging_review(
-            "staged", "## t — r-1（fake/model）：通过\n\n理由\n", tlon_paths=p
-        )
+        append_staging_review("staged", "## t — r-1（fake/model）：通过\n\n理由\n", tlon_paths=p)
 
         resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
 
@@ -612,10 +600,8 @@ class TestAdminPrototypeLineage:
     parent/generation/proposal_note, detail endpoints embed the derived
     lineage chain with per-generation diffs."""
 
-    _BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
-    _BEHAVIOR_V2 = (
-        "{:version 1 :rules [{:name \"r2\" :on :boot :actions []}]}\n"
-    )
+    _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
+    _BEHAVIOR_V2 = '{:version 1 :rules [{:name "r2" :on :boot :actions []}]}\n'
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
@@ -628,12 +614,14 @@ class TestAdminPrototypeLineage:
         )
 
         resp = await handler.handle_create_prototype(
-            StubRequest(body={
-                "name": "child",
-                "behavior": self._BEHAVIOR_V2,
-                "parent": "base",
-                "proposal_note": "改规则名",
-            })
+            StubRequest(
+                body={
+                    "name": "child",
+                    "behavior": self._BEHAVIOR_V2,
+                    "parent": "base",
+                    "proposal_note": "改规则名",
+                }
+            )
         )
 
         assert resp.status == 201
@@ -646,8 +634,7 @@ class TestAdminPrototypeLineage:
         handler, _p = self._handler(tmp_path)
 
         resp = await handler.handle_create_prototype(
-            StubRequest(body={"name": "orphan", "behavior": self._BEHAVIOR,
-                              "parent": "ghost"})
+            StubRequest(body={"name": "orphan", "behavior": self._BEHAVIOR, "parent": "ghost"})
         )
 
         assert resp.status == 400
@@ -659,8 +646,14 @@ class TestAdminPrototypeLineage:
             StubRequest(body={"name": "base", "behavior": self._BEHAVIOR})
         )
         await handler.handle_create_prototype(
-            StubRequest(body={"name": "child", "behavior": self._BEHAVIOR_V2,
-                              "parent": "base", "proposal_note": "改规则名"})
+            StubRequest(
+                body={
+                    "name": "child",
+                    "behavior": self._BEHAVIOR_V2,
+                    "parent": "base",
+                    "proposal_note": "改规则名",
+                }
+            )
         )
 
         resp = await handler.handle_get_prototype(StubRequest(name="child"))
@@ -728,15 +721,15 @@ class TestGetAgentLineageFields:
 
         reg = MagicMock()
         reg.get_config.return_value = SimpleNamespace(
-            name="新工程师", prototype="developer",
-            spawned_by="gu-yanxi", spawn_depth=1,
+            name="新工程师",
+            prototype="developer",
+            spawned_by="gu-yanxi",
+            spawn_depth=1,
         )
         reg.get_agent.return_value = None
         handler = RESTAPIHandler(
             None,
-            members=MembersFacade(
-                agent_registry=reg, tlon_paths=TlonPaths(home=tmp_path)
-            ),
+            members=MembersFacade(agent_registry=reg, tlon_paths=TlonPaths(home=tmp_path)),
         )
 
         resp = await handler.handle_get_agent(StubRequest(agent_id="dev-1"))
@@ -746,4 +739,3 @@ class TestGetAgentLineageFields:
         assert body["config"]["prototype"] == "developer"
         assert body["config"]["spawned_by"] == "gu-yanxi"
         assert body["config"]["spawn_depth"] == 1
-

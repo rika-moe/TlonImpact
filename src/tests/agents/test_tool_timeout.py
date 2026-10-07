@@ -115,9 +115,7 @@ async def test_declared_timeout_runs_past_engine_fallback(tmp_path: Path) -> Non
     executor.register_tool(_SelfLimitedTool(delay=0.4))
     driver = _make_driver(tmp_path, executor, per_tool_timeout=0.1)
 
-    _, result = await driver.execute_one_tool(
-        "s1", _tc("selfLimited", {"timeout": 120})
-    )
+    _, result = await driver.execute_one_tool("s1", _tc("selfLimited", {"timeout": 120}))
 
     assert result.success
     assert result.data == {"slept": 0.4}

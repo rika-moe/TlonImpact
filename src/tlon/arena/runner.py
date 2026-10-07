@@ -304,7 +304,9 @@ class ArenaRunner:
                 "v1 全局同时只跑一个（arena.md 成本界）"
             )
 
-        resolved_model = (model or "").strip() or (self._process_settings().arena_model or "").strip()
+        resolved_model = (model or "").strip() or (
+            self._process_settings().arena_model or ""
+        ).strip()
         if not resolved_model:
             raise ArenaError(
                 "演武场模型未指定：run 参数 model 与环境变量 TLON_ARENA_MODEL 皆空——"
@@ -319,9 +321,13 @@ class ArenaRunner:
 
         corpus_limit = DEFAULT_CORPUS_LIMIT if corpus_size is None else corpus_size
         if corpus_limit > HARD_CORPUS_LIMIT:
-            raise ArenaError(f"语料上限 {corpus_limit} 超过硬上限 {HARD_CORPUS_LIMIT}（arena.md 成本界）")
+            raise ArenaError(
+                f"语料上限 {corpus_limit} 超过硬上限 {HARD_CORPUS_LIMIT}（arena.md 成本界）"
+            )
         if corpus_limit < len(ADVERSARIAL_SUITE):
-            raise ArenaError(f"语料上限 {corpus_limit} 容纳不下内置对抗套件（{len(ADVERSARIAL_SUITE)} 封）")
+            raise ArenaError(
+                f"语料上限 {corpus_limit} 容纳不下内置对抗套件（{len(ADVERSARIAL_SUITE)} 封）"
+            )
 
         time_box = DEFAULT_TIME_BOX_SECONDS if time_box_seconds is None else time_box_seconds
         if time_box <= 0 or time_box > HARD_TIME_BOX_SECONDS:
@@ -470,12 +476,7 @@ class ArenaRunner:
 
     def _archive_dir(self, run: ArenaRun) -> Path:
         """生产 staging 原型目录内的归档位：``arena/<run-id>/``（证据随提案走）。"""
-        return (
-            self._paths.prototypes_staging_dir()
-            / run.prototype_name
-            / "arena"
-            / run.run_id
-        )
+        return self._paths.prototypes_staging_dir() / run.prototype_name / "arena" / run.run_id
 
     def _staging_description(self, prototype_name: str) -> str:
         for info in list_staging_prototypes(self._paths):

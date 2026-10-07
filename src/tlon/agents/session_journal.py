@@ -84,6 +84,7 @@ def session_id_for(agent_id: str, mail_id: str) -> str:
     """
     return f"{agent_id}-{mail_id}"
 
+
 #: File-keyed locks shared by every SessionJournal over the same file
 #: (bounded LRU; a locked entry is never evicted — see mailbox._lock_for).
 _LOCKS: OrderedDict[Path, asyncio.Lock] = OrderedDict()
@@ -200,9 +201,7 @@ class SessionJournal:
                         content = await f.read()
                     self._seq[session_id] = sum(1 for line in content.splitlines() if line.strip())
                 except Exception as e:
-                    logger.error(
-                        "session_journal_read_failed", file_path=str(path), error=str(e)
-                    )
+                    logger.error("session_journal_read_failed", file_path=str(path), error=str(e))
                     self._seq[session_id] = 0
             else:
                 self._seq[session_id] = 0
@@ -330,9 +329,7 @@ class SessionJournal:
             # Crash window between the tool/collect append and the state
             # append in _apply_outcome: nothing is actually pending, so
             # resume as ACTIVE instead of waiting forever.
-            logger.warning(
-                "session_journal_waiting_without_pending", session_id=session_id
-            )
+            logger.warning("session_journal_waiting_without_pending", session_id=session_id)
             state = SessionState.ACTIVE
 
         return SessionReplay(

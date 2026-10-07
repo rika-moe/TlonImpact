@@ -64,7 +64,10 @@ async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> No
     tool, journal = _tool(tmp_path)
     sid = "agent1-s1"
     await _write_session(
-        journal, sid, replies=["先查一下", "在 scripts/deploy.sh"], tools=["searchFiles", "readFile", "readFile"]
+        journal,
+        sid,
+        replies=["先查一下", "在 scripts/deploy.sh"],
+        tools=["searchFiles", "readFile", "readFile"],
     )
 
     result = await tool.execute(session_id=sid)

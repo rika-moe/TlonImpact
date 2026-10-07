@@ -161,8 +161,7 @@ class MemberLoop:
             data[Keyword("fuel")] = self.fuel
         if self.replies:
             data[Keyword("replies")] = {
-                Keyword(kind.replace("_", "-")): text
-                for kind, text in self.replies.items()
+                Keyword(kind.replace("_", "-")): text for kind, text in self.replies.items()
             }
         return data
 
@@ -213,9 +212,7 @@ class MemberRule:
         """The EDN-native form (kebab-case keywords, Form values)."""
         data: dict[Keyword, Any] = {
             Keyword("name"): self.name,
-            Keyword("on"): (
-                Keyword("boot") if self.on is None else Keyword(_on_to_str(self.on))
-            ),
+            Keyword("on"): (Keyword("boot") if self.on is None else Keyword(_on_to_str(self.on))),
             Keyword("actions"): self.actions,
         }
         if self.when is not None:
@@ -263,9 +260,7 @@ class MemberSpec:
             "version": self.version,
             "source_hash": self.source_hash,
             "execution": (
-                {"level": self.execution_level}
-                if self.execution_level is not None
-                else None
+                {"level": self.execution_level} if self.execution_level is not None else None
             ),
             "rules": [rule.to_dict() for rule in self.rules],
         }
@@ -291,8 +286,7 @@ class MemberSpec:
         version = _read(data, "version", path=":version", kind=int)
         if version != MEMBER_SPEC_VERSION:
             raise MemberSpecValidationError(
-                f"unsupported :version {version!r}; "
-                f"only version {MEMBER_SPEC_VERSION} is supported"
+                f"unsupported :version {version!r}; only version {MEMBER_SPEC_VERSION} is supported"
             )
         raw_rules = _require(data, "rules", ":rules")
         if isinstance(raw_rules, Form) or not isinstance(raw_rules, (list, tuple)):
@@ -301,9 +295,7 @@ class MemberSpec:
             )
         if not raw_rules:
             raise MemberSpecValidationError(":rules must not be empty")
-        rules = tuple(
-            _rule_from(item, str(index)) for index, item in enumerate(raw_rules)
-        )
+        rules = tuple(_rule_from(item, str(index)) for index, item in enumerate(raw_rules))
         return cls(
             version=MEMBER_SPEC_VERSION,
             source_hash=_read_optional_str(data, "source_hash", ":source-hash"),
@@ -337,9 +329,7 @@ class MemberSpec:
         if self.source_hash is not None:
             data[Keyword("source-hash")] = self.source_hash
         if self.execution_level is not None:
-            data[Keyword("execution")] = {
-                Keyword("level"): Keyword(self.execution_level)
-            }
+            data[Keyword("execution")] = {Keyword("level"): Keyword(self.execution_level)}
         return data
 
 
@@ -422,9 +412,7 @@ def _validate_when(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> No
     try:
         validate_form(rule.when, pure, scope=set(RULE_SCOPE))
     except EvalError as e:
-        raise MemberSpecValidationError(
-            f"{label}: invalid :when expression: {e}"
-        ) from e
+        raise MemberSpecValidationError(f"{label}: invalid :when expression: {e}") from e
 
 
 def _validate_actions(rule: MemberRule, label: str, registry: dict[str, Builtin]) -> None:
@@ -449,9 +437,7 @@ def _validate_cognitive(rule: MemberRule, label: str) -> None:
     try:
         validate_form(loop.until, LOOP_BUILTINS, scope=set())
     except EvalError as e:
-        raise MemberSpecValidationError(
-            f"{label}: invalid :loop/:until expression: {e}"
-        ) from e
+        raise MemberSpecValidationError(f"{label}: invalid :loop/:until expression: {e}") from e
 
 
 def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
@@ -471,13 +457,10 @@ def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
         name = str(head)
         if name not in SECTION_NAMES:
             raise MemberSpecValidationError(
-                f"{label}: unknown section {name!r} in :sections "
-                f"(allowed: {sorted(SECTION_NAMES)})"
+                f"{label}: unknown section {name!r} in :sections (allowed: {sorted(SECTION_NAMES)})"
             )
         if name in seen:
-            raise MemberSpecValidationError(
-                f"{label}: duplicate section {name!r} in :sections"
-            )
+            raise MemberSpecValidationError(f"{label}: duplicate section {name!r} in :sections")
         seen.add(name)
         if name == "mail-history":
             if len(form) != 2:
@@ -517,8 +500,7 @@ def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
         name = str(head)
         if name not in STAGE_NAMES:
             raise MemberSpecValidationError(
-                f"{label}: unknown stage {name!r} in :stages "
-                f"(allowed: {sorted(STAGE_NAMES)})"
+                f"{label}: unknown stage {name!r} in :stages (allowed: {sorted(STAGE_NAMES)})"
             )
         if len(form) > 2:
             raise MemberSpecValidationError(
@@ -533,9 +515,7 @@ def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
             _validate_stage_opts(name, opts, form, label)
 
 
-def _validate_stage_opts(
-    name: str, opts: dict[Any, Any], form: Form, label: str
-) -> None:
+def _validate_stage_opts(name: str, opts: dict[Any, Any], form: Form, label: str) -> None:
     """Validate one stage's opts map (mirrored the legacy AgentSpec's phase 7c checks)."""
     allowed = {"if", "max-steps"} if name == "plan" else {"if"}
     for key, value in opts.items():
@@ -552,13 +532,10 @@ def _validate_stage_opts(
             try:
                 validate_form(value, STAGE_COND_BUILTINS, scope=set())
             except EvalError as e:
-                raise MemberSpecValidationError(
-                    f"{label}: stage {name!r} :if: {e}"
-                ) from e
+                raise MemberSpecValidationError(f"{label}: stage {name!r} :if: {e}") from e
         elif not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise MemberSpecValidationError(
-                f"{label}: stage 'plan' :max-steps must be a positive int, "
-                f"got {dumps(value)}"
+                f"{label}: stage 'plan' :max-steps must be a positive int, got {dumps(value)}"
             )
 
 
@@ -574,9 +551,7 @@ def _normalize_data(value: Any) -> Any:
     if isinstance(value, Form):
         return value
     if isinstance(value, dict):
-        return {
-            _normalize_key(key): _normalize_data(item) for key, item in value.items()
-        }
+        return {_normalize_key(key): _normalize_data(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_normalize_data(item) for item in value]
     return value
@@ -586,9 +561,7 @@ def _normalize_key(key: Any) -> str:
     """Map an EDN key (``:max-iterations``) to a snake_case field name."""
     if isinstance(key, (Keyword, str)):
         return str(key).replace("-", "_")
-    raise MemberSpecValidationError(
-        f"spec keys must be keywords, got {_type_name(key)}: {key!r}"
-    )
+    raise MemberSpecValidationError(f"spec keys must be keywords, got {_type_name(key)}: {key!r}")
 
 
 # ── Field readers / validators ──
@@ -712,8 +685,7 @@ def _execution_from(value: Any) -> str | None:
     level = _require(value, "level", ":execution/:level")
     if not isinstance(level, str) or str(level) not in EXECUTION_LEVELS:
         raise MemberSpecValidationError(
-            f":execution/:level must be one of :L0/:L1/:L2, "
-            f"got {_type_name(level)}: {level!r}"
+            f":execution/:level must be one of :L0/:L1/:L2, got {_type_name(level)}: {level!r}"
         )
     return str(level)
 
@@ -740,8 +712,7 @@ def _on_from(value: Any, rule_name: str) -> EventType | None:
         return None
     if not isinstance(value, str):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :on must be an event keyword, "
-            f"got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: :on must be an event keyword, got {_type_name(value)}: {value!r}"
         )
     event_name = str(value).replace("-", "_").upper()
     try:
@@ -759,9 +730,7 @@ def _on_to_str(on: EventType | None) -> str | None:
     return on.name.lower().replace("_", "-")
 
 
-def _expr_from(
-    value: Any, path: str, rule_name: str, *, required: bool
-) -> "Form | None":
+def _expr_from(value: Any, path: str, rule_name: str, *, required: bool) -> "Form | None":
     """Read an expression field: a parsed Form or an EDN source string.
 
     Structural shape only — builtin-scope validation is done by
@@ -787,8 +756,7 @@ def _expr_from(
             )
         return parsed
     raise MemberSpecValidationError(
-        f"rule {rule_name!r}: {path} must be an expression, "
-        f"got {_type_name(value)}: {value!r}"
+        f"rule {rule_name!r}: {path} must be an expression, got {_type_name(value)}: {value!r}"
     )
 
 
@@ -803,8 +771,7 @@ def _forms_from(value: Any, path: str, rule_name: str) -> tuple[Form, ...]:
     """Read a vector of expression forms (parsed Forms or EDN strings)."""
     if isinstance(value, Form) or not isinstance(value, (list, tuple)):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: {path} must be a vector, "
-            f"got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: {path} must be a vector, got {_type_name(value)}: {value!r}"
         )
     forms: list[Form] = []
     for item in value:
@@ -895,8 +862,7 @@ def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
         return {}
     if isinstance(value, Form) or not isinstance(value, dict):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :loop/:replies must be a map, "
-            f"got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: :loop/:replies must be a map, got {_type_name(value)}: {value!r}"
         )
     replies: dict[str, str] = {}
     for key, text in value.items():
@@ -918,14 +884,11 @@ def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
 def _reflect_from(value: Any, rule_name: str) -> ReflectSpec:
     if not isinstance(value, dict):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :loop/:reflect must be a map, "
-            f"got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: :loop/:reflect must be a map, got {_type_name(value)}: {value!r}"
         )
     _warn_unknown_keys(value, "reflect")
     return ReflectSpec(
-        enabled=_read(
-            value, "enabled", f"rule {rule_name!r}: :loop/:reflect/:enabled", kind=bool
-        ),
+        enabled=_read(value, "enabled", f"rule {rule_name!r}: :loop/:reflect/:enabled", kind=bool),
         interval_minutes=_read(
             value,
             "interval_minutes",
@@ -946,8 +909,7 @@ def _actions_from(value: Any, rule_name: str) -> tuple[Form, ...]:
         return ()
     if isinstance(value, Form) or not isinstance(value, (list, tuple)):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :actions must be a vector, "
-            f"got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: :actions must be a vector, got {_type_name(value)}: {value!r}"
         )
     forms: list[Form] = []
     for item in value:

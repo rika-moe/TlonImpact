@@ -88,9 +88,7 @@ async def _seed_referenced(
 
 
 class TestSendMailSuccess:
-    async def test_valid_effect_publishes_mail_new_and_no_notice(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_valid_effect_publishes_mail_new_and_no_notice(self, tmp_path: Path) -> None:
         executor, mailbox, publish = _make_executor(tmp_path)
         referenced = await _seed_referenced(mailbox)
 
@@ -136,9 +134,7 @@ class TestReplyHeaderResolution:
         assert notice.from_address == POSTMASTER_ADDRESS
         assert "m-trigger" in notice.content
 
-    async def test_no_mailbox_passes_declared_headers_through(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_no_mailbox_passes_declared_headers_through(self, tmp_path: Path) -> None:
         """Bare setups without a mailbox cannot resolve references: the
         stage-declared headers go out as-is."""
         publish = AsyncMock()
@@ -233,23 +229,17 @@ class TestEndorsementValidation:
         executor, mailbox, publish = _make_executor(tmp_path)
         await self._seed_endorsed(mailbox)
 
-        await executor.send_mail(
-            _effect(in_reply_to=None, thread_id=None, endorsing="m-helpful")
-        )
+        await executor.send_mail(_effect(in_reply_to=None, thread_id=None, endorsing="m-helpful"))
 
         publish.assert_awaited_once()
         assert publish.await_args.args[0] is EventType.MAIL_NEW
         mail = publish.await_args.kwargs["payload"]
         assert mail.endorsing == "m-helpful"
 
-    async def test_hallucinated_endorsing_fails_with_notice(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_hallucinated_endorsing_fails_with_notice(self, tmp_path: Path) -> None:
         executor, mailbox, publish = _make_executor(tmp_path)
 
-        await executor.send_mail(
-            _effect(in_reply_to=None, thread_id=None, endorsing="m-ghost")
-        )
+        await executor.send_mail(_effect(in_reply_to=None, thread_id=None, endorsing="m-ghost"))
 
         publish.assert_awaited_once()
         assert publish.await_args.args[0] is EventType.MAIL_DELIVERED
@@ -269,9 +259,7 @@ class TestEndorsementValidation:
         )
         await mailbox.append_sent(own)
 
-        await executor.send_mail(
-            _effect(in_reply_to=None, thread_id=None, endorsing=own.id)
-        )
+        await executor.send_mail(_effect(in_reply_to=None, thread_id=None, endorsing=own.id))
 
         publish.assert_awaited_once()
         assert publish.await_args.args[0] is EventType.MAIL_DELIVERED
@@ -287,9 +275,7 @@ class TestMentorCc:
 
     MENTOR = "mentor@tlon.internal"
 
-    def _make_probation_executor(
-        self, tmp_path: Path
-    ) -> tuple[EffectExecutor, Mailbox, AsyncMock]:
+    def _make_probation_executor(self, tmp_path: Path) -> tuple[EffectExecutor, Mailbox, AsyncMock]:
         mailbox = Mailbox(TlonPaths(home=tmp_path).member_mail_dir("agent1"))
         publish = AsyncMock()
         executor = EffectExecutor(

@@ -80,9 +80,7 @@ class EventsFacade:
 
     # ---------- 人类在场（presence） ----------
 
-    async def attach_human(
-        self, username: str, session_id: str, sink: EventHandler
-    ) -> None:
+    async def attach_human(self, username: str, session_id: str, sink: EventHandler) -> None:
         """Attach a client session to the human's adapter (creating it on
         first contact — the persistent mailbox included)."""
         assert self._adapter_manager is not None, "human presence not wired"
@@ -128,9 +126,7 @@ class EventsFacade:
         """Whether the GitHub webhook ingress is configured."""
         return self._github_adapter is not None
 
-    async def receive_github_event(
-        self, event_type: str, payload: dict[str, Any]
-    ) -> str | None:
+    async def receive_github_event(self, event_type: str, payload: dict[str, Any]) -> str | None:
         """Hand a verified GitHub webhook delivery to the runtime.
 
         Returns:

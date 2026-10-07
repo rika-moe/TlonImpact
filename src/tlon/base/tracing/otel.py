@@ -58,9 +58,7 @@ def init_tracing(trace_store_dir: Path, otlp_endpoint: str | None = None) -> Tra
         try:
             sampler = TraceIdRatioBased(float(ratio_env))
         except ValueError:
-            logger.warning(
-                "invalid_sample_ratio", env_var=SAMPLE_RATIO_ENV, value=ratio_env
-            )
+            logger.warning("invalid_sample_ratio", env_var=SAMPLE_RATIO_ENV, value=ratio_env)
 
     provider = TracerProvider(sampler=sampler)
     provider.add_span_processor(SimpleSpanProcessor(JsonlSpanExporter(trace_store_dir)))

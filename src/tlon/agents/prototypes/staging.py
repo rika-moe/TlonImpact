@@ -228,9 +228,7 @@ def reject_prototype(name: str, tlon_paths: TlonPaths) -> None:
     logger.info("prototype_rejected", name=name)
 
 
-def append_staging_review(
-    name: str, entry_text: str, tlon_paths: TlonPaths
-) -> None:
+def append_staging_review(name: str, entry_text: str, tlon_paths: TlonPaths) -> None:
     """Append one peer-review entry to a staged prototype's ``REVIEW.md``.
 
     The review record is advisory (see docs/design/prototypes.md): it

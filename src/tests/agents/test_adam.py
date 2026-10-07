@@ -224,9 +224,7 @@ class TestGuardianInbox:
     Adam and never answers postmaster (a bounce must not be bounced back).
     """
 
-    def _mail_to_adam(
-        self, from_address: str = "worker-1@tlon.internal", **kwargs
-    ) -> Mail:
+    def _mail_to_adam(self, from_address: str = "worker-1@tlon.internal", **kwargs) -> Mail:
         return Mail.create(
             from_address=from_address,
             to=["adam@tlon.internal"],

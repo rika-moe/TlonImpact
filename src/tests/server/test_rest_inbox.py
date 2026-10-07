@@ -31,9 +31,7 @@ def paths(tmp_path: Path) -> TlonPaths:
 
 @pytest.fixture
 def handler(paths: TlonPaths) -> RESTAPIHandler:
-    return RESTAPIHandler(
-        None, mail=MailFacade(adapter_manager=MagicMock(), tlon_paths=paths)
-    )
+    return RESTAPIHandler(None, mail=MailFacade(adapter_manager=MagicMock(), tlon_paths=paths))
 
 
 async def _seed_mailbox(paths: TlonPaths, username: str, count: int = 3) -> list[Mail]:
@@ -84,9 +82,7 @@ class TestHandleInbox:
     async def test_limit_is_capped(self, paths: TlonPaths, handler: RESTAPIHandler):
         await _seed_mailbox(paths, "alice", count=5)
 
-        response = await handler.handle_inbox(
-            StubRequest({"username": "alice", "limit": "2"})
-        )
+        response = await handler.handle_inbox(StubRequest({"username": "alice", "limit": "2"}))
 
         body = json.loads(response.text)
         assert body["count"] == 2
@@ -105,9 +101,7 @@ class TestHandleInbox:
 
         assert response.status == 503
 
-    async def test_read_flag_from_cursor(
-        self, paths: TlonPaths, handler: RESTAPIHandler
-    ):
+    async def test_read_flag_from_cursor(self, paths: TlonPaths, handler: RESTAPIHandler):
         """/inbox exposes read semantics: unread inbox mail is read=false;
         mail marked read (cursor) flips to true."""
         seeded = await _seed_mailbox(paths, "alice", count=2)
@@ -121,9 +115,7 @@ class TestHandleInbox:
         assert read_by_id[seeded[0].id] is True  # marked read
         assert read_by_id[seeded[1].id] is False  # still unread
 
-    async def test_sent_mail_is_read(
-        self, paths: TlonPaths, handler: RESTAPIHandler
-    ):
+    async def test_sent_mail_is_read(self, paths: TlonPaths, handler: RESTAPIHandler):
         """The sender's own copy is always read."""
         mailbox = Mailbox(paths.member_mail_dir("human:alice"))
         mail = Mail.create(

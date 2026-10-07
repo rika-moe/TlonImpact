@@ -40,6 +40,7 @@ async def _read_event_with_token(resp: aiohttp.ClientResponse, token: str) -> di
     same mail, so matching on the token alone is not enough — the
     adapter fan-out is the mail.delivered one.
     """
+
     async def _scan() -> dict[str, Any]:
         async for raw in resp.content:
             line = raw.decode("utf-8", errors="replace").strip()

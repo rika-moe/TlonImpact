@@ -290,9 +290,7 @@ class Mailbox:
                 _SCANS.pop(self._dir, None)
                 return []
             except OSError as e:
-                logger.error(
-                    "mail_file_read_failed", file_path=str(self._inbox_path), error=str(e)
-                )
+                logger.error("mail_file_read_failed", file_path=str(self._inbox_path), error=str(e))
                 return []
 
             scan = _SCANS.get(self._dir)
@@ -300,7 +298,9 @@ class Mailbox:
                 logger.info("mail_inbox_rescan", file_path=str(self._inbox_path), reason="replaced")
                 scan = None
             elif scan is not None and scan.offset > stat.st_size:
-                logger.info("mail_inbox_rescan", file_path=str(self._inbox_path), reason="truncated")
+                logger.info(
+                    "mail_inbox_rescan", file_path=str(self._inbox_path), reason="truncated"
+                )
                 scan = None
 
             start = scan.offset if scan is not None else 0
@@ -309,9 +309,7 @@ class Mailbox:
                     await f.seek(start)
                     chunk = await f.read()
             except Exception as e:
-                logger.error(
-                    "mail_file_read_failed", file_path=str(self._inbox_path), error=str(e)
-                )
+                logger.error("mail_file_read_failed", file_path=str(self._inbox_path), error=str(e))
                 return []
 
             # Only complete lines are consumed: a trailing partial line
@@ -321,9 +319,7 @@ class Mailbox:
             try:
                 text = complete.decode("utf-8")
             except UnicodeDecodeError as e:
-                logger.error(
-                    "mail_file_read_failed", file_path=str(self._inbox_path), error=str(e)
-                )
+                logger.error("mail_file_read_failed", file_path=str(self._inbox_path), error=str(e))
                 return []
 
             scan = scan if scan is not None else _InboxScan(stat.st_dev, stat.st_ino, 0, 0)
@@ -384,9 +380,7 @@ class Mailbox:
             async with aiofiles.open(self._cursor_path, encoding="utf-8") as f:
                 content = await f.read()
         except Exception as e:
-            logger.error(
-                "mail_cursor_read_failed", file_path=str(self._cursor_path), error=str(e)
-            )
+            logger.error("mail_cursor_read_failed", file_path=str(self._cursor_path), error=str(e))
             return set()
 
         return {line.strip() for line in content.splitlines() if line.strip()}

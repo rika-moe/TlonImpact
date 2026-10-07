@@ -79,7 +79,9 @@ def _make_delivery(
         # ConfigService once and feeds both resolution sides.
         provider = GuardianAgentInfoProvider(provider)
     adapter_manager = AdapterManager(
-        event_bus=bus, agent_info_provider=provider, tlon_paths=temp_paths,
+        event_bus=bus,
+        agent_info_provider=provider,
+        tlon_paths=temp_paths,
         external_owner=external_owner,
     )
     for username in online_humans or []:
@@ -202,9 +204,7 @@ class TestAllExpansion:
             "a-001": AgentConfig(id="a-001", name="甲"),
             "a-002": AgentConfig(id="a-002", name="乙"),
         }
-        delivery, bus = _make_delivery(
-            temp_paths, configs, online_humans=["alice"]
-        )
+        delivery, bus = _make_delivery(temp_paths, configs, online_humans=["alice"])
         await delivery.initialize()
 
         mail = Mail.create(
@@ -398,9 +398,7 @@ class TestExternalGatewayRecipient:
         configs = {"a-001": AgentConfig(id="a-001", name="甲")}
         registry = ExternalGatewayRegistry()
         registry.claim(self.EXTERNAL, "gateway:github")
-        delivery, bus = _make_delivery(
-            temp_paths, configs, external_owner=registry.owner_of
-        )
+        delivery, bus = _make_delivery(temp_paths, configs, external_owner=registry.owner_of)
         await delivery.initialize()
 
         mail = Mail.create(
@@ -425,9 +423,7 @@ class TestExternalGatewayRecipient:
         configs = {"a-001": AgentConfig(id="a-001", name="甲")}
         registry = ExternalGatewayRegistry()
         registry.claim(self.EXTERNAL, "gateway:github")
-        delivery, bus = _make_delivery(
-            temp_paths, configs, external_owner=registry.owner_of
-        )
+        delivery, bus = _make_delivery(temp_paths, configs, external_owner=registry.owner_of)
         await delivery.initialize()
 
         mail = Mail.create(
@@ -791,9 +787,7 @@ class TestPostmasterConventions:
         assert [m.id for m in await sent.recent()] == [mail.id]
 
     @pytest.mark.asyncio
-    async def test_postmaster_sender_unknown_recipient_is_not_bounced(
-        self, temp_paths
-    ):
+    async def test_postmaster_sender_unknown_recipient_is_not_bounced(self, temp_paths):
         """A system mail (e.g. a cron tick) to an unknown recipient used to
         bounce to postmaster — the double guard keeps it silent."""
         delivery, bus = _make_delivery(temp_paths)

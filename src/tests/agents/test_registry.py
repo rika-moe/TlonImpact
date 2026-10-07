@@ -119,7 +119,11 @@ class TestRegistryStart:
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
-                {"relay-1": AgentConfig(id="relay-1", name="转发者", llm=LLMConfig(model_name="test/model"))}
+                {
+                    "relay-1": AgentConfig(
+                        id="relay-1", name="转发者", llm=LLMConfig(model_name="test/model")
+                    )
+                }
             ),
             tlon_paths=p,
         )
@@ -144,7 +148,9 @@ class TestRegistryStart:
         # AGENT_STARTED carries the spec provenance.
         await _wait_for(lambda: len(started) == 1)
         assert started[0].payload["agent_id"] == "relay-1"
-        assert started[0].payload["spec_hash"] == load_member_spec("relay-1", tlon_paths=p).source_hash
+        assert (
+            started[0].payload["spec_hash"] == load_member_spec("relay-1", tlon_paths=p).source_hash
+        )
 
         await registry.shutdown()
 
@@ -310,7 +316,13 @@ class TestWakeOnMail:
         _write_behavior(p, agent_id, text)
         registry = AgentRegistry(
             event_bus=bus,
-            agent_info_provider=_StaticProvider({agent_id: AgentConfig(id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model"))}),
+            agent_info_provider=_StaticProvider(
+                {
+                    agent_id: AgentConfig(
+                        id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model")
+                    )
+                }
+            ),
             tlon_paths=p,
         )
         await registry.initialize()
@@ -332,17 +344,17 @@ class TestWakeOnMail:
             content="wake up",
             to=[f"{recipient}@tlon.internal"],
         )
-        kwargs = {"type": EventType.MAIL_DELIVERED,
-                  "payload": {"mail": mail, "recipient": recipient},
-                  "source": "mail_delivery"}
+        kwargs = {
+            "type": EventType.MAIL_DELIVERED,
+            "payload": {"mail": mail, "recipient": recipient},
+            "source": "mail_delivery",
+        }
         if trace:
             kwargs["trace_id"], kwargs["span_id"], kwargs["parent_span_id"] = trace
         await bus.publish(Event(**kwargs))
 
     async def test_wake_sleeping_member(self, bus, tmp_path, monkeypatch):
-        registry = await self._sleeping_registry(
-            bus, tmp_path, monkeypatch, "worker-1", RELAY_EDN
-        )
+        registry = await self._sleeping_registry(bus, tmp_path, monkeypatch, "worker-1", RELAY_EDN)
         starts: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, lambda e: starts.append(e))
 
@@ -384,9 +396,7 @@ class TestWakeOnMail:
 
     async def test_wake_joins_trace(self, bus, tmp_path, monkeypatch):
         """The wake request carries the delivery event's trace triple."""
-        registry = await self._sleeping_registry(
-            bus, tmp_path, monkeypatch, "worker-1", RELAY_EDN
-        )
+        registry = await self._sleeping_registry(bus, tmp_path, monkeypatch, "worker-1", RELAY_EDN)
         starts: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, lambda e: starts.append(e))
 
@@ -411,7 +421,11 @@ class TestWakeOnMail:
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
-                {"gu-yanxi-9": AgentConfig(id="gu-yanxi-9", name="客服", llm=LLMConfig(model_name="test/model"))}
+                {
+                    "gu-yanxi-9": AgentConfig(
+                        id="gu-yanxi-9", name="客服", llm=LLMConfig(model_name="test/model")
+                    )
+                }
             ),
             tlon_paths=p,
         )
@@ -507,7 +521,12 @@ class TestMemberStopAndDrain:
         """The idle drain sleeps any member — AGENT_SLEEPING, home survives."""
         agent_id = "c-relay-a1b2c3d4"
         configs = {
-            agent_id: AgentConfig(id=agent_id, name="外包", idle_timeout_seconds=0, llm=LLMConfig(model_name="test/model"))
+            agent_id: AgentConfig(
+                id=agent_id,
+                name="外包",
+                idle_timeout_seconds=0,
+                llm=LLMConfig(model_name="test/model"),
+            )
         }
         registry, p = await self._make_registry(
             bus, tmp_path, monkeypatch, configs, homes=(agent_id,)
@@ -538,7 +557,11 @@ class TestPendingStop:
         registry = AgentRegistry(
             event_bus=bus,
             agent_info_provider=_StaticProvider(
-                {agent_id: AgentConfig(id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model"))}
+                {
+                    agent_id: AgentConfig(
+                        id=agent_id, name=agent_id, llm=LLMConfig(model_name="test/model")
+                    )
+                }
             ),
             tlon_paths=p,
         )
@@ -562,52 +585,34 @@ class TestPendingStop:
         )
         return registry, sessions
 
-    async def test_when_idle_registers_pending_not_rejected(
-        self, bus, tmp_path, monkeypatch
-    ):
+    async def test_when_idle_registers_pending_not_rejected(self, bus, tmp_path, monkeypatch):
         registry, _ = await self._running_member(bus, tmp_path, monkeypatch)
 
-        assert (
-            await registry.stop_member("worker-1", stopped_by="test", when_idle=True)
-            is False
-        )
+        assert await registry.stop_member("worker-1", stopped_by="test", when_idle=True) is False
         assert registry.get_agent("worker-1") is not None  # still running
         assert registry._pending_stops == {"worker-1": "test"}
         assert len(registry._pending_stop_tasks) == 1
 
         await registry.shutdown()
 
-    async def test_when_idle_repeated_registration_is_idempotent(
-        self, bus, tmp_path, monkeypatch
-    ):
+    async def test_when_idle_repeated_registration_is_idempotent(self, bus, tmp_path, monkeypatch):
         """Re-registering refreshes the audit stopped_by; one watcher only."""
         registry, _ = await self._running_member(bus, tmp_path, monkeypatch)
 
-        assert (
-            await registry.stop_member("worker-1", stopped_by="first", when_idle=True)
-            is False
-        )
-        assert (
-            await registry.stop_member("worker-1", stopped_by="second", when_idle=True)
-            is False
-        )
+        assert await registry.stop_member("worker-1", stopped_by="first", when_idle=True) is False
+        assert await registry.stop_member("worker-1", stopped_by="second", when_idle=True) is False
         assert registry._pending_stops == {"worker-1": "second"}
         assert len(registry._pending_stop_tasks) == 1
 
         await registry.shutdown()
 
-    async def test_pending_stop_fires_when_sessions_drain(
-        self, bus, tmp_path, monkeypatch
-    ):
+    async def test_pending_stop_fires_when_sessions_drain(self, bus, tmp_path, monkeypatch):
         registry, sessions = await self._running_member(bus, tmp_path, monkeypatch)
 
         stopped: list[Event] = []
         bus.subscribe(EventType.AGENT_STOPPED, lambda e: stopped.append(e))
 
-        assert (
-            await registry.stop_member("worker-1", stopped_by="test", when_idle=True)
-            is False
-        )
+        assert await registry.stop_member("worker-1", stopped_by="test", when_idle=True) is False
         assert registry.get_agent("worker-1") is not None
 
         sessions["count"] = 0  # the last session completed
@@ -620,17 +625,12 @@ class TestPendingStop:
 
         await registry.shutdown()
 
-    async def test_pending_stop_fulfilled_by_immediate_stop(
-        self, bus, tmp_path, monkeypatch
-    ):
+    async def test_pending_stop_fulfilled_by_immediate_stop(self, bus, tmp_path, monkeypatch):
         """An immediate stop once the member is idle fulfils the intent:
         the watcher is cancelled and the registry stays clean."""
         registry, sessions = await self._running_member(bus, tmp_path, monkeypatch)
 
-        assert (
-            await registry.stop_member("worker-1", stopped_by="test", when_idle=True)
-            is False
-        )
+        assert await registry.stop_member("worker-1", stopped_by="test", when_idle=True) is False
         sessions["count"] = 0
         assert await registry.stop_member("worker-1", stopped_by="test") is True
 

@@ -171,17 +171,13 @@ class TestWhileRecur:
 
     def test_no_recur_runs_once(self):
         recorded: list = []
-        result = eval_form(
-            loads("(while [i 0] (< i 5) (record i))"), {}, _recorded(recorded)
-        )
+        result = eval_form(loads("(while [i 0] (< i 5) (record i))"), {}, _recorded(recorded))
         assert recorded == [0]
         assert result == 0  # the body's last value
 
     def test_false_test_returns_none(self):
         recorded: list = []
-        result = eval_form(
-            loads("(while [i 0] (> i 5) (record i))"), {}, _recorded(recorded)
-        )
+        result = eval_form(loads("(while [i 0] (> i 5) (record i))"), {}, _recorded(recorded))
         assert recorded == []
         assert result is None
 
@@ -197,9 +193,7 @@ class TestWhileRecur:
     def test_outer_names_survive_rebinding(self):
         recorded: list = []
         result = eval_form(
-            loads(
-                "(while [i 0] (< i 2) (record (+ base i)) (recur (inc i)))"
-            ),
+            loads("(while [i 0] (< i 2) (record (+ base i)) (recur (inc i)))"),
             {"base": 10},
             _recorded(recorded),
         )
@@ -273,10 +267,7 @@ class TestMapFilterReduce:
 
     def test_reduce(self):
         assert eval_form(loads("(reduce acc x (+ acc x) 0 [1 2 3])"), {}, _BUILTINS) == 6
-        assert (
-            eval_form(loads("(reduce acc x (if (> x acc) x acc) 0 [3 1 2])"), {}, _BUILTINS)
-            == 3
-        )
+        assert eval_form(loads("(reduce acc x (if (> x acc) x acc) 0 [3 1 2])"), {}, _BUILTINS) == 3
 
     def test_empty_collections(self):
         assert eval_form(loads("(map x (+ x 1) [])"), {}, _BUILTINS) == []
@@ -285,8 +276,12 @@ class TestMapFilterReduce:
 
     def test_fuel_exhausted(self):
         with pytest.raises(FuelExhaustedError, match="fuel exhausted"):
-            eval_form(loads("(map x (+ x 1) [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15])"),
-                      {}, _BUILTINS, fuel=10)
+            eval_form(
+                loads("(map x (+ x 1) [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15])"),
+                {},
+                _BUILTINS,
+                fuel=10,
+            )
 
     def test_map_wrong_arity_rejected(self):
         with pytest.raises(EvalError, match="map expects a binding, a body, and a collection"):
@@ -425,9 +420,7 @@ class TestFunctions:
     first-class functions — bounded by the same fuel and depth levers."""
 
     def test_defn_defines_and_calls(self):
-        assert eval_form(
-            loads("(when true (defn f [x] (inc x)) (f 41))"), {}, _BUILTINS
-        ) == 42
+        assert eval_form(loads("(when true (defn f [x] (inc x)) (f 41))"), {}, _BUILTINS) == 42
 
     def test_defn_returns_the_closure(self):
         result = eval_form(loads("(defn f [x] x)"), {}, _BUILTINS)
@@ -439,14 +432,15 @@ class TestFunctions:
 
     def test_closure_captures_let_binding(self):
         # The closure captures the definition-time environment.
-        assert eval_form(
-            loads("(let [base 10] ((fn [x] (+ base x)) 5))"), {}, _BUILTINS
-        ) == 15
-        assert eval_form(
-            loads("(let [base 10] (defn add-base [x] (+ base x)) (add-base 5))"),
-            {},
-            _BUILTINS,
-        ) == 15
+        assert eval_form(loads("(let [base 10] ((fn [x] (+ base x)) 5))"), {}, _BUILTINS) == 15
+        assert (
+            eval_form(
+                loads("(let [base 10] (defn add-base [x] (+ base x)) (add-base 5))"),
+                {},
+                _BUILTINS,
+            )
+            == 15
+        )
 
     def test_variadic_rest_collects_extra_arguments(self):
         assert eval_form(
@@ -454,54 +448,65 @@ class TestFunctions:
         ) == [2, 3]
 
     def test_variadic_rest_empty_vector(self):
-        assert eval_form(
-            loads("(when true (defn f [a & rest] rest) (f 1))"), {}, _BUILTINS
-        ) == []
+        assert eval_form(loads("(when true (defn f [a & rest] rest) (f 1))"), {}, _BUILTINS) == []
 
     def test_variadic_only_rest(self):
-        assert eval_form(
-            loads("(when true (defn f [& xs] xs) (f 1 2))"), {}, _BUILTINS
-        ) == [1, 2]
+        assert eval_form(loads("(when true (defn f [& xs] xs) (f 1 2))"), {}, _BUILTINS) == [1, 2]
 
     def test_recursion_factorial(self):
-        assert eval_form(
-            loads("(when true (defn fact [n] (if (< n 2) 1 (* n (fact (dec n))))) (fact 5))"),
-            {},
-            _BUILTINS,
-        ) == 120
+        assert (
+            eval_form(
+                loads("(when true (defn fact [n] (if (< n 2) 1 (* n (fact (dec n))))) (fact 5))"),
+                {},
+                _BUILTINS,
+            )
+            == 120
+        )
 
     def test_recursion_fibonacci(self):
-        assert eval_form(
-            loads(
-                "(when true (defn fib [n] (if (< n 2) n"
-                " (+ (fib (- n 1)) (fib (- n 2))))) (fib 8))"
-            ),
-            {},
-            _BUILTINS,
-        ) == 21
+        assert (
+            eval_form(
+                loads(
+                    "(when true (defn fib [n] (if (< n 2) n"
+                    " (+ (fib (- n 1)) (fib (- n 2))))) (fib 8))"
+                ),
+                {},
+                _BUILTINS,
+            )
+            == 21
+        )
 
     def test_first_class_function_as_argument(self):
-        assert eval_form(
-            loads("(when true (defn apply2 [f x] (f (f x))) (apply2 (fn [x] (* x 2)) 3))"),
-            {},
-            _BUILTINS,
-        ) == 12
+        assert (
+            eval_form(
+                loads("(when true (defn apply2 [f x] (f (f x))) (apply2 (fn [x] (* x 2)) 3))"),
+                {},
+                _BUILTINS,
+            )
+            == 12
+        )
 
     def test_first_class_function_as_return_value(self):
-        assert eval_form(
-            loads("(when true (defn make-adder [n] (fn [x] (+ x n))) ((make-adder 3) 4))"),
-            {},
-            _BUILTINS,
-        ) == 7
+        assert (
+            eval_form(
+                loads("(when true (defn make-adder [n] (fn [x] (+ x n))) ((make-adder 3) 4))"),
+                {},
+                _BUILTINS,
+            )
+            == 7
+        )
 
     def test_defn_sibling_forms_see_the_definition(self):
         # defn binds into the current env dict, so later forms of the
         # same body resolve the name.
-        assert eval_form(
-            loads("(when true (defn f [x] (inc x)) (defn g [x] (f (f x))) (g 0))"),
-            {},
-            _BUILTINS,
-        ) == 2
+        assert (
+            eval_form(
+                loads("(when true (defn f [x] (inc x)) (defn g [x] (f (f x))) (g 0))"),
+                {},
+                _BUILTINS,
+            )
+            == 2
+        )
 
     def test_arity_error_fixed_params(self):
         with pytest.raises(EvalError, match="f expects 2 arguments, got 1"):
@@ -519,17 +524,12 @@ class TestFunctions:
         # Termination is guaranteed by the depth/fuel levers, not by the
         # absence of recursion (ADR 0021).
         with pytest.raises(EvalDepthError, match="depth exceeds"):
-            eval_form(
-                loads("(when true (defn f [x] (f (inc x))) (f 0))"), {}, _BUILTINS
-            )
+            eval_form(loads("(when true (defn f [x] (f (inc x))) (f 0))"), {}, _BUILTINS)
 
     def test_wide_recursion_hits_the_fuel_budget(self):
         with pytest.raises(FuelExhaustedError, match="fuel exhausted"):
             eval_form(
-                loads(
-                    "(when true (defn f [n] (if (< n 1) 0"
-                    " (+ (f (- n 1)) (f (- n 1))))) (f 20))"
-                ),
+                loads("(when true (defn f [n] (if (< n 1) 0 (+ (f (- n 1)) (f (- n 1))))) (f 20))"),
                 {},
                 _BUILTINS,
             )
@@ -540,8 +540,7 @@ class TestFunctions:
         with pytest.raises(EvalError, match="recur outside while"):
             eval_form(
                 loads(
-                    "(when true (defn f [] (recur 1))"
-                    " (while [i 0] (< i 1) (f) (recur (inc i))))"
+                    "(when true (defn f [] (recur 1)) (while [i 0] (< i 1) (f) (recur (inc i))))"
                 ),
                 {},
                 _BUILTINS,
@@ -618,9 +617,7 @@ class TestFlippedAssertions:
 
     def test_defn_fn_are_special_forms_now(self):
         # The flipped side of ADR 0021: defn/fn evaluate to closures.
-        assert eval_form(
-            loads("(when true (defn f [x] (inc x)) (f 1))"), {}, _BUILTINS
-        ) == 2
+        assert eval_form(loads("(when true (defn f [x] (inc x)) (f 1))"), {}, _BUILTINS) == 2
         assert eval_form(loads("((fn [x] (inc x)) 1)"), {}, _BUILTINS) == 2
 
     def test_recur_alone_still_rejected(self):

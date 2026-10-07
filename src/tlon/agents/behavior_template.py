@@ -130,12 +130,8 @@ def render_template(text: str, params: dict[str, Any]) -> str:
                 )
             replacements[name] = dumps(value)
         elif p.type == "string-list":
-            if not isinstance(value, (list, tuple)) or not all(
-                isinstance(v, str) for v in value
-            ):
-                raise BehaviorTemplateError(
-                    f"parameter {name!r}: expected list of strings"
-                )
+            if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+                raise BehaviorTemplateError(f"parameter {name!r}: expected list of strings")
             replacements[name] = dumps(list(value))
         else:
             raise BehaviorTemplateError(f"unknown parameter type {p.type!r}")
@@ -161,18 +157,14 @@ def _standin_substitute(
     return _TEMPLATE_RE.sub(_replacer, text)
 
 
-def _parse_parameters(
-    value: Any, placeholders: set[str]
-) -> tuple[ParameterSpec, ...]:
+def _parse_parameters(value: Any, placeholders: set[str]) -> tuple[ParameterSpec, ...]:
     """Parse and validate the ``:parameters`` map from a template.
 
     Every ``:parameters`` key must name a placeholder found in the text;
     every placeholder in the text must be declared in ``:parameters``.
     """
     if not isinstance(value, dict):
-        raise BehaviorTemplateError(
-            f":parameters must be a map, got {_type_name(value)}"
-        )
+        raise BehaviorTemplateError(f":parameters must be a map, got {_type_name(value)}")
     if not value:
         raise BehaviorTemplateError(":parameters must not be empty")
 
@@ -181,14 +173,11 @@ def _parse_parameters(
     for key, pval in value.items():
         if not isinstance(key, (Keyword, str)):
             raise BehaviorTemplateError(
-                f":parameters key must be a keyword or string, "
-                f"got {_type_name(key)}: {key!r}"
+                f":parameters key must be a keyword or string, got {_type_name(key)}: {key!r}"
             )
         name = str(key)
         if name in declared:
-            raise BehaviorTemplateError(
-                f"duplicate parameter name {name!r} in :parameters"
-            )
+            raise BehaviorTemplateError(f"duplicate parameter name {name!r} in :parameters")
         declared.add(name)
         if not isinstance(pval, dict):
             raise BehaviorTemplateError(
@@ -197,9 +186,7 @@ def _parse_parameters(
         pfields = {str(k): v for k, v in pval.items()}
         for pk in pfields:
             if pk not in _PARAM_KEYS:
-                raise BehaviorTemplateError(
-                    f"parameter {name!r}: unknown key :{pk}"
-                )
+                raise BehaviorTemplateError(f"parameter {name!r}: unknown key :{pk}")
         ptype_str = str(pfields.get("type") or "string")
         if ptype_str not in _VALID_PARAM_TYPES:
             raise BehaviorTemplateError(
@@ -212,8 +199,7 @@ def _parse_parameters(
     if not placeholders.issubset(declared):
         undeclared = placeholders - declared
         raise BehaviorTemplateError(
-            f"template placeholders not declared in :parameters: "
-            f"{sorted(undeclared)}"
+            f"template placeholders not declared in :parameters: {sorted(undeclared)}"
         )
     return tuple(specs)
 

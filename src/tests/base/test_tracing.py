@@ -43,11 +43,14 @@ def trace_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 async def test_exporter_output_readable_by_file_trace_store(trace_dir: Path) -> None:
     """Exporter JSONL round-trips through FileTraceStore with a nested tree."""
-    with start_span(
-        "message.received",
-        source="client_gateway",
-        attributes={"message_id": "m-1", "sender": "human"},
-    ) as root_ctx, start_span("message.routing", source="message_router") as child_ctx:
+    with (
+        start_span(
+            "message.received",
+            source="client_gateway",
+            attributes={"message_id": "m-1", "sender": "human"},
+        ) as root_ctx,
+        start_span("message.routing", source="message_router") as child_ctx,
+    ):
         pass
 
     assert root_ctx.trace_id is not None
@@ -99,9 +102,10 @@ def test_facade_start_span_and_continue_trace(trace_dir: Path) -> None:
 
     # A remote carrier (e.g. from an event) continues the same trace
     assert root_ctx.trace_id is not None
-    with continue_trace(root_ctx.trace_id, root_ctx.span_id), start_span(
-        "message.routing", source="message_router"
-    ) as child_ctx:
+    with (
+        continue_trace(root_ctx.trace_id, root_ctx.span_id),
+        start_span("message.routing", source="message_router") as child_ctx,
+    ):
         assert child_ctx.trace_id == root_ctx.trace_id
         assert child_ctx.parent_span_id == root_ctx.span_id
 
@@ -189,9 +193,10 @@ async def test_end_to_end_propagation_chain(
     assert gw_trace_id is not None
 
     # Router: continues the trace from the event carrier
-    with continue_trace(gw_trace_id, gw_span_id), start_span(
-        "message.routing", source="message_router"
-    ) as router_ctx:
+    with (
+        continue_trace(gw_trace_id, gw_span_id),
+        start_span("message.routing", source="message_router") as router_ctx,
+    ):
         router_span_id = router_ctx.span_id
 
     # Agent: continues from the router's carrier, then runs a ReAct round

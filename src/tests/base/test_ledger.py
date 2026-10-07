@@ -211,9 +211,7 @@ class TestReadLedger:
     async def test_torn_tail_line_is_skipped(self, tmp_path: Path) -> None:
         path = tmp_path / "dev-001" / "ledger.jsonl"
         path.parent.mkdir(parents=True)
-        path.write_text(
-            json.dumps(_record()) + "\n" + '{"ts": "2026', encoding="utf-8"
-        )
+        path.write_text(json.dumps(_record()) + "\n" + '{"ts": "2026', encoding="utf-8")
 
         records = await read_ledger(path)
 
@@ -249,9 +247,7 @@ class TestCollectAgentLedger:
 
     async def test_purpose_none_folds_into_unknown(self, tmp_path: Path) -> None:
         tlon_paths = TlonPaths(home=tmp_path)
-        await _write_records(
-            tlon_paths.agent_ledger_file("dev-001"), [_record(purpose=None)]
-        )
+        await _write_records(tlon_paths.agent_ledger_file("dev-001"), [_record(purpose=None)])
 
         summary = await collect_agent_ledger("dev-001", tlon_paths=tlon_paths)
 
@@ -308,12 +304,27 @@ class TestCollectAgentLedgerByModel:
         await _write_records(
             tlon_paths.agent_ledger_file("dev-001"),
             [
-                _record(model="moonshot/kimi-k2.5", prompt_tokens=10, completion_tokens=2,
-                        duration_ms=100, cpu_ms=4),
-                _record(model="deepseek/deepseek-chat", prompt_tokens=20, completion_tokens=4,
-                        duration_ms=200, cpu_ms=8),
-                _record(model="moonshot/kimi-k2.5", prompt_tokens=5, completion_tokens=1,
-                        duration_ms=50, cpu_ms=2),
+                _record(
+                    model="moonshot/kimi-k2.5",
+                    prompt_tokens=10,
+                    completion_tokens=2,
+                    duration_ms=100,
+                    cpu_ms=4,
+                ),
+                _record(
+                    model="deepseek/deepseek-chat",
+                    prompt_tokens=20,
+                    completion_tokens=4,
+                    duration_ms=200,
+                    cpu_ms=8,
+                ),
+                _record(
+                    model="moonshot/kimi-k2.5",
+                    prompt_tokens=5,
+                    completion_tokens=1,
+                    duration_ms=50,
+                    cpu_ms=2,
+                ),
             ],
         )
 
@@ -332,9 +343,7 @@ class TestCollectAgentLedgerByModel:
 
     async def test_record_without_model_folds_into_unknown(self, tmp_path: Path) -> None:
         tlon_paths = TlonPaths(home=tmp_path)
-        await _write_records(
-            tlon_paths.agent_ledger_file("dev-001"), [_record(model=None)]
-        )
+        await _write_records(tlon_paths.agent_ledger_file("dev-001"), [_record(model=None)])
 
         summary = await collect_agent_ledger("dev-001", tlon_paths=tlon_paths)
 

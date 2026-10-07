@@ -268,9 +268,7 @@ class TelegramBot:
             The ack/hint text to answer with
         """
         target = (
-            self._reply_map.lookup(reply_to_message_id)
-            if reply_to_message_id is not None
-            else None
+            self._reply_map.lookup(reply_to_message_id) if reply_to_message_id is not None else None
         )
         if target is not None:
             ok = await self.send_mail(

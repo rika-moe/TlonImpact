@@ -180,24 +180,18 @@ class MetricsService(Component, Device):
         self._mail_bounced = meter.create_counter(
             "tlon.mail.bounced", description="Bounce mails sent by postmaster"
         )
-        self._agent_started = meter.create_counter(
-            "tlon.agent.started", description="Agent starts"
-        )
+        self._agent_started = meter.create_counter("tlon.agent.started", description="Agent starts")
         self._agent_woken = meter.create_counter(
             "tlon.agent.woken", description="Agent wakes from sleep"
         )
         self._agent_sleeping = meter.create_counter(
             "tlon.agent.sleeping", description="Agent idle-sleeps"
         )
-        self._agent_stopped = meter.create_counter(
-            "tlon.agent.stopped", description="Agent stops"
-        )
+        self._agent_stopped = meter.create_counter("tlon.agent.stopped", description="Agent stops")
         self._agent_retired = meter.create_counter(
             "tlon.agent.retired", description="Retirement ceremonies held"
         )
-        self._llm_calls = meter.create_counter(
-            "tlon.llm.calls", description="Completed LLM calls"
-        )
+        self._llm_calls = meter.create_counter("tlon.llm.calls", description="Completed LLM calls")
         self._llm_duration = meter.create_histogram(
             "tlon.llm.duration_ms",
             description="LLM call duration",
@@ -407,9 +401,7 @@ class MetricsService(Component, Device):
             for agent_id, stats in self._container_stats().items()
         ]
 
-    def _observe_society_container_memory(
-        self, options: CallbackOptions
-    ) -> Iterable[Observation]:
+    def _observe_society_container_memory(self, options: CallbackOptions) -> Iterable[Observation]:
         """Society-level total container memory (no attributes)."""
         assert self._container_stats is not None
         total = sum(s["memory_bytes"] for s in self._container_stats().values())
@@ -456,8 +448,7 @@ class MetricsService(Component, Device):
         if isinstance(data, Sum):
             entry["type"] = "counter"
             entry["points"] = [
-                {"attributes": dict(p.attributes or {}), "value": p.value}
-                for p in data.data_points
+                {"attributes": dict(p.attributes or {}), "value": p.value} for p in data.data_points
             ]
         elif isinstance(data, Histogram):
             entry["type"] = "histogram"
@@ -474,8 +465,7 @@ class MetricsService(Component, Device):
         elif isinstance(data, Gauge):
             entry["type"] = "gauge"
             entry["points"] = [
-                {"attributes": dict(p.attributes or {}), "value": p.value}
-                for p in data.data_points
+                {"attributes": dict(p.attributes or {}), "value": p.value} for p in data.data_points
             ]
         else:
             entry["type"] = "unknown"

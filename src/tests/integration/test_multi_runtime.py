@@ -31,9 +31,7 @@ async def _wait_for(predicate, timeout: float = DELIVERY_TIMEOUT) -> None:
 def _mail_dirs(home: Path) -> list[str]:
     """Member dirs carrying a mailbox under ``home`` (seed dirs excluded)."""
     return sorted(
-        child.name
-        for child in home.iterdir()
-        if child.is_dir() and (child / "mail").is_dir()
+        child.name for child in home.iterdir() if child.is_dir() and (child / "mail").is_dir()
     )
 
 

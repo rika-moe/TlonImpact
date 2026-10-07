@@ -238,7 +238,10 @@ class TestFormat:
         assert text.endswith("…")
 
     def test_format_unread_list(self, bot_mod):
-        unread = [make_mail(), make_mail(id="mail-2", from_address="adam@tlon.internal", subject=None)]
+        unread = [
+            make_mail(),
+            make_mail(id="mail-2", from_address="adam@tlon.internal", subject=None),
+        ]
         text = bot_mod.format_unread_list(unread, "📬 2 封未读：")
         lines = text.splitlines()
         assert lines[0] == "📬 2 封未读："

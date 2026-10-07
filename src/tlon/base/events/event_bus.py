@@ -213,9 +213,7 @@ class EventBus(Component):
             RuntimeError: If the bus is not running (fail fast).
         """
         if not self._running:
-            raise RuntimeError(
-                f"EventBus is not running; cannot publish {event.type.value}"
-            )
+            raise RuntimeError(f"EventBus is not running; cannot publish {event.type.value}")
 
         subscriptions = self._subscribers.get(event.type)
         if not subscriptions:
@@ -266,9 +264,7 @@ class EventBus(Component):
                     else:
                         # Run sync handler in thread pool, awaited so
                         # per-subscriber FIFO order is preserved
-                        await asyncio.get_running_loop().run_in_executor(
-                            None, handler, event
-                        )
+                        await asyncio.get_running_loop().run_in_executor(None, handler, event)
                     logger.info("handler_completed", subscription_id=subscription_id)
                 except asyncio.CancelledError:
                     raise

@@ -145,9 +145,7 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     # MetricsService so its stats_snapshot can be constructor-injected as
     # the metrics pull port (no setter injection). Fail-soft: without a
     # reachable docker daemon it simply reports an empty ledger.
-    resource_monitor = ContainerResourceMonitor(
-        memory_budget=settings.container_memory_budget
-    )
+    resource_monitor = ContainerResourceMonitor(memory_budget=settings.container_memory_budget)
     await resource_monitor.initialize()
     logger.info("component_initialized", component="resource_monitor")
 

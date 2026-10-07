@@ -157,7 +157,7 @@ class TlonPaths:
         ids are agent ids and reuse the agent home.
         """
         if member_id.startswith("human:"):
-            username = member_id[len("human:"):]
+            username = member_id[len("human:") :]
             return self._home / f"human-{username}" / "mail"
         return self.agent_mail_dir(member_id)
 
@@ -172,7 +172,7 @@ class TlonPaths:
         ids: list[str] = []
         for child in sorted(self._home.glob("human-*")):
             if child.is_dir() and (child / "mail").is_dir():
-                ids.append(f"human:{child.name[len('human-'):]}")
+                ids.append(f"human:{child.name[len('human-') :]}")
         return ids
 
     # ===== Society-level config =====

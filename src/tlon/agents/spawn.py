@@ -365,7 +365,11 @@ class SpawnManager:
             else None
         )
         config = instantiate(
-            prototype, agent_id, name, model=parent_model or "", params=params,
+            prototype,
+            agent_id,
+            name,
+            model=parent_model or "",
+            params=params,
             tlon_paths=tlon_paths,
         )
 

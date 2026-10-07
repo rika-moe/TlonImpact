@@ -89,9 +89,7 @@ class TestModelNameRequired:
         with pytest.raises(ValueError, match="llm.model_name"):
             _build_llm_config(LLMConfig(max_tokens=2048), "member-1")
 
-    def test_declared_model_passes_through(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_declared_model_passes_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         get_model_info = MagicMock(return_value={"max_input_tokens": 64000})
         monkeypatch.setattr("litellm.get_model_info", get_model_info)
         file_config = LLMConfig(model_name="deepseek/deepseek-chat")
