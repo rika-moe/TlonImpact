@@ -370,9 +370,7 @@ class TestDeterministicDispatch:
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
 
         await bus.publish(
-            Event(
-                type=EventType.AGENT_STARTED, payload={"agent_id": "someone"}, source="registry"
-            )
+            Event(type=EventType.AGENT_STARTED, payload={"agent_id": "someone"}, source="registry")
         )
         await _wait_for(lambda: len(emitted) == 1)
         assert emitted[0].payload.content == "hello world"
@@ -441,9 +439,7 @@ class TestCapabilityWordDispatch:
 
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
-        mail = Mail.create(
-            from_address="alice@tlon.internal", content="ping", to=[member.address]
-        )
+        mail = Mail.create(from_address="alice@tlon.internal", content="ping", to=[member.address])
         await bus.publish(_deliver(mail, member.member_id))
 
         await _wait_for(lambda: len(emitted) == 1)
@@ -476,9 +472,7 @@ class TestPhaseDFuel:
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
 
-        mail = Mail.create(
-            from_address="alice@tlon.internal", content="hello", to=[member.address]
-        )
+        mail = Mail.create(from_address="alice@tlon.internal", content="hello", to=[member.address])
         with patch("tlon.agents.member_runtime.logger") as mock_logger:
             await member._on_event(_deliver(mail, member.member_id))
         warning_events = [c.args[0] for c in mock_logger.warning.call_args_list]
@@ -498,9 +492,7 @@ class TestPhaseDFuel:
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
 
-        mail = Mail.create(
-            from_address="alice@tlon.internal", content="hi", to=[member.address]
-        )
+        mail = Mail.create(from_address="alice@tlon.internal", content="hi", to=[member.address])
         await bus.publish(_deliver(mail, member.member_id))
         await _wait_for(lambda: len(emitted) == 3)
         assert all(event.payload.content == "x" for event in emitted)
@@ -525,9 +517,7 @@ class TestDefnAcrossActionForms:
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
 
-        mail = Mail.create(
-            from_address="alice@tlon.internal", content="hi", to=[member.address]
-        )
+        mail = Mail.create(from_address="alice@tlon.internal", content="hi", to=[member.address])
         await bus.publish(_deliver(mail, member.member_id))
         await _wait_for(lambda: len(emitted) == 1)
         assert emitted[0].payload.content == "note: hello"
@@ -999,9 +989,7 @@ class TestBootScanThrottle:
     async def test_same_thread_unread_merges_into_one_session(self, bus, mail_dir):
         mailbox = Mailbox(mail_dir)
         member = _make_cognitive_member("thinker-t1", COGNITIVE_EDN, bus, mailbox)
-        root = Mail.create(
-            from_address="alice@tlon.internal", content="first", to=[member.address]
-        )
+        root = Mail.create(from_address="alice@tlon.internal", content="first", to=[member.address])
         reply = Mail.create(
             from_address="alice@tlon.internal",
             content="second",
@@ -1030,9 +1018,7 @@ class TestBootScanThrottle:
         """No backlog, no sharing: behavior is unchanged."""
         mailbox = Mailbox(mail_dir)
         member = _make_cognitive_member("thinker-t2", COGNITIVE_EDN, bus, mailbox)
-        mail = Mail.create(
-            from_address="alice@tlon.internal", content="hello", to=[member.address]
-        )
+        mail = Mail.create(from_address="alice@tlon.internal", content="hello", to=[member.address])
         await mailbox.append_inbox(mail)
 
         await member._scan_unread_mail()
@@ -1154,15 +1140,9 @@ class TestPeriodicRescan:
         """A boot member never reboots: the periodic sweep picks up
         live mail the full bounded queue dropped."""
         mailbox = Mailbox(mail_dir)
-        member = self._make_rescan_member(
-            "resident-1", bus, mailbox, queue_size=1, interval=0.05
-        )
-        first = Mail.create(
-            from_address="alice@tlon.internal", content="one", to=[member.address]
-        )
-        second = Mail.create(
-            from_address="alice@tlon.internal", content="two", to=[member.address]
-        )
+        member = self._make_rescan_member("resident-1", bus, mailbox, queue_size=1, interval=0.05)
+        first = Mail.create(from_address="alice@tlon.internal", content="one", to=[member.address])
+        second = Mail.create(from_address="alice@tlon.internal", content="two", to=[member.address])
         await mailbox.append_inbox(first)
         await mailbox.append_inbox(second)
 
@@ -1192,9 +1172,7 @@ class TestPeriodicRescan:
         """An idle sweep is a no-op: no enqueue, no scan state, no LLM
         call (the stub LLM raises if ever invoked)."""
         mailbox = Mailbox(mail_dir)
-        member = self._make_rescan_member(
-            "resident-2", bus, mailbox, queue_size=2, interval=0.03
-        )
+        member = self._make_rescan_member("resident-2", bus, mailbox, queue_size=2, interval=0.03)
         member._initialized = True
         member._rescan_task = asyncio.create_task(member._rescan_loop())
         await asyncio.sleep(0.15)  # several sweeps
@@ -1213,9 +1191,7 @@ class TestPeriodicRescan:
         up a later live drop — ``_rescan_task`` is never replaced.
         """
         mailbox = Mailbox(mail_dir)
-        member = self._make_rescan_member(
-            "resident-3", bus, mailbox, queue_size=1, interval=0.05
-        )
+        member = self._make_rescan_member("resident-3", bus, mailbox, queue_size=1, interval=0.05)
         sender = "alice@tlon.internal"
         backlog = [
             Mail.create(from_address=sender, content=f"backlog {i}", to=[member.address])
@@ -1339,9 +1315,7 @@ class TestIdleAwareBackground:
 
     async def test_shutdown_cancels_in_flight_reflection(self, bus, mail_dir):
         mailbox = Mailbox(mail_dir)
-        config = AgentConfig(
-            id="thinker-i2", name="thinker-i2", llm=LLMConfig(model_name="test")
-        )
+        config = AgentConfig(id="thinker-i2", name="thinker-i2", llm=LLMConfig(model_name="test"))
         llm = _BlockingLLM()
         caps = CognitiveCapabilities(
             config=config,

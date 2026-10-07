@@ -145,9 +145,7 @@ class TestProposeCapability:
         p = TlonPaths(home=tmp_path)
         agent_id = "c-base-00000001"
         llm = _FakeLLM(_DRAFT_ARTIFACT)
-        tool = _make_tool(
-            p, agent_id, llm, trusted_words=lambda: "- mail-triage（纯）：邮件分诊"
-        )
+        tool = _make_tool(p, agent_id, llm, trusted_words=lambda: "- mail-triage（纯）：邮件分诊")
 
         result = await tool.execute(intent="造词", name="thread-digest")
 
@@ -222,9 +220,7 @@ class TestProposeCapability:
 class TestProposeCapabilitySolvency:
     """提案偿付闸：失去偿付能力的血脉不能提案；闸 fail-open。"""
 
-    async def test_insolvent_bloodline_rejected_before_drafting(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_insolvent_bloodline_rejected_before_drafting(self, tmp_path: Path) -> None:
         """闸排在起草调用之前：被闸时 LLM 一次都不调用，staging 无残留。"""
         p = TlonPaths(home=tmp_path)
         agent_id = "c-base-00000001"

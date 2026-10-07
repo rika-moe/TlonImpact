@@ -222,18 +222,14 @@ def mailbox(tlon_paths: TlonPaths) -> Mailbox:
 
 async def _seed_mailbox(mailbox: Mailbox) -> None:
     # Thread the agent initiated with Bob; Bob replied 5 minutes later.
-    await mailbox.append_sent(
-        _mail("m1", OWN, [BOB], "2026-09-06T10:00:00", thread_id="m1")
-    )
+    await mailbox.append_sent(_mail("m1", OWN, [BOB], "2026-09-06T10:00:00", thread_id="m1"))
     await mailbox.append_inbox(
         _mail("m2", BOB, [OWN], "2026-09-06T10:05:00", thread_id="m1", in_reply_to="m1")
     )
     # Bob also initiated a thread of his own.
     await mailbox.append_inbox(_mail("m3", BOB, [OWN], "2026-09-06T11:00:00", thread_id="m3"))
     # Thread the agent initiated with Carol; never answered.
-    await mailbox.append_sent(
-        _mail("m4", OWN, [CAROL], "2026-09-06T12:00:00", thread_id="m4")
-    )
+    await mailbox.append_sent(_mail("m4", OWN, [CAROL], "2026-09-06T12:00:00", thread_id="m4"))
     # Broadcast: not a correspondent.
     await mailbox.append_sent(
         _mail("m5", OWN, ["all@tlon.internal"], "2026-09-06T13:00:00", thread_id="m5")
@@ -289,13 +285,9 @@ class TestCollectMailStats:
 
 class TestGetMailStatsTool:
     @pytest.mark.asyncio
-    async def test_execute_returns_provider_stats(
-        self, tlon_paths: TlonPaths, mailbox: Mailbox
-    ):
+    async def test_execute_returns_provider_stats(self, tlon_paths: TlonPaths, mailbox: Mailbox):
         await _seed_mailbox(mailbox)
-        tool = GetMailStatsTool(
-            provider=mail_stats_provider(tlon_paths), agent_id=AGENT_ID
-        )
+        tool = GetMailStatsTool(provider=mail_stats_provider(tlon_paths), agent_id=AGENT_ID)
 
         result = await tool.execute()
 
@@ -309,8 +301,13 @@ class TestGetMailStatsTool:
 
         async def provider(agent_id: str) -> dict[str, Any]:
             seen.append(agent_id)
-            return {"agent_id": agent_id, "total_sent": 0, "total_received": 0,
-                    "correspondents": {}, "never_replied": []}
+            return {
+                "agent_id": agent_id,
+                "total_sent": 0,
+                "total_received": 0,
+                "correspondents": {},
+                "never_replied": [],
+            }
 
         tool = GetMailStatsTool(provider=provider, agent_id=AGENT_ID)
         result = await tool.execute()

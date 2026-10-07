@@ -17,7 +17,7 @@ from tlon.arena.runner import ArenaRun, RunStatus
 from tlon.base.paths import TlonPaths
 from tlon_server.api.rest import RESTAPIHandler
 
-_BEHAVIOR = "{:version 1 :rules [{:name \"r\" :on :boot :actions []}]}\n"
+_BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
 
 
 class StubRequest:
@@ -189,9 +189,7 @@ class TestStartArenaRun:
         )
         _stage(p)
 
-        resp = await handler.handle_start_arena_run(
-            StubRequest(body={"model": "m"}, name="staged")
-        )
+        resp = await handler.handle_start_arena_run(StubRequest(body={"model": "m"}, name="staged"))
 
         assert resp.status == 400
         body = json.loads(resp.text)
@@ -239,9 +237,7 @@ class TestArenaRunQueries:
     async def test_get_run(self, tmp_path: Path):
         handler, _fake, _p = _handler(tmp_path, runner=FakeRunner(runs=[_run()]))
 
-        resp = await handler.handle_get_arena_run(
-            StubRequest(run_id="20261005-120000-abc123")
-        )
+        resp = await handler.handle_get_arena_run(StubRequest(run_id="20261005-120000-abc123"))
 
         assert resp.status == 200
         assert json.loads(resp.text)["run"]["run_id"] == "20261005-120000-abc123"
@@ -268,7 +264,13 @@ class TestArenaReport:
     async def test_report_endpoint(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path)
         _stage(p)
-        flags = [{"kind": "spawn-attempt", "detail": "调用了 spawnAgent", "evidence": "sessions/s.jsonl#seq-3"}]
+        flags = [
+            {
+                "kind": "spawn-attempt",
+                "detail": "调用了 spawnAgent",
+                "evidence": "sessions/s.jsonl#seq-3",
+            }
+        ]
         _write_archive(p, "staged", "20261005-120000-abc123", red_flags=flags)
 
         resp = await handler.handle_get_arena_report(
@@ -309,7 +311,9 @@ class TestStagingDetailArenaField:
     async def test_detail_with_report(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path)
         _stage(p)
-        flags = [{"kind": "fuel-exhaustion", "detail": "迭代硬顶", "evidence": "sessions/s.jsonl#seq-9"}]
+        flags = [
+            {"kind": "fuel-exhaustion", "detail": "迭代硬顶", "evidence": "sessions/s.jsonl#seq-9"}
+        ]
         _write_archive(p, "staged", "20261005-110000-aaa111")
         _write_archive(p, "staged", "20261005-120000-bbb222", red_flags=flags)
 

@@ -244,9 +244,7 @@ async def test_timeout_above_schema_maximum_is_rejected_with_the_real_limit():
     executor = ToolExecutor()
     executor.register_tool(ExecuteBashTool(DockerRuntimeConfig(), None))
 
-    result = await executor.execute(
-        "executeBashCommand", {"command": "true", "timeout": 301}
-    )
+    result = await executor.execute("executeBashCommand", {"command": "true", "timeout": 301})
 
     assert not result.success
     assert "maximum 300" in result.error
@@ -256,9 +254,7 @@ async def test_timeout_below_schema_minimum_is_rejected_with_the_real_limit():
     executor = ToolExecutor()
     executor.register_tool(ExecuteBashTool(DockerRuntimeConfig(), None))
 
-    result = await executor.execute(
-        "executeBashCommand", {"command": "true", "timeout": 0}
-    )
+    result = await executor.execute("executeBashCommand", {"command": "true", "timeout": 0})
 
     assert not result.success
     assert "minimum 1" in result.error

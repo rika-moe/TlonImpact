@@ -110,43 +110,51 @@ class JsonlSpanExporter(SpanExporter):
         events: list[dict[str, Any]] = []
 
         if is_root and trace_id not in self._started_traces:
-            events.append({
-                "type": "trace_start",
-                "trace_id": trace_id,
-                "root_span_id": span_id,
-                "name": span.name,
-                "source": source,
-                "timestamp": start_ts,
-                "metadata": None,
-            })
+            events.append(
+                {
+                    "type": "trace_start",
+                    "trace_id": trace_id,
+                    "root_span_id": span_id,
+                    "name": span.name,
+                    "source": source,
+                    "timestamp": start_ts,
+                    "metadata": None,
+                }
+            )
             self._started_traces.add(trace_id)
 
-        events.append({
-            "type": "span_start",
-            "span_id": span_id,
-            "trace_id": trace_id,
-            "parent_span_id": format_span_id(span.parent.span_id) if span.parent else None,
-            "name": span.name,
-            "source": source,
-            "event_type": str(attributes.get("event_type", span.name)),
-            "timestamp": start_ts,
-            "payload": attributes or None,
-            "metadata": None,
-        })
+        events.append(
+            {
+                "type": "span_start",
+                "span_id": span_id,
+                "trace_id": trace_id,
+                "parent_span_id": format_span_id(span.parent.span_id) if span.parent else None,
+                "name": span.name,
+                "source": source,
+                "event_type": str(attributes.get("event_type", span.name)),
+                "timestamp": start_ts,
+                "payload": attributes or None,
+                "metadata": None,
+            }
+        )
 
-        events.append({
-            "type": "span_end",
-            "span_id": span_id,
-            "trace_id": trace_id,
-            "timestamp": end_ts,
-        })
-
-        if is_root:
-            events.append({
-                "type": "trace_end",
+        events.append(
+            {
+                "type": "span_end",
+                "span_id": span_id,
                 "trace_id": trace_id,
                 "timestamp": end_ts,
-            })
+            }
+        )
+
+        if is_root:
+            events.append(
+                {
+                    "type": "trace_end",
+                    "trace_id": trace_id,
+                    "timestamp": end_ts,
+                }
+            )
 
         self._append_lines(trace_id, events)
 

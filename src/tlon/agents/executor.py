@@ -140,9 +140,7 @@ class EffectExecutor:
             return effect.in_reply_to, effect.thread_id
         referenced = await self._mailbox.find(effect.in_reply_to)
         if referenced is None:
-            raise ValueError(
-                f"in_reply_to 引用的邮件不在你的邮箱中: {effect.in_reply_to}"
-            )
+            raise ValueError(f"in_reply_to 引用的邮件不在你的邮箱中: {effect.in_reply_to}")
         return effect.in_reply_to, referenced.thread_id
 
     async def _resolve_endorsing(self, effect: MailEffect) -> str | None:
@@ -162,13 +160,9 @@ class EffectExecutor:
             return effect.endorsing
         endorsed = await self._mailbox.find(effect.endorsing)
         if endorsed is None:
-            raise ValueError(
-                f"endorsing 致谢的邮件不在你的邮箱中: {effect.endorsing}"
-            )
+            raise ValueError(f"endorsing 致谢的邮件不在你的邮箱中: {effect.endorsing}")
         if endorsed.from_address == self.identity.address:
-            raise ValueError(
-                f"不能致谢自己写的邮件: {effect.endorsing}"
-            )
+            raise ValueError(f"不能致谢自己写的邮件: {effect.endorsing}")
         return effect.endorsing
 
     async def _notify_send_failure(self, effect: MailEffect, error: Exception) -> None:

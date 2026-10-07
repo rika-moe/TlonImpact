@@ -132,8 +132,11 @@ async def gateway(
 
 @pytest.fixture
 def handler(
-    gateway: ClientGateway, registry: MagicMock, manager: AdapterManager,
-    bus: EventBus, tmp_path: Path,
+    gateway: ClientGateway,
+    registry: MagicMock,
+    manager: AdapterManager,
+    bus: EventBus,
+    tmp_path: Path,
 ) -> RESTAPIHandler:
     return RESTAPIHandler(
         gateway,
@@ -198,7 +201,7 @@ async def _read_event_frame(response: Any, timeout: float = 5.0) -> dict[str, An
     while True:
         line = await _read_sse_line(response, timeout)
         if line.startswith("data: "):
-            return json.loads(line[len("data: "):])
+            return json.loads(line[len("data: ") :])
 
 
 class TestCreateSession:
@@ -251,9 +254,7 @@ class TestCreateSession:
 
     async def test_invalid_username_rejected(self, handler: RESTAPIHandler):
         for bad in ("", "  ", "../evil", "a/b", "a\\b"):
-            response = await handler.handle_create_session(
-                StubRequest(_session_body(username=bad))
-            )
+            response = await handler.handle_create_session(StubRequest(_session_body(username=bad)))
             assert response.status == 400, f"username {bad!r} must be rejected"
             assert json.loads(response.text)["reason"] == "invalid_username"
 
@@ -325,18 +326,14 @@ class TestUpdateSession:
         assert body["filters"] == {"trace_id": "t-1"}
 
     async def test_not_found(self, handler: RESTAPIHandler):
-        response = await handler.handle_update_session(
-            StubRequest({"mode": "event"}, "nope-0001")
-        )
+        response = await handler.handle_update_session(StubRequest({"mode": "event"}, "nope-0001"))
 
         assert response.status == 404
 
     async def test_invalid_mode(self, handler: RESTAPIHandler):
         session_id = await self._create(handler)
 
-        response = await handler.handle_update_session(
-            StubRequest({"mode": "bogus"}, session_id)
-        )
+        response = await handler.handle_update_session(StubRequest({"mode": "bogus"}, session_id))
 
         assert response.status == 400
         assert json.loads(response.text)["reason"] == "invalid_mode"
@@ -344,9 +341,7 @@ class TestUpdateSession:
     async def test_invalid_filters(self, handler: RESTAPIHandler):
         session_id = await self._create(handler)
 
-        response = await handler.handle_update_session(
-            StubRequest({"filters": "nope"}, session_id)
-        )
+        response = await handler.handle_update_session(StubRequest({"filters": "nope"}, session_id))
 
         assert response.status == 400
         assert json.loads(response.text)["reason"] == "invalid_filters"
@@ -421,9 +416,7 @@ class TestEventsStream:
         self, client: TestClient, bus: EventBus, manager: AdapterManager
     ):
         session = await _create_session(client)
-        async with client.get(
-            "/events", headers={"X-Session-Id": session["session_id"]}
-        ) as resp:
+        async with client.get("/events", headers={"X-Session-Id": session["session_id"]}) as resp:
             assert resp.status == 200
             await _wait_for(lambda: manager.get_adapter("alice") is not None)
             await bus.publish(Event(type=EventType.SYSTEM_SHUTDOWN, payload={}, source="test"))
@@ -513,9 +506,7 @@ class TestEventsStream:
             )
             # Suppressed by the chat mode patterns (agent.thinking is not
             # in "chat"'s event set)
-            await bus.publish(
-                Event(type=EventType.AGENT_THINKING, payload={}, source="xie-yunshu")
-            )
+            await bus.publish(Event(type=EventType.AGENT_THINKING, payload={}, source="xie-yunshu"))
             # Passes the chat mode patterns (system.*)
             await bus.publish(Event(type=EventType.SYSTEM_STARTUP, payload={}, source="test"))
 

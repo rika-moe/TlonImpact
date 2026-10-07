@@ -136,14 +136,13 @@ class MailDelivery(Component, Device):
 
         attributes = {"mail_id": mail.id, "sender": mail.from_address}
         if event.trace_id:
-            with continue_trace(event.trace_id, event.span_id), start_span(
-                "mail.delivery", source="mail_delivery", attributes=attributes
-            ) as ctx:
+            with (
+                continue_trace(event.trace_id, event.span_id),
+                start_span("mail.delivery", source="mail_delivery", attributes=attributes) as ctx,
+            ):
                 await self._deliver(mail, ctx)
         else:
-            with start_span(
-                "mail.delivery", source="mail_delivery", attributes=attributes
-            ) as ctx:
+            with start_span("mail.delivery", source="mail_delivery", attributes=attributes) as ctx:
                 await self._deliver(mail, ctx)
 
     async def _deliver(self, mail: Mail, ctx: SpanCtx) -> None:
@@ -225,16 +224,12 @@ class MailDelivery(Component, Device):
         are included; their copy waits in their inbox.
         """
         addresses = [
-            address_for_member(agent_id)
-            for agent_id in sorted(self._agent_info.get_all_ids())
+            address_for_member(agent_id) for agent_id in sorted(self._agent_info.get_all_ids())
         ]
         addresses.extend(
-            address_for_member(adapter.member_id)
-            for adapter in self._adapter_manager.list_online()
+            address_for_member(adapter.member_id) for adapter in self._adapter_manager.list_online()
         )
-        addresses.extend(
-            address_for_member(human_id) for human_id in self._paths.known_human_ids()
-        )
+        addresses.extend(address_for_member(human_id) for human_id in self._paths.known_human_ids())
         return addresses
 
     def _resolve_address(self, address: str) -> str | None:
@@ -300,9 +295,7 @@ class MailDelivery(Component, Device):
             event_kwargs["parent_span_id"] = ctx.parent_span_id
         await self.publish(Event(**event_kwargs))
 
-    async def _publish_endorsed(
-        self, mail: Mail, sender_id: str | None, ctx: SpanCtx
-    ) -> None:
+    async def _publish_endorsed(self, mail: Mail, sender_id: str | None, ctx: SpanCtx) -> None:
         """Publish MAIL_ENDORSED for a mail carrying an endorsement.
 
         Payload: ``endorser`` (sender member id, or the raw address when
@@ -339,9 +332,7 @@ class MailDelivery(Component, Device):
             author=author,
         )
 
-    async def _bounce(
-        self, mail: Mail, unknown: list[str], sender_id: str, ctx: SpanCtx
-    ) -> None:
+    async def _bounce(self, mail: Mail, unknown: list[str], sender_id: str, ctx: SpanCtx) -> None:
         """Return a bounce mail to the sender for unknown recipients.
 
         A mail from postmaster is never bounced (double insurance — such

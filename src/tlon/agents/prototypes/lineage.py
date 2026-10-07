@@ -18,9 +18,7 @@ from tlon.tools.prototypes.ports import PrototypeError
 _MAX_LINEAGE_DEPTH = 32
 
 
-def get_prototype_lineage(
-    name: str, tlon_paths: TlonPaths
-) -> list[dict[str, Any]]:
+def get_prototype_lineage(name: str, tlon_paths: TlonPaths) -> list[dict[str, Any]]:
     """Walk the ``:parent`` chain up to the root (see
     docs/design/prototypes.md).
 

@@ -221,8 +221,10 @@ class Distiller:
             {
                 "role": "user",
                 "content": (
-                    "已有记忆断言：\n" + "\n".join(old_lines) +
-                    "\n\n新记忆断言：\n" + "\n".join(new_lines)
+                    "已有记忆断言：\n"
+                    + "\n".join(old_lines)
+                    + "\n\n新记忆断言：\n"
+                    + "\n".join(new_lines)
                 ),
             }
         ]
@@ -255,9 +257,7 @@ class Distiller:
         return [by_index.get(i, ConflictVerdict()) for i in range(1, len(new_claims) + 1)]
 
     @staticmethod
-    def _parse_verdict(
-        entry: Any, candidate_ids: set[str]
-    ) -> tuple[int, ConflictVerdict] | None:
+    def _parse_verdict(entry: Any, candidate_ids: set[str]) -> tuple[int, ConflictVerdict] | None:
         """Parse one raw verdict; malformed entries parse as None and the
         corresponding new claim degrades to ADD."""
         if not isinstance(entry, dict):

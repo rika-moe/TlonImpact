@@ -121,9 +121,7 @@ class ReviewPrototypeTool(Tool):
             info, behavior, lessons, _reviews = self._detail(name)
             chain = self._lineage(name)
         except PrototypeError as e:
-            return ToolResult(
-                success=False, data=None, error=str(e), message=f"评审失败: {e}"
-            )
+            return ToolResult(success=False, data=None, error=str(e), message=f"评审失败: {e}")
 
         prompt_parts = [
             f"## 提案元数据\n名称：{info.name}；作者：{info.author or '未知'}；"
@@ -155,10 +153,7 @@ class ReviewPrototypeTool(Tool):
 
         model = self._llm_client.config.model_name
         timestamp = datetime.now(UTC).isoformat()
-        entry = (
-            f"## {timestamp} — {self._reviewer_id}（{model}）：{verdict}\n\n"
-            f"{reason.strip()}\n"
-        )
+        entry = f"## {timestamp} — {self._reviewer_id}（{model}）：{verdict}\n\n{reason.strip()}\n"
         try:
             self._append_review(name, entry)
         except PrototypeError as e:

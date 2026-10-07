@@ -72,9 +72,7 @@ def instantiate(
         )
     proto_dir = p.prototypes_dir() / prototype_name
     if not _is_prototype_dir(proto_dir):
-        raise PrototypeError(
-            f"prototype '{prototype_name}' not found under {p.prototypes_dir()}"
-        )
+        raise PrototypeError(f"prototype '{prototype_name}' not found under {p.prototypes_dir()}")
     if yaml_exists(agent_id, p.tlon_home()):
         raise PrototypeError(f"agent '{agent_id}' already exists")
 
@@ -92,9 +90,7 @@ def instantiate(
         try:
             behavior_text = render_template(raw_text, params)
         except BehaviorTemplateError as e:
-            raise PrototypeError(
-                f"prototype '{prototype_name}' parameter error: {e}"
-            ) from e
+            raise PrototypeError(f"prototype '{prototype_name}' parameter error: {e}") from e
     else:
         if params:
             raise PrototypeError(
@@ -133,9 +129,7 @@ def instantiate(
     try:
         spec = MemberSpec.from_edn(loads(behavior_text))
     except (EDNParseError, MemberSpecValidationError) as e:
-        raise PrototypeError(
-            f"prototype '{prototype_name}' behavior failed to parse: {e}"
-        ) from e
+        raise PrototypeError(f"prototype '{prototype_name}' behavior failed to parse: {e}") from e
 
     # Execution capability (constitution 1, docs/design/execution-device.md):
     # the spec's ``:execution`` declaration is genotype, reviewed with the

@@ -63,7 +63,9 @@ async def test_build_corpus_typical_fills_budget() -> None:
 
 
 async def test_build_corpus_full_budget_no_note() -> None:
-    three = json.dumps([{"from": f"u{i}@example.com", "subject": "s", "body": f"b{i}"} for i in range(5)])
+    three = json.dumps(
+        [{"from": f"u{i}@example.com", "subject": "s", "body": f"b{i}"} for i in range(5)]
+    )
     mails, note = await build_corpus("relay", "", limit=7, llm=cast(CorpusLLM, _FakeLLM(three)))
     assert len(mails) == 7
     assert note is None

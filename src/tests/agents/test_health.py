@@ -62,7 +62,9 @@ def _monitor(bus: EventBus, tmp_path: Path, agent_ids=None, **knobs) -> PublicHe
 
 
 async def _send(bus: EventBus, sender: str, to=None, content: str = "hi") -> None:
-    mail = Mail.create(from_address=address_for_member(sender), to=to or ["bob@tlon.internal"], content=content)
+    mail = Mail.create(
+        from_address=address_for_member(sender), to=to or ["bob@tlon.internal"], content=content
+    )
     await bus.publish(Event(type=EventType.MAIL_NEW, payload=mail, source=sender))
 
 
@@ -103,9 +105,7 @@ class TestNoiseDetection:
         await monitor.shutdown()
 
     async def test_cooldown_suppresses_repeat_alerts(self, bus, tmp_path):
-        monitor = _monitor(
-            bus, tmp_path, noisy_threshold=1, noisy_cooldown_seconds=600
-        )
+        monitor = _monitor(bus, tmp_path, noisy_threshold=1, noisy_cooldown_seconds=600)
         noisy: list[Event] = []
         bus.subscribe(EventType.AGENT_NOISY, lambda e: noisy.append(e))
         await monitor.initialize()
@@ -137,9 +137,7 @@ class TestNoiseDetection:
         await monitor.shutdown()
 
     async def test_window_expiry_clears_count(self, bus, tmp_path):
-        monitor = _monitor(
-            bus, tmp_path, noisy_threshold=2, noisy_window_seconds=0.05
-        )
+        monitor = _monitor(bus, tmp_path, noisy_threshold=2, noisy_window_seconds=0.05)
         noisy: list[Event] = []
         bus.subscribe(EventType.AGENT_NOISY, lambda e: noisy.append(e))
         await monitor.initialize()

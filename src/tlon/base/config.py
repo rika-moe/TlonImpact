@@ -59,9 +59,7 @@ class AgentInfoProvider(ABC):
 
         The default implementation reports the provider as read-only.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support delete_agent"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not support delete_agent")
 
 
 # =============================================================================

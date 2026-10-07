@@ -114,9 +114,7 @@ class TestMailCreate:
 
 class TestMailSerialization:
     def test_round_trip(self):
-        mail = _mail(
-            subject="s", in_reply_to="abc", thread_id="abc", forward_of="def", cc=[ADA]
-        )
+        mail = _mail(subject="s", in_reply_to="abc", thread_id="abc", forward_of="def", cc=[ADA])
         assert Mail.from_dict(mail.to_dict()) == mail
 
     def test_from_dict_tolerates_missing_optional_fields(self):
@@ -432,9 +430,7 @@ class TestLockLRU:
         assert rebuilt._lock is not a._lock
         assert (tmp_path / "b") not in mailbox_module._LOCKS
 
-    async def test_locked_lock_is_not_evicted(
-        self, tmp_path: Path, small_lock_cap
-    ):
+    async def test_locked_lock_is_not_evicted(self, tmp_path: Path, small_lock_cap):
         """A lock that is held or awaited must stay: evicting it would
         break mutual exclusion for its waiters."""
         a = Mailbox(tmp_path / "a")

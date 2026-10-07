@@ -96,9 +96,7 @@ class TestClaimLifecycle:
 
 
 class TestSupersede:
-    async def test_supersede_marks_in_place_without_deleting(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_supersede_marks_in_place_without_deleting(self, tmp_path: Path) -> None:
         """失效不删除: the old claim stays in the file for audit; only
         its lifecycle fields change, and it drops out of active views."""
         store = _store(tmp_path)

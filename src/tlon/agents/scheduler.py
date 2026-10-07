@@ -78,8 +78,8 @@ class SessionScheduler:
         # Inbound mail queue (bounded: a full queue drops new mail rather
         # than blocking the EventBus dispatch — see Agent._enqueue_mail)
         # and the worker lifecycle, both owned here (R2).
-        self._mail_queue: asyncio.Queue[tuple[Mail, dict[str, str | None]]] = (
-            asyncio.Queue(maxsize=config.message_queue_size)
+        self._mail_queue: asyncio.Queue[tuple[Mail, dict[str, str | None]]] = asyncio.Queue(
+            maxsize=config.message_queue_size
         )
         self._worker_running = False
         self._worker_task: asyncio.Task[None] | None = None
@@ -211,9 +211,7 @@ class SessionScheduler:
                             ),
                         )
                         await self._end_session(session, "timeout")
-                        await self._notify_failure_reply(
-                            session, session_mails.get(sid), "timeout"
-                        )
+                        await self._notify_failure_reply(session, session_mails.get(sid), "timeout")
                     else:
                         try:
                             with self._session_span(session):
@@ -281,9 +279,7 @@ class SessionScheduler:
         sid = session_id_for(self._id, mail.id)
         replay = await self._journal.resume(sid)
         if replay is not None and replay.completed:
-            logger.info(
-                "session_journal_completed", session_id=sid, end_reason=replay.end_reason
-            )
+            logger.info("session_journal_completed", session_id=sid, end_reason=replay.end_reason)
             await self._mark_mail_read(mail)
             return
         if replay is None:
@@ -342,9 +338,7 @@ class SessionScheduler:
         try:
             await self._loop_driver.send_failure_reply(mail, reason)
         except Exception as e:
-            logger.error(
-                "session_failure_reply_failed", session_id=session.id, error=str(e)
-            )
+            logger.error("session_failure_reply_failed", session_id=session.id, error=str(e))
 
     async def _end_session(self, session: AgentSession, reason: str) -> None:
         """Journal ``session/end``, then mark the session completed.

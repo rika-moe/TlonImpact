@@ -72,9 +72,7 @@ def load_capability_builtins(
         if not cap_dir.is_dir() or not _is_capability_dir(cap_dir):
             continue
         try:
-            spec = CapabilitySpec.from_edn(
-                (cap_dir / CAPABILITY_FILE).read_text(encoding="utf-8")
-            )
+            spec = CapabilitySpec.from_edn((cap_dir / CAPABILITY_FILE).read_text(encoding="utf-8"))
             validate_capability(spec, taken_names=taken)
         except (CapabilityError, OSError) as e:
             logger.error("capability_word_rejected", directory=cap_dir.name, error=str(e))

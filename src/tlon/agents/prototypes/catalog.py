@@ -73,9 +73,7 @@ def _list_from(root: Path) -> list[PrototypeInfo]:
     return result
 
 
-def get_prototype_info(
-    name: str, tlon_paths: TlonPaths
-) -> PrototypeInfo | None:
+def get_prototype_info(name: str, tlon_paths: TlonPaths) -> PrototypeInfo | None:
     """Metadata of a trusted-library prototype, or None when absent."""
     proto_dir = (tlon_paths).prototypes_dir() / name
     if not _is_prototype_dir(proto_dir):

@@ -188,9 +188,7 @@ class TestExecutionSection:
 
     def test_unknown_key_inside_section_tolerated(self):
         """Warn-only forward compatibility holds inside :execution too."""
-        spec = _parse(
-            "{:version 1\n :execution {:level :L2 :future-key 42}\n" + self.RULES
-        )
+        spec = _parse("{:version 1\n :execution {:level :L2 :future-key 42}\n" + self.RULES)
         assert spec.execution_level == "L2"
 
 
@@ -229,7 +227,7 @@ class TestSingleValidator:
 
     def test_unsupported_version_rejected(self):
         with pytest.raises(MemberSpecValidationError, match="version"):
-            _parse("{:version 2 :rules [{:name \"x\" :on :boot :actions []}]}")
+            _parse('{:version 2 :rules [{:name "x" :on :boot :actions []}]}')
 
     def test_empty_rules_rejected(self):
         with pytest.raises(MemberSpecValidationError, match="rules"):
@@ -349,8 +347,7 @@ class TestLoopReplies:
     未知键、非字符串、空串均拒载。"""
 
     REPLIES = (
-        ':replies {:iteration-limit "想太久了，简单说。" '
-        ':error "出错了。" :timeout "超时了。"}'
+        ':replies {:iteration-limit "想太久了，简单说。" :error "出错了。" :timeout "超时了。"}'
     )
 
     @staticmethod
@@ -378,9 +375,7 @@ class TestLoopReplies:
         spec = _parse(COGNITIVE_EDN)
         assert spec.rules[0].loop is not None
         assert spec.rules[0].loop.replies == {}
-        assert (
-            Keyword("replies") not in spec.to_edn_data()["rules"][0]["loop"]
-        )
+        assert Keyword("replies") not in spec.to_edn_data()["rules"][0]["loop"]
 
     def test_replies_partial_override_roundtrip(self):
         spec = _parse(self._with_replies(':replies {:timeout "超时了。"}'))
@@ -394,9 +389,7 @@ class TestLoopReplies:
             _parse(self._with_replies(':replies "出错了。"'))
 
     def test_replies_unknown_key_rejected(self):
-        with pytest.raises(
-            MemberSpecValidationError, match="unknown :loop/:replies key"
-        ):
+        with pytest.raises(MemberSpecValidationError, match="unknown :loop/:replies key"):
             _parse(self._with_replies(':replies {:on-limit "x"}'))
 
     def test_replies_empty_string_rejected(self):

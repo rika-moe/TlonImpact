@@ -113,8 +113,7 @@ class RecipientResolver:
         matches = [
             agent_id
             for agent_id in self._agent_info.get_all_ids()
-            if (config := self._agent_info.get_config(agent_id))
-            and config.name == name
+            if (config := self._agent_info.get_config(agent_id)) and config.name == name
         ]
         if len(matches) == 1:
             return address_for_member(matches[0])
@@ -130,9 +129,7 @@ class RecipientResolver:
             return None
 
         # Human ("alice" or "human:alice"), online or known-offline
-        username = (
-            name[len(HUMAN_ID_PREFIX):] if name.startswith(HUMAN_ID_PREFIX) else name
-        )
+        username = name[len(HUMAN_ID_PREFIX) :] if name.startswith(HUMAN_ID_PREFIX) else name
         if self._known_human(username):
             return address_for_member(f"{HUMAN_ID_PREFIX}{username}")
 

@@ -51,8 +51,7 @@ _DRAFT_SYSTEM_PROMPT = (
 def _render_digest(digest: dict[str, Any]) -> str:
     """Render a memory digest as prompt text (claims)."""
     parts = [
-        f"未蒸馏会话数：{digest['undistilled_session_count']}；"
-        f"记忆数：{digest['claim_count']}",
+        f"未蒸馏会话数：{digest['undistilled_session_count']}；记忆数：{digest['claim_count']}",
     ]
     if digest["claims"]:
         parts.append("### 记忆")
@@ -77,7 +76,7 @@ def _extract_edn(content: str) -> str | None:
         if first_newline != -1:
             text = text[first_newline + 1 :]
         if text.rstrip().endswith("```"):
-            text = text.rstrip()[: -3]
+            text = text.rstrip()[:-3]
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end <= start:
@@ -202,11 +201,7 @@ class ProposeBehaviorTool(Tool):
 
         digest = await self._memory.get_memory_digest(self._logs)
         lessons_file = self._paths.memory_lessons_file(self._agent_id)
-        lessons = (
-            lessons_file.read_text(encoding="utf-8")
-            if lessons_file.exists()
-            else None
-        )
+        lessons = lessons_file.read_text(encoding="utf-8") if lessons_file.exists() else None
 
         prompt_parts = [
             "## 当前行为规约（behavior.tlon）\n" + base_spec,

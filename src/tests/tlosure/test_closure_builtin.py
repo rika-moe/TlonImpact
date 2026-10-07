@@ -120,9 +120,7 @@ class TestFuelAccounting:
 
         builtins = {
             **_BUILTINS,
-            "loop": _word(
-                "(fn [n] (while [i 0] (< i n) (recur (inc i))))", name="loop"
-            ),
+            "loop": _word("(fn [n] (while [i 0] (< i n) (recur (inc i))))", name="loop"),
         }
         evaluator = Evaluator(builtins, 20, 100)
         with pytest.raises(FuelExhaustedError):

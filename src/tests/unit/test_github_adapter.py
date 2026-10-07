@@ -238,25 +238,43 @@ class TestSkips:
         adapter = _adapter(bus, tmp_path)
         mails = _collected(bus)
 
-        assert await adapter.receive(
-            "issues", {"action": "closed", "repository": _repo(), "issue": _issue()}
-        ) is None
-        assert await adapter.receive(
-            "issue_comment",
-            {"action": "edited", "repository": _repo(),
-             "issue": _issue(), "comment": {}},
-        ) is None
-        assert await adapter.receive(
-            "pull_request_review",
-            {"action": "dismissed", "repository": _repo(),
-             "pull_request": {"number": 1}, "review": {}},
-        ) is None
+        assert (
+            await adapter.receive(
+                "issues", {"action": "closed", "repository": _repo(), "issue": _issue()}
+            )
+            is None
+        )
+        assert (
+            await adapter.receive(
+                "issue_comment",
+                {"action": "edited", "repository": _repo(), "issue": _issue(), "comment": {}},
+            )
+            is None
+        )
+        assert (
+            await adapter.receive(
+                "pull_request_review",
+                {
+                    "action": "dismissed",
+                    "repository": _repo(),
+                    "pull_request": {"number": 1},
+                    "review": {},
+                },
+            )
+            is None
+        )
         # A successful CI run is not mail-worthy.
-        assert await adapter.receive(
-            "check_run",
-            {"action": "completed", "repository": _repo(),
-             "check_run": {"name": "ci", "conclusion": "success"}},
-        ) is None
+        assert (
+            await adapter.receive(
+                "check_run",
+                {
+                    "action": "completed",
+                    "repository": _repo(),
+                    "check_run": {"name": "ci", "conclusion": "success"},
+                },
+            )
+            is None
+        )
         await asyncio.sleep(0.05)
         assert mails == []
 
@@ -268,18 +286,21 @@ class TestSkips:
         # Missing repository, missing nested objects, wrong field types —
         # all skipped with a warning, never raised.
         assert await adapter.receive("issues", {"action": "opened"}) is None
-        assert await adapter.receive(
-            "issues", {"action": "opened", "repository": _repo()}
-        ) is None
-        assert await adapter.receive(
-            "issues",
-            {"action": "opened", "repository": _repo(),
-             "issue": {"title": "no number"}},
-        ) is None
-        assert await adapter.receive(
-            "issue_comment",
-            {"action": "created", "repository": _repo(), "issue": _issue()},
-        ) is None
+        assert await adapter.receive("issues", {"action": "opened", "repository": _repo()}) is None
+        assert (
+            await adapter.receive(
+                "issues",
+                {"action": "opened", "repository": _repo(), "issue": {"title": "no number"}},
+            )
+            is None
+        )
+        assert (
+            await adapter.receive(
+                "issue_comment",
+                {"action": "created", "repository": _repo(), "issue": _issue()},
+            )
+            is None
+        )
         await asyncio.sleep(0.05)
         assert mails == []
 
@@ -288,8 +309,7 @@ class TestAddressing:
     async def test_configured_recipient(self, bus, tmp_path):
         """A configured agent recipient receives the mail, not the humans."""
         _make_human(tmp_path, "alice")
-        adapter = _adapter(bus, tmp_path, agent_ids=["gu-yanxi"],
-                           recipient_id="gu-yanxi")
+        adapter = _adapter(bus, tmp_path, agent_ids=["gu-yanxi"], recipient_id="gu-yanxi")
 
         mail = await adapter.receive(
             "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}
@@ -330,9 +350,12 @@ class TestAddressing:
         adapter = _adapter(bus, tmp_path, recipient_id="ghost")
         mails = _collected(bus)
 
-        assert await adapter.receive(
-            "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}
-        ) is None
+        assert (
+            await adapter.receive(
+                "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}
+            )
+            is None
+        )
         await asyncio.sleep(0.05)
         assert mails == []
 
@@ -340,9 +363,12 @@ class TestAddressing:
         adapter = _adapter(bus, tmp_path)
         mails = _collected(bus)
 
-        assert await adapter.receive(
-            "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}
-        ) is None
+        assert (
+            await adapter.receive(
+                "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}
+            )
+            is None
+        )
         await asyncio.sleep(0.05)
         assert mails == []
 
@@ -355,9 +381,7 @@ class _FakePost:
         self.error = error
         self.calls: list[tuple[str, dict[str, str], dict[str, Any]]] = []
 
-    async def __call__(
-        self, url: str, headers: dict[str, str], body: dict[str, Any]
-    ) -> int:
+    async def __call__(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> int:
         self.calls.append((url, headers, body))
         if self.error is not None:
             raise self.error
@@ -468,9 +492,7 @@ class TestEgress:
         await adapter.initialize()
         inbound = await self._inbound(bus, adapter)
 
-        await bus.publish(
-            _delivered_event(_reply(inbound, inbound.subject), recipient="a-001")
-        )
+        await bus.publish(_delivered_event(_reply(inbound, inbound.subject), recipient="a-001"))
 
         await asyncio.sleep(0.1)
         assert post.calls == []

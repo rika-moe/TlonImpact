@@ -41,15 +41,11 @@ class MockAgentInfoProvider:
 
 @pytest.fixture
 def provider() -> MockAgentInfoProvider:
-    return MockAgentInfoProvider(
-        {"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")}
-    )
+    return MockAgentInfoProvider({"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")})
 
 
 @pytest.fixture
-async def manager(
-    provider: MockAgentInfoProvider, tmp_path
-) -> AsyncGenerator[AdapterManager]:
+async def manager(provider: MockAgentInfoProvider, tmp_path) -> AsyncGenerator[AdapterManager]:
     """Provide an initialized AdapterManager (isolated tlon home)."""
     bus = EventBus()
     await bus.initialize()
@@ -91,25 +87,19 @@ class TestSharedResolver:
         assert isinstance(manager.recipient_resolver, RecipientResolver)
         assert delivery._resolver is manager.recipient_resolver
 
-    async def test_display_name_resolution_via_shared_resolver(
-        self, manager: AdapterManager
-    ):
+    async def test_display_name_resolution_via_shared_resolver(self, manager: AdapterManager):
         resolver = manager.recipient_resolver
         assert resolver.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
         assert resolver.resolve_member("xie-yunshu@tlon.internal") == "xie-yunshu"
 
-    async def test_online_human_round_trip(
-        self, manager: AdapterManager, tmp_path
-    ):
+    async def test_online_human_round_trip(self, manager: AdapterManager, tmp_path):
         await manager.attach("alice", "sess-1", lambda event: None)
         resolver = manager.recipient_resolver
         address = resolver.resolve_address("alice")
         assert address == "alice@tlon.internal"
         assert resolver.resolve_member(address) == "human:alice"
 
-    async def test_offline_human_with_mailbox_round_trip(
-        self, manager: AdapterManager, tmp_path
-    ):
+    async def test_offline_human_with_mailbox_round_trip(self, manager: AdapterManager, tmp_path):
         # Known-but-offline: a persistent mailbox exists, no live adapter
         manager._paths.member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
         resolver = manager.recipient_resolver
@@ -117,16 +107,12 @@ class TestSharedResolver:
         assert address == "friend@tlon.internal"
         assert resolver.resolve_member(address) == "human:friend"
 
-    async def test_unknown_human_unresolvable_on_both_sides(
-        self, manager: AdapterManager
-    ):
+    async def test_unknown_human_unresolvable_on_both_sides(self, manager: AdapterManager):
         resolver = manager.recipient_resolver
         assert resolver.resolve_address("ghost") is None
         assert resolver.resolve_member("ghost@tlon.internal") is None
 
-    async def test_agent_wins_over_colliding_human(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
+    async def test_agent_wins_over_colliding_human(self, provider: MockAgentInfoProvider, tmp_path):
         provider._configs["alice"] = AgentConfig(id="alice", name="撞名")
         bus = EventBus()
         await bus.initialize()

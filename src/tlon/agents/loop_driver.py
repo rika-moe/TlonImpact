@@ -96,6 +96,7 @@ _DISTILL_TOKEN_BUDGET = 40_000
 #: per-tool limit (tool.per_timeout).
 _TOOL_TIMEOUT_GRACE = 10.0
 
+
 class LoopDriver:
     """Drives the ReAct step/collect cycle for agent sessions."""
 
@@ -481,9 +482,7 @@ class LoopDriver:
                 raise ValueError("empty distillation")
             return content
         except Exception as e:
-            log.warning(
-                "max_iterations_distill_failed", session_id=session.id, error=str(e)
-            )
+            log.warning("max_iterations_distill_failed", session_id=session.id, error=str(e))
             return self._termination_reply("iteration_limit", _ITERATION_LIMIT_REPLY)
 
     @staticmethod
@@ -562,9 +561,7 @@ class LoopDriver:
             )
         )
         try:
-            result = eval_form(
-                condition, env, STAGE_COND_BUILTINS, fuel=self._loop_fuel
-            )
+            result = eval_form(condition, env, STAGE_COND_BUILTINS, fuel=self._loop_fuel)
         except EvalError as e:
             log.warning(
                 "loop_stage_condition_failed",
@@ -574,9 +571,7 @@ class LoopDriver:
             )
             return False
         if not result:
-            log.debug(
-                "loop_stage_skipped", session_id=session.id, stage=name, reason="condition"
-            )
+            log.debug("loop_stage_skipped", session_id=session.id, stage=name, reason="condition")
             return False
         return True
 

@@ -168,9 +168,7 @@ def _parse_policy(text: str) -> tuple[Form, ...]:
     if raw is None:
         return ()
     if isinstance(raw, Form) or not isinstance(raw, (list, tuple)):
-        raise PolicyValidationError(
-            f":policy must be a vector of forms, got {type(raw).__name__}"
-        )
+        raise PolicyValidationError(f":policy must be a vector of forms, got {type(raw).__name__}")
     for item in raw:
         if not isinstance(item, Form) or not item:
             raise PolicyValidationError(
@@ -252,17 +250,11 @@ async def materialize_lineages(tlon_paths: TlonPaths) -> list[LineageStats]:
                     id=member_id, endorsements_received=report["endorsements_received"]
                 )
             )
-        out.append(
-            LineageStats(
-                name=name, total_tokens=lineage["total_tokens"], members=members
-            )
-        )
+        out.append(LineageStats(name=name, total_tokens=lineage["total_tokens"], members=members))
     return out
 
 
-async def materialize_member(
-    agent_id: str, *, tlon_paths: TlonPaths
-) -> PolicyMemberInfo | None:
+async def materialize_member(agent_id: str, *, tlon_paths: TlonPaths) -> PolicyMemberInfo | None:
     """One member's social facts; None when the member has no on-disk config.
 
     A config-less member is not ours to gate — the trust provider passes
@@ -299,14 +291,10 @@ def policy_tilt_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable[flo
         try:
             policy = load_policy(resolved)
             lineages = await materialize_lineages(resolved)
-            subject = next(
-                (lineage for lineage in lineages if lineage["name"] == prototype), None
-            )
+            subject = next((lineage for lineage in lineages if lineage["name"] == prototype), None)
             result = policy.call("tilt", subject, lineages)
             if isinstance(result, bool) or not isinstance(result, (int, float)):
-                raise EvalError(
-                    f"tilt must return a number, got {type(result).__name__}"
-                )
+                raise EvalError(f"tilt must return a number, got {type(result).__name__}")
             return float(result)
         except Exception as e:  # fail-open: policy never blocks a spawn
             logger.warning("policy_tilt_failed", prototype=prototype, error=str(e))
@@ -323,9 +311,7 @@ def policy_solvency_provider(tlon_paths: TlonPaths) -> Callable[[str], Awaitable
         try:
             policy = load_policy(resolved)
             lineages = await materialize_lineages(resolved)
-            subject = next(
-                (lineage for lineage in lineages if lineage["name"] == prototype), None
-            )
+            subject = next((lineage for lineage in lineages if lineage["name"] == prototype), None)
             return bool(policy.call("solvent?", subject, lineages))
         except Exception as e:  # fail-open: policy never gates anyone
             logger.warning("policy_solvency_failed", prototype=prototype, error=str(e))

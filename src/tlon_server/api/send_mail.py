@@ -52,14 +52,10 @@ def parse_send_mail_fields(msg: dict[str, Any]) -> SendMailFields | SendMailErro
         return SendMailError("invalid_cc", "Field 'cc' must be a list")
     in_reply_to = msg.get("in_reply_to")
     if in_reply_to is not None and not isinstance(in_reply_to, str):
-        return SendMailError(
-            "invalid_in_reply_to", "Field 'in_reply_to' must be a string"
-        )
+        return SendMailError("invalid_in_reply_to", "Field 'in_reply_to' must be a string")
     thread_id = msg.get("thread_id")
     if thread_id is not None and not isinstance(thread_id, str):
-        return SendMailError(
-            "invalid_thread_id", "Field 'thread_id' must be a string"
-        )
+        return SendMailError("invalid_thread_id", "Field 'thread_id' must be a string")
 
     return SendMailFields(
         content=content.strip(),

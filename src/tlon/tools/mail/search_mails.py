@@ -143,11 +143,7 @@ class SearchMailsTool(Tool):
             )
 
         limit = kwargs.get("limit")
-        limit = (
-            int(limit)
-            if isinstance(limit, (int, float))
-            else SEARCH_MAILS_DEFAULT_LIMIT
-        )
+        limit = int(limit) if isinstance(limit, (int, float)) else SEARCH_MAILS_DEFAULT_LIMIT
         limit = max(1, min(limit, SEARCH_MAILS_MAX_LIMIT))
 
         terms = [term.lower() for term in query.split()]

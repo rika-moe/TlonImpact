@@ -191,9 +191,7 @@ def rule_env(payload: Any, *, member_id: str, name: str) -> RuleEnv:
     return {"msg": mail, "event": payload, "self": self_env(member_id, name)}
 
 
-def on_complete_env(
-    msg: Mail | None, result: str, *, member_id: str, name: str
-) -> OnCompleteEnv:
+def on_complete_env(msg: Mail | None, result: str, *, member_id: str, name: str) -> OnCompleteEnv:
     """The completion-actions env (``on_complete`` delegates here)."""
     return {"msg": msg, "result": result, "self": self_env(member_id, name)}
 
@@ -294,11 +292,7 @@ def _builtin_from(env: dict[str, Any], msg: Mail | None, address: Any) -> bool:
     rule excludes postmaster senders to never answer a bounce). A
     non-string ``address`` never matches.
     """
-    return (
-        isinstance(msg, Mail)
-        and isinstance(address, str)
-        and msg.from_address == address
-    )
+    return isinstance(msg, Mail) and isinstance(address, str) and msg.from_address == address
 
 
 def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> bool:
@@ -314,13 +308,9 @@ def _builtin_content_matches(env: dict[str, Any], target: Any, pattern: Any) -> 
     elif type(target) is str:
         content = target
     else:
-        raise EvalError(
-            f"content-matches? expects a mail or string, got {type(target).__name__}"
-        )
+        raise EvalError(f"content-matches? expects a mail or string, got {type(target).__name__}")
     if not isinstance(pattern, str):
-        raise EvalError(
-            f"content-matches? pattern must be a string, got {type(pattern).__name__}"
-        )
+        raise EvalError(f"content-matches? pattern must be a string, got {type(pattern).__name__}")
     try:
         return re.search(pattern, content) is not None
     except re.error as e:
@@ -593,9 +583,7 @@ def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[
     required for ``start`` / ``stop`` and rejected for ``start-all``.
     """
     if not isinstance(options, dict):
-        raise EvalError(
-            f"{name} expects an options map, got {type(options).__name__}"
-        )
+        raise EvalError(f"{name} expects an options map, got {type(options).__name__}")
     fields = {str(key): value for key, value in options.items()}
     unknown = set(fields) - {"agent", "reason"}
     if unknown:
@@ -623,9 +611,7 @@ def _script_forward_fields(options: Any) -> dict[str, Any]:
     time — the action data only carries routing.
     """
     if not isinstance(options, dict):
-        raise EvalError(
-            f"forward expects an options map, got {type(options).__name__}"
-        )
+        raise EvalError(f"forward expects an options map, got {type(options).__name__}")
     fields = {str(key): value for key, value in options.items()}
     unknown = set(fields) - {"to", "cc", "subject"}
     if unknown:
@@ -638,8 +624,7 @@ def _script_forward_fields(options: Any) -> dict[str, Any]:
             or not all(type(address) is str and address for address in value)
         ):
             raise EvalError(
-                f"forward :{name} must be a non-empty vector of address "
-                f"strings, got {value!r}"
+                f"forward :{name} must be a non-empty vector of address strings, got {value!r}"
             )
         return list(value)
 
@@ -694,28 +679,20 @@ def make_member_builtins(
 
     def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> ActionRequest:
         if type(prototype) is not str:
-            raise EvalError(
-                f"spawn prototype must be a string, got {type(prototype).__name__}"
-            )
+            raise EvalError(f"spawn prototype must be a string, got {type(prototype).__name__}")
         name: str | None = None
         if options is not None:
             if not isinstance(options, dict):
-                raise EvalError(
-                    f"spawn options must be a map, got {type(options).__name__}"
-                )
+                raise EvalError(f"spawn options must be a map, got {type(options).__name__}")
             unknown = set(options) - {"name"}
             if unknown:
                 raise EvalError(f"spawn options: unknown keys {sorted(unknown)}")
             raw_name = options.get("name")
             if raw_name is not None:
                 if type(raw_name) is not str:
-                    raise EvalError(
-                        f"spawn :name must be a string, got {type(raw_name).__name__}"
-                    )
+                    raise EvalError(f"spawn :name must be a string, got {type(raw_name).__name__}")
                 name = raw_name
-        return _record(
-            ActionRequest(kind="spawn", data={"prototype": prototype, "name": name})
-        )
+        return _record(ActionRequest(kind="spawn", data={"prototype": prototype, "name": name}))
 
     def _emit(env: dict[str, Any], content: Any, to: Any = None) -> ActionRequest:
         if type(content) is not str:
@@ -723,18 +700,12 @@ def make_member_builtins(
         resolved: list[str] = []
         if to is not None:
             if not isinstance(to, (list, tuple)):
-                raise EvalError(
-                    f"emit recipients must be a vector, got {type(to).__name__}"
-                )
+                raise EvalError(f"emit recipients must be a vector, got {type(to).__name__}")
             for item in to:
                 if not isinstance(item, str):
-                    raise EvalError(
-                        f"emit recipient must be a string, got {type(item).__name__}"
-                    )
+                    raise EvalError(f"emit recipient must be a string, got {type(item).__name__}")
                 resolved.append(str(item))
-        return _record(
-            ActionRequest(kind="emit", data={"content": content, "to": resolved})
-        )
+        return _record(ActionRequest(kind="emit", data={"content": content, "to": resolved}))
 
     def _start(env: dict[str, Any], options: Any) -> ActionRequest:
         fields = _script_action_fields("start", options, require_agent=True)

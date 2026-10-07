@@ -44,7 +44,10 @@ _RELAY_SPEC = """\
 """
 
 _TYPICAL_JSON = json.dumps(
-    [{"from": f"user-{i}@example.com", "subject": f"请求 {i}", "body": f"正文 {i}"} for i in range(3)]
+    [
+        {"from": f"user-{i}@example.com", "subject": f"请求 {i}", "body": f"正文 {i}"}
+        for i in range(3)
+    ]
 )
 
 
@@ -433,7 +436,9 @@ class _FakeContainers:
     def __init__(self, containers: list[_FakeContainer]) -> None:
         self._containers = containers
 
-    def list(self, all: bool = False, filters: dict[str, str] | None = None) -> list[_FakeContainer]:
+    def list(
+        self, all: bool = False, filters: dict[str, str] | None = None
+    ) -> list[_FakeContainer]:
         return self._containers
 
 
@@ -455,9 +460,7 @@ async def test_docker_container_gc_removes_only_the_runs_containers(
     unrelated = _FakeContainer("tlon-agent-other")
     containers = [cabinets, exec_unit, lookalike, unrelated]
     client = _FakeDockerClient(containers)
-    monkeypatch.setattr(
-        "tlon.arena.runner.create_docker_client", lambda: cast(Any, client)
-    )
+    monkeypatch.setattr("tlon.arena.runner.create_docker_client", lambda: cast(Any, client))
 
     removed = await docker_container_gc("arena-r1")
     assert removed == ["tlon-agent-arena-r1", "tlon-agent-arena-r1-exec-ab12cd34"]
@@ -508,9 +511,7 @@ async def test_run_archives_report_and_fed_mapping(tmp_path: Path) -> None:
     assert len(payload["sessions"]) == 8
     assert (archive / "ARENA.md").exists()
     root_md = h.paths.prototypes_staging_dir() / run.prototype_name / "ARENA.md"
-    assert root_md.read_text(encoding="utf-8") == (archive / "ARENA.md").read_text(
-        encoding="utf-8"
-    )
+    assert root_md.read_text(encoding="utf-8") == (archive / "ARENA.md").read_text(encoding="utf-8")
 
 
 async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:

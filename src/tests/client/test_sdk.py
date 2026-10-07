@@ -119,9 +119,7 @@ def make_test_app() -> web.Application:
             )
         queue: asyncio.Queue = asyncio.Queue()
         app["sse_queues"][session_id] = queue
-        resp = web.StreamResponse(
-            status=200, headers={"Content-Type": "text/event-stream"}
-        )
+        resp = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
         await resp.prepare(request)
         try:
             while True:
@@ -355,9 +353,7 @@ class TestReconnect:
     """Auto-reconnect: re-POST /sessions + reopen the SSE stream."""
 
     async def test_reconnect_reestablishes_session(self, base_url, server):
-        client = BaseClient(
-            base_url=base_url, auto_reconnect=True, reconnect_delay=0.01
-        )
+        client = BaseClient(base_url=base_url, auto_reconnect=True, reconnect_delay=0.01)
         on_reconnect = MagicMock()
         client.on_reconnect(on_reconnect)
         try:
@@ -384,9 +380,7 @@ class TestReconnect:
 
     async def test_events_flow_after_reconnect(self, base_url, server):
         """The reopened stream delivers events to the same handlers."""
-        client = BaseClient(
-            base_url=base_url, auto_reconnect=True, reconnect_delay=0.01
-        )
+        client = BaseClient(base_url=base_url, auto_reconnect=True, reconnect_delay=0.01)
         events: list[dict] = []
         client.on_event(events.append)
         try:
@@ -397,9 +391,7 @@ class TestReconnect:
             await wait_for(lambda: "tui-2" in server.app["sse_queues"])
 
             frame = {"type": "event", "event_type": "mail.delivered", "payload": {}}
-            server.app["sse_queues"]["tui-2"].put_nowait(
-                f"data: {json.dumps(frame)}\n\n"
-            )
+            server.app["sse_queues"]["tui-2"].put_nowait(f"data: {json.dumps(frame)}\n\n")
             await wait_for(lambda: len(events) == 1)
         finally:
             await client.disconnect()
@@ -759,9 +751,7 @@ class TestTlonClient:
         client._base.username = None
         client._base.rest_post = AsyncMock(return_value={"mail_id": "mail-2"})
 
-        await client.send_message(
-            "Got it", to=["agent-1"], reply_to="mail-1", thread_id="thread-1"
-        )
+        await client.send_message("Got it", to=["agent-1"], reply_to="mail-1", thread_id="thread-1")
 
         body = client._base.rest_post.call_args[0][1]
         assert body["in_reply_to"] == "mail-1"
@@ -866,9 +856,7 @@ class TestTlonClient:
         mails = await client.get_inbox(username="alice", limit=20)
 
         assert mails == [{"id": "mail-1", "read": False}]
-        client._base.rest_get.assert_called_once_with(
-            "/inbox", {"username": "alice", "limit": 20}
-        )
+        client._base.rest_get.assert_called_once_with("/inbox", {"username": "alice", "limit": 20})
 
     async def test_get_inbox_omits_username_when_unset(self, client):
         """Without a username the server-side default ("guest") applies."""
@@ -906,9 +894,7 @@ class TestTlonClientIntegration:
                 "event_type": "mail.delivered",
                 "payload": {"content": "hi"},
             }
-            server.app["sse_queues"]["tui-1"].put_nowait(
-                f"data: {json.dumps(frame)}\n\n"
-            )
+            server.app["sse_queues"]["tui-1"].put_nowait(f"data: {json.dumps(frame)}\n\n")
             await wait_for(lambda: len(events) == 1)
             assert events[0]["type"] == "mail.delivered"
 

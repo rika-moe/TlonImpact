@@ -44,9 +44,7 @@ class GetPrototypeLineageTool(Tool):
         try:
             chain = self._lineage(name)
         except PrototypeError as e:
-            return ToolResult(
-                success=False, data=None, error=str(e), message=f"谱系查询失败: {e}"
-            )
+            return ToolResult(success=False, data=None, error=str(e), message=f"谱系查询失败: {e}")
         return ToolResult(
             success=True,
             data={"lineage": chain},

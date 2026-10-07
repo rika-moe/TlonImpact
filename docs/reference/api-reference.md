@@ -393,8 +393,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `agent.stop_request` | `AGENT_STOP_REQUEST` |  |
 | `agent.idle` | `AGENT_IDLE` |  |
 | `agent.spawned` | `AGENT_SPAWNED` |  |
-| `agent.noisy` | `AGENT_NOISY` | A member is generating social noise (mail burst / broadcast storm) |
-| `mail.orphan_scan` | `MAIL_ORPHAN_SCAN` | Periodic orphan-mail (unanswered thread root) scan statistics |
+| `agent.noisy` | `AGENT_NOISY` |  |
+| `mail.orphan_scan` | `MAIL_ORPHAN_SCAN` |  |
 | `agent.thinking_start` | `AGENT_THINKING_START` |  |
 | `agent.thinking_end` | `AGENT_THINKING_END` |  |
 | `agent.llm_request` | `AGENT_LLM_REQUEST` |  |

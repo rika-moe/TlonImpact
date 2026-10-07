@@ -132,7 +132,9 @@ def test_messages_field_keeps_native_list_structure(tmp_path: Path) -> None:
         {"role": "user", "content": "你好"},
     ]
 
-    get_logger("test.llm").info("llm_request", model="kimi-k2.5", message_count=2, messages=messages)
+    get_logger("test.llm").info(
+        "llm_request", model="kimi-k2.5", message_count=2, messages=messages
+    )
 
     entries = _read_jsonl(tmp_path)
     assert entries[0]["messages"] == messages
@@ -206,7 +208,9 @@ class _FakeAgentRegistry:
 class _FakeRequest:
     """Minimal stand-in for aiohttp.web.Request for handler unit tests."""
 
-    def __init__(self, match_info: dict[str, str] | None = None, query: dict[str, str] | None = None):
+    def __init__(
+        self, match_info: dict[str, str] | None = None, query: dict[str, str] | None = None
+    ):
         self.match_info = match_info or {}
         self.query = query or {}
 

@@ -57,9 +57,7 @@ async def _completed_session(
         carrier=None,
         context=[{"role": "user", "content": trigger}],
     )
-    await journal.append(
-        session_id, "llm/response", response=LLMResponse(content=reply).to_dict()
-    )
+    await journal.append(session_id, "llm/response", response=LLMResponse(content=reply).to_dict())
     await journal.append(session_id, "tool/dispatch", tool_calls=[tc.to_dict()])
     await journal.append(
         session_id,
@@ -98,9 +96,7 @@ class TestListCompleted:
 
 
 class TestProjection:
-    async def test_projection_carries_trigger_rounds_and_tools(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_projection_carries_trigger_rounds_and_tools(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         await _completed_session(journal, "agent1-p", "帮我查一下磁盘", reply="已经查完")
 
@@ -211,9 +207,7 @@ class TestWatermark:
         assert await restarted.maybe_distill_completed_sessions(journal) is None
         assert len(await restarted.claims.get_all_claims()) == claim_count
 
-    async def test_persist_failure_does_not_advance_watermark(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_persist_failure_does_not_advance_watermark(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
         for i in range(3):
@@ -229,9 +223,7 @@ class TestWatermark:
         assert await manager.maybe_distill_completed_sessions(journal) is None
         assert _watermark(tmp_path) is None
 
-    async def test_session_without_start_time_is_always_pending(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_session_without_start_time_is_always_pending(self, tmp_path: Path) -> None:
         """A session whose log carries no usable start timestamp is never
         silently skipped — it stays pending (the safe direction)."""
 
@@ -283,9 +275,7 @@ class TestLLMPath:
         assert claim.importance == 0.7
         assert claim.source_session_ids == ["agent1-s0", "agent1-s1", "agent1-s2"]
 
-    async def test_llm_failure_falls_back_to_mechanical_claims(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_llm_failure_falls_back_to_mechanical_claims(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
 
@@ -304,9 +294,7 @@ class TestLLMPath:
         assert any("触发0" in t for t in texts)  # fallback quotes real triggers
         assert _watermark(tmp_path) is not None
 
-    async def test_llm_empty_result_falls_back_to_mechanical_claims(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_llm_empty_result_falls_back_to_mechanical_claims(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
 

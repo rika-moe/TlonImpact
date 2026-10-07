@@ -53,16 +53,13 @@ class TestMailPredicates:
     def test_from(self):
         mail = _mail(from_address="postmaster@tlon.internal", to=["me@tlon.internal"])
         env = self._env(mail)
-        assert (
-            eval_form(loads('(from? msg "postmaster@tlon.internal")'), env, _BUILTINS) is True
-        )
+        assert eval_form(loads('(from? msg "postmaster@tlon.internal")'), env, _BUILTINS) is True
         assert eval_form(loads('(from? msg "alice@tlon.internal")'), env, _BUILTINS) is False
 
     def test_content_matches_mail_and_string(self):
         mail = _mail(to=["me@tlon.internal"], content="URGENT: reply needed")
         assert (
-            eval_form(loads('(content-matches? msg "URGENT")'), self._env(mail), _BUILTINS)
-            is True
+            eval_form(loads('(content-matches? msg "URGENT")'), self._env(mail), _BUILTINS) is True
         )
         # A plain string target (e.g. ``result``) works too.
         env = {"result": "all quiet", "self": {}}
@@ -70,9 +67,7 @@ class TestMailPredicates:
         assert eval_form(loads('(content-matches? result "URGENT")'), env, _BUILTINS) is False
 
     def test_content_matches_none_is_false(self):
-        assert (
-            eval_form(loads('(content-matches? msg "x")'), self._env(None), _BUILTINS) is False
-        )
+        assert eval_form(loads('(content-matches? msg "x")'), self._env(None), _BUILTINS) is False
 
 
 class TestMemberRoster:
@@ -111,9 +106,7 @@ class TestActionCollection:
     def test_while_body_collects_each_emit(self):
         collector: list[ActionRequest] = []
         builtins = make_member_builtins(collector=collector)
-        result = eval_form(
-            loads('(while [i 0] (< i 3) (emit "x") (recur (inc i)))'), {}, builtins
-        )
+        result = eval_form(loads('(while [i 0] (< i 3) (emit "x") (recur (inc i)))'), {}, builtins)
         assert result is None
         assert len(collector) == 3
         assert all(request.kind == "emit" for request in collector)
@@ -160,15 +153,11 @@ class TestValidateMemberActions:
 
     def test_unregistered_vocabulary_still_rejected(self):
         with pytest.raises(EvalError, match="unknown function or special form: frobnicate"):
-            validate_member_actions(
-                (loads("(frobnicate 1)"),), registry=_BUILTINS, scope=set()
-            )
+            validate_member_actions((loads("(frobnicate 1)"),), registry=_BUILTINS, scope=set())
 
     def test_undefined_symbol_still_rejected(self):
         with pytest.raises(EvalError, match="undefined symbol: foo"):
-            validate_member_actions(
-                (loads("(emit foo)"),), registry=_BUILTINS, scope=set()
-            )
+            validate_member_actions((loads("(emit foo)"),), registry=_BUILTINS, scope=set())
 
     def test_defn_threads_to_later_forms(self):
         validate_member_actions(
@@ -185,7 +174,7 @@ class TestValidateMemberActions:
             validate_member_actions(
                 (
                     loads('(notify "hi")'),
-                    loads('(defn notify [x] (emit x))'),
+                    loads("(defn notify [x] (emit x))"),
                 ),
                 registry=_BUILTINS,
                 scope=set(),

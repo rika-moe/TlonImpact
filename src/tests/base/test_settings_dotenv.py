@@ -21,8 +21,7 @@ def _fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_env: boo
     p = TlonPaths(home=tmp_path)
     if with_env:
         (tmp_path / ".env").write_text(
-            "TLON_TEST_DOTENV_KEY=from_dotenv\n"
-            "TLON_TEST_DOTENV_FALLBACK=from_dotenv\n",
+            "TLON_TEST_DOTENV_KEY=from_dotenv\nTLON_TEST_DOTENV_FALLBACK=from_dotenv\n",
             encoding="utf-8",
         )
     monkeypatch.setattr("tlon.base.settings._paths", p)
@@ -74,9 +73,7 @@ class TestLoadDotenvFiles:
 class TestSettingsGitHubEnv:
     """Settings reads the GitHub webhook ingress variables (docs/design/mail.md)."""
 
-    def test_reads_github_env_vars(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_reads_github_env_vars(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("tlon.base.settings._paths", TlonPaths(home=tmp_path))
         monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "whsec")
         monkeypatch.setenv("GITHUB_RECIPIENT", "human:alice")
@@ -86,9 +83,7 @@ class TestSettingsGitHubEnv:
         assert settings.github_webhook_secret == "whsec"
         assert settings.github_recipient == "human:alice"
 
-    def test_defaults_empty(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_defaults_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty secret = the /webhooks/github route is not registered."""
         monkeypatch.setattr("tlon.base.settings._paths", TlonPaths(home=tmp_path))
         monkeypatch.delenv("GITHUB_WEBHOOK_SECRET", raising=False)

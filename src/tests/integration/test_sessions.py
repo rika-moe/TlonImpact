@@ -113,9 +113,7 @@ async def test_session_edge_cases(inproc_server: tuple[str, Path]) -> None:
         assert updated["filters"] == {"event_types": ["mail.delivered"]}
 
         # PATCH invalid mode -> 400 invalid_mode
-        async with http.patch(
-            f"{base_url}/sessions/{session_id}", json={"mode": "bogus"}
-        ) as resp:
+        async with http.patch(f"{base_url}/sessions/{session_id}", json={"mode": "bogus"}) as resp:
             assert resp.status == 400
             data = await resp.json()
             assert data["reason"] == "invalid_mode"

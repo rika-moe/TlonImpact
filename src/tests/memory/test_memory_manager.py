@@ -24,9 +24,7 @@ def _manager(tmp_path: Path, disk_config: dict | None) -> MemoryManager:
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
     if disk_config is not None:
-        (memory_dir / "config.json").write_text(
-            json.dumps(disk_config), encoding="utf-8"
-        )
+        (memory_dir / "config.json").write_text(json.dumps(disk_config), encoding="utf-8")
     return MemoryManager("test-agent", MemoryConfig(), data_dir=tmp_path)
 
 

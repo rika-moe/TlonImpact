@@ -213,9 +213,7 @@ class ReflectionEngine:
                     else:
                         description = op.get("description", "")
                         if description:
-                            result = await self._memory.forget(
-                                query=description, confirm=True
-                            )
+                            result = await self._memory.forget(query=description, confirm=True)
                             logger.debug(
                                 "reflection_claim_deleted_by_description",
                                 description=description,

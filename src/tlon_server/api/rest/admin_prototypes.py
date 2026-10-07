@@ -29,8 +29,7 @@ def _prototype_payload(
         "generation": info.generation,
         "proposal_note": info.proposal_note,
         "parameters": [
-            {"name": s.name, "type": s.type, "required": s.required}
-            for s in info.parameters
+            {"name": s.name, "type": s.type, "required": s.required} for s in info.parameters
         ],
     }
     if behavior is not None:
@@ -41,9 +40,7 @@ def _prototype_payload(
         # is a red flag by itself.
         level = parse_execution_level(behavior)
         payload["execution_level"] = level
-        payload["red_flags"] = (
-            ["execution-level-l2"] if not info.trusted and level == "L2" else []
-        )
+        payload["red_flags"] = ["execution-level-l2"] if not info.trusted and level == "L2" else []
     if lessons is not None:
         payload["lessons"] = lessons
     if reviews is not None:
@@ -112,9 +109,7 @@ class AdminPrototypeHandlers(RestHandlerBase):
         assert self.prototypes is not None
         name = request.match_info["name"]
         try:
-            info, behavior, lessons, reviews = self.prototypes.get_detail(
-                name, staging=staging
-            )
+            info, behavior, lessons, reviews = self.prototypes.get_detail(name, staging=staging)
         except PrototypeError as e:
             return self._json_response(
                 {"error": str(e), "reason": "prototype_not_found"}, status=404
@@ -152,8 +147,10 @@ class AdminPrototypeHandlers(RestHandlerBase):
         behavior = body.get("behavior")
         if not name or not isinstance(name, str) or not behavior or not isinstance(behavior, str):
             return self._json_response(
-                {"error": "Fields 'name' and 'behavior' are required",
-                 "reason": "invalid_prototype"},
+                {
+                    "error": "Fields 'name' and 'behavior' are required",
+                    "reason": "invalid_prototype",
+                },
                 status=400,
             )
         try:
@@ -163,15 +160,11 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 display_name=str(body.get("display_name") or ""),
                 description=str(body.get("description") or ""),
                 parent=str(body["parent"]) if body.get("parent") else None,
-                proposal_note=(
-                    str(body["proposal_note"]) if body.get("proposal_note") else None
-                ),
+                proposal_note=(str(body["proposal_note"]) if body.get("proposal_note") else None),
                 lessons=str(body["lessons"]) if body.get("lessons") else None,
             )
         except PrototypeError as e:
-            return self._json_response(
-                {"error": str(e), "reason": "invalid_prototype"}, status=400
-            )
+            return self._json_response({"error": str(e), "reason": "invalid_prototype"}, status=400)
         return self._json_response(
             {"status": "success", "prototype": _prototype_payload(info)}, status=201
         )
@@ -220,9 +213,11 @@ class AdminPrototypeHandlers(RestHandlerBase):
             and lessons is None
         ):
             return self._json_response(
-                {"error": "Nothing to update: provide display_name, description, behavior, "
-                          "parent, proposal_note or lessons",
-                 "reason": "invalid_prototype"},
+                {
+                    "error": "Nothing to update: provide display_name, description, behavior, "
+                    "parent, proposal_note or lessons",
+                    "reason": "invalid_prototype",
+                },
                 status=400,
             )
         try:
@@ -237,12 +232,8 @@ class AdminPrototypeHandlers(RestHandlerBase):
                 staging=staging,
             )
         except PrototypeError as e:
-            return self._json_response(
-                {"error": str(e), "reason": "invalid_prototype"}, status=400
-            )
-        return self._json_response(
-            {"status": "success", "prototype": _prototype_payload(info)}
-        )
+            return self._json_response({"error": str(e), "reason": "invalid_prototype"}, status=400)
+        return self._json_response({"status": "success", "prototype": _prototype_payload(info)})
 
     async def handle_delete_prototype(self, request: web.Request) -> web.Response:
         """DELETE /admin/prototypes/{name} - remove a prototype from the

@@ -47,13 +47,21 @@ def _three_generations(p: TlonPaths) -> None:
     """gen1 (trusted root) → gen2 (trusted) → gen3 (staging proposal)."""
     write_trusted_prototype("gen1", SPEC_V1, tlon_paths=p)
     write_staging_prototype(
-        "gen2", SPEC_V2, author_id="adam", parent="gen1",
-        proposal_note="换转发目标", tlon_paths=p,
+        "gen2",
+        SPEC_V2,
+        author_id="adam",
+        parent="gen1",
+        proposal_note="换转发目标",
+        tlon_paths=p,
     )
     approve_prototype("gen2", tlon_paths=p)
     write_staging_prototype(
-        "gen3", SPEC_V3, author_id="adam", parent="gen2",
-        proposal_note="再换转发目标", tlon_paths=p,
+        "gen3",
+        SPEC_V3,
+        author_id="adam",
+        parent="gen2",
+        proposal_note="再换转发目标",
+        tlon_paths=p,
     )
 
 

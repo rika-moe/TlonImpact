@@ -301,11 +301,7 @@ class MemberRuntime(Member):
             return self._scheduler.idle_seconds
         if self._initialized_at is None:
             return 0.0
-        since = (
-            self._last_action_at
-            if self._last_action_at is not None
-            else self._initialized_at
-        )
+        since = self._last_action_at if self._last_action_at is not None else self._initialized_at
         return time.monotonic() - since
 
     # ── Lifecycle ──
@@ -636,9 +632,7 @@ class MemberRuntime(Member):
             if isinstance(result, ActionRequest):
                 requests.append(result)
             elif isinstance(result, list):
-                requests.extend(
-                    item for item in result if isinstance(item, ActionRequest)
-                )
+                requests.extend(item for item in result if isinstance(item, ActionRequest))
         return requests
 
     # ── Unified action executor ──
@@ -669,18 +663,14 @@ class MemberRuntime(Member):
         elif kind == "start":
             await self._publish_request(
                 EventType.AGENT_START_REQUEST,
-                StartRequest(
-                    agent_id=request.data["agent_id"], reason=request.data["reason"]
-                ),
+                StartRequest(agent_id=request.data["agent_id"], reason=request.data["reason"]),
                 trigger_event,
                 action="start",
             )
         elif kind == "stop":
             await self._publish_request(
                 EventType.AGENT_STOP_REQUEST,
-                StopRequest(
-                    agent_id=request.data["agent_id"], reason=request.data["reason"]
-                ),
+                StopRequest(agent_id=request.data["agent_id"], reason=request.data["reason"]),
                 trigger_event,
                 action="stop",
             )

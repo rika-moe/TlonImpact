@@ -140,15 +140,11 @@ async def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> bool
     return False
 
 
-def _make_ceremony(
-    bus: EventBus, p: TlonPaths, llm: Any
-) -> tuple[RetirementCeremony, list[Event]]:
+def _make_ceremony(bus: EventBus, p: TlonPaths, llm: Any) -> tuple[RetirementCeremony, list[Event]]:
     """A ceremony on the bus plus a capture list for AGENT_RETIRED."""
     retired: list[Event] = []
     bus.subscribe(EventType.AGENT_RETIRED, lambda event: retired.append(event))
-    ceremony = RetirementCeremony(
-        event_bus=bus, tlon_paths=p, llm_client_factory=lambda _id: llm
-    )
+    ceremony = RetirementCeremony(event_bus=bus, tlon_paths=p, llm_client_factory=lambda _id: llm)
     return ceremony, retired
 
 
@@ -188,8 +184,14 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
     tasks.create_task("写完退休文档")
     box = Mailbox(p.member_mail_dir("retiree"))
     await box.append_inbox(
-        _mail("m1", "gu-yanxi@tlon.internal", "retiree@tlon.internal", "t1",
-              "2026-09-01T10:00:00", subject="评审提案")
+        _mail(
+            "m1",
+            "gu-yanxi@tlon.internal",
+            "retiree@tlon.internal",
+            "t1",
+            "2026-09-01T10:00:00",
+            subject="评审提案",
+        )
     )
 
     bus = EventBus()
@@ -289,8 +291,14 @@ async def test_open_threads_unreplied_counted(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
     box = Mailbox(p.member_mail_dir("retiree"))
     await box.append_inbox(
-        _mail("m1", "gu-yanxi@tlon.internal", "retiree@tlon.internal", "t1",
-              "2026-09-01T10:00:00", subject="未回复的事")
+        _mail(
+            "m1",
+            "gu-yanxi@tlon.internal",
+            "retiree@tlon.internal",
+            "t1",
+            "2026-09-01T10:00:00",
+            subject="未回复的事",
+        )
     )
 
     ceremony, _ = _make_ceremony(EventBus(), p, _FakeLLM("x"))
@@ -306,12 +314,11 @@ async def test_open_threads_answered_excluded(tmp_path: Path) -> None:
     own = address_for_member("retiree")
     box = Mailbox(p.member_mail_dir("retiree"))
     await box.append_inbox(
-        _mail("m1", "gu-yanxi@tlon.internal", own, "t1",
-              "2026-09-01T10:00:00", subject="已回复的事")
+        _mail(
+            "m1", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T10:00:00", subject="已回复的事"
+        )
     )
-    await box.append_sent(
-        _mail("m2", own, "gu-yanxi@tlon.internal", "t1", "2026-09-01T11:00:00")
-    )
+    await box.append_sent(_mail("m2", own, "gu-yanxi@tlon.internal", "t1", "2026-09-01T11:00:00"))
 
     ceremony, _ = _make_ceremony(EventBus(), p, _FakeLLM("x"))
 
@@ -323,15 +330,10 @@ async def test_open_threads_newer_incoming_reopens(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
     own = address_for_member("retiree")
     box = Mailbox(p.member_mail_dir("retiree"))
+    await box.append_inbox(_mail("m1", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T10:00:00"))
+    await box.append_sent(_mail("m2", own, "gu-yanxi@tlon.internal", "t1", "2026-09-01T11:00:00"))
     await box.append_inbox(
-        _mail("m1", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T10:00:00")
-    )
-    await box.append_sent(
-        _mail("m2", own, "gu-yanxi@tlon.internal", "t1", "2026-09-01T11:00:00")
-    )
-    await box.append_inbox(
-        _mail("m3", "gu-yanxi@tlon.internal", own, "t1",
-              "2026-09-01T12:00:00", subject="追问")
+        _mail("m3", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T12:00:00", subject="追问")
     )
 
     ceremony, _ = _make_ceremony(EventBus(), p, _FakeLLM("x"))

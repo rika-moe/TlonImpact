@@ -594,9 +594,7 @@ class BaseClient:
         except Exception as e:
             logger.error("frame_handling_failed", error=str(e), exc_info=True)
 
-    def _fire(
-        self, handlers: Sequence[Callable[..., Any]], log_event: str, *args: Any
-    ) -> None:
+    def _fire(self, handlers: Sequence[Callable[..., Any]], log_event: str, *args: Any) -> None:
         """Dispatch to registered handlers (sync inline, coroutine as a task)."""
         for handler in handlers:
             try:
@@ -607,9 +605,7 @@ class BaseClient:
             except Exception as e:
                 logger.error(log_event, error=str(e), exc_info=True)
 
-    def _spawn_handler_task(
-        self, handler: Callable[..., Any], log_event: str, *args: Any
-    ) -> None:
+    def _spawn_handler_task(self, handler: Callable[..., Any], log_event: str, *args: Any) -> None:
         """Run a coroutine handler as a tracked task; failures are logged."""
         task = asyncio.create_task(handler(*args))
         self._handler_tasks.add(task)
@@ -647,7 +643,9 @@ class BaseClient:
 
     # ==================== Handler Registration ====================
 
-    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
+    def on_event(
+        self, handler: Callable[[dict[str, Any]], None]
+    ) -> Callable[[dict[str, Any]], None]:
         """Register an event handler.
 
         Args:
@@ -659,7 +657,9 @@ class BaseClient:
         self._event_handlers.append(handler)
         return handler
 
-    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
+    def on_message(
+        self, handler: Callable[[dict[str, Any]], None]
+    ) -> Callable[[dict[str, Any]], None]:
         """Register a message handler.
 
         Args:
@@ -683,7 +683,9 @@ class BaseClient:
         self._error_handlers.append(handler)
         return handler
 
-    def on_state_change(self, handler: Callable[[ConnectionState], None]) -> Callable[[ConnectionState], None]:
+    def on_state_change(
+        self, handler: Callable[[ConnectionState], None]
+    ) -> Callable[[ConnectionState], None]:
         """Register a state change handler.
 
         Args:
@@ -714,7 +716,9 @@ class BaseClient:
 
     # ==================== REST API ====================
 
-    async def rest_get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    async def rest_get(
+        self, path: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
         """Make a GET request to the REST API.
 
         Args:

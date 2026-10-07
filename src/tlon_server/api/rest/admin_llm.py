@@ -61,6 +61,4 @@ class AdminLlmHandlers(RestHandlerBase):
             optional deprecation date.
         """
         models = _chat_models()
-        return self._json_response(
-            {"status": "success", "models": models, "count": len(models)}
-        )
+        return self._json_response({"status": "success", "models": models, "count": len(models)})

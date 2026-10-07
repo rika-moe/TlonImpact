@@ -126,10 +126,7 @@ class ObservabilityFacade:
                 continue
             if min_level is not None:
                 entry_level = str(entry.get("level", "")).lower()
-                if (
-                    entry_level not in _LOG_LEVELS
-                    or _LOG_LEVELS.index(entry_level) < min_level
-                ):
+                if entry_level not in _LOG_LEVELS or _LOG_LEVELS.index(entry_level) < min_level:
                     continue
             if before is not None and str(entry.get("timestamp", "")) >= before:
                 continue

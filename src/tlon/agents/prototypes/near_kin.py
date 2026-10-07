@@ -87,9 +87,7 @@ def find_near_kin(
             if proto_dir.name == exclude:
                 continue
             try:
-                existing = _normalize_behavior_text(
-                    behavior_file.read_text(encoding="utf-8")
-                )
+                existing = _normalize_behavior_text(behavior_file.read_text(encoding="utf-8"))
             except OSError as e:
                 logger.warning("near_kin_unreadable", path=str(behavior_file), error=str(e))
                 continue

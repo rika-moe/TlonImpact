@@ -54,9 +54,7 @@ class GitHubWebhookMixin(RestHandlerBase):
         body = await request.read()
 
         signature = request.headers.get("X-Hub-Signature-256", "")
-        expected = "sha256=" + hmac.new(
-            secret.encode("utf-8"), body, hashlib.sha256
-        ).hexdigest()
+        expected = "sha256=" + hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
             logger.warning("github_webhook_rejected", reason="bad_signature")
             return self._json_response(
@@ -86,6 +84,4 @@ class GitHubWebhookMixin(RestHandlerBase):
         mail_id = await self.events.receive_github_event(event_type, payload)
         if mail_id is None:
             return self._json_response({"status": "ignored"})
-        return self._json_response(
-            {"status": "accepted", "mail_id": mail_id}, status=202
-        )
+        return self._json_response({"status": "accepted", "mail_id": mail_id}, status=202)

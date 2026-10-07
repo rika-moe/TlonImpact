@@ -123,9 +123,7 @@ class TestLoadCapabilityBuiltins:
 
     def test_deprecated_word_registers_normally(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        _write_trusted(
-            p, "thread-digest", PURE_CAPABILITY, metadata='{:deprecated true}'
-        )
+        _write_trusted(p, "thread-digest", PURE_CAPABILITY, metadata="{:deprecated true}")
         assert set(load_capability_builtins(p)) == {"thread-digest"}
 
     def test_bad_artifact_excluded_others_unaffected(self, tmp_path):
@@ -219,7 +217,5 @@ class TestLoaderEndToEnd:
 
         p = TlonPaths(home=tmp_path)
         _write_trusted(p, "thread-digest", PURE_CAPABILITY)
-        result = eval_form(
-            loads('(thread-digest ["m1" "m2" "m3"])'), {}, _merged(p)
-        )
+        result = eval_form(loads('(thread-digest ["m1" "m2" "m3"])'), {}, _merged(p))
         assert result == "digest:3"

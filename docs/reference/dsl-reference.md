@@ -90,8 +90,8 @@
 | `:agent-stop-request` | `agent.stop_request` |  |
 | `:agent-idle` | `agent.idle` |  |
 | `:agent-spawned` | `agent.spawned` |  |
-| `:agent-noisy` | `agent.noisy` | A member is generating social noise (mail burst / broadcast storm) |
-| `:mail-orphan-scan` | `mail.orphan_scan` | Periodic orphan-mail (unanswered thread root) scan statistics |
+| `:agent-noisy` | `agent.noisy` |  |
+| `:mail-orphan-scan` | `mail.orphan_scan` |  |
 | `:agent-thinking-start` | `agent.thinking_start` |  |
 | `:agent-thinking-end` | `agent.thinking_end` |  |
 | `:agent-llm-request` | `agent.llm_request` |  |

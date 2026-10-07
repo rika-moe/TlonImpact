@@ -208,7 +208,12 @@ async def build_corpus(
     try:
         response = await llm.chat(
             _SYSTEM_PROMPT,
-            [{"role": "user", "content": _typical_prompt(prototype_name, description, typical_count)}],
+            [
+                {
+                    "role": "user",
+                    "content": _typical_prompt(prototype_name, description, typical_count),
+                }
+            ],
         )
         data = _extract_json_array(response.content or "")
         if data is None:

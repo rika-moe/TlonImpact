@@ -102,9 +102,7 @@ def test_cpu_percent_online_cpus_falls_back_to_percpu_len() -> None:
 
 def test_cpu_percent_no_cpu_count_defaults_to_one() -> None:
     """Neither online_cpus nor percpu_usage → single-CPU fallback."""
-    stats = _stats(
-        cpu_total=1500, precpu_total=1000, system=5000, presystem=4000, online_cpus=None
-    )
+    stats = _stats(cpu_total=1500, precpu_total=1000, system=5000, presystem=4000, online_cpus=None)
     assert _cpu_percent(stats) == pytest.approx(50.0)
 
 

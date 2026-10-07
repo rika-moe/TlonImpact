@@ -167,9 +167,7 @@ class ClaimStore:
                     item["valid_to"] = valid_to
                     await self._persist()
                     return True
-            logger.warning(
-                "claim_supersede_not_found", agent_id=self.agent_id, claim_id=claim_id
-            )
+            logger.warning("claim_supersede_not_found", agent_id=self.agent_id, claim_id=claim_id)
             return False
 
     async def delete_claim(self, claim_id: str) -> bool:

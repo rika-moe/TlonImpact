@@ -41,9 +41,7 @@ KEEP_RECENT = 20
 KEEP_RECENT_FORCE = 10
 
 #: Placeholder replacing a pruned tool result's content in place.
-PRUNED_PLACEHOLDER = json.dumps(
-    {"_pruned": True, "note": "历史工具结果已清理"}, ensure_ascii=False
-)
+PRUNED_PLACEHOLDER = json.dumps({"_pruned": True, "note": "历史工具结果已清理"}, ensure_ascii=False)
 
 #: Content prefix marking a summary message (also the running-summary marker).
 SUMMARY_MARKER = "[前文摘要]"

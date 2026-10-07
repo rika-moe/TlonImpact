@@ -40,9 +40,7 @@ def provider(delegate: MockAgentInfoProvider) -> GuardianAgentInfoProvider:
 
 
 @pytest.fixture
-def resolver(
-    provider: GuardianAgentInfoProvider, tmp_path
-) -> RecipientResolver:
+def resolver(provider: GuardianAgentInfoProvider, tmp_path) -> RecipientResolver:
     return RecipientResolver(
         agent_info_provider=provider,
         is_human_online=lambda _username: False,
@@ -51,9 +49,7 @@ def resolver(
 
 
 class TestGuardianResolution:
-    def test_adam_resolves_to_a_synthesized_config(
-        self, provider: GuardianAgentInfoProvider
-    ):
+    def test_adam_resolves_to_a_synthesized_config(self, provider: GuardianAgentInfoProvider):
         config = provider.get_config("adam")
         assert config is not None
         assert config.id == "adam"
@@ -65,9 +61,7 @@ class TestGuardianResolution:
         assert provider.get_config("a-001") is delegate.get_config("a-001")
         assert provider.get_config("ghost") is None
 
-    def test_get_all_ids_excludes_adam(
-        self, provider: GuardianAgentInfoProvider
-    ):
+    def test_get_all_ids_excludes_adam(self, provider: GuardianAgentInfoProvider):
         assert provider.get_all_ids() == {"a-001"}
 
     def test_delivery_side_resolves_adam(self, resolver: RecipientResolver):
@@ -84,9 +78,7 @@ class TestGuardianResolution:
 
 
 class TestGuardianWriteCapabilities:
-    async def test_reload_adam_is_a_noop(
-        self, provider: GuardianAgentInfoProvider
-    ):
+    async def test_reload_adam_is_a_noop(self, provider: GuardianAgentInfoProvider):
         assert await provider.reload_agent("adam") is False
 
     def test_delete_adam_is_refused(self, provider: GuardianAgentInfoProvider):

@@ -62,9 +62,7 @@ class AdminAgentHandlers(RestHandlerBase):
 
         agent_id = request.match_info["agent_id"]
         result = await self.members.adopt(agent_id)
-        return self._json_response(
-            {"status": "success", "agent_id": agent_id, "result": result}
-        )
+        return self._json_response({"status": "success", "agent_id": agent_id, "result": result})
 
     # ---- Admin: agent CRUD + prototype approval (wizard removal, A2) ----
 
@@ -177,9 +175,7 @@ class AdminAgentHandlers(RestHandlerBase):
                 agent_id,
                 model_name=str(llm["model_name"]) if llm.get("model_name") else None,
                 embedding_model_name=(
-                    str(llm["embedding_model_name"])
-                    if llm.get("embedding_model_name")
-                    else None
+                    str(llm["embedding_model_name"]) if llm.get("embedding_model_name") else None
                 ),
             )
             assert updated is not None  # loaded above
@@ -219,6 +215,4 @@ class AdminAgentHandlers(RestHandlerBase):
                 {"status": "error", "reason": e.reason, "message": str(e)},
                 status=409,
             )
-        return self._json_response(
-            {"status": "success", "agent_id": agent_id, "removed": True}
-        )
+        return self._json_response({"status": "success", "agent_id": agent_id, "removed": True})

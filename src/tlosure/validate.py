@@ -206,9 +206,7 @@ def _validate(
                 _validate(arg, builtins, scope, _non_tail(loop))
             return
         if name not in builtins:
-            raise EvalError(
-                f"unknown function or special form: {name} (in form {dumps(value)})"
-            )
+            raise EvalError(f"unknown function or special form: {name} (in form {dumps(value)})")
         # Builtin arguments are never tail positions (no recursion into
         # builtins, so a recur there would not be a loop tail).
         for arg in value[1:]:

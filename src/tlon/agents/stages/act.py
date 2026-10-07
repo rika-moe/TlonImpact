@@ -38,12 +38,8 @@ def attempts_completion(response: "LLMResponse | None") -> bool:
     calls = response.tool_calls
     send_calls = [tc for tc in calls if tc.function_name == "sendEmail"]
     silence_calls = [tc for tc in calls if tc.function_name == "silence"]
-    other_calls = [
-        tc for tc in calls if tc.function_name not in ("sendEmail", "silence")
-    ]
-    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(
-        silence_calls
-    )
+    other_calls = [tc for tc in calls if tc.function_name not in ("sendEmail", "silence")]
+    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(silence_calls)
     return bool(has_complete and not (other_calls or (silence_calls and send_calls)))
 
 
@@ -78,13 +74,9 @@ async def act_stage_step(
     send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendEmail"]
     silence_calls = [tc for tc in response.tool_calls if tc.function_name == "silence"]
     other_calls = [
-        tc
-        for tc in response.tool_calls
-        if tc.function_name not in ("sendEmail", "silence")
+        tc for tc in response.tool_calls if tc.function_name not in ("sendEmail", "silence")
     ]
-    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(
-        silence_calls
-    )
+    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(silence_calls)
 
     if has_complete and (other_calls or (silence_calls and send_calls)):
         return StageOutcome(

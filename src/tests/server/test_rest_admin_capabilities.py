@@ -182,9 +182,7 @@ class TestCapabilityDetail:
         handler, _p = _handler(tmp_path, wire=False)
 
         assert (await handler.handle_get_capability(StubRequest(name="x"))).status == 503
-        assert (
-            await handler.handle_get_staging_capability(StubRequest(name="x"))
-        ).status == 503
+        assert (await handler.handle_get_staging_capability(StubRequest(name="x"))).status == 503
 
     async def test_detail_includes_passing_examples(self, tmp_path: Path):
         handler, p = _handler(tmp_path)

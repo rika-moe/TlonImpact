@@ -210,7 +210,9 @@ class ContextBuilder:
         try:
             signature = scan_signature(self._config.id, self._paths)
             if self._skills_index_cache is None or signature != self._skills_signature:
-                self._skills_index_cache = render_skills_index(scan_skills(self._config.id, self._paths))
+                self._skills_index_cache = render_skills_index(
+                    scan_skills(self._config.id, self._paths)
+                )
                 self._skills_signature = signature
             return self._skills_index_cache
         except Exception:
@@ -316,9 +318,7 @@ class ContextBuilder:
                 context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
         return BuiltContext(messages=context, anchor_len=anchor_len)
 
-    async def _build_mail_history(
-        self, count: int, current_mail: Mail
-    ) -> list[dict[str, Any]]:
+    async def _build_mail_history(self, count: int, current_mail: Mail) -> list[dict[str, Any]]:
         """Render up to ``count`` mailbox history mails as context messages.
 
         The history is the agent's own correspondence (mailbox inbox +
@@ -376,16 +376,12 @@ class ContextBuilder:
             for mail in reversed(thread):
                 if mail.id == current_mail.id:
                     continue
-                events = await self._journal.read_events(
-                    session_id_for(self._config.id, mail.id)
-                )
+                events = await self._journal.read_events(session_id_for(self._config.id, mail.id))
                 if not events:  # no log: this mail never ran a session
                     continue
                 if not any(event.get("type") == "session/end" for event in events):
                     continue  # in flight or crashed mid-session
-                return _render_thread_recap(
-                    events, external=is_external_address(mail.from_address)
-                )
+                return _render_thread_recap(events, external=is_external_address(mail.from_address))
             return ""
         except Exception:
             logger.warning("thread_recap_build_failed", exc_info=True)
@@ -398,7 +394,9 @@ class ContextBuilder:
             if m.id == self._config.id:
                 continue
             soul_file = self._paths.agent_soul_file(m.id)
-            profile = soul_file.read_text(encoding="utf-8").strip() if soul_file.exists() else m.name
+            profile = (
+                soul_file.read_text(encoding="utf-8").strip() if soul_file.exists() else m.name
+            )
             team_profiles.append((m.name, profile))
 
         return AgentPromptContext(
@@ -415,9 +413,7 @@ class ContextBuilder:
             self._paths.agent_rules_file(self._config.id),
         ]
         files.extend(
-            self._paths.agent_soul_file(m.id)
-            for m in self._team_members
-            if m.id != self._config.id
+            self._paths.agent_soul_file(m.id) for m in self._team_members if m.id != self._config.id
         )
         return files
 

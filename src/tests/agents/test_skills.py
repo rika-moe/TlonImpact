@@ -91,9 +91,7 @@ def _skill(name: str, description: str) -> str:
 
 def test_name_conflict_project_wins(tmp_path: Path) -> None:
     home = tmp_path
-    project_file = _write_skill(
-        _project_root(home), "dup", _skill("dup", "项目版")
-    )
+    project_file = _write_skill(_project_root(home), "dup", _skill("dup", "项目版"))
     _write_skill(_global_root(home), "dup", _skill("dup", "全局版"))
 
     skills = scan_skills(AGENT, TlonPaths(home=home))
@@ -213,9 +211,7 @@ def _spec_with_sections(sections: str) -> MemberSpec:
                  :max-consecutive-errors 1
                  :max-tokens 1000000
                  :reflect {:enabled false :interval-minutes 15}}}]}
-""".replace(
-                "SECTIONS", sections
-            )
+""".replace("SECTIONS", sections)
         )
     )
 

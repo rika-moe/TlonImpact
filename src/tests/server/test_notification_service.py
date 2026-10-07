@@ -146,9 +146,7 @@ class TestShouldSendToSession:
 
         # mail.new has no recipient and passes as before
         assert service._should_send_to_session(session, make_event(EventType.MAIL_NEW))
-        assert service._should_send_to_session(
-            session, make_event(EventType.AGENT_RESPONSE)
-        )
+        assert service._should_send_to_session(session, make_event(EventType.AGENT_RESPONSE))
 
     # ==================== Session filters ====================
 

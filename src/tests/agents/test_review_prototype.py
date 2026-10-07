@@ -61,9 +61,7 @@ def _make_tool(p: TlonPaths, reviewer_id: str, llm: _FakeLLM) -> ReviewPrototype
         llm_client=llm,  # type: ignore[arg-type]
         detail=lambda name: get_prototype_detail(name, staging=True, tlon_paths=p),
         lineage=lambda name: get_prototype_lineage(name, tlon_paths=p),
-        append_review=lambda name, entry: append_staging_review(
-            name, entry, tlon_paths=p
-        ),
+        append_review=lambda name, entry: append_staging_review(name, entry, tlon_paths=p),
     )
 
 
@@ -131,9 +129,7 @@ class TestReviewPrototype:
             result = await tool.execute(name="base-gen2")
             assert result.success, result.error
 
-        text = (p.prototypes_staging_dir() / "base-gen2" / "REVIEW.md").read_text(
-            encoding="utf-8"
-        )
+        text = (p.prototypes_staging_dir() / "base-gen2" / "REVIEW.md").read_text(encoding="utf-8")
         assert text.count("# 评审记录") == 1
         assert text.count("r-1（fake/reviewer-model）：不通过") == 3
         assert text.count("理由甲。") == 3
@@ -152,9 +148,7 @@ class TestReviewPrototype:
         assert "r-1" in trusted_review.read_text(encoding="utf-8")
         assert not (p.prototypes_staging_dir() / "base-gen2").exists()
         # trusted 侧详情同样带 reviews
-        _info, _behavior, _lessons, reviews = get_prototype_detail(
-            "base-gen2", tlon_paths=p
-        )
+        _info, _behavior, _lessons, reviews = get_prototype_detail("base-gen2", tlon_paths=p)
         assert reviews is not None and "可以晋级。" in reviews
 
     @pytest.mark.parametrize("verdict", ["通过", "不通过", "弃权"])

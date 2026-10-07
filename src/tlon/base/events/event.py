@@ -48,8 +48,12 @@ class EventType(StrEnum):
 
     # Public health facts (ADR 0003): detection only, never enforcement —
     # the monitor publishes facts; acting on them is policy (Adam/operator)
-    AGENT_NOISY = "agent.noisy"  # A member is generating social noise (mail burst / broadcast storm)
-    MAIL_ORPHAN_SCAN = "mail.orphan_scan"  # Periodic orphan-mail (unanswered thread root) scan statistics
+    AGENT_NOISY = (
+        "agent.noisy"  # A member is generating social noise (mail burst / broadcast storm)
+    )
+    MAIL_ORPHAN_SCAN = (
+        "mail.orphan_scan"  # Periodic orphan-mail (unanswered thread root) scan statistics
+    )
 
     # Agent thinking process (observability)
     AGENT_THINKING_START = "agent.thinking_start"

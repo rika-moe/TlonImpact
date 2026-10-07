@@ -442,12 +442,8 @@ class DockerRuntime:
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout} seconds"
                 )
 
-            stdout_bytes = await asyncio.to_thread(
-                container.logs, stdout=True, stderr=False
-            )
-            stderr_bytes = await asyncio.to_thread(
-                container.logs, stdout=False, stderr=True
-            )
+            stdout_bytes = await asyncio.to_thread(container.logs, stdout=True, stderr=False)
+            stderr_bytes = await asyncio.to_thread(container.logs, stdout=False, stderr=True)
             status_code = wait_result.get("StatusCode")
             exit_code: int = status_code if isinstance(status_code, int) else -1
             stdout = (

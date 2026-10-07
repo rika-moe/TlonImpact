@@ -34,15 +34,12 @@ def tlon_paths(tmp_path: Path) -> TlonPaths:
     return TlonPaths(home=tmp_path)
 
 
-def _lineage(
-    name: str, total_tokens: int, endorsements: list[int]
-) -> dict[str, Any]:
+def _lineage(name: str, total_tokens: int, endorsements: list[int]) -> dict[str, Any]:
     return {
         "name": name,
         "total_tokens": total_tokens,
         "members": [
-            {"id": f"{name}-{i}", "endorsements_received": e}
-            for i, e in enumerate(endorsements)
+            {"id": f"{name}-{i}", "endorsements_received": e} for i, e in enumerate(endorsements)
         ],
     }
 
@@ -101,7 +98,7 @@ class TestPolicyFile:
 
     def test_override_a_single_hook(self, tlon_paths: TlonPaths) -> None:
         tlon_paths.policy_file().write_text(
-            '{:version 1 :policy [(defn tilt [subject lineages] 42)]}',
+            "{:version 1 :policy [(defn tilt [subject lineages] 42)]}",
             encoding="utf-8",
         )
         policy = load_policy(tlon_paths)
@@ -109,9 +106,7 @@ class TestPolicyFile:
         # hooks not overridden keep the default implementation
         assert policy.call("solvent?", None, []) is True
         assert (
-            policy.call(
-                "full-member?", {"id": "r", "spawned_by": "m", "endorsements_received": 0}
-            )
+            policy.call("full-member?", {"id": "r", "spawned_by": "m", "endorsements_received": 0})
             is False
         )
 
@@ -199,17 +194,13 @@ class TestProviders:
 
     # ── trust provider over the real filesystem ──
 
-    def _write_agent(
-        self, tlon_paths: TlonPaths, agent_id: str, *, spawned_by: str | None
-    ) -> None:
+    def _write_agent(self, tlon_paths: TlonPaths, agent_id: str, *, spawned_by: str | None) -> None:
         yaml_save(
             AgentConfig(id=agent_id, name=agent_id, spawned_by=spawned_by),
             tlon_paths.tlon_home(),
         )
 
-    async def _endorse(
-        self, tlon_paths: TlonPaths, target: str, endorser: str
-    ) -> None:
+    async def _endorse(self, tlon_paths: TlonPaths, target: str, endorser: str) -> None:
         target_addr = f"{target}@tlon.internal"
         endorser_addr = f"{endorser}@tlon.internal"
         m1 = Mail(
@@ -244,15 +235,11 @@ class TestProviders:
             )
         )
 
-    async def test_trust_provider_spawned_member_on_probation(
-        self, tlon_paths: TlonPaths
-    ) -> None:
+    async def test_trust_provider_spawned_member_on_probation(self, tlon_paths: TlonPaths) -> None:
         self._write_agent(tlon_paths, "rookie", spawned_by="mentor")
         assert await policy_trust_provider(tlon_paths)("rookie") is False
 
-    async def test_trust_provider_endorsed_turns_full(
-        self, tlon_paths: TlonPaths
-    ) -> None:
+    async def test_trust_provider_endorsed_turns_full(self, tlon_paths: TlonPaths) -> None:
         self._write_agent(tlon_paths, "rookie", spawned_by="mentor")
         self._write_agent(tlon_paths, "outsider", spawned_by=None)
         await self._endorse(tlon_paths, "rookie", "outsider")
@@ -339,9 +326,7 @@ class TestAssemblyToolSubset:
             tlon_paths=tlon_paths,
         )
 
-    async def test_probation_member_lacks_reproduction_tools(
-        self, tlon_paths: TlonPaths
-    ) -> None:
+    async def test_probation_member_lacks_reproduction_tools(self, tlon_paths: TlonPaths) -> None:
         caps = await self._assemble(tlon_paths, spawned_by="mentor")
 
         names = set(caps.tool_executor.list_tools())

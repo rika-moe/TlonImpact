@@ -67,12 +67,8 @@ def _paths(tmp_path) -> TlonPaths:
 
 
 class TestBuiltinPrototypes:
-    @pytest.mark.parametrize(
-        ("name", "params"), BUILTIN_PARAMS.items(), ids=BUILTIN_PARAMS.keys()
-    )
-    def test_seed_instantiate_load_spec(
-        self, tmp_path, name: str, params: dict
-    ) -> None:
+    @pytest.mark.parametrize(("name", "params"), BUILTIN_PARAMS.items(), ids=BUILTIN_PARAMS.keys())
+    def test_seed_instantiate_load_spec(self, tmp_path, name: str, params: dict) -> None:
         p = _paths(tmp_path)
 
         info = get_prototype_info(name, tlon_paths=p)
@@ -148,9 +144,7 @@ class TestExecutionLevels:
     def test_level_table_covers_every_builtin(self) -> None:
         assert set(EXPECTED_LEVELS) == set(BUILTIN_PARAMS)
 
-    @pytest.mark.parametrize(
-        ("name", "level"), EXPECTED_LEVELS.items(), ids=EXPECTED_LEVELS.keys()
-    )
+    @pytest.mark.parametrize(("name", "level"), EXPECTED_LEVELS.items(), ids=EXPECTED_LEVELS.keys())
     def test_builtin_prototype_declares_its_level(self, name: str, level: str) -> None:
         spec = _prototype_spec(name)
         assert spec.execution_level == level

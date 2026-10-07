@@ -373,7 +373,9 @@ class AgentRegistry(Component):
         if agent_id in self._profiles:
             return None  # cached failure
         try:
-            spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=self._member_builtins())
+            spec = load_member_spec(
+                agent_id, tlon_paths=self._paths, builtins=self._member_builtins()
+            )
         except (FileNotFoundError, ValueError, OSError) as e:
             logger.warning("member_spec_unreadable", agent_id=agent_id, error=str(e))
             self._profiles[agent_id] = None
@@ -917,9 +919,7 @@ class AgentRegistry(Component):
         if agent_id in self._pending_stop_tasks:
             return
         logger.info("pending_stop_registered", agent_id=agent_id, stopped_by=stopped_by)
-        self._pending_stop_tasks[agent_id] = asyncio.create_task(
-            self._watch_pending_stop(agent_id)
-        )
+        self._pending_stop_tasks[agent_id] = asyncio.create_task(self._watch_pending_stop(agent_id))
 
     async def _watch_pending_stop(self, agent_id: str) -> None:
         """Fire a pending stop the moment the member's sessions drain.
@@ -953,9 +953,7 @@ class AgentRegistry(Component):
                 except StopRejectedError as e:
                     # Only unknown_agent can reach here (the member left
                     # the config); the intent is unfulfillable.
-                    logger.warning(
-                        "pending_stop_dropped", agent_id=agent_id, reason=e.reason
-                    )
+                    logger.warning("pending_stop_dropped", agent_id=agent_id, reason=e.reason)
                     return
                 if stopped_now:
                     logger.info("pending_stop_fired", agent_id=agent_id)

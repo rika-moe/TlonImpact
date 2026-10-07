@@ -431,7 +431,9 @@ class TestRunLevelGate:
     ):
         monkeypatch.setattr(DockerRuntime, "_create_client", lambda self: MagicMock())
         runtime = DockerRuntime(
-            DockerRuntimeConfig(level=level), agent_id="dev-001", tlon_paths=TlonPaths(home=tmp_path)
+            DockerRuntimeConfig(level=level),
+            agent_id="dev-001",
+            tlon_paths=TlonPaths(home=tmp_path),
         )
 
         with pytest.raises(RuntimeError, match="无代码执行能力"):

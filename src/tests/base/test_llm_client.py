@@ -30,9 +30,7 @@ def _client(model_name: str, **overrides: Any) -> LLMClient:
     return LLMClient(config)
 
 
-async def _call_and_capture(
-    client: LLMClient, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Any]:
+async def _call_and_capture(client: LLMClient, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     acompletion = AsyncMock(return_value=_fake_litellm_response())
     monkeypatch.setattr("litellm.acompletion", acompletion)
     response = await client.chat(system_prompt="sys", messages=[{"role": "user", "content": "hi"}])
@@ -42,9 +40,7 @@ async def _call_and_capture(
 
 
 class TestProviderModelRouting:
-    async def test_provider_slash_model_passed_as_is(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_provider_slash_model_passed_as_is(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """provider/model goes to litellm untouched; no api_base override —
         litellm's routing table resolves the provider's endpoint. The key
         is never passed: litellm reads {PROVIDER}_API_KEY natively (ADR
@@ -72,9 +68,7 @@ class TestProviderModelRouting:
         assert params["model"] == "openai/kimi-k2.5"
         assert params["api_base"] == "https://api.moonshot.cn/v1"
 
-    async def test_temperature_never_sent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_temperature_never_sent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Sampling is not configured anywhere (ADR 0016 follow-up):
         requests never carry temperature — the provider default applies."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
@@ -169,9 +163,7 @@ class TestCacheBreakpoints:
     def _cached_block(text: str) -> list[dict[str, Any]]:
         return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
-    async def test_anthropic_marks_system_and_anchor(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_anthropic_marks_system_and_anchor(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
         client = _client("anthropic/claude-sonnet-4-5")
 

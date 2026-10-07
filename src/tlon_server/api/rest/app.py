@@ -194,9 +194,7 @@ class RESTAPIHandler(
         # Admin LLM registry (ADR 0016 §4): model metadata for the WebUI dropdown
         app.router.add_get("/admin/llm/models", self.handle_list_llm_models)
         app.router.add_get("/admin/prototypes/staging", self.handle_list_staging)
-        app.router.add_get(
-            "/admin/prototypes/staging/{name}", self.handle_get_staging_prototype
-        )
+        app.router.add_get("/admin/prototypes/staging/{name}", self.handle_get_staging_prototype)
         app.router.add_patch(
             "/admin/prototypes/staging/{name}", self.handle_update_staging_prototype
         )
@@ -205,9 +203,7 @@ class RESTAPIHandler(
         app.router.add_post(
             "/admin/prototypes/staging/{name}/approve", self.handle_approve_prototype
         )
-        app.router.add_post(
-            "/admin/prototypes/staging/{name}/reject", self.handle_reject_prototype
-        )
+        app.router.add_post("/admin/prototypes/staging/{name}/reject", self.handle_reject_prototype)
         app.router.add_get("/admin/prototypes/{name}", self.handle_get_prototype)
         app.router.add_patch("/admin/prototypes/{name}", self.handle_update_prototype)
         app.router.add_delete("/admin/prototypes/{name}", self.handle_delete_prototype)
@@ -231,15 +227,9 @@ class RESTAPIHandler(
         # routes; handlers 503 when the facade is not wired. The literal
         # ``staging`` routes precede the ``{name}`` ones (aiohttp matches
         # in registration order).
-        app.router.add_get(
-            "/admin/capabilities/staging", self.handle_list_staging_capabilities
-        )
-        app.router.add_post(
-            "/admin/capabilities/staging", self.handle_create_staging_capability
-        )
-        app.router.add_get(
-            "/admin/capabilities/staging/{name}", self.handle_get_staging_capability
-        )
+        app.router.add_get("/admin/capabilities/staging", self.handle_list_staging_capabilities)
+        app.router.add_post("/admin/capabilities/staging", self.handle_create_staging_capability)
+        app.router.add_get("/admin/capabilities/staging/{name}", self.handle_get_staging_capability)
         app.router.add_post(
             "/admin/capabilities/staging/{name}/approve", self.handle_approve_capability
         )
@@ -345,9 +335,7 @@ class RESTAPIHandler(
                 "port": self.client_gateway.port,
             },
             "agents": {
-                "count": (
-                    len(self.members.get_all_agent_status()) if self.members else 0
-                ),
+                "count": (len(self.members.get_all_agent_status()) if self.members else 0),
             },
             "sessions": {
                 "active": len(self.client_gateway.get_all_sessions()),

@@ -48,9 +48,7 @@ class MockAgentInfoProvider:
 
 @pytest.fixture
 def provider() -> MockAgentInfoProvider:
-    return MockAgentInfoProvider(
-        {"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")}
-    )
+    return MockAgentInfoProvider({"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")})
 
 
 @pytest.fixture
@@ -132,9 +130,7 @@ async def _deliver_mail(bus: EventBus, mail: Mail, recipient: str) -> None:
 
 def _make_mail(to: list[str]) -> Mail:
     """Create a minimal mail for delivery tests."""
-    return Mail.create(
-        from_address="xie-yunshu@tlon.internal", to=to, content="hi"
-    )
+    return Mail.create(from_address="xie-yunshu@tlon.internal", to=to, content="hi")
 
 
 class TestHumanAdapterIdentity:
@@ -188,17 +184,13 @@ class TestAdapterManagerLifecycle:
         await manager.detach("tui-9999")  # must not raise
         assert manager.list_online() == []
 
-    async def test_attach_creates_persistent_mailbox(
-        self, manager: AdapterManager, tmp_path
-    ):
+    async def test_attach_creates_persistent_mailbox(self, manager: AdapterManager, tmp_path):
         """First attach creates the human's mailbox — connecting once makes
         the human "known", so offline mail waits in their inbox."""
         await manager.attach("alice", "tui-0001", _noop_sink)
         assert (tmp_path / "human-alice" / "mail").is_dir()
 
-    async def test_concurrent_first_attach_shares_one_adapter(
-        self, manager: AdapterManager
-    ):
+    async def test_concurrent_first_attach_shares_one_adapter(self, manager: AdapterManager):
         """The attach lock prevents two adapters for one username."""
         first, second = await asyncio.gather(
             manager.attach("alice", "tui-0001", _noop_sink),
@@ -228,9 +220,7 @@ class TestAdapterManagerPublish:
         """R2: explicit to resolves names, ids and full addresses."""
         await manager.attach("alice", "tui-0001", _noop_sink)
 
-        mail = await manager.publish(
-            "tui-0001", "hi", to=["谢云舒", "xie-yunshu@tlon.internal"]
-        )
+        mail = await manager.publish("tui-0001", "hi", to=["谢云舒", "xie-yunshu@tlon.internal"])
 
         assert mail is not None
         # Name and full-address forms dedupe to one recipient
@@ -275,9 +265,7 @@ class TestAdapterManagerPublish:
         assert reply.thread_id == original.thread_id
         assert reply.id != original.id
 
-    async def test_publish_new_thread_defaults_thread_id(
-        self, manager: AdapterManager
-    ):
+    async def test_publish_new_thread_defaults_thread_id(self, manager: AdapterManager):
         """Without reply headers the thread root is the mail's own id."""
         await manager.attach("alice", "tui-0001", _noop_sink)
 
@@ -287,9 +275,7 @@ class TestAdapterManagerPublish:
         assert mail.in_reply_to is None
         assert mail.thread_id == mail.id
 
-    async def test_publish_to_and_cc_both_addressed(
-        self, manager: AdapterManager
-    ):
+    async def test_publish_to_and_cc_both_addressed(self, manager: AdapterManager):
         """R2: to and cc resolve independently and both count."""
         await manager.attach("alice", "tui-0001", _noop_sink)
         await manager.attach("friend", "tui-0002", _noop_sink)
@@ -315,16 +301,12 @@ class TestAdapterManagerPublish:
         assert mail.to == []
         assert mail.cc == ["xie-yunshu@tlon.internal"]
 
-    async def test_publish_to_offline_known_human(
-        self, manager: AdapterManager, tmp_path
-    ):
+    async def test_publish_to_offline_known_human(self, manager: AdapterManager, tmp_path):
         """A mail to a known-but-offline human (persistent mailbox, no
         adapter) is addressed, not dropped — the copy waits in their
         inbox on the delivery side (docs/design/mail.md)."""
         await manager.attach("alice", "tui-0001", _noop_sink)
-        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(
-            parents=True, exist_ok=True
-        )
+        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
 
         mail = await manager.publish("tui-0001", "hi", to=["friend"])
 
@@ -359,9 +341,7 @@ class TestResolveAddress:
         assert manager.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
 
     async def test_full_address_passthrough(self, manager: AdapterManager):
-        assert (
-            manager.resolve_address("all@tlon.internal") == "all@tlon.internal"
-        )
+        assert manager.resolve_address("all@tlon.internal") == "all@tlon.internal"
 
     async def test_online_human(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001", _noop_sink)
@@ -370,22 +350,16 @@ class TestResolveAddress:
         assert manager.resolve_address("human:alice") == "alice@tlon.internal"
         assert manager.resolve_address("offline-user") is None
 
-    async def test_offline_human_with_mailbox(
-        self, manager: AdapterManager, tmp_path
-    ):
+    async def test_offline_human_with_mailbox(self, manager: AdapterManager, tmp_path):
         """A known-but-offline human (persistent mailbox, no adapter)
         resolves — same rule as MailDelivery, the mail waits in their
         inbox (docs/design/mail.md)."""
-        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(
-            parents=True, exist_ok=True
-        )
+        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
 
         assert manager.resolve_address("friend") == "friend@tlon.internal"
         assert manager.resolve_address("human:friend") == "friend@tlon.internal"
 
-    async def test_offline_human_without_mailbox_unresolved(
-        self, manager: AdapterManager
-    ):
+    async def test_offline_human_without_mailbox_unresolved(self, manager: AdapterManager):
         """An offline human with no persistent mailbox stays unknown."""
         assert manager.resolve_address("ghost") is None
         assert manager.resolve_address("human:ghost") is None
@@ -421,9 +395,7 @@ class TestHumanMailDelivery:
         assert [e.payload["mail"].id for e in first] == [mail.id]
         assert [e.payload["mail"].id for e in second] == [mail.id]
 
-    async def test_mail_for_other_recipient_ignored(
-        self, bus: EventBus, manager: AdapterManager
-    ):
+    async def test_mail_for_other_recipient_ignored(self, bus: EventBus, manager: AdapterManager):
         """A copy addressed to another member is not pushed."""
         collected: list[Event] = []
         await manager.attach("alice", "tui-0001", _collecting_sink(collected))
@@ -443,9 +415,7 @@ class TestHumanMailDelivery:
 
         await adapter.shutdown()
 
-    async def test_sink_error_isolated(
-        self, bus: EventBus, manager: AdapterManager
-    ):
+    async def test_sink_error_isolated(self, bus: EventBus, manager: AdapterManager):
         """A failing sink does not prevent delivery to the other sinks."""
         collected: list[Event] = []
 
@@ -460,9 +430,7 @@ class TestHumanMailDelivery:
 
         assert [e.payload["mail"].id for e in collected] == [mail.id]
 
-    async def test_missing_recipient_ignored(
-        self, bus: EventBus, manager: AdapterManager
-    ):
+    async def test_missing_recipient_ignored(self, bus: EventBus, manager: AdapterManager):
         """A malformed payload (no recipient) is ignored."""
         collected: list[Event] = []
         await manager.attach("alice", "tui-0001", _collecting_sink(collected))

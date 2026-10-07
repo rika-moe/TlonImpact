@@ -104,7 +104,6 @@ class SpawnAgentTool(Tool):
                 "spawn_depth": config.spawn_depth,
             },
             message=(
-                f"新成员 {config.name}（{config.id}）已创建并启动；"
-                f"@ {config.name} 即可分配任务"
+                f"新成员 {config.name}（{config.id}）已创建并启动；@ {config.name} 即可分配任务"
             ),
         )

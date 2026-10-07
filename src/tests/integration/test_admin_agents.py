@@ -79,9 +79,7 @@ async def test_agent_config_validation(inproc_server: tuple[str, Path]) -> None:
             assert resp.status == 400
 
         # Missing prototype -> 400
-        async with http.post(
-            f"{base_url}/admin/config/agents", json={"name": "无名氏"}
-        ) as resp:
+        async with http.post(f"{base_url}/admin/config/agents", json={"name": "无名氏"}) as resp:
             assert resp.status == 400
 
         # Unknown prototype -> 400 (PrototypeError from instantiate)

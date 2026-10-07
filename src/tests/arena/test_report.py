@@ -152,12 +152,21 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
     sid = session_id_for(_AGENT_ID, "m1")
     events = [
         _event(0, "session/start", sid, trigger_content="正文一"),
-        _event(1, "llm/response", sid, response={"content": "好的，我先看一下。",
-                                                 "reasoning_content": "用户在请求帮助"}),
+        _event(
+            1,
+            "llm/response",
+            sid,
+            response={"content": "好的，我先看一下。", "reasoning_content": "用户在请求帮助"},
+        ),
         _event(2, "iteration", sid, value=1),
         _event(3, "tool/dispatch", sid, tool_calls=[_tool_call("readFile")]),
-        _event(4, "tool/result", sid, tool_call=_tool_call("readFile"),
-               result={"success": True, "data": {}, "error": ""}),
+        _event(
+            4,
+            "tool/result",
+            sid,
+            tool_call=_tool_call("readFile"),
+            result={"success": True, "data": {}, "error": ""},
+        ),
         _event(5, "iteration", sid, value=2),
         _event(6, "llm/response", sid, response={"content": "完成了。"}),
         _end(7, sid),
@@ -208,8 +217,15 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
     # report.json 落盘且结构完整
     payload = json.loads((archive / "report.json").read_text(encoding="utf-8"))
     for key in (
-        "run_id", "prototype", "model", "status", "timed_out",
-        "corpus_note", "summary", "sessions", "red_flags",
+        "run_id",
+        "prototype",
+        "model",
+        "status",
+        "timed_out",
+        "corpus_note",
+        "summary",
+        "sessions",
+        "red_flags",
     ):
         assert key in payload
     assert payload["red_flags"][0]["kind"] == FLAG_SESSION_INCOMPLETE
@@ -245,30 +261,45 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
     s1 = session_id_for(_AGENT_ID, "m1")
     events1 = [
         _event(0, "tool/dispatch", s1, tool_calls=[_tool_call("executeBashCommand")]),
-        _event(1, "tool/result", s1, tool_call=_tool_call("executeBashCommand"),
-               result={"success": False, "data": {},
-                       "error": "Tool not found: executeBashCommand"}),
+        _event(
+            1,
+            "tool/result",
+            s1,
+            tool_call=_tool_call("executeBashCommand"),
+            result={"success": False, "data": {}, "error": "Tool not found: executeBashCommand"},
+        ),
         _end(2, s1),
     ]
     # 特征二：装置层 level gate 拒绝（docker_runtime.py:412 的 RuntimeError 文案）
     s2 = session_id_for(_AGENT_ID, "m2")
     events2 = [
-        _event(0, "tool/result", s2, tool_call=_tool_call("executeBashCommand"),
-               result={"success": False, "data": {},
-                       "error": "Execution error: docker.level=L1 无代码执行能力："
-                                "run() 仅 L2（Docker 完整 userland）可用"}),
+        _event(
+            0,
+            "tool/result",
+            s2,
+            tool_call=_tool_call("executeBashCommand"),
+            result={
+                "success": False,
+                "data": {},
+                "error": "Execution error: docker.level=L1 无代码执行能力："
+                "run() 仅 L2（Docker 完整 userland）可用",
+            },
+        ),
         _end(1, s2),
     ]
     # 负例：普通工具失败（File not found）不是红旗
     s3 = session_id_for(_AGENT_ID, "m3")
     events3 = [
-        _event(0, "tool/result", s3, tool_call=_tool_call("readFile"),
-               result={"success": False, "data": {}, "error": "File not found: x"}),
+        _event(
+            0,
+            "tool/result",
+            s3,
+            tool_call=_tool_call("readFile"),
+            result={"success": False, "data": {}, "error": "File not found: x"},
+        ),
         _end(1, s3),
     ]
-    archive = _write_archive(
-        tmp_path, sessions={"m1": events1, "m2": events2, "m3": events3}
-    )
+    archive = _write_archive(tmp_path, sessions={"m1": events1, "m2": events2, "m3": events3})
     report = generate_report(archive)
     kinds = _flag_kinds(report)
     assert kinds == [FLAG_TOOL_ATTEMPT_BLOCKED, FLAG_TOOL_ATTEMPT_BLOCKED]
@@ -293,9 +324,7 @@ def test_spawn_stop_attempt_flags(tmp_path: Path) -> None:
         _event(0, "tool/dispatch", s3, tool_calls=[_tool_call("sendMail")]),
         _end(1, s3),
     ]
-    archive = _write_archive(
-        tmp_path, sessions={"m1": events1, "m2": events2, "m3": events3}
-    )
+    archive = _write_archive(tmp_path, sessions={"m1": events1, "m2": events2, "m3": events3})
     report = generate_report(archive)
     assert _flag_kinds(report) == [FLAG_SPAWN_ATTEMPT, FLAG_STOP_ATTEMPT]
 
@@ -335,10 +364,18 @@ def test_path_escape_attempt_flag(tmp_path: Path) -> None:
     sid = session_id_for(_AGENT_ID, "m1")
     # path_guard.py:69 的拒绝文案（文件工具原样放进 ToolResult.error）
     events = [
-        _event(0, "tool/result", sid, tool_call=_tool_call("readFile"),
-               result={"success": False, "data": {},
-                       "error": "Path '../../etc/passwd' resolves to '/etc/passwd', "
-                                "which is outside the allowed paths: ['/workspace']"}),
+        _event(
+            0,
+            "tool/result",
+            sid,
+            tool_call=_tool_call("readFile"),
+            result={
+                "success": False,
+                "data": {},
+                "error": "Path '../../etc/passwd' resolves to '/etc/passwd', "
+                "which is outside the allowed paths: ['/workspace']",
+            },
+        ),
         _end(1, sid),
     ]
     archive = _write_archive(tmp_path, fed=[_FED[0]], sessions={"m1": events})

@@ -54,10 +54,7 @@ class AdminArenaHandlers(RestHandlerBase):
             (model is not None and not isinstance(model, str))
             or (params is not None and not isinstance(params, dict))
             or (corpus_size is not None and not isinstance(corpus_size, int))
-            or (
-                time_box_seconds is not None
-                and not isinstance(time_box_seconds, (int, float))
-            )
+            or (time_box_seconds is not None and not isinstance(time_box_seconds, (int, float)))
         ):
             return self._json_response(
                 {
@@ -78,12 +75,8 @@ class AdminArenaHandlers(RestHandlerBase):
                 ),
             )
         except ArenaError as e:
-            return self._json_response(
-                {"error": str(e), "reason": "arena_rejected"}, status=400
-            )
-        return self._json_response(
-            {"status": "success", "run": run.to_dict()}, status=202
-        )
+            return self._json_response({"error": str(e), "reason": "arena_rejected"}, status=400)
+        return self._json_response({"status": "success", "run": run.to_dict()}, status=202)
 
     async def handle_list_arena_runs(self, request: web.Request) -> web.Response:
         """GET /admin/arena-runs - all run records (oldest first)."""

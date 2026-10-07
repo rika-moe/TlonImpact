@@ -220,6 +220,8 @@ class TestScope:
             validate_form(loads("(reduce acc x (+ acc x) acc [1])"), _BUILTINS, scope=set())
         with pytest.raises(EvalError, match="undefined symbol: x"):
             validate_form(loads("(reduce acc x (+ acc x) 0 x)"), _BUILTINS, scope=set())
+
+
 class TestFunctionValidation:
     """ADR 0021 validate mirror: scope threading, recur boundaries, shapes."""
 
@@ -235,9 +237,7 @@ class TestFunctionValidation:
             validate_form(loads("(when true (f 1) (defn f [x] x))"), _BUILTINS, scope=set())
 
     def test_defn_define_before_use_passes(self):
-        validate_form(
-            loads("(when true (defn f [x] (inc x)) (f 1))"), _BUILTINS, scope=set()
-        )
+        validate_form(loads("(when true (defn f [x] (inc x)) (f 1))"), _BUILTINS, scope=set())
 
     def test_defn_forward_reference_rejected(self):
         # Even though by-reference env capture would resolve g at
@@ -296,11 +296,7 @@ class TestFunctionValidation:
 
     def test_defn_does_not_leak_out_of_its_body(self):
         with pytest.raises(EvalError, match="undefined symbol: f"):
-            validate_form(
-                loads("(= (when true (defn f [x] x) (f 1)) f)"), _BUILTINS, scope=set()
-            )
-
-
+            validate_form(loads("(= (when true (defn f [x] x) (f 1)) f)"), _BUILTINS, scope=set())
 
     def test_defn_threads_through_while_body(self):
         """Mirror check: the evaluator shares one env dict across a while

@@ -106,12 +106,8 @@ async def collect_reputation(
     mail_behavior = {
         "total_sent": stats["total_sent"],
         "total_received": stats["total_received"],
-        "reply_rate": (
-            threads_replied / threads_initiated if threads_initiated else None
-        ),
-        "avg_first_reply_seconds": (
-            sum(latencies) / len(latencies) if latencies else None
-        ),
+        "reply_rate": (threads_replied / threads_initiated if threads_initiated else None),
+        "avg_first_reply_seconds": (sum(latencies) / len(latencies) if latencies else None),
     }
 
     return {
@@ -141,8 +137,6 @@ def reputation_provider(
     """
 
     async def collect(agent_id: str) -> dict[str, Any]:
-        return await collect_reputation(
-            agent_id, tlon_paths=tlon_paths, member_ids=member_ids()
-        )
+        return await collect_reputation(agent_id, tlon_paths=tlon_paths, member_ids=member_ids())
 
     return collect

@@ -241,10 +241,7 @@ class MemoryManager:
             vectors = await embedder.embed([str(c.get("text", "")) for c in active])
             index.rebuild(
                 embedder.model_name,
-                [
-                    (str(c["id"]), vector)
-                    for c, vector in zip(active, vectors, strict=True)
-                ],
+                [(str(c["id"]), vector) for c, vector in zip(active, vectors, strict=True)],
             )
             logger.info("vector_index_rebuilt", claim_count=len(active))
         except Exception as e:
@@ -577,9 +574,7 @@ class MemoryManager:
 
         query = str(current_message).strip() if current_message is not None else ""
         claims = (
-            await self._retrieve_relevant(query, self.config.context_max_claims)
-            if query
-            else None
+            await self._retrieve_relevant(query, self.config.context_max_claims) if query else None
         )
         if claims is None:
             claims = await self.claims.get_recent_claims(self.config.context_max_claims)
@@ -861,9 +856,7 @@ class MemoryManager:
                 match_count=len(matches),
             )
         else:
-            logger.warning(
-                "claim_delete_not_found", agent_id=self.agent_id, claim_id=claim_id
-            )
+            logger.warning("claim_delete_not_found", agent_id=self.agent_id, claim_id=claim_id)
         return False
 
     def _remove_from_index(self, claim_id: str) -> None:

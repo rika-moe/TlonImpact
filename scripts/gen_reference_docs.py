@@ -277,9 +277,7 @@ def _frozenset_strings(path: Path, name: str) -> list[str]:
     return [str(_literal(elt)) for elt in value.args[0].elts]
 
 
-def _function_doc_first_line(
-    fn_name: str, sources: list[tuple[ast.Module, Path]]
-) -> str:
+def _function_doc_first_line(fn_name: str, sources: list[tuple[ast.Module, Path]]) -> str:
     """First docstring line of a module-level function ("" when undocumented).
 
     Searches ``sources`` in order: a registry may reference functions
@@ -288,10 +286,7 @@ def _function_doc_first_line(
     """
     for tree, _path in sources:
         for node in tree.body:
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name == fn_name
-            ):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn_name:
                 doc = ast.get_docstring(node)
                 return doc.splitlines()[0] if doc else ""
     paths = ", ".join(str(path) for _tree, path in sources)
@@ -334,9 +329,7 @@ def builtin_registry(name: str, path: Path) -> list[BuiltinEntry]:
             and val.args
             and isinstance(val.args[0], ast.Name)
         ):
-            raise GenerationError(
-                f"{path}: {name}[{builtin_name!r}] is not Builtin(<fn>, ...)"
-            )
+            raise GenerationError(f"{path}: {name}[{builtin_name!r}] is not Builtin(<fn>, ...)")
         fn_name = val.args[0].id
         pure = True
         for kw in val.keywords:
@@ -392,10 +385,7 @@ _ROUTER_METHODS = {
 
 def _route_condition(test: ast.expr) -> str:
     """Label one enclosing ``if`` guard of a route registration."""
-    if (
-        isinstance(test, ast.BoolOp)
-        and isinstance(test.op, ast.And)
-    ):
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
         return " + ".join(_route_condition(value) for value in test.values)
     if (
         isinstance(test, ast.Attribute)
@@ -895,9 +885,7 @@ def render_bridge_env_contracts() -> str:
                 and type_str not in nested_names
             ):
                 nested_names.append(type_str)
-            rows.append(
-                f"| `{contract}` | `{builder}()` | `{field_name}` | `{_cell(type_str)}` |"
-            )
+            rows.append(f"| `{contract}` | `{builder}()` | `{field_name}` | `{_cell(type_str)}` |")
     header = (
         f"每个求值语境绑定一组固定符号、固定形状的数据（{len(_ENV_CONTRACT_BUILDERS)} 个"
         f"顶层契约，`vocabulary.py` 的 `*Env` TypedDict 是形状的单一事实源，"
@@ -968,8 +956,7 @@ def render_dsl_action_kinds() -> str:
     """ActionRequest kind/data shapes for dsl-reference.md §4.5."""
     kinds = action_request_kinds()
     rows = [
-        f"| `{kind}` | {'、'.join(f'`{key}`' for key in keys)} |"
-        for kind, keys in kinds.items()
+        f"| `{kind}` | {'、'.join(f'`{key}`' for key in keys)} |" for kind, keys in kinds.items()
     ]
     header = (
         f"六个动作 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
@@ -1057,10 +1044,7 @@ def host_query_ports() -> list[HostQueryPort]:
             )
         method = body.func.attr
         for stmt in protocol.body:
-            if (
-                isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and stmt.name == method
-            ):
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == method:
                 doc = ast.get_docstring(stmt)
                 first_line = doc.splitlines()[0] if doc else ""
                 found.append((node.lineno, HostQueryPort(word, method, first_line)))
@@ -1072,8 +1056,7 @@ def host_query_ports() -> list[HostQueryPort]:
             )
     if not found:
         raise GenerationError(
-            f"{VOCABULARY_FILE}: no builtins[...] host-query assignments in "
-            "make_member_builtins"
+            f"{VOCABULARY_FILE}: no builtins[...] host-query assignments in make_member_builtins"
         )
     return [port for _lineno, port in sorted(found)]
 
@@ -1097,9 +1080,7 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         (TOOLS_REF, "tool-registry"): render_tool_registry(),
         (API_REF, "event-types"): render_event_types(),
         (TLOSURE_REF, "dsl-special-forms"): render_dsl_special_forms(),
-        (TLOSURE_REF, "dsl-builtins-core"): render_builtin_table(
-            "CORE_BUILTINS", BUILTINS_FILE
-        ),
+        (TLOSURE_REF, "dsl-builtins-core"): render_builtin_table("CORE_BUILTINS", BUILTINS_FILE),
         (TLOSURE_REF, "dsl-builtins-arithmetic"): render_builtin_table(
             "ARITHMETIC_BUILTINS", BUILTINS_FILE
         ),
@@ -1111,12 +1092,8 @@ def _render_sections() -> dict[tuple[Path, str], str]:
         (DSL_REF, "dsl-builtins-stage-cond"): render_builtin_table(
             "STAGE_COND_BUILTINS", VOCABULARY_FILE
         ),
-        (DSL_REF, "dsl-builtins-script"): render_builtin_table(
-            "SCRIPT_BUILTINS", VOCABULARY_FILE
-        ),
-        (DSL_REF, "dsl-builtins-policy"): render_builtin_table(
-            "POLICY_BUILTINS", VOCABULARY_FILE
-        ),
+        (DSL_REF, "dsl-builtins-script"): render_builtin_table("SCRIPT_BUILTINS", VOCABULARY_FILE),
+        (DSL_REF, "dsl-builtins-policy"): render_builtin_table("POLICY_BUILTINS", VOCABULARY_FILE),
         (DSL_REF, "dsl-loop-names"): render_dsl_loop_names(),
         (DSL_REF, "dsl-fuel-defaults"): render_dsl_fuel_defaults(),
         (DSL_REF, "bridge-env-contracts"): render_bridge_env_contracts(),

@@ -68,9 +68,7 @@ def address_for_member(member_id: str) -> str:
         The member's address in the tlon.internal domain
     """
     local = (
-        member_id[len(HUMAN_ID_PREFIX):]
-        if member_id.startswith(HUMAN_ID_PREFIX)
-        else member_id
+        member_id[len(HUMAN_ID_PREFIX) :] if member_id.startswith(HUMAN_ID_PREFIX) else member_id
     )
     return f"{local}@{MAIL_DOMAIN}"
 

@@ -104,7 +104,9 @@ class TestGetPrototypeDetail:
         p = TlonPaths(home=tmp_path)
         write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
 
-        info, _behavior, _lessons, _reviews = get_prototype_detail("staged", staging=True, tlon_paths=p)
+        info, _behavior, _lessons, _reviews = get_prototype_detail(
+            "staged", staging=True, tlon_paths=p
+        )
 
         assert info.trusted is False
         assert info.author == "adam"
@@ -139,9 +141,7 @@ class TestStagingReviewFile:
         append_staging_review("staged", "## t1 — r-1（m-1）：通过\n\n理由甲\n", tlon_paths=p)
         append_staging_review("staged", "## t2 — r-2（m-2）：弃权\n\n理由乙\n", tlon_paths=p)
 
-        text = (p.prototypes_staging_dir() / "staged" / "REVIEW.md").read_text(
-            encoding="utf-8"
-        )
+        text = (p.prototypes_staging_dir() / "staged" / "REVIEW.md").read_text(encoding="utf-8")
         assert text.count("理由甲") == 1 and text.count("理由乙") == 1
         assert text.index("理由甲") < text.index("理由乙")
         _info, _behavior, _lessons, reviews = get_prototype_detail(
@@ -194,9 +194,7 @@ class TestUpdatePrototype:
         # Neither the behavior file nor the metadata was written.
         _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
         assert behavior == VALID_BEHAVIOR
-        metadata = (p.prototypes_dir() / "hand" / "prototype.tlon").read_text(
-            encoding="utf-8"
-        )
+        metadata = (p.prototypes_dir() / "hand" / "prototype.tlon").read_text(encoding="utf-8")
         assert "orig" in metadata and "changed" not in metadata
 
     def test_nothing_to_update_rejected(self, tmp_path):
@@ -234,9 +232,7 @@ class TestApprovePreservesLineage:
         assert info.generation == 2
         assert info.proposal_note == "改转发目标"
         # On-disk metadata round-trips too.
-        metadata = (p.prototypes_dir() / "child" / "prototype.tlon").read_text(
-            encoding="utf-8"
-        )
+        metadata = (p.prototypes_dir() / "child" / "prototype.tlon").read_text(encoding="utf-8")
         assert ":parent :base" in metadata
         assert ":generation 2" in metadata
         assert ":proposal-note" in metadata

@@ -133,9 +133,7 @@ def _apply_cache_breakpoints(
             continue
         marked[i] = {
             **message,
-            "content": [
-                {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
-            ],
+            "content": [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}],
         }
     return marked
 
@@ -192,9 +190,7 @@ class LLMResponse:
         """Convert to dictionary (session journal persistence, ADR 0007)."""
         return {
             "content": self.content,
-            "tool_calls": (
-                [tc.to_dict() for tc in self.tool_calls] if self.tool_calls else None
-            ),
+            "tool_calls": ([tc.to_dict() for tc in self.tool_calls] if self.tool_calls else None),
             "finish_reason": self.finish_reason,
             "usage": self.usage,
             "reasoning_content": self.reasoning_content,

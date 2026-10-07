@@ -75,15 +75,11 @@ class TestDeleteClaim:
         engine, manager = _engine(tmp_path)
         victim_id = await manager.remember_fact("过时的部署地址")
 
-        await engine._apply_operations(
-            [{"action": "delete_claim", "claim_id": victim_id[:8]}]
-        )
+        await engine._apply_operations([{"action": "delete_claim", "claim_id": victim_id[:8]}])
 
         assert await manager.claims.get_claim(victim_id) is None
 
-    async def test_delete_claim_unknown_id_warns_and_deletes_nothing(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_delete_claim_unknown_id_warns_and_deletes_nothing(self, tmp_path: Path) -> None:
         engine, manager = _engine(tmp_path)
         keeper_id = await manager.remember_fact("仍然有效的记忆")
 
@@ -102,9 +98,7 @@ class TestDeleteClaim:
         engine, manager = _engine(tmp_path)
         victim_id = await manager.remember_fact("用户喜欢浓缩咖啡")
 
-        await engine._apply_operations(
-            [{"action": "delete_claim", "description": "浓缩咖啡"}]
-        )
+        await engine._apply_operations([{"action": "delete_claim", "description": "浓缩咖啡"}])
 
         assert await manager.claims.get_claim(victim_id) is None
 
