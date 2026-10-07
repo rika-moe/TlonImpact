@@ -38,9 +38,9 @@ class _RegistryStub:
         self._configs = configs
         self._running = running or set()
         self._boot_eligible = boot_eligible or set()
-        # RegistryQueries.member_roster reads ``_paths`` for prototype
-        # metadata; None here (never hit — no stub config carries a
-        # prototype).
+        # RegistryQueries.member_roster no longer touches paths (the
+        # yellow page carries no prototype metadata); None here is never
+        # hit either way.
         self._paths = None
 
     def get_agent(self, agent_id: str):
@@ -205,10 +205,11 @@ class TestAdamDecisions:
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
         # Greeting names the newborn and points it at its own discovery
-        # channels (team section in the system prompt, listAgents); the
+        # channels (its contact book, the listAgents yellow page); the
         # roster is no longer embedded (docs/design/mail.md).
         assert "小新" in mail.content
         assert "worker-1（worker-1）" not in mail.content
+        assert "updateContact" in mail.content
         assert "listAgents" in mail.content
         assert "adam@tlon.internal" in mail.content
 
