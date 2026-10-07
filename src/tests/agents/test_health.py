@@ -1,8 +1,8 @@
 """PublicHealthMonitor — social public-health facts (docs/design/mail.md).
 
 Pins the two fact lines: noise detection (AGENT_NOISY sliding window +
-cooldown, broadcast path) and the periodic orphan-mail scan
-(MAIL_ORPHAN_SCAN — old unanswered thread roots; broadcasts, fresh mail
+cooldown) and the periodic orphan-mail scan
+(MAIL_ORPHAN_SCAN — old unanswered thread roots; fresh mail
 and answered threads excluded; report truncation).
 """
 
@@ -17,7 +17,7 @@ from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import ALL_ADDRESS, Mail, address_for_member
+from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 
 
@@ -88,7 +88,6 @@ class TestNoiseDetection:
         payload = noisy[0].payload
         assert payload["agent_id"] == "agent-a"
         assert payload["mail_count"] == 4
-        assert payload["broadcast_count"] == 0
         assert payload["window_seconds"] == 60
         await monitor.shutdown()
 
@@ -114,26 +113,6 @@ class TestNoiseDetection:
             await _send(bus, "agent-a")
         await asyncio.sleep(0.1)
         assert len(noisy) == 1
-        await monitor.shutdown()
-
-    async def test_broadcast_storm_publishes_fact(self, bus, tmp_path):
-        monitor = _monitor(
-            bus,
-            tmp_path,
-            noisy_threshold=100,
-            noisy_broadcast_threshold=2,
-        )
-        noisy: list[Event] = []
-        bus.subscribe(EventType.AGENT_NOISY, lambda e: noisy.append(e))
-        await monitor.initialize()
-
-        await _send(bus, "agent-a", to=[ALL_ADDRESS])
-        await _send(bus, "agent-a", to=[ALL_ADDRESS])
-        await _wait_for(lambda: len(noisy) == 1)
-
-        payload = noisy[0].payload
-        assert payload["agent_id"] == "agent-a"
-        assert payload["broadcast_count"] == 2
         await monitor.shutdown()
 
     async def test_window_expiry_clears_count(self, bus, tmp_path):
@@ -239,23 +218,6 @@ class TestOrphanScan:
                 from_address="alice@tlon.internal",
                 to=["bob@tlon.internal"],
                 content="question",
-            )
-        )
-
-        monitor = _monitor(bus, tmp_path, agent_ids=["alice"], orphan_mail_days=3)
-        payload = await monitor.scan_orphan_mail()
-        assert payload["orphan_count"] == 0
-
-    async def test_broadcast_is_not_orphan(self, bus, tmp_path):
-        paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
-        old = datetime.now(UTC) - timedelta(days=4)
-        await mailbox.append_sent(
-            _mail(
-                old,
-                from_address="alice@tlon.internal",
-                to=[ALL_ADDRESS],
-                content="announcement",
             )
         )
 

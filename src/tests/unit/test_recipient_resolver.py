@@ -60,15 +60,12 @@ async def manager(provider: MockAgentInfoProvider, tmp_path) -> AsyncGenerator[A
     await bus.shutdown()
 
 
-def _make_delivery(
-    manager: AdapterManager, provider: MockAgentInfoProvider, tmp_path
-) -> MailDelivery:
+def _make_delivery(manager: AdapterManager, tmp_path) -> MailDelivery:
     bus = MagicMock()
     bus.publish = AsyncMock()
     bus.subscribe = MagicMock(side_effect=lambda *_args, **_kwargs: "sub-x")
     return MailDelivery(
         event_bus=bus,
-        agent_info_provider=provider,
         adapter_manager=manager,
         tlon_paths=TlonPaths(home=tmp_path),
     )
@@ -80,10 +77,9 @@ class TestSharedResolver:
     def test_delivery_shares_the_adapter_manager_resolver(
         self,
         manager: AdapterManager,
-        provider: MockAgentInfoProvider,
         tmp_path,
     ):
-        delivery = _make_delivery(manager, provider, tmp_path)
+        delivery = _make_delivery(manager, tmp_path)
         assert isinstance(manager.recipient_resolver, RecipientResolver)
         assert delivery._resolver is manager.recipient_resolver
 

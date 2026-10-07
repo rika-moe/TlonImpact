@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 MAIL_DOMAIN = "tlon.internal"
-ALL_ADDRESS = f"all@{MAIL_DOMAIN}"
 POSTMASTER_ADDRESS = f"postmaster@{MAIL_DOMAIN}"
 
 HUMAN_ID_PREFIX = "human:"

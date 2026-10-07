@@ -4,8 +4,8 @@ Backpressure (bounded bus queues, session schedulers) protects the
 *plumbing*; this monitor watches the *society*:
 
 - Noise detection (real-time): a pure event consumer of MAIL_NEW. Each
-  sender gets an in-memory sliding window; crossing the mail-rate or
-  broadcast thresholds publishes an AGENT_NOISY fact (per-sender cooldown
+  sender gets an in-memory sliding window; crossing the mail-rate
+  threshold publishes an AGENT_NOISY fact (per-sender cooldown
   keeps the fact itself from becoming noise).
 - Orphan-mail scan (periodic): every ``health_scan_interval_seconds``,
   every member's mailbox is scanned for thread roots older than
@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import ALL_ADDRESS, address_for_member
+from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.observability.ports import OrphanMailProvider
 
@@ -79,8 +79,7 @@ async def collect_orphan_mails(
 
     An orphan is a sent thread root (``in_reply_to`` empty) that is
     older than ``orphan_mail_days`` and whose thread has no reply in
-    the owner's inbox. Broadcasts to ``all@tlon.internal`` are excluded
-    (they expect no per-member reply), as are the owner's own replies.
+    the owner's inbox. The owner's own replies don't count.
 
     Read-only: mailboxes are only opened when they already exist on disk
     — a scan never creates a mailbox.
@@ -134,8 +133,6 @@ async def _orphans_for(
     for mail in await mailbox.sent():
         if mail.in_reply_to is not None:
             continue  # not a thread root
-        if ALL_ADDRESS in mail.to or ALL_ADDRESS in mail.cc:
-            continue  # broadcasts expect no per-member reply
         timestamp = _mail_timestamp(mail.timestamp)
         if timestamp is None:
             continue
@@ -211,7 +208,6 @@ class PublicHealthMonitor:
         orphan_mail_days: int = 3,
         noisy_window_seconds: float = 60.0,
         noisy_threshold: int = 20,
-        noisy_broadcast_threshold: int = 3,
         noisy_cooldown_seconds: float = 600.0,
     ) -> None:
         self._event_bus = event_bus
@@ -222,12 +218,11 @@ class PublicHealthMonitor:
         self._orphan_mail_days = orphan_mail_days
         self._noisy_window_seconds = noisy_window_seconds
         self._noisy_threshold = noisy_threshold
-        self._noisy_broadcast_threshold = noisy_broadcast_threshold
         self._noisy_cooldown_seconds = noisy_cooldown_seconds
 
-        # Noise detection state: per-sender sliding window of
-        # (monotonic ts, is_broadcast), and the last alert time
-        self._windows: dict[str, deque[tuple[float, bool]]] = {}
+        # Noise detection state: per-sender sliding window of monotonic
+        # send timestamps, and the last alert time
+        self._windows: dict[str, deque[float]] = {}
         self._last_noisy_alert: dict[str, float] = {}
 
         self._subscription_id: str | None = None
@@ -271,24 +266,15 @@ class PublicHealthMonitor:
         from_address = _payload_value(payload, "from_address")
         agent_id = event.source or (str(from_address) if from_address else "unknown")
 
-        to = _payload_value(payload, "to")
-        cc = _payload_value(payload, "cc")
-        addresses = [a for a in [*(to or []), *(cc or [])] if isinstance(a, str)]
-        is_broadcast = ALL_ADDRESS in addresses
-
         now = time.monotonic()
         window = self._windows.setdefault(agent_id, deque())
-        window.append((now, is_broadcast))
+        window.append(now)
         cutoff = now - self._noisy_window_seconds
-        while window and window[0][0] < cutoff:
+        while window and window[0] < cutoff:
             window.popleft()
 
         mail_count = len(window)
-        broadcast_count = sum(1 for _, broadcast in window if broadcast)
-        if (
-            mail_count <= self._noisy_threshold
-            and broadcast_count < self._noisy_broadcast_threshold
-        ):
+        if mail_count <= self._noisy_threshold:
             return
 
         last_alert = self._last_noisy_alert.get(agent_id)
@@ -300,7 +286,6 @@ class PublicHealthMonitor:
             "agent_noisy_detected",
             agent_id=agent_id,
             mail_count=mail_count,
-            broadcast_count=broadcast_count,
         )
         await self._event_bus.publish(
             Event(
@@ -309,7 +294,6 @@ class PublicHealthMonitor:
                     "agent_id": agent_id,
                     "window_seconds": self._noisy_window_seconds,
                     "mail_count": mail_count,
-                    "broadcast_count": broadcast_count,
                 },
                 source="public_health_monitor",
             )

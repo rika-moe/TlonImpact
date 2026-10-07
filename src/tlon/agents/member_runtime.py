@@ -408,8 +408,9 @@ class MemberRuntime(Member):
         read is deferred to session completion); deterministic rules
         evaluate and execute their actions inline. Mail sent by the member
         itself is ignored (own-mail guard) and marked read immediately —
-        an ``all@`` self-copy must not linger as unread until the next
-        boot scan. A delivered mail not enqueued for a cognitive session
+        a self-copy (cc-to-self or a misrouted self-delivery) must not
+        linger as unread until the next boot scan. A delivered mail not
+        enqueued for a cognitive session
         is marked read after processing (D6.1).
         """
         mail = event.payload.get("mail") if isinstance(event.payload, dict) else None

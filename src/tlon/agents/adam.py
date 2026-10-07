@@ -33,7 +33,7 @@ into the evaluator. Five policy lines live in the spec:
    Adam carries a real mailbox (``~/.tlon/adam/mail/``), so read-marking
    and the boot unread replay come for free.
 5. noisy-circuit-breaker — the PublicHealthMonitor's AGENT_NOISY fact
-   (a sender crossing the mail-rate or broadcast threshold) is turned
+   (a sender crossing the mail-rate threshold) is turned
    into an AGENT_STOP_REQUEST: a member flooding the society is put to
    sleep (never deleted — wake-on-mail can revive it). The monitor's
    per-sender cooldown keeps repeated facts from repeated stops; the
