@@ -16,9 +16,10 @@ class AgentPromptContext:
     Attributes:
         agent_name: The agent's display name.
         agent_home: Path to agent's ~/.tlon/{id}/ directory (for reading .md files).
-        team_profiles: List of (name, profile_text) tuples for all other agents.
+        contacts: Full text of the agent's own CONTACTS.md ("" = empty book;
+            ADR 0024 — the contact book replaced the team-wide SOUL roster).
     """
 
     agent_name: str
     agent_home: str
-    team_profiles: list[tuple[str, str]]
+    contacts: str

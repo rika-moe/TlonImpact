@@ -726,7 +726,6 @@ def _cognitive_caps(config: AgentConfig, tlon_paths: TlonPaths) -> CognitiveCapa
         memory=_MemoryStub(),
         task_manager=_TaskStub(),
         tool_executor=ToolExecutor(),
-        team_members=[],
         tlon_paths=tlon_paths,
     )
 
@@ -813,7 +812,6 @@ class TestToolShutdownWiring:
             memory=_MemoryStub(),
             task_manager=_TaskStub(),
             tool_executor=tool_executor,
-            team_members=[],
             tlon_paths=TlonPaths(home=mail_dir.parent),
         )
         member = _make_member("thinker-x", COGNITIVE_EDN, bus, mailbox=mailbox, cognitive=caps)
@@ -834,7 +832,6 @@ class TestToolShutdownWiring:
             memory=_MemoryStub(),
             task_manager=_TaskStub(),
             tool_executor=ToolExecutor(),
-            team_members=[],
             tlon_paths=TlonPaths(home=mail_dir.parent),
             docker_runtime=docker_runtime,
         )
@@ -856,7 +853,6 @@ class TestToolShutdownWiring:
             memory=_MemoryStub(),
             task_manager=_TaskStub(),
             tool_executor=ToolExecutor(),
-            team_members=[],
             tlon_paths=TlonPaths(home=mail_dir.parent),
         )
         member = _make_member("thinker-z", COGNITIVE_EDN, bus, mailbox=mailbox, cognitive=caps)
@@ -1323,7 +1319,6 @@ class TestIdleAwareBackground:
             memory=_DigestMemoryStub(),
             task_manager=_TaskStub(),
             tool_executor=ToolExecutor(),
-            team_members=[],
             tlon_paths=TlonPaths(home=mail_dir.parent),
         )
         member = _make_member(

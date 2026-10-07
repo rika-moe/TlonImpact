@@ -514,14 +514,6 @@ async def assemble_cognitive(
     # Initialize tools
     await tool_executor.initialize()
 
-    # Prepare team members config (all other agents)
-    all_ids = agent_info.get_all_ids()
-    team_members = [
-        cfg
-        for aid in all_ids
-        if aid != config.id and (cfg := agent_info.get_config(aid)) is not None
-    ]
-
     # Read tool timeout from agent config
     per_tool_timeout = config.tool.per_timeout
 
@@ -533,7 +525,6 @@ async def assemble_cognitive(
         memory=memory,
         task_manager=task_manager,
         tool_executor=tool_executor,
-        team_members=team_members,
         tlon_paths=tlon_paths,
         per_tool_timeout=per_tool_timeout,
         registry=registry,

@@ -134,7 +134,6 @@ class CognitiveCapabilities:
     memory: MemoryManager
     task_manager: TaskManager
     tool_executor: ToolExecutor
-    team_members: list[AgentConfig]
     tlon_paths: TlonPaths
     per_tool_timeout: float = 30.0
     registry: "AgentRegistry | None" = None
@@ -1040,7 +1039,6 @@ class MemberRuntime(Member):
         journal = SessionJournal(self._member_id, caps.tlon_paths)
         self._context_builder = ContextBuilder(
             caps.config,
-            caps.team_members,
             self._mailbox,
             caps.memory,
             caps.task_manager,

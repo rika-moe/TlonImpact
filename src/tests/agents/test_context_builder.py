@@ -72,7 +72,6 @@ def _make_builder(tmp_path: Path, sections: str) -> tuple[ContextBuilder, TaskMa
     task_manager = TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path))
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
-        [],
         None,
         _MemoryStub(),  # type: ignore[arg-type]
         task_manager,
@@ -92,7 +91,6 @@ def _make_thread_builder(
     journal = SessionJournal(AGENT, tlon_paths)
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
-        [],
         mailbox,
         _MemoryStub(),  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=tlon_paths),
@@ -255,6 +253,73 @@ async def test_undeclared_section_injects_nothing(tmp_path: Path) -> None:
 
     assert len(context) == 1
     assert context[0]["content"].endswith("\n\nhello")
+
+
+# ===== contact book injection (ADR 0024) =====
+
+
+async def test_system_prompt_injects_own_contact_book(tmp_path: Path) -> None:
+    """The team-wide SOUL roster is gone: the prompt carries the member's
+    own CONTACTS.md (in a 联系簿 section), never another member's SOUL."""
+    tlon_paths = TlonPaths(home=tmp_path)
+    contacts = tlon_paths.agent_contacts_file(AGENT)
+    contacts.parent.mkdir(parents=True, exist_ok=True)
+    contacts.write_text(
+        "# 联系簿\n\n## 林知遥\n- 地址：lin@tlon.internal\n- 描述：聪明\n", encoding="utf-8"
+    )
+    # Another member's SOUL must not leak into this member's prompt.
+    other_soul = tlon_paths.agent_soul_file("someone-else")
+    other_soul.parent.mkdir(parents=True, exist_ok=True)
+    other_soul.write_text("别人的人设自述", encoding="utf-8")
+    builder, _ = _make_builder(tmp_path, "[(persona)]")
+
+    prompt = await builder.get_system_prompt()
+
+    assert "## 联系簿" in prompt
+    assert "林知遥" in prompt
+    assert "别人的人设自述" not in prompt
+    assert "## 团队成员" not in prompt
+
+
+async def test_empty_contact_book_gets_empty_state_section(tmp_path: Path) -> None:
+    """缺省即空：no CONTACTS.md still renders the section's empty state."""
+    builder, _ = _make_builder(tmp_path, "[(persona)]")
+
+    prompt = await builder.get_system_prompt()
+
+    assert "## 联系簿" in prompt
+    assert "你还不认识任何人" in prompt
+
+
+async def test_contact_book_edit_rebuilds_prompt_cache(tmp_path: Path) -> None:
+    """The mtime signature covers CONTACTS.md — an updateContact write
+    takes effect at the next assembly (no restart)."""
+    tlon_paths = TlonPaths(home=tmp_path)
+    builder, _ = _make_builder(tmp_path, "[(persona)]")
+    assert "林知遥" not in await builder.get_system_prompt()
+
+    contacts = tlon_paths.agent_contacts_file(AGENT)
+    contacts.parent.mkdir(parents=True, exist_ok=True)
+    contacts.write_text("## 林知遥\n- 地址：lin@tlon.internal\n- 描述：聪明\n", encoding="utf-8")
+
+    assert "林知遥" in await builder.get_system_prompt()
+
+
+def test_persona_files_are_all_own_files(tmp_path: Path) -> None:
+    """The mtime signature covers exactly the member's own files — no
+    other member's SOUL (a teammate editing their SOUL must not rebuild
+    this member's prompt cache)."""
+    tlon_paths = TlonPaths(home=tmp_path)
+    builder, _ = _make_builder(tmp_path, "[(persona)]")
+
+    files = builder.persona_files()
+
+    assert files == [
+        tlon_paths.agent_identity_file(AGENT),
+        tlon_paths.agent_soul_file(AGENT),
+        tlon_paths.agent_rules_file(AGENT),
+        tlon_paths.agent_contacts_file(AGENT),
+    ]
 
 
 async def test_section_follows_vector_order(tmp_path: Path) -> None:
@@ -460,7 +525,6 @@ def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
     """A builder whose lessons file resolves under the isolated home."""
     return ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
-        [],
         None,
         _MemoryStub(),  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
@@ -580,7 +644,6 @@ def _make_knowledge_builder(tmp_path: Path) -> tuple[ContextBuilder, _RecordingM
     memory = _RecordingMemory()
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
-        [],
         None,
         memory,  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
@@ -630,7 +693,6 @@ async def test_knowledge_lands_last_after_current_mail(tmp_path: Path) -> None:
     tasks.start_task(task.id)
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
-        [],
         None,
         memory,  # type: ignore[arg-type]
         tasks,
@@ -672,7 +734,6 @@ async def test_empty_knowledge_leaves_anchor_unchanged(tmp_path: Path) -> None:
 
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),
-        [],
         None,
         _EmptyMemory(),  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),

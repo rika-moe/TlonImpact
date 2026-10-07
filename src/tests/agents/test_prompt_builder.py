@@ -20,3 +20,15 @@ def test_protocol_declares_persona_self_edit() -> None:
     assert "留痕" in _PROTOCOL
     assert "RULES.md 不可自改" in _PROTOCOL
     assert "告知用户修改" not in _PROTOCOL
+
+
+def test_protocol_declares_subjective_identity() -> None:
+    """ADR 0024: no authoritative identity source — SOUL is private, the
+    contact book is one's own subjective record, the roster is a mere
+    yellow page. The retired 团队成员/人设自述 wording never comes back."""
+    assert "不存在权威的身份数据源" in _PROTOCOL
+    assert "联系簿" in _PROTOCOL
+    assert "寻址黄页" in _PROTOCOL
+    assert "团队成员" not in _PROTOCOL
+    assert "人设自述" not in _PROTOCOL
+    assert "队友也会看到" not in _PROTOCOL
