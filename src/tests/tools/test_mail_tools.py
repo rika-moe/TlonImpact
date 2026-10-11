@@ -1,11 +1,19 @@
-"""Tests for the mail tools (tools/mail/send_email.py, search_mails.py)."""
+"""Tests for the mail tools (tools/mail/send_email.py, search_mails.py,
+check_inbox.py, mark_read.py)."""
 
 import pytest
 
+from tlon.agents.mail_inbox import mark_read_actor, unread_mails_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.tools.mail.check_inbox import (
+    CHECK_INBOX_DEFAULT_LIMIT,
+    CHECK_INBOX_MAX_LIMIT,
+    CheckInboxTool,
+)
+from tlon.tools.mail.mark_read import MarkReadTool
 from tlon.tools.mail.search_mails import (
     CONTENT_EXCERPT_LENGTH,
     SEARCH_MAILS_MAX_LIMIT,
@@ -260,3 +268,186 @@ class TestSearchMailsTool:
 
         excerpt = result.data["mails"][0]["content_excerpt"]
         assert excerpt == "长" * CONTENT_EXCERPT_LENGTH + "…"
+
+
+def _check_inbox_tool(tlon_paths: TlonPaths) -> CheckInboxTool:
+    return CheckInboxTool(provider=unread_mails_provider(tlon_paths), agent_id=AGENT_ID)
+
+
+def _mark_read_tool(tlon_paths: TlonPaths) -> MarkReadTool:
+    return MarkReadTool(actor=mark_read_actor(tlon_paths), agent_id=AGENT_ID)
+
+
+class TestCheckInboxTool:
+    @pytest.mark.asyncio
+    async def test_returns_unread_full_content_oldest_first(
+        self, tlon_paths: TlonPaths, mailbox: Mailbox
+    ):
+        # 新→旧 append，返回必须是旧→新（处理顺序）；已发出的不计未读。
+        await _seed_mailbox(mailbox)
+        tool = _check_inbox_tool(tlon_paths)
+
+        result = await tool.execute()
+
+        assert result.success
+        assert [m["id"] for m in result.data["mails"]] == ["m1", "m3"]
+        assert result.data["count"] == 2
+        assert result.data["total_unread"] == 2
+        first = result.data["mails"][0]
+        assert first["content"] == "请分析一下季度数据"  # 完整正文，不是节选
+        assert first["subject"] == "季度汇报"
+        assert first["from_address"] == BOB
+        assert first["to"] == [OWN]
+        assert first["thread_id"] == "m1"
+        assert first["timestamp"] == "2026-09-06T10:00:00"
+        assert first["external"] is False
+
+    @pytest.mark.asyncio
+    async def test_external_flag_marks_untrusted_senders(
+        self, tlon_paths: TlonPaths, mailbox: Mailbox
+    ):
+        await mailbox.append_inbox(
+            _mail("ext1", "notifications@github.com", [OWN], "CI 红了", "2026-09-06T10:00:00")
+        )
+        tool = _check_inbox_tool(tlon_paths)
+
+        result = await tool.execute()
+
+        assert result.data["mails"][0]["external"] is True
+
+    @pytest.mark.asyncio
+    async def test_empty_inbox(self, tlon_paths: TlonPaths):
+        tool = _check_inbox_tool(tlon_paths)
+
+        result = await tool.execute()
+
+        assert result.success
+        assert result.data["mails"] == []
+        assert result.data["total_unread"] == 0
+        assert "没有未读" in result.message
+
+    @pytest.mark.asyncio
+    async def test_read_mails_excluded(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        await _seed_mailbox(mailbox)
+        await mailbox.mark_read("m1")
+        tool = _check_inbox_tool(tlon_paths)
+
+        result = await tool.execute()
+
+        assert [m["id"] for m in result.data["mails"]] == ["m3"]
+        assert result.data["total_unread"] == 1
+
+    @pytest.mark.asyncio
+    async def test_limit_truncates_and_total_unread_survives(
+        self, tlon_paths: TlonPaths, mailbox: Mailbox
+    ):
+        for i in range(CHECK_INBOX_MAX_LIMIT + 10):
+            await mailbox.append_inbox(
+                _mail(f"m{i:02d}", BOB, [OWN], f"来信 {i}", f"2026-09-06T10:{i:02d}:00")
+            )
+        tool = _check_inbox_tool(tlon_paths)
+
+        capped = await tool.execute(limit=CHECK_INBOX_MAX_LIMIT + 5)
+        assert capped.data["count"] == CHECK_INBOX_MAX_LIMIT
+        assert capped.data["total_unread"] == CHECK_INBOX_MAX_LIMIT + 10
+        # 截断保留最旧的（处理顺序），不是最新的
+        assert capped.data["mails"][0]["id"] == "m00"
+
+        defaulted = await tool.execute()
+        assert defaulted.data["count"] == CHECK_INBOX_DEFAULT_LIMIT
+
+        explicit = await tool.execute(limit=3)
+        assert [m["id"] for m in explicit.data["mails"]] == ["m00", "m01", "m02"]
+
+    @pytest.mark.asyncio
+    async def test_only_own_mailbox(self, tlon_paths: TlonPaths):
+        # Bob 的邮箱里有未读，但工具绑定的是 a-001 的邮箱。
+        bobs = Mailbox(tlon_paths.member_mail_dir("b-002"))
+        await bobs.append_inbox(_mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00"))
+        tool = _check_inbox_tool(tlon_paths)
+
+        result = await tool.execute()
+
+        assert result.success
+        assert result.data["total_unread"] == 0
+
+
+class TestMarkReadTool:
+    @pytest.mark.asyncio
+    async def test_batch_mark_reduces_unread(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        await _seed_mailbox(mailbox)  # 未读：m1, m3（m2 是 sent）
+        tool = _mark_read_tool(tlon_paths)
+
+        result = await tool.execute(mail_ids=["m1", "m3"])
+
+        assert result.success
+        assert result.data == {"marked": ["m1", "m3"], "already_read": [], "not_found": []}
+        assert await mailbox.unread() == []
+
+    @pytest.mark.asyncio
+    async def test_idempotent_repeat_mark(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        await _seed_mailbox(mailbox)
+        tool = _mark_read_tool(tlon_paths)
+
+        await tool.execute(mail_ids=["m1"])
+        again = await tool.execute(mail_ids=["m1"])
+
+        assert again.success
+        assert again.data["marked"] == []
+        assert again.data["already_read"] == ["m1"]
+        # cursor 里没有重复 id
+        cursor = (tlon_paths.member_mail_dir(AGENT_ID) / "inbox.cursor").read_text().split()
+        assert cursor.count("m1") == 1
+
+    @pytest.mark.asyncio
+    async def test_not_found_never_reaches_cursor(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        await _seed_mailbox(mailbox)
+        tool = _mark_read_tool(tlon_paths)
+
+        result = await tool.execute(mail_ids=["nope", "m1"])
+
+        assert result.success
+        assert result.data["not_found"] == ["nope"]
+        assert result.data["marked"] == ["m1"]
+        cursor = (tlon_paths.member_mail_dir(AGENT_ID) / "inbox.cursor").read_text().split()
+        assert "nope" not in cursor
+
+    @pytest.mark.asyncio
+    async def test_sent_mail_id_is_not_found(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        """已发出的邮件不是收件箱未读，标读它不落 cursor。"""
+        await _seed_mailbox(mailbox)  # m2 在 sent
+        tool = _mark_read_tool(tlon_paths)
+
+        result = await tool.execute(mail_ids=["m2"])
+
+        assert result.data["not_found"] == ["m2"]
+        cursor_path = tlon_paths.member_mail_dir(AGENT_ID) / "inbox.cursor"
+        assert not cursor_path.exists() or "m2" not in cursor_path.read_text()
+
+    @pytest.mark.asyncio
+    async def test_requires_mail_ids(self, tlon_paths: TlonPaths):
+        tool = _mark_read_tool(tlon_paths)
+
+        missing = await tool.execute()
+        assert not missing.success
+
+        empty = await tool.execute(mail_ids=[])
+        assert not empty.success
+
+        wrong_type = await tool.execute(mail_ids="m1")
+        assert not wrong_type.success
+
+    @pytest.mark.asyncio
+    async def test_only_own_mailbox(self, tlon_paths: TlonPaths, mailbox: Mailbox):
+        """工具绑定 a-001：标读 a-001 的 id 不影响 Bob 的未读。"""
+        bobs = Mailbox(tlon_paths.member_mail_dir("b-002"))
+        await bobs.append_inbox(_mail("b1", OWN, [BOB], "给 Bob 的信", "2026-09-06T10:00:00"))
+        await mailbox.append_inbox(_mail("m1", BOB, [OWN], "给自己的信", "2026-09-06T10:00:00"))
+        tool = _mark_read_tool(tlon_paths)
+
+        # a-001 的收件箱里没有 b1——not_found，且 Bob 的未读不变
+        result = await tool.execute(mail_ids=["b1", "m1"])
+
+        assert result.data["not_found"] == ["b1"]
+        assert result.data["marked"] == ["m1"]
+        assert [m.id for m in await bobs.unread()] == ["b1"]

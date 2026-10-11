@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from tlon.agents.capabilities.catalog import list_trusted_capabilities
 from tlon.agents.capabilities.staging import write_staging_capability
 from tlon.agents.health import orphan_mail_provider
+from tlon.agents.mail_inbox import mark_read_actor, unread_mails_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import CognitiveCapabilities
@@ -57,6 +58,8 @@ from tlon.tools.filesystem.list_directory import ListDirectoryTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.search_files import SearchFilesTool
 from tlon.tools.filesystem.write_file import WriteFileTool
+from tlon.tools.mail.check_inbox import CheckInboxTool
+from tlon.tools.mail.mark_read import MarkReadTool
 from tlon.tools.mail.search_mails import SearchMailsTool
 from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.mail.silence import SilenceTool
@@ -327,6 +330,16 @@ async def assemble_cognitive(
     # mailbox — the mail evidence source of the explain-decision skill.
     tool_executor.register_tool(
         SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=config.id)
+    )
+    # checkInbox / markRead (ADR 0028 收件箱驱动模型): the agent pulls its
+    # own unread mail and manages the read cursor explicitly — delivery no
+    # longer injects mail bodies into the session prompt. agent_id binds at
+    # construction: only the owning member's mailbox is reachable.
+    tool_executor.register_tool(
+        CheckInboxTool(provider=unread_mails_provider(tlon_paths), agent_id=config.id)
+    )
+    tool_executor.register_tool(
+        MarkReadTool(actor=mark_read_actor(tlon_paths), agent_id=config.id)
     )
     tool_executor.register_tool(
         ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
