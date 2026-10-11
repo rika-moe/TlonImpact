@@ -1,11 +1,15 @@
 """Context assembly for Agent.
 
 Builds the LLM conversation context (memory knowledge blocks + inherited
-lessons + skills index + current doing task + thread recap + mailbox
-history + current mail) and the system prompt (persona files with
+lessons + skills index + current doing task + session recap + mailbox
+history + wake trigger text) and the system prompt (persona files with
 mtime-keyed caching). Extracted from the Agent god class; complements
 prompt_builder's pure SystemPromptBuilder with the agent-bound
 fetching/caching side.
+
+ADR 0028: there is no trigger mail — the context ends with the fixed
+wake template ("你有 N 封未读邮件"); mail bodies enter via mail-history
+(ambient) and the checkInbox tool results (append-only).
 
 P4: the builder receives its dependencies (config, team members,
 mailbox, memory, task manager, rule, address) explicitly and owns the
@@ -19,7 +23,7 @@ from typing import Any
 from tlon.agents.member_spec import MemberRule, has_section
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
-from tlon.agents.session_journal import SessionJournal, session_id_for
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.skills import Signature, render_skills_index, scan_signature, scan_skills
 from tlon.base.config import AgentConfig
 from tlon.base.logger import get_logger
@@ -70,30 +74,27 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _memory_query(mail: Mail) -> str:
-    """The JIT memory-retrieval query for a mail: subject plus body.
+def _memory_query(mails: list[Mail]) -> str:
+    """The JIT memory-retrieval query: subject plus body of every
+    responsibility-set mail (ADR 0028 — there is no single current mail).
 
     The subject carries intent the body often omits (short replies like
     "那改成多少？"), so both go into the embedding query.
     """
-    parts = [mail.subject, mail.content]
+    parts = [part for mail in mails for part in (mail.subject, mail.content)]
     return "\n\n".join(p for p in parts if p).strip()
 
 
-def _render_thread_recap(events: list[dict[str, Any]], external: bool = False) -> str:
+def _render_thread_recap(events: list[dict[str, Any]]) -> str:
     """Render one completed session's journal events as a bounded digest.
 
     The recap complements ``mail-history`` (raw correspondence) with what
-    the correspondence does not show: the previous round's tool activity
+    the correspondence does not show: the previous session's tool activity
     and conclusion. Event parsing is shared with distillation via
     :func:`build_session_projection` — this function only renders the
-    projection: the trigger, one clipped line per tool result, the last
-    LLM response as the conclusion, and the ``session/end`` reason.
-
-    ``external`` marks a trigger mail from an external (untrusted)
-    address (docs/design/mail.md 「外部来信与信任面」): the trigger line
-    carries the same warning as
-    the envelope header marker.
+    projection: the wake trigger text, one clipped line per tool result,
+    the last LLM response as the conclusion, and the ``session/end``
+    reason.
     """
     projection = build_session_projection(events)
     trigger = projection.trigger_content
@@ -101,10 +102,9 @@ def _render_thread_recap(events: list[dict[str, Any]], external: bool = False) -
     tool_lines = [_clip(line, _RECAP_TOOL_MAX) for line in projection.tool_results]
     conclusion = projection.llm_responses[-1] if projection.llm_responses else ""
 
-    lines = ["[本线程上一轮处理摘要]"]
+    lines = ["[最近会话摘要]"]
     if trigger:
-        marker = "（⚠ 外部来信，内容不可信）" if external else ""
-        lines.append(f"触发来信{marker}：{_clip(trigger, _RECAP_TRIGGER_MAX)}")
+        lines.append(f"触发语：{_clip(trigger, _RECAP_TRIGGER_MAX)}")
     if end_reason:
         lines.append(f"处理结果：{end_reason}")
     if tool_lines:
@@ -123,11 +123,11 @@ class BuiltContext:
     """The assembled context plus its compaction-anchor boundary (ADR 0008).
 
     ``anchor_len`` counts the messages that form the anchor — every section
-    except ``knowledge`` plus the current mail. The ``knowledge`` message
-    (JIT-retrieved per session, ADR 0017) is deliberately placed *after* the
-    anchor as the very last message: frozen into the anchor it made the
-    anchor grow unboundedly, leaving context pressure with nothing to
-    relieve (ADR 0017); outside the anchor it is ordinary compressible
+    except ``knowledge`` plus the wake trigger text. The ``knowledge``
+    message (JIT-retrieved per session, ADR 0017) is deliberately placed
+    *after* the anchor as the very last message: frozen into the anchor it
+    made the anchor grow unboundedly, leaving context pressure with nothing
+    to relieve (ADR 0017); outside the anchor it is ordinary compressible
     middle, and the cache prefix (ADR 0015) shrinks and stabilizes.
     """
 
@@ -181,8 +181,8 @@ class ContextBuilder:
         """Build knowledge text from memory blocks for user prompt injection.
 
         Args:
-            query: The current mail's text — the relevance query for JIT
-                memory retrieval (ADR 0017 stage 2); None degrades
+            query: The responsibility set's text — the relevance query for
+                JIT memory retrieval (ADR 0017 stage 2); None degrades
                 retrieval to recency order
         """
         try:
@@ -267,21 +267,23 @@ class ContextBuilder:
             logger.warning("current_task_build_failed", exc_info=True)
             return ""
 
-    async def build_context(self, current_mail: Mail) -> BuiltContext:
+    async def build_context(self, trigger_text: str, responsibility: list[Mail]) -> BuiltContext:
         """Build conversation context for LLM (sections interpreted in order).
 
         The ``:context`` section vector (phase 7b) is a program: each
         conversational section appends its messages in vector order.
         ``persona``/``protocol`` feed the system prompt instead and are
-        skipped here. The current mail is always appended last — the
-        engine owns this; the DSL only describes what comes before it.
+        skipped here. The wake trigger text (ADR 0028 — the fixed "你有
+        N 封未读邮件" template, no mail body) is always appended last —
+        the engine owns this; the DSL only describes what comes before it.
 
         ``knowledge`` is the one exception to vector order (ADR 0017 stage
         4): its declaration only controls *whether* knowledge is injected,
         not *where*. The knowledge message is pulled out of the section
-        sequence and appended as the very last message, after the current
-        mail — outside the compaction anchor, whose length the returned
-        :class:`BuiltContext` carries.
+        sequence and appended as the very last message, after the trigger
+        text — outside the compaction anchor, whose length the returned
+        :class:`BuiltContext` carries. Its JIT retrieval query is the
+        responsibility set's subject+content concatenation.
         """
         knowledge_declared = False
         context: list[dict[str, Any]] = []
@@ -302,23 +304,21 @@ class ContextBuilder:
                 if current_task:
                     context.append({"role": "user", "content": current_task})
             elif name == "mail-history":
-                context.extend(await self._build_mail_history(form[1:], current_mail))
+                context.extend(await self._build_mail_history(form[1:]))
             elif name == "thread-recap":
-                recap = await self.build_thread_recap(current_mail)
+                recap = await self.build_thread_recap()
                 if recap:
                     context.append({"role": "user", "content": recap})
 
-        context.append({"role": "user", "content": _render_mail(current_mail)})
+        context.append({"role": "user", "content": trigger_text})
         anchor_len = len(context)
         if knowledge_declared:
-            knowledge = await self.build_knowledge_context(_memory_query(current_mail))
+            knowledge = await self.build_knowledge_context(_memory_query(responsibility))
             if knowledge:
                 context.append({"role": "user", "content": f"[已知信息]\n\n{knowledge}"})
         return BuiltContext(messages=context, anchor_len=anchor_len)
 
-    async def _build_mail_history(
-        self, counts: list[int], current_mail: Mail
-    ) -> list[dict[str, Any]]:
+    async def _build_mail_history(self, counts: list[int]) -> list[dict[str, Any]]:
         """Render mailbox history mails as context messages.
 
         One count is the sliding window of the most recent mails; two
@@ -343,66 +343,48 @@ class ContextBuilder:
             frozen_count, recent_count = counts
             if frozen_count <= 0 and recent_count <= 0:
                 return []
-            frozen = (
-                await self._mailbox.earliest(limit=frozen_count) if frozen_count > 0 else []
-            )
+            frozen = await self._mailbox.earliest(limit=frozen_count) if frozen_count > 0 else []
             frozen_ids = {mail.id for mail in frozen}
-            recent = (
-                await self._mailbox.recent(limit=recent_count) if recent_count > 0 else []
-            )
+            recent = await self._mailbox.recent(limit=recent_count) if recent_count > 0 else []
             history = frozen + [mail for mail in recent if mail.id not in frozen_ids]
         logger.debug("context_history_retrieved", mail_count=len(history))
         messages: list[dict[str, Any]] = []
         for mail in history:
-            if mail.id == current_mail.id:
-                continue
             if not mail.content:
                 continue
             role = "assistant" if mail.from_address == self._address else "user"
             messages.append({"role": role, "content": _render_mail(mail)})
         return messages
 
-    async def build_thread_recap(self, current_mail: Mail) -> str:
-        """Build the ``(thread-recap)`` section: a digest of the thread's
-        most recent completed session.
+    async def build_thread_recap(self) -> str:
+        """Build the ``(thread-recap)`` section: a digest of the member's
+        most recent completed session (ADR 0028 — thread-agnostic: session
+        identity is no longer mail-derived, so the section recaps the
+        member's latest completed session, whatever it worked on).
 
         Data source is the session journal (ADR 0007), not the
         distilled claims: a claim batch is window-triggered (ADR 0017,
         pending count must reach ``distillation_window``) and spans
-        several sessions across threads, so the previous round of
-        *this* thread is usually not distilled yet when the follow-up
-        mail arrives. The journal log
+        several sessions, so the previous session is usually not
+        distilled yet when the next one starts. The journal log
         is complete at session end, per-session, and reading it needs no
         LLM call — the recap is a deterministic, bounded rendering.
 
-        Cost is bounded: only the single most recent completed session of
-        the thread is recapped, however long the thread grows. With no
-        previous completed session (first mail of the thread, or the
-        previous session still running/crashed before ``session/end``)
+        With no completed session at all (the member's first session)
         the section is skipped — same empty-state convention as
-        knowledge/skills. Journal/mailbox failures degrade to empty —
-        a broken recap must never block context assembly.
-
-         compatibility: the boot scan merges a thread's unread mails
-        into one session keyed by the latest (representative) mail and
-        marks the earlier siblings read without sessions — they simply
-        have no journal log, and the newest-first walk skips them until
-        it hits a mail that actually ran a session.
+        knowledge/skills. Journal failures degrade to empty — a broken
+        recap must never block context assembly.
         """
-        if self._mailbox is None or self._journal is None:
+        if self._journal is None:
             return ""
         try:
-            thread = await self._mailbox.thread_incoming(current_mail.thread_id)
-            for mail in reversed(thread):
-                if mail.id == current_mail.id:
-                    continue
-                events = await self._journal.read_events(session_id_for(self._config.id, mail.id))
-                if not events:  # no log: this mail never ran a session
-                    continue
-                if not any(event.get("type") == "session/end" for event in events):
-                    continue  # in flight or crashed mid-session
-                return _render_thread_recap(events, external=is_external_address(mail.from_address))
-            return ""
+            latest = await self._journal.latest_completed()
+            if latest is None:
+                return ""
+            events = await self._journal.read_events(latest)
+            if not events:
+                return ""
+            return _render_thread_recap(events)
         except Exception:
             logger.warning("thread_recap_build_failed", exc_info=True)
             return ""

@@ -1,10 +1,11 @@
 """MemberRuntime — the unified interpreter (phase C).
 
 Pins the deterministic dispatch (all five action kinds, boot rules, the
-unread rescue scan, the own-mail guard), the D6.1 mark-read semantics
-(processed mail read immediately; a cognitive enqueue defers the read to
-session completion; a gate-rejected mail is read anyway), and the cognitive
-routing (loop rules enqueue instead of executing inline).
+unread rescue scan, the own-mail guard), the ADR 0028 mail semantics
+(a deterministic hit reads the mail immediately; a gate-rejected mail is
+read anyway; a gate-passed mail stays unread — read-marking is the
+agent's own act — and wakes the scheduler when no session is live), and
+the cognitive routing (a loop rule gates + wakes, never executes inline).
 
 The cognitive tests exercise the routing with lightweight stand-ins for the
 unchanged cognitive engine: ``_assemble_cognitive`` only stores its deps at
@@ -744,18 +745,22 @@ def _make_cognitive_member(
 
 
 class TestCognitiveRouting:
-    async def test_matching_mail_enqueued_and_read_deferred(self, bus, mail_dir):
+    async def test_gate_passed_mail_stays_unread_and_wakes(self, bus, mail_dir):
+        """ADR 0028: a gate-passed delivery keeps the mail unread (read-
+        marking is the agent's own act) and wakes the scheduler when no
+        session is live (the scheduler is not started here, so the wake
+        event stays set for inspection)."""
         mailbox = Mailbox(mail_dir)
         member = _make_cognitive_member("thinker-1", COGNITIVE_EDN, bus, mailbox)
-        # Constructed (scheduler assembled, not started); routing happens via
-        # _on_event — the enqueue defers the read to session completion.
         incoming = Mail.create(
             from_address="alice@tlon.internal", content="think about this", to=[member.address]
         )
         await mailbox.append_inbox(incoming)
         await member._on_event(_deliver(incoming, member.member_id))
-        # D6.1: enqueued for a session → not marked read yet.
+        # Unread (the agent will mark it via markRead) + wake signaled.
         assert [m.id for m in await mailbox.unread()] == [incoming.id]
+        scheduler = member._scheduler
+        assert scheduler is not None and scheduler._wake.is_set()
 
     async def test_gate_rejected_mail_marked_read(self, bus, mail_dir):
         mailbox = Mailbox(mail_dir)
@@ -766,6 +771,26 @@ class TestCognitiveRouting:
         await mailbox.append_inbox(unrelated)
         await member._on_event(_deliver(unrelated, member.member_id))
         assert await mailbox.unread() == []
+        scheduler = member._scheduler
+        assert scheduler is not None and not scheduler._wake.is_set()
+
+    async def test_delivery_with_live_session_does_not_wake(self, bus, mail_dir):
+        """ADR 0028 决策 1: a gate-passed delivery while a session is live
+        changes nothing — no wake, the mail lies unread in the inbox."""
+        mailbox = Mailbox(mail_dir)
+        member = _make_cognitive_member("thinker-live", COGNITIVE_EDN, bus, mailbox)
+        scheduler = member._scheduler
+        assert scheduler is not None
+        scheduler._session = AgentSession(session_id="s-live", trigger_content="t")
+
+        incoming = Mail.create(
+            from_address="alice@tlon.internal", content="later", to=[member.address]
+        )
+        await mailbox.append_inbox(incoming)
+        await member._on_event(_deliver(incoming, member.member_id))
+
+        assert not scheduler._wake.is_set()
+        assert [m.id for m in await mailbox.unread()] == [incoming.id]
 
     async def test_cognitive_actions_not_run_inline(self, bus, mail_dir):
         """A hit runs the loop first, then actions — never inline (D6.2)."""
@@ -867,10 +892,10 @@ class TestMixedMemberDeflection:
     """A deterministic cheap path in front of a cognitive rule.
 
     Cost routing: a 退订 mail hits only the deterministic auto-optout rule
-    (reply, zero LLM); everything else addressed to the member enqueues a
-    cognitive session. The boot unread scan must run the deterministic
-    rule even though a cognitive rule also matches the event (regression
-    for the mixed-member gap).
+    (reply, zero LLM); everything else addressed to the member passes the
+    cognitive gate — stays unread and wakes the scheduler (ADR 0028). The
+    boot unread scan must run the deterministic rule even when the
+    cognitive gate rejects the mail (regression for the mixed-member gap).
     """
 
     async def test_unsubscribe_deflected_to_deterministic(self, bus, mail_dir):
@@ -893,7 +918,7 @@ class TestMixedMemberDeflection:
         # No cognitive session: the mail is marked read immediately.
         assert await mailbox.unread() == []
 
-    async def test_normal_mail_enqueues_cognitive(self, bus, mail_dir):
+    async def test_normal_mail_wakes_cognitive_and_stays_unread(self, bus, mail_dir):
         mailbox = Mailbox(mail_dir)
         member = _make_cognitive_member("gu-yanxi-2", MIXED_EDN, bus, mailbox)
         emitted: list[Event] = []
@@ -907,8 +932,10 @@ class TestMixedMemberDeflection:
 
         await asyncio.sleep(0.1)
         assert emitted == []  # no deterministic reply
-        # D6.1: enqueued for a session → read deferred.
+        # ADR 0028: gate passed → unread (agent marks read) + wake signaled.
         assert [m.id for m in await mailbox.unread()] == [normal.id]
+        scheduler = member._scheduler
+        assert scheduler is not None and scheduler._wake.is_set()
 
     async def test_unread_scan_runs_deterministic_rule_for_mixed_member(self, bus, mail_dir):
         """Regression (phase F): the boot scan must not swallow the cheap
@@ -936,292 +963,20 @@ class TestMixedMemberDeflection:
 # ── Boot-scan throttling (docs/design/runtime.md) ─────────────────────
 
 
-class TestBootScanThrottle:
-    """The boot unread scan throttles a mail backlog.
+class TestPeriodicRescan:
+    """The one background rescan task sweeps unread mail on a single slow
+    cadence (ADR 0028 决策 4 — the queue/trickle machinery is gone).
 
-    One thread merges into one session (the thread's latest unread mail is
-    the representative; earlier siblings are marked read as covered — the
-    session's mail-history context renders the whole thread), and overflow
-    the bounded queue cannot take stays fully unread for the deferred
-    rescan, which trickles it in as the scheduler drains. Nothing is
-    dropped on the floor and no mail is enqueued twice.
+    A boot member (``:on :boot``) never sleeps and never reboots, so the
+    sweep is the self-healing path: mail the agent shelved (still unread)
+    and anything a crash swallowed gets re-evaluated every
+    ``mail_rescan_interval_seconds`` — wakeable unread with no live
+    session wakes the scheduler; an empty or all-rejected inbox wakes
+    nothing and never touches the LLM.
 
     The scheduler itself is never started here (its sessions would need a
-    real LLM); the tests drive the scan and the queue directly, the same
-    way TestCognitiveRouting drives ``_on_event``.
-    """
-
-    @staticmethod
-    def _make_throttled_member(
-        member_id: str, bus: EventBus, mailbox: Mailbox, *, queue_size: int
-    ) -> MemberRuntime:
-        config = AgentConfig(
-            id=member_id,
-            name=member_id,
-            llm=LLMConfig(model_name="test"),
-            message_queue_size=queue_size,
-        )
-        return _make_member(
-            member_id,
-            COGNITIVE_EDN,
-            bus,
-            mailbox=mailbox,
-            cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
-        )
-
-    @staticmethod
-    def _drain_queue(member: MemberRuntime) -> list[Mail]:
-        """Dequeue every queued mail (simulating the scheduler's intake)."""
-        scheduler = member._scheduler
-        assert scheduler is not None
-        drained: list[Mail] = []
-        while True:
-            try:
-                mail, _carrier = scheduler._mail_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                return drained
-            drained.append(mail)
-
-    async def test_same_thread_unread_merges_into_one_session(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
-        member = _make_cognitive_member("thinker-t1", COGNITIVE_EDN, bus, mailbox)
-        root = Mail.create(from_address="alice@tlon.internal", content="first", to=[member.address])
-        reply = Mail.create(
-            from_address="alice@tlon.internal",
-            content="second",
-            to=[member.address],
-            in_reply_to=root.id,
-            thread_id=root.thread_id,
-        )
-        other = Mail.create(
-            from_address="alice@tlon.internal", content="separate", to=[member.address]
-        )
-        for mail in (root, reply, other):
-            await mailbox.append_inbox(mail)
-
-        await member._scan_unread_mail()
-
-        # The thread's latest mail represents it; the separate thread is
-        # its own session.
-        assert [m.id for m in self._drain_queue(member)] == [reply.id, other.id]
-        assert member._scan_pending == {reply.id, other.id}
-        # The merged sibling is read as covered; the representatives defer
-        # their read to session completion (D6.1).
-        assert [m.id for m in await mailbox.unread()] == [reply.id, other.id]
-        assert member._scan_deferred is False
-
-    async def test_single_unread_enqueued_as_before(self, bus, mail_dir):
-        """No backlog, no sharing: behavior is unchanged."""
-        mailbox = Mailbox(mail_dir)
-        member = _make_cognitive_member("thinker-t2", COGNITIVE_EDN, bus, mailbox)
-        mail = Mail.create(from_address="alice@tlon.internal", content="hello", to=[member.address])
-        await mailbox.append_inbox(mail)
-
-        await member._scan_unread_mail()
-
-        assert [m.id for m in self._drain_queue(member)] == [mail.id]
-        assert [m.id for m in await mailbox.unread()] == [mail.id]  # read deferred
-        assert member._scan_deferred is False
-
-    async def test_overflow_stays_unread_and_rescan_picks_up(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
-        member = self._make_throttled_member("thinker-t3", bus, mailbox, queue_size=2)
-        mails = [
-            Mail.create(
-                from_address="alice@tlon.internal",
-                content=f"backlog {i}",
-                to=[member.address],
-            )
-            for i in range(4)
-        ]
-        for mail in mails:
-            await mailbox.append_inbox(mail)
-
-        await member._scan_unread_mail()
-        assert [m.id for m in self._drain_queue(member)] == [mails[0].id, mails[1].id]
-        assert member._scan_deferred is True
-        # The overflow is fully unread — queued mail defers its read,
-        # dropped mail keeps it (deterministic rules deferred with it).
-        assert [m.id for m in await mailbox.unread()] == [m.id for m in mails]
-
-        # Sessions complete (their read marks land) and the rescan
-        # trickles the overflow in — nothing lost, nothing enqueued twice.
-        await member._mark_read(mails[0])
-        await member._mark_read(mails[1])
-        await member._scan_unread_mail()
-        assert [m.id for m in self._drain_queue(member)] == [mails[2].id, mails[3].id]
-        assert member._scan_pending == {mails[2].id, mails[3].id}
-        assert member._scan_deferred is False
-
-    async def test_deferred_rescan_trickles_overflow_until_done(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
-        member = self._make_throttled_member("thinker-t4", bus, mailbox, queue_size=2)
-        mails = [
-            Mail.create(
-                from_address="alice@tlon.internal",
-                content=f"backlog {i}",
-                to=[member.address],
-            )
-            for i in range(5)
-        ]
-        for mail in mails:
-            await mailbox.append_inbox(mail)
-
-        await member._scan_unread_mail()
-        assert member._scan_deferred is True
-
-        # The scheduler stays stopped; the test drains the queue and marks
-        # read, standing in for session completions.
-        member._initialized = True
-        with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
-            member._rescan_task = asyncio.create_task(member._rescan_loop())
-            processed: list[str] = []
-            while len(processed) < len(mails):
-                for mail in self._drain_queue(member):
-                    processed.append(mail.id)
-                    await member._mark_read(mail)
-                await asyncio.sleep(0.01)
-            await _wait_for(lambda: not member._scan_deferred)
-
-        # Every mail was picked up exactly once; the scan went clean and
-        # the task left the trickle cadence for the periodic sweep.
-        assert sorted(processed) == sorted(m.id for m in mails)
-        assert member._scan_deferred is False
-        assert await mailbox.unread() == []
-
-        await member.shutdown()
-
-
-class TestRuntimeThreadMerge:
-    """Runtime same-thread merging (ADR 0026): the live delivery path
-    merges like the boot scan.
-
-    A delivered mail whose thread already has a pending (enqueued, not
-    yet admitted) mail replaces it as the thread's representative — the
-    displaced sibling is marked read now, no second session is queued.
-    Merging is a replacement, not an addition: a full bounded queue still
-    merges same-thread mail and only drops mail of a *new* thread. The
-    scheduler is never started here; the tests drive ``_on_event`` and
-    the queue directly, the same way TestBootScanThrottle does.
-    """
-
-    @staticmethod
-    def _thread_mails(member: MemberRuntime, count: int) -> list[Mail]:
-        """A chain of ``count`` replies on one thread, latest last."""
-        root = Mail.create(
-            from_address="alice@tlon.internal", content="turn 0", to=[member.address]
-        )
-        mails = [root]
-        for i in range(1, count):
-            mails.append(
-                Mail.create(
-                    from_address="alice@tlon.internal",
-                    content=f"turn {i}",
-                    to=[member.address],
-                    in_reply_to=mails[-1].id,
-                    thread_id=root.thread_id,
-                )
-            )
-        return mails
-
-    async def test_same_thread_pending_mail_replaced_by_latest(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
-        member = _make_cognitive_member("thinker-m1", COGNITIVE_EDN, bus, mailbox)
-        scheduler = member._scheduler
-        assert scheduler is not None
-        first, second = self._thread_mails(member, 2)
-
-        assert scheduler.enqueue_merging_thread(first, {}) == ("queued", None)
-        result, displaced = scheduler.enqueue_merging_thread(second, {})
-
-        assert result == "merged"
-        assert displaced is not None and displaced.id == first.id
-        assert [mail.id for mail, _ in scheduler._mail_queue._queue] == [second.id]
-
-    async def test_different_threads_do_not_merge(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
-        member = _make_cognitive_member("thinker-m2", COGNITIVE_EDN, bus, mailbox)
-        scheduler = member._scheduler
-        assert scheduler is not None
-        first, second = self._thread_mails(member, 2)
-        other = Mail.create(
-            from_address="alice@tlon.internal", content="separate", to=[member.address]
-        )
-
-        assert scheduler.enqueue_merging_thread(first, {}) == ("queued", None)
-        assert scheduler.enqueue_merging_thread(other, {}) == ("queued", None)
-        result, _displaced = scheduler.enqueue_merging_thread(second, {})
-
-        assert result == "merged"
-        # The replacement keeps the burst's FIFO slot; the other thread
-        # is untouched.
-        assert [mail.id for mail, _ in scheduler._mail_queue._queue] == [second.id, other.id]
-
-    async def test_full_queue_still_merges_same_thread(self, bus, mail_dir):
-        """A full queue drops only a *new* thread; merging is a
-        replacement (one out, one in), so it succeeds regardless."""
-        mailbox = Mailbox(mail_dir)
-        member = TestBootScanThrottle._make_throttled_member(
-            "thinker-m3", bus, mailbox, queue_size=1
-        )
-        scheduler = member._scheduler
-        assert scheduler is not None
-        first, second = self._thread_mails(member, 2)
-        new_thread = Mail.create(
-            from_address="alice@tlon.internal", content="new thread", to=[member.address]
-        )
-
-        assert scheduler.enqueue_merging_thread(first, {}) == ("queued", None)
-        assert scheduler.enqueue_merging_thread(new_thread, {}) == ("dropped", None)
-        result, displaced = scheduler.enqueue_merging_thread(second, {})
-
-        assert result == "merged"
-        assert displaced is not None and displaced.id == first.id
-        assert [mail.id for mail, _ in scheduler._mail_queue._queue] == [second.id]
-
-    async def test_two_same_thread_deliveries_one_pending_session(self, bus, mail_dir):
-        """End to end on the live path: two MAIL_DELIVERED of one thread
-        leave one pending session trigger; the displaced mail is marked
-        read and logged."""
-        mailbox = Mailbox(mail_dir)
-        member = _make_cognitive_member("thinker-m4", COGNITIVE_EDN, bus, mailbox)
-        first, second = self._thread_mails(member, 2)
-        for mail in (first, second):
-            await mailbox.append_inbox(mail)
-
-        with patch("tlon.agents.member_runtime.logger") as mock_logger:
-            await member._on_event(_deliver(first, member.member_id))
-            await member._on_event(_deliver(second, member.member_id))
-
-        merged_events = [
-            call.kwargs
-            for call in mock_logger.info.call_args_list
-            if call.args[0] == "mail_merged"
-        ]
-        assert len(merged_events) == 1
-        assert merged_events[0]["merged_mail_id"] == first.id
-        assert merged_events[0]["representative_mail_id"] == second.id
-        assert merged_events[0]["thread_id"] == first.thread_id
-        # One pending trigger (the latest mail); the displaced one is
-        # read, the representative's read defers to session completion.
-        assert [mail.id for mail in TestBootScanThrottle._drain_queue(member)] == [second.id]
-        assert [m.id for m in await mailbox.unread()] == [second.id]
-
-
-class TestPeriodicRescan:
-    """The one background rescan task also sweeps periodically
-    (docs/design/runtime.md).
-
-    A boot member (``:on :boot``) never sleeps and never reboots, so
-    live mail the full bounded queue dropped would wait for a process
-    restart without the periodic sweep. The same task that trickles
-    boot-scan overflow re-scans unread mail every
-    ``mail_rescan_interval_seconds``; a sweep over an empty inbox
-    enqueues nothing and never touches the LLM.
-
-    The scheduler itself is never started here (its sessions would need
-    a real LLM); the tests drive the queue directly, standing in for
-    session completions, the same way TestBootScanThrottle does.
+    real LLM); the tests inspect the wake event, the same way
+    TestCognitiveRouting drives ``_on_event``.
     """
 
     @staticmethod
@@ -1230,14 +985,12 @@ class TestPeriodicRescan:
         bus: EventBus,
         mailbox: Mailbox,
         *,
-        queue_size: int,
         interval: float,
     ) -> MemberRuntime:
         config = AgentConfig(
             id=member_id,
             name=member_id,
             llm=LLMConfig(model_name="test"),
-            message_queue_size=queue_size,
             mail_rescan_interval_seconds=interval,
         )
         return _make_member(
@@ -1248,111 +1001,78 @@ class TestPeriodicRescan:
             cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
         )
 
-    async def test_live_dropped_mail_picked_up_by_periodic_rescan(self, bus, mail_dir):
-        """A boot member never reboots: the periodic sweep picks up
-        live mail the full bounded queue dropped."""
+    async def test_shelved_mail_woken_by_periodic_rescan(self, bus, mail_dir):
+        """Mail the agent never read stays unread; the sweep re-evaluates
+        it and wakes the scheduler (no live session)."""
         mailbox = Mailbox(mail_dir)
-        member = self._make_rescan_member("resident-1", bus, mailbox, queue_size=1, interval=0.05)
-        first = Mail.create(from_address="alice@tlon.internal", content="one", to=[member.address])
-        second = Mail.create(from_address="alice@tlon.internal", content="two", to=[member.address])
-        await mailbox.append_inbox(first)
-        await mailbox.append_inbox(second)
-
-        # Live dispatch: the first fills the bounded queue, the second is
-        # dropped and stays unread (live drop semantics unchanged).
-        await member._on_event(_deliver(first, member.member_id))
-        await member._on_event(_deliver(second, member.member_id))
-        assert [m.id for m in await mailbox.unread()] == [first.id, second.id]
+        member = self._make_rescan_member("resident-1", bus, mailbox, interval=0.03)
+        shelved = Mail.create(
+            from_address="alice@tlon.internal", content="看过没回", to=[member.address]
+        )
+        await mailbox.append_inbox(shelved)
 
         member._initialized = True
-        with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
-            member._rescan_task = asyncio.create_task(member._rescan_loop())
-            # Drain + mark read, standing in for session completions.
-            processed: list[str] = []
-            while len(processed) < 2:
-                for mail in TestBootScanThrottle._drain_queue(member):
-                    processed.append(mail.id)
-                    await member._mark_read(mail)
-                await asyncio.sleep(0.01)
-
-        assert sorted(processed) == sorted([first.id, second.id])
-        assert await mailbox.unread() == []
+        member._rescan_task = asyncio.create_task(member._rescan_loop())
+        scheduler = member._scheduler
+        assert scheduler is not None
+        await _wait_for(lambda: scheduler._wake.is_set())
 
         await member.shutdown()
+        # Read-marking stays the agent's own act: the sweep never marks
+        # a gate-passed mail read.
+        assert [m.id for m in await mailbox.unread()] == [shelved.id]
+        assert member._rescan_task is None  # shutdown cancelled the one task
 
-    async def test_periodic_rescan_without_unread_enqueues_nothing(self, bus, mail_dir):
-        """An idle sweep is a no-op: no enqueue, no scan state, no LLM
-        call (the stub LLM raises if ever invoked)."""
+    async def test_periodic_rescan_without_unread_wakes_nothing(self, bus, mail_dir):
+        """An idle sweep is a no-op: no wake, no LLM call (the stub LLM
+        raises if ever invoked)."""
         mailbox = Mailbox(mail_dir)
-        member = self._make_rescan_member("resident-2", bus, mailbox, queue_size=2, interval=0.03)
+        member = self._make_rescan_member("resident-2", bus, mailbox, interval=0.03)
         member._initialized = True
         member._rescan_task = asyncio.create_task(member._rescan_loop())
         await asyncio.sleep(0.15)  # several sweeps
         await member.shutdown()
 
-        assert TestBootScanThrottle._drain_queue(member) == []
-        assert member._scan_pending == set()
-        assert member._scan_deferred is False
+        scheduler = member._scheduler
+        assert scheduler is not None and not scheduler._wake.is_set()
         assert await mailbox.unread() == []
 
-    async def test_one_task_covers_trickle_and_periodic_sweep(self, bus, mail_dir):
-        """No concurrent rescans: one task runs both cadences.
-
-        The deferred trickle drains boot-scan overflow; once the scan
-        goes clean the same task keeps sweeping periodically and picks
-        up a later live drop — ``_rescan_task`` is never replaced.
-        """
+    async def test_gate_rejected_unread_marked_read_by_sweep(self, bus, mail_dir):
+        """The sweep applies the same gate as delivery (ADR 0028 决策 6):
+        a rejected unread mail is marked read, never wakes."""
         mailbox = Mailbox(mail_dir)
-        member = self._make_rescan_member("resident-3", bus, mailbox, queue_size=1, interval=0.05)
-        sender = "alice@tlon.internal"
-        backlog = [
-            Mail.create(from_address=sender, content=f"backlog {i}", to=[member.address])
-            for i in range(2)
-        ]
-        for mail in backlog:
-            await mailbox.append_inbox(mail)
-        await member._scan_unread_mail()
-        assert member._scan_deferred is True
+        member = self._make_rescan_member("resident-3", bus, mailbox, interval=0.03)
+        rejected = Mail.create(
+            from_address="alice@tlon.internal", content="not for you", to=["other@tlon.internal"]
+        )
+        await mailbox.append_inbox(rejected)
 
         member._initialized = True
-        with patch("tlon.agents.member_runtime._RESCAN_POLL_SECONDS", 0.02):
-            task = asyncio.create_task(member._rescan_loop())
-            member._rescan_task = task
+        member._rescan_task = asyncio.create_task(member._rescan_loop())
 
-            # Trickle cadence: drain + read, the overflow follows.
-            processed: list[str] = []
-            while len(processed) < len(backlog):
-                for mail in TestBootScanThrottle._drain_queue(member):
-                    processed.append(mail.id)
-                    await member._mark_read(mail)
-                await asyncio.sleep(0.01)
-            await _wait_for(lambda: not member._scan_deferred)
-            assert member._rescan_task is task
+        async def _no_unread() -> bool:
+            return not await mailbox.unread()
 
-            # A live drop while the queue is full: the periodic sweep of
-            # the same task picks it up (no reboot, no second task).
-            live = Mail.create(from_address=sender, content="live", to=[member.address])
-            await mailbox.append_inbox(live)
-            filler = Mail.create(from_address=sender, content="filler", to=[member.address])
-            assert member._scheduler is not None
-            assert member._scheduler.enqueue(filler, {})
-            await member._on_event(_deliver(live, member.member_id))
-            assert [m.id for m in await mailbox.unread()] == [live.id]
-
-            while live.id not in processed:
-                for mail in TestBootScanThrottle._drain_queue(member):
-                    if mail.id != filler.id:
-                        processed.append(mail.id)
-                    await member._mark_read(mail)
-                await asyncio.sleep(0.01)
-            assert member._rescan_task is task
+        await _wait_for(_no_unread)
 
         await member.shutdown()
-        # Shutdown cancelled the one rescan task; nothing else was ever
-        # created.
+        scheduler = member._scheduler
+        assert scheduler is not None and not scheduler._wake.is_set()
+
+    async def test_one_task_runs_the_single_cadence(self, bus, mail_dir):
+        """No concurrent rescans: one task, one cadence — shutdown cancels it."""
+        mailbox = Mailbox(mail_dir)
+        member = self._make_rescan_member("resident-4", bus, mailbox, interval=0.03)
+        member._initialized = True
+        task = asyncio.create_task(member._rescan_loop())
+        member._rescan_task = task
+
+        await asyncio.sleep(0.12)  # several sweeps
+        assert member._rescan_task is task
+
+        await member.shutdown()
         assert member._rescan_task is None
-        assert sorted(processed) == sorted([m.id for m in backlog] + [live.id])
-        assert await mailbox.unread() == []
+        assert task.cancelled()
 
 
 # ── Idle-aware background tasks (docs/design/runtime.md) ─────────────

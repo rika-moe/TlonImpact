@@ -147,27 +147,20 @@ async def act_stage_collect(
 
         if tc.function_name == "sendEmail" and result.success:
             content = result.data.get("content", "")
-            trigger_mail = session.trigger_message
-            # Reply semantics: an explicit `to` wins; otherwise the
-            # reply goes back to the sender of the trigger mail, with
-            # thread headers inherited from it.
-            to = result.data.get("to") or ([trigger_mail.from_address] if trigger_mail else [])
-            # An explicit in_reply_to from the model wins over the
-            # trigger default. The thread must follow the *referenced*
-            # mail — which only a mailbox read can establish, so the
-            # engine (EffectExecutor) validates the reference and
-            # re-derives thread_id from it; stages stay I/O-free.
-            in_reply_to = result.data.get("in_reply_to") or (
-                trigger_mail.id if trigger_mail else None
-            )
+            # ADR 0028: no trigger mail anymore — ``to`` / ``in_reply_to``
+            # are exactly what the model declared. The thread must follow
+            # the *referenced* mail — which only a mailbox read can
+            # establish, so the engine (EffectExecutor) validates the
+            # reference and re-derives thread_id from it; stages stay
+            # I/O-free.
             outcome.mails.append(
                 MailEffect(
-                    to=to,
+                    to=result.data.get("to") or [],
                     content=content,
                     cc=result.data.get("cc"),
                     subject=result.data.get("subject"),
-                    in_reply_to=in_reply_to,
-                    thread_id=trigger_mail.thread_id if trigger_mail else None,
+                    in_reply_to=result.data.get("in_reply_to"),
+                    thread_id=None,
                     # Endorsement signal (): passed through as
                     # declared; the engine validates the reference
                     # against the agent's own mailbox (same
@@ -180,7 +173,8 @@ async def act_stage_collect(
                 final_content = content
         elif tc.function_name == "silence" and result.success:
             # Completion without any reply: the loop ends, no mail is
-            # emitted, and the trigger mail is marked read on completion.
+            # emitted, and read-marking stays the agent's own explicit
+            # act (ADR 0028 — markRead tool).
             is_complete = True
 
         # Append to context

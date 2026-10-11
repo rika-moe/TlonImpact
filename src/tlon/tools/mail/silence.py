@@ -1,11 +1,11 @@
 """Silence tool — politely not reply (an exit from the loop, like sendEmail's
 ``is_complete=true`` but without sending anything).
 
-The agent decides a mail needs no answer (a detected loop, a duplicate, a
+The agent decides nothing needs an answer (a detected loop, a duplicate, a
 one-way notice) and calls ``silence``: the current session completes, no
-mail is sent, and the trigger mail is marked read. Nothing persists and
-nothing is suppressed afterwards — the next mail triggers a fresh session
-exactly as before. The tool is a completion signal for the act stage:
+mail is sent. Read-marking stays the agent's own explicit act (ADR 0028
+— the ``markRead`` tool); shelved unread mail is re-evaluated by the
+slow rescan. The tool is a completion signal for the act stage:
 calling it must be the only tool call in the round (like sendEmail with
 ``is_complete=true``).
 """
@@ -18,9 +18,9 @@ from tlon.tools.base import Tool, ToolResult
 class SilenceTool(Tool):
     """Tool to end the current round without replying.
 
-    Completion-only: the loop finishes, no mail is emitted, and the
-    trigger mail is marked read (same cursor path as a completed
-    sendEmail round).
+    Completion-only: the loop finishes and no mail is emitted. The
+    session's read-marking is separate and explicit (ADR 0028 —
+    ``markRead``).
     """
 
     def __init__(self) -> None:

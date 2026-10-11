@@ -36,10 +36,10 @@ def _clip(text: str, limit: int) -> str:
 def render_session_digest(events: list[dict[str, Any]]) -> str:
     """Render one session's journal events as a bounded readable digest.
 
-    Contents: the trigger, the end reason, every LLM reply in order, and
-    a per-name tool-call count — the same event vocabulary as the
-    thread-recap renderer, but exhaustive over the session instead of a
-    one-round recap.
+    Contents: the wake trigger text, the end reason, every LLM reply in
+    order, and a per-name tool-call count — the same event vocabulary as
+    the session-recap renderer, but exhaustive over the session instead of
+    a one-session recap.
     """
     trigger = ""
     end_reason = ""
@@ -62,7 +62,7 @@ def render_session_digest(events: list[dict[str, Any]]) -> str:
 
     lines: list[str] = []
     if trigger:
-        lines.append(f"触发：{_clip(trigger, _TRIGGER_MAX)}")
+        lines.append(f"触发语：{_clip(trigger, _TRIGGER_MAX)}")
     if end_reason:
         lines.append(f"结束：{end_reason}")
     if tool_counts:
@@ -83,7 +83,7 @@ class ReadSessionTool(Tool):
 
     Closes the claim → source loop: ``searchMemories`` exposes each
     claim's ``source_session_ids``; this tool renders that session's
-    original trigger and replies from its journal log, so the agent can
+    wake trigger text and replies from its journal log, so the agent can
     recover detail the claim compressed away.
 
     Example:
@@ -102,7 +102,7 @@ class ReadSessionTool(Tool):
         super().__init__(
             name="readSession",
             description=(
-                "回读一个历史会话的原文摘要（触发来信 + 各轮回复 + 工具活动）。"
+                "回读一个历史会话的原文摘要（触发语 + 各轮回复 + 工具活动）。"
                 "searchMemories 返回的记忆条带 source_session_ids 来源引用，"
                 "需要细节时用本工具按 session id 回读原文"
             ),

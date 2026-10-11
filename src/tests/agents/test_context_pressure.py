@@ -35,7 +35,6 @@ from tlon.agents.trigger import AgentIdentity
 from tlon.base.config import AgentConfig, LLMConfig
 from tlon.base.llm_client import ContextWindowExceededError, LLMClient, LLMResponse
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import Mail
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
@@ -392,16 +391,14 @@ class TestReplay:
             AgentConfig(id="agent1", name="agent1"),
             memory=MagicMock(),
             session_span=lambda session: contextlib.nullcontext(),
-            mark_mail_read=AsyncMock(),
             check_reflection=AsyncMock(),
             note_interaction=MagicMock(),
             loop_driver=MagicMock(),
             journal=journal,
+            wakeable_unread=AsyncMock(return_value=[]),
+            mailbox=None,
         )
-        mail = Mail.create(
-            from_address="user@tlon.internal", content="hi", to=["agent1@tlon.internal"]
-        )
-        session = scheduler._restore_session(replay, mail, {})
+        session = await scheduler._restore_session(replay)
 
         assert session.anchor_len == 3
         assert session.context == replay.context
@@ -545,11 +542,8 @@ class TestDriverEmergency:
             *[_user(f"recent {i}") for i in range(12)],
         ]
         session = _session(context, anchor_len=2)
-        mail = Mail.create(
-            from_address="user@tlon.internal", content="hi", to=["agent1@tlon.internal"]
-        )
 
-        await driver.step_session(session, mail)
+        await driver.step_session(session)
 
         assert services.think.await_count == 2  # retried exactly once
         # The retry saw the compacted context.

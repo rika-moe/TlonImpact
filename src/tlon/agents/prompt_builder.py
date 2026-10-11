@@ -11,11 +11,13 @@ from tlon.agents.prompt_context import AgentPromptContext
 _PROTOCOL = """## 交互协议
 
 1. **邮件格式**
-   - 上下文中的每条消息都是一封邮件，带有信封头：
+   - 邮件历史的每条消息都是一封邮件，带有信封头：
      `From: 发件人地址` / `To: 收件人地址` / `Subject: 主题`（可选）
    - 地址形如 `<agent-id>@tlon.internal`；不存在组地址或全员列表——
      一对多通信就把每个收件人逐个写进 `to`（或 `cc`）
    - 回复时从原邮件的 From 取收件人地址
+   - 新到的未读邮件不会直接进入上下文——用 `checkInbox` 查看收件箱，
+     处理完（或确认搁置）后用 `markRead` 显式标读；不标读的邮件会一直算未读
 
 2. **输出机制**
    - 必须使用 `sendEmail` 工具发送所有邮件

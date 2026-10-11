@@ -1,10 +1,13 @@
-"""Session journal (ADR 0007): append-only per-session event log + replay.
+"""Session journal (ADR 0007) + the single-session scheduler (ADR 0028).
 
-Pins the append/resume roundtrip, the orphan-dispatch self-healing, the
-"model-visible ⇒ journaled" invariant (derive_context == session.context
-after a full driver run), crash recovery via resume_collect, and the
-scheduler admission rules (completed logs only advance the read cursor),
-and the abnormal-termination failure replies (timeout / stage error).
+Pins the append/resume roundtrip (including the journaled responsibility
+snapshot), the orphan-dispatch self-healing, the "model-visible ⇒
+journaled" invariant (derive_context == session.context after a full
+driver run), crash recovery via resume_collect, boot recovery through
+``find_unfinished``/``_restore_unfinished``, the wake semantics
+(edge-triggered admission, chain wake on new ids, shelved leftovers never
+re-wake), and the abnormal-termination failure replies — anchored on the
+responsibility set's human senders (ADR 0027 as revised by ADR 0028).
 """
 
 import asyncio
@@ -29,6 +32,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
@@ -55,6 +59,9 @@ REPLIES_EDN = COGNITIVE_EDN.replace(
     '                           :timeout "超时了。"}',
 )
 
+#: The wake trigger text used by driver-level tests (ADR 0028 template).
+TRIGGER = "你有 1 封未读邮件"
+
 
 @pytest.fixture
 def tlon(tmp_path: Path) -> TlonPaths:
@@ -66,22 +73,30 @@ def journal(tlon: TlonPaths) -> SessionJournal:
     return SessionJournal("agent1", tlon)
 
 
-def _mail() -> Mail:
-    return Mail.create(from_address="user@tlon.internal", content="hi", to=["agent1@tlon.internal"])
+def _mail(content: str = "hi", sender: str = "user@tlon.internal") -> Mail:
+    return Mail.create(from_address=sender, content=content, to=["agent1@tlon.internal"])
 
 
 def _tc(tc_id: str, name: str = "someTool", arguments: dict | None = None) -> ToolCall:
     return ToolCall(id=tc_id, function_name=name, arguments=arguments or {})
 
 
-async def _start(journal: SessionJournal, sid: str, mail_id: str = "m1") -> None:
+def _session(sid: str, *mails: Mail) -> AgentSession:
+    """A session as the scheduler would open it: wake-template trigger
+    text plus the responsibility set (ADR 0028)."""
+    return AgentSession(session_id=sid, trigger_content=TRIGGER, responsibility=list(mails))
+
+
+async def _start(
+    journal: SessionJournal, sid: str, responsibility: list[str] | None = None
+) -> None:
     await journal.append(
         sid,
         "session/start",
         agent_id="agent1",
-        mail_id=mail_id,
-        trigger_content="hi",
+        trigger_content=TRIGGER,
         carrier={"trace_id": "t-1"},
+        responsibility=responsibility or [],
         context=[{"role": "user", "content": "hi"}],
     )
 
@@ -92,7 +107,7 @@ async def _start(journal: SessionJournal, sid: str, mail_id: str = "m1") -> None
 class TestJournalReplay:
     async def test_append_resume_roundtrip(self, journal: SessionJournal) -> None:
         sid = "agent1-deadbeef"
-        await _start(journal, sid)
+        await _start(journal, sid, responsibility=["m1", "m2"])
         await journal.append(
             sid, "context/append", messages=[{"role": "assistant", "content": "yo"}]
         )
@@ -114,6 +129,8 @@ class TestJournalReplay:
         replay = await journal.resume(sid)
 
         assert replay is not None and not replay.completed and replay.end_reason is None
+        # ADR 0028: the responsibility snapshot survives the roundtrip.
+        assert replay.responsibility == ["m1", "m2"]
         assert replay.context == [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "yo"},
@@ -140,6 +157,27 @@ class TestJournalReplay:
     async def test_resume_without_log_returns_none(self, journal: SessionJournal) -> None:
         assert await journal.resume("agent1-nope") is None
 
+    async def test_legacy_log_without_responsibility_falls_back_to_empty(
+        self, journal: SessionJournal
+    ) -> None:
+        """Logs predating the responsibility field (in-flight sessions from
+        before ADR 0028) replay with the empty set — no compat layer."""
+        sid = "agent1-legacy"
+        await journal.append(
+            sid,
+            "session/start",
+            agent_id="agent1",
+            mail_id="m1",
+            trigger_content="hi",
+            carrier=None,
+            context=[{"role": "user", "content": "hi"}],
+        )
+
+        replay = await journal.resume(sid)
+
+        assert replay is not None
+        assert replay.responsibility == []
+
     async def test_tokens_event_replays_absolute_total(self, journal: SessionJournal) -> None:
         """ADR 0023: ``tokens`` events carry the post-accumulation absolute
         total (same pattern as iteration/errors), so replay restores the
@@ -153,8 +191,8 @@ class TestJournalReplay:
 
         assert replay is not None
         assert replay.token_usage == 850
-        scheduler, _ = _make_scheduler(journal)
-        session = scheduler._restore_session(replay, _mail(), {})
+        scheduler = _make_scheduler(journal)
+        session = await scheduler._restore_session(replay)
         assert session.token_usage == 850
 
     async def test_completed_log_marks_session_done(self, journal: SessionJournal) -> None:
@@ -241,11 +279,11 @@ class TestJournalReplay:
             sid,
             "session/start",
             agent_id="agent1",
-            mail_id="m1",
-            trigger_content="hi",
+            trigger_content=TRIGGER,
             carrier=None,
+            responsibility=["m1"],
             context=[
-                {"role": "user", "content": "触发邮件"},
+                {"role": "user", "content": TRIGGER},
                 {"role": "user", "content": "[已知信息]\n\nclaim"},
             ],
             anchor_len=1,
@@ -269,6 +307,23 @@ class TestJournalReplay:
 
         assert replay is not None
         assert replay.anchor_len == 1 == len(replay.context)
+
+
+class TestFindUnfinished:
+    """Boot recovery index (ADR 0007 + ADR 0028): a journal with a start
+    but no end is unfinished; completed and start-less logs are not."""
+
+    async def test_unfinished_and_completed_partition(self, journal: SessionJournal) -> None:
+        await _start(journal, "agent1-open")
+        await _start(journal, "agent1-closed")
+        await journal.append("agent1-closed", "session/end", reason="complete")
+        # A stray file without session/start is not a session.
+        await journal.append("agent1-stray", "iteration", value=1)
+
+        assert await journal.find_unfinished() == ["agent1-open"]
+
+    async def test_empty_dir(self, journal: SessionJournal) -> None:
+        assert await journal.find_unfinished() == []
 
 
 async def _read_lines(session_id: str, journal: SessionJournal) -> list[str]:
@@ -330,7 +385,7 @@ def _make_driver(
     return driver, journal, executor, services
 
 
-async def _drive(driver: LoopDriver, session: AgentSession, mail: Mail) -> None:
+async def _drive(driver: LoopDriver, session: AgentSession) -> None:
     """Step/collect until completion (mirrors LoopDriver.process_message)."""
     while not session.is_completed:
         if session.state == SessionState.WAITING:
@@ -341,7 +396,7 @@ async def _drive(driver: LoopDriver, session: AgentSession, mail: Mail) -> None:
                 await asyncio.gather(*pending, return_exceptions=True)
                 await driver.collect_session_results(session)
         elif session.state == SessionState.ACTIVE:
-            await driver.step_session(session, mail)
+            await driver.step_session(session)
         else:
             break
 
@@ -361,20 +416,20 @@ class TestDriverJournaling:
         services.build_context = AsyncMock(
             return_value=BuiltContext(
                 messages=[
-                    {"role": "user", "content": "触发邮件"},
+                    {"role": "user", "content": TRIGGER},
                     {"role": "user", "content": "[已知信息]\n\nclaim"},
                 ],
                 anchor_len=1,
             )
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.anchor_len == 1
         # The initial two messages head the (grown) session context.
         assert session.context[:2] == [
-            {"role": "user", "content": "触发邮件"},
+            {"role": "user", "content": TRIGGER},
             {"role": "user", "content": "[已知信息]\n\nclaim"},
         ]
         start = next(
@@ -384,6 +439,30 @@ class TestDriverJournaling:
         )
         assert start["anchor_len"] == 1
         assert len(start["context"]) == 2  # knowledge included — model saw it
+
+    async def test_responsibility_snapshot_journaled(self, tmp_path: Path) -> None:
+        """ADR 0028: session/start persists the responsibility-set id
+        snapshot, so crash recovery can read it back for the chain-wake
+        comparison."""
+        mail = _mail()
+        response = LLMResponse(
+            content="done",
+            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+        )
+        driver, journal, _, services = _make_driver(tmp_path, [response])
+        session = _session("agent1-resp", mail)
+
+        await _drive(driver, session)
+
+        start = next(
+            event
+            for event in await journal.read_events(session.id)
+            if event.get("type") == "session/start"
+        )
+        assert start["responsibility"] == [mail.id]
+        assert "mail_id" not in start
+        # The context builder got the wake text + responsibility set.
+        services.build_context.assert_awaited_once_with(TRIGGER, [mail])
 
     async def test_full_session_journal_matches_context(self, tmp_path: Path) -> None:
         mail = _mail()
@@ -396,9 +475,9 @@ class TestDriverJournaling:
             return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
 
         driver, journal, executor, _ = _make_driver(tmp_path, [response], tool_execute=tool_execute)
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         # The invariant: everything the model saw is in the log.
@@ -410,7 +489,7 @@ class TestDriverJournaling:
 
     async def test_journal_write_failure_leaves_memory_untouched(self, tmp_path: Path) -> None:
         driver, journal, _, _ = _make_driver(tmp_path, [])
-        session = AgentSession(session_id="s1", trigger_content="trigger")
+        session = _session("s1")
 
         async def boom(session_id: str, event_type: str, **payload: object) -> None:
             raise OSError("disk full")
@@ -447,9 +526,9 @@ class TestDriverJournaling:
             return ToolResult(success=True, data={"stdout": big_stdout})
 
         driver, journal, _, _ = _make_driver(tmp_path, [round1, round2], tool_execute=tool_execute)
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         # The journaled tool/result is the locator, not the payload.
@@ -498,10 +577,10 @@ class TestCrashRecovery:
         driver, journal, executor, _ = _make_driver(
             tmp_path, [round1, round2], tool_execute=tool_execute
         )
-        session = AgentSession(session_id=sid, trigger_content=mail.content)
+        session = _session(sid, mail)
 
         # Round 1: dispatch both tools; only the fast one finishes.
-        await driver.step_session(session, mail)
+        await driver.step_session(session)
         assert session.state == SessionState.WAITING
         await session.get_pending_tasks()["c-fast"]
         await session.cancel_pending()  # simulate the process dying
@@ -513,8 +592,8 @@ class TestCrashRecovery:
         assert by_id["c-fast"].success is True
         assert by_id["c-slow"].error == INTERRUPTED_ERROR
 
-        scheduler, _ = _make_scheduler(journal, loop_driver=driver)
-        resumed = scheduler._restore_session(replay, mail, {})
+        scheduler = _make_scheduler(journal, loop_driver=driver)
+        resumed = await scheduler._restore_session(replay)
 
         # First collect after resume consumes the journaled results.
         await driver.resume_collect(resumed, replay.pending_collect)
@@ -523,7 +602,7 @@ class TestCrashRecovery:
         assert len(resumed.all_tool_results) == 2
 
         # The session continues to completion — nothing is re-executed.
-        await _drive(driver, resumed, mail)
+        await _drive(driver, resumed)
         assert resumed.is_completed
         assert executed.count("someTool") == 1  # replayed, not re-run
         assert executed.count("sendEmail") == 1
@@ -534,73 +613,113 @@ class TestCrashRecovery:
         assert final.pending_collect == []
         assert await journal.derive_context(sid) == resumed.context
 
+    async def test_restore_reads_back_responsibility(
+        self, tmp_path: Path, tlon: TlonPaths, journal: SessionJournal
+    ) -> None:
+        """ADR 0028: a crashed session's responsibility ids come back from
+        the journal and resolve to Mail objects through the mailbox, so
+        the failure-reply anchors and the chain-wake comparison survive
+        the crash."""
+        mailbox = Mailbox(tmp_path / "mail")
+        mail = _mail()
+        await mailbox.append_inbox(mail)
+        sid = "agent1-crashed"
+        await _start(journal, sid, responsibility=[mail.id])
+        scheduler = _make_scheduler(journal, mailbox=mailbox)
 
-# ── Scheduler admission rules ───────────────────────────────────────────
+        pending = await scheduler._restore_unfinished()
+
+        assert pending is None  # no orphan dispatches → no resume_collect
+        session = scheduler._session
+        assert session is not None and session.id == sid
+        assert [m.id for m in session.responsibility] == [mail.id]
+
+
+# ── Boot recovery + wake semantics (ADR 0028) ───────────────────────────
 
 
 def _make_scheduler(
-    journal: SessionJournal, loop_driver: object = None, config: AgentConfig | None = None
-) -> tuple[SessionScheduler, AsyncMock]:
-    mark_read = AsyncMock()
-    scheduler = SessionScheduler(
+    journal: SessionJournal,
+    loop_driver: object = None,
+    config: AgentConfig | None = None,
+    provider: Callable[[], object] | None = None,
+    mailbox: Mailbox | None = None,
+) -> SessionScheduler:
+    return SessionScheduler(
         config or AgentConfig(id="agent1", name="agent1"),
         memory=MagicMock(),
         session_span=lambda session: contextlib.nullcontext(),
-        mark_mail_read=mark_read,
         check_reflection=AsyncMock(),
         note_interaction=MagicMock(),
         loop_driver=loop_driver or MagicMock(),
         journal=journal,
+        wakeable_unread=provider or AsyncMock(return_value=[]),
+        mailbox=mailbox,
     )
-    return scheduler, mark_read
 
 
-class TestSchedulerAdmission:
-    async def test_completed_log_only_marks_mail_read(
-        self, tmp_path: Path, journal: SessionJournal
-    ) -> None:
-        mail = _mail()
-        sid = f"agent1-{mail.id}"
-        await _start(journal, sid, mail_id=mail.id)
+class _CompletingDriver:
+    """Duck-typed LoopDriver: completes each session on its first step."""
+
+    def __init__(self) -> None:
+        self.sessions: list[AgentSession] = []
+        self.send_failure_reply = AsyncMock()
+
+    async def step_session(self, session: AgentSession) -> None:
+        self.sessions.append(session)
+        session.mark_completed()
+
+    async def collect_session_results(self, session: AgentSession) -> None: ...
+
+    async def resume_collect(self, session: AgentSession, completed: list) -> None: ...
+
+
+async def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("timed out waiting for condition")
+
+
+class TestBootRecovery:
+    async def test_completed_log_is_not_resumed(self, journal: SessionJournal) -> None:
+        """A log with session/end ran to completion in a previous process:
+        boot recovery leaves it alone."""
+        sid = "agent1-done"
+        await _start(journal, sid, responsibility=["m1"])
         await journal.append(sid, "session/end", reason="complete")
-        scheduler, mark_read = _make_scheduler(journal)
+        scheduler = _make_scheduler(journal)
 
-        sessions: dict[str, AgentSession] = {}
-        mails: dict[str, Mail] = {}
-        pending: dict = {}
-        await scheduler._admit(mail, {}, sessions, mails, pending)
+        pending = await scheduler._restore_unfinished()
 
-        assert sessions == {} and mails == {} and pending == {}
-        mark_read.assert_awaited_once_with(mail)
+        assert pending is None
+        assert scheduler._session is None
 
-    async def test_orphan_log_resumes_session_with_pending_collect(
-        self, tmp_path: Path, journal: SessionJournal
+    async def test_unfinished_log_resumes_with_pending_collect(
+        self, journal: SessionJournal
     ) -> None:
-        mail = _mail()
-        sid = f"agent1-{mail.id}"
-        await _start(journal, sid, mail_id=mail.id)
+        sid = "agent1-unfinished"
+        await _start(journal, sid, responsibility=["m9"])
         await journal.append(sid, "tool/dispatch", tool_calls=[_tc("c1").to_dict()])
         await journal.append(sid, "state", value="waiting")
-        scheduler, mark_read = _make_scheduler(journal)
+        scheduler = _make_scheduler(journal)
 
-        sessions: dict[str, AgentSession] = {}
-        mails: dict[str, Mail] = {}
-        pending: dict = {}
-        await scheduler._admit(mail, {"trace_id": "t-9"}, sessions, mails, pending)
+        pending = await scheduler._restore_unfinished()
 
-        session = sessions[sid]
+        session = scheduler._session
+        assert session is not None and session.id == sid
         assert session.context == [{"role": "user", "content": "hi"}]
-        assert session.trigger_message is mail
         assert session.carrier == {"trace_id": "t-1"}  # journaled carrier wins
         assert session.state == SessionState.WAITING
-        assert mails[sid] is mail
-        assert len(pending[sid]) == 1
-        assert pending[sid][0][1].error == INTERRUPTED_ERROR
-        mark_read.assert_not_awaited()
+        assert pending is not None and len(pending) == 1
+        assert pending[0][1].error == INTERRUPTED_ERROR
 
     async def test_end_session_journals_reason(self, journal: SessionJournal) -> None:
-        scheduler, _ = _make_scheduler(journal)
-        session = AgentSession(session_id="s-timeout", trigger_content="t")
+        scheduler = _make_scheduler(journal)
+        session = _session("s-timeout")
 
         await scheduler._end_session(session, "timeout")
 
@@ -608,8 +727,8 @@ class TestSchedulerAdmission:
         assert await journal.end_reason("s-timeout") == "timeout"
 
     async def test_ensure_session_end_is_idempotent(self, journal: SessionJournal) -> None:
-        scheduler, _ = _make_scheduler(journal)
-        session = AgentSession(session_id="s-end", trigger_content="t")
+        scheduler = _make_scheduler(journal)
+        session = _session("s-end")
 
         await scheduler._ensure_session_end(session)
         await scheduler._ensure_session_end(session)
@@ -620,15 +739,124 @@ class TestSchedulerAdmission:
         assert len(ends) == 1
 
 
-# ── Abnormal termination: a human sender always gets an answer (ADR 0027) ──
+class TestWakeSemantics:
+    """ADR 0028 wake rules: edge-triggered admission, chain wake on new
+    ids, shelved leftovers never re-wake, delivery during a live session
+    is a no-op, and concurrent deliveries dedup to one session (R6)."""
+
+    async def test_double_delivery_opens_one_session(self, journal: SessionJournal) -> None:
+        """R6: two notify_wake calls (concurrent deliveries) before the
+        loop runs collapse into a single session over one provider
+        snapshot."""
+        m1, m2 = _mail("one"), _mail("two")
+        reads = 0
+
+        async def provider() -> list[Mail]:
+            nonlocal reads
+            reads += 1
+            return [m1, m2] if reads == 1 else []  # the session "read" them
+
+        driver = _CompletingDriver()
+        scheduler = _make_scheduler(journal, loop_driver=driver, provider=provider)
+        scheduler.notify_wake({})
+        scheduler.notify_wake({})
+        scheduler.start()
+        try:
+            await _wait_for(lambda: len(driver.sessions) == 1)
+            await _wait_for(lambda: scheduler.active_session_count == 0)
+            await asyncio.sleep(0.1)
+        finally:
+            await scheduler.stop()
+
+        assert len(driver.sessions) == 1
+        # R5: the trigger N and the responsibility set come from the same
+        # provider snapshot.
+        assert driver.sessions[0].trigger_content == "你有 2 封未读邮件"
+        assert [m.id for m in driver.sessions[0].responsibility] == [m1.id, m2.id]
+
+    async def test_chain_wake_opens_new_session_for_new_mail(self, journal: SessionJournal) -> None:
+        """Reap-time chain wake: an unread id outside the just-finished
+        responsibility set opens the next session immediately."""
+        m1, m2 = _mail("one"), _mail("two")
+        inbox = [m1]
+
+        async def provider() -> list[Mail]:
+            return list(inbox)
+
+        release = asyncio.Event()
+        driver = _CompletingDriver()
+
+        async def slow_first_step(session: AgentSession) -> None:
+            driver.sessions.append(session)
+            if len(driver.sessions) == 1:
+                await release.wait()  # m2 arrives while session 1 runs
+            session.mark_completed()
+
+        driver.step_session = slow_first_step  # type: ignore[method-assign]
+        scheduler = _make_scheduler(journal, loop_driver=driver, provider=provider)
+        scheduler.notify_wake({})
+        scheduler.start()
+        try:
+            await _wait_for(lambda: len(driver.sessions) == 1)
+            inbox.append(m2)  # new mail mid-session: no disturbance
+            await asyncio.sleep(0.05)
+            assert len(driver.sessions) == 1
+            release.set()  # session 1 completes; m2 chains a new session
+            await _wait_for(lambda: len(driver.sessions) == 2)
+            assert [m.id for m in driver.sessions[1].responsibility] == [m1.id, m2.id]
+            inbox.clear()  # the second session "read" everything
+            await _wait_for(lambda: scheduler.active_session_count == 0)
+            await asyncio.sleep(0.1)
+        finally:
+            await scheduler.stop()
+
+        assert len(driver.sessions) == 2
+
+    async def test_leftover_ids_never_rewake(self, journal: SessionJournal) -> None:
+        """Hot-loop protection (ADR 0028 决策 5): a responsibility mail the
+        agent saw and shelved (still unread) does not re-open a session —
+        the slow rescan owns it."""
+        m1 = _mail("shelved")
+
+        async def provider() -> list[Mail]:
+            return [m1]  # never marked read
+
+        driver = _CompletingDriver()
+        scheduler = _make_scheduler(journal, loop_driver=driver, provider=provider)
+        scheduler.notify_wake({})
+        scheduler.start()
+        try:
+            await _wait_for(lambda: len(driver.sessions) == 1)
+            await _wait_for(lambda: scheduler.active_session_count == 0)
+            await asyncio.sleep(0.3)  # well past several loop passes
+        finally:
+            await scheduler.stop()
+
+        assert len(driver.sessions) == 1
+        assert not scheduler._wake.is_set()
+
+    async def test_notify_wake_is_a_no_op_with_live_session(self, journal: SessionJournal) -> None:
+        """ADR 0028 决策 1: a delivery while a session is live never
+        disturbs it — the wake event is not even set."""
+        scheduler = _make_scheduler(journal)
+        scheduler._session = _session("s-live")
+
+        scheduler.notify_wake({})
+
+        assert not scheduler._wake.is_set()
+
+
+# ── Abnormal termination: the responsibility set's humans get an answer ──
+# (ADR 0027, anchor revised by ADR 0028 决策 7)
 
 
 class TestFailureReply:
     async def test_send_failure_reply_timeout_and_error(self, tmp_path: Path) -> None:
         driver, _, executor, _ = _make_driver(tmp_path, [])
         mail = _mail()
+        session = _session("s1", mail)
 
-        await driver.send_failure_reply(mail, "timeout")
+        await driver.send_failure_reply(session, "timeout")
 
         effect = executor.send_mail.await_args.args[0]
         assert effect.to == ["user@tlon.internal"]
@@ -637,25 +865,65 @@ class TestFailureReply:
         assert "超时" in effect.content
 
         executor.send_mail.reset_mock()
-        await driver.send_failure_reply(mail, "error")
+        await driver.send_failure_reply(session, "error")
 
         effect = executor.send_mail.await_args.args[0]
         assert effect.to == ["user@tlon.internal"]
         assert effect.in_reply_to == mail.id
         assert "错误" in effect.content
 
+    async def test_failure_reply_fans_out_to_human_senders_deduped(self, tmp_path: Path) -> None:
+        """ADR 0028 决策 7: one mail per human sender in the responsibility
+        set (deduped by address; in_reply_to = that sender's latest mail
+        in the set)."""
+        driver, _, executor, _ = _make_driver(tmp_path, [])
+        older = _mail("第一个请求")
+        newer = Mail.create(
+            from_address="user@tlon.internal",
+            content="补充一下",
+            to=["agent1@tlon.internal"],
+            in_reply_to=older.id,
+            thread_id=older.thread_id,
+        )
+        other = _mail("另一个请求", sender="boss@tlon.internal")
+        session = _session("s1", older, newer, other)
+
+        await driver.send_failure_reply(session, "timeout")
+
+        assert executor.send_mail.await_count == 2
+        by_recipient = {c.args[0].to[0]: c.args[0] for c in executor.send_mail.await_args_list}
+        assert by_recipient["user@tlon.internal"].in_reply_to == newer.id
+        assert by_recipient["user@tlon.internal"].thread_id == older.thread_id
+        assert by_recipient["boss@tlon.internal"].in_reply_to == other.id
+
+    async def test_failure_reply_suppressed_for_agent_senders(self, tmp_path: Path) -> None:
+        """Agent senders in the responsibility set keep the ADR 0027
+        suppression: journaled + logged, no mail. Human senders in the
+        same set still get theirs."""
+        driver, _, executor, _ = _make_driver(
+            tmp_path, [], is_human_sender=lambda address: address == "user@tlon.internal"
+        )
+        agent_mail = _mail("来自另一个 agent", sender="other-agent@tlon.internal")
+        human_mail = _mail("来自人类")
+        session = _session("s1", agent_mail, human_mail)
+
+        await driver.send_failure_reply(session, "error")
+
+        executor.send_mail.assert_awaited_once()
+        assert executor.send_mail.await_args.args[0].to == ["user@tlon.internal"]
+
     async def test_send_failure_reply_uses_member_replies(self, tmp_path: Path) -> None:
         """A member declaring :loop/:replies gets its own wording on the
         abnormal-termination paths (timeout / stage error)."""
         driver, _, executor, _ = _make_driver(tmp_path, [], edn=REPLIES_EDN)
-        mail = _mail()
+        session = _session("s1", _mail())
 
-        await driver.send_failure_reply(mail, "timeout")
+        await driver.send_failure_reply(session, "timeout")
 
         assert executor.send_mail.await_args.args[0].content == "超时了。"
 
         executor.send_mail.reset_mock()
-        await driver.send_failure_reply(mail, "error")
+        await driver.send_failure_reply(session, "error")
 
         assert executor.send_mail.await_args.args[0].content == "出错了。"
 
@@ -680,9 +948,9 @@ class TestMaxIterationsDistillReply:
         services.distill = AsyncMock(
             return_value=LLMResponse(content="已查到三份资料并整理了大纲，但报告尚未写完。")
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "max_iterations"
@@ -693,18 +961,18 @@ class TestMaxIterationsDistillReply:
         assert effect.thread_id == mail.thread_id
         assert effect.content == "已查到三份资料并整理了大纲，但报告尚未写完。"
         # The distillation input is the context tail plus the instruction
-        # carrying the original request.
+        # carrying the session's trigger text.
         distill_messages = services.distill.await_args.args[1]
-        assert mail.content in distill_messages[-1]["content"]
+        assert TRIGGER in distill_messages[-1]["content"]
         assert any("working 9" in str(m.get("content")) for m in distill_messages)
 
     async def test_max_iterations_distill_failure_falls_back(self, tmp_path: Path) -> None:
         mail = _mail()
         driver, journal, executor, services = _make_driver(tmp_path, self._responses(10))
         services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "max_iterations"
@@ -718,9 +986,9 @@ class TestMaxIterationsDistillReply:
         mail = _mail()
         driver, _, executor, services = _make_driver(tmp_path, self._responses(10), edn=REPLIES_EDN)
         services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         executor.send_mail.assert_awaited_once()
@@ -756,9 +1024,9 @@ class TestTokenBudget:
         driver, journal, _, _ = _make_driver(
             tmp_path, [round1, round2, round3], tool_execute=tool_execute
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert session.token_usage == 850
@@ -784,9 +1052,9 @@ class TestTokenBudget:
         services.distill = AsyncMock(
             return_value=LLMResponse(content="已查到三份资料，但 token 预算用尽。")
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         # One round blew the budget; the next step's hard ceiling fired
@@ -811,9 +1079,9 @@ class TestTokenBudget:
             edn=edn,
         )
         services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "max_tokens"
@@ -829,17 +1097,20 @@ class TestDistillTailToolPairs:
 
     @staticmethod
     def _session_with_tool_rounds() -> AgentSession:
-        session = AgentSession(session_id="s1", trigger_content="原始任务")
+        session = _session("s1")
         session.context = [
-            {"role": "user", "content": "锚点来信"},
+            {"role": "user", "content": TRIGGER},
             {
                 "role": "assistant",
                 "content": "",
                 # 超大的 tool_calls 载荷：反推预算截取时停在这条之前，
                 # 使 tail 以孤儿 tool 消息开头
                 "tool_calls": [
-                    {"id": "c1", "type": "function",
-                     "function": {"name": "search", "arguments": "垫" * 500}}
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "垫" * 500},
+                    }
                 ],
             },
             {"role": "tool", "tool_call_id": "c1", "content": "结果一"},
@@ -851,9 +1122,7 @@ class TestDistillTailToolPairs:
     def _assert_pairs_intact(messages: list[dict]) -> None:
         for i, m in enumerate(messages):
             if m.get("role") == "tool":
-                assert i > 0 and messages[i - 1].get("tool_calls"), (
-                    f"孤儿 tool 消息 at {i}"
-                )
+                assert i > 0 and messages[i - 1].get("tool_calls"), f"孤儿 tool 消息 at {i}"
 
     def test_budget_cut_drops_orphan_tool_head(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("tlon.agents.loop_driver._DISTILL_TOKEN_BUDGET", 100)
@@ -864,14 +1133,14 @@ class TestDistillTailToolPairs:
         assert messages[0]["role"] != "tool"
         self._assert_pairs_intact(messages)
         assert messages[-1]["role"] == "user"  # 指令消息仍在末尾
-        assert "原始任务" in messages[-1]["content"]
+        assert TRIGGER in messages[-1]["content"]
 
     def test_no_cut_keeps_pairs_together(self) -> None:
         session = self._session_with_tool_rounds()
 
         messages = LoopDriver._distill_messages(session)
 
-        assert messages[0]["content"] == "锚点来信"
+        assert messages[0]["content"] == TRIGGER
         self._assert_pairs_intact(messages)
 
 
@@ -906,9 +1175,9 @@ class TestConsecutiveErrorLimit:
             ],
             tool_execute=tool_execute,
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "complete"
@@ -930,9 +1199,9 @@ class TestConsecutiveErrorLimit:
             tmp_path,
             [RuntimeError("llm down")] * 3 + [LLMResponse(content="never reached")],
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert session.error_count == 3
@@ -956,9 +1225,9 @@ class TestTerminationReplyOverrides:
             [RuntimeError("llm down")] * 3,
             edn=REPLIES_EDN,
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert session.error_count == 3
@@ -975,9 +1244,9 @@ class TestTerminationReplyOverrides:
             ":until (not (iteration-limit-reached?))",
         )
         driver, journal, executor, _ = _make_driver(tmp_path, [], edn=edn)
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "until"
@@ -986,10 +1255,11 @@ class TestTerminationReplyOverrides:
 
 
 class TestTerminationReplyHumanOnly:
-    """ADR 0027: termination replies go to human senders only. A session
-    triggered by a non-human sender (agent / postmaster / external
-    address) ends journaled + logged, without mail — breaking the
-    failure -> reply -> retrigger oscillation between agents."""
+    """ADR 0027 (anchor revised by ADR 0028 决策 7): termination replies go
+    to the responsibility set's human senders only. A session whose
+    responsibility is all non-human senders (agent / postmaster /
+    external address) ends journaled + logged, without mail — breaking
+    the failure -> reply -> retrigger oscillation between agents."""
 
     @staticmethod
     def _human_only(address: str) -> bool:
@@ -1010,9 +1280,9 @@ class TestTerminationReplyHumanOnly:
             [RuntimeError("llm down")] * 3,
             is_human_sender=self._human_only,
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert session.error_count == 3
@@ -1028,9 +1298,9 @@ class TestTerminationReplyHumanOnly:
             [RuntimeError("llm down")] * 3,
             is_human_sender=self._human_only,
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "until"
@@ -1042,20 +1312,19 @@ class TestTerminationReplyHumanOnly:
     async def test_failure_reply_suppressed_for_postmaster_and_external(
         self, tmp_path: Path
     ) -> None:
-        driver, _, executor, _ = _make_driver(
-            tmp_path, [], is_human_sender=self._human_only
-        )
+        driver, _, executor, _ = _make_driver(tmp_path, [], is_human_sender=self._human_only)
 
         for sender in ("postmaster@tlon.internal", "notifications@github.com"):
             mail = Mail.create(from_address=sender, content="bounce", to=["agent1@tlon.internal"])
-            await driver.send_failure_reply(mail, "timeout")
-            await driver.send_failure_reply(mail, "error")
+            await driver.send_failure_reply(_session("s1", mail), "timeout")
+            await driver.send_failure_reply(_session("s2", mail), "error")
 
         executor.send_mail.assert_not_awaited()
 
     async def test_hard_ceiling_suppression_skips_distill(self, tmp_path: Path) -> None:
         """The max_iterations/max_tokens path skips even the distillation
-        LLM call when the reply would be suppressed (ADR 0027)."""
+        LLM call when no human sender is in the responsibility set
+        (ADR 0027)."""
         mail = self._agent_mail()
         driver, journal, executor, services = _make_driver(
             tmp_path,
@@ -1063,9 +1332,9 @@ class TestTerminationReplyHumanOnly:
             is_human_sender=self._human_only,
         )
         services.distill = AsyncMock(return_value=LLMResponse(content="进展"))
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+        session = _session(f"agent1-{mail.id}", mail)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "max_iterations"
@@ -1074,107 +1343,76 @@ class TestTerminationReplyHumanOnly:
 
 
 class TestSchedulerFailureReply:
-    """Session timeout / stage error both reply to the trigger mail's
-    sender before the reap (the scheduler owns the fatal paths; the
-    reply goes through LoopDriver.send_failure_reply)."""
+    """Session timeout / stage error both notify the responsibility set's
+    human senders before the reap (the scheduler owns the fatal paths;
+    the reply goes through LoopDriver.send_failure_reply)."""
 
     @staticmethod
-    async def _wait_reaped(mark_read: AsyncMock) -> None:
-        for _ in range(500):
-            if mark_read.await_count:
-                return
-            await asyncio.sleep(0.01)
-        raise AssertionError("session was not reaped in time")
+    async def _wait_reaped(scheduler: SessionScheduler) -> None:
+        await _wait_for(lambda: scheduler.active_session_count == 0)
 
     async def test_timeout_ends_session_and_replies(self, journal: SessionJournal) -> None:
         mail = _mail()
         loop_driver = MagicMock()
         loop_driver.send_failure_reply = AsyncMock()
-        scheduler, mark_read = _make_scheduler(journal, loop_driver=loop_driver)
-        scheduler._config.session_timeout_seconds = 0
+        scheduler = _make_scheduler(
+            journal,
+            loop_driver=loop_driver,
+            config=AgentConfig(id="agent1", name="agent1", session_timeout_seconds=0),
+            provider=AsyncMock(return_value=[mail]),
+        )
 
-        scheduler.enqueue(mail, {})
+        scheduler.notify_wake({})
         scheduler.start()
         try:
-            await self._wait_reaped(mark_read)
+            await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
+            await self._wait_reaped(scheduler)
         finally:
             await scheduler.stop()
 
-        loop_driver.send_failure_reply.assert_awaited_once()
-        assert loop_driver.send_failure_reply.await_args.args == (mail, "timeout")
-        assert await journal.end_reason(f"agent1-{mail.id}") == "timeout"
-        mark_read.assert_awaited_once_with(mail)
+        session, reason = loop_driver.send_failure_reply.await_args.args
+        assert reason == "timeout"
+        assert [m.id for m in session.responsibility] == [mail.id]
+        assert await journal.end_reason(session.id) == "timeout"
 
     async def test_stage_error_ends_session_and_replies(self, journal: SessionJournal) -> None:
         mail = _mail()
         loop_driver = MagicMock()
         loop_driver.send_failure_reply = AsyncMock()
         loop_driver.step_session = AsyncMock(side_effect=RuntimeError("boom"))
-        scheduler, mark_read = _make_scheduler(journal, loop_driver=loop_driver)
+        scheduler = _make_scheduler(
+            journal, loop_driver=loop_driver, provider=AsyncMock(return_value=[mail])
+        )
 
-        scheduler.enqueue(mail, {})
+        scheduler.notify_wake({})
         scheduler.start()
         try:
-            await self._wait_reaped(mark_read)
+            await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
+            await self._wait_reaped(scheduler)
         finally:
             await scheduler.stop()
 
-        loop_driver.send_failure_reply.assert_awaited_once()
-        assert loop_driver.send_failure_reply.await_args.args == (mail, "error")
-        assert await journal.end_reason(f"agent1-{mail.id}") == "error"
-        mark_read.assert_awaited_once_with(mail)
+        session, reason = loop_driver.send_failure_reply.await_args.args
+        assert reason == "error"
+        assert await journal.end_reason(session.id) == "error"
 
     async def test_reply_failure_does_not_break_reap(self, journal: SessionJournal) -> None:
         mail = _mail()
         loop_driver = MagicMock()
         loop_driver.send_failure_reply = AsyncMock(side_effect=OSError("bus down"))
         loop_driver.step_session = AsyncMock(side_effect=RuntimeError("boom"))
-        scheduler, mark_read = _make_scheduler(journal, loop_driver=loop_driver)
+        scheduler = _make_scheduler(
+            journal, loop_driver=loop_driver, provider=AsyncMock(return_value=[mail])
+        )
 
-        scheduler.enqueue(mail, {})
+        scheduler.notify_wake({})
         scheduler.start()
         try:
-            await self._wait_reaped(mark_read)
+            await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
+            await self._wait_reaped(scheduler)
         finally:
             await scheduler.stop()
 
         # The reply failed, but the session still ended and was reaped.
-        loop_driver.send_failure_reply.assert_awaited_once()
-        assert await journal.end_reason(f"agent1-{mail.id}") == "error"
-        mark_read.assert_awaited_once_with(mail)
-
-
-# ── Session concurrency cap (backlog throttling, docs/design/runtime.md) ──
-
-
-class TestSessionConcurrencyCap:
-    """The scheduler admits at most ``max_concurrent_sessions`` live
-    sessions; excess mail waits in the bounded queue instead of burning
-    LLM quota all at once."""
-
-    async def test_admission_capped_excess_waits_in_queue(self, journal: SessionJournal) -> None:
-        loop_driver = MagicMock()
-        loop_driver.step_session = AsyncMock()  # sessions stay ACTIVE forever
-        loop_driver.collect_session_results = AsyncMock()
-        scheduler, mark_read = _make_scheduler(
-            journal,
-            loop_driver=loop_driver,
-            config=AgentConfig(id="agent1", name="agent1", max_concurrent_sessions=2),
-        )
-        mails = [_mail() for _ in range(4)]
-        for mail in mails:
-            assert scheduler.enqueue(mail, {})
-
-        scheduler.start()
-        try:
-            deadline = asyncio.get_running_loop().time() + 2.0
-            while scheduler.active_session_count < 2:
-                assert asyncio.get_running_loop().time() < deadline
-                await asyncio.sleep(0.01)
-            await asyncio.sleep(0.2)  # the cap must hold, not be transient
-            assert scheduler.active_session_count == 2
-            assert scheduler._mail_queue.qsize() == 2
-            loop_driver.step_session.assert_awaited()
-            mark_read.assert_not_awaited()
-        finally:
-            await scheduler.stop()
+        session, reason = loop_driver.send_failure_reply.await_args.args
+        assert await journal.end_reason(session.id) == "error"

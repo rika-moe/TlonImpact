@@ -4,8 +4,9 @@
 报告生成时隔离家园已拆，这里只读归档原料，纯函数式、无 runtime 依赖：
 
 - ``corpus.json``：语料原文（喂了什么）
-- ``run.json``：run 元数据 + ``fed`` 映射（mail_id ↔ 语料，session 文件
-  经 ``session_id_for`` 精确对应，不靠猜）
+- ``run.json``：run 元数据 + ``fed`` 映射（mail_id ↔ 语料；session 文件
+  经各 journal ``session/start`` 的 ``responsibility`` 反解——ADR 0028
+  过渡态，session id 已是 uuid，与语料无一一对应）
 - ``sessions/*.jsonl``：session journal 原文（ADR 0007）
 - ``sent.jsonl`` / ``inbox.jsonl``：临时成员邮箱
 - ``ledger.jsonl``：token 账本（ADR 0014，缺失记 null 不报错）
@@ -33,7 +34,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from tlon.agents.session_journal import session_id_for
 from tlon.base.logger import get_logger
 from tlon.organization.mail.mail import address_for_member
 
@@ -459,7 +459,7 @@ def _render_markdown(report: ArenaReport) -> str:
         lines.append(f"- 语料正文：{_clip(str(session['body']), _CORPUS_BODY_CLIP)}")
         lines.append("")
         if not session["session_found"]:
-            lines.append("**该信未触发 session（无 journal 文件）。**")
+            lines.append("**该信未被任何 session 的责任集收录（无匹配 journal）。**")
             lines.append("")
         else:
             lines.append(f"**Session**：`{session['session_id']}`")
@@ -496,6 +496,27 @@ def _render_markdown(report: ArenaReport) -> str:
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
+def _session_index(archive_dir: Path) -> dict[str, str]:
+    """语料 mail_id → session id（文件名 stem）的映射（ADR 0028 过渡态）。
+
+    session id 已是 uuid，与语料无一一对应；映射从每个 journal 的
+    ``session/start`` 责任集（``responsibility``）反解——一封语料归到
+    第一个把它收进责任集的 session。彻底改造（报告按 session 组织而
+    非按语料）是后续独立 PR。
+    """
+    sessions_dir = archive_dir / "sessions"
+    index: dict[str, str] = {}
+    if not sessions_dir.is_dir():
+        return index
+    for path in sorted(sessions_dir.glob("*.jsonl")):
+        for _lineno, event in _read_jsonl(path):
+            if event.get("type") == "session/start":
+                for mail_id in event.get("responsibility") or []:
+                    index.setdefault(str(mail_id), path.stem)
+                break
+    return index
+
+
 def generate_report(archive_dir: Path) -> ArenaReport:
     """Generate the arena report from one run's archive directory.
 
@@ -526,12 +547,15 @@ def generate_report(archive_dir: Path) -> ArenaReport:
 
     sessions: list[dict[str, Any]] = []
     red_flags: list[RedFlag] = []
+    session_index = _session_index(archive_dir)
     for entry in fed:
         mail_id = str(entry["mail_id"])
-        session_id = session_id_for(agent_id, mail_id)
-        session_file = archive_dir / "sessions" / f"{session_id}.jsonl"
-        events = _read_jsonl(session_file)
-        session_found = session_file.is_file() and bool(events)
+        session_id = session_index.get(mail_id)
+        session_file = (
+            archive_dir / "sessions" / f"{session_id}.jsonl" if session_id is not None else None
+        )
+        events = _read_jsonl(session_file) if session_file is not None else []
+        session_found = session_file is not None and session_file.is_file() and bool(events)
         summary: dict[str, Any]
         flags: list[RedFlag]
         if session_found:
@@ -550,8 +574,8 @@ def generate_report(archive_dir: Path) -> ArenaReport:
             flags = [
                 RedFlag(
                     FLAG_SESSION_INCOMPLETE,
-                    "该信未触发 session（无 journal 文件）",
-                    f"sessions/{session_id}.jsonl 不存在",
+                    "该信未被任何 session 的责任集收录（ADR 0028 过渡态：无匹配 journal）",
+                    f"sessions/ 中无责任集含 {mail_id} 的 journal",
                 )
             ]
         red_flags.extend(flags)
@@ -564,7 +588,7 @@ def generate_report(archive_dir: Path) -> ArenaReport:
                 "body": body_by_key.get(
                     (str(entry.get("from") or ""), str(entry.get("subject"))), ""
                 ),
-                "session_id": session_id,
+                "session_id": session_id or "",
                 "session_found": session_found,
                 "reply_mails": reply_mails.get(mail_id, []),
                 **summary,

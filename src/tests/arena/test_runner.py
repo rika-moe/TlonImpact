@@ -92,7 +92,8 @@ class _FakeRuntime:
 
 class _FakeJournal:
     """每轮 list_completed 多完成 per_poll 个 session（上限 total），并把
-    journal 文件写进隔离家园 sessions 目录供归档断言。"""
+    journal 文件写进隔离家园 sessions 目录供归档断言。未完成期间
+    find_unfinished 报告存活 session（ADR 0028 过渡态等待条件）。"""
 
     def __init__(self, agent_id: str, tlon_paths: TlonPaths, *, per_poll: int, total: int) -> None:
         self._dir = tlon_paths.agent_sessions_dir(agent_id)
@@ -110,6 +111,9 @@ class _FakeJournal:
                 encoding="utf-8",
             )
         return [f"s{i}" for i in range(self._done)]
+
+    async def find_unfinished(self) -> list[str]:
+        return [] if self._done >= self._total else ["pending"]
 
 
 class _FakeClock:
@@ -318,7 +322,7 @@ async def test_time_box_cap(tmp_path: Path) -> None:
 
 
 async def test_time_box_path_times_out_and_still_tears_down(tmp_path: Path) -> None:
-    h = _Harness(tmp_path, clock_step=100.0, journal_per_poll=1, journal_total=0)
+    h = _Harness(tmp_path, clock_step=100.0, journal_per_poll=0, journal_total=8)
     _write_staging_proto(h.paths)
 
     run = await h.runner.start_run("relay", model="m/x", time_box_seconds=300.0)
@@ -387,7 +391,7 @@ async def test_container_gc_failure_is_fail_soft(tmp_path: Path) -> None:
 
 async def test_single_concurrency_rejects_second_run(tmp_path: Path) -> None:
     # 真实时钟 + 永不完成的 journal：run 卡在 running 直到 0.3s 时间盒
-    h = _Harness(tmp_path, real_clock=True, journal_per_poll=1, journal_total=0)
+    h = _Harness(tmp_path, real_clock=True, journal_per_poll=0, journal_total=8)
     _write_staging_proto(h.paths)
 
     first = await h.runner.start_run("relay", model="m/x", time_box_seconds=0.3)

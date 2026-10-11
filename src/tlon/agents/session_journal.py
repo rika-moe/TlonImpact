@@ -31,8 +31,10 @@ Replay rules:
   ``ToolResult(success=False, error="interrupted: process restart")``
   which is also appended to the log (self-healing). Together they are
   ``pending_collect`` — the input of the first collect after resume.
-- A log containing ``session/end`` is completed: the scheduler only
-  marks the mail read, never re-runs the session.
+- ``session/start`` carries ``responsibility`` (ADR 0028): the wake-time
+  snapshot of wakeable unread mail ids. Replay reads it back (logs
+  predating the field fall back to the empty set); the scheduler's chain
+  wake compares fresh unread against it even after a crash.
 
 The read side tolerates corrupt lines (a crash can leave a torn tail
 line): each line is parsed independently and a bad line is skipped with
@@ -75,16 +77,6 @@ INTERRUPTED_ERROR = "interrupted: process restart"
 _LOCKS_CAP = 4096
 
 
-def session_id_for(agent_id: str, mail_id: str) -> str:
-    """The session id of one trigger mail (one mail = one session).
-
-    Single source for the scheduler's sid construction; the context
-    builder's ``thread-recap`` section uses it to map a thread's earlier
-    mails back to their session logs.
-    """
-    return f"{agent_id}-{mail_id}"
-
-
 #: File-keyed locks shared by every SessionJournal over the same file
 #: (bounded LRU; a locked entry is never evicted — see mailbox._lock_for).
 _LOCKS: OrderedDict[Path, asyncio.Lock] = OrderedDict()
@@ -114,9 +106,9 @@ class SessionReplay:
 
     session_id: str
     agent_id: str
-    mail_id: str
     trigger_content: str
     carrier: dict[str, str | None] | None
+    responsibility: list[str] = field(default_factory=list)
     context: list[dict[str, Any]] = field(default_factory=list)
     anchor_len: int = 0
     iteration: int = 0
@@ -335,9 +327,13 @@ class SessionJournal:
         return SessionReplay(
             session_id=str(start.get("session_id") or session_id),
             agent_id=str(start.get("agent_id") or self._agent_id),
-            mail_id=str(start.get("mail_id") or ""),
             trigger_content=str(start.get("trigger_content") or ""),
             carrier=start.get("carrier"),
+            # ADR 0028: the journaled responsibility id snapshot; logs
+            # predating the field fall back to the empty set (no compat
+            # layer — an empty set just disables chain-wake protection
+            # for that one restored session).
+            responsibility=[str(mail_id) for mail_id in start.get("responsibility") or []],
             context=context,
             anchor_len=anchor_len,
             iteration=iteration,
@@ -386,6 +382,47 @@ class SessionJournal:
             if await self.end_reason(path.stem) is not None:
                 completed.append(path.stem)
         return completed
+
+    async def latest_completed(self) -> str | None:
+        """The most recently completed session id (by log mtime), or None.
+
+        Feeds the context builder's ``thread-recap`` section (ADR 0028):
+        the recap is the member's latest completed session, thread-
+        agnostic. Session ids are uuids, so "latest" comes from the file
+        mtime, not the name.
+        """
+        sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
+        best: tuple[float, str] | None = None
+        for path in sessions_dir.glob("*.jsonl"):
+            if await self.end_reason(path.stem) is None:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if best is None or mtime > best[0]:
+                best = (mtime, path.stem)
+        return best[1] if best is not None else None
+
+    async def find_unfinished(self) -> list[str]:
+        """Session ids with a ``session/start`` but no ``session/end``.
+
+        Boot recovery (ADR 0007 + ADR 0028): the scheduler resumes the
+        unfinished session instead of starting a new one — the journaled
+        responsibility snapshot comes back with it, so chain-wake
+        protection survives the crash. Under the single-session model at
+        most one id is expected; extras (legacy multi-session logs) are
+        all returned, oldest file name first.
+        """
+        sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
+        unfinished: list[str] = []
+        for path in sorted(sessions_dir.glob("*.jsonl")):
+            events = await self.read_events(path.stem)
+            has_start = any(event.get("type") == "session/start" for event in events)
+            has_end = any(event.get("type") == "session/end" for event in events)
+            if has_start and not has_end:
+                unfinished.append(path.stem)
+        return unfinished
 
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
         """Read all events from the log, skipping malformed lines."""

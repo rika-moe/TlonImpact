@@ -74,7 +74,7 @@ async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> No
 
     assert result.success is True
     digest = result.data["digest"]
-    assert "触发：部署脚本放在哪？" in digest
+    assert "触发语：部署脚本放在哪？" in digest
     assert "结束：complete" in digest
     assert "工具调用：searchFiles ×1、readFile ×2" in digest
     assert "第 1 轮回复：先查一下" in digest
