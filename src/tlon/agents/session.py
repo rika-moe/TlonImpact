@@ -19,12 +19,16 @@ class AgentSession:
     """A single conversation or task that the agent is working on."""
 
     def __init__(
-        self, session_id: str, trigger_content: str, carrier: dict[str, str | None] | None = None
+        self,
+        session_id: str,
+        trigger_content: str,
+        carrier: dict[str, str | None] | None = None,
+        responsibility: "list[Mail] | None" = None,
     ):
         self.id = session_id
         self.context: list[dict[str, Any]] = []
         # Length of the initial context block (knowledge + mail history +
-        # trigger mail, journaled with session/start): the compaction
+        # trigger text, journaled with session/start): the compaction
         # anchor — messages before it are never compressed (ADR 0008).
         # Restored from the journal on resume; 0 until the first build.
         self.anchor_len = 0
@@ -33,9 +37,11 @@ class AgentSession:
         self.state = SessionState.ACTIVE
         self.trigger_content = trigger_content
 
-        # The mail that opened this session, recorded on the first step;
-        # on-complete action expressions read it as ``msg`` (phase 4b).
-        self.trigger_message: Mail | None = None
+        # Responsibility set (ADR 0028): the wake-time snapshot of the
+        # wakeable unread mails this session is accountable for. In-memory
+        # only — the journal persists the id list (session/start), and the
+        # failure-reply anchors read these Mail objects.
+        self.responsibility: list[Mail] = list(responsibility or [])
 
         # Trace carrier from the routing event (trace_id/span_id);
         # re-attached each _main_loop round since OTel context is contextvar-based

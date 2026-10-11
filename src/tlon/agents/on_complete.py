@@ -32,8 +32,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-#: The unified action-executor contract: run one collected request,
-#: with the session's trigger mail (for emit reply-to / forward source).
+#: The unified action-executor contract: run one collected request. The
+#: second argument was the session's trigger mail (emit reply-to / forward
+#: source); ADR 0028 retired the trigger mail, so it is always None now.
 ExecuteAction = Callable[[ActionRequest, Mail | None], Awaitable[None]]
 
 
@@ -70,7 +71,10 @@ class OnCompleteRunner:
 
         env: dict[str, Any] = dict(
             on_complete_env(
-                session.trigger_message,
+                # ADR 0028: the trigger mail is gone, so ``msg`` is always
+                # None on this path (the env shape is kept — the
+                # vocabulary contract is unchanged, its value degenerated).
+                None,
                 result,
                 member_id=self._identity.id,
                 name=self._identity.name,
@@ -116,7 +120,10 @@ class OnCompleteRunner:
         )
         for request in collector:
             try:
-                await self._execute_action(request, session.trigger_message)
+                # ADR 0028: no trigger mail — the executor's session_mail
+                # argument is always None on this path (emit without
+                # explicit recipients degenerates to no recipients).
+                await self._execute_action(request, None)
             except Exception as e:
                 self._logger.error(
                     "on_complete_action_failed",

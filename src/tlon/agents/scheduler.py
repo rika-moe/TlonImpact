@@ -1,137 +1,125 @@
-"""Session scheduler for Agent.
+"""Session scheduler for Agent — the single-session loop (ADR 0028).
 
-Owns the agent's continuous main loop: drains the message queue into
-sessions, advances each session (ReAct step or tool-result collection),
-and reaps completed/stale sessions. The agent-level state derives on
-read (Agent.state property), never by callback from here. Extracted from
-the Agent god class.
+One cognitive member runs at most one live session at a time; the mailbox
+is the only queue. The scheduler is one sentence: *no live session and
+wakeable unread mail > 0 → open one session*. Its inputs:
+
+- ``notify_wake`` — set by the member runtime when a gate-passed mail is
+  delivered and no session is live, or by the boot/periodic scan. The
+  event is idempotent (setting an already-set event dedups concurrent
+  deliveries); the actual admission decision always re-reads the mailbox
+  through the injected ``wakeable_unread`` provider, so a stale wake is a
+  no-op.
+- ``wakeable_unread`` — the member runtime's single implementation of
+  "可唤醒未读" (unread minus own-mail minus gate-rejected), shared by the
+  delivery path, the scan, and this loop (both the admission check and
+  the chain-wake comparison at reap, so the two can never drift apart).
+- ``journal.find_unfinished`` — boot recovery: a session journal without
+  ``session/end`` is resumed (ADR 0007), with its journaled
+  responsibility set, before any new wake is honored.
+
+Session identity is a fresh uuid (``session_id_for`` is retired — ADR
+0028 决策 8). The trigger content is the fixed template rendered from the
+*same* provider snapshot that becomes the session's responsibility set
+(R5: N and the responsibility set are one read).
 
 The whole loop task runs inside bound_contextvars(agent_id=...) so all
 logs emitted from session advances carry the agent binding; tasks spawned
-from here (e.g. reflection) inherit the context.
-
-P4/C2 follow-up: the scheduler runs on injected capabilities
-(config, memory, trace/mail/reflection delegates) and advances sessions
-via the directly injected LoopDriver — no back-reference to the Agent at
-all (the last host protocol retired here). The mail queue and the worker
-lifecycle (``_worker_running`` / ``_worker_task``) are owned here (R2):
-the scheduler drives them, so they live here.
+from here (e.g. reflection) inherit the context. The agent-level state
+derives on read (Agent/MemberRuntime properties), never by callback from
+here.
 """
 
 import asyncio
 import contextlib
+import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 
 from structlog.contextvars import bound_contextvars
 
-from tlon.agents.loop_driver import LoopDriver
+from tlon.agents.loop_driver import WAKE_TRIGGER_TEMPLATE, LoopDriver
 from tlon.agents.session import AgentSession, SessionState
-from tlon.agents.session_journal import SessionJournal, SessionReplay, session_id_for
+from tlon.agents.session_journal import SessionJournal, SessionReplay
 from tlon.base.config import AgentConfig
 from tlon.base.llm_client import ToolCall
 from tlon.base.logger import get_logger
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
 
 logger = get_logger(__name__)
 
 # Injected delegate signatures (assembled from StageServices /
-# EffectExecutor / ReflectionEngine at Agent construction).
+# ReflectionEngine / MemberRuntime at Agent construction).
 SessionSpan = Callable[[AgentSession], AbstractContextManager[None]]
-MarkMailRead = Callable[["Mail | None"], Awaitable[None]]
 CheckReflection = Callable[[], Awaitable[None]]
 NoteInteraction = Callable[[], None]
+#: The member runtime's "可唤醒未读" provider (ADR 0028 决策 5/6): unread
+#: inbox mails minus own mail, minus gate-rejected ones (which the
+#: provider marks read as a side effect). One implementation, read by the
+#: delivery path, the scan, and this scheduler.
+WakeableUnread = Callable[[], Awaitable[list[Mail]]]
 
 
 class SessionScheduler:
-    """Multi-session scheduling loop for one agent."""
+    """Single-session scheduling loop for one agent (ADR 0028)."""
 
     def __init__(
         self,
         config: AgentConfig,
         memory: MemoryManager,
         session_span: SessionSpan,
-        mark_mail_read: MarkMailRead,
         check_reflection: CheckReflection,
         note_interaction: NoteInteraction,
         loop_driver: LoopDriver,
         journal: SessionJournal,
+        wakeable_unread: WakeableUnread,
+        mailbox: Mailbox | None,
     ):
         self._id = config.id
         self._config = config
         self._memory = memory
         self._session_span = session_span
-        self._mark_mail_read = mark_mail_read
         self._check_reflection = check_reflection
         self._note_interaction = note_interaction
         self._loop_driver = loop_driver
         self._journal = journal
-        # Live (non-completed) sessions; run() rebinds this to its working
-        # dict. Read by the registry's idle monitor via the properties below.
-        self._sessions: dict[str, AgentSession] = {}
+        self._wakeable_unread = wakeable_unread
+        # Read side of crash recovery only: a restored session's
+        # responsibility ids are resolved back to Mail objects through it.
+        self._mailbox = mailbox
+        # The one live-session slot (ADR 0028 决策 1). Read by the
+        # registry's idle monitor via the properties below.
+        self._session: AgentSession | None = None
+        # Wake signal (delivery / scan / chain-wake at reap). Setting an
+        # already-set event is the dedup of concurrent deliveries (R6) —
+        # the admission check always re-reads the mailbox anyway.
+        self._wake = asyncio.Event()
+        # Trace carrier of the wake (from the delivering event); consumed
+        # by the next session start.
+        self._wake_carrier: dict[str, str | None] | None = None
         # Floor for last activity: loop start time, bumped on session
         # creation and session completion (see run()).
         self._last_activity_at: datetime = datetime.now(UTC)
-        # Inbound mail queue (bounded: a full queue drops new mail rather
-        # than blocking the EventBus dispatch — see Agent._enqueue_mail)
-        # and the worker lifecycle, both owned here (R2).
-        self._mail_queue: asyncio.Queue[tuple[Mail, dict[str, str | None]]] = asyncio.Queue(
-            maxsize=config.message_queue_size
-        )
         self._worker_running = False
         self._worker_task: asyncio.Task[None] | None = None
 
-    def enqueue(self, mail: Mail, carrier: dict[str, str | None]) -> bool:
-        """Enqueue a mail for session processing.
+    def notify_wake(self, carrier: dict[str, str | None] | None = None) -> None:
+        """Signal that wakeable unread mail may exist.
 
-        Returns:
-            True when queued; False when the bounded queue is full (the
-            caller logs the drop — the mail stays unread in the mailbox
-            and is picked up again by the member runtime's rescan task,
-            on its periodic sweep or at the next boot)
+        Pure signal, no payload: the loop re-reads the mailbox through the
+        provider before opening a session. With a live session this is a
+        no-op (ADR 0028 决策 1 — the running session is never disturbed;
+        the mail waits unread in the inbox).
         """
-        try:
-            self._mail_queue.put_nowait((mail, carrier))
-        except asyncio.QueueFull:
-            return False
-        return True
-
-    def enqueue_merging_thread(
-        self, mail: Mail, carrier: dict[str, str | None]
-    ) -> tuple[str, Mail | None]:
-        """Enqueue a mail, merging into a pending same-thread sibling (ADR 0026).
-
-        A thread with mail already waiting in the queue does not get a
-        second session: the new mail replaces the pending one in place —
-        the latest mail represents the thread, matching the boot scan's
-        ``_merged_thread_ids`` — and the displaced mail goes back to the
-        caller for read-marking (its content is covered by the session's
-        mail-history context). The replacement keeps the queue slot (the
-        FIFO position belongs to the burst, not to the individual mail),
-        so a full queue still merges — one out, one in — and only a mail
-        of a *new* thread can be dropped. All synchronous, no await: the
-        scan-and-replace is atomic against the event loop.
-
-        Returns:
-            ("queued", None) when enqueued as a new pending trigger;
-            ("merged", displaced) when a pending same-thread mail was
-            replaced; ("dropped", None) when the bounded queue is full
-            (the caller logs the drop — same contract as :meth:`enqueue`).
-        """
-        # The queue's item deque is not in typeshed; the scheduler owns
-        # the queue, and the in-place replacement (one out, one in)
-        # keeps qsize/unfinished-tasks accounting exact.
-        pending = self._mail_queue._queue  # type: ignore[attr-defined]
-        for index, (queued_mail, _carrier) in enumerate(pending):
-            if queued_mail.thread_id == mail.thread_id:
-                pending[index] = (mail, carrier)
-                return "merged", queued_mail
-        if self.enqueue(mail, carrier):
-            return "queued", None
-        return "dropped", None
+        if self._session is not None:
+            return
+        if carrier is not None:
+            self._wake_carrier = carrier
+        self._wake.set()
 
     def start(self) -> None:
         """Start the main-loop worker task."""
@@ -148,31 +136,22 @@ class SessionScheduler:
 
     @property
     def active_session_count(self) -> int:
-        """Number of live sessions (ACTIVE or WAITING; completed ones are reaped)."""
-        return len(self._sessions)
-
-    @property
-    def has_queue_capacity(self) -> bool:
-        """The bounded mail queue can take at least one more mail.
-
-        Read by the member runtime's deferred rescan to trickle boot-scan
-        overflow in as sessions drain.
-        """
-        return not self._mail_queue.full()
+        """0 or 1 — the single-session model (kept numeric for the registry's
+        idle monitor, which only compares against 0)."""
+        return 1 if self._session is not None else 0
 
     @property
     def last_activity_at(self) -> datetime:
         """Most recent session activity timestamp.
 
-        "Activity" means: a session was created, a live session's
+        "Activity" means: a session was created, the live session's
         ``last_active_at`` (updated on every state change/step), or a
-        session completed. With no sessions at all, this is the loop start
+        session completed. With no session at all, this is the loop start
         time — so a freshly started agent is considered recently active.
         """
         last = self._last_activity_at
-        for session in self._sessions.values():
-            if session.last_active_at > last:
-                last = session.last_active_at
+        if self._session is not None and self._session.last_active_at > last:
+            last = self._session.last_active_at
         return last
 
     @property
@@ -181,170 +160,235 @@ class SessionScheduler:
         return (datetime.now(UTC) - self.last_activity_at).total_seconds()
 
     async def run(self) -> None:
-        """Agent's continuous main loop with multi-session scheduling.
+        """The single-session main loop (ADR 0028).
 
-        Cycles through all active sessions each pass:
+        Each pass:
         0. Reflection trigger (timer-driven, no mail needed)
-        1. New messages -> create/resume sessions (journal replay, ADR 0007),
-           at most ``config.max_concurrent_sessions`` live at once — excess
-           mail waits in the bounded queue (backlog throttling, issue )
-        2. ACTIVE sessions -> one think+dispatch step
-        3. WAITING sessions -> collect completed background tools
-        4. COMPLETED -> cleanup (+ reflection counter and the batch
-           distillation trigger, ADR 0017)
+        1. No live session → admission, edge-triggered by the wake event
+           (R6 order: wake first, then the wakeable-unread provider —
+           the provider is never polled on its own, so shelved leftover
+           mail cannot re-open a session by itself, ADR 0028 决策 5)
+        2. Live session → advance it (ReAct step / tool-result collect /
+           crash-recovered pending collect), or end it on timeout/error
+        3. Completed → reap (reflection counter, the batch distillation
+           trigger ADR 0017, and the chain-wake check: unread ids outside
+           the reaped session's responsibility set wake the next session
+           immediately; leftover responsibility ids — mail the agent saw
+           and shelved — are left to the slow rescan, breaking the
+           re-wake hot loop)
         """
         # This loop runs in its own task per agent, so binding agent_id for
         # its whole lifetime is safe and also covers logs inside session
         # advances; tasks spawned here (e.g. reflection) inherit the context.
         with bound_contextvars(agent_id=self._id):
             logger.info("agent_main_loop_started")
-            sessions: dict[str, AgentSession] = {}
-            session_mails: dict[str, Mail] = {}
-            # Resumed sessions with journaled-but-uncollected tool results:
-            # fed to LoopDriver.resume_collect once, then back to normal.
-            pending_collects: dict[str, list[tuple[ToolCall, ToolResult]]] = {}
-            self._sessions = sessions
             self._last_activity_at = datetime.now(UTC)
+            # Crash recovery (ADR 0007) comes first: a journaled
+            # unfinished session resumes before any new wake is honored,
+            # and its responsibility set comes back from the journal.
+            pending_collect = await self._restore_unfinished()
+            if self._session is not None:
+                # A wake signaled before the restore (e.g. the boot scan)
+                # is stale: the restored session supersedes it — anything
+                # newer than its responsibility set chains at reap.
+                self._wake.clear()
+                self._wake_carrier = None
 
             while self._worker_running:
                 # ── 0. Reflection trigger (timer-driven, no mail needed) ──
                 await self._check_reflection()
 
-                # ── 1. New mail — one session per mail, capped concurrency ──
-                incoming: tuple[Mail, dict[str, str | None]] | None = None
-                if len(sessions) < self._config.max_concurrent_sessions:
-                    try:
-                        incoming = self._mail_queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        # No new mail — if no sessions either, block
-                        if not sessions:
-                            try:
-                                incoming = await asyncio.wait_for(
-                                    self._mail_queue.get(), timeout=0.5
-                                )
-                            except TimeoutError:
-                                continue
-                if incoming is not None:
-                    mail, carrier = incoming
-                    await self._admit(mail, carrier, sessions, session_mails, pending_collects)
-
-                # ── 2 & 3. Advance sessions ──
-                for sid in list(sessions.keys()):
-                    session = sessions[sid]
-                    if session.id not in session_mails:
+                session = self._session
+                if session is None:
+                    # ── 1. Admission: edge-triggered by the wake event ──
+                    # R6 order: wake first, then re-read the provider. The
+                    # provider is never polled on its own — only a wake
+                    # edge (delivery / scan / chain-wake) opens a session,
+                    # so shelved leftover mail (ADR 0028 决策 5) cannot
+                    # re-open one by itself.
+                    if not self._wake.is_set():
+                        with contextlib.suppress(TimeoutError):
+                            await asyncio.wait_for(self._wake.wait(), timeout=0.5)
                         continue
+                    self._wake.clear()
+                    wakeable = await self._wakeable_unread()
+                    if not wakeable:
+                        continue  # stale wake (mail read meanwhile)
+                    self._open_session(wakeable)
+                    continue
 
-                    # Stale sessions (stuck ACTIVE/WAITING) are abandoned
-                    if self._is_session_timed_out(session):
-                        logger.warning(
-                            "session_timeout",
-                            session_id=sid,
-                            state=session.state.value,
-                            idle_seconds=int(
-                                (datetime.now(UTC) - session.last_active_at).total_seconds()
-                            ),
+                # ── 2. Advance the live session ──
+                if self._is_session_timed_out(session):
+                    logger.warning(
+                        "session_timeout",
+                        session_id=session.id,
+                        state=session.state.value,
+                        idle_seconds=int(
+                            (datetime.now(UTC) - session.last_active_at).total_seconds()
+                        ),
+                    )
+                    await self._end_session(session, "timeout")
+                    await self._notify_failure_reply(session, "timeout")
+                else:
+                    try:
+                        with self._session_span(session):
+                            if pending_collect is not None:
+                                # Crash recovery (ADR 0007): harvest the
+                                # journaled tool results once, then the
+                                # session rejoins the normal flow.
+                                await self._loop_driver.resume_collect(session, pending_collect)
+                                pending_collect = None
+                            elif session.state == SessionState.WAITING:
+                                await self._loop_driver.collect_session_results(session)
+                            elif session.state == SessionState.ACTIVE:
+                                await self._loop_driver.step_session(session)
+                    except Exception as e:
+                        logger.error(
+                            "session_error", session_id=session.id, error=str(e), exc_info=True
                         )
-                        await self._end_session(session, "timeout")
-                        await self._notify_failure_reply(session, session_mails.get(sid), "timeout")
-                    else:
-                        try:
-                            with self._session_span(session):
-                                if sid in pending_collects:
-                                    # Crash recovery (ADR 0007): harvest the
-                                    # journaled tool results once, then the
-                                    # session rejoins the normal flow.
-                                    await self._loop_driver.resume_collect(
-                                        session, pending_collects.pop(sid)
-                                    )
-                                elif session.state == SessionState.WAITING:
-                                    await self._loop_driver.collect_session_results(session)
-                                elif session.state == SessionState.ACTIVE:
-                                    mail = session_mails[sid]
-                                    await self._loop_driver.step_session(session, mail)
-                        except Exception as e:
-                            logger.error(
-                                "session_error", session_id=sid, error=str(e), exc_info=True
-                            )
-                            await self._end_session(session, "error")
-                            await self._notify_failure_reply(
-                                session, session_mails.get(sid), "error"
-                            )
+                        await self._end_session(session, "error")
+                        await self._notify_failure_reply(session, "error")
 
-                    # ── 4. Cleanup: the mail is processed, cursor advances ──
-                    if session.is_completed:
-                        await self._ensure_session_end(session)
-                        await session.cancel_pending()
-                        await self._mark_mail_read(session_mails.get(sid))
-                        del sessions[sid]
-                        session_mails.pop(sid, None)
-                        pending_collects.pop(sid, None)
-                        self._last_activity_at = datetime.now(UTC)
-                        # Session completed: feed the reflection counter
-                        # and check the batch distillation trigger (ADR 0017 —
-                        # journal -> claims, threshold config.distillation_window).
-                        self._note_interaction()
-                        await self._check_session_distillation()
+                # ── 3. Reap + chain-wake check ──
+                if session.is_completed:
+                    await self._ensure_session_end(session)
+                    await session.cancel_pending()
+                    self._session = None
+                    self._last_activity_at = datetime.now(UTC)
+                    # Session completed: feed the reflection counter
+                    # and check the batch distillation trigger (ADR 0017 —
+                    # journal -> claims, threshold config.distillation_window).
+                    self._note_interaction()
+                    await self._check_session_distillation()
+                    # Chain wake (ADR 0028 决策 5): only unread ids
+                    # *outside* the reaped session's responsibility set
+                    # wake the next session immediately; leftover
+                    # responsibility ids (the agent saw them and chose to
+                    # shelve) do not — the slow rescan owns those.
+                    await self._check_chain_wake(session)
 
-                # Agent state derives on read (Agent.state property) — the
-                # scheduler never calls back into the Agent.
+                # Agent state derives on read — the scheduler never calls
+                # back into the MemberRuntime.
 
                 # Yield control
-                await asyncio.sleep(0.01 if sessions else 0.05)
+                await asyncio.sleep(0.01 if self._session else 0.05)
 
             logger.info("agent_main_loop_stopped")
 
-    async def _admit(
-        self,
-        mail: Mail,
-        carrier: dict[str, str | None],
-        sessions: dict[str, AgentSession],
-        session_mails: dict[str, Mail],
-        pending_collects: dict[str, list[tuple[ToolCall, ToolResult]]],
-    ) -> None:
-        """Admit one mail as a session: resume from the journal when there
-        is one (ADR 0007), else create a fresh session.
+    def _open_session(self, wakeable: list[Mail]) -> None:
+        """Open the one session over the given wakeable-unread snapshot.
 
-        A log with ``session/end`` means a previous process already ran
-        this mail to completion: only the read cursor advances, the
-        session is never re-run. A log with orphaned tool dispatches
-        resumes with a one-shot ``resume_collect`` before the normal
-        step/collect flow.
+        R5: the trigger text's N and the responsibility set come from this
+        one provider snapshot — never two reads. The responsibility ids are
+        always logged (R4: a carrier-less wake — boot scan, rescan — still
+        leaves the responsibility trail).
         """
-        sid = session_id_for(self._id, mail.id)
-        replay = await self._journal.resume(sid)
-        if replay is not None and replay.completed:
-            logger.info("session_journal_completed", session_id=sid, end_reason=replay.end_reason)
-            await self._mark_mail_read(mail)
-            return
-        if replay is None:
-            sessions[sid] = AgentSession(sid, mail.content, carrier=carrier)
-            logger.info("session_started", session_id=sid, content=mail.content)
-        else:
-            sessions[sid] = self._restore_session(replay, mail, carrier)
-            logger.info(
-                "session_resumed",
-                session_id=sid,
-                iteration=replay.iteration,
-                pending_collect=len(replay.pending_collect),
-            )
-            if replay.pending_collect:
-                pending_collects[sid] = replay.pending_collect
-        session_mails[sid] = mail
+        sid = f"{self._id}-{uuid.uuid4().hex[:12]}"
+        trigger = WAKE_TRIGGER_TEMPLATE.format(n=len(wakeable))
+        session = AgentSession(sid, trigger, carrier=self._wake_carrier, responsibility=wakeable)
+        self._wake_carrier = None
+        self._session = session
         self._last_activity_at = datetime.now(UTC)
+        logger.info(
+            "session_wake",
+            session_id=sid,
+            unread_count=len(wakeable),
+            responsibility=[mail.id for mail in wakeable],
+        )
 
-    def _restore_session(
-        self, replay: SessionReplay, mail: Mail, carrier: dict[str, str | None]
-    ) -> AgentSession:
+    async def _check_chain_wake(self, session: AgentSession) -> None:
+        """Compare post-reap unread against the reaped session's
+        responsibility set (ADR 0028 决策 5).
+
+        Uses the same wakeable-unread provider as delivery/scan (R1) —
+        gate-rejection read-marking as a provider side effect is
+        acceptable in the reap context. Never raises: a provider failure
+        just skips this wake (the rescan remains as the backstop).
+        """
+        try:
+            wakeable = await self._wakeable_unread()
+        except Exception as e:
+            logger.error("chain_wake_check_failed", session_id=session.id, error=str(e))
+            return
+        if not wakeable:
+            return
+        responsibility_ids = {mail.id for mail in session.responsibility}
+        new_ids = [mail.id for mail in wakeable if mail.id not in responsibility_ids]
+        if new_ids:
+            logger.info(
+                "session_chain_wake",
+                session_id=session.id,
+                new_mail_ids=new_ids,
+            )
+            self._wake.set()
+        else:
+            logger.info(
+                "session_leftover_unread_deferred",
+                session_id=session.id,
+                leftover_mail_ids=[mail.id for mail in wakeable],
+            )
+
+    async def _restore_unfinished(self) -> list[tuple[ToolCall, ToolResult]] | None:
+        """Resume a journaled unfinished session, if one exists (ADR 0007).
+
+        Returns the pending-collect list for the first post-resume
+        collect, or None. A restore failure (corrupt log, mailbox read
+        error) is logged and skipped — a broken journal must not wedge
+        the member's whole loop; the session is simply never resumed and
+        its journal keeps no ``session/end``.
+        """
+        try:
+            unfinished = await self._journal.find_unfinished()
+        except Exception as e:
+            logger.error("session_restore_scan_failed", error=str(e), exc_info=True)
+            return None
+        if not unfinished:
+            return None
+        if len(unfinished) > 1:
+            logger.warning(
+                "session_restore_multiple_unfinished",
+                count=len(unfinished),
+                resumed=unfinished[0],
+            )
+        sid = unfinished[0]
+        try:
+            replay = await self._journal.resume(sid)
+        except Exception as e:
+            logger.error("session_restore_failed", session_id=sid, error=str(e), exc_info=True)
+            return None
+        if replay is None:
+            return None
+        self._session = await self._restore_session(replay)
+        self._last_activity_at = datetime.now(UTC)
+        logger.info(
+            "session_resumed",
+            session_id=sid,
+            iteration=replay.iteration,
+            pending_collect=len(replay.pending_collect),
+            responsibility=replay.responsibility,
+        )
+        return replay.pending_collect or None
+
+    async def _restore_session(self, replay: SessionReplay) -> AgentSession:
         """Rebuild the in-memory session from a journal replay.
 
-        Data fields only — side effects (mails, interaction saves,
-        on-complete actions) are never re-executed (ADR 0007). The
-        trigger mail and carrier are re-attached from the live delivery.
+        Data fields only — side effects (mails, on-complete actions) are
+        never re-executed (ADR 0007). The responsibility id list is
+        resolved back to Mail objects through the mailbox; an id whose
+        mail is gone is dropped (the set is only used for failure-reply
+        anchoring and chain-wake comparison).
         """
+        responsibility: list[Mail] = []
+        if self._mailbox is not None:
+            for mail_id in replay.responsibility:
+                mail = await self._mailbox.find(mail_id)
+                if mail is not None:
+                    responsibility.append(mail)
         session = AgentSession(
             replay.session_id,
             replay.trigger_content,
-            carrier=replay.carrier or carrier,
+            carrier=replay.carrier,
+            responsibility=responsibility,
         )
         session.context = replay.context
         session.anchor_len = replay.anchor_len
@@ -355,23 +399,18 @@ class SessionScheduler:
         session._all_tool_results = replay.all_tool_results
         session.loop_scratch = replay.loop_scratch
         session.state = replay.state
-        session.trigger_message = mail
         return session
 
-    async def _notify_failure_reply(
-        self, session: AgentSession, mail: Mail | None, reason: str
-    ) -> None:
-        """Best-effort reply to the trigger mail's sender when a session
-        ends abnormally — human senders only (ADR 0027); a non-human
-        trigger is logged by the driver, not answered.
+    async def _notify_failure_reply(self, session: AgentSession, reason: str) -> None:
+        """Best-effort failure notification when a session ends abnormally
+        — one mail per human sender in the responsibility set (ADR 0027 as
+        revised by ADR 0028 决策 7); agent senders are logged, not answered.
 
         Never raises: the reply is courtesy; a failure here must not
         break the scheduler loop.
         """
-        if mail is None:
-            return
         try:
-            await self._loop_driver.send_failure_reply(mail, reason)
+            await self._loop_driver.send_failure_reply(session, reason)
         except Exception as e:
             logger.error("session_failure_reply_failed", session_id=session.id, error=str(e))
 

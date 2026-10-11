@@ -20,7 +20,6 @@ from tlon.agents.stages.think import think_stage
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import Mail
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 
@@ -106,19 +105,14 @@ class TestStagePurity:
 
         assert outcome == StageOutcome()
 
-    async def test_act_collect_send_email_inherits_trigger_headers_by_default(
+    async def test_act_collect_send_email_declares_model_headers_verbatim(
         self,
     ) -> None:
-        """Without an explicit in_reply_to the reply keeps the status
-        quo: reply headers come from the session's trigger mail."""
+        """ADR 0028: no trigger mail — ``to`` / ``in_reply_to`` are exactly
+        what the model declared; thread_id stays None (the engine
+        re-derives it from the referenced mail, docs/design/mail.md)."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
-        trigger = Mail.create(
-            from_address="user@tlon.internal",
-            to=["agent1@tlon.internal"],
-            content="触发邮件",
-        )
-        session.trigger_message = trigger
         tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
         result = ToolResult(
             success=True,
@@ -130,23 +124,16 @@ class TestStagePurity:
         assert len(outcome.mails) == 1
         mail = outcome.mails[0]
         assert mail.to == ["user@tlon.internal"]
-        assert mail.in_reply_to == trigger.id
-        assert mail.thread_id == trigger.thread_id
+        assert mail.in_reply_to is None
+        assert mail.thread_id is None
 
-    async def test_act_collect_send_email_explicit_in_reply_to_wins(self) -> None:
-        """The model's explicit in_reply_to (reply to a non-trigger
-        mail) is declared on the MailEffect. The stage cannot read the
-        mailbox, so thread_id stays the trigger-derived fallback — the
+    async def test_act_collect_send_email_explicit_in_reply_to_passes_through(self) -> None:
+        """The model's explicit in_reply_to is declared on the MailEffect.
+        The stage cannot read the mailbox, so thread_id stays None — the
         engine re-derives it from the referenced mail
         (docs/design/mail.md)."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
-        trigger = Mail.create(
-            from_address="user@tlon.internal",
-            to=["agent1@tlon.internal"],
-            content="触发邮件",
-        )
-        session.trigger_message = trigger
         tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
         result = ToolResult(
             success=True,
@@ -164,7 +151,7 @@ class TestStagePurity:
         mail = outcome.mails[0]
         assert mail.to == ["other@tlon.internal"]
         assert mail.in_reply_to == "m-earlier"
-        assert mail.thread_id == trigger.thread_id  # fallback; engine re-derives
+        assert mail.thread_id is None
 
 
 class TestEngineApplication:

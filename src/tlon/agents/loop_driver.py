@@ -39,7 +39,7 @@ from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession, SessionState
-from tlon.agents.session_journal import SessionJournal, session_id_for
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import act_stage_collect, act_stage_step, attempts_completion
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.outcome import MailEffect, StageOutcome
@@ -69,12 +69,20 @@ logger = get_logger(__name__)
 #: User-facing fixed termination replies — the engine's built-in fallback
 #: wording, used for any kind the member's ``:loop/:replies`` does not
 #: override (replies are load-time-validated plain data, used verbatim).
-#: Termination replies go to human senders only (ADR 0027): a session
-#: triggered by a non-human sender (agent, postmaster, external address)
-#: ends journaled + logged, without mail.
+#: Termination replies go to human senders only (ADR 0027, anchor revised
+#: by ADR 0028 决策 7): every human sender in the session's
+#: responsibility set gets one mail; agent senders are journaled + logged,
+#: never answered.
 _ITERATION_LIMIT_REPLY = "思考时间过长，请简化您的问题。"
 _ERROR_REPLY = "抱歉，处理邮件时出现了错误。"
-_TIMEOUT_REPLY = "抱歉，处理这封邮件超时了，请稍后重试。"
+_TIMEOUT_REPLY = "抱歉，处理超时了，请稍后重试。"
+
+#: The wake trigger text (ADR 0028 决策 2): fixed template, no mail body —
+#: ``n`` is the wake-time count of wakeable unread mails, taken from the
+#: same provider snapshot that becomes the session's responsibility set
+#: (R5). Short and structurally stable, so the prefix cache hits
+#: everything before it.
+WAKE_TRIGGER_TEMPLATE = "你有 {n} 封未读邮件"
 
 #: Distillation prompt for the resource-ceiling reply: an engine hard
 #: ceiling (iteration count or token budget, ADR 0023) fired mid-work, so
@@ -141,9 +149,10 @@ class LoopDriver:
         # Context pressure relief (ADR 0008): checked before each step and
         # forced after a context-length 4xx.
         self._pressure = pressure
-        # Termination replies go to human senders only (ADR 0027): the
-        # predicate classifies the trigger mail's sender. The caller
-        # resolves the human set on each invocation — it grows at runtime.
+        # Termination replies go to human senders only (ADR 0027, anchor
+        # revised by ADR 0028 决策 7): the predicate classifies each
+        # responsibility-set sender. The caller resolves the human set on
+        # each invocation — it grows at runtime.
         self._is_human_sender = is_human_sender
         # Stage registry (phases 7a/7c), step side. The collect half of
         # ``act`` is collect_session_results — one semantic unit split by
@@ -164,7 +173,7 @@ class LoopDriver:
             "act": partial(act_stage_step, services),
         }
 
-    async def step_session(self, session: AgentSession, mail: Mail) -> None:
+    async def step_session(self, session: AgentSession) -> None:
         """Advance a session by one step: until check + stage vector.
 
         The session's state transitions ACTIVE -> WAITING (tools running).
@@ -172,24 +181,22 @@ class LoopDriver:
         """
         log = self._services.logger
 
-        # The trigger mail is recorded on the first step, unconditionally —
-        # a resumed session already has context but still needs the mail
-        # (on-complete action expressions read it as ``msg``).
-        if session.trigger_message is None:
-            session.trigger_message = mail
-
         # Build context on first call (after LLM error: skip rebuild). The
         # session/start event is journaled before the context lands in
-        # memory and before the first stage runs (ADR 0007).
+        # memory and before the first stage runs (ADR 0007); it carries
+        # the responsibility-set id snapshot (ADR 0028 — crash recovery
+        # reads it back for the chain-wake comparison).
         if not session.context:
-            built = await self._services.build_context(mail)
+            built = await self._services.build_context(
+                session.trigger_content, session.responsibility
+            )
             await self._journal.append(
                 session.id,
                 "session/start",
                 agent_id=self._identity.id,
-                mail_id=mail.id,
                 trigger_content=session.trigger_content,
                 carrier=session.carrier,
+                responsibility=[mail.id for mail in session.responsibility],
                 context=built.messages,
                 anchor_len=built.anchor_len,
             )
@@ -217,7 +224,8 @@ class LoopDriver:
         # expression says — either one firing ends the session. Exhaustion
         # is not failure — the session's intermediate work is distilled
         # into the reply by one extra LLM call (fixed-text fallback).
-        # The reply goes to human senders only (ADR 0027).
+        # Replies go to the human senders of the responsibility set only
+        # (ADR 0027, anchor revised by ADR 0028 决策 7).
         iteration_capped = session.iteration >= loop.max_iterations
         token_capped = session.token_usage >= loop.max_tokens
         if iteration_capped or token_capped:
@@ -235,22 +243,22 @@ class LoopDriver:
                     max_iterations=loop.max_iterations,
                 )
             reason = "max_tokens" if token_capped else "max_iterations"
-            # ADR 0027: the reply goes to human senders only; for a
-            # non-human sender the distillation LLM call is skipped too —
-            # it would only produce a suppressed reply.
+            # ADR 0027: replies go to human senders only; with no human
+            # sender in the responsibility set the distillation LLM call is
+            # skipped too — it would only produce suppressed replies.
             content = (
                 await self._distill_reply(session)
-                if self._is_human_sender(mail.from_address)
+                if any(self._is_human_sender(mail.from_address) for mail in session.responsibility)
                 else ""
             )
-            await self._send_termination_reply(session.id, mail, reason, content)
+            await self._send_termination_reply(session, reason, content)
             await self._journal.append(session.id, "session/end", reason=reason)
             session.mark_completed()
             return
 
         # until expression (phase 7a): evaluated pre-think only.
         if self._until_reached(session):
-            await self._terminate_loop(session, mail)
+            await self._terminate_loop(session)
             return
 
         # Interpret the stage vector in order; stages chain the round's
@@ -437,39 +445,58 @@ class LoopDriver:
         return self._loop.replies.get(kind, default)
 
     async def _send_termination_reply(
-        self, session_id: str, mail: Mail, reason: str, content: str
+        self, session: AgentSession, reason: str, content: str
     ) -> None:
-        """Send a termination reply — to human senders only (ADR 0027).
+        """Send termination notifications — to the responsibility set's
+        human senders only (ADR 0027, anchor revised by ADR 0028 决策 7).
 
-        A human trigger gets the reply verbatim (a person needs the
-        feedback); a non-human sender (agent, postmaster, external
-        address) gets no mail — the termination stays journaled and is
-        logged here, breaking the failure -> reply -> retrigger
-        oscillation between agents.
+        The trigger mail no longer exists; the anchor is the session's
+        responsibility set: each *human* sender gets exactly one mail
+        (deduplicated by address), its ``in_reply_to`` pointing at that
+        sender's latest mail in the set. A non-human sender (agent,
+        postmaster, external address) gets no mail — the termination
+        stays journaled and is logged here, breaking the failure ->
+        reply -> retrigger oscillation between agents.
         """
-        if not self._is_human_sender(mail.from_address):
+        # Snapshot order is chronological, so the last write per sender
+        # is that sender's latest responsibility mail.
+        latest_by_sender: dict[str, Mail] = {}
+        for mail in session.responsibility:
+            latest_by_sender[mail.from_address] = mail
+        notified: list[str] = []
+        for sender, mail in latest_by_sender.items():
+            if not self._is_human_sender(sender):
+                self._services.logger.info(
+                    "termination_reply_suppressed",
+                    session_id=session.id,
+                    sender=sender,
+                    reason=reason,
+                )
+                continue
+            await self._executor.send_mail(
+                MailEffect(
+                    to=[sender],
+                    content=content,
+                    in_reply_to=mail.id,
+                    thread_id=mail.thread_id,
+                )
+            )
+            notified.append(sender)
+        if notified:
             self._services.logger.info(
-                "termination_reply_suppressed",
-                session_id=session_id,
-                sender=mail.from_address,
+                "termination_replies_sent",
+                session_id=session.id,
                 reason=reason,
+                recipients=notified,
             )
-            return
-        await self._executor.send_mail(
-            MailEffect(
-                to=[mail.from_address],
-                content=content,
-                in_reply_to=mail.id,
-                thread_id=mail.thread_id,
-            )
-        )
 
-    async def _terminate_loop(self, session: AgentSession, mail: Mail) -> None:
+    async def _terminate_loop(self, session: AgentSession) -> None:
         """Terminate a session whose until expression fired.
 
         The finishing action is chosen by state: error limit -> the error
         mail; anything else -> the iteration-limit mail. The reply goes to
-        human senders only (ADR 0027); the journal is written either way.
+        the responsibility set's human senders only (ADR 0027/0028); the
+        journal is written either way.
         """
         log = self._services.logger
         loop = self._loop
@@ -486,7 +513,7 @@ class LoopDriver:
             reason = "iteration_limit"
             content = self._termination_reply("iteration_limit", _ITERATION_LIMIT_REPLY)
         log.info("loop_until_reached", session_id=session.id, reason=reason)
-        await self._send_termination_reply(session.id, mail, reason, content)
+        await self._send_termination_reply(session, reason, content)
         await self._journal.append(session.id, "session/end", reason="until", detail=reason)
         session.mark_completed()
 
@@ -545,28 +572,27 @@ class LoopDriver:
         while tail and tail[0].get("role") == "tool":
             tail.pop(0)
         instruction = (
-            "以上是你处理来信时的工作记录（可能不完整）。原始来信内容：\n\n"
+            "以上是你在方才这个会话里的工作记录（可能不完整）。会话的触发语：\n\n"
             f"{session.trigger_content}\n\n请写回信正文。"
         )
         return [*tail, {"role": "user", "content": instruction}]
 
-    async def send_failure_reply(self, mail: Mail, reason: str) -> None:
-        """Reply to the trigger mail's sender when the scheduler ends a
-        session abnormally (idle timeout / unhandled stage error).
+    async def send_failure_reply(self, session: AgentSession, reason: str) -> None:
+        """Notify the responsibility set's human senders when the scheduler
+        ends a session abnormally (idle timeout / unhandled stage error).
 
-        Human senders only (ADR 0027): a non-human trigger ends with a
-        log line, no mail. The fatal paths live in the scheduler; the
-        reply goes through the same MailEffect -> EffectExecutor pipeline
-        every other engine mail uses (send_mail never raises).
+        Human senders only (ADR 0027, anchor revised by ADR 0028 决策 7):
+        agent senders end with a log line, no mail. The fatal paths live
+        in the scheduler; the reply goes through the same MailEffect ->
+        EffectExecutor pipeline every other engine mail uses (send_mail
+        never raises).
         """
         content = (
             self._termination_reply("timeout", _TIMEOUT_REPLY)
             if reason == "timeout"
             else self._termination_reply("error", _ERROR_REPLY)
         )
-        await self._send_termination_reply(
-            session_id_for(self._identity.id, mail.id), mail, reason, content
-        )
+        await self._send_termination_reply(session, reason, content)
 
     def _stage_condition_met(
         self,
@@ -709,12 +735,15 @@ class LoopDriver:
     async def process_message(self, mail: Mail) -> None:
         """Process a single mail synchronously via inline step/collect loop.
 
-        Used by tests. Creates a session and drives step_session /
-        collect_session_results until completion.
+        Used by tests. Creates a session (responsibility = this one mail,
+        wake-template trigger text) and drives step_session /
+        collect_session_results until completion. Read-marking is the
+        agent's own act under ADR 0028 — nothing is marked here.
         """
         session = AgentSession(
             session_id=f"{self._identity.id}-msg-{uuid.uuid4().hex[:8]}",
-            trigger_content=mail.content,
+            trigger_content=WAKE_TRIGGER_TEMPLATE.format(n=1),
+            responsibility=[mail],
         )
 
         try:
@@ -730,9 +759,8 @@ class LoopDriver:
                             await asyncio.gather(*pending, return_exceptions=True)
                             await self.collect_session_results(session)
                     elif session.state == SessionState.ACTIVE:
-                        await self.step_session(session, mail)
+                        await self.step_session(session)
                     else:
                         break
         finally:
             await session.cancel_pending()
-            await self._executor.mark_mail_read(mail)

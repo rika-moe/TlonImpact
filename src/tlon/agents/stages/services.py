@@ -147,9 +147,15 @@ class StageServices:
             )
             yield
 
-    async def build_context(self, current_mail: "Mail") -> "BuiltContext":
-        """Build the LLM conversation context for a trigger mail."""
-        return await self._context_builder.build_context(current_mail)
+    async def build_context(
+        self, trigger_text: str, responsibility: "list[Mail]"
+    ) -> "BuiltContext":
+        """Build the LLM conversation context for a session start.
+
+        ADR 0028: the trigger is the fixed wake template (no mail body);
+        the responsibility set feeds the JIT knowledge query.
+        """
+        return await self._context_builder.build_context(trigger_text, responsibility)
 
     async def publish_event(self, event_type: EventType, payload: Any) -> None:
         """Publish an observability event (source: this agent)."""

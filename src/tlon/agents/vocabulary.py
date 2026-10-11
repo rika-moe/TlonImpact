@@ -122,7 +122,9 @@ class RuleEnv(TypedDict):
 class OnCompleteEnv(TypedDict):
     """Cognitive-rule completion actions (``on_complete``).
 
-    ``msg`` is the session's trigger mail, ``result`` the session's final
+    ``msg`` was the session's trigger mail; ADR 0028 retired the trigger
+    mail, so it is always None on this path (the env shape is kept — the
+    vocabulary contract is unchanged). ``result`` is the session's final
     reply text. ``event`` is *not* bound on this path: ACTION_SCOPE is the
     union of the two action evaluation paths (deterministic actions run
     under RuleEnv, completion actions under this one).

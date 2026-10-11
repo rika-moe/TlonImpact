@@ -24,27 +24,20 @@ deterministic idle bookkeeping — with real background activity (an
 in-flight reflection) folded into ``idle_seconds`` so a member mid-audit
 is never reported idle.
 
-Mail semantics: a delivered mail addressed to this member is marked read
-once processed — a deterministic hit reads it immediately; a cognitive hit
-defers the read to session completion; a mail the ``:when`` gate rejects is
-read anyway (D6.1, retiring the react "never responds → mail stuck unread"
-quirk). A mail that a full bounded queue drops stays unread for the
-rescan — the member's one background rescan task picks it up on its
-periodic sweep, without waiting for a reboot (a boot member with
-``:on :boot`` never gets a second boot scan). Own mail (sent by this
-member) is never processed. Live delivery merges like the boot scan
-(ADR 0026): a delivered mail whose thread already has a pending
-(enqueued, not yet admitted) mail replaces it as the thread's
-representative — the displaced mail is marked read, no second session
-is created; running sessions are never merged retroactively.
-
-Boot-scan throttling (docs/design/runtime.md): the unread rescue scan merges one
-thread into one session (the thread's latest unread mail is the
-representative; earlier siblings are marked read as covered — the
-session's mail-history context renders the whole thread), and overflow
-the bounded queue cannot take stays fully unread (deterministic rules
-deferred with it) for the same rescan task, which trickles mail in as
-the scheduler drains — backlog is queued, never dropped on the floor.
+Mail semantics (ADR 0028 — 收件箱驱动的单 session 模型): the mailbox is
+the only queue. A delivered mail addressed to this member first passes
+the cognitive rule's ``:when`` gate — a rejected mail is marked read
+immediately (D6.1 延续, and it never counts as wakeable unread); a
+passing mail stays *unread* — read-marking is the agent's own explicit
+act (the ``markRead`` tool). Wake is edge-triggered: gate passed and no
+live session → ``notify_wake``; a live session is never disturbed (the
+mail lies unread in the inbox; the session sees it via checkInbox or the
+next session's mail-history). Deterministic rules still run inline and
+read the mail immediately. Own mail (sent by this member) is never
+processed and is marked read at once. The one background rescan task
+re-scans unread mail on a single slow cadence
+(``mail_rescan_interval_seconds``) — the self-healing path for mail the
+agent shelved and for anything a crash swallowed.
 """
 
 import asyncio
@@ -104,10 +97,6 @@ logger = get_logger(__name__)
 #: Trace carrier triple for forwarding an event's span tree to a decision.
 Carrier = tuple[str | None, str | None, str | None]
 
-#: Poll interval of the deferred rescan that trickles boot-scan overflow
-#: into the scheduler as sessions drain (docs/design/runtime.md).
-_RESCAN_POLL_SECONDS = 5.0
-
 
 class MemberState(Enum):
     """Member lifecycle states (cognitive members; deterministic ones are
@@ -161,9 +150,10 @@ class MemberRuntime(Member):
     """Unified member interpreter: spec-driven, cognitive or deterministic.
 
     All work happens in the EventBus dispatch context (no worker task; the
-    bus already isolates handler exceptions). Cognitive work is enqueued as
-    sessions and drained by the scheduler's main loop task. Decisions are
-    request events on the bus; execution is the registry's job.
+    bus already isolates handler exceptions). Cognitive work is woken into
+    the scheduler's single-session main loop (ADR 0028) — delivery only
+    signals; the mailbox is the queue. Decisions are request events on the
+    bus; execution is the registry's job.
     """
 
     def __init__(
@@ -232,14 +222,8 @@ class MemberRuntime(Member):
         self._context_builder: ContextBuilder | None = None
         self._logger = logger.bind(agent_id=member_id)
         self._state: MemberState | None = None
-        # Boot-scan throttle state (docs/design/runtime.md): mails a scan
-        # enqueued
-        # whose sessions have not yet marked them read, whether the last
-        # scan left overflow unread (bounded queue full), and the one
-        # rescan task that both trickles overflow in as the scheduler
-        # drains and periodically re-scans unread mail.
-        self._scan_pending: set[str] = set()
-        self._scan_deferred = False
+        # The one background mail-rescan task (ADR 0028 决策 4: boot scan +
+        # the slow periodic sweep share it).
         self._rescan_task: asyncio.Task[None] | None = None
         # Cognitive engine attachment is spec-derived (ADR 0006): a member
         # with a loop rule gets the engine, one without keeps the full
@@ -293,8 +277,7 @@ class MemberRuntime(Member):
         background activity folded in — an in-flight reflection LLM call
         is work in progress and counts as active, so the member is not
         reported idle and drained mid-audit. The rescan task's mere
-        existence does not count: it sleeps between sweeps, and a
-        sweep's enqueued mail already becomes session activity.
+        existence does not count: it sleeps between sweeps.
         Deterministic: time since the last executed rule action (from
         initialize when no action has run yet); 0 before initialization.
         """
@@ -344,13 +327,11 @@ class MemberRuntime(Member):
                 assert self._scheduler is not None
                 self._scheduler.start()
                 self._state = MemberState.ACTIVE
-                # One rescan task per member (docs/design/runtime.md): it
-                # trickles
-                # boot-scan overflow in as the scheduler drains and, on a
-                # longer cadence, re-scans unread mail so live mail the
-                # full queue dropped is picked up while the member runs —
-                # a boot member never reboots, so there is no "next
-                # boot scan" for it.
+                # One rescan task per member (ADR 0028 决策 4): a single
+                # slow cadence re-scans unread mail — the self-healing
+                # path for shelved mail and crash-swallowed deliveries (a
+                # boot member never reboots, so there is no "next boot
+                # scan" for it).
                 self._rescan_task = asyncio.create_task(self._rescan_loop())
 
             logger.info(
@@ -408,14 +389,15 @@ class MemberRuntime(Member):
     async def _on_event(self, event: Event) -> None:
         """Dispatch one bus event to every rule subscribed to its type.
 
-        A cognitive rule on MAIL_DELIVERED gates and enqueues a session (the
-        read is deferred to session completion); deterministic rules
-        evaluate and execute their actions inline. Mail sent by the member
-        itself is ignored (own-mail guard) and marked read immediately —
-        a self-copy (cc-to-self or a misrouted self-delivery) must not
-        linger as unread until the next boot scan. A delivered mail not
-        enqueued for a cognitive session
-        is marked read after processing (D6.1).
+        A cognitive rule on MAIL_DELIVERED gates the mail (ADR 0028):
+        gate rejected → marked read immediately (D6.1 延续); gate passed →
+        the mail stays unread (read-marking is the agent's own act) and,
+        with no live session, the scheduler is woken. Deterministic rules
+        evaluate and execute their actions inline, then the mail is
+        marked read. Mail sent by the member itself is ignored (own-mail
+        guard) and marked read immediately — a self-copy (cc-to-self or
+        a misrouted self-delivery) must not linger as unread until the
+        next scan.
         """
         mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
         is_own_mail = (
@@ -432,8 +414,7 @@ class MemberRuntime(Member):
             and event.payload.get("recipient") == self._member_id
         )
 
-        cognitive_deferred = False
-        dropped = False
+        cognitive_keeps_unread = False
         for rule in self._spec.rules:
             if rule.on is None or rule.on != event.type:
                 continue
@@ -448,68 +429,56 @@ class MemberRuntime(Member):
                     continue
                 if delivered_to_me:
                     assert isinstance(mail, Mail)
-                    result = await self._enqueue_cognitive(rule, mail, event)
-                    if result == "queued":
-                        cognitive_deferred = True
-                    elif result == "dropped":
-                        dropped = True
+                    if self._should_respond(rule, mail):
+                        cognitive_keeps_unread = self._wake_cognitive(mail, event)
+                    else:
+                        # Gate rejected: system marks read now (ADR 0028
+                        # 决策 6) — the mail never counts as wakeable.
+                        await self._mark_read(mail)
             else:
                 await self._run_rule(rule, trigger_event=event)
 
-        if delivered_to_me and not cognitive_deferred and not dropped:
+        if delivered_to_me and not cognitive_keeps_unread:
             await self._mark_read(mail)
 
-    async def _enqueue_cognitive(
-        self, rule: MemberRule, mail: Mail, trigger_event: Event | None
-    ) -> str:
-        """Gate a delivered mail and enqueue a session for it.
+    def _wake_cognitive(self, mail: Mail, trigger_event: Event | None) -> bool:
+        """A gate-passed delivery: wake the scheduler when no session is
+        live; leave the mail unread either way (ADR 0028 决策 1/3).
 
-        Enqueueing merges same-thread pending mail (ADR 0026): a thread
-        already waiting in the queue gets no second session — the new
-        mail replaces the pending sibling as the representative and the
-        displaced sibling is marked read now (covered by the session's
-        mail-history context), logged as ``mail_merged``.
-
-        Returns "queued" | "rejected" | "dropped". "rejected" (the ``:when``
-        gate failed, or the mail is not addressed to this member) marks the
-        mail read now (D6.1); "dropped" (bounded queue full) leaves it
-        unread for the rescan task's next sweep.
+        Returns True when the mail's read is now the agent's own affair
+        (always, for a cognitive member with a scheduler) — the caller
+        skips its deterministic-path read-marking. With a live session
+        this only logs: the running session's prompt is never disturbed;
+        the mail waits unread in the inbox.
         """
-        if not self._should_respond(rule, mail):
-            return "rejected"
+        scheduler = self._scheduler
+        if scheduler is None:
+            logger.warning(
+                "mail_without_scheduler",
+                member_id=self._member_id,
+                sender=mail.from_address,
+                mail_id=mail.id,
+            )
+            return False
+        if scheduler.active_session_count > 0:
+            logger.debug(
+                "mail_awaits_live_session",
+                member_id=self._member_id,
+                mail_id=mail.id,
+            )
+            return True
         carrier = {
             "trace_id": trigger_event.trace_id if trigger_event else None,
             "span_id": trigger_event.span_id if trigger_event else None,
         }
-        if self._scheduler is None:
-            logger.warning(
-                "mail_dropped",
-                member_id=self._member_id,
-                sender=mail.from_address,
-                mail_id=mail.id,
-            )
-            return "dropped"
-        result, displaced = self._scheduler.enqueue_merging_thread(mail, carrier)
-        if result == "dropped":
-            logger.warning(
-                "mail_dropped",
-                member_id=self._member_id,
-                sender=mail.from_address,
-                mail_id=mail.id,
-            )
-            return "dropped"
-        if result == "merged":
-            assert displaced is not None
-            logger.info(
-                "mail_merged",
-                member_id=self._member_id,
-                merged_mail_id=displaced.id,
-                representative_mail_id=mail.id,
-                thread_id=mail.thread_id,
-            )
-            await self._mark_read(displaced)
-        logger.debug("mail_queued", sender=mail.from_address, mail_id=mail.id)
-        return "queued"
+        logger.info(
+            "member_wake",
+            member_id=self._member_id,
+            sender=mail.from_address,
+            mail_id=mail.id,
+        )
+        scheduler.notify_wake(carrier)
+        return True
 
     @staticmethod
     def _rule_fuel(rule: MemberRule, default: int) -> int:
@@ -746,7 +715,10 @@ class MemberRuntime(Member):
         trigger_event: Event | None,
     ) -> None:
         """Emit a mail; an emit without explicit recipients replies to the
-        sender of the session's trigger mail (completion path)."""
+        sender of ``session_mail`` (deterministic rules: the triggering
+        mail). On the cognitive completion path ``session_mail`` is always
+        None (ADR 0028 — no trigger mail), so an emit without explicit
+        recipients sends to nobody there."""
         to = request.data["to"] or ([session_mail.from_address] if session_mail else [])
         carrier = self._carrier_for(trigger_event)
         await self._send_mail(
@@ -905,7 +877,6 @@ class MemberRuntime(Member):
         """Mark a processed mail read; failures are logged only."""
         if mail is None or self._mailbox is None:
             return
-        self._scan_pending.discard(mail.id)
         try:
             await self._mailbox.mark_read(mail.id)
         except Exception as e:
@@ -922,19 +893,17 @@ class MemberRuntime(Member):
         """Replay unread inbox mail through the matching rules.
 
         Runs at boot (mail that arrived while the member slept) and from
-        the rescan task (deferred overflow trickle and the periodic
-        sweep). Cognitive members gate and enqueue unread mail (a
-        rejected mail is marked read now, D6.1) under two throttles
-        (docs/design/runtime.md): one
-        thread merges into one session — the thread's latest unread mail
-        is the representative, its earlier siblings are marked read as
-        covered (the session's mail-history context renders the whole
-        thread) — and overflow the bounded queue cannot take stays fully
-        unread, deterministic rules deferred with it, for the deferred
-        rescan (falling through to read-marking here used to lose the
-        mail without a session). Deterministic members run the mail rules
-        inline. Failures of the scan itself are logged and skip the scan
-        only.
+        the rescan task's slow periodic sweep (ADR 0028 决策 4). Per mail:
+        own mail is marked read without processing; a mail the cognitive
+        ``:when`` gate rejects is marked read (D6.1 延续 — it never counts
+        as wakeable); deterministic MAIL_DELIVERED rules always run (a
+        mixed member's cheap path — auto-optout deflection — fires even
+        when a cognitive rule also matches this mail) and, for
+        deterministic-only members, the mail is then marked read. A
+        gate-passed mail stays unread — read-marking is the agent's own
+        explicit act. The scan ends with one wake when wakeable unread
+        exists and no session is live. Failures of the scan itself are
+        logged and skip the scan only.
         """
         if self._mailbox is None:
             return
@@ -952,102 +921,85 @@ class MemberRuntime(Member):
             and self._cognitive_rule is not None
             and self._cognitive_rule.on is EventType.MAIL_DELIVERED
         )
-        # Merge candidates: own mail is read without processing, and a
-        # mail a previous scan enqueued still belongs to its session —
-        # neither takes part in thread merging.
-        candidates = [
-            mail
-            for mail in unread
-            if mail.from_address != self.address and mail.id not in self._scan_pending
-        ]
-        merged = self._merged_thread_ids(candidates) if cognitive_scan else set()
-        dropped = False
         for mail in unread:
             if mail.from_address == self.address:
                 await self._mark_read(mail)
                 continue
-            if mail.id in self._scan_pending:
-                continue  # a previous scan's session owns this mail's read
-            cognitive_deferred = False
-            if cognitive_scan and mail.id not in merged:
-                assert self._cognitive_rule is not None
-                result = await self._enqueue_cognitive(
-                    self._cognitive_rule, mail, trigger_event=None
-                )
-                if result == "queued":
-                    cognitive_deferred = True
-                    self._scan_pending.add(mail.id)
-                elif result == "dropped":
-                    # Bounded queue full: leave the mail fully unread —
-                    # the deferred rescan picks it up once the scheduler
-                    # drains.
-                    dropped = True
-                    continue
-            # Deterministic MAIL_DELIVERED rules always run (phase F: a mixed
-            # member's cheap path — auto-optout deflection — fires even when
-            # a cognitive rule also matches this mail). Read is deferred only
-            # when a session was queued (D6.1), mirroring the live dispatch.
+            # Deterministic MAIL_DELIVERED rules always run (a mixed
+            # member's cheap path — auto-optout deflection — fires even
+            # when the cognitive gate rejects this mail).
             payload = {"mail": mail, "recipient": self._member_id}
             for rule in self._spec.rules:
                 if rule.on is EventType.MAIL_DELIVERED and rule.loop is None:
                     await self._run_rule(rule, trigger_event=None, payload=payload)
-            if not cognitive_deferred:
-                await self._mark_read(mail)
-        self._scan_deferred = dropped
+            if not cognitive_scan:
+                await self._mark_read(mail)  # deterministic member: processed → read
+        # The wake decision reuses the one wakeable-unread provider (R1):
+        # it re-reads the inbox (deterministic rules may have marked mail
+        # read), applies the gate, and marks gate-rejected mail read.
+        wake = False
+        if cognitive_scan:
+            wake = bool(await self._wakeable_unread())
+        if wake and self._scheduler is not None and self._scheduler.active_session_count == 0:
+            logger.info("member_wake", member_id=self._member_id, source="scan")
+            self._scheduler.notify_wake(None)
         if unread:
             logger.info(
                 "member_mail_unread_scanned",
                 member_id=self._member_id,
                 count=len(unread),
-                merged=len(merged),
-                deferred=dropped,
+                wake=wake,
             )
 
-    @staticmethod
-    def _merged_thread_ids(mails: list[Mail]) -> set[str]:
-        """Ids of unread mails covered by a later sibling in the same thread.
+    async def _wakeable_unread(self) -> list[Mail]:
+        """可唤醒未读 (ADR 0028 决策 5/6) — the single implementation shared
+        by the delivery admission, this scan, and the scheduler's reap
+        chain-wake comparison (R1: the three can never drift apart).
 
-        One thread = one session: the latest unread mail of a thread is the
-        representative (enqueued for the cognitive rule); every earlier
-        sibling merges into it.
+        Unread inbox mail minus own mail, gated by the cognitive rule's
+        ``:when``; a gate-rejected mail is marked read as a side effect
+        (D6.1 延续). A mailbox read failure degrades to "nothing wakeable"
+        (logged) — a transient read error must never wake a session.
         """
-        representative: dict[str, str] = {}
-        for mail in mails:  # chronological, the latest wins
-            representative[mail.thread_id] = mail.id
-        return {mail.id for mail in mails if mail.id != representative[mail.thread_id]}
+        if self._mailbox is None or self._cognitive_rule is None:
+            return []
+        try:
+            unread = await self._mailbox.unread()
+        except Exception as e:
+            logger.error(
+                "member_mail_unread_scan_failed",
+                member_id=self._member_id,
+                error=str(e),
+            )
+            return []
+        wakeable: list[Mail] = []
+        for mail in unread:
+            if mail.from_address == self.address:
+                continue
+            if self._should_respond(self._cognitive_rule, mail):
+                wakeable.append(mail)
+            else:
+                await self._mark_read(mail)
+        return wakeable
 
     async def _rescan_loop(self) -> None:
-        """The member's one background mail-rescan task (docs/design/runtime.md).
+        """The member's one background mail-rescan task (ADR 0028 决策 4).
 
-        Two cadences, never two tasks: while the last scan deferred
-        overflow (bounded queue full), poll every
-        ``_RESCAN_POLL_SECONDS`` and re-scan as soon as the scheduler
-        has queue capacity; otherwise re-scan every
-        ``mail_rescan_interval_seconds`` so live mail a full queue
-        dropped is picked up while the member runs (a boot member
-        never reboots, so there is no "next boot scan" for it). A
-        periodic sweep that itself hits a full queue flips back into
-        the drain-trickle cadence.
-
-        The scan is idempotent and LLM-free: it only enqueues sessions,
-        and ``_scan_pending`` skips mail whose session already owns the
-        read — a sweep over an empty inbox enqueues nothing.
+        One slow cadence — every ``mail_rescan_interval_seconds`` the
+        unread scan runs: shelved mail (leftover responsibility ids the
+        agent chose not to answer) gets re-evaluated, and anything a
+        crash swallowed is picked up — a boot member never reboots, so
+        there is no "next boot scan" for it. The scan is idempotent and
+        LLM-free: with no wakeable unread (or a live session) it wakes
+        nothing.
         """
         assert self._cognitive is not None
         interval = self._cognitive.config.mail_rescan_interval_seconds
-        next_sweep = time.monotonic() + interval
         while True:
-            if self._scan_deferred:
-                await asyncio.sleep(_RESCAN_POLL_SECONDS)
-            else:
-                await asyncio.sleep(max(0.0, next_sweep - time.monotonic()))
+            await asyncio.sleep(interval)
             if not self._initialized or self._scheduler is None:
                 return
-            if self._scan_deferred and not self._scheduler.has_queue_capacity:
-                continue
             await self._scan_unread_mail()
-            if not self._scan_deferred:
-                next_sweep = time.monotonic() + interval
 
     # ── Cognitive assembly (member_spec rule → LoopDriver engine) ──
 
@@ -1132,11 +1084,15 @@ class MemberRuntime(Member):
             caps.config,
             caps.memory,
             self._stage_services.session_span,
-            self._mark_read,
             self._reflection.check_trigger,
             self._reflection.note_interaction,
             self._loop_driver,
             journal,
+            # 可唤醒未读 provider (ADR 0028 决策 5/6): one implementation,
+            # read by the delivery admission, the scan, and the
+            # scheduler's reap chain-wake comparison.
+            self._wakeable_unread,
+            self._mailbox,
         )
 
     def _env(self, payload: Any) -> dict[str, Any]:

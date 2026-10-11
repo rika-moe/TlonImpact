@@ -126,7 +126,7 @@ def _make_driver(
     return driver, journal, executor, services
 
 
-async def _drive(driver: LoopDriver, session: AgentSession, mail: Mail) -> None:
+async def _drive(driver: LoopDriver, session: AgentSession) -> None:
     """Step/collect until completion (mirrors LoopDriver.process_message)."""
     while not session.is_completed:
         if session.state == SessionState.WAITING:
@@ -137,7 +137,7 @@ async def _drive(driver: LoopDriver, session: AgentSession, mail: Mail) -> None:
                 await asyncio.gather(*pending, return_exceptions=True)
                 await driver.collect_session_results(session)
         elif session.state == SessionState.ACTIVE:
-            await driver.step_session(session, mail)
+            await driver.step_session(session)
         else:
             break
 
@@ -197,7 +197,7 @@ class TestCompletionGate:
         )
         session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         executor.send_mail.assert_awaited_once()
@@ -221,7 +221,7 @@ class TestCompletionGate:
         session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
         # Round 1: the FAILed draft must never reach act's dispatch.
-        await driver.step_session(session, mail)
+        await driver.step_session(session)
         assert session.state == SessionState.ACTIVE  # not WAITING: nothing dispatched
         executor.send_mail.assert_not_awaited()
         # revise fed the feedback into context and consumed the verdict.
@@ -229,7 +229,7 @@ class TestCompletionGate:
         assert session.loop_scratch.get("critique") is None
 
         # Round 2: the revised draft is reviewed again and passes.
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         executor.send_mail.assert_awaited_once()
@@ -248,7 +248,7 @@ class TestCompletionGate:
         )
         session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         # Two thinks + exactly one critique (the completing round only).
@@ -269,7 +269,7 @@ class TestCompletionGate:
         )
         session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         # The conflict round is not completing: act's conflict reminder
@@ -286,7 +286,7 @@ class TestCompletionGate:
         )
         session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
-        await _drive(driver, session, mail)
+        await _drive(driver, session)
 
         assert session.is_completed
         executor.send_mail.assert_awaited_once()
@@ -302,7 +302,7 @@ class TestCompletionGate:
         )
         session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
 
-        await driver.step_session(session, mail)
+        await driver.step_session(session)
 
         # The silence call was blocked; the feedback is queued for the
         # next think instead.

@@ -140,7 +140,7 @@ class Distiller:
         lines = []
 
         for i, session in enumerate(sessions, 1):
-            lines.append(f"[会话 {i}] 触发：{session.trigger_content}")
+            lines.append(f"[会话 {i}] 触发语：{session.trigger_content}")
 
             for resp in session.llm_responses:
                 lines.append(f"    Agent: {resp[:200]}")
@@ -286,19 +286,20 @@ class Distiller:
 
     @staticmethod
     def fallback_claims(sessions: list[SessionProjection]) -> list[dict[str, Any]]:
-        """Mechanical claims without LLM: quote the real trigger plus the
-        session's first reply, one claim per session.
+        """Mechanical claims without LLM: quote the real trigger text plus
+        the session's first reply, one claim per session.
 
-        The projection carries the session's real trigger content, so the
-        fallback records actual user requests, never the agent's own
-        reply mistaken for user input.
+        The projection carries the session's trigger content (ADR 0028:
+        the wake template, not a user request), so the fallback records
+        the session's wake context, never the agent's own reply mistaken
+        for user input.
         """
         claims = []
         for session in sessions:
             trigger = session.trigger_content[:60]
             if not trigger:
                 continue
-            text = f"处理过请求：{trigger}"
+            text = f"处理过会话（触发语：{trigger}）"
             if session.llm_responses:
                 text += f"；回复要点：{session.llm_responses[-1][:80]}"
             claims.append({"text": text, "importance": 0.3})

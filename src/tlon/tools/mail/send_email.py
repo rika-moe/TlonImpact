@@ -20,11 +20,12 @@ class SendEmailTool(Tool):
     - ``is_complete=true``  → send the final reply and end the loop.
 
     The Agent's ReAct loop detects this tool call and declares the
-    reply mail: an explicit ``in_reply_to`` wins over the default
-    (replying to the session's trigger mail), and the engine validates
-    the reference against the agent's own mailbox — deriving
-    ``thread_id`` from the referenced mail — before publishing
-    MAIL_NEW; ``is_complete`` then decides whether the loop returns.
+    reply mail: ``to`` / ``in_reply_to`` are exactly what the model
+    declared (ADR 0028 — there is no trigger mail to default to), and
+    the engine validates the reference against the agent's own mailbox
+    — deriving ``thread_id`` from the referenced mail — before
+    publishing MAIL_NEW; ``is_complete`` then decides whether the loop
+    returns.
 
     ``endorsing`` marks the mail as an endorsement of another mail
     ("this mail helped me", issue ): the reference is validated
@@ -82,7 +83,7 @@ class SendEmailTool(Tool):
                     "in_reply_to": {
                         "type": "string",
                         "description": (
-                            "可选。被回复邮件的 id；留空则默认回复触发邮件。"
+                            "可选。被回复邮件的 id。"
                             "id 必须是你自己邮箱中真实存在的邮件（幻觉 id 会导致发送失败），"
                             "回复将并入该邮件所在的线程。"
                         ),

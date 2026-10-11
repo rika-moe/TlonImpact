@@ -7,7 +7,8 @@ effects here:
 
 - mails (``MailEffect`` -> Mail.create + MAIL_NEW event, trace-injected;
   a failure lands a postmaster-style notice in the agent's own inbox)
-- the inbox cursor advance (mark-read)
+- the inbox cursor advance (mark-read — legacy hook, unused by the engine
+  since ADR 0028; read-marking is the agent's own explicit act)
 
 The engine-side event-publish closure for tool dispatch observability
 (TOOL_EXECUTE_START) also lives here.
@@ -79,18 +80,17 @@ class EffectExecutor:
         """Send a declared mail via the event bus, injecting the trace context.
 
         Reply headers are declared by the stage: ``in_reply_to`` is the
-        model's explicit choice or the session's trigger mail, and the
-        ``thread_id`` declared alongside is only the trigger-derived
-        fallback — the thread must follow the *referenced* mail, which
-        only a mailbox read can establish (stages stay I/O-free). The
-        reference is validated against the agent's own mailbox: a mail
-        referencing an id the mailbox does not hold (typically a
-        hallucinated id) is not sent at all, instead of shipping with a
-        dangling reference. Both headers default to a fresh thread.
-        Never raises: a failure is logged and answered with a
-        postmaster-style notice in the agent's own inbox (the same
-        failure signal the delivery bounce gives), not propagated into
-        the loop.
+        model's explicit choice (ADR 0028 — no trigger-mail default), and
+        the ``thread_id`` declared alongside is only a fallback — the
+        thread must follow the *referenced* mail, which only a mailbox
+        read can establish (stages stay I/O-free). The reference is
+        validated against the agent's own mailbox: a mail referencing an
+        id the mailbox does not hold (typically a hallucinated id) is not
+        sent at all, instead of shipping with a dangling reference. Both
+        headers default to a fresh thread. Never raises: a failure is
+        logged and answered with a postmaster-style notice in the agent's
+        own inbox (the same failure signal the delivery bounce gives),
+        not propagated into the loop.
         """
         try:
             in_reply_to, thread_id = await self._resolve_reply_headers(effect)
@@ -202,11 +202,12 @@ class EffectExecutor:
             self._logger.error("mail_failure_notice_failed", exc_info=True)
 
     async def mark_mail_read(self, mail: Mail | None) -> None:
-        """Advance the inbox cursor once a mail's session has completed.
+        """Advance the inbox cursor for a mail (legacy hook).
 
-        Called on every session completion (success, error or timeout
-        alike — the mail has been processed). Never raises: a cursor
-        failure must not break session cleanup.
+        ADR 0028: read-marking is the agent's own explicit act (the
+        ``markRead`` tool); the engine no longer calls this on session
+        completion. Retained until the follow-up cleanup PR removes it.
+        Never raises: a cursor failure must not break session cleanup.
         """
         if mail is None or self._mailbox is None:
             return

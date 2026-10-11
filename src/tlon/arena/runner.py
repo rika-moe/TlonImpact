@@ -46,6 +46,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings, get_settings
 from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.mailbox import Mailbox
 from tlon.sandbox.docker_client import create_docker_client
 
 logger = get_logger(__name__)
@@ -100,6 +101,9 @@ class ArenaRun:
     error: str | None = None
     fed: list[dict[str, Any]] = field(default_factory=list)
     report_error: str | None = None
+    #: ADR 0028 过渡态：等待以「未读排空且无存活 session」为收工条件——
+    #: session 与语料不再一一对应，completed_count 只记完成的 session 数。
+    drained: bool = False
 
     @property
     def terminal(self) -> bool:
@@ -131,6 +135,7 @@ class ArenaRun:
             "time_box_seconds": self.time_box_seconds,
             "fed_count": self.fed_count,
             "completed_count": self.completed_count,
+            "drained": self.drained,
             "timed_out": self.timed_out,
             "error": self.error,
             "fed": self.fed,
@@ -166,6 +171,8 @@ class SessionJournalLike(Protocol):
     """session 完成检测的最小面（``SessionJournal`` 的结构子集）。"""
 
     async def list_completed(self) -> list[str]: ...
+
+    async def find_unfinished(self) -> list[str]: ...
 
 
 RuntimeFactory = Callable[[TlonPaths], Awaitable[IsolatedRuntime]]
@@ -427,8 +434,9 @@ class ArenaRunner:
                 raise ArenaError(f"临时成员接入失败（adopt: {adopt_result}）")
             await self._feed(runtime, run, agent_id, corpus)
 
-            # 有界等待：session 数 ≥ 喂信数，或撞全局时间盒（部分轨迹也是数据）
-            run.completed_count = await self._wait_sessions(arena_paths, run)
+            # 有界等待（ADR 0028 过渡态）：未读排空且无存活 session 即收工，
+            # 或撞全局时间盒（部分轨迹也是数据）
+            run.completed_count, run.drained = await self._wait_sessions(arena_paths, run)
             run.status = RunStatus.COLLECTING
         except Exception as e:
             run.status = RunStatus.FAILED
@@ -437,9 +445,7 @@ class ArenaRunner:
         finally:
             run.finished_at = _utc_now()
             if run.status is RunStatus.COLLECTING:
-                run.status = (
-                    RunStatus.DONE if run.completed_count >= run.fed_count else RunStatus.TIMED_OUT
-                )
+                run.status = RunStatus.DONE if run.drained else RunStatus.TIMED_OUT
             # 归档先于拆除：证据落盘后再 shutdown / GC / 删家园
             if archive_dir is not None and arena_paths is not None:
                 self._archive(run, arena_paths, archive_dir, agent_id)
@@ -494,8 +500,8 @@ class ArenaRunner:
         """Publish one MAIL_NEW per corpus mail on the isolated event bus.
 
         Each fed mail's ``{mail_id, from, subject, origin}`` is recorded on
-        the run (run.json ``fed`` 字段)——报告经 ``session_id_for`` 精确对应
-        session 文件，不靠猜。
+        the run (run.json ``fed`` 字段)——报告经 session/start 的
+        ``responsibility`` 反解 session 对应关系（ADR 0028 过渡态），不靠猜。
         """
         for item in corpus:
             mail = Mail.create(
@@ -518,17 +524,31 @@ class ArenaRunner:
         run.fed_count = len(corpus)
         logger.info("arena_corpus_fed", run_id=run.run_id, fed=run.fed_count)
 
-    async def _wait_sessions(self, arena_paths: TlonPaths, run: ArenaRun) -> int:
-        """Poll completed sessions until all fed mails finish or the time box hits."""
+    async def _wait_sessions(self, arena_paths: TlonPaths, run: ArenaRun) -> tuple[int, bool]:
+        """Poll until the member's inbox drains and no session stays live, or
+        the time box hits.
+
+        ADR 0028 过渡态：session 与语料不再一一对应（单 session 模型），
+        等待条件放宽为「未读排空且无存活 session」——agent 看过不标读是
+        合法行为，那时撞时间盒收场（部分轨迹也是数据）。排空需连续两次
+        观测成立才收工：喂信与投递是异步的，第一次轮询可能先于投递完成。
+
+        Returns:
+            (completed session count, drained) —— completed_count 只记完成
+            的 session 数，不再等于已处理语料数。
+        """
         journal = self._journal_factory(run.agent_id, arena_paths)
+        mailbox = Mailbox(arena_paths.agent_mail_dir(run.agent_id))
         deadline = self._clock() + run.time_box_seconds
         completed: list[str] = []
-        while len(completed) < run.fed_count:
+        drained_streak = 0
+        while True:
             completed = await journal.list_completed()
-            if len(completed) >= run.fed_count or self._clock() >= deadline:
-                break
+            drained = not await mailbox.unread() and not await journal.find_unfinished()
+            drained_streak = drained_streak + 1 if drained else 0
+            if drained_streak >= 2 or self._clock() >= deadline:
+                return len(completed), drained_streak >= 2
             await asyncio.sleep(self._poll_seconds)
-        return len(completed)
 
     def _archive(
         self,
