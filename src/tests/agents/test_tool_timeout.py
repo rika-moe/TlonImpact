@@ -101,6 +101,7 @@ def _make_driver(
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         pressure=ContextPressure(MagicMock(), journal, 262144),
+        is_human_sender=lambda address: True,
     )
 
 

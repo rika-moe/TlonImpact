@@ -48,6 +48,7 @@ def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         # Default context window: the threshold is never crossed here.
         pressure=ContextPressure(MagicMock(), journal, 262144),
+        is_human_sender=lambda address: True,
     )
 
 
