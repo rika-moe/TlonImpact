@@ -81,7 +81,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import get_current_trace
 from tlon.memory.manager import MemoryManager
-from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
@@ -1098,6 +1098,14 @@ class MemberRuntime(Member):
         on_complete = OnCompleteRunner(
             identity, rule, self._logger, execute_action=self._execute_action
         )
+
+        def is_human_sender(address: str) -> bool:
+            """ADR 0027: termination replies go to human senders only. The
+            known-human set is re-resolved on every call — a human's mailbox
+            is created on first delivery, so the set grows at runtime."""
+            humans = {address_for_member(h) for h in caps.tlon_paths.known_human_ids()}
+            return address in humans
+
         self._loop_driver = LoopDriver(
             identity=identity,
             rule=rule,
@@ -1118,6 +1126,7 @@ class MemberRuntime(Member):
                 (caps.config.llm.context_window if caps.config.llm else None)
                 or DEFAULT_CONTEXT_WINDOW,
             ),
+            is_human_sender=is_human_sender,
         )
         self._scheduler = SessionScheduler(
             caps.config,

@@ -10,6 +10,7 @@ and the abnormal-termination failure replies (timeout / stage error).
 import asyncio
 import contextlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -283,6 +284,7 @@ def _make_driver(
     responses: list[LLMResponse],
     tool_execute: object = None,
     edn: str = COGNITIVE_EDN,
+    is_human_sender: Callable[[str], bool] = lambda address: True,
 ) -> tuple[LoopDriver, SessionJournal, MagicMock, MagicMock]:
     spec = MemberSpec.from_edn(loads(edn))
     validate_member_spec(spec)
@@ -323,6 +325,7 @@ def _make_driver(
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         # Default context window: the threshold is never crossed here.
         pressure=ContextPressure(MagicMock(), journal, 262144),
+        is_human_sender=is_human_sender,
     )
     return driver, journal, executor, services
 
@@ -617,7 +620,7 @@ class TestSchedulerAdmission:
         assert len(ends) == 1
 
 
-# ── Abnormal termination: the sender always gets an answer ──────────────
+# ── Abnormal termination: a human sender always gets an answer (ADR 0027) ──
 
 
 class TestFailureReply:
@@ -980,6 +983,94 @@ class TestTerminationReplyOverrides:
         assert await journal.end_reason(session.id) == "until"
         executor.send_mail.assert_awaited_once()
         assert executor.send_mail.await_args.args[0].content == "想太久了，简单说。"
+
+
+class TestTerminationReplyHumanOnly:
+    """ADR 0027: termination replies go to human senders only. A session
+    triggered by a non-human sender (agent / postmaster / external
+    address) ends journaled + logged, without mail — breaking the
+    failure -> reply -> retrigger oscillation between agents."""
+
+    @staticmethod
+    def _human_only(address: str) -> bool:
+        return address == "user@tlon.internal"
+
+    @staticmethod
+    def _agent_mail() -> Mail:
+        return Mail.create(
+            from_address="other-agent@tlon.internal",
+            content="hi",
+            to=["agent1@tlon.internal"],
+        )
+
+    async def test_error_limit_suppressed_for_agent_sender(self, tmp_path: Path) -> None:
+        mail = self._agent_mail()
+        driver, journal, executor, _ = _make_driver(
+            tmp_path,
+            [RuntimeError("llm down")] * 3,
+            is_human_sender=self._human_only,
+        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert session.error_count == 3
+        # The termination is journaled exactly as before — only the mail
+        # is suppressed.
+        assert await journal.end_reason(session.id) == "until"
+        executor.send_mail.assert_not_awaited()
+
+    async def test_error_limit_sent_for_human_sender(self, tmp_path: Path) -> None:
+        mail = _mail()  # user@tlon.internal — human
+        driver, journal, executor, _ = _make_driver(
+            tmp_path,
+            [RuntimeError("llm down")] * 3,
+            is_human_sender=self._human_only,
+        )
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "until"
+        executor.send_mail.assert_awaited_once()
+        effect = executor.send_mail.await_args.args[0]
+        assert effect.to == ["user@tlon.internal"]
+        assert "错误" in effect.content
+
+    async def test_failure_reply_suppressed_for_postmaster_and_external(
+        self, tmp_path: Path
+    ) -> None:
+        driver, _, executor, _ = _make_driver(
+            tmp_path, [], is_human_sender=self._human_only
+        )
+
+        for sender in ("postmaster@tlon.internal", "notifications@github.com"):
+            mail = Mail.create(from_address=sender, content="bounce", to=["agent1@tlon.internal"])
+            await driver.send_failure_reply(mail, "timeout")
+            await driver.send_failure_reply(mail, "error")
+
+        executor.send_mail.assert_not_awaited()
+
+    async def test_hard_ceiling_suppression_skips_distill(self, tmp_path: Path) -> None:
+        """The max_iterations/max_tokens path skips even the distillation
+        LLM call when the reply would be suppressed (ADR 0027)."""
+        mail = self._agent_mail()
+        driver, journal, executor, services = _make_driver(
+            tmp_path,
+            [LLMResponse(content=f"working {i}") for i in range(10)],
+            is_human_sender=self._human_only,
+        )
+        services.distill = AsyncMock(return_value=LLMResponse(content="进展"))
+        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
+
+        await _drive(driver, session, mail)
+
+        assert session.is_completed
+        assert await journal.end_reason(session.id) == "max_iterations"
+        services.distill.assert_not_awaited()
+        executor.send_mail.assert_not_awaited()
 
 
 class TestSchedulerFailureReply:

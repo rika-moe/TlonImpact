@@ -336,7 +336,7 @@
 | `:max-tokens` | int | session 级累计 token 预算硬顶（ADR 0023；引擎无条件执行，与 `:max-iterations` 取或、先到先停；计量口径见 5.3 节） |
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
-| `:replies` | map | 可选；三条面向用户的终止回信措辞覆盖，键只允许 `:iteration-limit` / `:error` / `:timeout`，值必须是非空字符串（未知键、非字符串、空串均加载拒载）。纯数据原文使用——不求值、不渲染模板；未声明的键回落引擎内置文案（`loop_driver.py` 的三条常量） |
+| `:replies` | map | 可选；三条面向用户的终止回信措辞覆盖，键只允许 `:iteration-limit` / `:error` / `:timeout`，值必须是非空字符串（未知键、非字符串、空串均加载拒载）。纯数据原文使用——不求值、不渲染模板；未声明的键回落引擎内置文案（`loop_driver.py` 的三条常量）。终止回信只发给**人类**触发者（ADR 0027）：非人类发件人（agent、postmaster、外部地址）触发的终止只记 journal + 日志，不发信 |
 
 ### 5.1 `:sections`（`SECTION_NAMES`，8 种）
 
@@ -374,8 +374,8 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 每一步的顺序：
 
-1. **引擎硬顶（双停机线，ADR 0023）**：`iteration ≥ :max-iterations` 或 `token_usage ≥ :max-tokens` 任一到顶即直接回复触发邮件并结束会话（先到先停，`session/end` reason 分别为 `max_iterations` / `max_tokens`）——在任何 `:until` 求值之前。回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖，token 到顶复用同一措辞）。
-2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误/token 上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。
+1. **引擎硬顶（双停机线，ADR 0023）**：`iteration ≥ :max-iterations` 或 `token_usage ≥ :max-tokens` 任一到顶即结束会话（先到先停，`session/end` reason 分别为 `max_iterations` / `max_tokens`）——在任何 `:until` 求值之前。触发者是**人类**时回复触发邮件：回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖，token 到顶复用同一措辞）；非人类触发者不发信（ADR 0027），连蒸馏调用也一并跳过。
+2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误/token 上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。**以上所有终止回复都只发给人类触发者（ADR 0027）**：触发邮件的 from 是非人类（agent、postmaster、外部地址）时不发信，只照常记 `session/end` 并加一条 `termination_reply_suppressed` 日志；`:replies` 覆盖语义不受影响（人类触发时仍生效）。判定依据是 `TlonPaths.known_human_ids()`——有持久邮箱的人类 id 集合，每次发送判定实时重查。
 3. 按序解释 `:stages`；`think` 失败则本步提前返回。
 4. 若 stage 向量不含 `act`（或本轮 act 未推进迭代），引擎自行推进迭代计数，保证硬顶始终生效。
 

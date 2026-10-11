@@ -362,7 +362,8 @@ class SessionScheduler:
         self, session: AgentSession, mail: Mail | None, reason: str
     ) -> None:
         """Best-effort reply to the trigger mail's sender when a session
-        ends abnormally — the 'every mail gets an answer' contract.
+        ends abnormally — human senders only (ADR 0027); a non-human
+        trigger is logged by the driver, not answered.
 
         Never raises: the reply is courtesy; a failure here must not
         break the scheduler loop.

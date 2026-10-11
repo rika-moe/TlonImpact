@@ -532,6 +532,7 @@ class TestDriverEmergency:
             journal=journal,
             spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
             pressure=_make_pressure(journal, context_window=TEST_WINDOW),
+            is_human_sender=lambda address: True,
         )
 
         # Under the proactive threshold (no pre-step compaction), with a
