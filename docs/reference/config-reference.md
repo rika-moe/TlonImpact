@@ -4,12 +4,12 @@
 
 ## 1. agent.yaml（每 agent 配置）
 
-位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、[memory](../../src/tlon/memory) 不生效、可清理——记忆调参唯一入口是 `memory/config.json`）。
+位置：`~/.tlon/{agent_id}/config/agent.yaml`（路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `agent_config_file` 给出）。YAML 顶层是一个 `agent:` 键，其值对 [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig`（Pydantic v2 `BaseModel`）`model_validate`。未知字段被忽略（旧字段如 `proactive`、[memory](../../src/tlon/memory)、ADR 0028 退役的 `message_queue_size` / `max_concurrent_sessions` 不生效、可清理——记忆调参唯一入口是 `memory/config.json`）。
 
 ### 顶层字段
 
 <!-- BEGIN GENERATED: agent-yaml-fields-agent -->
-`AgentConfig` 字段（13 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`AgentConfig` 字段（11 个，按源码声明顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
@@ -23,8 +23,6 @@
 | `spawned_by` | `str \| None` | None |  |
 | `spawn_depth` | `int` | 0 |  |
 | `session_timeout_seconds` | `int` | 1800 |  |
-| `message_queue_size` | `int` | 100 |  |
-| `max_concurrent_sessions` | `int` | 4 |  |
 | `mail_rescan_interval_seconds` | `float` | 900.0 |  |
 <!-- END GENERATED: agent-yaml-fields-agent -->
 
@@ -34,8 +32,7 @@
 - `prototype` / `spawned_by` / `spawn_depth`：血缘审计（统一成员模型，ADR 0006）——spawn 出本成员的 agent id 与 spawn 链深度，非 spawn 为 `null` / `0`。
 - `idle_timeout_seconds`：lazy 成员空闲多少秒后睡（scale-to-zero；成员永不删除，档案归档）。
 - `session_timeout_seconds`：ACTIVE/WAITING 的会话空闲超时即取消。
-- `message_queue_size`：入站消息队列容量，溢出丢弃新消息。
-- `mail_rescan_interval_seconds`：运行中周期重扫未读邮件的间隔；被满队列丢弃、保持未读的邮件由这个重扫拾起，不用等重启。
+- `mail_rescan_interval_seconds`：慢速重扫未读邮件的间隔（ADR 0028 决策 4）——agent 搁置未处理的未读与被崩溃吞掉的投递由这个重扫兜底唤醒。
 
 ### `llm`
 
@@ -109,7 +106,6 @@ agent:
     allowed_paths:
       - /workspace
   session_timeout_seconds: 1800
-  message_queue_size: 100
 ```
 
 ## 2. 人格文件与行为规约

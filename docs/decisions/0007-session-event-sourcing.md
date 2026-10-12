@@ -10,7 +10,7 @@
 
 ## 决策
 
-每个 session 一个 append-only JSONL 事件日志，路径 `~/.tlon/{agent_id}/sessions/{session_id}.jsonl`（session_id = `{agent_id}-{mail.id}`，文件名天然安全）。日志是 session 状态的**唯一真相**，重启后重放恢复。实现为 [src/tlon/agents/session_journal.py](../../src/tlon/agents/session_journal.py) 的 `SessionJournal`，只在引擎层（`LoopDriver` / `SessionScheduler` / 装配点）使用——stage 纯度不变（`scripts/check_stage_purity.py` 的适用边界不收口）。
+每个 session 一个 append-only JSONL 事件日志，路径 `~/.tlon/{agent_id}/sessions/{session_id}.jsonl`（session_id = `{agent_id}-{uuid 前缀}`，每 session 一个全新 uuid——身份来源 2026-10 起不再由邮件 id 派生，见 ADR 0028 决策 8；文件名天然安全）。日志是 session 状态的**唯一真相**，重启后重放恢复。实现为 [src/tlon/agents/session_journal.py](../../src/tlon/agents/session_journal.py) 的 `SessionJournal`，只在引擎层（`LoopDriver` / `SessionScheduler` / 装配点）使用——stage 纯度不变（`scripts/check_stage_purity.py` 的适用边界不收口）。
 
 每行一个事件：`{seq, ts, type, ...payload}`（seq 为文件内递增序号，ts 为 ISO8601）。
 
@@ -18,7 +18,7 @@
 
 | type | payload | 写入点 |
 |---|---|---|
-| `session/start` | session_id, agent_id, mail_id, trigger_content, carrier, context（初始全量消息列表） | `step_session` 首次构建 context 后、首个 stage 前 |
+| `session/start` | session_id, agent_id, responsibility（责任集 mail id 快照，ADR 0028——已取代原 `mail_id`）, trigger_content, carrier, context（初始全量消息列表） | `step_session` 首次构建 context 后、首个 stage 前 |
 | `context/append` | messages | `LoopDriver._apply_outcome`（context_appends 非空时） |
 | `scratch/update` | updates | `_apply_outcome` |
 | `iteration` | value（绝对值） | `_apply_outcome` 的 advance_iteration；无 act 程序的引擎代推进 |
@@ -40,14 +40,14 @@ context 仅两个写入点（初始构建、`_apply_outcome`），都先 append 
 - context = `session/start.context` + 全部 `context/append.messages` 依序拼接。
 - `_all_tool_results` = 出现在某个 `tool/collect` 的 id 对应的 `tool/result`（按收割顺序）。
 - **孤儿工具不重演**：dispatch 后无对应 collect 的工具——已落盘的 `tool/result` 保留；dispatch 了但无 result 的，恢复时补一条合成 `ToolResult(success=False, error="interrupted: process restart")` 并把该合成结果 append 进日志（自愈，二次重放看到已愈合的日志）。这些合并为恢复后首轮 collect 的输入，直接调 `LoopDriver.resume_collect`（即 `act_stage_collect` + `_apply_outcome`），不再执行工具本身。
-- 日志含 `session/end` → 视为已完成：scheduler 仅 mark_mail_read，不重跑。
+- 日志含 `session/end` → 视为已完成：绝不重跑（ADR 0028 起引擎侧不再有任何 cursor 推进——标读是 agent 自己的显式行为）。
 - **副作用不重演**：重放只重建数据字段；mails / save_interaction / on_complete 的效果不重新执行（崩溃前发没发，日志不追溯——邮件层自身的至少一次语义兜底）。
 - 读侧坏行容忍：逐行 JSON，坏行（如崩溃留下的截断尾行）log warning 跳过，与 mailbox 读侧同范式。
 - 崩溃窗口特判：状态停在 WAITING 但没有任何待收割工具（`tool/collect` 已落盘、state 事件未落盘的窗口），恢复为 ACTIVE 而不是干等到超时。
 
 ### 与 mail cursor 的关系
 
-邮件层的「未读集合 + 启动扫描」不变，仍是唤醒与补处理的唯一补偿路径；session 日志叠在其上：同一封邮件再次进入调度器时，先查日志——有 `session/end` 只推进 cursor 不重跑，有未收割工具则恢复续跑，无日志才新建 session。两层各自幂等，合起来是「至少一次投递 + 恰好一次执行效果」的近似：效果至多执行一次（已完成的绝不重跑），未完成的从最后一个一致点继续。
+邮件层的「未读集合 + 启动扫描」仍是唤醒的补偿路径；session 日志叠在其上（ADR 0028 起，调度器不再有收件队列）：boot 时先经 `find_unfinished` 扫描未闭合日志——无 `session/end` 的 session 恢复续跑（责任集从日志读回，有未收割工具则经 `resume_collect`），已完成的绝不重跑；之后才响应唤醒信号（可唤醒未读 > 0 才开新 session）。两层各自幂等，合起来是「至少一次投递 + 恰好一次执行效果」的近似：效果至多执行一次（已完成的绝不重跑），未完成的从最后一个一致点继续。
 
 ## 后果
 
@@ -63,3 +63,4 @@ context 仅两个写入点（初始构建、`_apply_outcome`），都先 append 
 - **2026-09（ADR 0017 阶段 4）**：`session/start` 的 payload 新增显式 `anchor_len` 字段（knowledge 段移出 anchor 后，重放无法再从 context 长度推导出锚界）；重放优先读显式字段，旧事件回退 `len(context)`。
 - **2026-09（ADR 0009/0017）**：「只在引擎层使用」的边界已放宽——journal 现有引擎外读者：MemoryManager 蒸馏触发（经 `SessionLogReader` Protocol 结构化注入，import-linter 约束不变）、context_builder 的 thread-recap、退休仪式。
 - **2026-10（ADR 0023）**：事件集新增 `tokens`（session 级 token 预算消耗，绝对值）；`session/end` reason 新增 `max_tokens`。上表已回填。
+- **2026-10（ADR 0028 决策 8）**：session 身份从 `{agent_id}-{mail.id}` 变为每 session 全新 uuid；`session/start` 去掉 `mail_id`、新增 `responsibility`（唤醒时的可唤醒未读 id 快照，供崩溃恢复后的链式唤醒判定读回）；引擎不再在任何路径推进收件箱 cursor（标读归 agent 显式管理，`markRead` 工具）。上文正文与事件表已回填。

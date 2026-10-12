@@ -41,7 +41,7 @@
 
 ### 无工作者模型
 
-`MemberRuntime` 的规则派发全部发生在 EventBus 的派发上下文里（总线已经隔离了处理器异常），认知工作只是入队，由调度器的主循环 task 消费。这带来两个性质：一是成员不在派发上下文里跑长任务，派发慢的代价由有界队列的背压吸收而不是拖垮总线；二是关闭语义收敛——`shutdown` 依次停掉成员的后台 task 与认知循环（重扫、调度器主循环、进行中的反思，全部 cancel + await），再退订、关工具，不留游离协程。运行时里长住的 task 只有少数几类显式声明的后台工作：每成员的调度器主循环、邮件重扫、反思。
+`MemberRuntime` 的规则派发全部发生在 EventBus 的派发上下文里（总线已经隔离了处理器异常），认知工作只是给调度器置一个唤醒信号（`notify_wake`，纯信号无载荷），由调度器的主循环 task 消费。这带来两个性质：一是成员不在派发上下文里跑长任务，认知路径在派发上下文里只做门控求值与置位，总线不会被认知工作拖住；二是关闭语义收敛——`shutdown` 依次停掉成员的后台 task 与认知循环（重扫、调度器主循环、进行中的反思，全部 cancel + await），再退订、关工具，不留游离协程。运行时里长住的 task 只有少数几类显式声明的后台工作：每成员的调度器主循环、邮件重扫、反思。
 
 ### 运行时不做什么
 
@@ -57,9 +57,9 @@
 认知成员的处理链路是五个组件的接力，每个组件只做一件事、各有一个独立的变更理由：
 
 ```
-MAIL_DELIVERED → MemberRuntime（:when 门控、入队）
-  → SessionScheduler（每成员主循环、有界队列、会话回收）
-    → AgentSession（一邮件一会话）
+MAIL_DELIVERED → MemberRuntime（:when 门控、唤醒信号）
+  → SessionScheduler（每成员主循环、单 session、责任集与链式唤醒）
+    → AgentSession（一次唤醒一个会话，责任集 = 可唤醒未读快照）
       → LoopDriver（逐步推进；_apply_outcome 是唯一状态变更点）
         → stages（think/plan/critique/revise/act，纯函数）
         → EffectExecutor（执行 StageOutcome 声明的外部效果）
@@ -67,28 +67,29 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、入队）
 
 ### SessionScheduler：每成员一个主循环
 
-为什么把循环拆成调度器、驱动器、stage、执行器四层，而不是一个大循环函数：每一层各有一个独立的变更理由。调度器的变更理由是"会话生命周期策略"（超时、回收、背压）；驱动器的是"循环语义"（stage 顺序、终止判定）；stage 的是"单步认知内容"；执行器的是"效果怎么落地"。旧 `Agent` god class 的教训是这四类变化搅在一起，任何一处改动都要通读全部。拆开之后，每层对上只暴露声明（Outcome）或委托（闭包），对下只认能力——这也使 ADR 0004 的纯度检查有一个清晰的适用边界（`stages/` 目录）。
+为什么把循环拆成调度器、驱动器、stage、执行器四层，而不是一个大循环函数：每一层各有一个独立的变更理由。调度器的变更理由是"会话生命周期策略"（超时、回收、唤醒准入）；驱动器的是"循环语义"（stage 顺序、终止判定）；stage 的是"单步认知内容"；执行器的是"效果怎么落地"。旧 `Agent` god class 的教训是这四类变化搅在一起，任何一处改动都要通读全部。拆开之后，每层对上只暴露声明（Outcome）或委托（闭包），对下只认能力——这也使 ADR 0004 的纯度检查有一个清晰的适用边界（`stages/` 目录）。
 
-[agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的 `SessionScheduler` 拥有认知成员的连续主循环 task，做四件事：
+[agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的 `SessionScheduler` 拥有认知成员的连续主循环 task。它是收件箱驱动的**单 session 模型**（ADR 0028）：一个认知成员同一时刻至多一个存活 session，邮箱是唯一的队列——调度器没有收件队列，只有一句话的准入规则：*无存活 session 且可唤醒未读 > 0 → 开一个 session*。它做四件事：
 
-1. **有界收件队列**。入队走 `enqueue` 的 `put_nowait`，队列满（`config.message_queue_size`）返回 False——宁可丢新邮件也不阻塞 EventBus 的派发上下文。丢的是"新事件的拷贝"：邮件在磁盘收件箱里仍保持未读，下次启动扫描会补回来（见「唤醒与补偿」）。
-2. **一邮件一会话**。每封邮件排成一个 `AgentSession`（[agents/session.py](../../src/tlon/agents/session.py)）；一个成员可以同时有多个进行中的会话。会话有 ACTIVE / WAITING / COMPLETED 三态，超时（`session_timeout_seconds`）的会话被判卡死并强制完成。
-3. **逐轮推进**。ACTIVE 会话调 `LoopDriver.step_session`，WAITING 会话调 `collect_session_results` 收割后台工具结果；完成的会话取消残留后台任务、推进收件箱 cursor、回收。
-4. **状态派生而非回调**。成员的整体状态（THINKING/ACTIVE、空闲秒数）在读取时从会话集合派生，调度器从不回调宿主。这消灭了 MemberRuntime 与调度器之间的双向引用，也让"状态"永远与会话事实一致，不存在需要补偿的缓存。
+1. **边缘触发的唤醒准入**。`notify_wake` 是纯信号（`asyncio.Event`，无载荷）：投递路径、boot/周期扫描、收割时的链式唤醒三个来源都只会置位。主循环看到置位后先清位、再经注入的 `wakeable_unread` provider 重读邮箱——陈旧唤醒（邮件已被读走）自然空转一圈，并发投递被 Event 的幂等置位去重。provider 是 MemberRuntime 的「可唤醒未读」唯一实现（未读减去自己发的、减去门控拒绝的——拒绝的顺手标读），投递准入、扫描、链式唤醒判定三处共用，语义不会漂移。
+2. **责任集与会话开启**。准入通过时，provider 的这份快照同时成为新 session 的责任集与触发语素材（一次读取，两处使用）：触发语是固定模板「你有 N 封未读邮件」（N = 快照大小），session id 是全新 uuid。责任集 id 列表随 `session/start` 事件持久化进 journal——崩溃恢复后链式唤醒判定不丢。
+3. **逐轮推进与回收**。存活会话调 `LoopDriver.step_session`（ACTIVE）或 `collect_session_results`（WAITING）推进；超时（`session_timeout_seconds`）或 stage 未捕获异常的会话被判终止，先给责任集内的人类发件人发失败通知（ADR 0027，锚点经 ADR 0028 决策 7 修订），再落 `session/end` 回收。完成的会话取消残留后台任务、喂反思计数与批量蒸馏触发（ADR 0017）。
+4. **链式唤醒与热循环防护**。收割时再用同一 provider 读一次可唤醒未读：出现责任集**之外**的新 id → 立即置位唤醒下一个 session；只剩责任集内的遗留 id（agent 看过、选择搁置的邮件）→ 不立即重醒，交给慢速 rescan。无此防护，「显式标读 + 允许搁置」与链式唤醒会组合出烧 token 的死循环（ADR 0028 决策 5）。
+5. **状态派生而非回调**。成员的整体状态（THINKING/ACTIVE、空闲秒数）在读取时从存活会话派生，调度器从不回调宿主。这消灭了 MemberRuntime 与调度器之间的双向引用，也让"状态"永远与会话事实一致，不存在需要补偿的缓存。
 
 调度器自身跑在注入的能力之上（config、memory、trace/mail/reflection 委托、LoopDriver），不持有对 MemberRuntime 的反向引用——这是从旧 `Agent` god class 拆解时定下的规矩：组件只认能力，不认宿主。
 
 ### AgentSession：会话即状态容器
 
-`AgentSession` 是一封邮件触发的完整工作上下文：对话 context、迭代与错误计数、响应链、工具结果、后台任务句柄，以及 `loop_scratch`——stage 间共享的会话内草稿板（plan 文本、critique 结论等）。草稿板由引擎持有，DSL 只能经 stage 条件谓词读它：它是引擎内部状态，不是程序可写的内容。
+`AgentSession` 是一次唤醒的完整工作上下文：对话 context、迭代与错误计数、响应链、工具结果、后台任务句柄、责任集（唤醒时的可唤醒未读快照），以及 `loop_scratch`——stage 间共享的会话内草稿板（plan 文本、critique 结论等）。草稿板由引擎持有，DSL 只能经 stage 条件谓词读它：它是引擎内部状态，不是程序可写的内容。
 
-会话的粒度是**一封邮件**而不是一个线程：会话 id 由邮件 id 派生（`{agent_id}-{mail.id}`）。邮件是系统里天然的工作单元——持久、有唯一 id、有明确的处理完成时点（标读）；线程归由由邮件头（`in_reply_to` / `thread_id`）在内容层表达，会话结构不必承担它。这让多封邮件天然并行成多个会话，而"同一话题的多轮往来"由 context builder 读邮箱历史还原，不需要长生命周期会话。
+会话的粒度是**一次唤醒**而不是一封邮件（ADR 0028）：会话 id 是全新 uuid，触发内容是固定模板「你有 N 封未读邮件」——不含邮件本体，跨 session 的前缀缓存因此逐字节稳定；邮件本体经 `checkInbox` 工具结果以 append-only 方式进入上下文。线程归属由邮件头（`in_reply_to` / `thread_id`）在内容层表达，会话结构不必承担它；"同一话题的多轮往来"由 context builder 读邮箱历史还原，不需要长生命周期会话。
 
 ### Session 事件溯源
 
 会话状态的**唯一真相**是 append-only 事件日志（ADR 0007，[agents/session_journal.py](../../src/tlon/agents/session_journal.py) 的 `SessionJournal`）：每个 session 一个 JSONL 文件（`~/.tlon/{agent_id}/sessions/{session_id}.jsonl`），每行一个 `{seq, ts, type, ...payload}` 事件，覆盖 session 从生到死的全部状态变更——初始 context、每次 context 追加、scratch 写入、迭代/错误计数、LLM 响应、工具 dispatch/result/collect、状态迁移、终止原因。
 
-引擎遵守一条不变式：**模型可见 ⇒ 已入日志**。context 只有两个写入点（首次构建、`_apply_outcome`），都先写日志成功再改内存；写失败抛异常、不动内存。因此进程重启后调度器可以纯重放恢复会话：邮件再次进入调度时先查日志——含 `session/end` 的只推进收件箱 cursor 不重跑；有孤儿工具 dispatch 的（已落盘的结果保留，没结果的补一条合成 interrupted 结果并自愈进日志）经 `resume_collect` 续跑；无日志才新建。副作用（发信、记忆保存、on-complete 动作）绝不重演。journal 只在引擎层（LoopDriver / SessionScheduler / 装配点）出现，stage 纯度边界不变。
+引擎遵守一条不变式：**模型可见 ⇒ 已入日志**。context 只有两个写入点（首次构建、`_apply_outcome`），都先写日志成功再改内存；写失败抛异常、不动内存。因此进程重启后调度器可以纯重放恢复会话：主循环起跑先经 `find_unfinished` 扫未闭合日志——无 `session/end` 的 session 恢复续跑（责任集 id 从日志读回、经邮箱解析回邮件对象；有孤儿工具 dispatch 的——已落盘的结果保留，没结果的补一条合成 interrupted 结果并自愈进日志——经 `resume_collect` 续跑），已完成的绝不重跑；恢复优先于任何新唤醒。副作用（发信、on-complete 动作）绝不重演。journal 只在引擎层（LoopDriver / SessionScheduler / 装配点）出现，stage 纯度边界不变。
 
 ### 上下文压力管理
 
@@ -124,12 +125,9 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 ### EffectExecutor：效果的唯一执行口
 
-[agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor` 执行 stage 声明的外部效果：
+[agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor` 执行 stage 声明的外部效果——**发邮件**：`MailEffect` → 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`——与人类发信汇入同一条投递管道。收件箱已读不再是引擎的效果：ADR 0028 起标读是 agent 自己的显式行为（`markRead` 工具），引擎不在任何路径代标。
 
-- **发邮件**：`MailEffect` → 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`——与人类发信汇入同一条投递管道；
-- **推进收件箱 cursor**：会话完成（成功、出错、超时不限）即标读——邮件已被处理，与处理结果无关。
-
-所有效果执行**永不抛异常**：失败只记日志。一个失败的效果不能打断循环、不能破坏会话生命周期——循环的停机保证不被外部系统的故障绑架。
+所有效果执行**永不抛异常**：失败只记日志（发信失败另落一封 postmaster 风格的失败通知到发件 agent 自己的收件箱）。一个失败的效果不能打断循环、不能破坏会话生命周期——循环的停机保证不被外部系统的故障绑架。
 
 ## effects-as-data
 
@@ -156,8 +154,8 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 ## 背压与可观测性
 
-- **背压策略全链路一致**。EventBus 的 per-subscriber 队列、调度器的邮件队列都是有界的，溢出丢新保旧、绝不阻塞总线派发；邮件侧丢弃的代价由「邮箱即队列」兜底（未读事实在磁盘上）。
-- **trace 贯穿唤醒与循环**。唤醒请求续接投递事件的 trace 树（`AgentRegistry._fulfill_wake`）；每个会话携带路由事件的 carrier，调度器每轮经 `StageServices.session_span` 重新挂上 OTel context 并开启会话 span，span 属性带 spec 的 `source_hash`——观测数据总能回答"跑的是哪一版行为"。同一 span 内还绑定 session_id 到 contextvars，后台工具任务（如 spawnAgent 的会话配额归属）据此归账。
+- **背压策略全链路一致**。EventBus 的 per-subscriber 队列是有界的，溢出丢新保旧、绝不阻塞总线派发；认知侧没有第二份内存队列——调度器无收件队列（ADR 0028），邮箱本身就是持久队列，未读事实在磁盘上。
+- **trace 贯穿唤醒与循环**。唤醒请求续接投递事件的 trace 树（`AgentRegistry._fulfill_wake`）；每个会话携带唤醒信号的 carrier，调度器每轮经 `StageServices.session_span` 重新挂上 OTel context 并开启会话 span，span 属性带 spec 的 `source_hash`——观测数据总能回答"跑的是哪一版行为"。同一 span 内还绑定 session_id 到 contextvars，后台工具任务（如 spawnAgent 的会话配额归属）据此归账。
 - **决策即事件**。生命周期请求、邮件发送、工具分发起点（`TOOL_EXECUTE_START`）都是总线上的显式事件，运行时没有"隐式发生"的状态跃迁；这是机制可审计（ADR 0003）在运行时的投影。
 
 ## 唤醒与补偿
@@ -166,9 +164,9 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 - **唤醒资格从 spec 派生**。`AgentRegistry._on_mail_delivered` 看到 `MAIL_DELIVERED` 时，若收件人已注册、未运行、未在唤醒中，且 spec 声明了 `:on :mail-delivered`，就发布 `AGENT_START_REQUEST{reason="wake"}`，并续接投递事件的 trace 树。这是机制而非策略——唤醒资格本质是 spec 声明的订阅事实（见 [docs/decisions/0003-mechanism-vs-policy.md](../decisions/0003-mechanism-vs-policy.md)）。
 - **唤醒不带载荷**。请求里只有 agent_id 与 reason；邮件早已持久化在收件箱，被唤醒的成员启动时由 `MemberRuntime._scan_unread_mail` 重放全部未读邮件。邮箱即队列，不存在"丢给睡眠者的消息"。
-- **已读语义（D6.1）**：被 `:when` 门控拒绝的邮件立即标读（杜绝"永不回复 → 永远未读"的卡死）；排入认知会话的邮件延迟到会话完成才标读；被满队列丢弃的邮件保持未读，等下次启动扫描补处理。自己发给自己的邮件（own-mail guard：抄送自寄、误投自寄）直接标读、永不处理。
+- **已读语义（ADR 0028）**：被 `:when` 门控拒绝的邮件立即标读（D6.1——杜绝"永不回复 → 永远未读"的卡死，且不计入可唤醒未读）；通过门控的邮件保持未读——**标读是 agent 自己的显式行为**（`markRead` 工具），「看到了不管、不标读」是合法行为。运行中的 session 从不被打扰：送达时若有存活 session，邮件躺在收件箱里等下一次唤醒。自己发给自己的邮件（own-mail guard：抄送自寄、误投自寄）直接标读、永不处理。
 
-整套设计把"恰好一次"降格为"至少一次 + 幂等处理"：未读集合是磁盘上的事实，运行时队列只是它的易失投影。唤醒、队列溢出、进程重启走的是同一条补偿路径——启动扫描。补偿路径唯一是有意的：每一种"邮件可能被遗漏"的场景如果各有专属的重放逻辑，重复处理的语义就要逐路径论证；收敛到一条扫描路径后，需要论证的只有"扫描是幂等的"这一件事。
+整套设计把"恰好一次"降格为"至少一次 + 幂等处理"：未读集合是磁盘上的事实，唤醒信号（`asyncio.Event`）只是它的易失投影，可丢、可重复——投递送达、链式唤醒、boot 扫描之外，还有一条慢速兜底：每个认知成员的后台重扫任务按 `mail_rescan_interval_seconds`（默认 15 分钟，ADR 0028 决策 4）周期重扫未读，拾起被搁置的遗留未读与被崩溃吞掉的投递。补偿路径收敛为一条扫描是有意的：每一种"邮件可能被遗漏"的场景如果各有专属的重放逻辑，重复处理的语义就要逐路径论证；收敛到一条扫描路径后，需要论证的只有"扫描是幂等的"这一件事。
 
 ## 反思与完成
 
