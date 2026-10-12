@@ -114,7 +114,7 @@
 - 纯表达式（纯度约束见第 3 节），环境为 `{msg, event, self}`：`msg` 是事件负载中的 `Mail`（非邮件事件为 `nil`），`event` 是事件负载 map，`self` 是 `{"id" ..., "name" ..., "address" ...}`（address 由宿主预派生注入，ADR 0018 §3——mail 谓词据此解析"我"）。
 - 求值失败（含 fuel 耗尽）安全降级为"不命中"（`MemberRuntime._should_respond`）。
 - 确定规则：`:when` 为假则跳过整条规则的 `:actions`。
-- 认知规则：`:when` 为假则不入队会话，且该邮件立即标记已读（D6.1）。
+- 认知规则：`:when` 为假则不唤醒会话，且该邮件立即标记已读（D6.1）；为真则邮件保持未读、计入可唤醒未读（ADR 0028）。
 
 ### 2.3 命中后的执行顺序
 
@@ -336,25 +336,25 @@
 | `:max-tokens` | int | session 级累计 token 预算硬顶（ADR 0023；引擎无条件执行，与 `:max-iterations` 取或、先到先停；计量口径见 5.3 节） |
 | `:reflect` | map | `{:enabled bool :interval-minutes int}`——周期性后台记忆审计（`ReflectionEngine`：间隔 + 最少完成会话数双门控，对记忆做整理/增删） |
 | `:fuel` | int | 可选；约束 `:until` 与 stage `:if` 的求值，默认 1000，上限 10000 |
-| `:replies` | map | 可选；三条面向用户的终止回信措辞覆盖，键只允许 `:iteration-limit` / `:error` / `:timeout`，值必须是非空字符串（未知键、非字符串、空串均加载拒载）。纯数据原文使用——不求值、不渲染模板；未声明的键回落引擎内置文案（`loop_driver.py` 的三条常量）。终止回信只发给**人类**触发者（ADR 0027）：非人类发件人（agent、postmaster、外部地址）触发的终止只记 journal + 日志，不发信 |
+| `:replies` | map | 可选；三条面向用户的终止回信措辞覆盖，键只允许 `:iteration-limit` / `:error` / `:timeout`，值必须是非空字符串（未知键、非字符串、空串均加载拒载）。纯数据原文使用——不求值、不渲染模板；未声明的键回落引擎内置文案（`loop_driver.py` 的三条常量）。终止回信只发给责任集内的**人类**发件人（ADR 0027，锚点经 ADR 0028 决策 7 修订）：责任集内的非人类发件人（agent、postmaster、外部地址）只记 journal + 日志，不发信 |
 
 ### 5.1 `:sections`（`SECTION_NAMES`，8 种）
 
-`persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 追加到对话上下文（`ContextBuilder`）。section 名不得重复。**位置语义例外（ADR 0017 阶段 4，2026-09-17）**：`knowledge` 不随向量顺序落位——它固定注入为整个 context 的最后一条（当前邮件之后、压缩锚点 anchor 之外），声明只控制「是否包含」；其余段按向量顺序追加。
+`persona` 与 `protocol` 进 system prompt；`knowledge`、`lessons`、`skills`、`current-task`、`thread-recap` 与 `mail-history` 追加到对话上下文（`ContextBuilder`）。section 名不得重复。**位置语义例外（ADR 0017 阶段 4，2026-09-17）**：`knowledge` 不随向量顺序落位——它固定注入为整个 context 的最后一条（触发语之后、压缩锚点 anchor 之外），声明只控制「是否包含」；其余段按向量顺序追加。
 
-**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`mail-history`）居中，每会话必变的段（`thread-recap`）与当前邮件靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history F R) (thread-recap)`（`knowledge` 的声明位置是历史惯例，注入位置恒为最末）；当前邮件永远由引擎追加在最后（knowledge 之前）。两段式 `(mail-history F R)`（ADR 0025）让 mail-history 内部的前段（冻结段 = 最早 F 封）写满后逐字节稳定——新邮件到来时前缀断裂点收缩到滑动段的 R 封内。
+**排序原则（缓存友好）**：LLM 供应商按请求前缀逐字节命中缓存定价，断裂点之后的内容全部按未命中计费。因此 section 向量应按变动频率排序——几乎不变的段（`lessons`、`skills`）靠前，尾部增长的段（`mail-history`）居中，每会话必变的段（`thread-recap`）与触发语靠后。内置原型统一为 `(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history F R) (thread-recap)`（`knowledge` 的声明位置是历史惯例，注入位置恒为最末）；触发语永远由引擎追加在最后（knowledge 之前）——ADR 0028 起它是固定唤醒模板「你有 N 封未读邮件」，不含邮件本体。两段式 `(mail-history F R)`（ADR 0025）让 mail-history 内部的前段（冻结段 = 最早 F 封）写满后逐字节稳定——新邮件到来时前缀断裂点收缩到滑动段的 R 封内。
 
 | section | 参数 | 语义 |
 |---|---|---|
 | `(persona)` | 无 | 成员人格文件（SOUL/IDENTITY/RULES 等）进 system prompt |
 | `(protocol)` | 无 | 协作协议文本进 system prompt |
-| `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息；**固定注入为 context 最后一条**（当前邮件之后、anchor 之外，ADR 0017 阶段 4）——声明位置不决定注入位置，只决定是否注入 |
+| `(knowledge)` | 无 | 记忆块拼成 `[已知信息]` 用户消息；**固定注入为 context 最后一条**（触发语之后、anchor 之外，ADR 0017 阶段 4）——声明位置不决定注入位置，只决定是否注入；JIT 检索的查询是责任集各邮件的 subject+正文拼接（ADR 0028） |
 | `(lessons)` | 无 | 成员继承的 `config/LESSONS.md`（退休成员蒸馏、随原型包传递，见 [design/memory.md](../design/memory.md)「退休蒸馏」）拼成 `[传承教训]` 用户消息；无该文件则跳过该 section（空态惯例同 knowledge/skills） |
 | `(skills)` | 无 | 三层 skill 目录的索引（name + description + SKILL.md 路径）拼成 `[可用技能]` 用户消息；模型用 read_file 自读正文（ADR 0010，[design/skills.md](../design/skills.md)） |
 | `(current-task)` | 无 | 当前 doing 任务（至多一条：id + 标题 + 状态 + 描述）拼成 `[当前任务]` 用户消息；无 doing 任务则跳过该 section（空态惯例同 knowledge/skills），无 paused 回退。上下文在 session 首步构建一次（anchor），任务中途变化下个 session 才反映 |
-| `(thread-recap)` | 无 | 本线程最近一个已完成 session 的简报（触发、工具调用摘要、结论）拼成 `[本线程上一轮处理摘要]` 用户消息：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随线程长度膨胀；线程首轮、上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section |
+| `(thread-recap)` | 无 | 最近一个已完成 session 的简报（触发语、工具调用摘要、结论）拼成 `[最近会话摘要]` 用户消息：确定性重建自 session journal（ADR 0007），不调 LLM、不等批触发摘要；与 `mail-history` 互补——原文看邮件，简报看「我上一轮做了什么」。只覆盖最近一轮，成本不随历史膨胀；上一轮未完成（无 `session/end`）或从未跑过 session 时跳过该 section。ADR 0028 起与线程无关——session 身份不再由邮件派生，简报对象是本成员最近完成的那个 session |
 | `(mail-history n)` | 一个非负 int | 滑动窗口：取邮箱（inbox+sent 按时间正序合并）最近 n 封邮件进对话上下文 |
-| `(mail-history f r)` | 两个非负 int | 两段式（ADR 0025）：冻结段 = 合并时间序列表的最早 f 封（写满后逐字节稳定、永驻 prompt 前缀）+ 滑动段 = 最近 r 封；总量不足 f+r 时重叠部分按 mail id 去重只渲染一次；渲染保持时间正序（冻结段在前）。排除当前邮件与空正文邮件等规则与一段式相同 |
+| `(mail-history f r)` | 两个非负 int | 两段式（ADR 0025）：冻结段 = 合并时间序列表的最早 f 封（写满后逐字节稳定、永驻 prompt 前缀）+ 滑动段 = 最近 r 封；总量不足 f+r 时重叠部分按 mail id 去重只渲染一次；渲染保持时间正序（冻结段在前）。空正文邮件不渲染等规则与一段式相同 |
 
 ### 5.2 五个 stage（`STAGE_NAMES`）
 
@@ -363,7 +363,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
-| `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出回复邮件（显式 `to` 优先，否则回复触发邮件发件人）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
+| `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出声明的邮件（`to` / `in_reply_to` 完全是模型显式声明的值，ADR 0028——无触发邮件缺省）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
 | `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审草稿（响应链上尚未入 context 的响应，渲染为 assistant 消息）+ 评审指令；首行 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、不写 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不按 PASS 放行。失败软降级 |
 | `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |
@@ -374,8 +374,8 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 每一步的顺序：
 
-1. **引擎硬顶（双停机线，ADR 0023）**：`iteration ≥ :max-iterations` 或 `token_usage ≥ :max-tokens` 任一到顶即结束会话（先到先停，`session/end` reason 分别为 `max_iterations` / `max_tokens`）——在任何 `:until` 求值之前。触发者是**人类**时回复触发邮件：回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖，token 到顶复用同一措辞）；非人类触发者不发信（ADR 0027），连蒸馏调用也一并跳过。
-2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误/token 上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。**以上所有终止回复都只发给人类触发者（ADR 0027）**：触发邮件的 from 是非人类（agent、postmaster、外部地址）时不发信，只照常记 `session/end` 并加一条 `termination_reply_suppressed` 日志；`:replies` 覆盖语义不受影响（人类触发时仍生效）。判定依据是 `TlonPaths.known_human_ids()`——有持久邮箱的人类 id 集合，每次发送判定实时重查。
+1. **引擎硬顶（双停机线，ADR 0023）**：`iteration ≥ :max-iterations` 或 `token_usage ≥ :max-tokens` 任一到顶即结束会话（先到先停，`session/end` reason 分别为 `max_iterations` / `max_tokens`）——在任何 `:until` 求值之前。责任集内有**人类**发件人时回复：回复正文先经一次蒸馏 LLM 调用（把已完成工作浓缩成进展说明），蒸馏失败回落固定措辞"思考时间过长，请简化您的问题。"（可被 `:replies/:iteration-limit` 覆盖，token 到顶复用同一措辞）；责任集内没有人类发件人时不发信（ADR 0027），连蒸馏调用也一并跳过。
+2. **`:until` 求值**（4.2 谓词）：为真则终止——错误上限触发回复"抱歉，处理邮件时出现了错误。"（`:replies/:error` 可覆盖），否则回复"思考时间过长，请简化您的问题。"（`:replies/:iteration-limit` 可覆盖）。求值失败回退到引擎默认检查（迭代/错误/token 上限），循环必然停止。调度器侧的异常终止（会话超时 / stage 未捕获错误）回复"抱歉，处理这封邮件超时了，请稍后重试。"（`:replies/:timeout`）或错误措辞（`:replies/:error`）。**以上所有终止回复都只发给责任集内的人类发件人（ADR 0027，锚点经 ADR 0028 决策 7 修订）**：按发件人地址去重一人一封，`in_reply_to` 取该发件人在责任集内最新一封；责任集内的非人类发件人（agent、postmaster、外部地址）不发信，只照常记 `session/end` 并加一条 `termination_reply_suppressed` 日志；`:replies` 覆盖语义不受影响（有人类发件人时仍生效）。判定依据是 `TlonPaths.known_human_ids()`——有持久邮箱的人类 id 集合，每次发送判定实时重查。
 3. 按序解释 `:stages`；`think` 失败则本步提前返回。
 4. 若 stage 向量不含 `act`（或本轮 act 未推进迭代），引擎自行推进迭代计数，保证硬顶始终生效。
 
@@ -391,7 +391,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 - 规则的 `:when` 门控与全部 `:actions` form 共享同一 env（ADR 0021）：一个 form 里的 `(defn notify [x] ...)` 对后续 form 可见（先定义后使用，加载校验与运行期镜像）；函数体内的动作照常产出 `ActionRequest` 并被收集。
 - 每个动作 form 的求值结果是请求数据：`start-all` 返回请求列表，`while`/`map` 可收集多个请求；非 `ActionRequest` 的值被忽略。
 - 求值失败（含 fuel 耗尽）跳过本条规则，不影响其他规则与总线分发。
-- 邮件语义（`MemberRuntime`）：自己发出的邮件永不处理并立即标记已读；被 `:when` 拒绝的邮件也标记已读；确定规则命中即读；队列满丢弃的邮件保持未读，留待下次启动时的未读补救扫描（`_scan_unread_mail`）重放。
+- 邮件语义（`MemberRuntime`）：自己发出的邮件永不处理并立即标记已读；被 `:when` 拒绝的邮件也标记已读；确定规则命中即读；认知规则门控通过的邮件保持未读（标读归 agent 显式管理，ADR 0028），由 boot 与慢速周期重扫（`_scan_unread_mail`）兜底重放。
 
 ## 7. `:parameters` 模板（写侧专属）
 

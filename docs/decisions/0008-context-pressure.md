@@ -1,6 +1,6 @@
 # ADR 0008：上下文压力管理——存储不动，视图分级减压
 
-状态：已接受（2026-08-22，方向讨论拍板）；2026-09-17 经 ADR 0017（阶段 4）修订 anchor 语义：`(knowledge)` 段移出 anchor——knowledge 消息固定为整个 context 的最后一条（当前邮件之后），anchor 只含其余 sections + 触发邮件，`session/start` 事件显式携带 `anchor_len` 字段
+状态：已接受（2026-08-22，方向讨论拍板）；2026-09-17 经 ADR 0017（阶段 4）修订 anchor 语义：`(knowledge)` 段移出 anchor——knowledge 消息固定为整个 context 的最后一条（触发消息之后），anchor 只含其余 sections + 触发消息（ADR 0028 起为固定唤醒模板「你有 N 封未读邮件」，不再含邮件本体），`session/start` 事件显式携带 `anchor_len` 字段
 
 ## 背景
 
@@ -11,7 +11,7 @@
 1. **存储与取回分离**：compact 只改发给模型的视图，绝不动持久层（Letta「eviction ≠ deletion」、OpenAI Agents SDK 取回侧裁剪）。Tlon 的 session 事件溯源（ADR 0007）天然满足——journal 是全量真相，compact 只是 context 的一次变换。
 2. **减压分梯度**：tool result 清理是最便宜最安全的第一级（Claude Code）；LLM 摘要是最后手段（compact 本身是一次大请求）。
 3. **token 估算 + 显式阈值**，触发点在每次 LLM 调用前。
-4. **锚点保留**：任务定义（对 Tlon = 初始构建块，含触发邮件原文）永远保留；tool_call 与其 result 消息永不拆对。
+4. **锚点保留**：任务定义（对 Tlon = 初始构建块，含触发语消息）永远保留；tool_call 与其 result 消息永不拆对。
 
 ## 决策
 
@@ -36,7 +36,7 @@ threshold = max(context_window - 40_000, context_window * 0.8)
 1. **prune（零 LLM 成本）**：保留窗口之外的所有 `role=tool` 消息内容原位替换为短占位符（保留 `tool_call_id`，配对不破）。重新估算，达标即停。
 2. **summary（LLM 兜底）**：把「锚点之后、保留窗口之前」的中段消息摘要成一条 `[前文摘要]` user 消息。running summary：若中段开头已有上一轮的 `[前文摘要]` 消息，其内容并入本次摘要输入，生成的新摘要原位替换——摘要滚动更新，不无限堆叠。
 
-锚点 = 初始构建块（lessons + skills + current-task + mail-history + thread-recap + 触发邮件，`session/start` 事件显式携带的 `anchor_len`，记为 session 的 `anchor_len`）：永不压缩、永不删除。**修订（ADR 0017 阶段 4，2026-09-17）**：`(knowledge)` 段不再属于锚点——它曾冻结进 anchor（本段原文「knowledge + mail-history + 触发邮件」），记忆越积 anchor 越大，超阈值时中段为空、压缩无路可退；现 knowledge 消息固定为整个 context 的最后一条（当前邮件之后），是普通可压缩中段。旧日志没有 `anchor_len` 字段，重放时回退为 `session/start.context` 全长（旧行为）。保留窗口 = 最近 20 条消息，且不切断 tool_call/tool 配对（窗口首条若是 tool 消息则向前扩展到其 assistant 消息）。
+锚点 = 初始构建块（lessons + skills + current-task + mail-history + thread-recap + 触发语消息，`session/start` 事件显式携带的 `anchor_len`，记为 session 的 `anchor_len`）：永不压缩、永不删除。**修订（ADR 0017 阶段 4，2026-09-17）**：`(knowledge)` 段不再属于锚点——它曾冻结进 anchor（本段原文「knowledge + mail-history + 触发邮件」），记忆越积 anchor 越大，超阈值时中段为空、压缩无路可退；现 knowledge 消息固定为整个 context 的最后一条（触发语之后），是普通可压缩中段。旧日志没有 `anchor_len` 字段，重放时回退为 `session/start.context` 全长（旧行为）。保留窗口 = 最近 20 条消息，且不切断 tool_call/tool 配对（窗口首条若是 tool 消息则向前扩展到其 assistant 消息）。**修订（ADR 0028，2026-10-11）**：触发邮件不复存在——锚点尾部的「当前邮件」消息改为固定唤醒模板「你有 N 封未读邮件」（不含邮件本体），邮件本体经 `checkInbox` 工具结果进入上下文。
 
 ### 落日志（不变式不破）
 

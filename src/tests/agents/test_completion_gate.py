@@ -101,7 +101,6 @@ def _make_driver(
     executor = MagicMock()
     executor.send_mail = AsyncMock()
     executor.publish = AsyncMock()
-    executor.mark_mail_read = AsyncMock()
 
     tool_executor = MagicMock()
     tool_executor.execute = AsyncMock(side_effect=_send_tool)

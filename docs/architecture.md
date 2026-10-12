@@ -115,21 +115,20 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 2. **投递落盘**。`MailDelivery`（[organization/mail/delivery.py](../src/tlon/organization/mail/delivery.py)）订阅 `MAIL_NEW`，对每封邮件：to+cc 去重后用 [organization/mail/resolver.py](../src/tlon/organization/mail/resolver.py) 的 `RecipientResolver` 把每个地址解析成成员；写入发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 [base/paths.py](../src/tlon/base/paths.py) 的 `TlonPaths.member_mail_dir` 解析）；最后按收件人逐个发布 `MAIL_DELIVERED`。进程内幂等：重复投递同一 `mail_id` 不会写第二份副本。解析不到任何人的地址（社会无组地址——all@ 已退役，ADR 0024 / #102）会收到一封来自 `postmaster@tlon.internal` 的退信，落在发件人收件箱里——LLM 发件人可以自己读退信改地址。
 
-3. **收件人是 agent：唤醒或入队**。
+3. **收件人是 agent：唤醒或置信号**。
    - 若收件人未在运行，`AgentRegistry._on_mail_delivered`（[agents/agent_registry.py](../src/tlon/agents/agent_registry.py)）检查其 spec 是否声明了 `:on :mail-delivered`，是则发布 `AGENT_START_REQUEST{reason="wake"}` 将其唤醒。唤醒不带触发事件——邮件已持久化在收件箱，成员启动时自行扫描未读邮件。
-   - 若收件人在运行，`MemberRuntime`（[agents/member_runtime.py](../src/tlon/agents/member_runtime.py)）收到 `MAIL_DELIVERED`：先过 `:when` 门控，命中认知规则则把邮件排入 `SessionScheduler` 的有界队列（队列满时丢新邮件、保持未读，由重扫任务补拾）；自己发给自己的邮件直接标记已读、永不处理。
-   - 启动未读扫描对积压邮件做节流：同一 thread 的未读合并为一个 session（线程内最新一封为代表，更早的标记已读、由该 session 的 mail-history 上下文覆盖）；有界队列装不下的溢出邮件保持完全未读（确定性规则也一并推迟），由重扫在调度器腾出队列容量后分批补拾，直到无延期为止——积压只排队，不丢信。
-   - 每个认知成员有且只有一个后台重扫任务，两种节拍合一：有延期时按 5 秒轮询、随调度器排空分批补拾溢出；无延期时按 `mail_rescan_interval_seconds`（默认 15 分钟）周期重扫未读。boot 成员（`:on :boot`）从不睡眠、从不重新 boot，live 路径被丢的邮件靠这个周期重扫拾起，不用等进程重启。扫描本身幂等且不调 LLM：只 enqueue，`_scan_pending` 跳过已有 session 认领的邮件，无未读时什么都不做。
+   - 若收件人在运行，`MemberRuntime`（[agents/member_runtime.py](../src/tlon/agents/member_runtime.py)）收到 `MAIL_DELIVERED`：先过 `:when` 门控——拒绝的邮件立即标读、永不计入唤醒；通过的邮件保持未读（标读是 agent 自己的显式行为，`markRead` 工具），无存活 session 时给调度器置唤醒信号，有存活 session 则不打扰——邮件躺在收件箱里等链式唤醒或重扫。自己发给自己的邮件直接标记已读、永不处理。
+   - 每个认知成员有且只有一个后台重扫任务，按 `mail_rescan_interval_seconds`（默认 15 分钟，ADR 0028 决策 4）的慢速节拍周期重扫未读——搁置未读与漏网来信的兜底唤醒。boot 成员（`:on :boot`）从不睡眠、从不重新 boot，live 路径遗漏的邮件靠这个周期重扫拾起，不用等进程重启。扫描本身幂等且不调 LLM：只重放未读邮件过规则与门控，无未读时什么都不做。
 
-4. **认知循环**。`SessionScheduler`（[agents/scheduler.py](../src/tlon/agents/scheduler.py)）把队列里的邮件排成 `AgentSession`（[agents/session.py](../src/tlon/agents/session.py)），交给 `LoopDriver`（[agents/loop_driver.py](../src/tlon/agents/loop_driver.py)）逐步推进：think / plan / act / critique / revise 五个 stage（[agents/stages/](../src/tlon/agents/stages) 下各文件）是纯函数 `Session × StageServices → StageOutcome`，循环有 `max_iterations` 与 `max_tokens` 双硬顶（ADR 0023，任一到顶即停），耗尽时不丢中间成果：引擎用一次额外的 LLM 调用把 session 已完成的工作蒸馏成给发件人的回信（说明做了什么、做到哪、为何没做完），蒸馏失败则回落固定文案。stage 声明的外部效果由 `EffectExecutor` 真正执行：发邮件（回到第 2 步的 `MAIL_NEW`，形成 agent 间多轮通信）、保存交互记忆、推进收件箱 cursor。stage 跑哪些、以什么顺序跑，由 spec 里 loop 规则的 `stages` 向量决定；`act` 只声明工具分发列表，并发（每个工具调用一个后台 task）是引擎的。
+4. **认知循环**。`SessionScheduler`（[agents/scheduler.py](../src/tlon/agents/scheduler.py)）被唤醒信号触发后重读可唤醒未读，以这份快照为责任集开一个 `AgentSession`（[agents/session.py](../src/tlon/agents/session.py)，触发语是固定模板「你有 N 封未读邮件」），交给 `LoopDriver`（[agents/loop_driver.py](../src/tlon/agents/loop_driver.py)）逐步推进：think / plan / act / critique / revise 五个 stage（[agents/stages/](../src/tlon/agents/stages) 下各文件）是纯函数 `Session × StageServices → StageOutcome`，循环有 `max_iterations` 与 `max_tokens` 双硬顶（ADR 0023，任一到顶即停），耗尽时不丢中间成果：引擎用一次额外的 LLM 调用把 session 已完成的工作蒸馏成给发件人的回信（说明做了什么、做到哪、为何没做完），蒸馏失败则回落固定文案。stage 声明的外部效果由 `EffectExecutor` 真正执行：发邮件（回到第 2 步的 `MAIL_NEW`，形成 agent 间多轮通信）。stage 跑哪些、以什么顺序跑，由 spec 里 loop 规则的 `stages` 向量决定；`act` 只声明工具分发列表，并发（每个工具调用一个后台 task）是引擎的。
 
-   一个 agent 同时可以有多个进行中的 session（多封邮件、多个线程），上限 `max_concurrent_sessions`（默认 4），超出的邮件留在有界队列里等 session 完成再逐个补位；`SessionScheduler` 负责逐个推进、回收完成与过期的 session；session 因空闲超时或 stage 异常被终止时，调度器会给触发邮件的发件人回一封固定文案的失败通知（经 `LoopDriver` 的 MailEffect → `EffectExecutor` 管道，与正常回信同一出口），保证「邮件必有回音」。agent 的整体状态在读取时从 session 集合派生，不靠回调维护。反思引擎（[agents/reflection.py](../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）按交互计数触发，由调度器在循环间隙经注入的 `check_reflection` 委托检查；反思跑在引擎持有的后台 task 里——进行中计入成员活跃（不会被判空闲 drain 掉），成员 shutdown 时统一取消。
+   一个认知成员同一时刻至多一个存活 session（收件箱驱动的单 session 模型，ADR 0028）；`SessionScheduler` 负责推进、回收完成与超时的 session，收割时做链式唤醒判定——责任集之外出现新未读立即开下一个 session，责任集内的搁置遗留交给慢速 rescan。session 因空闲超时或 stage 异常被终止时，调度器给责任集内每个人类发件人各回一封固定文案的失败通知（按地址去重，经 `LoopDriver` 的 MailEffect → `EffectExecutor` 管道，与正常回信同一出口；agent 发件人只记 journal），保证「邮件必有回音」。agent 的整体状态在读取时从存活会话派生，不靠回调维护。反思引擎（[agents/reflection.py](../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）按交互计数触发，由调度器在循环间隙经注入的 `check_reflection` 委托检查；反思跑在引擎持有的后台 task 里——进行中计入成员活跃（不会被判空闲 drain 掉），成员 shutdown 时统一取消。
 
-   每封邮件开一个新 session，但同一线程的往复不是失忆重逢：`ContextBuilder`（[agents/context_builder.py](../src/tlon/agents/context_builder.py)）组装上下文时，`(thread-recap)` section 从 session journal（ADR 0007）确定性重建本线程最近一个已完成 session 的简报（触发、调了哪些工具、结论是什么），不调 LLM、不等批触发摘要；与 `mail-history` 的邮件原文互补——原文给「说了什么」，简报给「我做了什么」。只注入最近一轮，成本不随线程长度膨胀。
+   每次唤醒开一个新 session，但同一话题的往复不是失忆重逢：`ContextBuilder`（[agents/context_builder.py](../src/tlon/agents/context_builder.py)）组装上下文时，`(thread-recap)` section 从 session journal（ADR 0007）确定性重建最近一个已完成 session 的简报（触发语、调了哪些工具、结论是什么），不调 LLM、不等批触发摘要；与 `mail-history` 的邮件原文互补——原文给「说了什么」，简报给「我做了什么」。只注入最近一轮，成本不随历史膨胀。
 
 5. **收件人是人类：推送或拉取**。`HumanAdapter` 与其他成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的邮件 fan-out 给 attach 上来的客户端会话；客户端通过 `GET /events` 的 SSE 长连接实时收信（推送侧由 [tlon_server/core/notification_service.py](../src/tlon_server/core/notification_service.py) 的 `NotificationService` 管理），也可随时 `GET /inbox` 直接读邮箱文件。人类离线时邮件留在其持久邮箱里，上线后再读。
 
-全链路的背压策略一致：EventBus 的 per-subscriber 队列、SessionScheduler 的邮件队列都是有界的，溢出时丢新保旧并保未读，绝不阻塞总线。
+全链路的背压策略一致：EventBus 的 per-subscriber 队列是有界的，溢出时丢新保旧，绝不阻塞总线；认知侧无内存邮件队列（ADR 0028）——邮箱即唯一队列，未读事实在磁盘上。
 
 链路追踪贯穿全程：发信时注入当前 trace，唤醒请求加入投递的 trace 树（`AgentRegistry._fulfill_wake` 续接同一 trace），span 由 [base/tracing/trace_store.py](../src/tlon/base/tracing/trace_store.py) 的 `FileTraceStore` 落盘到 `~/.tlon/shared/traces/` 的 JSONL 文件，经 `GET /traces` 查询；也可配置 OTLP endpoint 外发（可选依赖 `opentelemetry-exporter-otlp-proto-http`）。
 
@@ -149,11 +148,11 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### effects-as-data
 
-认知循环里每个 stage 是纯变换，所有对外部状态的意图都声明在返回的 `StageOutcome`（[agents/stages/outcome.py](../src/tlon/agents/stages/outcome.py)）里。`LoopDriver` 负责应用 session 本地字段，外部效果（`MailEffect` 发信、交互记忆保存、inbox cursor 推进、工具并发分发）由 `EffectExecutor` 执行。stage 不允许碰 session 的 mutator 方法，这条纯度由 [scripts/check_stage_purity.py](../scripts/check_stage_purity.py) 静态强制——引擎与策略的边界是机器可检查的。
+认知循环里每个 stage 是纯变换，所有对外部状态的意图都声明在返回的 `StageOutcome`（[agents/stages/outcome.py](../src/tlon/agents/stages/outcome.py)）里。`LoopDriver` 负责应用 session 本地字段与工具并发分发，外部效果（`MailEffect` 发信）由 `EffectExecutor` 执行。stage 不允许碰 session 的 mutator 方法，这条纯度由 [scripts/check_stage_purity.py](../scripts/check_stage_purity.py) 静态强制——引擎与策略的边界是机器可检查的。
 
 ### mailbox 即队列
 
-邮箱是磁盘上的三个文件（`inbox.jsonl` 追加写、`sent.jsonl` 追加写、`inbox.cursor` 已读 id 集合），实现见 [organization/mail/mailbox.py](../src/tlon/organization/mail/mailbox.py) 的 `Mailbox`。邮件先持久化、后处理：唤醒不携带事件载荷，成员启动时扫描未读；运行中队列溢出丢的是「新事件的拷贝」，磁盘上的未读事实不变，由成员的后台重扫任务周期补拾（下次启动也会补扫）。同一目录的多个 `Mailbox` 实例（投递缓存、REST `/inbox`、agent 运行时）共享一把按目录的 asyncio 锁（有界 LRU），进程内写互斥。未读扫描是增量的：按目录的扫描缓存（有界 LRU，与锁表同纪律）记住已解析的字节偏移与解析结果，重复扫描只解析追加部分；文件被替换（inode 变化）或截断时回落全量扫描，崩溃留下的半行不消费、下次重试。
+邮箱是磁盘上的三个文件（`inbox.jsonl` 追加写、`sent.jsonl` 追加写、`inbox.cursor` 已读 id 集合），实现见 [organization/mail/mailbox.py](../src/tlon/organization/mail/mailbox.py) 的 `Mailbox`。邮件先持久化、后处理：唤醒不携带事件载荷，成员启动时扫描未读；认知侧没有内存邮件队列（ADR 0028——调度器无队列，邮箱是唯一的队列），搁置未读与漏网来信由成员的后台重扫任务周期拾起（下次启动也会补扫）。同一目录的多个 `Mailbox` 实例（投递缓存、REST `/inbox`、agent 运行时）共享一把按目录的 asyncio 锁（有界 LRU），进程内写互斥。未读扫描是增量的：按目录的扫描缓存（有界 LRU，与锁表同纪律）记住已解析的字节偏移与解析结果，重复扫描只解析追加部分；文件被替换（inode 变化）或截断时回落全量扫描，崩溃留下的半行不消费、下次重试。
 
 ### DAG 组件装配
 

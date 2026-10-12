@@ -18,9 +18,9 @@ wakeable unread mail > 0 → open one session*. Its inputs:
   ``session/end`` is resumed (ADR 0007), with its journaled
   responsibility set, before any new wake is honored.
 
-Session identity is a fresh uuid (``session_id_for`` is retired — ADR
-0028 决策 8). The trigger content is the fixed template rendered from the
-*same* provider snapshot that becomes the session's responsibility set
+Session identity is a fresh uuid (ADR 0028 决策 8). The trigger content is
+the fixed template rendered from the *same* provider snapshot that becomes
+the session's responsibility set
 (R5: N and the responsibility set are one read).
 
 The whole loop task runs inside bound_contextvars(agent_id=...) so all

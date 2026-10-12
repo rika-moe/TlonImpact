@@ -7,8 +7,6 @@ effects here:
 
 - mails (``MailEffect`` -> Mail.create + MAIL_NEW event, trace-injected;
   a failure lands a postmaster-style notice in the agent's own inbox)
-- the inbox cursor advance (mark-read — legacy hook, unused by the engine
-  since ADR 0028; read-marking is the agent's own explicit act)
 
 The engine-side event-publish closure for tool dispatch observability
 (TOOL_EXECUTE_START) also lives here.
@@ -49,8 +47,9 @@ class EffectExecutor:
         Args:
             identity: Agent identity snapshot (id/name/address)
             rule: The cognitive rule the effects are declared by
-            mailbox: The agent's own mailbox (inbox cursor); None in
-                bare test setups disables mark-read
+            mailbox: The agent's own mailbox (used to validate reply and
+            endorsement references against its contents); None in bare
+            test setups lets declared references pass through unresolved
             publish: Event-bus publish closure (Device.emit)
             logger: Per-agent bound logger (agent_id already bound)
             mentor_cc: Trust ladder (docs/design/unified-member-model.md):
@@ -200,18 +199,3 @@ class EffectExecutor:
             self._logger.info("mail_failure_notified", notice_id=notice.id)
         except Exception:
             self._logger.error("mail_failure_notice_failed", exc_info=True)
-
-    async def mark_mail_read(self, mail: Mail | None) -> None:
-        """Advance the inbox cursor for a mail (legacy hook).
-
-        ADR 0028: read-marking is the agent's own explicit act (the
-        ``markRead`` tool); the engine no longer calls this on session
-        completion. Retained until the follow-up cleanup PR removes it.
-        Never raises: a cursor failure must not break session cleanup.
-        """
-        if mail is None or self._mailbox is None:
-            return
-        try:
-            await self._mailbox.mark_read(mail.id)
-        except Exception as e:
-            self._logger.error("mail_mark_read_failed", mail_id=mail.id, error=str(e))

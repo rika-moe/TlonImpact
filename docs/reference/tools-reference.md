@@ -78,7 +78,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 43 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员（信任阶梯：spawn 出生且未获 endorse）装配时不注册五个生殖/演化工具——`spawnAgent`（19）、`stopAgent`（20）、`writePrototype`（22）、`proposeBehavior`（23）、`proposeCapability`（24），实装 36 个；`reviewPrototype`（18）咨询性保留，`updatePersona`（11）与联系簿两个工具（12–13）对见习成员照注（人格/联系簿自写不是生殖/演化）。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 41 个中的 7 个）；`docker.level: L1` 的成员（issue #40）不注册 1–2 的 shell 工具。
+上表是正式成员的满配。见习成员（信任阶梯：spawn 出生且未获 endorse）装配时不注册五个生殖/演化工具——`spawnAgent`（21）、`stopAgent`（22）、`writePrototype`（24）、`proposeBehavior`（25）、`proposeCapability`（26），实装 38 个；`reviewPrototype`（20）咨询性保留，`updatePersona`（11）与联系簿两个工具（12–13）对见习成员照注（人格/联系簿自写不是生殖/演化）。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 43 个中的 7 个）；`docker.level: L1` 的成员（issue #40）不注册 1–2 的 shell 工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
@@ -97,19 +97,19 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 | `subject` | string | 否 | — | 邮件主题 |
 | `content` | string | 是 | — | 邮件正文 |
 | `is_complete` | boolean | 是 | — | `false`=中间进度，发完继续思考；`true`=最终回复，结束本轮循环 |
-| `in_reply_to` | string | 否 | — | 被回复邮件的 id；留空默认回复触发邮件 |
+| `in_reply_to` | string | 否 | — | 被回复邮件的 id；必须是自己邮箱中真实存在的邮件（幻觉 id 发送失败），回复并入该邮件的线程；留空 = 另起线程（无触发邮件缺省，ADR 0028） |
 
 返回行为：恒 `success=True`，[data](../../data) 回显全部参数。投递异步——地址不存在时稍后会收到 `postmaster@tlon.internal` 的退信，退信是唯一失败信号。
 
 注意事项：
 
 - `is_complete=true` 时本轮不得同时调用其他工具，否则整轮被 act stage 拒绝（见总述）。
-- 回复目标与线程由引擎最终确定而非工具：`act_stage_collect` 构造 `MailEffect` 时，模型显式传的 `in_reply_to` 优先，缺省取 session 触发邮件；`EffectExecutor` 发送前在 agent 自己的邮箱（inbox+sent）里校验被引用邮件并把回复并入该邮件的线程（`thread_id` 取被引用邮件的值）。id 不在邮箱中（典型如幻觉 id）则该封不发送，agent 收到 postmaster 通知——不产生带悬空引用的邮件。另起线程仍靠新 session（新触发邮件）。
-- `to` 传空数组时回退为回复触发邮件的发件人（`act_stage_collect` 的 reply 语义）。
+- 回复目标与线程由引擎最终确定而非工具：`act_stage_collect` 构造 `MailEffect` 时，`to` / `in_reply_to` 完全是模型显式声明的值（ADR 0028——无触发邮件缺省）；`EffectExecutor` 发送前在 agent 自己的邮箱（inbox+sent）里校验被引用邮件并把回复并入该邮件的线程（`thread_id` 取被引用邮件的值）。id 不在邮箱中（典型如幻觉 id）则该封不发送，agent 收到 postmaster 通知——不产生带悬空引用的邮件。另起线程：不传 `in_reply_to` 即可。
+- `to` 传空数组且 `cc` 也为空时邮件构造被拒（没有收件人的邮件在数据层非法），agent 收到 postmaster 发送失败通知——`to` 不再有回退收件人。
 
 ### silence
 
-不回复即结束本轮。当 LLM 决定不回信（循环寒暄、重复内容、无事可回）时调用，替代 `sendEmail` 的"发一封『我们该停了』的信"：工具本身无副作用，不投递任何邮件、不写记忆、不持久化任何状态；act stage 收割到成功的 `silence` 调用后把本轮标记完成（`is_complete=true` 语义），触发邮件沿既有 completion 路径被标记已读，循环就此收口。
+不回复即结束本轮。当 LLM 决定不回信（循环寒暄、重复内容、无事可回）时调用，替代 `sendEmail` 的"发一封『我们该停了』的信"：工具本身无副作用，不投递任何邮件、不写记忆、不持久化任何状态；act stage 收割到成功的 `silence` 调用后把本轮标记完成（`is_complete=true` 语义），循环就此收口。已读标记不受 silence 影响——标读始终是 agent 自己的显式行为（`markRead` 工具，ADR 0028）。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
