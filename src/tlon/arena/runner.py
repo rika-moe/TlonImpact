@@ -4,9 +4,10 @@
 staging 原型拷入隔离宇宙 trusted 库 → ``instantiate`` 实例化临时成员 →
 config 资源收紧 → 语料落盘（先归档再跑，跑挂了语料也在）→
 ``build_runtime`` 起隔离 runtime → adopt 成员 → 逐封发 MAIL_NEW →
-有界等待 session 完成 → 证据归档回生产 staging（sessions + run.json
-含 fed 映射 + ledger + 邮箱）→ 生成报告（fail-soft，报告失败不毁证据）
-→ 拆除（shutdown → 容器 GC → 删隔离家园）。
+有界等待 drained（投递确认 + 未读排空 + 无存活 session）→ 证据归档回
+生产 staging（sessions + run.json 含 fed 映射 + ledger + 邮箱）→
+生成报告（fail-soft，报告失败不毁证据）→ 拆除（shutdown → 容器 GC →
+删隔离家园）。
 
 状态机：preparing → running → collecting → done | timed_out | failed(error)。
 run 记录只在进程内存（v1 不持久化状态，证据全在磁盘）；v1 全局同时只跑
@@ -101,8 +102,10 @@ class ArenaRun:
     error: str | None = None
     fed: list[dict[str, Any]] = field(default_factory=list)
     report_error: str | None = None
-    #: ADR 0028 过渡态：等待以「未读排空且无存活 session」为收工条件——
-    #: session 与语料不再一一对应，completed_count 只记完成的 session 数。
+    #: ADR 0028 收工语义：全部语料已投递、未读排空、无存活 session，且
+    #: 稳定跨一个轮询间隔（判定见 ``_wait_sessions``）。DONE = drained；
+    #: 否则撞全局时间盒（部分轨迹也是数据）。completed_count 只记完成的
+    #: session 数——单 session 可批处理多封语料，不等于已处理语料数。
     drained: bool = False
 
     @property
@@ -434,8 +437,8 @@ class ArenaRunner:
                 raise ArenaError(f"临时成员接入失败（adopt: {adopt_result}）")
             await self._feed(runtime, run, agent_id, corpus)
 
-            # 有界等待（ADR 0028 过渡态）：未读排空且无存活 session 即收工，
-            # 或撞全局时间盒（部分轨迹也是数据）
+            # 有界等待：drained（投递确认 + 未读排空 + 无存活 session，
+            # 稳定跨一个轮询间隔）即收工，或撞全局时间盒（部分轨迹也是数据）
             run.completed_count, run.drained = await self._wait_sessions(arena_paths, run)
             run.status = RunStatus.COLLECTING
         except Exception as e:
@@ -500,8 +503,9 @@ class ArenaRunner:
         """Publish one MAIL_NEW per corpus mail on the isolated event bus.
 
         Each fed mail's ``{mail_id, from, subject, origin}`` is recorded on
-        the run (run.json ``fed`` 字段)——报告经 session/start 的
-        ``responsibility`` 反解 session 对应关系（ADR 0028 过渡态），不靠猜。
+        the run (run.json ``fed`` 字段)——报告经各 session journal
+        ``session/start`` 的 ``responsibility`` 反解语料归属（ADR 0028：
+        一个 session 可收编多封语料），不靠猜。
         """
         for item in corpus:
             mail = Mail.create(
@@ -525,26 +529,44 @@ class ArenaRunner:
         logger.info("arena_corpus_fed", run_id=run.run_id, fed=run.fed_count)
 
     async def _wait_sessions(self, arena_paths: TlonPaths, run: ArenaRun) -> tuple[int, bool]:
-        """Poll until the member's inbox drains and no session stays live, or
-        the time box hits.
+        """Poll until the run drains, or the global time box hits.
 
-        ADR 0028 过渡态：session 与语料不再一一对应（单 session 模型），
-        等待条件放宽为「未读排空且无存活 session」——agent 看过不标读是
-        合法行为，那时撞时间盒收场（部分轨迹也是数据）。排空需连续两次
-        观测成立才收工：喂信与投递是异步的，第一次轮询可能先于投递完成。
+        ADR 0028 单 session 模型下，一个 session 可批处理多封语料，收工
+        条件不是「每封信一个完成 session」而是排空（drained），三个要件：
+
+        - **投递确认门**：``run.fed`` 全部 mail_id 出现在收件箱之前，排空
+          观测无意义——喂信与投递是异步的，空收件箱 ≠ 处理完。这是确定的
+          前置条件，替代了轮询次数碰运气。
+        - **无未读 ∧ 无 unfinished**：scheduler 只在未读邮件上开 session
+          （admission 的唯一入口是 wakeable unread），未读为空即不会有新
+          session 收编语料；无 unfinished 即没有活 session 还在处理。
+        - **稳定窗**：drained 须在连续两次观测（间隔一个 poll 周期）都成立
+          才收工——覆盖唯一残余竞态：成员自发信（如自寄）的投递可能落在
+          单次观测之后。两次不是魔法次数：第一次是状态快照，第二次确认
+          该状态持续了一个轮询间隔。
+
+        搁置（看过不标读）是合法行为：残留未读使 drained 不成立，慢速
+        rescan（``mail_rescan_interval_seconds``，默认 900s）通常长于
+        时间盒，run 撞盒收场——部分轨迹也是数据。
 
         Returns:
             (completed session count, drained) —— completed_count 只记完成
-            的 session 数，不再等于已处理语料数。
+            的 session 数，不等于已处理语料数（一对多）。
         """
         journal = self._journal_factory(run.agent_id, arena_paths)
         mailbox = Mailbox(arena_paths.agent_mail_dir(run.agent_id))
+        fed_ids = {str(entry["mail_id"]) for entry in run.fed}
         deadline = self._clock() + run.time_box_seconds
         completed: list[str] = []
         drained_streak = 0
         while True:
             completed = await journal.list_completed()
-            drained = not await mailbox.unread() and not await journal.find_unfinished()
+            inbox_ids = {mail.id for mail in await mailbox.inbox()}
+            drained = (
+                fed_ids <= inbox_ids
+                and not await mailbox.unread()
+                and not await journal.find_unfinished()
+            )
             drained_streak = drained_streak + 1 if drained else 0
             if drained_streak >= 2 or self._clock() >= deadline:
                 return len(completed), drained_streak >= 2

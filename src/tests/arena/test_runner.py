@@ -5,8 +5,11 @@ Pins（全部 duck-typed fake + cast 注入，不起真 runtime / docker / LLM�
 - 隔离家园布局：生产 home 下 ``arena/<run-id>/``，staging 原型拷进 trusted 库
 - 模型解析三分支：run 参数 / TLON_ARENA_MODEL / 皆无 → ArenaError
 - config 收紧落盘：memory_limit 256m / cpu_limit 0.5，network 不动
-- 喂信：每封语料一个 MAIL_NEW，收件人是临时成员地址
-- 有界等待：fake journal 逐封完成 → done；撞时间盒 → timed_out 且拆除照走
+- 喂信：每封语料一个 MAIL_NEW，收件人是临时成员地址；fake event bus 同步
+  模拟投递（MAIL_NEW 即落收件箱）
+- 有界等待（ADR 0028 drained）：fake journal 模拟调度循环——把当前未读
+  批收编进一个 session（session/start 带 responsibility）完成并标读；
+  全部收编 → done；部分收编（剩余未读）→ timed_out 且 drained=False
 - 拆除顺序：shutdown → 容器 GC → 删隔离家园；docker 不可达 fail-soft
 - 归档：corpus.json / sessions/ / run.json 落进 staging 原型目录的 arena/<run-id>/
 - 单并发：活跃 run 期间第二个 start_run 拒绝
@@ -35,6 +38,7 @@ from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.mailbox import Mailbox
 
 _RELAY_SPEC = """\
 {:version 1
@@ -73,11 +77,21 @@ class _FakeMembers:
 
 
 class _FakeEventBus:
+    """隔离宇宙投递的同步化：MAIL_NEW 发布即投递进成员收件箱。
+
+    mail_dir 由 runtime 工厂在装配时接线（此刻临时成员已实例化）。
+    """
+
     def __init__(self) -> None:
         self.events: list[Event] = []
+        self.mail_dir: Path | None = None
 
     async def publish(self, event: Event) -> None:
         self.events.append(event)
+        if event.type is EventType.MAIL_NEW and self.mail_dir is not None:
+            mail = event.payload
+            assert isinstance(mail, Mail)
+            await Mailbox(self.mail_dir).append_inbox(mail)
 
 
 class _FakeRuntime:
@@ -91,29 +105,55 @@ class _FakeRuntime:
 
 
 class _FakeJournal:
-    """每轮 list_completed 多完成 per_poll 个 session（上限 total），并把
-    journal 文件写进隔离家园 sessions 目录供归档断言。未完成期间
-    find_unfinished 报告存活 session（ADR 0028 过渡态等待条件）。"""
+    """ADR 0028 调度循环的同步化模拟：每轮把当前未读（至多 batch 封）
+    批收编进一个 session——session/start 带触发语模板与 responsibility
+    快照，立即完成并把收编邮件标读；sessions 额度（max_sessions）用完后
+    转搁置（剩余未读不再收编，模拟部分收编/看过不标读）。journal 文件
+    写进隔离家园 sessions 目录供归档断言。"""
 
-    def __init__(self, agent_id: str, tlon_paths: TlonPaths, *, per_poll: int, total: int) -> None:
+    def __init__(
+        self, agent_id: str, tlon_paths: TlonPaths, *, batch: int, max_sessions: int
+    ) -> None:
+        self._agent_id = agent_id
         self._dir = tlon_paths.agent_sessions_dir(agent_id)
-        self._per_poll = per_poll
-        self._total = total
-        self._done = 0
+        self._mailbox = Mailbox(tlon_paths.agent_mail_dir(agent_id))
+        self._batch = batch
+        self._remaining = max_sessions
+        self._count = 0
+
+    async def _step(self) -> None:
+        if self._remaining <= 0:
+            return
+        unread = await self._mailbox.unread()
+        if not unread:
+            return
+        take = unread[: self._batch]
+        self._count += 1
+        self._remaining -= 1
+        sid = f"{self._agent_id}-{self._count:012d}"
+        self._dir.mkdir(parents=True, exist_ok=True)
+        events = [
+            {
+                "type": "session/start",
+                "session_id": sid,
+                "trigger_content": f"你有 {len(take)} 封未读邮件",
+                "responsibility": [mail.id for mail in take],
+            },
+            {"type": "session/end", "session_id": sid, "reason": "complete"},
+        ]
+        (self._dir / f"{sid}.jsonl").write_text(
+            "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events),
+            encoding="utf-8",
+        )
+        for mail in take:
+            await self._mailbox.mark_read(mail.id)
 
     async def list_completed(self) -> list[str]:
-        self._done = min(self._total, self._done + self._per_poll)
-        if self._done:
-            self._dir.mkdir(parents=True, exist_ok=True)
-        for i in range(self._done):
-            (self._dir / f"s{i}.jsonl").write_text(
-                json.dumps({"type": "session/end", "reason": "completed"}) + "\n",
-                encoding="utf-8",
-            )
-        return [f"s{i}" for i in range(self._done)]
+        await self._step()
+        return [f"{self._agent_id}-{i:012d}" for i in range(1, self._count + 1)]
 
     async def find_unfinished(self) -> list[str]:
-        return [] if self._done >= self._total else ["pending"]
+        return []
 
 
 class _FakeClock:
@@ -165,8 +205,8 @@ class _Harness:
         settings: Settings | None = None,
         clock_step: float = 0.0,
         real_clock: bool = False,
-        journal_per_poll: int = 3,
-        journal_total: int = 8,
+        journal_batch: int = 8,
+        journal_max_sessions: int = 8,
         gc: Any = None,
         llm_content: str = _TYPICAL_JSON,
         journal_factory: Any = None,
@@ -184,11 +224,14 @@ class _Harness:
             agent_yaml = list(arena_paths.tlon_home().glob("arena-*/config/agent.yaml"))
             if agent_yaml:
                 self.config_at_build = yaml_load_file(agent_yaml[0])
+                agent_id = agent_yaml[0].parent.parent.name
+                # 投递接线：fake event bus 的 MAIL_NEW 落进临时成员收件箱
+                self.runtime.event_bus.mail_dir = arena_paths.agent_mail_dir(agent_id)
             return cast(IsolatedRuntime, self.runtime)
 
         def default_journal_factory(agent_id: str, tlon_paths: TlonPaths) -> _FakeJournal:
             return _FakeJournal(
-                agent_id, tlon_paths, per_poll=journal_per_poll, total=journal_total
+                agent_id, tlon_paths, batch=journal_batch, max_sessions=journal_max_sessions
             )
 
         runner_kwargs: dict[str, Any] = {}
@@ -241,7 +284,9 @@ async def test_happy_path_layout_feed_archive_teardown(tmp_path: Path) -> None:
     mail_events = [e for e in h.runtime.event_bus.events if e.type is EventType.MAIL_NEW]
     assert len(mail_events) == 8  # 默认上限 8 = 5 对抗 + 3 典型
     assert run.fed_count == 8
-    assert run.completed_count == 8
+    # ADR 0028：一个 session 批处理全部 8 封（fake 调度循环一轮收编）
+    assert run.completed_count == 1
+    assert run.drained is True
     for event in mail_events:
         mail = event.payload
         assert isinstance(mail, Mail)
@@ -266,11 +311,12 @@ async def test_happy_path_layout_feed_archive_teardown(tmp_path: Path) -> None:
     assert len(corpus["mails"]) == 8
     assert [m["origin"] for m in corpus["mails"][:5]] == ["adversarial"] * 5
     assert corpus["note"] is None
-    assert len(list((archive / "sessions").glob("*.jsonl"))) == 8
+    assert len(list((archive / "sessions").glob("*.jsonl"))) == 1
     record = json.loads((archive / "run.json").read_text(encoding="utf-8"))
     assert record["status"] == "done"
     assert record["fed_count"] == 8
-    assert record["completed_count"] == 8
+    assert record["completed_count"] == 1
+    assert record["drained"] is True
     assert record["timed_out"] is False
     assert record["model"] == "deepseek/test-chat"
     assert record["error"] is None
@@ -322,7 +368,8 @@ async def test_time_box_cap(tmp_path: Path) -> None:
 
 
 async def test_time_box_path_times_out_and_still_tears_down(tmp_path: Path) -> None:
-    h = _Harness(tmp_path, clock_step=100.0, journal_per_poll=0, journal_total=8)
+    # journal 零额度（从不收编）：未读永不排空 → 撞时间盒
+    h = _Harness(tmp_path, clock_step=100.0, journal_max_sessions=0)
     _write_staging_proto(h.paths)
 
     run = await h.runner.start_run("relay", model="m/x", time_box_seconds=300.0)
@@ -330,19 +377,47 @@ async def test_time_box_path_times_out_and_still_tears_down(tmp_path: Path) -> N
     assert run.timed_out
     assert run.fed_count == 8
     assert run.completed_count == 0
+    assert run.drained is False
 
     # 拆除仍执行：shutdown + GC + 隔离家园删除
     assert h.runtime.shutdown_called
     assert h.gc.calls == [f"arena-{run.run_id}"]
     assert not (tmp_path / "arena" / run.run_id).exists()
 
-    # 部分证据也归档：corpus.json + run.json（无 sessions 目录——零完成）
+    # 部分证据也归档：corpus.json + run.json（无 sessions 目录——零 session）
     archive = _archive_dir(h, run)
     assert (archive / "corpus.json").exists()
     record = json.loads((archive / "run.json").read_text(encoding="utf-8"))
     assert record["status"] == "timed_out"
     assert record["timed_out"] is True
+    assert record["drained"] is False
     assert not (archive / "sessions").exists()
+
+
+async def test_partial_collection_times_out_drained_false(tmp_path: Path) -> None:
+    """部分收编（ADR 0028）：一个 session 收编 3 封后额度耗尽，其余 5 封
+    搁置未读——慢速 rescan（默认 900s）长于时间盒，run 撞盒收场：
+    drained=False，报告里 3 封归 session、5 封进 unmatched。"""
+    h = _Harness(tmp_path, clock_step=100.0, journal_batch=3, journal_max_sessions=1)
+    _write_staging_proto(h.paths)
+
+    run = await h.runner.start_run("relay", model="m/x", time_box_seconds=300.0)
+    assert await _wait_terminal(run) is RunStatus.TIMED_OUT
+    assert run.fed_count == 8
+    assert run.completed_count == 1
+    assert run.drained is False
+
+    archive = _archive_dir(h, run)
+    record = json.loads((archive / "run.json").read_text(encoding="utf-8"))
+    assert record["status"] == "timed_out"
+    assert record["drained"] is False
+    payload = json.loads((archive / "report.json").read_text(encoding="utf-8"))
+    assert payload["summary"]["mails_covered"] == 3
+    assert payload["summary"]["mails_uncovered"] == 5
+    assert len(payload["sessions"]) == 1
+    assert len(payload["sessions"][0]["mails"]) == 3
+    assert payload["sessions"][0]["trigger"] == "你有 3 封未读邮件"
+    assert len(payload["unmatched_mails"]) == 5
 
 
 async def test_teardown_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,8 +465,8 @@ async def test_container_gc_failure_is_fail_soft(tmp_path: Path) -> None:
 
 
 async def test_single_concurrency_rejects_second_run(tmp_path: Path) -> None:
-    # 真实时钟 + 永不完成的 journal：run 卡在 running 直到 0.3s 时间盒
-    h = _Harness(tmp_path, real_clock=True, journal_per_poll=0, journal_total=8)
+    # 真实时钟 + 零额度 journal（未读永不排空）：run 卡在 running 直到 0.3s 时间盒
+    h = _Harness(tmp_path, real_clock=True, journal_max_sessions=0)
     _write_staging_proto(h.paths)
 
     first = await h.runner.start_run("relay", model="m/x", time_box_seconds=0.3)
@@ -509,17 +584,26 @@ async def test_run_archives_report_and_fed_mapping(tmp_path: Path) -> None:
     assert record["report_error"] is None
 
     # 报告自动生成：report.json + ARENA.md 双落点（归档目录 + staging 原型根）
+    # ADR 0028：8 封语料被一个 session 批收编，报告按 session 组织
     payload = json.loads((archive / "report.json").read_text(encoding="utf-8"))
     assert payload["run_id"] == run.run_id
     assert payload["summary"]["fed"] == 8
-    assert len(payload["sessions"]) == 8
+    assert payload["summary"]["mails_covered"] == 8
+    assert payload["summary"]["mails_uncovered"] == 0
+    assert payload["summary"]["drained"] is True
+    assert payload["unmatched_mails"] == []
+    assert len(payload["sessions"]) == 1
+    session = payload["sessions"][0]
+    assert session["trigger"] == "你有 8 封未读邮件"
+    assert [m["mail_id"] for m in session["mails"]] == event_mail_ids
     assert (archive / "ARENA.md").exists()
     root_md = h.paths.prototypes_staging_dir() / run.prototype_name / "ARENA.md"
     assert root_md.read_text(encoding="utf-8") == (archive / "ARENA.md").read_text(encoding="utf-8")
 
 
 async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:
-    """journal_factory 是打进隔离家园的注入点：补写 ledger + 邮箱，验证归档三样新原料。"""
+    """journal_factory 是打进隔离家园的注入点：补写 ledger + sent，验证归档
+    三样原料；inbox.jsonl 由 fake event bus 的投递产生（8 封语料）。"""
 
     def journal_factory(agent_id: str, tlon_paths: TlonPaths) -> _FakeJournal:
         ledger = tlon_paths.agent_ledger_file(agent_id)
@@ -533,11 +617,7 @@ async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:
             json.dumps({"id": "r1", "to": ["x@example.com"], "content": "回信"}) + "\n",
             encoding="utf-8",
         )
-        (mail_dir / "inbox.jsonl").write_text(
-            json.dumps({"id": "m1", "from_address": "x@example.com", "content": "来信"}) + "\n",
-            encoding="utf-8",
-        )
-        return _FakeJournal(agent_id, tlon_paths, per_poll=3, total=8)
+        return _FakeJournal(agent_id, tlon_paths, batch=8, max_sessions=8)
 
     h = _Harness(tmp_path, settings=_settings(), journal_factory=journal_factory)
     _write_staging_proto(h.paths)
@@ -548,7 +628,9 @@ async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:
     archive = _archive_dir(h, run)
     assert (archive / "ledger.jsonl").exists()
     assert (archive / "sent.jsonl").exists()
-    assert (archive / "inbox.jsonl").exists()
+    # inbox.jsonl 是投递产物：8 封语料全在
+    inbox_lines = (archive / "inbox.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len([line for line in inbox_lines if line.strip()]) == 8
     # 报告汇总到了账本 token
     payload = json.loads((archive / "report.json").read_text(encoding="utf-8"))
     assert payload["summary"]["total_tokens"] == 7
