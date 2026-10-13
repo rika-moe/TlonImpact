@@ -36,7 +36,7 @@ Trust model (stage 4a, the "code signing" analogy): package-seeded and
 user-installed prototypes are trusted (``:trusted true``, directly
 spawnable). LLM-authored prototypes are written to the staging area
 (``~/.tlon/prototypes-staging/``) with ``:trusted false`` and can only be
-spawned after a human approves them in the mirror, which moves them into
+spawned after a human approves them (ops/WebUI), which moves them into
 the trusted library.
 
 A ``behavior.tlon`` may declare a top-level ``:parameters`` map (a

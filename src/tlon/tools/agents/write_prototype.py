@@ -87,7 +87,7 @@ class WritePrototypeTool(Tool):
     behavior.tlon either way. Prototypes carry no persona (unified member
     model, ADR 0006). The prototype lands in
     ``~/.tlon/prototypes-staging/`` marked untrusted: it cannot be spawned
-    until a human approves it in the mirror (the Gatekeeper model of
+    until a human approves it (ops/WebUI — the Gatekeeper model of
     stage 4a). Validation errors come back verbatim so the LLM can fix
     its EDN and retry.
     """
@@ -106,7 +106,7 @@ class WritePrototypeTool(Tool):
                 "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。"
                 "两种规则形态都输出统一的 rules-form behavior.tlon："
                 "带 :loop 的规则（挂认知循环）与无 :loop 的规则（命中后直接执行 :actions）。"
-                "新 prototype 默认不可信：需人类在 mirror 中批准后才能被 spawnAgent 使用。"
+                "新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 spawnAgent 使用。"
                 "behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。"
                 "无 :loop 的规则可声明 :parameters 以支持 spawn 时参数化。"
                 "可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。"
@@ -127,7 +127,7 @@ class WritePrototypeTool(Tool):
                     },
                     "display_name": {
                         "type": "string",
-                        "description": "显示名（人类在 mirror 审批时看到）",
+                        "description": "显示名（人类审批时看到）",
                     },
                     "description": {
                         "type": "string",
@@ -242,6 +242,6 @@ class WritePrototypeTool(Tool):
             data=data,
             message=(
                 f"prototype '{info.name}' 已写入 staging 区（不可信）。"
-                "需人类在 mirror 的「规约审批」中批准后才能 spawn。"
+                "需人类在「规约审批」（ops/WebUI）中批准后才能 spawn。"
             ),
         )

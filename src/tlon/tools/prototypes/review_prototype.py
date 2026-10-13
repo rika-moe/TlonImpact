@@ -178,6 +178,6 @@ class ReviewPrototypeTool(Tool):
             },
             message=(
                 f"评审已记入 '{name}' 的 REVIEW.md：{verdict}。"
-                "评审是咨询性的——晋级与否由人类在 mirror 审批时决定。"
+                "评审是咨询性的——晋级与否由人类审批（ops/WebUI）决定。"
             ),
         )

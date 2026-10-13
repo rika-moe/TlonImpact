@@ -83,7 +83,7 @@ class SpawnAgentTool(Tool):
             )
         except SpawnRejectedError as e:
             if e.reason == "untrusted_prototype":
-                error = f"untrusted_prototype: {prototype}（需人类在 mirror 中批准）"
+                error = f"untrusted_prototype: {prototype}（需人类批准，ops/WebUI）"
             else:
                 error = f"budget_exceeded: {e.reason}"
             return ToolResult(

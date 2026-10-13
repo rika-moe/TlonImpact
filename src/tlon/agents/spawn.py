@@ -441,7 +441,7 @@ class SpawnManager:
         raise SpawnRejectedError(reason, f"spawn rejected ({reason}): {detail}")
 
     async def adopt_agent(self, agent_id: str) -> str:
-        """Adopt an agent created out-of-process (wizard/mirror), no restart.
+        """Adopt an agent created out-of-process (WebUI/ops), no restart.
 
         External tools write ``agent.yaml`` directly; this makes the running
         server pick the new agent up: the provider reloads the config, the

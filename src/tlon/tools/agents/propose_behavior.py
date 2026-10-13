@@ -92,7 +92,7 @@ class ProposeBehaviorTool(Tool):
     LLM call (purpose="propose"), and writes it to the staging area
     parented to the member's own prototype (``AgentConfig.prototype``;
     None = a new root). The proposal is untrusted: a human approves it in
-    the mirror, then ``spawnAgent`` derives the next generation.
+    human review (ops/WebUI), then ``spawnAgent`` derives the next generation.
     """
 
     def __init__(
@@ -116,7 +116,7 @@ class ProposeBehaviorTool(Tool):
                 "（claims 与蒸馏教训），由一次独立的起草调用产出完整的新 spec，"
                 "并以你自己的 prototype 为父原型写入 staging 区（proposal_note 记意图、"
                 "lessons 随包）。与 writePrototype 的区别：那是裸写通道（自带全文），"
-                "这里由经验驱动起草。提案不可信：需人类在 mirror 批准后才能 spawnAgent "
+                "这里由经验驱动起草。提案不可信：需人类批准（ops/WebUI）后才能 spawnAgent "
                 "派生新世代。"
             ),
             parameters={
@@ -132,7 +132,7 @@ class ProposeBehaviorTool(Tool):
                     },
                     "display_name": {
                         "type": "string",
-                        "description": "显示名（人类在 mirror 审批时看到）",
+                        "description": "显示名（人类审批时看到）",
                     },
                     "description": {
                         "type": "string",
@@ -272,6 +272,6 @@ class ProposeBehaviorTool(Tool):
             },
             message=(
                 f"提案 '{info.name}' 已写入 staging 区（不可信，第 {info.generation} 代）。"
-                "等待人类在 mirror 的「规约审批」中批准；批准后用 spawnAgent 派生新世代。"
+                "等待人类在「规约审批」（ops/WebUI）中批准；批准后用 spawnAgent 派生新世代。"
             ),
         )

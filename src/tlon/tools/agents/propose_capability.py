@@ -98,7 +98,7 @@ class ProposeCapabilityTool(Tool):
     its memory digest and distilled lessons, drafts a complete capability
     artifact with one LLM call (purpose="propose"), and writes it to the
     capability staging area. The proposal is untrusted: a human approves
-    it in the mirror, then the vocabulary bridge makes the word available
+    it (ops/WebUI), then the vocabulary bridge makes the word available
     to every member's spec on their next wake.
     """
 
@@ -122,7 +122,7 @@ class ProposeCapabilityTool(Tool):
                 "只需给出能力意图与词名：工具内部读你的记忆（claims 与蒸馏教训），"
                 "由一次独立的起草调用产出完整的 capability artifact（tlosure "
                 "(fn [...] ...) 实现），经 staging 闸写入（proposal_note 记意图）。"
-                "同名即拒——想改进既有词请换个新名字。提案不可信：需人类在 mirror "
+                "同名即拒——想改进既有词请换个新名字。提案不可信：需人类批准（ops/WebUI）"
                 "批准后，全社会成员下次 wake 才能在自己的 spec 里组合它。"
             ),
             parameters={
@@ -254,7 +254,7 @@ class ProposeCapabilityTool(Tool):
             },
             message=(
                 f"能力词 '{info.name}' 已写入 staging 区（不可信）。"
-                "等待人类在 mirror 的能力审批中批准；批准后全社会成员下次 wake "
+                "等待人类在能力审批（ops/WebUI）中批准；批准后全社会成员下次 wake "
                 "即可在自己的 spec 里组合它。"
             ),
         )
