@@ -1,7 +1,7 @@
 """Generate the mechanically-derivable sections of docs/reference/ from source.
 
-Inspired by deepseek-harness's doc generation + freshness gate (see
-docs/design/deepseek-harness-review.md, item 4). Handwritten narrative stays
+Inspired by deepseek-harness's doc generation + freshness gate.
+Handwritten narrative stays
 handwritten; only the drift-prone inventories are generated:
 
 - ``tool-registry`` in docs/reference/tools-reference.md — the cognitive

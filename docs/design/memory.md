@@ -36,9 +36,9 @@ store 一把 `asyncio.Lock`，缓存即真相，磁盘是缓存的持久化。`M
 
 ### 批量蒸馏：journal → claims
 
-蒸馏由 [memory/distiller.py](../../src/tlon/memory/distiller.py) 的 `Distiller` 完成：一次 LLM 调用（30 秒超时），从整批 session 投影蒸馏出若干条 claim（每条 `text` + `importance`），prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹。LLM 不可用时（未配置、调用失败或产出为空）回退到 `fallback_claims`——每个 session 一条机械 claim（真 trigger + 回复要点拼接）。降级是设计意图：记忆蒸馏不能因 LLM 抖动而丢失；且因为输入来自 journal，fallback 引用的也是真实用户请求而不是 agent 的回信。
+蒸馏由 [memory/distiller.py](../../src/tlon/memory/distiller.py) 的 `Distiller` 完成：一次 LLM 调用（30 秒超时），从整批 session 投影蒸馏出若干条 claim（每条 `text` + `importance`），prompt 要求模型以 JSON 返回，`_extract_json` 容忍 markdown 代码块包裹。LLM 不可用时（未配置、调用失败或产出为空）回退到 `fallback_claims`——每个 session 一条机械 claim（「处理过会话（触发语：…）」+ 回复要点拼接）。降级是设计意图：记忆蒸馏不能因 LLM 抖动而丢失；且因为输入来自 journal，fallback 引用的是真触发语（ADR 0028 起为固定模板「你有 N 封未读邮件」），而不是 agent 自己的回信。
 
-Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/models.py](../../src/tlon/memory/models.py)）：`trigger_content`（`session/start` 的真触发内容）+ 每轮 `llm/response` 的 content + 每条 `tool/result` 的一行摘要。投影由 `MemoryManager._build_projection` 从 journal 事件重建——蒸馏流不经过任何中间存储。
+Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/models.py](../../src/tlon/memory/models.py)）：`trigger_content`（`session/start` 的触发语，ADR 0028 起为固定模板）+ 每轮 `llm/response` 的 content + 每条 `tool/result` 的一行摘要。投影由 `MemoryManager._build_projection` 从 journal 事件重建——蒸馏流不经过任何中间存储。
 
 ### 进度水位线
 
@@ -76,12 +76,12 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 记忆的回流通道是 `MemoryManager.build_context_blocks(current_message)`——阶段 2 起 `current_message` 从死参数变为核心输入。两条路径：
 
-- **JIT 相关性检索**（有 query 且索引可用）：query（当前邮件的主题 + 正文）embed 成向量 → vec KNN 取候选池（`context_max_claims` 的 4 倍）→ 复合打分 `score = 1.0·similarity + 0.3·recency + 0.5·importance` 取 top-k active claims。similarity 由 cosine 距离归一化（`1 - distance`，截断到 [0,1]）；recency 是指数衰减（半衰期 7 天，Generative Agents 衰减的半衰期重参数化）；三个权重、半衰期与候选池倍数都是 `memory/config.json` 的 `retrieval` 段调参（默认值 1.0/0.3/0.5、7 天、4 倍，同原 [memory/manager.py](../../src/tlon/memory/manager.py) 模块常量）——相似度占主导（JIT 的意义就是相关性），importance 让关键断言赢下近似平局，recency 最弱（「最新优先」已有降级路径兜底，旧但相关的断言不能被新鲜噪声淹掉）。
+- **JIT 相关性检索**（有 query 且索引可用）：query（责任集全部邮件的主题 + 正文，ADR 0028——收件箱驱动模型下没有单一的「当前邮件」）embed 成向量 → vec KNN 取候选池（`context_max_claims` 的 4 倍）→ 复合打分 `score = 1.0·similarity + 0.3·recency + 0.5·importance` 取 top-k active claims。similarity 由 cosine 距离归一化（`1 - distance`，截断到 [0,1]）；recency 是指数衰减（半衰期 7 天，Generative Agents 衰减的半衰期重参数化）；三个权重、半衰期与候选池倍数都是 `memory/config.json` 的 `retrieval` 段调参（默认值 1.0/0.3/0.5、7 天、4 倍，同原 [memory/manager.py](../../src/tlon/memory/manager.py) 模块常量）——相似度占主导（JIT 的意义就是相关性），importance 让关键断言赢下近似平局，recency 最弱（「最新优先」已有降级路径兜底，旧但相关的断言不能被新鲜噪声淹掉）。
 - **时间序降级**（无 query / 未配置 embedding / 检索任何环节失败）：取最近 `context_max_claims` 条 active claims。
 
 两种路径的渲染一致：`- [YYYY-MM-DD] {text}` 的日期标记行，拼成一个 `ContextBlock`（类型 `claims`，标签「记忆」）。
 
-注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把当前邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动（ADR 0017 阶段 4）：knowledge 消息固定追加为整个 context 的最后一条（当前邮件之后），落在压缩锚点（anchor）之外——每 session JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它，KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
+注入点是 [agents/context_builder.py](../../src/tlon/agents/context_builder.py) 的 `ContextBuilder`：spec 的 `:context` 段向量里出现 `(knowledge)` 时，`build_context` 把责任集全部邮件的主题 + 正文作为 query 传给 `build_knowledge_context`，把记忆块拼成一条 `[已知信息]` 开头的 user 消息。注入位置不随声明浮动（ADR 0017 阶段 4）：knowledge 消息固定追加为整个 context 的最后一条（触发语之后），落在压缩锚点（anchor）之外——每 session JIT 变化的内容不再冻结进 anchor，context pressure 可以正常压缩它，KV-cache 前缀也随之更小更稳（ADR 0015）。`:sections` 里的 `(knowledge)` 声明只控制「是否注入」——fast-responder 原型的 `:context` 里没有 `(knowledge)`，它就不带记忆上场，这是 cost routing 的一部分。
 
 一个细节体现实用主义：`build_knowledge_context` 把记忆构建的异常整个兜住（记告警、返回空串），记忆损坏不阻断对话，空记忆等价于没有 `(knowledge)` 段。记忆是增强，不是依赖。
 
@@ -90,8 +90,8 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个工具读写自己的记忆，全部在 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配认知成员时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`readSession` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
 
 - `rememberFact`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数只有 `fact` 文本与 `importance`；旧的三元组参数已删）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `searchMemories` 立即可查，下个 session 进 JIT 注入。
-- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims（embedding 检索天然跨语言， 的中文分词缺陷随之消亡），每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。
-- `readSession`（`read_session.py` 的 `ReadSessionTool`，ADR 0017 阶段 4）——claim → 来源的回读通道：按 session id 读该会话的 journal，渲染为有界摘要（触发来信 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
+- `searchMemories`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims（embedding 检索天然跨语言，旧系统按空格分词的中文检索缺陷随之消亡），每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。
+- `readSession`（`read_session.py` 的 `ReadSessionTool`，ADR 0017 阶段 4）——claim → 来源的回读通道：按 session id 读该会话的 journal，渲染为有界摘要（触发语 + 各轮回复 + 工具活动；触发截 300 字、每轮回复截 600 字、最多列 12 轮、总量硬上限 12000 字符）。claim 是压缩指针，journal 是原文真相（ReadAgent 模式）。
 - `forget`（`forget_memory.py` 的 `ForgetMemoryTool`）——删除记忆；默认预览模式（只报匹配），`confirm: true` 才真正删。两步确认是给 LLM 的防误删闸门。
 
 工具的读写都只落在本 agent 的目录——`MemoryManager` 构造时绑定 `agent_id`，工具层没有跨 agent 访问的入口。记忆私有性在这一层是结构性保证，不是约定。
@@ -129,7 +129,7 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个�
 1. 认知循环跑完，journal 里留下完整的 session 事件流（ADR 0007：模型可见 ⇒ 已入日志）。
 2. scheduler 在回收点做两件事：`note_interaction` 喂反思计数；`maybe_distill_completed_sessions` 检查水位线 pending 窗口——满 3 个已完成 session 就从各自 journal 重建投影、批量蒸馏写 claims、推进水位线。
 3. 调度器在循环间隙另做周期检查：`check_reflection`（间隔与计数双门控通过则后台跑反思）。
-4. 下一封邮件进来时，`ContextBuilder` 按 spec 的 `(knowledge)` 段以邮件内容为 query 做 JIT 检索（或降级取最近 N 条），把选中的 active claim 拼成 `[已知信息]`，作为 context 的最后一条消息注入（anchor 之外，ADR 0017 阶段 4）。
+4. session 启动构建上下文时，`ContextBuilder` 按 spec 的 `(knowledge)` 段以责任集全部邮件的主题 + 正文为 query 做 JIT 检索（或降级取最近 N 条），把选中的 active claim 拼成 `[已知信息]`，作为 context 的最后一条消息注入（anchor 之外，ADR 0017 阶段 4）。
 
 整条链路里没有定时器、没有后台守护进程：蒸馏与反思全部挂在认知循环的事件节拍上。agent 不活动，记忆就不动——这与整个系统「事件驱动、睡觉零成本」的运行模型一致。
 
@@ -168,7 +168,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 ## 方向
 
-整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，/ 随之消亡）、阶段 3（冲突判定 + 失效不删除的 claim 生命周期， 随之消亡）、阶段 4（anchor 减肥——knowledge 移出 anchor 固定末位 + `readSession` journal 回读工具， 的 anchor 死路随之消亡）与阶段 5（记忆回归集，见上文「回归集」节）已全部落地，五阶段收官。
+整体重设计的方向与阶段规划见 [ADR 0017](../decisions/0017-claim-based-memory.md)：阶段 1（水位线 + claim 数据模型）、阶段 2（sqlite-vec 向量索引 + JIT 注入，中文检索失效与「注入与当前消息无关」两个旧缺陷随之消亡）、阶段 3（冲突判定 + 失效不删除的 claim 生命周期，同义事实矛盾堆积随之消亡）、阶段 4（anchor 减肥——knowledge 移出 anchor 固定末位 + `readSession` journal 回读工具，「anchor 挤死、压缩无路可退」的死路随之消亡）与阶段 5（记忆回归集，见上文「回归集」节）已全部落地，五阶段收官。
 
 与愿景的差距主要有两处：
 

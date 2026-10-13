@@ -2,7 +2,7 @@
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种；spawn 出的成员与手建成员同构、永不删除（停止即睡眠、档案归档）；`spawned_by`/`spawn_depth` 保留为血缘审计。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
-Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes.py](../../src/tlon/agents/prototypes.py)，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/tools/agents/](../../src/tlon/tools/agents)）。
+Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/tools/agents/](../../src/tlon/tools/agents)）。
 
 ## 原型是什么
 
@@ -53,7 +53,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ### 播种：幂等，永不覆盖
 
-`seed_prototypes`（[agents/prototypes.py](../../src/tlon/agents/prototypes.py)）在 `ServerApp.initialize()` 的装配早期运行（须在任何 agent 启动前——spawn 路径假设库已就位），把包内原型经 `importlib.resources` 拷贝到 `~/.tlon/prototypes/`。关键语义是**已存在的文件一律跳过**：用户在播种目录里的修改和新加的原型在重启后原样保留。播种是一次性「初始化资产」，不是同步——包内的更新不会冲掉用户的改动。这也解释了为什么 `list_prototypes` 读的是 `~/.tlon/prototypes/` 而不是包内目录：agent 看到的库就是用户手里的库，单一事实源。
+`seed_prototypes`（[agents/prototypes/catalog.py](../../src/tlon/agents/prototypes/catalog.py)）在 `ServerApp.initialize()` 的装配早期运行（须在任何 agent 启动前——spawn 路径假设库已就位），把包内原型经 `importlib.resources` 拷贝到 `~/.tlon/prototypes/`。关键语义是**已存在的文件一律跳过**：用户在播种目录里的修改和新加的原型在重启后原样保留。播种是一次性「初始化资产」，不是同步——包内的更新不会冲掉用户的改动。这也解释了为什么 `list_prototypes` 读的是 `~/.tlon/prototypes/` 而不是包内目录：agent 看到的库就是用户手里的库，单一事实源。
 
 ### 为什么原型是目录而不是单文件
 
@@ -70,7 +70,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。
 
-列出路径还有一条刻意的容错原则：**元数据读取不许失败**。`_read_metadata` 对坏 `prototype.tlon` 回退目录名兜底；`_read_parameters` 对解析不了的 `behavior.tlon` 回退空参数。理由是 listing 是发现入口——一个坏原型不该让整个库列表消失。代价是坏原型在列表里看起来正常（回退值恰好合理时），失败被推迟到实例化或启动——这不是假设，是已经发生的事实（见「已知问题」）。
+列出路径还有一条刻意的容错原则：**元数据读取不许失败**。`_read_metadata` 对坏 `prototype.tlon` 回退目录名兜底；`_read_parameters` 对解析不了的 `behavior.tlon` 回退空参数。理由是 listing 是发现入口——一个坏原型不该让整个库列表消失。代价是坏原型在列表里看起来正常（回退值恰好合理时），失败被推迟到实例化或启动。
 
 ## 模板：写侧专属的参数化
 
@@ -100,9 +100,9 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 孤儿策略是**reparent 而非 kill**：新成员独立于 spawner 注册，spawner 睡眠或停止不影响它，回收只由它自己的空闲策略决定（sleep，不删）。理由：成员可能在为多个委托方工作（邮件寻址是开放的，任何人都能 @ 它），spawner 只是它的出生证明，不是它的所有者；所有权归注册表，生命周期归空闲事实——这与全系统「idle 是事实、drain 是策略」的分工一致。
 
-### spawn 预算：内存账本
+### spawn 预算：落盘账本
 
-预算的三个硬编码默认值（注册表构造参数）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。配额账本 `_spawn_quota` 只在内存里，重启清零——这是防失控机制，不是计量系统，重启丢失可接受。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。
+三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——session 本身经 journal 重放跨重启存活（ADR 0007），纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。预算细节（tilt 倾斜、见习收紧、偿付门槛）与论证的唯一事实源是 [runtime.md](./runtime.md)「注册表的机制面」spawn 预算段。
 
 拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 ops 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
 
@@ -164,19 +164,6 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 装配层（`assemble_cognitive`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）把实现注入工具实例：注册表把自己注入 `SpawnAgentTool` / `StopAgentTool` / `ListAgentsTool`（它结构化满足 `AgentLifecycle` Protocol，无须显式继承），把 `list_prototypes` / `write_staging_prototype` 作为普通 callable 注入 `ListPrototypesTool` / `WritePrototypeTool`。import 方向保持 tools → ports，永不倒流，由 `uv run lint-imports` 强制。
 
 为什么不用直接 import 加契约豁免：反向依赖一旦开一个口子，tools 层就会逐渐长出对 agents 内部的随意引用，分层检查从「方向强制」退化为「逐个评审」。Protocol + 注入的额外收益是工具可独立测试——测试注入一个假的 `AgentLifecycle` 实现即可，不必拉起整个注册表。异常类型放 ports 而不是抛方模块，是因为 catch 发生在 tools 侧：异常是接口的一部分，不是实现的细节。
-
-## 已知问题
-
-~~一处当前缺陷：**archivist、deep-thinker、fast-responder 三个内置原型的 `behavior.tlon` 是非法 EDN**——第一条规则的 map 缺一个闭合 `}`（`:loop` 的 map 闭合后，规则 map 本身没有闭合就接了下一条规则），`edn.loads` 报 `EDNParseError: unmatched delimiter: ']'`。~~ **已修复**（三处补齐 `}`，且新增 [src/tests/agents/test_builtin_prototypes.py](../../src/tests/agents/test_builtin_prototypes.py) 对四个内置原型做「播种 → 实例化 → 加载 spec」冒烟测试，解析 + 单一校验器全过，防止同类回归）。
-
-当时这个 bug 被两层兜底掩盖了：
-
-- 元数据读取不许失败：`_derive_runtime` 解析失败回退 `"react"`（恰好是正确答案），`_read_parameters` 失败回退空参数——所以 `listPrototypes` 看起来一切正常。
-- ~~`instantiate` 对无占位符的具体 spec 不做解析（`analyze` 只在有 `${var}` 时才试解析），所以实例化本身也不报错——坏文件被原样拷贝。~~ 这层兜底已不存在：`instantiate` 对渲染后 spec 做结构化解析（`MemberSpec.from_edn`，最初为读取 `:llm` 声明引入；ADR 0016 后 `:llm` 已从语法删除，解析保留为纯校验门），解析失败以 `PrototypeError` 拒绝实例化，坏文件不再被原样拷贝。
-
-失败推迟到派生 agent 启动装配、加载 spec 时才暴露：这三个原型**实例化出的成员无法启动**，spawn 走到下游加载即失败。当时现有测试只覆盖了 relay（[src/tests/agents/test_relay.py](../../src/tests/agents/test_relay.py)），三个带 `:loop` 的内置原型没有任何实例化测试——这是测试盲区，不是设计意图。relay 是合法模板（`analyze` 的 standin 文本可解析），不受此 bug 影响。
-
-系统性修复有两层，互相独立：直接修复是补上三处缺失的 `}`（已完成）；回归防护是给四个内置原型各加一个「播种 → 实例化 → 加载 spec」的冒烟测试（已完成，relay 的测试形态直接复用）。「播种/列出时对 trusted 库做解析体检」暂未做——容错原则保护的是 staging 与用户目录，包内携带的原型由冒烟测试兜底。
 
 ## 方向
 

@@ -1,6 +1,6 @@
 # Telegram 客户端设计（MVP）
 
-> 2026-08-24 拍板。来源：issue （原为空标题占位，2026-08-24 完成必要性/可行性调研后立项 MVP）。
+> 状态：已落地（2026-08-24 拍板并实施，立项前同日完成必要性/可行性调研）。本文是设计与使用说明。
 
 ## 定位
 
@@ -38,25 +38,9 @@ bot 进程 = python-telegram-bot（polling）+ 官方 SDK `TlonClient`（chat �
 - **D6 依赖**：`python-telegram-bot` 走 optional extra（`uv sync --extra telegram`），不用此功能不装。
 - **D7 SDK 补强**：`adapter.py` 的 `ClientType.TELEGRAM` 占位变现（TelegramAdapter 子类，chat 模式、filters 只收 `mail.*`）；`client.py` 补 `get_inbox()` 封装（`GET /inbox` 服务端现成）。
 
-## 文件清单
-
-新建：
-
-- `src/tlon_client/telegram/`——`bot.py`（PTB 应用 + 消息路由）、`reply_map.py`（消息↔邮件映射 + 白名单校验，纯逻辑可测）；`adapter.py` 不重复——PR1 的 `sdk/adapter.py` TelegramAdapter 直接复用
-- `src/tlon_launcher/commands/telegram.py`
-- `src/tests/unit/test_telegram_bot.py`（映射 / 白名单 / 发信组包单测；收发链路参考 `test_sdk.py` 的 in-process 集成模式，PTB 侧以 deliver seam 打桩）
-
-修改（PR2）：`launcher/main.py`（注册命令）、`base/settings.py`（TELEGRAM_* 配置）、`pyproject.toml`（lint-imports 契约 + mypy override）、`README.md` / `AGENTS.md`（快速开始）。
-
-PR1 已落地：`sdk/client.py`（`get_inbox()`）、`sdk/adapter.py`（TelegramAdapter）、pyproject `telegram` extra。`docs/design/mail.md`（已废弃一节的过时表述）另行处理。
-
 ## 错误处理与边界
 
 - 白名单为空 / token 缺失 → 启动即拒绝，明确提示；
 - 会话 409（同身份已有活跃连接）→ 报错提示「同 username 已在别处连接」；
 - SSE 重连由 SDK 兜底；PTB polling 断线库内自恢复；
 - 回复映射丢失（重启后回复旧消息）→ 降级为无 `in_reply_to` 的普通发信，不报错。
-
-## 验收
-
-端到端冒烟：起 dream → `tlon telegram` → 手机 `/send 顾言蹊 …` → agent 收到并回信 → 手机收到推送 → 对该推送回复 → agent 收到带 `in_reply_to` 的信。另加质量门全绿。

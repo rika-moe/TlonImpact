@@ -9,7 +9,7 @@
 
 ## 决策
 
-对外协议为纯 HTTP REST + SSE：下行推送走 `GET /events` 的 SSE 长连接（协议 v2），上行写操作走普通 REST（`POST /messages` 等）。不提供 WebSocket 端点。实现见 [src/tlon/app/server/api/rest/](../../src/tlon/app/server/api/rest) 包，设计细节见 [docs/design/server-protocol.md](../design/server-protocol.md)。
+对外协议为纯 HTTP REST + SSE：下行推送走 `GET /events` 的 SSE 长连接（协议 v2），上行写操作走普通 REST（`POST /messages` 等）。不提供 WebSocket 端点。实现见 [src/tlon_server/api/rest/](../../src/tlon_server/api/rest) 包（ADR 0019 拆分后路径），设计细节见 [docs/design/server-protocol.md](../design/server-protocol.md)。
 
 ## 理由
 
@@ -25,5 +25,5 @@
 
 ## 后果
 
-- 正面：服务端只维护一个 aiohttp HTTP 栈；SDK（[app/clients/sdk/](../../src/tlon/app/clients/sdk)）与 TUI 都不依赖 WebSocket 库；协议可被任何 HTTP 工具完整复现。
+- 正面：服务端只维护一个 aiohttp HTTP 栈；SDK（[tlon_client/sdk/](../../src/tlon_client/sdk)，ADR 0019 拆分后路径）与 TUI 都不依赖 WebSocket 库；协议可被任何 HTTP 工具完整复现。
 - 负面：客户端不能经推送通道上行——但这本来就不是需求，上行 POST 语义更清晰；SSE 连接在 HTTP/1.1 下占用每域连接槽，本场景是本地单用户客户端，无感；断连期间的推送事件丢失，客户端以重连后重新拉取 `GET /inbox` 和会话快照补齐（邮件是持久事实，丢不了；瞬时事件可丢）。

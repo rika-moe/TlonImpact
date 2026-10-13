@@ -83,7 +83,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 - 不改生产信任闸：staging 原型永远进不了生产的 `instantiate`/spawn，演武发生在另一个宇宙
 - 报告不进审批逻辑：approve/reject 仍是纯人类决定
 - 演武场成员不进生产注册表、声誉、metrics、spawn 配额账本
-- 不做成员间的演武（ staging 原型 vs 现有成员交互）——v1 语料全部来自剧本
+- 不做成员间的演武（如 staging 原型 vs 现有成员交互）——v1 语料全部来自剧本
 
 ## 施工切片
 

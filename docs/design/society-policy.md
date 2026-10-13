@@ -55,7 +55,7 @@ Bridge API 分层落地后，runtime 里仍有一批**政策公式**硬编码在
 | `tilt` / `solvent?` | `subject lineages` | `subject`：目标血缘统计 map `{:name str :total-tokens int :members [{:id str :endorsements-received int}]}`，血缘无数据时为 nil；`lineages`：全社会血缘统计 vector（同形状） |
 | `full-member?` | `member` | `{:id str :spawned-by str|nil :endorsements-received int}` |
 
-`lineages`/`members` 注入为 vector 而非 map：政策侧不需要 `keys` 等新词汇，`map`/`filter`/`reduce` 即可遍历。求均值需要 `count`——作为通用词汇补进 tlosure（对齐 SCI core，EPIC 任务 PR2）。
+`lineages`/`members` 注入为 vector 而非 map：政策侧不需要 `keys` 等新词汇，`map`/`filter`/`reduce` 即可遍历。求均值需要 `count`——已作为通用词汇补进 tlosure（对齐 SCI core）。
 
 ### 内嵌默认政策（DEFAULT_POLICY_EDN）
 
@@ -96,12 +96,3 @@ fitness.py / trust.py 的公式函数（`tilt_for` / `insolvent_lineages` / `is_
 - act pre-act 语境 / `reject-with` 效果端口：动作拦截语义需要单独设计。
 - retirement / reaper 政策化：本次不动。
 - `MAIL_ORPHAN_SCAN` 消费：adam.py 已记录不消费的理由（周期性事实的无状态反应本身会变成周期噪声），不变。
-
-## 施工顺序（EPIC #62）
-
-1. **PR1**（本 PR）：设计文档 + ADR 0022 + EPIC issue。
-2. **PR2**：tlosure 通用词汇补 `count`。
-3. **PR3**：政策语境骨架 `agents/policy.py`（加载 / 校验 / hook 求值器 / 内嵌默认 / PolicyEnv / `paths.policy_file()`），无消费方接线。
-4. **PR4**：fitness 迁移（tilt / solvent? 接线 + 血缘数据物化 + fitness.py 删除）。
-5. **PR5**：trust 迁移（full-member? 接线 + trust.py 删除）。
-6. **PR6**：文档收尾（dsl-reference §4 语境表、bridge-api.md 迁移路线标注、architecture.md 同步、EPIC 勾选）。

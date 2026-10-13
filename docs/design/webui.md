@@ -58,7 +58,7 @@ staging 原型审批区从 AGENTS 视图迁至 PROTOTYPES 视图（2026-08-21 �
 
 原型 = 目录（`behavior.tlon` + `prototype.tlon` 元数据），信任分级不变：staging（LLM 写，`:trusted false`）→ 人工 approve → 正式库；**人类手写直接进正式库**（handwritten implies trusted，与既有语义一致）。写路径一律先过校验链（`analyze` 模板分析 → EDN parse → `validate_member_spec` schema），校验失败不落盘。
 
-在既有 `GET /admin/prototypes`、`GET /admin/prototypes/staging`、`POST .../staging/{name}/approve|reject` 之上新增（域函数在 [agents/prototypes.py](../../src/tlon/agents/prototypes.py)，路由在 `rest/admin_prototypes.py` 管理面）：
+在既有 `GET /admin/prototypes`、`GET /admin/prototypes/staging`、`POST .../staging/{name}/approve|reject` 之上新增（域函数在 [agents/prototypes/](../../src/tlon/agents/prototypes) 包，路由在 `rest/admin_prototypes.py` 管理面）：
 
 | 端点 | 语义 | 响应 / 错误 |
 |---|---|---|

@@ -69,22 +69,22 @@ Bridge API 由四类端口组成，全部集中定义、集中编目。前两类
 
 四阶段，每阶段独立交付、独立收尾；后一阶段的开始不以前序全部完成为前提（除标注的依赖外）。
 
-### 阶段 1：桥的形式化（行为不变，纯整理）
+### 阶段 1：桥的形式化（行为不变，纯整理）——已落地
 
 把散落的隐式约定收拢为显式 API。不改任何运行时行为。
 
 - 端口编目：盘点全部既有 builtin/动作/宿主谓词/env 注入点，按四类端口归类，形成单一事实源（建议落在 `agents/vocabulary.py` 的模块结构 + 生成文档）。
 - 环境契约显式化：每个语境的 env 构造收拢到一处定义（目前散在三个文件），符号清单与形状写成类型化契约。
-- 生成桥参考文档：`gen_reference_docs.py` 扩展出 bridge 编目（按语境列词汇、签名、fuel 默认、效果 kind）。
+- ~~生成桥参考文档：`gen_reference_docs.py` 扩展出 bridge 编目（按语境列词汇、签名、fuel 默认、效果 kind）。~~（已落地：[scripts/gen_reference_docs.py](../../scripts/gen_reference_docs.py) 生成 reference 文档中漂移高发的清单区块——工具注册表、REST 端点总表、事件类型、配置字段等——并带 freshness 门禁，改了会被 `--check` 打回）
 - 验收：行为零变化（既有测试全绿）；桥上有什么、每个语境能表达什么，不读实现代码即可回答。
 
 ### 阶段 2：存量策略数据化迁移（收益最大、风险最低）
 
 把目前是 Python 常量的策略逐处迁移。每一项一个 PR，串行施工；多项共享一处文件时相邻施工。
 
-- **Adam 消费健康事实**（首选示范，零 Python 改动）：`AGENT_NOISY` / `MAIL_ORPHAN_SCAN` 已由 [agents/health.py](../../src/tlon/agents/health.py) 机制化发布，但无策略消费。给 Adam spec 加规则即可，是"换政策不改引擎"的现成演示。
-- **记忆参数数据化**：[memory/manager.py](../../src/tlon/memory/manager.py) 的检索权重 α/β/γ、冲突阈值 0.75、蒸馏窗口，从模块常量迁为配置数据。
-- **反思参数数据化**：[agents/reflection.py](../../src/tlon/agents/reflection.py) 的触发阈值与 prompt 文本，阈值进 spec（`:reflect` 已是先例），prompt 落为可读文件。
+- ~~**Adam 消费健康事实**（首选示范，零 Python 改动）：`AGENT_NOISY` / `MAIL_ORPHAN_SCAN` 已由 [agents/health.py](../../src/tlon/agents/health.py) 机制化发布，但无策略消费。给 Adam spec 加规则即可，是"换政策不改引擎"的现成演示。~~（`AGENT_NOISY` 已落地：Adam spec 的 `:on :agent-noisy` 熔断规则把噪声事实转成 stop 请求；`MAIL_ORPHAN_SCAN` 刻意无消费者——周期事实的无状态反应本身会变成周期噪声，理由见 adam.py docstring）
+- ~~**记忆参数数据化**~~（已落地）：检索权重 α/β/γ、冲突阈值 0.75、蒸馏窗口已从模块常量迁为配置数据——`~/.tlon/{agent_id}/memory/config.json` 的 `retrieval` / `conflict` / `distillation` 段（见 [../reference/config-reference.md](../reference/config-reference.md) §3）。
+- ~~**反思参数数据化**~~（已落地）：触发间隔在 spec 的 `:reflect` 段，prompt 文本落为包数据文件 [agents/prompts/reflection_system.md](../../src/tlon/agents/prompts/reflection_system.md)，最小完成会话数阈值在 `memory/config.json` 的 `reflection.min_interactions`。
 - ~~**终止文案数据化**~~（已完成，2026-09-28）：[agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的三条固定终止回信措辞进 spec——落地形态是 `:loop` 内的 `:replies` 纯数据 map（键 `:iteration-limit` / `:error` / `:timeout`，加载期 total 校验），而非设想中的 `:on-limit` 动作。终止路径必须永不失败：措辞原文直接使用（不求值、不渲染），引擎内置常量保留为未声明键的兜底——DSL 化的是"默认措辞可被覆盖"，不是"措辞只能来自 spec"。
 - ~~**社会政策数据化（fitness/trust 公式）**~~（已完成，2026-09-28，EPIC #62 / ADR 0022）：fitness 的 tilt/偿付公式与 trust 见习判定从 Python 迁入第五个求值语境（社会政策语境，第一种 pull 型）——`~/.tlon/policy.tlon` 的 `tilt` / `solvent?` / `full-member?` hook，宿主在 spawn/提案/装配求值点物化社会数据注入调用；fitness.py / trust.py 删除，公式语义由内嵌默认政策精确复刻。见 [design/society-policy.md](society-policy.md)。
 - 原则：迁移的正当性是"这部分逻辑该可进化/该由 LLM 写"，不是减少 Python 行数；机制层一行不动。
