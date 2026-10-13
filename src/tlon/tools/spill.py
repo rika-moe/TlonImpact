@@ -1,7 +1,7 @@
 """Tool output spill — oversized results land on disk, the model sees a locator.
 
-Shell and filesystem tool outputs are a common context-explosion source
-(deepseek-harness-review item 2). When a ``ToolResult.data`` payload exceeds
+Shell and filesystem tool outputs are a common context-explosion source.
+When a ``ToolResult.data`` payload exceeds
 ``SPILL_THRESHOLD_CHARS`` serialized, the full payload is written to the
 member's workspace (``workspace/spills/{session_id}/{tool_call_id}.json``,
 pretty-printed so line-based pagination works) and the model receives a

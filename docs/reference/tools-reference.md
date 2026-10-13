@@ -345,7 +345,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 ### spawnAgent
 
-**见习成员不可用（，信任阶梯）**——spawn 出生且未获 endorse 的成员装配时不注册此工具；DSL 的 spawn 动作由 SpawnManager 的见习配额闸兜底（见 `session_quota` 拒绝行）。
+**见习成员不可用（信任阶梯，ADR 0022）**——spawn 出生且未获 endorse 的成员装配时不注册此工具；DSL 的 spawn 动作由 SpawnManager 的见习配额闸兜底（见 `session_quota` 拒绝行）。
 
 从 behavior prototype 派生一个新 agent 并立即启动（统一成员模型，ADR 0006：新 agent 是普通社会成员，永不删除——空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生）。behavior 文件原样拷贝（spec 是 total 的，无 overrides），spawn 不能授予新工具。
 
@@ -372,7 +372,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### stopAgent
 
-**见习成员不可用（，信任阶梯）**——装配时不注册；注意 DSL 的 stop 动作不走工具、目前不闸（已知缺口：停止请求的策略闸是 Adam 侧/未来项）。
+**见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册；注意 DSL 的 stop 动作不走工具、目前不闸（已知缺口：停止请求的策略闸是 Adam 侧/未来项）。
 
 停止一个 agent（统一成员模型，ADR 0006）：立即关闭并使其**睡眠**——home 目录（人格、记忆、邮箱）永久保留（归档），之后可被唤醒。停止永不删除数据。
 
@@ -383,7 +383,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 拒绝行为（`StopRejectedError`，`data.reason`）：`unknown_agent`（不存在）、`active_sessions`（drain 语义：有进行中的 session 就拒绝，停止临界区内在锁内复检一次）。
 
-挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员被其他途径停止/排空即视为意图达成，watcher 自清。挂起状态只在内存（ 先例：瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
+挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员被其他途径停止/排空即视为意图达成，watcher 自清。挂起状态只在内存（瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
 
 ### listAgents
 
@@ -391,7 +391,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### writePrototype
 
-**见习成员不可用（，信任阶梯）**——装配时不注册；`reviewPrototype`（咨询性）对见习成员保留。
+**见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册；`reviewPrototype`（咨询性）对见习成员保留。
 
 创作新 behavior prototype，写入 `~/.tlon/prototypes-staging/`。新 prototype 一律 `trusted=false`（`status=pending_approval`），需人类在 ops 的 Agents 视图（`s` 审批）批准后才能被 `spawnAgent` 使用——LLM 写行为、人类把关的信任闸。原型不带人格（统一成员模型，ADR 0006）：人格在成员创建时播种、之后是成员自主数据（`updatePersona` 自改，ADR 0024），不属基因库。
 
@@ -401,19 +401,19 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | `behavior` | string | 是 | — | 行为规约 EDN 字符串，v1 schema 的 rules-form |
 | `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
-| `parent` | string | 否 | — | 父原型名称（谱系，；须已存在，trusted 或 staging 皆可）；`generation` 服务端推导为父代 + 1 |
+| `parent` | string | 否 | — | 父原型名称（谱系；须已存在，trusted 或 staging 皆可）；`generation` 服务端推导为父代 + 1 |
 | `proposal_note` | string | 否 | — | 本代变更说明（相对父原型改了什么、为什么） |
-| `lessons` | string | 否 | — | 随包教训文本（：退休成员蒸馏的经验），落盘为原型的 `LESSONS.md`；实例化时拷贝给新成员，由其 spec 的 `(lessons)` section 注入对话 |
+| `lessons` | string | 否 | — | 随包教训文本（退休成员蒸馏的经验），落盘为原型的 `LESSONS.md`；实例化时拷贝给新成员，由其 spec 的 `(lessons)` section 注入对话 |
 
 失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带按提交内容选择的 schema 提示（含 `:loop` 用 `_BEHAVIOR_HINT`，否则 `_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
 
-另有血脉偿付闸（，仅 agent 侧）：作者血脉失去偿付能力时提案在写入前被拒（`success=False`，staging 无残留，提示先挣回 endorse 再提案）；偿付派生异常时 fail-open 放行。无 prototype 的 manual 成员无血脉可判，不受闸。
+另有血脉偿付闸（仅 agent 侧，ADR 0022 政策 hook）：作者血脉失去偿付能力时提案在写入前被拒（`success=False`，staging 无残留，提示先挣回 endorse 再提案）；偿付派生异常时 fail-open 放行。无 prototype 的 manual 成员无血脉可判，不受闸。
 
-另有近亲拒绝闸（，仅 agent 侧）：`behavior` 与两区既有原型做规范化文本相似度比较（`find_near_kin`，阈值 0.9），跨血脉命中（换皮级雷同）时提案在写入前被拒（`success=False`，error 指明最相似原型名与相似度，message 指引「做出实质差异或改为提案改进它」，staging 无残留）；提案的声明父本豁免（显式 `parent` 优先，缺省回退作者自身 prototype）——沿血脉的代际微改放行；相似度扫描异常时 fail-open 放行。
+另有近亲拒绝闸（仅 agent 侧，ADR 0014 非收敛选择压）：`behavior` 与两区既有原型做规范化文本相似度比较（`find_near_kin`，阈值 0.9），跨血脉命中（换皮级雷同）时提案在写入前被拒（`success=False`，error 指明最相似原型名与相似度，message 指引「做出实质差异或改为提案改进它」，staging 无残留）；提案的声明父本豁免（显式 `parent` 优先，缺省回退作者自身 prototype）——沿血脉的代际微改放行；相似度扫描异常时 fail-open 放行。
 
 ### proposeBehavior
 
-**见习成员不可用（，信任阶梯）**——装配时不注册。
+**见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册。
 
 世代通道的经验入口：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
 
@@ -424,13 +424,13 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
 
-成功返回 `{name, parent, generation, trusted=false, status="pending_approval"}`——与 `writePrototype` 同一信任闸：人类在 mirror 批准后才能 `spawnAgent` 派生新世代。
+成功返回 `{name, parent, generation, trusted=false, status="pending_approval"}`——与 `writePrototype` 同一信任闸：人类在 ops/WebUI 审批后才能 `spawnAgent` 派生新世代。
 
-失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：血脉偿付闸拒绝（，与 `writePrototype` 同一道闸，排在起草调用之前——被闸时不消耗起草 token，staging 无残留；fail-open）；起草响应剥离 ``` 代码围栏后找不到 EDN map；近亲拒绝（，与 `writePrototype` 同一道闸，排在起草**之后**——被比较的是草稿文本；父本恒为成员自己的 prototype 且豁免，跨血脉命中时 staging 无残留；fail-open）；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；名称冲突；成员无 `behavior.tlon` 底稿。
+失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：血脉偿付闸拒绝（与 `writePrototype` 同一道闸，排在起草调用之前——被闸时不消耗起草 token，staging 无残留；fail-open）；起草响应剥离 ``` 代码围栏后找不到 EDN map；近亲拒绝（与 `writePrototype` 同一道闸，排在起草**之后**——被比较的是草稿文本；父本恒为成员自己的 prototype 且豁免，跨血脉命中时 staging 无残留；fail-open）；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；名称冲突；成员无 `behavior.tlon` 底稿。
 
 ### proposeCapability
 
-**见习成员不可用（，信任阶梯）**——装配时不注册。
+**见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册。
 
 能力通道的经验入口（issue #30，docs/design/capabilities.md「#30：突变晋升通道」）：基于成员自己的个体经验提出一个新能力词——突变出生即 tlosure artifact，`proposeBehavior` 的能力版。调用方只给**能力意图与词名**——工具内部读 `get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带；**不读 behavior.tlon 底稿**，能力起草不需要行为规约），加上既有受信词清单（assembly 侧渲染注入，非空才拼进 prompt——防重复造词 + 风格示范），连同意图喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s），产出完整的 capability artifact 后走 `write_staging_capability` 闸落盘：schema 校验 + 命名空间/纯度准入 + `:examples` 沙盒断言，`proposal_note` 记意图、`:author` 记成员。无 near-kin 检查（与 proposeBehavior 不同）：能力词是几十词的小词汇表，同名即硬拒、评审见全文与断言，不另造相似度子系统。
 
@@ -439,7 +439,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | `intent` | string | 是 | — | 能力意图：想造什么词、解决什么问题（自然语言，记为 `proposal_note`） |
 | `name` | string | 是 | — | 词名（字母起头，后接字母/数字/`-`/`_`；同名即拒——改进既有词请换新名） |
 
-成功返回 `{name, trusted=false, status="pending_approval"}`——与原型通道同一信任模型：人类在 mirror 的能力审批批准后，经词汇桥全社会成员下次 wake 即可在自己的 spec 里组合它。
+成功返回 `{name, trusted=false, status="pending_approval"}`——与原型通道同一信任模型：人类在 ops/WebUI 的能力审批批准后，经词汇桥全社会成员下次 wake 即可在自己的 spec 里组合它。
 
 失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：血脉偿付闸拒绝（与 `proposeBehavior` 同一道闸，排在起草调用之前；fail-open）；起草响应剥离 ``` 代码围栏后找不到 EDN map；起草产物的 `:name` 与指定词名不一致（回喂重起草）；artifact 校验失败（`CapabilityError` 原文回喂 + `data.hint` artifact schema 提示，staging 无残留——含 `:examples` 断言失败）；与受信库/staging 同名冲突。
 
@@ -461,7 +461,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 ### reviewPrototype
 
-评审一个 staging 区的原型提案（异质评审， 第二阶段）。调用方只点名提案——verdict 不由调用方给：工具内部用评审者自己的 `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior.tlon 全文、随包 `LESSONS.md`（如有）与谱系链（含每代 diff、`proposal_note`）；响应首行必须是 `通过`/`不通过`/`弃权` 三者之一，其后为理由。合法 verdict 追加记入提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型——`llm_client.config.model_name`，异质性来源），多次评审累积不覆盖，approve 时随整目录晋级 trusted。评审是咨询性的：不自动晋级，人类在审批详情（`reviews` 字段）里读到记录再做决定。
+评审一个 staging 区的原型提案（异质评审，审批社会化的第一步）。调用方只点名提案——verdict 不由调用方给：工具内部用评审者自己的 `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior.tlon 全文、随包 `LESSONS.md`（如有）与谱系链（含每代 diff、`proposal_note`）；响应首行必须是 `通过`/`不通过`/`弃权` 三者之一，其后为理由。合法 verdict 追加记入提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型——`llm_client.config.model_name`，异质性来源），多次评审累积不覆盖，approve 时随整目录晋级 trusted。评审是咨询性的：不自动晋级，人类在审批详情（`reviews` 字段）里读到记录再做决定。
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|

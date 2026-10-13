@@ -27,13 +27,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 
 ## 端点分组
 
-路由集中在 `RESTAPIHandler.create_app` 注册，按职责分五组：
-
-- **消息**：`POST /messages`（人类发信，异步受理，成功返回 202 + `mail_id`，字段校验的唯一副本在 [tlon_server/api/send_mail.py](../../src/tlon_server/api/send_mail.py) 的 `parse_send_mail_fields`）；`GET /inbox`（读自己的邮箱，inbox+sent 合并按时间序，`username` 参数缺省为 `guest`）。
-- **会话**：`POST /sessions`（声明 username/client_type/mode/filters/protocol_version，201 返回 session id 及 participants/agents 快照）；`PATCH /sessions/{id}`（改 mode/filters，响应即更新后状态，不在流上推确认帧）；`DELETE /sessions/{id}`（幂等断开）；`GET /events`（SSE 流，session_id 走 query 参数或 `X-Session-Id` 头，同一会话重复开流返回 409）。
-- **成员**：`GET /agents`、`GET /agents/{agent_id}`、`GET /participants`、`GET /sessions`。
-- **配置**：`GET /config`；管理面 `GET /admin/config/agents`、`POST/PATCH/DELETE /admin/config/agents`（成员 CRUD）、`/admin/prototypes` 与 `/admin/prototypes/staging`（原型列表与审批）、`POST /admin/config/agents/{agent_id}/reload`（热重载）。
-- **可观测性**：`GET /traces`、`GET /traces/{trace_id}`、`GET /metrics`、`GET /agents/{agent_id}/logs`、`GET /logs`。另有 `GET /health`；`GET /test/ping`、`POST /test/echo` 仅 debug 模式注册。
+路由集中在 `RESTAPIHandler.create_app` 注册。端点全表（每条路由的注册条件、请求/响应细节、错误枚举）以 [reference/api-reference.md](../reference/api-reference.md) 的生成总表为单一事实源，本文不手工复制清单（双写必漂移）。按职责粗分：消息（`POST /messages` 发信、`GET /inbox` 读邮箱）、会话（`POST/PATCH/DELETE /sessions` + `GET /events` SSE 流）、成员与配置（含 `/admin/*` 管理面）、可观测性（traces/metrics/logs）。
 
 几个端点层面的设计选择：
 
@@ -118,7 +112,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 ## 端口与生命周期
 
-`RESTServer` 是 aiohttp 生命周期的薄封装：`start()` 建 app、起 `AppRunner` 和 `TCPSite`，`stop()` 清理。装配在 `ServerApp.initialize()` 完成（构造 `RESTAPIHandler` 并注入 ClientGateway 与 [tlon/api/](../../src/tlon/api) 的 domain facade——members / mail / prototypes / observability / config / events，ADR 0019；handler 不直摸 runtime 内脏），但**装配阶段不开端口**——监听发生在 `ServerApp.start()` 调 `RESTServer.start()` 时；关停严格反序，RESTServer 最先停。这条顺序保证两件事：装配失败时进程没有任何对外暴露；关停时不再接受新请求之后，内部组件才开始拆。
+`RESTServer` 是 aiohttp 生命周期的薄封装：`start()` 建 app、起 `AppRunner` 和 `TCPSite`，`stop()` 清理。装配在 `ServerApp.initialize()` 完成（构造 `RESTAPIHandler` 并注入 ClientGateway 与 [tlon/api/](../../src/tlon/api) 的 domain facade——members / mail / prototypes / observability / configs / events / arena / capabilities，ADR 0019；handler 不直摸 runtime 内脏），但**装配阶段不开端口**——监听发生在 `ServerApp.start()` 调 `RESTServer.start()` 时；关停严格反序，RESTServer 最先停。这条顺序保证两件事：装配失败时进程没有任何对外暴露；关停时不再接受新请求之后，内部组件才开始拆。
 
 默认绑定 `127.0.0.1:8080`，对外只有这一个端口。可观测性（traces/metrics/logs）也走同一个端口的 GET 端点，不开独立的 admin 端口——本地工具场景下，第二个端口是比「端点级的条件注册」更重的隔离手段。
 

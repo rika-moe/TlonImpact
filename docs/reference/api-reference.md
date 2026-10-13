@@ -8,7 +8,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 |---|---|---|
 | Base URL | `http://127.0.0.1:8080`（默认；host/port 由 `RESTServer` 构造参数决定） | `rest/app.py` 的 `RESTServer` |
 | 协议版本 | `SESSION_PROTOCOL_VERSION = "2.0.0"`，`POST /sessions` 唯一接受的版本 | `rest/sessions.py` |
-| 鉴权 | **无认证层**。身份即请求体/query 里的 `username`，信任边界是本机 | [docs/design/server-protocol.md](../design/server-protocol.md) |
+| 鉴权 | 邮件面**无认证层**（身份即请求体/query 里的 `username`，信任边界是本机）；`/admin/*` 可选 Bearer token（ADR 0013，见下「鉴权（admin 面）」节） | [docs/design/server-protocol.md](../design/server-protocol.md) |
 | 响应格式 | 除 SSE 外全部是 JSON（`application/json`，`ensure_ascii=False`） | `rest/common.py` 的 `_json_response` |
 | CORS | 全开：`Access-Control-Allow-Origin: *`，方法 `GET, POST, PATCH, DELETE, OPTIONS`，允许头仅 `Content-Type`；预检由 `OPTIONS /{path:.*}` 应答 | `rest/common.py` 的 `handle_options` |
 
@@ -29,11 +29,16 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `invalid_in_reply_to` / `invalid_thread_id` | `POST /messages` | 对应字段存在但不是字符串 |
 | `recipient_unresolved` | `POST /messages` | to/cc 全部解析不到任何成员地址（`HumanAdapter.speak` 抛 `ValueError`） |
 | `stream_active` | `GET /events` | 该会话已有一条活跃 SSE 流 |
+| `unauthorized` | 全部 `/admin/*` | 配置了 `TLON_ADMIN_TOKEN` 但请求未携带或携带错误的 Bearer token（401，见下「鉴权（admin 面）」节） |
 
 两个不一致处，如实说明：
 
 - 404 响应（`GET /agents/{id}`、`GET /traces/{id}`、`PATCH`/`GET /events` 的会话不存在等）只有 `{"error": ...}`，**没有 `reason` 字段**。
 - 503 响应（依赖未装配时）形状是 `{"status": "error", "message": ...}`，与 4xx 的 `{"error", "reason"}` 不同。
+
+### 鉴权（admin 面，ADR 0013）
+
+邮件面（`/messages`、`/inbox`、`/sessions`、`/events` 等）无认证层——身份即请求体/query 里的 `username`，信任边界是本机（默认绑定 `127.0.0.1`）。配置 `TLON_ADMIN_TOKEN` 后，所有 `/admin/*` 请求必须携带 `Authorization: Bearer <token>`：强制点是 `RESTAPIHandler.create_app` 注册的 `_admin_auth_middleware`（`hmac.compare_digest` 常量时间比对；CORS 预检 OPTIONS 按设计放行），未携带或比对失败返回 401 `{"error": "Admin authentication required", "reason": "unauthorized"}`。中间件只在 token 配置时注册，单一拦截点，未来新增 admin 路由自动被保护。默认（未配置）认证关闭，与「名字即身份」模型一致。
 
 ### 条件注册
 
@@ -43,6 +48,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 |---|---|
 | `GET /admin/config/agents`、`POST /admin/config/agents/{agent_id}/reload` | 注入了 `config_manager` |
 | `GET /traces`、`GET /traces/{trace_id}` | 注入了 `trace_store` |
+| `POST /webhooks/github` | 配置了 GitHub ingress 且 `GITHUB_WEBHOOK_SECRET` 非空 |
+| `GET /ui`、`GET /ui/`（+ 静态资源） | WebUI 构建产物（apps/webui/dist 的 index.html）存在 |
 | `GET /test/ping`、`POST /test/echo` | `debug=True`（仅冒烟用，生产不开启） |
 | `GET /metrics` | 总是注册；无 metrics 服务时返回 503 |
 

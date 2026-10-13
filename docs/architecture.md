@@ -21,8 +21,9 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 │   core/ —— ClientGateway / SessionManager / NotificationService / │
 │            MemberDirectory                                        │
 ├──────────────────── runtime 北向 API（tlon/api）─────────────────┤
-│   members / mail / prototypes / observability / config / events   │
-│   六个 domain facade + build_runtime（runtime 装配，ADR 0019）    │
+│   members / mail / prototypes / observability / configs / events /    │
+│   arena / capabilities —— 8 个 domain facade + build_runtime          │
+│   （runtime 装配，ADR 0019）                                          │
 ├──────────────────────────── 领域层 ──────────────────────────────┤
 │ agents —— AgentRegistry（机制）/ Adam（策略）/ MemberRuntime /    │
 │           SessionScheduler / AgentSession / LoopDriver / stages / │
@@ -42,14 +43,7 @@ Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮�
 
 整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon_launcher/main.py](../src/tlon_launcher/main.py) 的 `main`，最终由 [tlon_server/serverapp.py](../src/tlon_server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [tlon_server/api/rest/](../src/tlon_server/api/rest) 包的 `RESTServer`（`rest/app.py` 的 `create_app` 注册全部路由，handler 按域拆在 `rest/` 各模块），没有 WebSocket。
 
-REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
-
-- 消息与邮箱：`POST /messages`（人类发信）、`GET /inbox`（读自己的邮箱）
-- 实时推送：`GET /events`（SSE 长连接）
-- 成员与会话：`GET /agents`、`GET /agents/{agent_id}`、`GET /participants`、`GET /sessions`、`POST /sessions`
-- 配置：`GET /config`、`GET /admin/config/agents`、`POST /admin/config/agents/{agent_id}/reload`（热重载）
-- 可观测性：`GET /traces`、`GET /traces/{trace_id}`、`GET /metrics`、`GET /agents/{agent_id}/logs`、`GET /logs`
-- 其他：`GET /health`；`GET /test/ping`、`POST /test/echo` 仅在 debug 模式注册
+REST 端点全表（每条路由的注册条件、错误枚举、SSE 帧格式）以 [reference/api-reference.md](./reference/api-reference.md) 为单一事实源，本文不再罗列。
 
 客户端侧有两类接入方式：`tlon ops`（[tlon_launcher/commands/ops.py](../src/tlon_launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[tlon_client/sdk/](../src/tlon_client/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上不依赖 `tlon` 包（日志直接用 structlog），只经 REST + SSE 与服务端通信。
 
@@ -69,7 +63,7 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 | `tlon.tools` | agent 可用工具（邮件/文件/Shell/记忆/任务/生命周期/原型） | base、sandbox；不依赖 agents/app/prototypes | import-linter；生命周期与原型工具经 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py)、[tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py) 声明端口，由装配层注入实现（依赖倒置） |
 | `tlon.agents` | 领域核心：注册表、成员运行时、认知循环 | base/memory/organization/tools/sandbox；不依赖 app/prototypes | import-linter |
 | `tlon.prototypes` | 内置行为原型库（随包携带，启动时播种到 `~/.tlon/prototypes/`） | —（无独立契约） | — |
-| `tlon.api` | runtime 公共北向 API（ADR 0019）：六个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 server/client/launcher | import-linter「api 不依赖 server/client/launcher」 |
+| `tlon.api` | runtime 公共北向 API（ADR 0019）：8 个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 server/client/launcher | import-linter「api 不依赖 server/client/launcher」 |
 | `tlon_server` | REST/SSE handlers + 客户端连接管理 + WebUI 静态托管 | 仅 tlon.api + tlon.base（只禁直接 import） | import-linter「server 只依赖 tlon.api + tlon.base」 |
 | `tlon_client` | 客户端包：`sdk/`（外部客户端用的纯协议层 SDK）、`telegram/`（Telegram bot 客户端） | sdk 不依赖 tlon；telegram 仅 sdk/第三方 | import-linter「client.sdk 不依赖 tlon」「client.telegram 只依赖 sdk/第三方」 |
 | `tlon_launcher` | 命令行入口（composition root） | 仅 tlon.base + tlon_server + tlon_client | import-linter「launcher 不直摸 runtime」 |
@@ -88,17 +82,17 @@ REST 接口一览（均在 `rest/app.py` 的 `create_app` 注册）：
 
 装配分两段（ADR 0019），此阶段不开任何网络端口：
 
-**runtime 段**——`build_runtime()`（[api/bootstrap.py](../src/tlon/api/bootstrap.py)）按依赖拓扑序构造 runtime 组件，并在其上构造六个 domain facade，返回 `Runtime` 容器：
+**runtime 段**——`build_runtime()`（[api/bootstrap.py](../src/tlon/api/bootstrap.py)）按依赖拓扑序构造 runtime 组件，并在其上构造 8 个 domain facade，返回 `Runtime` 容器：
 
 1. **可观测性先行**：`init_tracing` + `init_metrics`，先于任何 span 创建。
 2. **基础设施**：`seed_prototypes()`（幂等地把内置原型写入 `~/.tlon/prototypes/`，须在任何 agent 启动前）→ `EventBus` → `ConfigService` → `MetricsService` → `FileTraceStore`。
 3. **领域组件**：`AgentRegistry`（此时只按 ConfigService 里的配置 `register`，不启动 agent）→ Adam（[agents/adam.py](../src/tlon/agents/adam.py) 的 `make_adam`，在注册表之后初始化并随后发出 boot 启动请求）→ `AdapterManager`（人类适配器生命周期）→ `MailDelivery`（邮件投递）→ 可选 `GitHubAdapter`（配了 webhook secret 才存在）。
-4. **facade 装配**：members / mail / prototypes / observability / config / events（[api/](../src/tlon/api) 下的六个小类，构造器注入 runtime 对象，薄透传）。
+4. **facade 装配**：members / mail / prototypes / observability / configs / events / arena / capabilities（[api/](../src/tlon/api) 下的 8 个小类，构造器注入 runtime 对象，薄透传）。
 
 **serving 段**——`ServerApp.initialize()`（[tlon_server/serverapp.py](../src/tlon_server/serverapp.py)）只装配自己的连接管理与 HTTP 生命周期：
 
 5. **客户端网关**：`SessionManager` → `NotificationService`（经 events facade 订阅 runtime 事件，不直摸 EventBus）→ `MemberDirectory`（成员通讯录，经 members/events facade 聚合）→ `ClientGateway`（协调各组件的门面）。
-6. **API 层**：构造 `RESTServer`（注入 ClientGateway 及六个 facade），尚未开始监听。
+6. **API 层**：构造 `RESTServer`（注入 ClientGateway 及 8 个 facade），尚未开始监听。
 7. 发布 `SYSTEM_STARTUP` 事件。
 
 随后 `ServerApp.start()` 调用 `RESTServer.start()` 才真正监听端口，然后阻塞在 shutdown 信号上。`shutdown()` 严格反序：先停 RESTServer 与 ClientGateway，再 `Runtime.shutdown()`（Adam（PID 1）先于它驱动的注册表停，EventBus 几乎最后停，tracing/metrics 收尾）。
@@ -187,15 +181,19 @@ runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后
 
 所有状态落盘在 `~/.tlon/`（可用 `$TLON_HOME` 覆盖），路径的唯一权威是 [base/paths.py](../src/tlon/base/paths.py) 的 `TlonPaths`——无模块级单例，实例在进程入口构造一次后显式注入贯穿各层（同进程可并存多个 runtime，各有独立 home）；任何模块不应硬编码目录结构。仓库根目录下的 [data/](../data) 是历史遗留，当前代码不引用它。
 
-`$TLON_HOME` 只在指向一个已存在的目录时才生效，否则回落到 `~/.tlon`（不存在则创建）——见 `paths.py` 的 `_resolve_tlon_home`。
+`$TLON_HOME` 显式设置时必须指向一个已存在的目录，否则报错拒绝启动（fail-fast，绝不静默回落真实数据根——typo 不该让进程跑在真实社会数据上）；缺省 `~/.tlon` 不存在时自动创建——见 `paths.py` 的 `_resolve_tlon_home`。
 
 ```
 ~/.tlon/
+├── .env                     # 进程级环境配置（API key 等，可选；真实环境变量优先）
+├── cron.yaml                # 声明式周期任务邮件（可选；启动时读一次）
+├── policy.tlon              # 社会政策文件（可选，ADR 0022；缺失即内嵌默认政策）
 ├── shared/
 │   ├── traces/
 │   │   └── trace-{uuid}.jsonl
-│   └── logs/
-│       └── server-{date}.jsonl
+│   ├── logs/
+│   │   └── server-{date}.jsonl
+│   └── spawn-quota.json     # spawn 配额账本（原子替换，跨重启存活）
 ├── prototypes/              # 行为原型库（启动时从 tlon.prototypes 播种）
 ├── prototypes-staging/      # LLM 撰写、待审批的原型
 ├── capabilities/            # 受信能力库（能力数据化，design/capabilities.md）
@@ -205,10 +203,13 @@ runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后
 │   │   ├── agent.yaml
 │   │   ├── behavior.tlon    # 成员 spec（唯一权威）
 │   │   ├── IDENTITY.md / SOUL.md / RULES.md
+│   │   └── CONTACTS.md      # 联系簿（成员自写、私有，ADR 0024）
 │   ├── memory/
 │   │   ├── config.json
 │   │   ├── claims.jsonl     # 记忆 claim（ADR 0017，append-only）
 │   │   └── distillation.json # 蒸馏水位线
+│   ├── sessions/            # session 事件日志（ADR 0007/0009：交互唯一真相）
+│   │   └── {session_id}.jsonl
 │   ├── tasks.jsonl
 │   ├── workspace/
 │   └── mail/

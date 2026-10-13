@@ -4,7 +4,7 @@
 
 ## 背景
 
-邮件是磁盘事实（mailbox 即队列，先持久化后处理），但认知循环的 `AgentSession` 是纯内存态：进程重启后，进行中的 session 整体蒸发——context、迭代计数、工具结果、后台工具任务全丢。邮件侧靠「未读集合 + 启动扫描」补偿，会话侧没有任何真相源；traces 落盘是观测而非事实。外部调研（[docs/design/deepseek-harness-review.md](../design/deepseek-harness-review.md) 第 1 条，deepseek-harness 的 session 子系统）给出已验证的范式：session 是 append-only 事件日志，模型历史由日志推导，崩溃恢复靠重放。
+邮件是磁盘事实（mailbox 即队列，先持久化后处理），但认知循环的 `AgentSession` 是纯内存态：进程重启后，进行中的 session 整体蒸发——context、迭代计数、工具结果、后台工具任务全丢。邮件侧靠「未读集合 + 启动扫描」补偿，会话侧没有任何真相源；traces 落盘是观测而非事实。外部调研（deepseek-harness 的 session 子系统）给出已验证的范式：session 是 append-only 事件日志，模型历史由日志推导，崩溃恢复靠重放。
 
 这与「行为即数据」哲学同构：**认知过程也是数据**。
 
