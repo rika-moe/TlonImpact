@@ -784,7 +784,7 @@ class AgentRegistry(Component):
     # ==================== Hot adoption + spawn (stage 6b) ====================
 
     async def adopt_agent(self, agent_id: str) -> str:
-        """Adopt an agent created out-of-process (wizard/mirror), no restart.
+        """Adopt an agent created out-of-process (WebUI/ops), no restart.
 
         Delegates to ``agents/spawn.py`` ``SpawnManager``; see there for
         semantics and the result enum.

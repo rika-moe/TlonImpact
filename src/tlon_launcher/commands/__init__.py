@@ -2,6 +2,6 @@
 
 This module provides the command implementations for the Tlon CLI:
 - dream: Start the server (maintain the dream)
-- intrude: Connect to the server (invade reality)
-- mirror: Configure agents (create in the mirror)
+- ops: Operator TUI (operate the society)
+- telegram: Telegram bot client (optional third human channel)
 """

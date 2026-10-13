@@ -94,7 +94,7 @@ def write_staging_prototype(
 
     The metadata is written with ``:trusted false`` and ``:author`` recording
     the authoring agent, so ``spawnAgent`` refuses it until a human approves
-    it in the mirror. Lineage (see docs/design/prototypes.md): ``parent``
+    it (ops/WebUI). Lineage (see docs/design/prototypes.md): ``parent``
     links the proposal to the prototype it was derived from (trusted or
     staging) and the generation is derived server-side as the parent's + 1;
     ``proposal_note`` records what this generation changes.
