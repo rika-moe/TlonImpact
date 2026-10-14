@@ -1,11 +1,12 @@
 [project]
 name = "tlon-impact"
-version = "0.0.1-alpha.1"
+version = "0.0.1-alpha.2"
 description = "Self-evolving agents, towards AGI"
 readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
 requires-python = ">=3.11"
 authors = [
-    {name = "Developer", email = "dev@example.com"}
+    {name = "Rika"}
 ]
 keywords = ["agent", "ai", "chatbot", "collaboration", "docker"]
 classifiers = [
@@ -59,7 +60,7 @@ packages = ["src/tlon", "src/tlosure", "src/tlon_server", "src/tlon_client", "sr
 artifacts = ["src/tlon_server/webui_dist/**"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src", "scripts", "docs", "README.md", "pyproject.toml", "uv.lock", ".python-version"]
+only-include = ["src", "scripts", "docs", "README.md", "LICENSE", "pyproject.toml", "uv.lock", ".python-version"]
 # 同 wheel：sdist 需携带 webui_dist，否则 uv build 的 wheel-from-sdist 拿不到
 artifacts = ["src/tlon_server/webui_dist/**"]
 

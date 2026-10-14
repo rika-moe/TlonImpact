@@ -1,6 +1,7 @@
 {
   "name": "tlon-webui",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "version": "0.1.0",
   "type": "module",
   "description": "Tlon WebUI - cyberpunk web client for the Tlon server (React + Vite)",
