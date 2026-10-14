@@ -74,3 +74,7 @@ Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtim
 
 完整文件清单与分层原则见 [docs/README.md](./docs/README.md)；开发协作规范见 [AGENTS.md](./AGENTS.md)。
 
+## 许可证
+
+本项目以 [PolyForm Noncommercial License 1.0.0](./LICENSE) 发布：个人、学习、研究等非商业用途可自由使用、修改和再分发（须保留版权与许可证声明）；任何商业用途均需另行获得授权。
+
