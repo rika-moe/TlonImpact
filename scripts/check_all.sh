@@ -59,6 +59,7 @@ if [ "$want_static" -eq 1 ]; then
     run "mypy"              uv run mypy src/tlon src/tlosure src/tlon_server src/tlon_client src/tlon_launcher
     run "lint-imports"      uv run lint-imports
     run "docs-freshness"    uv run python scripts/gen_reference_docs.py --check
+    run "dev-proxy"         uv run python scripts/check_dev_proxy.py
     ts_run "webui-tests"    webui test
     ts_run "webui-build"    webui build
     ts_run "operator-tests" operator test
