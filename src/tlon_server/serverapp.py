@@ -104,6 +104,13 @@ class ServerApp:
         # State
         self._shutdown_event = asyncio.Event()
         self._running = False
+        # shutdown() re-entry guard: the signal handler spawns one
+        # shutdown task per signal and run_server's finally always calls
+        # shutdown() again after start() returns — without this flag the
+        # second pass re-publishes SYSTEM_SHUTDOWN onto an already-stopped
+        # EventBus and raises. Set at entry (before the first await) so a
+        # concurrent second task bails out immediately too.
+        self._shutdown_started = False
 
     async def initialize(self) -> None:
         """Initialize the runtime and the serving side with full DI.
@@ -237,7 +244,15 @@ class ServerApp:
         """Shutdown the server gracefully.
 
         Stops API servers and shuts down all components in reverse order.
+        Idempotent: re-entry (a second signal's shutdown task, or
+        run_server's finally after a completed shutdown) returns
+        immediately — the EventBus is stopped by the first pass and
+        cannot take a second SYSTEM_SHUTDOWN publish.
         """
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
+
         if not self._running and self._runtime is None:
             return
 
