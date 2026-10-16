@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from tlon.base.logger import configure_logging
 from tlon.base.settings import get_settings
+from tlon.base.version import VERSION
 from tlon_launcher.commands.dream import run_dream
 from tlon_launcher.commands.ops import run_ops
 from tlon_launcher.commands.telegram import run_telegram
@@ -47,7 +48,7 @@ Commands:
     )
 
     # Global options (apply to all commands including embedded mode)
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode (verbose logging)")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
