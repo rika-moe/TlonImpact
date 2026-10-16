@@ -59,6 +59,7 @@ from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.search_files import SearchFilesTool
 from tlon.tools.filesystem.write_file import WriteFileTool
 from tlon.tools.mail.check_inbox import CheckInboxTool
+from tlon.tools.mail.forward_mail import ForwardMailTool
 from tlon.tools.mail.mark_read import MarkReadTool
 from tlon.tools.mail.search_mails import SearchMailsTool
 from tlon.tools.mail.send_email import SendEmailTool
@@ -310,6 +311,10 @@ async def assemble_cognitive(
         )
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
+    # forwardMail (ADR 0029): the cognitive member's forwarding outlet —
+    # declarative like sendEmail; the engine validates mail_id against the
+    # agent's own mailbox and composes the self-contained forward body.
+    tool_executor.register_tool(ForwardMailTool())
     tool_executor.register_tool(SilenceTool())
     # Persona self-edit (ADR 0024, docs/design/identity.md): the member
     # rewrites its own IDENTITY.md / SOUL.md on the host (outside the

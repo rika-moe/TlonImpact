@@ -373,9 +373,45 @@ def validate_member_spec(
         _validate_when(rule, label, pure)
         if rule.loop is not None:
             _validate_cognitive(rule, label)
+            _reject_cognitive_forward(rule, label)
         _validate_actions(rule, label, registry)
         _validate_fuel(rule, label)
     return member
+
+
+def _reject_cognitive_forward(rule: MemberRule, label: str) -> None:
+    """Reject a cognitive rule whose ``:actions`` statically call ``forward``.
+
+    The DSL ``forward`` action reads the triggering event's mail — which
+    no longer exists on the cognitive path (ADR 0028 retired the trigger
+    mail), so it silently no-ops there. Forwarding is a runtime decision
+    carried by the ``forwardMail`` tool instead (ADR 0029); the DSL
+    action stays reserved for deterministic rules. The walk is syntactic:
+    any nested form headed by the ``forward`` symbol rejects the spec
+    (tlosure has no quote form, so no false positives from quoting).
+    """
+    if _calls_forward(rule.actions):
+        raise MemberSpecValidationError(
+            f"{label}: 认知规则的 :actions 不允许 forward——触发邮件已退役（ADR 0028），"
+            "forward 在认知路径上静默失效；认知成员请用 forwardMail 工具（ADR 0029）"
+        )
+
+
+def _calls_forward(forms: tuple[Form, ...]) -> bool:
+    """Whether any (nested) action form is headed by the ``forward`` symbol."""
+
+    def scan(node: Any) -> bool:
+        if isinstance(node, Form):
+            if node and isinstance(node[0], Symbol) and str(node[0]) == "forward":
+                return True
+            return any(scan(item) for item in node)
+        if isinstance(node, list):
+            return any(scan(item) for item in node)
+        if isinstance(node, dict):
+            return any(scan(value) for value in node.values())
+        return False
+
+    return any(scan(form) for form in forms)
 
 
 def _validate_fuel(rule: MemberRule, label: str) -> None:

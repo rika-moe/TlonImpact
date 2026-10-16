@@ -168,6 +168,8 @@ agent 收信的入口是 [agents/member_runtime.py](../../src/tlon/agents/member
 
 agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 [agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头的分工是 stage 声明、引擎定稿：stage 把模型显式传的 `in_reply_to` 原样声明进 `MailEffect`（ADR 0028——无触发邮件缺省，回复对象完全是模型的显式选择）；`EffectExecutor` 发送前在 agent 自己的邮箱里按 `in_reply_to` 查到被引用邮件，以它的 `thread_id` 为线程根——所以回复**自动并入被回复邮件的线程**，不需要 LLM 自己记得带 thread_id。查不到被引用邮件（典型如幻觉 id）时该封不发送，按「退信是设计意图」的同一风格落一封 postmaster 通知，不产生带悬空引用的邮件。
 
+转发也经同一出口（ADR 0029）：认知成员用 `forwardMail` 工具声明 `mail_id` / `to` / `cc` / `comment`，act stage 声明带 `forward_of` 的 `MailEffect`，`EffectExecutor` 从 agent 自己的邮箱取出原信、组自包含转发体（comment + 归因头「—— 转发的邮件 ——」+ 原正文；外部来信在归因头加不可信警示行）与 `Fwd: <原主题>` 主题，另起新线程发送。`mail_id` 的幻觉防护与 `in_reply_to` 同一条路径：id 不在自己邮箱中则不发，postmaster 通知。DSL 的 `forward` 动作保留给确定性规则（触发事件带原邮件）；认知规则的 `:actions` 含 `forward` 加载即拒绝。
+
 为什么强调「唯一出口」：
 
 - **可审计**：所有 agent 发出的信都经过同一个点，trace 注入、落盘、投递语义只有一份实现，社会的全部通信记录完整可查。

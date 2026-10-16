@@ -271,6 +271,49 @@ class TestSingleValidator:
         validate_member_spec(_parse(SCRIPT_EDN))
 
 
+class TestCognitiveForwardRejected:
+    """ADR 0029: the DSL ``forward`` action reads the triggering event's
+    mail, which the cognitive path no longer has (ADR 0028) — a cognitive
+    rule calling it in ``:actions`` is a load error pointing at the
+    forwardMail tool; deterministic rules keep it."""
+
+    COGNITIVE_WITH_FORWARD = """\
+{:version 1
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :loop {:context {:sections [(persona)]}
+                 :stages [(think) (act)]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?))
+                 :max-iterations 5
+                 :max-consecutive-errors 3
+                 :max-tokens 1000000
+                 :reflect {:enabled false :interval-minutes 5}}
+          :actions [%s]}]}
+"""
+
+    def test_top_level_forward_rejected(self):
+        spec = _parse(self.COGNITIVE_WITH_FORWARD % '(forward {:to ["x@tlon.internal"]})')
+        with pytest.raises(MemberSpecValidationError, match="forwardMail"):
+            validate_member_spec(spec)
+
+    def test_nested_forward_rejected(self):
+        """The walk is syntactic: forward inside any expression depth
+        (here a when body) is still caught."""
+        spec = _parse(
+            self.COGNITIVE_WITH_FORWARD
+            % '(when true (emit "x" ["sink@tlon.internal"]) (forward {:to ["x@tlon.internal"]}))'
+        )
+        with pytest.raises(MemberSpecValidationError, match="forwardMail"):
+            validate_member_spec(spec)
+
+    def test_deterministic_forward_unaffected(self):
+        validate_member_spec(_parse(SCRIPT_EDN))
+
+    def test_cognitive_without_forward_passes(self):
+        spec = _parse(self.COGNITIVE_WITH_FORWARD % '(emit "x" ["sink@tlon.internal"])')
+        validate_member_spec(spec)
+
+
 class TestRuleFuel:
     """Phase D: rule-level :fuel roundtrips and is gated by MAX_FUEL."""
 

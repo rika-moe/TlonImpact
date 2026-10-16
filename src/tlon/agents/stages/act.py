@@ -171,6 +171,22 @@ async def act_stage_collect(
             if result.data.get("is_complete"):
                 is_complete = True
                 final_content = content
+        elif tc.function_name == "forwardMail" and result.success:
+            # ADR 0029: a forward declares the source mail id and an
+            # optional comment; the engine validates the id against the
+            # agent's own mailbox (same hallucination guard as
+            # in_reply_to) and composes the self-contained forward body
+            # — stages stay I/O-free, so content stays empty here. A
+            # forward never completes the loop.
+            outcome.mails.append(
+                MailEffect(
+                    to=result.data.get("to") or [],
+                    content="",
+                    cc=result.data.get("cc"),
+                    forward_of=result.data.get("mail_id"),
+                    forward_comment=result.data.get("comment"),
+                )
+            )
         elif tc.function_name == "silence" and result.success:
             # Completion without any reply: the loop ends, no mail is
             # emitted, and read-marking stays the agent's own explicit
