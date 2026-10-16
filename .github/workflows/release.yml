@@ -21,14 +21,27 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      # build_package.sh 要求 apps/webui/node_modules 存在（正式产物必含 WebUI）
+      # TS 门禁要求两端 node_modules（check_all.sh 的 ts_run 契约：CI 恒执行）
       - name: Install TS dependencies
-        run: npm ci --prefix apps/webui
+        run: |
+          npm ci --prefix apps/webui
+          npm ci --prefix apps/operator
+
+      # 红着的代码不许发版（issue #144）：全量质量门（静态 + 单元 + 集成），
+      # 与 CI 三个 workflow 同一脚本——检查项单一事实源
+      - name: Quality gate
+        run: scripts/check_all.sh
 
       - name: Check tag version matches pyproject
         run: |
