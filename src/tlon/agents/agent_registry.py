@@ -226,6 +226,7 @@ class AgentRegistry(Component):
         self._paths = tlon_paths
         self._post_office = post_office
         self._mail_rescue_task: asyncio.Task[None] | None = None
+        self._mail_rescue_not_before: dict[str, float] = {}
         self._lifecycle_tasks: set[asyncio.Task[None]] = set()
         self._shutting_down = False
         self._metrics_service = metrics_service
@@ -489,6 +490,7 @@ class AgentRegistry(Component):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._lifecycle_tasks.clear()
+        self._mail_rescue_not_before.clear()
 
         # Stop the public-health monitor (scan task + MAIL_NEW subscription)
         await self._health.shutdown()
@@ -638,12 +640,27 @@ class AgentRegistry(Component):
     async def _rescue_sleeping_mail(self) -> None:
         store = MailStore(self._paths.mail_database_file())
         for member_id in await asyncio.to_thread(store.unread_member_ids):
+            if time.monotonic() < self._mail_rescue_not_before.get(member_id, 0):
+                continue
             await self._on_mail_delivered(
                 Event(
                     type=EventType.MAIL_DELIVERED,
                     payload={"recipient": member_id},
                     source="mail_rescue",
                 )
+            )
+
+    def defer_mail_rescue(self, agent_id: str) -> None:
+        """Respect the member's own rescan cadence after idle sleep.
+
+        This throttles recovery only. A genuinely new delivery notification
+        still wakes the member immediately, and failed wake attempts remain
+        eligible for retry on the next recovery poll.
+        """
+        config = self._agent_info.get_config(agent_id)
+        if config is not None:
+            self._mail_rescue_not_before[agent_id] = (
+                time.monotonic() + config.mail_rescan_interval_seconds
             )
 
     async def _on_mail_delivered(self, event: Event) -> None:
@@ -1098,6 +1115,7 @@ class AgentRegistry(Component):
             if agent_id in self._registered_ids:
                 self._registered_ids.remove(agent_id)
             self._profiles.pop(agent_id, None)
+            self._mail_rescue_not_before.pop(agent_id, None)
             self._wake_locks.pop(agent_id, None)
             try:
                 self._agent_info.delete_agent(agent_id)

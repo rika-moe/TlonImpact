@@ -176,3 +176,36 @@ async def test_notifications_continue_current_trace(tmp_path: Path) -> None:
     events = [call.args[0] for call in office._bus.publish.await_args_list]
     assert all(event.trace_id == trace_id for event in events)
     assert events[0].source == "a"
+
+
+async def test_new_request_id_is_new_intent_even_with_identical_content(tmp_path: Path) -> None:
+    office = office_at(tmp_path)
+    first = await office.send(
+        from_address="a@tlon.internal", to=["b"], content="same", request_id="one"
+    )
+    second = await office.send(
+        from_address="a@tlon.internal", to=["b"], content="same", request_id="two"
+    )
+    assert first.mail.id != second.mail.id
+    assert len(await Mailbox(office._paths.mail_database_file(), "b").inbox()) == 2
+
+
+async def test_send_resolves_each_alias_once(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    office = office_at(tmp_path)
+    resolve = Mock(wraps=office._resolver.resolve_address)
+    monkeypatch.setattr(office._resolver, "resolve_address", resolve)
+    await office.send(from_address="a@tlon.internal", to=["B", "B"], cc=["a"], content="once")
+    assert [call.args[0] for call in resolve.call_args_list] == ["B", "a"]
+
+
+def test_post_office_constructor_has_no_filesystem_io(tmp_path: Path, monkeypatch) -> None:
+    from tlon.organization.mail.store import MailStore
+
+    def unexpected_initialize(self) -> None:
+        raise AssertionError("constructor must not initialize SQLite")
+
+    monkeypatch.setattr(MailStore, "initialize", unexpected_initialize)
+    office = office_at(tmp_path)
+    assert not office._paths.mail_database_file().exists()

@@ -35,7 +35,6 @@ class PostOffice:
         self._resolver = resolver
         self._paths = tlon_paths
         self.store = MailStore(tlon_paths.mail_database_file())
-        self.store.initialize()
 
     async def send(
         self,
@@ -74,18 +73,13 @@ class PostOffice:
         raw_to, raw_cc = to, cc or []
         if not raw_to and not raw_cc:
             raise PostRejected("请指定至少一个收件人", [])
-        resolved = {raw: self._resolver.resolve_address(raw) for raw in [*raw_to, *raw_cc]}
-        invalid: list[str] = []
-        for raw, address in resolved.items():
-            member = self._resolver.resolve_member(address) if address else None
-            if member is None or await asyncio.to_thread(self.store.is_retired, member):
-                invalid.append(raw)
-        if invalid:
-            raise PostRejected("无效收件人：" + ", ".join(invalid), invalid)
+        resolved_to, resolved_cc, local_ids, gateways = await self._resolve_recipients(
+            raw_to, raw_cc
+        )
         mail = Mail.create(
             from_address=from_address,
-            to=[resolved[raw] or raw for raw in raw_to],
-            cc=[resolved[raw] or raw for raw in raw_cc],
+            to=resolved_to,
+            cc=resolved_cc,
             content=content,
             subject=subject,
             in_reply_to=in_reply_to,
@@ -93,24 +87,32 @@ class PostOffice:
             forward_of=forward_of,
             endorsing=endorsing,
         )
-        return await self._post(mail, request_id, fingerprint)
+        return await self._post(mail, request_id, fingerprint, (local_ids, gateways))
 
     async def post(self, mail: Mail, request_id: str | None = None) -> StoredPost:
         """Commit a concrete mail. Replay does not repeat notifications or gateways."""
         return await self._post(mail, request_id)
 
     async def _post(
-        self, mail: Mail, request_id: str | None, fingerprint: str | None = None
+        self,
+        mail: Mail,
+        request_id: str | None,
+        fingerprint: str | None = None,
+        routes: tuple[list[str], list[str]] | None = None,
     ) -> StoredPost:
         with start_span(
             "mail.post",
             source="post_office",
             attributes={"mail_id": mail.id, "sender": mail.from_address},
         ):
-            return await self._submit(mail, request_id, fingerprint)
+            return await self._submit(mail, request_id, fingerprint, routes)
 
     async def _submit(
-        self, mail: Mail, request_id: str | None, fingerprint: str | None
+        self,
+        mail: Mail,
+        request_id: str | None,
+        fingerprint: str | None,
+        routes: tuple[list[str], list[str]] | None,
     ) -> StoredPost:
         data = mail.to_dict()
         for key in ("id", "timestamp"):
@@ -125,28 +127,11 @@ class PostOffice:
         if replay is not None:
             return replay
 
-        invalid: list[str] = []
-        local_ids: list[str] = []
-        gateways: list[str] = []
-        normalized: dict[str, str] = {}
-        for address in dict.fromkeys([*mail.to, *mail.cc]):
-            concrete = self._resolver.resolve_address(address)
-            member = self._resolver.resolve_member(concrete) if concrete else None
-            if member is None or await asyncio.to_thread(self.store.is_retired, member):
-                invalid.append(address)
-                continue
-            normalized[address] = concrete or address
-            if is_external_address(concrete or address):
-                gateways.append(concrete or address)
-            elif member not in local_ids:
-                local_ids.append(member)
-        if invalid:
-            raise PostRejected("无效或已退休的收件人：" + ", ".join(invalid), invalid)
-        mail = replace(
-            mail,
-            to=list(dict.fromkeys(normalized[a] for a in mail.to)),
-            cc=list(dict.fromkeys(normalized[a] for a in mail.cc)),
-        )
+        if routes is None:
+            to, cc, local_ids, gateways = await self._resolve_recipients(mail.to, mail.cc)
+            mail = replace(mail, to=to, cc=cc)
+        else:
+            local_ids, gateways = routes
         sender_id = self._resolver.resolve_member(mail.from_address)
         try:
             receipt, created = await asyncio.to_thread(
@@ -155,8 +140,8 @@ class PostOffice:
         except RetiredRecipients as exc:
             retired = [
                 address
-                for address in normalized
-                if self._resolver.resolve_member(normalized[address]) in exc.member_ids
+                for address in dict.fromkeys([*mail.to, *mail.cc])
+                if self._resolver.resolve_member(address) in exc.member_ids
             ]
             raise PostRejected("收件人已退休：" + ", ".join(retired), retired) from exc
         if not created:
@@ -208,6 +193,36 @@ class PostOffice:
             except Exception:
                 logger.exception("post_office_endorsement_notification_failed", mail_id=mail.id)
         return receipt
+
+    async def _resolve_recipients(
+        self, to: list[str], cc: list[str]
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Resolve aliases once and collect every invalid or retired recipient."""
+        invalid: list[str] = []
+        local_ids: list[str] = []
+        gateways: list[str] = []
+        normalized: dict[str, str] = {}
+        for raw in dict.fromkeys([*to, *cc]):
+            address = self._resolver.resolve_address(raw)
+            member = self._resolver.resolve_member(address) if address else None
+            if member is None or await asyncio.to_thread(self.store.is_retired, member):
+                invalid.append(raw)
+                continue
+            assert address is not None
+            normalized[raw] = address
+            if is_external_address(address):
+                if address not in gateways:
+                    gateways.append(address)
+            elif member not in local_ids:
+                local_ids.append(member)
+        if invalid:
+            raise PostRejected("无效或已退休的收件人：" + ", ".join(invalid), invalid)
+        return (
+            list(dict.fromkeys(normalized[raw] for raw in to)),
+            list(dict.fromkeys(normalized[raw] for raw in cc)),
+            local_ids,
+            gateways,
+        )
 
     @staticmethod
     def _fingerprint(data: dict[str, object]) -> str:

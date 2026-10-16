@@ -117,6 +117,7 @@ class IdleReaper:
                 return
 
             registry._agents.pop(agent_id)
+            registry.defer_mail_rescue(agent_id)
             idle = int(agent.idle_seconds)
             try:
                 await agent.shutdown()

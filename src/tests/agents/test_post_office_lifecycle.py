@@ -137,3 +137,49 @@ async def test_shutdown_cancels_inflight_start_without_retiring(
     assert not registry._lifecycle_tasks
     assert not registry._agents
     assert not MailStore(registry._paths.mail_database_file()).is_retired("worker")
+
+
+async def test_shelved_unread_rescue_respects_member_cadence(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    import tlon.agents.agent_registry as registry_module
+
+    registry = registry_at(tmp_path)
+    config = registry._agent_info.get_config("worker")
+    assert config is not None
+    config.mail_rescan_interval_seconds = 120
+    monkeypatch.setattr(registry._agent_info, "get_config", lambda _: config)
+    clock = [100.0]
+    monkeypatch.setattr(registry_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    mail = Mail.create(
+        from_address="source@tlon.internal", to=["worker@tlon.internal"], content="shelved"
+    )
+    await Mailbox(registry._paths.mail_database_file(), "worker").append_inbox(mail)
+    registry._agents["worker"] = member_with_sessions(0)
+    await registry._reaper.drain("worker", "idle")
+    registry.event_bus.publish.reset_mock()
+
+    for now in (101.0, 130.0, 160.0, 219.0):
+        clock[0] = now
+        await registry._rescue_sleeping_mail()
+    registry.event_bus.publish.assert_not_awaited()
+    clock[0] = 220.0
+    await registry._rescue_sleeping_mail()
+    assert registry.event_bus.publish.await_args.args[0].type is EventType.AGENT_START_REQUEST
+    # If notification/start fails, the following recovery poll must still retry.
+    registry.event_bus.publish.reset_mock()
+    clock[0] = 250.0
+    await registry._rescue_sleeping_mail()
+    registry.event_bus.publish.assert_awaited_once()
+
+
+async def test_new_delivery_bypasses_shelved_mail_cooldown(tmp_path: Path) -> None:
+    registry = registry_at(tmp_path)
+    registry._agents["worker"] = member_with_sessions(0)
+    await registry._reaper.drain("worker", "idle")
+    registry.event_bus.publish.reset_mock()
+    await registry._on_mail_delivered(
+        Event(type=EventType.MAIL_DELIVERED, payload={"recipient": "worker"}, source="post_office")
+    )
+    registry.event_bus.publish.assert_awaited_once()
+    assert registry.event_bus.publish.await_args.args[0].payload.reason == "wake"

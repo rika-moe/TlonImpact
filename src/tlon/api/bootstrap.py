@@ -16,6 +16,7 @@ tracing/metrics 支柱（OTel provider 是进程级单例）不在此处初始�
 session/notification/HTTP 生命周期。
 """
 
+import asyncio
 from dataclasses import dataclass
 
 from tlon.agents.adam import make_adam
@@ -164,6 +165,7 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     gateway_registry = ExternalGatewayRegistry()
     resolver = RecipientResolver(guardian_info, runtime_paths, gateway_registry.owner_of)
     post_office = PostOffice(event_bus, resolver, runtime_paths)
+    await asyncio.to_thread(post_office.store.initialize)
 
     # AgentRegistry - agent management.
     # Depends on EventBus and ConfigService (as AgentInfoProvider);
