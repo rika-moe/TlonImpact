@@ -72,6 +72,7 @@ from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice
 from tlosure.edn import loads
 
 #: Adam's policy, as data. Parsed once per assembly by
@@ -118,6 +119,7 @@ def make_adam(
     event_bus: EventBus,
     agent_registry: AgentRegistry,
     tlon_paths: TlonPaths,
+    post_office: PostOffice | None = None,
 ) -> MemberRuntime:
     """Assemble Adam: the built-in spec plus registry query closures.
 
@@ -146,6 +148,7 @@ def make_adam(
         event_bus=event_bus,
         spec=spec,
         builtins=builtins,
-        mailbox=Mailbox(tlon_paths.member_mail_dir("adam")),
+        mailbox=Mailbox(tlon_paths.mail_database_file(), "adam"),
         cognitive=None,
+        post_office=post_office,
     )

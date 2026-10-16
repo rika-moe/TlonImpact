@@ -51,7 +51,7 @@ async def collect_mail_stats(agent_id: str, *, tlon_paths: TlonPaths) -> dict[st
       from a root recipient; first-reply latency is the gap between the
       thread root's send time and that correspondent's first reply.
     """
-    mailbox = Mailbox(tlon_paths.member_mail_dir(agent_id))
+    mailbox = Mailbox(tlon_paths.mail_database_file(), agent_id)
     own_address = address_for_member(agent_id)
     sent = await mailbox.sent()
     inbox = await mailbox.inbox()

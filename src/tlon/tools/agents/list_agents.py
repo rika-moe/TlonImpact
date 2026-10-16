@@ -48,7 +48,7 @@ class ListAgentsTool(Tool):
                 "address": address_for_member(status["id"]),
             }
             for status in self._registry.get_all_agent_status()
-            if status is not None
+            if status is not None and status.get("state") != "retired"
         ]
         agents.sort(key=lambda entry: entry["id"])
         return ToolResult(

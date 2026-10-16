@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.mail_helpers import make_office
 from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.on_complete import OnCompleteRunner
@@ -252,8 +253,9 @@ class _TaskStub:
 
 
 @pytest.fixture
-async def bus():
+async def bus(tmp_path):
     b = EventBus()
+    b.test_home = tmp_path
     await b.initialize()
     yield b
     await b.shutdown()
@@ -283,6 +285,11 @@ def _make_member(
         member_id=member_id,
         name=member_id,
         event_bus=event_bus,
+        post_office=make_office(
+            event_bus,
+            event_bus.test_home,
+            [member_id, "sink", "sender", "worker", "other", "mentor", "receiver", "user"],
+        ),
         spec=spec,
         builtins=registry_builtins,
         mailbox=mailbox,
@@ -322,7 +329,7 @@ def _deliver(mail: Mail, member_id: str) -> Event:
 
 class TestDeterministicDispatch:
     async def test_forward_on_delivery_and_mark_read(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_member("relay-1", SCRIPT_FORWARD, bus, mailbox=mailbox)
         await member.initialize()
 
@@ -467,7 +474,7 @@ class TestPhaseDFuel:
         """Fuel exhaustion at the gate is logged distinctly and skips the
         rule — no action fires, and the mail is still marked read (D6.1).
         """
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_member("fueled-1", FUELED_LOOP_GATE, bus, mailbox=mailbox)
         await member.initialize()
         emitted: list[Event] = []
@@ -624,7 +631,7 @@ class TestOnCompleteLoopActions:
 class TestMarkReadSemantics:
     async def test_gate_rejected_mail_is_marked_read(self, bus, mail_dir):
         """D6.1: a mail the :when gate rejects is read anyway."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_member("gate-1", SCRIPT_GATED, bus, mailbox=mailbox)
         await member.initialize()
 
@@ -647,7 +654,7 @@ class TestMarkReadSemantics:
         await member.shutdown()
 
     async def test_gate_pass_marks_read(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_member("gate-2", SCRIPT_GATED, bus, mailbox=mailbox)
         await member.initialize()
         delivered: list[Event] = []
@@ -664,7 +671,7 @@ class TestMarkReadSemantics:
         await member.shutdown()
 
     async def test_own_mail_is_ignored(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_member("relay-1", SCRIPT_FORWARD, bus, mailbox=mailbox)
         await member.initialize()
         delivered: list[Event] = []
@@ -697,7 +704,7 @@ class TestBootAndUnread:
 
     async def test_unread_scan_replays_mail_on_boot(self, bus, mail_dir):
         """Mail that arrived while the member slept is replayed at boot."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         sleeper = Mail.create(
             from_address="alice@tlon.internal",
             content="while asleep",
@@ -740,7 +747,7 @@ def _make_cognitive_member(
         edn,
         event_bus,
         mailbox=mailbox,
-        cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
+        cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._store.database.parent.parent)),
     )
 
 
@@ -750,7 +757,7 @@ class TestCognitiveRouting:
         marking is the agent's own act) and wakes the scheduler when no
         session is live (the scheduler is not started here, so the wake
         event stays set for inspection)."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("thinker-1", COGNITIVE_EDN, bus, mailbox)
         incoming = Mail.create(
             from_address="alice@tlon.internal", content="think about this", to=[member.address]
@@ -763,7 +770,7 @@ class TestCognitiveRouting:
         assert scheduler is not None and scheduler._wake.is_set()
 
     async def test_gate_rejected_mail_marked_read(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("thinker-2", COGNITIVE_EDN, bus, mailbox)
         unrelated = Mail.create(
             from_address="alice@tlon.internal", content="not for you", to=["other@tlon.internal"]
@@ -777,7 +784,7 @@ class TestCognitiveRouting:
     async def test_delivery_with_live_session_does_not_wake(self, bus, mail_dir):
         """ADR 0028 决策 1: a gate-passed delivery while a session is live
         changes nothing — no wake, the mail lies unread in the inbox."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("thinker-live", COGNITIVE_EDN, bus, mailbox)
         scheduler = member._scheduler
         assert scheduler is not None
@@ -794,7 +801,7 @@ class TestCognitiveRouting:
 
     async def test_cognitive_actions_not_run_inline(self, bus, mail_dir):
         """A hit runs the loop first, then actions — never inline (D6.2)."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("thinker-3", COGNITIVE_WITH_ACTIONS, bus, mailbox)
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
@@ -826,7 +833,7 @@ class TestToolShutdownWiring:
     async def test_member_shutdown_shuts_down_tool_executor(self, bus, mail_dir):
         """MemberRuntime.shutdown must cascade into tool_executor.shutdown so
         tools (e.g. ExecuteBashTool) can cancel their background tasks."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         config = AgentConfig(id="thinker-x", name="thinker-x", llm=LLMConfig(model_name="test"))
         tool_executor = ToolExecutor()
         recorder = _RecordingTool()
@@ -848,7 +855,7 @@ class TestToolShutdownWiring:
     async def test_member_shutdown_closes_docker_runtime(self, bus, mail_dir):
         """shutdown closes the assembled DockerRuntime (the client's
         connection pool must not leak across sleep→wake re-assembly)."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         config = AgentConfig(id="thinker-y", name="thinker-y", llm=LLMConfig(model_name="test"))
         docker_runtime = MagicMock()
         caps = CognitiveCapabilities(
@@ -870,7 +877,7 @@ class TestToolShutdownWiring:
         """docker_runtime defaults to None (daemon unreachable at assembly,
         or a capability set built without assembly) — shutdown must not
         blow up."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         config = AgentConfig(id="thinker-z", name="thinker-z", llm=LLMConfig(model_name="test"))
         caps = CognitiveCapabilities(
             config=config,
@@ -899,7 +906,7 @@ class TestMixedMemberDeflection:
     """
 
     async def test_unsubscribe_deflected_to_deterministic(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("gu-yanxi-1", MIXED_EDN, bus, mailbox)
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
@@ -919,7 +926,7 @@ class TestMixedMemberDeflection:
         assert await mailbox.unread() == []
 
     async def test_normal_mail_wakes_cognitive_and_stays_unread(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("gu-yanxi-2", MIXED_EDN, bus, mailbox)
         emitted: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, partial(_capture, emitted))
@@ -941,7 +948,7 @@ class TestMixedMemberDeflection:
         """Regression (phase F): the boot scan must not swallow the cheap
         path for a mixed member — a 退订 mail that arrived while sleeping
         gets the deterministic auto-optout reply on wake."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         optout = Mail.create(
             from_address="user@tlon.internal", content="退订谢谢", to=["gu-yanxi-3@tlon.internal"]
         )
@@ -998,13 +1005,15 @@ class TestPeriodicRescan:
             COGNITIVE_EDN,
             bus,
             mailbox=mailbox,
-            cognitive=_cognitive_caps(config, TlonPaths(home=mailbox._dir.parent)),
+            cognitive=_cognitive_caps(
+                config, TlonPaths(home=mailbox._store.database.parent.parent)
+            ),
         )
 
     async def test_shelved_mail_woken_by_periodic_rescan(self, bus, mail_dir):
         """Mail the agent never read stays unread; the sweep re-evaluates
         it and wakes the scheduler (no live session)."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = self._make_rescan_member("resident-1", bus, mailbox, interval=0.03)
         shelved = Mail.create(
             from_address="alice@tlon.internal", content="看过没回", to=[member.address]
@@ -1026,7 +1035,7 @@ class TestPeriodicRescan:
     async def test_periodic_rescan_without_unread_wakes_nothing(self, bus, mail_dir):
         """An idle sweep is a no-op: no wake, no LLM call (the stub LLM
         raises if ever invoked)."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = self._make_rescan_member("resident-2", bus, mailbox, interval=0.03)
         member._initialized = True
         member._rescan_task = asyncio.create_task(member._rescan_loop())
@@ -1040,7 +1049,7 @@ class TestPeriodicRescan:
     async def test_gate_rejected_unread_marked_read_by_sweep(self, bus, mail_dir):
         """The sweep applies the same gate as delivery (ADR 0028 决策 6):
         a rejected unread mail is marked read, never wakes."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = self._make_rescan_member("resident-3", bus, mailbox, interval=0.03)
         rejected = Mail.create(
             from_address="alice@tlon.internal", content="not for you", to=["other@tlon.internal"]
@@ -1061,7 +1070,7 @@ class TestPeriodicRescan:
 
     async def test_one_task_runs_the_single_cadence(self, bus, mail_dir):
         """No concurrent rescans: one task, one cadence — shutdown cancels it."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = self._make_rescan_member("resident-4", bus, mailbox, interval=0.03)
         member._initialized = True
         task = asyncio.create_task(member._rescan_loop())
@@ -1128,7 +1137,7 @@ class TestIdleAwareBackground:
     """
 
     async def test_in_flight_reflection_counts_as_active(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_cognitive_member("thinker-i1", COGNITIVE_EDN, bus, mailbox)
         scheduler = member._scheduler
         reflection = member._reflection
@@ -1146,7 +1155,7 @@ class TestIdleAwareBackground:
         assert member.idle_seconds > 600
 
     async def test_shutdown_cancels_in_flight_reflection(self, bus, mail_dir):
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         config = AgentConfig(id="thinker-i2", name="thinker-i2", llm=LLMConfig(model_name="test"))
         llm = _BlockingLLM()
         caps = CognitiveCapabilities(
@@ -1233,7 +1242,7 @@ class TestMentorCc:
     async def test_forward_not_cced(self, bus, mail_dir):
         """Forward passes along an existing mail — cc'ing the mentor on
         every relay would be noise, so it is deliberately exempt."""
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")
         member = _make_member("rookie-1", SCRIPT_FORWARD, bus, mailbox=mailbox)
         member._mentor_cc = self.MENTOR
         await member.initialize()

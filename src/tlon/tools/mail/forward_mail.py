@@ -40,6 +40,7 @@ class ForwardMailTool(Tool):
         super().__init__(
             name="forwardMail",
             description=(
+                "本地成功表示已入箱，不代表已阅读或处理；网关仅尝试投递，不保证成功或外部接收。无效或已退休收件人使整封拒绝。"
                 "转发你自己邮箱里的一封邮件给其他成员。\n"
                 "- mail_id：被转发邮件的 id（必填）。id 必须来自 checkInbox / searchMails "
                 "的返回结果——幻觉 id 会导致发送失败。\n"
@@ -51,6 +52,10 @@ class ForwardMailTool(Tool):
             parameters={
                 "type": "object",
                 "properties": {
+                    "request_id": {
+                        "type": "string",
+                        "description": "可选。一次投信的稳定标识；超时结果未知时使用原值重试。相同标识不同内容会被拒绝。",
+                    },
                     "mail_id": {
                         "type": "string",
                         "description": (
@@ -109,10 +114,5 @@ class ForwardMailTool(Tool):
                 "comment": comment,
                 "action": "forward_mail",
             },
-            message=(
-                "✉️ 转发已受理，进入投递队列。投递是异步的：若发送或投递失败"
-                "（如 mail_id 不在你的邮箱中、收件人地址不存在），稍后会收到 "
-                "postmaster 的通知邮件——以该通知为唯一的失败信号，"
-                "不要在本轮向用户承诺「已转发」。"
-            ),
+            message="投信请求已构造；引擎完成邮局提交后才返回最终结果。",
         )

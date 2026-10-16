@@ -26,10 +26,10 @@ async def test_cc_reaches_all_recipients(inproc_server: tuple[str, Path]) -> Non
         accepted = await client.send_message(token, to=["bob"], cc=["carol"], subject="cc smoke")
 
     assert accepted
-    await _assert_delivered(tlon_home, "human-bob", token)
-    await _assert_delivered(tlon_home, "human-carol", token)
+    await _assert_delivered(tlon_home, "human:bob", token)
+    await _assert_delivered(tlon_home, "human:carol", token)
 
-    mail = _find_inbox_mail(tlon_home, "human-bob", token)
+    mail = _find_inbox_mail(tlon_home, "human:bob", token)
     assert mail["to"] == ["bob@tlon.internal"]
     assert mail["cc"] == ["carol@tlon.internal"]
 
@@ -44,10 +44,10 @@ async def test_reply_threads(inproc_server: tuple[str, Path]) -> None:
     async with TlonClient(base_url=base_url) as client:
         await client.get_inbox(username="bob")
         # A: guest -> bob (sender "guest" is the default identity; first
-        # contact creates the human-guest mailbox).
+        # contact creates the human:guest mailbox).
         assert await client.send_message(token_a, to=["bob"], subject="A")
-        await _assert_delivered(tlon_home, "human-bob", token_a)
-        mail_a = _find_inbox_mail(tlon_home, "human-bob", token_a)
+        await _assert_delivered(tlon_home, "human:bob", token_a)
+        mail_a = _find_inbox_mail(tlon_home, "human:bob", token_a)
         assert mail_a["thread_id"] == mail_a["id"]  # a new thread roots at itself
 
         # B: reply to A with the upstream thread_id -> same thread.
@@ -57,14 +57,14 @@ async def test_reply_threads(inproc_server: tuple[str, Path]) -> None:
         # C: reply to A without thread_id -> a new thread, no inheritance.
         assert await client.send_message(token_c, to=["guest"], reply_to=mail_a["id"])
 
-    await _assert_delivered(tlon_home, "human-guest", token_b)
-    await _assert_delivered(tlon_home, "human-guest", token_c)
+    await _assert_delivered(tlon_home, "human:guest", token_b)
+    await _assert_delivered(tlon_home, "human:guest", token_c)
 
-    mail_b = _find_inbox_mail(tlon_home, "human-guest", token_b)
+    mail_b = _find_inbox_mail(tlon_home, "human:guest", token_b)
     assert mail_b["in_reply_to"] == mail_a["id"]
     assert mail_b["thread_id"] == mail_a["thread_id"]
 
-    mail_c = _find_inbox_mail(tlon_home, "human-guest", token_c)
+    mail_c = _find_inbox_mail(tlon_home, "human:guest", token_c)
     assert mail_c["in_reply_to"] == mail_a["id"]
     assert mail_c["thread_id"] == mail_c["id"]
     assert mail_c["thread_id"] != mail_a["thread_id"]

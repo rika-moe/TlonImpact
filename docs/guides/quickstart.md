@@ -56,9 +56,10 @@ tlon dream
 
 ## 6. 验证与下一步
 
-- 回信会落到 `~/.tlon/human-{你的用户名}/mail/inbox.jsonl`（人类收件箱，[base/paths.py](../../src/tlon/base/paths.py) 的 `member_mail_dir`）；离线时信件在此等待投递。
-- 发信记录在 `~/.tlon/human-{你的用户名}/mail/sent.jsonl`。
-- agent 收发的邮件在各自 `~/.tlon/{agent_id}/mail/`（`inbox.jsonl` / `sent.jsonl` / `inbox.cursor`）。
+- 人类与 agent 的邮件统一存于 `~/.tlon/shared/mail.sqlite3`，通过客户端收件箱和成员邮件接口查询；本地成功表示已经入箱，离线不影响接收。
+- 发件箱与收件箱是同一份邮件的成员视图，已读状态单独属于各收件人，不代表工作已完成。
+- 任一无效或退休收件人会让整封投信被拒绝；已注册网关仅尝试投递，不保证入箱或外部接收。
+- 旧 JSONL 邮箱原样保留为离线档案，新系统不读取或导入。
 - 想看 agent 在做什么：WebUI 的 Agents 视图看状态，Events 视图看实时事件流，Logs/Traces 视图看一次会话的完整追踪。
 
 协议细节（端点、SSE 帧格式、curl/httpx 裸调）见 `reference/api-reference.md`；信件机制的设计取舍见 `design/mail.md`。

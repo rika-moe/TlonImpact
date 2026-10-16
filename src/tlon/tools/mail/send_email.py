@@ -24,7 +24,7 @@ class SendEmailTool(Tool):
     declared (ADR 0028 — there is no trigger mail to default to), and
     the engine validates the reference against the agent's own mailbox
     — deriving ``thread_id`` from the referenced mail — before
-    publishing MAIL_NEW; ``is_complete`` then decides whether the loop
+    committing through the post office; successful ``is_complete`` decides whether the loop
     returns.
 
     ``endorsing`` marks the mail as an endorsement of another mail
@@ -47,7 +47,7 @@ class SendEmailTool(Tool):
         super().__init__(
             name="sendEmail",
             description=(
-                "发送邮件。这是 Agent 唯一的邮件出口。\n"
+                "发送邮件。本地成功表示已入箱，不代表已阅读或处理；网关只尝试投递，不保证成功或外部接收。无效或已退休收件人使整封拒绝。\n"
                 "- to：收件人地址列表（必填），如 'gu-yanxi@tlon.internal'；"
                 "多人就把每个地址逐个列进 to 或 cc（不存在组地址）。\n"
                 "- is_complete=false：发送中间进度/阶段性发现，发送后 Agent 继续思考。\n"
@@ -57,6 +57,10 @@ class SendEmailTool(Tool):
             parameters={
                 "type": "object",
                 "properties": {
+                    "request_id": {
+                        "type": "string",
+                        "description": "一次投信的稳定标识；结果未知时用原值重试，同键不同内容会被拒绝。",
+                    },
                     "to": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -141,11 +145,7 @@ class SendEmailTool(Tool):
                 "in_reply_to": in_reply_to,
                 "endorsing": endorsing,
                 "action": "send_email",
+                "request_id": kwargs.get("request_id"),
             },
-            message=(
-                "✉️ 邮件已受理，进入投递队列。投递是异步的：若发送或投递失败"
-                "（如收件人地址不存在），稍后会收到 postmaster 的通知邮件——"
-                "以该通知为唯一的失败信号，"
-                "不要在本轮向用户承诺「已送达」。"
-            ),
+            message="投信请求已构造；引擎完成邮局提交后才返回最终结果。",
         )

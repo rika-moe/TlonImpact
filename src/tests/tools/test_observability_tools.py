@@ -217,7 +217,7 @@ def tlon_paths(tmp_path) -> TlonPaths:
 
 @pytest.fixture
 def mailbox(tlon_paths: TlonPaths) -> Mailbox:
-    return Mailbox(tlon_paths.member_mail_dir(AGENT_ID))
+    return Mailbox(tlon_paths.mail_database_file(), AGENT_ID)
 
 
 async def _seed_mailbox(mailbox: Mailbox) -> None:
@@ -424,7 +424,8 @@ class TestGetSocialHealthTool:
         result = await tool.execute()
 
         assert result.success
-        assert result.data["scanned_members"] == 0
+        assert result.data["scanned_members"] == 1
+        assert not tlon_paths.mail_database_file().exists()
         assert not (tlon_paths._home / "ghost-member").exists()
 
     def test_tool_schema(self):

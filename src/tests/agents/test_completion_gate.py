@@ -99,7 +99,11 @@ def _make_driver(
     services.session_span = lambda session: contextlib.nullcontext()
 
     executor = MagicMock()
-    executor.send_mail = AsyncMock()
+    executor.send_mail = AsyncMock(
+        return_value=__import__("types").SimpleNamespace(
+            to_dict=lambda: {"mail_id": "sent", "message": "已入箱"}
+        )
+    )
     executor.publish = AsyncMock()
 
     tool_executor = MagicMock()

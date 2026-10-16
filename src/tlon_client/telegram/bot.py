@@ -23,6 +23,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from tlon_client.sdk.adapter import TelegramAdapter
+from tlon_client.sdk.base_client import MailSendError
 from tlon_client.sdk.client import TlonClient
 
 from .reply_map import ReplyMap, is_allowed, parse_send_command
@@ -234,23 +235,17 @@ class TelegramBot:
         to: list[str],
         reply_to: str | None = None,
         thread_id: str | None = None,
-    ) -> bool:
-        """Send a mail through the SDK client (POST /messages).
-
-        Args:
-            content: Mail content
-            to: Recipients (names, ids or full addresses)
-            reply_to: Optional in_reply_to mail id
-            thread_id: Optional thread id inherited from the upstream mail
-
-        Returns:
-            True if accepted by the server
-        """
+    ) -> str:
+        """Submit mail and report the actual receipt or uncertainty."""
         if self._client is None:
             raise RuntimeError("send_mail called before run()")
-        return await self._client.send_message(
-            content, to=to, reply_to=reply_to, thread_id=thread_id
-        )
+        try:
+            receipt = await self._client.send_message(
+                content, to=to, reply_to=reply_to, thread_id=thread_id
+            )
+            return str(receipt["message"])
+        except MailSendError as exc:
+            return f"{exc}（request_id: {exc.request_id}）"
 
     async def process_reply(self, text: str, reply_to_message_id: int | None) -> str:
         """Route an inbound Telegram text and produce the ack message.
@@ -271,21 +266,19 @@ class TelegramBot:
             self._reply_map.lookup(reply_to_message_id) if reply_to_message_id is not None else None
         )
         if target is not None:
-            ok = await self.send_mail(
+            receipt = await self.send_mail(
                 text,
                 to=[target.from_address],
                 reply_to=target.mail_id,
                 thread_id=target.thread_id,
             )
-            return "已回复 ✅" if ok else "发送失败：收件人无法解析"
+            return receipt
 
         if reply_to_message_id is not None:
             last = self._reply_map.last_from_address
             if last is not None:
-                ok = await self.send_mail(text, to=[last])
-                if ok:
-                    return "原信映射已丢失，已作为新邮件发给最近来信者 ✅"
-                return "发送失败：收件人无法解析"
+                receipt = await self.send_mail(text, to=[last])
+                return f"原信映射已丢失，作为新邮件提交：{receipt}"
 
         return "请对某条来信点「回复」回信，或用 /send <名字> <内容> 发新邮件"
 
@@ -307,8 +300,8 @@ class TelegramBot:
             await message.reply_text("用法：/send <名字> <内容>")
             return
         name, content = parsed
-        ok = await self.send_mail(content, to=[name])
-        await message.reply_text("已发送 ✅" if ok else "发送失败：收件人无法解析")
+        receipt = await self.send_mail(content, to=[name])
+        await message.reply_text(receipt)
 
     async def _on_inbox_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/inbox — list unread mail (D2)."""

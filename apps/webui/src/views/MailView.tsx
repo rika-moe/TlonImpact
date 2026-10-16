@@ -184,7 +184,8 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
     });
   };
 
-  const onSent = (mail: MailItem): void => {
+  const onSent = (mail: MailItem, message: string): void => {
+    setNotice(message);
     // Own sends are not delivered back via SSE, so append on the ack.
     setMails((prev) => mergeMails(prev, [mail]));
     setCompose(null);
@@ -494,7 +495,7 @@ function ComposeModal({
   username: string;
   myAddress: string;
   participants: ParticipantInfo[];
-  onSent: (mail: MailItem) => void;
+  onSent: (mail: MailItem, message: string) => void;
   onClose: () => void;
 }): ReactElement {
   const [to, setTo] = useState(request.to);
@@ -503,6 +504,7 @@ function ComposeModal({
   const [content, setContent] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [requestId] = useState(() => crypto.randomUUID());
 
   const submit = async (): Promise<void> => {
     const toList = splitList(to);
@@ -521,7 +523,8 @@ function ComposeModal({
     setSending(true);
     setError(null);
     try {
-      const mailId = await rest.sendMail(username, {
+      const receipt = await rest.sendMail(username, {
+        request_id: requestId,
         to: toList,
         cc: ccList,
         subject: subjectTrimmed,
@@ -529,6 +532,7 @@ function ComposeModal({
         in_reply_to: request.inReplyTo,
         thread_id: request.threadId,
       });
+      const mailId = receipt.mail_id;
       const sent: MailItem = {
         id: mailId,
         from_address: myAddress,
@@ -542,12 +546,12 @@ function ComposeModal({
         timestamp: new Date().toISOString(),
         read: true,
       };
-      onSent(sent);
+      onSent(sent, receipt.message);
     } catch (err) {
       // The form stays open with its fields intact; the server's semantic
       // reason (recipient_unresolved / empty_content / …) lands in the bar.
       if (err instanceof MailSendError) {
-        setError(`SEND FAILED // ${err.reason ?? "error"} — ${err.message}`);
+        setError(`${err.reason === "submission_unknown" ? "RESULT UNKNOWN" : "SEND REJECTED"} // ${err.reason ?? "error"} — ${err.message}`);
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }

@@ -8,7 +8,6 @@ must leave zero traces in instance B's home — and vice versa. Any
 process-level shared state that leaks across instances fails here.
 """
 
-import asyncio
 import uuid
 from pathlib import Path
 
@@ -17,23 +16,7 @@ from tlon.api.bootstrap import build_runtime
 from tlon.api.capabilities import CapabilitiesFacade
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
-
-DELIVERY_TIMEOUT = 10.0
-
-
-async def _wait_for(predicate, timeout: float = DELIVERY_TIMEOUT) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while not predicate():
-        if asyncio.get_running_loop().time() > deadline:
-            raise TimeoutError("condition not met in time")
-        await asyncio.sleep(0.05)
-
-
-def _mail_dirs(home: Path) -> list[str]:
-    """Member dirs carrying a mailbox under ``home`` (seed dirs excluded)."""
-    return sorted(
-        child.name for child in home.iterdir() if child.is_dir() and (child / "mail").is_dir()
-    )
+from tlon.organization.mail.store import MailStore
 
 
 async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
@@ -51,23 +34,21 @@ async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
         # Capabilities facade is wired into every runtime (issue #45 切片 3/3).
         assert isinstance(runtime_a.capabilities, CapabilitiesFacade)
         assert isinstance(runtime_b.capabilities, CapabilitiesFacade)
-        # bob is a known human in A only (mailbox exists → deliverable).
-        paths_a.member_mail_dir("human:bob").mkdir(parents=True, exist_ok=True)
+        # Bob is registered in A only; a legacy directory does not register a human.
+        MailStore(paths_a.mail_database_file()).register_member("human:bob")
 
         token = uuid.uuid4().hex[:12]
         # Send through instance A's mail channel (facade → adapter manager,
         # no HTTP): alice writes to bob.
         await runtime_a.mail.send("alice", f"hello {token}", to=["bob"])
 
-        inbox_bob = home_a / "human-bob" / "mail" / "inbox.jsonl"
-        await _wait_for(lambda: inbox_bob.exists() and token in inbox_bob.read_text())
-
-        # The mail landed in A's layout only: sender + recipient mailboxes
-        # exist under home_a, and instance B's home carries no member mail
-        # at all. (Mailbox construction is side-effect free — dirs appear
-        # on first delivery, so even Adam's inbox is absent until used.)
-        assert _mail_dirs(home_a) == ["human-alice", "human-bob"]
-        assert _mail_dirs(home_b) == []
+        store_a = MailStore(paths_a.mail_database_file())
+        store_b = MailStore(paths_b.mail_database_file())
+        assert [mail.content for mail in store_a.mails("human:bob")] == [f"hello {token}"]
+        assert store_b.mails("human:bob") == []
+        assert store_a.member_exists("human:alice")
+        assert not store_b.member_exists("human:alice")
+        assert paths_a.mail_database_file() != paths_b.mail_database_file()
     finally:
         await runtime_a.shutdown()
         await runtime_b.shutdown()

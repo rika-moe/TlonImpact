@@ -59,18 +59,17 @@ async def collect_reputation(
     own_address = address_for_member(agent_id)
 
     given = 0
-    own_dir = tlon_paths.member_mail_dir(agent_id)
-    if own_dir.is_dir():
-        given = sum(1 for mail in await Mailbox(own_dir).sent() if mail.endorsing)
+    given = sum(
+        1
+        for mail in await Mailbox(tlon_paths.mail_database_file(), agent_id).sent()
+        if mail.endorsing
+    )
 
     received: set[tuple[str, str]] = set()  # (endorser member id, endorsed mail id)
     endorsers_by_mail: dict[str, set[str]] = {}
     subject_by_mail: dict[str, str | None] = {}
     for member_id in member_ids:
-        mail_dir = tlon_paths.member_mail_dir(member_id)
-        if not mail_dir.is_dir():
-            continue
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(tlon_paths.mail_database_file(), member_id)
         for mail in await mailbox.sent():
             if not mail.endorsing:
                 continue

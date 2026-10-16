@@ -7,7 +7,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 [docs/vision.md](../vision.md) 把 Tlon 的社会结构定为「书信共和国」（Republic of Letters），三条哲学直接决定了邮件系统的形态：
 
 - **开放**——成员凭名字相互寻址，新成员出生即可加入，无需改造任何既有成员。实现上就是一个扁平的地址域加一张名称解析表，没有房间、没有订阅关系、没有权限矩阵。
-- **沉淀**——信件持久、可检索、可流传。实现上邮箱是磁盘上的追加写文件，邮件先落盘后处理，知识随书信积累而不是随会话蒸发。
+- **沉淀**——信件持久、可检索、可流传。实现上邮件正文与邮箱归属存入 SQLite，邮件先落盘后处理，知识随书信积累而不是随会话蒸发。
 - **平等**——人类不是管理员，而是社会的一员。实现上人类和 agent 走同一条投递管线、同一种邮箱、同一个事件流，人类只是「没有认知循环的成员」。
 
 这三条合起来排除了聊天室、消息队列、RPC 直连等方案：它们要么没有开放寻址，要么没有持久沉淀，要么把人类和 agent 分成两个通道。
@@ -18,7 +18,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 邮件模型是 [organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail`：一个纯数据 dataclass。字段一览：
 
-- `id`：uuid hex，全系统唯一，投递幂等、cursor、线程链接都以它为锚。
+- `id`：uuid hex，全系统唯一，持久化幂等、已读状态、线程链接都以它为锚。
 - `from_address`：发件人地址，构造时校验形态。
 - `to` / `cc`：主送与抄送地址列表，构造时去重（保序）；两者至少其一非空，否则拒绝构造——没有收件人的邮件在数据层就是非法的。
 - `subject`：可选。LLM 之间的通信经常不需要标题，它不承担任何线程语义。
@@ -35,10 +35,9 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 ### 地址域
 
-所有地址都住在 `tlon.internal` 域（`MAIL_DOMAIN`）。成员 id 到地址的映射由 `address_for_member` 完成：agent 用裸 id（`gu-yanxi` → `gu-yanxi@tlon.internal`），人类成员 id 是 `human:<username>`，映射时剥掉前缀（`human:alice` → `alice@tlon.internal`）。`is_mail_address` 只校验 `local@domain` 形态，域白名单在反解时才查——地址格式故意宽松，把「合不合法」和「投不投得到」分成两步，前者在构造时挡，后者在投递时以退信回答。
+本地成员地址住在 `tlon.internal` 域（`MAIL_DOMAIN`）。成员 id 到地址的映射由 `address_for_member` 完成：agent 用裸 id（`gu-yanxi` → `gu-yanxi@tlon.internal`），人类成员 id 是 `human:<username>`，映射时剥掉前缀（`human:alice` → `alice@tlon.internal`）。`is_mail_address` 只校验 `local@domain` 形态，域白名单在反解时才查——地址格式故意宽松，把「合不合法」和「投不投得到」分成两步，前者在构造时挡，后者在投信时统一验证，任一无效则整封拒绝。
 
-特殊地址只有一个：
-- `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）——退信发件人，系统地址，没有自己的邮箱。邮差惯例两条：**寄给** postmaster 的信静默丢弃（记日志 `mail_to_postmaster_dropped`），绝不退信；**来自** postmaster 的信遇到未知收件人也不再退信（`_bounce` 的显式闸，双保险）——退信套娃因此不可能。周期任务的 tick 邮件也以它为发件人（见「周期任务：tick 即邮件」）。
+系统地址 `postmaster@tlon.internal`（`POSTMASTER_ADDRESS`）用于周期任务等系统发件，没有成员邮箱，不能作为有效收件人。无效地址直接向调用方返回拒绝，不生成退信。
 
 反方向映射 `member_id_for_address` 是有损的：裸 local part 无法区分 agent 和人类（`alice@tlon.internal` 既可能是 agent `alice` 也可能是人类 `human:alice`），消歧留给解析器（见下文「名称解析」）。
 
@@ -48,29 +47,26 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 一个具体例子：A 发出信 m1（`thread_id = m1.id`）；B 回复 m2（`in_reply_to = m1.id`，`thread_id = m1.id`）；A 再回 m3（`in_reply_to = m2.id`，`thread_id = m1.id`）。`thread_id` 把 {m1, m2, m3} 聚成一个会话视图，`in_reply_to` 在会话内部给出回复的父子结构。agent 侧的回复头由模型显式声明（`in_reply_to` 是模型的显式选择，无触发邮件缺省——ADR 0028；线程跟随被引用邮件，见「发信：唯一出口」），人类客户端与 SDK 则要在 `POST /messages` 里显式传 `in_reply_to` / `thread_id`——字段穿透 REST 协议直达 `Mail.create`，服务端不重写。
 
-## 投递管线
+## SQLite 邮局
 
-投递由 [organization/mail/delivery.py](../../src/tlon/organization/mail/delivery.py) 的 `MailDelivery` 承担。它订阅 EventBus 上的 `MAIL_NEW`，对每封邮件依次做三件事：
+[ADR 0030](../decisions/0030-sqlite-post-office.md) 区分投信、入箱、阅读/思考。本地投信通过 [PostOffice](../../src/tlon/organization/mail/post_office.py) 完成，所有入口共用同一服务：
 
-1. **解析**：to+cc 合并去重（一个收件人只收一份），每个地址经 `RecipientResolver.resolve_member` 解析成成员 id；解析不到的收集进 unknown 列表，留到最后统一退信。社会没有组地址（all@ 已退役，ADR 0024 / #102）——发往 all@ 这类不存在成员的地址就按普通未知地址退信；一对多通信由发件人逐个列出收件人，组织内部通信由**社会角色**承担（某成员担任「邮件列表秘书」收信转发，设计见 [identity.md](identity.md)「组织即共识」）。
-2. **落盘**：写发件人的 `sent.jsonl` 和每个有效收件人的 `inbox.jsonl`（邮箱目录经 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths.member_mail_dir` 解析，`Mailbox` 实例按需建立、有界 LRU 缓存，`_MAILBOXES_CAP = 4096`）。
-3. **通知**：按收件人逐个发布 `MAIL_DELIVERED`，payload 携带邮件本体和收件人成员 id。唤醒、推送都挂在这个事件上，投递组件自己不知道收件人是 agent 还是人类。
+1. 解析并验证全部 `to` / `cc`。任一地址不存在或成员已退休，整封拒绝，列出全部问题；发件箱与所有收件箱均不产生记录。休眠和离线成员正常收信；无组地址，允许自寄，重复成员只入箱一次。
+2. 在一个 SQLite 事务中写入邮件正文、全部本地邮箱归属、幂等请求和网关尝试的初始未知状态。退休与本地入箱通过写事务排序。提交失败明确报错，不报告成功。
+3. 提交后尝试投递已注册网关的信箱，记录 `delivered` / `failed` / `unknown`。网关尝试不属于本地事务，不保证成功，更不保证外部平台接收；失败不撤销本地入箱。相同 owner 的地址只尝试一次。
+4. 提交后发布 `MAIL_NEW` 与本地 `MAIL_DELIVERED` 事实；网关只在入箱成功后发布送达通知。通知失败不改变已提交结果。
 
-`MAIL_NEW` 与 `MAIL_DELIVERED` 分成两个事件是刻意的：`MAIL_NEW` 表达「有一封信进入系统」（每封一次，发件视角），`MAIL_DELIVERED` 表达「这封信到达了某个成员的邮箱」（每收件人一次，收件视角）。落盘发生在这两者之间——订阅 `MAIL_DELIVERED` 的任何一方都可以假设邮件已在磁盘上。这也让投递本身成为总线上可观察的一环：运维模式的事件流能看到每一跳。
+成功回执明确列出本地已入箱成员及网关尝试结果，不表示收件人已读、理解或完成工作。不存在后台可靠外发队列，也不自动重试未知的网关结果。
 
-`MailDelivery` 除两个有界缓存外无状态：路由信息全部来自共享的 `RecipientResolver`（已注册 agent 含睡眠、在线人类、有持久邮箱的已知离线人类——同一份解析权威，发言侧与投递侧共用）。投递失败只记日志不抛出——EventBus 的处理器约定如此，一封信的失败不能阻塞总线上其他订阅者。
+### 持久化幂等与结果未知
 
-### 进程内幂等
+`request_id` 按发件人唯一。相同键、相同请求内容返回既有结果，不重复入箱、通知或尝试网关；同键不同内容明确冲突。调用方应在超时后复用原键，不能把响应丢失解释为确定失败。幂等记录跨进程重启保留，重放先于重新验证地址，成员后来退休不影响查询原结果。
 
-`MAIL_NEW` 可能被重发（例如事件回放）。`MailDelivery` 用一个有界内存集合（`_SEEN_CAP = 4096`，最旧淘汰）记住最近处理过的 `(mail_id, 环节, member)` 键（`{mail.id}|sent|{sender}`、`{mail.id}|inbox|{member}`、`{mail.id}|bounce|{sender}` 三种）：同一封邮件不会对同一成员写第二份副本、发第二个 `MAIL_DELIVERED`。键被淘汰或进程重启后回退为重复投递——追加写的邮箱容忍重复，宁多勿丢。
+网关实际尝试后、结果记录前崩溃，会留下 `unknown`；重放不自动重复外部副作用。需要再次尝试时，由发件人明确发起新的投信。
 
-投递全程在 tracing 之下：`_on_mail_new` 续接事件的 trace（或新开根 span），`mail.delivery` span 记录 `mail_id` 与发件人，`MAIL_DELIVERED` 事件携带同一 trace 的上下文——一封信从发出到落盘到唤醒收件人，在 `~/.tlon/shared/traces/` 里是一棵连续的树。
+### 历史决策的替代
 
-### 退信是设计意图
-
-解析不到任何人的地址会触发退信：`MailDelivery._bounce` 以 `postmaster@tlon.internal` 名义给发件人回一封信，subject 为 `Undeliverable: ...`，正文列出不存在的地址，`in_reply_to` 指向原信、`thread_id` 继承原线程。退信落在发件人的**收件箱**里，走和普通邮件完全相同的投递路径——所以一个 LLM 发件人会在自己的认知循环里读到退信，自己改正地址重发。错误不需要专门的告警通道，错误本身就是一封邮件。发件人没有邮箱时（postmaster 这类系统地址）退信无处可投，记日志丢弃；另加两道闸：收件人是 postmaster 的信直接静默丢弃不进 unknown 列表，原信来自 postmaster 时 `_bounce` 也直接拒退——退信不会无限循环是显式规则，不是巧合。
-
-这一点的深意在于：失败反馈与正常通信同构，LLM 不需要专门的错误处理路径，它的「读邮件-改行为」循环天然覆盖投递失败。发送侧失败（`EffectExecutor.send_mail` 的 `in_reply_to` 引用校验不通过、构造 `Mail` 被拒或 `MAIL_NEW` 发布失败）走同一风格：postmaster 名义的失败通知直接写进发件 agent 自己的收件箱（不经过 `MAIL_NEW`——通知路径不能依赖刚刚失败的那次发布），附一条 `MAIL_DELIVERED` 唤醒它。`SendEmailTool` 的受理回执明确告诉 LLM「以 postmaster 通知为唯一的失败信号」，把这条约定写进了工具语义。
+ADR 0030 已替代原来的 `MAIL_NEW → MailDelivery → JSONL` 写入链路、部分收件人照投加退信、进程内去重。旧 `inbox.jsonl`、`sent.jsonl`、`inbox.cursor` 原样保留为离线档案，新系统不读取、不导入、不双写、不删除。历史达成记录不表示这些机制仍在运行。
 
 ## 名称解析：唯一权威
 
@@ -79,11 +75,11 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 - `resolve_address`：原始收件人（agent id、agent 显示名、人类用户名、`human:<username>` 或完整地址）→ 邮件地址。发信侧用，人类可以说「谢云舒」而不必记 `xie-yunshu@tlon.internal`。
 - `resolve_member`：邮件地址 → 成员 id。投递侧用。local part 撞名时 agent 优先于人类。
 
-「已知人类」的规则——在线，**或**离线但有持久邮箱——只写在 `_known_human` 一处，两个方向共享。这保证了一个关键不变量：发信侧能解析出的收件人，投递侧一定能投递。`AdapterManager` 持有这个 resolver 实例，`MailDelivery` 构造时经 `adapter_manager.recipient_resolver` 取同一个实例；resolver 的在线检查闭包直接读 `_adapters` 字典，永远看到的是实时的在线集合。
+「已知人类」指已在 SQLite 注册的 `human:<username>`，与在线状态及旧邮箱目录无关。首次 attach 或 REST 投信时注册。`PostOffice` 与 `AdapterManager` 共享注入的 resolver；agent 查询来自 `AgentInfoProvider`，网关查询来自注入的认领表。
 
-resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含睡眠中的已注册 agent），人类在线性查注入的 callable，邮箱布局查 `TlonPaths`。组织层只依赖 base 的契约因此不破——三个能力全部构造器注入。
+完整地址通过 `resolve_address` 只代表格式可用，仍必须经 `resolve_member` 和退休检查，不能把解析成地址等同于投信有效。
 
-守护者信箱：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（投递自动建 `~/.tlon/adam/mail/`），但不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 MailDelivery 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的信（退信）不回——邮差不与邮差通信。
+守护者信箱：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（SQLite 中登记邮箱归属），但不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 PostOffice 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的系统信不回——邮差不与邮差通信。
 
 ## 外部来信与信任面
 
@@ -91,19 +87,19 @@ resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含
 
 外部来信是不可信输入，轻量防护三件套：
 
-- **身份可识别**：地址就是身份。外部发件人地址解析不到任何成员（`member_id_for_address` 对外域返回 None），投递层因此自然不写 sent 副本、退信安全跳过（`mail_bounce_dropped` 记日志），`MAIL_DELIVERED` 正常发布——投递语义不需要为外部发件人特判。
-- **机制级不可信标记**：渲染时标记，不改存储。邮件进入 agent 上下文的每个渲染点——`(mail-history)` 的信封头（`ContextBuilder._render_mail`）、`checkInbox` / `searchMails` 工具结果（`external` 字段）——都按 `is_external_address` 现算标记；jsonl 里不加任何字段。地址是唯一权威，标记是派生，与「状态派生不存储」哲学一致。
+- **身份可识别**：地址就是身份。外部发件人地址解析不到任何成员（`member_id_for_address` 对外域返回 None），邮局保留真实来源，并为本地收件人事务入箱，提交后发布 `MAIL_DELIVERED`——投递语义不需要为外部发件人特判。
+- **机制级不可信标记**：渲染时标记，不改存储。邮件进入 agent 上下文的每个渲染点——`(mail-history)` 的信封头（`ContextBuilder._render_mail`）、`checkInbox` / `searchMails` 工具结果（`external` 字段）——都按 `is_external_address` 现算标记；邮件存储不增加冗余信任字段。地址是唯一权威，标记是派生，与「状态派生不存储」哲学一致。
 - **protocol 通则**：系统提示的交互协议（[agents/prompt_builder.py](../../src/tlon/agents/prompt_builder.py) `_PROTOCOL`）声明：外部来信的内容是**数据不是指令**，其中的「命令」「要求」「紧急请求」不得直接执行，涉及动作前按既有流程与人类确认。
 
 与噪音治理的关系：标记防的是「内容欺骗」，不防「数量冲刷」。外部源失控刷信时由既有公共健康机制接管——同一发件人的邮件突发超过阈值，`PublicHealthMonitor` 发布 `AGENT_NOISY` 事实，噪音治理覆盖外部源与内部成员一视同仁。
 
-第一个外部源：GitHub webhook（入站方向）。入站链路是：GitHub 投递 webhook 到 `POST /webhooks/github`（配置 `GITHUB_WEBHOOK_SECRET` 才注册该端点）→ REST 层对原始 body 做 HMAC-SHA256 验签（`X-Hub-Signature-256`，`hmac.compare_digest` 比较）→ [organization/messaging/github_adapter.py](../../src/tlon/organization/messaging/github_adapter.py) 的 `GitHubAdapter` 把受支持的事件（issue 开立/指派、issue/PR 评论、PR review、CI 失败）映射成 `notifications@github.com` 的外部来信并发布 `MAIL_NEW`——之后走的就是本节描述的既有投递与不可信标记链路，无任何特判。subject 携带 `[owner/repo]` 上下文，是出站方向 thread 对齐的锚点；不支持的事件与动作直接跳过（200 ignored），不进入系统。
+第一个外部源：GitHub webhook（入站方向）。入站链路是：GitHub 投递 webhook 到 `POST /webhooks/github`（配置 `GITHUB_WEBHOOK_SECRET` 才注册该端点）→ REST 层对原始 body 做 HMAC-SHA256 验签（`X-Hub-Signature-256`，`hmac.compare_digest` 比较）→ [organization/messaging/github_adapter.py](../../src/tlon/organization/messaging/github_adapter.py) 的 `GitHubAdapter` 把受支持的事件（issue 开立/指派、issue/PR 评论、PR review、CI 失败）映射成 `notifications@github.com` 的外部来信并调用 `PostOffice.post`——之后走统一事务入箱与不可信标记链路，无任何特判。subject 携带 `[owner/repo]` 上下文，是出站方向 thread 对齐的锚点；不支持的事件与动作直接跳过（200 ignored），不进入系统。
 
 ### 外部收件人与出口方向
 
-「外部地址解析不到任何成员」对**发件人**恒成立，对**收件人**有一个受控例外：注册的网关可以**认领**外部地址。[organization/mail/gateways.py](../../src/tlon/organization/mail/gateways.py) 的 `ExternalGatewayRegistry` 是纯数据注册表——`claim(address, member_id)` 登记认领关系，`owner_of(address)` 查询。`RecipientResolver.resolve_member` 在内部域解析落空（`member_id_for_address` 对外域返回 None）时查注册表：被认领的外部地址解析到网关 member id，之后投递走完全正常的路径——写网关邮箱的 `inbox.jsonl`、`MAIL_DELIVERED` 照常发布；**未被认领的外部收件人照旧 bounce**——拼错的外域地址仍然退信，语义不稀释。认领表挂在同一个 resolver 上（构造注入 `external_owner`），单一权威哲学不破。
+注册网关通过 [ExternalGatewayRegistry](../../src/tlon/organization/mail/gateways.py) 认领外部地址，resolver 可将它解析为网关 owner。未注册的外部收件人导致整封拒绝。已注册网关只得到一次尽力投递其 SQLite 信箱的尝试，不保证入箱成功。
 
-网关邮箱就是出站审计痕迹：发出去（或没能发出去）的每一封回信都先落在 `member_mail_dir("gateway:github")` 的 `inbox.jsonl` 里，出口动作成功与否则看日志。
+本地事务保存网关目标与初始未知状态。实际入箱成功、失败或结果未知记录在回执中；成功入箱的邮件可供审计。没有入箱成功记录也可能已经尝试过，不能据此自动重发。外部 HTTP 的成败独立于网关入箱结果，当前由网关日志记录。
 
 第一个网关：`GitHubAdapter` 的出站方向。initialize 时认领 `notifications@github.com` → `gateway:github` 并订阅 `MAIL_DELIVERED`；收件人是 `gateway:github` 的投递事件触发出口——把邮件正文发成 GitHub comment（`POST /repos/{repo}/issues/{number}/comments`，需配置 `GITHUB_TOKEN`；token 缺失只禁出站、记 warning，入站不受影响）。thread 映射靠「内存表 + subject 锚点兜底」：入站发布时把 `mail.id → (repo, issue 号)` 记入内存表，出站按 `mail.in_reply_to` 查表；查不到则解析回信 subject 的 `[owner/repo#N]` 锚点；都失败只记 error 日志——邮件留在网关邮箱（审计），不 bounce 不重试。出站 HTTP 失败（非 2xx 或网络错）同样只记 error（含 mail_id、repo、number、状态码），不重试。
 
@@ -113,43 +109,19 @@ resolver 本身无状态：agent 存在性查注入的 `AgentInfoProvider`（含
 
 ## 一封信的生命周期
 
-把各环节串起来，一封 agent 回信从产生到被下一个收件人消费的完整路径：
+发件人调用邮局 → 校验全部地址 → SQLite 原子本地入箱 → 尽力尝试网关 → 返回具体回执并发布事实通知 → 收件人查询邮箱 → 自行阅读、标读、安排工作和回信。入箱不等待阅读，已读不等于任务完成。
 
-1. **声明**：act stage 在 `StageOutcome` 里声明 `MailEffect`（stage 是纯变换，不碰外部状态）。
-2. **执行**：`EffectExecutor.send_mail` 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`；失败则改为把 postmaster 失败通知落进自己的收件箱（见「退信是设计意图」），不抛出。
-3. **投递**：`MailDelivery` 展开收件人、解析、写发件人 `sent.jsonl` 与各收件人 `inbox.jsonl`，逐收件人发 `MAIL_DELIVERED`。
-4. **分流**：`MAIL_DELIVERED` 到达三类订阅者——收件人是运行中的 agent，`MemberRuntime` 门控入队；收件人是睡眠的 agent，`AgentRegistry` 发唤醒请求；收件人是人类，`HumanAdapter` fan-out 给在线会话，离线则邮件留在邮箱。
-5. **消费**：agent 经唤醒进入 session——触发语是固定模板「你有 N 封未读邮件」，邮件本体由 agent 调 `checkInbox` 读入上下文；标读是 agent 的显式行为（`markRead` 工具，ADR 0028），处理完由 agent 自己标记。人类经 SSE 实时收到或上线后 `GET /inbox` 拉取。
-6. **闭环**：agent 的回复回到第 1 步，自动继承线程——多轮通信就这样在投递管线上滚动起来。
+## mailbox 即持久事实
 
-注意整条链路上没有一个环节依赖「对方此刻在线」：这就是异步通道换来的解耦——发送、投递、消费、回复四者的速率与在线状态完全独立。
+[Mailbox](../../src/tlon/organization/mail/mailbox.py) 是共享 SQLite 数据库的成员视图。正文只保存一份，发件箱按发件人查询，收件箱按邮箱归属查询，每个收件人单独保存已读位。查看不自动标读，`mark_read` 幂等，不向发件人提供已读回执。
 
-## mailbox 即队列
+EventBus 只降低发现新信的延迟，不承担可靠存储。成员启动检查与周期 rescan 发现已提交未读；通知丢失或队列溢出不会删除邮件。数据库写入经工作线程执行，事务与唯一约束承担并发一致性，不再维护 JSONL 扫描缓存或按目录锁表。
 
-邮箱实现是 [organization/mail/mailbox.py](../../src/tlon/organization/mail/mailbox.py) 的 `Mailbox`，磁盘上三个文件：
-
-- `inbox.jsonl`——收到的邮件，追加写；
-- `sent.jsonl`——发出的邮件，追加写；
-- `inbox.cursor`——已读邮件 id，每行一个。
-
-已读状态用「id 集合」而不是「每封邮件一个已读位」，因为 jsonl 是追加写的：翻转一个标志位意味着重写整个文件，而一个已读 id 集合即使邮件被乱序处理也始终正确。cursor 文件不存在意味着全部未读。`mark_read` 幂等（重复标记是 no-op），`unread` 返回按时间排序的未读列表，`recent` 合并 inbox+sent 供上下文构造器展示成员自己的通信历史。
-
-选三个纯文本文件而不是数据库，理由和整个存储层一致：零依赖、可 `tail -f` 观察、可被任何工具读写、损坏容忍度高（`_read_mails` 跳过坏行继续解析）。邮箱是社会的公共基础设施，它的格式应该简单到任何成员（包括未来自己写工具的成员）都能直接操作。
-
-这个结构让邮箱天然就是一个持久队列，系统的背压与恢复语义全部建立在它上面：
-
-- **先持久化，后处理**：邮件先写进 `inbox.jsonl`，才发布 `MAIL_DELIVERED`。处理环节（唤醒、session、回复）全部失败也不丢信。
-- **唤醒不带载荷**：睡眠中的 agent 被 `MAIL_DELIVERED` 唤醒时，事件不携带「你要处理什么」——邮件已在收件箱，成员启动时自行扫描未读（`Mailbox.unread`）。唤醒信号可以丢、可以重复，未读事实在磁盘上。
-- **邮箱是唯一的队列**（ADR 0028）：认知侧没有任何内存邮件队列——送达的邮件过 `:when` 门控后保持未读、置一个唤醒信号；有存活 session 时连信号都不置，邮件躺在收件箱里等链式唤醒或慢速 rescan。搁置的未读与漏网的来信由每成员的周期重扫（`mail_rescan_interval_seconds`，默认 15 分钟）兜底拾起。绝不阻塞总线。
-- **按目录共享锁**：同一目录的多个 `Mailbox` 实例（投递缓存、REST `/inbox` 处理器、agent 运行时）共享一把按目录的 asyncio 锁（模块级 `_LOCKS`，有界 LRU，`_LOCKS_CAP = 4096`；已持有的锁永不淘汰），进程内写互斥。`Mailbox` 实例本身是无状态句柄，淘汰重建安全。
-
-把四条合起来看，这是一套一致的溢出哲学：EventBus 的订阅者队列、投递的幂等集合、Mailbox 的锁表——全是有界的，溢出时丢的都是「内存里的拷贝」，磁盘上的事实永远完好。系统的任何一层都可以被打垮，信不会丢；这是「邮箱即队列」对可靠性承诺的完整含义。
-
-为什么不引入外部消息队列（NATS、Redis Streams 等）来「更可靠」：那些系统解决的是跨进程、跨机器的可靠投递，而 Tlon 是单进程系统，唯一的真相来源就是本地磁盘。引入外部队列只会多一个要运维的组件、多一种双写不一致的可能，可靠性反而下降。邮箱文件就是队列，追加写就是入队，cursor 就是消费位——原语已经足够。
+不引入外部消息中间件：本地入箱已经在单个数据库事务中完成，不需要额外的接纳/投递状态机。邮局不保存 thinking、processing、completed 等认知状态，任务进度由 session、journal 和任务系统管理。
 
 ## agent 收发
 
-agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控唤醒，发信经 `SendEmailTool` 声明效果。两侧都把「邮件」与「认知」解耦——邮件层不知道认知循环的存在，认知循环不知道邮箱的文件布局，中间是 `MAIL_DELIVERED` / `MAIL_NEW` 两个事件和磁盘上的邮箱。
+agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控唤醒，发信经引擎执行工具后调用邮局。两侧都把「邮件」与「认知」解耦——邮件层不知道认知循环的存在，认知循环不知道邮箱的文件布局，中间是邮局接口、已提交的事实通知和 SQLite 邮箱。
 
 ### 收信：门控唤醒
 
@@ -162,23 +134,15 @@ agent 收信的入口是 [agents/member_runtime.py](../../src/tlon/agents/member
 
 收件人未在运行时走唤醒路径：`AgentRegistry` 收到 `MAIL_DELIVERED` 后检查其 spec 是否声明了 `:on :mail-delivered`，是则发布启动请求将其唤醒——唤醒资格从 spec 派生，是机制不是策略（Adam 不参与）。唤醒请求续接投递的 trace，启动后的未读扫描与触发它的那封信在同一棵 trace 树下，可观测性贯穿「投递 → 唤醒 → 处理 → 回复」全程。
 
-为什么收信要过 `:when` 门控而不是有信必回：邮箱是开放寻址的，抄送、误投、退信都会到一个成员的收件箱；门控是成员对注意力的自主控制，spec 声明「哪些信值得一个 session」。这和认知循环的燃料预算（`:fuel`）是同一层设计——开放社会里每个成员都必须能自我保护。
+为什么收信要过 `:when` 门控而不是有信必回：邮箱是开放寻址的，抄送、系统信都会到一个成员的收件箱；门控是成员对注意力的自主控制，spec 声明「哪些信值得一个 session」。这和认知循环的燃料预算（`:fuel`）是同一层设计——开放社会里每个成员都必须能自我保护。
 
-### 发信：唯一出口
+### 发信：统一邮局入口
 
-agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool`（工具名 `sendEmail`）。认知循环里 act stage 把工具调用声明为 `StageOutcome` 里的 `MailEffect`，由 [agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor.send_mail` 真正执行：构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`，与人类发信汇入同一条投递管线。回复头的分工是 stage 声明、引擎定稿：stage 把模型显式传的 `in_reply_to` 原样声明进 `MailEffect`（ADR 0028——无触发邮件缺省，回复对象完全是模型的显式选择）；`EffectExecutor` 发送前在 agent 自己的邮箱里按 `in_reply_to` 查到被引用邮件，以它的 `thread_id` 为线程根——所以回复**自动并入被回复邮件的线程**，不需要 LLM 自己记得带 thread_id。查不到被引用邮件（典型如幻觉 id）时该封不发送，按「退信是设计意图」的同一风格落一封 postmaster 通知，不产生带悬空引用的邮件。
+认知工具 `sendEmail`、`forwardMail` 由引擎实际执行，只有邮局返回后才把真实结果交给模型；拒绝返回结构化工具错误，不生成退信，不把失败当成最终回复结束 session。DSL、周期任务和退休交接同样调用邮局，不能通过发布 `MAIL_NEW` 绕过持久化。
 
-转发也经同一出口（ADR 0029）：认知成员用 `forwardMail` 工具声明 `mail_id` / `to` / `cc` / `comment`，act stage 声明带 `forward_of` 的 `MailEffect`，`EffectExecutor` 从 agent 自己的邮箱取出原信、组自包含转发体（comment + 归因头「—— 转发的邮件 ——」+ 原正文；外部来信在归因头加不可信警示行）与 `Fwd: <原主题>` 主题，另起新线程发送。`mail_id` 的幻觉防护与 `in_reply_to` 同一条路径：id 不在自己邮箱中则不发，postmaster 通知。DSL 的 `forward` 动作保留给确定性规则（触发事件带原邮件）；认知规则的 `:actions` 含 `forward` 加载即拒绝。
+回复显式选择 `in_reply_to`，引擎从自己的邮箱校验引用并继承线程根；转发校验原信并组装自包含归因正文。引用不存在则拒绝发送。`endorsing` 校验致谢对象真实存在且不是自寄，提交后发布 `MAIL_ENDORSED`；声誉从已存邮件派生。
 
-为什么强调「唯一出口」：
-
-- **可审计**：所有 agent 发出的信都经过同一个点，trace 注入、落盘、投递语义只有一份实现，社会的全部通信记录完整可查。
-- **纯度可检查**：stage 只声明 `MailEffect` 数据、不直接发布事件，这是 effects-as-data 的一部分，由 [scripts/check_stage_purity.py](../../scripts/check_stage_purity.py) 静态强制（见 [docs/design/runtime.md](./runtime.md)）。发信意图是数据，执行是引擎的事。
-- **LLM 心智负担小**：LLM 只需要学会一个工具；线程继承、trace、幂等都是引擎自动给的。
-
-工具本身不投递——`execute` 只返回受理回执，回执文案明确告知 LLM：投递是异步的，发送或投递失败会收到 postmaster 的通知邮件，该通知是唯一的失败信号，「不要在本轮向用户承诺已送达」。这句文案是把系统的异步语义翻译成 LLM 能遵守的行为约定。
-
-`endorsing` 参数是致谢信号：发信时声明「这封信帮到了我」。引用校验与 `in_reply_to` 同款——被致谢邮件必须在发件人自己的邮箱里真实存在（幻觉 id 发送失败），且不能是发件人自己写的邮件（不允许自我致谢）。致谢信投递时 `MailDelivery` 额外发布一条 `MAIL_ENDORSED` 事实事件；声誉不存储，由 `agents/reputation.py` 从全社会的邮件文件实时派生，agent 通过 `getReputation` 工具查询（评审原型提案时引用提案者历史记录作为证据）。
+stage 继续声明数据，外部效果由引擎执行；区别在于工具回执现在反映实际投信结果。本地成功表示已经入箱，网关仅表示尝试及已知结果，均不表示阅读或工作完成。
 
 `is_complete` 参数把「发邮件」和「结束本轮思考」绑定：`false` 表示发中间进度、继续思考（一封协作过程中的中间信，随后还会有别的工具调用和信件）；`true` 表示这是最终回复、结束循环（且本轮只能调 `sendEmail`，不能与其他工具混用——最终回复就是本轮的句号）。这把「agent 每轮思考的产出」与「一封信」对齐：认知循环不是跑到燃料耗尽才停，而是以「回信了」为自然终止条件。对社会而言这意味着每个 session 的产出都落在邮件层可见——没有停留在内存里、随 session 结束蒸发的思考结果；最终答复一定是一封可检索的信。
 
@@ -209,7 +173,7 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 
 声明条目只支持静态 content；需要动态内容（如按当前人类清单现算）的周期任务走代码注册的内置条目。
 
-这个设计是「退信是设计意图」的同构延伸：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。
+周期任务同样调用统一邮局：周期信号不需要专用通道，tick 与正常通信同构——它先落盘（有投递幂等和未读语义保底）、可唤醒睡眠中的收件人、在 trace 树上可见。postmaster 没有自己的邮箱，系统发件不留 sent 副本，通道干净。
 
 配套的两个只读工具把「待人类处置」可查询化：`getSocialHealth`（[tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 
@@ -217,7 +181,7 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 
 成员被蓄意停止（`AGENT_STOPPED`，与退休蒸馏同一触发点）时，[agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` 离线盘点它的归档：未完成任务（todo/doing/paused）、未回复的邮件线程（inbox 按 thread 分组，组内最后一封来自他人且 sent 里没有更晚的本人回复）、记忆（claims）。有东西可交接或可说（digest 非空、有未完成任务或有未回复线程）时，一次 LLM 调用（`purpose="farewell"`，归属退休成员账本）写一封告别信——任期总结 + 未竟事项 + 移交清单 + 给继任者的建议。
 
-这封信的特殊之处在于发件人：**以退休成员自己的地址发出**（退休 = 睡眠，成员仍在注册表，地址可解析，sent 副本正常落进它的归档）。收件人是它的「负责人」：`spawned_by` 指向的成员，非 spawn 成员（标准团队）则兜底给 guest 人类。无论信是否发出（LLM 失败、空移交），都发布 `AGENT_RETIRED` 事实事件携带移交清单——可见性不依赖 LLM 成败。
+这封信的特殊之处在于发件人：**以退休成员自己的地址发出**（退休拒收新信，但交接服务可以代表退休成员发出最后的交接信，历史发件可查）。收件人是它的「负责人」：`spawned_by` 指向的成员，非 spawn 成员（标准团队）则兜底给 guest 人类。无论信是否发出（LLM 失败、空移交），都发布 `AGENT_RETIRED` 事实事件携带移交清单——可见性不依赖 LLM 成败。
 
 **任务认领不做自动化**：信把清单送达即完成「死亡不丢东西」；认领哪件、由谁认领，是收件者（成员或人类）的决定。
 
@@ -227,27 +191,24 @@ agent 发信只有一个出口：[tools/mail/send_email.py](../../src/tlon/tools
 
 adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。TUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
-发言侧，`speak` 只接受显式的 `to` / `cc`（R2 协议；R1b 的 `mentions` 别名和按正文 `@名字` 解析的兼容桥已在 PR-C 移除），收件人经共享 resolver 解析，零可解析收件人的邮件直接拒绝——没有地址的邮件是非法的。收件侧与所有成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。这条「每成员一个邮箱、经成员投递」的单轨对人也成立（推送分工详见 [docs/design/server-protocol.md](./server-protocol.md)）。
+发言侧，`speak` 只接受显式的 `to` / `cc`（R2 协议；R1b 的 `mentions` 别名和按正文 `@名字` 解析的兼容桥已在 PR-C 移除），收件人经共享 resolver 解析，任何无效或退休收件人都导致整封拒绝——没有地址的邮件是非法的。收件侧与所有成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。这条「每成员一个邮箱、经成员投递」的单轨对人也成立（推送分工详见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
-`AdapterManager` 管理 adapter 的生命周期：首个会话 attach 时创建（attach/detach 由一把锁串行化，两个并行的首次 attach 不会泄漏出两个 adapter），最后一个 detach 时关停。关键语义在**首次接触**：第一次 attach（或 REST 发信）同时创建人类的持久邮箱——连接过一次的人类就是「已知人类」，此后离线时发给他的邮件留在持久邮箱里，上线再读。REST 入口 `POST /messages` 走 `publish_as`：发件人身份来自请求体的 `username`，没有在线 adapter 时建一个临时的，发完即拆（若期间有会话 attach 则保留——拆除前再查一次会话数）。
+`AdapterManager` 管理 adapter 的生命周期：首个会话 attach 时创建（attach/detach 由一把锁串行化，两个并行的首次 attach 不会泄漏出两个 adapter），最后一个 detach 时关停。关键语义在**首次接触**：第一次 attach（或 REST 发信）同时在 SQLite 注册人类身份——连接过一次的人类就是「已知人类」，此后离线时发给他的邮件留在持久邮箱里，上线再读。REST 入口 `POST /messages` 走 `publish_as`：发件人身份来自请求体的 `username`，没有在线 adapter 时建一个临时的，发完即拆（若期间有会话 attach 则保留——拆除前再查一次会话数）。
 
 人类离线时邮件留在持久邮箱，这不是降级路径而是一等语义：邮箱是磁盘事实，adapter 只是「在线时的推送通道」。上线后 `GET /inbox` 拉到的是全量历史，SSE 只是增量——人类和睡眠中被唤醒的 agent 遵循同一套「未读在磁盘、上线补扫」的模型。人机平等在这条规则上最具体：没有谁的消息会因为你不在线而消失，agent 的不会，人的也不会。
 
-邮箱对观察者也开放：`GET /members/{member_id}/mail` 读任意成员（agent 裸 id、人类 `human:<username>`）的持久邮箱，inbox+sent 合并按时间序，响应形状与 `GET /inbox` 一致但**不合成 `read` 字段**——已读游标是成员自己的状态，不是观察者该看到的。观测端点纯只读：不会为不存在的成员建邮箱目录（成员不存在返回 404），只把磁盘事实以协议形状吐出来。
+邮箱对观察者也开放：`GET /members/{member_id}/mail` 读任意成员（agent 裸 id、人类 `human:<username>`）的持久邮箱，inbox+sent 合并按时间序，响应形状与 `GET /inbox` 一致但**不合成 `read` 字段**——已读状态是成员自己的状态，不是观察者该看到的。观测端点纯只读：不会为不存在的成员建邮箱目录（成员不存在返回 404），只把磁盘事实以协议形状吐出来。
 
 值得注意的还有身份模型：人类成员 id 带 `human:` 前缀，地址上却与 agent 同域同名空间（local part 撞名时 agent 优先）。这是一个刻意的轻量选择——社会里成员数量小、由同一批人管理，撞名靠约定而非命名空间隔离解决；前缀只留在成员 id 层用于区分运行时类型，不进地址，人类在地址簿里和 agent 长得一样。
 
 ## 不变量
 
-把分散在各节的不变量收拢在这里，它们是改邮件系统时不能破坏的约束：
-
-- 发信侧能解析的收件人，投递侧必能投递（共享 `RecipientResolver`）。
-- 邮件先落盘后通知；`MAIL_DELIVERED` 发布时邮件已在收件箱（先持久化后处理）。
-- 未读事实只在 `inbox.jsonl` + `inbox.cursor`，唤醒信号可丢可重复（邮箱即唯一队列，慢速 rescan 兜底）。
-- 每个成员一个邮箱；投递到成员，不经成员投递到会话（单轨，人类也不例外）。
-- 成员永不处理自己发的邮件（own-mail guard）。
-- 错误以邮件形态回到发件人收件箱（postmaster 退信），无带外告警通道。
-- 可信边界从地址域派生：非 `@tlon.internal` 即发件人外部来信，渲染时标记，不落存储（见「外部来信与信任面」）。
+- 全部本地收件人原子入箱，任一无效或退休地址整封拒绝。
+- 本地成功在持久化提交之后；网关只承诺尝试，不保证入箱或外部接收。
+- `MAIL_NEW` / `MAIL_DELIVERED` 是已提交事实通知，不是投信命令。
+- 未读事实在 SQLite；查看、开启 session 不自动标读，阅读不等于完成任务。
+- 幂等记录持久化；重放不重复入箱或自动重试网关。
+- 邮局与成员认知分离，外部来信的信任边界由地址域派生。
 
 ## 已废弃
 
@@ -267,6 +228,6 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 
 次一级的已知简化（不构成方向，只记录边界）：
 
-- 幂等集合、邮箱缓存、锁表都是进程内有界结构，重启后回退为「可能重复投递」——追加写模型容忍，跨进程部署是另一个量级的问题，届时再议。
+- 网关外发没有可靠重试与恰好一次保证；结果未知时由发件人决定是否新发。
 - 没有邮件级检索与分页：`Mailbox.recent` 按条数截取，`GET /inbox` 同理。社会规模小、邮箱不大时够用；检索是公共层建设的一部分，不在当前范围。
 - all@ 已退役（ADR 0024 / #102）：社会无组地址，组织通信由社会角色承担；「我认识谁」由每个成员自己的联系簿回答，主观、分布式、无需一致（[identity.md](identity.md)）。

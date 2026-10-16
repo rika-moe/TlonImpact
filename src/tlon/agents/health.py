@@ -102,12 +102,11 @@ async def collect_orphan_mails(
     orphans: list[dict[str, Any]] = []
     scanned_members = 0
     for member_id in member_ids:
-        mail_dir = tlon_paths.member_mail_dir(member_id)
-        if not mail_dir.is_dir():
-            continue
         scanned_members += 1
         try:
-            found = await _orphans_for(member_id, Mailbox(mail_dir), now, min_age)
+            found = await _orphans_for(
+                member_id, Mailbox(tlon_paths.mail_database_file(), member_id), now, min_age
+            )
         except Exception as e:
             logger.error("orphan_scan_member_failed", member_id=member_id, error=str(e))
             continue

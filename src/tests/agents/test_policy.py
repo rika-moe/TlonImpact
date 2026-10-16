@@ -216,8 +216,8 @@ class TestProviders:
             timestamp="2026-09-28T10:00:00",
             endorsing=None,
         )
-        await Mailbox(tlon_paths.member_mail_dir(target)).append_sent(m1)
-        endorser_box = Mailbox(tlon_paths.member_mail_dir(endorser))
+        await Mailbox(tlon_paths.mail_database_file(), target).append_sent(m1)
+        endorser_box = Mailbox(tlon_paths.mail_database_file(), endorser)
         await endorser_box.append_inbox(m1)
         await endorser_box.append_sent(
             Mail(

@@ -396,7 +396,10 @@ class LoopDriver:
             await self._journal.append(session.id, "state", value=SessionState.WAITING.value)
             session.mark_waiting()
         for effect in outcome.mails:
-            await self._executor.send_mail(effect)
+            try:
+                await self._executor.send_mail(effect)
+            except Exception:
+                self._services.logger.error("mail_effect_failed", exc_info=True)
         if outcome.run_on_complete:
             await self._on_complete.run(session, outcome.final_reply or "")
         if outcome.complete:
@@ -473,15 +476,17 @@ class LoopDriver:
                     reason=reason,
                 )
                 continue
-            await self._executor.send_mail(
-                MailEffect(
-                    to=[sender],
-                    content=content,
-                    in_reply_to=mail.id,
-                    thread_id=mail.thread_id,
+            try:
+                await self._executor.send_mail(
+                    MailEffect(
+                        to=[sender], content=content, in_reply_to=mail.id, thread_id=mail.thread_id
+                    ),
+                    request_id=f"{session.id}:termination:{reason}:{sender}",
                 )
-            )
-            notified.append(sender)
+            except Exception:
+                self._services.logger.error("termination_reply_failed", exc_info=True)
+            else:
+                notified.append(sender)
         if notified:
             self._services.logger.info(
                 "termination_replies_sent",
@@ -686,15 +691,21 @@ class LoopDriver:
         result: ToolResult
         try:
             result = await asyncio.wait_for(
-                self._tool_executor.execute(tc.function_name, tc.arguments),
+                self._execute_tool_and_mail(session_id, tc),
                 timeout=timeout,
             )
         except TimeoutError:
-            result = ToolResult(
-                success=False,
-                data={},
-                error=f"Timeout after {timeout}s ({authority})",
-            )
+            if tc.function_name in ("sendEmail", "forwardMail"):
+                request_id = tc.arguments.get("request_id") or f"{session_id}:{tc.id}"
+                result = ToolResult(
+                    success=False,
+                    data={"request_id": request_id, "outcome": "unknown"},
+                    error=f"投信结果未知；请用原 request_id {request_id} 重试",
+                )
+            else:
+                result = ToolResult(
+                    success=False, data={}, error=f"Timeout after {timeout}s ({authority})"
+                )
         except Exception as e:
             result = ToolResult(success=False, data={}, error=str(e))
         # Spill before journaling: log and context hold the same locator.
@@ -703,6 +714,38 @@ class LoopDriver:
             session_id, "tool/result", tool_call=tc.to_dict(), result=result.to_dict()
         )
         return tc, result
+
+    async def _execute_tool_and_mail(self, session_id: str, tc: ToolCall) -> ToolResult:
+        """Finish mail submission before journaling or exposing tool success."""
+        result = await self._tool_executor.execute(tc.function_name, tc.arguments)
+        if not result.success or tc.function_name not in ("sendEmail", "forwardMail"):
+            return result
+        data = result.data
+        effect = MailEffect(
+            to=data.get("to") or [],
+            cc=data.get("cc"),
+            content=data.get("content", ""),
+            subject=data.get("subject"),
+            in_reply_to=data.get("in_reply_to"),
+            endorsing=data.get("endorsing"),
+            forward_of=data.get("mail_id") if tc.function_name == "forwardMail" else None,
+            forward_comment=data.get("comment"),
+        )
+        request_id = tc.arguments.get("request_id") or f"{session_id}:{tc.id}"
+        try:
+            receipt = await self._executor.send_mail(effect, request_id=request_id)
+        except ValueError as error:
+            return ToolResult(success=False, data={"request_id": request_id}, error=str(error))
+        except Exception as error:
+            return ToolResult(
+                success=False,
+                data={"request_id": request_id, "outcome": "unknown"},
+                error=f"投信结果未知；请使用原 request_id 查询或重试：{error}",
+            )
+        payload = receipt.to_dict()
+        return ToolResult(
+            success=True, data={**data, **payload}, message=str(payload.get("message", ""))
+        )
 
     def _tool_timeout_budget(self, tc: ToolCall) -> tuple[float, str]:
         """Effective wait_for budget for one tool call, plus its authority.

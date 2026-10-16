@@ -29,6 +29,15 @@ from .exceptions import AuthenticationError, ConnectionError, ProtocolError
 logger = structlog.get_logger(__name__)
 
 
+class MailSendError(RuntimeError):
+    """Rejected or uncertain submission; retain request_id for safe retries."""
+
+    def __init__(self, message: str, *, request_id: str, reason: str):
+        super().__init__(message)
+        self.request_id = request_id
+        self.reason = reason
+
+
 class ConnectionState(Enum):
     """Connection state machine states."""
 
@@ -767,3 +776,33 @@ class BaseClient:
         except Exception as e:
             logger.error("rest_post_error", path=path, error=str(e), exc_info=True)
             return None
+
+    async def submit_mail(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Post with structured errors; uncertain results retain their request key."""
+        request_id = str(msg["request_id"])
+        if self._http is None:
+            raise MailSendError(
+                "Client is not connected", request_id=request_id, reason="not_connected"
+            )
+        try:
+            async with self._http.post(f"{self.base_url}/messages", json=msg) as response:
+                body: dict[str, Any] = await response.json()
+                if response.status not in (200, 201, 202):
+                    raise MailSendError(
+                        body.get("error", "Mail submission rejected"),
+                        request_id=request_id,
+                        reason=body.get("reason", "submission_unknown"),
+                    )
+                if not isinstance(body.get("mail_id"), str) or not isinstance(
+                    body.get("message"), str
+                ):
+                    raise ValueError("Invalid mail receipt")
+                return body
+        except MailSendError:
+            raise
+        except Exception as exc:
+            raise MailSendError(
+                f"Submission result unknown; retry with request_id {request_id}",
+                request_id=request_id,
+                reason="submission_unknown",
+            ) from exc

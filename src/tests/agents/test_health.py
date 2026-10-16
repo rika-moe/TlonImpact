@@ -134,7 +134,7 @@ class TestNoiseDetection:
 class TestOrphanScan:
     async def test_old_unanswered_thread_root_is_orphan(self, bus, tmp_path):
         paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "alice")
         old = datetime.now(UTC) - timedelta(days=4)
         root = _mail(
             old,
@@ -159,7 +159,7 @@ class TestOrphanScan:
 
     async def test_replied_thread_is_not_orphan(self, bus, tmp_path):
         paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "alice")
         old = datetime.now(UTC) - timedelta(days=4)
         root = _mail(
             old,
@@ -184,7 +184,7 @@ class TestOrphanScan:
 
     async def test_own_reply_does_not_count(self, bus, tmp_path):
         paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "alice")
         old = datetime.now(UTC) - timedelta(days=4)
         root = _mail(
             old,
@@ -210,7 +210,7 @@ class TestOrphanScan:
 
     async def test_fresh_mail_is_not_orphan(self, bus, tmp_path):
         paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "alice")
         recent = datetime.now(UTC) - timedelta(hours=1)
         await mailbox.append_sent(
             _mail(
@@ -227,7 +227,7 @@ class TestOrphanScan:
 
     async def test_report_is_capped_and_count_is_total(self, bus, tmp_path):
         paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "alice")
         old = datetime.now(UTC) - timedelta(days=4)
         for i in range(25):
             await mailbox.append_sent(
@@ -246,7 +246,7 @@ class TestOrphanScan:
 
     async def test_scan_and_report_publishes_fact(self, bus, tmp_path):
         paths = TlonPaths(home=tmp_path)
-        mailbox = Mailbox(paths.member_mail_dir("alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "alice")
         old = datetime.now(UTC) - timedelta(days=4)
         await mailbox.append_sent(
             _mail(

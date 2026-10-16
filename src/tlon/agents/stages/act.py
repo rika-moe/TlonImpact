@@ -15,7 +15,7 @@ import json
 from typing import Any
 
 from tlon.agents.session import AgentSession
-from tlon.agents.stages.outcome import MailEffect, StageOutcome
+from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
 from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
@@ -147,46 +147,9 @@ async def act_stage_collect(
 
         if tc.function_name == "sendEmail" and result.success:
             content = result.data.get("content", "")
-            # ADR 0028: no trigger mail anymore — ``to`` / ``in_reply_to``
-            # are exactly what the model declared. The thread must follow
-            # the *referenced* mail — which only a mailbox read can
-            # establish, so the engine (EffectExecutor) validates the
-            # reference and re-derives thread_id from it; stages stay
-            # I/O-free.
-            outcome.mails.append(
-                MailEffect(
-                    to=result.data.get("to") or [],
-                    content=content,
-                    cc=result.data.get("cc"),
-                    subject=result.data.get("subject"),
-                    in_reply_to=result.data.get("in_reply_to"),
-                    thread_id=None,
-                    # Endorsement signal (): passed through as
-                    # declared; the engine validates the reference
-                    # against the agent's own mailbox (same
-                    # hallucination guard as in_reply_to).
-                    endorsing=result.data.get("endorsing"),
-                )
-            )
             if result.data.get("is_complete"):
                 is_complete = True
                 final_content = content
-        elif tc.function_name == "forwardMail" and result.success:
-            # ADR 0029: a forward declares the source mail id and an
-            # optional comment; the engine validates the id against the
-            # agent's own mailbox (same hallucination guard as
-            # in_reply_to) and composes the self-contained forward body
-            # — stages stay I/O-free, so content stays empty here. A
-            # forward never completes the loop.
-            outcome.mails.append(
-                MailEffect(
-                    to=result.data.get("to") or [],
-                    content="",
-                    cc=result.data.get("cc"),
-                    forward_of=result.data.get("mail_id"),
-                    forward_comment=result.data.get("comment"),
-                )
-            )
         elif tc.function_name == "silence" and result.success:
             # Completion without any reply: the loop ends, no mail is
             # emitted, and read-marking stays the agent's own explicit

@@ -29,7 +29,16 @@ export class RestError extends Error {
 }
 
 /** A mail send request (see `sendMail`). */
+export interface MailReceipt {
+  mail_id: string;
+  request_id: string;
+  local_recipients: string[];
+  gateways: { address: string; status: string; error?: string | null }[];
+  message: string;
+}
+
 export interface SendMailMessage {
+  request_id?: string;
   to: string[];
   cc?: string[];
   subject?: string;
@@ -44,6 +53,7 @@ export class MailSendError extends Error {
     message: string,
     readonly reason?: string,
     readonly status?: number,
+    readonly requestId?: string,
   ) {
     super(message);
     this.name = "MailSendError";
@@ -143,33 +153,43 @@ export class RestClient {
    * server resolves them. Resolves with the new mail id; rejects with a
    * MailSendError carrying the server's semantic reason on 4xx.
    */
-  async sendMail(username: string, msg: SendMailMessage): Promise<string> {
+  async sendMail(username: string, msg: SendMailMessage): Promise<MailReceipt> {
+    const requestId = msg.request_id ?? crypto.randomUUID();
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, ...msg }),
+        body: JSON.stringify({ username, ...msg, request_id: requestId }),
       });
     } catch (err) {
-      throw new MailSendError(`REST request failed: /messages (${String(err)})`);
+      throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试 (${String(err)})`, "submission_unknown", undefined, requestId);
     }
     const data = (await response.json().catch(() => ({}))) as {
       mail_id?: string;
+      request_id?: string;
+      local_recipients?: string[];
+      gateways?: MailReceipt["gateways"];
+      message?: string;
       error?: string;
       reason?: string;
     };
     if (!response.ok) {
       throw new MailSendError(
-        data.error ?? `REST /messages returned ${String(response.status)}`,
+        `${data.error ?? `REST /messages returned ${String(response.status)}`} (request_id: ${requestId})`,
         data.reason,
         response.status,
+        requestId,
       );
     }
     if (typeof data.mail_id !== "string") {
-      throw new MailSendError("REST /messages: response missing mail_id");
+      throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试`, "submission_unknown", undefined, requestId);
     }
-    return data.mail_id;
+    if (typeof data.request_id !== "string" || typeof data.message !== "string"
+        || !Array.isArray(data.local_recipients) || !Array.isArray(data.gateways)) {
+      throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试`, "submission_unknown", undefined, requestId);
+    }
+    return data as MailReceipt;
   }
 
   /** The member address book (agents + online humans). */

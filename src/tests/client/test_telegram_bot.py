@@ -335,7 +335,16 @@ def make_test_app() -> web.Application:
     async def send_message(request: web.Request) -> web.Response:
         body = await request.json()
         app["requests"].append(("POST", "/messages", body))
-        return web.json_response({"mail_id": "out-1"}, status=202)
+        return web.json_response(
+            {
+                "mail_id": "out-1",
+                "request_id": body["request_id"],
+                "local_recipients": ["gu-yanxi"],
+                "gateways": [],
+                "message": "已存入信箱",
+            },
+            status=202,
+        )
 
     async def inbox(request: web.Request) -> web.Response:
         app["requests"].append(("GET", "/inbox", dict(request.query)))
@@ -432,7 +441,7 @@ class TestPipeline:
 
         ack = await bot.process_reply("收到，多谢", reply_to_message_id=bot.fake.message_ids[0])
 
-        assert ack == "已回复 ✅"
+        assert ack == "已存入信箱"
         _, _, body = [r for r in server.app["requests"] if r[1] == "/messages"][0]
         assert body["to"] == [mail["from_address"]]
         assert body["in_reply_to"] == mail["id"]
@@ -466,7 +475,7 @@ class TestPipeline:
         await client.authenticate(username="alice")
         bot._client = client
 
-        assert await bot.send_mail("你好", to=["顾言蹊"]) is True
+        assert await bot.send_mail("你好", to=["顾言蹊"]) == "已存入信箱"
 
         _, _, body = [r for r in server.app["requests"] if r[1] == "/messages"][0]
         assert body["to"] == ["顾言蹊"]

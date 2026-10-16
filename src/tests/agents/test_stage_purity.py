@@ -94,7 +94,7 @@ class TestStagePurity:
         assert outcome.complete is True
         assert outcome.run_on_complete is True
         assert outcome.final_reply == "done"
-        assert len(outcome.mails) == 1
+        assert outcome.mails == []  # already submitted before collection
         assert session.is_completed is False
 
     async def test_act_collect_still_waiting_declares_nothing(self) -> None:
@@ -121,11 +121,11 @@ class TestStagePurity:
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
-        assert len(outcome.mails) == 1
-        mail = outcome.mails[0]
-        assert mail.to == ["user@tlon.internal"]
-        assert mail.in_reply_to is None
-        assert mail.thread_id is None
+        assert outcome.mails == []  # already submitted before collection
+        mail = result.data
+        assert mail.get("to") == ["user@tlon.internal"]
+        assert mail.get("in_reply_to") is None
+        assert mail.get("thread_id") is None
 
     async def test_act_collect_send_email_explicit_in_reply_to_passes_through(self) -> None:
         """The model's explicit in_reply_to is declared on the MailEffect.
@@ -147,12 +147,11 @@ class TestStagePurity:
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
-        assert len(outcome.mails) == 1
-        mail = outcome.mails[0]
-        assert mail.to == ["other@tlon.internal"]
-        assert mail.in_reply_to == "m-earlier"
-        assert mail.thread_id is None
-
+        assert outcome.mails == []  # already submitted before collection
+        mail = result.data
+        assert mail.get("to") == ["other@tlon.internal"]
+        assert mail.get("in_reply_to") == "m-earlier"
+        assert mail.get("thread_id") is None
 
     async def test_act_collect_forward_mail_declares_effect_without_completing(self) -> None:
         """ADR 0029: a forwardMail result declares a MailEffect carrying
@@ -175,12 +174,12 @@ class TestStagePurity:
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
-        assert len(outcome.mails) == 1
-        mail = outcome.mails[0]
-        assert mail.to == ["other@tlon.internal"]
-        assert mail.content == ""
-        assert mail.forward_of == "m-source"
-        assert mail.forward_comment == "转给你"
+        assert outcome.mails == []  # already submitted before collection
+        mail = result.data
+        assert mail.get("to") == ["other@tlon.internal"]
+        assert mail.get("content", "") == ""
+        assert mail.get("mail_id") == "m-source"
+        assert mail.get("comment") == "转给你"
         assert outcome.complete is False
         assert outcome.advance_iteration is True
         assert outcome.mark_active is True

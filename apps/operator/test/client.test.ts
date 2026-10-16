@@ -42,10 +42,11 @@ test("RestClient sendMail posts the body and returns the mail id", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(input), init });
-    return new Response(JSON.stringify({ mail_id: "m1" }), { status: 202 });
+    return new Response(JSON.stringify({ mail_id: "m1", request_id: "request-1", local_recipients: ["xie-yunshu"], gateways: [], message: "已入箱" }), { status: 202 });
   }) as typeof fetch;
   try {
     const id = await client.sendMail("alice", {
+      request_id: "request-1",
       to: ["谢云舒"],
       cc: ["pm-001"],
       subject: "Re: 周报",
@@ -53,11 +54,13 @@ test("RestClient sendMail posts the body and returns the mail id", async () => {
       in_reply_to: "m0",
       thread_id: "t0",
     });
-    assert.equal(id, "m1");
+    assert.equal(id.mail_id, "m1");
+    assert.equal(id.message, "已入箱");
     assert.equal(calls[0]?.url, "http://localhost:8080/messages");
     assert.equal(calls[0]?.init?.method, "POST");
     assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
       username: "alice",
+      request_id: "request-1",
       to: ["谢云舒"],
       cc: ["pm-001"],
       subject: "Re: 周报",
@@ -82,7 +85,8 @@ test("RestClient sendMail surfaces the server reason on 4xx", async () => {
       () => client.sendMail("alice", { to: ["nobody"], content: "hi" }),
       (err: unknown) => {
         assert.ok(err instanceof MailSendError);
-        assert.equal(err.message, "没有可送达的收件人");
+        assert.match(err.message, /^没有可送达的收件人 \(request_id: .+\)$/);
+        assert.ok(err.requestId);
         assert.equal(err.reason, "recipient_unresolved");
         assert.equal(err.status, 400);
         return true;

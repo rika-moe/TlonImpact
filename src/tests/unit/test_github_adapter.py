@@ -23,6 +23,9 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.github_adapter import (
     GATEWAY_MEMBER_ID,
     GITHUB_FROM_ADDRESS,
@@ -66,7 +69,7 @@ async def _wait_for(predicate, timeout: float = 2.0) -> None:
 
 def _make_human(tmp_path: Path, username: str) -> None:
     """A "known human" is a persistent mailbox directory on disk."""
-    (tmp_path / f"human-{username}" / "mail").mkdir(parents=True)
+    MailStore(TlonPaths(home=tmp_path).mail_database_file()).register_member(f"human:{username}")
 
 
 def _adapter(
@@ -78,10 +81,15 @@ def _adapter(
     github_token: str | None = None,
     http_post: HttpPost | None = None,
 ) -> GitHubAdapter:
+    registry = registry or ExternalGatewayRegistry()
+    provider = _AgentInfoStub(agent_ids or [])
+    paths = TlonPaths(home=tmp_path)
+    office = PostOffice(bus, RecipientResolver(provider, paths, registry.owner_of), paths)
     return GitHubAdapter(
         event_bus=bus,
-        agent_info_provider=_AgentInfoStub(agent_ids or []),
-        gateway_registry=registry or ExternalGatewayRegistry(),
+        agent_info_provider=provider,
+        gateway_registry=registry,
+        post_office=office,
         tlon_paths=TlonPaths(home=tmp_path),
         recipient_id=recipient_id,
         github_token=github_token,

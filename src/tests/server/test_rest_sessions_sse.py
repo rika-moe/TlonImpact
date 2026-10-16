@@ -34,6 +34,8 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
 from tlon.organization.messaging.human_adapter import AdapterManager
 from tlon_server.api import rest as rest_module
 from tlon_server.api.rest import RESTAPIHandler, RESTServer
@@ -85,11 +87,10 @@ async def bus() -> AsyncGenerator[EventBus]:
 @pytest.fixture
 async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManager]:
     """Provide an initialized AdapterManager (isolated tlon home)."""
-    mgr = AdapterManager(
-        event_bus=bus,
-        agent_info_provider=MockAgentInfoProvider(AGENT_CONFIGS),
-        tlon_paths=TlonPaths(home=tmp_path),
-    )
+    paths = TlonPaths(home=tmp_path)
+    resolver = RecipientResolver(MockAgentInfoProvider(AGENT_CONFIGS), paths)
+    office = PostOffice(bus, resolver, paths)
+    mgr = AdapterManager(bus, office, resolver, paths)
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()

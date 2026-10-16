@@ -4,10 +4,11 @@ mailbox) and POST /messages (send a mail as a human member, protocol v2
 PR-1)."""
 
 import json
+import sqlite3
 
 from aiohttp import web
 
-from tlon.api.mail import DEFAULT_USERNAME
+from tlon.api.mail import DEFAULT_USERNAME, MailSubmissionError
 from tlon.base.logger import get_logger
 from tlon_server.api.send_mail import SendMailError, parse_send_mail_fields
 
@@ -85,9 +86,7 @@ class MailHandlers(RestHandlerBase):
         # The id becomes a directory name — reject empty and anything
         # carrying a path separator (traversal guard)
         if not member_id or "/" in member_id or "\\" in member_id:
-            return self._json_response(
-                {"error": f"Invalid member_id: {member_id!r}"}, status=400
-            )
+            return self._json_response({"error": f"Invalid member_id: {member_id!r}"}, status=400)
 
         limit = _parse_limit(request, default=50, maximum=200)
         result = await self.mail.member_inbox(member_id, limit)
@@ -120,7 +119,7 @@ class MailHandlers(RestHandlerBase):
                 (optional)
 
         Returns:
-            202 Accepted with {"mail_id": ...}, or 4xx with
+            202 with a post-office receipt (local inboxes and gateway attempts), or 4xx with
             {"error", "reason"} (e.g. "recipient_unresolved",
             "empty_content", "invalid_to")
         """
@@ -171,7 +170,7 @@ class MailHandlers(RestHandlerBase):
         )
 
         try:
-            mail_id = await self.mail.send(
+            receipt = await self.mail.send(
                 username,
                 parsed.content,
                 to=parsed.to,
@@ -179,10 +178,21 @@ class MailHandlers(RestHandlerBase):
                 subject=parsed.subject,
                 in_reply_to=parsed.in_reply_to,
                 thread_id=parsed.thread_id,
+                request_id=parsed.request_id,
             )
-        except ValueError as e:
+        except MailSubmissionError as e:
             return self._json_response(
-                {"error": str(e), "reason": "recipient_unresolved"}, status=400
+                {"error": str(e), "reason": e.reason, "invalid_recipients": e.invalid_recipients},
+                status=409 if e.reason == "idempotency_conflict" else 400,
+            )
+        except (OSError, sqlite3.Error):
+            return self._json_response(
+                {
+                    "error": "Submission result unknown; retry with the same request_id",
+                    "reason": "submission_unknown",
+                    "request_id": parsed.request_id,
+                },
+                status=503,
             )
 
-        return self._json_response({"mail_id": mail_id}, status=202)
+        return self._json_response(receipt, status=202)

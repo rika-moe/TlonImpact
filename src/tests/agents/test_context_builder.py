@@ -87,7 +87,7 @@ def _make_thread_builder(
 ) -> tuple[ContextBuilder, Mailbox, SessionJournal]:
     """A builder wired to a real mailbox and journal over ``tmp_path``."""
     tlon_paths = TlonPaths(home=tmp_path)
-    mailbox = Mailbox(tmp_path / "mail")
+    mailbox = Mailbox(tmp_path / "mail.sqlite3", AGENT)
     journal = SessionJournal(AGENT, tlon_paths)
     builder = ContextBuilder(
         AgentConfig(id=AGENT, name=AGENT),

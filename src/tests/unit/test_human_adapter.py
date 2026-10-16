@@ -27,6 +27,9 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.human_adapter import (
     AdapterManager,
     HumanAdapter,
@@ -65,11 +68,10 @@ async def manager(
     bus: EventBus, provider: MockAgentInfoProvider, tmp_path
 ) -> AsyncGenerator[AdapterManager]:
     """Provide an initialized AdapterManager (isolated tlon home)."""
-    mgr = AdapterManager(
-        event_bus=bus,
-        agent_info_provider=provider,
-        tlon_paths=TlonPaths(home=tmp_path),
-    )
+    paths = TlonPaths(home=tmp_path)
+    resolver = RecipientResolver(provider, paths)
+    office = PostOffice(bus, resolver, paths)
+    mgr = AdapterManager(bus, office, resolver, paths)
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()
@@ -188,7 +190,7 @@ class TestAdapterManagerLifecycle:
         """First attach creates the human's mailbox — connecting once makes
         the human "known", so offline mail waits in their inbox."""
         await manager.attach("alice", "tui-0001", _noop_sink)
-        assert (tmp_path / "human-alice" / "mail").is_dir()
+        assert MailStore(TlonPaths(home=tmp_path).mail_database_file()).member_exists("human:alice")
 
     async def test_concurrent_first_attach_shares_one_adapter(self, manager: AdapterManager):
         """The attach lock prevents two adapters for one username."""
@@ -211,10 +213,10 @@ class TestAdapterManagerPublish:
         await _drain(bus)
 
         assert mail is not None
-        assert mail.from_address == "alice@tlon.internal"
-        assert mail.to == ["xie-yunshu@tlon.internal"]
-        assert mail.content == "hello"
-        assert collected[-1].id == mail.id
+        assert mail.mail.from_address == "alice@tlon.internal"
+        assert mail.mail.to == ["xie-yunshu@tlon.internal"]
+        assert mail.mail.content == "hello"
+        assert collected[-1].id == mail.mail.id
 
     async def test_publish_explicit_to(self, manager: AdapterManager):
         """R2: explicit to resolves names, ids and full addresses."""
@@ -224,7 +226,7 @@ class TestAdapterManagerPublish:
 
         assert mail is not None
         # Name and full-address forms dedupe to one recipient
-        assert mail.to == ["xie-yunshu@tlon.internal"]
+        assert mail.mail.to == ["xie-yunshu@tlon.internal"]
 
     async def test_publish_cc_and_subject(self, manager: AdapterManager):
         """R2: cc resolves like to; subject is passed through."""
@@ -240,9 +242,9 @@ class TestAdapterManagerPublish:
         )
 
         assert mail is not None
-        assert mail.to == ["xie-yunshu@tlon.internal"]
-        assert mail.cc == ["friend@tlon.internal"]
-        assert mail.subject == "周报"
+        assert mail.mail.to == ["xie-yunshu@tlon.internal"]
+        assert mail.mail.cc == ["friend@tlon.internal"]
+        assert mail.mail.subject == "周报"
 
     async def test_publish_reply_headers(self, manager: AdapterManager):
         """R2: in_reply_to / thread_id pass through to the created mail."""
@@ -256,14 +258,14 @@ class TestAdapterManagerPublish:
             "tui-0001",
             "re: hello",
             to=["friend"],
-            in_reply_to=original.id,
-            thread_id=original.thread_id,
+            in_reply_to=original.mail.id,
+            thread_id=original.mail.thread_id,
         )
 
         assert reply is not None
-        assert reply.in_reply_to == original.id
-        assert reply.thread_id == original.thread_id
-        assert reply.id != original.id
+        assert reply.mail.in_reply_to == original.mail.id
+        assert reply.mail.thread_id == original.mail.thread_id
+        assert reply.mail.id != original.mail.id
 
     async def test_publish_new_thread_defaults_thread_id(self, manager: AdapterManager):
         """Without reply headers the thread root is the mail's own id."""
@@ -272,8 +274,8 @@ class TestAdapterManagerPublish:
         mail = await manager.publish("tui-0001", "hi", to=["xie-yunshu"])
 
         assert mail is not None
-        assert mail.in_reply_to is None
-        assert mail.thread_id == mail.id
+        assert mail.mail.in_reply_to is None
+        assert mail.mail.thread_id == mail.mail.id
 
     async def test_publish_to_and_cc_both_addressed(self, manager: AdapterManager):
         """R2: to and cc resolve independently and both count."""
@@ -288,8 +290,8 @@ class TestAdapterManagerPublish:
         )
 
         assert mail is not None
-        assert mail.to == ["friend@tlon.internal"]
-        assert mail.cc == ["xie-yunshu@tlon.internal"]
+        assert mail.mail.to == ["friend@tlon.internal"]
+        assert mail.mail.cc == ["xie-yunshu@tlon.internal"]
 
     async def test_publish_cc_only_is_addressed(self, manager: AdapterManager):
         """A cc-only mail counts as addressed."""
@@ -298,20 +300,20 @@ class TestAdapterManagerPublish:
         mail = await manager.publish("tui-0001", "fyi", cc=["xie-yunshu"])
 
         assert mail is not None
-        assert mail.to == []
-        assert mail.cc == ["xie-yunshu@tlon.internal"]
+        assert mail.mail.to == []
+        assert mail.mail.cc == ["xie-yunshu@tlon.internal"]
 
     async def test_publish_to_offline_known_human(self, manager: AdapterManager, tmp_path):
         """A mail to a known-but-offline human (persistent mailbox, no
         adapter) is addressed, not dropped — the copy waits in their
         inbox on the delivery side (docs/design/mail.md)."""
         await manager.attach("alice", "tui-0001", _noop_sink)
-        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
+        MailStore(TlonPaths(home=tmp_path).mail_database_file()).register_member("human:friend")
 
         mail = await manager.publish("tui-0001", "hi", to=["friend"])
 
         assert mail is not None
-        assert mail.to == ["friend@tlon.internal"]
+        assert mail.mail.to == ["friend@tlon.internal"]
 
     async def test_publish_zero_recipients_raises(self, manager: AdapterManager):
         await manager.attach("alice", "tui-0001", _noop_sink)
@@ -354,7 +356,7 @@ class TestResolveAddress:
         """A known-but-offline human (persistent mailbox, no adapter)
         resolves — same rule as MailDelivery, the mail waits in their
         inbox (docs/design/mail.md)."""
-        TlonPaths(home=tmp_path).member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
+        MailStore(TlonPaths(home=tmp_path).mail_database_file()).register_member("human:friend")
 
         assert manager.resolve_address("friend") == "friend@tlon.internal"
         assert manager.resolve_address("human:friend") == "friend@tlon.internal"

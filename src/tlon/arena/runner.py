@@ -41,13 +41,14 @@ from tlon.arena.corpus import (
 )
 from tlon.arena.report import ArenaReport, generate_report
 from tlon.base.config import LLMConfig, yaml_load_file, yaml_save
-from tlon.base.events.event import Event, EventType
+from tlon.base.events.event import Event
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.store import MailStore, StoredPost
 from tlon.sandbox.docker_client import create_docker_client
 
 logger = get_logger(__name__)
@@ -150,6 +151,10 @@ class _EventBusLike(Protocol):
     async def publish(self, event: Event) -> None: ...
 
 
+class _PostOfficeLike(Protocol):
+    async def post(self, mail: Mail, request_id: str | None = None) -> StoredPost: ...
+
+
 class _MembersLike(Protocol):
     async def adopt(self, agent_id: str) -> str: ...
 
@@ -163,6 +168,9 @@ class IsolatedRuntime(Protocol):
 
     @property
     def event_bus(self) -> _EventBusLike: ...
+
+    @property
+    def post_office(self) -> _PostOfficeLike: ...
 
     @property
     def members(self) -> _MembersLike: ...
@@ -315,9 +323,7 @@ class ArenaRunner:
                 "v1 全局同时只跑一个（arena.md 成本界）"
             )
 
-        resolved_model = (model or "").strip() or (
-            self._settings.arena_model or ""
-        ).strip()
+        resolved_model = (model or "").strip() or (self._settings.arena_model or "").strip()
         if not resolved_model:
             raise ArenaError(
                 "演武场模型未指定：run 参数 model 与环境变量 TLON_ARENA_MODEL 皆空——"
@@ -518,9 +524,7 @@ class ArenaRunner:
                     "origin": item.origin,
                 }
             )
-            await runtime.event_bus.publish(
-                Event(type=EventType.MAIL_NEW, payload=mail, source=f"arena-{run.run_id}")
-            )
+            await runtime.post_office.post(mail)
         run.fed_count = len(corpus)
         logger.info("arena_corpus_fed", run_id=run.run_id, fed=run.fed_count)
 
@@ -550,7 +554,7 @@ class ArenaRunner:
             的 session 数，不等于已处理语料数（一对多）。
         """
         journal = self._journal_factory(run.agent_id, arena_paths)
-        mailbox = Mailbox(arena_paths.agent_mail_dir(run.agent_id))
+        mailbox = Mailbox(arena_paths.mail_database_file(), run.agent_id)
         fed_ids = {str(entry["mail_id"]) for entry in run.fed}
         deadline = self._clock() + run.time_box_seconds
         completed: list[str] = []
@@ -589,11 +593,16 @@ class ArenaRunner:
             ledger_src = arena_paths.agent_ledger_file(agent_id)
             if ledger_src.is_file():
                 shutil.copy2(ledger_src, archive_dir / "ledger.jsonl")
-            mail_dir = arena_paths.agent_mail_dir(agent_id)
-            for name in ("sent.jsonl", "inbox.jsonl"):
-                mail_src = mail_dir / name
-                if mail_src.is_file():
-                    shutil.copy2(mail_src, archive_dir / name)
+            # Portable report evidence only, never a runtime mailbox fallback.
+            store = MailStore(arena_paths.mail_database_file())
+            for view in ("sent", "inbox"):
+                mails = store.mails(agent_id, view)
+                (archive_dir / f"{view}.jsonl").write_text(
+                    "".join(
+                        json.dumps(mail.to_dict(), ensure_ascii=False) + "\n" for mail in mails
+                    ),
+                    encoding="utf-8",
+                )
             self._rewrite_run_json(run, archive_dir)
         except Exception as e:
             logger.error("arena_archive_failed", run_id=run.run_id, error=str(e))

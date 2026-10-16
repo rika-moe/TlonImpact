@@ -51,10 +51,10 @@ from typing import TYPE_CHECKING
 import yaml
 from croniter import croniter
 
-from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail, address_for_member
+from tlon.organization.mail.post_office import PostOffice
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
@@ -134,6 +134,7 @@ class CronScheduler:
         agent_info_provider: "AgentInfoProvider",
         tlon_paths: TlonPaths,
         *,
+        post_office: PostOffice | None = None,
         interval_seconds: float = 86400.0,
         scribe_id: str = "ji-shuheng",
         builtin_entries: list[CronEntry] | None = None,
@@ -141,6 +142,7 @@ class CronScheduler:
         self._event_bus = event_bus
         self._agent_info = agent_info_provider
         self._paths = tlon_paths
+        self._post_office = post_office
         if builtin_entries is not None:
             self._builtin_entries = builtin_entries
         else:
@@ -325,9 +327,9 @@ class CronScheduler:
             subject=entry.subject,
             content=content,
         )
-        await self._event_bus.publish(
-            Event(type=EventType.MAIL_NEW, payload=mail, source="cron_scheduler")
-        )
+        if self._post_office is None:
+            raise RuntimeError("Cron scheduler has no post office")
+        await self._post_office.post(mail)
         logger.info("cron_task_sent", entry=entry.name, mail_id=mail.id, to=entry.to)
         return mail
 

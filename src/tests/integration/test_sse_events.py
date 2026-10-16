@@ -74,7 +74,12 @@ async def test_mail_delivered_pushed_to_sse_stream(inproc_server: tuple[str, Pat
                 # alice is online and this send resolves her address.
                 async with http.post(
                     f"{base_url}/messages",
-                    json={"username": "guest", "content": token, "to": ["alice"]},
+                    json={
+                        "username": "guest",
+                        "content": token,
+                        "to": ["alice"],
+                        "request_id": token,
+                    },
                 ) as send_resp:
                     assert send_resp.status == 202
 

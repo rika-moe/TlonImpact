@@ -26,6 +26,9 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.human_adapter import AdapterManager
 from tlon_server.api.rest import RESTAPIHandler
 
@@ -34,7 +37,7 @@ class StubRequest:
     """Minimal stand-in for aiohttp.web.Request (json body only)."""
 
     def __init__(self, body: Any):
-        self._body = body
+        self._body = {"request_id": "test-request", **body} if isinstance(body, dict) else body
 
     async def json(self) -> Any:
         if isinstance(self._body, Exception):
@@ -67,13 +70,11 @@ async def bus() -> AsyncGenerator[EventBus]:
 @pytest.fixture
 async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManager]:
     """Provide an initialized AdapterManager (isolated tlon home)."""
-    mgr = AdapterManager(
-        event_bus=bus,
-        agent_info_provider=MockAgentInfoProvider(
-            {"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")}
-        ),
-        tlon_paths=TlonPaths(home=tmp_path),
-    )
+    paths = TlonPaths(home=tmp_path)
+    provider = MockAgentInfoProvider({"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")})
+    resolver = RecipientResolver(provider, paths)
+    office = PostOffice(bus, resolver, paths)
+    mgr = AdapterManager(bus, office, resolver, paths)
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()
@@ -144,7 +145,9 @@ class TestHandleSendMessage:
 
         assert response.status == 202
         body = json.loads(response.text)
-        assert body == {"mail_id": collected[0].id}
+        assert body["mail_id"] == collected[0].id
+        assert body["local_recipients"] == ["xie-yunshu"]
+        assert body["request_id"] == "test-request"
 
         mail = collected[0]
         assert mail.from_address == "alice@tlon.internal"
@@ -155,7 +158,7 @@ class TestHandleSendMessage:
 
         # First contact created the persistent mailbox, and the
         # transient adapter was torn down again
-        assert TlonPaths(home=tmp_path).member_mail_dir("human:alice").exists()
+        assert MailStore(TlonPaths(home=tmp_path).mail_database_file()).member_exists("human:alice")
 
     async def test_transient_adapter_is_torn_down(
         self, handler: RESTAPIHandler, manager: AdapterManager
@@ -187,7 +190,7 @@ class TestHandleSendMessage:
 
         assert response.status == 400
         body = json.loads(response.text)
-        assert body["reason"] == "recipient_unresolved"
+        assert body["reason"] == "invalid_recipients"
         assert body["error"]
 
     async def test_missing_content(self, handler: RESTAPIHandler):
@@ -251,3 +254,40 @@ class TestHandleSendMessage:
         )
 
         assert response.status == 503
+
+
+async def test_submission_replay_and_conflict(handler: RESTAPIHandler) -> None:
+    payload = {"username": "alice", "content": "hi", "to": ["xie-yunshu"], "request_id": "stable"}
+    first = await handler.handle_send_message(StubRequest(payload))
+    replay = await handler.handle_send_message(StubRequest(payload))
+    assert first.status == replay.status == 202
+    assert json.loads(first.text) == json.loads(replay.text)
+    conflict = await handler.handle_send_message(StubRequest({**payload, "content": "different"}))
+    assert conflict.status == 409
+    assert json.loads(conflict.text)["reason"] == "idempotency_conflict"
+
+
+async def test_all_invalid_recipients_reported(handler: RESTAPIHandler) -> None:
+    response = await handler.handle_send_message(
+        StubRequest(
+            {
+                "username": "alice",
+                "content": "hi",
+                "to": ["xie-yunshu", "unknown-a"],
+                "cc": ["unknown-b"],
+            }
+        )
+    )
+    assert response.status == 400
+    assert json.loads(response.text)["invalid_recipients"] == ["unknown-a", "unknown-b"]
+    inbox = await handler.mail.inbox("alice")
+    assert inbox == []
+
+
+@pytest.mark.parametrize("request_id", [None, "", "  ", 123])
+async def test_request_id_required(handler: RESTAPIHandler, request_id: Any) -> None:
+    response = await handler.handle_send_message(
+        StubRequest({"content": "hi", "to": ["xie-yunshu"], "request_id": request_id})
+    )
+    assert response.status == 400
+    assert json.loads(response.text)["reason"] == "invalid_request_id"

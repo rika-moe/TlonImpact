@@ -26,7 +26,7 @@ async def read_own_mails(agent_id: str, *, tlon_paths: TlonPaths) -> list[dict[s
     address domain — the trust marker
     travels with the data into tool results.
     """
-    mailbox = Mailbox(tlon_paths.member_mail_dir(agent_id))
+    mailbox = Mailbox(tlon_paths.mail_database_file(), agent_id)
     mails: list[dict[str, Any]] = []
     for box, folder in (("inbox", await mailbox.inbox()), ("sent", await mailbox.sent())):
         for mail in folder:
