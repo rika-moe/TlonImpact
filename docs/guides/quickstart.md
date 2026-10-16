@@ -30,7 +30,7 @@ echo 'DEEPSEEK_API_KEY=your-api-key-here' >> ~/.tlon/.env
 # OPENAI_API_KEY=...
 ```
 
-`.env` 不覆盖真实环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `_load_dotenv_files`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（报错会指明缺哪个变量）。**模型不在进程级配置**（ADR 0016）：每个成员的模型在创建时选择，落在成员 `agent.yaml` 的 `llm.model_name`。全部变量见 `reference/config-reference.md` 第 4 节。
+`.env` 不覆盖真实环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `load_process_env`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（报错会指明缺哪个变量）。**模型不在进程级配置**（ADR 0016）：每个成员的模型在创建时选择，落在成员 `agent.yaml` 的 `llm.model_name`。全部变量见 `reference/config-reference.md` 第 4 节。
 
 ## 3. 起服务端 —— 空社会 + 原型库
 

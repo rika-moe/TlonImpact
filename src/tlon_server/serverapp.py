@@ -23,7 +23,7 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.logger import configure_logging, get_logger
 from tlon.base.metrics import init_metrics, shutdown_metrics
 from tlon.base.paths import TlonPaths
-from tlon.base.settings import get_settings
+from tlon.base.settings import Settings, load_process_env
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon_server.api.rest import WEBUI_DIST_DIR, RESTServer
 from tlon_server.core.client_gateway import ClientGateway
@@ -79,6 +79,7 @@ class ServerApp:
         host: str = "127.0.0.1",
         rest_port: int = 8080,
         tlon_paths: TlonPaths | None = None,
+        settings: Settings | None = None,
     ):
         """Initialize the server application (does not create components yet).
 
@@ -88,10 +89,14 @@ class ServerApp:
             tlon_paths: Path resolver for the runtime's tlon home; None
                 resolves ``$TLON_HOME`` / ``~/.tlon`` — the process entry
                 point constructs exactly one and hands it down
+            settings: Process-level settings snapshot (env + secrets),
+                built by the entry point (``run_server``); None builds one
+                from the current environment (bare test setups)
         """
         self.host = host
         self.rest_port = rest_port
         self._paths = tlon_paths or TlonPaths()
+        self._settings = settings or Settings.from_env()
         self.shared_dir = self._paths.shared_dir()
 
         # The assembled runtime (set by initialize())
@@ -128,11 +133,11 @@ class ServerApp:
         # and one runtime's shutdown must never flush another's pillars.
         init_tracing(
             self._paths.traces_dir(),
-            otlp_endpoint=get_settings().otel_exporter_otlp_endpoint,
+            otlp_endpoint=self._settings.otel_exporter_otlp_endpoint,
         )
         init_metrics()
 
-        runtime = await build_runtime(self._paths)
+        runtime = await build_runtime(self._paths, self._settings)
         self._runtime = runtime
 
         # ========== Client Gateway Components (serving side) ==========
@@ -168,7 +173,6 @@ class ServerApp:
         logger.info("component_initialized", component="client_gateway")
 
         # ========== API Layer (DI) ==========
-        settings = get_settings()
         self.rest = RESTServer(
             self.client_gateway,
             members=runtime.members,
@@ -181,8 +185,8 @@ class ServerApp:
             capabilities=runtime.capabilities,
             host=self.host,
             port=self.rest_port,
-            admin_token=settings.admin_api_token or None,  # ADR 0013
-            github_webhook_secret=settings.github_webhook_secret or None,
+            admin_token=self._settings.admin_api_token or None,  # ADR 0013
+            github_webhook_secret=self._settings.github_webhook_secret or None,
         )
 
         self._running = False
@@ -230,7 +234,7 @@ class ServerApp:
                 host=self.host,
                 rest_port=self.rest_port,
             )
-        if get_settings().admin_api_token:
+        if self._settings.admin_api_token:
             logger.info("admin_auth_enabled")
 
         print(_startup_banner(self.host, self.rest_port), flush=True)
@@ -305,6 +309,8 @@ async def run_server(
     rest_port: int = 8080,
     log_level: str = "INFO",
     debug: bool = False,
+    tlon_paths: TlonPaths | None = None,
+    settings: Settings | None = None,
 ) -> int:
     """Run the Tlon server.
 
@@ -315,13 +321,23 @@ async def run_server(
         rest_port: Port for the HTTP API (REST + SSE)
         log_level: Logging level
         debug: Enable debug mode
+        tlon_paths: Path resolver from the process entry point; None
+            resolves ``$TLON_HOME`` / ``~/.tlon`` (bare embedding)
+        settings: Process settings snapshot from the entry point; None
+            loads ``{TLON_HOME}/.env`` and snapshots the environment
+            (bare embedding)
 
     Returns:
         Exit code (0 for success)
     """
-    # Configure logging (stdout + daily JSONL file sink under ~/.tlon/shared/logs/)
-    settings = get_settings()
-    tlon_paths = TlonPaths()
+    # Configure logging (stdout + daily JSONL file sink under ~/.tlon/shared/logs/).
+    # 进程入口纪律（ADR 0019）：TlonPaths / Settings 由入口构造一次并往下
+    # 传；裸嵌入（无注入）时这里兜底构造，.env 回退加载必须在任何 env
+    # 读取（Settings.from_env）之前。
+    tlon_paths = tlon_paths or TlonPaths()
+    if settings is None:
+        load_process_env(tlon_paths)
+        settings = Settings.from_env()
     configure_logging(
         log_level=log_level,
         debug=debug,
@@ -332,7 +348,7 @@ async def run_server(
     logger.info("server_starting", host=host, rest_port=rest_port)
 
     # Create and run server
-    app = ServerApp(host=host, rest_port=rest_port, tlon_paths=tlon_paths)
+    app = ServerApp(host=host, rest_port=rest_port, tlon_paths=tlon_paths, settings=settings)
 
     # Setup signal handlers
     loop = asyncio.get_event_loop()

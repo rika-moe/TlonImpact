@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -94,17 +95,26 @@ class TestMainAsync:
         base: dict[str, Any] = {"command": command, "debug": False}
         return argparse.Namespace(**(base | extra))
 
-    def _patch_infra(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _patch_infra(
+        self, monkeypatch: pytest.MonkeyPatch, *, debug: bool = False, log_level: str = "INFO"
+    ) -> tuple[Any, Any]:
+        """Stub the entry-point construction: TlonPaths / load_process_env /
+        Settings.from_env — tests never touch the real ~/.tlon."""
+        paths = argparse.Namespace(name="fake-paths")
+        settings = argparse.Namespace(debug=debug, log_level=log_level)
         monkeypatch.setattr(main_module, "configure_logging", lambda **kwargs: None)
+        monkeypatch.setattr(main_module, "TlonPaths", lambda: paths)
+        monkeypatch.setattr(main_module, "load_process_env", lambda p: None)
         monkeypatch.setattr(
             main_module,
-            "get_settings",
-            lambda: argparse.Namespace(debug=False, log_level="INFO"),
+            "Settings",
+            SimpleNamespace(from_env=lambda: settings),
         )
+        return paths, settings
 
     @pytest.mark.parametrize("command", ["dream", "ops", "telegram"])
     async def test_routes_to_command(self, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
-        self._patch_infra(monkeypatch)
+        paths, settings = self._patch_infra(monkeypatch)
         runners: dict[str, AsyncMock] = {}
         for name in ("run_dream", "run_ops", "run_telegram"):
             runner = AsyncMock(return_value=0)
@@ -115,9 +125,15 @@ class TestMainAsync:
         result = await main_async(args)
 
         assert result == 0
-        runners[f"run_{command}"].assert_awaited_once_with(args)
+        expected_args = {
+            "run_dream": [args, paths, settings],
+            "run_ops": [args],
+            "run_telegram": [args, settings],
+        }
         for name, runner in runners.items():
-            if name != f"run_{command}":
+            if name == f"run_{command}":
+                runner.assert_awaited_once_with(*expected_args[name])
+            else:
                 runner.assert_not_awaited()
 
     async def test_exit_code_passthrough(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,12 +156,8 @@ class TestMainAsync:
 
     async def test_debug_enables_debug_log_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[dict[str, Any]] = []
+        self._patch_infra(monkeypatch)
         monkeypatch.setattr(main_module, "configure_logging", lambda **kwargs: calls.append(kwargs))
-        monkeypatch.setattr(
-            main_module,
-            "get_settings",
-            lambda: argparse.Namespace(debug=False, log_level="INFO"),
-        )
         monkeypatch.setattr(main_module, "run_dream", AsyncMock(return_value=0))
 
         await main_async(self._args("dream", debug=True))
@@ -156,12 +168,8 @@ class TestMainAsync:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls: list[dict[str, Any]] = []
+        self._patch_infra(monkeypatch, log_level="WARNING")
         monkeypatch.setattr(main_module, "configure_logging", lambda **kwargs: calls.append(kwargs))
-        monkeypatch.setattr(
-            main_module,
-            "get_settings",
-            lambda: argparse.Namespace(debug=False, log_level="WARNING"),
-        )
         monkeypatch.setattr(main_module, "run_dream", AsyncMock(return_value=0))
 
         await main_async(self._args("dream"))

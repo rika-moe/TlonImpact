@@ -16,6 +16,7 @@ from tlon.api.arena import ArenaFacade
 from tlon.api.bootstrap import build_runtime
 from tlon.api.capabilities import CapabilitiesFacade
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import Settings
 
 DELIVERY_TIMEOUT = 10.0
 
@@ -41,8 +42,8 @@ async def test_two_runtimes_coexist_in_one_process(tmp_path: Path) -> None:
     paths_a = TlonPaths(home=home_a)
     paths_b = TlonPaths(home=home_b)
 
-    runtime_a = await build_runtime(paths_a)
-    runtime_b = await build_runtime(paths_b)
+    runtime_a = await build_runtime(paths_a, Settings.from_env())
+    runtime_b = await build_runtime(paths_b, Settings.from_env())
     try:
         # Arena facade is wired into every runtime (issue #29 切片 3/3).
         assert isinstance(runtime_a.arena, ArenaFacade)

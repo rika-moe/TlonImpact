@@ -1,7 +1,7 @@
 """Arena facade：演武场 run 的触发与查询（docs/design/arena.md）。
 
 薄透传 ``tlon.arena.runner.ArenaRunner``：构造器注入生产 TlonPaths +
-runner 工厂（默认以 ``build_runtime`` 装配隔离 runtime 的标准 runner）。
+Settings + runner 工厂（默认以 ``build_runtime`` 装配隔离 runtime 的标准 runner）。
 ``ArenaRun`` / ``RunStatus`` / ``ArenaError``（方法返回/抛出类型）作为
 本模块 API 面的一部分对 server 可见。另有两个读侧归档方法
 （``get_report`` / ``latest_report``）直读 staging 归档目录——报告是
@@ -16,24 +16,29 @@ from typing import Any
 from tlon.arena.runner import ArenaError, ArenaRun, ArenaRunner, RunStatus
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import Settings
 
 __all__ = ["ArenaError", "ArenaFacade", "ArenaRun", "RunStatus"]
 
 logger = get_logger(__name__)
 
 
-def _default_runner(tlon_paths: TlonPaths) -> ArenaRunner:
+def _default_runner(tlon_paths: TlonPaths, settings: Settings) -> ArenaRunner:
     # 延迟 import 打破环：api.bootstrap 装配 ArenaFacade（顶层 import 本模块）。
     from tlon.api.bootstrap import build_runtime
 
-    return ArenaRunner(tlon_paths=tlon_paths, runtime_factory=build_runtime)
+    return ArenaRunner(
+        tlon_paths=tlon_paths,
+        runtime_factory=lambda arena_paths: build_runtime(arena_paths, settings),
+        settings=settings,
+    )
 
 
 class ArenaFacade:
-    """演武场域北向 API。构造器注入 TlonPaths + runner 工厂，薄透传。
+    """演武场域北向 API。构造器注入 TlonPaths + Settings + runner 工厂，薄透传。
 
     Example:
-        >>> arena = ArenaFacade(tlon_paths=paths)
+        >>> arena = ArenaFacade(tlon_paths=paths, settings=settings)
         >>> run = await arena.start_run("llm-idea", model="deepseek/deepseek-chat")
         >>> arena.get_run(run.run_id)
     """
@@ -42,16 +47,21 @@ class ArenaFacade:
         self,
         *,
         tlon_paths: TlonPaths,
+        settings: Settings,
         runner_factory: Callable[[TlonPaths], ArenaRunner] | None = None,
     ):
         """Initialize the facade.
 
         Args:
             tlon_paths: Production path resolver (staging library + arena homes)
+            settings: Process settings snapshot (injected into the default
+                runner; the runner never reads the environment itself)
             runner_factory: Builds the runner (tests inject a faked runner);
                 None = standard runner over ``build_runtime``
         """
-        factory = runner_factory or _default_runner
+        factory = runner_factory or (
+            lambda paths: _default_runner(paths, settings)
+        )
         self._paths = tlon_paths
         self._runner = factory(tlon_paths)
 

@@ -29,6 +29,7 @@ import aiohttp
 import pytest
 
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import Settings
 from tlon_server.serverapp import ServerApp
 
 SERVER_STARTUP_TIMEOUT = 45.0
@@ -193,11 +194,11 @@ async def _run_inprocess(
     ):
         for key, value in (extra_env or {}).items():
             mp.setenv(key, value)
-        mp.setattr("tlon.base.settings._settings", None)
         app = ServerApp(
             host="127.0.0.1",
             rest_port=port,
             tlon_paths=TlonPaths(home=Path(tlon_home)),
+            settings=Settings.from_env(),
         )
         await app.initialize()
         # start() blocks on the shutdown event after binding, so it

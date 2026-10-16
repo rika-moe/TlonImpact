@@ -6,6 +6,7 @@ from typing import Any, cast
 from tlon.api.arena import ArenaError, ArenaFacade, ArenaRun, RunStatus
 from tlon.arena.runner import ArenaRunner
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import Settings
 
 
 class _StubRunner:
@@ -41,6 +42,7 @@ async def test_facade_delegates_to_runner(tmp_path: Path) -> None:
     stub = _StubRunner()
     facade = ArenaFacade(
         tlon_paths=TlonPaths(home=tmp_path),
+        settings=Settings.from_env(),
         runner_factory=lambda paths: cast(ArenaRunner, stub),
     )
     run = await facade.start_run(
@@ -61,5 +63,5 @@ async def test_facade_delegates_to_runner(tmp_path: Path) -> None:
 
 
 def test_facade_default_runner_factory(tmp_path: Path) -> None:
-    facade = ArenaFacade(tlon_paths=TlonPaths(home=tmp_path))
+    facade = ArenaFacade(tlon_paths=TlonPaths(home=tmp_path), settings=Settings.from_env())
     assert isinstance(facade._runner, ArenaRunner)

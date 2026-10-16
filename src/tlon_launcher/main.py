@@ -18,7 +18,8 @@ import sys
 from typing import TYPE_CHECKING
 
 from tlon.base.logger import configure_logging
-from tlon.base.settings import get_settings
+from tlon.base.paths import TlonPaths
+from tlon.base.settings import Settings, load_process_env
 from tlon.base.version import VERSION
 from tlon_launcher.commands.dream import run_dream
 from tlon_launcher.commands.ops import run_ops
@@ -144,11 +145,17 @@ async def main_async(args: Namespace | None = None) -> int:
         parser = create_parser()
         args = parser.parse_args()
 
+    # 进程入口纪律（ADR 0019）：TlonPaths / Settings 各构造一次并显式
+    # 往下传；.env 回退加载必须在任何 env 读取（Settings.from_env）之前。
+    tlon_paths = TlonPaths()
+    load_process_env(tlon_paths)
+    settings = Settings.from_env()
+
     # Configure logging - use --debug flag if provided
-    is_debug = getattr(args, "debug", False) or get_settings().debug
+    is_debug = getattr(args, "debug", False) or settings.debug
 
     configure_logging(
-        log_level="DEBUG" if is_debug else get_settings().log_level,
+        log_level="DEBUG" if is_debug else settings.log_level,
         debug=is_debug,
     )
 
@@ -156,13 +163,13 @@ async def main_async(args: Namespace | None = None) -> int:
     cmd = args.command
 
     if cmd == "dream":
-        return await run_dream(args)
+        return await run_dream(args, tlon_paths, settings)
 
     elif cmd == "ops":
         return await run_ops(args)
 
     elif cmd == "telegram":
-        return await run_telegram(args)
+        return await run_telegram(args, settings)
 
     else:
         # No command - show help

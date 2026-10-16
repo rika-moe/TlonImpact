@@ -9,9 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tlon_launcher.commands import dream as dream_module
 from tlon_launcher.commands import ops as ops_module
-from tlon_launcher.commands import telegram as telegram_module
 from tlon_launcher.commands.dream import run_dream
 from tlon_launcher.commands.ops import _find_operator_command, run_ops
 from tlon_launcher.commands.telegram import run_telegram
@@ -30,16 +28,17 @@ class TestRunDream:
         monkeypatch.setattr("tlon_server.serverapp.run_server", run_server)
         return run_server
 
+    def _infra(self, log_level: str = "INFO") -> tuple[Any, Any]:
+        """The entry-point injectables: a stand-in TlonPaths and a settings
+        snapshot with the given log level."""
+        return SimpleNamespace(name="fake-paths"), SimpleNamespace(log_level=log_level)
+
     async def test_passthrough_and_exit_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
         run_server = self._patch_run_server(monkeypatch)
         run_server.return_value = 7
-        monkeypatch.setattr(
-            dream_module,
-            "get_settings",
-            lambda: SimpleNamespace(log_level="WARNING"),
-        )
+        paths, settings = self._infra(log_level="WARNING")
 
-        result = await run_dream(_dream_args(host="0.0.0.0", rest_port=9090))
+        result = await run_dream(_dream_args(host="0.0.0.0", rest_port=9090), paths, settings)
 
         assert result == 7
         run_server.assert_awaited_once_with(
@@ -47,12 +46,15 @@ class TestRunDream:
             rest_port=9090,
             log_level="WARNING",
             debug=False,
+            tlon_paths=paths,
+            settings=settings,
         )
 
     async def test_lucid_forces_debug_log_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
         run_server = self._patch_run_server(monkeypatch)
+        paths, settings = self._infra()
 
-        result = await run_dream(_dream_args(debug=True))
+        result = await run_dream(_dream_args(debug=True), paths, settings)
 
         assert result == 0
         run_server.assert_awaited_once_with(
@@ -60,6 +62,8 @@ class TestRunDream:
             rest_port=8080,
             log_level="DEBUG",
             debug=True,
+            tlon_paths=paths,
+            settings=settings,
         )
 
 
@@ -244,11 +248,7 @@ class TestRunTelegram:
     async def test_missing_token_returns_one_and_never_starts_bot(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ):
-        monkeypatch.setattr(
-            telegram_module,
-            "get_settings",
-            lambda: SimpleNamespace(telegram_bot_token="", telegram_allowed_users="123"),
-        )
+        settings = SimpleNamespace(telegram_bot_token="", telegram_allowed_users="123")
 
         # The bot startup path begins by parsing the user whitelist; the
         # token check must bail out before any of that happens.
@@ -258,7 +258,7 @@ class TestRunTelegram:
             lambda raw: parse_calls.append(raw),
         )
 
-        result = await run_telegram(self._args())
+        result = await run_telegram(self._args(), settings)
 
         assert result == 1
         assert "TELEGRAM_BOT_TOKEN" in capsys.readouterr().out
@@ -267,13 +267,9 @@ class TestRunTelegram:
     async def test_empty_allowed_users_returns_one(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ):
-        monkeypatch.setattr(
-            telegram_module,
-            "get_settings",
-            lambda: SimpleNamespace(telegram_bot_token="token", telegram_allowed_users=""),
-        )
+        settings = SimpleNamespace(telegram_bot_token="token", telegram_allowed_users="")
 
-        result = await run_telegram(self._args())
+        result = await run_telegram(self._args(), settings)
 
         assert result == 1
         assert "TELEGRAM_ALLOWED_USERS" in capsys.readouterr().out
@@ -281,15 +277,11 @@ class TestRunTelegram:
     async def test_invalid_allowed_users_returns_one(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ):
-        monkeypatch.setattr(
-            telegram_module,
-            "get_settings",
-            lambda: SimpleNamespace(
-                telegram_bot_token="token", telegram_allowed_users="not-a-number"
-            ),
+        settings = SimpleNamespace(
+            telegram_bot_token="token", telegram_allowed_users="not-a-number"
         )
 
-        result = await run_telegram(self._args())
+        result = await run_telegram(self._args(), settings)
 
         assert result == 1
         assert "TELEGRAM_ALLOWED_USERS" in capsys.readouterr().out
