@@ -68,9 +68,8 @@ REST 端点全表（每条路由的注册条件、错误枚举、SSE 帧格式�
 | `tlon_client` | 客户端包：`sdk/`（外部客户端用的纯协议层 SDK）、`telegram/`（Telegram bot 客户端） | sdk 不依赖 tlon；telegram 仅 sdk/第三方 | import-linter「client.sdk 不依赖 tlon」「client.telegram 只依赖 sdk/第三方」 |
 | `tlon_launcher` | 命令行入口（composition root） | 仅 tlon.base + tlon_server + tlon_client | import-linter「launcher 不直摸 runtime」 |
 
-除 import-linter 外，[scripts/](../scripts) 下还有三个 AST 检查脚本：
+除 import-linter 外，[scripts/](../scripts) 下还有两个 AST 检查脚本：
 
-- [scripts/check_architecture.py](../scripts/check_architecture.py)：组件依赖只能构造器注入，禁止 setter/property 注入、运行时替换组件、隐式全局依赖。
 - [scripts/check_no_reexport.py](../scripts/check_no_reexport.py)：`__init__.py` 禁止 re-export，防止 IDE 重命名重构跨包静默断裂。
 - [scripts/check_stage_purity.py](../scripts/check_stage_purity.py)：认知循环的 stage 模块必须是纯变换，禁止直接改 session 状态（见下文「effects-as-data」）。
 
@@ -150,7 +149,7 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### DAG 组件装配
 
-全部组件继承 `Component`，依赖只走构造器，通信只走 EventBus；`ServerApp` 是唯一装配者。这条规则同时由 [base/component.py](../src/tlon/base/component.py) 的约定文档、[scripts/check_architecture.py](../scripts/check_architecture.py) 的静态检查和 import-linter 的依赖方向契约三层维持。
+全部组件继承 `Component`，依赖只走构造器，通信只走 EventBus；`ServerApp` 是唯一装配者。这条规则由 [base/component.py](../src/tlon/base/component.py) 的约定文档和 import-linter 的依赖方向契约两层维持（曾有第三个 AST 检查脚本 check_architecture.py，因纯名字启发式不可靠已删除，见 #144）。
 
 ### 记忆与沙箱
 
@@ -231,7 +230,6 @@ runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后
 | 工具 | 检查内容 |
 |---|---|
 | `uv run lint-imports` | pyproject.toml 中 import-linter 契约：各包依赖方向（base 不依赖上层、memory/organization/sandbox 只依赖 base、tools 不反向依赖 agents/server/client/launcher/prototypes、agents 不依赖 server/client/launcher/prototypes、sdk 只依赖 base、server 只经 api+base、launcher 不直摸 runtime） |
-| `uv run python scripts/check_architecture.py` | 组件 DAG 规则：只许构造器注入，禁止 setter/property 注入与运行时替换 |
 | `uv run python scripts/check_no_reexport.py` | `__init__.py` 禁止 re-export |
 | `uv run python scripts/check_stage_purity.py` | [agents/stages/](../src/tlon/agents/stages) 下 stage 纯度：禁止直接修改 session 状态 |
 
