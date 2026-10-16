@@ -16,7 +16,14 @@ Each adapter provides:
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
+from importlib.metadata import version as _dist_version
 from typing import Any
+
+#: SDK 自报版本：与整个项目同一 ``tlon-impact`` 发行版的安装元数据
+#: （issue #144——曾经硬编码 "0.2.0" 与 pyproject 漂移）。client.sdk 有
+#: 「不依赖 tlon」的 import-linter 契约，不能 import tlon.base.version，
+#: 同一发行版元数据就地直读。
+_CLIENT_VERSION = _dist_version("tlon-impact")
 
 
 class ClientType(StrEnum):
@@ -99,7 +106,7 @@ class ClientAdapter(ABC):
             Dictionary of metadata for auth message
         """
         return {
-            "client_version": "0.2.0",
+            "client_version": _CLIENT_VERSION,
             "platform": self._get_platform(),
         }
 

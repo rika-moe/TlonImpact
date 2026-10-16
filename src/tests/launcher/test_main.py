@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tlon.base.version import VERSION
 from tlon_launcher import main as main_module
 from tlon_launcher.main import create_parser, main, main_async
 
@@ -23,7 +24,7 @@ class TestCreateParser:
             create_parser().parse_args(["--version"])
 
         assert exc_info.value.code == 0
-        assert "0.1.0" in capsys.readouterr().out
+        assert VERSION in capsys.readouterr().out
 
     def test_dream_defaults(self):
         args = create_parser().parse_args(["dream"])

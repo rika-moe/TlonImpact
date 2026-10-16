@@ -33,6 +33,7 @@ from tlon.api.members import MembersFacade
 from tlon.api.observability import ObservabilityFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon.base.logger import get_logger
+from tlon.base.version import VERSION
 from tlon_server.core.client_gateway import ClientGateway
 
 from .admin_agents import AdminAgentHandlers
@@ -320,7 +321,7 @@ class RESTAPIHandler(
                 "status": "healthy",
                 "running": self.client_gateway.is_running(),
                 "timestamp": datetime.now(UTC).isoformat(),
-                "version": "0.2.0",
+                "version": VERSION,
             }
         )
 
