@@ -4,10 +4,14 @@ import react from "@vitejs/plugin-react";
 /** Tlon server (REST + SSE, protocol v2). */
 const SERVER = "http://127.0.0.1:8080";
 
-/** API path prefixes proxied to the server in dev. */
+/** API path prefixes proxied to the server in dev.
+ *  Drift-guarded by scripts/check_dev_proxy.py (check_all.sh --static):
+ *  every REST route prefix is either listed here or explicitly exempted
+ *  there with a reason. */
 const API_PATHS = [
   "/messages",
   "/inbox",
+  "/members",
   "/sessions",
   "/events",
   "/agents",
