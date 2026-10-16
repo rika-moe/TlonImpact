@@ -24,7 +24,14 @@ from tlon.tools.base import ToolResult
 
 @dataclass
 class MailEffect:
-    """One mail to send (C2 — declared by a stage, sent by the engine)."""
+    """One mail to send (C2 — declared by a stage, sent by the engine).
+
+    A forward (``forwardMail`` tool, ADR 0029) declares ``forward_of``
+    (the source mail id) plus an optional ``forward_comment``; its
+    ``content`` stays empty — the engine composes the self-contained
+    forward body (comment + attribution header + original content) from
+    the source mail it resolves out of the agent's own mailbox.
+    """
 
     to: list[str]
     content: str
@@ -33,6 +40,8 @@ class MailEffect:
     in_reply_to: str | None = None
     thread_id: str | None = None
     endorsing: str | None = None
+    forward_of: str | None = None
+    forward_comment: str | None = None
 
 
 @dataclass

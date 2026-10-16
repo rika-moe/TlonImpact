@@ -252,7 +252,7 @@
 
 ### 4.5 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
 
-动作 builtin 不在模块级注册表——它们由 `make_member_builtins` 以闭包定义、按调用方装配（`collector` / `host` 注入），因此本表手写维护。这六个是全部效果词汇（能力白名单即 `MEMBER_ACTION_NAMES`）；ADR 0021 后动作位置按全量成员注册表校验、语法上不再分区——它们可以出现在任意表达式深度，包括用户函数体内。
+动作 builtin 不在模块级注册表——它们由 `make_member_builtins` 以闭包定义、按调用方装配（`collector` / `host` 注入），因此本表手写维护。这六个是全部效果词汇（能力白名单即 `MEMBER_ACTION_NAMES`）；ADR 0021 后动作位置按全量成员注册表校验、语法上不再分区——它们可以出现在任意表达式深度，包括用户函数体内。唯一例外：`forward` 是确定性规则专用（认知规则 `:actions` 含它加载即拒绝，ADR 0029）。
 
 | 名称 | 签名 | 语义 |
 |---|---|---|
@@ -261,7 +261,7 @@
 | `start` | `(start {:agent id :reason s})` | 发布启动请求；`:agent` / `:reason` 均为必填非空字符串 |
 | `stop` | `(stop {:agent id :reason s})` | 发布停止请求；参数同上 |
 | `start-all` | `(start-all {:reason s})` | 对"声明了 `:on :boot` 的成员"集合逐个发启动请求；**不允许 `:agent`**；候选集展开依赖宿主查询注入——无宿主的注册表运行时会抛 `EvalError` |
-| `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发触发邮件：`:to` 必填非空地址向量，`:cc` 可选向量，`:subject` 可选字符串；正文取自触发邮件，新邮件以 `forward_of` 链接原邮件；无触发邮件时跳过并记 warning |
+| `forward` | `(forward {:to [...] :cc [...] :subject s})` | 转发触发邮件：`:to` 必填非空地址向量，`:cc` 可选向量，`:subject` 可选字符串；正文取自触发邮件，新邮件以 `forward_of` 链接原邮件；无触发邮件时跳过并记 warning。**仅确定性规则可用**——认知路径没有触发邮件（ADR 0028），认知规则的 `:actions` 含 `forward` 加载即拒绝，认知成员用 `forwardMail` 工具转发（ADR 0029，见 [tools-reference.md](./tools-reference.md)） |
 
 <!-- BEGIN GENERATED: dsl-action-kinds -->
 六个动作 builtin 实际产出的 `ActionRequest` 形状（5 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）

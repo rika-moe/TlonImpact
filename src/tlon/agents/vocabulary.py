@@ -573,8 +573,12 @@ class ScriptHostQueries(Protocol):
 # reach past the engine's quotas and trust gates.
 
 
-#: The unified action vocabulary: every rule kind — cognitive or
-#: deterministic — may use any of these actions in its ``:actions``.
+#: The unified action vocabulary. With one exception every rule kind —
+#: cognitive or deterministic — may use any of these actions in its
+#: ``:actions``: ``forward`` reads the triggering event's mail, which the
+#: cognitive path no longer has (ADR 0028), so it is deterministic-only
+#: (ADR 0029 — cognitive members forward through the ``forwardMail``
+#: tool; ``validate_member_spec`` rejects it in a cognitive rule).
 MEMBER_ACTION_NAMES = frozenset({"spawn", "emit", "start", "stop", "start-all", "forward"})
 
 
@@ -610,7 +614,11 @@ def _script_forward_fields(options: Any) -> dict[str, Any]:
     ``:to`` is a required non-empty vector of address strings; ``:cc`` is
     an optional address vector; ``:subject`` is an optional string. The
     forwarded mail's content comes from the triggering event at execution
-    time — the action data only carries routing.
+    time — the action data only carries routing. That makes ``forward``
+    a deterministic-rules-only action: on the cognitive path there is no
+    trigger mail (ADR 0028), so ``validate_member_spec`` rejects a
+    cognitive rule whose ``:actions`` call it; cognitive members forward
+    through the ``forwardMail`` tool instead (ADR 0029).
     """
     if not isinstance(options, dict):
         raise EvalError(f"forward expects an options map, got {type(options).__name__}")

@@ -13,6 +13,7 @@ from tlon.tools.mail.check_inbox import (
     CHECK_INBOX_MAX_LIMIT,
     CheckInboxTool,
 )
+from tlon.tools.mail.forward_mail import ForwardMailTool
 from tlon.tools.mail.mark_read import MarkReadTool
 from tlon.tools.mail.search_mails import (
     CONTENT_EXCERPT_LENGTH,
@@ -74,6 +75,56 @@ class TestSendEmailTool:
         assert tool.name == "sendEmail"
         required = tool.parameters["required"]
         assert set(required) == {"to", "content", "is_complete"}
+
+
+class TestForwardMailTool:
+    """forwardMail (ADR 0029): declarative like sendEmail — execute only
+    declares the intent; the engine composes and sends the forward."""
+
+    @pytest.mark.asyncio
+    async def test_execute_returns_forward_data(self):
+        tool = ForwardMailTool()
+        result = await tool.execute(
+            mail_id="m1",
+            to=["a-001@tlon.internal"],
+            cc=["a-002@tlon.internal"],
+            comment="转给你看看",
+        )
+
+        assert result.success
+        assert result.data["mail_id"] == "m1"
+        assert result.data["to"] == ["a-001@tlon.internal"]
+        assert result.data["cc"] == ["a-002@tlon.internal"]
+        assert result.data["comment"] == "转给你看看"
+        assert result.data["action"] == "forward_mail"
+
+    @pytest.mark.asyncio
+    async def test_defaults(self):
+        tool = ForwardMailTool()
+        result = await tool.execute(mail_id="m1", to=["b-002@tlon.internal"])
+
+        assert result.success
+        assert result.data["cc"] == []
+        assert result.data["comment"] is None
+
+    @pytest.mark.asyncio
+    async def test_message_points_at_postmaster_notice(self):
+        """Async delivery: the postmaster notice is the only failure
+        signal (hallucinated mail_id fails the send engine-side)."""
+        tool = ForwardMailTool()
+        result = await tool.execute(mail_id="m1", to=["b-002@tlon.internal"])
+
+        assert "postmaster" in result.message
+
+    def test_tool_schema(self):
+        tool = ForwardMailTool()
+        assert tool.name == "forwardMail"
+        required = tool.parameters["required"]
+        # subject / is_complete are not parameters: the subject is
+        # generated (Fwd: 原主题) and a forward never ends the loop.
+        assert set(required) == {"mail_id", "to"}
+        assert "subject" not in tool.parameters["properties"]
+        assert "is_complete" not in tool.parameters["properties"]
 
 
 AGENT_ID = "a-001"

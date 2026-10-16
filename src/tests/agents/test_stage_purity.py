@@ -154,6 +154,38 @@ class TestStagePurity:
         assert mail.thread_id is None
 
 
+    async def test_act_collect_forward_mail_declares_effect_without_completing(self) -> None:
+        """ADR 0029: a forwardMail result declares a MailEffect carrying
+        the source id + comment; content stays empty (the engine composes
+        the forward body), and a forward never completes the loop."""
+        svc = _make_services()
+        session = AgentSession(session_id="s1", trigger_content="trigger")
+        session.mark_waiting()
+        tc = ToolCall(id="t1", function_name="forwardMail", arguments={})
+        result = ToolResult(
+            success=True,
+            data={
+                "mail_id": "m-source",
+                "to": ["other@tlon.internal"],
+                "cc": [],
+                "comment": "转给你",
+                "action": "forward_mail",
+            },
+        )
+
+        outcome = await act_stage_collect(svc, session, [(tc, result)])
+
+        assert len(outcome.mails) == 1
+        mail = outcome.mails[0]
+        assert mail.to == ["other@tlon.internal"]
+        assert mail.content == ""
+        assert mail.forward_of == "m-source"
+        assert mail.forward_comment == "转给你"
+        assert outcome.complete is False
+        assert outcome.advance_iteration is True
+        assert outcome.mark_active is True
+
+
 class TestEngineApplication:
     async def test_response_recorded_as_last_llm_response(self, tmp_path: Path) -> None:
         driver = _make_driver(MagicMock(), tmp_path)
