@@ -15,6 +15,7 @@ from tlon.api.arena import ArenaError, ArenaFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon.arena.runner import ArenaRun, RunStatus
 from tlon.base.paths import TlonPaths
+from tlon.base.settings import Settings
 from tlon_server.api.rest import RESTAPIHandler
 
 _BEHAVIOR = '{:version 1 :rules [{:name "r" :on :boot :actions []}]}\n'
@@ -106,7 +107,11 @@ def _handler(
 ) -> tuple[RESTAPIHandler, FakeRunner, TlonPaths]:
     p = TlonPaths(home=tmp_path)
     fake = runner or FakeRunner()
-    arena = ArenaFacade(tlon_paths=p, runner_factory=lambda _paths: fake) if wire_arena else None
+    arena = (
+        ArenaFacade(tlon_paths=p, settings=Settings.from_env(), runner_factory=lambda _paths: fake)
+        if wire_arena
+        else None
+    )
     handler = RESTAPIHandler(
         None,
         prototypes=PrototypesFacade(tlon_paths=p),

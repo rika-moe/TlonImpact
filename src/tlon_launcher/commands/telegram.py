@@ -10,10 +10,10 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from tlon.base.settings import get_settings
-
 if TYPE_CHECKING:
     from argparse import Namespace
+
+    from tlon.base.settings import Settings
 
 _CONFIG_HINT = """\
 请在 ~/.tlon/.env 中配置：
@@ -23,17 +23,16 @@ _CONFIG_HINT = """\
  https://api.telegram.org/bot<token>/getUpdates 即可看到自己的 user_id）"""
 
 
-async def run_telegram(args: Namespace) -> int:
+async def run_telegram(args: Namespace, settings: Settings) -> int:
     """Run the telegram command (Telegram bot client).
 
     Args:
         args: Parsed arguments
+        settings: Process settings snapshot, built at the entry point
 
     Returns:
         Exit code
     """
-    settings = get_settings()
-
     if not settings.telegram_bot_token:
         print("\n❌ 缺少 TELEGRAM_BOT_TOKEN，Telegram bot 无法启动。")
         print(_CONFIG_HINT)

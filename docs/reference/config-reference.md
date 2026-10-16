@@ -152,26 +152,26 @@ agent:
 
 ## 4. 环境变量
 
-读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`_load_dotenv_files`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
+读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`load_process_env`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 <!-- BEGIN GENERATED: env-vars -->
 `Settings` 读取的环境变量（13 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `APP_NAME` | Tlon | App settings |
+| `APP_NAME` | Tlon |  |
 | `LOG_LEVEL` | INFO |  |
 | `DEBUG` | false |  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | （未设置） | Observability (OTel): optional OTLP collector, requires the `otlp` extra |
-| `TELEGRAM_BOT_TOKEN` | "" | Telegram bot client (optional `telegram` extra) |
-| `TELEGRAM_ALLOWED_USERS` | "" |  |
+| `TELEGRAM_BOT_TOKEN` | "" | Telegram bot client (optional `telegram` extra)：@BotFather 颁发的 bot token；缺失则 `tlon telegram` 拒绝启动 |
+| `TELEGRAM_ALLOWED_USERS` | "" | Telegram user-id 白名单（逗号分隔）；为空则拒绝启动 |
 | `TLON_LOG_RETENTION_DAYS` | 7 | Logging: retention (days) for the daily server log file sink |
 | `TLON_CONTAINER_MEMORY_BUDGET` | "" | Society-level container resource budget (issue #24): total memory budget across all agent containers (e.g. "4g"); empty = no budget. Warning-only — exceeding it logs container_memory_budget_exceeded, nothing is enforced. |
 | `TLON_ARENA_MODEL` | "" | 演武场（docs/design/arena.md 「成本界」）：run 请求未带 model 时的缺省； 空 = 未配置，run 必须显式指定模型（显式优于静默错默认） |
 | `TLON_ADMIN_TOKEN` | "" | Admin API auth (ADR 0013): shared Bearer token guarding /admin/*; empty = auth disabled (default, localhost trust boundary) |
 | `GITHUB_WEBHOOK_SECRET` | "" | GitHub webhook ingress (see docs/design/mail.md 「外部来信与信任面」): HMAC secret of the webhook; empty = POST /webhooks/github is not registered at all |
-| `GITHUB_RECIPIENT` | "" |  |
-| `GITHUB_TOKEN` | "" |  |
+| `GITHUB_RECIPIENT` | "" | GitHub 来信的默认收件人 member id；空 = 发给全体已知人类 |
+| `GITHUB_TOKEN` | "" | GitHub API token（出站：回信 → issue/PR comment）； 空 = 出站禁用，入站不受影响 |
 <!-- END GENERATED: env-vars -->
 
 上表是 `Settings` 的全部读取点；另有三个环境变量由其他模块读取（手写维护）：

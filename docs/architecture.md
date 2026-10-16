@@ -163,13 +163,12 @@ wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒�
 
 ### 进程级全局状态（2026-09-22 审计）
 
-runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后，文件系统访问、EventBus、注册表、投递全部是实例状态，同进程多实例由 [tests/integration/test_multi_runtime.py](../src/tests/integration/test_multi_runtime.py) 钉住（双向隔离断言是常驻哨兵）。以下进程级共享状态是**全部**存量，各有正当理由：
+runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后，文件系统访问、EventBus、注册表、投递全部是实例状态，同进程多实例由 [tests/integration/test_multi_runtime.py](../src/tests/integration/test_multi_runtime.py) 钉住（双向隔离断言是常驻哨兵）。进程级 env 配置同样无单例：`Settings` 是入口构造一次、显式注入的不可变快照（[base/settings.py](../src/tlon/base/settings.py)，#144）。以下进程级共享状态是**全部**存量，各有正当理由：
 
 | 状态 | 位置 | 为什么合法 |
 | --- | --- | --- |
 | OTel TracerProvider + `_initialized` 守卫 | [base/tracing/otel.py](../src/tlon/base/tracing/otel.py) | OTel provider 模型本身是进程级；幂等守卫下**首调参数生效**——多实例时后续实例的 `trace_store_dir`/`otlp_endpoint` 被忽略，观测共享进程级管道（已知语义） |
 | MeterProvider + `_initialized`/`_reader` | [base/metrics.py](../src/tlon/base/metrics.py) | 同上 |
-| `_settings` 惰性单例 + `_paths` | [base/settings.py](../src/tlon/base/settings.py) | 进程级 env 配置（admin token、Telegram、OTel endpoint），消费方是 launcher/server 组成根 |
 | `structlog.configure` | [base/logger.py](../src/tlon/base/logger.py) `configure_logging` | 进程级输出格式，仅 launcher 入口调用 |
 | mailbox 锁表 `_LOCKS` 与扫描缓存 `_SCANS` | [organization/mail/mailbox.py](../src/tlon/organization/mail/mailbox.py) | **按目录绝对路径键控**的有界 LRU（cap 4096）：多实例因键不同天然隔离；存在意义是同目录多 `Mailbox` 实例的写互斥与增量解析（见「mailbox 即队列」） |
 | structlog contextvars | member_runtime / stages/services / spawn_agent | task-local by design，非共享状态 |

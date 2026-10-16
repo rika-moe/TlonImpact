@@ -37,7 +37,7 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
-from tlon.base.settings import get_settings
+from tlon.base.settings import Settings
 from tlon.base.tracing.trace_store import FileTraceStore
 from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
@@ -107,7 +107,7 @@ class Runtime:
         logger.info("runtime_stopped")
 
 
-async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
+async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime:
     """Assemble the tlon runtime: all components + domain facades.
 
     No network ports are opened here — that is the server's concern.
@@ -117,6 +117,9 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
 
     Args:
         runtime_paths: path resolver for this runtime's tlon home
+        settings: process-level settings snapshot (env + secrets), built
+            at the process entry point and injected here — the runtime
+            never reads the environment itself
 
     Returns:
         The assembled Runtime container
@@ -135,10 +138,6 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
     # ConfigService - configuration management (needs EventBus)
     config_service = ConfigService(event_bus=event_bus, tlon_home=runtime_paths.tlon_home())
     await config_service.initialize()
-
-    # Process-level settings (env + secrets) — read once for the runtime
-    # components that need them (resource budget, GitHub adapter).
-    settings = get_settings()
 
     # ContainerResourceMonitor - society-level container resource ledger
     # (issue #24, constitution 4: budget as data). Created BEFORE
@@ -309,6 +308,6 @@ async def build_runtime(runtime_paths: TlonPaths) -> Runtime:
             adapter_manager=adapter_manager,
             github_adapter=github_adapter,
         ),
-        arena=ArenaFacade(tlon_paths=runtime_paths),
+        arena=ArenaFacade(tlon_paths=runtime_paths, settings=settings),
         capabilities=CapabilitiesFacade(tlon_paths=runtime_paths),
     )

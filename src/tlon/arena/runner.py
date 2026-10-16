@@ -45,7 +45,7 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.base.settings import Settings, get_settings
+from tlon.base.settings import Settings
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.sandbox.docker_client import create_docker_client
@@ -240,7 +240,7 @@ class ArenaRunner:
         *,
         tlon_paths: TlonPaths,
         runtime_factory: RuntimeFactory,
-        settings: Settings | None = None,
+        settings: Settings,
         journal_factory: JournalFactory = SessionJournal,
         corpus_llm_factory: CorpusLLMFactory = _default_corpus_llm,
         container_gc: ContainerGC = docker_container_gc,
@@ -254,7 +254,8 @@ class ArenaRunner:
             tlon_paths: Production path resolver (staging library + arena homes)
             runtime_factory: Builds the isolated runtime for one arena home
                 (production: ``tlon.api.bootstrap.build_runtime``)
-            settings: Process settings (``TLON_ARENA_MODEL``); None = get_settings()
+            settings: Process settings snapshot (``TLON_ARENA_MODEL``),
+                built at the process entry point and injected here
             journal_factory: Session completion probe (production: SessionJournal)
             corpus_llm_factory: Builds the corpus-generation LLM from a model name
             container_gc: Force-removes the run's containers by name (fail-soft)
@@ -315,7 +316,7 @@ class ArenaRunner:
             )
 
         resolved_model = (model or "").strip() or (
-            self._process_settings().arena_model or ""
+            self._settings.arena_model or ""
         ).strip()
         if not resolved_model:
             raise ArenaError(
@@ -361,11 +362,6 @@ class ArenaRunner:
         return run
 
     # ---------- 生命周期 ----------
-
-    def _process_settings(self) -> Settings:
-        if self._settings is None:
-            self._settings = get_settings()
-        return self._settings
 
     async def _execute(self, run: ArenaRun) -> None:
         """Drive one run through the state machine; never raises."""
