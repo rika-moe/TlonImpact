@@ -52,6 +52,10 @@ class MailHandlers(RestHandlerBase):
                 )
 
         limit = _parse_limit(request, default=50, maximum=200)
+        if limit <= 0:
+            return self._json_response(
+                {"error": "limit must be positive", "reason": "invalid_limit"}, status=400
+            )
         try:
             result = await self.mail.inbox_page(username, limit, request.query.get("before"))
         except ValueError as exc:
@@ -92,6 +96,10 @@ class MailHandlers(RestHandlerBase):
             )
 
         limit = _parse_limit(request, default=50, maximum=200)
+        if limit <= 0:
+            return self._json_response(
+                {"error": "limit must be positive", "reason": "invalid_limit"}, status=400
+            )
         try:
             result = await self.mail.member_inbox_page(
                 member_id, limit, request.query.get("before")

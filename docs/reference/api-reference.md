@@ -18,15 +18,25 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 | reason | 触发端点 | 含义 |
 |---|---|---|
-| `invalid_json` | `POST /messages`、`POST /sessions`、`PATCH /sessions/{id}` | 请求体不是合法 JSON 或不是 JSON object |
-| `invalid_username` | `POST /messages`、`POST /sessions` | username 非字符串、为空、或含 `/`、`\`（路径穿越防御，见 `rest/common.py` 的 `_validate_username`） |
+| `invalid_json` | `POST /messages`、`POST /sessions`、`PATCH /sessions/{id}`、`POST /inbox/read` | 请求体不是合法 JSON；前三个端点也用此码表示非 JSON object |
+| `invalid_body` | `POST /inbox/read` | JSON 语法有效，但请求体不是 object |
+| `invalid_read` | `POST /inbox/read` | read 不是严格布尔值 |
+| `invalid_selector` | `POST /inbox/read` | 未恰好提供 mail_id 或 thread_id 中的一个 |
+| `invalid_mail_id` | `POST /inbox/read` | mail_id 非字符串或为空白 |
+| `invalid_limit` | `GET /inbox`、`GET /members/{member_id}/mail` | limit 是零或负数，在游标校验前拒绝 |
+| `invalid_cursor` | `GET /inbox`、`GET /members/{member_id}/mail` | before 为空、邮件不存在或不属于该可见邮箱 |
+| `invalid_member_id` | `GET /members/{member_id}/mail` | member_id 为空或含路径分隔符 |
+| `mail_not_found` | `POST /inbox/read` | 目标没有该人类的收件关系，404（仅发件副本不可标读） |
+| `member_not_found` | `GET /members/{member_id}/mail` | 运行配置与历史邮件库中均无该成员，404 |
+| `invalid_username` | `POST /messages`、`POST /sessions`、`GET /inbox`、`POST /inbox/read` | username 非字符串、为空、或含 `/`、`\`（路径穿越防御，见 `rest/common.py` 的 `_validate_username`） |
 | `invalid_client_type` | `POST /sessions` | client_type 缺失、非字符串或为空白 |
 | `invalid_mode` | `POST /sessions`、`PATCH /sessions/{id}` | mode 不在 `SESSION_MODES = ("chat", "event", "agent")` 内 |
 | `invalid_filters` | `POST /sessions`、`PATCH /sessions/{id}` | filters 不是 object |
 | `unsupported_protocol_version` | `POST /sessions` | protocol_version ≠ "2.0.0"；响应额外带 `supported_versions` 列表 |
 | `empty_content` | `POST /messages` | content 缺失、非字符串或全空白（`send_mail.py` 的 `parse_send_mail_fields`） |
 | `invalid_to` / `invalid_cc` | `POST /messages` | to/cc 存在但不是 list |
-| `invalid_in_reply_to` / `invalid_thread_id` | `POST /messages` | 对应字段存在但不是字符串 |
+| `invalid_in_reply_to` | `POST /messages` | in_reply_to 存在但不是字符串 |
+| `invalid_thread_id` | `POST /messages`、`POST /inbox/read` | thread_id 存在但不是字符串；标读接口也拒绝空白 |
 | `invalid_recipients` | `POST /messages` | 任一 to/cc 地址无效或成员已退休，整封拒绝并返回 invalid_recipients 列表 |
 | `invalid_request_id` | `POST /messages` | request_id 缺失、非字符串或空白 |
 | `idempotency_conflict` | `POST /messages` | 同发件人、同 request_id 被用于不同内容，409 |
@@ -167,6 +177,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `before` | string | 无 | 上一页最早邮件 id，读取更早记录；必须属于当前可见邮箱，否则 400 |
 
 - 200：`{"mails": [...], "count": n, "has_more": bool, "next_before": string|null}`。`has_more` 为 true 时，`next_before` 是本页最早邮件 id；否则为 null。
+- 400：零或负数 limit 返回 `invalid_limit`，先于游标校验；无效 before 返回 `invalid_cursor`。
 - Mail 字段见 `Mail.to_dict`；额外含 `read: bool`，来自该人类的收件关系。仅发件记录显示为 true；发给自己的邮件按自己的收件关系判定。
 - 503：未装配 mail facade。
 
@@ -185,7 +196,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 观察者视角读任意成员邮箱，处理函数 `handle_member_mail`，调用 `MailFacade.member_inbox_page`。`member_id` 使用 agent 裸 id 或人类 `human:<username>`。成员存在于运行注册表或历史邮件库即可以观察；未知成员返回 404。纯只读，不注册成员，不暴露 `read`。
 
-Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相同，但邮件没有 `read` 字段。已知空邮箱返回空页。非法 member id 或不可见游标返回 400，reason 分别为 `invalid_member_id`、`invalid_cursor`；未知成员的 404 reason 为 `member_not_found`，未装配 facade 返回 503。`GET /inbox` 的无效游标同样返回 `invalid_cursor`。
+Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相同，但邮件没有 `read` 字段。已知空邮箱返回空页。非法 member id、非正数 limit 或不可见游标返回 400，reason 分别为 `invalid_member_id`、`invalid_limit`、`invalid_cursor`；未知成员的 404 reason 为 `member_not_found`，未装配 facade 返回 503。`GET /inbox` 的无效游标同样返回 `invalid_cursor`。
 
 ### POST /sessions
 

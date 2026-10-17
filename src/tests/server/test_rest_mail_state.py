@@ -146,6 +146,25 @@ def test_missing_database_page_does_not_create_database(tmp_path: Path) -> None:
     assert not store.database.exists()
 
 
+@pytest.mark.parametrize("limit", ["0", "-1"])
+@pytest.mark.parametrize("observer", [False, True])
+async def test_nonpositive_limit_is_not_a_cursor_error(
+    tmp_path: Path, limit: str, observer: bool
+) -> None:
+    store, handler = setup(tmp_path)
+    store.register_member("human:alice")
+    request = Request(query={"username": "alice", "limit": limit})
+    request.match_info["member_id"] = "human:alice"
+    response = await (
+        handler.handle_member_mail(request) if observer else handler.handle_inbox(request)
+    )
+    assert response.status == 400
+    assert json.loads(response.text) == {
+        "error": "limit must be positive",
+        "reason": "invalid_limit",
+    }
+
+
 async def test_cursor_ignores_newer_insert_between_pages(tmp_path: Path) -> None:
     store, handler = setup(tmp_path)
     mails = [letter(i) for i in range(5)]
