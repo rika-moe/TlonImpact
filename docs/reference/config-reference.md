@@ -221,8 +221,8 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   │   ├── config.json               # 记忆调参
 │   │   ├── claims.jsonl              # 记忆 claim（ADR 0017，append-only）
 │   │   └── distillation.json         # 蒸馏水位线（last_distilled_at）
-│   ├── sessions/                     # session 事件日志（ADR 0007/0009：交互唯一真相）
-│   │   └── {session_id}.jsonl
+│   ├── sessions.sqlite3              # session 事件与生命周期元数据（ADR 0007/0032：交互唯一真相）
+│   ├── sessions/                     # 旧 session JSONL 离线档案（不读取、不导入、不双写）
 │   ├── tasks.jsonl                   # TaskManager 持久化
 │   └── workspace/                  # 成员工作目录
 ```

@@ -18,12 +18,14 @@ Pins（全部 duck-typed fake + cast 注入，不起真 runtime / docker / LLM�
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from tlon.agents.session_journal import SessionJournal
 from tlon.arena.runner import (
     ArenaError,
     ArenaRun,
@@ -121,14 +123,14 @@ class _FakeJournal:
     """ADR 0028 调度循环的同步化模拟：每轮把当前未读（至多 batch 封）
     批收编进一个 session——session/start 带触发语模板与 responsibility
     快照，立即完成并把收编邮件标读；sessions 额度（max_sessions）用完后
-    转搁置（剩余未读不再收编，模拟部分收编/看过不标读）。journal 文件
-    写进隔离家园 sessions 目录供归档断言。"""
+    转搁置（剩余未读不再收编，模拟部分收编/看过不标读）。session 事实
+    写进隔离家园 SQLite，供归档导出断言。"""
 
     def __init__(
         self, agent_id: str, tlon_paths: TlonPaths, *, batch: int, max_sessions: int
     ) -> None:
         self._agent_id = agent_id
-        self._dir = tlon_paths.agent_sessions_dir(agent_id)
+        self._journal = SessionJournal(agent_id, tlon_paths)
         self._mailbox = Mailbox(tlon_paths.mail_database_file(), agent_id)
         self._batch = batch
         self._remaining = max_sessions
@@ -144,29 +146,25 @@ class _FakeJournal:
         self._count += 1
         self._remaining -= 1
         sid = f"{self._agent_id}-{self._count:012d}"
-        self._dir.mkdir(parents=True, exist_ok=True)
-        events = [
-            {
-                "type": "session/start",
-                "session_id": sid,
-                "trigger_content": f"你有 {len(take)} 封未读邮件",
-                "responsibility": [mail.id for mail in take],
-            },
-            {"type": "session/end", "session_id": sid, "reason": "complete"},
-        ]
-        (self._dir / f"{sid}.jsonl").write_text(
-            "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events),
-            encoding="utf-8",
+        await self._journal.append(
+            sid,
+            "session/start",
+            agent_id=self._agent_id,
+            trigger_content=f"你有 {len(take)} 封未读邮件",
+            carrier=None,
+            responsibility=[mail.id for mail in take],
+            context=[],
         )
+        await self._journal.append(sid, "session/end", reason="complete")
         for mail in take:
             await self._mailbox.mark_read(mail.id)
 
-    async def list_completed(self) -> list[str]:
+    async def count_completed(self, started_after: datetime | None = None) -> int:
         await self._step()
-        return [f"{self._agent_id}-{i:012d}" for i in range(1, self._count + 1)]
+        return await self._journal.count_completed(started_after=started_after)
 
     async def find_unfinished(self) -> list[str]:
-        return []
+        return await self._journal.find_unfinished()
 
 
 class _FakeClock:
@@ -324,7 +322,11 @@ async def test_happy_path_layout_feed_archive_teardown(tmp_path: Path) -> None:
     assert len(corpus["mails"]) == 8
     assert [m["origin"] for m in corpus["mails"][:5]] == ["adversarial"] * 5
     assert corpus["note"] is None
-    assert len(list((archive / "sessions").glob("*.jsonl"))) == 1
+    exported = list((archive / "sessions").glob("*.jsonl"))
+    assert len(exported) == 1
+    events = [json.loads(line) for line in exported[0].read_text(encoding="utf-8").splitlines()]
+    assert [event["seq"] for event in events] == [0, 1]
+    assert [event["type"] for event in events] == ["session/start", "session/end"]
     record = json.loads((archive / "run.json").read_text(encoding="utf-8"))
     assert record["status"] == "done"
     assert record["fed_count"] == 8
@@ -630,6 +632,9 @@ async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:
             json.dumps({"id": "r1", "to": ["x@example.com"], "content": "回信"}) + "\n",
             encoding="utf-8",
         )
+        legacy_dir = tlon_paths.agent_dir(agent_id) / "sessions"
+        legacy_dir.mkdir()
+        (legacy_dir / "legacy.jsonl").write_text("old offline archive\n", encoding="utf-8")
         return _FakeJournal(agent_id, tlon_paths, batch=8, max_sessions=8)
 
     h = _Harness(tmp_path, settings=_settings(), journal_factory=journal_factory)
@@ -641,6 +646,8 @@ async def test_archive_includes_ledger_and_mailbox(tmp_path: Path) -> None:
     archive = _archive_dir(h, run)
     assert (archive / "ledger.jsonl").exists()
     assert (archive / "sent.jsonl").exists()
+    assert not (archive / "sessions" / "legacy.jsonl").exists()
+    assert len(list((archive / "sessions").glob("*.jsonl"))) == 1
     # inbox.jsonl 是投递产物：8 封语料全在
     inbox_lines = (archive / "inbox.jsonl").read_text(encoding="utf-8").splitlines()
     assert len([line for line in inbox_lines if line.strip()]) == 8

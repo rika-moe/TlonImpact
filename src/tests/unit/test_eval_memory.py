@@ -127,6 +127,7 @@ class TestFakeJournal:
         journal.add_completed_session("s1", "2026-08-01T10:00:00", "t1", ["r1"])
         journal.add_completed_session("s2", "2026-08-02T10:00:00", "t2", [])
         assert await journal.list_completed() == ["s1", "s2"]
+        assert await journal.count_completed() == 2
 
     async def test_events_carry_start_ts_trigger_responses_and_end(self) -> None:
         journal = eval_memory.FakeJournal()

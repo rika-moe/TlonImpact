@@ -207,20 +207,6 @@ class TestJournalReplay:
         assert replay.end_reason == "complete"
         assert await journal.end_reason(sid) == "complete"
 
-    async def test_torn_tail_line_is_skipped(
-        self, journal: SessionJournal, tlon: TlonPaths
-    ) -> None:
-        sid = "agent1-torn"
-        await _start(journal, sid)
-        path = tlon.agent_sessions_dir("agent1") / f"{sid}.jsonl"
-        with path.open("a", encoding="utf-8") as f:
-            f.write('{"seq": 1, "type": "context/app')  # crash mid-write
-
-        replay = await journal.resume(sid)
-
-        assert replay is not None
-        assert replay.context == [{"role": "user", "content": "hi"}]
-
     async def test_orphan_dispatch_heals_with_interrupted_result(
         self, journal: SessionJournal
     ) -> None:
@@ -250,9 +236,9 @@ class TestJournalReplay:
         healed = await journal.resume(sid)
         assert healed is not None
         assert {tc.id for tc, _ in healed.pending_collect} == {"c-done", "c-lost"}
-        raw = [json.loads(line) for line in (await _read_lines(healed.session_id, journal))]
+        events = await journal.read_events(healed.session_id)
         synthetic = [
-            e for e in raw if e.get("type") == "tool/result" and e["tool_call"]["id"] == "c-lost"
+            e for e in events if e.get("type") == "tool/result" and e["tool_call"]["id"] == "c-lost"
         ]
         assert len(synthetic) == 1
         assert synthetic[0]["result"]["error"] == INTERRUPTED_ERROR
@@ -309,26 +295,113 @@ class TestJournalReplay:
         assert replay.anchor_len == 1 == len(replay.context)
 
 
+class TestSqliteJournal:
+    async def test_restart_queries_and_replays_only_the_requested_session(
+        self, tlon: TlonPaths, journal: SessionJournal
+    ) -> None:
+        await _start(journal, "agent1-done")
+        await journal.append(
+            "agent1-done", "context/append", messages=[{"role": "assistant", "content": "ok"}]
+        )
+        await journal.append("agent1-done", "session/end", reason="complete")
+        await _start(journal, "agent1-open")
+
+        restarted = SessionJournal("agent1", tlon)
+
+        done_events = await restarted.read_events("agent1-done")
+        assert [event["seq"] for event in done_events] == [0, 1, 2]
+        assert {event["session_id"] for event in done_events} == {"agent1-done"}
+        assert [event["type"] for event in await restarted.read_events("agent1-open")] == [
+            "session/start"
+        ]
+        assert await restarted.list_completed() == ["agent1-done"]
+        assert await restarted.latest_completed() == "agent1-done"
+        assert await restarted.find_unfinished() == ["agent1-open"]
+        assert await restarted.end_reason("agent1-done") == "complete"
+        replay = await restarted.resume("agent1-done")
+        assert replay is not None and replay.completed
+        assert replay.context[-1] == {"role": "assistant", "content": "ok"}
+
+    async def test_concurrent_append_allocates_conflict_free_sequences(
+        self, tlon: TlonPaths, journal: SessionJournal
+    ) -> None:
+        sid = "agent1-concurrent"
+        await _start(journal, sid)
+        writers = [SessionJournal("agent1", tlon) for _ in range(4)]
+
+        await asyncio.gather(
+            *(
+                writers[index % len(writers)].append(sid, "iteration", value=index)
+                for index in range(32)
+            )
+        )
+
+        events = await journal.read_events(sid)
+        assert [event["seq"] for event in events] == list(range(33))
+        assert sorted(event["value"] for event in events[1:]) == list(range(32))
+
+    async def test_legacy_jsonl_is_neither_read_nor_written(
+        self, tlon: TlonPaths, tmp_path: Path
+    ) -> None:
+        sid = "agent1-legacy"
+        legacy_dir = tmp_path / "agent1" / "sessions"
+        legacy_dir.mkdir(parents=True)
+        legacy_file = legacy_dir / f"{sid}.jsonl"
+        legacy_text = "".join(
+            json.dumps(event) + "\n"
+            for event in [
+                {"seq": 90, "type": "session/start", "session_id": sid, "context": []},
+                {"seq": 91, "type": "session/end", "session_id": sid, "reason": "complete"},
+            ]
+        )
+        legacy_file.write_text(legacy_text, encoding="utf-8")
+        journal = SessionJournal("agent1", tlon)
+
+        assert await journal.read_events(sid) == []
+        assert await journal.resume(sid) is None
+        assert await journal.list_completed() == []
+        assert await journal.latest_completed() is None
+        assert await journal.find_unfinished() == []
+        assert not tlon.agent_sessions_database_file("agent1").exists()
+
+        await _start(journal, sid)
+
+        events = await journal.read_events(sid)
+        assert len(events) == 1 and events[0]["seq"] == 0
+        assert legacy_file.read_text(encoding="utf-8") == legacy_text
+        assert list(legacy_dir.glob("*.jsonl")) == [legacy_file]
+        assert tlon.agent_sessions_database_file("agent1").is_file()
+
+    async def test_lifecycle_queries_never_read_event_bodies(self, journal: SessionJournal) -> None:
+        await _start(journal, "agent1-open")
+        await _start(journal, "agent1-closed")
+        await journal.append("agent1-closed", "session/end", reason="complete")
+        store_events = MagicMock(side_effect=AssertionError("lifecycle query read event bodies"))
+        journal._store.events = store_events  # type: ignore[method-assign]
+
+        assert await journal.list_completed() == ["agent1-closed"]
+        assert await journal.count_completed() == 1
+        assert await journal.latest_completed() == "agent1-closed"
+        assert await journal.find_unfinished() == ["agent1-open"]
+        assert await journal.end_reason("agent1-closed") == "complete"
+        store_events.assert_not_called()
+
+
 class TestFindUnfinished:
-    """Boot recovery index (ADR 0007 + ADR 0028): a journal with a start
-    but no end is unfinished; completed and start-less logs are not."""
+    """Boot recovery index (ADR 0007 + ADR 0028): started metadata without
+    end metadata is unfinished; completed and start-less sessions are not."""
 
     async def test_unfinished_and_completed_partition(self, journal: SessionJournal) -> None:
         await _start(journal, "agent1-open")
         await _start(journal, "agent1-closed")
         await journal.append("agent1-closed", "session/end", reason="complete")
-        # A stray file without session/start is not a session.
+        # Stray events without session/start are not recoverable sessions.
         await journal.append("agent1-stray", "iteration", value=1)
 
         assert await journal.find_unfinished() == ["agent1-open"]
 
-    async def test_empty_dir(self, journal: SessionJournal) -> None:
+    async def test_empty_database(self, journal: SessionJournal) -> None:
         assert await journal.find_unfinished() == []
-
-
-async def _read_lines(session_id: str, journal: SessionJournal) -> list[str]:
-    path = journal._path(session_id)
-    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 # ── Driver integration: the journal sees everything the model sees ──────
@@ -687,17 +760,20 @@ async def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> None
 
 class TestBootRecovery:
     async def test_completed_log_is_not_resumed(self, journal: SessionJournal) -> None:
-        """A log with session/end ran to completion in a previous process:
-        boot recovery leaves it alone."""
+        """Committed end metadata keeps boot from replaying a completed session."""
         sid = "agent1-done"
         await _start(journal, sid, responsibility=["m1"])
         await journal.append(sid, "session/end", reason="complete")
+        journal.resume = AsyncMock(  # type: ignore[method-assign]
+            side_effect=AssertionError("boot replayed a completed session")
+        )
         scheduler = _make_scheduler(journal)
 
         pending = await scheduler._restore_unfinished()
 
         assert pending is None
         assert scheduler._session is None
+        journal.resume.assert_not_awaited()
 
     async def test_unfinished_log_resumes_with_pending_collect(
         self, journal: SessionJournal
@@ -735,8 +811,8 @@ class TestBootRecovery:
         await scheduler._ensure_session_end(session)
 
         assert await journal.end_reason("s-end") == "complete"
-        lines = await _read_lines("s-end", journal)
-        ends = [json.loads(line) for line in lines if json.loads(line)["type"] == "session/end"]
+        events = await journal.read_events("s-end")
+        ends = [event for event in events if event["type"] == "session/end"]
         assert len(ends) == 1
 
 
@@ -1034,9 +1110,9 @@ class TestTokenBudget:
         # Journaled values are the post-accumulation absolute totals; the
         # usage-less first round produced no event at all.
         token_events = [
-            json.loads(line)["value"]
-            for line in await _read_lines(session.id, journal)
-            if json.loads(line)["type"] == "tokens"
+            event["value"]
+            for event in await journal.read_events(session.id)
+            if event["type"] == "tokens"
         ]
         assert token_events == [150, 850]
         replay = await journal.resume(session.id)
@@ -1188,9 +1264,9 @@ class TestConsecutiveErrorLimit:
         replay = await journal.resume(session.id)
         assert replay is not None and replay.error_count == 0
         error_events = [
-            json.loads(line)["value"]
-            for line in await _read_lines(session.id, journal)
-            if json.loads(line)["type"] == "errors"
+            event["value"]
+            for event in await journal.read_events(session.id)
+            if event["type"] == "errors"
         ]
         assert error_events == [1, 0, 1, 0, 1, 0]
 

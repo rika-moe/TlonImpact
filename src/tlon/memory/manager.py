@@ -66,11 +66,15 @@ class SessionLogReader(Protocol):
 
     ``tlon.memory`` cannot import ``tlon.agents`` (import-linter), so the
     journal (agents layer) is injected structurally: any object with
-    these two methods qualifies — in production, ``SessionJournal``.
+    these methods qualifies — in production, ``SessionJournal``.
     """
 
-    async def list_completed(self) -> list[str]:
-        """Session ids whose log carries a ``session/end``."""
+    async def list_completed(self, started_after: datetime | None = None) -> list[str]:
+        """Completed ids newer than the start watermark; timeless ones stay pending."""
+        ...
+
+    async def count_completed(self, started_after: datetime | None = None) -> int:
+        """Count completed sessions with the same watermark filter."""
         ...
 
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
@@ -335,6 +339,16 @@ class MemoryManager:
             with contextlib.suppress(OSError):
                 tmp_file.unlink(missing_ok=True)
 
+    def _parsed_watermark(self) -> datetime | None:
+        """Parse the persisted timestamp; invalid values mean no progress."""
+        if not self._watermark:
+            return None
+        try:
+            return datetime.fromisoformat(self._watermark)
+        except ValueError:
+            logger.warning("distillation_watermark_invalid", watermark=self._watermark)
+            return None
+
     @staticmethod
     def _session_started_at(events: list[dict[str, Any]]) -> datetime | None:
         """The session's start time from its ``session/start`` event;
@@ -360,19 +374,11 @@ class MemoryManager:
         uuids without temporal order. A session whose start time cannot
         be determined is always pending — never silently skipped.
         """
-        watermark: datetime | None = None
-        if self._watermark:
-            try:
-                watermark = datetime.fromisoformat(self._watermark)
-            except ValueError:
-                logger.warning("distillation_watermark_invalid", watermark=self._watermark)
-
         pending = []
-        for session_id in await logs.list_completed():
+        for session_id in await logs.list_completed(started_after=self._parsed_watermark()):
             events = await logs.read_events(session_id)
             started_at = self._session_started_at(events)
-            if started_at is None or watermark is None or started_at > watermark:
-                pending.append((session_id, started_at, events))
+            pending.append((session_id, started_at, events))
         return pending
 
     # ===== Batch distillation (journal -> claims, ADR 0017) =====
@@ -882,10 +888,10 @@ class MemoryManager:
             await self.load()
 
         claims = await self.claims.get_recent_claims(50)
-        pending = await self._collect_pending(logs)
+        pending_count = await logs.count_completed(started_after=self._parsed_watermark())
 
         return {
-            "undistilled_session_count": len(pending),
+            "undistilled_session_count": pending_count,
             "claim_count": len(claims),
             "claims": claims,
         }

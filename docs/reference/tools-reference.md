@@ -263,7 +263,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 ## memory
 
-前三个工具操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/claims.jsonl`（claim 模型，ADR 0017）；`readSession` 读本 agent 的 session journal。检索为向量检索（ADR 0017 阶段 2，sqlite-vec），索引不可用时降级关键词子串匹配。
+前三个工具操作当前 agent 自己的 `MemoryManager`（[memory/manager.py](../../src/tlon/memory/manager.py)），数据落在 `~/.tlon/{agent_id}/memory/claims.jsonl`（claim 模型，ADR 0017）；`readSession` 只查询本 agent 的 `sessions.sqlite3` 中指定 session 的事件，不回读旧 `sessions/*.jsonl`（ADR 0032）。检索为向量检索（ADR 0017 阶段 2，sqlite-vec），索引不可用时降级关键词子串匹配。
 
 ### rememberFact
 

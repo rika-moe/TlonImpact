@@ -14,8 +14,8 @@ wakeable unread mail > 0 → open one session*. Its inputs:
   "可唤醒未读" (unread minus own-mail minus gate-rejected), shared by the
   delivery path, the scan, and this loop (both the admission check and
   the chain-wake comparison at reap, so the two can never drift apart).
-- ``journal.find_unfinished`` — boot recovery: a session journal without
-  ``session/end`` is resumed (ADR 0007), with its journaled
+- ``journal.find_unfinished`` — boot recovery: metadata with a start and
+  no committed end is resumed (ADR 0007/0032), with its journaled
   responsibility set, before any new wake is honored.
 
 Session identity is a fresh uuid (ADR 0028 决策 8). The trigger content is

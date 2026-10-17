@@ -1,15 +1,15 @@
-"""SessionJournal — append-only per-session event log (ADR 0007).
+"""SessionJournal — append-only session events in SQLite (ADR 0007/0032).
 
-Every cognitive session gets one JSONL event log at
-``~/.tlon/{agent_id}/sessions/{session_id}.jsonl``. The log is the sole
-source of truth for session state: the engine appends every state change
-*before* mutating the in-memory :class:`~tlon.agents.session.AgentSession`
-(the invariant "model-visible ⇒ journaled"), and a restart rebuilds the
-session by replaying the log.
+Each agent owns one ``~/.tlon/{agent_id}/sessions.sqlite3`` database. It is
+the sole source of truth for session state: the engine commits every state
+change *before* mutating the in-memory
+:class:`~tlon.agents.session.AgentSession` (the invariant
+"model-visible ⇒ journaled"), and a restart rebuilds the session by
+replaying that session's events.
 
-One event per line: ``{seq, ts, type, ...payload}`` — ``seq`` is a
-per-file increasing sequence number, ``ts`` an ISO 8601 timestamp. Event
-types: ``session/start``, ``context/append``, ``context/compact``,
+Every event is ``{seq, ts, type, ...payload}`` — ``seq`` starts at zero and
+increases within one session, ``ts`` an ISO 8601 timestamp. Event types:
+``session/start``, ``context/append``, ``context/compact``,
 ``scratch/update``, ``iteration``, ``errors``, ``tokens``,
 ``llm/response``, ``tool/dispatch``, ``tool/result``, ``tool/collect``,
 ``state``, ``session/end``.
@@ -36,32 +36,28 @@ Replay rules:
   predating the field fall back to the empty set); the scheduler's chain
   wake compares fresh unread against it even after a crash.
 
-The read side tolerates corrupt lines (a crash can leave a torn tail
-line): each line is parsed independently and a bad line is skipped with
-a warning, same as the mailbox reader. Replay never re-executes side
-effects — mails and on-complete actions happened (or did not) in the
-previous process; replay only rebuilds data fields. Completed logs
-(``list_completed``) also feed the journal → claims distillation
-trigger (ADR 0017): the log is the sole interaction truth, so
-distillation reads it directly.
+Replay never re-executes side effects — mails and on-complete actions
+happened (or did not) in the previous process; replay only rebuilds data
+fields. Completed session metadata (``list_completed``) also feeds the
+journal → claims distillation trigger (ADR 0017): the database is the sole
+interaction truth, and watermark filtering happens before event reads.
 
-Writes are serialized by one asyncio lock per journal file, shared
-process-wide across SessionJournal instances (same pattern as the
-mailbox). A failed append raises — the engine then refuses to mutate the
-in-memory state, keeping the log and the session consistent.
+Writes are serialized by one asyncio lock per agent database, shared
+process-wide across SessionJournal instances. SQLite transactions coordinate
+other connections. A failed append rolls back and raises — the engine then
+refuses to mutate the in-memory state, keeping the database and session
+consistent.
 """
 
 import asyncio
-import json
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import aiofiles
-
 from tlon.agents.session import SessionState
+from tlon.agents.session_store import SessionStore
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
@@ -77,25 +73,25 @@ INTERRUPTED_ERROR = "interrupted: process restart"
 _LOCKS_CAP = 4096
 
 
-#: File-keyed locks shared by every SessionJournal over the same file
+#: Database-keyed locks shared by every SessionJournal over the same agent
 #: (bounded LRU; a locked entry is never evicted — see mailbox._lock_for).
 _LOCKS: OrderedDict[Path, asyncio.Lock] = OrderedDict()
 
 
-def _lock_for(path: Path) -> asyncio.Lock:
-    """Return the shared lock for a journal file (bounded LRU)."""
-    lock = _LOCKS.get(path)
+def _lock_for(database: Path) -> asyncio.Lock:
+    """Return the shared lock for an agent session database (bounded LRU)."""
+    lock = _LOCKS.get(database)
     if lock is not None:
-        _LOCKS.move_to_end(path)
+        _LOCKS.move_to_end(database)
         return lock
     lock = asyncio.Lock()
-    _LOCKS[path] = lock
+    _LOCKS[database] = lock
     if len(_LOCKS) > _LOCKS_CAP:
-        for candidate_path, candidate in _LOCKS.items():
-            if candidate_path == path:
+        for candidate_database, candidate in _LOCKS.items():
+            if candidate_database == database:
                 continue  # never evict the lock we are about to return
             if not candidate.locked():
-                del _LOCKS[candidate_path]
+                del _LOCKS[candidate_database]
                 break
     return lock
 
@@ -131,73 +127,41 @@ class SessionJournal:
     what to write and when.
     """
 
-    def __init__(self, agent_id: str, tlon_paths: TlonPaths):
+    def __init__(self, agent_id: str, tlon_paths: TlonPaths) -> None:
         """Initialize the journal for one agent.
 
         Args:
-            agent_id: Owning agent id (the sessions dir lives under its home)
+            agent_id: Owning agent id (the session database lives under its home)
             tlon_paths: Path resolver (tests inject an isolated home)
         """
         self._agent_id = agent_id
-        self._paths = tlon_paths
-        # Per-session next sequence number, counted from the file on first
-        # append after process start. Mutated only under the file lock.
-        self._seq: dict[str, int] = {}
-
-    def _path(self, session_id: str) -> Path:
-        return self._paths.agent_sessions_dir(self._agent_id) / f"{session_id}.jsonl"
+        self._database = tlon_paths.agent_sessions_database_file(agent_id)
+        self._store = SessionStore(self._database)
 
     async def append(self, session_id: str, event_type: str, **payload: Any) -> None:
-        """Append one event to the session's log.
+        """Commit one event and its lifecycle metadata atomically.
 
         Raises on I/O failure: the caller must NOT mutate the in-memory
-        session when the journal write failed (the log is the truth).
+        session when the journal write failed (the database is the truth).
 
         Args:
             session_id: Session the event belongs to
             event_type: One of the event types in the module docstring
             payload: JSON-serializable event payload
         """
-        path = self._path(session_id)
-        async with _lock_for(path):
-            seq = await self._next_seq(session_id, path)
-            event = {
-                "seq": seq,
-                "ts": datetime.now(UTC).isoformat(),
-                "type": event_type,
-                "session_id": session_id,
-                **payload,
-            }
+        async with _lock_for(self._database):
             try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                async with aiofiles.open(path, "a", encoding="utf-8") as f:
-                    await f.write(json.dumps(event, ensure_ascii=False) + "\n")
+                await asyncio.to_thread(self._store.append, session_id, event_type, payload)
             except Exception as e:
                 logger.error(
                     "session_journal_append_failed",
                     session_id=session_id,
                     event_type=event_type,
-                    file_path=str(path),
+                    database_path=str(self._database),
                     error=str(e),
                     exc_info=True,
                 )
                 raise
-            self._seq[session_id] = seq + 1
-
-    async def _next_seq(self, session_id: str, path: Path) -> int:
-        """The next sequence number for a session (file line count on first use)."""
-        if session_id not in self._seq:
-            if path.exists():
-                try:
-                    async with aiofiles.open(path, encoding="utf-8") as f:
-                        content = await f.read()
-                    self._seq[session_id] = sum(1 for line in content.splitlines() if line.strip())
-                except Exception as e:
-                    logger.error("session_journal_read_failed", file_path=str(path), error=str(e))
-                    self._seq[session_id] = 0
-            else:
-                self._seq[session_id] = 0
-        return self._seq[session_id]
 
     async def resume(self, session_id: str) -> SessionReplay | None:
         """Replay a session's log, rebuilding its state.
@@ -362,93 +326,38 @@ class SessionJournal:
         return context
 
     async def end_reason(self, session_id: str) -> str | None:
-        """The ``session/end`` reason if the log has one, else None."""
-        for event in reversed(await self.read_events(session_id)):
-            if event.get("type") == "session/end":
-                return str(event.get("reason", "unknown"))
-        return None
+        """The committed ``session/end`` reason, without reading events."""
+        return await asyncio.to_thread(self._store.end_reason, session_id)
 
-    async def list_completed(self) -> list[str]:
-        """Session ids whose log carries a ``session/end``.
+    async def list_completed(self, started_after: datetime | None = None) -> list[str]:
+        """Completed session ids, optionally pending after a start watermark.
 
-        The distillation trigger (``MemoryManager``) diffs this set
-        against the persisted watermark (a scalar timestamp — session
-        ids are uuids without temporal order), so a session is
-        distilled exactly once. Order is stable (file name order).
+        Sessions without ``started_at`` always pass the watermark filter.
+        Only lifecycle metadata is queried; event bodies are not read.
         """
-        sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
-        completed: list[str] = []
-        for path in sorted(sessions_dir.glob("*.jsonl")):
-            if await self.end_reason(path.stem) is not None:
-                completed.append(path.stem)
-        return completed
+        return await asyncio.to_thread(self._store.completed_ids, started_after)
+
+    async def count_completed(self, started_after: datetime | None = None) -> int:
+        """Count completed sessions with the same metadata watermark filter."""
+        return await asyncio.to_thread(self._store.count_completed, started_after)
 
     async def latest_completed(self) -> str | None:
-        """The most recently completed session id (by log mtime), or None.
+        """The latest session by committed end metadata, or None.
 
-        Feeds the context builder's ``thread-recap`` section (ADR 0028):
-        the recap is the member's latest completed session, thread-
-        agnostic. Session ids are uuids, so "latest" comes from the file
-        mtime, not the name.
+        Feeds the context builder's ``thread-recap`` section (ADR 0028).
+        Only lifecycle metadata is queried; event bodies are not read.
         """
-        sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
-        best: tuple[float, str] | None = None
-        for path in sessions_dir.glob("*.jsonl"):
-            if await self.end_reason(path.stem) is None:
-                continue
-            try:
-                mtime = path.stat().st_mtime
-            except OSError:
-                continue
-            if best is None or mtime > best[0]:
-                best = (mtime, path.stem)
-        return best[1] if best is not None else None
+        return await asyncio.to_thread(self._store.latest_completed)
 
     async def find_unfinished(self) -> list[str]:
-        """Session ids with a ``session/start`` but no ``session/end``.
+        """Started sessions without a committed end, in session id order.
 
-        Boot recovery (ADR 0007 + ADR 0028): the scheduler resumes the
-        unfinished session instead of starting a new one — the journaled
-        responsibility snapshot comes back with it, so chain-wake
-        protection survives the crash. Under the single-session model at
-        most one id is expected; extras (legacy multi-session logs) are
-        all returned, oldest file name first.
+        Boot recovery (ADR 0007 + ADR 0028) resumes the first id. Stray
+        events without ``session/start`` do not participate, and completed
+        session events are never read by this metadata query.
         """
-        sessions_dir = self._paths.agent_sessions_dir(self._agent_id)
-        unfinished: list[str] = []
-        for path in sorted(sessions_dir.glob("*.jsonl")):
-            events = await self.read_events(path.stem)
-            has_start = any(event.get("type") == "session/start" for event in events)
-            has_end = any(event.get("type") == "session/end" for event in events)
-            if has_start and not has_end:
-                unfinished.append(path.stem)
-        return unfinished
+        return await asyncio.to_thread(self._store.unfinished_ids)
 
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
-        """Read all events from the log, skipping malformed lines."""
-        path = self._path(session_id)
-        if not path.exists():
-            return []
-        try:
-            async with aiofiles.open(path, encoding="utf-8") as f:
-                content = await f.read()
-        except Exception as e:
-            logger.error("session_journal_read_failed", file_path=str(path), error=str(e))
-            return []
-
-        events: list[dict[str, Any]] = []
-        for line_num, line in enumerate(content.splitlines()):
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-                if isinstance(event, dict):
-                    events.append(event)
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    "session_journal_parse_failed",
-                    file_path=str(path),
-                    line_number=line_num,
-                    error=str(e),
-                )
-        return events
+        """Read only the requested session's events, ordered by sequence."""
+        return await asyncio.to_thread(self._store.events, session_id)

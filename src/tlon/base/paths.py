@@ -30,8 +30,8 @@ Layout:
     │   │   ├── lessons.md
     │   │   ├── claims.jsonl
     │   │   └── distillation.json
-    │   ├── sessions/
-    │   │   └── {session_id}.jsonl
+    │   ├── sessions.sqlite3
+    │   ├── sessions/ (legacy offline archive; never read by the session journal)
     │   ├── tasks.jsonl
     │   ├── ledger.jsonl
     │   ├── workspace/
@@ -145,9 +145,9 @@ class TlonPaths:
         """
         return self._home / agent_id / "ledger.jsonl"
 
-    def agent_sessions_dir(self, agent_id: str) -> Path:
-        """~/.tlon/{agent_id}/sessions/ — per-session event journals (ADR 0007)."""
-        return self._home / agent_id / "sessions"
+    def agent_sessions_database_file(self, agent_id: str) -> Path:
+        """~/.tlon/{agent_id}/sessions.sqlite3 — session events (ADR 0032)."""
+        return self.agent_dir(agent_id) / "sessions.sqlite3"
 
     def agent_mail_dir(self, agent_id: str) -> Path:
         return self._home / agent_id / "mail"
