@@ -61,10 +61,22 @@ class AdminAgentHandlers(RestHandlerBase):
             )
 
         agent_id = request.match_info["agent_id"]
+        conflict = self._member_address_conflict(agent_id)
+        if conflict is not None:
+            return conflict
         result = await self.members.adopt(agent_id)
         return self._json_response({"status": "success", "agent_id": agent_id, "result": result})
 
     # ---- Admin: agent CRUD + prototype approval (wizard removal, A2) ----
+
+    def _member_address_conflict(self, agent_id: str) -> web.Response | None:
+        """Reject the operator's address before modifying or adopting a member."""
+        if agent_id.casefold() == self.identity.require_username().casefold():
+            return self._json_response(
+                {"error": "Member id conflicts with WebUI identity", "reason": "identity_conflict"},
+                status=409,
+            )
+        return None
 
     def _require_admin_context(self) -> web.Response | None:
         """Common guard: the members and configs facades must be wired."""
@@ -114,6 +126,9 @@ class AdminAgentHandlers(RestHandlerBase):
                 status=400,
             )
         agent_id = str(body.get("agent_id") or f"m-{prototype}-{uuid.uuid4().hex[:8]}")
+        conflict = self._member_address_conflict(agent_id)
+        if conflict is not None:
+            return conflict
         params: dict[str, Any] | None = body.get("params")
         persona: dict[str, Any] = body.get("persona") or {}
 
@@ -152,6 +167,9 @@ class AdminAgentHandlers(RestHandlerBase):
             return guard
         assert self.members is not None and self.configs is not None
         agent_id = request.match_info["agent_id"]
+        conflict = self._member_address_conflict(agent_id)
+        if conflict is not None:
+            return conflict
         try:
             body = await request.json()
         except Exception:

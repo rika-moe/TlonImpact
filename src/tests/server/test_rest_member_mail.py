@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.identity_helpers import make_identity
 from tlon.api.mail import MailFacade
 from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
@@ -54,6 +55,7 @@ def paths(tmp_path: Path) -> TlonPaths:
 def handler(paths: TlonPaths) -> RESTAPIHandler:
     return RESTAPIHandler(
         None,
+        identity=make_identity(),
         mail=MailFacade(
             adapter_manager=MagicMock(),
             agent_registry=StubAgentRegistry(["gu-yanxi"]),  # type: ignore[arg-type]
@@ -152,7 +154,7 @@ class TestHandleMemberMail:
             assert response.status == 400, f"member_id {bad!r} must be rejected"
 
     async def test_mail_facade_unavailable_returns_503(self):
-        handler = RESTAPIHandler(None, mail=None)
+        handler = RESTAPIHandler(None, identity=make_identity(), mail=None)
 
         response = await handler.handle_member_mail(StubRequest("gu-yanxi"))
 

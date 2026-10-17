@@ -1,7 +1,7 @@
 """End-to-end mail smoke test against a real ``tlon dream`` subprocess.
 
 Automates the manual smoke flow from AGENTS.md: boot the server with an
-isolated TLON_HOME, send mail through the SDK, assert it lands in the
+isolated TLON_HOME, send mail through the WebUI HTTP protocol, assert it lands in the
 recipient's SQLite inbox. The delivery path (POST /messages -> SQLite
 transaction) touches neither LLM nor Docker, so it runs in plain CI.
 
@@ -16,9 +16,7 @@ from pathlib import Path
 
 import aiohttp
 
-from tlon_client.sdk.client import TlonClient
-
-from .conftest import _assert_delivered
+from .conftest import WEBUI_HEADERS, _assert_delivered, _register_human, _send_mail
 
 
 async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> None:
@@ -31,7 +29,7 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
     token = f"smoke-{uuid.uuid4().hex}"
 
     async with (
-        aiohttp.ClientSession() as http,
+        aiohttp.ClientSession(headers=WEBUI_HEADERS) as http,
         http.post(
             f"{base_url}/admin/config/agents",
             json={
@@ -44,8 +42,8 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
     ):
         assert resp.status == 200
 
-    async with TlonClient(base_url=base_url) as client:
-        accepted = await client.send_message(token, to=["lin-zhiyao"], subject="smoke")
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+        accepted = await _send_mail(http, base_url, token, to=["lin-zhiyao"], subject="smoke")
 
     assert accepted
     await _assert_delivered(tlon_home, "lin-zhiyao", token)
@@ -56,10 +54,10 @@ async def test_mail_to_known_human_lands_in_inbox(tlon_server: tuple[str, Path])
     base_url, tlon_home = tlon_server
     token = f"smoke-{uuid.uuid4().hex}"
 
-    async with TlonClient(base_url=base_url) as client:
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
         # Reading bob's inbox creates his mailbox, making him a known human.
-        await client.get_inbox(username="bob")
-        accepted = await client.send_message(token, to=["bob"], subject="smoke")
+        _register_human(tlon_home, "bob")
+        accepted = await _send_mail(http, base_url, token, to=["bob"], subject="smoke")
 
     assert accepted
     await _assert_delivered(tlon_home, "human:bob", token)

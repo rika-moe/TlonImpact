@@ -113,6 +113,10 @@ class TlonPaths:
         """
         return self._home / ".env"
 
+    def webui_identity_file(self) -> Path:
+        """Instance-local WebUI member identity (ADR 0033)."""
+        return self._home / "webui-identity.json"
+
     def shared_dir(self) -> Path:
         return self._home / "shared"
 

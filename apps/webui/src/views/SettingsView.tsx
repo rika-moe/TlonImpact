@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ChangeEvent, ReactElement } from "react";
+import type { ReactElement } from "react";
 import type { ServerEvent, ViewProps } from "../types";
 import "../styles/settings.css";
 
@@ -26,8 +26,8 @@ function formatAgentConfig(agent: Record<string, unknown>): string {
 
 /**
  * SETTINGS — merges the TUI's config + settings views. Read-only: server
- * config (GET /config) and member configs (GET /admin/config/agents),
- * plus the admin-token editor (ADR 0013, browser-local). The process-level
+ * config (GET /config) and member configs (GET /admin/config/agents).
+ * The process-level
  * LLM env editor is gone (ADR 0016): LLM config is member-level now —
  * the model is picked when creating a member, API keys are the
  * provider's own `{PROVIDER}_API_KEY` env vars. SSE `config.updated`
@@ -37,12 +37,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [agentConfigs, setAgentConfigs] = useState<Record<string, unknown>[]>([]);
   const [configError, setConfigError] = useState<string | null>(null);
-
-  // Admin token (ADR 0013): lives in localStorage, sent as Bearer on every
-  // request. Never shown back — the field stays empty after save.
-  const [adminTokenInput, setAdminTokenInput] = useState("");
-  const [adminTokenConfigured, setAdminTokenConfigured] = useState(rest.hasAdminToken);
-  const [adminTokenSaved, setAdminTokenSaved] = useState<string | null>(null);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -70,15 +64,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
       sse.off("event", onEvent);
     };
   }, [sse, loadConfig]);
-
-  const saveAdminToken = (token: string): void => {
-    rest.setAdminToken(token);
-    setAdminTokenConfigured(rest.hasAdminToken);
-    setAdminTokenInput("");
-    setAdminTokenSaved(token.trim() ? "已保存 — 立即生效" : "已清除");
-    // Panels that 401'd before the token was set get a fresh chance.
-    void loadConfig();
-  };
 
   return (
     <section className="settings-view">
@@ -128,65 +113,6 @@ export function SettingsView({ rest, sse }: ViewProps): ReactElement {
         </div>
       </div>
 
-      <div className="panel">
-        <h3 className="tech-label settings-section-title">
-          ADMIN TOKEN · TLON_ADMIN_TOKEN（ADR 0013）
-        </h3>
-        <div className="settings-status-row">
-          <span className="tech-label">TOKEN</span>
-          <span
-            className={`tech-label ${adminTokenConfigured ? "settings-status--ok" : "settings-status--warn"}`}
-          >
-            {adminTokenConfigured
-              ? "CONFIGURED — 随所有请求以 Bearer 发送"
-              : "NOT CONFIGURED — 服务端开启鉴权后 admin 功能不可用"}
-          </span>
-        </div>
-        <div className="settings-form">
-          <div className="settings-field">
-            <label className="tech-label" htmlFor="admin-token">
-              admin token
-            </label>
-            <input
-              id="admin-token"
-              className="input"
-              type="password"
-              value={adminTokenInput}
-              placeholder={
-                adminTokenConfigured ? "已配置 — 输入新 token 并保存以替换" : "输入服务端配置的 TLON_ADMIN_TOKEN"
-              }
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                setAdminTokenInput(e.target.value);
-                setAdminTokenSaved(null);
-              }}
-              spellCheck={false}
-              autoComplete="off"
-            />
-          </div>
-        </div>
-        <div className="settings-actions">
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => saveAdminToken(adminTokenInput)}
-            disabled={!adminTokenInput.trim()}
-          >
-            SAVE
-          </button>
-          <button
-            type="button"
-            className="btn btn--secondary"
-            onClick={() => saveAdminToken("")}
-            disabled={!adminTokenConfigured}
-          >
-            CLEAR
-          </button>
-          {adminTokenSaved ? (
-            <span className="tech-label settings-saved">{adminTokenSaved}</span>
-          ) : null}
-        </div>
-        <div className="settings-path">仅存浏览器 localStorage（tlon.adminToken），不上传</div>
-      </div>
     </section>
   );
 }

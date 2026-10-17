@@ -23,17 +23,10 @@ export class RestError extends Error {
   }
 }
 
-/** localStorage key for the admin Bearer token (ADR 0013). */
-export const ADMIN_TOKEN_KEY = "tlon.adminToken";
+/** Browser same-origin boundary; this public marker is not a credential. */
+export const WEBUI_HEADERS = { "X-Tlon-WebUI": "1" };
 
-/** Read the persisted admin token; "" when unset or storage unavailable. */
-function readStoredAdminToken(): string {
-  try {
-    return globalThis.localStorage?.getItem(ADMIN_TOKEN_KEY)?.trim() ?? "";
-  } catch {
-    return "";
-  }
-}
+export type WebuiIdentity = { username: string | null; address: string | null };
 
 /** A mail send request (see `sendMail`). */
 export interface MailReceipt {
@@ -298,8 +291,6 @@ export class PrototypeError extends Error {
 /** GET /health response (see handle_health in src/tlon/app/server/api/rest.py). */
 export interface ServerHealth {
   status: string;
-  running: boolean;
-  timestamp: string;
   version: string;
 }
 
@@ -323,62 +314,28 @@ export interface SessionList {
 
 export class RestClient {
   readonly baseUrl: string;
-  private adminToken: string;
-
-  /**
-   * `baseUrl` defaults to "" (same-origin relative paths). `adminToken`
-   * defaults to the value persisted in localStorage (ADR 0013); pass an
-   * explicit value in tests / non-browser contexts.
-   */
-  constructor(baseUrl = "", adminToken?: string) {
+  constructor(baseUrl = "") {
     this.baseUrl = baseUrl;
-    this.adminToken = adminToken ?? readStoredAdminToken();
   }
 
-  /** Whether an admin Bearer token is configured. */
-  get hasAdminToken(): boolean {
-    return this.adminToken.length > 0;
+  async identity(): Promise<WebuiIdentity> {
+    return this.get("/identity");
   }
 
-  /**
-   * Set (or clear, with "") the admin Bearer token, persisting it to
-   * localStorage like the username. Takes effect on the next request.
-   */
-  setAdminToken(token: string): void {
-    this.adminToken = token.trim();
-    try {
-      if (this.adminToken) {
-        globalThis.localStorage?.setItem(ADMIN_TOKEN_KEY, this.adminToken);
-      } else {
-        globalThis.localStorage?.removeItem(ADMIN_TOKEN_KEY);
-      }
-    } catch {
-      // Storage unavailable (tests, privacy mode) — in-memory only.
-    }
-  }
-
-  /** Authorization header for every request when a token is configured. */
-  private authHeaders(): Record<string, string> {
-    return this.adminToken ? { Authorization: `Bearer ${this.adminToken}` } : {};
-  }
-
-  /** 401 means the server wants an admin token — say where to fix it. */
-  private static withAuthHint(message: string, status?: number): string {
-    return status === 401
-      ? `${message} — admin 端点需要 token，请在 Settings 页配置`
-      : message;
+  async initializeIdentity(username: string): Promise<WebuiIdentity> {
+    return this.send("POST", "/identity", { username });
   }
 
   private async get<T>(path: string): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}${path}`, { headers: this.authHeaders() });
+      response = await fetch(`${this.baseUrl}${path}`, { headers: WEBUI_HEADERS });
     } catch (err) {
       throw new RestError(`REST request failed: ${path} (${String(err)})`);
     }
     if (!response.ok) {
       throw new RestError(
-        RestClient.withAuthHint(`REST ${path} returned ${response.status}`, response.status),
+        `REST ${path} returned ${response.status}`,
         response.status,
       );
     }
@@ -396,7 +353,7 @@ export class RestClient {
         method,
         headers: {
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-          ...this.authHeaders(),
+          ...WEBUI_HEADERS,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
@@ -409,10 +366,7 @@ export class RestClient {
     } & T;
     if (!response.ok) {
       throw new RestError(
-        RestClient.withAuthHint(
-          data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
-          response.status,
-        ),
+        data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
         response.status,
       );
     }
@@ -457,18 +411,17 @@ export class RestClient {
   }
 
   /** The member's own mail (inbox + sent merged, chronological). */
-  async getInbox(username: string, limit = 100): Promise<MailItem[]> {
+  async getInbox(limit = 100): Promise<MailItem[]> {
     const data = await this.get<{ mails?: MailItem[] }>(
-      `/inbox?username=${encodeURIComponent(username)}&limit=${limit}`,
+      `/inbox?limit=${limit}`,
     );
     return data.mails ?? [];
   }
 
   async getInboxPage(
-    username: string,
     options: { before?: string; limit?: number } = {},
   ): Promise<MailPage> {
-    const query = new URLSearchParams({ username, limit: String(options.limit ?? 100) });
+    const query = new URLSearchParams({ limit: String(options.limit ?? 100) });
     if (options.before) query.set("before", options.before);
     return this.get(`/inbox?${query.toString()}`);
   }
@@ -484,11 +437,10 @@ export class RestClient {
 
   /** Explicitly change only this human's received copies; viewing never marks read. */
   async setMailRead(
-    username: string,
     read: boolean,
     target: { mail_id?: string; thread_id?: string },
   ): Promise<MailReadResult> {
-    return this.send("POST", "/inbox/read", { username, read, ...target });
+    return this.send("POST", "/inbox/read", { read, ...target });
   }
 
   /**
@@ -505,19 +457,19 @@ export class RestClient {
   }
 
   /**
-   * Send a mail as the given human user (POST /messages). Recipients in
+   * Send a mail as the instance member (POST /messages). Recipients in
    * `to`/`cc` may be display names, member ids or full addresses — the
    * server resolves them. Resolves with the new mail id; rejects with a
    * MailSendError carrying the server's semantic reason on 4xx.
    */
-  async sendMail(username: string, msg: SendMailMessage): Promise<MailReceipt> {
+  async sendMail(msg: SendMailMessage): Promise<MailReceipt> {
     const requestId = msg.request_id ?? crypto.randomUUID();
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, ...msg, request_id: requestId }),
+        headers: { "Content-Type": "application/json", ...WEBUI_HEADERS },
+        body: JSON.stringify({ ...msg, request_id: requestId }),
       });
     } catch (err) {
       throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试 (${String(err)})`, "submission_unknown", undefined, requestId);
@@ -570,7 +522,7 @@ export class RestClient {
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: { "Content-Type": "application/json", ...this.authHeaders() },
+        headers: { "Content-Type": "application/json", ...WEBUI_HEADERS },
         body: JSON.stringify(body),
       });
     } catch (err) {
@@ -584,10 +536,7 @@ export class RestClient {
     } & T;
     if (!response.ok) {
       throw new PrototypeError(
-        RestClient.withAuthHint(
-          data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
-          response.status,
-        ),
+        data.error ?? `REST ${method} ${path} returned ${String(response.status)}`,
         data.reason,
         response.status,
       );
@@ -723,7 +672,7 @@ export class RestClient {
         method,
         headers: {
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-          ...this.authHeaders(),
+          ...WEBUI_HEADERS,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
@@ -739,10 +688,7 @@ export class RestClient {
     } & T;
     if (!response.ok) {
       throw new CapabilityError(
-        RestClient.withAuthHint(
-          data.error ?? data.message ?? `REST ${method} ${path} returned ${String(response.status)}`,
-          response.status,
-        ),
+        data.error ?? data.message ?? `REST ${method} ${path} returned ${String(response.status)}`,
         data.reason,
         response.status,
       );

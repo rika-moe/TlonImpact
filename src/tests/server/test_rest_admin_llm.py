@@ -8,6 +8,7 @@ import json
 
 import litellm
 
+from tests.identity_helpers import make_identity
 from tlon_server.api.rest import RESTAPIHandler
 
 
@@ -20,7 +21,10 @@ class StubRequest:
 
 def _handler() -> RESTAPIHandler:
     # The LLM registry endpoint touches no runtime state — no facades.
-    return RESTAPIHandler(None)
+    return RESTAPIHandler(
+        None,
+        identity=make_identity(),
+    )
 
 
 class TestListLlmModels:

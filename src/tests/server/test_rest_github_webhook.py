@@ -17,6 +17,7 @@ import hmac
 import json
 from typing import Any
 
+from tests.identity_helpers import make_identity
 from tlon.api.events import EventsFacade
 from tlon.base.events.event_bus import EventBus
 from tlon.organization.mail.mail import Mail
@@ -71,7 +72,9 @@ def _handler(adapter: StubGitHubAdapter | None) -> RESTAPIHandler:
         if adapter is not None
         else None
     )
-    return RESTAPIHandler(None, events=events, github_webhook_secret=SECRET)
+    return RESTAPIHandler(
+        None, identity=make_identity(), events=events, github_webhook_secret=SECRET
+    )
 
 
 def _accepted_mail() -> Mail:

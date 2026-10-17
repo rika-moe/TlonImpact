@@ -1,4 +1,4 @@
-"""Real HTTP/SDK contracts: committed inboxes, restarts and whole-post refusal."""
+"""Real WebUI HTTP contracts: committed inboxes, restarts and whole-post refusal."""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -12,10 +12,16 @@ from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.store import MailStore
-from tlon_client.sdk.client import TlonClient
 from tlon_server.serverapp import ServerApp
 
-from .conftest import _free_port, _wait_ready_http
+from .conftest import (
+    WEBUI_HEADERS,
+    _free_port,
+    _initialize_identity,
+    _register_human,
+    _send_mail,
+    _wait_ready_http,
+)
 
 
 @asynccontextmanager
@@ -33,6 +39,7 @@ async def _server(home: Path) -> AsyncGenerator[tuple[str, ServerApp]]:
     base_url = f"http://127.0.0.1:{port}"
     try:
         await _wait_ready_http(base_url, task)
+        await _initialize_identity(base_url)
         yield base_url, app
     finally:
         await asyncio.wait_for(app.shutdown(), timeout=15)
@@ -43,18 +50,17 @@ async def test_success_is_durable_and_replay_survives_server_restart(tmp_path: P
     database = TlonPaths(home=tmp_path).mail_database_file()
     async with _server(tmp_path) as (url, app):
         assert app._runtime is not None
-        async with TlonClient(url) as client:
-            await client.get_inbox(username="bob")
-            first = await client.send_message("durable letter", to=["bob"], request_id="stable")
+        async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+            _register_human(tmp_path, "bob")
+            first = await _send_mail(http, url, "durable letter", to=["bob"], request_id="stable")
             # A fresh SQLite connection sees the mail as soon as HTTP returns.
             inbox = MailStore(database).mails("human:bob")
             assert [mail.id for mail in inbox] == [first["mail_id"]]
             assert first["local_recipients"] == ["human:bob"]
-            assert await client.get_inbox(username="bob")
             assert len(MailStore(database).mails("human:bob", "unread")) == 1
 
-    async with _server(tmp_path) as (url, _), TlonClient(url) as client:
-        replay = await client.send_message("durable letter", to=["bob"], request_id="stable")
+    async with _server(tmp_path) as (url, _), aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+        replay = await _send_mail(http, url, "durable letter", to=["bob"], request_id="stable")
         assert replay == first
         assert [mail.id for mail in MailStore(database).mails("human:bob")] == [first["mail_id"]]
 
@@ -63,7 +69,7 @@ async def test_retired_and_unknown_addresses_refuse_entire_post(tmp_path: Path) 
     async with _server(tmp_path) as (url, app):
         assert app._runtime is not None
         runtime = app._runtime
-        async with aiohttp.ClientSession() as http:
+        async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
             async with http.post(
                 f"{url}/admin/config/agents",
                 json={
@@ -82,8 +88,7 @@ async def test_retired_and_unknown_addresses_refuse_entire_post(tmp_path: Path) 
             )
             await asyncio.to_thread(store.add_to_inbox, history, "retired-test")
             await runtime.agent_registry.stop_member("retired-test", stopped_by="integration-test")
-            async with http.get(f"{url}/inbox", params={"username": "bob"}) as response:
-                assert response.status == 200
+            _register_human(tmp_path, "bob")
             async with http.post(
                 f"{url}/messages",
                 json={
@@ -98,7 +103,7 @@ async def test_retired_and_unknown_addresses_refuse_entire_post(tmp_path: Path) 
             assert error["reason"] == "invalid_recipients"
             assert error["invalid_recipients"] == ["retired-test", "unknown-human", "also-unknown"]
             assert store.mails("human:bob") == []
-            assert store.mails("human:guest", "sent") == []
+            assert store.mails("human:alice", "sent") == []
             async with http.get(f"{url}/members/retired-test/mail") as response:
                 assert response.status == 200
                 assert [mail["id"] for mail in (await response.json())["mails"]] == [history.id]

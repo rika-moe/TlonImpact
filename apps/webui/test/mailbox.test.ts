@@ -25,9 +25,9 @@ class Stream extends SseClient {
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 function setup(load: (before?: string) => Promise<MailPage>, mark = async () => ({ mail_ids: ["a"], read: true })) {
   const sse = new Stream();
-  const rest = { getInboxPage: (_: string, options: { before?: string } = {}) => load(options.before),
+  const rest = { getInboxPage: (options: { before?: string } = {}) => load(options.before),
     getMemberMailPage: (_: string, options: { before?: string } = {}) => load(options.before), setMailRead: mark };
-  const box = new MailboxController(rest, sse, "alice", "human:alice", address, false);
+  const box = new MailboxController(rest, sse, "human:alice", address, false);
   box.start();
   return { box, sse, rest };
 }
@@ -122,7 +122,7 @@ test("old mailbox requests, sends and mutation acknowledgements cannot publish a
   sse.changeStatus(true);
   const pendingMark = box.setRead(true, { mail_id: "a" });
   box.stop();
-  const observer = new MailboxController(rest, sse, "alice", "bob", "bob@tlon.internal", true);
+  const observer = new MailboxController(rest, sse, "bob", "bob@tlon.internal", true);
   observer.start();
   snapshot.resolve(page([mail("a")])); mutation.resolve({ mail_ids: ["a"], read: true });
   box.addLocal(mail("sent")); await pendingMark; await flush();

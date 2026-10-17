@@ -21,6 +21,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from structlog.contextvars import bound_contextvars
 
+from tests.identity_helpers import make_identity
 from tlon.api.members import MembersFacade
 from tlon.api.observability import ObservabilityFacade
 from tlon.base.logger import configure_logging, get_logger
@@ -218,6 +219,7 @@ class _FakeRequest:
 def _make_handler(log_dir: Path) -> RESTAPIHandler:
     return RESTAPIHandler(
         client_gateway=None,
+        identity=make_identity(),
         members=MembersFacade(
             agent_registry=_FakeAgentRegistry(),  # type: ignore[arg-type]
             tlon_paths=MagicMock(),
@@ -312,6 +314,7 @@ async def test_logs_limit_and_before(handler: RESTAPIHandler) -> None:
 async def test_logs_unavailable_503(tmp_path: Path) -> None:
     handler = RESTAPIHandler(
         client_gateway=None,
+        identity=make_identity(),
         members=MembersFacade(
             agent_registry=_FakeAgentRegistry(),  # type: ignore[arg-type]
             tlon_paths=MagicMock(),

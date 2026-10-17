@@ -16,7 +16,6 @@ Provides HTTP endpoints for:
 """
 
 import asyncio
-import hmac
 import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -35,12 +34,14 @@ from tlon.api.prototypes import PrototypesFacade
 from tlon.base.logger import get_logger
 from tlon.base.version import VERSION
 from tlon_server.core.client_gateway import ClientGateway
+from tlon_server.core.local_identity import LocalIdentity, validate_username
 
 from .admin_agents import AdminAgentHandlers
 from .admin_arena import AdminArenaHandlers
 from .admin_capabilities import AdminCapabilityHandlers
 from .admin_llm import AdminLlmHandlers
 from .admin_prototypes import AdminPrototypeHandlers
+from .browser_boundary import LOOPBACK_HOSTS, protect_response, trusted_request
 from .github import GitHubWebhookMixin
 from .mail import MailHandlers
 from .observability import ObservabilityHandlers
@@ -105,6 +106,7 @@ class RESTAPIHandler(
         self,
         client_gateway: ClientGateway,
         *,
+        identity: LocalIdentity,
         members: MembersFacade | None = None,
         mail: MailFacade | None = None,
         prototypes: PrototypesFacade | None = None,
@@ -114,7 +116,6 @@ class RESTAPIHandler(
         arena: ArenaFacade | None = None,
         capabilities: CapabilitiesFacade | None = None,
         debug: bool = False,
-        admin_token: str | None = None,
         github_webhook_secret: str | None = None,
     ):
         """Initialize the REST API handler.
@@ -130,8 +131,7 @@ class RESTAPIHandler(
             arena: Arena facade (/admin/arena-runs, staging 演武触发/报告)
             capabilities: Capabilities facade (/admin/capabilities/*)
             debug: Whether to enable debug/test endpoints (never enable in production)
-            admin_token: Shared Bearer token guarding /admin/* (ADR 0013);
-                None disables authentication (default, localhost trust boundary)
+            identity: Persistent instance WebUI identity
             github_webhook_secret: HMAC secret of the GitHub webhook; the
                 /webhooks/github route registers only when the runtime
                 ingress is also enabled (events facade with adapter)
@@ -146,7 +146,7 @@ class RESTAPIHandler(
         self.arena = arena
         self.capabilities = capabilities
         self.debug = debug
-        self.admin_token = admin_token
+        self.identity = identity
         self.github_ingress = events is not None and events.github_enabled
         self.github_webhook_secret = github_webhook_secret
         # Active SSE streams: session_id -> frame queue (None sentinel ends
@@ -160,13 +160,13 @@ class RESTAPIHandler(
         Returns:
             Configured aiohttp Application
         """
-        if self.admin_token:
-            app = web.Application(middlewares=[self._admin_auth_middleware])
-        else:
-            app = web.Application()
+        app = web.Application(middlewares=[self._browser_boundary_middleware])
+        app.on_response_prepare.append(protect_response)
 
         # Add API routes first
         app.router.add_get("/health", self.handle_health)
+        app.router.add_get("/identity", self.handle_identity)
+        app.router.add_post("/identity", self.handle_initialize_identity)
         app.router.add_get("/config", self.handle_config)
         app.router.add_get("/inbox", self.handle_inbox)
         app.router.add_post("/inbox/read", self.handle_inbox_read)
@@ -277,31 +277,99 @@ class RESTAPIHandler(
             app.router.add_get("/ui/", self.handle_webui_index)
             app.router.add_static("/ui/", WEBUI_DIST_DIR, name="webui")
 
-        # CORS
-        app.router.add_options("/{path:.*}", self.handle_options)
-
         return app
 
     @web.middleware
-    async def _admin_auth_middleware(
+    async def _browser_boundary_middleware(
         self,
         request: web.Request,
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
-        """Guard /admin/* with the shared Bearer token (ADR 0013).
-
-        Registered only when ``admin_token`` is configured. CORS preflight
-        (OPTIONS) carries no credentials by design and passes through.
-        """
-        if request.method != "OPTIONS" and request.path.startswith("/admin/"):
-            header = request.headers.get("Authorization", "")
-            expected = f"Bearer {self.admin_token}"
-            if not hmac.compare_digest(header, expected):
+        """Reject foreign pages before running business handlers or identity writes."""
+        if not trusted_request(request):
+            return self._json_response(
+                {"error": "Untrusted browser request", "reason": "untrusted_origin"}, status=403
+            )
+        public = (
+            request.path == "/health" or request.path == "/ui" or request.path.startswith("/ui/")
+        )
+        webhook = request.path == "/webhooks/github" and request.method == "POST"
+        if not public and not webhook:
+            if request.method == "OPTIONS":
                 return self._json_response(
-                    {"error": "Admin authentication required", "reason": "unauthorized"},
-                    status=401,
+                    {
+                        "error": "Cross-origin preflight is not supported",
+                        "reason": "untrusted_origin",
+                    },
+                    status=403,
+                )
+            has_header = request.headers.get("X-Tlon-WebUI") == "1"
+            same_origin_events = (
+                request.method == "GET"
+                and request.path == "/events"
+                and request.headers.get("Sec-Fetch-Site") == "same-origin"
+            )
+            if not has_header and not same_origin_events:
+                return self._json_response(
+                    {"error": "WebUI request header required", "reason": "untrusted_origin"},
+                    status=403,
+                )
+            if request.path != "/identity" and self.identity.username is None:
+                return self._json_response(
+                    {"error": "Set your WebUI identity first", "reason": "identity_required"},
+                    status=409,
                 )
         return await handler(request)
+
+    async def handle_identity(self, request: web.Request) -> web.Response:
+        """Return the stable member identity, or null on first use."""
+        return self._json_response(
+            {"username": self.identity.username, "address": self.identity.address}
+        )
+
+    async def handle_initialize_identity(self, request: web.Request) -> web.Response:
+        """Initialize the local operator once; no authentication or registration."""
+        if self.identity.username is not None:
+            return self._json_response(
+                {"error": "Identity already initialized", "reason": "identity_exists"}, status=409
+            )
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return self._json_response(
+                {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
+            )
+        try:
+            username = validate_username(body.get("username") if isinstance(body, dict) else None)
+        except ValueError as exc:
+            return self._json_response(
+                {"error": str(exc), "reason": "invalid_username"}, status=400
+            )
+        member_ids = set(self.members.list_ids()) if self.members is not None else set()
+        if self.configs is not None:
+            member_ids.update(config.id for config in self.configs.list_agent_configs())
+        if username.casefold() in {member_id.casefold() for member_id in member_ids}:
+            return self._json_response(
+                {
+                    "error": "Username conflicts with an existing member",
+                    "reason": "identity_conflict",
+                },
+                status=409,
+            )
+        try:
+            self.identity.initialize(username)
+        except FileExistsError:
+            return self._json_response(
+                {"error": "Identity already initialized", "reason": "identity_exists"}, status=409
+            )
+        except OSError:
+            logger.exception("webui_identity_write_failed")
+            return self._json_response(
+                {"error": "Unable to save identity", "reason": "identity_write_failed"}, status=503
+            )
+        return self._json_response(
+            {"username": self.identity.username, "address": self.identity.address}, status=201
+        )
 
     async def handle_webui_redirect(self, request: web.Request) -> web.Response:
         """Redirect /ui to /ui/ so the static index resolves relative assets."""
@@ -320,8 +388,6 @@ class RESTAPIHandler(
         return self._json_response(
             {
                 "status": "healthy",
-                "running": self.client_gateway.is_running(),
-                "timestamp": datetime.now(UTC).isoformat(),
                 "version": VERSION,
             }
         )
@@ -436,6 +502,7 @@ class RESTServer:
         self,
         client_gateway: ClientGateway,
         *,
+        identity: LocalIdentity,
         members: MembersFacade | None = None,
         mail: MailFacade | None = None,
         prototypes: PrototypesFacade | None = None,
@@ -447,7 +514,6 @@ class RESTServer:
         host: str = "127.0.0.1",
         port: int = 8080,
         debug: bool = False,
-        admin_token: str | None = None,
         github_webhook_secret: str | None = None,
     ):
         """Initialize the REST server.
@@ -465,12 +531,14 @@ class RESTServer:
             host: Host to bind to
             port: Port to listen on
             debug: Whether to enable debug/test endpoints (never enable in production)
-            admin_token: Shared Bearer token guarding /admin/* (ADR 0013)
+            identity: Persistent instance WebUI identity
             github_webhook_secret: HMAC secret of the GitHub webhook; the
                 /webhooks/github route registers only when the events facade
                 also reports the ingress enabled
         """
         self.client_gateway = client_gateway
+        if host not in LOOPBACK_HOSTS:
+            raise ValueError("The local WebUI server must bind to a loopback host")
         self.host = host
         self.port = port
         self._handler = RESTAPIHandler(
@@ -484,7 +552,7 @@ class RESTServer:
             arena=arena,
             capabilities=capabilities,
             debug=debug,
-            admin_token=admin_token,
+            identity=identity,
             github_webhook_secret=github_webhook_secret,
         )
         self._app: web.Application | None = None

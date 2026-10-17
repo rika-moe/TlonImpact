@@ -501,74 +501,75 @@ class TestPipeline:
         assert query["username"] == "alice"
 
 
-async def test_retry_command_reuses_committed_request_and_original_thread(
-    bot_mod, tmp_path, monkeypatch
-) -> None:
-    """The SDK sees uncertainty after actual commit; /retry must not create a second mail."""
+async def test_retry_command_reuses_request_and_original_thread(bot_mod: Any) -> None:
+    """An uncertain submission retains its exact envelope and owner for /retry."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from tests.integration.test_post_office import _server
-    from tlon.base.paths import TlonPaths
-    from tlon.organization.mail.store import MailStore
     from tlon_client.sdk.base_client import MailSendError
-    from tlon_server import serverapp
 
-    # This client test exercises real HTTP and SQLite, not process-global
-    # OTel setup. Leave the singleton providers untouched for other tests.
-    monkeypatch.setattr(serverapp, "init_metrics", lambda: None)
-    monkeypatch.setattr(serverapp, "shutdown_metrics", lambda: None)
-    monkeypatch.setattr(serverapp, "init_tracing", lambda *args, **kwargs: None)
-    monkeypatch.setattr(serverapp, "shutdown_tracing", lambda: None)
-    async with _server(tmp_path) as (url, _app), TlonClient(url) as sdk:
-        await sdk.get_inbox(username="bob")
-        bot = bot_mod.TelegramBot(
-            token="t", allowed_users=[111, 222], username="alice", base_url=url
+    bot = bot_mod.TelegramBot(
+        token="t", allowed_users=[111, 222], username="alice", base_url="http://unused"
+    )
+    receipt = {"mail_id": "committed-mail", "message": "已存入信箱"}
+    sent: list[dict[str, Any]] = []
+
+    async def submit(
+        content: str,
+        *,
+        to: list[str],
+        reply_to: str | None,
+        thread_id: str | None,
+        request_id: str,
+    ) -> dict[str, str]:
+        sent.append(
+            {
+                "content": content,
+                "to": list(to),
+                "reply_to": reply_to,
+                "thread_id": thread_id,
+                "request_id": request_id,
+            }
         )
-        bot._client = sdk
-        bot._reply_map.record(
-            7,
-            make_mail(id="original", from_address="bob@tlon.internal", thread_id="original-thread"),
-        )
-        submit = sdk._base.submit_mail
-        sent = []
+        if len(sent) == 1:
+            raise MailSendError("response lost", request_id=request_id, reason="submission_unknown")
+        return receipt
 
-        async def lose_first_response(body):
-            sent.append(dict(body))
-            receipt = await submit(body)
-            if len(sent) == 1:
-                raise MailSendError(
-                    "response lost", request_id=body["request_id"], reason="submission_unknown"
-                )
-            return receipt
+    client = AsyncMock()
+    client.send_message.side_effect = submit
+    bot._client = client
+    bot._reply_map.record(
+        7,
+        make_mail(id="original", from_address="bob@tlon.internal", thread_id="original-thread"),
+    )
+    unknown = await bot.process_reply("keep envelope", 7, owner=(111, 10))
+    request_id = sent[0]["request_id"]
+    assert request_id
+    assert f"/retry {request_id}" in unknown
+    assert sent[0] == {
+        "content": "keep envelope",
+        "to": ["bob@tlon.internal"],
+        "reply_to": "original",
+        "thread_id": "original-thread",
+        "request_id": request_id,
+    }
 
-        monkeypatch.setattr(sdk._base, "submit_mail", lose_first_response)
-        unknown = await bot.process_reply("keep envelope", 7, owner=(111, 10))
-        request_id = sent[0]["request_id"]
-        assert f"/retry {request_id}" in unknown
-        assert len(MailStore(TlonPaths(home=tmp_path).mail_database_file()).mails("human:bob")) == 1
-
-        # Neither another user nor the same user in another chat can replay it.
-        for owner in ((222, 10), (111, 20)):
-            assert "未重新发送" in await bot.retry_mail(request_id, owner=owner)
-        assert len(sent) == 1
-        # A changed reply map must not alter the retry envelope.
-        bot._reply_map.record(
-            7, make_mail(id="changed", from_address="nobody@tlon.internal", thread_id="changed")
-        )
-        message = SimpleNamespace(text=f"/retry {request_id}", chat_id=10, reply_text=AsyncMock())
-        update = SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=111))
-        await bot._on_retry_command(update, None)
-        assert sent[0] == sent[1]
-        message.reply_text.assert_awaited_once()
-        assert "已存入" in message.reply_text.await_args.args[0]
-        inbox = MailStore(TlonPaths(home=tmp_path).mail_database_file()).mails("human:bob")
-        assert len(inbox) == 1
-        assert inbox[0].in_reply_to == "original"
-        assert inbox[0].thread_id == "original-thread"
-        assert not bot._pending_mail
-        assert "未重新发送" in await bot.retry_mail(request_id, owner=(111, 10))
-        assert len(sent) == 2
+    # Neither another user nor the same user in another chat can replay it.
+    for owner in ((222, 10), (111, 20)):
+        assert "未重新发送" in await bot.retry_mail(request_id, owner=owner)
+    assert client.send_message.await_count == 1
+    # A changed reply map must not alter the retry envelope.
+    bot._reply_map.record(
+        7, make_mail(id="changed", from_address="nobody@tlon.internal", thread_id="changed")
+    )
+    message = SimpleNamespace(text=f"/retry {request_id}", chat_id=10, reply_text=AsyncMock())
+    update = SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=111))
+    await bot._on_retry_command(update, None)
+    assert sent[0] == sent[1]
+    message.reply_text.assert_awaited_once_with(receipt["message"])
+    assert not bot._pending_mail
+    assert "未重新发送" in await bot.retry_mail(request_id, owner=(111, 10))
+    assert client.send_message.await_count == 2
 
 
 async def test_retry_unavailable_after_restart_or_eviction_never_resends(

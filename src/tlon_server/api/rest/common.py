@@ -3,7 +3,7 @@
 ``RestHandlerBase`` declares the constructor-injected attributes (set by
 ``RESTAPIHandler.__init__`` in app.py) so the per-domain mixins can read
 them with mypy-checked types, and hosts the cross-domain helpers
-(``_json_response``, CORS preflight).
+(``_json_response``).
 
 Runtime touchpoints are the tlon.api domain facades (ADR 0019); the
 server never imports runtime internals directly.
@@ -24,6 +24,7 @@ from tlon.api.members import MembersFacade
 from tlon.api.observability import ObservabilityFacade
 from tlon.api.prototypes import PrototypesFacade
 from tlon_server.core.client_gateway import ClientGateway
+from tlon_server.core.local_identity import LocalIdentity
 
 
 class RestHandlerBase:
@@ -43,7 +44,7 @@ class RestHandlerBase:
     arena: ArenaFacade | None
     capabilities: CapabilitiesFacade | None
     debug: bool
-    admin_token: str | None
+    identity: LocalIdentity
     github_ingress: bool
     github_webhook_secret: str | None
     # Active SSE streams: session_id -> frame queue (None sentinel ends
@@ -64,37 +65,7 @@ class RestHandlerBase:
             text=json.dumps(data, ensure_ascii=False, default=str),
             status=status,
             content_type="application/json",
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            },
         )
-
-    async def handle_options(self, request: web.Request) -> web.Response:
-        """Handle CORS preflight requests."""
-        return web.Response(
-            status=200,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            },
-        )
-
-
-def _validate_username(username_raw: Any) -> str | None:
-    """Normalize a human username; None when invalid.
-
-    The username becomes a directory name — reject empty and anything
-    carrying a path separator (traversal guard).
-    """
-    if not isinstance(username_raw, str):
-        return None
-    username = username_raw.strip()
-    if not username or "/" in username or "\\" in username:
-        return None
-    return username
 
 
 def _parse_limit(request: web.Request, default: int = 100, maximum: int = 1000) -> int:

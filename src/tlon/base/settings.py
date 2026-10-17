@@ -62,7 +62,6 @@ class Settings:
     log_retention_days: int
     container_memory_budget: str
     arena_model: str
-    admin_api_token: str
     github_webhook_secret: str
     github_recipient: str
     github_token: str
@@ -95,9 +94,6 @@ class Settings:
             # 演武场（docs/design/arena.md 「成本界」）：run 请求未带 model 时的缺省；
             # 空 = 未配置，run 必须显式指定模型（显式优于静默错默认）
             arena_model=os.getenv("TLON_ARENA_MODEL", ""),
-            # Admin API auth (ADR 0013): shared Bearer token guarding /admin/*;
-            # empty = auth disabled (default, localhost trust boundary)
-            admin_api_token=os.getenv("TLON_ADMIN_TOKEN", ""),
             # GitHub webhook ingress (see docs/design/mail.md 「外部来信与信任面」):
             # HMAC secret of the webhook;
             # empty = POST /webhooks/github is not registered at all

@@ -15,13 +15,15 @@ from typing import Any
 
 import aiohttp
 
+from .conftest import WEBUI_HEADERS
+
 
 async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> None:
     """create -> patched -> deleted -> home directory gone."""
     base_url, tlon_home = inproc_server
     name = f"测试员-{uuid.uuid4().hex[:8]}"
 
-    async with aiohttp.ClientSession() as http:
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
         async with http.post(
             f"{base_url}/admin/config/agents",
             json={"prototype": "developer", "name": name, "model": "openai/gpt-test"},
@@ -71,7 +73,7 @@ async def test_agent_config_validation(inproc_server: tuple[str, Path]) -> None:
     base_url, _ = inproc_server
     bogus_id = f"m-nope-{uuid.uuid4().hex[:8]}"
 
-    async with aiohttp.ClientSession() as http:
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
         # Missing name -> 400
         async with http.post(
             f"{base_url}/admin/config/agents", json={"prototype": "developer"}

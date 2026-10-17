@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ReactElement } from "react";
+import { IdentityController } from "./lib/identity";
 import { RestClient } from "./client/rest";
-import type { ServerHealth } from "./client/rest";
+import { ServerHealthBadge } from "./components/ServerHealthBadge";
+import type { HealthState } from "./components/ServerHealthBadge";
 import { SseClient } from "./client/sse";
 import type { ConnectionStatus, ViewName } from "./types";
 import { VIEWS, VIEW_TITLES } from "./types";
@@ -15,24 +17,6 @@ import { MetricsView } from "./views/MetricsView";
 import { SessionsView } from "./views/SessionsView";
 import { LogsView } from "./views/LogsView";
 import { SettingsView } from "./views/SettingsView";
-
-const USERNAME_KEY = "tlon.username";
-const DEFAULT_USERNAME = "guest";
-
-/**
- * Username resolution, same rules as the TUI: `?username=` in the URL
- * wins and is persisted to localStorage; otherwise localStorage; default
- * "guest".
- */
-function resolveUsername(): string {
-  const params = new URLSearchParams(window.location.search);
-  const fromQuery = params.get("username")?.trim();
-  if (fromQuery) {
-    window.localStorage.setItem(USERNAME_KEY, fromQuery);
-    return fromQuery;
-  }
-  return window.localStorage.getItem(USERNAME_KEY)?.trim() || DEFAULT_USERNAME;
-}
 
 type BadgeKind = "connected" | "reconnecting" | "down";
 
@@ -51,33 +35,6 @@ const BADGE_TEXT: Record<BadgeKind, string> = {
 /** Header health poll interval: startup + every 30s. */
 const HEALTH_POLL_INTERVAL_MS = 30_000;
 
-/**
- * Server health for the topbar. null = first poll still pending (keep
- * only the SSE badge until the first answer lands).
- */
-type HealthState = { kind: "ok"; health: ServerHealth } | { kind: "unreachable" } | null;
-
-/**
- * Server version + runtime badge (GET /health). Degrades gracefully:
- * on request failure only an UNREACHABLE badge replaces the version, no
- * error surfaces elsewhere.
- */
-function ServerHealthBadge({ state }: { state: HealthState }): ReactElement | null {
-  if (state === null) return null;
-  if (state.kind === "unreachable") {
-    return <span className="badge badge--down">UNREACHABLE</span>;
-  }
-  const { version, running } = state.health;
-  return (
-    <>
-      <span className="tech-label">SERVER v{version}</span>
-      <span className={`badge badge--${running ? "connected" : "reconnecting"}`}>
-        {running ? "RUNNING" : "STOPPED"}
-      </span>
-    </>
-  );
-}
-
 const VIEW_COMPONENTS: Record<ViewName, (props: {
   rest: RestClient;
   sse: SseClient;
@@ -95,14 +52,12 @@ const VIEW_COMPONENTS: Record<ViewName, (props: {
   settings: SettingsView,
 };
 
-export default function App(): ReactElement {
-  const [username] = useState(resolveUsername);
+function Operator({ rest, username }: { rest: RestClient; username: string }): ReactElement {
   // Same-origin relative paths: production is served by the server
   // itself under /ui/, dev goes through the vite proxy.
-  const rest = useMemo(() => new RestClient(), []);
   const sse = useMemo(
-    () => new SseClient({ clientType: "webui", username }),
-    [username],
+    () => new SseClient({ clientType: "webui" }),
+    [],
   );
   const [status, setStatus] = useState<ConnectionStatus>(() => sse.getStatus());
   const [health, setHealth] = useState<HealthState>(null);
@@ -144,7 +99,7 @@ export default function App(): ReactElement {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <h1 className="glow-title">TLON://OPERATOR</h1>
+        <h1 className="glow-title">TlonImpact</h1>
         <span className="tech-label">{window.location.host}</span>
         <ServerHealthBadge state={health} />
         <span className="spacer" />
@@ -167,5 +122,46 @@ export default function App(): ReactElement {
         <ActiveView rest={rest} sse={sse} username={username} />
       </main>
     </div>
+  );
+}
+
+export default function App(): ReactElement {
+  const rest = useMemo(() => new RestClient(), []);
+  const identity = useMemo(() => new IdentityController(rest), [rest]);
+  const state = useSyncExternalStore(identity.subscribe, identity.getSnapshot);
+  const [username, setUsername] = useState("");
+  useEffect(() => { void identity.load(); }, [identity]);
+  if (state.identity?.username) {
+    return <Operator rest={rest} username={state.identity.username} />;
+  }
+  return (
+    <main className="identity-screen">
+      <section className="panel identity-panel">
+        <h1 className="glow-title">TLON</h1>
+        {state.identity === null ? (
+          <>
+            <p>{state.busy ? "正在读取你的身份…" : "无法读取 Tlon 身份"}</p>
+            {state.error && <p role="alert">{state.error}</p>}
+            {!state.busy && <button className="btn btn--primary" onClick={() => void identity.load()}>重试</button>}
+          </>
+        ) : (
+          <form onSubmit={(event) => { event.preventDefault(); void identity.initialize(username); }}>
+            <h2>你在 Tlon 中叫什么？</h2>
+            <p>设置一次，此后打开即可进入。身份保存在本机 Tlon 实例中。</p>
+            <label htmlFor="identity-username">用户名</label>
+            <input id="identity-username" className="input" value={username}
+              onChange={(event) => setUsername(event.target.value)} required maxLength={64}
+              pattern={"[A-Za-z0-9][A-Za-z0-9._\\-]*"} autoComplete="off" spellCheck={false}
+              disabled={state.busy} />
+            <p>地址：{username.trim() || "username"}@tlon.internal</p>
+            <p>使用英文字母、数字、点、下划线或连字符，以字母或数字开头。地址设置后不可更改。</p>
+            {state.error && <p role="alert">{state.error}</p>}
+            <button className="btn btn--primary" type="submit" disabled={state.busy || !username.trim()}>
+              {state.busy ? "正在设置…" : "设置身份并进入"}
+            </button>
+          </form>
+        )}
+      </section>
+    </main>
   );
 }

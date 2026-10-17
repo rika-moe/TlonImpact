@@ -8,7 +8,7 @@ Covers:
 - Success: 202 + mail_id, MAIL_NEW published as "human:<username>",
   persistent mailbox created, transient adapter torn down
 - Failures: 4xx + {"error", "reason"} for unresolved recipients,
-  field validation, invalid username, invalid JSON
+  field validation, client identity overrides, invalid JSON
 """
 
 import asyncio
@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.identity_helpers import make_identity
 from tlon.api.mail import MailFacade
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -37,6 +38,7 @@ class StubRequest:
     """Minimal stand-in for aiohttp.web.Request (json body only)."""
 
     def __init__(self, body: Any):
+        self.query: dict[str, str] = {}
         self._body = {"request_id": "test-request", **body} if isinstance(body, dict) else body
 
     async def json(self) -> Any:
@@ -84,6 +86,7 @@ async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManage
 def handler(manager: AdapterManager, tmp_path: Path) -> RESTAPIHandler:
     return RESTAPIHandler(
         None,
+        identity=make_identity(),
         mail=MailFacade(
             adapter_manager=manager, agent_registry=MagicMock(), tlon_paths=TlonPaths(home=tmp_path)
         ),
@@ -133,7 +136,6 @@ class TestHandleSendMessage:
         response = await handler.handle_send_message(
             StubRequest(
                 {
-                    "username": "alice",
                     "content": "你好",
                     "to": ["谢云舒"],
                     "cc": ["xie-yunshu"],
@@ -164,7 +166,7 @@ class TestHandleSendMessage:
         self, handler: RESTAPIHandler, manager: AdapterManager
     ):
         response = await handler.handle_send_message(
-            StubRequest({"username": "alice", "content": "hi", "to": ["xie-yunshu"]})
+            StubRequest({"content": "hi", "to": ["xie-yunshu"]})
         )
 
         assert response.status == 202
@@ -176,7 +178,7 @@ class TestHandleSendMessage:
         await manager.attach("alice", "session-1", lambda event: None)
 
         response = await handler.handle_send_message(
-            StubRequest({"username": "alice", "content": "hi", "to": ["xie-yunshu"]})
+            StubRequest({"content": "hi", "to": ["xie-yunshu"]})
         )
 
         assert response.status == 202
@@ -185,7 +187,7 @@ class TestHandleSendMessage:
 
     async def test_recipient_unresolved(self, handler: RESTAPIHandler):
         response = await handler.handle_send_message(
-            StubRequest({"username": "alice", "content": "hi", "to": ["nobody"]})
+            StubRequest({"content": "hi", "to": ["nobody"]})
         )
 
         assert response.status == 400
@@ -194,16 +196,14 @@ class TestHandleSendMessage:
         assert body["error"]
 
     async def test_missing_content(self, handler: RESTAPIHandler):
-        response = await handler.handle_send_message(
-            StubRequest({"username": "alice", "to": ["xie-yunshu"]})
-        )
+        response = await handler.handle_send_message(StubRequest({"to": ["xie-yunshu"]}))
 
         assert response.status == 400
         assert json.loads(response.text)["reason"] == "empty_content"
 
     async def test_invalid_to(self, handler: RESTAPIHandler):
         response = await handler.handle_send_message(
-            StubRequest({"username": "alice", "content": "hi", "to": "xie-yunshu"})
+            StubRequest({"content": "hi", "to": "xie-yunshu"})
         )
 
         assert response.status == 400
@@ -213,7 +213,6 @@ class TestHandleSendMessage:
         response = await handler.handle_send_message(
             StubRequest(
                 {
-                    "username": "alice",
                     "content": "hi",
                     "to": ["xie-yunshu"],
                     "thread_id": 42,
@@ -224,13 +223,13 @@ class TestHandleSendMessage:
         assert response.status == 400
         assert json.loads(response.text)["reason"] == "invalid_thread_id"
 
-    async def test_invalid_username_rejected(self, handler: RESTAPIHandler):
-        for bad in ("", "  ", "../evil", "a/b", "a\\b"):
+    async def test_client_cannot_override_instance_identity(self, handler: RESTAPIHandler):
+        for bad in ("alice", "bob", "", "  ", "../evil", "a/b", "a\\b"):
             response = await handler.handle_send_message(
                 StubRequest({"username": bad, "content": "hi", "to": ["xie-yunshu"]})
             )
             assert response.status == 400, f"username {bad!r} must be rejected"
-            assert json.loads(response.text)["reason"] == "invalid_username"
+            assert json.loads(response.text)["reason"] == "identity_managed"
 
     async def test_invalid_json(self, handler: RESTAPIHandler):
         response = await handler.handle_send_message(
@@ -247,17 +246,17 @@ class TestHandleSendMessage:
         assert json.loads(response.text)["reason"] == "invalid_json"
 
     async def test_messaging_unavailable_returns_503(self):
-        handler = RESTAPIHandler(None, mail=None)
+        handler = RESTAPIHandler(None, identity=make_identity(), mail=None)
 
         response = await handler.handle_send_message(
-            StubRequest({"username": "alice", "content": "hi", "to": ["xie-yunshu"]})
+            StubRequest({"content": "hi", "to": ["xie-yunshu"]})
         )
 
         assert response.status == 503
 
 
 async def test_submission_replay_and_conflict(handler: RESTAPIHandler) -> None:
-    payload = {"username": "alice", "content": "hi", "to": ["xie-yunshu"], "request_id": "stable"}
+    payload = {"content": "hi", "to": ["xie-yunshu"], "request_id": "stable"}
     first = await handler.handle_send_message(StubRequest(payload))
     replay = await handler.handle_send_message(StubRequest(payload))
     assert first.status == replay.status == 202
@@ -271,7 +270,6 @@ async def test_all_invalid_recipients_reported(handler: RESTAPIHandler) -> None:
     response = await handler.handle_send_message(
         StubRequest(
             {
-                "username": "alice",
                 "content": "hi",
                 "to": ["xie-yunshu", "unknown-a"],
                 "cc": ["unknown-b"],
@@ -291,3 +289,11 @@ async def test_request_id_required(handler: RESTAPIHandler, request_id: Any) -> 
     )
     assert response.status == 400
     assert json.loads(response.text)["reason"] == "invalid_request_id"
+
+
+async def test_send_username_query_cannot_override_identity(handler: RESTAPIHandler) -> None:
+    request = StubRequest({"content": "hi", "to": ["xie-yunshu"]})
+    request.query["username"] = "bob"
+    response = await handler.handle_send_message(request)
+    assert response.status == 400
+    assert json.loads(response.text)["reason"] == "identity_managed"

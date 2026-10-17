@@ -10,6 +10,9 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from tests.identity_helpers import make_identity
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
     get_prototype_info,
@@ -57,6 +60,7 @@ def _handler(
         reg.remove_member = AsyncMock(return_value=True)
     handler = RESTAPIHandler(
         None,
+        identity=make_identity(),
         members=MembersFacade(agent_registry=reg, tlon_paths=p),
         configs=ConfigFacade(config_service=MagicMock(), tlon_paths=p),
         prototypes=PrototypesFacade(tlon_paths=p),
@@ -132,6 +136,35 @@ class TestAdminCreateAgent:
 
 
 class TestAdminUpdateAgent:
+    @pytest.mark.parametrize("agent_id", ["alice", "ALICE"])
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"persona": {"identity": "must not be written"}},
+            {
+                "persona": {"identity": "must not be written"},
+                "llm": {"model_name": "other-model"},
+            },
+        ],
+    )
+    async def test_offline_identity_collision_rejected_before_writes_or_adopt(
+        self, tmp_path: Path, agent_id: str, body: dict[str, object]
+    ) -> None:
+        from tlon.agents.prototypes.instantiate import instantiate
+
+        handler, registry, paths = _handler(tmp_path)
+        # Supported offline creation does not pass the REST create/reload guards.
+        instantiate("developer", agent_id, "离线成员", model="openai/gpt-5", tlon_paths=paths)
+        config_dir = paths.agent_config_dir(agent_id)
+        before = {file.name: file.read_bytes() for file in config_dir.iterdir()}
+
+        response = await handler.handle_update_agent(StubRequest(body=body, agent_id=agent_id))
+
+        assert response.status == 409
+        assert json.loads(response.text)["reason"] == "identity_conflict"
+        registry.adopt_agent.assert_not_awaited()
+        assert {file.name: file.read_bytes() for file in config_dir.iterdir()} == before
+
     async def test_update_persona_and_llm(self, tmp_path: Path):
         handler, reg, p = _handler(tmp_path)
         from tlon.agents.prototypes.instantiate import instantiate
@@ -198,7 +231,9 @@ class TestAdminStaging:
 
     async def test_list_approve_reject(self, tmp_path: Path):
         p = await self._staged(tmp_path)
-        handler = RESTAPIHandler(None, prototypes=PrototypesFacade(tlon_paths=p))
+        handler = RESTAPIHandler(
+            None, identity=make_identity(), prototypes=PrototypesFacade(tlon_paths=p)
+        )
 
         listed = await handler.handle_list_staging(StubRequest())
         assert listed.status == 200
@@ -216,7 +251,9 @@ class TestAdminStaging:
 
     async def test_reject_removes_staging(self, tmp_path: Path):
         p = await self._staged(tmp_path)
-        handler = RESTAPIHandler(None, prototypes=PrototypesFacade(tlon_paths=p))
+        handler = RESTAPIHandler(
+            None, identity=make_identity(), prototypes=PrototypesFacade(tlon_paths=p)
+        )
 
         rejected = await handler.handle_reject_prototype(StubRequest(name="llm-idea"))
         assert rejected.status == 200
@@ -242,7 +279,9 @@ class TestAdminPrototypeManagement:
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
-        return RESTAPIHandler(None, prototypes=PrototypesFacade(tlon_paths=p)), p
+        return RESTAPIHandler(
+            None, identity=make_identity(), prototypes=PrototypesFacade(tlon_paths=p)
+        ), p
 
     async def test_create_writes_trusted_library(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
@@ -489,7 +528,9 @@ class TestAdminPrototypeLessons:
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
-        return RESTAPIHandler(None, prototypes=PrototypesFacade(tlon_paths=p)), p
+        return RESTAPIHandler(
+            None, identity=make_identity(), prototypes=PrototypesFacade(tlon_paths=p)
+        ), p
 
     async def test_create_with_lessons_and_detail_returns_it(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
@@ -569,7 +610,9 @@ class TestAdminPrototypeReviews:
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
-        return RESTAPIHandler(None, prototypes=PrototypesFacade(tlon_paths=p)), p
+        return RESTAPIHandler(
+            None, identity=make_identity(), prototypes=PrototypesFacade(tlon_paths=p)
+        ), p
 
     async def test_staging_detail_carries_reviews(self, tmp_path: Path):
         handler, p = self._handler(tmp_path)
@@ -605,7 +648,9 @@ class TestAdminPrototypeLineage:
 
     def _handler(self, tmp_path: Path) -> tuple[RESTAPIHandler, TlonPaths]:
         p = TlonPaths(home=tmp_path)
-        return RESTAPIHandler(None, prototypes=PrototypesFacade(tlon_paths=p)), p
+        return RESTAPIHandler(
+            None, identity=make_identity(), prototypes=PrototypesFacade(tlon_paths=p)
+        ), p
 
     async def test_create_with_parent_derives_generation(self, tmp_path: Path):
         handler, _p = self._handler(tmp_path)
@@ -729,6 +774,7 @@ class TestGetAgentLineageFields:
         reg.get_agent.return_value = None
         handler = RESTAPIHandler(
             None,
+            identity=make_identity(),
             members=MembersFacade(agent_registry=reg, tlon_paths=TlonPaths(home=tmp_path)),
         )
 

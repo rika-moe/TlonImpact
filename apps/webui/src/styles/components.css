@@ -297,3 +297,8 @@ body {
   font-size: 12px;
   color: var(--neon-yellow);
 }
+
+.identity-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.identity-panel { width: min(100%, 560px); }
+.identity-panel .input { display: block; width: 100%; margin-top: 8px; }
+.identity-panel [role="alert"] { color: var(--color-danger, #ff6b81); }

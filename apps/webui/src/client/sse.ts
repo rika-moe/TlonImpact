@@ -3,7 +3,7 @@
  *
  * Same flow and outward interface as apps/operator/src/client/sseClient.ts,
  * with the Node fetch stream replaced by the browser `EventSource`:
- * - POST /sessions declares username/client_type/mode/filters and returns
+ * - POST /sessions declares client_type/mode/filters and returns
  *   the session id plus the participants/agents snapshots (emitted as
  *   "session"/"agents"/"participants" events).
  * - PATCH /sessions/{id} switches the session to "event" mode.
@@ -17,6 +17,7 @@
  * `dispose()` closes the stream and best-effort DELETEs the session.
  */
 
+import { WEBUI_HEADERS } from "./rest";
 import type { ConnectionStatus, ServerEvent } from "../types";
 
 export const PROTOCOL_VERSION = "2.0.0";
@@ -40,8 +41,6 @@ export interface SseClientOptions {
   baseUrl?: string;
   clientType?: string;
   filters?: Record<string, unknown>;
-  /** Human username for the session (server defaults to "guest" when omitted). */
-  username?: string;
 }
 
 /** Payload types per emitted event name. */
@@ -130,7 +129,7 @@ export class SseClient extends Emitter {
     try {
       response = await fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...WEBUI_HEADERS },
         body: JSON.stringify({ mode }),
       });
     } catch {
@@ -162,6 +161,7 @@ export class SseClient extends Emitter {
       // the closed stream's heartbeat write fails.
       void fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
+        headers: WEBUI_HEADERS,
         keepalive: true,
       }).catch(() => {});
     }
@@ -188,6 +188,7 @@ export class SseClient extends Emitter {
       if (sessionId) {
         void fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}`, {
           method: "DELETE",
+          headers: WEBUI_HEADERS,
         }).catch(() => {});
       }
       this.scheduleReconnect();
@@ -197,9 +198,8 @@ export class SseClient extends Emitter {
   private async openSession(generation: number): Promise<void> {
     const response = await fetch(`${this.baseUrl}/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...WEBUI_HEADERS },
       body: JSON.stringify({
-        username: this.options.username,
         client_type: this.options.clientType ?? "webui",
         mode: "chat",
         filters: this.options.filters ?? {},
@@ -216,6 +216,7 @@ export class SseClient extends Emitter {
     if (this.disposed || generation !== this.generation) {
       void fetch(`${this.baseUrl}/sessions/${encodeURIComponent(data["session_id"])}`, {
         method: "DELETE",
+        headers: WEBUI_HEADERS,
       }).catch(() => {});
       return;
     }

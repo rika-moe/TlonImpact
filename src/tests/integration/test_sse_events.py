@@ -14,15 +14,16 @@ from typing import Any
 
 import aiohttp
 
+from .conftest import WEBUI_HEADERS
+
 EVENT_TIMEOUT = 10.0
 
 
-async def _create_session(http: aiohttp.ClientSession, base_url: str, username: str) -> str:
+async def _create_session(http: aiohttp.ClientSession, base_url: str) -> str:
     """POST /sessions and return the new session id."""
     async with http.post(
         f"{base_url}/sessions",
         json={
-            "username": username,
             "client_type": "test",
             "mode": "chat",
             "protocol_version": "2.0.0",
@@ -59,8 +60,8 @@ async def test_mail_delivered_pushed_to_sse_stream(inproc_server: tuple[str, Pat
     base_url, _ = inproc_server
     token = f"sse-{uuid.uuid4().hex}"
 
-    async with aiohttp.ClientSession() as http:
-        session_id = await _create_session(http, base_url, "alice")
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+        session_id = await _create_session(http, base_url)
         try:
             async with http.get(
                 f"{base_url}/events",
@@ -75,7 +76,6 @@ async def test_mail_delivered_pushed_to_sse_stream(inproc_server: tuple[str, Pat
                 async with http.post(
                     f"{base_url}/messages",
                     json={
-                        "username": "guest",
                         "content": token,
                         "to": ["alice"],
                         "request_id": token,
@@ -101,13 +101,13 @@ async def test_duplicate_stream_rejected_and_unknown_session_404(
     """One stream per session (409 on a second open); unknown -> 404."""
     base_url, _ = inproc_server
 
-    async with aiohttp.ClientSession() as http:
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
         async with http.get(
             f"{base_url}/events", params={"session_id": f"no-such-{uuid.uuid4().hex[:8]}"}
         ) as resp:
             assert resp.status == 404
 
-        session_id = await _create_session(http, base_url, "alice")
+        session_id = await _create_session(http, base_url)
         try:
             async with http.get(
                 f"{base_url}/events",
