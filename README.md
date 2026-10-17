@@ -32,7 +32,7 @@ mkdir -p ~/.tlon
 echo 'DEEPSEEK_API_KEY=sk-...' >> ~/.tlon/.env
 ```
 
-用哪家的模型就配哪家的 key，变量名规则是 provider 段大写、`-` 换 `_`、加 `_API_KEY` 后缀：`DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等。模型是成员级配置，创建成员时在 WebUI 里选。完整配置项（admin token、GitHub 集成等）见 [.env.example](./.env.example)。
+用哪家的模型就配哪家的 key，变量名规则是 provider 段大写、`-` 换 `_`、加 `_API_KEY` 后缀：`DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等。模型是成员级配置，创建成员时在 WebUI 里选。完整配置项（GitHub 集成等）见 [.env.example](./.env.example)。
 
 ### 3. 启动
 
@@ -45,7 +45,7 @@ tlon dream
 1. **AGENTS 视图 → CREATE**：创建第一个成员（选原型、选 provider/模型）
 2. **Mail 视图**：给他写第一封信
 
-所有数据落 `~/.tlon/`；Ctrl+C 停止。服务端默认只绑 `127.0.0.1`；如需绑定非回环地址，务必先在 `.env` 配置 `TLON_ADMIN_TOKEN`。
+所有数据落 `~/.tlon/`；Ctrl+C 停止。服务端只允许绑定本机回环地址（`127.0.0.1`、`localhost`、`::1`）。
 
 > 开发者从源码运行（`uv sync` / `uv run tlon dream`）见 [AGENTS.md](./AGENTS.md)；完整走查与常见问题见 [docs/guides/quickstart.md](./docs/guides/quickstart.md)。
 
@@ -78,3 +78,5 @@ Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtim
 
 本项目以 [PolyForm Noncommercial License 1.0.0](./LICENSE) 发布：个人、学习、研究等非商业用途可自由使用、修改和再分发（须保留版权与许可证声明）；任何商业用途均需另行获得授权。
 
+
+WebUI 首次打开时设置本实例的 username，对应固定地址 `<username>@tlon.internal`；之后自动进入，换浏览器也使用同一身份。身份保存在 `{TLON_HOME}/webui-identity.json`。仅支持本机回环访问，无账号密码或 admin token；WebUI 与 API 同源，其他网页的跨域业务请求会被拒绝。详见 [ADR 0033](docs/decisions/0033-local-webui-identity.md)。旧 TUI、SDK、Telegram 的协议可用性不在此模式的维护范围内。

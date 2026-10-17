@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.identity_helpers import make_identity
 from tlon.api.members import MembersFacade
 from tlon.base.paths import TlonPaths
 from tlon_server.api.rest import RESTAPIHandler
@@ -29,7 +30,7 @@ def _make_handler(
     registry = MagicMock()
     registry.adopt_agent = AsyncMock(return_value=result)
     members = MembersFacade(agent_registry=registry, tlon_paths=TlonPaths(home=tmp_path))
-    return RESTAPIHandler(None, members=members), registry
+    return RESTAPIHandler(None, identity=make_identity(), members=members), registry
 
 
 class TestHandleReloadAgent:
@@ -50,7 +51,10 @@ class TestHandleReloadAgent:
         registry.adopt_agent.assert_awaited_once_with("a-001")
 
     async def test_registry_unavailable_returns_503(self):
-        handler = RESTAPIHandler(None)
+        handler = RESTAPIHandler(
+            None,
+            identity=make_identity(),
+        )
 
         response = await handler.handle_reload_agent(StubRequest("a-001"))
 

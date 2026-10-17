@@ -11,11 +11,13 @@ test("mail receipt preserves failed gateway status without claiming delivery", a
   };
   globalThis.fetch = (async (_url, init) => {
     assert.equal(JSON.parse(String(init?.body)).request_id, "stable");
+    assert.equal("username" in JSON.parse(String(init?.body)), false);
+    assert.equal(new Headers(init?.headers).get("X-Tlon-WebUI"), "1");
     return new Response(JSON.stringify(receipt), { status: 202 });
   }) as typeof fetch;
   try {
     const client = new RestClient();
-    assert.deepEqual(await client.sendMail("sender", {
+    assert.deepEqual(await client.sendMail({
       request_id: "stable", to: ["alice", "issue@github"], content: "hello",
     }), receipt);
   } finally {
@@ -28,7 +30,7 @@ test("lost response exposes original request id for safe retry", async () => {
   globalThis.fetch = (async () => { throw new TypeError("connection lost"); }) as typeof fetch;
   try {
     await assert.rejects(
-      new RestClient().sendMail("sender", { request_id: "stable", to: ["alice"], content: "hello" }),
+      new RestClient().sendMail({ request_id: "stable", to: ["alice"], content: "hello" }),
       (error: unknown) => error instanceof MailSendError
         && error.reason === "submission_unknown" && error.requestId === "stable",
     );

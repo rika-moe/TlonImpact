@@ -89,7 +89,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 
 - [arena/runner.py](../../src/tlon/arena/runner.py) 的 `ArenaRunner` 管理 preparing → running → collecting → done/timed_out/failed；`_feed` 经隔离邮局投信，`_wait_sessions` 连续两次观测 drained。
 - [arena/report.py](../../src/tlon/arena/report.py) 的 `generate_report` 读取归档证据生成报告，不依赖已经拆除的试验家园。生成失败只记录日志及 `run.json` 的 `report_error`，保留证据并继续拆除。
-- [api/arena.py](../../src/tlon/api/arena.py) 的 `ArenaFacade` 提供启动、状态及归档报告读侧；[rest/admin_arena.py](../../src/tlon_server/api/rest/admin_arena.py) 提供 admin 端点，使用现有 admin token 边界。精确路径与字段见 [API reference](../reference/api-reference.md)。
+- [api/arena.py](../../src/tlon/api/arena.py) 的 `ArenaFacade` 提供启动、状态及归档报告读侧；[rest/admin_arena.py](../../src/tlon_server/api/rest/admin_arena.py) 提供 admin 端点，遵守统一的本地浏览器来源边界（ADR 0033）。精确路径与字段见 [API reference](../reference/api-reference.md)。
 - WebUI staging 详情提供演武入口、模型输入、状态轮询、报告与红旗。报告摘要位于 staging detail 的 `arena` 字段，与 execution level 的 `red_flags` 分开。
 - 活跃 run 状态保存在进程内；重启后不恢复进行中的 run 记录，已归档证据仍在磁盘。
 

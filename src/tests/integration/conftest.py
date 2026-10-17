@@ -48,11 +48,7 @@ async def _wait_ready(
     proc: asyncio.subprocess.Process,
     server_output: Callable[[], str],
 ) -> None:
-    """Poll GET /inbox until the REST API answers 200.
-
-    The probe read also creates the "smoke" mailbox — harmless in the
-    throwaway TLON_HOME.
-    """
+    """Poll GET /health until the REST API answers 200."""
     deadline = asyncio.get_running_loop().time() + SERVER_STARTUP_TIMEOUT
     async with aiohttp.ClientSession() as session:
         while True:
@@ -61,7 +57,7 @@ async def _wait_ready(
                     f"tlon dream exited with {proc.returncode} during startup:\n{server_output()}"
                 )
             try:
-                async with session.get(f"{base_url}/inbox", params={"username": "smoke"}) as resp:
+                async with session.get(f"{base_url}/health") as resp:
                     if resp.status == 200:
                         return
             except aiohttp.ClientError:
@@ -80,7 +76,7 @@ async def _run_server(
     """Boot a real ``tlon dream`` subprocess with an isolated TLON_HOME.
 
     Yields (base_url, tlon_home). ``extra_env`` is merged into the
-    subprocess environment on top of TLON_HOME (e.g. TLON_ADMIN_TOKEN).
+    subprocess environment on top of TLON_HOME.
     The subprocess output is drained continuously so a startup failure
     can report what the server said.
     """
@@ -114,6 +110,7 @@ async def _run_server(
         try:
             base_url = f"http://127.0.0.1:{port}"
             await _wait_ready(base_url, proc, _server_output)
+            await _initialize_identity(base_url)
             yield base_url, Path(tlon_home)
         finally:
             if proc.returncode is None:
@@ -137,7 +134,7 @@ async def tlon_server() -> AsyncGenerator[tuple[str, Path]]:
 
 
 async def _wait_ready_http(base_url: str, start_task: asyncio.Task[None]) -> None:
-    """Poll GET /inbox until the in-process REST API answers 200.
+    """Poll GET /health until the in-process REST API answers 200.
 
     ``ServerApp.start()`` returns only after the port is bound, but the
     probe stays (milliseconds in-process): a bound socket is not proof
@@ -151,7 +148,7 @@ async def _wait_ready_http(base_url: str, start_task: asyncio.Task[None]) -> Non
                     f"ServerApp.start() exited during startup: {start_task.exception()!r}"
                 )
             try:
-                async with session.get(f"{base_url}/inbox", params={"username": "smoke"}) as resp:
+                async with session.get(f"{base_url}/health") as resp:
                     if resp.status == 200:
                         return
             except aiohttp.ClientError:
@@ -171,7 +168,7 @@ async def _run_inprocess(
 
     Yields (base_url, tlon_home) — the same shape as ``_run_server``, so
     tests assert against real HTTP over 127.0.0.1 on an ephemeral port,
-    unchanged. ``extra_env`` (e.g. TLON_ADMIN_TOKEN) is applied to the
+    unchanged. ``extra_env`` is applied to the
     process environment and the lazy ``tlon.base.settings`` singleton is
     reset so the server re-resolves settings from it; both are restored
     on teardown. Shutdown is timeout-guarded so a stuck runtime fails the
@@ -197,6 +194,7 @@ async def _run_inprocess(
         base_url = f"http://127.0.0.1:{port}"
         try:
             await _wait_ready_http(base_url, start_task)
+            await _initialize_identity(base_url)
             yield base_url, Path(tlon_home)
         finally:
             try:
@@ -235,3 +233,57 @@ def _find_inbox_mail(tlon_home: Path, member_id: str, token: str) -> dict[str, A
         if token in mail.get("content", ""):
             return mail
     raise AssertionError(f"no mail with token {token!r} in {member_id}'s inbox")
+
+
+WEBUI_HEADERS = {"X-Tlon-WebUI": "1"}
+
+
+async def _initialize_identity(base_url: str) -> None:
+    """Use the same instance setup as WebUI, then register its mailbox."""
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+        async with http.get(f"{base_url}/identity") as response:
+            assert response.status == 200
+            identity = await response.json()
+        if identity["username"] is None:
+            async with http.post(f"{base_url}/identity", json={"username": "alice"}) as response:
+                assert response.status == 201
+        async with http.get(f"{base_url}/inbox") as response:
+            assert response.status == 200
+
+
+async def _send_mail(
+    http: aiohttp.ClientSession,
+    base_url: str,
+    content: str,
+    *,
+    to: list[str],
+    cc: list[str] | None = None,
+    subject: str = "",
+    reply_to: str | None = None,
+    thread_id: str | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """Submit the WebUI wire format and assert durable acceptance."""
+    from uuid import uuid4
+
+    body: dict[str, Any] = {
+        "content": content,
+        "to": to,
+        "subject": subject,
+        "request_id": request_id or uuid4().hex,
+    }
+    if cc is not None:
+        body["cc"] = cc
+    if reply_to is not None:
+        body["in_reply_to"] = reply_to
+    if thread_id is not None:
+        body["thread_id"] = thread_id
+    async with http.post(f"{base_url}/messages", json=body) as response:
+        receipt = await response.json()
+        assert response.status == 202, receipt
+        return dict(receipt)
+
+
+def _register_human(home: Path, username: str) -> None:
+    """Seed a historical correspondent without a self-reported HTTP identity."""
+    MailStore(TlonPaths(home=home).mail_database_file()).register_member(f"human:{username}")

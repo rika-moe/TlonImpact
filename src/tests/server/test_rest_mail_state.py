@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.identity_helpers import make_identity
 from tlon.api.mail import MailFacade
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
@@ -28,6 +29,7 @@ def setup(tmp_path: Path) -> tuple[MailStore, RESTAPIHandler]:
     paths = TlonPaths(home=tmp_path)
     return MailStore(paths.mail_database_file()), RESTAPIHandler(
         None,
+        identity=make_identity(),
         mail=MailFacade(adapter_manager=MagicMock(), agent_registry=MagicMock(), tlon_paths=paths),
     )
 
@@ -48,7 +50,7 @@ async def test_same_timestamp_pagination_and_cursor_visibility(tmp_path: Path) -
         mail.timestamp = mails[0].timestamp
         store.add_to_inbox(mail, "human:alice")
     seen: list[str] = []
-    query = {"username": "alice", "limit": "2"}
+    query = {"limit": "2"}
     while True:
         response = await handler.handle_inbox(Request(query=query))
         assert response.status == 200
@@ -62,9 +64,7 @@ async def test_same_timestamp_pagination_and_cursor_visibility(tmp_path: Path) -
     foreign = letter(9)
     store.add_to_inbox(foreign, "human:bob")
     for cursor in (foreign.id, "missing", ""):
-        response = await handler.handle_inbox(
-            Request(query={"username": "alice", "before": cursor})
-        )
+        response = await handler.handle_inbox(Request(query={"before": cursor}))
         assert response.status == 400
         assert json.loads(response.text)["reason"] == "invalid_cursor"
         request = Request(query={"before": cursor})
@@ -83,11 +83,11 @@ async def test_thread_read_covers_unloaded_history_and_only_own_incoming(tmp_pat
         store.add_to_inbox(mail, "agent")
     sent = letter(3, root.thread_id)
     store.append_sent(sent, "human:alice")
-    response = await handler.handle_inbox(Request(query={"username": "alice", "limit": "1"}))
+    response = await handler.handle_inbox(Request(query={"limit": "1"}))
     assert json.loads(response.text)["count"] == 1
     for read in (True, False):
         response = await handler.handle_inbox_read(
-            Request({"username": "alice", "read": read, "thread_id": root.thread_id})
+            Request({"read": read, "thread_id": root.thread_id})
         )
         assert response.status == 200
         assert json.loads(response.text) == {"mail_ids": [m.id for m in mails], "read": read}
@@ -96,15 +96,14 @@ async def test_thread_read_covers_unloaded_history_and_only_own_incoming(tmp_pat
             [] if read else [m.id for m in mails]
         )
         assert len(reopened.mails("agent", "unread")) == 3
-    response = await handler.handle_inbox_read(
-        Request({"username": "alice", "read": False, "mail_id": sent.id})
-    )
+    response = await handler.handle_inbox_read(Request({"read": False, "mail_id": sent.id}))
     assert response.status == 404
     assert json.loads(response.text)["reason"] == "mail_not_found"
     response = await handler.handle_inbox_read(
         Request({"username": "bob", "read": True, "mail_id": root.id})
     )
-    assert response.status == 404
+    assert response.status == 400
+    assert json.loads(response.text)["reason"] == "identity_managed"
 
 
 @pytest.mark.parametrize(
@@ -112,14 +111,14 @@ async def test_thread_read_covers_unloaded_history_and_only_own_incoming(tmp_pat
     [
         (None, "invalid_body"),
         ([], "invalid_body"),
-        ({}, "invalid_username"),
-        ({"username": "alice", "read": 1, "mail_id": "x"}, "invalid_read"),
-        ({"username": "../alice", "read": True, "mail_id": "x"}, "invalid_username"),
-        ({"username": "alice", "read": False}, "invalid_selector"),
-        ({"username": "alice", "read": True, "mail_id": "x", "thread_id": "x"}, "invalid_selector"),
-        ({"username": "alice", "read": True, "mail_id": None}, "invalid_mail_id"),
-        ({"username": "alice", "read": True, "mail_id": " "}, "invalid_mail_id"),
-        ({"username": "alice", "read": True, "thread_id": " "}, "invalid_thread_id"),
+        ({}, "invalid_read"),
+        ({"read": 1, "mail_id": "x"}, "invalid_read"),
+        ({"username": "../alice", "read": True, "mail_id": "x"}, "identity_managed"),
+        ({"read": False}, "invalid_selector"),
+        ({"read": True, "mail_id": "x", "thread_id": "x"}, "invalid_selector"),
+        ({"read": True, "mail_id": None}, "invalid_mail_id"),
+        ({"read": True, "mail_id": " "}, "invalid_mail_id"),
+        ({"read": True, "thread_id": " "}, "invalid_thread_id"),
     ],
 )
 async def test_read_validation(tmp_path: Path, body: Any, reason: str) -> None:
@@ -153,7 +152,7 @@ async def test_nonpositive_limit_is_not_a_cursor_error(
 ) -> None:
     store, handler = setup(tmp_path)
     store.register_member("human:alice")
-    request = Request(query={"username": "alice", "limit": limit})
+    request = Request(query={"limit": limit})
     request.match_info["member_id"] = "human:alice"
     response = await (
         handler.handle_member_mail(request) if observer else handler.handle_inbox(request)
@@ -170,15 +169,13 @@ async def test_cursor_ignores_newer_insert_between_pages(tmp_path: Path) -> None
     mails = [letter(i) for i in range(5)]
     for mail in mails:
         store.add_to_inbox(mail, "human:alice")
-    first = json.loads(
-        (await handler.handle_inbox(Request(query={"username": "alice", "limit": "2"}))).text
-    )
+    first = json.loads((await handler.handle_inbox(Request(query={"limit": "2"}))).text)
     newer = letter(9)
     store.add_to_inbox(newer, "human:alice")
     second = json.loads(
         (
             await handler.handle_inbox(
-                Request(query={"username": "alice", "limit": "10", "before": first["next_before"]})
+                Request(query={"limit": "10", "before": first["next_before"]})
             )
         ).text
     )
@@ -191,14 +188,18 @@ async def test_single_mail_read_and_missing_target_preserve_other_state(tmp_path
     a, b = letter(1), letter(2)
     for mail in (a, b):
         store.add_to_inbox(mail, "human:alice")
-    response = await handler.handle_inbox_read(
-        Request({"username": "alice", "read": True, "mail_id": a.id})
-    )
+    response = await handler.handle_inbox_read(Request({"read": True, "mail_id": a.id}))
     assert response.status == 200
     assert json.loads(response.text)["mail_ids"] == [a.id]
-    response = await handler.handle_inbox_read(
-        Request({"username": "alice", "read": False, "thread_id": "missing"})
-    )
+    response = await handler.handle_inbox_read(Request({"read": False, "thread_id": "missing"}))
     assert response.status == 404
     reopened = MailStore(store.database)
     assert [m.id for m in reopened.mails("human:alice", "unread")] == [b.id]
+
+
+async def test_read_username_query_cannot_override_identity(tmp_path: Path) -> None:
+    _, handler = setup(tmp_path)
+    request = Request({"read": True, "mail_id": "some-mail"}, query={"username": "bob"})
+    response = await handler.handle_inbox_read(request)
+    assert response.status == 400
+    assert json.loads(response.text)["reason"] == "identity_managed"

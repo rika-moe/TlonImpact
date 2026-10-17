@@ -65,8 +65,8 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
 
   const readOnly = observedId !== selfId;
   const observedAddress = memberAddress(observedId);
-  const mailbox = useMemo(() => new MailboxController(rest, sse, username, observedId,
-    observedAddress, readOnly), [rest, sse, username, observedId, observedAddress, readOnly]);
+  const mailbox = useMemo(() => new MailboxController(rest, sse, observedId,
+    observedAddress, readOnly), [rest, sse, observedId, observedAddress, readOnly]);
   const { mails, loading, loadingMore, syncing, marking, hasMore, notice } = useSyncExternalStore(
     mailbox.subscribe, mailbox.getSnapshot);
   useEffect(() => {
@@ -215,7 +215,6 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
         <ComposeModal
           request={compose}
           rest={rest}
-          username={username}
           myAddress={myAddress}
           participants={participants}
           onSent={onSent}
@@ -472,7 +471,6 @@ function Conversation({
 function ComposeModal({
   request,
   rest,
-  username,
   myAddress,
   participants,
   onSent,
@@ -480,7 +478,6 @@ function ComposeModal({
 }: {
   request: ComposeRequest;
   rest: RestClient;
-  username: string;
   myAddress: string;
   participants: ParticipantInfo[];
   onSent: (mail: MailItem, message: string) => void;
@@ -514,7 +511,7 @@ function ComposeModal({
     setSending(true);
     setError(null);
     try {
-      const receipt = await rest.sendMail(username, {
+      const receipt = await rest.sendMail({
         request_id: requestId,
         to: toList,
         cc: ccList,

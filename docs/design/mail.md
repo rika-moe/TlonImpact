@@ -115,7 +115,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 [Mailbox](../../src/tlon/organization/mail/mailbox.py) 是共享 SQLite 数据库的成员视图。正文只保存一份，发件箱按发件人查询，收件箱按邮箱归属查询，每个收件人单独保存已读位。查看不自动标读，`mark_read` 幂等，不向发件人提供已读回执。
 
-人类客户端的显式已读管理：`POST /inbox/read` 只修改指定人类的收件关系，支持单封或整个线程，线程操作包括尚未加载的历史邮件。本人邮箱展示未读数，观察其他成员邮箱仍纯只读。同步与历史分页契约见 [server-protocol.md](./server-protocol.md)，页面合并规则见 [webui.md](./webui.md)；选择的历史见 [ADR 0031](../decisions/0031-webui-mail-consistency.md)。
+人类客户端的显式已读管理：`POST /inbox/read` 只修改实例身份对应成员的收件关系，支持单封或整个线程，线程操作包括尚未加载的历史邮件。本人邮箱展示未读数，观察其他成员邮箱仍纯只读。同步与历史分页契约见 [server-protocol.md](./server-protocol.md)，页面合并规则见 [webui.md](./webui.md)；选择的历史见 [ADR 0031](../decisions/0031-webui-mail-consistency.md)。
 
 EventBus 只降低发现新信的延迟，不承担可靠存储。成员启动检查与周期 rescan 发现已提交未读；通知丢失或队列溢出不会删除邮件。数据库写入经工作线程执行，事务与唯一约束承担并发一致性，不再维护 JSONL 扫描缓存或按目录锁表。
 
@@ -180,19 +180,21 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 ## 人类接入
 
+WebUI 采用本地单人实例身份（[ADR 0033](../decisions/0033-local-webui-identity.md)）：首次填写 username 后保存在服务端，后续自动进入，不设账号密码或 admin token。REST 发信、个人邮箱、标读和 SSE session 都从实例身份派生，客户端不能自报 username；来源校验隔离非同源网页，不提供本机进程隔离。邮件本身不增加认证徽章、人类等级或管理员标签，agents 仍把该地址当作普通通信成员。历史 guest 保留为另一成员，不迁移或关联；退休交接等现有 guest 兜底行为未因本次修改而改变。
+
 人类不是协议层的特殊存在，而是总线上的一个普通成员。[organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。
 
-adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。TUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 [docs/design/server-protocol.md](./server-protocol.md)）。
+adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。WebUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
 发言侧，`speak` 只接受显式的 `to` / `cc`，收件人经共享 resolver 解析，任何无效或退休收件人都导致整封拒绝——没有地址的邮件是非法的。收件侧与所有成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的副本 fan-out 给 attach 的会话。这条「每成员一个邮箱、经成员投递」的单轨对人也成立（推送分工详见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
-`AdapterManager` 管理 adapter 的生命周期：首个会话 attach 时创建（attach/detach 由一把锁串行化，两个并行的首次 attach 不会泄漏出两个 adapter），最后一个 detach 时关停。关键语义在**首次接触**：第一次 attach（或 REST 发信）同时在 SQLite 注册人类身份——连接过一次的人类就是「已知人类」，此后离线时发给他的邮件留在持久邮箱里，上线再读。REST 入口 `POST /messages` 走 `publish_as`：发件人身份来自请求体的 `username`，没有在线 adapter 时建一个临时的，发完即拆（若期间有会话 attach 则保留——拆除前再查一次会话数）。
+`AdapterManager` 管理 adapter 的生命周期：首个会话 attach 时创建（attach/detach 由一把锁串行化，两个并行的首次 attach 不会泄漏出两个 adapter），最后一个 detach 时关停。关键语义在**首次接触**：第一次 attach（或 REST 发信）同时在 SQLite 注册人类身份——连接过一次的人类就是「已知人类」，此后离线时发给他的邮件留在持久邮箱里，上线再读。REST 入口 `POST /messages` 走 `publish_as`：发件人身份由服务端实例持久 username 决定，旧请求体 username 返回 400 `identity_managed`；底层 `publish_as` 仍接受独立 username 参数，REST 层传入服务端决定的值，没有在线 adapter 时建一个临时的，发完即拆（若期间有会话 attach 则保留——拆除前再查一次会话数）。
 
 人类离线时邮件留在持久邮箱，这不是降级路径而是一等语义：邮箱是磁盘事实，adapter 只是「在线时的推送通道」。上线后 `GET /inbox` 分页读取持久历史，SSE 只是增量——人类和睡眠中被唤醒的 agent 遵循同一套「未读在磁盘、上线补扫」的模型。人机平等在这条规则上最具体：没有谁的消息会因为你不在线而消失，agent 的不会，人的也不会。
 
 邮箱对观察者也开放：`GET /members/{member_id}/mail` 读任意成员（agent 裸 id、人类 `human:<username>`）的持久邮箱，inbox+sent 合并按时间序，响应形状与 `GET /inbox` 一致但**不合成 `read` 字段**——已读状态是成员自己的状态，不是观察者该看到的。观测端点纯只读：不会为不存在的成员创建邮箱（成员不存在返回 404），只把磁盘事实以协议形状吐出来。
 
-值得注意的还有身份模型：人类成员 id 带 `human:` 前缀，地址上却与 agent 同域同名空间（local part 撞名时 agent 优先）。这是一个刻意的轻量选择——社会里成员数量小、由同一批人管理，撞名靠约定而非命名空间隔离解决；前缀只留在成员 id 层用于区分运行时类型，不进地址，人类在地址簿里和 agent 长得一样。
+值得注意的还有身份模型：人类成员 id 带 `human:` 前缀，地址上却与 agent 同域同名空间（local part 撞名时 agent 优先）。地址解析仍保留 agent 优先的既有规则；WebUI 首次设置身份时会拒绝保留名与已有 agent id，避免新操作者地址与现有成员冲突。前缀只留在成员 id 层用于区分运行时类型，不进地址，人类在地址簿里和 agent 长得一样。
 
 ## 不变量
 
@@ -205,7 +207,7 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 
 ## 客户端与历史来源
 
-当前人类通道包括 Operator TUI、[WebUI](./webui.md) 和 [Telegram](./telegram.md)，共用 [REST/SSE 协议](./server-protocol.md)。聊天室、正文 @ 寻址与旧 JSONL 投递机制的替代原因分别见 [ADR 0002](../decisions/0002-mail-as-only-channel.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
+当前维护的人类通道是 [WebUI](./webui.md)，使用 [REST/SSE 协议](./server-protocol.md)。Operator TUI、SDK 与 [Telegram](./telegram.md) 代码仍保留，但不再保证当前服务端接入兼容；本次不维护其可用性。聊天室、正文 @ 寻址与旧 JSONL 投递机制的替代原因分别见 [ADR 0002](../decisions/0002-mail-as-only-channel.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
 ## 未实施方向与当前边界
 

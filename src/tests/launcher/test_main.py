@@ -46,10 +46,15 @@ class TestCreateParser:
         assert args.debug is True
 
     def test_dream_custom_host_and_port(self):
-        args = create_parser().parse_args(["dream", "--host", "0.0.0.0", "--rest-port", "9090"])
+        args = create_parser().parse_args(["dream", "--host", "localhost", "--rest-port", "9090"])
 
-        assert args.host == "0.0.0.0"
+        assert args.host == "localhost"
         assert args.rest_port == 9090
+
+    @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.10", "example.com"])
+    def test_dream_rejects_non_loopback_host(self, host: str) -> None:
+        with pytest.raises(SystemExit):
+            create_parser().parse_args(["dream", "--host", host])
 
     def test_ops_defaults(self):
         args = create_parser().parse_args(["ops"])

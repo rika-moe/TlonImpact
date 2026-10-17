@@ -8,7 +8,7 @@ import sqlite3
 
 from aiohttp import web
 
-from tlon.api.mail import DEFAULT_USERNAME, MailSubmissionError
+from tlon.api.mail import MailSubmissionError
 from tlon.base.logger import get_logger
 from tlon_server.api.send_mail import SendMailError, parse_send_mail_fields
 
@@ -24,8 +24,6 @@ class MailHandlers(RestHandlerBase):
         """GET /inbox - The human member's own mail (mail model, R2).
 
         Query Parameters:
-            username: Human username (default: "guest"); the inbox of
-                "human:<username>" is served
             limit: Maximum number of mails (default: 50, max: 200)
             before: Earliest mail id from previous page; must be visible in this mailbox
 
@@ -38,18 +36,12 @@ class MailHandlers(RestHandlerBase):
                 {"status": "error", "message": "Mail storage not available"}, status=503
             )
 
-        username_raw = request.query.get("username")
-        if username_raw is None:
-            username = DEFAULT_USERNAME
-        else:
-            username = username_raw.strip()
-            # The username becomes a directory name — reject empty and
-            # anything carrying a path separator (traversal guard)
-            if not username or "/" in username or "\\" in username:
-                return self._json_response(
-                    {"error": f"Invalid username: {username_raw!r}", "reason": "invalid_username"},
-                    status=400,
-                )
+        if "username" in request.query:
+            return self._json_response(
+                {"error": "Identity is managed by the server", "reason": "identity_managed"},
+                status=400,
+            )
+        username = self.identity.require_username()
 
         limit = _parse_limit(request, default=50, maximum=200)
         if limit <= 0:
@@ -117,7 +109,7 @@ class MailHandlers(RestHandlerBase):
     async def handle_inbox_read(self, request: web.Request) -> web.Response:
         """POST /inbox/read explicitly changes this human's incoming read state.
 
-        JSON requires username, read (boolean), and exactly one non-empty
+        JSON requires read (boolean), and exactly one non-empty
         mail_id or thread_id. A thread includes all incoming history in one
         transaction. Returns mail_ids/read; malformed input is 400 and no
         matching incoming relation is 404. Sent-only copies are not writable.
@@ -135,16 +127,12 @@ class MailHandlers(RestHandlerBase):
                 {"error": "Request body must be a JSON object", "reason": "invalid_body"},
                 status=400,
             )
-        username = body.get("username")
-        if (
-            not isinstance(username, str)
-            or not username.strip()
-            or "/" in username
-            or "\\" in username
-        ):
+        if "username" in body or "username" in request.query:
             return self._json_response(
-                {"error": "Invalid username", "reason": "invalid_username"}, status=400
+                {"error": "Identity is managed by the server", "reason": "identity_managed"},
+                status=400,
             )
+        username = self.identity.require_username()
         if not isinstance(body.get("read"), bool):
             return self._json_response(
                 {"error": "Field 'read' must be a boolean", "reason": "invalid_read"}, status=400
@@ -178,13 +166,12 @@ class MailHandlers(RestHandlerBase):
     async def handle_send_message(self, request: web.Request) -> web.Response:
         """POST /messages - Send a mail as a human member (protocol v2, PR-1).
 
-        The sender's identity comes from the body's ``username``. If the
+        The sender identity comes from the instance identity. If the
         human has no live adapter, a transient one is created — first
         contact also creates the persistent mailbox, same semantics as
         the first session attach.
 
         Request Body:
-            username: Human username (default: "guest")
             content: Mail content (required, non-empty)
             to: Recipients (names, ids or full addresses)
             cc: Carbon-copy recipients (optional)
@@ -215,20 +202,12 @@ class MailHandlers(RestHandlerBase):
                 status=400,
             )
 
-        username_raw = body.get("username", DEFAULT_USERNAME)
-        if not isinstance(username_raw, str):
+        if "username" in body or "username" in request.query:
             return self._json_response(
-                {"error": "Field 'username' must be a string", "reason": "invalid_username"},
+                {"error": "Identity is managed by the server", "reason": "identity_managed"},
                 status=400,
             )
-        username = username_raw.strip()
-        # The username becomes a directory name — reject empty and
-        # anything carrying a path separator (traversal guard)
-        if not username or "/" in username or "\\" in username:
-            return self._json_response(
-                {"error": f"Invalid username: {username_raw!r}", "reason": "invalid_username"},
-                status=400,
-            )
+        username = self.identity.require_username()
 
         parsed = parse_send_mail_fields(body)
         if isinstance(parsed, SendMailError):

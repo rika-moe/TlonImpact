@@ -64,7 +64,10 @@ From "The Circular Ruins": The dreamer creates reality through dreams.
 The server is the dream that sustains the Tlon universe.""",
     )
     dream_parser.add_argument(
-        "--host", default="127.0.0.1", help="Host to bind to (default: 127.0.0.1)"
+        "--host",
+        default="127.0.0.1",
+        choices=("127.0.0.1", "localhost", "::1"),
+        help="Loopback host to bind to (default: 127.0.0.1)",
     )
     dream_parser.add_argument(
         "--rest-port", type=int, default=8080, help="Port for the HTTP API (default: 8080)"

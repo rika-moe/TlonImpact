@@ -61,6 +61,11 @@ class AdminAgentHandlers(RestHandlerBase):
             )
 
         agent_id = request.match_info["agent_id"]
+        if agent_id.casefold() == self.identity.require_username().casefold():
+            return self._json_response(
+                {"error": "Member id conflicts with WebUI identity", "reason": "identity_conflict"},
+                status=409,
+            )
         result = await self.members.adopt(agent_id)
         return self._json_response({"status": "success", "agent_id": agent_id, "result": result})
 
@@ -114,6 +119,11 @@ class AdminAgentHandlers(RestHandlerBase):
                 status=400,
             )
         agent_id = str(body.get("agent_id") or f"m-{prototype}-{uuid.uuid4().hex[:8]}")
+        if agent_id.casefold() == self.identity.require_username().casefold():
+            return self._json_response(
+                {"error": "Member id conflicts with WebUI identity", "reason": "identity_conflict"},
+                status=409,
+            )
         params: dict[str, Any] | None = body.get("params")
         persona: dict[str, Any] = body.get("persona") or {}
 
@@ -124,6 +134,11 @@ class AdminAgentHandlers(RestHandlerBase):
         except PrototypeError as e:
             return self._json_response({"status": "error", "message": str(e)}, status=400)
 
+        if agent_id.casefold() == self.identity.require_username().casefold():
+            return self._json_response(
+                {"error": "Member id conflicts with WebUI identity", "reason": "identity_conflict"},
+                status=409,
+            )
         result = await self.members.adopt(agent_id)
         return self._json_response(
             {

@@ -1,8 +1,10 @@
-"""Unit tests for the ``tlon dream`` startup banner's security warning."""
+"""Unit tests for the ``tlon dream`` loopback startup boundary."""
+
+from unittest.mock import MagicMock
 
 import pytest
 
-from tlon_server.serverapp import _LOOPBACK_HOSTS, _startup_banner
+from tlon_server.serverapp import _LOOPBACK_HOSTS, ServerApp, _startup_banner
 
 
 @pytest.mark.parametrize("host", sorted(_LOOPBACK_HOSTS))
@@ -12,8 +14,7 @@ def test_loopback_bind_has_no_security_warning(host: str) -> None:
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.10", "example.com"])
-def test_non_loopback_bind_warns(host: str) -> None:
-    """Wildcard or LAN/public binds get a visible no-auth warning."""
-    banner = _startup_banner(host, 8080)
-    assert "Security" in banner
-    assert "NO authentication" in banner
+def test_non_loopback_bind_is_rejected(host: str) -> None:
+    """Never expose the unauthenticated instance on wildcard/LAN addresses."""
+    with pytest.raises(ValueError, match="loopback"):
+        ServerApp(host=host, tlon_paths=MagicMock(), settings=MagicMock())

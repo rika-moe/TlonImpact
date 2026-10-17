@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.identity_helpers import make_identity
 from tlon.api.mail import MailFacade
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
@@ -34,6 +35,7 @@ def paths(tmp_path: Path) -> TlonPaths:
 def handler(paths: TlonPaths) -> RESTAPIHandler:
     return RESTAPIHandler(
         None,
+        identity=make_identity(),
         mail=MailFacade(adapter_manager=MagicMock(), agent_registry=MagicMock(), tlon_paths=paths),
     )
 
@@ -61,15 +63,15 @@ class TestHandleInbox:
     async def test_returns_member_mail(self, paths: TlonPaths, handler: RESTAPIHandler):
         seeded = await _seed_mailbox(paths, "alice")
 
-        response = await handler.handle_inbox(StubRequest({"username": "alice"}))
+        response = await handler.handle_inbox(StubRequest({}))
 
         assert response.status == 200
         body = json.loads(response.text)
         assert body["count"] == len(seeded)
         assert [m["id"] for m in body["mails"]] == [m.id for m in seeded]
 
-    async def test_defaults_to_guest(self, paths: TlonPaths, handler: RESTAPIHandler):
-        await _seed_mailbox(paths, "guest")
+    async def test_uses_instance_identity(self, paths: TlonPaths, handler: RESTAPIHandler):
+        await _seed_mailbox(paths, "alice")
 
         response = await handler.handle_inbox(StubRequest())
 
@@ -78,7 +80,7 @@ class TestHandleInbox:
         assert body["count"] == 3
 
     async def test_empty_inbox(self, handler: RESTAPIHandler):
-        response = await handler.handle_inbox(StubRequest({"username": "nobody"}))
+        response = await handler.handle_inbox(StubRequest())
 
         assert response.status == 200
         body = json.loads(response.text)
@@ -87,22 +89,23 @@ class TestHandleInbox:
     async def test_limit_is_capped(self, paths: TlonPaths, handler: RESTAPIHandler):
         await _seed_mailbox(paths, "alice", count=5)
 
-        response = await handler.handle_inbox(StubRequest({"username": "alice", "limit": "2"}))
+        response = await handler.handle_inbox(StubRequest({"limit": "2"}))
 
         body = json.loads(response.text)
         assert body["count"] == 2
         # The most recent mails are kept
         assert [m["content"] for m in body["mails"]] == ["letter 3", "letter 4"]
 
-    async def test_invalid_username_rejected(self, handler: RESTAPIHandler):
-        for bad in ("", "../evil", "a/b", "a\\b"):
+    async def test_client_cannot_override_instance_identity(self, handler: RESTAPIHandler):
+        for bad in ("alice", "bob", "", "../evil", "a/b", "a\\b"):
             response = await handler.handle_inbox(StubRequest({"username": bad}))
             assert response.status == 400, f"username {bad!r} must be rejected"
+            assert json.loads(response.text)["reason"] == "identity_managed"
 
     async def test_mail_facade_unavailable_returns_503(self):
-        handler = RESTAPIHandler(None, mail=None)
+        handler = RESTAPIHandler(None, identity=make_identity(), mail=None)
 
-        response = await handler.handle_inbox(StubRequest({"username": "alice"}))
+        response = await handler.handle_inbox(StubRequest({}))
 
         assert response.status == 503
 
@@ -113,7 +116,7 @@ class TestHandleInbox:
         mailbox = Mailbox(paths.mail_database_file(), "human:alice")
         await mailbox.mark_read(seeded[0].id)
 
-        response = await handler.handle_inbox(StubRequest({"username": "alice"}))
+        response = await handler.handle_inbox(StubRequest({}))
 
         body = json.loads(response.text)
         read_by_id = {m["id"]: m["read"] for m in body["mails"]}
@@ -130,7 +133,7 @@ class TestHandleInbox:
         )
         await mailbox.append_sent(mail)
 
-        response = await handler.handle_inbox(StubRequest({"username": "alice"}))
+        response = await handler.handle_inbox(StubRequest({}))
 
         body = json.loads(response.text)
         assert body["mails"][0]["read"] is True

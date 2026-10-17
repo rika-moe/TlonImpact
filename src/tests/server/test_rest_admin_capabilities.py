@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tests.identity_helpers import make_identity
 from tlon.agents.capabilities.staging import append_staging_review, write_staging_capability
 from tlon.api.capabilities import CapabilitiesFacade
 from tlon.base.paths import TlonPaths
@@ -74,6 +75,7 @@ def _handler(tmp_path: Path, wire: bool = True) -> tuple[RESTAPIHandler, TlonPat
     p = TlonPaths(home=tmp_path)
     handler = RESTAPIHandler(
         None,
+        identity=make_identity(),
         capabilities=CapabilitiesFacade(tlon_paths=p) if wire else None,
     )
     return handler, p

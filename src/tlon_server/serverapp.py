@@ -27,20 +27,21 @@ from tlon.base.settings import Settings, load_process_env
 from tlon.base.tracing.otel import init_tracing, shutdown_tracing
 from tlon_server.api.rest import WEBUI_DIST_DIR, RESTServer
 from tlon_server.core.client_gateway import ClientGateway
+from tlon_server.core.local_identity import LocalIdentity
 from tlon_server.core.member_directory import MemberDirectory
 from tlon_server.core.notification_service import NotificationService
 from tlon_server.core.session_manager import SessionManager
 
 logger = get_logger(__name__)
 
-# Hosts that keep the server reachable only from this machine. Anything
-# else (wildcard or a LAN/public address) exposes an unauthenticated API.
+# The single-user WebUI only serves loopback listeners (ADR 0033).
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _startup_banner(host: str, rest_port: int) -> str:
     """User-facing startup banner printed to the terminal by `tlon dream`."""
-    base = f"http://{host}:{rest_port}"
+    authority = f"[{host}]" if ":" in host else host
+    base = f"http://{authority}:{rest_port}"
     lines = [
         "",
         "🐙 Tlon dream is running",
@@ -50,10 +51,6 @@ def _startup_banner(host: str, rest_port: int) -> str:
         lines.append(f"   WebUI      : {base}/ui/")
     else:
         lines.append("   WebUI      : not built (cd apps/webui && npm install && npm run build)")
-    if host not in _LOOPBACK_HOSTS:
-        lines.append("   ⚠️  Security  : non-loopback bind — Tlon has NO authentication;")
-        lines.append("                 anyone who can reach this port can read mail")
-        lines.append("                 and call admin endpoints")
     lines.append("")
     return "\n".join(lines)
 
@@ -68,7 +65,7 @@ class ServerApp:
     - Coordinating graceful shutdown
 
     Example:
-        >>> app = ServerApp(host="0.0.0.0", rest_port=8080)
+        >>> app = ServerApp(host="127.0.0.1", rest_port=8080)
         >>> await app.initialize()  # DI assembly
         >>> await app.start()       # Start serving
         >>> await app.shutdown()    # Cleanup
@@ -93,6 +90,8 @@ class ServerApp:
                 built by the entry point (``run_server``); None builds one
                 from the current environment (bare test setups)
         """
+        if host not in _LOOPBACK_HOSTS:
+            raise ValueError("Tlon only supports loopback hosts: 127.0.0.1, localhost, ::1")
         self.host = host
         self.rest_port = rest_port
         self._paths = tlon_paths or TlonPaths()
@@ -185,7 +184,7 @@ class ServerApp:
             capabilities=runtime.capabilities,
             host=self.host,
             port=self.rest_port,
-            admin_token=self._settings.admin_api_token or None,  # ADR 0013
+            identity=LocalIdentity(self._paths.webui_identity_file()),
             github_webhook_secret=self._settings.github_webhook_secret or None,
         )
 
@@ -228,15 +227,6 @@ class ServerApp:
             rest_port=self.rest_port,
             agent_count=agent_count,
         )
-        if self.host not in _LOOPBACK_HOSTS:
-            logger.warning(
-                "server_exposed_non_loopback",
-                host=self.host,
-                rest_port=self.rest_port,
-            )
-        if self._settings.admin_api_token:
-            logger.info("admin_auth_enabled")
-
         print(_startup_banner(self.host, self.rest_port), flush=True)
 
         # Wait for shutdown signal

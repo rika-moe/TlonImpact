@@ -155,7 +155,7 @@ agent:
 读取方是 [base/settings.py](../../src/tlon/base/settings.py) 的 `Settings`（只处理进程级基建与密钥；业务配置在 `AgentConfig`）与 [base/tracing/otel.py](../../src/tlon/base/tracing/otel.py)。`.env` 在 **`{TLON_HOME}/.env`**（默认 `~/.tlon/.env`，配置与数据同目录）加载，且不覆盖已设置的真实环境变量（`load_process_env`，`override=False`）；`TLON_HOME` 本身只认真实环境变量，不来自 `.env`。
 
 <!-- BEGIN GENERATED: env-vars -->
-`Settings` 读取的环境变量（13 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`Settings` 读取的环境变量（12 个，按源码顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -168,7 +168,6 @@ agent:
 | `TLON_LOG_RETENTION_DAYS` | 7 | Logging: retention (days) for the daily server log file sink |
 | `TLON_CONTAINER_MEMORY_BUDGET` | "" | Society-level container resource budget (issue #24): total memory budget across all agent containers (e.g. "4g"); empty = no budget. Warning-only — exceeding it logs container_memory_budget_exceeded, nothing is enforced. |
 | `TLON_ARENA_MODEL` | "" | 演武场（docs/design/arena.md 「成本界」）：run 请求未带 model 时的缺省； 空 = 未配置，run 必须显式指定模型（显式优于静默错默认） |
-| `TLON_ADMIN_TOKEN` | "" | Admin API auth (ADR 0013): shared Bearer token guarding /admin/*; empty = auth disabled (default, localhost trust boundary) |
 | `GITHUB_WEBHOOK_SECRET` | "" | GitHub webhook ingress (see docs/design/mail.md 「外部来信与信任面」): HMAC secret of the webhook; empty = POST /webhooks/github is not registered at all |
 | `GITHUB_RECIPIENT` | "" | GitHub 来信的默认收件人 member id；空 = 发给全体已知人类 |
 | `GITHUB_TOKEN` | "" | GitHub API token（出站：回信 → issue/PR comment）； 空 = 出站禁用，入站不受影响 |
@@ -193,6 +192,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ```
 ~/.tlon/
 ├── .env                              # 进程级环境配置（API key 等，可选；真实环境变量优先）
+├── webui-identity.json                # 首次 WebUI 设置的实例 username（ADR 0033；非密码/凭据）
 ├── cron.yaml                         # 声明式周期任务邮件（可选；启动时读一次，改动需重启）
 ├── policy.tlon                       # 社会政策文件（可选；ADR 0022，tilt/solvent?/full-member? hook；缺失即内嵌默认政策）
 ├── shared/
@@ -229,6 +229,8 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ```
 
 要点：
+
+- `webui-identity.json` 由 `TlonPaths.webui_identity_file` 定位，内容为 `{"username":"alice"}`；首次设置后地址恒定为 `alice@tlon.internal`。跨浏览器和重启复用；只允许初始化一次，不提供改名功能。文件损坏启动报错，不回落 guest。WebUI 不再使用 admin token；本地接入边界见 [ADR 0033](../decisions/0033-local-webui-identity.md)。
 
 - 人类 id `human:{username}` 在共享 SQLite 中拥有邮箱归属，首次 attach 或投信时注册。
 - SQLite 已注册人类即 known；离线不影响本地入箱。旧 JSONL 邮箱仅保留为离线档案，不读取、不导入、不双写、不删除。

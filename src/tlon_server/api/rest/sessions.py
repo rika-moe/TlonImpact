@@ -7,12 +7,11 @@ from typing import Any
 
 from aiohttp import web
 
-from tlon.api.mail import DEFAULT_USERNAME
 from tlon.base.events.event import Event
 from tlon.base.logger import get_logger
 from tlon_server.core.session_manager import ClientSession
 
-from .common import RestHandlerBase, _validate_username
+from .common import RestHandlerBase
 
 logger = get_logger("tlon_server.api.rest")
 
@@ -91,7 +90,7 @@ class SessionHandlers(RestHandlerBase):
         """Serialize a session's current state for v2 responses."""
         return {
             "session_id": session.id,
-            "username": session.metadata.get("username", DEFAULT_USERNAME),
+            "username": session.metadata["username"],
             "client_type": session.client_type,
             "mode": session.mode,
             "filters": session.filters,
@@ -101,13 +100,12 @@ class SessionHandlers(RestHandlerBase):
     async def handle_create_session(self, request: web.Request) -> web.Response:
         """POST /sessions - Establish a client session (protocol v2, PR-2).
 
-        The client declares its identity, mode and filters up front; the
+        The client declares its mode and filters up front; the
         response carries the session id plus the participants/agents
         snapshots. The event handler is registered only when the client
         opens its SSE stream (GET /events).
 
         Request Body:
-            username: Human username (default: "guest")
             client_type: Client type ("tui", "web", ...)
             mode: Initial mode ("chat" | "event" | "agent", default "chat")
             filters: Optional initial event filters
@@ -143,15 +141,12 @@ class SessionHandlers(RestHandlerBase):
                 status=400,
             )
 
-        username = _validate_username(body.get("username", DEFAULT_USERNAME))
-        if username is None:
+        if "username" in body or "username" in request.query:
             return self._json_response(
-                {
-                    "error": f"Invalid username: {body.get('username')!r}",
-                    "reason": "invalid_username",
-                },
+                {"error": "Identity is managed by the server", "reason": "identity_managed"},
                 status=400,
             )
+        username = self.identity.require_username()
 
         client_type = body.get("client_type", "unknown")
         if not isinstance(client_type, str) or not client_type.strip():
@@ -344,7 +339,7 @@ class SessionHandlers(RestHandlerBase):
         # mail delivery sink: human mail reaches the session through the
         # adapter, not the NotificationService — single-track delivery).
         self.client_gateway.set_event_handler(session.id, event_handler)
-        username = session.metadata.get("username", DEFAULT_USERNAME)
+        username = session.metadata["username"]
         if self.events:
             await self.events.attach_human(username, session.id, event_handler)
 
@@ -354,7 +349,6 @@ class SessionHandlers(RestHandlerBase):
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
             },
         )
         try:

@@ -8,17 +8,17 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 |---|---|---|
 | Base URL | `http://127.0.0.1:8080`（默认；host/port 由 `RESTServer` 构造参数决定） | `rest/app.py` 的 `RESTServer` |
 | 协议版本 | `SESSION_PROTOCOL_VERSION = "2.0.0"`，`POST /sessions` 唯一接受的版本 | `rest/sessions.py` |
-| 鉴权 | 邮件面**无认证层**（身份即请求体/query 里的 `username`，信任边界是本机）；`/admin/*` 可选 Bearer token（ADR 0013，见下「鉴权（admin 面）」节） | [docs/design/server-protocol.md](../design/server-protocol.md) |
+| 身份与接入 | 本地单人、无账号认证；WebUI 首次设置实例 username，服务端决定邮件与会话身份；业务 API 统一检查浏览器来源 | [ADR 0033](../decisions/0033-local-webui-identity.md) |
 | 响应格式 | 除 SSE 外全部是 JSON（`application/json`，`ensure_ascii=False`） | `rest/common.py` 的 `_json_response` |
-| CORS | 全开：`Access-Control-Allow-Origin: *`，方法 `GET, POST, PATCH, DELETE, OPTIONS`，允许头仅 `Content-Type`；预检由 `OPTIONS /{path:.*}` 应答 | `rest/common.py` 的 `handle_options` |
+| 来源边界 | 仅回环监听，核对 Host/Origin/Fetch Metadata；业务 API 要求 `X-Tlon-WebUI: 1`（SSE 例外见下）；所有响应不输出 CORS 授权头，拒绝业务 API 预检 | `rest/browser_boundary.py` 与 `rest/app.py` |
 
 ### 错误响应
 
-4xx 错误体为 `{"error": <给人看的消息>, "reason": <机器可读枚举>}`，客户端分支判 `reason`。`reason` 全量枚举：
+带 reason 的 4xx/503 错误体为 `{"error": <给人看的消息>, "reason": <机器可读枚举>}`，客户端分支判 `reason`。`reason` 全量枚举：
 
 | reason | 触发端点 | 含义 |
 |---|---|---|
-| `invalid_json` | `POST /messages`、`POST /sessions`、`PATCH /sessions/{id}`、`POST /inbox/read` | 请求体不是合法 JSON；前三个端点也用此码表示非 JSON object |
+| `invalid_json` | `POST /identity`、`POST /messages`、`POST /sessions`、`PATCH /sessions/{id}`、`POST /inbox/read` | 请求体不是合法 JSON；messages/sessions 的 POST 与 session PATCH 也用此码表示非 JSON object |
 | `invalid_body` | `POST /inbox/read` | JSON 语法有效，但请求体不是 object |
 | `invalid_read` | `POST /inbox/read` | read 不是严格布尔值 |
 | `invalid_selector` | `POST /inbox/read` | 未恰好提供 mail_id 或 thread_id 中的一个 |
@@ -28,7 +28,13 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `invalid_member_id` | `GET /members/{member_id}/mail` | member_id 为空或含路径分隔符 |
 | `mail_not_found` | `POST /inbox/read` | 目标没有该人类的收件关系，404（仅发件副本不可标读） |
 | `member_not_found` | `GET /members/{member_id}/mail` | 运行配置与历史邮件库中均无该成员，404 |
-| `invalid_username` | `POST /messages`、`POST /sessions`、`GET /inbox`、`POST /inbox/read` | username 非字符串、为空、或含 `/`、`\`（路径穿越防御，见 `rest/common.py` 的 `_validate_username`） |
+| `invalid_username` | `POST /identity` | username 不符合 1–64 位 ASCII local-part 规则，或使用保留名 |
+| `identity_conflict` | `POST /identity` | 与现有 agent id 撞名（不区分大小写），409 |
+| `identity_exists` | `POST /identity` | 实例身份已经设置，409 |
+| `identity_write_failed` | `POST /identity` | 身份文件写入失败，503 |
+| `identity_required` | 除公开入口、identity 与 GitHub webhook 外的业务 API | 尚未设置实例身份，409 |
+| `identity_managed` | `POST /messages`、`POST /sessions`、`GET /inbox`、`POST /inbox/read` | 请求仍携带旧 username 字段或参数，400 |
+| `untrusted_origin` | 全部端点的浏览器边界检查；业务 API 预检 | Host/Origin/Fetch Metadata 不可信、缺少 WebUI 请求头或不允许的预检，403 |
 | `invalid_client_type` | `POST /sessions` | client_type 缺失、非字符串或为空白 |
 | `invalid_mode` | `POST /sessions`、`PATCH /sessions/{id}` | mode 不在 `SESSION_MODES = ("chat", "event", "agent")` 内 |
 | `invalid_filters` | `POST /sessions`、`PATCH /sessions/{id}` | filters 不是 object |
@@ -42,16 +48,19 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `idempotency_conflict` | `POST /messages` | 同发件人、同 request_id 被用于不同内容，409 |
 | `submission_unknown` | `POST /messages` | 存储或传输结果未知，使用原 request_id 重试确认 |
 | `stream_active` | `GET /events` | 该会话已有一条活跃 SSE 流 |
-| `unauthorized` | 全部 `/admin/*` | 配置了 `TLON_ADMIN_TOKEN` 但请求未携带或携带错误的 Bearer token（401，见下「鉴权（admin 面）」节） |
 
 两个不一致处，如实说明：
 
 - 404 响应（`GET /agents/{id}`、`GET /traces/{id}`、`PATCH`/`GET /events` 的会话不存在等）只有 `{"error": ...}`，**没有 `reason` 字段**。
 - 503 响应（依赖未装配时）形状是 `{"status": "error", "message": ...}`，与 4xx 的 `{"error", "reason"}` 不同。
 
-### 鉴权（admin 面，ADR 0013）
+### 本地实例身份与浏览器来源边界（ADR 0033）
 
-邮件面（`/messages`、`/inbox`、`/sessions`、`/events` 等）无认证层——身份即请求体/query 里的 `username`，信任边界是本机（默认绑定 `127.0.0.1`）。配置 `TLON_ADMIN_TOKEN` 后，所有 `/admin/*` 请求必须携带 `Authorization: Bearer <token>`：强制点是 `RESTAPIHandler.create_app` 注册的 `_admin_auth_middleware`（`hmac.compare_digest` 常量时间比对；CORS 预检 OPTIONS 按设计放行），未携带或比对失败返回 401 `{"error": "Admin authentication required", "reason": "unauthorized"}`。中间件只在 token 配置时注册，单一拦截点，未来新增 admin 路由自动被保护。默认（未配置）认证关闭，与「名字即身份」模型一致。
+无密码、认证会话或 admin token。唯一 username 由 WebUI 首次设置并保存在实例的 `webui-identity.json`，换浏览器或重启不会改变。邮件发件人、自己的邮箱与 SSE session 身份均由服务端从该文件决定；旧 guest 的邮件与关系不关联、不迁移。
+
+服务端只允许监听 `127.0.0.1`、`localhost` 或 `::1`，请求 Host 必须是实际监听端口上的回环 authority。Origin 若存在必须同源；`Sec-Fetch-Site` 仅允许缺失、`same-origin` 或 `none`。静态页与 `/health` 无需 WebUI 请求头，其余业务 API（含 `/identity`、`/admin/*`）必须携带 `X-Tlon-WebUI: 1`。原生 EventSource 不能加头，仅 `GET /events` 可用 `Sec-Fetch-Site: same-origin` 替代。边界失败统一返回 403 `untrusted_origin`；跨域预检不放行，所有响应（含 SSE、错误和静态资源）不输出 CORS 授权头，并禁止页面被嵌入。
+
+身份未设置时，业务 API 返回 409 `identity_required`；公开入口、identity API 与 GitHub webhook 例外。`POST /webhooks/github` 沿用自身 HMAC 校验，不要求 WebUI 头，但仍经过 Host/Origin/Fetch Metadata 检查。此边界隔离非同源网页，不隔离本机程序。当前只保证 WebUI；TUI、SDK 与 Telegram 不提供兼容接入。
 
 ### 条件注册
 
@@ -69,11 +78,13 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 53 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 54 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
 | GET | `/health` | `handle_health` | 无条件 |
+| GET | `/identity` | `handle_identity` | 无条件 |
+| POST | `/identity` | `handle_initialize_identity` | 无条件 |
 | GET | `/config` | `handle_config` | 无条件 |
 | GET | `/inbox` | `handle_inbox` | 无条件 |
 | POST | `/inbox/read` | `handle_inbox_read` | 无条件 |
@@ -125,7 +136,6 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/ui` | `handle_webui_redirect` | webui dist 存在 |
 | GET | `/ui/` | `handle_webui_index` | webui dist 存在 |
 | GET | `/ui/` | `(static)` | webui dist 存在 |
-| OPTIONS | `/{path:.*}` | `handle_options` | 无条件 |
 <!-- END GENERATED: rest-endpoints -->
 
 各端点的请求/响应细节见下文「端点详情」。
@@ -137,20 +147,29 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 无参数。200：
 
 ```json
-{"status": "healthy", "running": true, "timestamp": "<ISO>", "version": "0.2.0"}
+{"status": "healthy", "version": "0.2.0"}
 ```
 
-`running` 是 `ClientGateway.is_running()`；`version` 是硬编码的服务版本号，与协议版本无关。
+公开健康检查只返回存活状态与服务版本号，不暴露 runtime 状态或时间；`version` 与协议版本无关。
+
+### GET /identity
+
+无参数；要求 `X-Tlon-WebUI: 1`。200 返回 `{"username": null, "address": null}`（未设置）或 `{"username": "alice", "address": "alice@tlon.internal"}`。
+
+### POST /identity
+
+首次设置唯一实例身份。JSON 请求体为 `{"username": "alice"}`，成功 201 返回与 GET 相同的已设置对象。username 长 1–64 位，以 ASCII 字母或数字开头，后续只允许 ASCII 字母、数字、点、下划线、连字符；不自动改写大小写。保留名 `postmaster`、`adam`（不区分大小写）返回 400 `invalid_username`，与现有 agent id 撞名返回 409 `identity_conflict`。
+
+重复设置或并发初始化已有胜出者返回 409 `identity_exists`；非法 JSON 返回 400 `invalid_json`；非对象、缺 username 或非法名字返回 400 `invalid_username`；写入失败返回 503 `identity_write_failed`。失败不建立新身份；文件损坏时启动显式报错，不回落 guest。没有改名、删除身份、注册或登录接口。
 
 ### POST /messages
 
-人类成员发信，处理函数 `rest/mail.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。返回 **202** 前已在 SQLite 事务内完成全部本地入箱；不代表收件人已阅读或处理。已注册网关仅尝试投递其信箱，不保证成功或外部平台收到。
+人类成员发信，处理函数 `rest/mail.py` 的 `handle_send_message`。发件人身份取自实例持久 username，不接受客户端自报身份；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。返回 **202** 前已在 SQLite 事务内完成全部本地入箱；不代表收件人已阅读或处理。已注册网关仅尝试投递其信箱，不保证成功或外部平台收到。
 
 请求体字段（校验的唯一副本在 [tlon_server/api/send_mail.py](../../src/tlon_server/api/send_mail.py) 的 `parse_send_mail_fields`）：
 
 | 字段 | 类型 | 必填 | 规则 |
 |---|---|---|---|
-| `username` | string | 否（默认 `guest`） | 非空、不含 `/`、`\`；否则 400 `invalid_username` |
 | `content` | string | 是 | 非空白；否则 400 `empty_content` |
 | `request_id` | string | 是 | 一次投信的稳定非空标识；同发件人同键同内容返回已有回执，不同内容返回 409 |
 | `to` | list[string] | 否 | 收件人：名字、成员 id 或完整地址；存在则必须是 list，否则 400 `invalid_to` |
@@ -159,7 +178,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `in_reply_to` | string | 否 | 被回复邮件的 id；非字符串报 `invalid_in_reply_to` |
 | `thread_id` | string | 否 | 线程根 id，缺省取本邮件自身 id；非字符串报 `invalid_thread_id` |
 
-未知字段静默忽略。`to`/`cc` 任一地址无效或成员已退休，整封拒绝，返回全部问题地址，不写成功发件记录也不另发退信。休眠或离线成员正常入箱。
+`username` 字段返回 400 `identity_managed`，其他未知字段静默忽略。`to`/`cc` 任一地址无效或成员已退休，整封拒绝，返回全部问题地址，不写成功发件记录也不另发退信。休眠或离线成员正常入箱。
 
 - 202：`{"mail_id", "request_id", "local_recipients": [...], "gateways": [{"address", "status", "error"}], "message"}`。网关 status 为 delivered/failed/unknown，仅描述网关信箱，不是外部平台状态。
 - 400：`{"error", "reason", "invalid_recipients"}`。
@@ -168,11 +187,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### GET /inbox
 
-读人类成员的持久邮箱，处理函数 `handle_inbox`，调用 `MailFacade.inbox_page`。inbox 与 sent 合并，按 SQLite timestamp/rowid 稳定分页，页内按时间正序返回。读取不修改已读状态。
+读实例身份对应成员的持久邮箱，不接受 username query（携带则 400 `identity_managed`），处理函数 `handle_inbox`，调用 `MailFacade.inbox_page`。inbox 与 sent 合并，按 SQLite timestamp/rowid 稳定分页，页内按时间正序返回。读取不修改已读状态。
 
 | Query 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `username` | string | `guest` | 读 `human:<username>` 的邮箱；空或含路径分隔符返回 400 |
 | `limit` | int | 50（上限 200） | 非整数回落默认值 |
 | `before` | string | 无 | 上一页最早邮件 id，读取更早记录；必须属于当前可见邮箱，否则 400 |
 
@@ -183,12 +201,12 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### POST /inbox/read
 
-显式设置人类收件关系的已读状态，处理函数 `handle_inbox_read`。本机信任边界与发信一致，身份来自 `username`；没有替任意 agent 修改状态的接口。
+显式设置人类收件关系的已读状态，处理函数 `handle_inbox_read`。本机来源边界与发信一致，身份来自实例持久配置；没有替任意 agent 修改状态的接口。
 
-请求 JSON 必须包含 `username`（非空且不含路径分隔符）、`read`（严格布尔值），以及 `mail_id` 或 `thread_id` 恰好一个非空字符串。线程操作在一个事务中覆盖该人类收到的所有该线程邮件，包括尚未加载的历史。仅发件副本不可操作，其他收件人的状态不会改变。
+请求 JSON 必须包含 `read`（严格布尔值），以及 `mail_id` 或 `thread_id` 恰好一个非空字符串。线程操作在一个事务中覆盖该人类收到的所有该线程邮件，包括尚未加载的历史。仅发件副本不可操作，其他收件人的状态不会改变。
 
 - 200：`{"mail_ids": ["..."], "read": bool}`，包含全部匹配的收件邮件 id（含原本已处于目标状态的邮件）。
-- 400：`{"error": "...", "reason": "..."}`。reason 为 `invalid_json`（语法）、`invalid_body`（非对象）、`invalid_username`、`invalid_read`（非布尔值）、`invalid_selector`（未恰好指定一个范围）、`invalid_mail_id` 或 `invalid_thread_id`（空值/类型错误）。
+- 400：`{"error": "...", "reason": "..."}`。reason 为 `invalid_json`（语法）、`invalid_body`（非对象）、`identity_managed`（携带 username）、`invalid_read`（非布尔值）、`invalid_selector`（未恰好指定一个范围）、`invalid_mail_id` 或 `invalid_thread_id`（空值/类型错误）。
 - 404：没有匹配的收件关系，reason 为 `mail_not_found`。
 - 503：未装配 mail facade。
 
@@ -200,12 +218,11 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 
 ### POST /sessions
 
-建立客户端会话，协议版本协商的唯一检查点，处理函数 `handle_create_session`。只创建会话记录，**此时不注册事件处理器、不 attach adapter**——接线发生在 `GET /events` 开流时。
+建立客户端会话，身份由实例持久配置确定，携带 username 返回 400 `identity_managed`。这是协议版本协商的唯一检查点，处理函数 `handle_create_session`。只创建会话记录，**此时不注册事件处理器、不 attach adapter**——接线发生在 `GET /events` 开流时。
 
 | 字段 | 类型 | 必填 | 规则 |
 |---|---|---|---|
 | `protocol_version` | string | 是 | 必须等于 `"2.0.0"`，否则 400 `unsupported_protocol_version`（响应带 `supported_versions`） |
-| `username` | string | 否（默认 `guest`） | 同 `POST /messages` 的 username 规则 |
 | `client_type` | string | 否（默认 `"unknown"`） | 非空字符串，否则 400 `invalid_client_type`；会成为 session id 前缀 |
 | `mode` | string | 否（默认 `"chat"`） | `chat` / `event` / `agent`，否则 400 `invalid_mode` |
 | `filters` | object | 否 | 初始事件过滤器（见 SSE 节），非 object 报 400 `invalid_filters` |
@@ -298,7 +315,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 
 ### 演武场端点（docs/design/arena.md，WebUI PROTOTYPES staging 详情的演武场面板）
 
-演武场由**人类专属触发**（ADR 0013 admin token 同一罩），run 在后台推进，证据归档在 staging 原型目录 `arena/<run-id>/`。facade 未装配时全部 503。
+演武场由**人类专属触发**（与其他管理操作统一经过本地浏览器来源边界），run 在后台推进，证据归档在 staging 原型目录 `arena/<run-id>/`。facade 未装配时全部 503。
 
 - `POST /admin/prototypes/staging/{name}/arena-runs`——触发一次 run（后台 task 推进）；body 全可选 `{model?, params?, corpus_size?, time_box_seconds?}`（`model` 留空走 `TLON_ARENA_MODEL`，两者皆无则拒绝）。202：`{"status": "success", "run": <ArenaRun.to_dict()>}`；400：`{"error", "reason": "arena_rejected"}`（staging 原型缺失/模型双缺/语料或时间盒超硬上限/已有活跃 run——v1 全局单并发）或 `"invalid_arena_request"`（字段类型错）
 - `GET /admin/arena-runs`——全部 run 记录（最旧在前）。200：`{"status": "success", "runs": [<ArenaRun.to_dict()>]}`
@@ -502,83 +519,54 @@ mode 与 filters 可经 `PATCH /sessions/{id}` 在线修改。过滤只在服务
 
 ## 接入示例
 
-以下流程与 [src/tlon_client/sdk/base_client.py](../../src/tlon_client/sdk/base_client.py) 的 `BaseClient` 行为一致（`connect` → `authenticate` 建会话 → `_stream_events` 读流 → `rest_post` 发信 → 断连后 `_reconnect` 重建会话）。
+以下示例用于本机 HTTP 检查；当前维护的客户端是 WebUI，不保证旧 SDK、TUI 或 Telegram 兼容。
 
 ### curl
 
 ```bash
 BASE=http://127.0.0.1:8080
 
-# 1. 建会话（拿到 session_id 与 participants/agents 快照）
-curl -s -X POST $BASE/sessions -H 'Content-Type: application/json' -d '{
-  "username": "alice",
-  "client_type": "script",
-  "mode": "chat",
-  "protocol_version": "2.0.0"
+# 1. 查看实例身份；仅未设置时执行首次设置
+curl -s "$BASE/identity" -H 'X-Tlon-WebUI: 1'
+curl -s -X POST "$BASE/identity" -H 'X-Tlon-WebUI: 1' \
+  -H 'Content-Type: application/json' -d '{"username":"alice"}'
+
+# 2. 建会话，使用返回的 session_id（不提交 username）
+curl -s -X POST "$BASE/sessions" -H 'X-Tlon-WebUI: 1' \
+  -H 'Content-Type: application/json' -d '{
+  "client_type": "webui", "mode": "chat", "protocol_version": "2.0.0"
 }'
-# => 201 {"session_id": "script-0001", "participants": [...], "agents": [...], ...}
 
-# 2. 开 SSE 流（另一个终端；会话建立后不开流则收不到任何推送）
-curl -N "$BASE/events?session_id=script-0001"
-# 收到 200 响应头即已接线；随后是 ": ping" 心跳与 data: {...} 事件帧
+# 3. 另开终端读 SSE（此处示例 session_id，实际以建会话响应为准）
+curl -N "$BASE/events?session_id=webui-0001" -H 'X-Tlon-WebUI: 1'
 
-# 3. 投信（202 表示本地已入箱；网关仍是尽力尝试）
-curl -s -X POST $BASE/messages -H 'Content-Type: application/json' -d '{
-  "username": "alice",
-  "to": ["dev-001"],
-  "request_id": "alice-example-001",
-  "content": "你好"
+# 4. 发信；202 表示本地入箱，不表示阅读或网关外部投递成功
+curl -s -X POST "$BASE/messages" -H 'X-Tlon-WebUI: 1' \
+  -H 'Content-Type: application/json' -d '{
+  "to": ["dev-001"], "request_id": "example-001", "content": "你好"
 }'
-# => 202 {"mail_id": "...", "request_id": "alice-example-001", "local_recipients": ["dev-001"], "gateways": [], "message": "..."}
 
-# 4. 回信会以 mail.delivered 事件帧出现在 SSE 流上；
-#    也可随时拉历史：
-curl -s "$BASE/inbox?username=alice&limit=20"
-
-# 5. 断开（幂等）
-curl -s -X DELETE $BASE/sessions/script-0001
+# 5. 拉历史、显式标读与清理会话
+curl -s "$BASE/inbox?limit=20" -H 'X-Tlon-WebUI: 1'
+curl -s -X POST "$BASE/inbox/read" -H 'X-Tlon-WebUI: 1' \
+  -H 'Content-Type: application/json' -d '{"read":true,"thread_id":"<线程 id>"}'
+curl -s -X DELETE "$BASE/sessions/webui-0001" -H 'X-Tlon-WebUI: 1'
 ```
 
-### Python（httpx 风格的最小骨架）
+### WebUI 同源请求
 
-对应 `BaseClient` 的两个要点：读流用 `timeout=None` 的长连接，按 SSE 行解析（`data:` 累积、空行派发、`:` 开头的注释行忽略）；断线后指数退避并**重新 POST /sessions**（新 session id），SDK 默认 5s 起步、60s 封顶、最多 10 次（`reconnect_delay` / `MAX_RECONNECT_DELAY` / `max_reconnect_attempts`）。
+页面由 dream 的 `/ui/` 提供，开发时经 Vite 同源代理。fetch 一律带固定来源边界头；原生 EventSource 由浏览器发送 `Sec-Fetch-Site: same-origin`。
 
-```python
-import httpx
+```javascript
+const response = await fetch("/identity", {
+  headers: { "X-Tlon-WebUI": "1" },
+});
+if (!response.ok) throw new Error(`Identity request failed: ${response.status}`);
+const identity = await response.json();
+// username 为 null 时显示首次设置表单，成功后再建立 session。
 
-BASE = "http://127.0.0.1:8080"
-
-with httpx.Client(base_url=BASE, timeout=None) as http:
-    # 1. 建会话
-    resp = http.post("/sessions", json={
-        "username": "alice",
-        "client_type": "script",
-        "mode": "chat",
-        "protocol_version": "2.0.0",
-    })
-    resp.raise_for_status()
-    session_id = resp.json()["session_id"]
-
-    # 2. 开 SSE 流并读帧
-    with http.stream("GET", "/events", params={"session_id": session_id}) as stream:
-        # 3. 发信（流建立后再发，保证推送可达）
-        http.post("/messages", json={
-            "username": "alice", "to": ["dev-001"], "content": "你好",
-        })
-        data_lines: list[str] = []
-        for line in stream.iter_lines():
-            if not line:                       # 空行：一帧结束
-                if data_lines:
-                    frame = json.loads("\n".join(data_lines))  # {"type": "event", ...}
-                    print(frame["event_type"], frame["payload"])
-                    data_lines = []
-            elif line.startswith(":"):         # ": ping" 心跳，忽略
-                continue
-            elif line.startswith("data:"):
-                data_lines.append(line[5:].lstrip())
-
-    # 4. 断开
-    http.delete(f"/sessions/{session_id}")
+// 建会话并切换 event mode 后，用真实返回的 session_id 开流。
+const source = new EventSource(`/events?session_id=${encodeURIComponent(sessionId)}`);
 ```
 
-生产用法直接用 SDK：[tlon_client/sdk/client.py](../../src/tlon_client/sdk/client.py) 的 `TlonClient` 封装了以上全部（会话生命周期、SSE 重连、mode/filters 声明）。
+断流后应重新 POST `/sessions`、切换模式并打开新流，恢复时以 `/inbox` 持久快照补齐邮件；EventSource 重连不能复用已经销毁的会话。实现见 [WebUI REST 客户端](../../apps/webui/src/client/rest.ts) 与 [SSE 客户端](../../apps/webui/src/client/sse.ts)。

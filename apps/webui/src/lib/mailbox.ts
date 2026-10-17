@@ -34,7 +34,7 @@ export class MailboxController {
   private nextBefore: string | null = null;
 
   constructor(private readonly rest: MailRest, private readonly sse: MailSse,
-    private readonly username: string, private readonly memberId: string,
+    private readonly memberId: string,
     readonly address: string, readonly readOnly: boolean) {}
 
   getSnapshot = (): MailboxState => this.state;
@@ -94,7 +94,7 @@ export class MailboxController {
     this.update({ mails: [...mails.values()], ...(notice ? { notice } : {}) });
   }
   private page(before?: string) {
-    return this.readOnly ? this.rest.getMemberMailPage(this.memberId, { before }) : this.rest.getInboxPage(this.username, { before });
+    return this.readOnly ? this.rest.getMemberMailPage(this.memberId, { before }) : this.rest.getInboxPage({ before });
   }
   private mergeSnapshot(incoming: MailItem[], revision: number, sequence: number): void {
     const mails = new Map(this.state.mails.map((m) => [m.id, m]));
@@ -169,7 +169,7 @@ export class MailboxController {
     const generation = this.generation;
     this.update({ marking: true });
     try {
-      const result = await this.rest.setMailRead(this.username, read, target);
+      const result = await this.rest.setMailRead(read, target);
       if (!this.active || generation !== this.generation) return;
       this.revision += 1;
       const ids = new Set(result.mail_ids);

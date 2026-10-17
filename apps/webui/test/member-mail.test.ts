@@ -33,7 +33,7 @@ function mail(id: string): MailItem {
 
 test("getMemberMail builds the observer URL with an encoded member id", async () => {
   const calls = stubFetch(200, { mails: [mail("m1")], count: 1 });
-  const rest = new RestClient("", "");
+  const rest = new RestClient();
   const mails = await rest.getMemberMail("human:alice");
   assert.equal(calls[0]?.url, "/members/human%3Aalice/mail?limit=100");
   assert.equal(mails.length, 1);
@@ -42,7 +42,7 @@ test("getMemberMail builds the observer URL with an encoded member id", async ()
 
 test("getMemberMail passes a custom limit and bare agent ids unencoded", async () => {
   const calls = stubFetch(200, { mails: [], count: 0 });
-  const rest = new RestClient("", "");
+  const rest = new RestClient();
   const mails = await rest.getMemberMail("gu-yanxi", 25);
   assert.equal(calls[0]?.url, "/members/gu-yanxi/mail?limit=25");
   assert.deepEqual(mails, []);
@@ -50,7 +50,7 @@ test("getMemberMail passes a custom limit and bare agent ids unencoded", async (
 
 test("getMemberMail surfaces the server's 404 as a RestError", async () => {
   stubFetch(404, { error: "Member 'ghost' not found" });
-  const rest = new RestClient("", "");
+  const rest = new RestClient();
   await assert.rejects(
     () => rest.getMemberMail("ghost"),
     (err: unknown) => {

@@ -67,6 +67,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
 | [ADR 0012：引入 LiteLLM 作为 LLM 传输层 + provider 预设（方案 B）](0012-litellm-llm-provider.md) | [infrastructure](../design/infrastructure.md) | LiteLLM 传输层保留；进程级 LLM 配置由 ADR 0016 替代，成员字段见配置参考 |
-| [ADR 0013：admin 端点共享 token 鉴权（TLON_ADMIN_TOKEN）](0013-admin-token-auth.md) | [server-protocol](../design/server-protocol.md) | 管理端 token 的可选边界，不等于完整身份认证 |
+| [ADR 0033：本地单人 WebUI 身份与浏览器来源边界](0033-local-webui-identity.md) | [server-protocol](../design/server-protocol.md)、[webui](../design/webui.md) | 实例持久身份、同源 API、回环限定；替代 ADR 0013，关闭 #144 跨域入口 |
+| [ADR 0013：admin 端点共享 token 鉴权（TLON_ADMIN_TOKEN）](0013-admin-token-auth.md) | [server-protocol](../design/server-protocol.md) | 已废止，由 ADR 0033 的本地来源边界替代 |
 | [ADR 0016：LLM 配置成员级化——删除进程级 LLM_* 设置](0016-member-level-llm-config.md) | [infrastructure](../design/infrastructure.md)、[webui](../design/webui.md) | 成员级模型配置与不自动创建标准团队 |
 | [ADR 0031：WebUI 邮箱同步、线程展示与人类已读管理](0031-webui-mail-consistency.md) | [webui](../design/webui.md)、[server-protocol](../design/server-protocol.md)、[mail](../design/mail.md) | 客户端同步及已读管理；旧验收流水作为历史证据保留 |

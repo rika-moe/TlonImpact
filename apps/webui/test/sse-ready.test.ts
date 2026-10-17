@@ -36,7 +36,9 @@ test("connected means stream open, not just session creation; reconnect opens a 
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let sessions = 0;
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    assert.equal(new Headers(init.headers).get("X-Tlon-WebUI"), "1");
     if (init.method === "POST") {
+      assert.equal("username" in JSON.parse(String(init.body)), false);
       return new Response(JSON.stringify({ session_id: `s${++sessions}` }));
     }
     return new Response("{}");
@@ -71,7 +73,9 @@ test("dispose while session is opening cannot attach a stale stream after reconn
   const deleted: string[] = [];
   let sessions = 0;
   t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    assert.equal(new Headers(init.headers).get("X-Tlon-WebUI"), "1");
     if (init.method === "POST") {
+      assert.equal("username" in JSON.parse(String(init.body)), false);
       sessions += 1;
       return sessions === 1 ? old : new Response(JSON.stringify({ session_id: "new" }));
     }

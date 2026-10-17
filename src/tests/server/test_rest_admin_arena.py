@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tests.identity_helpers import make_identity
 from tlon.agents.prototypes.staging import write_staging_prototype
 from tlon.api.arena import ArenaError, ArenaFacade
 from tlon.api.prototypes import PrototypesFacade
@@ -114,6 +115,7 @@ def _handler(
     )
     handler = RESTAPIHandler(
         None,
+        identity=make_identity(),
         prototypes=PrototypesFacade(tlon_paths=p),
         arena=arena,
     )

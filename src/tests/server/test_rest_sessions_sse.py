@@ -26,6 +26,7 @@ import pytest
 from aiohttp import ClientSession
 from aiohttp.test_utils import TestClient, TestServer
 
+from tests.identity_helpers import make_identity
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.api.events import EventsFacade
 from tlon.api.members import MembersFacade
@@ -50,6 +51,7 @@ class StubRequest:
 
     def __init__(self, body: Any = None, session_id: str | None = None):
         self._body = body
+        self.query: dict[str, str] = {}
         self.match_info = {"session_id": session_id} if session_id else {}
 
     async def json(self) -> Any:
@@ -141,6 +143,7 @@ def handler(
 ) -> RESTAPIHandler:
     return RESTAPIHandler(
         gateway,
+        identity=make_identity(),
         members=MembersFacade(agent_registry=registry, tlon_paths=TlonPaths(home=tmp_path)),
         events=EventsFacade(event_bus=bus, adapter_manager=manager),
     )
@@ -149,7 +152,7 @@ def handler(
 @pytest.fixture
 async def client(handler: RESTAPIHandler) -> AsyncGenerator[TestClient]:
     """Provide a running in-process HTTP server for the handler."""
-    test_client = TestClient(TestServer(handler.create_app()))
+    test_client = TestClient(TestServer(handler.create_app()), headers={"X-Tlon-WebUI": "1"})
     await test_client.start_server()
     yield test_client
     await test_client.close()
@@ -157,7 +160,6 @@ async def client(handler: RESTAPIHandler) -> AsyncGenerator[TestClient]:
 
 def _session_body(**overrides: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "username": "alice",
         "client_type": "tui",
         "mode": "event",
         "protocol_version": "2.0.0",
@@ -236,13 +238,13 @@ class TestCreateSession:
 
         assert response.status == 201
         body = json.loads(response.text)
-        assert body["username"] == "guest"
+        assert body["username"] == "alice"
         assert body["mode"] == "chat"
         assert body["filters"] == {}
 
     @pytest.mark.parametrize("version", [None, "1.0.0", "3.0.0", 42])
     async def test_unsupported_protocol_version(self, handler: RESTAPIHandler, version: Any):
-        body = {"client_type": "tui", "username": "alice"}
+        body = {"client_type": "tui"}
         if version is not None:
             body["protocol_version"] = version
 
@@ -253,11 +255,11 @@ class TestCreateSession:
         assert payload["reason"] == "unsupported_protocol_version"
         assert payload["supported_versions"] == ["2.0.0"]
 
-    async def test_invalid_username_rejected(self, handler: RESTAPIHandler):
-        for bad in ("", "  ", "../evil", "a/b", "a\\b"):
+    async def test_client_cannot_override_instance_identity(self, handler: RESTAPIHandler):
+        for bad in ("alice", "bob", "", "  ", "../evil", "a/b", "a\\b"):
             response = await handler.handle_create_session(StubRequest(_session_body(username=bad)))
             assert response.status == 400, f"username {bad!r} must be rejected"
-            assert json.loads(response.text)["reason"] == "invalid_username"
+            assert json.loads(response.text)["reason"] == "identity_managed"
 
     async def test_invalid_mode(self, handler: RESTAPIHandler):
         response = await handler.handle_create_session(StubRequest(_session_body(mode="bogus")))
@@ -391,6 +393,7 @@ class TestEventsStream:
         async with client.get("/events", params={"session_id": session["session_id"]}) as resp:
             assert resp.status == 200
             assert resp.headers["Content-Type"] == "text/event-stream"
+            assert not any(key.lower().startswith("access-control-") for key in resp.headers)
             # Stream wiring completes before the 200 headers; the adapter
             # attach is the last step, so it doubles as a readiness signal.
             await _wait_for(lambda: manager.get_adapter("alice") is not None)
@@ -562,13 +565,12 @@ class TestEventsStream:
         manager: AdapterManager,
     ):
         first = await _create_session(client)
-        second = await _create_session(client, username="bob")
+        second = await _create_session(client)
         resp_first = await client.get("/events", params={"session_id": first["session_id"]})
         resp_second = await client.get("/events", params={"session_id": second["session_id"]})
         assert resp_first.status == 200
         assert resp_second.status == 200
         await _wait_for(lambda: manager.get_adapter("alice") is not None)
-        await _wait_for(lambda: manager.get_adapter("bob") is not None)
 
         handler.close_sse_streams()
 
@@ -577,7 +579,7 @@ class TestEventsStream:
         await _wait_for(lambda: gateway.get_session(first["session_id"]) is None)
         await _wait_for(lambda: gateway.get_session(second["session_id"]) is None)
         assert manager.get_adapter("alice") is None
-        assert manager.get_adapter("bob") is None
+
         assert handler._sse_queues == {}
         resp_first.close()
         resp_second.close()
@@ -598,6 +600,7 @@ class TestRestServerShutdown:
     ):
         rest = RESTServer(
             gateway,
+            identity=make_identity(),
             members=MembersFacade(agent_registry=registry, tlon_paths=TlonPaths(home=tmp_path)),
             events=EventsFacade(event_bus=bus, adapter_manager=manager),
             host="127.0.0.1",
@@ -608,7 +611,7 @@ class TestRestServerShutdown:
         host, port = rest._runner.addresses[0][:2]
         base = f"http://{host}:{port}"
 
-        async with ClientSession() as http:
+        async with ClientSession(headers={"X-Tlon-WebUI": "1"}) as http:
             async with http.post(f"{base}/sessions", json=_session_body()) as created:
                 assert created.status == 201
                 session_id = (await created.json())["session_id"]
@@ -625,3 +628,11 @@ class TestRestServerShutdown:
             assert gateway.get_session(session_id) is None
             assert manager.get_adapter("alice") is None
             await asyncio.wait_for(stream.read(), timeout=5.0)
+
+
+async def test_session_username_query_cannot_override_identity(handler: RESTAPIHandler) -> None:
+    request = StubRequest(_session_body())
+    request.query["username"] = "bob"
+    response = await handler.handle_create_session(request)
+    assert response.status == 400
+    assert json.loads(response.text)["reason"] == "identity_managed"

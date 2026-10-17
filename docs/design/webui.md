@@ -67,7 +67,7 @@ MAIL 是线程列表、信件内容与写信抽屉的组合。线程标题优先
 | METRICS | 分组指标与成员/模型 token、缓存用量，定期轮询 |
 | SESSIONS | session 列表与事件记录 |
 | LOGS | level/agent/trace 过滤与日志读取 |
-| SETTINGS | 服务端配置只读展示与本地 admin token 设置 |
+| SETTINGS | 服务端配置与成员配置只读展示 |
 
 原型写入/审批契约归 [prototypes.md](./prototypes.md)，能力审批归 [capabilities.md](./capabilities.md)，演武场报告是证据而非自动批准信号，见 [arena.md](./arena.md)。这里不复制端点表或服务端校验规则。
 
@@ -79,4 +79,4 @@ MAIL 是线程列表、信件内容与写信抽屉的组合。线程标题优先
 
 开发使用 Vite dev proxy；生产构建写入 `apps/webui/dist/`，dream 同一 HTTP 端口托管于 `/ui/`，`/ui` 重定向。无构建产物时不注册静态路由，启动 banner 提供构建提示。运行操作见 [快速开始](../guides/quickstart.md)。
 
-WebUI 没有登录与多用户认证层，沿用服务端本机信任边界。Settings 保存的 admin token 位于浏览器 localStorage（`tlon.adminToken`），REST 以 Bearer 透传；用户名也保存在本地，默认 guest。admin token 不保护邮件接口，完整安全边界见 [server-protocol.md](./server-protocol.md)。
+WebUI 采用本地单人身份设置（[ADR 0033](../decisions/0033-local-webui-identity.md)）：启动先查询 `/identity`，未设置时填写 username，保存到实例 `{TLON_HOME}/webui-identity.json`；已设置自动进入。身份不再来自 URL 或 localStorage，无密码、登录会话或 admin token。所有 API fetch 带 `X-Tlon-WebUI: 1`，原生 EventSource 由同源 Fetch Metadata 校验；生产 `/ui/` 与 API 同源，开发继续走 Vite 代理，拒绝跨域来源。固定地址是普通 member 地址，不向 agents 添加特殊身份信息。完整来源边界见 [server-protocol.md](./server-protocol.md)。
