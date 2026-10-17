@@ -114,10 +114,6 @@ class WritePrototypeTool(Tool):
             parameters={
                 "type": "object",
                 "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "prototype 名称（字母/数字/'-'/'_'，全局唯一）",
-                    },
                     "behavior": {
                         "type": "string",
                         "description": (
@@ -127,7 +123,7 @@ class WritePrototypeTool(Tool):
                     },
                     "display_name": {
                         "type": "string",
-                        "description": "显示名（人类审批时看到）",
+                        "description": "必填行为标签，描述怎样行动；不赋予职业、职位或社会身份",
                     },
                     "description": {
                         "type": "string",
@@ -136,7 +132,7 @@ class WritePrototypeTool(Tool):
                     "parent": {
                         "type": "string",
                         "description": (
-                            "父原型名称（本原型从哪个原型派生而来；留空表示新的根原型）。"
+                            "父原型系统 ID（本原型从哪个原型派生而来；留空表示新的根原型）。"
                             "父原型必须已存在（trusted 库或 staging 区皆可），"
                             "generation 由服务端自动推导为父代 + 1"
                         ),
@@ -154,7 +150,7 @@ class WritePrototypeTool(Tool):
                         ),
                     },
                 },
-                "required": ["name", "behavior"],
+                "required": ["behavior", "display_name"],
             },
         )
         self._author_id = author_id
@@ -184,6 +180,16 @@ class WritePrototypeTool(Tool):
             return True
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if "name" in kwargs:
+            return ToolResult(
+                success=False,
+                data={},
+                error="name is system-generated; provide display_name instead",
+            )
+        if not isinstance(kwargs.get("display_name"), str) or not kwargs["display_name"].strip():
+            return ToolResult(
+                success=False, data={}, error="display_name must be a non-empty behavior label"
+            )
         if self._prototype is not None and not await self._solvent(self._prototype):
             return ToolResult(
                 success=False,
@@ -195,9 +201,8 @@ class WritePrototypeTool(Tool):
                 ),
             )
 
-        name: str = kwargs["name"]
         behavior: str = kwargs["behavior"]
-        display_name: str = kwargs.get("display_name", "")
+        display_name: str = kwargs["display_name"]
         description: str = kwargs.get("description", "")
         parent: str | None = kwargs.get("parent") or None
         proposal_note: str | None = kwargs.get("proposal_note") or None
@@ -212,7 +217,6 @@ class WritePrototypeTool(Tool):
             return near_kin_rejection
         try:
             info = self._writer(
-                name,
                 behavior,
                 display_name=display_name,
                 description=description,

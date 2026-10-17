@@ -1,0 +1,4 @@
+{:name :p-5bb5829d38ad49e2af1a6deea842e68c
+ :display-name "精简上下文响应"
+ :description "L0 执行能力；最多 10 次迭代、1000000 token，仅注入人格、公共协议与最近 5 封邮件，采用思考和执行阶段，每 15 分钟反思。"
+ :trusted true}

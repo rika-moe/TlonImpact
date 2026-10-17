@@ -122,8 +122,10 @@ def _handler(
     return handler, fake, p
 
 
-def _stage(p: TlonPaths, name: str = "staged") -> None:
-    write_staging_prototype(name, _BEHAVIOR, author_id="adam", tlon_paths=p)
+def _stage(p: TlonPaths) -> str:
+    return write_staging_prototype(
+        _BEHAVIOR, display_name="定址测试", author_id="adam", tlon_paths=p
+    ).name
 
 
 def _write_archive(
@@ -156,23 +158,23 @@ def _write_archive(
 class TestStartArenaRun:
     async def test_trigger_success_202_passthrough(self, tmp_path: Path):
         handler, fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
 
         resp = await handler.handle_start_arena_run(
             StubRequest(
                 body={"model": "deepseek/deepseek-chat", "corpus_size": 10, "params": {"x": 1}},
-                name="staged",
+                name=staged_id,
             )
         )
 
         assert resp.status == 202
         body = json.loads(resp.text)
         assert body["status"] == "success"
-        assert body["run"]["prototype"] == "staged"
+        assert body["run"]["prototype"] == staged_id
         assert body["run"]["model"] == "deepseek/deepseek-chat"
         assert fake.calls == [
             {
-                "prototype_name": "staged",
+                "prototype_name": staged_id,
                 "model": "deepseek/deepseek-chat",
                 "params": {"x": 1},
                 "corpus_size": 10,
@@ -183,9 +185,9 @@ class TestStartArenaRun:
     async def test_trigger_empty_body_ok(self, tmp_path: Path):
         """body 全可选——空 body 也走缺省解析（TLON_ARENA_MODEL 等）。"""
         handler, fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
 
-        resp = await handler.handle_start_arena_run(StubRequest(name="staged"))
+        resp = await handler.handle_start_arena_run(StubRequest(name=staged_id))
 
         assert resp.status == 202
         assert fake.calls[0]["model"] is None
@@ -194,9 +196,11 @@ class TestStartArenaRun:
         handler, _fake, p = _handler(
             tmp_path, runner=FakeRunner(error=ArenaError("已有活跃演武 run"))
         )
-        _stage(p)
+        staged_id = _stage(p)
 
-        resp = await handler.handle_start_arena_run(StubRequest(body={"model": "m"}, name="staged"))
+        resp = await handler.handle_start_arena_run(
+            StubRequest(body={"model": "m"}, name=staged_id)
+        )
 
         assert resp.status == 400
         body = json.loads(resp.text)
@@ -205,10 +209,10 @@ class TestStartArenaRun:
 
     async def test_invalid_field_types_400(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
 
         resp = await handler.handle_start_arena_run(
-            StubRequest(body={"corpus_size": "ten"}, name="staged")
+            StubRequest(body={"corpus_size": "ten"}, name=staged_id)
         )
 
         assert resp.status == 400
@@ -216,9 +220,9 @@ class TestStartArenaRun:
 
     async def test_unwired_503(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path, wire_arena=False)
-        _stage(p)
+        staged_id = _stage(p)
 
-        resp = await handler.handle_start_arena_run(StubRequest(body={}, name="staged"))
+        resp = await handler.handle_start_arena_run(StubRequest(body={}, name=staged_id))
 
         assert resp.status == 503
 
@@ -270,7 +274,7 @@ class TestArenaRunQueries:
 class TestArenaReport:
     async def test_report_endpoint(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
         flags = [
             {
                 "kind": "spawn-attempt",
@@ -278,10 +282,10 @@ class TestArenaReport:
                 "evidence": "sessions/s.jsonl#seq-3",
             }
         ]
-        _write_archive(p, "staged", "20261005-120000-abc123", red_flags=flags)
+        _write_archive(p, staged_id, "20261005-120000-abc123", red_flags=flags)
 
         resp = await handler.handle_get_arena_report(
-            StubRequest(name="staged", run_id="20261005-120000-abc123")
+            StubRequest(name=staged_id, run_id="20261005-120000-abc123")
         )
 
         assert resp.status == 200
@@ -292,10 +296,10 @@ class TestArenaReport:
 
     async def test_report_missing_404(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
 
         resp = await handler.handle_get_arena_report(
-            StubRequest(name="staged", run_id="20261005-120000-abc123")
+            StubRequest(name=staged_id, run_id="20261005-120000-abc123")
         )
 
         assert resp.status == 404
@@ -304,11 +308,11 @@ class TestArenaReport:
     async def test_report_run_without_report_404(self, tmp_path: Path):
         """归档目录在但 report.json 未生成（run 进行中/报告失败）→ 404。"""
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
-        _write_archive(p, "staged", "20261005-120000-abc123", with_report=False)
+        staged_id = _stage(p)
+        _write_archive(p, staged_id, "20261005-120000-abc123", with_report=False)
 
         resp = await handler.handle_get_arena_report(
-            StubRequest(name="staged", run_id="20261005-120000-abc123")
+            StubRequest(name=staged_id, run_id="20261005-120000-abc123")
         )
 
         assert resp.status == 404
@@ -317,14 +321,14 @@ class TestArenaReport:
 class TestStagingDetailArenaField:
     async def test_detail_with_report(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
         flags = [
             {"kind": "fuel-exhaustion", "detail": "迭代硬顶", "evidence": "sessions/s.jsonl#seq-9"}
         ]
-        _write_archive(p, "staged", "20261005-110000-aaa111")
-        _write_archive(p, "staged", "20261005-120000-bbb222", red_flags=flags)
+        _write_archive(p, staged_id, "20261005-110000-aaa111")
+        _write_archive(p, staged_id, "20261005-120000-bbb222", red_flags=flags)
 
-        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+        resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
 
         assert resp.status == 200
         arena = json.loads(resp.text)["prototype"]["arena"]
@@ -336,9 +340,9 @@ class TestStagingDetailArenaField:
     async def test_detail_without_report(self, tmp_path: Path):
         """无归档目录 → arena 为 None（与 execution-level red_flags 分开字段）。"""
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
+        staged_id = _stage(p)
 
-        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+        resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
 
         assert resp.status == 200
         proto = json.loads(resp.text)["prototype"]
@@ -348,19 +352,19 @@ class TestStagingDetailArenaField:
     async def test_detail_latest_run_without_report_is_none(self, tmp_path: Path):
         """最新 run 无报告时不冒名旧 run 的报告。"""
         handler, _fake, p = _handler(tmp_path)
-        _stage(p)
-        _write_archive(p, "staged", "20261005-110000-aaa111")
-        _write_archive(p, "staged", "20261005-120000-bbb222", with_report=False)
+        staged_id = _stage(p)
+        _write_archive(p, staged_id, "20261005-110000-aaa111")
+        _write_archive(p, staged_id, "20261005-120000-bbb222", with_report=False)
 
-        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+        resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
 
         assert json.loads(resp.text)["prototype"]["arena"] is None
 
     async def test_detail_arena_none_when_unwired(self, tmp_path: Path):
         handler, _fake, p = _handler(tmp_path, wire_arena=False)
-        _stage(p)
-        _write_archive(p, "staged", "20261005-120000-abc123")
+        staged_id = _stage(p)
+        _write_archive(p, staged_id, "20261005-120000-abc123")
 
-        resp = await handler.handle_get_staging_prototype(StubRequest(name="staged"))
+        resp = await handler.handle_get_staging_prototype(StubRequest(name=staged_id))
 
         assert json.loads(resp.text)["prototype"]["arena"] is None

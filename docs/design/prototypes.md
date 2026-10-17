@@ -22,28 +22,21 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
 
-[src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带十一个内置原型：
+[src/tlon/prototypes/](../../src/tlon/prototypes) 随包携带 9 个行为原型（[ADR 0035](../decisions/0035-generated-ids-and-behavior-prototypes.md)）。目录及元数据 `name` 使用一次生成并固定的 `p-<uuid4 hex>`，播种不会重新编号。显示名与描述说明实际行为，不赋予职业：
 
-**角色行为原型**（快速开始的成员从它们创建——首启是空社会（ADR 0016），人类在 WebUI / ops 创建成员时选择原型与模型）：
+| 行为显示名 | 执行层 | 实际差异 |
+|---|---|---|
+| 长预算工具迭代 | L2 | 100 次迭代、8000000 token；合并原 developer/data-analyst 的相同行为 |
+| 标准工具迭代 | L2 | 标准 ReAct、10 次迭代、1000000 token |
+| 标准文件迭代 | L1 | 标准 ReAct；合并原 pm/product 的相同行为 |
+| 标准无执行迭代 | L0 | 标准 ReAct，无执行装置 |
+| 频繁反思迭代 | L0 | 反思间隔 5 分钟 |
+| 超长预算迭代 | L0 | 300 次迭代、10000000 token |
+| 精简上下文响应 | L0 | 不注入 knowledge，只看最近 5 封邮件 |
+| 低频反思迭代 | L0 | 反思间隔 30 分钟 |
+| 定址转发 | L0 | 无认知循环，`to` 参数指定转发目标 |
 
-| 原型 | 规则形态 | `:execution` 层 | 关键 spec 差异 |
-|---|---|---|---|
-| developer（开发工程师） | 带 `:loop` | L2 | 标准 ReAct 模板；`:max-iterations 100 :max-tokens 8000000`——研究类任务的迭代轮数退为安全网，token 预算是真实约束线（ADR 0023） |
-| ops（运维工程师） | 带 `:loop` | L2 | 标准 ReAct 模板 |
-| pm（项目经理） | 带 `:loop` | L1 | 标准 ReAct 模板 |
-| support（客服专员） | 带 `:loop` | L0 | 标准 ReAct 模板 |
-| product（产品经理） | 带 `:loop` | L1 | 标准 ReAct 模板 |
-| data-analyst（数据分析师） | 带 `:loop` | L2 | 标准 ReAct 模板；数值同 developer |
-
-**行为形态原型**（覆盖体系的两个维度——带不带 `:loop`、重思考/轻响应）：
-
-| 原型 | 规则形态 | `:execution` 层 | 关键 spec 差异 |
-|---|---|---|---|
-| archivist（档案管理者） | 带 `:loop` | L0 | `:max-iterations 10 :max-tokens 1000000`，反思间隔 5 分钟，知识注入全开——记忆整理型 |
-| deep-thinker（深度思考者） | 带 `:loop` | L0 | `:max-iterations 300 :max-tokens 10000000`——更长思考预算；stage 程序同默认（交卷前自评审） |
-| fast-responder（快速反应者） | 带 `:loop` | L0 | `:max-iterations 10 :max-tokens 1000000`（同默认成员），差异在 `:context` 不含 `(knowledge)`、`(mail-history 5)`——精简上下文换速度 |
-| scribe（书记员） | 带 `:loop` | L0 | 反思间隔 30 分钟——社会文摘的记录者（经提案通道入库的原型） |
-| relay（转发者） | 无 `:loop` | L0 | `:actions [(forward {:to ${to}})]`，唯一带 `:parameters` 的原型——纯转发 |
+原型只回答「怎样行动」。系统不从原型名或显示名推导成员职业、组织、能力认证或人格。创建原型必须提供非空行为显示名；技术 ID 由写入函数生成，调用方不得指定。成员显示名和人格种子仍可自主表达社会身份。
 
 `:execution` 层是执行装置能力声明（宪法一，[execution-device.md](./execution-device.md)「能力阶梯」——内置原型的定层表与「最低够用」原则记录在那里）：实例化时一次性投影进 agent.yaml 的 `docker.level`。「标准 ReAct 模板」指同一套 stage 程序（think + 交卷前 critique + act + revise）与 `:max-iterations 10 :max-tokens 1000000`（ADR 0023）。
 
@@ -93,7 +86,7 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 真正的管线在 `AgentRegistry.spawn_member`（[agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)），顺序是刻意安排的：**信任门先于一切预算检查**——`untrusted_prototype` 的拒绝在计数之前，staging 里的原型连预算都消耗不到。随后：
 
 1. **预算检查**（见下节）。
-2. **生成 id**——`c-{prototype}-{uuid8}`，由注册表生成、调用方无法指定，字符集收敛在 AgentConfig 允许的范围内（原型名先做字符清洗）。`c-` 前缀一眼可辨，uuid 后缀防碰撞，没有任何语义可供依赖。
+2. **生成 id**——`m-<uuid4 hex>`，由注册表生成、调用方无法指定，字符集收敛在 AgentConfig 允许的范围内（原型名先做字符清洗）。`c-` 前缀一眼可辨，uuid 后缀防碰撞，没有任何语义可供依赖。
 3. **`instantiate`**——拷贝落盘（行为冻结）。
 4. **血缘审计**——`spawned_by` 记录 spawner、`spawn_depth` 继承递增（成员侧血缘；原型侧谱系见「谱系」一节）。不设任何角色标记：lazy/常驻由原型 spec 的 `:on :boot` 规则派生。
 5. **注册并启动**，发布 `AGENT_SPAWNED`。
@@ -138,7 +131,7 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 晋级只由人类完成：`approve_prototype` 把目录从 staging 移入 trusted 库并把元数据改写为 `:trusted true`（`:author` 保留——晋级不抹掉作者，审计链不断）；`reject_prototype` 整个删除 staging 目录。这是 Gatekeeper 模型——LLM 可以创作行为，但只有人类能把创作变成可执行的成员。审批界面在 ops 的 Agents 视图（`s`）与 WebUI 的 PROTOTYPES 视图；校验失败时给 LLM 的 ToolResult 里带 `hint`（schema 速查），让它能自助修正重试——闸要严，但试错成本要低。
 
-人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes` → `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
+人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes`（behavior + 必填 display_name）→ `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
 `writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
 
@@ -179,3 +172,7 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 
 - **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：拷贝 + 填模板槽位。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用 `proposeBehavior` 起草变更后的完整 spec 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
 - **staging 审批是人工瓶颈**——Gatekeeper 模型里人类是每个 LLM 创作的原型的必经之路，这与愿景里「人类从审批者退为规则的守护者」相悖。审批社会化的第一步已落地：成员可用 `reviewPrototype` 对 staging 提案做异质同行评审，评审记录（含评审者模型血统）落盘 `REVIEW.md` 并随详情端点呈现给审批者——人类不再是唯一读提案的人。但**自动晋级仍不做**：评审是咨询性的，approve 依旧是人类决定；下一步才是「评议通过的原型按规则自动晋级」，人类退到「定评议规则」的位置。
+
+## 技术标识与存量
+
+新原型技术标识统一由系统分配为 `p-<uuid4 hex>`，新成员由管理创建或 spawn 分配为 `m-<uuid4 hex>`，均不含职业、原型显示名或父本片段。创建接口拒绝旧 name／agent_id 参数；返回的 name（原型 ID）／agent_id（成员 ID）用于后续引用。parent 指向原型 ID。底层 instantiate 仅落实系统已分配的 ID，arena 使用系统 run-id，Adam、人类地址和既有成员不重编号。已有用户目录不被重命名或删除，不提供旧内置名别名、映射或迁移脚本。

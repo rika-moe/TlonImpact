@@ -4,6 +4,8 @@ from pathlib import Path
 
 import aiohttp
 
+from tests.prototype_helpers import builtin_id
+
 from .conftest import WEBUI_HEADERS
 
 
@@ -90,7 +92,13 @@ async def test_patch_cannot_adopt_offline_member_at_operator_address(
 
     base_url, home = inproc_server
     paths = TlonPaths(home)
-    instantiate("developer", "alice", "Offline member", model="openai/gpt-test", tlon_paths=paths)
+    instantiate(
+        builtin_id("长预算工具迭代"),
+        "alice",
+        "Offline member",
+        model="openai/gpt-test",
+        tlon_paths=paths,
+    )
     original_config = paths.agent_config_file("alice").read_bytes()
     async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
         async with http.patch(

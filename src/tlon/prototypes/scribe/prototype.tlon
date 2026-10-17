@@ -1,4 +1,0 @@
-{:name :scribe
- :display-name "书记员"
- :description "社会记录行为骨架：收到 postmaster 的「社会文摘周期任务」邮件时，调用观测工具把全社会近期活动蒸馏成文摘发给人类成员；人类直接来信要摘要时同样处理。平时安静，不主动发言。行为模板，不代表社会身份。"
- :trusted true}

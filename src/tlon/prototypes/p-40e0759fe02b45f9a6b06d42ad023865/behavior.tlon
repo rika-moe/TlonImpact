@@ -1,4 +1,3 @@
-; 书记员：标准认知程序（交卷前自评审），社会文摘的记录者（total spec——文件即全部行为）
 {:version 1
  :execution {:level :L0}
  :rules [{:name "respond"
@@ -10,10 +9,10 @@
                           (act {:if (or (not (completing?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
-                 :max-iterations 10
+                 :max-iterations 300
                  :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled true :interval-minutes 30}}}
+                 :max-tokens 10000000
+                 :reflect {:enabled true :interval-minutes 10}}}
          {:name "boot"
           :on :boot
           :actions []}]}

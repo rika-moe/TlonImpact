@@ -11,10 +11,12 @@ masked by the listing/instantiation tolerance until spawn
 """
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
 import tlon
+from tests.prototype_helpers import builtin_id
 from tlon.agents.behavior_template import analyze
 from tlon.agents.member_spec import MemberLoop, MemberSpec, validate_member_spec
 from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
@@ -22,41 +24,28 @@ from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 from tlosure.edn import dumps, loads
 
-# Every built-in prototype, with the template parameters instantiation
-# requires (relay declares a ``${to}`` placeholder; the others are
-# concrete specs and take none). Includes the seven role prototypes
-# (developer/ops/pm/support/product/data-analyst/scribe) that the
-# standard team is born from (ADR 0006).
+# Fixed package IDs are discovered by behavioral labels, never by historical roles.
 BUILTIN_PARAMS: dict[str, dict] = {
-    "archivist": {},
-    "deep-thinker": {},
-    "fast-responder": {},
-    "relay": {"to": ["a@tlon.internal"]},
-    "developer": {},
-    "ops": {},
-    "pm": {},
-    "support": {},
-    "product": {},
-    "data-analyst": {},
-    "scribe": {},
+    builtin_id(label): ({"to": ["a@tlon.internal"]} if label == "定址转发" else {})
+    for label in (
+        "频繁反思迭代",
+        "长预算工具迭代",
+        "超长预算迭代",
+        "精简上下文响应",
+        "标准工具迭代",
+        "标准文件迭代",
+        "定址转发",
+        "低频反思迭代",
+        "标准无执行迭代",
+    )
 }
-
-#: Execution-device level of every built-in prototype (issue #31, the
-#: settled table; docs/design/execution-device.md 「能力阶梯」). Least-
-#: privilege assignment: an L0 member keeps the mail/memory/task/prototype
-#: observation tools — only workspace file I/O and code execution are cut.
 EXPECTED_LEVELS: dict[str, str] = {
-    "archivist": "L0",
-    "deep-thinker": "L0",
-    "fast-responder": "L0",
-    "relay": "L0",
-    "scribe": "L0",
-    "support": "L0",
-    "pm": "L1",
-    "product": "L1",
-    "data-analyst": "L2",
-    "developer": "L2",
-    "ops": "L2",
+    name: "L2"
+    if name in {builtin_id("长预算工具迭代"), builtin_id("标准工具迭代")}
+    else "L1"
+    if name == builtin_id("标准文件迭代")
+    else "L0"
+    for name in BUILTIN_PARAMS
 }
 
 
@@ -114,18 +103,11 @@ DEFAULT_COGNITIVE_STAGES = [
     "(revise {:if (critique-failed?)})",
 ]
 
-#: Cognitive prototypes carrying the default loop. fast-responder is
-#: deliberately bare (minimal design); relay is deterministic (no loop).
+#: Minimal-context and deterministic behaviors deliberately omit the default loop.
 GATED_PROTOTYPES = [
-    "archivist",
-    "deep-thinker",
-    "developer",
-    "ops",
-    "pm",
-    "support",
-    "product",
-    "data-analyst",
-    "scribe",
+    name
+    for name in BUILTIN_PARAMS
+    if name not in {builtin_id("精简上下文响应"), builtin_id("定址转发")}
 ]
 
 
@@ -136,7 +118,7 @@ class TestDefaultStageVector:
         assert [dumps(form) for form in loop.stages] == DEFAULT_COGNITIVE_STAGES
 
     def test_fast_responder_stays_bare(self) -> None:
-        loop = _prototype_loop("fast-responder")
+        loop = _prototype_loop(builtin_id("精简上下文响应"))
         assert [dumps(form) for form in loop.stages] == ["(think)", "(act)"]
 
 
@@ -167,3 +149,34 @@ def _prototype_loop(name: str) -> MemberLoop:
     loop = _prototype_spec(name).rules[0].loop
     assert loop is not None
     return loop
+
+
+class TestBuiltinLibraryIdentity:
+    def test_nine_fixed_generated_ids_and_distinct_behavior(self) -> None:
+        root = Path(tlon.__file__).parent / "prototypes"
+        directories = [entry for entry in root.iterdir() if (entry / "prototype.tlon").is_file()]
+        assert len(directories) == 9
+        assert {entry.name for entry in directories} == set(BUILTIN_PARAMS)
+        specs = []
+        for entry in directories:
+            assert entry.name.startswith("p-")
+            assert UUID(hex=entry.name[2:]).version == 4
+            metadata = {
+                str(key).lstrip(":"): value
+                for key, value in loads((entry / "prototype.tlon").read_text()).items()
+            }
+            assert str(metadata["name"]).lstrip(":") == entry.name
+            # Preserve parameter declarations while comparing parsed behavior.
+            spec = loads(analyze((entry / "behavior.tlon").read_text()).standin_text)
+            assert spec not in specs
+            specs.append(spec)
+
+    def test_seed_is_idempotent_and_preserves_existing_files(self, tmp_path: Path) -> None:
+        paths = TlonPaths(home=tmp_path)
+        assert seed_prototypes(paths) == 18
+        name = builtin_id("标准工具迭代")
+        metadata = paths.prototypes_dir() / name / "prototype.tlon"
+        metadata.write_text("user-owned metadata")
+        assert seed_prototypes(paths) == 0
+        assert metadata.read_text() == "user-owned metadata"
+        assert {entry.name for entry in paths.prototypes_dir().iterdir()} == set(BUILTIN_PARAMS)

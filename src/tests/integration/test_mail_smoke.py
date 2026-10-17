@@ -16,6 +16,8 @@ from pathlib import Path
 
 import aiohttp
 
+from tests.prototype_helpers import builtin_id
+
 from .conftest import WEBUI_HEADERS, _assert_delivered, _register_human, _send_mail
 
 
@@ -33,20 +35,20 @@ async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> No
         http.post(
             f"{base_url}/admin/config/agents",
             json={
-                "prototype": "developer",
+                "prototype": builtin_id("长预算工具迭代"),
                 "name": "林知遥",
                 "model": "openai/gpt-test",
-                "agent_id": "lin-zhiyao",
             },
         ) as resp,
     ):
         assert resp.status == 200
+        agent_id = (await resp.json())["agent_id"]
 
     async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
-        accepted = await _send_mail(http, base_url, token, to=["lin-zhiyao"], subject="smoke")
+        accepted = await _send_mail(http, base_url, token, to=[agent_id], subject="smoke")
 
     assert accepted
-    await _assert_delivered(tlon_home, "lin-zhiyao", token)
+    await _assert_delivered(tlon_home, agent_id, token)
 
 
 async def test_mail_to_known_human_lands_in_inbox(tlon_server: tuple[str, Path]) -> None:

@@ -1,0 +1,4 @@
+{:name :p-f7158dedb39e404690480d56f9f23945
+ :display-name "长预算工具迭代"
+ :description "L2 执行能力；最多 100 次迭代、8000000 token，完整上下文与交卷前自评审，每 15 分钟反思。"
+ :trusted true}

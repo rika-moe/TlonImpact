@@ -54,7 +54,7 @@ function stateTone(state: string): StateTone {
 function protoLabel(p: ProtoRecord): string {
   const name = String(p["name"] ?? "?");
   const display = String(p["display_name"] ?? "");
-  return display && display !== name ? `${name} — ${display}` : name;
+  return display && display !== name ? `${display} — ${name}` : name;
 }
 
 function errMsg(err: unknown): string {
@@ -670,7 +670,7 @@ function CreateProtoModal({
   );
 }
 
-/** Create step 2: name / model / agent_id? / identity? -> POST /admin/config/agents. */
+/** Create step 2: name / model / identity? -> POST /admin/config/agents. */
 function CreateFormModal({
   rest,
   prototype,
@@ -684,7 +684,6 @@ function CreateFormModal({
 }): ReactElement {
   const [name, setName] = useState("");
   const [model, setModel] = useState("");
-  const [agentIdField, setAgentIdField] = useState("");
   const [identity, setIdentity] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -701,14 +700,13 @@ function CreateFormModal({
     setBusy(true);
     setError(null);
     try {
-      await rest.createAgent({
+      const result = await rest.createAgent({
         prototype,
         name: name.trim(),
         model: model.trim(),
-        agent_id: agentIdField.trim() || undefined,
         persona: identity.trim() ? { identity: identity.trim() } : undefined,
       });
-      onDone(`CREATED ${name.trim()}`);
+      onDone(`CREATED ${name.trim()} · ${String(result["agent_id"])}`);
     } catch (err) {
       setError(errMsg(err));
       setBusy(false);
@@ -731,14 +729,7 @@ function CreateFormModal({
           <span className="tech-label">MODEL *（provider/model，如 deepseek/deepseek-chat）</span>
           <ModelSelect rest={rest} value={model} onChange={setModel} />
         </label>
-        <label className="agents-form-row">
-          <span className="tech-label">AGENT_ID (可选)</span>
-          <input
-            className="input"
-            value={agentIdField}
-            onChange={(e) => setAgentIdField(e.target.value)}
-          />
-        </label>
+        <p>成员地址由系统生成，与原型和社会身份无关。</p>
         <label className="agents-form-row">
           <span className="tech-label">IDENTITY (可选)</span>
           <textarea

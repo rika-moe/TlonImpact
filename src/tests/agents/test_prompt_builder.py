@@ -42,3 +42,9 @@ def test_protocol_distinguishes_public_directory_from_private_material() -> None
     assert "尚不了解来信者不构成禁止其查询公开黄页的理由" in _PROTOCOL
     assert "列举通信对象不授权读取或转交他人的私有材料" in _PROTOCOL
     assert "listAgents" not in _PROTOCOL
+
+
+def test_protocol_separates_behavior_prototypes_from_social_identity() -> None:
+    assert "prototype 只描述行为步骤" in _PROTOCOL
+    assert "不是人格模板，也不认证职业或职位" in _PROTOCOL
+    assert "原型与成员技术 ID 由系统生成" in _PROTOCOL

@@ -1,8 +1,7 @@
 {:version 1
- :execution {:level :L1}
+ :execution {:level :L0}
  :rules [{:name "respond"
           :on :mail-delivered
-          :actions []
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
                  :stages [(think)
@@ -13,7 +12,7 @@
                  :max-iterations 10
                  :max-consecutive-errors 3
                  :max-tokens 1000000
-                 :reflect {:enabled true :interval-minutes 15}}}
+                 :reflect {:enabled true :interval-minutes 30}}}
          {:name "boot"
           :on :boot
           :actions []}]}

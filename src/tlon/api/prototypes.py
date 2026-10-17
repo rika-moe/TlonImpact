@@ -91,10 +91,9 @@ class PrototypesFacade:
 
     def create(
         self,
-        name: str,
         behavior: str,
         *,
-        display_name: str = "",
+        display_name: str,
         description: str = "",
         parent: str | None = None,
         proposal_note: str | None = None,
@@ -104,10 +103,9 @@ class PrototypesFacade:
         (handwritten implies trusted; validation precedes any disk write).
 
         Raises:
-            PrototypeError: invalid name or a spec that fails validation
+            PrototypeError: empty behavior label, generated ID conflict or invalid spec
         """
         return write_trusted_prototype(
-            name,
             behavior,
             display_name=display_name,
             description=description,

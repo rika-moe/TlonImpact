@@ -377,7 +377,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 | `name` | string | 是 | 显示名，他人 @ 此名即可对话 |
 | `params` | object | 否 | 模板参数，仅当 prototype 声明 `:parameters`；`:string` 传字符串，`:string-list` 传字符串数组 |
 
-成功返回 `agent_id`（注册表生成，形如 `c-{prototype}-{8位hex}`）、`name`、`prototype`、`spawn_depth`。
+成功返回 `agent_id`（注册表生成，形如 `m-<uuid4 hex>`）、`name`、`prototype`、`spawn_depth`。
 
 拒绝行为（`SpawnRejectedError`，`success=False`，`data.reason` 为机器可读 token）：
 
@@ -421,9 +421,8 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
-| `name` | string | 是 | — | 名称（字母/数字/`-`/`_`，全局唯一） |
 | `behavior` | string | 是 | — | 行为规约 EDN 字符串，v1 schema 的 rules-form |
-| `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
+| `display_name` | string | 是 | — | 非空行为显示名，描述步骤、预算、上下文或反思，不赋予职业 |
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
 | `parent` | string | 否 | — | 父原型名称（谱系；须已存在，trusted 或 staging 皆可）；`generation` 服务端推导为父代 + 1 |
 | `proposal_note` | string | 否 | — | 本代变更说明（相对父原型改了什么、为什么） |
@@ -435,22 +434,25 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 另有近亲拒绝闸（仅 agent 侧，ADR 0014 非收敛选择压）：`behavior` 与两区既有原型做规范化文本相似度比较（`find_near_kin`，阈值 0.9），跨血脉命中（换皮级雷同）时提案在写入前被拒（`success=False`，error 指明最相似原型名与相似度，message 指引「做出实质差异或改为提案改进它」，staging 无残留）；提案的声明父本豁免（显式 `parent` 优先，缺省回退作者自身 prototype）——沿血脉的代际微改放行；相似度扫描异常时 fail-open 放行。
 
+成功返回原型 `name` 为系统生成的 p-UUID，后续 parent、评审与批准引用该 ID；携带旧 name 参数明确拒绝，不保留别名。
+
 ### proposeBehavior
 
 **见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册。
 
-世代通道的经验入口：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与新名称**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
+世代通道的经验入口：基于成员自己的个体经验提出下一代行为原型。与 `writePrototype`（裸写通道，调用方自带全文）的区别在于调用方只给**变更意图与行为显示名**——工具内部读成员自己的 `config/behavior.tlon` 底稿、`get_memory_digest` 记忆快照（claims）与 `memory/lessons.md` 蒸馏教训（存在才带），连同意志喂给一次独立的起草 LLM 调用（`purpose="propose"`、timeout 60s；采样参数不配置，供应商默认生效），产出完整的新 spec 后走同一个 `write_staging_prototype` 闸落盘：父原型固定为成员自己的 prototype（`AgentConfig.prototype`，无则为新根），`proposal_note` 记意图，lessons 随包落 `LESSONS.md`。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `intent` | string | 是 | — | 变更意图：想改什么、为什么（自然语言，记为 `proposal_note`） |
-| `name` | string | 是 | — | 新原型名称（字母/数字/`-`/`_`，全局唯一） |
-| `display_name` | string | 否 | `""` | 人类审批时看到的显示名 |
+| `display_name` | string | 是 | — | 人类审批时看到的显示名 |
 | `description` | string | 否 | `""` | 行为定位一句话描述 |
 
 成功返回 `{name, parent, generation, trusted=false, status="pending_approval"}`——与 `writePrototype` 同一信任闸：人类在 ops/WebUI 审批后才能 `spawnAgent` 派生新世代。
 
-失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：血脉偿付闸拒绝（与 `writePrototype` 同一道闸，排在起草调用之前——被闸时不消耗起草 token，staging 无残留；fail-open）；起草响应剥离 ``` 代码围栏后找不到 EDN map；近亲拒绝（与 `writePrototype` 同一道闸，排在起草**之后**——被比较的是草稿文本；父本恒为成员自己的 prototype 且豁免，跨血脉命中时 staging 无残留；fail-open）；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；名称冲突；成员无 `behavior.tlon` 底稿。
+失败行为（均 `success=False`，工具内不重试——外层 ReAct 循环即重试机制）：血脉偿付闸拒绝（与 `writePrototype` 同一道闸，排在起草调用之前——被闸时不消耗起草 token，staging 无残留；fail-open）；起草响应剥离 ``` 代码围栏后找不到 EDN map；近亲拒绝（与 `writePrototype` 同一道闸，排在起草**之后**——被比较的是草稿文本；父本恒为成员自己的 prototype 且豁免，跨血脉命中时 staging 无残留；fail-open）；起草产出非法 spec（`PrototypeError` 原文回喂 + `data.hint` schema 提示，staging 无残留）；系统生成的 ID 冲突；成员无 `behavior.tlon` 底稿。
+
+原型技术 ID 由系统分配，name 不再是输入；display_name 必须是非空行为标签，不能把原型当作职业或人格模板。
 
 ### proposeCapability
 

@@ -183,9 +183,8 @@ export type ArenaRunReport = {
 
 /** Handwritten prototype creation body (POST /admin/prototypes). */
 export type PrototypeCreate = {
-  name: string;
   behavior: string;
-  display_name?: string;
+  display_name: string;
   description?: string;
 };
 
@@ -757,7 +756,6 @@ export class RestClient {
     prototype: string;
     name: string;
     model: string;
-    agent_id?: string;
     params?: Record<string, unknown>;
     persona?: Record<string, string>;
   }): Promise<Record<string, unknown>> {

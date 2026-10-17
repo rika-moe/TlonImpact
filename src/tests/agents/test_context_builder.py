@@ -755,7 +755,7 @@ async def test_knowledge_lands_last_after_trigger(tmp_path: Path) -> None:
 
 
 async def test_anchor_len_covers_everything_without_knowledge(tmp_path: Path) -> None:
-    """A member without (knowledge) (fast-responder style): the anchor is
+    """A member without (knowledge) (minimal-context style): the anchor is
     the whole initial context, as before."""
     builder, tasks = _make_builder(tmp_path, "[(current-task)]")
     task = tasks.create_task("写周报")

@@ -11,9 +11,11 @@ from tlon.agents.prototypes.info import (
     _is_prototype_dir,
     _read_metadata,
     _resolve_parent_generation,
+    _validate_display_name,
     _validate_name,
 )
 from tlon.agents.prototypes.staging import _validate_behavior
+from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
@@ -23,14 +25,13 @@ logger = get_logger(__name__)
 
 
 def write_trusted_prototype(
-    name: str,
     behavior_edn: str,
-    display_name: str = "",
+    *,
+    display_name: str,
     description: str = "",
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
-    *,
     tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Write a human-authored prototype directly into the trusted library.
@@ -42,10 +43,8 @@ def write_trusted_prototype(
     docs/design/prototypes.md) work exactly as in the staging write path.
 
     Args:
-        name: prototype directory name (charset-checked, must be unique
-            across both the trusted library and the staging area)
         behavior_edn: raw EDN text of the unified behavior spec
-        display_name: human-facing name (falls back to ``name``)
+        display_name: required non-empty behavior label; does not assign a profession
         description: human-facing description
         parent: name of the prototype this one derives from (must exist in
             either area; None = a new root)
@@ -58,21 +57,18 @@ def write_trusted_prototype(
         Metadata of the created prototype (``trusted=True``).
 
     Raises:
-        PrototypeError: invalid name, name conflict, unknown parent, or spec
+        PrototypeError: empty behavior label, generated ID conflict, unknown parent, or spec
             failed validation (nothing is written in any case)
     """
     p = tlon_paths
-    _validate_name(name)
-
-    proto_dir = p.prototypes_dir() / name
-    if (proto_dir / BEHAVIOR_FILE).exists():
-        raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
-    if (p.prototypes_staging_dir() / name).exists():
-        raise PrototypeError(f"prototype '{name}' already exists in the staging area")
-
+    _validate_display_name(display_name)
     generation = _resolve_parent_generation(parent, p) if parent is not None else 1
     spec_text = _validate_behavior(behavior_edn)
 
+    name = new_prototype_id()
+    if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
+        raise PrototypeError(f"prototype '{name}' already exists")
+    proto_dir = p.prototypes_dir() / name
     proto_dir.mkdir(parents=True)
     (proto_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
     if lessons:
@@ -80,7 +76,7 @@ def write_trusted_prototype(
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
-        Keyword("display-name"): display_name or name,
+        Keyword("display-name"): display_name,
         Keyword("description"): description,
         Keyword("trusted"): True,
         Keyword("generation"): generation,
@@ -157,6 +153,9 @@ def update_prototype(
             "nothing to update: provide display_name, description, behavior_edn, "
             "parent, proposal_note or lessons"
         )
+
+    if display_name is not None:
+        _validate_display_name(display_name)
 
     # Resolve everything that can fail before anything touches disk.
     parent_generation: int | None = None
