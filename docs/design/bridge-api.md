@@ -1,115 +1,73 @@
-# Bridge API：Python 机制底座与 tlosure 策略层之间的桥
+# Bridge API：宿主机制与 tlosure 策略的接口
 
-> 方向已于 2026-09-28 拍板：**把桥接面形式化为稳定的 Bridge API 层，让策略/逻辑持续从 Python 向 tlosure 迁移；机制层（调度、IO、LLM、Docker）永远留在 Python。** 本文是该方向的设计文档：定义桥的形态、边界、版本约定与迁移路线。语言与 spec 的既有设计见 [dsl.md](./dsl.md)，本文不重复其论证，只在其基础上回答"桥怎么长"。
+Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值语境能使用哪些词汇。它由 Python 协议、builtin 注册表、环境契约和 `ActionRequest` 组成；不是通用 FFI。语言及行为模型见 [DSL 设计](dsl.md)，字段与词汇见 [DSL reference](../reference/dsl-reference.md)。
 
-## 定位
+## 领域约束
 
-Tlon 的愿景（[../vision.md](../vision.md)）要求行为是可进化的数据，机制是可信的代码。[dsl.md](./dsl.md) 已把这条线划清：行为即数据（spec 由 LLM 可写），能力仍是代码（白名单常量，人类维护）。但 dsl.md 只定义了桥两端各自的样子，**桥本身——宿主暴露什么、以什么形态暴露、如何演进——至今是散在代码里的隐式约定**：
+- 调度、并发、持久化、LLM 调用、Docker 和权限检查留在宿主机制层；策略组合已有机制。
+- 查询只暴露受控视图，不向 DSL 开放任意 Python 属性或方法调用。
+- 效果词产出 `ActionRequest` 数据，求值结束后才由宿主执行。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
+- 每个语境有自己的词汇注册表、符号作用域和 fuel 预算；新增词汇必须明确适用语境。
+- 函数可以返回动作意图，也可以在函数体内调用效果词。动作位置不再靠语法分区枚举；纯语境通过可见词汇约束效果。
+- tlosure 核心保持宿主无关；领域端口位于 tlon。纯度标记描述效果权限，不能将“读取宿主状态”误解成可重放的常量计算。
 
-- `Builtin(fn, pure)` 注册表（[tlosure/builtins.py](../../src/tlosure/builtins.py)）是注入通道，但词汇散在 [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个注册表里，没有统一的端口视图；
-- `ActionRequest`（[tlosure/builtins.py](../../src/tlosure/builtins.py)）是效果返回通道，但"哪些动作存在、参数什么形状"只有读实现才知道；
-- `ScriptHostQueries` 协议（[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)）是宿主查询端口，但只有一个、且为 Adam 专用；
-- env 注入（`{msg, event, self}` 等）分散在 [member_runtime.py](../../src/tlon/agents/member_runtime.py) / [loop_driver.py](../../src/tlon/agents/loop_driver.py) / [on_complete.py](../../src/tlon/agents/on_complete.py) 各处，每个语境能看到什么符号没有集中定义。
+## 四类接口
 
-Bridge API 就是把这些隐式约定提升为**显式、集中、有版本契约的接口层**。它要回答的问题只有一个：当一处 Python 策略逻辑想迁往 tlosure 时，作者应该去哪里看"桥上有什么"、往哪里加"桥上还缺什么"。
+### 查询
 
-## 边界：什么过桥的、什么永远不过桥
+[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `ScriptHostQueries` 声明宿主查询协议，`make_member_builtins(host)` 通过闭包注入查询。实现由 [agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `RegistryQueries` 提供。Adam 获得注册表状态查询，普通成员不因此获得同样权限。
 
-桥的存在不改变机制/策略的划分，它是这条划分的**载体**而非例外：
+查询词登记为 `pure=True`，表示不执行外部效果；结果来自当前宿主视图，未必在不同时刻相同。能力 artifact 不能直接引用这些依赖隐式上下文的查询，必须由调用方显式传入数据。
 
-- **永远留在 Python（机制层）**：EventBus、SessionScheduler 与 session 状态机、journal、PostOffice 事务入箱与网关尝试、Mailbox、LLMClient/EmbeddingClient、MemoryManager 存储与检索执行、DockerRuntime、EffectExecutor 的安全校验（幻觉收件人、spawn 预算、信任闸）、五个 stage 的语义本体、tlosure 求值器本身。这些触碰并发/IO/外部世界，或是不可绕过的安全执行点——它们是 DSL 程序的"指令集"，必须是不可信环境里的可信不动点。
-- **持续迁往 tlosure（策略层）**：何时醒、如何思考、完成后做什么（已是 spec）；以及目前仍是 Python 常量的调参型与措辞型政策（记忆检索权重、反思阈值、终止文案、社会事实的消费政策——见"迁移路线"阶段 2）。
-- **桥自身**：端口的定义与实现在 Python，端口的清单与契约是文档化的 API。Python 侧端口实现遵循与 builtin 相同的纪律——纯查询无副作用，效果意图只产数据不执行。
+### 效果
 
-## 桥的结构：四类端口
+`spawn`、`emit`、`start`、`stop`、`start-all`、`forward` 登记为 `pure=False`，只构造请求。新增效果需要同时定义参数校验、请求执行分支和必要的权限/配额检查。
 
-Bridge API 由四类端口组成，全部集中定义、集中编目。前两类已存在（本文做的是形式化而非发明），后两类是把现状中隐式的部分补上。
+确定规则按 form 返回值收集请求；认知规则的完成动作使用 collector 捕获多动作体中的请求。两条路径均由宿主执行，表达式不能同步观察自己所声明效果的执行结果。完整运行流程见 [runtime](runtime.md)。
 
-### 1. 查询端口（Queries，host → DSL，只读）
+### 环境
 
-宿主状态的只读视图。现状：`ScriptHostQueries` 协议 + `make_member_builtins` 闭包注入（[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)），生产实现是 [agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `RegistryQueries`。
+类型声明集中在 `agents/vocabulary.py`，运行时由相应执行点构造：
 
-形式化要求：
+| 语境 | 环境契约 | 可见内容 |
+|---|---|---|
+| 规则门控、确定动作 | `RuleEnv` | `msg`、`event`、`self` |
+| 认知规则完成动作 | `OnCompleteEnv` | `msg`（当前为 nil）、`result`、`self`；没有 `event` |
+| 循环终止条件 | `LoopEnv` | `self`、`state`、`limits` |
+| stage 条件 | `StageCondEnv` | `state`、`scratch`、`round` |
 
-- 每个查询端口是一个 **协议（Protocol）类 + 一个 builtin 注册表工厂**（`make_*_builtins(host)` 模式），`pure=True`；
-- 查询永不暴露宿主对象本身，只暴露拆包后的 Plain Old Data（关键字、字符串、数字、向量、map）——env 里的宿主对象保持不透明，没有属性/方法访问语法这条禁令（[dsl.md](./dsl.md)）不因桥而开口子；
-- 查询的实现方（如 RegistryQueries）与 DSL 侧词汇各归各位：协议声明在词汇层，实现由机制组件提供，装配时注入。
+ADR 0028 的单 session 模型没有唯一触发邮件，因此完成动作不能把 `msg` 当作原始来信。加载期动作作用域是两条执行路径的并集，不代表每条路径都绑定全部符号；作者应遵守对应运行环境。
 
-### 2. 效果端口（Effects，DSL → host，数据化意图）
+社会政策是独立的 pull 型求值语境，其 hook 数据由调用点物化，见 [society-policy](society-policy.md)。
 
-副作用的唯一合法形态：`ActionRequest` 数据，求值结束后由引擎执行。现状：六个动作 builtin（`spawn`/`emit`/`start`/`stop`/`start-all`/`forward`）。
+### 注册表
 
-形式化要求：
+成员、循环和 stage 条件分别使用 `make_member_builtins`、`LOOP_BUILTINS`、`STAGE_COND_BUILTINS` 等注册表。加载校验与运行时必须使用相匹配的词汇。受信能力以 closure-backed builtin 注入成员门控与确定动作注册表，函数体消耗调用方 fuel/depth；循环条件、stage 条件与认知完成动作仍有接线缺口，机制及限制见 [capabilities](capabilities.md)。
 
-- 效果词汇永远 `pure=False`，产出已验证的 `ActionRequest`；参数校验全部前置在纯求值期（现状已如此，保持）；
-- 新增效果端口 = 新增动作 builtin + 引擎侧 `_execute_action` 的一个分支 + 相应的配额/权限检查。效果端口的执行侧永远是机制层代码，DSL 够不到执行本身；
-- ~~动作位置的纯度分区（`validate_member_action`：包装形式只允许 `when`/`while`/`map`，参数必须纯表达式）适用于一切新效果词汇，无例外。~~（ADR 0021 修订：语法纯度分区已删除——函数体可携带动作使其失去静态可判定性；`validate_member_actions` 只做全量注册表校验 + `defn` 穿线，动作汇聚由运行时 collector/返回值收集承担。）
+## 当前政策数据的归属
 
-### 3. 环境契约（Environments，每个语境的可见符号）
+桥已经支持下列政策配置；它们不是待施工清单：
 
-现状：env 构造散在各调用点——`{msg, event, self}`（member_runtime）、`{result}`（on_complete）、`{self, state, limits}`（loop until）、`{state, scratch, round}`（stage if）。
+| 政策 | 当前来源 | 机制归属 |
+|---|---|---|
+| 启停、噪声熔断 | Adam 内置 spec | 注册表与健康事实生产 |
+| 检索权重、冲突阈值、蒸馏与反思参数 | 成员 `memory/config.json`、spec `:reflect` | memory / runtime |
+| 终止回信措辞 | spec `:loop/:replies`，未声明时使用引擎默认措辞 | runtime 的终止路径 |
+| fitness 与 trust | `policy.tlon` hook | society-policy |
+| 复合能力 | 受信能力 artifact | 加载准入与效果执行 |
 
-形式化要求：每个 DSL 求值语境（`:when` 门控、确定规则 `:actions`、on-complete、`:until`、stage `:if`，以及未来新增的语境）有一份**显式的环境契约**：可用符号清单、各符号的类型与形状、事件负载的字段约定。契约与语境注册表（下条）一一对应，共同构成"这个语境能表达什么"的完整答案。
+`AGENT_NOISY` 有 Adam 消费政策；`MAIL_ORPHAN_SCAN` 不因为存在就必须产生反应，避免周期事实转成周期噪声。迁移政策的理由应是让这部分规则可编辑、可评审，而非单纯减少 Python 行数。
 
-### 4. 语境注册表（Contexts，词汇按语境切分）
+## 演进与检查
 
-现状已有雏形（`TRIGGER_BUILTINS` / `LOOP_BUILTINS` / `STAGE_COND_BUILTINS` / Adam 宿主谓词）。形式化要求：注册表的切分、每份注册表的内容、各语境的 fuel 预算分配方式，集中编目；新增词汇时必须声明它属于哪个（些）语境，禁止"哪里都能用"的词汇膨胀。
+`:version` 标识 spec 格式，不建立运行时词汇版本矩阵。变更词汇与语境时，同步修改校验、执行环境和 reference；不能保留文档中已经删除的词汇。既有演进取舍见 [ADR 0020](../decisions/0020-bridge-api.md)；能力的元数据退役机制见 [capabilities](capabilities.md)。ADR 中设想的通用加载期 deprecation warning 不应被当作已经具备的机制。
 
-## 版本与演进纪律
+[scripts/gen_reference_docs.py](../../scripts/gen_reference_docs.py) 对其负责的 reference 区块做生成与 freshness 检查，包括工具、REST、事件、配置等清单；并非本文全部语境契约均已自动生成，手写部分仍需核对代码。
 
-桥是 spec 作者（包括 LLM）面对的稳定界面，需要明确的演进纪律：
+加载校验能拒绝未注册词和未定义符号，但不能保证合法程序运行时无类型错误、无 fuel 耗尽。失败处理由相应运行语境定义。
 
-- **默认 additive，删除走 deprecation 生命周期**（ADR 0020，2026-09-28 修订）：`introduced → deprecated → removed`。发现坏设计先标记废弃——加载期 warning（不拒载）、生成文档标注、给迁移窗口；窗口后删除词汇并机械迁移磁盘 spec（spec 语料小且可触达，`loads`/`dumps` 对称使迁移可测试；loader 仍是唯一读盘路径）。语义只紧不松：修复式收紧（原来放行的坏输入改为拒绝）允许，需记录。
-- **`:version` 只给格式**：spec 顶层 `:version` 字段（loader 硬校验）留给规则形态/字段结构的变化；词汇增删不消耗版本号。不引入运行时版本矩阵——spec 语料可触达可迁移，版本矩阵的收益抵不上 N 份注册表/校验/文档矩阵的永久维护面。
-- **新语境 = 桥的小版本**。新增求值语境（含其注册表与环境契约）是桥的主要演化方式，比往既有语境里塞词更值得鼓励——语境切分是信任模型的组成部分。
-- **文档从代码生成**。桥的完整编目（各语境的词汇、环境契约、fuel 预算）由脚本从注册表代码生成（沿用 [scripts/gen_reference_docs.py](../../scripts/gen_reference_docs.py) 的方式），文档与实现不可漂移。
-- 加载期校验是唯一守门人：任何桥上词汇的引用错误都在加载时被 `validate_member_spec` 拒绝，运行期不存在"未定义词汇"这一类错误。
+## 历史与未实施方向
 
-## 迁移路线
+桥的形式化见 [ADR 0020](../decisions/0020-bridge-api.md)，完整函数能力见 [ADR 0021](../decisions/0021-tlosure-full-functions.md)，社会政策语境见 [ADR 0022](../decisions/0022-society-policy-context.md)。完整函数和复合能力均已实现，不再列为远期阶段。
 
-四阶段，每阶段独立交付、独立收尾；后一阶段的开始不以前序全部完成为前提（除标注的依赖外）。
-
-### 阶段 1：桥的形式化（行为不变，纯整理）——已落地
-
-把散落的隐式约定收拢为显式 API。不改任何运行时行为。
-
-- 端口编目：盘点全部既有 builtin/动作/宿主谓词/env 注入点，按四类端口归类，形成单一事实源（建议落在 `agents/vocabulary.py` 的模块结构 + 生成文档）。
-- 环境契约显式化：每个语境的 env 构造收拢到一处定义（目前散在三个文件），符号清单与形状写成类型化契约。
-- ~~生成桥参考文档：`gen_reference_docs.py` 扩展出 bridge 编目（按语境列词汇、签名、fuel 默认、效果 kind）。~~（已落地：[scripts/gen_reference_docs.py](../../scripts/gen_reference_docs.py) 生成 reference 文档中漂移高发的清单区块——工具注册表、REST 端点总表、事件类型、配置字段等——并带 freshness 门禁，改了会被 `--check` 打回）
-- 验收：行为零变化（既有测试全绿）；桥上有什么、每个语境能表达什么，不读实现代码即可回答。
-
-### 阶段 2：存量策略数据化迁移（收益最大、风险最低）
-
-把目前是 Python 常量的策略逐处迁移。每一项一个 PR，串行施工；多项共享一处文件时相邻施工。
-
-- ~~**Adam 消费健康事实**（首选示范，零 Python 改动）：`AGENT_NOISY` / `MAIL_ORPHAN_SCAN` 已由 [agents/health.py](../../src/tlon/agents/health.py) 机制化发布，但无策略消费。给 Adam spec 加规则即可，是"换政策不改引擎"的现成演示。~~（`AGENT_NOISY` 已落地：Adam spec 的 `:on :agent-noisy` 熔断规则把噪声事实转成 stop 请求；`MAIL_ORPHAN_SCAN` 刻意无消费者——周期事实的无状态反应本身会变成周期噪声，理由见 adam.py docstring）
-- ~~**记忆参数数据化**~~（已落地）：检索权重 α/β/γ、冲突阈值 0.75、蒸馏窗口已从模块常量迁为配置数据——`~/.tlon/{agent_id}/memory/config.json` 的 `retrieval` / `conflict` / `distillation` 段（见 [../reference/config-reference.md](../reference/config-reference.md) §3）。
-- ~~**反思参数数据化**~~（已落地）：触发间隔在 spec 的 `:reflect` 段，prompt 文本落为包数据文件 [agents/prompts/reflection_system.md](../../src/tlon/agents/prompts/reflection_system.md)，最小完成会话数阈值在 `memory/config.json` 的 `reflection.min_interactions`。
-- ~~**终止文案数据化**~~（已完成，2026-09-28）：[agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的三条固定终止回信措辞进 spec——落地形态是 `:loop` 内的 `:replies` 纯数据 map（键 `:iteration-limit` / `:error` / `:timeout`，加载期 total 校验），而非设想中的 `:on-limit` 动作。终止路径必须永不失败：措辞原文直接使用（不求值、不渲染），引擎内置常量保留为未声明键的兜底——DSL 化的是"默认措辞可被覆盖"，不是"措辞只能来自 spec"。
-- ~~**社会政策数据化（fitness/trust 公式）**~~（已完成，2026-09-28，EPIC #62 / ADR 0022）：fitness 的 tilt/偿付公式与 trust 见习判定从 Python 迁入第五个求值语境（社会政策语境，第一种 pull 型）——`~/.tlon/policy.tlon` 的 `tilt` / `solvent?` / `full-member?` hook，宿主在 spawn/提案/装配求值点物化社会数据注入调用；fitness.py / trust.py 删除，公式语义由内嵌默认政策精确复刻。见 [design/society-policy.md](society-policy.md)。
-- 原则：迁移的正当性是"这部分逻辑该可进化/该由 LLM 写"，不是减少 Python 行数；机制层一行不动。
-
-### 阶段 3：语言能力扩展（评估驱动，逐项拍板）
-
-仅当阶段 2 后表达力确实不够时才启动。每项扩展独立评估其对信任模型的影响，拍板一项做一项：
-
-- ~~**低风险（纯词汇扩充）**：字符串处理（split/join/substring 等纯函数）、除法。只加词，不动语言结构，信任模型不受影响。~~（已完成，2026-09-28：PR #57 除法、PR #58 字符串三件套）
-- **语言结构**：~~命名函数（`defn` 或等价物）与一等函数/闭包曾列为中风险/不做项~~——2026-09-28 拍板直接上完整函数能力（ADR 0021：`defn` 各处定义、闭包、变长参数、递归、一等函数、函数体可含动作词汇），约束统一由 fuel/depth 承担，已实施（PR #60 及 tlon 集成 PR）。
-- **不做**：宏、`eval`、可变全局状态、DSL 内异步。任何一项直接击穿"spec 文本即行为全部"与加载期可校验性。若某天确实需要超出此范围的能力，按 ADR 0011 的既定退路评估嵌入 SCI。
-
-### 阶段 4：能力数据化（远期，对应愿景「开放」）
-
-工具/能力描述成为数据 artifact，复用 spec 的 staging + 人工批准通道（[agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py) 模式）。前置是 [dsl.md](./dsl.md) 末尾三个未拍板问题：能力的数据化形态、信任分级、审计责任归属。回答之前不动工。
-
-## 与既有决策的关系
-
-- 本文不修改 [dsl.md](./dsl.md) 的信任边界（行为可进化、能力不可进化），桥是该边界内"策略侧继续扩大"的工程载体。
-- 与 ADR 0018（tlosure 独立成包）一致：桥的全部形式化工作在 tlon 侧（词汇/端口/环境契约），tlosure 保持宿主无关。
-- 与 ADR 0011（SCI 兼容子集）一致：桥的端口纪律（数据进出、无一等函数依赖）保证 spec 语义未来可移植到 SCI 宿主。
-- 阶段 4 触及 dsl.md 明文的未拍板方向，届时需先修订 dsl.md 再实施。
-
-## 非目标
-
-- 不把 scheduler / PostOffice / DockerRuntime / MemoryManager 等机制层用 tlosure 重写。
-- 不追求"Python 行数最少"，追求"可进化的逻辑都在数据里、可信的机制都在代码里"。
-- 不在桥上加通用 FFI / 任意 Python 对象通道；数据进、数据出，桥永远不传行为。
+当前不提供通用 FFI、宏、`eval`、可变全局状态或 DSL 并发。更换语言宿主以及能力进入 LLM 工具面的方案尚未实施，不能从 SCI 兼容方向推导出当前存在这些能力。

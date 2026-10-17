@@ -2,13 +2,13 @@
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
-语言规范（EDN 语法、求值器、燃料计量、特殊形式、通用词汇）见 [../reference/tlosure-reference.md](../reference/tlosure-reference.md)；MemberSpec 全字段与领域词汇清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文只回答"为什么这样设计"。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)；语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）的决策见 [../decisions/0011-sci-compatible-subset.md](../decisions/0011-sci-compatible-subset.md)。一切以代码为准。
+语言规范（EDN 语法、求值器、燃料计量、特殊形式、通用词汇）见 [../reference/tlosure-reference.md](../reference/tlosure-reference.md)；MemberSpec 全字段与领域词汇清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文定义当前行为模型、信任边界和加载机制，并解释必要的取舍。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)；语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）的决策见 [../decisions/0011-sci-compatible-subset.md](../decisions/0011-sci-compatible-subset.md)。
 
 ## DSL 在愿景中的位置
 
 Tlon 的愿景是 agent 社会自进化（见 [../vision.md](../vision.md)）：不依赖人类修改代码，新的行为从社会内部生长出来。这条愿景对行为描述有一个硬约束——**进化要求基因型是可写的**。如果 agent 的行为是 Python 代码，它就永远只能由人类修改；只有当行为变成数据，agent 才能阅读、书写、传递和修改自己的行为。
 
-因此每个成员的行为完全由一份 spec 描述：[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员唯一的 `config/behavior.tlon` 文件。DSL 就是这份数据的语法。它是自进化的前提，而不是一个配置格式的偏好问题。
+成员的事件规则、循环编排和完成动作由一份 spec 描述：[agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员唯一的 `config/behavior.tlon` 文件。DSL 就是这份数据的语法。它是自进化的前提，而不是一个配置格式的偏好问题。
 
 由此推出本文其余部分的全部设计取向：这门语言的预期作者不只是人类，还包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` 让 agent 自己撰写新成员的 spec）。所以 DSL 被**故意**设计得受限——表达能力让渡给安全性，一门语言只有足够安全，才配交给 agent 自己书写。
 
@@ -28,42 +28,36 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 值得说明的是，这门语言**并非**靠表达能力残缺来保证停机：`while`/`recur`（Clojure 风格有界循环对）加进来之后，语言在图灵等价意义下是完备的，终止性完全由 fuel 预算保证。这是刻意的取舍——"足够弱以至于显然停机"的语言写不出真实策略（比如对一组收件人逐个 `forward`）；正确的做法是让语言够用，同时让任何求值都有一个不可逾越的步数上界。无论 LLM 写出什么样的表达式，求值都必然终止，且代价可预测。
 
-fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与全部 `:actions` 共享一个计数器（它们是同一次事件处理里的连续计算）；认知规则的门控与会话完成后的 `:actions` 在时间上分离，各自独立计一份预算；`:loop/:fuel` 单独约束 `:until` 与 stage `:if` 的求值。预算按"一次不可中断的求值片段"划分，而不是按字段死板分配——spec 作者声明的 `:fuel` 语义因此是直观的：这条规则每次被触发最多花这么多步。
+确定规则显式声明 `:fuel` 时，门控与全部动作共享预算；未声明时门控使用默认门控预算，每个动作各用默认动作预算。认知规则的门控与完成动作在时间上分离；当前完成路径每个 form 独立使用规则声明值或默认动作预算。`:loop/:fuel` 约束每次 `:until` 与 stage `:if` 求值。因此 fuel 是相应求值片段的上界，不能笼统解释为整个 session 的总预算。
 
 ### 词汇表按语境切分
 
-受限不是只有"少"，还有"各归各位"。builtin 注册表按使用语境切成互不混淆的几份：`:when` 门控与动作参数用成员统一注册表的纯子集（`make_member_builtins` 里 `pure=True` 的部分）；`:until` 只能见 `LOOP_BUILTINS`（迭代/错误上限谓词）；stage `:if` 只能见 `STAGE_COND_BUILTINS`（对会话 scratchpad 的只读谓词）。每份注册表只含纯函数，所以三个语境的求值都是无副作用的**构造性**结论——不是靠约定"作者别乱写"，而是乱写的词汇根本不在注册表里。`:when` 里引用 `iteration-limit-reached?`、`:until` 里引用 `addressed-to-me?`，都在加载校验时因"未注册"被拒。
+受限不是只有"少"，还有"各归各位"。builtin 注册表按使用语境切成互不混淆的几份：`:when` 门控用成员统一注册表的纯子集（`make_member_builtins` 里 `pure=True` 的部分）；`:until` 只能见 `LOOP_BUILTINS`（迭代/错误上限谓词）；stage `:if` 只能见 `STAGE_COND_BUILTINS`（对会话 scratchpad 的只读谓词）。这些纯语境的注册表只含纯词，所以三个语境的求值都是无副作用的**构造性**结论——不是靠约定"作者别乱写"，而是乱写的词汇根本不在注册表里。`:when` 里引用 `iteration-limit-reached?`、`:until` 里引用 `addressed-to-me?`，都在加载校验时因"未注册"被拒。
 
-环境同理：表达式能看到的只有显式绑定的几个符号（门控是 `{msg, event, self}`，完成动作多一个 `result`），非邮件事件的 `msg` 绑定为 `nil` 且所有邮件相关 builtin 对此 nil-safe。事件负载来自总线、形状不完全可控，所以 builtin 对畸形输入的默认行为是安全返回（缺键得 `false`/`nil`），而不是抛错——抛错留给真正的 spec bug（如类型用错），运行时噪音因此有区分度。
+环境同理：表达式能看到的只有显式绑定的几个符号（门控是 `{msg, event, self}`，认知完成动作绑定 `result`、`self`，`msg` 为 nil 且不绑定 `event`），非邮件事件的 `msg` 绑定为 `nil` 且所有邮件相关 builtin 对此 nil-safe。事件负载来自总线、形状不完全可控，所以 builtin 对畸形输入的默认行为是安全返回（缺键得 `false`/`nil`），而不是抛错——抛错留给真正的 spec bug（如类型用错），运行时噪音因此有区分度。
 
-### ~~无定义能力：没有 fn / def / 宏~~ → 函数能力（ADR 0021，2026-09-28 修订）
+### 函数能力与信任边界
 
-~~特殊形式是封闭白名单（[tlosure/eval.py](../../src/tlosure/eval.py) 的 `SPECIAL_FORMS`：`if` / `when` / `let` / `and` / `or` / `while` / `recur` / `map` / `filter` / `reduce`），没有 `def`、没有 `lambda`/`fn`、没有宏、没有可变全局状态。无法命名函数意味着递归在语法上不可能，`recur` 只能跳回最近一层 `while` 的循环头——控制流的所有形态在加载时就是可枚举的，这正是静态校验（下文的 total 语义）可行的原因。代价是 spec 作者不能抽象自己的可复用片段，只能重复书写；对 LLM 作者而言这是可接受的代价，重复恰恰是 LLM 擅长的。~~
+语言支持 `defn`、`fn`、闭包、变长参数、递归和一等函数。用户函数可在任意合法位置定义，也可在动作语境组合效果词；`map`/`filter`/`reduce` 保留显式绑定形式。语言不靠禁止函数来限制消耗，而由 fuel/depth 对求值定界。
 
-~~没有 lambda 不等于没有高阶遍历：`map` / `filter` / `reduce` 用显式绑定元素变量（`(map x body coll)`）代替了函数参数——逐元素处理的表达力保住了，但"函数值"这个概念不存在于语言里。这堵死了一整类复杂性：没有闭包就没有捕获环境，没有一等函数就没有把行为当参数传来传去的间接层，表达式树里有什么就是什么。对一门要求"加载时看清全部行为"的语言，函数值的缺席是静态可分析性的重要来源。~~
+当前信任边界由四部分组成：fuel/depth 限制求值；effects-as-data 将意图与执行分开；语境注册表限制可调用词汇；staging + 人工批准控制机器产物的生效。加载校验保证结构、作用域和词汇合法，不能静态枚举所有动作，也不能证明合法程序无运行时错误。
 
-> **修订（ADR 0021）**：上面的论证被拍板放弃——语言获得完整函数能力：`defn`（任意位置定义）、`fn`、闭包、变长参数、递归、一等函数。总原则是**尽可能不限制语言能力，agent 的消耗统一由 fuel（+ 深度顶）约束**。
->
-> 修订后信任模型的承重墙换成四道：**fuel/depth**（任何求值必然终止且代价有界，递归由深度顶兜住）；**effects-as-data**（动作 builtin 在函数体内被调用也仍只产 `ActionRequest` 数据，引擎在求值结束后执行，配额与信任闸不可绕过）；**语境注册表**（动作词只在成员注册表语境可见，纯语境的函数体里写了也加载拒载）；**staging + 人工批准**。被放弃的保证如实记录：动作位置不再可静态枚举（语法分区已随 tlon 集成删除，运行时 collector 与返回值收集是动作汇聚的实际机制），"加载时看清全部行为"降级为"加载时可静态校验 + 运行时有界"。
->
-> 仍然禁止：`eval`（无自反求值——spec 文本仍是行为的全部）、宏、可变全局状态、并发原语。`map`/`filter`/`reduce` 的显式绑定形式保留。
+不提供 `eval`、宏、可变全局状态或 DSL 并发。函数能力的引入及放弃语法动作分区的取舍见 [ADR 0021](../decisions/0021-tlosure-full-functions.md)。
 
 ### 无副作用：DSL 描述，引擎执行
 
-求值永不产生副作用。动作 builtin（`spawn` / `emit` / `start` / `stop` / `start-all` / `forward`，`pure=False`）只校验参数并产出 `ActionRequest` 数据，由引擎在求值结束后执行——DSL 说"想做什么"，做不做、怎么做是引擎的事。这个边界带来两个直接收益：
+求值不执行外部效果；collector 仅在求值内部收集效果意图。动作 builtin（`spawn` / `emit` / `start` / `stop` / `start-all` / `forward`，`pure=False`）只校验参数并产出 `ActionRequest` 数据，由引擎在求值结束后执行——DSL 说"想做什么"，做不做、怎么做是引擎的事。这个边界带来两个直接收益：
 
 - spec 作者无法绕过引擎的配额与权限检查。`spawn` 请求仍然要过注册表的 spawn 预算与信任闸（见下），spec 文本本身够不到任何系统资源。
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 对象只能经 builtin 检查（`addressed-to-me?`、`content-matches?` 等）。能触碰什么数据，由 builtin 注册表决定，而不是由对象自身的能力决定。
 
-宿主谓词（`sleeping?` / `running?` / `lazy?`）读取注册表状态，因此永不注册在模块级，只由 `make_member_builtins` 的调用方闭包注入——它们是 Adam 的词汇表，普通成员的 spec 引用即在加载校验时被拒。
+宿主查询读取注册表状态，由 `make_member_builtins` 的调用方闭包注入——它们是 Adam 的词汇表，普通成员不能因使用同一种语法就获得宿主查询权限。
 
-请求从求值器到引擎有两条路径，按规则形态分开：确定规则取每个动作 form 的求值**返回值**（`(spawn ...)` 求值即其请求，`start-all` 求值为请求列表）；认知规则的完成动作（on-complete）允许 `(when cond (spawn ...) (emit ...))` 这样的多动作体，而 `when` 只求值出最后一个 body 值，所以这条路径给注册表附一个 collector，动作 builtin 在纯求值过程中把每个请求追加进去。两条路径共用同一组 builtin 实现（`_record` 同时追加并返回）。时序上的关键点不变：无论哪条路径，请求的执行都发生在整个求值结束之后——表达式永远观察不到自己意图的执行结果，求值因此是一个可静态校验、可重放的纯函数。
+请求从求值器到引擎有两条路径，按规则形态分开：确定规则取每个动作 form 的求值**返回值**（`(spawn ...)` 求值即其请求，`start-all` 求值为请求列表）；认知规则的完成动作（on-complete）允许 `(when cond (spawn ...) (emit ...))` 这样的多动作体，而 `when` 只求值出最后一个 body 值，所以这条路径给注册表附一个 collector，动作 builtin 在纯求值过程中把每个请求追加进去。两条路径共用同一组 builtin 实现（`_record` 同时追加并返回）。时序上的关键点不变：无论哪条路径，请求的执行都发生在整个求值结束之后——表达式永远观察不到自己意图的执行结果，查询可能读取当前宿主状态，重放还需要相同输入与宿主视图；无外部效果不等于结果永远不变。
 
-参数校验同样前置在纯求值期完成：动作 builtin 在产出请求前就把参数查完（`spawn` 的 prototype 必须是字符串、`start`/`stop` 的 `:reason` 必须非空、`forward` 的 `:to` 必须是非空地址向量），引擎执行侧拿到的 `ActionRequest` 是已验证的数据，执行路径因此不必重复防御。校验集中在描述侧、执行保持简单——这是"DSL 描述，引擎执行"的另一半：描述侧把错都挑完，执行侧只管照做。
+参数校验同样前置在纯求值期完成：动作 builtin 在产出请求前就把参数查完（`spawn` 的 prototype 必须是字符串、`start`/`stop` 的 `:reason` 必须非空、`forward` 的 `:to` 必须是非空地址向量），引擎执行侧拿到的 `ActionRequest` 是已验证的数据，执行侧仍检查当前权限、配额、收件人及生命周期状态。描述侧负责参数合法性，执行侧负责是否允许执行，二者不能互相替代。
 
-~~纯度约束还细化到了语法位置（[agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `validate_member_action`）：动作位置允许的包装形式只有 `when` / `while` / `map`，`if` / `let` / `filter` / `reduce` 不能出现在动作位置；动作的全部参数必须是纯表达式。也就是说"计算"与"产生意图"在语法上是分区的——一个 spec 里哪里可能有动作意图，校验器一眼就能数清，不存在藏在深层计算里的副作用声明。~~
-
-> 修订（ADR 0021）：函数能力引入后，动作可以藏在用户函数体里，上面的语法分区对函数调用不再可静态判定，已随 tlon 集成整体删除——`validate_member_actions` 只做全量成员注册表校验（未注册词汇/未定义符号仍加载拒载）加 `defn` 跨 form 穿线（先定义后使用），"哪里可能有动作"不再是可枚举性质；动作的汇聚机制改为运行时事实——on-complete 路径的 collector 与确定规则路径的返回值收集。词汇级分区（动作词只在成员注册表语境）不受影响。
+`validate_member_actions` 使用全量成员注册表校验动作表达式，并让 `defn` 在动作 form 之间按定义顺序穿线。效果词可以出现在用户函数中；是否收集到请求由实际求值路径决定，不能靠语法位置推断。
 
 数据与计算之间留了一座受控的桥：map 字面量的键保持字面（实际中都是关键字），值会被求值。于是动作的选项 map 可以内嵌表达式——`(stop {:agent (get event :agent_id) :reason "drain"})` 里目标成员 id 取自触发事件。桥是单向的：数据位置可以引入计算，计算的结果再回流成请求数据；反向（表达式产出新的表达式再执行）不存在，语言没有 `eval`。这条"无自反求值"的禁令配合无宏，保证了 spec 文本就是行为的全部——不存在运行时生成的、加载时看不见的行为。
 
@@ -71,7 +65,7 @@ fuel 的分摊方式也跟规则形态对齐：确定规则的 `:when` 门控与
 
 ### 信任闸：staging + 人工批准
 
-受限语言把风险降到了"写错行为"的级别，但写错的行为仍然是行为。所以 LLM 撰写的 spec 不直接生效：`WritePrototypeTool` 的产物经 [agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py) 的 `write_staging_prototype` 落入 `~/.tlon/prototypes-staging/`，元数据标记 `:trusted false`；`AgentRegistry` 在 spawn 前检查信任位，未受信原型直接拒绝。人类在 ops 的 Agents 视图（`s` 审批）中批准后，`approve_prototype` 把目录移入受信库并改写 `:trusted true`。
+受限语言把风险降到了"写错行为"的级别，但写错的行为仍然是行为。所以 LLM 撰写的 spec 不直接生效：`WritePrototypeTool` 的产物经 [agents/prototypes/staging.py](../../src/tlon/agents/prototypes/staging.py) 的 `write_staging_prototype` 落入 `~/.tlon/prototypes-staging/`，元数据标记 `:trusted false`；`AgentRegistry` 在 spawn 前检查信任位，未受信原型直接拒绝。人类通过管理审批入口批准后，`approve_prototype` 把目录移入受信库并改写 `:trusted true`。
 
 信任的默认值是不对称的：随包播种的与人类手写的原型默认受信（`:trusted true`，可直接 spawn——手写即意味着人类已经看过），只有 staging 区写出 `:trusted false`。也就是说信任位标记的不是"这份 spec 的质量"，而是"它的作者是不是机器"；审批动作把一份机器产物正式记为人类认可。`:author` 字段记录撰写者 agent 的 id，审计链完整：谁写的、谁批准的、何时进的可信库，都可追溯。
 
@@ -84,7 +78,7 @@ DSL 的设计前提是看清哪一半在语言内、哪一半在语言外：
 - **机制是 Python 固定实现**：工具（发邮件、读写文件、Shell、记忆、spawn）、stage（think / act / plan / critique / revise）、section（persona / protocol / knowledge / skills / current-task / thread-recap / mail-history）、求值器本身、事件总线。这些由引擎提供，有单元测试，不随 spec 变化。
 - **策略是 spec 数据**：何时醒（`:on` + `:when`）、如何思考（`:loop` 的 stage 编排、上下文组装、`:until` 终止条件）、何时完成、完成后做什么（`:actions`）。Adam 是最纯粹的例子：作为 agent 世界的 init 进程，它的全部策略就是 [agents/adam.py](../../src/tlon/agents/adam.py) 里一段内置 spec 文本（`ADAM_SPEC_EDN`），boot 时 `start-all`、空闲时 `stop`、新成员出生时发欢迎信（出生社会化：指引新成员用自己的联系簿结识同伴（通信即结识、updateContact 记录）并用 listAgents 寻址黄页查地址，通信惯例是 spec 里的静态文本），机制上一个普通的 `MemberRuntime` 实例。这个例子的分量在于：系统里权限最高的成员（能启停其他所有成员）恰恰是用最受限的方式写成的——它的权力不来自语言能力的豁免，只来自注入给它的宿主谓词与动作。权限是注入的，不是语法授予的。
 
-由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 发明不出第六个 stage、第七种 section、第七个动作。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
+由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 不能创造新的 stage、section 或宿主效果原语。受信复合能力可以新增 DSL 词，但只能组合已有原语，见 [capabilities](capabilities.md)。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
 
 机制/策略的界线在认知循环内部同样清晰。`:stages` 向量决定跑哪些 stage、以什么顺序、各自带什么条件（`:if`），但每个 stage 的语义——`think` 是一次 LLM 调用、`act` 是执行本轮全部工具调用、`critique` 失败如何软降级——是 [agents/stages/](../../src/tlon/agents/stages) 下的 Python 实现。spec 里的 `act` 只声明"执行这轮的工具分发列表"，每个工具一个后台 task 的并发执行是引擎的事。更关键的是引擎保留了 spec 无法覆盖的否决权：`:max-iterations` 与 `:max-tokens` 是双停机线（ADR 0023），任一到顶、在任何 `:until` 求值之前无条件生效——spec 可以声明终止条件，但声明不出"永不终止"。策略可以自由，自由有边。
 
@@ -94,13 +88,13 @@ DSL 的设计前提是看清哪一半在语言内、哪一半在语言外：
 
 ## total 语义：加载失败即整体拒绝
 
-spec 的加载是全有或全无的：缺必填字段是错误而不是默认值，类型错误同样拒绝（`bool` 永不被接受为 `int`），任何失败——文件缺失、EDN 非法、校验不过——都使该成员拒绝启动。入口是 [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec`，结构校验在 `MemberSpec.from_dict`（`from_edn` 只做 kebab-case 关键字到 snake_case 字段名的归一化后委托给它），builtin 作用域校验在单一校验器 `validate_member_spec`。三类失败各有专属异常——`FileNotFoundError`（文件缺失或不可读）、`EDNParseError`（文本非法，带行列号）、`MemberSpecValidationError`（结构或作用域校验不过）——异常类型本身就是失败发生在哪一层的信号，调用方（注册表）不需要解析错误消息就能分类记日志。
+spec 的加载是全有或全无的：缺必填字段是错误而不是默认值，类型错误同样拒绝（`bool` 永不被接受为 `int`），任何失败——文件缺失、EDN 非法、校验不过——都使该成员拒绝启动。入口是 [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec`，结构校验在 `MemberSpec.from_dict`（`from_edn` 只做 kebab-case 关键字到 snake_case 字段名的归一化后委托给它），builtin 作用域校验在单一校验器 `validate_member_spec`。三类失败各有专属异常——`FileNotFoundError`（文件缺失；其他 I/O 错误按原异常上报）、`EDNParseError`（文本非法，带行列号）、`MemberSpecValidationError`（结构或作用域校验不过）——异常类型本身就是失败发生在哪一层的信号，调用方（注册表）不需要解析错误消息就能分类记日志。
 
 为什么不做"尽力加载、能跑多少跑多少"：spec 是行为的**唯一权威**（见下节），一份半残的 spec 意味着一个行为不可预测的成员——它可能收不到邮件、可能永不停机、可能发出不该发的信。对一个人类会长期缺席的系统，"拒绝启动、原地报错"比"带病运行"安全得多。注册表隔离失败：一个成员的 spec 坏了只影响它自己，server 与其他成员不受影响。
 
 报错设计也承认读者可能是机器：校验失败的错误消息原文返回给撰写者（`WritePrototypeTool` 把 `PrototypeError` 连同格式提示一起塞回工具结果），LLM 据此自行修正重试。所以错误消息要求自解释——带字段路径、带期望值、带实际值——这不是日志美学，而是"agent 能自己修好自己写的 spec"这个闭环的必要条件。错误信息是 API 的一部分。
 
-唯一的宽容是前向兼容：未知键记 warning 后忽略（`_warn_unknown_keys`），让旧版本引擎能读新版本写出的文件。宽容只给"多出来的"，不给"缺的"和"错的"。
+当前解析器对未知键会记 warning 后忽略（`_warn_unknown_keys`）；这描述现有校验行为，不构成维护旧格式、兼容层或迁移程序的要求。缺失必填项和错误值仍拒绝加载。
 
 total 还体现在两条结构性约束上，都在加载时拒绝而非运行时兜底：
 
@@ -109,9 +103,9 @@ total 还体现在两条结构性约束上，都在加载时拒绝而非运行�
 
 加载时还有一份不参与语义只参与审计的产物：`load_member_spec` 对原始文件字节算 sha256 短哈希挂到 `MemberSpec.source_hash`，随可观测性事件上报——这份 spec 是从哪个文件来的有据可查，但哈希永远不写回 behavior 文件（provenance 不是 semantics）。
 
-## spec 是唯一权威：一切派生，无处存储
+## spec 的权威范围与配置边界
 
-spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里凡是可以从 spec 算出来的东西，一律现算、从不落盘：
+spec 是成员规则的权威来源；boot、lazy、wake 资格从规则派生，不另存一份独立的配置。模型、人格、社会政策和运行时执行授权分别有自己的来源，不能由“spec 是唯一权威”推导为所有成员状态都由 spec 决定：
 
 - **boot 集合**：`AgentRegistry.start_all_candidates`——spec 声明了 `:on :boot` 的成员。
 - **lazy 资格**：`AgentRegistry.is_lazy`——spec 没有 `:on :boot` 规则（或 spec 不可读）的成员可以被排空。
@@ -121,22 +115,22 @@ spec 不只是"行为的描述"，它是行为事实的唯一来源。系统里�
 
 唯一权威还有两层推论：
 
-- **实例化是复制，不是引用**。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型的 behavior 文件原样拷贝成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件在创建时播种，之后 IDENTITY/SOUL 是成员自主数据（`updatePersona` 自改，ADR 0024）。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型不是基因型（ADR 0016——机制/策略分离，模型选择是部署/资源策略）：成员的 `llm.model_name` 来自 `instantiate` 的必填 `model` 参数（spawn 时继承 spawner 的模型）；spec 语法已删除顶层 `:llm` 键，残留即加载报错；未声明模型的成员装配期硬报错，没有进程级兜底。执行能力声明则相反——它是基因型（宪法一）：spec 的可选顶层段 `:execution {:level :L0|:L1|:L2}` 随原型提案一起评审，`instantiate` 把它一次性投影进 agent.yaml 的 `docker.level`，此后运行时权威是 agent.yaml——成员自改自己 spec 的 `:execution` 不生效，防自提权。
-- **模板只存在于写侧**。behavior 文件可以声明顶层 `:parameters` 并用 `${name}` 占位（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)），但渲染发生在实例化落盘之前；运行时加载器永远见不到占位符，`:parameters` 本身也只作为未知键记 warning。运行时面对的永远是一份完全的、具体的 spec——"这份文件就是这个成员的全部行为"这个命题，不需要任何上下文就成立。
+- **实例化生成独立配置，不是引用**。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型 behavior（带参数时先渲染）写成新成员自己的配置，行为冻结在创建时刻；之后原型的修改不影响已出生的成员，成员的 spec 被改也不回流原型。原型不带人格（ADR 0006）——成员的人格文件在创建时播种，之后 IDENTITY/SOUL 是成员自主数据（`updatePersona` 自改，ADR 0024）。spec 是 total 的，所以不存在"继承 + 覆盖"的合并语义——没有可合并的东西，拷贝就是完整答案。模型不是基因型（ADR 0016——机制/策略分离，模型选择是部署/资源策略）：成员的 `llm.model_name` 来自 `instantiate` 的必填 `model` 参数（spawn 时继承 spawner 的模型）；spec 语法已删除顶层 `:llm` 键，残留即加载报错；未声明模型的成员装配期硬报错，没有进程级兜底。执行能力声明则相反——它是基因型：spec 的可选顶层段 `:execution {:level :L0|:L1|:L2}` 随原型提案一起评审，`instantiate` 把它一次性投影进 agent.yaml 的 `docker.level`，此后运行时权威是 agent.yaml——成员自改自己 spec 的 `:execution` 不生效，防自提权。
+- **模板只存在于写侧**。behavior 文件可以声明顶层 `:parameters` 并用 `${name}` 占位（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py)），但渲染发生在实例化落盘之前；运行时加载器永远见不到占位符，`:parameters` 本身也只作为未知键记 warning。运行时面对的是具体规则，不在读取时重新套模板；其词汇仍依赖显式注入的受信注册表。
 
 ## 分层
 
-DSL 的实现分五层，各层职责单一、失败模式明确。语言核心（L0 解析、L1 求值/校验、通用 builtin 词汇）住在独立包 [tlosure](../../src/tlosure)（ADR 0018），不依赖 tlon 的任何层；tlon 的领域词汇（mail/loop/stage 谓词、动作族、宿主端口）住在 [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)（ADR 0018 修订），语义模型与加载校验留在 `tlon.agents`，依赖方向 tlon → tlosure：
+DSL 的实现分五层，各层职责单一、失败模式明确。语言核心（解析、求值/校验、通用 builtin 词汇）住在独立包 [tlosure](../../src/tlosure)（ADR 0018），不依赖 tlon 的任何层；tlon 的领域词汇（mail/loop/stage 谓词、动作族、宿主端口）住在 [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)（ADR 0018 修订），语义模型与加载校验留在 `tlon.agents`，依赖方向 tlon → tlosure：
 
 | 层 | 位置 | 职责 | 失败即 |
 |---|---|---|---|
-| EDN 解析（L0） | [tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
+| EDN 解析 | [tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
 | 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `MemberLoop` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
-| 受限求值器（L1） | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
+| 受限求值器 | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
 | 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_actions` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |
 
-L0 不求值这一点值得单独说：解析的产物是惰性、安全、可流转的数据。正因为如此，模板分析（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 在文本/数据层提取 `:parameters`）、`source_hash` 对原文字节做哈希、原型元数据读取失败时安全回退（`_read_metadata` 对一个坏掉的 `prototype.tlon` 只记 warning 返回名字兜底）都可以在完全不触碰求值器的前提下工作。求值被推迟到 L1 且永远由引擎发起——数据在系统里流动的每一站都不承担"执行"的风险。
+解析不求值这一点值得单独说：解析的产物是惰性、安全、可流转的数据。正因为如此，模板分析（[agents/behavior_template.py](../../src/tlon/agents/behavior_template.py) 的 `analyze` 在文本/数据层提取 `:parameters`）、`source_hash` 对原文字节做哈希、原型元数据读取失败时安全回退（`_read_metadata` 对一个坏掉的 `prototype.tlon` 只记 warning 返回名字兜底）都可以在完全不触碰求值器的前提下工作。求值只在宿主显式发起时发生——数据在系统里流动的每一站都不承担"执行"的风险。
 
 三条边界值得强调：
 
@@ -148,10 +142,12 @@ L0 不求值这一点值得单独说：解析的产物是惰性、安全、可�
 
 L1 内部还有一个刻意的紧邻：运行时求值（`eval_form`）与加载时静态校验（`validate_form`）住在 tlosure 包内相邻的两个模块（`eval.py` 求值、`validate.py` 校验）、共享对表达式树的同一套结构理解（特殊形式的形状、尾位置规则、绑定向量格式在两处是 mirrored 实现）。这保证了"校验器承认的语言"与"求值器执行的语言"不会随版本漂移而裂开——如果校验在别处另起炉灶，两边对 `(recur ...)` 合法位置的理解迟早出现缝隙，而静态校验的全部价值就在于它证明的东西在运行时成立。
 
-loader 是整个系统**唯一**的读盘路径，这点也有设计意图：热重载、首次启动、测试中的临时 spec，走的都是同一条"解析 → 模型 → 校验 → 挂 provenance"的链，不存在第二条绕过校验的加载方式。链条唯一意味着校验策略的改动（比如新增一条结构约束）自动对所有加载场景生效，不需要逐个调用点追缴。
+loader 是运行时加载成员 behavior 的统一读盘入口，这点也有设计意图：热重载、首次启动、测试中的临时 spec，走的都是同一条"解析 → 模型 → 校验 → 挂 provenance"的链，不存在第二条绕过校验的加载方式。链条唯一意味着校验策略的改动（比如新增一条结构约束）自动对所有加载场景生效，不需要逐个调用点追缴。
 
-## 方向：与愿景的差距
+## 复合能力与历史来源
 
-当前实现的信任边界划在**行为重组**：LLM 可以组合已有机制写出新成员的行为（writePrototype → staging → 人工批准 → spawn），这已经是"新成员从社会内部产生"的最小闭环。
+当前已有两条机器提案通道：新成员行为经原型 staging 与批准后实例化；复合能力经能力 staging 与批准后成为受信词。两者都只能组合已有宿主机制。新原语（LLM 调用、新 IO、Docker、异步）仍由人类修改 Python 并发版，因为 fuel 限制的是语言求值步数，不能替代外部调用的成本和权限控制。
 
-能力层的闸门已经拍板开启（2026-09-28 方向共识、2026-10-05 机制五点拍板，issue #45）：**复合可进化、原语不可进化**——组合既有词汇的复合能力成为 tlosure 函数 artifact，复用 staging + 人工批准通道从社会内部生长；新原语（LLM 调用、新 IO、Docker、异步）永远 Python + 人类写 + 发版（fuel 限得住步数限不住钱）。形态、env 契约（只见 args）、纯度分区、命名空间与退役纪律的完整设计见 [capabilities.md](./capabilities.md)。开闸不失守的关键在形态：能力不是宿主代码而是 tlosure 表达式——可停机、无副作用、fuel 计量，本文所述的全部受限设计对它依然成立。
+复合能力的 artifact、零注入环境、纯度准入与调用方预算见 [capabilities](capabilities.md)。桥的查询、效果和环境契约见 [bridge-api](bridge-api.md)。
+
+历史取舍见 [EDN 语法](../decisions/0001-edn-as-dsl.md)、[SCI 兼容子集方向](../decisions/0011-sci-compatible-subset.md)、[tlosure 独立](../decisions/0018-dsl-extraction-tlosure.md) 与 [完整函数能力](../decisions/0021-tlosure-full-functions.md)。SCI 是语言演进方向，不代表系统已经迁移到 JVM。

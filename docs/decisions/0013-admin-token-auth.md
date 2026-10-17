@@ -1,5 +1,7 @@
 # ADR 0013：admin 端点共享 token 鉴权（TLON_ADMIN_TOKEN）
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [server-protocol](../design/server-protocol.md)。当前适用范围：管理端 token 的可选边界，不等于完整身份认证。完整关系见 [决策索引](README.md)。
+
 - 状态：已接受（2026-08-30，方向讨论拍板）
 - 相关：issue （安全面为零）；[design/server-protocol.md](../design/server-protocol.md)「身份与安全边界」
 

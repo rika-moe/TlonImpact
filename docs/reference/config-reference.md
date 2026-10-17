@@ -188,7 +188,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 
 ## 5. `~/.tlon` 目录布局
 
-[base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 是**唯一**的路径构造入口——无模块级单例，实例在进程入口构造一次后显式注入贯穿各层。`TlonPaths` 是**纯路径解析器**：所有访问器零副作用，目录创建在真实写入点（各写入方自建父目录）；唯一例外是进程引导的 `_resolve_tlon_home`（默认 `~/.tlon` 根）。布局（docstring 原样）：
+[base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 是**唯一**的路径构造入口——无模块级单例，实例在进程入口构造一次后显式注入贯穿各层。`TlonPaths` 是**纯路径解析器**：所有访问器零副作用，目录创建在真实写入点（各写入方自建父目录）；唯一例外是进程引导的 `_resolve_tlon_home`（默认 `~/.tlon` 根）。布局（按用途列示，具体路径以 TlonPaths 为准）：
 
 ```
 ~/.tlon/
@@ -196,7 +196,8 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ├── cron.yaml                         # 声明式周期任务邮件（可选；启动时读一次，改动需重启）
 ├── policy.tlon                       # 社会政策文件（可选；ADR 0022，tilt/solvent?/full-member? hook；缺失即内嵌默认政策）
 ├── shared/
-│   ├── mail.sqlite3                # 邮件、邮箱归属、已读状态、幂等与退休记录
+│   ├── mail.sqlite3                  # 邮件、邮箱归属、已读状态、幂等与退休记录
+│   ├── spawn-quota.json              # 每 spawner/session 的 spawn 配额账本
 │   ├── traces/
 │   │   └── trace-{uuid}.jsonl        # 会话追踪
 │   └── logs/
@@ -214,12 +215,12 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ├── {agent_id}/
 │   ├── config/
 │   │   ├── agent.yaml                # 本 agent 配置
-│   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 人格（创建时播种，之后成员自主数据 ADR 0024，非基因型）
+│   │   ├── IDENTITY.md / SOUL.md / RULES.md   # 身份/人格及约束（IDENTITY/SOUL 可自主修改，RULES 不可自改，见 identity design）
 │   │   ├── CONTACTS.md               # 联系簿（成员自写、私有，缺省即空；ADR 0024 / EPIC #101）
 │   │   └── behavior.tlon             # 行为规约（唯一权威，一切派生）
 │   ├── memory/
 │   │   ├── config.json               # 记忆调参
-│   │   ├── claims.jsonl              # 记忆 claim（ADR 0017，append-only）
+│   │   ├── claims.jsonl              # 记忆 claim（ADR 0017，追加优先，允许删除/重写）
 │   │   └── distillation.json         # 蒸馏水位线（last_distilled_at）
 │   ├── sessions.sqlite3              # session 事件与生命周期元数据（ADR 0007/0032：交互唯一真相）
 │   ├── sessions/                     # 旧 session JSONL 离线档案（不读取、不导入、不双写）

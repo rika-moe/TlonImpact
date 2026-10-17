@@ -1,6 +1,6 @@
 # 原型与 spawn 体系设计
 
-> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种；spawn 出的成员与手建成员同构、永不删除（停止即睡眠、档案归档）；`spawned_by`/`spawn_depth` 保留为血缘审计。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
+> 本文定义原型目录、实例化、提案审批、spawn 预算和谱系。成员模型、信任阶梯与默认生命周期政策见 [unified-member-model.md](unified-member-model.md)。当前 stop 为永久退休，idle drain 为可唤醒休眠；二者均不隐式删除历史。历史来源：[ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
 Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型是一份纯数据的行为模板，spawn 是把它拷贝成一个真实 agent 的动作。这套体系是「新成员由社会内部产生」的当前形态。本文解释它为什么长现在这样，以当前实现为准（原型库在 [src/tlon/agents/prototypes/](../../src/tlon/agents/prototypes) 包，内置原型在 [src/tlon/prototypes/](../../src/tlon/prototypes)，spawn 工具在 [src/tlon/tools/agents/](../../src/tlon/tools/agents)）。
 
@@ -13,12 +13,12 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 - `LESSONS.md`——**可选**：随包传递的教训文本——退休成员记忆的蒸馏产物（见 [memory.md](./memory.md)「退休蒸馏」），经 `writePrototype` / `write_trusted_prototype` / `update_prototype` 的 `lessons` 参数（或 admin REST 的 `lessons` 字段）写入；详情端点（`get_prototype_detail`）把文本带回，评审提案时可见。
 - `REVIEW.md`——**可选**：staging 提案的同行评审记录，`reviewPrototype` 工具每次评审追加一条（时间、评审者 id、评审者模型、verdict、理由）；元数据读取不碰它（listing 零成本），approve 的整目录 `shutil.move` 把它免费带进 trusted 库；详情端点以 `reviews` 字段带回文本。
 
-统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件（IDENTITY.md / SOUL.md / RULES.md）是**创建时的数据**（ops 创建时填写 / 未来工具注入），不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
+统一成员模型（ADR 0006）：原型**不带人格文件**——原型是行为的基因型，成员的人格文件可在创建时播种，之后 IDENTITY.md / SOUL.md 可由成员自主修改，RULES.md 由人类维护，见 [identity.md](identity.md)；这些文件不是基因型的一部分。这也让进化的单位保持纯粹：能安全进化的只有受限 DSL（behavior.tlon），自由文本人格不进基因库。
 
 两个「不声明」值得注意：
 
 - **不声明运行时类型**。原型是行为模板——元数据里没有 `:runtime` 字段（`PrototypeInfo` 也不派生它）。一条规则带不带 `:loop` 是实例 spec 的语法事实，不构成任何类型标记。
-- **不声明权限**。spec 是 total 的：工具能力、循环结构、上下文段全部写在 `behavior.tlon` 里，原型之外没有可叠加的东西。
+- **不提供任意行为 overrides**。规则、循环和上下文来自完整 spec，模板只能填声明过的常量槽位。`:execution` 声明实例化时投影为 `docker.level`；运行时权限还受装置配置、挂载和工具注册约束，不能把 spec 称为所有权限的唯一来源。
 
 元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
 
@@ -53,7 +53,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 ### 播种：幂等，永不覆盖
 
-`seed_prototypes`（[agents/prototypes/catalog.py](../../src/tlon/agents/prototypes/catalog.py)）在 `ServerApp.initialize()` 的装配早期运行（须在任何 agent 启动前——spawn 路径假设库已就位），把包内原型经 `importlib.resources` 拷贝到 `~/.tlon/prototypes/`。关键语义是**已存在的文件一律跳过**：用户在播种目录里的修改和新加的原型在重启后原样保留。播种是一次性「初始化资产」，不是同步——包内的更新不会冲掉用户的改动。这也解释了为什么 `list_prototypes` 读的是 `~/.tlon/prototypes/` 而不是包内目录：agent 看到的库就是用户手里的库，单一事实源。
+`seed_prototypes`（[agents/prototypes/catalog.py](../../src/tlon/agents/prototypes/catalog.py)）由 runtime 的 `agents/bootstrap.py` 在装配早期运行（须在任何 agent 启动前——spawn 路径假设库已就位），把包内原型经 `importlib.resources` 拷贝到 `~/.tlon/prototypes/`。关键语义是**已存在的文件一律跳过**：用户在播种目录里的修改和新加的原型在重启后原样保留。播种是一次性「初始化资产」，不是同步——包内的更新不会冲掉用户的改动。这也解释了为什么 `list_prototypes` 读的是 `~/.tlon/prototypes/` 而不是包内目录：agent 看到的库就是用户手里的库，单一事实源。
 
 ### 为什么原型是目录而不是单文件
 
@@ -68,7 +68,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 3. `agent.yaml` 走 `yaml_save` 标准路径写出，`prototype` 字段记录来源。`llm.model_name` 来自 `instantiate` 的必填 `model` 参数（ADR 0016——模型选择是部署策略，不是基因型；spec 语法已删除顶层 `:llm` 键，残留即加载报错）；没有进程级兜底，未声明模型的成员装配期硬报错。
 4. 无需重启生效：调用方（ops 管理 API 或注册表 spawn）热收养（`POST /admin/config/agents/{id}/reload` → `AgentRegistry.adopt_agent`）。
 
-拷贝而非引用的理由与「spec 是唯一权威」一致：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个 agent 的 `config/` 目录在任何时候都是其行为的完整描述。
+拷贝而非引用的理由是成员规则需要明确的权威副本：如果实例引用原型，改原型就会静默改变活着的 agent 的行为——行为数据有了第二真相，审计和复现都变得不可能。冻结拷贝让每个成员保存自己的可执行规则副本；人格、模型配置和装置权限仍由各自文件与执行机制决定。
 
 列出路径还有一条刻意的容错原则：**元数据读取不许失败**。`_read_metadata` 对坏 `prototype.tlon` 回退目录名兜底；`_read_parameters` 对解析不了的 `behavior.tlon` 回退空参数。理由是 listing 是发现入口——一个坏原型不该让整个库列表消失。代价是坏原型在列表里看起来正常（回退值恰好合理时），失败被推迟到实例化或启动。
 
@@ -102,22 +102,30 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 ### spawn 预算：落盘账本
 
-三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——session 本身经 journal 重放跨重启存活（ADR 0007），纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。预算细节（tilt 倾斜、见习收紧、偿付门槛）与论证的唯一事实源是 [runtime.md](./runtime.md)「注册表的机制面」spawn 预算段。
+三道防失控闸门（注册表构造参数，硬编码默认值）：全局同时运行上限 `max_activations = 8`、spawn 链深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，落盘 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动），跨重启存活——session 本身经 journal 重放跨重启存活（ADR 0007），纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。三个维度分别防三种失控：总量防资源耗尽，深度防无限递归 spawn，会话配额防单个任务循环里刷成员。`max_activations` 从当前运行表计数，重启后重新形成；`max_spawn_depth` 从成员持久化的 `spawn_depth` 递增派生，两者不另建账本。
 
-拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 ops 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
+每次 spawn 在基础配额上应用两个独立维度：
 
-### 权限不可升格
+- **目标血脉的 tilt**：有效配额先算 `ceil(session_spawn_quota × tilt)`；冷启动和 provider 异常回到中性 `1.0`。
+- **发起者的见习状态**：按 **spawner_id** 判断，而不是目标 prototype；见习成员的有效配额再取 `min(effective, 1)`，派生异常不收紧。
 
-spawn 不能授予任何新能力，这是两条结构性保证的合取：
+目标血脉还必须通过偿付检查，失败返回 `insolvent_lineage`，异常则放行。这些判断的公式和默认阈值统一在 [society-policy.md](society-policy.md) 定义，SpawnManager 负责执行结果。全局激活上限不按血脉拆分，避免因血脉暂时低效影响其现役成员。账本损坏时从头开始是当前可用性取舍，不等于配额在磁盘损坏后仍有严格保障。
 
-- **来源唯一**——新成员的 spec 只能来自原型库（trusted 那半边），LLM 不能临场写一份 spec 直接 spawn（它写的进 staging，见下节）。
-- **spec total，无 overrides**——行为文件逐字拷贝，spawn 时没有任何参数能修改 spec 内容（模板参数只能填原型自己声明的槽位）。spawner 的能力上限就是它能用到的原型的上限。
+拒绝经 `SpawnRejectedError` 带回机器可读的 `reason`（`max_activations` / `max_spawn_depth` / `session_quota` / `untrusted_prototype` / `insolvent_lineage` / `config_reload_failed`），工具层把它翻译成 LLM 能理解的错误文案——`untrusted_prototype` 会明确告知「需人类在 ops 中批准」，其余归为 `budget_exceeded`。机器可读的 reason 与面向 LLM 的文案分离，让程序与模型各取所需。
 
-### 停止与排空：睡，永不删
+### 出生行为与能力边界
 
-统一成员模型（ADR 0006）：成员只有一种，`stopAgent`（[tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` → `stop_member`，先做 drain 检查——有 ACTIVE/WAITING session 的拒绝停）与空闲超时收割（idle reaper 走 `_drain_agent`）对**所有**成员一视同仁：停止即睡眠（`AGENT_STOPPED` / `AGENT_SLEEPING`），home 目录永不删除——人格、记忆、邮箱、workspace 全部归档，之后可被唤醒。容器也从不 force-remove（睡眠保留容器，零成本唤醒）。系统内（agent 侧与自动路径）不存在"删除成员"这条路径：成员只会"睡"，不会"蒸发"；唯一的删除通道是人类治理的显式 admin 端点（`DELETE /admin/config/agents/{agent_id}`）。
+新成员的 spec 只能来自 trusted 原型，LLM 临场创作进入 staging；spawn 不接受任意行为 overrides，模板参数只能填原型声明的槽位。这保证出生行为经过可信库选择，不能绕过提案审批。
 
-配套的可观测性是 `listAgents`（[tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool`）：列出全部注册 agent 的运行状态（running/sleeping/waking）与血缘字段（来源 prototype、spawned_by）。spawn/stop 之前先 list，是工具设计上给 LLM 的标准用法——`spawnAgent` 成功回执里带回 `agent_id`、`spawn_depth` 等字段，供后续 `stopAgent` 或 @ 寻址使用。
+该保证不等于「子成员权限必定是父成员权限的子集」：当前 spawn 路径不比较父子的执行层级。新成员的执行层来自可信原型的声明并受运行时装置检查约束，详细边界见 [execution-device.md](execution-device.md)。
+
+### 休眠、退休与保留
+
+空闲回收 `_drain_agent` 让成员休眠，符合 spec 的新信可将其唤醒。主动 `stopAgent` 则经 `stop_member` 永久退休，拒收新信与再次启动；有 ACTIVE/WAITING session 时默认拒绝，`when_idle=true` 登记排空后退休的待停意图。完整生命周期及 Adam 默认政策见 [unified-member-model.md](unified-member-model.md)。
+
+这两种自动生命周期都不隐式删除成员 home；人类显式 admin 删除是独立治理动作。spawn 成员独立注册，spawner 休眠或退休不会连带停止它，`spawned_by` 是出生审计而不是所有权。
+
+`listAgents` 是寻址黄页，只输出 id / name / address，并过滤退休成员；运行状态和血缘在管理详情及专门查询中展示。spawn 成功回执带回 `agent_id`、`spawn_depth` 等信息，供后续寻址与管理使用。
 
 ## 信任分级：staging 闸
 
@@ -134,9 +142,9 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 `writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
 
-提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`writePrototype` / `proposeBehavior` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认政策：总消耗 ≥ 10 万 token 且效率 < 全体均值 × 0.25 才算失去偿付能力，样本不足无罪推定，阈值保守宁可放过；公式与阈值可在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
+提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`writePrototype` / `proposeBehavior` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
 
-第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案文本与 trusted + staging 两区所有既有原型的 `behavior.tlon` 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；writePrototype 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，proposeBehavior 的父本恒为成员自己的 prototype），于是沿血脉的代际微改放行——实测锚点：scribe 底稿仅把 reflect 间隔 15→30 的微改相似度 0.996，父本豁免后放行、跨血脉仍被拦；实质重写（换谓词/动作/规则结构）实测落在 0.3 量级，不受影响。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。远期档（MAP-Elites 生态位档案）未做。
+第三道闸是近亲拒绝（ADR 0014 的非收敛选择压，agent 侧）：提案文本与 trusted + staging 两区所有既有原型的 `behavior.tlon` 做纯文本相似度比较（`find_near_kin`，`difflib.SequenceMatcher.ratio`，比较前规范化——去掉 `;` 注释行、折叠空白；不解析 EDN，模板原型的 `${var}` 占位符按原文比），最相似的一档 ≥ 阈值 0.9 就直接打回（staging 无残留），指引是「做出实质差异或改为提案改进既有原型」。阈值刻意定高、只拦换皮级雷同与**跨血脉**趋同：提案的声明父本在比较中豁免（NEAT 式物种形成保护——创新在自己血脉内被保护几代；writePrototype 的豁免名取显式 `parent`、缺省回退作者自身的 prototype，proposeBehavior 的父本恒为成员自己的 prototype），于是沿血脉的代际微改可放行，而跨血脉的近似复制仍被拦。与偿付闸同款边界：不进 `write_staging_prototype`、不闸 admin REST 人类直写，fail-open——相似度扫描任何异常都放行。
 
 三道闸之外是**同行评审记录**：任何成员可用 `reviewPrototype`（[tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool`）评审一个 staging 提案。调用方只点名——verdict 不由调用方当场给，工具内部用**评审者自己的** `llm_client` 做一次专项评审调用（`purpose="review"`、timeout 60s；采样参数不配置，供应商默认生效），材料是提案的 behavior 全文、随包 lessons、谱系链与每代 diff；响应首行必须是三个标记之一（`通过`/`不通过`/`弃权`），不合规则 `success=False` 且不写记录。通过的评审追加进提案目录的 `REVIEW.md`（每条含时间、评审者 id、评审者模型 `llm_client.config.model_name`、verdict、理由全文）。异质性来自评审者的模型血统（成员的模型在创建时经 WebUI/admin API 选定，随 spawn 沿血脉继承，ADR 0016——不同血脉各自绑定不同模型）——评审记录格式统一，判断却出自不同血统，这正是 ADR 0014 的非收敛选择压落在审批环节的形态。评审是**咨询性的**：不闸 approve，人类审批时在详情 payload 的 `reviews` 字段里读到全部记录再做决定；评审记录随 approve 的整目录 move 晋级 trusted，审计链不断。
 
@@ -146,7 +154,7 @@ spawn 不能授予任何新能力，这是两条结构性保证的合取：
 
 ## 谱系：原型谱系作为一等数据
 
-成员侧的血缘早已落盘（`agent.yaml` 的 `prototype`/`spawned_by`/`spawn_depth`），原型侧此前没有——一个原型从哪个原型派生、改了什么，只能靠人脑记。本节把原型谱系提升为一等数据：
+成员侧血缘落在 `agent.yaml` 的 `prototype`/`spawned_by`/`spawn_depth`，原型侧谱系落在元数据中。二者分别记录成员出生与行为演化：
 
 - **落盘的只有三个元数据字段**：`:parent`（父原型名）、`:generation`（代数，根=1、子=父+1，永远服务端推导）、`:proposal-note`（本代变更说明）。写入点只有 `write_staging_prototype` / `write_trusted_prototype` / `update_prototype` 三处；`approve_prototype` 的晋级是目录搬迁 + 元数据改写，谱系字段原样保留（审计链不断）。
 - **谱系查询是派生的，不另落盘**：`get_prototype_lineage` 沿 `:parent` 链向上走到根，返回每一代的 `{name, generation, author, proposal_note, trusted}` 加相邻两代 `behavior.tlon` 的 unified diff（difflib 文本 diff，不做结构化 diff——模板 `${var}` 占位符会让 EDN loads 失败，而 behavior.tlon 本身已是规范化文本）。父原型被删除/改名时链断在哪就停在哪，最老可达的一代标注 `broken`；环与失控链由 visited 集合 + 链长上限（32）截断，同样标注 `broken`。
@@ -165,9 +173,9 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 
 为什么不用直接 import 加契约豁免：反向依赖一旦开一个口子，tools 层就会逐渐长出对 agents 内部的随意引用，分层检查从「方向强制」退化为「逐个评审」。Protocol + 注入的额外收益是工具可独立测试——测试注入一个假的 `AgentLifecycle` 实现即可，不必拉起整个注册表。异常类型放 ports 而不是抛方模块，是因为 catch 发生在 tools 侧：异常是接口的一部分，不是实现的细节。
 
-## 方向
+## 未实施方向
 
 与愿景的差距主要有两处：
 
-- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：拷贝 + 填模板槽位。没有对 spec 的变异、重组、交叉，派生成员的多样性上限就是原型库的多样性。进化的原材料（可写的行为数据）已就位，但产生变异的机制还没有。
+- **实例化是纯拷贝，无变异算子**——「新成员从社会内部生长」目前只有复制一种算子：拷贝 + 填模板槽位。实例化不会自行变异、重组或交叉，派生成员的行为来自已有原型和模板参数。成员已经可以用 `proposeBehavior` 起草变更后的完整 spec 并进入 staging；尚未实现的是实例化时的自动变异、重组和交叉。
 - **staging 审批是人工瓶颈**——Gatekeeper 模型里人类是每个 LLM 创作的原型的必经之路，这与愿景里「人类从审批者退为规则的守护者」相悖。审批社会化的第一步已落地：成员可用 `reviewPrototype` 对 staging 提案做异质同行评审，评审记录（含评审者模型血统）落盘 `REVIEW.md` 并随详情端点呈现给审批者——人类不再是唯一读提案的人。但**自动晋级仍不做**：评审是咨询性的，approve 依旧是人类决定；下一步才是「评议通过的原型按规则自动晋级」，人类退到「定评议规则」的位置。

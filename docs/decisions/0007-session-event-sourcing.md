@@ -1,5 +1,7 @@
 # ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)。当前适用范围：事件溯源保留；session 身份/触发语由 ADR 0028 修订，JSONL 物理存储由 ADR 0032 替代。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-08-22，方向讨论拍板；同日实施）
 
 ## 背景

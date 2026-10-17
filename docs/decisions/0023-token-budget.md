@@ -1,5 +1,7 @@
 # ADR 0023：Session 级 token 预算——认知循环的第二条停机线
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)。当前适用范围：Session token 预算停机线。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-10-07 拍板；同日实施）
 
 ## 背景

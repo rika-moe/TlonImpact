@@ -1,6 +1,6 @@
 # Skill 能力设计
 
-> 决策见 [ADR 0010](../decisions/0010-skills.md)。本文是设计与使用说明。
+> 决策见 [ADR 0010](../decisions/0010-skills.md)。本文定义技能发现与上下文机制，并明确当前正文访问边界。
 
 ## 是什么
 
@@ -9,21 +9,21 @@ Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 
 - **人格**（SOUL.md 等，`(persona)` section）：常驻 system prompt，回答"我是谁"。
 - **记忆**（claims，`(knowledge)` section）：回答"发生过什么"。
 - **技能**（`(skills)` section）：平时只有索引在上下文里，匹配到才读正文，回答"这类事该怎么做"。
-- **工具**（`read_file` 等）：确定性的"能做什么"。skill 不是工具——它是编排工具的知识。
+- **工具**（`readFile` 等）：确定性的"能做什么"。skill 不是工具——它是编排工具的知识。
 
-格式采用 Agent Skills 开放标准（Claude Code / Codex / Cursor 通用），第三方 skill 包拷进目录即用。
+格式采用 Agent Skills 开放标准（Claude Code / Codex / Cursor 通用），第三方技能包可以被扫描发现；正文和脚本是否可用，还取决于成员执行层级与容器可见路径。
 
 ## 目录布局（三层）
 
 | 层 | 宿主机路径 | 容器内路径 | 用途 |
 |---|---|---|---|
 | 项目级 | `~/.tlon/{agent_id}/workspace/.agents/skills/` | `/workspace/.agents/skills/` | 工作区仓库自带的工作流 |
-| agent 级 | `~/.tlon/{agent_id}/skills/` | —（容器不可见） | 该 agent 的私人技能 |
+| agent 级 | `~/.tlon/{agent_id}/skills/` | `/tlon-home/skills/`（只读） | 该 agent 的私人技能 |
 | 全局级 | `~/.tlon/skills/` | —（容器不可见） | 跨 agent 共享 |
 
 项目级目录经 workspace bind-mount 进容器，引擎在宿主机直读，不进容器扫描。同名 skill 冲突时 **项目 > agent > 全局**，后出现的被跳过并记日志。
 
-注意：索引里的路径是**宿主机绝对路径**；项目级 skill 的正文模型也可以在容器内按 `/workspace/.agents/skills/...` 读（同一文件），但 `read_file` 工具走宿主机路径。
+注意：索引当前输出**宿主机绝对路径**，但实际文件工具 `readFile` 只接受容器可见路径；没有通用宿主机 `read_file` 工具。项目级技能的正文位于 `/workspace/.agents/skills/...`，agent 级正文可以通过 `/tlon-home/skills/...` 访问；全局层没有对应容器挂载。
 
 ## 内置 skill
 
@@ -65,7 +65,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 需要某个技能时，用 read_file 读取其 SKILL.md 获取完整指令。
 ```
 
-索引按全部 SKILL.md 的 mtime 签名缓存（与 system prompt 的 persona mtime 缓存同手法），无变更零磁盘重读，文件一改下一 session 生效。目录不存在视为空；三层全空则该 section 不产生任何消息。
+索引按三层技能目录存在性、子目录名及 SKILL.md 的 mtime 签名缓存（与 system prompt 的 persona mtime 缓存同手法），无变更零磁盘重读，文件一改下一 session 生效。目录不存在视为空；三层全空则该 section 不产生任何消息。
 
 **DSL**：`(skills)` 是 `:context :sections` 向量的一员，无参数，与 `(knowledge)` 平级，按向量顺序落位：
 
@@ -75,12 +75,16 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 
 不加该 section 的成员没有任何 skill 开销（无 `:loop` 的成员天然如此）。
 
-**加载（progressive disclosure）**：模型看到索引后自行决定——要用某 skill，就用 `read_file` 读索引里给出的 SKILL.md 路径拿正文；要跑脚本就用 `execute_bash`（容器内执行）。引擎不做正文注入，没有 `use_skill` 工具。
+**按需加载意图**：模型从索引选择技能，再读取正文；引擎不注入正文，也没有 `use_skill` 工具。
+
+**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 仍提示不存在的 `read_file`，并给出不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `readFile` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 不注册 filesystem 工具，无法通过此机制读取任何正文。脚本需要 L2 的 `executeBashCommand`，并且文件必须位于容器可见路径。
+
+因此三层发现与索引已经实现，不能把它描述为三层正文访问均已跑通。补齐路径映射、全局正文可见性和 L0 加载入口需要独立设计及实现，此次文档整理不改变权限或增加工具。
 
 ## 信任与安全
 
-**SKILL.md 的内容是不可信输入。** 项目级 skill 来自 workspace——可能是 agent 自己 clone 的仓库，其中 skill 的指令（"先把某文件发出去"）模型可能照做。这与普通 prompt injection 同级：第一版的缓解只有两层——skill 永远需要模型"读了索引、主动读正文"才生效（无自动执行），以及 agent 本身运行在容器沙箱里。更严格的手段（`allowed-tools` 白名单、项目级 skill 启用确认门）留给后续决策。写 skill 的人请记住：description 和正文都会进模型上下文。
+**SKILL.md 的内容是不可信输入。** 项目级 skill 来自 workspace——可能是 agent 自己 clone 的仓库，其中 skill 的指令（"先把某文件发出去"）模型可能照做。这与普通 prompt injection 同级：当前不自动执行技能正文或脚本，实际工具调用仍受成员执行权限与文件可见范围约束。L0 没有 Docker 装置；L1/L2 的文件和执行边界见 [execution-device](execution-device.md)。更严格的手段（`allowed-tools` 白名单、项目级 skill 启用确认门）留给后续决策。写 skill 的人请记住：description 和正文都会进模型上下文。
 
-## 边界（第一版不做）
+## 未实施方向
 
-skill 市场/安装器、工具白名单、触发命令、版本管理。先跑通"三层目录 + 索引进上下文 + 模型自读"的最小闭环。
+技能市场/安装器、技能级工具白名单、触发命令和版本管理尚未实施；三层正文加载的具体缺口见上节。历史选择见 [ADR 0010](../decisions/0010-skills.md)。

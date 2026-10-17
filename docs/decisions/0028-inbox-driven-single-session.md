@@ -1,5 +1,7 @@
 # ADR 0028：收件箱驱动的单 session 模型
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)、[mail](../design/mail.md)。当前适用范围：收件箱驱动单 session；替代旧来信队列/触发邮件模型。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-10-11 拍板）
 
 ## 背景

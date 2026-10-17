@@ -1,5 +1,7 @@
 # ADR 0019：tlon runtime / server / client 包级拆分
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[server-protocol](../design/server-protocol.md)。当前适用范围：包边界保留；facade 数量等历史快照以当前 architecture 为准。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-09-20，方向讨论拍板）
 
 ## 背景

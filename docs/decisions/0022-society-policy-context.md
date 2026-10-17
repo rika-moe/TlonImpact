@@ -1,5 +1,7 @@
 # ADR 0022：社会政策语境——policy.tlon 与 pull 型求值点
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [society-policy](../design/society-policy.md)。当前适用范围：社会政策语境与 pull 型求值点。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-09-28 拍板）
 
 ## 背景

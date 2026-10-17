@@ -1,119 +1,88 @@
-# Execution Device 设计：能力阶梯与宪法执行层
+# Execution Device：成员执行权限与容器机制
 
-> 本文是 agent 执行装置（execution device）的设计哲学与规划。当前实现覆盖 L1/L2 两层（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py) 的 `DockerRuntime`，同一实现按声明层级闸能力，issue #40），本文把它放进一个更大的图景：device 不是「给 agent 一台电脑」，而是**书信共和国宪法的执行层、自进化自然选择的竞技场**。现状描述以代码为准，未实现的部分集中在「能力阶梯」「方向」两节。
+执行装置隔离成员的文件访问和代码执行。tlosure 求值、文件操作、Linux 命令执行分成 L0/L1/L2 三层，按最低够用原则授权。复合能力的进化通道见 [capabilities](capabilities.md)，行为评估见 [arena](arena.md)。
 
-## device 是什么：两个极端之间的空白
+## 领域约束
 
-Tlon 已有的两个执行环境位于光谱的两端：
+- 运行时执行权限的权威是成员 `agent.yaml` 的 `docker.level`。原型 `behavior.tlon` 的 `:execution` 是实例化输入，不是每次运行重新授权的来源；成员自改 spec 不能提高运行权限。
+- 没有代码执行权限的成员，装配层不注册 Shell 工具，装置层也拒绝 `run()`；权限不能只靠提示词表达。
+- 文件柜不执行程序，每条 Shell 命令使用一次性执行单元。跨命令持久状态通过挂载的 workspace 保存。
+- 容器只挂载自己的成员目录，家目录只读；代码执行不能获得其他成员目录或宿主 Docker socket。
+- 对命令执行保留时间、CPU、内存和网络边界；可观测的资源账本与强制配额要区分。
 
-- **tlosure 求值器**（[tlosure/eval.py](../../src/tlosure/eval.py)）——被故意阉割到极点的执行环境：可停机、无副作用、fuel 计量、只能组合已有机制。它是最小 execution device，弱到只配做纯计算，但因此安全到可以交给 agent 自己书写。
-- **Docker 容器**（[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py)）——最大 unrestricted 的执行环境：图灵完备、任意 syscall（网络已默认断开，issue #23）。它是最强 execution device，强到 agent 在里面做什么系统都管不住。
+## 层级与授权
 
-问题是**两个极端之间空无一物**：一个只读信回信的成员和一个需要编译代码的成员，拿着同一台 full-power 的机器。device 的设计哲学，首先就是把这片空白组织成有秩序的阶梯。
+| 层级 | 当前实现 | 可用能力 |
+|---|---|---|
+| L0 | 无 Docker 装置 | tlosure 计量求值及非装置工具；不注册文件、Shell 工具 |
+| L1 | DockerRuntime 的 archive-only 文件柜 | 五个 filesystem 工具；无代码执行 |
+| L2 | 文件柜 + 一次性执行单元 | filesystem 工具及 `executeBashCommand` / `checkBashTask` |
 
-再往下挖一层：在自进化的叙事里，device 扮演的角色是「环境」——DNA 是 `behavior.tlon`，突变是 agent 在 device 里写出的新程序，选择压是信任闸（静态校验、演武场、同行评审、人类审批），遗传是原型库。**device 是表型遇见环境的地方，是自然选择发生的竞技场。** 它的设计目标因此不是「能跑命令」，而是：让试错极其便宜、让失败极其无聊、让每次试验都能向全社会解释自己。
+[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig` 默认 `level="L1"`。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型声明一次性投影到成员配置；[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_cognitive` 按成员配置装配。即使 Docker 不可用，L1/L2 仍按声明注册工具，调用时返回装置未初始化错误。
 
-## 五条宪法
+内置原型按职责声明：relay、fast-responder、scribe、deep-thinker、support、archivist 为 L0；pm、product 为 L1；data-analyst、developer、ops 为 L2。L2 声明在原型评审中作为红旗呈现，不自动构成拒绝。
 
-### 1. 能力阶梯，而不是一个房间
+L1 是文件层，没有 WASM/WASI 运行时。更强隔离的 gVisor/microVM 也不是当前实现。
 
-每个成员不该拿到同一台万能机器。执行能力与行为一样，是**声明在基因组里的数据**——「spec 是唯一权威」从行为延伸到执行面。成员声明自己需要哪一层，默认拿最低够用层；device 需求随原型提案一起被评审（一个 staging 原型声明 L2，本身就是评审时的红旗）。这是最小权限原则（POLA）的 Tlon 方言：能力即数据，授权即评审。
+## 接口与审计
 
-### 2. 可读性：device 必须对全社会可读
+[sandbox/device.py](../../src/tlon/sandbox/device.py) 定义 `ExecutionDevice` Protocol：
 
-书信共和国的根基是一切皆可查证——邮件持久、可检索、可问责。device 里发生的事也不能是黑箱：每次 exec 进 journal/trace，workspace 的每处变更可 diff。推论很具体：**workspace 是 git 仓库**——agent 的每处改动是一个 commit，diff 就是一封可以邮寄、可以评审的「信」。agent 写的程序，可以用共和国自己的协议提交同行评审。
-
-### 3. Ephemerality：试验要便宜，失败要无聊
-
-正确的模型是把执行当成 tlosure 求值那样的东西：**输入 → 有界执行 → 输出，效果显式声明，其余蒸发**。持久的东西只有 workspace（bind mount 出来的那部分）。容器是 cattle 不是 pet——ADR 0006 说成员不死，但成员的「鞋」可以每穿一次就扔。
-
-**已落地**（issue #25，混合方案 D'）：`run()` 每条命令创建一个一次性执行单元（同镜像/挂载/ro rootfs/tmpfs/限额/网络，跑完读输出即删），常驻容器降级为「无菌文件柜」——只服务文件 I/O，从不执行任何命令。详见「方向」P2。
-
-### 4. 预算即数据，像 fuel 一样
-
-tlosure 最漂亮的思想是 fuel：计算有预算，耗尽是优雅停机而不是事故。device 把这条推广到底：时间预算、内存/CPU 预算（已有 per 容器）、**社会级预算**（每成员每日 CPU-秒、磁盘总量——现在完全没有的暗账），全部声明在 config 里、可审计、可按成员调节。预算即数据，数据即可治理。
-
-### 5. 突变晋升通道：能力词可以改写语言本身
-
-**2026-10-05 修订（issue #30 拍板）**：本节原以 workspace 为突变发生器——~~workspace 里的一个程序（突变）→ 重表达为 tlosure defn → 演武场反复验证 → 原型提案通道评审（信任闸）→ 成为 tlosure 的新 builtin（遗传）~~——workspace 起源已正式废止。新口径：**突变出生即 tlosure artifact**——agent 从意图与自身经验直接起草 `:impl`，经能力 staging 信任闸（#45 通道，见 [capabilities.md](./capabilities.md)）晋升为受信词，从此全社会每个成员都能在自己的 spec 里组合它。tlosure 的受限表达力是突变的天生形态而非待跨越的围墙：静态准入校验器就是唯一判据。
-
-这条通路一旦成立，「行为即数据」就闭环了：agent 不光能改写自己的行为，还能**改写语言本身**——当然，永远经过信任闸。信任闸是选择器，DSL 词汇是基因库，两者咬合，自进化才不是口号。
-
-## 抽象接口：ExecutionDevice
-
-device 定义为一个以数据为参数的抽象接口，隔离级别、持久性、网络策略、预算全是参数：
-
-```
-run(program, inputs, budget) -> outcome
+```python
+async def run(program: str, timeout: int = 60, workdir: str | None = None) -> ExecutionResult
+async def read_file(path: str) -> bytes
+async def fetch_archive(path: str) -> bytes
+async def write_file(path: str, content: bytes) -> bool
+async def file_exists(path: str) -> bool
+def close() -> None
 ```
 
-- `program`：要执行的东西（shell 字符串、程序文件路径——都是数据）
-- `inputs`：stdin、环境、挂载声明
-- `budget`：时间 / 内存 / CPU / 输出上限
-- `outcome`：结构化结果——exit code、stdout/stderr、**文件系统变更 diff**、资源消耗计量
+`ExecutionResult` 只有 `exit_code`、`stdout`、`stderr`。`close()` 幂等释放客户端连接，不删除文件柜；关闭后的装置实例不再复用。
 
-> **当前形态（P1，issue #21）**：接口已落地为 [sandbox/device.py](../../src/tlon/sandbox/device.py) 的 `ExecutionDevice`（`typing.Protocol` + `@runtime_checkable`），但签名是**刻意的最小化**——`run(program, timeout, workdir) -> ExecutionResult`（对齐 `DockerRuntime` 现状，outcome 即 `exit_code/stdout/stderr`），外加 `read_file` / `write_file` / `file_exists` / `fetch_archive` / `close`。inputs/budget dataclass 与带资源计量的 outcome 推迟到第二个实现出现时再引入：现在只有一个实现，不做预防性抽象。
+装配层通过 `AuditedExecutionDevice` 包装装置。每次正常返回的 `run()` 记录 `device.exec` span 与 `device_exec` 日志，包括成员、工作目录、命令前 200 字符、耗时、退出码和超时标记。完整工具调用存在 session journal 中；文件 I/O 和生命周期仅透传，不因此获得逐次 exec 审计。
 
-`DockerRuntime` 是这个接口的第一个实现，同时承载 L1 与 L2（同一实现按 `docker.level` 闸能力：L1 只暴露文件 I/O，`run()` 直接拒绝，issue #40）。接口化的直接收益：能力声明可以进成员 config，装配层按声明选择实现与参数；exec 审计、资源账本挂在接口边界上，对所有实现一刀切。
+接口保持当前实现需要的最小形态，不提供文件 diff、资源计量 outcome 或通用 inputs/budget 数据结构。
 
-## 能力阶梯
+## 双容器模型与生命周期
 
-| 层 | 环境 | 适用 | 实现 | 状态 |
-|---|---|---|---|---|
-| L0 | tlosure 求值器 | 纯计算、数据变换 | 已有（[tlosure/eval.py](../../src/tlosure/eval.py)） | ✅ |
-| L1 | 文件层（archive-only） | 只读写文件、收发邮件的成员——结构性零代码执行 | DockerRuntime 文件柜（get/put_archive，容器从不启动、exec 单元从不存在）+ 装配层只注册 5 个 filesystem 工具 | ✅（issue #40） |
-| L2 | 完整 Linux userland | 真正需要真实机器的声明者（bash/gcc/python） | Docker（现 `DockerRuntime`）；gVisor/microVM 为升级位 | ✅（加固 #22 + 一次性执行单元 #25） |
+[sandbox/docker_runtime.py](../../src/tlon/sandbox/docker_runtime.py) 的 `DockerRuntime` 实现两种容器：
 
-L1 的定位在 2026-09-26 拍板重定义：最初规划里 L1 是 WASM/WASI 受限运行时（「运行 agent 编写的程序，无 syscall 自由」），该路线经讨论**否决**（issue #27 随之关闭）——它的前提是「加固前的 L2 有洞」，而 #22（ro rootfs + 写侧 symlink 封死）/#23（默认断网）/#25（无菌文件柜 + 一次性执行单元）落地后边际收益消失；且 WASI 里没有「shell」，agent 的 bash 工作流与之结构性不匹配（coreutils 有 WASI 移植但工作流摩擦真实存在）。重定义后的 L1 不再发明新运行时，而是把既有文件柜的使用面收窄成一层能力：装置还在（文件 I/O 需要容器），但代码执行通道从结构上不存在——bash 工具不注册是装配闸，`run()` 在非 L2 直接 raise 是装置层兜底。gVisor/Firecracker 是「需要更强隔离时」的升级位，不是现在的需求——别为了哲学换轮子。
+- **文件柜**：`tlon-agent-{agent_id}`，创建后不启动，只经 Docker archive API 服务文件 I/O。L1/L2 共用这一机制。
+- **一次性执行单元**：`tlon-agent-{agent_id}-exec-{uuid8}`，仅 L2 每次 `run()` 创建，start → wait → 分别取 stdout/stderr → finally 强制删除。避免 auto_remove 与取日志竞态。
 
-**内置原型定层**（issue #31 拍板，behavior.tlon 顶层 `:execution {:level :LX}`）：按「最低够用」原则逐个声明——
+`run()` 在非 L2 时立即拒绝。L2 命令使用容器内 `timeout` 加外层 `asyncio.wait_for(timeout + 5)`；超时返回退出码 -1 和 `Command timed out after … seconds`。默认镜像使用 coreutils；busybox timeout 作为 PID 1 时可能依赖外层兜底，最长多等待约 5 秒。
 
-| 层 | 原型 |
-|---|---|
-| L0 | relay, fast-responder, scribe, deep-thinker, support, archivist |
-| L1 | pm, product |
-| L2 | data-analyst, developer, ops |
+成员自己启动的后台进程不跨命令存活；`background=true` 使用宿主任务包裹一次性容器，由 CheckBashTask 查询。`/tmp`、根文件系统变化和进程状态随执行单元消失。
 
-L0 成员仍保留邮件/记忆/任务/原型观测工具，砍掉的只是 workspace 文件 I/O 与代码执行——读写信件、整理记忆本就不需要一台机器。真正声明要真实机器的只有数据/开发/运维三个工程角色（L2），协调型角色（pm/product）落在文件层（L1）。
+文件柜跨睡眠和进程重启保留，但不是永不重建。`ensure_running` 比对镜像、挂载、内存/CPU 限额、网络、只读 rootfs 和 tmpfs，发现配置漂移便移除重建；workspace 在宿主挂载上，重建不删除它。显式删除成员与演武场拆除另有生命周期，不由 `close()` 隐式完成。
 
-## 现状评估：DockerRuntime 的优点与欠账
+## 挂载与文件通道
 
-**做对了的**（详见 [architecture.md](../architecture.md)「存储布局」容器视角）：
+两种容器共用 `_container_kwargs` 与 `_bind_mounts`：
 
-- 纵深防御：自己家目录只读 bind-mount（内核级）+ 工具层 path_guard 白名单（字符串级），跨 agent 读取结构上不可能
-- 生命周期与统一成员模型自洽：容器跨睡眠保留、唤醒零成本、从不强删（ADR 0006）
-- 文件写入不依赖镜像内软件（put_archive 内存 tar）；阻塞 SDK 调用全部 `asyncio.to_thread`；双层超时（容器内 `timeout` 真杀 + 外层 `wait_for` 兜底）
+| 宿主数据 | 容器位置 | 权限 |
+|---|---|---|
+| 成员 workspace | `docker.working_dir`，默认 `/workspace` | 读写 |
+| 整个成员家目录 | `/tlon-home` | 只读 |
+| 容器 rootfs | `/` | 只读 |
+| 临时 scratch | `/tmp` tmpfs，64 MiB | 读写、随容器丢弃 |
 
-**欠账**（按严重度，前两项已立案）：
+成员可读取自己的行为定义、人格和记忆；邮箱通过邮件工具访问共享邮局，不靠成员目录里的旧邮件文件。只有 workspace 的写入跨执行单元持久保存。
 
-1. ~~`network_mode: "host"` 默认——容器共享宿主机网络命名空间，agent 可直连服务端 REST（`/messages` 的 username 取自请求体）、内网与外网。「邮件是唯一通道」目前只靠工具层自觉，结构上是筛子。**违反宪法零**。~~ **已修复**（issue #23）：默认翻转为 `none`，见「方向」P1。
-2. path_guard 白名单是字符串级，容器内 symlink 可逃逸（`/workspace/x -> /etc/passwd` 后 readFile 跟随）。写侧已被 ro rootfs 内核级封死（issue #22，见「方向」P1），读侧残留。
-3. `read_file` 用 `cat` 经 stdout 回传，`decode(errors="replace")` 损坏二进制（issue #1）——写入用 put_archive、读取却不用 get_archive，不对称。
-4. docker client 从不关闭，sleep→wake 重复装配泄漏连接；socket 探测失败完全静默（issue #4）。
-5. ~~执行依赖镜像内 `bash` 与 `timeout`，与文件 I/O「不假设镜像有软件」的哲学自相矛盾~~ → 文件侧已收敛（issue #40）：list/search/write/exists 全部走 get/put_archive，容器内零命令；残留仅 `run()` 自身（L2 的本职就是执行）；错误语义靠 stderr 字符串匹配（换 locale 即碎）仍在。
-6. ~~容器配置漂移无 reconcile~~ → 已解决（issue #22）：`ensure_running` 比对期望配置与实际配置，不符自动重建。
-7. 只有数量闸（`max_activations=8`）没有资源闸——8×512m 是暗账（违反宪法四）。→ 暗账已变明账（issue #24）：实际占用进 metrics，`TLON_CONTAINER_MEMORY_BUDGET` 超预算记 warning；强制型资源闸仍是后续决策
+filesystem 工具经 path_guard 检查路径。读侧额外允许 `/tlon-home`；写/edit 使用配置的写白名单。内核只读挂载是第二道边界。其他成员目录不进入容器，但容器自带文件系统可读；字符串路径检查也不等同于禁止所有符号链接读取，不能把它描述为完整的读侧 symlink 沙箱。
 
-## 方向
+`read_file` 与 `write_file` 使用 get_archive / put_archive，字节不经 stdout 解码；ReadFileTool 在工具层另要求 UTF-8 文本。`file_exists` 读 archive 响应头；list/search 把目录 tar 拉回宿主分析，由 [tools/filesystem/archive.py](../../src/tlon/tools/filesystem/archive.py) 完成遍历与匹配，不依赖镜像内 find/grep。搜索内容正则采用 Python `re`。写入父目录通过 tar 目录条目创建，只加入缺失父目录，避免修改已有目录元数据。
 
-按「地基 → 宪法加固 → 阶梯成形」排序，每项对应 EPIC 下的 sub issue：
+## 网络与资源
 
-**P0 地基（bug 修复）**
-- issue #1：`read_file` 改 get_archive，二进制安全
-- issue #4：docker client 生命周期管理 + 探测失败日志
+网络默认 `none`；成员配置可显式声明其他 `docker.network_mode`。文件柜和执行单元使用相同网络配置。默认断网不是对所有成员配置都强制断网。
 
-**P1 接口化与加固（全部落在现有实现上，不扩能力）**
-- ✅ ExecutionDevice 抽象接口，`DockerRuntime` 改造为首个实现（本 PR，issue #21）：接口落 [sandbox/device.py](../../src/tlon/sandbox/device.py)（`ExecutionResult` 迁入、`DockerRuntime.execute` 改名 `run`）；exec 审计经接口边界进 trace/log——装配层用 `AuditedExecutionDevice` 包装，每次 `run` 发 `device.exec` span + `device_exec` structlog 日志（命令截断前 200 字符、耗时、退出码、timed_out；资源消耗计量随完整形态 budget/outcome 一起推迟）（宪法二）。**刻意的最小化**：完整形态 `run(program, inputs, budget)` 推迟到第二个实现出现时（见「抽象接口」加注）
-- ✅ 容器加固（本 PR，issue #22）：rootfs 只读（`read_only=True`）+ `/workspace` rw + `/tlon-home` ro + tmpfs `/tmp`（64m）——把「可写面 = 工作区」变成内核事实；写侧 symlink 逃逸封死（经真 daemon 冒烟验证：put_archive 的 daemon 端 tar 解包**替换** symlink 为普通文件而不跟随，`/etc/passwd` 未被触及——机制不是「跟随后被 ro 拒」，而是「根本不跟随」）。配置漂移 reconcile 落地为 `ensure_running` 里的 `_container_mismatches` 比对（image / binds / mem_limit / cpu quota / network_mode / read_only+tmpfs 七维），不符记 `container_config_drift` 日志后 remove + 重建——workspace 在 bind-mount 上状态不丢，与 ADR 0006 不冲突。**行为变化**：加固前创建的存量容器在下次 wake 时被自动重建一次，这正是加固触达存量的机制（真 daemon 冒烟：改 mem_limit 触发重建、workspace 内容保留）
-- ✅ 网络宪法（本 PR，issue #23）：**现状调查先行**——全部历史工具调用 154 条中 bash 仅 8 条、联网命令 0 条（7 条 sleep/echo 冒烟 + 1 条容器内 ls），7 个成员 workspace 全空，仓内原型 spec 与工具描述零网络引导——默认断网不破坏任何现有工作流（潜在影响仅是开发/运维角色尚未发生的预期场景）。据此 `network_mode` 默认 `"host"` → `"none"`（[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig`）；**外联的口子保留**：成员在 agent.yaml 的 `docker.network_mode` 显式声明（如 `"bridge"`），声明即数据、随原型提案一起评审。存量容器经 #22 的漂移 reconcile 在下次 wake 自动重建为断网，无迁移负担。egress 代理是远期，等第一个真实外联需求，不做预防性抽象
-- ✅ 社会级资源账本（本 PR，issue #24）：全局容器内存/CPU 实际占用进 metrics（宪法四）。`sandbox/resource_monitor.py` 的 `ContainerResourceMonitor` 每 30 秒枚举 `tlon-agent-*` 容器收集 `container.stats`（内存 usage/limit + docker stats 标准公式的 cpu_percent），经 `stats_snapshot()` 纯内存端口喂给 `MetricsService` 的 observable gauge（`tlon.container.memory_bytes`/`tlon.container.cpu_percent` 按 agent_id，`tlon.society.container_memory_bytes`/`tlon.society.containers` 社会级总量）——`GET /metrics` 的同步 snapshot 路径永不阻塞在 docker 调用上。fail-soft：daemon 不可达只记 warning、账本为空。docker client 探测链提取为 `sandbox/docker_client.py` 共用。**边界**：社会级内存预算 `TLON_CONTAINER_MEMORY_BUDGET`（如 "4g"）是 warning-only——超预算记 `container_memory_budget_exceeded` 日志，不做激活拒绝等强制（强制策略是后续决策）
+每容器内存/CPU 限额由 Docker 执行。[sandbox/resource_monitor.py](../../src/tlon/sandbox/resource_monitor.py) 的 `ContainerResourceMonitor` 在后台采样，按成员归并执行单元，向 metrics 提供内存、CPU 与社会汇总的内存快照；metrics 读取不阻塞等待 Docker。daemon 不可达时记录警告并返回空账本。
 
-**P2 阶梯成形（随真实需求驱动）**
-- ✅ ephemeral 执行单元（本 PR，issue #25，混合方案 D'）：**无菌文件柜 + 一次性执行单元**。关键洞察：get_archive/put_archive 对 created-but-never-started 的容器同样有效（真 daemon 验证），所以常驻容器可以**从不启动**——降级为只服务文件 I/O 的「文件柜」，不执行就不会被污染（#22 的漂移 reconcile 继续守护它）。`run()` 不再 exec 进常驻容器，改为每条命令创建一次性容器（命名 `tlon-agent-{agent_id}-exec-{uuid8}`）：创建参数与文件柜同源于 `_container_kwargs`（同镜像/挂载/ro rootfs/tmpfs/限额/网络），`start → wait → logs 分路取 stdout/stderr → finally remove(force=True)`；不用 auto_remove（与 wait/logs 有竞态）。双层超时保持：容器内 `timeout` + 外层 `asyncio.wait_for`（+5s 兜底，触发时 finally 强杀容器）；超时文案契约（`Command timed out after {n} seconds`，AuditedExecutionDevice 依赖）不变。已知边界：busybox `timeout`（如 alpine 镜像）作为容器 PID 1 时不触发，此类镜像靠外层兜底限时（晚 ≤5s，语义不变）；默认 ubuntu 镜像（coreutils）走 124 路径。**行为变化（目的而非 bug）**：agent 自己 nohup 的进程不再跨命令存活，后台任务走 `background=true`（host 侧 asyncio task 包一次性容器，天然兼容）；唯一持久状态是 /workspace。资源账本（#24）同步适配：exec 单元按 `-exec-` 命名标记归属到所属成员聚合计量，避免每条命令产生一个随机 uuid 指标序列。工具契约（executeBashCommand description）已告知 LLM 新语义
-- ✅ 能力声明进成员 spec/config，装配层按声明选择层级与参数（本 PR，issue #26，宪法一）：声明落在 agent.yaml 的 `docker.level`（[base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig`），初始取值 `"L0"` | `"L2"`，**默认 `"L2"`**（行为不变先行；默认后于 issue #31（2026-10-05）拍板翻转为 `"L1"`——未声明 `:execution` 的新成员拿最低够用的文件层，L0 太紧会逼显式声明，需要代码执行的原型在 spec 显式声明 L2）。`L0` = 无执行装置：装配层（[agents/assembly.py](../../src/tlon/agents/assembly.py)）不创建 DockerRuntime、不注册 shell/filesystem 七个装置工具，记 `execution_device_declared_none` 日志；`L2` = 现状路径不变。（落地时 `"L1"` 在 config 校验即拒绝；L1 于 issue #40 以「文件层」重新定义并落地，见下条。）spec 语法扩展已落地：behavior.tlon 新增可选顶层段 `:execution {:level :L0|:L1|:L2}`（语义同 `docker.level`，见 [dsl-reference.md](../reference/dsl-reference.md) 1.1 节），`instantiate` 实例化时把它一次性投影进 agent.yaml 的 `docker.level`——运行时权威仍是 agent.yaml，成员事后自改 behavior.tlon 的 `:execution` 不生效（防自提权）；staging 原型声明 L2 即评审红旗（详情 payload 派生 `red_flags`、评审 prompt 含对应角度、WebUI 呈现警示徽章）
-- ✅ L1 文件层（本 PR，issue #40）：**archive-only 执行装置，结构性零代码执行**。L1 重定义为「只读写文件」——WASM/WASI 路线否决的定论记录在「能力阶梯」一节。落地三件事：① **去 run() 化**（对 L1/L2 同样生效，是简化不是特判）——`write_file` 的 `mkdir -p` 消失（真 daemon 验证：put_archive 不会自动建父目录，且 tar 里带**已存在**目录条目会被 daemon 改 mode/mtime，所以缺失父目录作为 tar 目录条目、锚定在探测到的最深已存在祖先上）；`file_exists` 改 get_archive 响应头探测（404 即不存在，流不解体即关，大目录也便宜）；`listDirectory`/`searchFiles` 不再进容器跑 find/grep——目录子树整棵 get_archive 拉回 host 侧解 tar（[tools/filesystem/archive.py](../../src/tlon/tools/filesystem/archive.py)），名称/类型/大小/mtime 与内容匹配全在 host 完成，输出契约（条目字段、目录在前排序、截断语义、.git 排除、二进制跳过、每行 200 字符截断）不变；content 模式正则从 grep -E 换为 Python `re`（大体兼容，是已知的最小语义差）。② **装置层结构保证**：`DockerRuntime.run()` 在非 L2 直接 raise（中文错误信息）——兜底，正常路径下 L1 根本不注册 bash 工具。③ **装配闸**：`level != "L0"` 建 runtime（包 AuditedExecutionDevice 不变）并注册 5 个 filesystem 工具；`level == "L2"` 才注册 ExecuteBash/CheckBashTask。接口因此新增 `fetch_archive`（tar 字节通道，进 `ExecutionDevice` Protocol 与审计包装的透传）
-- workspace git 化：改动即 commit，diff 即评审材料（宪法二）
+社会级 `TLON_CONTAINER_MEMORY_BUDGET` 目前只报警，不拒绝激活。每日 CPU 秒、磁盘总量和社会级强制预算尚不存在，不能把它们当作已有安全保证。
 
-**P3 进化专属机制（对应愿景「闭环」阶段）**
-- 演武场（proving ground）：staging 原型实例化临时成员，放进隔离宇宙（独立 TlonPaths + 隔离 runtime），喂合成邮件跑认知循环，评审看「它在围墙里做了什么」（完整 journal 轨迹）而不只是「它写了什么」——信任闸从静态审查升级为行为审查。演武场容器是试验装置不是成员，拆除与 ADR 0006 不冲突。**设计已拍板**（issue #29，2026-10-05）：[arena.md](./arena.md)
-- 突变晋升通道：agent 起草 tlosure artifact → 能力 staging 评审 → 受信词（宪法五；2026-10-05 拍板全面 tlosure、弃 workspace 起源，issue #30）
+## 历史与未实施方向
+
+此领域的建设经过接口化、只读 rootfs、默认断网、资源监控、一次性执行单元和 L1 文件层等步骤；历史设计见执行装置相关 Issues #21–#26、#31、#40，当前规则以上述机制为准。行为与执行授权的关系参见 [DSL 设计](dsl.md)。
+
+尚未实施：workspace 自动 Git 提交与 diff 审计、通用资源计量结果、社会级强制资源闸、替代隔离运行时、egress 代理。它们是后续方向，不是执行装置已承诺的接口或能力。突变直接起草为 tlosure artifact，已由能力 staging 通道实现，不再以 workspace 程序为起点。

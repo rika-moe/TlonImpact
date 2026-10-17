@@ -1,5 +1,7 @@
 # ADR 0032：SQLite session journal——事件与生命周期元数据同一事实存储
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)、[memory](../design/memory.md)。当前适用范围：SQLite journal；替代 ADR 0007 的 JSONL 存储，保留事件溯源不变式。完整关系见 [决策索引](README.md)。
+
 日期：2026-10-17。状态：已实施。
 
 修订关系：取代 ADR 0007 中「每个 session 一个 JSONL 文件」的物理存储决策；session 事件溯源、append-only、replay、副作用不重演及「model-visible ⇒ journaled」不变式不变。ADR 0017 的 journal 真相层和 `last_distilled_at` 时间戳 watermark 语义不变。

@@ -1,5 +1,7 @@
 # ADR 0012：引入 LiteLLM 作为 LLM 传输层 + provider 预设（方案 B）
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)。当前适用范围：LiteLLM 传输层保留；进程级 LLM 配置由 ADR 0016 替代，成员字段见配置参考。完整关系见 [决策索引](README.md)。
+
 - 状态：已接受（2026-08-30，方向讨论拍板）
 - 相关：[0008-context-pressure.md](0008-context-pressure.md)（context window 驱动压缩）、[0007-session-event-sourcing.md](0007-session-event-sourcing.md)（LLMResponse journal 序列化契约）
 

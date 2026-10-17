@@ -1,5 +1,7 @@
 # ADR 0005：SSE 而非 WebSocket
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [server-protocol](../design/server-protocol.md)。当前适用范围：REST + SSE 通信选择。完整关系见 [决策索引](README.md)。
+
 - 状态：已接受（回溯记录，2026-08-15）
 - 相关：[../design/server-protocol.md](../design/server-protocol.md)（服务端协议设计）
 

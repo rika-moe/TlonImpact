@@ -1,5 +1,7 @@
 # ADR 0010：Skill 能力——开放标准 SKILL.md，三层目录，DSL `(skills)` section，模型自读正文
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [skills](../design/skills.md)。当前适用范围：Skill 发现与渐进加载选择；当前正文访问限制见 design。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-08-22，方向讨论拍板；同日实施）
 
 ## 背景
