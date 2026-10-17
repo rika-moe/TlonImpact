@@ -12,6 +12,7 @@ and the log-only failure semantics (no bounce, no retry, never raise).
 """
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -338,10 +339,19 @@ class TestAddressing:
         assert mail is not None
         assert mail.to == [address_for_member("human:alice")]
 
-    async def test_all_known_humans_when_unconfigured(self, bus, tmp_path):
+    async def test_all_known_humans_when_unconfigured(self, bus, tmp_path, monkeypatch):
         _make_human(tmp_path, "alice")
         _make_human(tmp_path, "bob")
         adapter = _adapter(bus, tmp_path)
+
+        loop_thread = threading.get_ident()
+        original = MailStore.known_human_ids
+
+        def checked_roster(store: MailStore) -> list[str]:
+            assert threading.get_ident() != loop_thread
+            return original(store)
+
+        monkeypatch.setattr(MailStore, "known_human_ids", checked_roster)
 
         mail = await adapter.receive(
             "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}

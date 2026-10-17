@@ -20,7 +20,7 @@ import json
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import ClientSession
@@ -90,7 +90,7 @@ async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManage
     paths = TlonPaths(home=tmp_path)
     resolver = RecipientResolver(MockAgentInfoProvider(AGENT_CONFIGS), paths)
     office = PostOffice(bus, resolver, paths)
-    mgr = AdapterManager(bus, office, resolver, paths)
+    mgr = AdapterManager(bus, office, paths)
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()
@@ -102,7 +102,7 @@ def registry() -> MagicMock:
     reg = MagicMock()
     reg.get_all_ids.return_value = list(AGENT_CONFIGS)
     reg.get_config.side_effect = AGENT_CONFIGS.get
-    reg.get_all_agent_status.return_value = list(AGENT_STATUS)
+    reg.get_all_agent_status = AsyncMock(return_value=list(AGENT_STATUS))
     return reg
 
 

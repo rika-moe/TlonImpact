@@ -125,9 +125,9 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 ### EffectExecutor：效果的唯一执行口
 
-[agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor` 执行 stage 声明的外部效果——**发邮件**：`MailEffect` → 构造 `Mail`、注入当前 trace、发布 `MAIL_NEW`——与人类发信汇入同一条投递管道。收件箱已读不再是引擎的效果：ADR 0028 起标读是 agent 自己的显式行为（`markRead` 工具），引擎不在任何路径代标。
+[agents/executor.py](../../src/tlon/agents/executor.py) 的 `EffectExecutor` 在工具执行期间提交邮件：`MailEffect` → 构造 `Mail`、注入当前 trace、调用 `PostOffice`，取得真实回执后才记录工具结果。stage 收集结果时不再声明或重复发送邮件；人类发信也使用同一邮局。收件箱已读不再是引擎的效果：ADR 0028 起标读是 agent 自己的显式行为（`markRead` 工具），引擎不在任何路径代标。
 
-所有效果执行**永不抛异常**：失败只记日志（发信失败另落一封 postmaster 风格的失败通知到发件 agent 自己的收件箱）。一个失败的效果不能打断循环、不能破坏会话生命周期——循环的停机保证不被外部系统的故障绑架。
+工具投信失败以真实拒绝或结果未知返回给模型，不产生 postmaster 退信，也不因失败的完成邮件而结束 session。DSL 发信失败在运行时边界记日志，on-complete 逐 action 隔离异常，后续动作继续执行；取消仍正常传播。
 
 ## effects-as-data
 

@@ -6,8 +6,8 @@ change to the cognitive runtime, each periodic task is one mail from the
 ``postmaster`` system address to a target member, fired on a schedule.
 The mail body carries the full work instructions; the recipient's
 ordinary ``:on :mail-delivered`` cognitive rule fires. A system sender
-has no mailbox, so no ``sent`` copy pollutes the channel (see
-``organization/mail/delivery.py``).
+has no local mailbox; PostOffice stores the accepted message and
+recipient inbox copies in SQLite.
 
 Entries come from two sources, merged and managed uniformly:
 
@@ -55,6 +55,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail, address_for_member
 from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.store import MailStore
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
@@ -166,7 +167,7 @@ class CronScheduler:
         """
 
         def factory() -> str | None:
-            human_ids = self._paths.known_human_ids()
+            human_ids = MailStore(self._paths.mail_database_file()).known_human_ids()
             if not human_ids:
                 return None
             addresses = [address_for_member(human_id) for human_id in human_ids]
@@ -311,12 +312,12 @@ class CronScheduler:
         Returns the published Mail, or None when the tick was skipped
         (target member unknown / content factory declined).
         """
-        if not self._member_exists(entry.to):
+        if not await asyncio.to_thread(self._member_exists, entry.to):
             logger.info(
                 "cron_tick_skipped", entry=entry.name, reason="member_not_found", to=entry.to
             )
             return None
-        content = entry.content()
+        content = await asyncio.to_thread(entry.content)
         if content is None:
             logger.info("cron_tick_skipped", entry=entry.name, reason="content_unavailable")
             return None
@@ -336,5 +337,5 @@ class CronScheduler:
     def _member_exists(self, member_id: str) -> bool:
         """Target existence: agent ids from the registry, humans from disk."""
         if member_id.startswith("human:"):
-            return member_id in self._paths.known_human_ids()
+            return member_id in MailStore(self._paths.mail_database_file()).known_human_ids()
         return member_id in self._agent_info.get_all_ids()

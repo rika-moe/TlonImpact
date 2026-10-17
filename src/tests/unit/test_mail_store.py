@@ -108,11 +108,11 @@ async def test_legacy_files_are_ignored(tmp_path: Path) -> None:
     legacy = paths.member_mail_dir("human:old")
     legacy.mkdir(parents=True)
     (legacy / "inbox.jsonl").write_text("legacy data")
-    assert paths.known_human_ids() == []
+    assert MailStore(paths.mail_database_file()).known_human_ids() == []
     assert await Mailbox(paths.mail_database_file(), "human:old").inbox() == []
     store = MailStore(paths.mail_database_file())
     store.register_member("human:new")
-    assert paths.known_human_ids() == ["human:new"]
+    assert MailStore(paths.mail_database_file()).known_human_ids() == ["human:new"]
 
 
 def test_retirement_and_post_are_serialized(tmp_path: Path) -> None:
@@ -191,7 +191,7 @@ def test_reads_are_readonly_without_schema_changes_and_connections_close(
     assert store.known_human_ids() == ["human:bob"]
     assert store.get_request(original.from_address, "r", "f") is not None
     assert store.mails("human:bob") == [original]
-    assert TlonPaths(home=tmp_path).known_human_ids() == ["human:bob"]
+    assert store.known_human_ids() == ["human:bob"]
     for statement in statements:
         assert statement.lstrip().upper().startswith("SELECT") or statement == "PRAGMA user_version"
     for connection in connections:
@@ -262,13 +262,13 @@ def test_reads_during_atomic_schema_initialization(tmp_path: Path, monkeypatch) 
             assert store.database.exists()
             assert store.get_request("alice@tlon.internal", "r", "f") is None
             assert store.known_human_ids() == []
-            assert paths.known_human_ids() == []
+            assert MailStore(paths.mail_database_file()).known_human_ids() == []
             assert store.mails("bob") == []
         finally:
             release.set()
         initializing.result()
     store.register_member("human:bob")
-    assert paths.known_human_ids() == ["human:bob"]
+    assert MailStore(paths.mail_database_file()).known_human_ids() == ["human:bob"]
 
 
 def test_concurrent_first_writes_from_multiple_store_instances(tmp_path: Path) -> None:

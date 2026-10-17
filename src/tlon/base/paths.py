@@ -168,27 +168,6 @@ class TlonPaths:
         """Shared authoritative SQLite post office (ADR 0030)."""
         return self.shared_dir() / "mail.sqlite3"
 
-    def known_human_ids(self) -> list[str]:
-        """Read registered human ids from the post office, ignoring legacy files."""
-        import sqlite3
-
-        database = self.mail_database_file()
-        if not database.exists():
-            return []
-        from contextlib import closing
-
-        with closing(
-            sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True)
-        ) as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
-                return []
-            return [
-                row[0]
-                for row in connection.execute(
-                    "SELECT member_id FROM members WHERE member_id LIKE 'human:%' ORDER BY member_id"
-                )
-            ]
-
     # ===== Society-level config =====
 
     def cron_file(self) -> Path:

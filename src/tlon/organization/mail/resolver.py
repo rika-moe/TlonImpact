@@ -25,6 +25,9 @@ class RecipientResolver:
     Configuration includes sleeping agents. Humans become known through SQLite
     registration, independent of active sessions. Retirement is checked by the
     post office, including transactionally at local admission.
+
+    A supplied human_ids snapshot makes resolution database-free for a batch.
+    Without a snapshot, callers must run these synchronous queries in a worker.
     """
 
     def __init__(
@@ -37,7 +40,7 @@ class RecipientResolver:
         self._store = MailStore(tlon_paths.mail_database_file())
         self._external_owner = external_owner
 
-    def resolve_address(self, recipient: str) -> str | None:
+    def resolve_address(self, recipient: str, *, human_ids: set[str] | None = None) -> str | None:
         """Resolve an explicit address, agent id/display name, or human name.
 
         Full addresses still require existence validation through resolve_member.
@@ -59,11 +62,11 @@ class RecipientResolver:
             logger.warning("recipient_ambiguous_display_name", recipient=name, matches=matches)
             return None
         username = name.removeprefix(HUMAN_ID_PREFIX)
-        if self._known_human(username):
+        if self._known_human(username, human_ids):
             return address_for_member(f"{HUMAN_ID_PREFIX}{username}")
         return None
 
-    def resolve_member(self, address: str) -> str | None:
+    def resolve_member(self, address: str, *, human_ids: set[str] | None = None) -> str | None:
         """Find the member or registered gateway owning an address.
 
         Configured agents take precedence over humans with the same local part.
@@ -73,9 +76,14 @@ class RecipientResolver:
             return self._external_owner(address) if self._external_owner else None
         if self._agent_info.get_config(local) is not None:
             return local
-        if self._known_human(local):
+        if self._known_human(local, human_ids):
             return f"{HUMAN_ID_PREFIX}{local}"
         return None
 
-    def _known_human(self, username: str) -> bool:
-        return self._store.member_exists(f"{HUMAN_ID_PREFIX}{username}")
+    def _known_human(self, username: str, human_ids: set[str] | None) -> bool:
+        member_id = f"{HUMAN_ID_PREFIX}{username}"
+        return (
+            member_id in human_ids
+            if human_ids is not None
+            else self._store.member_exists(member_id)
+        )

@@ -132,7 +132,7 @@ class PostOffice:
             mail = replace(mail, to=to, cc=cc)
         else:
             local_ids, gateways = routes
-        sender_id = self._resolver.resolve_member(mail.from_address)
+        sender_id = await asyncio.to_thread(self._resolver.resolve_member, mail.from_address)
         try:
             receipt, created = await asyncio.to_thread(
                 self.store.accept, mail, sender_id, local_ids, key, fingerprint, gateways
@@ -141,7 +141,7 @@ class PostOffice:
             retired = [
                 address
                 for address in dict.fromkeys([*mail.to, *mail.cc])
-                if self._resolver.resolve_member(address) in exc.member_ids
+                if await asyncio.to_thread(self._resolver.resolve_member, address) in exc.member_ids
             ]
             raise PostRejected("收件人已退休：" + ", ".join(retired), retired) from exc
         if not created:
@@ -151,7 +151,7 @@ class PostOffice:
             await self._notify(EventType.MAIL_DELIVERED, {"mail": mail, "recipient": member})
         outcomes: dict[str, tuple[str, str]] = {}
         for address in gateways:
-            owner = self._resolver.resolve_member(address)
+            owner = await asyncio.to_thread(self._resolver.resolve_member, address)
             if owner is not None and owner in outcomes:
                 status, error = outcomes[owner]
             else:
@@ -202,9 +202,12 @@ class PostOffice:
         local_ids: list[str] = []
         gateways: list[str] = []
         normalized: dict[str, str] = {}
+        human_ids = set(await asyncio.to_thread(self.store.known_human_ids))
         for raw in dict.fromkeys([*to, *cc]):
-            address = self._resolver.resolve_address(raw)
-            member = self._resolver.resolve_member(address) if address else None
+            address = self._resolver.resolve_address(raw, human_ids=human_ids)
+            member = (
+                self._resolver.resolve_member(address, human_ids=human_ids) if address else None
+            )
             if member is None or await asyncio.to_thread(self.store.is_retired, member):
                 invalid.append(raw)
                 continue

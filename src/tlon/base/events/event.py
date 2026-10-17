@@ -84,7 +84,7 @@ class Event:
     """Event for transmission via Event Bus.
 
     This class is designed to be shared across all components:
-    - Server (EventBus, MailDelivery)
+    - Runtime and server (EventBus, PostOffice)
     - Agents
     - TUI/Web clients
 

@@ -16,7 +16,6 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.post_office import PostOffice
-from tlon.organization.mail.resolver import RecipientResolver
 from tlon.organization.mail.store import StoredPost
 from tlon.organization.messaging.member import Member
 
@@ -30,9 +29,6 @@ DEFAULT_USERNAME = "guest"
 
 # Prefix of the internal human member-id namespace ("human:<username>").
 HUMAN_ID_PREFIX = "human:"
-
-# Resolves a recipient (name, id or full address) to a mail address.
-AddressResolver = Callable[[str], str | None]
 
 # Push callback for an attached session (sync or async, like the
 # NotificationService event handlers).
@@ -112,7 +108,7 @@ class HumanAdapter(Member):
     async def _on_mail_delivered(self, event: Event) -> None:
         """Handle mail delivered to this human's inbox.
 
-        The delivery component publishes one MAIL_DELIVERED per recipient;
+        PostOffice publishes one MAIL_DELIVERED per local recipient;
         only the copy addressed to this member is fanned out to the
         attached sessions.
 
@@ -192,25 +188,19 @@ class AdapterManager(Component):
         self,
         event_bus: EventBus,
         post_office: PostOffice,
-        resolver: RecipientResolver,
         tlon_paths: TlonPaths,
     ):
         """Initialize the adapter manager.
 
         Args:
-            event_bus: Event bus adapters publish on
-            agent_info_provider: Provider for agent config queries
-                (recipient name → address resolution)
-            tlon_paths: Path resolver (persistent mailbox layout)
-            external_owner: Gateway claim lookup forwarded to the shared
-                resolver (docs/design/mail.md egress); None = no gateway
-                claims
+            event_bus: Delivery events forwarded to attached human sessions
+            post_office: Transactional mail acceptance service
+            tlon_paths: Explicit paths for persistent human registration
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
         self._paths = tlon_paths
         self._adapters: dict[str, HumanAdapter] = {}  # username -> adapter
-        self._resolver = resolver
         self._post_office = post_office
         self._sessions: dict[str, str] = {}  # session_id -> username
         self._lock = asyncio.Lock()  # serializes attach/detach
@@ -307,51 +297,6 @@ class AdapterManager(Component):
                 del self._adapters[username]
                 logger.info("human_adapter_removed", username=username)
 
-    async def publish(
-        self,
-        session_id: str,
-        content: str,
-        to: list[str] | None = None,
-        cc: list[str] | None = None,
-        subject: str | None = None,
-        in_reply_to: str | None = None,
-        thread_id: str | None = None,
-        request_id: str | None = None,
-    ) -> StoredPost | None:
-        """Publish a mail from the user owning this session.
-
-        Args:
-            session_id: Sender's session ID
-            content: Message content
-            to: Explicit recipients (raw names, ids or full addresses)
-            cc: Carbon-copy recipients
-            subject: Optional mail subject
-            in_reply_to: Id of the mail being replied to (optional)
-            thread_id: Thread root id inherited from the upstream mail
-                (optional)
-
-        Returns:
-            The created mail, or None if no adapter is attached to
-            this session (rejected, logged as warning)
-
-        Raises:
-            ValueError: If no recipient resolves to a mail address
-        """
-        username = self._sessions.get(session_id)
-        adapter = self._adapters.get(username) if username else None
-        if adapter is None:
-            logger.warning("publish_rejected_no_adapter", session_id=session_id)
-            return None
-        return await adapter.speak(
-            content,
-            to=to,
-            cc=cc,
-            subject=subject,
-            in_reply_to=in_reply_to,
-            thread_id=thread_id,
-            request_id=request_id,
-        )
-
     async def publish_as(
         self,
         username: str,
@@ -434,35 +379,6 @@ class AdapterManager(Component):
             Online adapters
         """
         return [self._adapters[name] for name in sorted(self._adapters)]
-
-    @property
-    def recipient_resolver(self) -> RecipientResolver:
-        """The shared recipient resolver (single authority, issue ).
-
-        PostOffice uses this instance so both sides of resolution
-        (speak-side names, delivery-side addresses) share one
-        implementation of the "known human" rule.
-        """
-        return self._resolver
-
-    def resolve_address(self, recipient: str) -> str | None:
-        """Resolve a recipient to a mail address.
-
-        Delegates to the shared RecipientResolver (mail domain, issue
-        ): accepts a full mail address (passed through), an agent
-        id, an agent display name, a human's username or the
-        "human:<username>" form. A human resolves when they are online
-        or known-but-offline with a persistent mailbox — the same rule
-        MailDelivery applies on the delivery side, so a resolvable
-        recipient here is deliverable there.
-
-        Args:
-            recipient: Recipient to resolve
-
-        Returns:
-            The member's mail address, or None if unresolvable
-        """
-        return self._resolver.resolve_address(recipient)
 
     def username_for(self, session_id: str) -> str | None:
         """Get the username owning a session.

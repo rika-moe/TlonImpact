@@ -74,7 +74,7 @@ async def manager(bus: EventBus, tmp_path: Path) -> AsyncGenerator[AdapterManage
     provider = MockAgentInfoProvider({"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")})
     resolver = RecipientResolver(provider, paths)
     office = PostOffice(bus, resolver, paths)
-    mgr = AdapterManager(bus, office, resolver, paths)
+    mgr = AdapterManager(bus, office, paths)
     await mgr.initialize()
     yield mgr
     await mgr.shutdown()

@@ -1,6 +1,7 @@
 """Retirement and wake recovery are independent from notification delivery."""
 
 import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -232,3 +233,26 @@ async def test_failed_retirement_cleanup_keeps_live_reference(tmp_path: Path) ->
     member.shutdown.side_effect = None
     assert await registry.stop_member("worker", "operator")
     assert "worker" not in registry._agents
+
+
+async def test_status_queries_read_retirement_off_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = registry_at(tmp_path)
+    loop_thread = threading.get_ident()
+    original = MailStore.is_retired
+    query_threads: list[int] = []
+
+    def checked_is_retired(store: MailStore, member_id: str) -> bool:
+        query_threads.append(threading.get_ident())
+        assert threading.get_ident() != loop_thread
+        return original(store, member_id)
+
+    monkeypatch.setattr(MailStore, "is_retired", checked_is_retired)
+    status = await registry.get_agent_status("worker")
+    assert status is not None and status["state"] == "sleeping"
+    await asyncio.to_thread(MailStore(registry._paths.mail_database_file()).retire, "worker")
+    statuses = await registry.get_all_agent_status()
+    assert len(statuses) == 1 and statuses[0]["state"] == "retired"
+    assert await registry.get_agent_status("missing") is None
+    assert len(query_threads) == 2

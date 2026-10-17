@@ -50,9 +50,13 @@
 
 ## 外围接线复核（2026-10-17）
 
+收尾决定：SQLite 查询统一由 MailStore 承担，删除路径对象中的查询实现；异步业务经工作线程读取，不在事件循环连接数据库。邮局批量解析复用一次已知人快照，退休检查仍以提交事务为准。删除无生产者的 StageOutcome.mails 及无人调用的 AdapterManager.publish，不保留兼容入口；同步废止组件的文档描述。
+
 - DSL 发信与工具投信分开处理失败：确定性 emit/forward 的邮局拒绝及基础设施异常记录结构化日志，不打断后续规则动作；认知 on-complete 原有逐 action 隔离保留。工具仍直接返回真实拒绝/未知结果，不制造退信。
 - 已退休不等于运行资源已关停。stop 重试在持久退休标记存在但活成员仍在运行表时，必须继续关闭；只有关闭完成才移出运行表。取消或关闭异常不丢失该引用，也不清除永久退休标记。
 - Telegram 对 submission_unknown 保存有界、按 user/chat 隔离的原始投信信封，提供 `/retry <request_id>`；复用全部内容和原键。缓存只在当前进程有效，重启或淘汰后明确拒绝重试，绝不重建信封或换键重发。
 - 旧退信机制已废止，删除 tlon.mail.bounced 指标及 postmaster 发件人推断，cron 系统邮件只计正常发信。
 
 外围修正验证：`scripts/check_all.sh` 14/14 全绿，Python 单元 2031 项、集成 16 项通过；最终补强的 DSL/on-complete 回归 4 项通过。实际 dream + SDK 验证入箱、同键重放和保持未读，临时 home、进程及端口均已清理。Telegram 使用真实 REST/SQLite 模拟提交成功后响应丢失，原键重试只产生一封邮件；未连接外部 Telegram 平台。
+
+收尾验证：M2/M4/L2/L3 完成后，`scripts/check_all.sh` 14/14 全绿，Python 单元 2029 项、集成 16 项通过。移除 6 项废止入口测试，新增 4 项工作线程/实时查询回归；现存 cron、GitHub 测试也断言 SQLite 不在事件循环执行。隔离 dream + SDK 冒烟再次通过，临时目录、进程和端口已清理。

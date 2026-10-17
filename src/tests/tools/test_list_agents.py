@@ -9,7 +9,7 @@ class _RegistryStub:
     """Serves the registry's full status dicts (management surface shape) —
     the tool must project them down to the yellow page."""
 
-    def get_all_agent_status(self) -> list[dict[str, Any]]:
+    async def get_all_agent_status(self) -> list[dict[str, Any]]:
         return [
             {
                 "id": "b-002",

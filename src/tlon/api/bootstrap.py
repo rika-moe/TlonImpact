@@ -3,7 +3,7 @@
 ConfigService、ContainerResourceMonitor、MetricsService、TraceStore、
 AgentRegistry、
 LessonsDistiller、RetirementCeremony、Adam、guardian 包装、外部网关
-注册表、AdapterManager、MailDelivery、可选的 GitHubAdapter——并在其上
+注册表、AdapterManager、PostOffice、可选的 GitHubAdapter——并在其上
 构造八个 domain facade。
 
 ``build_runtime(runtime_paths)`` 持有一个显式的 ``TlonPaths``：同一进程
@@ -229,7 +229,6 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     adapter_manager = AdapterManager(
         event_bus=event_bus,
         post_office=post_office,
-        resolver=resolver,
         tlon_paths=runtime_paths,
     )
     await adapter_manager.initialize()

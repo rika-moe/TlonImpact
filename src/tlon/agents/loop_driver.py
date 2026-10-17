@@ -248,7 +248,11 @@ class LoopDriver:
             # skipped too — it would only produce suppressed replies.
             content = (
                 await self._distill_reply(session)
-                if any(self._is_human_sender(mail.from_address) for mail in session.responsibility)
+                if await asyncio.to_thread(
+                    lambda: any(
+                        self._is_human_sender(mail.from_address) for mail in session.responsibility
+                    )
+                )
                 else ""
             )
             await self._send_termination_reply(session, reason, content)
@@ -395,11 +399,6 @@ class LoopDriver:
             session.dispatch_tools(outcome.tool_dispatches, tasks)
             await self._journal.append(session.id, "state", value=SessionState.WAITING.value)
             session.mark_waiting()
-        for effect in outcome.mails:
-            try:
-                await self._executor.send_mail(effect)
-            except Exception:
-                self._services.logger.error("mail_effect_failed", exc_info=True)
         if outcome.run_on_complete:
             await self._on_complete.run(session, outcome.final_reply or "")
         if outcome.complete:
@@ -468,7 +467,7 @@ class LoopDriver:
             latest_by_sender[mail.from_address] = mail
         notified: list[str] = []
         for sender, mail in latest_by_sender.items():
-            if not self._is_human_sender(sender):
+            if not await asyncio.to_thread(self._is_human_sender, sender):
                 self._services.logger.info(
                     "termination_reply_suppressed",
                     session_id=session.id,

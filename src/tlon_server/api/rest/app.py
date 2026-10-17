@@ -338,7 +338,7 @@ class RESTAPIHandler(
                 "port": self.client_gateway.port,
             },
             "agents": {
-                "count": (len(self.members.get_all_agent_status()) if self.members else 0),
+                "count": (len(await self.members.get_all_agent_status()) if self.members else 0),
             },
             "sessions": {
                 "active": len(self.client_gateway.get_all_sessions()),
@@ -356,7 +356,7 @@ class RESTAPIHandler(
             return self._json_response(
                 {"status": "error", "message": "Agent registry not available"}, status=503
             )
-        agents = self.members.get_all_agent_status()
+        agents = await self.members.get_all_agent_status()
         return self._json_response(
             {
                 "agents": agents,

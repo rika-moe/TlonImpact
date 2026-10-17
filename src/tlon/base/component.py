@@ -60,7 +60,7 @@ class Component(ABC):
 
         Example:
         --------
-            class MailDelivery(Component):
+            class MailObserver(Component):
                 def __init__(
                     self,
                     event_bus: EventBus,  # ✅ Constructor injection
@@ -74,7 +74,7 @@ class Component(ABC):
                 async def initialize(self) -> None:
                     # ✅ Subscribe in initialize(), not __init__
                     self._subscription_id = self._event_bus.subscribe(
-                        EventType.MAIL_NEW, self._on_mail
+                        EventType.MAIL_DELIVERED, self._on_mail
                     )
 
                 async def shutdown(self) -> None:

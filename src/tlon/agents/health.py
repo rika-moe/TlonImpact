@@ -38,6 +38,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.store import MailStore
 from tlon.tools.observability.ports import OrphanMailProvider
 
 if TYPE_CHECKING:
@@ -172,7 +173,7 @@ def orphan_mail_provider(
 
     async def scan() -> dict[str, Any]:
         return await collect_orphan_mails(
-            member_ids(),
+            await asyncio.to_thread(member_ids),
             tlon_paths=tlon_paths,
             orphan_mail_days=orphan_mail_days,
         )
@@ -343,7 +344,9 @@ class PublicHealthMonitor:
             ``ORPHAN_REPORT_CAP``, oldest first, each with
             mail_id/from/to/subject/age_days)
         """
-        member_ids = sorted(self._agent_info.get_all_ids()) + self._paths.known_human_ids()
+        member_ids = sorted(self._agent_info.get_all_ids()) + await asyncio.to_thread(
+            MailStore(self._paths.mail_database_file()).known_human_ids
+        )
         return await collect_orphan_mails(
             member_ids,
             tlon_paths=self._paths,

@@ -77,6 +77,7 @@ from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.post_office import PostOffice, PostRejected
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
@@ -1075,9 +1076,12 @@ class MemberRuntime(Member):
 
         def is_human_sender(address: str) -> bool:
             """ADR 0027: termination replies go to human senders only. The
-            known-human set is re-resolved on every call — a human's mailbox
-            is created on first delivery, so the set grows at runtime."""
-            humans = {address_for_member(h) for h in caps.tlon_paths.known_human_ids()}
+            known-human set is re-resolved on every call in a worker thread;
+            humans register when connecting, so the set grows at runtime."""
+            humans = {
+                address_for_member(h)
+                for h in MailStore(caps.tlon_paths.mail_database_file()).known_human_ids()
+            }
             return address in humans
 
         self._loop_driver = LoopDriver(

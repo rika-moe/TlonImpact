@@ -94,7 +94,6 @@ class TestStagePurity:
         assert outcome.complete is True
         assert outcome.run_on_complete is True
         assert outcome.final_reply == "done"
-        assert outcome.mails == []  # already submitted before collection
         assert session.is_completed is False
 
     async def test_act_collect_still_waiting_declares_nothing(self) -> None:
@@ -121,17 +120,14 @@ class TestStagePurity:
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
-        assert outcome.mails == []  # already submitted before collection
+        assert outcome.tool_results == [(tc, result)]
         mail = result.data
         assert mail.get("to") == ["user@tlon.internal"]
         assert mail.get("in_reply_to") is None
         assert mail.get("thread_id") is None
 
     async def test_act_collect_send_email_explicit_in_reply_to_passes_through(self) -> None:
-        """The model's explicit in_reply_to is declared on the MailEffect.
-        The stage cannot read the mailbox, so thread_id stays None — the
-        engine re-derives it from the referenced mail
-        (docs/design/mail.md)."""
+        """Collection preserves the result headers already submitted by the tool."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
@@ -147,16 +143,15 @@ class TestStagePurity:
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
-        assert outcome.mails == []  # already submitted before collection
+        assert outcome.tool_results == [(tc, result)]
         mail = result.data
         assert mail.get("to") == ["other@tlon.internal"]
         assert mail.get("in_reply_to") == "m-earlier"
         assert mail.get("thread_id") is None
 
     async def test_act_collect_forward_mail_declares_effect_without_completing(self) -> None:
-        """ADR 0029: a forwardMail result declares a MailEffect carrying
-        the source id + comment; content stays empty (the engine composes
-        the forward body), and a forward never completes the loop."""
+        """A submitted forward result retains its source and comment;
+        collecting it never completes the loop."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.mark_waiting()
@@ -174,7 +169,7 @@ class TestStagePurity:
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
-        assert outcome.mails == []  # already submitted before collection
+        assert outcome.tool_results == [(tc, result)]
         mail = result.data
         assert mail.get("to") == ["other@tlon.internal"]
         assert mail.get("content", "") == ""
@@ -264,7 +259,6 @@ class TestEngineApplication:
 
         assert outcome.complete is True
         assert outcome.run_on_complete is True
-        assert outcome.mails == []  # nothing sent
         assert outcome.final_reply is None  # nothing to pass on
         assert session.is_completed is False
 

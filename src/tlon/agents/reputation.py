@@ -13,6 +13,7 @@ mailbox. The full-society scan is acceptable at the Republic's scale
 (a handful of members).
 """
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -136,6 +137,8 @@ def reputation_provider(
     """
 
     async def collect(agent_id: str) -> dict[str, Any]:
-        return await collect_reputation(agent_id, tlon_paths=tlon_paths, member_ids=member_ids())
+        return await collect_reputation(
+            agent_id, tlon_paths=tlon_paths, member_ids=await asyncio.to_thread(member_ids)
+        )
 
     return collect

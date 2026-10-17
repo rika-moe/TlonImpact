@@ -11,6 +11,7 @@ targets are skipped, and a failed tick never kills an entry's loop.
 """
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -115,10 +116,19 @@ class TestBuiltinDigestTick:
         assert "listStagingPrototypes" in mail.content
         assert "is_complete=true" in mail.content
 
-    async def test_tick_lists_all_known_humans(self, bus, tmp_path):
+    async def test_tick_lists_all_known_humans(self, bus, tmp_path, monkeypatch):
         _make_human(tmp_path, "alice")
         _make_human(tmp_path, "bob")
         scheduler = _scheduler(bus, tmp_path)
+
+        loop_thread = threading.get_ident()
+        original = MailStore.known_human_ids
+
+        def checked_roster(store: MailStore) -> list[str]:
+            assert threading.get_ident() != loop_thread
+            return original(store)
+
+        monkeypatch.setattr(MailStore, "known_human_ids", checked_roster)
 
         mail = await scheduler.tick(_digest_entry(scheduler))
 

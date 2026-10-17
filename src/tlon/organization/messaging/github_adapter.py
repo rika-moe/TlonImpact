@@ -7,11 +7,9 @@ docs/design/mail.md 「外部来信与信任面」), covering both directions:
 - **Ingress**: the REST endpoint ``POST /webhooks/github`` verifies the
   HMAC signature and hands the decoded event here; the adapter maps
   supported events onto one ``Mail`` from the real external address
-  ``notifications@github.com`` and publishes ``MAIL_NEW`` directly on
-  the bus (the cron.py bare-publish precedent). Delivery needs no
-  special-casing for external senders: no ``sent`` copy, bounce safely
-  dropped, ``MAIL_DELIVERED`` normal, and every rendering point marks
-  the mail as untrusted external input.
+  ``notifications@github.com`` and submits it through PostOffice. Local
+  inbox copies commit before delivery events are published; every rendering
+  point marks the mail as untrusted external input.
 - **Egress**: ``initialize`` claims ``notifications@github.com`` for the
   gateway member ``gateway:github`` in the ExternalGatewayRegistry, so
   replies to that address resolve and land in the gateway mailbox (the
@@ -36,6 +34,7 @@ skipped with a warning. The issue/PR number goes into the subject
 when its in-memory thread table has no entry (e.g. after a restart).
 """
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -184,7 +183,7 @@ class GitHubAdapter(Device):
             return None
         subject, content = mapped
 
-        to = self._recipient_addresses()
+        to = await asyncio.to_thread(self._recipient_addresses)
         if not to:
             logger.warning("github_event_skipped", reason="no_recipient", event_type=event_type)
             return None

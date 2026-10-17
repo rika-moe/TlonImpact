@@ -209,3 +209,37 @@ def test_post_office_constructor_has_no_filesystem_io(tmp_path: Path, monkeypatc
     monkeypatch.setattr(MailStore, "initialize", unexpected_initialize)
     office = office_at(tmp_path)
     assert not office._paths.mail_database_file().exists()
+
+
+async def test_recipient_lookup_uses_one_worker_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from tlon.organization.mail.store import MailStore
+
+    office = office_at(tmp_path)
+    office.store.register_member("human:bob")
+    office.store.register_member("human:carol")
+    loop_thread = threading.get_ident()
+    snapshots = 0
+    known_humans = MailStore.known_human_ids
+    member_exists = MailStore.member_exists
+
+    def checked_snapshot(store: MailStore) -> list[str]:
+        nonlocal snapshots
+        assert threading.get_ident() != loop_thread
+        snapshots += 1
+        return known_humans(store)
+
+    def checked_exists(store: MailStore, member_id: str) -> bool:
+        assert threading.get_ident() != loop_thread
+        return member_exists(store, member_id)
+
+    monkeypatch.setattr(MailStore, "known_human_ids", checked_snapshot)
+    monkeypatch.setattr(MailStore, "member_exists", checked_exists)
+    await office.send(
+        from_address="bob@tlon.internal", to=["bob", "carol"], cc=["bob"], content="batch"
+    )
+    assert snapshots == 1
+    assert len(office.store.mails("human:carol")) == 1

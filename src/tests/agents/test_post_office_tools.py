@@ -105,7 +105,6 @@ async def test_tool_receipt_is_durable_before_collect_and_replay_does_not_send_a
     session = AgentSession(session_id="session1", trigger_content="work")
     outcome = await act_stage_collect(services, session, [completed])
     assert outcome.complete
-    assert outcome.mails == []
     await driver._apply_outcome(session, None, outcome)
     assert session.is_completed
     assert len(fresh_store.mails("human:bob")) == 1
@@ -130,7 +129,6 @@ async def test_rejection_never_completes_session_even_with_is_complete(
     assert not outcome.complete
     await driver._apply_outcome(session, None, outcome)
     assert not session.is_completed
-    assert outcome.mails == []
     assert office.store.mails("human:bob") == []
     assert office.store.mails("agent1", "sent") == []
 

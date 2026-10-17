@@ -1161,7 +1161,7 @@ class AgentRegistry(Component):
         """
         return self._agent_info.get_config(agent_id)
 
-    def get_agent_status(self, agent_id: str) -> dict[str, Any] | None:
+    async def get_agent_status(self, agent_id: str) -> dict[str, Any] | None:
         """Get status of a specific agent.
 
         Args:
@@ -1174,9 +1174,11 @@ class AgentRegistry(Component):
         if not config:
             return None
 
+        retired = await asyncio.to_thread(
+            MailStore(self._paths.mail_database_file()).is_retired, agent_id
+        )
         agent = self._agents.get(agent_id)
-
-        if MailStore(self._paths.mail_database_file()).is_retired(agent_id):
+        if retired:
             state = "retired"
         elif agent:
             state = agent.get_state()
@@ -1196,7 +1198,7 @@ class AgentRegistry(Component):
             "spawn_depth": config.spawn_depth,
         }
 
-    def get_all_agent_status(self) -> list[dict[str, Any]]:
+    async def get_all_agent_status(self) -> list[dict[str, Any]]:
         """Get status of all registered agents.
 
         Returns:
@@ -1205,5 +1207,5 @@ class AgentRegistry(Component):
         return [
             status
             for agent_id in self._agent_info.get_all_ids()
-            if (status := self.get_agent_status(agent_id)) is not None
+            if (status := await self.get_agent_status(agent_id)) is not None
         ]
