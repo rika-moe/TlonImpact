@@ -15,7 +15,7 @@ module is their single source of truth:
   protocol of host read-only queries closure-injected by
   :func:`make_member_builtins` (``sleeping?`` / ``running?`` / ``lazy?`` /
   ``member-roster`` / the ``start-all`` candidate set). They read registry
-  state, so they are never registered module-level; the implementation
+  state or the delivery directory, so they are never registered module-level; the implementation
   (``RegistryQueries`` in ``tlon.agents/agent_registry.py``) is injected at
   assembly time.
 - **Effect ports** (DSL → host, effects-as-data) — the action family
@@ -560,8 +560,9 @@ class ScriptHostQueries(Protocol):
         in the implementation, not the DSL: the DSL never iterates,
         iteration is a builtin. Public routing information, open to every
         member (the same injected host serves Adam and registry-spawned
-        members); sleeping members stay listed, Adam itself is not
-        registered and so not listed."""
+        members); offline members and Adam are included through the delivery
+        directory. The public names and addresses may be quoted and shared;
+        private contact books, persona files and mail remain private."""
         ...
 
 
@@ -674,7 +675,7 @@ def make_member_builtins(
     Host predicates (``sleeping?`` / ``running?`` / ``lazy?``), the
     ``member-roster`` addressing yellow page and the ``start-all``
     candidate set
-    are closure-injected via ``host`` — they read registry state, so they
+    are closure-injected via ``host`` — they read registry state or the delivery directory, so they
     are never registered module-level. ``start-all`` without a host raises
     at evaluation time; ``member-roster`` without a host is simply absent
     from the registry (static validation rejects it), like ``sleeping?``.

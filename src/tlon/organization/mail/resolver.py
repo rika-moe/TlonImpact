@@ -1,12 +1,13 @@
 """Resolve aliases using configured agents, registered humans and gateway claims."""
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import (
     HUMAN_ID_PREFIX,
+    POSTMASTER_ADDRESS,
     address_for_member,
     is_mail_address,
     member_id_for_address,
@@ -17,6 +18,14 @@ if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
 
 logger = get_logger(__name__)
+
+
+class MemberAddress(TypedDict):
+    """Public addressing information, without private runtime identity details."""
+
+    id: str
+    name: str
+    address: str
 
 
 class RecipientResolver:
@@ -39,6 +48,33 @@ class RecipientResolver:
         self._agent_info = agent_info_provider
         self._store = MailStore(tlon_paths.mail_database_file())
         self._external_owner = external_owner
+
+    def list_members(self) -> list[MemberAddress]:
+        """List current local recipients without creating or waking mailboxes.
+
+        Candidates only discover addresses; normal delivery resolution determines
+        ownership, including configured-agent precedence and retirement.
+        """
+        human_ids = set(self._store.known_human_ids())
+        candidates = set(self._agent_info.get_all_ids()) | human_ids
+        if self._agent_info.get_config("adam") is not None:
+            candidates.add("adam")
+        members: dict[str, MemberAddress] = {}
+        for candidate in candidates:
+            address = address_for_member(candidate)
+            local = member_id_for_address(address)
+            if local is None or address == POSTMASTER_ADDRESS:
+                continue
+            member_id = self.resolve_member(address, human_ids=human_ids)
+            if member_id is None or self._store.is_retired(member_id):
+                continue
+            config = self._agent_info.get_config(member_id)
+            members[address] = {
+                "id": local,
+                "name": config.name if config is not None else local,
+                "address": address,
+            }
+        return [members[address] for address in sorted(members)]
 
     def resolve_address(self, recipient: str, *, human_ids: set[str] | None = None) -> str | None:
         """Resolve an explicit address, agent id/display name, or human name.

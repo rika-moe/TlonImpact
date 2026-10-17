@@ -56,7 +56,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 21 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
 | 22 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
 | 23 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
-| 24 | `listAgents` | [tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py) 的 `ListAgentsTool` | agents |
+| 24 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
 | 25 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
 | 26 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
 | 27 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
@@ -407,9 +407,11 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员先被空闲排空时，watcher 仍完成永久退休；重复退休不重复触发交接与蒸馏。挂起状态只在内存（瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
 
-### listAgents
+### listMembers
 
-无参数。返回未退休的已注册 agent 的**寻址黄页**（ADR 0024 决策 3）：每项恰为 `id` / `name` / `address`（`id@tlon.internal`）三字段，按 id 排序——只回答「给谁写信能到」，不携带身份内容（prototype、血缘、运行状态都不在成员面向的输出里；人类管理端的 REST 详情仍是完整 status）。给成员写信前查地址、spawn/stop 前确认目标 id 存在用它；你对成员的认识以你自己的联系簿与通信为准。
+无参数。返回统一成员寻址黄页（[ADR 0034](../decisions/0034-member-address-directory.md)）：包含当前可投递且未退休的配置成员、Adam 和 SQLite 已登记的通信成员；休眠、离线不影响入选。按真实地址归属去重并按地址排序，外部来源、网关与 postmaster 系统地址不列出。每项恰为 `id` / `name` / `address`，其中 id 是地址 local-part（例如 rika，不是内部 human:rika），不携带人类／agent 标签、职务、组织、可信等级、运行状态或血缘。
+
+黄页是所有成员可查询、引用和转告的公开寻址信息，不认证任何社会身份，也不授权读取、披露他人的私人联系簿、人格文件、邮件正文或记忆。工具与 DSL `member-roster` 使用同一邮局目录。生命周期操作仍由相应工具检查真实目标及权限；黄页不授予启停权限。旧 `listAgents` 已删除，无兼容别名。
 
 ### writePrototype
 

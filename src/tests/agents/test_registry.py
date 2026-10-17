@@ -264,35 +264,62 @@ class TestRegistryQueries:
         assert queries.start_all_candidates() == []
 
     def test_member_roster(self, tmp_path):
-        """ADR 0024 决策 3: one pre-formatted yellow-page line per
-        registered member — ``名字（id） — id@tlon.internal``, no identity
-        content (prototype lineage stays out even when the member carries
-        one). Sleeping members stay listed (the page answers "who can be
-        reached by letter", not "who is awake").
-        """
+        """DSL and tool query the same public delivery directory."""
+        from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
+        from tlon.organization.mail.post_office import PostOffice
+        from tlon.organization.mail.resolver import RecipientResolver
+
         p = TlonPaths(home=tmp_path)
         configs = {
             "a-bai-1a2b3c4d": AgentConfig(id="a-bai-1a2b3c4d", name="阿白", prototype="worker"),
             "manual-1": AgentConfig(id="manual-1", name="手册"),
         }
+        provider = _StaticProvider(configs)
+        bus = EventBus()
+        office = PostOffice(bus, RecipientResolver(GuardianAgentInfoProvider(provider), p), p)
+        office.store.register_member("human:rika")
+        office.store.retire("manual-1")
         registry = AgentRegistry(
-            event_bus=EventBus(),
-            agent_info_provider=_StaticProvider(configs),
+            event_bus=bus,
+            agent_info_provider=provider,
             tlon_paths=p,
+            post_office=office,
         )
         roster = RegistryQueries(registry).member_roster()
 
-        assert set(roster.splitlines()) == {
+        assert roster.splitlines() == [
             "阿白（a-bai-1a2b3c4d） — a-bai-1a2b3c4d@tlon.internal",
-            "手册（manual-1） — manual-1@tlon.internal",
-        }
+            "Adam（adam） — adam@tlon.internal",
+            "rika（rika） — rika@tlon.internal",
+        ]
+        assert set(registry.get_all_ids()) == set(configs)
+        assert registry.get_config("rika") is None
+        assert registry.get_config("adam") is None
 
-        empty = AgentRegistry(
+    def test_empty_member_roster(self, tmp_path):
+        from tlon.organization.mail.post_office import PostOffice
+        from tlon.organization.mail.resolver import RecipientResolver
+
+        paths = TlonPaths(home=tmp_path)
+        provider = _StaticProvider({})
+        bus = EventBus()
+        office = PostOffice(bus, RecipientResolver(provider, paths), paths)
+        registry = AgentRegistry(
+            event_bus=bus,
+            agent_info_provider=provider,
+            tlon_paths=paths,
+            post_office=office,
+        )
+        assert RegistryQueries(registry).member_roster() == ""
+
+    def test_member_roster_requires_post_office(self, tmp_path):
+        registry = AgentRegistry(
             event_bus=EventBus(),
             agent_info_provider=_StaticProvider({}),
-            tlon_paths=p,
+            tlon_paths=TlonPaths(home=tmp_path),
         )
-        assert RegistryQueries(empty).member_roster() == ""
+        with pytest.raises(RuntimeError, match="requires a post office"):
+            RegistryQueries(registry).member_roster()
 
 
 class TestWakeOnMail:

@@ -30,6 +30,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 | [ADR 0014：环境-Agent 协同演化——代谢经济学与演化分层](0014-environment-agent-coevolution.md) | [prototypes](../design/prototypes.md)、[society-policy](../design/society-policy.md) | 共演化方向含未实施部分；已落地政策形态由 ADR 0022 具体化 |
 | [ADR 0022：社会政策语境——policy.tlon 与 pull 型求值点](0022-society-policy-context.md) | [society-policy](../design/society-policy.md) | 社会政策语境与 pull 型求值点 |
 | [ADR 0024：主观身份与自组织社会——人格自主权、联系簿与 all@ 退役](0024-subjective-identity.md) | [identity](../design/identity.md)、[unified-member-model](../design/unified-member-model.md) | 主观身份、联系簿、人格自主权与 all@ 退役 |
+| [ADR 0034：统一成员寻址黄页与信息边界](0034-member-address-directory.md) | [identity](../design/identity.md)、[mail](../design/mail.md) | 修订 ADR 0024 黄页范围：覆盖所有已登记且可投递成员，黄页公开，私有材料边界保留 |
 
 ## 运行时与上下文
 

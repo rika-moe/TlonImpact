@@ -1067,7 +1067,7 @@ def render_bridge_query_ports() -> str:
     rows = [f"| `{p.word}` | `host.{p.method}` | {_cell(p.doc)} |" for p in ports]
     header = (
         f"`make_member_builtins` 在调用方注入 `host` 时追加 {len(ports)} 个宿主查询"
-        f"（`pure=True`，全部读注册表状态、无宿主即不在注册表；说明取自 "
+        f"（`pure=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 "
         f"`ScriptHostQueries` 协议方法的 docstring）：{GENERATED_NOTE}\n\n"
         "| DSL 词 | 宿主方法 | 说明 |\n"
         "|---|---|---|"

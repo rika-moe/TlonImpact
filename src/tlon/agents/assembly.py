@@ -47,7 +47,7 @@ from tlon.organization.mail.store import MailStore
 from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
-from tlon.tools.agents.list_agents import ListAgentsTool
+from tlon.tools.agents.list_members import ListMembersTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.propose_capability import ProposeCapabilityTool
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
@@ -389,7 +389,7 @@ async def assemble_cognitive(
     if is_full:
         tool_executor.register_tool(SpawnAgentTool(registry=registry, spawner_id=config.id))
         tool_executor.register_tool(StopAgentTool(registry=registry, spawner_id=config.id))
-    tool_executor.register_tool(ListAgentsTool(registry=registry))
+    tool_executor.register_tool(ListMembersTool(directory=registry))
     # Spec authoring (stage 4a): writes untrusted prototypes to the
     # staging area; author_id is recorded as the :author for audit.
     # Proposal solvency gate (docs/design/prototypes.md, agent side only

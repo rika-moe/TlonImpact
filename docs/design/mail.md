@@ -77,9 +77,11 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 「已知人类」指已在 SQLite 注册的 `human:<username>`，与在线状态及旧邮箱目录无关。首次 attach 或 REST 投信时注册。`PostOffice` 与 `AdapterManager` 共享注入的 resolver；agent 查询来自 `AgentInfoProvider`，网关查询来自注入的认领表。
 
+成员寻址黄页由投递解析层生成，经 `PostOffice.list_members` 提供给 `listMembers` 和 `member-roster`：合并可解析的配置成员、Adam、SQLite 已登记的通信成员，按真实投递归属去重、排除退休地址。离线成员仍可发现，输出仅公开 id（地址 local-part）、名字和地址，不披露运行类型、社会身份或私有材料。黄页可向其他成员引用、转告，详见 [ADR 0034](../decisions/0034-member-address-directory.md)。
+
 完整地址通过 `resolve_address` 只代表格式可用，仍必须经 `resolve_member` 和退休检查，不能把解析成地址等同于投信有效。
 
-守护者信箱：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（SQLite 中登记邮箱归属），但不进名册、不进任何枚举驱动的扫描（trust/ledger/spawn 面保持原样）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 PostOffice 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的系统信不回——邮差不与邮差通信。
+守护者信箱：Adam 是内置成员，没有 `~/.tlon/adam/config/agent.yaml`，裸的 ConfigService 解析不出 `adam@tlon.internal`。runtime 侧（[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) 的 `GuardianAgentInfoProvider`）把 ConfigService 包一层：唯一差异是 `get_config("adam")` 返回一份合成的 AgentConfig，`get_all_ids()` 原样委托——Adam 因此可投递（SQLite 中登记邮箱归属），但不进入 agent 注册表的生命周期枚举（trust/ledger/spawn 面保持原样）；统一成员寻址黄页独立加入 Adam（ADR 0034）。`build_runtime()`（ADR 0019）包一次、AdapterManager 与 PostOffice 共享同一实例，发言侧与投递侧同时生效。按显示名 "Adam" 寻址不支持（显示名查表枚举 `get_all_ids`），写信请用 `adam@tlon.internal`。Adam 收到信后由 spec 里的 guardian-inbox 规则回一封固定确认信（见 [agents/adam.py](../../src/tlon/agents/adam.py)），postmaster 发来的系统信不回——邮差不与邮差通信。
 
 ## 外部来信与信任面
 
