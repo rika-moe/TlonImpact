@@ -6,7 +6,7 @@
 - ``corpus.json``：语料原文（喂了什么）
 - ``run.json``：run 元数据 + ``fed`` 映射（mail_id ↔ 语料）+ ``drained``
   （ADR 0028 收工语义：投递确认 + 未读排空 + 无存活 session）
-- ``sessions/*.jsonl``：session journal 原文（ADR 0007）
+- ``sessions/*.jsonl``：从 session SQLite 导出的事件原文（ADR 0032）
 - ``sent.jsonl`` / ``inbox.jsonl``：临时成员邮箱
 - ``ledger.jsonl``：token 账本（ADR 0014，缺失记 null 不报错）
 

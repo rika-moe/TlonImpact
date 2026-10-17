@@ -30,6 +30,7 @@ from tlon.agents.prototypes.info import BEHAVIOR_FILE
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.prototypes.staging import list_staging_prototypes
 from tlon.agents.session_journal import SessionJournal
+from tlon.agents.session_store import SessionStore
 from tlon.arena.corpus import (
     ADVERSARIAL_SUITE,
     DEFAULT_CORPUS_LIMIT,
@@ -181,7 +182,7 @@ class IsolatedRuntime(Protocol):
 class SessionJournalLike(Protocol):
     """session 完成检测的最小面（``SessionJournal`` 的结构子集）。"""
 
-    async def list_completed(self) -> list[str]: ...
+    async def count_completed(self, started_after: datetime | None = None) -> int: ...
 
     async def find_unfinished(self) -> list[str]: ...
 
@@ -557,10 +558,10 @@ class ArenaRunner:
         mailbox = Mailbox(arena_paths.mail_database_file(), run.agent_id)
         fed_ids = {str(entry["mail_id"]) for entry in run.fed}
         deadline = self._clock() + run.time_box_seconds
-        completed: list[str] = []
+        completed_count = 0
         drained_streak = 0
         while True:
-            completed = await journal.list_completed()
+            completed_count = await journal.count_completed()
             inbox_ids = {mail.id for mail in await mailbox.inbox()}
             drained = (
                 fed_ids <= inbox_ids
@@ -569,7 +570,7 @@ class ArenaRunner:
             )
             drained_streak = drained_streak + 1 if drained else 0
             if drained_streak >= 2 or self._clock() >= deadline:
-                return len(completed), drained_streak >= 2
+                return completed_count, drained_streak >= 2
             await asyncio.sleep(self._poll_seconds)
 
     def _archive(
@@ -579,17 +580,18 @@ class ArenaRunner:
         archive_dir: Path,
         agent_id: str,
     ) -> None:
-        """Copy session journals + ledger + mailbox, write run.json.
+        """Export session events + ledger + mailbox, write run.json.
 
         corpus.json was already written before the run started. The ledger
         (ADR 0014) and the member mailbox (sent/inbox) are the report's
-        other raw materials. Archiving is best-effort: 缺失不报错，a
+        other raw materials. Exported JSONL is portable report evidence,
+        never a runtime fallback. Archiving is best-effort: 缺失不报错，a
         failure here must not skip teardown.
         """
         try:
-            sessions_src = arena_paths.agent_sessions_dir(agent_id)
-            if sessions_src.is_dir():
-                shutil.copytree(sessions_src, archive_dir / "sessions", dirs_exist_ok=True)
+            SessionStore(arena_paths.agent_sessions_database_file(agent_id)).export_jsonl(
+                archive_dir / "sessions"
+            )
             ledger_src = arena_paths.agent_ledger_file(agent_id)
             if ledger_src.is_file():
                 shutil.copy2(ledger_src, archive_dir / "ledger.jsonl")

@@ -22,7 +22,7 @@
 
 ### 第 1 层：真相层（不变）
 
-session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产物都是 journal 的派生视图，可删可重建。
+session journal 是唯一不可变交互真相（ADR 0007；物理存储自 ADR 0032 起为每 agent 一个 `sessions.sqlite3`）。一切记忆产物都是 journal 的派生视图，可删可重建。
 
 ### 第 2 层：蒸馏层（替换摘要 + 事实两套机制）
 
@@ -32,7 +32,7 @@ session journal 是唯一不可变交互真相（ADR 0007）。一切记忆产�
   - `status: active | superseded`——取代即失效，**不删除**（借鉴 Zep 双时态：历史可审计，与书信共和国「信件永存」一致）
   - `importance`——检索打分因子
 - **废三元组**：`(subject, predicate, object)` 模型整个删除。自然语言断言 + embedding 检索不需要结构化三元组；精确字符串匹配的 supersede 缺陷随之消亡。摘要与事实不再分两个文件两套逻辑——它们只是 importance/粒度不同的 claim。
-- **进度水位线独立持久化**：标量时间戳水位线 `last_distilled_at` 存独立小文件 `memory/distillation.json`——session id 为 uuid 无序，不能按 id 做水位线；「哪些 session 待蒸馏」只查水位线（session 的 `session/start` 时间戳 > 水位线者，取不到时间戳的一律视为 pending），不扫描存留产物——产物被淘汰不影响进度（断链重摘要缺陷随之消亡）。
+- **进度水位线独立持久化**：标量时间戳水位线 `last_distilled_at` 存独立小文件 `memory/distillation.json`——session id 为 uuid 无序，不能按 id 做水位线；「哪些 session 待蒸馏」只查水位线（session 的 `session/start` 时间戳 > 水位线者，取不到时间戳的一律视为 pending），不扫描存留产物——产物被淘汰不影响进度（断链重摘要缺陷随之消亡）。ADR 0032 起 `list_completed(started_after=watermark)` 先在 `sessions.started_at` 元数据上过滤，MemoryManager 只对返回的 pending session 读取事件；watermark 类型与蒸馏语义不变。
 - **冲突判定在蒸馏时做**：新 claim 与向量检索到的相似旧 claim 一起交 LLM 判定 新增 / 取代 / 并存（借鉴 Mem0 的 ADD/UPDATE/DELETE 路由，机制公开、不引库）。
 - **rememberFact 语义改为「立即蒸馏一条 claim」**：走同一套冲突判定与索引，不再是绕过 journal 时间轴的旁路写；写入即入索引，下一轮检索即可命中（「记了看不到」的缺陷解除）。
 - **蒸馏在 scheduler 回收点/反思时段批量跑**（sleep-time 模式），在线路径零 LLM 成本。

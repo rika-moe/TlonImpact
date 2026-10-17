@@ -41,6 +41,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -213,12 +214,25 @@ class FakeJournal:
         events.append({"type": "session/end", "ts": ts})
         self._logs[session_id] = events
 
-    async def list_completed(self) -> list[str]:
-        return [
-            session_id
-            for session_id, events in self._logs.items()
-            if any(e.get("type") == "session/end" for e in events)
-        ]
+    async def list_completed(self, started_after: datetime | None = None) -> list[str]:
+        completed: list[str] = []
+        for session_id, events in self._logs.items():
+            if not any(e.get("type") == "session/end" for e in events):
+                continue
+            if started_after is not None:
+                start = next((e for e in events if e.get("type") == "session/start"), None)
+                raw_ts = start.get("ts") if start is not None else None
+                try:
+                    started_at = datetime.fromisoformat(str(raw_ts)) if raw_ts else None
+                except ValueError:
+                    started_at = None
+                if started_at is not None and started_at <= started_after:
+                    continue
+            completed.append(session_id)
+        return completed
+
+    async def count_completed(self, started_after: datetime | None = None) -> int:
+        return len(await self.list_completed(started_after=started_after))
 
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
         return [dict(event) for event in self._logs[session_id]]

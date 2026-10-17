@@ -12,7 +12,6 @@ completed session, rebuilt deterministically from its journal (ADR 0007).
 """
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -104,17 +103,13 @@ def _make_thread_builder(
 
 async def _write_completed_session(
     journal: SessionJournal,
-    tlon: TlonPaths,
     *,
     trigger: str,
     conclusion: str,
     tool_text: str | None = None,
-    mtime: float | None = None,
 ) -> str:
-    """Journal one completed session (trigger -> tool -> reply -> end);
-    returns the session id. ``mtime`` pins the log's mtime (the recap's
-    latest-completed ordering key)."""
-    sid = f"{AGENT}-s-{trigger[:8]}-{mtime or 0}"
+    """Journal one completed session (trigger -> tool -> reply -> end)."""
+    sid = f"{AGENT}-s-{trigger[:8]}"
     await journal.append(
         sid,
         "session/start",
@@ -137,8 +132,6 @@ async def _write_completed_session(
         )
     await journal.append(sid, "llm/response", response={"content": conclusion})
     await journal.append(sid, "session/end", reason="complete")
-    if mtime is not None:
-        os.utime(tlon.agent_sessions_dir(AGENT) / f"{sid}.jsonl", (mtime, mtime))
     return sid
 
 
@@ -397,10 +390,8 @@ async def test_latest_completed_session_is_recapped(tmp_path: Path) -> None:
     """The recap shows what the member's most recent completed session did
     (thread-agnostic, ADR 0028)."""
     builder, _mailbox, journal = _make_thread_builder(tmp_path, "[(thread-recap)]")
-    tlon = TlonPaths(home=tmp_path)
     await _write_completed_session(
         journal,
-        tlon,
         trigger="你有 2 封未读邮件",
         conclusion="配置里端口写成了 8081",
         tool_text="读取 config.toml 成功",
@@ -420,16 +411,20 @@ async def test_latest_completed_session_is_recapped(tmp_path: Path) -> None:
 
 
 async def test_recap_bounded_to_latest_completed_session(tmp_path: Path) -> None:
-    """Only the single most recent completed session (by log mtime) is
-    recapped — the digest never spans multiple sessions."""
+    """Only the latest session by committed end metadata is read and recapped."""
     builder, _mailbox, journal = _make_thread_builder(tmp_path, "[(thread-recap)]")
-    tlon = TlonPaths(home=tmp_path)
-    await _write_completed_session(
-        journal, tlon, trigger="旧触发", conclusion="第一轮的结论", mtime=1000.0
+    await _write_completed_session(journal, trigger="旧触发", conclusion="第一轮的结论")
+    latest_sid = await _write_completed_session(
+        journal, trigger="新触发", conclusion="第二轮的结论"
     )
-    await _write_completed_session(
-        journal, tlon, trigger="新触发", conclusion="第二轮的结论", mtime=2000.0
-    )
+    original_read_events = journal.read_events
+    read_ids: list[str] = []
+
+    async def recording_read_events(session_id: str) -> list[dict[str, Any]]:
+        read_ids.append(session_id)
+        return await original_read_events(session_id)
+
+    journal.read_events = recording_read_events  # type: ignore[method-assign]
 
     context = await _build(builder)
 
@@ -438,16 +433,14 @@ async def test_recap_bounded_to_latest_completed_session(tmp_path: Path) -> None
     assert "第二轮的结论" in recap
     assert "第一轮的结论" not in recap
     assert recap.count("[最近会话摘要]") == 1
+    assert read_ids == [latest_sid]
 
 
 async def test_unfinished_latest_session_falls_back(tmp_path: Path) -> None:
     """The latest session without session/end (in flight or crashed) is
     skipped; the last *completed* one is the one recapped."""
     builder, _mailbox, journal = _make_thread_builder(tmp_path, "[(thread-recap)]")
-    tlon = TlonPaths(home=tmp_path)
-    await _write_completed_session(
-        journal, tlon, trigger="完成轮", conclusion="完成轮的结论", mtime=1000.0
-    )
+    await _write_completed_session(journal, trigger="完成轮", conclusion="完成轮的结论")
     # A newer but unfinished session (no session/end).
     await journal.append(
         f"{AGENT}-s-unfinished",
@@ -458,7 +451,6 @@ async def test_unfinished_latest_session_falls_back(tmp_path: Path) -> None:
         responsibility=[],
         context=[],
     )
-    os.utime(tlon.agent_sessions_dir(AGENT) / f"{AGENT}-s-unfinished.jsonl", (2000.0, 2000.0))
 
     context = await _build(builder)
 
@@ -471,9 +463,7 @@ async def test_unfinished_latest_session_falls_back(tmp_path: Path) -> None:
 async def test_undeclared_thread_recap_injects_nothing(tmp_path: Path) -> None:
     """A spec without (thread-recap) never sees the recap, journal or not."""
     builder, _mailbox, journal = _make_thread_builder(tmp_path, "[(current-task)]")
-    await _write_completed_session(
-        journal, TlonPaths(home=tmp_path), trigger="旧触发", conclusion="旧结论"
-    )
+    await _write_completed_session(journal, trigger="旧触发", conclusion="旧结论")
 
     context = await _build(builder)
 
@@ -487,9 +477,7 @@ async def test_recap_precedes_mail_history(tmp_path: Path) -> None:
     builder, mailbox, journal = _make_thread_builder(tmp_path, "[(thread-recap) (mail-history 5)]")
     mail1 = _mail("旧信")
     await mailbox.append_inbox(mail1)
-    await _write_completed_session(
-        journal, TlonPaths(home=tmp_path), trigger="旧触发", conclusion="旧结论"
-    )
+    await _write_completed_session(journal, trigger="旧触发", conclusion="旧结论")
 
     context = await _build(builder)
 

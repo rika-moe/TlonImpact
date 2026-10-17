@@ -204,13 +204,12 @@ runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后
 │   │   ├── config.json
 │   │   ├── claims.jsonl     # 记忆 claim（ADR 0017，append-only）
 │   │   └── distillation.json # 蒸馏水位线
-│   ├── sessions/            # session 事件日志（ADR 0007/0009：交互唯一真相）
-│   │   └── {session_id}.jsonl
+│   ├── sessions.sqlite3     # session 事件与生命周期元数据（ADR 0007/0032：交互唯一真相）
 │   ├── tasks.jsonl
 │   └── workspace/            # 成员工作目录
 ```
 
-旧成员 `mail/` 中的 JSONL 与 cursor 只作离线档案，新邮局不读取、导入、双写或删除。人类邮箱归属在共享 SQLite 中注册，不依赖 `human-{username}/mail/` 目录。
+旧成员 `sessions/` 中的 JSONL 与 `mail/` 中的 JSONL、cursor 只作离线档案，新 session journal 与邮局均不读取、导入、双写或删除。人类邮箱归属在共享 SQLite 中注册，不依赖 `human-{username}/mail/` 目录。
 
 人类成员 id 为 `human:<username>`，首次 attach 或投信时在 SQLite 注册。
 

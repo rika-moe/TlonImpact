@@ -6,6 +6,7 @@ tool activity), clips every piece, caps the total, and answers a missing
 session with a clean error instead of an exception.
 """
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -146,8 +147,11 @@ class _BrokenLogs:
     async def read_events(self, session_id: str) -> list[dict[str, Any]]:
         raise OSError("disk gone")
 
-    async def list_completed(self) -> list[str]:
+    async def list_completed(self, started_after: datetime | None = None) -> list[str]:
         return []
+
+    async def count_completed(self, started_after: datetime | None = None) -> int:
+        return 0
 
 
 async def test_journal_failure_is_a_clean_error(tmp_path: Path) -> None:

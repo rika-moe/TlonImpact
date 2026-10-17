@@ -11,7 +11,7 @@ Tlon 的记忆不是检索增强的附件，而是 agent 认知循环的一部�
 
 这两条决定了记忆系统的基本形态：每个 agent 一个私有目录（`~/.tlon/{agent_id}/memory/`，路径由 [base/paths.py](../../src/tlon/base/paths.py) 的 `TlonPaths` 解析），内容以 JSONL/JSON 文本文件为主体，外加一个 sqlite-vec 向量索引库（`claims_vec.db`）——索引是 `claims.jsonl` 的**纯派生视图**，可删可重建，不是第二个真相（ADR 0017 阶段 2）。
 
-还有一条隐含约束来自认知循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储、蒸馏与检索能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（spec 的 `:loop` 声明与 `ContextBuilder` / `SessionScheduler` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。也是这条约束决定了蒸馏触发入口的形状：manager 不能 import journal，于是定义 `SessionLogReader` Protocol（`list_completed` + `read_events` 两个方法），`SessionJournal` 结构化满足它，由 scheduler 在回收点注入。
+还有一条隐含约束来自认知循环的架构：`tlon.memory` 在分层上只依赖 `tlon.base`（import-linter 强制），不认识 agent、邮件、工具。它提供的是纯粹的存储、蒸馏与检索能力，「什么时候存、什么时候取、取多少拼进上下文」的决策都在 agents 层（spec 的 `:loop` 声明与 `ContextBuilder` / `SessionScheduler` 的装配）。记忆系统是被编排的机制，不自带策略——这与全系统「策略/机制分离」的原则一致。也是这条约束决定了蒸馏触发入口的形状：manager 不能 import journal，于是定义 `SessionLogReader` Protocol（`list_completed(started_after)`、`count_completed(started_after)` + `read_events` 三个方法），`SessionJournal` 结构化满足它，由 scheduler 在回收点注入。ADR 0032 起完成集合先按 `started_at` 元数据与 watermark 过滤，蒸馏只对 pending session 调用 `read_events`；digest 只要数量时直接 `count_completed`，不读事件。无 `started_at` 的完成 session 始终 pending。
 
 ## 单一产物：claim
 
@@ -155,7 +155,7 @@ ADR 0017 的业界调研结论：主流现成 memory 产品无可直接引入者
 
 - **可解释**——每条 claim 都记着 `source_session_ids`，可疑的断言可以回到 journal 逐事件核对。
 - **可编辑**——JSONL 是纯文本，人类可以直接打开审计、改错、删除；`forget` 工具的两步确认也建立在「记忆是可枚举条目」之上。
-- **可审计**——落盘即事实。`~/.tlon/{agent_id}/memory/` 与 `sessions/` 下的文件就是 agent 经历与记得的全部，没有第二个真相。
+- **可审计**——落盘即事实。`~/.tlon/{agent_id}/memory/` 下的文件与 `sessions.sqlite3` 就是 agent 经历与记得的全部，没有第二个真相；旧 `sessions/` JSONL 只是不参与运行时的离线档案（ADR 0032）。
 - **可重建**——claims 是 journal 的派生视图，蒸馏 bug 可以删产物重建恢复，真相无损。
 
 ### 为什么蒸馏用 LLM 而不是规则

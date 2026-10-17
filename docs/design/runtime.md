@@ -87,9 +87,9 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、唤醒信号）
 
 ### Session 事件溯源
 
-会话状态的**唯一真相**是 append-only 事件日志（ADR 0007，[agents/session_journal.py](../../src/tlon/agents/session_journal.py) 的 `SessionJournal`）：每个 session 一个 JSONL 文件（`~/.tlon/{agent_id}/sessions/{session_id}.jsonl`），每行一个 `{seq, ts, type, ...payload}` 事件，覆盖 session 从生到死的全部状态变更——初始 context、每次 context 追加、scratch 写入、迭代/错误计数、LLM 响应、工具 dispatch/result/collect、状态迁移、终止原因。
+会话状态的**唯一真相**是 append-only 事件存储（ADR 0007/0032，[agents/session_journal.py](../../src/tlon/agents/session_journal.py) 的 `SessionJournal`）：每个 agent 一个 `~/.tlon/{agent_id}/sessions.sqlite3`，`sessions` 表保存 start/end 与 `last_seq` 元数据，`events` 表保存 `{seq, ts, type, ...payload}` 完整事件（每 session 的 seq 从 0 开始），覆盖 session 从生到死的全部状态变更——初始 context、每次 context 追加、scratch 写入、迭代/错误计数、LLM 响应、工具 dispatch/result/collect、状态迁移、终止原因。旧 `sessions/*.jsonl` 仅为离线档案，不导入、不双写、不读取 fallback。
 
-引擎遵守一条不变式：**模型可见 ⇒ 已入日志**。context 只有两个写入点（首次构建、`_apply_outcome`），都先写日志成功再改内存；写失败抛异常、不动内存。因此进程重启后调度器可以纯重放恢复会话：主循环起跑先经 `find_unfinished` 扫未闭合日志——无 `session/end` 的 session 恢复续跑（责任集 id 从日志读回、经邮箱解析回邮件对象；有孤儿工具 dispatch 的——已落盘的结果保留，没结果的补一条合成 interrupted 结果并自愈进日志——经 `resume_collect` 续跑），已完成的绝不重跑；恢复优先于任何新唤醒。副作用（发信、on-complete 动作）绝不重演。journal 只在引擎层（LoopDriver / SessionScheduler / 装配点）出现，stage 纯度边界不变。
+引擎遵守一条不变式：**模型可见 ⇒ 已入日志**。context 只有两个写入点（首次构建、`_apply_outcome`），都先在同一个 SQLite 事务中提交事件、序号和生命周期元数据再改内存；失败整体回滚并抛异常、不动内存。因此进程重启后调度器可以纯重放恢复会话：主循环起跑先经 `find_unfinished` 只查元数据找出已开始但未结束的 session，再只读该 session 的事件重放续跑（责任集 id 从事件读回、经邮箱解析回邮件对象；有孤儿工具 dispatch 的——已落盘的结果保留，没结果的补一条合成 interrupted 结果并自愈进 journal——经 `resume_collect` 续跑），已完成的绝不重跑；恢复优先于任何新唤醒。副作用（发信、on-complete 动作）绝不重演。journal 只在引擎层（LoopDriver / SessionScheduler / 装配点）出现，stage 纯度边界不变。
 
 ### 上下文压力管理
 

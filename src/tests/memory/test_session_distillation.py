@@ -10,6 +10,7 @@ advances only after the claims land.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +76,7 @@ class TestListCompleted:
     async def test_only_logs_with_session_end_are_completed(self, tmp_path: Path) -> None:
         journal = _journal(tmp_path)
         await _completed_session(journal, "agent1-a", "q1")
-        # An unfinished log (no session/end) is not completed.
+        # An unfinished session (no session/end) is not completed.
         await journal.append(
             "agent1-live",
             "session/start",
@@ -88,7 +89,7 @@ class TestListCompleted:
 
         assert await journal.list_completed() == ["agent1-a"]
 
-    async def test_empty_sessions_dir_yields_nothing(self, tmp_path: Path) -> None:
+    async def test_empty_database_yields_nothing(self, tmp_path: Path) -> None:
         assert await _journal(tmp_path).list_completed() == []
 
 
@@ -193,6 +194,24 @@ class TestWatermark:
             assert claim["source_session_ids"] == ["agent1-s3", "agent1-s4", "agent1-s5"]
         assert _watermark(tmp_path) != first_watermark
 
+    async def test_empty_reap_filters_watermark_before_reading_events(self, tmp_path: Path) -> None:
+        journal = _journal(tmp_path)
+        manager = _manager(tmp_path, distillation_window=1)
+        await _completed_session(journal, "agent1-s0", "已完成")
+        assert await manager.maybe_distill_completed_sessions(journal) is not None
+        original_read_events = journal.read_events
+        read_count = 0
+
+        async def counting_read_events(session_id: str) -> list[dict[str, Any]]:
+            nonlocal read_count
+            read_count += 1
+            return await original_read_events(session_id)
+
+        journal.read_events = counting_read_events  # type: ignore[method-assign]
+
+        assert await manager.maybe_distill_completed_sessions(journal) is None
+        assert read_count == 0
+
     async def test_watermark_survives_restart(self, tmp_path: Path) -> None:
         """A fresh manager over the same directory resumes from the
         persisted watermark instead of re-distilling history."""
@@ -228,8 +247,11 @@ class TestWatermark:
         silently skipped — it stays pending (the safe direction)."""
 
         class _TimelessReader:
-            async def list_completed(self) -> list[str]:
+            async def list_completed(self, started_after: datetime | None = None) -> list[str]:
                 return ["agent1-x"]
+
+            async def count_completed(self, started_after: datetime | None = None) -> int:
+                return 1
 
             async def read_events(self, session_id: str) -> list[dict[str, Any]]:
                 return [{"type": "session/start", "trigger_content": "q"}]  # no ts
@@ -237,7 +259,7 @@ class TestWatermark:
         manager = _manager(tmp_path, distillation_window=3)
         await manager._save_watermark("2999-01-01T00:00:00+00:00")
 
-        pending = await manager._collect_pending(_TimelessReader())  # type: ignore[arg-type]
+        pending = await manager._collect_pending(_TimelessReader())
         assert [sid for sid, _ts, _events in pending] == ["agent1-x"]
 
 
@@ -329,19 +351,33 @@ class TestLLMPath:
 
 
 class TestDigest:
-    async def test_digest_counts_undistilled_sessions(self, tmp_path: Path) -> None:
+    async def test_digest_counts_undistilled_sessions_without_reading_events(
+        self, tmp_path: Path
+    ) -> None:
         journal = _journal(tmp_path)
         manager = _manager(tmp_path, distillation_window=3)
         for i in range(3):
             await _completed_session(journal, f"agent1-s{i}", f"请求{i}")
+        original_read_events = journal.read_events
+        read_count = 0
+
+        async def counting_read_events(session_id: str) -> list[dict[str, Any]]:
+            nonlocal read_count
+            read_count += 1
+            return await original_read_events(session_id)
+
+        journal.read_events = counting_read_events  # type: ignore[method-assign]
 
         digest = await manager.get_memory_digest(journal)
         assert digest["undistilled_session_count"] == 3
         assert digest["claim_count"] == 0
         assert digest["claims"] == []
+        assert read_count == 0
 
-        await manager.maybe_distill_completed_sessions(journal)
+        assert await manager.maybe_distill_completed_sessions(journal) is not None
+        read_count = 0
 
         digest = await manager.get_memory_digest(journal)
         assert digest["undistilled_session_count"] == 0
         assert digest["claim_count"] == len(digest["claims"]) > 0
+        assert read_count == 0

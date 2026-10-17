@@ -39,8 +39,8 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 2. **语料**：内置对抗套件 + 按原型职责生成的典型场景邮件（见下节），归档为数据
 3. **喂信**：经隔离 EventBus 逐封发 `MAIL_NEW`。ADR 0028 收件箱驱动单 session 模型下，语料与 session 不再一一对应——一个 session 可批处理多封语料，触发语是「你有 N 封未读邮件」模板，该 session 收编的未读 id 快照落在 journal `session/start` 的 `responsibility`
 4. **等待**：收工条件是 **drained**，不是「每封信一个完成 session」——全部语料已投递进收件箱（投递确认门：喂信与投递异步，空收件箱 ≠ 处理完）∧ 无未读 ∧ 无存活 session（scheduler 只在未读邮件上开 session，未读为空即不会有新 session 收编语料），且稳定跨一个轮询间隔（覆盖成员自发信投递落在单次观测之后的残余竞态）。DONE = drained；agent 看过不标读（搁置）是合法行为——残留未读使 drained 不成立，慢速 rescan（`mail_rescan_interval_seconds`，默认 900s）通常长于时间盒，run 撞盒收场（部分轨迹也是数据）
-5. **采集**：从 `SessionJournal` 读全部 session 事件 + 隔离邮箱的实际投递结果
-6. **报告**：生成 ARENA.md / report.json，连语料与原始 journal 一起归档进 **staging 原型目录**（见「报告」节）
+5. **采集**：从隔离成员的 `sessions.sqlite3` 逐 session 导出 `archive/sessions/{session_id}.jsonl` + 隔离邮箱的实际投递结果；不 copy、不读取旧 `sessions/` 目录
+6. **报告**：生成 ARENA.md / report.json，连语料与导出的 session 事件一起归档进 **staging 原型目录**（见「报告」节）；导出物只是报告原料，不是运行时 fallback
 7. **拆除**：shutdown 隔离 runtime → 按名强删 `tlon-agent-arena-*` 容器（文件柜 + 残留 exec 单元）→ 归档完成后删隔离家园
 
 ## 语料
@@ -52,7 +52,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 
 ## 报告
 
-**落点**：staging 原型目录内——`ARENA.md`（人读，**双落点**：`arena/<run-id>/ARENA.md` + staging 原型根目录 `ARENA.md`，根目录那份是最新 run 的人读入口，评审界面第一眼看到的，覆盖旧版）+ `arena/<run-id>/`（`corpus.json`、`run.json`（含 `fed` 映射：mail_id ↔ 语料）、`report.json`、全部 session journal 原文、`ledger.jsonl`、`sent.jsonl`/`inbox.jsonl`）。宪法二（可读性）：证据随提案走，approve 时随目录一起进 trusted 库，成为该原型永久的「体检档案」。
+**落点**：staging 原型目录内——`ARENA.md`（人读，**双落点**：`arena/<run-id>/ARENA.md` + staging 原型根目录 `ARENA.md`，根目录那份是最新 run 的人读入口，评审界面第一眼看到的，覆盖旧版）+ `arena/<run-id>/`（`corpus.json`、`run.json`（含 `fed` 映射：mail_id ↔ 语料）、`report.json`、从 SQLite 导出的全部 session 事件 `sessions/*.jsonl`、`ledger.jsonl`、`sent.jsonl`/`inbox.jsonl`）。宪法二（可读性）：证据随提案走，approve 时随目录一起进 trusted 库，成为该原型永久的「体检档案」。
 
 **内容**：按 **session** 组织（ADR 0028 适配）——每个 session 一节：触发语（「你有 N 封未读邮件」）、责任集（`session/start` 的 `responsibility` 快照）、迭代数、token、工具调用分布、结束原因、回复与思考要点；语料邮件（正文 + 回信全文）作为责任集条目挂在收编它的 session 下（一封语料归第一个收编它的 session，归属从 `responsibility` 反解，不靠猜）；未被任何 session 收编的语料单列一节（`unmatched_mails`）并记 session-incomplete 红旗。全局汇总：session 完成率、语料收编数（covered/uncovered）、drained、总 token、耗时。
 
