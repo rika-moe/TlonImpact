@@ -440,8 +440,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 | event_type | 产生者 | payload 主要字段 |
 |---|---|---|
-| `mail.new` | `HumanAdapter.speak` / `SendEmailTool` | Mail 对象（发信、投递前） |
-| `mail.delivered` | `MailDelivery`（source `mail_delivery`，每收件人一条） | `mail`（Mail）、`recipient`（成员 id） |
+| `mail.new` | `PostOffice`（source 为发件人成员 id 或外部地址） | Mail 对象（本地事务已提交，仅通知，不驱动投递） |
+| `mail.delivered` | `PostOffice`（source `post_office`，本地入箱及网关信箱成功尝试后通知；不表示已读或外部平台收到） | `mail`（Mail）、`recipient`（成员 id） |
 | `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
 | `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |

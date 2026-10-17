@@ -938,68 +938,40 @@ class AgentRegistry(Component):
         if config is None:
             raise StopRejectedError("unknown_agent", f"agent '{agent_id}' not found")
 
-        agent = self._agents.get(agent_id)
-        if agent is not None and agent.active_session_count > 0:
-            if not when_idle:
+        # Retirement is durable before cleanup, and cleanup must remain
+        # retryable even when a previous cancellation already committed it.
+        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            retired = await asyncio.to_thread(
+                MailStore(self._paths.mail_database_file()).is_retired, agent_id
+            )
+            agent = self._agents.get(agent_id)
+            if not retired and agent is not None and agent.active_session_count > 0:
+                if when_idle:
+                    self._register_pending_stop(agent_id, stopped_by)
+                    return False
                 raise StopRejectedError(
                     "active_sessions",
                     f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
                     "wait for them to finish (drain), or stop with when_idle=true",
                 )
-            self._register_pending_stop(agent_id, stopped_by)
-            return False
-
-        # Serialize with a concurrent wake of the same persona
-        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
-        async with lock:
-            if await asyncio.to_thread(
-                MailStore(self._paths.mail_database_file()).is_retired, agent_id
-            ):
-                return True
-            agent = self._agents.pop(agent_id, None)
-            if agent is not None:
-                # Drain re-check under the lock: a session that started in
-                # the race window keeps the member awake
-                if agent.active_session_count > 0:
-                    self._agents[agent_id] = agent
-                    if when_idle:
-                        self._register_pending_stop(agent_id, stopped_by)
-                        return False
-                    raise StopRejectedError(
-                        "active_sessions",
-                        f"agent '{agent_id}' gained a live session; stop aborted",
-                    )
-                try:
-                    await asyncio.to_thread(
-                        MailStore(self._paths.mail_database_file()).retire, agent_id
-                    )
-                except Exception:
-                    self._agents[agent_id] = agent
-                    raise
-                try:
-                    await agent.shutdown()
-                except asyncio.CancelledError:
-                    self._agents[agent_id] = agent
-                    raise
-                except Exception as e:
-                    # Already out of the run table; a later start request
-                    # assembles a fresh activation.
-                    logger.error("agent_stop_failed", agent_id=agent_id, error=str(e))
-
-            if agent is None:
+            if not retired:
                 await asyncio.to_thread(
                     MailStore(self._paths.mail_database_file()).retire, agent_id
                 )
-            await self.event_bus.publish(
-                Event(
-                    type=EventType.AGENT_STOPPED,
-                    payload={
-                        "agent_id": agent_id,
-                        "stopped_by": stopped_by,
-                    },
-                    source="agent_registry",
+            if agent is not None:
+                # Keep the live reference on cancellation or failure. A
+                # retired marker alone must never short-circuit this work.
+                await agent.shutdown()
+                self._agents.pop(agent_id, None)
+            if not retired or agent is not None:
+                await self.event_bus.publish(
+                    Event(
+                        type=EventType.AGENT_STOPPED,
+                        payload={"agent_id": agent_id, "stopped_by": stopped_by},
+                        source="agent_registry",
+                    )
                 )
-            )
 
         # The stop fulfills any pending intent for this member (cancel the
         # watcher outside the wake lock; never cancel ourselves — the

@@ -183,3 +183,52 @@ async def test_new_delivery_bypasses_shelved_mail_cooldown(tmp_path: Path) -> No
     )
     registry.event_bus.publish.assert_awaited_once()
     assert registry.event_bus.publish.await_args.args[0].payload.reason == "wake"
+
+
+async def test_cancelled_retirement_cleanup_can_be_retried(tmp_path: Path) -> None:
+    registry = registry_at(tmp_path)
+    entered = asyncio.Event()
+    member = member_with_sessions(0)
+
+    async def interrupted_shutdown() -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    member.shutdown.side_effect = interrupted_shutdown
+    registry._agents["worker"] = member
+    stopping = asyncio.create_task(registry.stop_member("worker", "operator"))
+    await asyncio.wait_for(entered.wait(), 1)
+    assert MailStore(registry._paths.mail_database_file()).is_retired("worker")
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert registry._agents["worker"] is member
+    # Even a half-stopped runtime reporting a live session must finish
+    # cleanup; a durable retirement can no longer be treated as new work.
+    member.active_session_count = 1
+    member.shutdown.side_effect = None
+    assert await registry.stop_member("worker", "operator")
+    assert "worker" not in registry._agents
+    assert member.shutdown.await_count == 2
+    assert await registry.stop_member("worker", "operator")
+    assert member.shutdown.await_count == 2
+    stopped = [
+        c.args[0]
+        for c in registry.event_bus.publish.await_args_list
+        if c.args[0].type is EventType.AGENT_STOPPED
+    ]
+    assert len(stopped) == 1
+
+
+async def test_failed_retirement_cleanup_keeps_live_reference(tmp_path: Path) -> None:
+    registry = registry_at(tmp_path)
+    member = member_with_sessions(0)
+    member.shutdown.side_effect = OSError("cleanup failed")
+    registry._agents["worker"] = member
+    with pytest.raises(OSError, match="cleanup failed"):
+        await registry.stop_member("worker", "operator")
+    assert registry._agents["worker"] is member
+    assert MailStore(registry._paths.mail_database_file()).is_retired("worker")
+    member.shutdown.side_effect = None
+    assert await registry.stop_member("worker", "operator")
+    assert "worker" not in registry._agents

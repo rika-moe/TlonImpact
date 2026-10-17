@@ -1,5 +1,7 @@
 # ADR 0029：认知成员转发走 forwardMail 工具
 
+> 后续决策：ADR 0030 已废止本文旧的 postmaster 失败通知契约；现由工具直接返回拒绝/未知结果并提供 request_id。转发归因、线程及引用校验决策保留。
+
 状态：已接受（2026-10-16 拍板）
 
 ## 背景
@@ -29,6 +31,6 @@ ADR 0028（收件箱驱动的单 session 模型）退役了「触发邮件」：
 
 ## 后果
 
-- 认知成员获得转发能力，走与 `sendEmail` 完全相同的投递管线与失败信号（postmaster 通知是唯一失败信号）。
+- 认知成员获得转发能力，走与 `sendEmail` 完全相同的投递管线与失败信号（~~postmaster 通知是唯一失败信号~~；ADR 0030 已废止，现由工具直接返回拒绝或结果未知，附原 request_id）。
 - DSL `forward` 的适用范围收窄为确定性规则；`MEMBER_ACTION_NAMES` 不变（`forward` 仍是合法动作词），收窄由 `validate_member_spec` 的认知规则专项检查承担。
 - 转发件一律新线程：线程聚合视图里转发不并入原线程，转发链由 `forward_of` 表达。

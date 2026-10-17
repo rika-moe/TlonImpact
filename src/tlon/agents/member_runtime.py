@@ -76,7 +76,7 @@ from tlon.base.tracing.trace_context import continue_trace, get_current_trace
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.post_office import PostOffice, PostRejected
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
@@ -827,7 +827,7 @@ class MemberRuntime(Member):
         thread_id: str | None = None,
         carrier: Carrier = (None, None, None),
     ) -> None:
-        """Build a mail from this member and publish MAIL_NEW on the bus.
+        """Build a mail and submit through the DSL best-effort effect boundary.
 
         A probationary member's mentor (trust ladder,
         docs/design/unified-member-model.md) is cc'd unless already a
@@ -863,15 +863,36 @@ class MemberRuntime(Member):
         await self._publish_mail(mail, carrier)
 
     async def _publish_mail(self, mail: Mail, carrier: Carrier) -> None:
-        """Publish a built mail as MAIL_NEW with the given trace carrier."""
-        if self._post_office is None:
-            raise RuntimeError("This member has no post office")
-        trace_id, span_id, _ = carrier
-        if trace_id:
-            with continue_trace(trace_id, span_id):
+        """Isolate DSL mail failures without changing tool submission semantics.
+
+        Rejection and uncertainty are observable in structured logs; no
+        postmaster notice is manufactured and cancellation still propagates.
+        """
+        try:
+            if self._post_office is None:
+                raise RuntimeError("This member has no post office")
+            trace_id, span_id, _ = carrier
+            if trace_id:
+                with continue_trace(trace_id, span_id):
+                    await self._post_office.post(mail)
+            else:
                 await self._post_office.post(mail)
-        else:
-            await self._post_office.post(mail)
+        except PostRejected as error:
+            self._logger.warning(
+                "dsl_mail_rejected",
+                mail_id=mail.id,
+                reason=error.reason,
+                invalid_recipients=error.invalid_recipients,
+                error=str(error),
+            )
+        except Exception as error:
+            self._logger.error(
+                "dsl_mail_submission_unknown",
+                mail_id=mail.id,
+                request_id=mail.id,
+                error=str(error),
+                exc_info=True,
+            )
 
     async def _mark_read(self, mail: Mail | None) -> None:
         """Mark a processed mail read; failures are logged only."""
