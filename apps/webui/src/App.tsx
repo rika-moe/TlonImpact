@@ -99,7 +99,7 @@ function Operator({ rest, username }: { rest: RestClient; username: string }): R
   return (
     <div className="app-shell">
       <header className="topbar">
-        <h1 className="glow-title">TLON://OPERATOR</h1>
+        <h1 className="glow-title">TlonImpact</h1>
         <span className="tech-label">{window.location.host}</span>
         <ServerHealthBadge state={health} />
         <span className="spacer" />

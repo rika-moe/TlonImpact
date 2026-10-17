@@ -9,6 +9,8 @@ Tlon 作为本机单人应用运行，不建立账号密码、认证 Cookie、JW
 
 username 使用 ASCII 地址 local-part 子集（字母数字开头，后续字母数字、点、下划线、连字符，最长 64）；拒绝系统保留地址与已有 agent id，避免寻址冲突。地址为 `<username>@tlon.internal`，内部适配仍用 `human:<username>`；agents 只看到普通 member 邮件，不增加人类、管理员或认证标识。
 
+地址不冲突是整个实例生命周期的不变式：创建、reload 和 PATCH 成员均须在任何配置／人格写入及 adopt 前检查；冷启动加载持久身份后须比对磁盘启动成员，在 HTTP 开始服务前拒绝冲突，并清理已装配资源。不能只在首次设置身份时检查。
+
 `GET /identity` 返回 `{username: string|null, address: string|null}`；`POST /identity` 接受 `{username}`，首次成功 201，重复初始化 409，非法名字 400。未初始化时仅允许静态 WebUI、最小 `/health` 与 identity API，其余业务 API 返回 409 `identity_required`。初始化失败不得写入身份；损坏的持久文件必须显式报错，不能回落为 guest。
 
 发信、自己的邮箱、已读修改与 SSE session 的人类身份一律由服务端实例身份决定。删除这些 API 的客户端 username 参数（带旧字段返回 400 `identity_managed`），不保留自报身份入口。观察其他成员邮箱仍是本机操作者的管理能力，不会将其作为发件人。

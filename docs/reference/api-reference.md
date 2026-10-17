@@ -158,7 +158,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### POST /identity
 
-首次设置唯一实例身份。JSON 请求体为 `{"username": "alice"}`，成功 201 返回与 GET 相同的已设置对象。username 长 1–64 位，以 ASCII 字母或数字开头，后续只允许 ASCII 字母、数字、点、下划线、连字符；不自动改写大小写。保留名 `postmaster`、`adam`（不区分大小写）返回 400 `invalid_username`，与现有 agent id 撞名返回 409 `identity_conflict`。
+首次设置唯一实例身份。JSON 请求体为 `{"username": "alice"}`，成功 201 返回与 GET 相同的已设置对象。username 长 1–64 位，以 ASCII 字母或数字开头，后续只允许 ASCII 字母、数字、点、下划线、连字符；不自动改写大小写。保留名 `postmaster`、`adam`（不区分大小写）返回 400 `invalid_username`，与现有 agent id 撞名返回 409 `identity_conflict`。 创建、reload 或 PATCH 同名成员也返回 409 `identity_conflict`，在配置与人格文件写入及收养之前拒绝；冷启动发现持久身份与启动成员撞名时拒绝开始服务。
 
 重复设置或并发初始化已有胜出者返回 409 `identity_exists`；非法 JSON 返回 400 `invalid_json`；非对象、缺 username 或非法名字返回 400 `invalid_username`；写入失败返回 503 `identity_write_failed`。失败不建立新身份；文件损坏时启动显式报错，不回落 guest。没有改名、删除身份、注册或登录接口。
 

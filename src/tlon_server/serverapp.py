@@ -126,6 +126,8 @@ class ServerApp:
         """
         logger.info("server_initializing")
 
+        identity = LocalIdentity(self._paths.webui_identity_file())
+
         # Tracing / metrics pillars (process-wide, OTel providers are
         # process singletons): initialized here at the orchestration layer,
         # NOT inside build_runtime — a process may host several runtimes,
@@ -138,6 +140,20 @@ class ServerApp:
 
         runtime = await build_runtime(self._paths, self._settings)
         self._runtime = runtime
+
+        # Offline agent.yaml edits become effective on restart as well as
+        # through the admin API. Check the complete startup configuration,
+        # including members that were not successfully registered.
+        agent_ids = set(runtime.members.list_ids())
+        agent_ids.update(config.id for config in runtime.configs.list_agent_configs())
+        if identity.username is not None and any(
+            agent_id.casefold() == identity.username.casefold() for agent_id in agent_ids
+        ):
+            await self.shutdown()
+            raise ValueError(
+                f"WebUI identity '{identity.username}' conflicts with an agent address; "
+                "remove or rename the conflicting agent before starting Tlon"
+            )
 
         # ========== Client Gateway Components (serving side) ==========
         # Session Manager - session lifecycle management
@@ -184,7 +200,7 @@ class ServerApp:
             capabilities=runtime.capabilities,
             host=self.host,
             port=self.rest_port,
-            identity=LocalIdentity(self._paths.webui_identity_file()),
+            identity=identity,
             github_webhook_secret=self._settings.github_webhook_secret or None,
         )
 

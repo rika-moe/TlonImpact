@@ -78,3 +78,32 @@ async def test_new_browser_uses_instance_identity_and_cannot_select_sender(
         ) as response:
             assert response.status == 400
             assert (await response.json())["reason"] == "identity_managed"
+
+
+async def test_patch_cannot_adopt_offline_member_at_operator_address(
+    inproc_server: tuple[str, Path],
+) -> None:
+    from tlon.agents.prototypes.instantiate import instantiate
+    from tlon.base.paths import TlonPaths
+
+    from .conftest import _read_inbox, _send_mail
+
+    base_url, home = inproc_server
+    paths = TlonPaths(home)
+    instantiate("developer", "alice", "Offline member", model="openai/gpt-test", tlon_paths=paths)
+    original_config = paths.agent_config_file("alice").read_bytes()
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+        async with http.patch(
+            f"{base_url}/admin/config/agents/alice",
+            json={"persona": {"identity": "must not be written"}, "llm": {"model_name": "other"}},
+        ) as response:
+            assert response.status == 409
+            assert (await response.json())["reason"] == "identity_conflict"
+        assert paths.agent_config_file("alice").read_bytes() == original_config
+        assert not paths.agent_identity_file("alice").exists()
+        async with http.get(f"{base_url}/agents") as response:
+            assert "alice" not in {agent["id"] for agent in (await response.json())["agents"]}
+        receipt = await _send_mail(http, base_url, "operator still owns this address", to=["alice"])
+    inbox = _read_inbox(home, "human:alice")
+    assert [mail["id"] for mail in inbox] == [receipt["mail_id"]]
+    assert _read_inbox(home, "alice") == []

@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from tests.identity_helpers import make_identity
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
@@ -134,6 +136,35 @@ class TestAdminCreateAgent:
 
 
 class TestAdminUpdateAgent:
+    @pytest.mark.parametrize("agent_id", ["alice", "ALICE"])
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"persona": {"identity": "must not be written"}},
+            {
+                "persona": {"identity": "must not be written"},
+                "llm": {"model_name": "other-model"},
+            },
+        ],
+    )
+    async def test_offline_identity_collision_rejected_before_writes_or_adopt(
+        self, tmp_path: Path, agent_id: str, body: dict[str, object]
+    ) -> None:
+        from tlon.agents.prototypes.instantiate import instantiate
+
+        handler, registry, paths = _handler(tmp_path)
+        # Supported offline creation does not pass the REST create/reload guards.
+        instantiate("developer", agent_id, "离线成员", model="openai/gpt-5", tlon_paths=paths)
+        config_dir = paths.agent_config_dir(agent_id)
+        before = {file.name: file.read_bytes() for file in config_dir.iterdir()}
+
+        response = await handler.handle_update_agent(StubRequest(body=body, agent_id=agent_id))
+
+        assert response.status == 409
+        assert json.loads(response.text)["reason"] == "identity_conflict"
+        registry.adopt_agent.assert_not_awaited()
+        assert {file.name: file.read_bytes() for file in config_dir.iterdir()} == before
+
     async def test_update_persona_and_llm(self, tmp_path: Path):
         handler, reg, p = _handler(tmp_path)
         from tlon.agents.prototypes.instantiate import instantiate

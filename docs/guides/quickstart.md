@@ -69,7 +69,7 @@ tlon dream
 - **agent 不回信** — 确认 (1) 成员 `agent.yaml` 配了 `llm.model_name`（provider/model 形式）且 `.env` 里对应 provider 的 `{PROVIDER}_API_KEY` 有效（如模型是 `deepseek/...` 就配 `DEEPSEEK_API_KEY`）；(2) To/CC 里真的写了对方（`behavior.tlon` 里 `:when` 门控通常要求收件人包含自己才响应）；(3) 服务端日志有报错。回信是异步的，最多等几秒到几十秒。
 - **shell/filesystem 工具报 `Docker runtime not initialized`** — Docker daemon 没起来或不可用；不影响 agent 本体和邮件收发。
 - **改了 `agent.yaml` 不生效** — 服务端启动时扫描一次，热重载走 `POST /admin/config/agents/{agent_id}/reload`（条件注册端点，见 `reference/api-reference.md`）。
-- **要把服务暴露到非回环地址** — 先在 `.env` 配置 `TLON_ADMIN_TOKEN`（ADR 0013），否则 `/admin/*` 无鉴权。
+- **访问地址限制** — 仅支持本机回环地址 `127.0.0.1`、`localhost`、`::1`，不支持局域网或公网部署；非回环绑定会直接启动失败。WebUI 首次设置实例 username 后自动进入，不设密码或 admin token；浏览器来源边界见 [ADR 0033](../decisions/0033-local-webui-identity.md)。
 
 ## 附录：其他客户端（源码场景）
 
