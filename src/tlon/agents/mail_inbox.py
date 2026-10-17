@@ -24,7 +24,7 @@ async def read_own_unread(agent_id: str, *, tlon_paths: TlonPaths) -> list[dict[
     results. Order is chronological (oldest first), matching
     ``Mailbox.unread`` — the processing order ADR 0028 expects.
     """
-    mailbox = Mailbox(tlon_paths.member_mail_dir(agent_id))
+    mailbox = Mailbox(tlon_paths.mail_database_file(), agent_id)
     return [
         {"external": is_external_address(mail.from_address), **mail.to_dict()}
         for mail in await mailbox.unread()
@@ -55,7 +55,7 @@ async def mark_own_read(
     cursor is reported as ``already_read`` (``Mailbox.mark_read`` itself
     is idempotent, the split exists so the agent can tell what happened).
     """
-    mailbox = Mailbox(tlon_paths.member_mail_dir(agent_id))
+    mailbox = Mailbox(tlon_paths.mail_database_file(), agent_id)
     inbox_ids = {mail.id for mail in await mailbox.inbox()}
     unread_ids = {mail.id for mail in await mailbox.unread()}
     report: dict[str, list[str]] = {"marked": [], "already_read": [], "not_found": []}

@@ -3,7 +3,7 @@
 ConfigService、ContainerResourceMonitor、MetricsService、TraceStore、
 AgentRegistry、
 LessonsDistiller、RetirementCeremony、Adam、guardian 包装、外部网关
-注册表、AdapterManager、MailDelivery、可选的 GitHubAdapter——并在其上
+注册表、AdapterManager、PostOffice、可选的 GitHubAdapter——并在其上
 构造八个 domain facade。
 
 ``build_runtime(runtime_paths)`` 持有一个显式的 ``TlonPaths``：同一进程
@@ -16,6 +16,7 @@ tracing/metrics 支柱（OTel provider 是进程级单例）不在此处初始�
 session/notification/HTTP 生命周期。
 """
 
+import asyncio
 from dataclasses import dataclass
 
 from tlon.agents.adam import make_adam
@@ -39,9 +40,10 @@ from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.base.tracing.trace_store import FileTraceStore
-from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
 from tlon.organization.messaging.github_adapter import GitHubAdapter
 from tlon.organization.messaging.human_adapter import AdapterManager
 from tlon.sandbox.resource_monitor import ContainerResourceMonitor
@@ -69,7 +71,7 @@ class Runtime:
     adam: MemberRuntime
     gateway_registry: ExternalGatewayRegistry
     adapter_manager: AdapterManager
-    mail_delivery: MailDelivery
+    post_office: PostOffice
     github_adapter: GitHubAdapter | None
 
     # domain facades（server 的注入面）
@@ -99,7 +101,6 @@ class Runtime:
         await self.agent_registry.shutdown()
         await self.lessons_distiller.shutdown()
         await self.retirement_ceremony.shutdown()
-        await self.mail_delivery.shutdown()
         await self.metrics_service.shutdown()
         await self.resource_monitor.shutdown()
         await self.adapter_manager.shutdown()
@@ -160,6 +161,12 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     trace_store = FileTraceStore(data_dir=runtime_paths.traces_dir())
     logger.info("component_initialized", component="trace_store")
 
+    guardian_info = GuardianAgentInfoProvider(config_service)
+    gateway_registry = ExternalGatewayRegistry()
+    resolver = RecipientResolver(guardian_info, runtime_paths, gateway_registry.owner_of)
+    post_office = PostOffice(event_bus, resolver, runtime_paths)
+    await asyncio.to_thread(post_office.store.initialize)
+
     # AgentRegistry - agent management.
     # Depends on EventBus and ConfigService (as AgentInfoProvider);
     # the metrics/trace pillars are forwarded into each member's
@@ -170,6 +177,7 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
         tlon_paths=runtime_paths,
         metrics_service=metrics_service,
         trace_store=trace_store,
+        post_office=post_office,
     )
     # Register initial agents (by ID, config is looked up from provider)
     for agent_id in config_service.agents:
@@ -197,7 +205,9 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     # over, and always publish the AGENT_RETIRED fact. Administrative
     # removals (payload ``removed=True``) skip the ceremony entirely —
     # removal is not retirement: the archive is already deleted.
-    retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=runtime_paths)
+    retirement_ceremony = RetirementCeremony(
+        event_bus=event_bus, tlon_paths=runtime_paths, post_office=post_office
+    )
     await retirement_ceremony.initialize()
     logger.info("component_initialized", component="retirement_ceremony")
 
@@ -207,46 +217,21 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     # from the built-in ADAM_SPEC (policy as data; phase C unified runtime).
     # It is a bus member, not an agent — it is not registered in the agent
     # registry or MemberDirectory.
-    adam = make_adam(event_bus=event_bus, agent_registry=agent_registry, tlon_paths=runtime_paths)
+    adam = make_adam(
+        event_bus=event_bus,
+        agent_registry=agent_registry,
+        tlon_paths=runtime_paths,
+        post_office=post_office,
+    )
     await adam.initialize()
     logger.info("component_initialized", component="adam")
 
-    # The guardian-aware provider (docs/design/mail.md 「守护者信箱」): a
-    # thin wrapper over
-    # ConfigService that additionally resolves "adam" so mail to the
-    # built-in guardian is deliverable. One instance feeds both the
-    # AdapterManager (speak side) and MailDelivery (delivery side) —
-    # they share one RecipientResolver, so adam@tlon.internal resolves
-    # in both directions. get_all_ids stays Adam-free: no broadcast,
-    # no roster, no enumeration-driven scan sees the guardian.
-    guardian_info = GuardianAgentInfoProvider(config_service)
-    # The external gateway registry (egress, docs/design/mail.md) is a
-    # plain
-    # data component constructed here so every resolver instance on
-    # the delivery path consults the same claim table; gateways
-    # (github_adapter) claim their addresses at initialize.
-    gateway_registry = ExternalGatewayRegistry()
-
-    # AdapterManager - human adapter lifecycle (one per username)
     adapter_manager = AdapterManager(
         event_bus=event_bus,
-        agent_info_provider=guardian_info,
+        post_office=post_office,
         tlon_paths=runtime_paths,
-        external_owner=gateway_registry.owner_of,
     )
     await adapter_manager.initialize()
-    logger.info("component_initialized", component="adapter_manager")
-
-    # MailDelivery - mail persistence + per-recipient delivery
-    # Depends on EventBus and AdapterManager (online humans + the shared
-    # recipient resolver); the router's successor (docs/design/mail.md)
-    mail_delivery = MailDelivery(
-        event_bus=event_bus,
-        adapter_manager=adapter_manager,
-        tlon_paths=runtime_paths,
-    )
-    await mail_delivery.initialize()
-    logger.info("component_initialized", component="mail_delivery")
 
     # GitHub webhook ingress + egress (docs/design/mail.md): the adapter
     # exists
@@ -262,6 +247,7 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
             event_bus=event_bus,
             agent_info_provider=config_service,
             gateway_registry=gateway_registry,
+            post_office=post_office,
             tlon_paths=runtime_paths,
             recipient_id=settings.github_recipient or None,
             github_token=settings.github_token or None,
@@ -288,7 +274,7 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
         adam=adam,
         gateway_registry=gateway_registry,
         adapter_manager=adapter_manager,
-        mail_delivery=mail_delivery,
+        post_office=post_office,
         github_adapter=github_adapter,
         members=MembersFacade(agent_registry=agent_registry, tlon_paths=runtime_paths),
         mail=MailFacade(

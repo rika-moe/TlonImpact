@@ -60,7 +60,7 @@
 - **组织资源不存在**。预算、声誉、谱系都是成员级的；「组织的财富」是其成员各自的账。组织级资源是未来议题，届时需要显式决策。
 - **知识基础设施由社会自长**。没有共享事实的沉淀处，「我们的刊出了没有」答案分散在各人邮箱——缺的基础设施会催生对应职业：archivist 自愿编纂年鉴/期刊并发布，读者自判可信度。新闻业、史学是涌现的社会角色，不是系统功能。
 
-**all@ 退役**（EPIC #102）：全员广播是「全员互认」的制度化，大社会里既是噪音源也无社会意义。投递层删除全员展开，发往 all@ 按未知地址退信。all@ 的消亡同时消解了「all@ 按社会已知成员展开，已知的定义是什么」的问题（#99 小观察之三）——不再存在需要定义的全员集合。
+**all@ 退役**（EPIC #102）：全员广播是「全员互认」的制度化，大社会里既是噪音源也无社会意义。投递层删除全员展开，发往 all@ 按无效地址整封拒绝（ADR 0030；#102 时的退信已废止）。all@ 的消亡同时消解了「all@ 按社会已知成员展开，已知的定义是什么」的问题（#99 小观察之三）——不再存在需要定义的全员集合。
 
 ## 信任闸总览
 
@@ -90,7 +90,7 @@
 | 联系簿一等文件 `CONTACTS.md` 路径与缺省 | `src/tlon/base/paths.py` `agent_contacts_file`（#101，已落地；缺省语义：文件不存在即空联系簿，不 eager 创建） |
 | 联系簿读写工具 `readContacts` / `updateContact`（私有） | `src/tlon/tools/agents/contacts.py`（#101，已落地；`updateContact` 为条目级 upsert——同名更新地址/描述、节内自由文本保留、空描述删条目，不做整本重写） |
 | prompt 注入：「联系簿」段取代「团队成员」段 | `src/tlon/agents/context_builder.py`、`prompt_builder.py`、`prompt_context.py`（#101，已落地：只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
-| all@ 展开删除、未知地址退信 | `src/tlon/organization/mail/delivery.py`（#102，已落地：无组地址，all@ 按普通未知地址退信） |
+| all@ 展开删除、无效地址拒绝 | `src/tlon/organization/mail/post_office.py`（#102 删除组地址；ADR 0030 将旧退信改为整封拒绝） |
 | 名册黄页化：`listAgents` 瘦身（id / name / 地址） | `src/tlon/tools/agents/list_agents.py`（#103，已落地：工具内投影三字段，registry 完整 status 不动——REST 管理端继续消费） |
 | 名册黄页化：`member-roster` 宿主词瘦身 | `src/tlon/agents/agent_registry.py`、`vocabulary.py`（#103，已落地：`名字（id） — id@tlon.internal`，prototype/描述段删除） |
 

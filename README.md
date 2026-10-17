@@ -57,7 +57,7 @@ Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtim
 
 **Runtime——行为如何执行。** `MemberRuntime` 是统一解释器：带 `:loop` 规则的成员挂认知循环（think / plan / act / critique / revise 五个 stage 是纯变换，外部效果声明在 `StageOutcome`、由 `EffectExecutor` 执行，迭代上限保证停机）；无 `:loop` 的规则只跑 `:actions`，零 token。`AgentRegistry` 是纯机制，策略只有一个实例 Adam——本身也是一段 spec。
 
-**邮件——成员如何通信。** 邮件是唯一通道：agent 发信只有一个出口（`sendEmail` 工具），人类以普通成员身份加入同一网络。邮箱是磁盘文件（`inbox.jsonl` / `sent.jsonl` / `inbox.cursor`），先持久化、后处理；`all@tlon.internal` 广播、退信、离线等待都是书信共和国的机制。
+**邮件——成员如何通信。** 邮件是统一通信通道，人类与 agent 共用 SQLite 邮局。本地成功表示已原子存入全部有效收件人的信箱，任一无效或退休地址整封拒绝；休眠、离线成员正常收信。已注册网关只尝试投递，不保证成功或外部接收。入箱、阅读与思考处理是三件不同的事。
 
 系统是单进程 asyncio：一个服务端（`tlon dream`）暴露一个 aiohttp 端口（REST + SSE，无 WebSocket），组件间只经 `EventBus` 通信（per-subscriber 有界队列）。代码按客户端 / 服务端装配 / 领域 / 基础设施四层组织，详细分层、装配顺序与数据流见 [docs/architecture.md](./docs/architecture.md)。
 

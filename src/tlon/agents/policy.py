@@ -39,6 +39,7 @@ safe default at the provider level — tilt 1.0, solvent, full trust.
 Policy bookkeeping never blocks a spawn or an assembly.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -55,6 +56,7 @@ from tlon.base.config import yaml_load_all
 from tlon.base.ledger import collect_lineage_ledgers
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.store import MailStore
 from tlosure.builtins import EvalError
 from tlosure.edn import EDNParseError, Form, Keyword, Symbol, loads
 from tlosure.eval import DEFAULT_MAX_DEPTH, MAX_FUEL, Evaluator
@@ -265,7 +267,9 @@ async def materialize_member(agent_id: str, *, tlon_paths: TlonPaths) -> PolicyM
     config = configs.get(agent_id)
     if config is None:
         return None
-    member_ids = sorted(configs) + tlon_paths.known_human_ids()
+    member_ids = sorted(configs) + await asyncio.to_thread(
+        MailStore(tlon_paths.mail_database_file()).known_human_ids
+    )
     report = await collect_reputation(agent_id, tlon_paths=tlon_paths, member_ids=member_ids)
     return PolicyMemberInfo(
         id=agent_id,

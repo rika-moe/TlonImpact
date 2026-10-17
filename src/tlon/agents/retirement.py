@@ -9,7 +9,7 @@ its unfinished business should not vanish with it: this component takes an
 when there is anything to hand over or to say, runs one LLM pass writing a
 farewell letter (tenure summary + unfinished items + handover list +
 advice for the successor). The letter is mailed **from the retired
-member's own address** (retirement is sleep: the member stays in the
+member's own address** (retirement preserves history: the member stays in the
 registry, its address still resolves, and the sent copy lands in its
 archive) to its spawner, or to the guest human when it was not spawned by
 another member.
@@ -51,6 +51,7 @@ from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice
 from tlon.tools.tasks.manager import TaskManager
 from tlon.tools.tasks.models import TaskStatus
 from tlosure.edn import loads
@@ -106,10 +107,12 @@ class RetirementCeremony(Component, Device):
         event_bus: EventBus,
         tlon_paths: TlonPaths,
         llm_client_factory: Callable[[str], LLMClient] | None = None,
+        post_office: PostOffice | None = None,
     ):
         Component.__init__(self, name="RetirementCeremony")
         Device.__init__(self, event_bus=event_bus, name="RetirementCeremony")
         self._paths = tlon_paths
+        self._post_office = post_office
         self._client_factory = llm_client_factory or (
             lambda agent_id: build_retiree_llm_client(agent_id, tlon_paths)
         )
@@ -226,10 +229,7 @@ class RetirementCeremony(Component, Device):
         someone else and the retiree's sent file holds no later reply in
         that thread (the mirror image of the orphan-mail scan, which
         finds "I wrote and nobody answered")."""
-        mail_dir = self._paths.member_mail_dir(agent_id)
-        if not mail_dir.is_dir():
-            return []
-        mailbox = Mailbox(mail_dir)
+        mailbox = Mailbox(self._paths.mail_database_file(), agent_id)
         own_address = address_for_member(agent_id)
 
         # File order is chronological: the last write wins per thread.
@@ -295,7 +295,7 @@ class RetirementCeremony(Component, Device):
         open_threads: list[dict[str, str]],
         digest: dict[str, Any] | None,
     ) -> bool:
-        """One attributed LLM pass + one MAIL_NEW; False on any failure."""
+        """One attributed LLM pass + one direct post; False on any failure."""
         try:
             client = self._client_factory(agent_id)
             response = await client.chat(
@@ -320,7 +320,9 @@ class RetirementCeremony(Component, Device):
                 subject=f"告别与交接：{name}",
                 content=response.content,
             )
-            await self.publish(Event(type=EventType.MAIL_NEW, payload=mail, source=agent_id))
+            if self._post_office is None:
+                raise RuntimeError("Retirement ceremony has no post office")
+            await self._post_office.post(mail)
             logger.info("retirement_farewell_sent", agent_id=agent_id, to=to, mail_id=mail.id)
             return True
         except Exception as e:

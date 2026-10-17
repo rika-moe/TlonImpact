@@ -117,9 +117,13 @@ class IdleReaper:
                 return
 
             registry._agents.pop(agent_id)
+            registry.defer_mail_rescue(agent_id)
             idle = int(agent.idle_seconds)
             try:
                 await agent.shutdown()
+            except asyncio.CancelledError:
+                registry._agents[agent_id] = agent
+                raise
             except Exception as e:
                 # The agent is already out of the run table; a later
                 # start request assembles a fresh activation.

@@ -43,7 +43,6 @@ def provider(delegate: MockAgentInfoProvider) -> GuardianAgentInfoProvider:
 def resolver(provider: GuardianAgentInfoProvider, tmp_path) -> RecipientResolver:
     return RecipientResolver(
         agent_info_provider=provider,
-        is_human_online=lambda _username: False,
         tlon_paths=TlonPaths(home=tmp_path),
     )
 

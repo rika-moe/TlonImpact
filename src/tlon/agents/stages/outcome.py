@@ -4,7 +4,7 @@ Stages are pure transformations ``Session x Services -> StageOutcome``:
 every system-state change a stage wants (context appends, scratch
 writes, iteration/error counters, session-field writes such as the
 last LLM response / tool-result log / ACTIVE transition, and — from
-C2 — mails, tool dispatches, the final reply, the completion signal)
+C2 — tool dispatches, the final reply, the completion signal)
 is returned as data; the LoopDriver applies it. Read-only external
 queries (the LLM call) and observability (logs/events/traces) go
 through the injected :mod:`tlon.agents.stages.services` instead — they
@@ -24,7 +24,7 @@ from tlon.tools.base import ToolResult
 
 @dataclass
 class MailEffect:
-    """One mail to send (C2 — declared by a stage, sent by the engine).
+    """One mail submitted by the tool executor before its result is collected.
 
     A forward (``forwardMail`` tool, ADR 0029) declares ``forward_of``
     (the source mail id) plus an optional ``forward_comment``; its
@@ -82,9 +82,6 @@ class StageOutcome:
 
     mark_active: bool = False
     """Transition the session back to ACTIVE (WAITING -> ACTIVE, C2)."""
-
-    mails: list[MailEffect] = field(default_factory=list)
-    """Mails to send (C2)."""
 
     tool_dispatches: list[ToolCall] = field(default_factory=list)
     """Tool calls to dispatch as background tasks (C2)."""

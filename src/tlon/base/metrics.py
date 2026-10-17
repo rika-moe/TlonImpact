@@ -41,7 +41,6 @@ logger = get_logger(__name__)
 
 # Source of truth: tlon.organization.mail.mail (duplicated here to keep the
 # base layer free of upward dependencies).
-_POSTMASTER_ADDRESS = "postmaster@tlon.internal"
 _HUMAN_ID_PREFIX = "human:"
 
 _initialized = False
@@ -114,7 +113,6 @@ class MetricsService(Component, Device):
 
     Event -> metric mapping:
         MAIL_NEW            -> tlon.mail.sent {agent=source}
-                               (+ tlon.mail.bounced when from postmaster)
         MAIL_DELIVERED      -> tlon.mail.delivered {kind=agent|human}
         AGENT_STARTED       -> tlon.agent.started {agent_id}
         AGENT_WOKEN         -> tlon.agent.woken {agent_id}
@@ -176,9 +174,6 @@ class MetricsService(Component, Device):
         self._mail_delivered = meter.create_counter(
             "tlon.mail.delivered",
             description="Per-recipient mail deliveries (kind=agent|human)",
-        )
-        self._mail_bounced = meter.create_counter(
-            "tlon.mail.bounced", description="Bounce mails sent by postmaster"
         )
         self._agent_started = meter.create_counter("tlon.agent.started", description="Agent starts")
         self._agent_woken = meter.create_counter(
@@ -286,12 +281,9 @@ class MetricsService(Component, Device):
     # ========== Event Handlers (sync; the bus isolates failures too) ==========
 
     def _on_mail_new(self, event: Event) -> None:
-        """Count sent mail; postmaster bounces count separately."""
+        """Count accepted mail by its event source."""
         try:
             self._mail_sent.add(1, {"agent": event.source})
-            from_address = _payload_value(event.payload, "from_address")
-            if from_address == _POSTMASTER_ADDRESS:
-                self._mail_bounced.add(1, {})
         except Exception as e:
             logger.warning("metrics_event_failed", event_type=event.type.value, error=str(e))
 

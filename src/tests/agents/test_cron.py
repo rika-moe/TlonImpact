@@ -11,11 +11,13 @@ targets are skipped, and a failed tick never kills an entry's loop.
 """
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
 import yaml
 
+from tests.mail_helpers import make_office
 from tlon.agents.cron import CronEntry, CronScheduler
 from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.events.event import Event, EventType
@@ -26,6 +28,7 @@ from tlon.organization.mail.mail import (
     Mail,
     address_for_member,
 )
+from tlon.organization.mail.store import MailStore
 
 SCRIBE_ID = "ji-shuheng"
 
@@ -67,9 +70,11 @@ def _scheduler(
     agent_ids: list[str] | None = None,
     **knobs,
 ) -> CronScheduler:
+    ids = agent_ids if agent_ids is not None else [SCRIBE_ID]
     return CronScheduler(
         event_bus=bus,
-        agent_info_provider=_AgentInfoStub(agent_ids if agent_ids is not None else [SCRIBE_ID]),
+        agent_info_provider=_AgentInfoStub(ids),
+        post_office=make_office(bus, tmp_path, ids),
         tlon_paths=TlonPaths(home=tmp_path),
         **knobs,
     )
@@ -81,7 +86,7 @@ def _digest_entry(scheduler: CronScheduler) -> CronEntry:
 
 def _make_human(tmp_path: Path, username: str) -> None:
     """A "known human" is a persistent mailbox directory on disk."""
-    (tmp_path / f"human-{username}" / "mail").mkdir(parents=True)
+    MailStore(TlonPaths(home=tmp_path).mail_database_file()).register_member(f"human:{username}")
 
 
 def _write_cron_yaml(tmp_path: Path, entries: object) -> None:
@@ -99,8 +104,8 @@ class TestBuiltinDigestTick:
 
         assert mail is not None
         await _wait_for(lambda: len(sent) == 1)
-        assert sent[0].payload is mail
-        assert sent[0].source == "cron_scheduler"
+        assert sent[0].payload == mail
+        assert sent[0].source == POSTMASTER_ADDRESS
         assert mail.from_address == POSTMASTER_ADDRESS
         assert mail.to == [address_for_member(SCRIBE_ID)]
         assert mail.subject is not None
@@ -111,10 +116,19 @@ class TestBuiltinDigestTick:
         assert "listStagingPrototypes" in mail.content
         assert "is_complete=true" in mail.content
 
-    async def test_tick_lists_all_known_humans(self, bus, tmp_path):
+    async def test_tick_lists_all_known_humans(self, bus, tmp_path, monkeypatch):
         _make_human(tmp_path, "alice")
         _make_human(tmp_path, "bob")
         scheduler = _scheduler(bus, tmp_path)
+
+        loop_thread = threading.get_ident()
+        original = MailStore.known_human_ids
+
+        def checked_roster(store: MailStore) -> list[str]:
+            assert threading.get_ident() != loop_thread
+            return original(store)
+
+        monkeypatch.setattr(MailStore, "known_human_ids", checked_roster)
 
         mail = await scheduler.tick(_digest_entry(scheduler))
 
@@ -164,7 +178,7 @@ class TestDeclaredEntries:
         await _wait_for(lambda: len(sent) >= 2)  # fires repeatedly, not once
 
         mail: Mail = sent[0].payload
-        assert sent[0].source == "cron_scheduler"
+        assert sent[0].source == POSTMASTER_ADDRESS
         assert mail.from_address == POSTMASTER_ADDRESS
         assert mail.to == [address_for_member(SCRIBE_ID)]
         assert mail.subject == "定期检查 staging 提案"

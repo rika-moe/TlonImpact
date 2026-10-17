@@ -108,13 +108,12 @@ class TestForwardMailTool:
         assert result.data["comment"] is None
 
     @pytest.mark.asyncio
-    async def test_message_points_at_postmaster_notice(self):
-        """Async delivery: the postmaster notice is the only failure
-        signal (hallucinated mail_id fails the send engine-side)."""
+    async def test_message_defers_success_until_post_office_submission(self):
+        """Constructing a request does not claim delivery success."""
         tool = ForwardMailTool()
         result = await tool.execute(mail_id="m1", to=["b-002@tlon.internal"])
 
-        assert "postmaster" in result.message
+        assert "邮局提交" in result.message
 
     def test_tool_schema(self):
         tool = ForwardMailTool()
@@ -161,7 +160,7 @@ def tlon_paths(tmp_path) -> TlonPaths:
 
 @pytest.fixture
 def mailbox(tlon_paths: TlonPaths) -> Mailbox:
-    return Mailbox(tlon_paths.member_mail_dir(AGENT_ID))
+    return Mailbox(tlon_paths.mail_database_file(), AGENT_ID)
 
 
 def _search_tool(tlon_paths: TlonPaths) -> SearchMailsTool:
@@ -254,7 +253,7 @@ class TestSearchMailsTool:
     @pytest.mark.asyncio
     async def test_only_own_mailbox(self, tlon_paths: TlonPaths, tmp_path):
         # Bob 的邮箱里有命中邮件，但工具绑定的是 a-001 的邮箱。
-        bobs = Mailbox(tlon_paths.member_mail_dir("b-002"))
+        bobs = Mailbox(tlon_paths.mail_database_file(), "b-002")
         await bobs.append_inbox(_mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00"))
         tool = _search_tool(tlon_paths)
 
@@ -413,7 +412,7 @@ class TestCheckInboxTool:
     @pytest.mark.asyncio
     async def test_only_own_mailbox(self, tlon_paths: TlonPaths):
         # Bob 的邮箱里有未读，但工具绑定的是 a-001 的邮箱。
-        bobs = Mailbox(tlon_paths.member_mail_dir("b-002"))
+        bobs = Mailbox(tlon_paths.mail_database_file(), "b-002")
         await bobs.append_inbox(_mail("b1", OWN, [BOB], "季度数据", "2026-09-06T10:00:00"))
         tool = _check_inbox_tool(tlon_paths)
 
@@ -446,9 +445,7 @@ class TestMarkReadTool:
         assert again.success
         assert again.data["marked"] == []
         assert again.data["already_read"] == ["m1"]
-        # cursor 里没有重复 id
-        cursor = (tlon_paths.member_mail_dir(AGENT_ID) / "inbox.cursor").read_text().split()
-        assert cursor.count("m1") == 1
+        assert [mail.id for mail in await mailbox.unread()] == ["m3"]
 
     @pytest.mark.asyncio
     async def test_not_found_never_reaches_cursor(self, tlon_paths: TlonPaths, mailbox: Mailbox):
@@ -460,8 +457,7 @@ class TestMarkReadTool:
         assert result.success
         assert result.data["not_found"] == ["nope"]
         assert result.data["marked"] == ["m1"]
-        cursor = (tlon_paths.member_mail_dir(AGENT_ID) / "inbox.cursor").read_text().split()
-        assert "nope" not in cursor
+        assert [mail.id for mail in await mailbox.unread()] == ["m3"]
 
     @pytest.mark.asyncio
     async def test_sent_mail_id_is_not_found(self, tlon_paths: TlonPaths, mailbox: Mailbox):
@@ -472,8 +468,7 @@ class TestMarkReadTool:
         result = await tool.execute(mail_ids=["m2"])
 
         assert result.data["not_found"] == ["m2"]
-        cursor_path = tlon_paths.member_mail_dir(AGENT_ID) / "inbox.cursor"
-        assert not cursor_path.exists() or "m2" not in cursor_path.read_text()
+        assert [mail.id for mail in await mailbox.unread()] == ["m1", "m3"]
 
     @pytest.mark.asyncio
     async def test_requires_mail_ids(self, tlon_paths: TlonPaths):
@@ -491,7 +486,7 @@ class TestMarkReadTool:
     @pytest.mark.asyncio
     async def test_only_own_mailbox(self, tlon_paths: TlonPaths, mailbox: Mailbox):
         """工具绑定 a-001：标读 a-001 的 id 不影响 Bob 的未读。"""
-        bobs = Mailbox(tlon_paths.member_mail_dir("b-002"))
+        bobs = Mailbox(tlon_paths.mail_database_file(), "b-002")
         await bobs.append_inbox(_mail("b1", OWN, [BOB], "给 Bob 的信", "2026-09-06T10:00:00"))
         await mailbox.append_inbox(_mail("m1", BOB, [OWN], "给自己的信", "2026-09-06T10:00:00"))
         tool = _mark_read_tool(tlon_paths)

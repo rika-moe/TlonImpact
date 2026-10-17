@@ -1,23 +1,7 @@
-"""Human Adapter: human users as bus citizens of Congress.
+"""Human identities and session notifications backed by the transactional post office.
 
-A HumanAdapter is the on-bus presence of a human user (one per username);
-client sessions are its attachments. It carries identity, lifecycle and the
-ability to speak (publish MAIL_NEW) — nothing of the LLM / memory /
-Docker machinery of a cognitive member (MemberRuntime).
-
-R2 protocol (docs/design/mail.md): ``speak`` accepts explicit ``to`` /
-``cc`` / ``subject`` fields; explicit addressing is the only entry point
-(the R1b ``mentions`` alias and the legacy ``@名字`` content-parsing
-bridge were removed in PR-C). A mail with zero resolvable recipients is
-rejected outright — an unaddressed mail is illegal.
-
-Delivery is single-track: like every Member, the adapter subscribes to
-MAIL_DELIVERED and fans out copies addressed to its own member id to its
-attached sessions. The NotificationService does NOT push mail to chat
-sessions — human mail delivery goes through this adapter, so "one
-mailbox per Member, delivery via Member" holds for humans too.
-
-See docs/design/members.md (阶段 B).
+Every human registers in SQLite on first attachment or sessionless post.
+Only PostOffice accepts mail; delivery events are committed facts for UI sinks.
 """
 
 import asyncio
@@ -30,13 +14,13 @@ from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.base.tracing.trace_context import start_span
 from tlon.organization.mail.mail import Mail
-from tlon.organization.mail.resolver import RecipientResolver
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.store import StoredPost
 from tlon.organization.messaging.member import Member
 
 if TYPE_CHECKING:
-    from tlon.base.config import AgentInfoProvider
+    pass
 
 logger = get_logger(__name__)
 
@@ -45,9 +29,6 @@ DEFAULT_USERNAME = "guest"
 
 # Prefix of the internal human member-id namespace ("human:<username>").
 HUMAN_ID_PREFIX = "human:"
-
-# Resolves a recipient (name, id or full address) to a mail address.
-AddressResolver = Callable[[str], str | None]
 
 # Push callback for an attached session (sync or async, like the
 # NotificationService event handlers).
@@ -62,19 +43,18 @@ class HumanAdapter(Member):
     username share one adapter (refcount semantics).
     """
 
-    def __init__(self, username: str, event_bus: EventBus, address_resolver: AddressResolver):
+    def __init__(self, username: str, event_bus: EventBus, post_office: PostOffice):
         """Initialize the human adapter.
 
         Args:
             username: Human username (also the display name)
             event_bus: Event bus for publishing mail
-            address_resolver: Recipient name -> mail address resolution
-                (injected by the AdapterManager)
+            post_office: Transactional mail acceptance service
         """
         Component.__init__(self, name=f"HumanAdapter:{username}")
         Device.__init__(self, event_bus=event_bus, name=f"HumanAdapter:{username}")
         self._username = username
-        self._address_resolver = address_resolver
+        self._post_office = post_office
         self._sinks: dict[str, EventHandler] = {}  # session_id -> push callback
 
     @property
@@ -128,7 +108,7 @@ class HumanAdapter(Member):
     async def _on_mail_delivered(self, event: Event) -> None:
         """Handle mail delivered to this human's inbox.
 
-        The delivery component publishes one MAIL_DELIVERED per recipient;
+        PostOffice publishes one MAIL_DELIVERED per local recipient;
         only the copy addressed to this member is fanned out to the
         attached sessions.
 
@@ -177,91 +157,23 @@ class HumanAdapter(Member):
         subject: str | None = None,
         in_reply_to: str | None = None,
         thread_id: str | None = None,
-    ) -> Mail:
-        """Speak into Congress: publish the human's mail as MAIL_NEW.
+        request_id: str | None = None,
+    ) -> StoredPost:
+        """Post mail atomically to every local recipient, or refuse the whole post.
 
-        Recipients come exclusively from the explicit ``to`` / ``cc``
-        fields (R2 protocol; the R1b ``mentions`` alias and the legacy
-        ``@名字`` bridge were removed in PR-C). Unresolvable recipients
-        are dropped with a warning; a mail with zero resolvable
-        recipients is rejected outright — an unaddressed mail is
-        illegal.
-
-        Args:
-            content: Message content
-            to: Explicit recipients (raw names, ids or full addresses)
-            cc: Carbon-copy recipients (same resolution as ``to``)
-            subject: Optional mail subject
-            in_reply_to: Id of the mail being replied to (optional)
-            thread_id: Thread root id inherited from the upstream mail
-                (optional; defaults to this mail's own id)
-
-        Returns:
-            The created mail
-
-        Raises:
-            ValueError: If no recipient resolves to a mail address
+        Gateway inboxes are attempted once without a success guarantee.
+        The receipt does not indicate reading, thinking or task completion.
         """
-        resolved_to = self._resolve_recipients(to or [])
-        resolved_cc = self._resolve_recipients(cc or [])
-
-        if not resolved_to and not resolved_cc:
-            raise ValueError("没有可送达的收件人：请在 to 中指定至少一个收件人")
-
-        mail = Mail.create(
+        return await self._post_office.send(
             from_address=self.address,
-            to=resolved_to,
-            cc=resolved_cc,
-            subject=subject,
             content=content,
+            to=to or [],
+            cc=cc,
+            subject=subject,
             in_reply_to=in_reply_to,
             thread_id=thread_id,
+            request_id=request_id,
         )
-
-        with start_span(
-            "mail.received",
-            source="human_adapter",
-            attributes={"mail_id": mail.id, "sender": self.member_id},
-        ) as ctx:
-            await self.publish(
-                Event(
-                    type=EventType.MAIL_NEW,
-                    payload=mail,
-                    source=self.member_id,
-                    trace_id=ctx.trace_id,
-                    span_id=ctx.span_id,
-                    parent_span_id=ctx.parent_span_id,
-                )
-            )
-
-        logger.info(
-            "human_mail_published",
-            username=self._username,
-            mail_id=mail.id,
-            to=mail.to,
-            cc=mail.cc,
-        )
-        return mail
-
-    def _resolve_recipients(self, raw: list[str]) -> list[str]:
-        """Resolve raw recipients (names, ids or full addresses) to mail
-        addresses, dropping unresolvable ones and deduplicating.
-
-        Args:
-            raw: Raw recipient strings in priority order
-
-        Returns:
-            Resolved mail addresses (deduplicated, order preserved)
-        """
-        resolved: list[str] = []
-        for name in raw:
-            address = self._address_resolver(name)
-            if address is None:
-                logger.warning("recipient_unresolved", username=self._username, recipient=name)
-                continue
-            if address not in resolved:
-                resolved.append(address)
-        return resolved
 
 
 class AdapterManager(Component):
@@ -275,36 +187,21 @@ class AdapterManager(Component):
     def __init__(
         self,
         event_bus: EventBus,
-        agent_info_provider: "AgentInfoProvider",
+        post_office: PostOffice,
         tlon_paths: TlonPaths,
-        external_owner: Callable[[str], str | None] | None = None,
     ):
         """Initialize the adapter manager.
 
         Args:
-            event_bus: Event bus adapters publish on
-            agent_info_provider: Provider for agent config queries
-                (recipient name → address resolution)
-            tlon_paths: Path resolver (persistent mailbox layout)
-            external_owner: Gateway claim lookup forwarded to the shared
-                resolver (docs/design/mail.md egress); None = no gateway
-                claims
+            event_bus: Delivery events forwarded to attached human sessions
+            post_office: Transactional mail acceptance service
+            tlon_paths: Explicit paths for persistent human registration
         """
         super().__init__(name="AdapterManager")
         self._event_bus = event_bus
         self._paths = tlon_paths
         self._adapters: dict[str, HumanAdapter] = {}  # username -> adapter
-        # Single authority for recipient resolution (see
-        # docs/design/mail.md); the
-        # online check closes over ``self._adapters``, so the resolver
-        # always sees the live adapter set. MailDelivery delegates to
-        # the same instance via ``recipient_resolver``.
-        self._resolver = RecipientResolver(
-            agent_info_provider=agent_info_provider,
-            is_human_online=lambda username: username in self._adapters,
-            tlon_paths=self._paths,
-            external_owner=external_owner,
-        )
+        self._post_office = post_office
         self._sessions: dict[str, str] = {}  # session_id -> username
         self._lock = asyncio.Lock()  # serializes attach/detach
 
@@ -327,7 +224,7 @@ class AdapterManager(Component):
 
         Serialized by a lock: two concurrent first-attaches for the same
         username must not create (and leak) two adapters. First attach
-        also creates the human's persistent mailbox — having connected
+        also registers the human in SQLite — having connected
         once makes the human "known", so mail addressed to them is held
         in their inbox while they are offline (docs/design/mail.md).
 
@@ -354,17 +251,17 @@ class AdapterManager(Component):
     async def _get_or_create_adapter(self, username: str) -> HumanAdapter:
         """Get or create the user's adapter; caller must hold ``self._lock``.
 
-        First creation also creates the human's persistent mailbox —
+        First creation also registers the human in SQLite —
         having spoken/connected once makes the human "known", so mail
         addressed to them is held in their inbox while they are offline
         (docs/design/mail.md).
         """
         adapter = self._adapters.get(username)
         if adapter is None:
-            adapter = HumanAdapter(username, self._event_bus, self.resolve_address)
+            adapter = HumanAdapter(username, self._event_bus, self._post_office)
+            await asyncio.to_thread(self._post_office.store.register_member, adapter.member_id)
             await adapter.initialize()
             self._adapters[username] = adapter
-            self._paths.member_mail_dir(adapter.member_id).mkdir(parents=True, exist_ok=True)
             logger.info(
                 "human_adapter_created",
                 username=username,
@@ -400,49 +297,6 @@ class AdapterManager(Component):
                 del self._adapters[username]
                 logger.info("human_adapter_removed", username=username)
 
-    async def publish(
-        self,
-        session_id: str,
-        content: str,
-        to: list[str] | None = None,
-        cc: list[str] | None = None,
-        subject: str | None = None,
-        in_reply_to: str | None = None,
-        thread_id: str | None = None,
-    ) -> Mail | None:
-        """Publish a mail from the user owning this session.
-
-        Args:
-            session_id: Sender's session ID
-            content: Message content
-            to: Explicit recipients (raw names, ids or full addresses)
-            cc: Carbon-copy recipients
-            subject: Optional mail subject
-            in_reply_to: Id of the mail being replied to (optional)
-            thread_id: Thread root id inherited from the upstream mail
-                (optional)
-
-        Returns:
-            The created mail, or None if no adapter is attached to
-            this session (rejected, logged as warning)
-
-        Raises:
-            ValueError: If no recipient resolves to a mail address
-        """
-        username = self._sessions.get(session_id)
-        adapter = self._adapters.get(username) if username else None
-        if adapter is None:
-            logger.warning("publish_rejected_no_adapter", session_id=session_id)
-            return None
-        return await adapter.speak(
-            content,
-            to=to,
-            cc=cc,
-            subject=subject,
-            in_reply_to=in_reply_to,
-            thread_id=thread_id,
-        )
-
     async def publish_as(
         self,
         username: str,
@@ -452,13 +306,14 @@ class AdapterManager(Component):
         subject: str | None = None,
         in_reply_to: str | None = None,
         thread_id: str | None = None,
-    ) -> Mail:
+        request_id: str | None = None,
+    ) -> StoredPost:
         """Publish a mail as ``human:<username>`` without a client session.
 
         REST entry point (POST /messages, protocol v2 PR-1): the sender's
         identity comes from the request body rather than an attached
         session. If the human has no live adapter, a transient one is
-        created — first contact also creates the persistent mailbox, same
+        created — first contact registers the human in SQLite, same
         semantics as the first session attach — and torn down again once
         the mail is out.
 
@@ -493,6 +348,7 @@ class AdapterManager(Component):
                 subject=subject,
                 in_reply_to=in_reply_to,
                 thread_id=thread_id,
+                request_id=request_id,
             )
         finally:
             if transient:
@@ -523,35 +379,6 @@ class AdapterManager(Component):
             Online adapters
         """
         return [self._adapters[name] for name in sorted(self._adapters)]
-
-    @property
-    def recipient_resolver(self) -> RecipientResolver:
-        """The shared recipient resolver (single authority, issue ).
-
-        MailDelivery picks it up here so both sides of resolution
-        (speak-side names, delivery-side addresses) share one
-        implementation of the "known human" rule.
-        """
-        return self._resolver
-
-    def resolve_address(self, recipient: str) -> str | None:
-        """Resolve a recipient to a mail address.
-
-        Delegates to the shared RecipientResolver (mail domain, issue
-        ): accepts a full mail address (passed through), an agent
-        id, an agent display name, a human's username or the
-        "human:<username>" form. A human resolves when they are online
-        or known-but-offline with a persistent mailbox — the same rule
-        MailDelivery applies on the delivery side, so a resolvable
-        recipient here is deliverable there.
-
-        Args:
-            recipient: Recipient to resolve
-
-        Returns:
-            The member's mail address, or None if unresolvable
-        """
-        return self._resolver.resolve_address(recipient)
 
     def username_for(self, session_id: str) -> str | None:
         """Get the username owning a session.

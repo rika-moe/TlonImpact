@@ -8,6 +8,7 @@ client types.
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any
+from uuid import uuid4
 
 import structlog
 
@@ -181,7 +182,8 @@ class TlonClient:
         subject: str | None = None,
         reply_to: str | None = None,
         thread_id: str | None = None,
-    ) -> bool:
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
         """Send a mail message (POST /messages, protocol v2).
 
         Args:
@@ -192,14 +194,17 @@ class TlonClient:
             cc: Optional carbon-copy recipients
             subject: Optional mail subject
             reply_to: Optional message ID to reply to
+            request_id: Stable key for retries; omitted keys are generated once.
             thread_id: Optional thread ID (inherit from the upstream
                 mail when replying; otherwise the reply starts a new
                 thread)
 
         Returns:
-            True if accepted by the server (202 + mail_id)
+            Receipt separating local inbox delivery from gateway attempts.
         """
+        request_id = str(uuid4()) if request_id is None else request_id
         msg: dict[str, Any] = {
+            "request_id": request_id,
             "content": content,
             "to": to,
         }
@@ -214,7 +219,7 @@ class TlonClient:
         if thread_id:
             msg["thread_id"] = thread_id
 
-        return await self._base.rest_post("/messages", msg) is not None
+        return await self._base.submit_mail(msg)
 
     async def set_mode(self, mode: str) -> bool:
         """Set the operation mode (PATCH /sessions/{id}).

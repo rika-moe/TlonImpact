@@ -89,37 +89,39 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 ### sendEmail
 
-发送邮件，agent 唯一的邮件出口。工具本身不投递：它把参数打包进 `ToolResult.data`（`action="send_email"`），由 act stage 收割后声明 `MailEffect`，`EffectExecutor` 构造 `Mail` 并发布 `MAIL_NEW` 进入投递管道（见 docs/design/mail.md）。所有地址都在 `tlon.internal` 域：`<agent-id>@tlon.internal`、`<username>@tlon.internal`；不存在组地址（all@ 已退役，ADR 0024）——多人就把每个地址逐个列进 to/cc。
+发送邮件，agent 的邮件出口。引擎在记录工具结果前调用 `EffectExecutor → PostOffice` 完成真实投信；act 收割结果不会再次发信。地址支持本地成员及已注册网关，不存在组地址；多人逐个列入 to/cc。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `to` | array[string] | 是 | — | 收件人地址列表 |
 | `cc` | array[string] | 否 | `[]` | 抄送地址列表 |
+| `request_id` | string | 否 | 引擎生成 | 稳定投信标识，结果未知时用原值重试；同键不同内容拒绝 |
 | `subject` | string | 否 | — | 邮件主题 |
 | `content` | string | 是 | — | 邮件正文 |
 | `is_complete` | boolean | 是 | — | `false`=中间进度，发完继续思考；`true`=最终回复，结束本轮循环 |
 | `in_reply_to` | string | 否 | — | 被回复邮件的 id；必须是自己邮箱中真实存在的邮件（幻觉 id 发送失败），回复并入该邮件的线程；留空 = 另起线程（无触发邮件缺省，ADR 0028） |
 
-返回行为：恒 `success=True`，[data](../../data) 回显全部参数。投递异步——地址不存在时稍后会收到 `postmaster@tlon.internal` 的退信，退信是唯一失败信号。
+返回行为：本地提交成功后 `success=True`，data 包含 mail_id/request_id/local_recipients/gateways/message；网关单独报告成功、失败或未知，不保证外部平台收到。无效或已退休收件人使整封拒绝，直接返回 success=False；不产生退信。结果未知时复用原 request_id，失败的 is_complete=true 不结束会话。
 
 注意事项：
 
 - `is_complete=true` 时本轮不得同时调用其他工具，否则整轮被 act stage 拒绝（见总述）。
-- 回复目标与线程由引擎最终确定而非工具：`act_stage_collect` 构造 `MailEffect` 时，`to` / `in_reply_to` 完全是模型显式声明的值（ADR 0028——无触发邮件缺省）；`EffectExecutor` 发送前在 agent 自己的邮箱（inbox+sent）里校验被引用邮件并把回复并入该邮件的线程（`thread_id` 取被引用邮件的值）。id 不在邮箱中（典型如幻觉 id）则该封不发送，agent 收到 postmaster 通知——不产生带悬空引用的邮件。另起线程：不传 `in_reply_to` 即可。
-- `to` 传空数组且 `cc` 也为空时邮件构造被拒（没有收件人的邮件在数据层非法），agent 收到 postmaster 发送失败通知——`to` 不再有回退收件人。
+- 回复目标与线程由引擎最终确定而非工具：引擎处理工具请求时，`to` / `in_reply_to` 完全是模型显式声明的值（ADR 0028——无触发邮件缺省）；`EffectExecutor` 发送前在 agent 自己的邮箱（inbox+sent）里校验被引用邮件并把回复并入该邮件的线程（`thread_id` 取被引用邮件的值）。id 不在邮箱中（典型如幻觉 id）则该封不发送，工具直接返回拒绝——不产生带悬空引用的邮件。另起线程：不传 `in_reply_to` 即可。
+- `to` 传空数组且 `cc` 也为空时邮件构造被拒（没有收件人的邮件在数据层非法），工具直接返回发送失败——`to` 不再有回退收件人。
 
 ### forwardMail
 
-转发自己邮箱里的一封邮件（ADR 0029）——认知成员的转发出口（DSL 的 `forward` 动作是确定性规则专用，见 dsl-reference.md 第 4.5 节）。与 sendEmail 同为声明式工具：工具本身不投递，参数打包进 `ToolResult.data`（`action="forward_mail"`），act stage 声明带 `forward_of` 的 `MailEffect`，`EffectExecutor` 组信发送。
+转发自己邮箱里的一封邮件（ADR 0029）——认知成员的转发出口（DSL 的 `forward` 动作是确定性规则专用，见 dsl-reference.md 第 4.5 节）。与 sendEmail 同为声明式工具：工具本身不投递，参数打包进 `ToolResult.data`（`action="forward_mail"`），引擎在工具结果落 journal 前由 `EffectExecutor` 验证来源、组信并调用邮局；act 收割不再重发。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | `mail_id` | string | 是 | — | 被转发邮件的 id；必须是自己邮箱（inbox+sent）中真实存在的邮件（从 checkInbox / searchMails 结果里取；幻觉 id 发送失败） |
 | `to` | array[string] | 是 | — | 收件人地址列表 |
 | `cc` | array[string] | 否 | `[]` | 抄送地址列表 |
+| `request_id` | string | 否 | 引擎生成 | 稳定投信标识，结果未知时用原值重试；同键不同内容拒绝 |
 | `comment` | string | 否 | — | 转发者自己的话，放在归因头之前 |
 
-返回行为：恒 `success=True`，data 回显全部参数。投递异步——幻觉 `mail_id`、地址不存在等失败稍后会收到 `postmaster@tlon.internal` 的通知，该通知是唯一失败信号。
+返回行为：真实投信成功后返回回执，含本地入箱与网关尝试状态。幻觉 mail_id、无效或已退休收件人直接返回 success=False，不再另发退信。
 
 注意事项：
 
@@ -394,7 +396,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 **见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册；注意 DSL 的 stop 动作不走工具、目前不闸（已知缺口：停止请求的策略闸是 Adam 侧/未来项）。
 
-停止一个 agent（统一成员模型，ADR 0006）：立即关闭并使其**睡眠**——home 目录（人格、记忆、邮箱）永久保留（归档），之后可被唤醒。停止永不删除数据。
+退休一个 agent（ADR 0030）：排空会话后关闭，持久化退休状态，拒收新信且不再唤醒；人格、记忆与历史邮箱保留。空闲自动 drain 仍是可唤醒休眠，不是退休。
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -403,11 +405,11 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 
 拒绝行为（`StopRejectedError`，`data.reason`）：`unknown_agent`（不存在）、`active_sessions`（drain 语义：有进行中的 session 就拒绝，停止临界区内在锁内复检一次）。
 
-挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员被其他途径停止/排空即视为意图达成，watcher 自清。挂起状态只在内存（瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
+挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员先被空闲排空时，watcher 仍完成永久退休；重复退休不重复触发交接与蒸馏。挂起状态只在内存（瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
 
 ### listAgents
 
-无参数。返回全部已注册 agent 的**寻址黄页**（ADR 0024 决策 3）：每项恰为 `id` / `name` / `address`（`id@tlon.internal`）三字段，按 id 排序——只回答「给谁写信能到」，不携带身份内容（prototype、血缘、运行状态都不在成员面向的输出里；人类管理端的 REST 详情仍是完整 status）。给成员写信前查地址、spawn/stop 前确认目标 id 存在用它；你对成员的认识以你自己的联系簿与通信为准。
+无参数。返回未退休的已注册 agent 的**寻址黄页**（ADR 0024 决策 3）：每项恰为 `id` / `name` / `address`（`id@tlon.internal`）三字段，按 id 排序——只回答「给谁写信能到」，不携带身份内容（prototype、血缘、运行状态都不在成员面向的输出里；人类管理端的 REST 详情仍是完整 status）。给成员写信前查地址、spawn/stop 前确认目标 id 存在用它；你对成员的认识以你自己的联系簿与通信为准。
 
 ### writePrototype
 

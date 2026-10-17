@@ -25,7 +25,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from tlon_client.sdk.adapter import TelegramAdapter, TerminalAdapter
-from tlon_client.sdk.base_client import BaseClient, ConnectionState
+from tlon_client.sdk.base_client import BaseClient, ConnectionState, MailSendError
 from tlon_client.sdk.client import TlonClient
 from tlon_client.sdk.exceptions import (
     AuthenticationError,
@@ -139,7 +139,16 @@ def make_test_app() -> web.Application:
                 {"error": "Recipient not found", "reason": "recipient_unresolved"},
                 status=400,
             )
-        return web.json_response({"mail_id": "mail-1"}, status=202)
+        return web.json_response(
+            {
+                "mail_id": "mail-1",
+                "request_id": body["request_id"],
+                "local_recipients": ["agent-1"],
+                "gateways": [],
+                "message": "已入箱",
+            },
+            status=202,
+        )
 
     async def inbox(request: web.Request) -> web.Response:
         app["requests"].append(("GET", "/inbox", dict(request.query)))
@@ -733,14 +742,16 @@ class TestTlonClient:
         """send_message posts to /messages with the session's username."""
         client._base = AsyncMock()
         client._base.username = "alice"
-        client._base.rest_post = AsyncMock(return_value={"mail_id": "mail-1"})
+        client._base.submit_mail = AsyncMock(
+            return_value={"mail_id": "mail-1", "message": "已入箱"}
+        )
 
         result = await client.send_message("Hello", to=["agent-1"])
 
-        assert result is True
-        client._base.rest_post.assert_called_once()
-        path, body = client._base.rest_post.call_args[0]
-        assert path == "/messages"
+        assert result["mail_id"] == "mail-1"
+        client._base.submit_mail.assert_called_once()
+        body = client._base.submit_mail.call_args[0][0]
+        assert body["request_id"]
         assert body["content"] == "Hello"
         assert body["to"] == ["agent-1"]
         assert body["username"] == "alice"
@@ -749,11 +760,13 @@ class TestTlonClient:
         """reply_to/thread_id map to the server's in_reply_to/thread_id fields."""
         client._base = AsyncMock()
         client._base.username = None
-        client._base.rest_post = AsyncMock(return_value={"mail_id": "mail-2"})
+        client._base.submit_mail = AsyncMock(
+            return_value={"mail_id": "mail-2", "message": "已入箱"}
+        )
 
         await client.send_message("Got it", to=["agent-1"], reply_to="mail-1", thread_id="thread-1")
 
-        body = client._base.rest_post.call_args[0][1]
+        body = client._base.submit_mail.call_args[0][0]
         assert body["in_reply_to"] == "mail-1"
         assert body["thread_id"] == "thread-1"
         assert "reply_to" not in body
@@ -763,9 +776,12 @@ class TestTlonClient:
         """A 4xx receipt (rest_post -> None) makes send_message return False."""
         client._base = AsyncMock()
         client._base.username = None
-        client._base.rest_post = AsyncMock(return_value=None)
+        client._base.submit_mail = AsyncMock(
+            side_effect=MailSendError("rejected", request_id="r", reason="invalid_recipients")
+        )
 
-        assert await client.send_message("Hi", to=["ghost"]) is False
+        with pytest.raises(MailSendError):
+            await client.send_message("Hi", to=["ghost"])
 
     async def test_set_trace_filter(self, client):
         """Test set_trace_filter method."""
@@ -899,12 +915,13 @@ class TestTlonClientIntegration:
             assert events[0]["type"] == "mail.delivered"
 
             # Send receipt (202 + mail_id)
-            assert await client.send_message("Hello", to=["dev-001"]) is True
+            assert (await client.send_message("Hello", to=["dev-001"]))["mail_id"] == "mail-1"
             msg_req = [r for r in server.app["requests"] if r[1] == "/messages"][0]
             assert msg_req[2]["username"] == "alice"
 
             # Send rejection (4xx) -> False
-            assert await client.send_message("FAIL now", to=["ghost"]) is False
+            with pytest.raises(MailSendError):
+                await client.send_message("FAIL now", to=["ghost"])
 
             # set_mode via PATCH
             assert await client.set_mode("event") is True
@@ -925,3 +942,16 @@ class TestTlonClientIntegration:
         inbox_req = [r for r in server.app["requests"] if r[1] == "/inbox"][0]
         assert inbox_req[0] == "GET"
         assert inbox_req[2] == {"username": "alice", "limit": "5"}
+
+
+async def test_uncertain_mail_send_retains_request_id() -> None:
+    """A lost HTTP response cannot be reported as a definite rejection."""
+    client = TlonClient("http://localhost:8080")
+    client._base._http = MagicMock()
+    client._base._http.post.side_effect = TimeoutError("response lost")
+    with pytest.raises(MailSendError) as caught:
+        await client.send_message("hello", to=["alice"], request_id="stable-request")
+    assert caught.value.reason == "submission_unknown"
+    assert caught.value.request_id == "stable-request"
+    body = client._base._http.post.call_args.kwargs["json"]
+    assert body["request_id"] == "stable-request"

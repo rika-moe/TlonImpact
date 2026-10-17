@@ -82,6 +82,7 @@ export function MailView({
   const [filtering, setFiltering] = useState(false);
   const height = useListHeight();
 
+  const requestId = useRef(crypto.randomUUID());
   const replyRef = useRef<{ in_reply_to?: string; thread_id?: string }>({});
 
   // Initial inbox + address book load.
@@ -195,6 +196,7 @@ export function MailView({
   };
 
   const closeForm = () => {
+    requestId.current = crypto.randomUUID();
     setSending(false);
     setForm(EMPTY_FORM);
     setFormError(null);
@@ -222,7 +224,9 @@ export function MailView({
     setSending(true);
     setFormError(null);
     try {
-      const mailId = await rest.sendMail(username, { to, cc, subject, content, ...reply });
+      const receipt = await rest.sendMail(username, { request_id: requestId.current, to, cc, subject, content, ...reply });
+      const mailId = receipt.mail_id;
+      setNotice(receipt.message);
       const sent: MailItem = {
         id: mailId,
         from_address: myAddress,

@@ -70,7 +70,7 @@
 | `:on` 关键字 | 事件值 | 说明 |
 |---|---|---|
 | `:boot` | — | 启动规则：映射 `None`，订阅就绪后运行一次，`msg` / `event` 均为 `nil` |
-| `:mail-new` | `mail.new` | A mail was sent (pre-delivery) |
+| `:mail-new` | `mail.new` | A mail was committed by the post office (notification only) |
 | `:mail-delivered` | `mail.delivered` | A mail landed in one recipient's inbox |
 | `:mail-endorsed` | `mail.endorsed` | A delivered mail endorses another mail (reputation signal, see docs/design/mail.md) |
 | `:agent-join` | `agent.join` |  |

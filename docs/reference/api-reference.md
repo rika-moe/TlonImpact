@@ -27,7 +27,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `empty_content` | `POST /messages` | content 缺失、非字符串或全空白（`send_mail.py` 的 `parse_send_mail_fields`） |
 | `invalid_to` / `invalid_cc` | `POST /messages` | to/cc 存在但不是 list |
 | `invalid_in_reply_to` / `invalid_thread_id` | `POST /messages` | 对应字段存在但不是字符串 |
-| `recipient_unresolved` | `POST /messages` | to/cc 全部解析不到任何成员地址（`HumanAdapter.speak` 抛 `ValueError`） |
+| `invalid_recipients` | `POST /messages` | 任一 to/cc 地址无效或成员已退休，整封拒绝并返回 invalid_recipients 列表 |
+| `invalid_request_id` | `POST /messages` | request_id 缺失、非字符串或空白 |
+| `idempotency_conflict` | `POST /messages` | 同发件人、同 request_id 被用于不同内容，409 |
+| `submission_unknown` | `POST /messages` | 存储或传输结果未知，使用原 request_id 重试确认 |
 | `stream_active` | `GET /events` | 该会话已有一条活跃 SSE 流 |
 | `unauthorized` | 全部 `/admin/*` | 配置了 `TLON_ADMIN_TOKEN` 但请求未携带或携带错误的 Bearer token（401，见下「鉴权（admin 面）」节） |
 
@@ -130,7 +133,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### POST /messages
 
-人类成员发信，处理函数 `rest/mail.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。受理即返回 **202**，投递是异步的；解析不到的收件人地址事后以 `postmaster@tlon.internal` 退信形式回到发件人收件箱。
+人类成员发信，处理函数 `rest/mail.py` 的 `handle_send_message`。发件人身份取自请求体 `username`；该人类没有在线 adapter 时由 `AdapterManager.publish_as` 建临时 adapter（首次接触同时创建持久邮箱），发完即拆。返回 **202** 前已在 SQLite 事务内完成全部本地入箱；不代表收件人已阅读或处理。已注册网关仅尝试投递其信箱，不保证成功或外部平台收到。
 
 请求体字段（校验的唯一副本在 [tlon_server/api/send_mail.py](../../src/tlon_server/api/send_mail.py) 的 `parse_send_mail_fields`）：
 
@@ -138,17 +141,19 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 |---|---|---|---|
 | `username` | string | 否（默认 `guest`） | 非空、不含 `/`、`\`；否则 400 `invalid_username` |
 | `content` | string | 是 | 非空白；否则 400 `empty_content` |
+| `request_id` | string | 是 | 一次投信的稳定非空标识；同发件人同键同内容返回已有回执，不同内容返回 409 |
 | `to` | list[string] | 否 | 收件人：名字、成员 id 或完整地址；存在则必须是 list，否则 400 `invalid_to` |
 | `cc` | list[string] | 否 | 同上，错误码 `invalid_cc` |
 | `subject` | string | 否 | — |
 | `in_reply_to` | string | 否 | 被回复邮件的 id；非字符串报 `invalid_in_reply_to` |
 | `thread_id` | string | 否 | 线程根 id，缺省取本邮件自身 id；非字符串报 `invalid_thread_id` |
 
-未知字段静默忽略。`to`/`cc` 中解析失败的单个收件人被丢弃（记 warning）；to+cc 全部解析失败时 400 `recipient_unresolved`。
+未知字段静默忽略。`to`/`cc` 任一地址无效或成员已退休，整封拒绝，返回全部问题地址，不写成功发件记录也不另发退信。休眠或离线成员正常入箱。
 
-- 202：`{"mail_id": "<id>"}`
-- 400：`{"error", "reason"}`（枚举见总述）
-- 503：未装配 `adapter_manager`
+- 202：`{"mail_id", "request_id", "local_recipients": [...], "gateways": [{"address", "status", "error"}], "message"}`。网关 status 为 delivered/failed/unknown，仅描述网关信箱，不是外部平台状态。
+- 400：`{"error", "reason", "invalid_recipients"}`。
+- 409：同 request_id 不同内容。
+- 503：邮件能力不可用，或 `submission_unknown`；未知结果应以原 request_id 确认，不能换新键盲目重发。
 
 ### GET /inbox
 
@@ -159,7 +164,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | `username` | string | `guest` | 读 `human:<username>` 的邮箱；空或含路径分隔符返回 400（`{"error"}`，无 reason） |
 | `limit` | int | 50（上限 200） | 非整数回落默认值 |
 
-- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（[organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail.to_dict`）；handler 额外注入 `read: bool`——收件箱邮件按已读游标判定（id 不在未读集合即已读），已发邮件恒为 `true`
+- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（[organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail.to_dict`）；handler 额外注入 `read: bool`——收件箱邮件按 SQLite 中的收件人已读位判定（id 不在未读集合即已读），已发邮件恒为 `true`
 - 503：未装配 `paths`
 
 ### GET /members/{member_id}/mail
@@ -394,7 +399,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
-| `mail.new` | `MAIL_NEW` | A mail was sent (pre-delivery) |
+| `mail.new` | `MAIL_NEW` | A mail was committed by the post office (notification only) |
 | `mail.delivered` | `MAIL_DELIVERED` | A mail landed in one recipient's inbox |
 | `mail.endorsed` | `MAIL_ENDORSED` | A delivered mail endorses another mail (reputation signal, see docs/design/mail.md) |
 | `agent.join` | `AGENT_JOIN` |  |
@@ -435,8 +440,8 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 | event_type | 产生者 | payload 主要字段 |
 |---|---|---|
-| `mail.new` | `HumanAdapter.speak` / `SendEmailTool` | Mail 对象（发信、投递前） |
-| `mail.delivered` | `MailDelivery`（source `mail_delivery`，每收件人一条） | `mail`（Mail）、`recipient`（成员 id） |
+| `mail.new` | `PostOffice`（source 为发件人成员 id 或外部地址） | Mail 对象（本地事务已提交，仅通知，不驱动投递） |
+| `mail.delivered` | `PostOffice`（source `post_office`，本地入箱及网关信箱成功尝试后通知；不表示已读或外部平台收到） | `mail`（Mail）、`recipient`（成员 id） |
 | `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
 | `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
@@ -499,13 +504,14 @@ curl -s -X POST $BASE/sessions -H 'Content-Type: application/json' -d '{
 curl -N "$BASE/events?session_id=script-0001"
 # 收到 200 响应头即已接线；随后是 ": ping" 心跳与 data: {...} 事件帧
 
-# 3. 发信（202 即受理，投递异步）
+# 3. 投信（202 表示本地已入箱；网关仍是尽力尝试）
 curl -s -X POST $BASE/messages -H 'Content-Type: application/json' -d '{
   "username": "alice",
   "to": ["dev-001"],
+  "request_id": "alice-example-001",
   "content": "你好"
 }'
-# => 202 {"mail_id": "..."}
+# => 202 {"mail_id": "...", "request_id": "alice-example-001", "local_recipients": ["dev-001"], "gateways": [], "message": "..."}
 
 # 4. 回信会以 mail.delivered 事件帧出现在 SSE 流上；
 #    也可随时拉历史：

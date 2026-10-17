@@ -8,21 +8,26 @@ One process = python-telegram-bot (polling) + the official SDK TlonClient
 - a Telegram reply to a pushed message -> mail with in_reply_to/thread_id
   back to the original sender; a lost mapping (restart / eviction)
   degrades to a plain mail to the last correspondent, never an error;
-- ``/send <名字> <内容>`` sends a new mail, ``/inbox`` lists unread mail,
+- ``/send <名字> <内容>`` sends a new mail, ``/retry <request_id>`` retries
+  an uncertain envelope owned by the same user/chat, ``/inbox`` lists unread mail,
   and an unread summary is pushed at startup (offline backfill).
 
 Requires the ``telegram`` optional extra (``uv sync --extra telegram``).
 """
 
 import asyncio
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 import structlog
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from tlon_client.sdk.adapter import TelegramAdapter
+from tlon_client.sdk.base_client import MailSendError
 from tlon_client.sdk.client import TlonClient
 
 from .reply_map import ReplyMap, is_allowed, parse_send_command
@@ -34,6 +39,7 @@ MAX_MESSAGE_LEN = 4000
 
 # How many recent mails /inbox and the startup backfill look at.
 INBOX_LIMIT = 20
+PENDING_MAIL_LIMIT = 128
 
 # Outbound seam: (chat_id, text) -> telegram message_id of the sent message.
 DeliverFunc = Callable[[int, str], Awaitable[int]]
@@ -85,6 +91,16 @@ def format_unread_list(unread: list[dict[str, Any]], header: str) -> str:
     return text
 
 
+@dataclass(frozen=True)
+class PendingMail:
+    """Exact envelope retained only for uncertain submissions in this process."""
+
+    content: str
+    to: tuple[str, ...]
+    reply_to: str | None
+    thread_id: str | None
+
+
 class TelegramBot:
     """The Telegram bot: PTB polling + TlonClient in one event loop.
 
@@ -113,6 +129,7 @@ class TelegramBot:
         self._deliver = deliver
         self._reply_map = ReplyMap()
         self._client: TlonClient | None = None
+        self._pending_mail: OrderedDict[tuple[int, int, str], PendingMail] = OrderedDict()
 
     # ==================== Lifecycle ====================
 
@@ -125,6 +142,7 @@ class TelegramBot:
         """
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("send", self._on_send_command))
+        app.add_handler(CommandHandler("retry", self._on_retry_command))
         app.add_handler(CommandHandler("inbox", self._on_inbox_command))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
         if self._deliver is None:
@@ -234,25 +252,56 @@ class TelegramBot:
         to: list[str],
         reply_to: str | None = None,
         thread_id: str | None = None,
-    ) -> bool:
-        """Send a mail through the SDK client (POST /messages).
+        *,
+        owner: tuple[int, int],
+    ) -> str:
+        """Submit with an explicit key and retain an uncertain envelope for /retry."""
+        envelope = PendingMail(content, tuple(to), reply_to, thread_id)
+        return await self._submit_mail(envelope, uuid4().hex, owner)
 
-        Args:
-            content: Mail content
-            to: Recipients (names, ids or full addresses)
-            reply_to: Optional in_reply_to mail id
-            thread_id: Optional thread id inherited from the upstream mail
-
-        Returns:
-            True if accepted by the server
-        """
+    async def _submit_mail(
+        self, envelope: PendingMail, request_id: str, owner: tuple[int, int]
+    ) -> str:
         if self._client is None:
             raise RuntimeError("send_mail called before run()")
-        return await self._client.send_message(
-            content, to=to, reply_to=reply_to, thread_id=thread_id
-        )
+        key = (*owner, request_id)
+        try:
+            receipt = await self._client.send_message(
+                envelope.content,
+                to=list(envelope.to),
+                reply_to=envelope.reply_to,
+                thread_id=envelope.thread_id,
+                request_id=request_id,
+            )
+        except MailSendError as exc:
+            if exc.reason == "submission_unknown":
+                self._pending_mail[key] = envelope
+                self._pending_mail.move_to_end(key)
+                while len(self._pending_mail) > PENDING_MAIL_LIMIT:
+                    self._pending_mail.popitem(last=False)
+                return (
+                    f"投信结果未知（request_id: {request_id}）。"
+                    f"请在本聊天使用 /retry {request_id} 原样重试；不要重新 /send。"
+                    "原信封仅保留在当前进程，重启或缓存淘汰后不可重试。"
+                )
+            self._pending_mail.pop(key, None)
+            return f"{exc}（request_id: {request_id}）"
+        self._pending_mail.pop(key, None)
+        return str(receipt["message"])
 
-    async def process_reply(self, text: str, reply_to_message_id: int | None) -> str:
+    async def retry_mail(self, request_id: str, *, owner: tuple[int, int]) -> str:
+        """Retry only this user's exact original envelope, never reconstruct one."""
+        envelope = self._pending_mail.get((*owner, request_id))
+        if envelope is None:
+            return (
+                "找不到本用户在此聊天的待确认投信：可能已完成、进程已重启或缓存已淘汰。"
+                "未重新发送，请先查询邮箱确认原结果。"
+            )
+        return await self._submit_mail(envelope, request_id, owner)
+
+    async def process_reply(
+        self, text: str, reply_to_message_id: int | None, *, owner: tuple[int, int]
+    ) -> str:
         """Route an inbound Telegram text and produce the ack message.
 
         A reply to a pushed message goes back to the original sender with
@@ -271,21 +320,20 @@ class TelegramBot:
             self._reply_map.lookup(reply_to_message_id) if reply_to_message_id is not None else None
         )
         if target is not None:
-            ok = await self.send_mail(
+            receipt = await self.send_mail(
                 text,
                 to=[target.from_address],
                 reply_to=target.mail_id,
                 thread_id=target.thread_id,
+                owner=owner,
             )
-            return "已回复 ✅" if ok else "发送失败：收件人无法解析"
+            return receipt
 
         if reply_to_message_id is not None:
             last = self._reply_map.last_from_address
             if last is not None:
-                ok = await self.send_mail(text, to=[last])
-                if ok:
-                    return "原信映射已丢失，已作为新邮件发给最近来信者 ✅"
-                return "发送失败：收件人无法解析"
+                receipt = await self.send_mail(text, to=[last], owner=owner)
+                return f"原信映射已丢失，作为新邮件提交：{receipt}"
 
         return "请对某条来信点「回复」回信，或用 /send <名字> <内容> 发新邮件"
 
@@ -307,8 +355,23 @@ class TelegramBot:
             await message.reply_text("用法：/send <名字> <内容>")
             return
         name, content = parsed
-        ok = await self.send_mail(content, to=[name])
-        await message.reply_text("已发送 ✅" if ok else "发送失败：收件人无法解析")
+        user_id = self._user_id(update)
+        assert user_id is not None
+        receipt = await self.send_mail(content, to=[name], owner=(user_id, message.chat_id))
+        await message.reply_text(receipt)
+
+    async def _on_retry_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/retry <request_id> — retain the original identity, content and headers."""
+        message = update.effective_message
+        user_id = self._user_id(update)
+        if message is None or user_id is None or not is_allowed(user_id, self._allowed_users):
+            return
+        parts = (message.text or "").split()
+        if len(parts) != 2:
+            await message.reply_text("用法：/retry <request_id>（仅重试本聊天中结果未知的投信）")
+            return
+        ack = await self.retry_mail(parts[1], owner=(user_id, message.chat_id))
+        await message.reply_text(ack)
 
     async def _on_inbox_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """/inbox — list unread mail (D2)."""
@@ -330,5 +393,7 @@ class TelegramBot:
             return
         reply = message.reply_to_message
         reply_to_id = reply.message_id if reply else None
-        ack = await self.process_reply(message.text, reply_to_id)
+        user_id = self._user_id(update)
+        assert user_id is not None
+        ack = await self.process_reply(message.text, reply_to_id, owner=(user_id, message.chat_id))
         await message.reply_text(ack)

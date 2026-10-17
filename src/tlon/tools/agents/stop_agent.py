@@ -1,4 +1,4 @@
-"""Stop a member (drain semantics — stopping means sleeping, never deleting)."""
+"""Retire a member after draining, preserving history and refusing future mail."""
 
 from typing import Any
 
@@ -9,9 +9,9 @@ from tlon.tools.base import Tool, ToolResult
 class StopAgentTool(Tool):
     """Tool to stop a member.
 
-    Unified member model (ADR 0006): stopping a member puts it to sleep
-    (scale-to-zero) — its home directory (persona, memory, mailbox) is
-    archived forever, never deleted. Drain semantics: a member with live
+    ADR 0030: explicit stop permanently retires the member, preserving
+    persona, memory and mail history. Future mail and wake are refused;
+    idle scale-to-zero remains reversible sleep. Drain semantics: a member with live
     (ACTIVE/WAITING) sessions is never stopped — with ``when_idle=true``
     the stop is not rejected but registered as pending and fires the
     moment the sessions drain.
@@ -21,10 +21,10 @@ class StopAgentTool(Tool):
         super().__init__(
             name="stopAgent",
             description=(
-                "停止一个 Agent（睡眠，不删除任何数据）：立即关闭并使其进入睡眠，"
+                "退休一个 Agent（保留历史数据）：关闭后拒收新信且不再唤醒，"
                 "有未完成会话时会被拒绝（先等它完工），或传 when_idle=true 登记"
                 "「空闲后停止」——会话全部完成后自动执行，无需反复重试。"
-                "数据（人格、记忆、邮箱）永久保留，之后可被唤醒。"
+                "数据（人格、记忆、邮箱）永久保留。空闲自动休眠不属于退休。"
             ),
             parameters={
                 "type": "object",
@@ -74,5 +74,5 @@ class StopAgentTool(Tool):
         return ToolResult(
             success=True,
             data={"agent_id": agent_id, "stopped": True},
-            message=f"成员 {agent_id} 已停止（睡眠，数据保留）",
+            message=f"成员 {agent_id} 已退休（历史保留，拒收新信）",
         )

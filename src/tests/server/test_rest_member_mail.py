@@ -21,6 +21,7 @@ from tlon.base.config import AgentConfig
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.store import MailStore
 from tlon_server.api.rest import RESTAPIHandler
 
 
@@ -36,7 +37,9 @@ class StubAgentRegistry:
     """Existence lookup for a fixed set of agent ids."""
 
     def __init__(self, agent_ids: list[str]):
-        self._configs = {agent_id: AgentConfig(id=agent_id, name=agent_id) for agent_id in agent_ids}
+        self._configs = {
+            agent_id: AgentConfig(id=agent_id, name=agent_id) for agent_id in agent_ids
+        }
 
     def get_config(self, agent_id: str) -> AgentConfig | None:
         return self._configs.get(agent_id)
@@ -61,7 +64,7 @@ def handler(paths: TlonPaths) -> RESTAPIHandler:
 
 async def _seed_mailbox(paths: TlonPaths, member_id: str, count: int = 3) -> list[Mail]:
     """Write a few mails into the member's inbox and return them."""
-    mailbox = Mailbox(paths.member_mail_dir(member_id))
+    mailbox = Mailbox(paths.mail_database_file(), member_id)
     mails = [
         Mail.create(
             from_address="postmaster@tlon.internal",
@@ -70,6 +73,7 @@ async def _seed_mailbox(paths: TlonPaths, member_id: str, count: int = 3) -> lis
         )
         for i in range(count)
     ]
+    MailStore(paths.mail_database_file()).register_member(mailbox.member_id)
     for mail in mails:
         await mailbox.append_inbox(mail)
     return mails
@@ -101,7 +105,7 @@ class TestHandleMemberMail:
     async def test_no_read_field_synthesized(self, paths: TlonPaths, handler: RESTAPIHandler):
         """Observer view must not expose the member's read cursor."""
         seeded = await _seed_mailbox(paths, "gu-yanxi", count=2)
-        mailbox = Mailbox(paths.member_mail_dir("gu-yanxi"))
+        mailbox = Mailbox(paths.mail_database_file(), "gu-yanxi")
         await mailbox.mark_read(seeded[0].id)
 
         response = await handler.handle_member_mail(StubRequest("gu-yanxi"))
@@ -116,9 +120,7 @@ class TestHandleMemberMail:
         body = json.loads(response.text)
         assert body["error"]
 
-    async def test_unknown_human_returns_404(
-        self, paths: TlonPaths, handler: RESTAPIHandler
-    ):
+    async def test_unknown_human_returns_404(self, paths: TlonPaths, handler: RESTAPIHandler):
         """A human without a persistent mailbox is not a known member —
         and the lookup must not materialize one."""
         response = await handler.handle_member_mail(StubRequest("human:nobody"))

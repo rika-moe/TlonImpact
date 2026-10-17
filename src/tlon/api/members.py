@@ -55,7 +55,7 @@ class MembersFacade:
 
     Example:
         >>> members = MembersFacade(agent_registry=registry, tlon_paths=paths)
-        >>> members.get_all_agent_status()
+        >>> await members.get_all_agent_status()
         >>> await members.adopt("dev-1")
     """
 
@@ -71,9 +71,9 @@ class MembersFacade:
 
     # ---------- 状态查询 ----------
 
-    def get_all_agent_status(self) -> list[dict[str, Any]]:
+    async def get_all_agent_status(self) -> list[dict[str, Any]]:
         """Status snapshot of every registered agent."""
-        return self._registry.get_all_agent_status()
+        return await self._registry.get_all_agent_status()
 
     def get_config(self, agent_id: str) -> AgentConfig | None:
         """The member's config, or None when unknown."""

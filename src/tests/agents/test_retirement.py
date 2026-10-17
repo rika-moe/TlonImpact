@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from tests.mail_helpers import make_office
 from tlon.agents.retirement import RetirementCeremony
 from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
@@ -23,10 +24,9 @@ from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.messaging.human_adapter import AdapterManager
+from tlon.organization.mail.store import MailStore
 from tlon.tools.tasks.manager import TaskManager
 
 _COGNITIVE_SPEC = """\
@@ -144,7 +144,11 @@ def _make_ceremony(bus: EventBus, p: TlonPaths, llm: Any) -> tuple[RetirementCer
     """A ceremony on the bus plus a capture list for AGENT_RETIRED."""
     retired: list[Event] = []
     bus.subscribe(EventType.AGENT_RETIRED, lambda event: retired.append(event))
-    ceremony = RetirementCeremony(event_bus=bus, tlon_paths=p, llm_client_factory=lambda _id: llm)
+    office = make_office(bus, p.tlon_home(), ["retiree", "spawner-1", "relay-1", "fresh"])
+    office.store.register_member("human:guest")
+    ceremony = RetirementCeremony(
+        event_bus=bus, tlon_paths=p, llm_client_factory=lambda _id: llm, post_office=office
+    )
     return ceremony, retired
 
 
@@ -182,7 +186,7 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
     await _remember(p, "retiree", "部署前先跑质量门")
     tasks = TaskManager("retiree", p)
     tasks.create_task("写完退休文档")
-    box = Mailbox(p.member_mail_dir("retiree"))
+    box = Mailbox(p.mail_database_file(), "retiree")
     await box.append_inbox(
         _mail(
             "m1",
@@ -196,26 +200,15 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
 
     bus = EventBus()
     await bus.initialize()
-    provider = _StaticAgentInfo(
-        {
-            "retiree": AgentConfig(id="retiree", name="老张"),
-            "spawner-1": AgentConfig(id="spawner-1", name="继任者"),
-        }
-    )
-    adapter_manager = AdapterManager(event_bus=bus, agent_info_provider=provider, tlon_paths=p)
-    delivery = MailDelivery(bus, adapter_manager, tlon_paths=p)
-    await delivery.initialize()
     llm = _FakeLLM("# 告别信\n各位再见。")
     ceremony, retired = _make_ceremony(bus, p, llm)
     await ceremony.initialize()
     try:
         await bus.publish(_stopped_event("retiree"))
 
-        spawner_inbox = p.member_mail_dir("spawner-1") / "inbox.jsonl"
-        assert await _wait_for(spawner_inbox.exists)
         assert await _wait_for(lambda: len(retired) == 1)
 
-        letter = (await Mailbox(p.member_mail_dir("spawner-1")).inbox())[0]
+        letter = (await Mailbox(p.mail_database_file(), "spawner-1").inbox())[0]
         assert letter.from_address == "retiree@tlon.internal"
         assert letter.content == "# 告别信\n各位再见。"
         assert letter.subject == "告别与交接：老张"
@@ -234,7 +227,6 @@ async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
         assert llm.calls[0]["timeout"] == 60.0
     finally:
         await ceremony.shutdown()
-        await delivery.shutdown()
         await bus.shutdown()
 
 
@@ -244,27 +236,20 @@ async def test_farewell_falls_back_to_guest_human(tmp_path: Path) -> None:
     _write_behavior(p, "retiree", _COGNITIVE_SPEC)
     _write_config(p, "retiree", name="老王")
     await _remember(p, "retiree", "一条事实")
-    p.member_mail_dir("human:guest").mkdir(parents=True, exist_ok=True)  # known human
+    MailStore(p.mail_database_file()).register_member("human:guest")
 
     bus = EventBus()
     await bus.initialize()
-    provider = _StaticAgentInfo({"retiree": AgentConfig(id="retiree", name="老王")})
-    adapter_manager = AdapterManager(event_bus=bus, agent_info_provider=provider, tlon_paths=p)
-    delivery = MailDelivery(bus, adapter_manager, tlon_paths=p)
-    await delivery.initialize()
     ceremony, retired = _make_ceremony(bus, p, _FakeLLM("告别。"))
     await ceremony.initialize()
     try:
         await bus.publish(_stopped_event("retiree"))
 
-        guest_inbox = p.member_mail_dir("human:guest") / "inbox.jsonl"
-        assert await _wait_for(guest_inbox.exists)
         assert await _wait_for(lambda: len(retired) == 1)
         assert retired[0].payload["farewell_sent"] is True
         assert retired[0].payload["farewell_to"] == address_for_member("human:guest")
     finally:
         await ceremony.shutdown()
-        await delivery.shutdown()
         await bus.shutdown()
 
 
@@ -289,7 +274,7 @@ async def test_open_tasks_inventory(tmp_path: Path) -> None:
 
 async def test_open_threads_unreplied_counted(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
-    box = Mailbox(p.member_mail_dir("retiree"))
+    box = Mailbox(p.mail_database_file(), "retiree")
     await box.append_inbox(
         _mail(
             "m1",
@@ -312,7 +297,7 @@ async def test_open_threads_answered_excluded(tmp_path: Path) -> None:
     """A thread with a later own reply in sent is not awaiting me."""
     p = TlonPaths(home=tmp_path)
     own = address_for_member("retiree")
-    box = Mailbox(p.member_mail_dir("retiree"))
+    box = Mailbox(p.mail_database_file(), "retiree")
     await box.append_inbox(
         _mail(
             "m1", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T10:00:00", subject="已回复的事"
@@ -329,7 +314,7 @@ async def test_open_threads_newer_incoming_reopens(tmp_path: Path) -> None:
     """My reply is not the last word when a newer incoming mail follows."""
     p = TlonPaths(home=tmp_path)
     own = address_for_member("retiree")
-    box = Mailbox(p.member_mail_dir("retiree"))
+    box = Mailbox(p.mail_database_file(), "retiree")
     await box.append_inbox(_mail("m1", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T10:00:00"))
     await box.append_sent(_mail("m2", own, "gu-yanxi@tlon.internal", "t1", "2026-09-01T11:00:00"))
     await box.append_inbox(

@@ -13,6 +13,7 @@ class SendMailFields:
     """Validated send-mail fields (R2 protocol, docs/design/mail.md)."""
 
     content: str
+    request_id: str
     to: list[str] | None
     cc: list[str] | None
     subject: str | None
@@ -45,10 +46,10 @@ def parse_send_mail_fields(msg: dict[str, Any]) -> SendMailFields | SendMailErro
         return SendMailError("empty_content", "Message content is empty")
 
     to = msg.get("to")
-    if to is not None and not isinstance(to, list):
+    if to is not None and (not isinstance(to, list) or any(not isinstance(v, str) for v in to)):
         return SendMailError("invalid_to", "Field 'to' must be a list")
     cc = msg.get("cc")
-    if cc is not None and not isinstance(cc, list):
+    if cc is not None and (not isinstance(cc, list) or any(not isinstance(v, str) for v in cc)):
         return SendMailError("invalid_cc", "Field 'cc' must be a list")
     in_reply_to = msg.get("in_reply_to")
     if in_reply_to is not None and not isinstance(in_reply_to, str):
@@ -57,11 +58,20 @@ def parse_send_mail_fields(msg: dict[str, Any]) -> SendMailFields | SendMailErro
     if thread_id is not None and not isinstance(thread_id, str):
         return SendMailError("invalid_thread_id", "Field 'thread_id' must be a string")
 
+    subject = msg.get("subject")
+    if subject is not None and not isinstance(subject, str):
+        return SendMailError("invalid_subject", "Field 'subject' must be a string")
+
+    request_id = msg.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        return SendMailError("invalid_request_id", "Field 'request_id' must be a nonempty string")
+
     return SendMailFields(
         content=content.strip(),
+        request_id=request_id,
         to=to,
         cc=cc,
-        subject=msg.get("subject"),
+        subject=subject,
         in_reply_to=in_reply_to,
         thread_id=thread_id,
     )

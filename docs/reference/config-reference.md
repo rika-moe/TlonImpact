@@ -196,6 +196,7 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 ├── cron.yaml                         # 声明式周期任务邮件（可选；启动时读一次，改动需重启）
 ├── policy.tlon                       # 社会政策文件（可选；ADR 0022，tilt/solvent?/full-member? hook；缺失即内嵌默认政策）
 ├── shared/
+│   ├── mail.sqlite3                # 邮件、邮箱归属、已读状态、幂等与退休记录
 │   ├── traces/
 │   │   └── trace-{uuid}.jsonl        # 会话追踪
 │   └── logs/
@@ -223,19 +224,13 @@ LLM 的 API key 不走 `Settings`（ADR 0016——进程级 `LLM_*` 变量已全
 │   ├── sessions/                     # session 事件日志（ADR 0007/0009：交互唯一真相）
 │   │   └── {session_id}.jsonl
 │   ├── tasks.jsonl                   # TaskManager 持久化
-│   ├── workspace/                    # 沙箱工作目录
-│   └── mail/
-│       ├── inbox.jsonl
-│       ├── sent.jsonl
-│       └── inbox.cursor
-└── human-{username}/                 # 人类成员（human:{username} 映射到 human-{username}）
-    └── mail/                         # 离线人类收信等待投递
+│   └── workspace/                  # 成员工作目录
 ```
 
 要点：
 
-- 人类 id `human:{username}` 的邮箱映射到 `human-{username}/mail/`——冒号只在 `member_mail_dir` 里换连字符。
-- 人类一旦有邮箱目录（首次 attach 会话、首次投递或首次读 `/inbox`）即"known"；离线人类收到的信在 `inbox.jsonl` 等待。
+- 人类 id `human:{username}` 在共享 SQLite 中拥有邮箱归属，首次 attach 或投信时注册。
+- SQLite 已注册人类即 known；离线不影响本地入箱。旧 JSONL 邮箱仅保留为离线档案，不读取、不导入、不双写、不删除。
 - `prototypes/` 与 `prototypes-staging/` 不存在即空（`exists()` 检查无副作用——整个 `TlonPaths` 都是纯解析）；`prototypes/` 是受信任源，`prototypes-staging/` 是信任闸（人工批准后才能被 spawn）。`capabilities/` 与 `capabilities-staging/` 同构（[design/capabilities.md](../design/capabilities.md)）：受信是默认（人类手写进受信库即可信），staging 写入显式 `:trusted false`，`approve_capability` 整目录移动并翻转信任位。
 - `cron.yaml` 是声明式周期任务（`{name, to, subject, content}` + `interval_seconds` 或 5 字段 `cron` 表达式），由 [agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler` 在启动时读一次——改动需重启生效；不存在即无声明条目。格式与示例见 [design/mail.md](../design/mail.md)「周期任务：tick 即邮件」。
 - `policy.tlon` 是社会政策文件（ADR 0022）：`:policy` form 序列定义的 `tilt` / `solvent?` / `full-member?` hook 在 spawn / 提案 / 装配求值点被宿主调用，宿主每次求值重新读文件——改动即时生效；**人类专写**（不进任何成员的 `allowed_paths`，不走 staging 通道）；缺失或失败即回退 [agents/policy.py](../../src/tlon/agents/policy.py) 的内嵌默认政策（精确复刻迁移前的 Python 公式）。格式与词汇见 [dsl-reference.md](dsl-reference.md) §10。

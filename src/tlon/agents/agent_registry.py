@@ -51,6 +51,7 @@ Architecture:
 
 import asyncio
 import time
+from collections.abc import Coroutine
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -81,6 +82,8 @@ from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.store import MailStore
 from tlon.tools.agents.ports import StopRejectedError
 from tlosure.builtins import Builtin
 
@@ -194,6 +197,7 @@ class AgentRegistry(Component):
         session_spawn_quota: int = 2,
         metrics_service: MetricsService | None = None,
         trace_store: TraceStore | None = None,
+        post_office: PostOffice | None = None,
     ):
         """Initialize the agent registry.
 
@@ -220,6 +224,11 @@ class AgentRegistry(Component):
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self._paths = tlon_paths
+        self._post_office = post_office
+        self._mail_rescue_task: asyncio.Task[None] | None = None
+        self._mail_rescue_not_before: dict[str, float] = {}
+        self._lifecycle_tasks: set[asyncio.Task[None]] = set()
+        self._shutting_down = False
         self._metrics_service = metrics_service
         self._trace_store = trace_store
 
@@ -253,6 +262,7 @@ class AgentRegistry(Component):
         # from postmaster (built-in digest + declared cron.yaml entries).
         # Same ownership.
         self._cron = CronScheduler(
+            post_office=post_office,
             event_bus=event_bus,
             agent_info_provider=agent_info_provider,
             tlon_paths=tlon_paths,
@@ -421,6 +431,7 @@ class AgentRegistry(Component):
         fulfillment path — the server continues operating with the agents
         that did start.
         """
+        self._shutting_down = False
         logger.info("agent_registry_initializing", agent_ids=self._registered_ids)
 
         # Lifecycle request subscriptions (idempotent across re-initialize)
@@ -439,6 +450,9 @@ class AgentRegistry(Component):
         if self._idle_monitor_task is None:
             self._idle_monitor_task = asyncio.create_task(self._reaper.run())
 
+        if self._mail_rescue_task is None:
+            self._mail_rescue_task = asyncio.create_task(self._rescue_mail_loop())
+
         # Public-health monitor (noise subscription + orphan scan task)
         await self._health.initialize()
 
@@ -454,7 +468,14 @@ class AgentRegistry(Component):
 
     async def shutdown(self) -> None:
         """Shutdown all agents and cleanup."""
+        self._shutting_down = True
         logger.info("agent_registry_shutdown_started")
+
+        if self._mail_rescue_task is not None:
+            self._mail_rescue_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._mail_rescue_task
+            self._mail_rescue_task = None
 
         # Stop the idle monitor first so it cannot drain mid-shutdown
         if self._idle_monitor_task:
@@ -462,6 +483,14 @@ class AgentRegistry(Component):
             with suppress(asyncio.CancelledError):
                 await self._idle_monitor_task
             self._idle_monitor_task = None
+
+        tasks = list(self._lifecycle_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._lifecycle_tasks.clear()
+        self._mail_rescue_not_before.clear()
 
         # Stop the public-health monitor (scan task + MAIL_NEW subscription)
         await self._health.shutdown()
@@ -516,6 +545,11 @@ class AgentRegistry(Component):
         Returns:
             The started MemberRuntime instance, or None if not found
         """
+        if await asyncio.to_thread(
+            MailStore(self._paths.mail_database_file()).is_retired, agent_id
+        ):
+            logger.warning("retired_member_start_rejected", agent_id=agent_id)
+            return None
         if agent_id in self._agents:
             # Already active
             return self._agents[agent_id]
@@ -525,6 +559,7 @@ class AgentRegistry(Component):
             logger.error("unknown_agent", agent_id=agent_id)
             return None
 
+        member: MemberRuntime | None = None
         try:
             logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
 
@@ -536,7 +571,7 @@ class AgentRegistry(Component):
             builtins = self._member_builtins()
             spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
-            mailbox = Mailbox(self._paths.member_mail_dir(config.id))
+            mailbox = Mailbox(self._paths.mail_database_file(), config.id)
             capabilities = await assemble_cognitive(
                 config,
                 registry=self,
@@ -555,6 +590,7 @@ class AgentRegistry(Component):
                 mailbox=mailbox,
                 cognitive=capabilities,
                 registry=self,
+                post_office=self._post_office,
             )
             await member.initialize()
 
@@ -582,11 +618,50 @@ class AgentRegistry(Component):
             )
             return member
 
+        except asyncio.CancelledError:
+            if member is not None:
+                await member.shutdown()
+            raise
         except Exception as e:
             logger.error("agent_start_failed", agent_id=agent_id, error=str(e), exc_info=True)
             return None
 
     # ==================== Lifecycle request execution ====================
+
+    async def _rescue_mail_loop(self) -> None:
+        """Durable unread mail wakes sleepers even when a notification was lost."""
+        while True:
+            try:
+                await self._rescue_sleeping_mail()
+            except Exception:
+                logger.exception("mail_rescue_failed")
+            await asyncio.sleep(30)
+
+    async def _rescue_sleeping_mail(self) -> None:
+        store = MailStore(self._paths.mail_database_file())
+        for member_id in await asyncio.to_thread(store.unread_member_ids):
+            if time.monotonic() < self._mail_rescue_not_before.get(member_id, 0):
+                continue
+            await self._on_mail_delivered(
+                Event(
+                    type=EventType.MAIL_DELIVERED,
+                    payload={"recipient": member_id},
+                    source="mail_rescue",
+                )
+            )
+
+    def defer_mail_rescue(self, agent_id: str) -> None:
+        """Respect the member's own rescan cadence after idle sleep.
+
+        This throttles recovery only. A genuinely new delivery notification
+        still wakes the member immediately, and failed wake attempts remain
+        eligible for retry on the next recovery poll.
+        """
+        config = self._agent_info.get_config(agent_id)
+        if config is not None:
+            self._mail_rescue_not_before[agent_id] = (
+                time.monotonic() + config.mail_rescan_interval_seconds
+            )
 
     async def _on_mail_delivered(self, event: Event) -> None:
         """Wake-on-mail (phase E): issue a wake for a sleeping subscriber.
@@ -603,6 +678,10 @@ class AgentRegistry(Component):
         """
         recipient = event.payload.get("recipient")
         if not isinstance(recipient, str):
+            return
+        if await asyncio.to_thread(
+            MailStore(self._paths.mail_database_file()).is_retired, recipient
+        ):
             return
         if self._agents.get(recipient) is not None or recipient in self._waking:
             return  # already running or waking — no request needed
@@ -622,6 +701,16 @@ class AgentRegistry(Component):
             )
         )
 
+    def _launch_lifecycle(self, coroutine: Coroutine[object, object, None]) -> None:
+        task = asyncio.create_task(coroutine)
+        self._lifecycle_tasks.add(task)
+        task.add_done_callback(self._lifecycle_done)
+
+    def _lifecycle_done(self, task: asyncio.Task[None]) -> None:
+        self._lifecycle_tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("lifecycle_task_failed", error=str(error))
+
     async def _on_start_request(self, event: Event) -> None:
         """Execute an AGENT_START_REQUEST decision (mechanism only).
 
@@ -631,6 +720,8 @@ class AgentRegistry(Component):
         The dedup state is updated synchronously here so back-to-back
         requests for the same persona collapse to one assembly.
         """
+        if self._shutting_down:
+            return
         request = event.payload
         if not isinstance(request, StartRequest):
             return
@@ -641,7 +732,7 @@ class AgentRegistry(Component):
         if not self._agent_info.get_config(agent_id):
             return
         self._waking.add(agent_id)
-        asyncio.create_task(self._fulfill_start_request(request, event))
+        self._launch_lifecycle(self._fulfill_start_request(request, event))
 
     async def _fulfill_start_request(self, request: StartRequest, event: Event) -> None:
         """Assemble one agent under its wake lock, per the request's reason.
@@ -779,7 +870,8 @@ class AgentRegistry(Component):
         request = event.payload
         if not isinstance(request, StopRequest):
             return
-        asyncio.create_task(self._reaper.drain(request.agent_id, request.reason))
+        if not self._shutting_down:
+            self._launch_lifecycle(self._reaper.drain(request.agent_id, request.reason))
 
     # ==================== Hot adoption + spawn (stage 6b) ====================
 
@@ -811,10 +903,10 @@ class AgentRegistry(Component):
         return await self._spawn.spawn_member(prototype, name, spawner_id, session_id, params)
 
     async def stop_member(self, agent_id: str, stopped_by: str, when_idle: bool = False) -> bool:
-        """Stop a member: drain-check, then put it to sleep.
+        """Retire a member after draining; future mail and starts are rejected.
 
-        Unified member model (ADR 0006): stopping never deletes — a member
-        sleeps (scale-to-zero) and its home directory is archived forever.
+        ADR 0030: explicit stop retires the mailbox permanently without
+        deleting history. Idle drain remains reversible sleep.
         Drain semantics mirror the idle reaper: a member with any live
         (ACTIVE/WAITING) session is never stopped. Whether a stop request
         is accepted is policy (decision 7); the registry executes requests
@@ -835,7 +927,7 @@ class AgentRegistry(Component):
                 the member has live sessions
 
         Returns:
-            True when the member was stopped (asleep); False when a
+            True when the member was retired; False when a
             pending stop was registered instead (``when_idle=True`` only).
 
         Raises:
@@ -846,50 +938,40 @@ class AgentRegistry(Component):
         if config is None:
             raise StopRejectedError("unknown_agent", f"agent '{agent_id}' not found")
 
-        agent = self._agents.get(agent_id)
-        if agent is not None and agent.active_session_count > 0:
-            if not when_idle:
+        # Retirement is durable before cleanup, and cleanup must remain
+        # retryable even when a previous cancellation already committed it.
+        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
+        async with lock:
+            retired = await asyncio.to_thread(
+                MailStore(self._paths.mail_database_file()).is_retired, agent_id
+            )
+            agent = self._agents.get(agent_id)
+            if not retired and agent is not None and agent.active_session_count > 0:
+                if when_idle:
+                    self._register_pending_stop(agent_id, stopped_by)
+                    return False
                 raise StopRejectedError(
                     "active_sessions",
                     f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
                     "wait for them to finish (drain), or stop with when_idle=true",
                 )
-            self._register_pending_stop(agent_id, stopped_by)
-            return False
-
-        # Serialize with a concurrent wake of the same persona
-        lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
-        async with lock:
-            agent = self._agents.pop(agent_id, None)
-            if agent is not None:
-                # Drain re-check under the lock: a session that started in
-                # the race window keeps the member awake
-                if agent.active_session_count > 0:
-                    self._agents[agent_id] = agent
-                    if when_idle:
-                        self._register_pending_stop(agent_id, stopped_by)
-                        return False
-                    raise StopRejectedError(
-                        "active_sessions",
-                        f"agent '{agent_id}' gained a live session; stop aborted",
-                    )
-                try:
-                    await agent.shutdown()
-                except Exception as e:
-                    # Already out of the run table; a later start request
-                    # assembles a fresh activation.
-                    logger.error("agent_stop_failed", agent_id=agent_id, error=str(e))
-
-            await self.event_bus.publish(
-                Event(
-                    type=EventType.AGENT_STOPPED,
-                    payload={
-                        "agent_id": agent_id,
-                        "stopped_by": stopped_by,
-                    },
-                    source="agent_registry",
+            if not retired:
+                await asyncio.to_thread(
+                    MailStore(self._paths.mail_database_file()).retire, agent_id
                 )
-            )
+            if agent is not None:
+                # Keep the live reference on cancellation or failure. A
+                # retired marker alone must never short-circuit this work.
+                await agent.shutdown()
+                self._agents.pop(agent_id, None)
+            if not retired or agent is not None:
+                await self.event_bus.publish(
+                    Event(
+                        type=EventType.AGENT_STOPPED,
+                        payload={"agent_id": agent_id, "stopped_by": stopped_by},
+                        source="agent_registry",
+                    )
+                )
 
         # The stop fulfills any pending intent for this member (cancel the
         # watcher outside the wake lock; never cancel ourselves — the
@@ -935,8 +1017,8 @@ class AgentRegistry(Component):
                     return  # cancelled — stopped (or removed) by other means
                 agent = self._agents.get(agent_id)
                 if agent is None:
-                    # Already asleep (drained or stopped): intent fulfilled.
-                    self._pending_stops.pop(agent_id, None)
+                    # A drain is sleep, not retirement: finish the explicit intent.
+                    await self.stop_member(agent_id, stopped_by)
                     return
                 if agent.active_session_count > 0:
                     continue
@@ -995,12 +1077,17 @@ class AgentRegistry(Component):
                     )
                 try:
                     await agent.shutdown()
+                except asyncio.CancelledError:
+                    self._agents[agent_id] = agent
+                    raise
                 except Exception as e:
                     logger.error("agent_stop_failed", agent_id=agent_id, error=str(e))
 
+            await asyncio.to_thread(MailStore(self._paths.mail_database_file()).retire, agent_id)
             if agent_id in self._registered_ids:
                 self._registered_ids.remove(agent_id)
             self._profiles.pop(agent_id, None)
+            self._mail_rescue_not_before.pop(agent_id, None)
             self._wake_locks.pop(agent_id, None)
             try:
                 self._agent_info.delete_agent(agent_id)
@@ -1074,7 +1161,7 @@ class AgentRegistry(Component):
         """
         return self._agent_info.get_config(agent_id)
 
-    def get_agent_status(self, agent_id: str) -> dict[str, Any] | None:
+    async def get_agent_status(self, agent_id: str) -> dict[str, Any] | None:
         """Get status of a specific agent.
 
         Args:
@@ -1087,9 +1174,13 @@ class AgentRegistry(Component):
         if not config:
             return None
 
+        retired = await asyncio.to_thread(
+            MailStore(self._paths.mail_database_file()).is_retired, agent_id
+        )
         agent = self._agents.get(agent_id)
-
-        if agent:
+        if retired:
+            state = "retired"
+        elif agent:
             state = agent.get_state()
         elif agent_id in self._waking:
             state = "waking"
@@ -1107,7 +1198,7 @@ class AgentRegistry(Component):
             "spawn_depth": config.spawn_depth,
         }
 
-    def get_all_agent_status(self) -> list[dict[str, Any]]:
+    async def get_all_agent_status(self) -> list[dict[str, Any]]:
         """Get status of all registered agents.
 
         Returns:
@@ -1116,5 +1207,5 @@ class AgentRegistry(Component):
         return [
             status
             for agent_id in self._agent_info.get_all_ids()
-            if (status := self.get_agent_status(agent_id)) is not None
+            if (status := await self.get_agent_status(agent_id)) is not None
         ]

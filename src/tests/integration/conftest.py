@@ -11,12 +11,11 @@ Two server fixtures, two jobs:
   (test_mail_smoke.py).
 
 Helpers cover the common flows: waiting on conditions, asserting mail
-delivery, and reading a member's inbox.jsonl.
+delivery, and reading a member's SQLite inbox.
 """
 
 import asyncio
 import contextlib
-import json
 import os
 import socket
 import tempfile
@@ -30,11 +29,11 @@ import pytest
 
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
+from tlon.organization.mail.store import MailStore
 from tlon_server.serverapp import ServerApp
 
 SERVER_STARTUP_TIMEOUT = 45.0
 SERVER_SHUTDOWN_TIMEOUT = 15.0
-DELIVERY_TIMEOUT = 10.0
 
 
 def _free_port() -> int:
@@ -42,15 +41,6 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-async def _wait_for(predicate: Callable[[], bool], timeout: float) -> None:
-    """Poll until the predicate holds or the timeout expires."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while not predicate():
-        if asyncio.get_running_loop().time() > deadline:
-            raise TimeoutError("condition not met in time")
-        await asyncio.sleep(0.05)
 
 
 async def _wait_ready(
@@ -228,23 +218,20 @@ async def inproc_server() -> AsyncGenerator[tuple[str, Path]]:
         yield server
 
 
-async def _assert_delivered(tlon_home: Path, member_dir: str, token: str) -> None:
-    """Wait for a mail carrying the token to land in the member's inbox."""
-    inbox = tlon_home / member_dir / "mail" / "inbox.jsonl"
-    await _wait_for(lambda: inbox.exists() and token in inbox.read_text(), timeout=DELIVERY_TIMEOUT)
+async def _assert_delivered(tlon_home: Path, member_id: str, token: str) -> None:
+    """Check durable inbox immediately; no event delivery polling is necessary."""
+    assert any(token in mail["content"] for mail in _read_inbox(tlon_home, member_id))
 
 
-def _read_inbox(tlon_home: Path, member_dir: str) -> list[dict[str, Any]]:
-    """Parse a member's inbox.jsonl into mail dicts (empty if absent)."""
-    inbox = tlon_home / member_dir / "mail" / "inbox.jsonl"
-    if not inbox.exists():
-        return []
-    return [json.loads(line) for line in inbox.read_text().splitlines() if line.strip()]
+def _read_inbox(tlon_home: Path, member_id: str) -> list[dict[str, Any]]:
+    """Read the post-office database through a new connection."""
+    store = MailStore(TlonPaths(home=tlon_home).mail_database_file())
+    return [mail.to_dict() for mail in store.mails(member_id)]
 
 
-def _find_inbox_mail(tlon_home: Path, member_dir: str, token: str) -> dict[str, Any]:
+def _find_inbox_mail(tlon_home: Path, member_id: str, token: str) -> dict[str, Any]:
     """Return the inbox mail whose content carries the token."""
-    for mail in _read_inbox(tlon_home, member_dir):
+    for mail in _read_inbox(tlon_home, member_id):
         if token in mail.get("content", ""):
             return mail
-    raise AssertionError(f"no mail with token {token!r} in {member_dir}'s inbox")
+    raise AssertionError(f"no mail with token {token!r} in {member_id}'s inbox")

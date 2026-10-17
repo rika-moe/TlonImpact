@@ -421,10 +421,16 @@ class TestWakeOnMail:
             ),
             tlon_paths=p,
         )
+        from tlon.organization.mail.post_office import PostOffice
+        from tlon.organization.mail.resolver import RecipientResolver
+        from tlon.organization.mail.store import MailStore
+
+        MailStore(p.mail_database_file()).register_member("human:user")
+        registry._post_office = PostOffice(bus, RecipientResolver(registry, p), p)
         await registry.initialize()
 
         # The mail sat in the sleeping member's inbox while she was down.
-        mailbox = Mailbox(p.member_mail_dir("gu-yanxi-9"))
+        mailbox = Mailbox(p.mail_database_file(), "gu-yanxi-9")
         optout = Mail.create(
             from_address="user@tlon.internal",
             content="我要退订",

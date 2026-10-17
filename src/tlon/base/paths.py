@@ -17,6 +17,7 @@ Layout:
     │   │   └── trace-{uuid}.jsonl
     │   ├── logs/
     │   │   └── server-{date}.jsonl
+    │   ├── mail.sqlite3
     │   └── spawn-quota.json
     ├── {agent_id}/
     │   ├── config/
@@ -35,15 +36,9 @@ Layout:
     │   ├── ledger.jsonl
     │   ├── workspace/
     │   │   └── .agents/skills/{skill}/SKILL.md
-    │   └── mail/
-    │       ├── inbox.jsonl
-    │       ├── sent.jsonl
-    │       └── inbox.cursor
+    │   └── mail/ (legacy offline archive; never read by the post office)
     ├── skills/
     │   └── {skill}/SKILL.md
-    ├── human-{username}/
-    │   └── mail/
-    │       └── ...
     └── ...
 
 There is no module-level instance: every consumer holds an explicit
@@ -169,19 +164,9 @@ class TlonPaths:
             return self._home / f"human-{username}" / "mail"
         return self.agent_mail_dir(member_id)
 
-    def known_human_ids(self) -> list[str]:
-        """List human member ids that have a persistent mailbox directory.
-
-        A human becomes "known" once their mailbox exists (created on
-        first session attach, first delivery, or first ``/inbox`` read).
-        Mail to a known-but-offline human waits in their inbox
-        (docs/design/mail.md 人类侧).
-        """
-        ids: list[str] = []
-        for child in sorted(self._home.glob("human-*")):
-            if child.is_dir() and (child / "mail").is_dir():
-                ids.append(f"human:{child.name[len('human-') :]}")
-        return ids
+    def mail_database_file(self) -> Path:
+        """Shared authoritative SQLite post office (ADR 0030)."""
+        return self.shared_dir() / "mail.sqlite3"
 
     # ===== Society-level config =====
 

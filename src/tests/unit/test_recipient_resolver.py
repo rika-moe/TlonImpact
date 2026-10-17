@@ -1,218 +1,45 @@
-"""Tests for the shared RecipientResolver (organization/mail/resolver.py).
+"""Resolution uses member configuration and SQLite human registration."""
 
-Issue : recipient resolution converged to a single authority — the
-adapter side (speak: raw name -> address) and the delivery side
-(address -> member id) delegate to the same RecipientResolver instance,
-so the "known human" rule (online OR persistent mailbox) exists once.
+from pathlib import Path
 
-Covers:
-- AdapterManager and MailDelivery share one resolver instance
-- display-name resolution through the shared resolver
-- speak-side resolvable <=> delivery-side deliverable (round trip),
-  for online humans and known-but-offline humans
-- agents win over humans on a colliding local part
-"""
-
-from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-
-from tlon.base.config import AgentConfig
-from tlon.base.events.event_bus import EventBus
+from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.delivery import MailDelivery
 from tlon.organization.mail.resolver import RecipientResolver
-from tlon.organization.messaging.human_adapter import AdapterManager
+from tlon.organization.mail.store import MailStore
 
 
-class MockAgentInfoProvider:
-    """Mock AgentInfoProvider for testing."""
-
-    def __init__(self, configs: dict[str, AgentConfig]):
-        self._configs = configs
-
+class Provider(AgentInfoProvider):
     def get_config(self, agent_id: str) -> AgentConfig | None:
-        return self._configs.get(agent_id)
+        return AgentConfig(id="alice", name="Alice") if agent_id == "alice" else None
 
     def get_all_ids(self) -> set[str]:
-        return set(self._configs.keys())
+        return {"alice"}
 
 
-@pytest.fixture
-def provider() -> MockAgentInfoProvider:
-    return MockAgentInfoProvider({"xie-yunshu": AgentConfig(id="xie-yunshu", name="谢云舒")})
+def test_registered_humans_and_sleeping_agents_resolve(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    resolver = RecipientResolver(Provider(), paths)
+    store = MailStore(paths.mail_database_file())
+    store.register_member("human:bob")
+    assert resolver.resolve_address("Alice") == "alice@tlon.internal"
+    assert resolver.resolve_member("alice@tlon.internal") == "alice"
+    assert resolver.resolve_address("human:bob") == "bob@tlon.internal"
+    assert resolver.resolve_member("bob@tlon.internal") == "human:bob"
+    assert resolver.resolve_address("ghost") is None
 
 
-@pytest.fixture
-async def manager(provider: MockAgentInfoProvider, tmp_path) -> AsyncGenerator[AdapterManager]:
-    """Provide an initialized AdapterManager (isolated tlon home)."""
-    bus = EventBus()
-    await bus.initialize()
-    mgr = AdapterManager(
-        event_bus=bus,
-        agent_info_provider=provider,
-        tlon_paths=TlonPaths(home=tmp_path),
+def test_legacy_directories_do_not_register_humans(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    paths.member_mail_dir("human:old").mkdir(parents=True)
+    resolver = RecipientResolver(Provider(), paths)
+    assert resolver.resolve_address("old") is None
+
+
+def test_external_addresses_require_gateway_claim(tmp_path: Path) -> None:
+    resolver = RecipientResolver(
+        Provider(),
+        TlonPaths(home=tmp_path),
+        lambda address: "gateway:github" if address == "n@github.com" else None,
     )
-    await mgr.initialize()
-    yield mgr
-    await mgr.shutdown()
-    await bus.shutdown()
-
-
-def _make_delivery(manager: AdapterManager, tmp_path) -> MailDelivery:
-    bus = MagicMock()
-    bus.publish = AsyncMock()
-    bus.subscribe = MagicMock(side_effect=lambda *_args, **_kwargs: "sub-x")
-    return MailDelivery(
-        event_bus=bus,
-        adapter_manager=manager,
-        tlon_paths=TlonPaths(home=tmp_path),
-    )
-
-
-class TestSharedResolver:
-    """Both resolution sides delegate to one RecipientResolver instance."""
-
-    def test_delivery_shares_the_adapter_manager_resolver(
-        self,
-        manager: AdapterManager,
-        tmp_path,
-    ):
-        delivery = _make_delivery(manager, tmp_path)
-        assert isinstance(manager.recipient_resolver, RecipientResolver)
-        assert delivery._resolver is manager.recipient_resolver
-
-    async def test_display_name_resolution_via_shared_resolver(self, manager: AdapterManager):
-        resolver = manager.recipient_resolver
-        assert resolver.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
-        assert resolver.resolve_member("xie-yunshu@tlon.internal") == "xie-yunshu"
-
-    async def test_online_human_round_trip(self, manager: AdapterManager, tmp_path):
-        await manager.attach("alice", "sess-1", lambda event: None)
-        resolver = manager.recipient_resolver
-        address = resolver.resolve_address("alice")
-        assert address == "alice@tlon.internal"
-        assert resolver.resolve_member(address) == "human:alice"
-
-    async def test_offline_human_with_mailbox_round_trip(self, manager: AdapterManager, tmp_path):
-        # Known-but-offline: a persistent mailbox exists, no live adapter
-        manager._paths.member_mail_dir("human:friend").mkdir(parents=True, exist_ok=True)
-        resolver = manager.recipient_resolver
-        address = resolver.resolve_address("friend")
-        assert address == "friend@tlon.internal"
-        assert resolver.resolve_member(address) == "human:friend"
-
-    async def test_unknown_human_unresolvable_on_both_sides(self, manager: AdapterManager):
-        resolver = manager.recipient_resolver
-        assert resolver.resolve_address("ghost") is None
-        assert resolver.resolve_member("ghost@tlon.internal") is None
-
-    async def test_agent_wins_over_colliding_human(self, provider: MockAgentInfoProvider, tmp_path):
-        provider._configs["alice"] = AgentConfig(id="alice", name="撞名")
-        bus = EventBus()
-        await bus.initialize()
-        mgr = AdapterManager(
-            event_bus=bus,
-            agent_info_provider=provider,
-            tlon_paths=TlonPaths(home=tmp_path),
-        )
-        await mgr.attach("alice", "sess-1", lambda event: None)
-        resolver = mgr.recipient_resolver
-        # Speak side: agent id direct hit precedes the human lookup
-        assert resolver.resolve_address("alice") == "alice@tlon.internal"
-        # Delivery side: the agent member id wins the colliding local part
-        assert resolver.resolve_member("alice@tlon.internal") == "alice"
-        await mgr.shutdown()
-        await bus.shutdown()
-
-    async def test_ambiguous_display_name_is_refused(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        """Two agents sharing a display name must not resolve silently to
-        the first one — the addressing surface is the name (ADR 0006), so
-        a collision refuses explicitly (None), pushing the sender to the
-        stable agent id."""
-        provider._configs["dupe-1"] = AgentConfig(id="dupe-1", name="谢云舒")
-        resolver = RecipientResolver(
-            agent_info_provider=provider,
-            is_human_online=lambda _username: False,
-            tlon_paths=TlonPaths(home=tmp_path),
-        )
-
-        assert resolver.resolve_address("谢云舒") is None
-        # The stable id still resolves (the escape hatch)
-        assert resolver.resolve_address("dupe-1") == "dupe-1@tlon.internal"
-        assert resolver.resolve_address("xie-yunshu") == "xie-yunshu@tlon.internal"
-
-    async def test_unique_display_name_still_resolves(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        resolver = RecipientResolver(
-            agent_info_provider=provider,
-            is_human_online=lambda _username: False,
-            tlon_paths=TlonPaths(home=tmp_path),
-        )
-        assert resolver.resolve_address("谢云舒") == "xie-yunshu@tlon.internal"
-
-
-class TestExternalGatewayClaims:
-    """External addresses resolve only via a gateway claim
-    (docs/design/mail.md egress); unclaimed external recipients stay
-    unknown and bounce."""
-
-    EXTERNAL = "notifications@github.com"
-
-    def _resolver(
-        self, provider: MockAgentInfoProvider, tmp_path, with_owner: bool = True
-    ) -> RecipientResolver:
-        owners = {self.EXTERNAL: "gateway:github"}
-        return RecipientResolver(
-            agent_info_provider=provider,
-            is_human_online=lambda _username: False,
-            tlon_paths=TlonPaths(home=tmp_path),
-            external_owner=owners.get if with_owner else None,
-        )
-
-    async def test_claimed_external_address_resolves_to_gateway(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        resolver = self._resolver(provider, tmp_path)
-        assert resolver.resolve_member(self.EXTERNAL) == "gateway:github"
-
-    async def test_unclaimed_external_address_stays_unknown(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        resolver = self._resolver(provider, tmp_path)
-        assert resolver.resolve_member("nobody@example.com") is None
-
-    async def test_no_external_owner_keeps_everything_external_unknown(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        """Default construction (no claim lookup) is the pre- behavior."""
-        resolver = self._resolver(provider, tmp_path, with_owner=False)
-        assert resolver.resolve_member(self.EXTERNAL) is None
-
-    async def test_internal_resolution_unaffected_by_claims(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        resolver = self._resolver(provider, tmp_path)
-        assert resolver.resolve_member("xie-yunshu@tlon.internal") == "xie-yunshu"
-        assert resolver.resolve_member("ghost@tlon.internal") is None
-
-    async def test_claim_via_adapter_manager_shared_resolver(
-        self, provider: MockAgentInfoProvider, tmp_path
-    ):
-        """The delivery path shares the AdapterManager's resolver — wiring
-        the claim lookup into the manager reaches delivery resolution."""
-        bus = EventBus()
-        await bus.initialize()
-        mgr = AdapterManager(
-            event_bus=bus,
-            agent_info_provider=provider,
-            tlon_paths=TlonPaths(home=tmp_path),
-            external_owner={self.EXTERNAL: "gateway:github"}.get,
-        )
-        assert mgr.recipient_resolver.resolve_member(self.EXTERNAL) == "gateway:github"
-        await mgr.shutdown()
-        await bus.shutdown()
+    assert resolver.resolve_member("n@github.com") == "gateway:github"
+    assert resolver.resolve_member("x@elsewhere.com") is None

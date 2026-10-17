@@ -39,6 +39,7 @@ from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.store import StoredPost
 
 _RELAY_SPEC = """\
 {:version 1
@@ -91,13 +92,25 @@ class _FakeEventBus:
         if event.type is EventType.MAIL_NEW and self.mail_dir is not None:
             mail = event.payload
             assert isinstance(mail, Mail)
-            await Mailbox(self.mail_dir).append_inbox(mail)
+            await Mailbox(
+                self.mail_dir.parent.parent / "shared" / "mail.sqlite3", self.mail_dir.parent.name
+            ).append_inbox(mail)
+
+
+class _FakePostOffice:
+    def __init__(self, bus: _FakeEventBus) -> None:
+        self.bus = bus
+
+    async def post(self, mail: Mail, request_id: str | None = None) -> StoredPost:
+        await self.bus.publish(Event(type=EventType.MAIL_NEW, payload=mail, source="arena"))
+        return StoredPost(mail, request_id or mail.id, [], [])
 
 
 class _FakeRuntime:
     def __init__(self) -> None:
         self.event_bus = _FakeEventBus()
         self.members = _FakeMembers()
+        self.post_office = _FakePostOffice(self.event_bus)
         self.shutdown_called = False
 
     async def shutdown(self) -> None:
@@ -116,7 +129,7 @@ class _FakeJournal:
     ) -> None:
         self._agent_id = agent_id
         self._dir = tlon_paths.agent_sessions_dir(agent_id)
-        self._mailbox = Mailbox(tlon_paths.agent_mail_dir(agent_id))
+        self._mailbox = Mailbox(tlon_paths.mail_database_file(), agent_id)
         self._batch = batch
         self._remaining = max_sessions
         self._count = 0

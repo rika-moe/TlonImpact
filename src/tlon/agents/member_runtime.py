@@ -72,10 +72,12 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
-from tlon.base.tracing.trace_context import get_current_trace
+from tlon.base.tracing.trace_context import continue_trace, get_current_trace
 from tlon.memory.manager import MemoryManager
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice, PostRejected
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
@@ -165,6 +167,7 @@ class MemberRuntime(Member):
         spec: MemberSpec,
         builtins: dict[str, Builtin],
         mailbox: Mailbox | None = None,
+        post_office: PostOffice | None = None,
         cognitive: CognitiveCapabilities | None = None,
         registry: "AgentRegistry | None" = None,
     ):
@@ -195,6 +198,7 @@ class MemberRuntime(Member):
         self._spec = spec
         self._builtins = builtins
         self._mailbox = mailbox
+        self._post_office = post_office
         self._cognitive = cognitive
         self._registry = (
             registry if registry is not None else (cognitive.registry if cognitive else None)
@@ -824,7 +828,7 @@ class MemberRuntime(Member):
         thread_id: str | None = None,
         carrier: Carrier = (None, None, None),
     ) -> None:
-        """Build a mail from this member and publish MAIL_NEW on the bus.
+        """Build a mail and submit through the DSL best-effort effect boundary.
 
         A probationary member's mentor (trust ladder,
         docs/design/unified-member-model.md) is cc'd unless already a
@@ -860,18 +864,36 @@ class MemberRuntime(Member):
         await self._publish_mail(mail, carrier)
 
     async def _publish_mail(self, mail: Mail, carrier: Carrier) -> None:
-        """Publish a built mail as MAIL_NEW with the given trace carrier."""
-        trace_id, span_id, parent_span_id = carrier
-        await self.publish(
-            Event(
-                type=EventType.MAIL_NEW,
-                payload=mail,
-                source=self.member_id,
-                trace_id=trace_id,
-                span_id=span_id,
-                parent_span_id=parent_span_id,
+        """Isolate DSL mail failures without changing tool submission semantics.
+
+        Rejection and uncertainty are observable in structured logs; no
+        postmaster notice is manufactured and cancellation still propagates.
+        """
+        try:
+            if self._post_office is None:
+                raise RuntimeError("This member has no post office")
+            trace_id, span_id, _ = carrier
+            if trace_id:
+                with continue_trace(trace_id, span_id):
+                    await self._post_office.post(mail)
+            else:
+                await self._post_office.post(mail)
+        except PostRejected as error:
+            self._logger.warning(
+                "dsl_mail_rejected",
+                mail_id=mail.id,
+                reason=error.reason,
+                invalid_recipients=error.invalid_recipients,
+                error=str(error),
             )
-        )
+        except Exception as error:
+            self._logger.error(
+                "dsl_mail_submission_unknown",
+                mail_id=mail.id,
+                request_id=mail.id,
+                error=str(error),
+                exc_info=True,
+            )
 
     async def _mark_read(self, mail: Mail | None) -> None:
         """Mark a processed mail read; failures are logged only."""
@@ -1046,6 +1068,7 @@ class MemberRuntime(Member):
             publish=publisher,
             logger=self._logger,
             mentor_cc=self._mentor_cc,
+            post_office=self._post_office,
         )
         on_complete = OnCompleteRunner(
             identity, rule, self._logger, execute_action=self._execute_action
@@ -1053,9 +1076,12 @@ class MemberRuntime(Member):
 
         def is_human_sender(address: str) -> bool:
             """ADR 0027: termination replies go to human senders only. The
-            known-human set is re-resolved on every call — a human's mailbox
-            is created on first delivery, so the set grows at runtime."""
-            humans = {address_for_member(h) for h in caps.tlon_paths.known_human_ids()}
+            known-human set is re-resolved on every call in a worker thread;
+            humans register when connecting, so the set grows at runtime."""
+            humans = {
+                address_for_member(h)
+                for h in MailStore(caps.tlon_paths.mail_database_file()).known_human_ids()
+            }
             return address in humans
 
         self._loop_driver = LoopDriver(

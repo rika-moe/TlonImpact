@@ -7,11 +7,9 @@ docs/design/mail.md 「外部来信与信任面」), covering both directions:
 - **Ingress**: the REST endpoint ``POST /webhooks/github`` verifies the
   HMAC signature and hands the decoded event here; the adapter maps
   supported events onto one ``Mail`` from the real external address
-  ``notifications@github.com`` and publishes ``MAIL_NEW`` directly on
-  the bus (the cron.py bare-publish precedent). Delivery needs no
-  special-casing for external senders: no ``sent`` copy, bounce safely
-  dropped, ``MAIL_DELIVERED`` normal, and every rendering point marks
-  the mail as untrusted external input.
+  ``notifications@github.com`` and submits it through PostOffice. Local
+  inbox copies commit before delivery events are published; every rendering
+  point marks the mail as untrusted external input.
 - **Egress**: ``initialize`` claims ``notifications@github.com`` for the
   gateway member ``gateway:github`` in the ExternalGatewayRegistry, so
   replies to that address resolve and land in the gateway mailbox (the
@@ -36,6 +34,7 @@ skipped with a warning. The issue/PR number goes into the subject
 when its in-memory thread table has no entry (e.g. after a restart).
 """
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -48,6 +47,7 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import HUMAN_ID_PREFIX, Mail, address_for_member
+from tlon.organization.mail.post_office import PostOffice
 
 if TYPE_CHECKING:
     from tlon.base.config import AgentInfoProvider
@@ -123,6 +123,7 @@ class GitHubAdapter(Device):
         agent_info_provider: "AgentInfoProvider",
         gateway_registry: ExternalGatewayRegistry,
         tlon_paths: TlonPaths,
+        post_office: PostOffice,
         recipient_id: str | None = None,
         github_token: str | None = None,
         http_post: HttpPost | None = None,
@@ -146,6 +147,7 @@ class GitHubAdapter(Device):
         self._agent_info = agent_info_provider
         self._registry = gateway_registry
         self._paths = tlon_paths
+        self._post_office = post_office
         self._recipient_id = recipient_id
         self._github_token = github_token
         self._http_post: HttpPost = http_post or _aiohttp_post
@@ -181,7 +183,7 @@ class GitHubAdapter(Device):
             return None
         subject, content = mapped
 
-        to = self._recipient_addresses()
+        to = await asyncio.to_thread(self._recipient_addresses)
         if not to:
             logger.warning("github_event_skipped", reason="no_recipient", event_type=event_type)
             return None
@@ -192,9 +194,8 @@ class GitHubAdapter(Device):
             subject=subject,
             content=content,
         )
-        await self._event_bus.publish(
-            Event(type=EventType.MAIL_NEW, payload=mail, source="github_adapter")
-        )
+        receipt = await self._post_office.post(mail)
+        mail = receipt.mail
         anchor = self._parse_anchor(mail.subject)
         if anchor is not None:
             self._threads[mail.id] = anchor
@@ -442,12 +443,14 @@ class GitHubAdapter(Device):
                 return [address_for_member(self._recipient_id)]
             logger.warning("github_recipient_not_found", recipient=self._recipient_id)
             return []
-        return [address_for_member(human_id) for human_id in self._paths.known_human_ids()]
+        return [
+            address_for_member(human_id) for human_id in self._post_office.store.known_human_ids()
+        ]
 
     def _member_exists(self, member_id: str) -> bool:
         """Recipient existence: agent ids from the registry, humans from disk."""
         if member_id.startswith(HUMAN_ID_PREFIX):
-            return member_id in self._paths.known_human_ids()
+            return member_id in self._post_office.store.known_human_ids()
         return member_id in self._agent_info.get_all_ids()
 
     @staticmethod

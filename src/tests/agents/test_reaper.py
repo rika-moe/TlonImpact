@@ -68,6 +68,10 @@ class _FakeRegistry:
         self._wake_locks: dict[str, asyncio.Lock] = {}
         self.event_bus = bus
 
+    def defer_mail_rescue(self, agent_id: str) -> None:
+        """The fake has no rescue loop; verify the same member still exists."""
+        assert self._agent_info.get_config(agent_id) is not None
+
     def is_lazy(self, agent_id: str) -> bool:
         return agent_id in self._lazy
 

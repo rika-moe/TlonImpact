@@ -17,7 +17,7 @@ Bridge API 就是把这些隐式约定提升为**显式、集中、有版本契�
 
 桥的存在不改变机制/策略的划分，它是这条划分的**载体**而非例外：
 
-- **永远留在 Python（机制层）**：EventBus、SessionScheduler 与 session 状态机、journal、MailDelivery 投递路由、Mailbox、LLMClient/EmbeddingClient、MemoryManager 存储与检索执行、DockerRuntime、EffectExecutor 的安全校验（幻觉收件人、spawn 预算、信任闸）、五个 stage 的语义本体、tlosure 求值器本身。这些触碰并发/IO/外部世界，或是不可绕过的安全执行点——它们是 DSL 程序的"指令集"，必须是不可信环境里的可信不动点。
+- **永远留在 Python（机制层）**：EventBus、SessionScheduler 与 session 状态机、journal、PostOffice 事务入箱与网关尝试、Mailbox、LLMClient/EmbeddingClient、MemoryManager 存储与检索执行、DockerRuntime、EffectExecutor 的安全校验（幻觉收件人、spawn 预算、信任闸）、五个 stage 的语义本体、tlosure 求值器本身。这些触碰并发/IO/外部世界，或是不可绕过的安全执行点——它们是 DSL 程序的"指令集"，必须是不可信环境里的可信不动点。
 - **持续迁往 tlosure（策略层）**：何时醒、如何思考、完成后做什么（已是 spec）；以及目前仍是 Python 常量的调参型与措辞型政策（记忆检索权重、反思阈值、终止文案、社会事实的消费政策——见"迁移路线"阶段 2）。
 - **桥自身**：端口的定义与实现在 Python，端口的清单与契约是文档化的 API。Python 侧端口实现遵循与 builtin 相同的纪律——纯查询无副作用，效果意图只产数据不执行。
 
@@ -110,6 +110,6 @@ Bridge API 由四类端口组成，全部集中定义、集中编目。前两类
 
 ## 非目标
 
-- 不把 scheduler / MailDelivery / DockerRuntime / MemoryManager 等机制层用 tlosure 重写。
+- 不把 scheduler / PostOffice / DockerRuntime / MemoryManager 等机制层用 tlosure 重写。
 - 不追求"Python 行数最少"，追求"可进化的逻辑都在数据里、可信的机制都在代码里"。
 - 不在桥上加通用 FFI / 任意 Python 对象通道；数据进、数据出，桥永远不传行为。

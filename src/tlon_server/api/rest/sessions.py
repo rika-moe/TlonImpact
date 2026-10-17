@@ -196,7 +196,7 @@ class SessionHandlers(RestHandlerBase):
             for p in self.client_gateway.get_all_members()
         ]
         assert self.members is not None  # wired in production
-        agents = self.members.get_all_agent_status()
+        agents = await self.members.get_all_agent_status()
 
         logger.info(
             "rest_session_created",

@@ -335,7 +335,16 @@ def make_test_app() -> web.Application:
     async def send_message(request: web.Request) -> web.Response:
         body = await request.json()
         app["requests"].append(("POST", "/messages", body))
-        return web.json_response({"mail_id": "out-1"}, status=202)
+        return web.json_response(
+            {
+                "mail_id": "out-1",
+                "request_id": body["request_id"],
+                "local_recipients": ["gu-yanxi"],
+                "gateways": [],
+                "message": "已存入信箱",
+            },
+            status=202,
+        )
 
     async def inbox(request: web.Request) -> web.Response:
         app["requests"].append(("GET", "/inbox", dict(request.query)))
@@ -430,9 +439,11 @@ class TestPipeline:
         assert bot.fake.sent[0][0] == 111
         assert mail["content"] in bot.fake.sent[0][1]
 
-        ack = await bot.process_reply("收到，多谢", reply_to_message_id=bot.fake.message_ids[0])
+        ack = await bot.process_reply(
+            "收到，多谢", reply_to_message_id=bot.fake.message_ids[0], owner=(111, 111)
+        )
 
-        assert ack == "已回复 ✅"
+        assert ack == "已存入信箱"
         _, _, body = [r for r in server.app["requests"] if r[1] == "/messages"][0]
         assert body["to"] == [mail["from_address"]]
         assert body["in_reply_to"] == mail["id"]
@@ -448,7 +459,7 @@ class TestPipeline:
         # message id (999) is unknown — as after a restart
         bot._reply_map.record(1, make_mail())
 
-        ack = await bot.process_reply("还在吗", reply_to_message_id=999)
+        ack = await bot.process_reply("还在吗", reply_to_message_id=999, owner=(111, 111))
 
         assert "映射已丢失" in ack
         _, _, body = [r for r in server.app["requests"] if r[1] == "/messages"][0]
@@ -458,7 +469,7 @@ class TestPipeline:
 
     async def test_plain_text_without_any_mapping_gets_guidance(self, bot):
         """No reply context and no correspondent: usage hint, nothing sent."""
-        ack = await bot.process_reply("你好", reply_to_message_id=None)
+        ack = await bot.process_reply("你好", reply_to_message_id=None, owner=(111, 111))
         assert "回复" in ack and "/send" in ack
 
     async def test_send_mail_posts_message(self, bot, client, server):
@@ -466,7 +477,7 @@ class TestPipeline:
         await client.authenticate(username="alice")
         bot._client = client
 
-        assert await bot.send_mail("你好", to=["顾言蹊"]) is True
+        assert await bot.send_mail("你好", to=["顾言蹊"], owner=(111, 111)) == "已存入信箱"
 
         _, _, body = [r for r in server.app["requests"] if r[1] == "/messages"][0]
         assert body["to"] == ["顾言蹊"]
@@ -488,3 +499,119 @@ class TestPipeline:
 
         _, _, query = [r for r in server.app["requests"] if r[1] == "/inbox"][0]
         assert query["username"] == "alice"
+
+
+async def test_retry_command_reuses_committed_request_and_original_thread(
+    bot_mod, tmp_path, monkeypatch
+) -> None:
+    """The SDK sees uncertainty after actual commit; /retry must not create a second mail."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tests.integration.test_post_office import _server
+    from tlon.base.paths import TlonPaths
+    from tlon.organization.mail.store import MailStore
+    from tlon_client.sdk.base_client import MailSendError
+    from tlon_server import serverapp
+
+    # This client test exercises real HTTP and SQLite, not process-global
+    # OTel setup. Leave the singleton providers untouched for other tests.
+    monkeypatch.setattr(serverapp, "init_metrics", lambda: None)
+    monkeypatch.setattr(serverapp, "shutdown_metrics", lambda: None)
+    monkeypatch.setattr(serverapp, "init_tracing", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serverapp, "shutdown_tracing", lambda: None)
+    async with _server(tmp_path) as (url, _app), TlonClient(url) as sdk:
+        await sdk.get_inbox(username="bob")
+        bot = bot_mod.TelegramBot(
+            token="t", allowed_users=[111, 222], username="alice", base_url=url
+        )
+        bot._client = sdk
+        bot._reply_map.record(
+            7,
+            make_mail(id="original", from_address="bob@tlon.internal", thread_id="original-thread"),
+        )
+        submit = sdk._base.submit_mail
+        sent = []
+
+        async def lose_first_response(body):
+            sent.append(dict(body))
+            receipt = await submit(body)
+            if len(sent) == 1:
+                raise MailSendError(
+                    "response lost", request_id=body["request_id"], reason="submission_unknown"
+                )
+            return receipt
+
+        monkeypatch.setattr(sdk._base, "submit_mail", lose_first_response)
+        unknown = await bot.process_reply("keep envelope", 7, owner=(111, 10))
+        request_id = sent[0]["request_id"]
+        assert f"/retry {request_id}" in unknown
+        assert len(MailStore(TlonPaths(home=tmp_path).mail_database_file()).mails("human:bob")) == 1
+
+        # Neither another user nor the same user in another chat can replay it.
+        for owner in ((222, 10), (111, 20)):
+            assert "未重新发送" in await bot.retry_mail(request_id, owner=owner)
+        assert len(sent) == 1
+        # A changed reply map must not alter the retry envelope.
+        bot._reply_map.record(
+            7, make_mail(id="changed", from_address="nobody@tlon.internal", thread_id="changed")
+        )
+        message = SimpleNamespace(text=f"/retry {request_id}", chat_id=10, reply_text=AsyncMock())
+        update = SimpleNamespace(effective_message=message, effective_user=SimpleNamespace(id=111))
+        await bot._on_retry_command(update, None)
+        assert sent[0] == sent[1]
+        message.reply_text.assert_awaited_once()
+        assert "已存入" in message.reply_text.await_args.args[0]
+        inbox = MailStore(TlonPaths(home=tmp_path).mail_database_file()).mails("human:bob")
+        assert len(inbox) == 1
+        assert inbox[0].in_reply_to == "original"
+        assert inbox[0].thread_id == "original-thread"
+        assert not bot._pending_mail
+        assert "未重新发送" in await bot.retry_mail(request_id, owner=(111, 10))
+        assert len(sent) == 2
+
+
+async def test_retry_unavailable_after_restart_or_eviction_never_resends(
+    bot_mod, monkeypatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from tlon_client.sdk.base_client import MailSendError
+
+    bot = bot_mod.TelegramBot(
+        token="t", allowed_users=[111], username="alice", base_url="http://unused"
+    )
+
+    async def uncertain(*args, **kwargs):
+        raise MailSendError("unknown", request_id=kwargs["request_id"], reason="submission_unknown")
+
+    client = AsyncMock()
+    client.send_message.side_effect = uncertain
+    bot._client = client
+    monkeypatch.setattr(bot_mod, "PENDING_MAIL_LIMIT", 1)
+    await bot.send_mail("first", ["bob"], owner=(111, 10))
+    first_key = next(iter(bot._pending_mail))[2]
+    await bot.send_mail("second", ["bob"], owner=(111, 10))
+    assert len(bot._pending_mail) == 1
+    assert "未重新发送" in await bot.retry_mail(first_key, owner=(111, 10))
+    assert client.send_message.await_count == 2
+    bot._pending_mail.clear()  # restart loses process-local pending envelopes
+    assert "未重新发送" in await bot.retry_mail(first_key, owner=(111, 10))
+    assert client.send_message.await_count == 2
+
+
+async def test_explicit_rejection_is_not_queued_for_retry(bot_mod) -> None:
+    from unittest.mock import AsyncMock
+
+    from tlon_client.sdk.base_client import MailSendError
+
+    bot = bot_mod.TelegramBot(
+        token="t", allowed_users=[111], username="alice", base_url="http://unused"
+    )
+    client = AsyncMock()
+    client.send_message.side_effect = MailSendError(
+        "invalid", request_id="rejected", reason="invalid_recipients"
+    )
+    bot._client = client
+    assert "invalid" in await bot.send_mail("reject", ["missing"], owner=(111, 10))
+    assert not bot._pending_mail

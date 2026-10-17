@@ -59,12 +59,12 @@ async def _seed_society(tlon_paths: TlonPaths) -> None:
     a-001 endorses b-002's m2 once."""
     # m1: authored by the target; sits in each endorser's inbox.
     m1 = _mail("m1", TARGET_ADDR, [BOB_ADDR, CAROL_ADDR], subject="m1主题")
-    await Mailbox(tlon_paths.member_mail_dir(TARGET)).append_sent(m1)
+    await Mailbox(tlon_paths.mail_database_file(), TARGET).append_sent(m1)
     for member in (BOB, CAROL):
-        await Mailbox(tlon_paths.member_mail_dir(member)).append_inbox(m1)
+        await Mailbox(tlon_paths.mail_database_file(), member).append_inbox(m1)
 
     # b-002 endorses m1 twice: the (endorser, mail_id) pair counts once.
-    bob = Mailbox(tlon_paths.member_mail_dir(BOB))
+    bob = Mailbox(tlon_paths.mail_database_file(), BOB)
     await bob.append_sent(_mail("e1", BOB_ADDR, [TARGET_ADDR], endorsing="m1"))
     await bob.append_sent(_mail("e2", BOB_ADDR, [TARGET_ADDR], endorsing="m1"))
     # An endorsement of somebody else's mail does not count for a-001.
@@ -73,13 +73,13 @@ async def _seed_society(tlon_paths: TlonPaths) -> None:
     await bob.append_sent(_mail("e9", BOB_ADDR, [CAROL_ADDR], endorsing="m9"))
 
     # c-003 endorses m1 once.
-    await Mailbox(tlon_paths.member_mail_dir(CAROL)).append_sent(
+    await Mailbox(tlon_paths.mail_database_file(), CAROL).append_sent(
         _mail("e3", CAROL_ADDR, [TARGET_ADDR], endorsing="m1")
     )
 
     # a-001 endorses b-002's m2 (given=1; m2 sits in a-001's inbox).
     m2 = _mail("m2", BOB_ADDR, [TARGET_ADDR])
-    target = Mailbox(tlon_paths.member_mail_dir(TARGET))
+    target = Mailbox(tlon_paths.mail_database_file(), TARGET)
     await target.append_inbox(m2)
     await target.append_sent(_mail("e4", TARGET_ADDR, [BOB_ADDR], endorsing="m2"))
 
@@ -125,8 +125,8 @@ class TestCollectReputation:
         assert behavior["avg_first_reply_seconds"] is None
 
     async def test_top_endorsed_capped(self, tlon_paths: TlonPaths) -> None:
-        target = Mailbox(tlon_paths.member_mail_dir(TARGET))
-        bob = Mailbox(tlon_paths.member_mail_dir(BOB))
+        target = Mailbox(tlon_paths.mail_database_file(), TARGET)
+        bob = Mailbox(tlon_paths.mail_database_file(), BOB)
         for i in range(TOP_ENDORSED_CAP + 3):
             mail = _mail(f"m{i:02d}", TARGET_ADDR, [BOB_ADDR], subject=f"s{i}")
             await target.append_sent(mail)

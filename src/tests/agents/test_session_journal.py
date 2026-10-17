@@ -355,7 +355,9 @@ def _make_driver(
     services.session_span = lambda session: contextlib.nullcontext()
 
     executor = MagicMock()
-    executor.send_mail = AsyncMock()
+    receipt = MagicMock()
+    receipt.to_dict.return_value = {"mail_id": "submitted", "message": "入箱成功"}
+    executor.send_mail = AsyncMock(return_value=receipt)
     executor.publish = AsyncMock()
 
     tool_executor = MagicMock()
@@ -619,7 +621,7 @@ class TestCrashRecovery:
         the journal and resolve to Mail objects through the mailbox, so
         the failure-reply anchors and the chain-wake comparison survive
         the crash."""
-        mailbox = Mailbox(tmp_path / "mail")
+        mailbox = Mailbox(tmp_path / "mail.sqlite3", "agent1")
         mail = _mail()
         await mailbox.append_inbox(mail)
         sid = "agent1-crashed"

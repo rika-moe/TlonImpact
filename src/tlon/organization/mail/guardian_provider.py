@@ -3,7 +3,7 @@ receive mail).
 
 Adam is a built-in member with no config file (``~/.tlon/adam/config/
 agent.yaml`` does not exist), so the plain ConfigService cannot resolve
-``adam@tlon.internal`` and mail to the guardian bounced. This wrapper
+``adam@tlon.internal`` and mail to the guardian was unresolved. This wrapper
 delegates every query to the injected provider and answers exactly one
 extra id: ``get_config("adam")`` returns a synthesized AgentConfig.
 
@@ -11,11 +11,9 @@ extra id: ``get_config("adam")`` returns a synthesized AgentConfig.
 every enumeration-driven scan (trust/ledger/spawn), keeping those
 surfaces exactly as they were.
 
-The wrapper belongs to the runtime's mail side (it exists so MailDelivery
-can resolve the guardian): ``build_runtime()`` wraps the ConfigService
-once and hands the same instance to both the AdapterManager (speak-side
-resolution) and MailDelivery (delivery-side resolution), which share one
-RecipientResolver — one wrap, both directions.
+The runtime wraps ConfigService once and injects this provider into the
+RecipientResolver shared by PostOffice and AdapterManager. Both alias
+resolution and concrete-address validation therefore recognize Adam.
 """
 
 from tlon.base.config import AgentConfig, AgentInfoProvider

@@ -82,10 +82,10 @@ def test_init_metrics_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── Event -> metric mapping ──
 
 
-async def test_mail_new_counts_sent_and_bounce(
+async def test_mail_new_counts_sent_without_obsolete_bounce_metric(
     metric_setup: tuple[InMemoryMetricReader, MetricsService],
 ) -> None:
-    """MAIL_NEW counts tlon.mail.sent by source; postmaster mail also bounces."""
+    """Postmaster digest mail is sent mail, never a synthetic bounce."""
     _, service = metric_setup
     service._on_mail_new(Event(type=EventType.MAIL_NEW, payload=_make_mail(), source="gu-yanxi"))
     service._on_mail_new(
@@ -97,8 +97,7 @@ async def test_mail_new_counts_sent_and_bounce(
     snapshot = service.snapshot()
     assert _point(snapshot, "tlon.mail.sent", agent="gu-yanxi")["value"] == 1
     assert _point(snapshot, "tlon.mail.sent", agent="mail_delivery")["value"] == 1
-    bounced = snapshot["metrics"]["tlon.mail.bounced"]["points"]
-    assert sum(p["value"] for p in bounced) == 1
+    assert "tlon.mail.bounced" not in snapshot["metrics"]
 
 
 async def test_mail_delivered_counts_by_member_kind(

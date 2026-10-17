@@ -12,6 +12,7 @@ and the log-only failure semantics (no bounce, no retry, never raise).
 """
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,9 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.gateways import ExternalGatewayRegistry
 from tlon.organization.mail.mail import Mail, address_for_member
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.github_adapter import (
     GATEWAY_MEMBER_ID,
     GITHUB_FROM_ADDRESS,
@@ -66,7 +70,7 @@ async def _wait_for(predicate, timeout: float = 2.0) -> None:
 
 def _make_human(tmp_path: Path, username: str) -> None:
     """A "known human" is a persistent mailbox directory on disk."""
-    (tmp_path / f"human-{username}" / "mail").mkdir(parents=True)
+    MailStore(TlonPaths(home=tmp_path).mail_database_file()).register_member(f"human:{username}")
 
 
 def _adapter(
@@ -78,10 +82,15 @@ def _adapter(
     github_token: str | None = None,
     http_post: HttpPost | None = None,
 ) -> GitHubAdapter:
+    registry = registry or ExternalGatewayRegistry()
+    provider = _AgentInfoStub(agent_ids or [])
+    paths = TlonPaths(home=tmp_path)
+    office = PostOffice(bus, RecipientResolver(provider, paths, registry.owner_of), paths)
     return GitHubAdapter(
         event_bus=bus,
-        agent_info_provider=_AgentInfoStub(agent_ids or []),
-        gateway_registry=registry or ExternalGatewayRegistry(),
+        agent_info_provider=provider,
+        gateway_registry=registry,
+        post_office=office,
         tlon_paths=TlonPaths(home=tmp_path),
         recipient_id=recipient_id,
         github_token=github_token,
@@ -330,10 +339,19 @@ class TestAddressing:
         assert mail is not None
         assert mail.to == [address_for_member("human:alice")]
 
-    async def test_all_known_humans_when_unconfigured(self, bus, tmp_path):
+    async def test_all_known_humans_when_unconfigured(self, bus, tmp_path, monkeypatch):
         _make_human(tmp_path, "alice")
         _make_human(tmp_path, "bob")
         adapter = _adapter(bus, tmp_path)
+
+        loop_thread = threading.get_ident()
+        original = MailStore.known_human_ids
+
+        def checked_roster(store: MailStore) -> list[str]:
+            assert threading.get_ident() != loop_thread
+            return original(store)
+
+        monkeypatch.setattr(MailStore, "known_human_ids", checked_roster)
 
         mail = await adapter.receive(
             "issues", {"action": "opened", "repository": _repo(), "issue": _issue()}

@@ -24,6 +24,8 @@ from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import RecipientResolver
 
 
 class _RegistryStub:
@@ -66,6 +68,11 @@ class _RegistryStub:
         return agent_id not in self._boot_eligible
 
 
+def _make_adam(bus, registry, paths):
+    office = PostOffice(bus, RecipientResolver(registry, paths), paths)
+    return make_adam(bus, registry, paths, post_office=office)
+
+
 @pytest.fixture
 async def bus():
     b = EventBus()
@@ -101,7 +108,7 @@ class TestAdamDecisions:
             boot_eligible={"worker-1"},
         )
 
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         starts: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, lambda e: starts.append(e))
 
@@ -114,7 +121,7 @@ class TestAdamDecisions:
 
     async def test_drain_idle(self, bus, tlon_paths):
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         stops: list[Event] = []
         bus.subscribe(EventType.AGENT_STOP_REQUEST, lambda e: stops.append(e))
         await adam.initialize()
@@ -131,7 +138,7 @@ class TestAdamDecisions:
     async def test_noisy_circuit_breaker(self, bus, tlon_paths):
         """AGENT_NOISY (PublicHealthMonitor's fact) → stop the flooding member."""
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         stops: list[Event] = []
         bus.subscribe(EventType.AGENT_STOP_REQUEST, lambda e: stops.append(e))
         await adam.initialize()
@@ -156,7 +163,7 @@ class TestAdamDecisions:
     async def test_noisy_fact_without_agent_id_is_skipped(self, bus, tlon_paths):
         """A malformed fact fails safe: the action raises, the rule is skipped."""
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         stops: list[Event] = []
         bus.subscribe(EventType.AGENT_STOP_REQUEST, lambda e: stops.append(e))
         await adam.initialize()
@@ -180,8 +187,11 @@ class TestAdamDecisions:
         event's agent id — emit recipients are full mail addresses, never
         bare ids (``Mail.create`` rejects non-addresses).
         """
-        registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        registry = _RegistryStub(
+            {"worker-1": _worker(), "c-xin-1a2b3c4d": _worker("c-xin-1a2b3c4d")},
+            running={"worker-1"},
+        )
+        adam = _make_adam(bus, registry, tlon_paths)
         mails: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
         await adam.initialize()
@@ -232,17 +242,31 @@ class TestGuardianInbox:
             **kwargs,
         )
 
-    async def test_mail_to_adam_gets_acknowledgement_reply(self, bus, tlon_paths):
+    async def test_mail_to_adam_gets_acknowledgement_reply(
+        self, bus: EventBus, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         mails: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
         await adam.initialize()
 
+        assert adam._mailbox is not None
+        mark_read = adam._mailbox.mark_read
+        allow_mark_read = asyncio.Event()
+        marked_read = asyncio.Event()
+
+        async def controlled_mark_read(mail_id: str) -> None:
+            await allow_mark_read.wait()
+            await mark_read(mail_id)
+            marked_read.set()
+
+        monkeypatch.setattr(adam._mailbox, "mark_read", controlled_mark_read)
+
         incoming = self._mail_to_adam()
         # Simulate delivery: the mail sits unread in Adam's inbox, then
         # the MAIL_DELIVERED event arrives (docs/design/mail.md: 落盘先于通知).
-        inbox = Mailbox(tlon_paths.member_mail_dir("adam"))
+        inbox = Mailbox(tlon_paths.mail_database_file(), "adam")
         await inbox.append_inbox(incoming)
         assert [m.id for m in await inbox.unread()] == [incoming.id]
         await bus.publish(
@@ -260,15 +284,18 @@ class TestGuardianInbox:
         assert reply.thread_id == incoming.thread_id
         assert "收讫" in reply.content
 
-        # The triggering mail is marked read after processing (D6.1) —
-        # Adam's mailbox is real since .
+        # Reply acceptance precedes the asynchronous read mark. A reply
+        # notification cannot serve as the completion barrier for that write.
+        assert [m.id for m in await inbox.unread()] == [incoming.id]
+        allow_mark_read.set()
+        await asyncio.wait_for(marked_read.wait(), timeout=2)
         assert [m.id for m in await inbox.unread()] == []
 
         await adam.shutdown()
 
     async def test_mail_addressed_to_another_member_is_ignored(self, bus, tlon_paths):
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         mails: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
         await adam.initialize()
@@ -293,7 +320,7 @@ class TestGuardianInbox:
     async def test_postmaster_mail_gets_no_reply(self, bus, tlon_paths):
         """A bounce landing in Adam's inbox must not be answered (loop guard)."""
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
-        adam = make_adam(bus, registry, tlon_paths)
+        adam = _make_adam(bus, registry, tlon_paths)
         mails: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
         await adam.initialize()

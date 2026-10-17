@@ -5,8 +5,8 @@ The pure stages declare their intended system-state changes as
 applies the session-local fields itself and delegates the external
 effects here:
 
-- mails (``MailEffect`` -> Mail.create + MAIL_NEW event, trace-injected;
-  a failure lands a postmaster-style notice in the agent's own inbox)
+- mails (``MailEffect`` -> PostOffice transaction, trace-injected;
+  failures propagate directly into the tool result)
 
 The engine-side event-publish closure for tool dispatch observability
 (TOOL_EXECUTE_START) also lives here.
@@ -21,10 +21,11 @@ from tlon.agents.member_spec import MemberRule
 from tlon.agents.stages.outcome import MailEffect
 from tlon.agents.stages.services import EventPublisher
 from tlon.agents.trigger import AgentIdentity
-from tlon.base.events.event import EventType
-from tlon.base.tracing.trace_context import get_current_trace, start_span
-from tlon.organization.mail.mail import POSTMASTER_ADDRESS, Mail, is_external_address
+from tlon.base.tracing.trace_context import start_span
+from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.store import StoredPost
 
 if TYPE_CHECKING:
     import structlog
@@ -41,6 +42,7 @@ class EffectExecutor:
         publish: EventPublisher,
         logger: "structlog.stdlib.BoundLogger",
         mentor_cc: str | None = None,
+        post_office: PostOffice | None = None,
     ):
         """Assemble from the Agent's injected dependencies.
 
@@ -62,6 +64,7 @@ class EffectExecutor:
         self._mailbox = mailbox
         self._logger = logger
         self._mentor_cc = mentor_cc
+        self._post_office = post_office
 
     def _cc_with_mentor(self, effect: MailEffect) -> list[str]:
         """The effect's cc plus the mentor's address, unless the mentor is
@@ -75,38 +78,25 @@ class EffectExecutor:
             cc.append(self._mentor_cc)
         return cc
 
-    async def send_mail(self, effect: MailEffect) -> None:
-        """Send a declared mail via the event bus, injecting the trace context.
+    async def send_mail(self, effect: MailEffect, request_id: str | None = None) -> StoredPost:
+        """Submit to the post office; failures propagate to the tool result.
 
-        Reply headers are declared by the stage: ``in_reply_to`` is the
-        model's explicit choice (ADR 0028 — no trigger-mail default), and
-        the ``thread_id`` declared alongside is only a fallback — the
-        thread must follow the *referenced* mail, which only a mailbox
-        read can establish (stages stay I/O-free). The reference is
-        validated against the agent's own mailbox: a mail referencing an
-        id the mailbox does not hold (typically a hallucinated id) is not
-        sent at all, instead of shipping with a dangling reference. Both
-        headers default to a fresh thread. A forward (``forward_of`` set,
-        ADR 0029) skips the reply-header resolution entirely: the source
-        mail is resolved out of the agent's own mailbox (same
-        hallucination guard), the self-contained body and the ``Fwd:``
-        subject are composed here, and the forward always opens a fresh
-        thread. Never raises: a failure is
-        logged and answered with a postmaster-style notice in the agent's
-        own inbox (the same failure signal the delivery bounce gives),
-        not propagated into the loop.
+        Local success means durable inbox placement, never reading or work
+        completion. Gateway placement is best effort. No failure mail is
+        manufactured: the caller receives the rejection directly.
         """
-        try:
-            forward_source = await self._resolve_forward_source(effect)
-            if effect.forward_of is not None:
-                subject, content = self._compose_forward(effect, forward_source)
-                # A forward opens a fresh thread — it is not a reply.
-                in_reply_to, thread_id = None, None
-            else:
-                in_reply_to, thread_id = await self._resolve_reply_headers(effect)
-                subject, content = effect.subject, effect.content
-            endorsing = await self._resolve_endorsing(effect)
-            mail = Mail.create(
+        if self._post_office is None:
+            raise RuntimeError("This member has no post office")
+        forward_source = await self._resolve_forward_source(effect)
+        if effect.forward_of is not None:
+            subject, content = self._compose_forward(effect, forward_source)
+            in_reply_to, thread_id = None, None
+        else:
+            in_reply_to, thread_id = await self._resolve_reply_headers(effect)
+            subject, content = effect.subject, effect.content
+        endorsing = await self._resolve_endorsing(effect)
+        with start_span("mail.send", source=self.identity.id):
+            return await self._post_office.send(
                 from_address=self.identity.address,
                 to=effect.to,
                 cc=self._cc_with_mentor(effect),
@@ -116,24 +106,8 @@ class EffectExecutor:
                 thread_id=thread_id,
                 forward_of=effect.forward_of,
                 endorsing=endorsing,
+                request_id=request_id,
             )
-            with start_span(
-                "mail.send",
-                source=self.identity.id,
-                attributes={"mail_id": mail.id, "to": mail.to},
-            ):
-                current = get_current_trace()
-                await self.publish(
-                    EventType.MAIL_NEW,
-                    payload=mail,
-                    source=self.identity.id,
-                    trace_id=current.trace_id if current else None,
-                    span_id=current.span_id if current else None,
-                    parent_span_id=current.parent_span_id if current else None,
-                )
-        except Exception as e:
-            self._logger.error("mail_emit_failed", exc_info=True)
-            await self._notify_send_failure(effect, e)
 
     async def _resolve_reply_headers(self, effect: MailEffect) -> tuple[str | None, str | None]:
         """Validate the reply reference and derive the thread from it.
@@ -176,9 +150,7 @@ class EffectExecutor:
             raise ValueError(f"forwardMail 转发的邮件不在你的邮箱中: {effect.forward_of}")
         return source
 
-    def _compose_forward(
-        self, effect: MailEffect, source: Mail | None
-    ) -> tuple[str | None, str]:
+    def _compose_forward(self, effect: MailEffect, source: Mail | None) -> tuple[str | None, str]:
         """Build the forward's subject and self-contained body.
 
         Subject: ``Fwd: <原主题>``; when the source mail has no subject
@@ -230,39 +202,3 @@ class EffectExecutor:
         if endorsed.from_address == self.identity.address:
             raise ValueError(f"不能致谢自己写的邮件: {effect.endorsing}")
         return effect.endorsing
-
-    async def _notify_send_failure(self, effect: MailEffect, error: Exception) -> None:
-        """Land a send-failure notice in the agent's own inbox
-        (docs/design/mail.md 「退信是设计意图」).
-
-        Same style as MailDelivery's postmaster bounce: a direct inbox
-        append plus one MAIL_DELIVERED, never MAIL_NEW — the notice
-        path must not depend on the very publish that may have just
-        failed. Fully defensive: a notice failure is logged only, and
-        this path never goes through send_mail, so it cannot loop.
-        """
-        if self._mailbox is None:
-            return
-        try:
-            notice = Mail.create(
-                from_address=POSTMASTER_ADDRESS,
-                to=[self.identity.address],
-                subject=f"发送失败: {effect.subject or '（无主题）'}",
-                content=(
-                    "你发出的一封邮件未能进入投递队列：\n"
-                    f"- 收件人：{', '.join([*effect.to, *(effect.cc or [])])}\n"
-                    f"- 原因：{error}\n"
-                    "请修正后重新发送。"
-                ),
-                in_reply_to=effect.in_reply_to,
-                thread_id=effect.thread_id,
-            )
-            await self._mailbox.append_inbox(notice)
-            await self.publish(
-                EventType.MAIL_DELIVERED,
-                payload={"mail": notice, "recipient": self.identity.id},
-                source=self.identity.id,
-            )
-            self._logger.info("mail_failure_notified", notice_id=notice.id)
-        except Exception:
-            self._logger.error("mail_failure_notice_failed", exc_info=True)

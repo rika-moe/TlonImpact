@@ -43,6 +43,7 @@ from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import address_for_member
+from tlon.organization.mail.store import MailStore
 from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
 from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
@@ -343,9 +344,7 @@ async def assemble_cognitive(
     tool_executor.register_tool(
         CheckInboxTool(provider=unread_mails_provider(tlon_paths), agent_id=config.id)
     )
-    tool_executor.register_tool(
-        MarkReadTool(actor=mark_read_actor(tlon_paths), agent_id=config.id)
-    )
+    tool_executor.register_tool(MarkReadTool(actor=mark_read_actor(tlon_paths), agent_id=config.id))
     tool_executor.register_tool(
         ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
     )
@@ -494,7 +493,10 @@ async def assemble_cognitive(
         GetReputationTool(
             provider=reputation_provider(
                 tlon_paths,
-                member_ids=lambda: sorted(agent_info.get_all_ids()) + tlon_paths.known_human_ids(),
+                member_ids=lambda: (
+                    sorted(agent_info.get_all_ids())
+                    + MailStore(tlon_paths.mail_database_file()).known_human_ids()
+                ),
             ),
             agent_id=config.id,
         )
@@ -508,7 +510,10 @@ async def assemble_cognitive(
         GetSocialHealthTool(
             provider=orphan_mail_provider(
                 tlon_paths,
-                member_ids=lambda: sorted(agent_info.get_all_ids()) + tlon_paths.known_human_ids(),
+                member_ids=lambda: (
+                    sorted(agent_info.get_all_ids())
+                    + MailStore(tlon_paths.mail_database_file()).known_human_ids()
+                ),
             )
         )
     )

@@ -14,6 +14,7 @@ from tlon.api.mail import MailFacade
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.store import MailStore
 from tlon_server.api.rest import RESTAPIHandler
 
 
@@ -33,15 +34,13 @@ def paths(tmp_path: Path) -> TlonPaths:
 def handler(paths: TlonPaths) -> RESTAPIHandler:
     return RESTAPIHandler(
         None,
-        mail=MailFacade(
-            adapter_manager=MagicMock(), agent_registry=MagicMock(), tlon_paths=paths
-        ),
+        mail=MailFacade(adapter_manager=MagicMock(), agent_registry=MagicMock(), tlon_paths=paths),
     )
 
 
 async def _seed_mailbox(paths: TlonPaths, username: str, count: int = 3) -> list[Mail]:
     """Write a few mails into the member's inbox and return them."""
-    mailbox = Mailbox(paths.member_mail_dir(f"human:{username}"))
+    mailbox = Mailbox(paths.mail_database_file(), f"human:{username}")
     mails = [
         Mail.create(
             from_address="gu-yanxi@tlon.internal",
@@ -50,6 +49,7 @@ async def _seed_mailbox(paths: TlonPaths, username: str, count: int = 3) -> list
         )
         for i in range(count)
     ]
+    MailStore(paths.mail_database_file()).register_member(mailbox.member_id)
     for mail in mails:
         await mailbox.append_inbox(mail)
     return mails
@@ -110,7 +110,7 @@ class TestHandleInbox:
         """/inbox exposes read semantics: unread inbox mail is read=false;
         mail marked read (cursor) flips to true."""
         seeded = await _seed_mailbox(paths, "alice", count=2)
-        mailbox = Mailbox(paths.member_mail_dir("human:alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "human:alice")
         await mailbox.mark_read(seeded[0].id)
 
         response = await handler.handle_inbox(StubRequest({"username": "alice"}))
@@ -122,7 +122,7 @@ class TestHandleInbox:
 
     async def test_sent_mail_is_read(self, paths: TlonPaths, handler: RESTAPIHandler):
         """The sender's own copy is always read."""
-        mailbox = Mailbox(paths.member_mail_dir("human:alice"))
+        mailbox = Mailbox(paths.mail_database_file(), "human:alice")
         mail = Mail.create(
             from_address="alice@tlon.internal",
             to=["gu-yanxi@tlon.internal"],

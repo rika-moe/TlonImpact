@@ -1,31 +1,29 @@
-"""Mail facade：人类成员的邮箱读与发信。
+"""Mail facade: SQLite mailbox reads and transactional post-office receipts."""
 
-收编 REST 层对邮件内脏的两个直接触点：
-
-- inbox 读：直接构造 ``Mailbox`` 读 jsonl（``recent``/``unread``）并
-  合成 read 标记 —— 收进 :meth:`MailFacade.inbox`，返回可直接 JSON
-  序列化的 dict
-- 发信：``AdapterManager.publish_as``（无会话身份发信，首次接触建
-  持久邮箱）—— 收进 :meth:`MailFacade.send`
-- 成员观测：任意成员（agent 或人类）邮箱的只读视图 —— 收进
-  :meth:`MailFacade.member_inbox`（无 read 合成、无任何副作用）
-
-``DEFAULT_USERNAME`` 是协议常量（请求缺省用户名），作为本模块 API
-面的一部分对 server 可见。
-"""
-
+import asyncio
 from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostRejected
+from tlon.organization.mail.store import IdempotencyConflict, MailStore
 from tlon.organization.messaging.human_adapter import (
     DEFAULT_USERNAME,
     HUMAN_ID_PREFIX,
     AdapterManager,
 )
 
-__all__ = ["DEFAULT_USERNAME", "MailFacade"]
+__all__ = ["DEFAULT_USERNAME", "MailFacade", "MailSubmissionError"]
+
+
+class MailSubmissionError(ValueError):
+    """A rejected submission exposed to serving layers."""
+
+    def __init__(self, message: str, reason: str, invalid_recipients: list[str]):
+        super().__init__(message)
+        self.reason = reason
+        self.invalid_recipients = invalid_recipients
 
 
 class MailFacade:
@@ -35,7 +33,7 @@ class MailFacade:
     Example:
         >>> mail = MailFacade(adapter_manager=am, agent_registry=reg, tlon_paths=paths)
         >>> mails = await mail.inbox("alice", limit=50)
-        >>> mail_id = await mail.send("alice", "你好", to=["谢云舒"])
+        >>> receipt = await mail.send("alice", "你好", to=["谢云舒"])
     """
 
     def __init__(
@@ -50,7 +48,7 @@ class MailFacade:
         Args:
             adapter_manager: Human adapter lifecycle (speak side)
             agent_registry: Agent existence lookup (member observation)
-            tlon_paths: Path resolver (member mailbox directories)
+            tlon_paths: Path resolver (post-office database)
         """
         self._adapter_manager = adapter_manager
         self._registry = agent_registry
@@ -59,8 +57,8 @@ class MailFacade:
     async def inbox(self, username: str, limit: int = 50) -> list[dict[str, Any]]:
         """The human member's own mail (inbox + sent merged, chronological).
 
-        Read semantics: an inbox mail is read when its id is in the
-        cursor; sent mail is always read (the sender has seen it).
+        Reading does not mark mail read. Sent-only mail is shown as read;
+        inbox read state belongs to its recipient.
 
         Args:
             username: Human username (the inbox of "human:<username>")
@@ -69,11 +67,10 @@ class MailFacade:
         Returns:
             Mail dicts (Mail.to_dict) with an added "read" flag
         """
-        mail_dir = self._paths.member_mail_dir(f"{HUMAN_ID_PREFIX}{username}")
-        # A human becomes "known" on first inbox read (docs/design/mail.md);
-        # materialize their persistent mailbox explicitly.
-        mail_dir.mkdir(parents=True, exist_ok=True)
-        mailbox = Mailbox(mail_dir)
+        member_id = f"{HUMAN_ID_PREFIX}{username}"
+        store = MailStore(self._paths.mail_database_file())
+        await asyncio.to_thread(store.register_member, member_id)
+        mailbox = Mailbox(self._paths.mail_database_file(), member_id)
         mails = await mailbox.recent(limit)
         unread_ids = {m.id for m in await mailbox.unread()}
         result = []
@@ -87,8 +84,8 @@ class MailFacade:
         """Any member's mailbox for observers (inbox + sent merged, chronological).
 
         Read-only observation (``GET /members/{member_id}/mail``): unlike
-        :meth:`inbox` it materializes nothing (no mailbox mkdir) and
-        synthesizes no ``read`` flag — the read cursor is the member's
+        :meth:`inbox` it does not register a member and
+        synthesizes no ``read`` flag — the read state is the member's
         own state, not the observer's business.
 
         Args:
@@ -97,14 +94,15 @@ class MailFacade:
 
         Returns:
             Mail dicts (Mail.to_dict), or None when the member does not
-            exist (agent not in the registry / human without a mailbox)
+            exist in either the registry or the historical mail database
         """
-        if member_id.startswith(HUMAN_ID_PREFIX):
-            if member_id not in self._paths.known_human_ids():
-                return None
-        elif self._registry.get_config(member_id) is None:
+        store = MailStore(self._paths.mail_database_file())
+        exists = await asyncio.to_thread(store.member_exists, member_id)
+        if not exists and (
+            member_id.startswith(HUMAN_ID_PREFIX) or self._registry.get_config(member_id) is None
+        ):
             return None
-        mailbox = Mailbox(self._paths.member_mail_dir(member_id))
+        mailbox = Mailbox(self._paths.mail_database_file(), member_id)
         return [mail.to_dict() for mail in await mailbox.recent(limit)]
 
     async def send(
@@ -117,7 +115,8 @@ class MailFacade:
         subject: str | None = None,
         in_reply_to: str | None = None,
         thread_id: str | None = None,
-    ) -> str:
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
         """Send a mail as a human member (no client session required).
 
         If the human has no live adapter, a transient one is created —
@@ -134,18 +133,24 @@ class MailFacade:
             thread_id: Thread root id inherited from the upstream mail
 
         Returns:
-            The created mail's id
+            Receipt with local inbox confirmations and gateway attempt results.
 
         Raises:
-            ValueError: If no recipient resolves to a mail address
+            MailSubmissionError: Any invalid/retired recipient or request-key conflict.
         """
-        mail = await self._adapter_manager.publish_as(
-            username,
-            content,
-            to=to,
-            cc=cc,
-            subject=subject,
-            in_reply_to=in_reply_to,
-            thread_id=thread_id,
-        )
-        return mail.id
+        try:
+            post = await self._adapter_manager.publish_as(
+                username,
+                content,
+                to=to,
+                cc=cc,
+                subject=subject,
+                in_reply_to=in_reply_to,
+                thread_id=thread_id,
+                request_id=request_id,
+            )
+        except IdempotencyConflict as exc:
+            raise MailSubmissionError(str(exc), "idempotency_conflict", []) from exc
+        except PostRejected as exc:
+            raise MailSubmissionError(str(exc), exc.reason, exc.invalid_recipients) from exc
+        return post.to_dict()
