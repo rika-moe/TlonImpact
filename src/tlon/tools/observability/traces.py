@@ -36,7 +36,7 @@ class ListTracesTool(Tool):
 
     ``source`` defaults to the owning agent's id (bound at assembly) so
     the common question is "my recent sessions"; passing another member's
-    id (or a component source like ``mail_delivery``) looks at the rest
+    id (or a component source like ``post_office``) looks at the rest
     of the society. Traces persist across restarts (JSONL files), unlike
     the metrics snapshot.
     """
@@ -53,7 +53,8 @@ class ListTracesTool(Tool):
             description=(
                 "列出最近的 trace（执行轨迹），按开始时间从新到旧（只读）。\n"
                 "- 默认只看你自己（source 默认为你的 agent id）；"
-                "传其他成员 id 或组件名（如 'mail_delivery'）可看社会其他部分的轨迹。\n"
+                "传其他成员 id 或组件名（如 'post_office'）可看社会其他部分的轨迹。\n"
+                "source 按整条 trace 的起始来源过滤，不按子 span 来源过滤；agent 会话里的 mail.post 应查该成员 trace。\n"
                 "- 返回摘要列表（trace_id/name/source/起止时间/span 数）；"
                 "看某条 trace 的完整 span 树用 getTrace。\n"
                 "典型问题：我最近的任务成功率在下降吗？哪类任务耗时变长？"
@@ -71,7 +72,7 @@ class ListTracesTool(Tool):
                         "type": "string",
                         "description": (
                             "按来源过滤：agent id（如 'gu-yanxi'）或组件名"
-                            "（如 'mail_delivery'）。默认是你自己"
+                            "（如 'post_office'）。默认是你自己"
                         ),
                     },
                 },

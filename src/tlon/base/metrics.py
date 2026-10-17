@@ -169,13 +169,17 @@ class MetricsService(Component, Device):
 
         meter = metrics.get_meter("tlon")
         self._mail_sent = meter.create_counter(
-            "tlon.mail.sent", description="Mails published as MAIL_NEW"
+            "tlon.mail.sent",
+            description="Cumulative accepted mails, one per mail; agent label is the sender storage key",
         )
         self._mail_delivered = meter.create_counter(
             "tlon.mail.delivered",
-            description="Per-recipient mail deliveries (kind=agent|human)",
+            description="Cumulative recipient inbox/gateway successes; not reads, replies or agent execution",
         )
-        self._agent_started = meter.create_counter("tlon.agent.started", description="Agent starts")
+        self._agent_started = meter.create_counter(
+            "tlon.agent.started",
+            description="Cumulative agent start events; not distinct or currently active members",
+        )
         self._agent_woken = meter.create_counter(
             "tlon.agent.woken", description="Agent wakes from sleep"
         )
@@ -249,7 +253,7 @@ class MetricsService(Component, Device):
             meter.create_observable_gauge(
                 "tlon.society.containers",
                 callbacks=[self._observe_society_containers],
-                description="Number of running agent containers",
+                description="Latest sampled running container count; not member count or cumulative starts",
             )
 
         logger.info("metrics_service_constructed")

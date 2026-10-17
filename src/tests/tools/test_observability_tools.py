@@ -7,11 +7,13 @@ mail stats from the agents-layer provider over the agent's own mailbox.
 
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import collect_mail_stats, mail_stats_provider
+from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import SpanRecord, TraceRecord, TraceStore
 from tlon.organization.mail.mail import Mail
@@ -383,10 +385,13 @@ class TestGetSocialHealthTool:
 
     @staticmethod
     def _tool(tlon_paths: TlonPaths, member_ids: list[str]) -> GetSocialHealthTool:
+        info = Mock(spec=AgentInfoProvider)
+        info.get_all_ids.return_value = set(member_ids)
+        info.get_config.side_effect = lambda key: (
+            AgentConfig(id=key, name=key) if key in member_ids else None
+        )
         return GetSocialHealthTool(
-            provider=orphan_mail_provider(
-                tlon_paths, member_ids=lambda: member_ids, orphan_mail_days=3
-            )
+            provider=orphan_mail_provider(tlon_paths, info, orphan_mail_days=3)
         )
 
     @pytest.mark.asyncio
@@ -400,7 +405,7 @@ class TestGetSocialHealthTool:
         result = await tool.execute()
 
         assert result.success
-        assert result.data["scanned_members"] == 1
+        assert result.data["scanned_members"] == [AGENT_ID, "adam"]
         assert result.data["orphan_count"] == 1
         assert result.data["orphans"][0]["mail_id"] == "old1"
 
@@ -424,7 +429,7 @@ class TestGetSocialHealthTool:
         result = await tool.execute()
 
         assert result.success
-        assert result.data["scanned_members"] == 1
+        assert result.data["scanned_members"] == ["adam", "ghost-member"]
         assert not tlon_paths.mail_database_file().exists()
         assert not (tlon_paths._home / "ghost-member").exists()
 

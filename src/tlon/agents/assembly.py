@@ -510,10 +510,7 @@ async def assemble_cognitive(
         GetSocialHealthTool(
             provider=orphan_mail_provider(
                 tlon_paths,
-                member_ids=lambda: (
-                    sorted(agent_info.get_all_ids())
-                    + MailStore(tlon_paths.mail_database_file()).known_human_ids()
-                ),
+                agent_info=agent_info,
             )
         )
     )

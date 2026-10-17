@@ -42,12 +42,20 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
                 f"{member['name']}（{member['id']}） — {member['address']}"
                 for member in result.data
             )
+            report = await runtime.agent_registry._health.scan_orphan_mail()
+            assert report["scanned_members"] == sorted(member["id"] for member in result.data)
+            assert report["scanned_count"] == len(result.data)
+            assert report["failed_members"] == []
             # Merely listing the unified directory does not change lifecycle targets.
             assert set(runtime.agent_registry.get_all_ids()) == {bob_id}
             receipt = await _send_mail(http, url, "directory address is deliverable", to=["alice"])
             assert _read_inbox(tmp_path, "human:alice")[0]["id"] == receipt["mail_id"]
         await asyncio.to_thread(runtime.post_office.store.retire, bob_id)
         assert [member["id"] for member in (await tool.execute()).data] == ["adam", "alice"]
+        assert (await runtime.agent_registry._health.scan_orphan_mail())["scanned_members"] == [
+            "adam",
+            "alice",
+        ]
 
     async with _server(tmp_path) as (_, restarted):
         assert restarted._runtime is not None
