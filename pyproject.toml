@@ -31,7 +31,7 @@ dependencies = [
     "structlog>=23.0.0",
     "opentelemetry-sdk>=1.30",
     # LLM（litellm 次版本间有 breaking change，锁定次版本，ADR 0012）
-    "litellm==1.98.*",
+    "litellm==1.105.*",
     "croniter>=6.2.4",
     "sqlite-vec>=0.1.9",
 ]
