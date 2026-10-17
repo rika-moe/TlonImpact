@@ -7,13 +7,12 @@ Also covers the ``listStagingPrototypes`` tool (): the staging
 proposals an agent's digest can surface as pending human decisions.
 """
 
+from pathlib import Path
+
 import pytest
 
 from tlon.agents.prototypes.management import write_trusted_prototype
-from tlon.agents.prototypes.staging import (
-    list_staging_prototypes,
-    write_staging_prototype,
-)
+from tlon.agents.prototypes.staging import list_staging_prototypes, write_staging_prototype
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
@@ -25,17 +24,11 @@ class TestWriteStagingValidation:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="unknown function or special form: jump"):
             write_staging_prototype(
-                "wild",
-                """\
-{:version 1
- :rules [{:name "wild"
-          :on :mail-delivered
-          :actions [(jump {:to ["x@tlon.internal"]})]}]}
-""",
+                '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n',
                 tlon_paths=p,
+                display_name="定址转发",
             )
-        # Nothing reached disk.
-        assert not (p.prototypes_staging_dir() / "wild").exists()
+        assert not p.prototypes_staging_dir().exists()
 
     def test_invalid_execution_level_rejected(self, tmp_path):
         """The write gate inherits the spec grammar: an illegal
@@ -43,25 +36,14 @@ class TestWriteStagingValidation:
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match=":execution/:level"):
             write_staging_prototype(
-                "overreaching",
-                """\
-{:version 1
- :execution {:level :L9}
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-""",
+                '{:version 1\n :execution {:level :L9}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n',
                 tlon_paths=p,
+                display_name="定址转发",
             )
-        assert not (p.prototypes_staging_dir() / "overreaching").exists()
+        assert not p.prototypes_staging_dir().exists()
 
 
-VALID_SPEC = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+VALID_SPEC = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
 
 
 class TestListStagingPrototypesTool:
@@ -70,8 +52,7 @@ class TestListStagingPrototypesTool:
 
     async def test_lists_staged_proposals(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype(
-            "night-owl",
+        created_1 = write_staging_prototype(
             VALID_SPEC,
             display_name="夜猫子",
             description="夜间值守",
@@ -79,13 +60,11 @@ class TestListStagingPrototypesTool:
             tlon_paths=p,
         )
         tool = ListStagingPrototypesTool(lister=lambda: list_staging_prototypes(p))
-
         result = await tool.execute()
-
         assert result.success
         assert result.data == [
             {
-                "name": "night-owl",
+                "name": created_1.name,
                 "display_name": "夜猫子",
                 "description": "夜间值守",
                 "author": "lin-zhiyao",
@@ -97,9 +76,7 @@ class TestListStagingPrototypesTool:
     async def test_empty_staging(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         tool = ListStagingPrototypesTool(lister=lambda: list_staging_prototypes(p))
-
         result = await tool.execute()
-
         assert result.success
         assert result.data == []
 
@@ -118,52 +95,55 @@ class TestStagingLineageFields:
 
     def test_root_proposal_defaults(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        info = write_staging_prototype("root", VALID_SPEC, author_id="adam", tlon_paths=p)
-
+        info = write_staging_prototype(
+            VALID_SPEC, author_id="adam", tlon_paths=p, display_name="定址转发"
+        )
         assert info.parent is None
         assert info.generation == 1
         assert info.proposal_note is None
 
     def test_child_derives_generation_from_trusted_parent(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("base", VALID_SPEC, tlon_paths=p)
-
+        created_1 = write_trusted_prototype(VALID_SPEC, tlon_paths=p, display_name="定址转发")
         info = write_staging_prototype(
-            "child",
             VALID_SPEC,
             author_id="adam",
-            parent="base",
+            parent=created_1.name,
             proposal_note="换上更严格的门控",
             tlon_paths=p,
+            display_name="定址转发",
         )
-
-        assert info.parent == "base"
+        assert info.parent == created_1.name
         assert info.generation == 2
         assert info.proposal_note == "换上更严格的门控"
 
     def test_parent_may_live_in_staging(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype("gen1", VALID_SPEC, author_id="adam", tlon_paths=p)
-
-        info = write_staging_prototype(
-            "gen2", VALID_SPEC, author_id="adam", parent="gen1", tlon_paths=p
+        created_1 = write_staging_prototype(
+            VALID_SPEC, author_id="adam", tlon_paths=p, display_name="定址转发"
         )
-
+        info = write_staging_prototype(
+            VALID_SPEC,
+            author_id="adam",
+            parent=created_1.name,
+            tlon_paths=p,
+            display_name="定址转发",
+        )
         assert info.generation == 2
 
     def test_unknown_parent_rejected_nothing_on_disk(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
             write_staging_prototype(
-                "orphan", VALID_SPEC, author_id="adam", parent="ghost", tlon_paths=p
+                VALID_SPEC, author_id="adam", parent="ghost", tlon_paths=p, display_name="定址转发"
             )
-        assert not (p.prototypes_staging_dir() / "orphan").exists()
+        assert not p.prototypes_staging_dir().exists()
 
     def test_invalid_parent_name_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="invalid prototype name"):
             write_staging_prototype(
-                "orphan", VALID_SPEC, author_id="adam", parent="../x", tlon_paths=p
+                VALID_SPEC, author_id="adam", parent="../x", tlon_paths=p, display_name="定址转发"
             )
 
 
@@ -178,11 +158,11 @@ class TestWritePrototypeToolLessons:
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-
-        result = await tool.execute(name="wise", behavior=VALID_SPEC, lessons="- 教训\n")
-
+        result = await tool.execute(
+            behavior=VALID_SPEC, lessons="- 教训\n", display_name="定址转发"
+        )
         assert result.success
-        lessons_file = p.prototypes_staging_dir() / "wise" / "LESSONS.md"
+        lessons_file = p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训\n"
 
     async def test_no_lessons_no_file(self, tmp_path):
@@ -191,11 +171,9 @@ class TestWritePrototypeToolLessons:
             author_id="adam",
             writer=lambda *a, **kw: write_staging_prototype(*a, tlon_paths=p, **kw),
         )
-
-        result = await tool.execute(name="plain", behavior=VALID_SPEC)
-
+        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
         assert result.success
-        assert not (p.prototypes_staging_dir() / "plain" / "LESSONS.md").exists()
+        assert not (p.prototypes_staging_dir() / result.data["name"] / "LESSONS.md").exists()
 
 
 class TestWritePrototypeSolvency:
@@ -215,12 +193,10 @@ class TestWritePrototypeSolvency:
             prototype="broke",
             solvency=_insolvent,
         )
-
-        result = await tool.execute(name="wild", behavior=VALID_SPEC)
-
+        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
         assert not result.success
         assert "insolvent" in result.error
-        assert not (p.prototypes_staging_dir() / "wild").exists()
+        assert not p.prototypes_staging_dir().exists()
 
     async def test_solvency_failure_is_fail_open(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -234,9 +210,7 @@ class TestWritePrototypeSolvency:
             prototype="broke",
             solvency=_boom,
         )
-
-        result = await tool.execute(name="fine", behavior=VALID_SPEC)
-
+        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
         assert result.success, result.error
 
     async def test_manual_member_never_gated(self, tmp_path):
@@ -253,7 +227,23 @@ class TestWritePrototypeSolvency:
             prototype=None,
             solvency=_insolvent,
         )
-
-        result = await tool.execute(name="root", behavior=VALID_SPEC)
-
+        result = await tool.execute(behavior=VALID_SPEC, display_name="定址转发")
         assert result.success, result.error
+
+
+async def test_write_tool_rejects_old_name_and_requires_behavior_label(tmp_path: Path) -> None:
+    from unittest.mock import Mock
+
+    writer = Mock()
+    tool = WritePrototypeTool(author_id="adam", writer=writer)
+    assert "name" not in tool.parameters["properties"]
+    assert "display_name" in tool.parameters["required"]
+    for args in (
+        {"name": "developer", "display_name": "定址转发", "behavior": VALID_SPEC},
+        {"behavior": VALID_SPEC},
+        {"display_name": "  ", "behavior": VALID_SPEC},
+    ):
+        result = await tool.execute(**args)
+        assert not result.success
+        assert "name" in result.error
+    writer.assert_not_called()

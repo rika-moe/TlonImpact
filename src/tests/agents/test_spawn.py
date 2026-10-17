@@ -13,6 +13,7 @@ spawner without a declared model fails the spawn at instantiation.
 """
 
 import json
+from uuid import UUID
 
 import pytest
 
@@ -64,6 +65,9 @@ class _FakeRegistry:
         self._profiles: dict[str, object] = {}
         self._agent_info = provider or _FakeProvider()
         self.event_bus = _FakeBus()
+
+    def get_all_ids(self) -> list[str]:
+        return list(self._registered_ids)
 
     def register(self, agent_id: str) -> None:
         pass
@@ -353,6 +357,9 @@ class TestModelInheritance:
 
         config = await manager.spawn_member("worker", "甲", "boss-1", "sess-1")
 
+        assert config.id.startswith("m-")
+        assert UUID(hex=config.id[2:]).version == 4
+        assert "worker" not in config.id
         assert config.llm is not None
         assert config.llm.model_name == _SPAWNER_MODEL
         # persisted: agent.yaml on disk carries the inherited model

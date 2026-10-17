@@ -1,4 +1,3 @@
-; 快速反应者：低迭代上限、短邮件历史（total spec——文件即全部行为）
 {:version 1
  :execution {:level :L0}
  :rules [{:name "respond"

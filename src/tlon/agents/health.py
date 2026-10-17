@@ -28,7 +28,6 @@ registry's own initialize/shutdown.
 import asyncio
 import time
 from collections import deque
-from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -36,9 +35,10 @@ from typing import TYPE_CHECKING, Any
 from tlon.base.events.event import Event, EventType
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.guardian_provider import GuardianAgentInfoProvider
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.mail.store import MailStore
+from tlon.organization.mail.resolver import RecipientResolver
 from tlon.tools.observability.ports import OrphanMailProvider
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ def _mail_timestamp(value: str) -> datetime | None:
 
 
 async def collect_orphan_mails(
-    member_ids: list[str],
+    members: dict[str, str],
     *,
     tlon_paths: TlonPaths,
     orphan_mail_days: int,
@@ -86,14 +86,14 @@ async def collect_orphan_mails(
     — a scan never creates a mailbox.
 
     Args:
-        member_ids: Every society member id to scan (agents + known
-            humans); injected to keep the collector testable
+        members: Public directory id to mailbox owner mapping; injected for tests
         tlon_paths: Mailbox layout resolver
         orphan_mail_days: Minimum thread-root age to qualify as orphan
         report_cap: Max orphan entries in the payload
 
     Returns:
-        The scan payload: ``scanned_members`` (count), ``orphan_count``
+        The scan payload: ``scanned_members`` (public ids), ``scanned_count`` (successful count),
+        ``failed_members`` (public ids whose mailbox scan failed), ``orphan_count``
         (total found), ``orphans`` (capped at ``report_cap``, oldest
         first, each with mail_id/from/to/subject/age_days)
     """
@@ -101,21 +101,25 @@ async def collect_orphan_mails(
     min_age = timedelta(days=orphan_mail_days)
 
     orphans: list[dict[str, Any]] = []
-    scanned_members = 0
-    for member_id in member_ids:
-        scanned_members += 1
+    scanned_members: list[str] = []
+    failed_members: list[str] = []
+    for public_id, member_id in sorted(members.items()):
         try:
             found = await _orphans_for(
                 member_id, Mailbox(tlon_paths.mail_database_file(), member_id), now, min_age
             )
         except Exception as e:
             logger.error("orphan_scan_member_failed", member_id=member_id, error=str(e))
+            failed_members.append(public_id)
             continue
+        scanned_members.append(public_id)
         orphans.extend(found)
 
     orphans.sort(key=lambda entry: entry["age_days"], reverse=True)
     return {
         "scanned_members": scanned_members,
+        "scanned_count": len(scanned_members),
+        "failed_members": failed_members,
         "orphan_count": len(orphans),
         "orphans": orphans[:report_cap],
     }
@@ -159,21 +163,31 @@ async def _orphans_for(
 
 def orphan_mail_provider(
     tlon_paths: TlonPaths,
-    member_ids: Callable[[], list[str]],
+    agent_info: "AgentInfoProvider",
     orphan_mail_days: int = 3,
 ) -> OrphanMailProvider:
     """Bind the orphan scan to a paths layout and a live roster.
 
-    The roster callable is re-read per query so the report always sees
-    the current society (same pattern as the reputation provider).
+    The delivery directory is re-read in a worker per query, including Adam
+    and registered humans and excluding retired or shadowed addresses. Public
+    IDs are reported; mailbox owners retain the delivery layer's internal keys.
 
     Returns:
         An ``OrphanMailProvider`` running the on-demand scan
     """
 
+    resolver = RecipientResolver(GuardianAgentInfoProvider(agent_info), tlon_paths)
+
+    def members() -> dict[str, str]:
+        return {
+            member["id"]: owner
+            for member in resolver.list_members()
+            if (owner := resolver.resolve_member(member["address"])) is not None
+        }
+
     async def scan() -> dict[str, Any]:
         return await collect_orphan_mails(
-            await asyncio.to_thread(member_ids),
+            await asyncio.to_thread(members),
             tlon_paths=tlon_paths,
             orphan_mail_days=orphan_mail_days,
         )
@@ -211,11 +225,9 @@ class PublicHealthMonitor:
         noisy_cooldown_seconds: float = 600.0,
     ) -> None:
         self._event_bus = event_bus
-        self._agent_info = agent_info_provider
-        self._paths = tlon_paths
+        self._scan = orphan_mail_provider(tlon_paths, agent_info_provider, orphan_mail_days)
 
         self._health_scan_interval_seconds = health_scan_interval_seconds
-        self._orphan_mail_days = orphan_mail_days
         self._noisy_window_seconds = noisy_window_seconds
         self._noisy_threshold = noisy_threshold
         self._noisy_cooldown_seconds = noisy_cooldown_seconds
@@ -319,7 +331,8 @@ class PublicHealthMonitor:
         payload = await self.scan_orphan_mail()
         logger.info(
             "orphan_scan_completed",
-            scanned_members=payload["scanned_members"],
+            scanned_count=payload["scanned_count"],
+            failed_members=payload["failed_members"],
             orphan_count=payload["orphan_count"],
         )
         await self._event_bus.publish(
@@ -339,16 +352,10 @@ class PublicHealthMonitor:
         monitor's thresholds. See there for the orphan definition.
 
         Returns:
-            The MAIL_ORPHAN_SCAN payload: ``scanned_members`` (count),
+            The MAIL_ORPHAN_SCAN payload: ``scanned_members`` (public ids), ``scanned_count`` (successful count),
+            ``failed_members`` (public ids whose mailbox scan failed),
             ``orphan_count`` (total found), ``orphans`` (capped at
             ``ORPHAN_REPORT_CAP``, oldest first, each with
             mail_id/from/to/subject/age_days)
         """
-        member_ids = sorted(self._agent_info.get_all_ids()) + await asyncio.to_thread(
-            MailStore(self._paths.mail_database_file()).known_human_ids
-        )
-        return await collect_orphan_mails(
-            member_ids,
-            tlon_paths=self._paths,
-            orphan_mail_days=self._orphan_mail_days,
-        )
+        return await self._scan()

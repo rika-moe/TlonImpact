@@ -1,0 +1,4 @@
+{:name :p-59b63f0de59f482781637e106de350c7
+ :display-name "低频反思迭代"
+ :description "L0 执行能力；最多 10 次迭代、1000000 token，完整上下文与交卷前自评审，每 30 分钟反思。"
+ :trusted true}

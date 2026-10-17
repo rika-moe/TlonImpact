@@ -40,6 +40,7 @@ _DRAFT_SYSTEM_PROMPT = (
     "（behavior.tlon 底稿）、它的个体经验（记忆、蒸馏教训）"
     "和一条变更意图；输出是一份**完整的新 behavior.tlon**。\n"
     "要求：\n"
+    "- 原型只描述怎样行动，不授予职业、职位或社会身份；行为显示名与描述应对应实际 spec。\n"
     "- 只输出 spec 文本本身——一个 v1 schema 的 EDN map；不要解释、"
     "不要注释、不要 Markdown 代码围栏。\n"
     "- 输出必须完整自足（不是 diff）：保留底稿中与意图无关的行为，"
@@ -87,7 +88,7 @@ def _extract_edn(content: str) -> str | None:
 class ProposeBehaviorTool(Tool):
     """Tool to propose a next-generation behavior from lived experience.
 
-    The member supplies only the change intent and a name; the tool reads
+    The member supplies only the change intent and a behavior label; the tool reads
     its own behavior spec and memory, drafts a complete new spec with one
     LLM call (purpose="propose"), and writes it to the staging area
     parented to the member's own prototype (``AgentConfig.prototype``;
@@ -112,7 +113,7 @@ class ProposeBehaviorTool(Tool):
             name="proposeBehavior",
             description=(
                 "基于自己的个体经验提出下一代行为原型（世代通道的经验入口）。"
-                "只需给出变更意图与新原型名：工具内部读你当前的 behavior.tlon 与记忆"
+                "只需给出变更意图与行为显示名：工具内部读你当前的 behavior.tlon 与记忆"
                 "（claims 与蒸馏教训），由一次独立的起草调用产出完整的新 spec，"
                 "并以你自己的 prototype 为父原型写入 staging 区（proposal_note 记意图、"
                 "lessons 随包）。与 writePrototype 的区别：那是裸写通道（自带全文），"
@@ -126,20 +127,16 @@ class ProposeBehaviorTool(Tool):
                         "type": "string",
                         "description": "变更意图：想改什么、为什么（自然语言，记为 proposal_note）",
                     },
-                    "name": {
-                        "type": "string",
-                        "description": "新原型名称（字母/数字/'-'/'_'，全局唯一）",
-                    },
                     "display_name": {
                         "type": "string",
-                        "description": "显示名（人类审批时看到）",
+                        "description": "必填行为标签，描述怎样行动；不赋予职业、职位或社会身份",
                     },
                     "description": {
                         "type": "string",
                         "description": "一句话描述这个原型的行为定位",
                     },
                 },
-                "required": ["intent", "name"],
+                "required": ["intent", "display_name"],
             },
         )
         self._agent_id = agent_id
@@ -173,6 +170,16 @@ class ProposeBehaviorTool(Tool):
             return True
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        if "name" in kwargs:
+            return ToolResult(
+                success=False,
+                data={},
+                error="name is system-generated; provide display_name instead",
+            )
+        if not isinstance(kwargs.get("display_name"), str) or not kwargs["display_name"].strip():
+            return ToolResult(
+                success=False, data={}, error="display_name must be a non-empty behavior label"
+            )
         if self._prototype is not None and not await self._solvent(self._prototype):
             return ToolResult(
                 success=False,
@@ -185,8 +192,7 @@ class ProposeBehaviorTool(Tool):
             )
 
         intent: str = kwargs["intent"]
-        name: str = kwargs["name"]
-        display_name: str = kwargs.get("display_name", "")
+        display_name: str = kwargs["display_name"]
         description: str = kwargs.get("description", "")
 
         behavior_file = self._paths.agent_behavior_file(self._agent_id)
@@ -237,7 +243,6 @@ class ProposeBehaviorTool(Tool):
             return near_kin_rejection
         try:
             info = self._writer(
-                name,
                 draft,
                 display_name=display_name,
                 description=description,

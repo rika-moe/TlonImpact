@@ -231,7 +231,7 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
             <section className="panel proto-detail">
               <div className="proto-detail-head">
                 <span className="tech-label">
-                  {selected.staging ? "STAGING" : "TRUSTED"} // {selected.name}
+                  {selected.staging ? "STAGING" : "TRUSTED"} // {detail?.display_name || selected.name}
                 </span>
                 <span className="prototypes-spacer" />
                 <button
@@ -290,11 +290,11 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
                 <>
                   <div className="proto-meta">
                     <div className="proto-meta-row">
-                      <span className="tech-label">NAME</span>
+                      <span className="tech-label">ID</span>
                       <span className="proto-meta-value">{detail.name}</span>
                     </div>
                     <div className="proto-meta-row">
-                      <span className="tech-label">DISPLAY_NAME</span>
+                      <span className="tech-label">行为显示名</span>
                       <span className="proto-meta-value">
                         {detail.display_name || "—"}
                       </span>
@@ -468,7 +468,7 @@ function ModalShell({
   );
 }
 
-/** Handwritten creation: name + metadata + behavior.tlon full text. */
+/** Handwritten creation: behavior label + metadata + behavior.tlon full text. */
 function NewModal({
   rest,
   onDone,
@@ -478,7 +478,6 @@ function NewModal({
   onDone: (notice: string) => void;
   onClose: () => void;
 }): ReactElement {
-  const [name, setName] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
   const [behavior, setBehavior] = useState("");
@@ -486,8 +485,8 @@ function NewModal({
   const [busy, setBusy] = useState(false);
 
   const submit = async (): Promise<void> => {
-    if (!name.trim()) {
-      setError("NAME 不能为空");
+    if (!displayName.trim()) {
+      setError("行为显示名不能为空");
       return;
     }
     if (!behavior.trim()) {
@@ -497,13 +496,13 @@ function NewModal({
     setBusy(true);
     setError(null);
     try {
-      await rest.createPrototype({
-        name: name.trim(),
+      const result = await rest.createPrototype({
         behavior,
-        display_name: displayName.trim() || undefined,
+        display_name: displayName.trim(),
         description: description.trim() || undefined,
       });
-      onDone(`CREATED ${name.trim()}`);
+      const created = result["prototype"] as { name: string };
+      onDone(`CREATED ${displayName.trim()} · ${created.name}`);
     } catch (err) {
       setError(writeErrMsg(err));
       setBusy(false);
@@ -513,20 +512,14 @@ function NewModal({
   return (
     <ModalShell title="NEW // HANDWRITTEN PROTOTYPE" onClose={onClose}>
       <div className="proto-form">
+        <p>技术 ID 由系统生成。显示名描述怎样行动，不授予职业或职务。</p>
         <label className="proto-form-row">
-          <span className="tech-label">NAME *</span>
-          <input
-            className="input"
-            value={name}
-            autoFocus
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
-        <label className="proto-form-row">
-          <span className="tech-label">DISPLAY_NAME (可选)</span>
+          <span className="tech-label">行为显示名 *（例如：长预算工具迭代）</span>
           <input
             className="input"
             value={displayName}
+            autoFocus
+            placeholder="描述处理过程、上下文或预算"
             onChange={(e) => setDisplayName(e.target.value)}
           />
         </label>
@@ -535,6 +528,7 @@ function NewModal({
           <input
             className="input"
             value={description}
+            placeholder="说明触发条件与处理方式，不用职业头衔代替行为"
             onChange={(e) => setDescription(e.target.value)}
           />
         </label>
@@ -619,7 +613,7 @@ function EditModal({
     <ModalShell title={`EDIT // ${selection.name}`} onClose={onClose}>
       <div className="proto-form">
         <label className="proto-form-row">
-          <span className="tech-label">DISPLAY_NAME</span>
+          <span className="tech-label">行为显示名</span>
           <input
             className="input"
             value={displayName}
@@ -632,6 +626,7 @@ function EditModal({
           <input
             className="input"
             value={description}
+            placeholder="说明触发条件与处理方式，不用职业头衔代替行为"
             onChange={(e) => setDescription(e.target.value)}
           />
         </label>

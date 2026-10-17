@@ -305,11 +305,11 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 
 ### 原型管理端点（WebUI PROTOTYPES 视图）
 
-域函数在 [agents/prototypes/](../../src/tlon/agents/prototypes) 包；原型对象形状 `{name, display_name, description, trusted, author, parent, generation, proposal_note, parameters: [{name, type, required}]}`（`parent`/`generation`/`proposal_note` 是谱系字段：`parent` 为父原型名、根为 `null`，`generation` 根=1 且由服务端推导，`proposal_note` 为本代变更说明）。详情端点额外带 `behavior`（behavior.tlon 全文）、`lessons`（`LESSONS.md` 全文，仅原型携带该文件时出现）、`reviews`（`REVIEW.md` 同行评审记录全文，仅原型携带该文件时出现——staging 提案经 `reviewPrototype` 评审累积，approve 后随目录晋级 trusted）与 `lineage`（`get_prototype_lineage` 的派生结果：根在前，每代 `{name, generation, author, proposal_note, trusted, parent, diff_from_parent, broken}`，`diff_from_parent` 是相邻两代 behavior.tlon 的 unified diff，根为 `null`；父原型已删/改名时链在断点截断并标 `broken`）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
+域函数在 [agents/prototypes/](../../src/tlon/agents/prototypes) 包；原型对象形状 `{name, display_name, description, trusted, author, parent, generation, proposal_note, parameters: [{name, type, required}]}`（`parent`/`generation`/`proposal_note` 是谱系字段：`parent` 为父原型 ID、根为 `null`，`generation` 根=1 且由服务端推导，`proposal_note` 为本代变更说明）。详情端点额外带 `behavior`（behavior.tlon 全文）、`lessons`（`LESSONS.md` 全文，仅原型携带该文件时出现）、`reviews`（`REVIEW.md` 同行评审记录全文，仅原型携带该文件时出现——staging 提案经 `reviewPrototype` 评审累积，approve 后随目录晋级 trusted）与 `lineage`（`get_prototype_lineage` 的派生结果：根在前，每代 `{name, generation, author, proposal_note, trusted, parent, diff_from_parent, broken}`，`diff_from_parent` 是相邻两代 behavior.tlon 的 unified diff，根为 `null`；父原型已删/改名时链在断点截断并标 `broken`）。写路径一律先跑校验链（模板分析 → EDN parse → `validate_member_spec`），失败不落盘。
 
 - `GET /admin/prototypes`、`GET /admin/prototypes/staging`——200：`{"status": "success", "prototypes": [<原型对象>]}`；503：未装配 `paths`
 - `GET /admin/prototypes/{name}`、`GET /admin/prototypes/staging/{name}`——200：`{"status": "success", "prototype": <原型对象 + behavior + lessons? + reviews? + lineage>}`；404：`{"error", "reason": "prototype_not_found"}`
-- `POST /admin/prototypes`——body `{name, behavior, display_name?, description?, parent?, proposal_note?, lessons?}`，手写创建直接进正式库（`:trusted true`、无 author）；`parent` 须指向已存在的原型（trusted 或 staging 皆可），`generation` 服务端推导、不接受客户端指定；`lessons` 落盘为 `LESSONS.md`。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段、父原型不存在或校验失败）
+- `POST /admin/prototypes`——body `{behavior, display_name, description?, parent?, proposal_note?, lessons?}`，name 由系统生成 p-UUID，display_name 为必填非空行为标签；带旧 name 返回 400 managed_id。手写创建直接进正式库（`:trusted true`、无 author）；`parent` 须指向已存在的原型（trusted 或 staging 皆可），`generation` 服务端推导、不接受客户端指定；`lessons` 落盘为 `LESSONS.md`。201：`{"status": "success", "prototype": <原型对象>}`；400：`{"error", "reason": "invalid_prototype"}`（缺字段、父原型不存在或校验失败）
 - `PATCH /admin/prototypes/{name}`、`PATCH /admin/prototypes/staging/{name}`——body `{display_name?, description?, behavior?, parent?, proposal_note?, lessons?}`（全空 → 400 `invalid_prototype`），behavior 变更重跑校验链（失败则磁盘原样）；给 `parent` 会重新挂谱系并重推 `generation`；`lessons` 重写 `LESSONS.md`、不传则保留。200：`{"status": "success", "prototype": <原型对象>}`；404：`prototype_not_found`
 - `DELETE /admin/prototypes/{name}`——200：`{"status": "success"}`；404：`prototype_not_found`
 
@@ -570,3 +570,7 @@ const source = new EventSource(`/events?session_id=${encodeURIComponent(sessionI
 ```
 
 断流后应重新 POST `/sessions`、切换模式并打开新流，恢复时以 `/inbox` 持久快照补齐邮件；EventSource 重连不能复用已经销毁的会话。实现见 [WebUI REST 客户端](../../apps/webui/src/client/rest.ts) 与 [SSE 客户端](../../apps/webui/src/client/sse.ts)。
+
+### 系统分配的技术 ID（ADR 0035）
+
+POST /admin/config/agents 的请求为 `{prototype, name, model, params?, persona?}`，其中 prototype 是原型 ID、name 是成员显示名；agent_id 由系统生成 m-UUID，携带 agent_id（包括空值）返回 400 `managed_id`，不留下新成员。响应的 agent_id 用于收信、详情和管理。POST /admin/prototypes 不接受自报 name，返回的 prototype.name 是系统分配的 p-UUID。原型 display_name 创建必填、编辑不可清空；名字和描述应表达行为，不授予成员职业。已有用户文件不迁移或重编号，无旧职业名映射。

@@ -8,6 +8,7 @@ concrete ``(forward ...)``, and the required-params gate.
 
 import pytest
 
+from tests.prototype_helpers import builtin_id
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
 from tlon.agents.prototypes.instantiate import instantiate
@@ -28,14 +29,14 @@ class TestRelayPrototype:
         template, not a member class — no runtime is declared or derived
         in its metadata."""
         p = _paths(tmp_path)
-        info = get_prototype_info("relay", tlon_paths=p)
+        info = get_prototype_info(builtin_id("定址转发"), tlon_paths=p)
         assert info is not None
         assert not hasattr(info, "runtime")
 
     def test_instantiate_renders_forward(self, tmp_path):
         p = _paths(tmp_path)
         cfg = instantiate(
-            "relay",
+            builtin_id("定址转发"),
             "relay-1",
             "转发者",
             model="openai/gpt-5",
@@ -56,13 +57,15 @@ class TestRelayPrototype:
     def test_missing_params_refused(self, tmp_path):
         p = _paths(tmp_path)
         with pytest.raises(PrototypeError, match="params"):
-            instantiate("relay", "relay-1", "转发者", model="openai/gpt-5", tlon_paths=p)
+            instantiate(
+                builtin_id("定址转发"), "relay-1", "转发者", model="openai/gpt-5", tlon_paths=p
+            )
 
     def test_extra_params_refused(self, tmp_path):
         p = _paths(tmp_path)
         with pytest.raises(PrototypeError, match="unknown parameters"):
             instantiate(
-                "relay",
+                builtin_id("定址转发"),
                 "relay-1",
                 "转发者",
                 model="openai/gpt-5",

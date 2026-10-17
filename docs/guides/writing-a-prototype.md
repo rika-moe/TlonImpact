@@ -2,8 +2,8 @@
 
 完整走查：从零写一个行为原型，把它变成活的 agent。读完你就能：
 
-- 手写一份 `behavior.tlon`（rules-form EDN）并把目录放进 `~/.tlon/prototypes/`；
-- 用 ops 管理界面或 `spawnAgent` 从原型派生 agent；
+- 手写一份 `behavior.tlon`（rules-form EDN），经 WebUI 创建并取得系统原型 ID；
+- 用 WebUI 或 `spawnAgent` 从原型派生 agent；
 - 走一遍「LLM 创作 → staging → 人工审批」的完整管线。
 
 前置：先通读 `design/prototypes.md`（为什么这么设计）、`reference/tlosure-reference.md`（EDN 语法与求值器）与 `reference/dsl-reference.md`（MemberSpec 全字段与领域词汇）。本文是操作手册，不重复语法。
@@ -13,13 +13,13 @@
 原型是一个**纯数据目录**，判定标准只有一条：目录里有 `behavior.tlon`（[agents/prototypes/info.py](../../src/tlon/agents/prototypes/info.py) 的 `_is_prototype_dir`）。
 
 ```
-~/.tlon/prototypes/{prototype_name}/
+~/.tlon/prototypes/{prototype_id}/
 ├── prototype.tlon          # 元数据：:name / :display-name / :description / :trusted / :author
 │                          #   + 谱系：:parent / :generation / :proposal-note
 └── behavior.tlon          # 成员的全部行为规约（total spec，唯一权威）
 ```
 
-谱系字段（可缺省）：`:parent` 是父原型名（根原型不写）；`:generation` 是代数，根=1、子=父+1，**永远由服务端推导**，手写时不必填写（读取缺省按根处理）；`:proposal-note` 是本代变更说明的自由文本。写新原型时若它是某个既有原型的改进版，填上 `:parent :base-name` 即可挂上谱系——之后 `getPrototypeLineage` / `GET /admin/prototypes/{name}` 能展示整条代际链与每代的行为 diff。
+谱系字段（可缺省）：`:parent` 是父原型 ID（根原型不写）；`:generation` 是代数，根=1、子=父+1，**永远由服务端推导**，手写时不必填写（读取缺省按根处理）；`:proposal-note` 是本代变更说明的自由文本。写新原型时若它是某个既有原型的改进版，在创建表单或请求中填上现有父原型 ID 即可挂上谱系——之后 `getPrototypeLineage` / `GET /admin/prototypes/{name}` 能展示整条代际链与每代的行为 diff。
 
 原型**不带人格文件**（统一成员模型，ADR 0006）：原型是行为的基因型；成员的人格（IDENTITY/SOUL/RULES.md）是创建时的数据，不是基因型的一部分——创建成员时经 WebUI / admin API 的 `persona` 字段写入。
 
@@ -30,18 +30,13 @@
 
 ## 2. 从零写一个带 `:loop` 的原型
 
-带 `:loop` = 有 LLM 参与、跑认知循环的成员。我们写一个「简报员」：收到点名自己的邮件就做一轮简短的认知循环（think/act + 交卷前自评审），最多 3 轮。
+带 `:loop` = 有 LLM 参与、跑认知循环的成员。我们写一个「短轮次回复」行为：收到点名自己的邮件就做一轮简短的认知循环（think/act + 交卷前自评审），最多 3 轮。
 
-### 2.1 prototype.tlon
+### 2.1 行为显示名与系统元数据
 
-```edn
-{:name :briefing-agent
- :display-name "简报员"
- :description "收到点名邮件时做一轮简短思考并回复，适合快速查询类任务。"
- :trusted true}
-```
+在 WebUI 的 PROTOTYPES → CREATE 中填写显示名「短轮次回复」、说明「收到点名邮件后最多迭代三轮再回复」，再粘贴下面的 behavior。无需填写原型 name；创建成功后服务端返回 `p-<uuid4 hex>`，并写入 prototype.tlon。display_name 必填且描述行为，技术 ID 不表达职业或人格。
 
-`trusted` 默认就是 true：能直接往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信。只有 staging 区写入路径才会显式写 `:trusted false`。
+原型的 trusted、author 与 generation 由创建渠道和谱系决定，不能通过显示名授予职务。手写创建进入 trusted 库，LLM 提案进入 staging，批准不改变其 ID。
 
 ### 2.2 behavior.tlon
 
@@ -86,17 +81,17 @@
 
 `behavior.tlon` 会在派生时**逐字拷贝**进 `~/.tlon/{agent_id}/config/`，此后改原型不影响已派生的 agent（拷贝即冻结）；`agent.yaml` 的 `prototype` 字段记录来源（血缘）。两种派生入口：
 
-### 方法 A：ops Agents 视图（人类）
+### 方法 A：WebUI（人类）
 
-`uv run tlon ops` → Agents 视图按 `c` 创建：选中你的原型 → 填姓名与**模型**（`provider/model` 形式，ADR 0016 起必填——模型是成员级部署策略，没有进程级兜底；可选 agent_id / identity）→ 回车提交。启动模式由 `behavior.tlon` 的 `:on :boot` 规则自动决定，无需配置。
+AGENTS → CREATE → 按行为显示名选择原型 → 填成员名字、模型（provider/model）与可选人格种子 → CREATE。服务端分配 `m-<uuid4 hex>` 并返回地址，表单不接受 agent_id。成员的显示名可以表达自己的社会身份；原型只是行为来源。
 
 ### 方法 B：spawnAgent（LLM）
 
-认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`；子成员继承 spawner 的模型（ADR 0016——成本/能力画像随谱系）。派生出的成员（`c-{prototype}-{uuid8}`）与手建成员同构（统一成员模型，ADR 0006）：永不删除，空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生。
+认知 agent 自己用 `spawnAgent` 工具，指定 `prototype`、`name`、可选 `params`；子成员继承 spawner 的模型（ADR 0016——成本/能力画像随谱系）。派生出的成员（`m-<uuid4 hex>`）与手建成员同构（统一成员模型，ADR 0006）：永不删除，空闲睡眠、档案归档；是否开机启动由原型 spec 的 `:on :boot` 规则派生。
 
 ## 4. 无 `:loop` 的原型
 
-无 `:loop` 的规则只跑 `:actions`、不启动认知会话（统一装配下能力对象仍存在，只是不被使用——对象便宜，调用才贵）。内置的 `relay`（转发者）是完整示例（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）：
+无 `:loop` 的规则只跑 `:actions`、不启动认知会话（统一装配下能力对象仍存在，只是不被使用——对象便宜，调用才贵）。内置的「定址转发」是完整示例（[定址转发行为](../../src/tlon/prototypes/p-39c280594c5b4e4084ce8aad72e6b07f/behavior.tlon)）：
 
 ```edn
 {:version 1
@@ -115,8 +110,8 @@
 
 「agent 创造 agent」不直接落进 trusted 库，走两区制：
 
-1. **创作**：LLM 用 `writePrototype` 工具，传 `name` + `behavior`（EDN 字符串）；可选 `parent`（父原型名，挂谱系，服务端推导 `generation`）与 `proposal_note`（本代变更说明）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
-2. **审批**：人类在 ops 的 Agents 视图按 `s`（staging 列表）`a` 批准 / `x` 拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 与谱系字段保留，审计链不断）；`reject_prototype` 整个删除。
+1. **创作**：LLM 用 `writePrototype` 工具，传 `display_name` + `behavior`（EDN 字符串）；可选 `parent`（父原型 ID，挂谱系，服务端推导 `generation`）与 `proposal_note`（本代变更说明）。产物写入 `~/.tlon/prototypes-staging/`，元数据强制 `:trusted false`、`:author` 记录作者 id。校验**先于落盘**：模板校验 → EDN 解析 → MemberSpec schema 校验（用无 host 谓词的默认注册表——Adam 的词汇表不许过闸），失败则什么都不写、错误原文返回给 LLM 改了重试。
+2. **审批**：人类在 WebUI 的 PROTOTYPES staging 列表批准或拒绝。`approve_prototype` 把目录移入 `~/.tlon/prototypes/` 并改写 `:trusted true`（`:author` 与谱系字段保留，审计链不断）；`reject_prototype` 整个删除。
 3. **实例化**：批准后即可被 `spawnAgent` 使用。`spawnAgent` 对 staging 里的不可信原型直接拒绝（`untrusted_prototype`），且在一切预算检查之前——不可信原型连配额都消耗不到。
 
 ## 6. 校验与排错
@@ -152,3 +147,4 @@ print('OK', any(rule.loop is not None for rule in spec.rules))
 - [ ] 每个 `respond` 规则都写了 `:when` 门控；
 - [ ] 参数化原型：`:parameters` 声明与 `${var}` 引用闭合，参数类型只用 `:string` / `:string-list`；
 - [ ] LLM 创作走 staging + 人类审批，不直接写 trusted 库。
+创建接口会拒绝旧 name／agent_id 参数，没有旧职业原型名别名。技术标识、行为显示名与社会身份的边界见 [ADR 0035](../decisions/0035-generated-ids-and-behavior-prototypes.md)。

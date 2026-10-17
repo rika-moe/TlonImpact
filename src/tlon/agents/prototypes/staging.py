@@ -21,8 +21,10 @@ from tlon.agents.prototypes.info import (
     _is_prototype_dir,
     _read_metadata,
     _resolve_parent_generation,
+    _validate_display_name,
     _validate_name,
 )
+from tlon.base.identifiers import new_prototype_id
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
@@ -64,15 +66,14 @@ def _validate_behavior(behavior_edn: str) -> str:
 
 
 def write_staging_prototype(
-    name: str,
     behavior_edn: str,
-    display_name: str = "",
+    *,
+    display_name: str,
     description: str = "",
     author_id: str = "",
     parent: str | None = None,
     proposal_note: str | None = None,
     lessons: str | None = None,
-    *,
     tlon_paths: TlonPaths,
 ) -> PrototypeInfo:
     """Write an LLM-authored prototype to the staging area (untrusted).
@@ -100,10 +101,8 @@ def write_staging_prototype(
     ``proposal_note`` records what this generation changes.
 
     Args:
-        name: prototype directory name (charset-checked, must be unique
-            across both the trusted library and the staging area)
         behavior_edn: raw EDN text of the unified behavior spec
-        display_name: human-facing name (falls back to ``name``)
+        display_name: required non-empty behavior label; does not assign a profession
         description: human-facing description
         author_id: id of the agent that authored the spec (audit)
         parent: name of the prototype this one derives from (must exist in
@@ -117,23 +116,20 @@ def write_staging_prototype(
         Metadata of the staged prototype (``trusted=False``).
 
     Raises:
-        PrototypeError: invalid name, name conflict, unknown parent, or spec
+        PrototypeError: empty behavior label, generated ID conflict, unknown parent, or spec
             failed template / EDN / schema validation (nothing is written in
             any case)
     """
     p = tlon_paths
-    _validate_name(name)
-
-    if (p.prototypes_dir() / name / BEHAVIOR_FILE).exists():
-        raise PrototypeError(f"prototype '{name}' already exists in the trusted library")
-    staging_dir = p.prototypes_staging_dir() / name
-    if staging_dir.exists():
-        raise PrototypeError(f"prototype '{name}' already exists in the staging area")
-
+    _validate_display_name(display_name)
     # Validate first: a broken spec must never reach disk.
     generation = _resolve_parent_generation(parent, p) if parent is not None else 1
     spec_text = _validate_behavior(behavior_edn)
 
+    name = new_prototype_id()
+    if (p.prototypes_dir() / name).exists() or (p.prototypes_staging_dir() / name).exists():
+        raise PrototypeError(f"prototype '{name}' already exists")
+    staging_dir = p.prototypes_staging_dir() / name
     staging_dir.mkdir(parents=True)
 
     (staging_dir / BEHAVIOR_FILE).write_text(spec_text, encoding="utf-8")
@@ -142,7 +138,7 @@ def write_staging_prototype(
 
     metadata: dict[Any, Any] = {
         Keyword("name"): Keyword(name),
-        Keyword("display-name"): display_name or name,
+        Keyword("display-name"): display_name,
         Keyword("description"): description,
         Keyword("trusted"): False,
         Keyword("author"): author_id,

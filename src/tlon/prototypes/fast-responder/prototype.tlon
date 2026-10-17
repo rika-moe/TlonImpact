@@ -1,4 +1,0 @@
-{:name :fast-responder
- :display-name "快速反应者"
- :description "轻量响应骨架：极少思考迭代、精简上下文（不注入知识、只看最近 5 封邮件），适合简单问答、快速确认与轻量任务。行为模板，不代表社会身份。"
- :trusted true}

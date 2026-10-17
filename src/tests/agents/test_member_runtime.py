@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.mail_helpers import make_office
+from tests.prototype_helpers import builtin_id
 from tlon.agents.member_runtime import CognitiveCapabilities, MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.on_complete import OnCompleteRunner
@@ -82,8 +83,8 @@ SCRIPT_SPAWN = """\
 {:version 1
  :rules [{:name "hire"
           :on :mail-delivered
-          :actions [(spawn "developer")]}]}
-"""
+          :actions [(spawn "BUILTIN_PROTOTYPE")]}]}
+""".replace("BUILTIN_PROTOTYPE", builtin_id("长预算工具迭代"))
 
 COGNITIVE_EDN = """\
 {:version 1
@@ -403,7 +404,7 @@ class TestDeterministicDispatch:
         )
         await bus.publish(_deliver(mail, member.member_id))
         await _wait_for(lambda: len(registry.calls) == 1)
-        assert registry.calls[0][0] == "developer"
+        assert registry.calls[0][0] == builtin_id("长预算工具迭代")
         assert registry.calls[0][2] == "admin-2"  # spawner_id
         assert registry.calls[0][3] is None  # no session context
 

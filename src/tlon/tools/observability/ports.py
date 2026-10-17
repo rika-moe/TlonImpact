@@ -23,6 +23,6 @@ MailStatsProvider = Callable[[str], Awaitable[dict[str, Any]]]
 ReputationProvider = Callable[[str], Awaitable[dict[str, Any]]]
 
 #: Orphan-mail scan provider (): runs an on-demand society-wide scan
-#: and returns the report (scanned_members / orphan_count / orphans) as a
+#: and returns the report (scanned_members (public ids) / scanned_count / failed_members / orphan_count / orphans) as a
 #: JSON-safe dict. Derived, never stored.
 OrphanMailProvider = Callable[[], Awaitable[dict[str, Any]]]

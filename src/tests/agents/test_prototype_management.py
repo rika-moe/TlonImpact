@@ -6,9 +6,13 @@ creation lands directly in the trusted library, behavior changes rerun the
 full validation chain before anything touches disk.
 """
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from tlon.agents.prototypes.catalog import get_prototype_detail
+from tlon.agents.prototypes.info import PrototypeInfo
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.prototypes.management import (
     delete_prototype,
@@ -24,41 +28,23 @@ from tlon.base.config import yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
 
-VALID_BEHAVIOR = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
-
-VALID_BEHAVIOR_V2 = """\
-{:version 1
- :rules [{:name "relay-v2"
-          :on :mail-delivered
-          :actions [(forward {:to ["y@tlon.internal"]})]}]}
-"""
-
-INVALID_BEHAVIOR = """\
-{:version 1
- :rules [{:name "wild"
-          :on :mail-delivered
-          :actions [(jump {:to ["x@tlon.internal"]})]}]}
-"""
+VALID_BEHAVIOR = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
+VALID_BEHAVIOR_V2 = '{:version 1\n :rules [{:name "relay-v2"\n          :on :mail-delivered\n          :actions [(forward {:to ["y@tlon.internal"]})]}]}\n'
+INVALID_BEHAVIOR = '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
 
 
 class TestWriteTrustedPrototype:
     def test_creates_trusted_without_author(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         info = write_trusted_prototype(
-            "hand", VALID_BEHAVIOR, display_name="手写", description="d", tlon_paths=p
+            VALID_BEHAVIOR, display_name="手写", description="d", tlon_paths=p
         )
-
-        assert info.name == "hand"
+        assert info.name == info.name
         assert info.display_name == "手写"
         assert info.description == "d"
         assert info.trusted is True
         assert info.author is None
-        proto_dir = p.prototypes_dir() / "hand"
+        proto_dir = p.prototypes_dir() / info.name
         assert (proto_dir / "behavior.tlon").read_text(encoding="utf-8") == VALID_BEHAVIOR
         metadata = (proto_dir / "prototype.tlon").read_text(encoding="utf-8")
         assert ":trusted true" in metadata
@@ -67,47 +53,55 @@ class TestWriteTrustedPrototype:
     def test_invalid_behavior_nothing_on_disk(self, tmp_path):
         p = TlonPaths(home=tmp_path)
         with pytest.raises(PrototypeError, match="validation failed"):
-            write_trusted_prototype("bad", INVALID_BEHAVIOR, tlon_paths=p)
-        assert not (p.prototypes_dir() / "bad").exists()
+            write_trusted_prototype(INVALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        assert not p.prototypes_dir().exists()
 
-    def test_name_conflict_rejected(self, tmp_path):
+    def test_name_conflict_rejected(self, tmp_path, monkeypatch):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("dup", VALID_BEHAVIOR, tlon_paths=p)
-        with pytest.raises(PrototypeError, match="already exists in the trusted library"):
-            write_trusted_prototype("dup", VALID_BEHAVIOR, tlon_paths=p)
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        monkeypatch.setattr(
+            "tlon.agents.prototypes.management.new_prototype_id", lambda: created_1.name
+        )
+        with pytest.raises(PrototypeError, match="already exists"):
+            write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
 
-    def test_staging_name_conflict_rejected(self, tmp_path):
+    def test_staging_name_conflict_rejected(self, tmp_path, monkeypatch):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype("dup", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
-        with pytest.raises(PrototypeError, match="already exists in the staging area"):
-            write_trusted_prototype("dup", VALID_BEHAVIOR, tlon_paths=p)
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+        )
+        monkeypatch.setattr(
+            "tlon.agents.prototypes.management.new_prototype_id", lambda: created_1.name
+        )
+        with pytest.raises(PrototypeError, match="already exists"):
+            write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
 
-    def test_invalid_name_rejected(self, tmp_path):
+    def test_empty_behavior_label_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        with pytest.raises(PrototypeError, match="invalid prototype name"):
-            write_trusted_prototype("a/b", VALID_BEHAVIOR, tlon_paths=p)
+        with pytest.raises(PrototypeError, match="display_name"):
+            write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="  ")
 
 
 class TestGetPrototypeDetail:
     def test_trusted_detail_returns_metadata_and_behavior(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, description="d", tlon_paths=p)
-
-        info, behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR, description="d", tlon_paths=p, display_name="定址转发"
+        )
+        info, behavior, lessons, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert lessons is None
-        assert info.name == "hand"
+        assert info.name == created_1.name
         assert info.trusted is True
         assert behavior == VALID_BEHAVIOR
 
     def test_staging_detail(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
-
-        info, _behavior, _lessons, _reviews = get_prototype_detail(
-            "staged", staging=True, tlon_paths=p
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
         )
-
+        info, _behavior, _lessons, _reviews = get_prototype_detail(
+            created_1.name, staging=True, tlon_paths=p
+        )
         assert info.trusted is False
         assert info.author == "adam"
 
@@ -126,26 +120,28 @@ class TestStagingReviewFile:
 
     def test_detail_without_reviews_returns_none(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
-
-        _info, _behavior, _lessons, reviews = get_prototype_detail(
-            "staged", staging=True, tlon_paths=p
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
         )
-
+        _info, _behavior, _lessons, reviews = get_prototype_detail(
+            created_1.name, staging=True, tlon_paths=p
+        )
         assert reviews is None
 
     def test_append_roundtrip_and_accumulate(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
-
-        append_staging_review("staged", "## t1 — r-1（m-1）：通过\n\n理由甲\n", tlon_paths=p)
-        append_staging_review("staged", "## t2 — r-2（m-2）：弃权\n\n理由乙\n", tlon_paths=p)
-
-        text = (p.prototypes_staging_dir() / "staged" / "REVIEW.md").read_text(encoding="utf-8")
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
+        )
+        append_staging_review(created_1.name, "## t1 — r-1（m-1）：通过\n\n理由甲\n", tlon_paths=p)
+        append_staging_review(created_1.name, "## t2 — r-2（m-2）：弃权\n\n理由乙\n", tlon_paths=p)
+        text = (p.prototypes_staging_dir() / created_1.name / "REVIEW.md").read_text(
+            encoding="utf-8"
+        )
         assert text.count("理由甲") == 1 and text.count("理由乙") == 1
         assert text.index("理由甲") < text.index("理由乙")
         _info, _behavior, _lessons, reviews = get_prototype_detail(
-            "staged", staging=True, tlon_paths=p
+            created_1.name, staging=True, tlon_paths=p
         )
         assert reviews == text
 
@@ -158,50 +154,49 @@ class TestStagingReviewFile:
 class TestUpdatePrototype:
     def test_metadata_update_preserves_trust_and_author(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype("staged", VALID_BEHAVIOR, author_id="adam", tlon_paths=p)
-
-        info = update_prototype(
-            "staged", display_name="新名字", description="新描述", staging=True, tlon_paths=p
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR, author_id="adam", tlon_paths=p, display_name="定址转发"
         )
-
+        info = update_prototype(
+            created_1.name, display_name="新名字", description="新描述", staging=True, tlon_paths=p
+        )
         assert info.display_name == "新名字"
         assert info.description == "新描述"
-        assert info.trusted is False  # approval status untouched
-        assert info.author == "adam"  # audit chain untouched
-        behavior = (p.prototypes_staging_dir() / "staged" / "behavior.tlon").read_text(
+        assert info.trusted is False
+        assert info.author == "adam"
+        behavior = (p.prototypes_staging_dir() / created_1.name / "behavior.tlon").read_text(
             encoding="utf-8"
         )
         assert behavior == VALID_BEHAVIOR
 
     def test_behavior_update_rewrites_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        update_prototype("hand", behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
-
-        _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        update_prototype(created_1.name, behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
+        _info, behavior, _, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert behavior == VALID_BEHAVIOR_V2
 
     def test_invalid_behavior_update_leaves_disk_untouched(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, description="orig", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR, description="orig", tlon_paths=p, display_name="定址转发"
+        )
         with pytest.raises(PrototypeError, match="validation failed"):
             update_prototype(
-                "hand", description="changed", behavior_edn=INVALID_BEHAVIOR, tlon_paths=p
+                created_1.name, description="changed", behavior_edn=INVALID_BEHAVIOR, tlon_paths=p
             )
-
-        # Neither the behavior file nor the metadata was written.
-        _info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
+        _info, behavior, _, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert behavior == VALID_BEHAVIOR
-        metadata = (p.prototypes_dir() / "hand" / "prototype.tlon").read_text(encoding="utf-8")
+        metadata = (p.prototypes_dir() / created_1.name / "prototype.tlon").read_text(
+            encoding="utf-8"
+        )
         assert "orig" in metadata and "changed" not in metadata
 
     def test_nothing_to_update_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
         with pytest.raises(PrototypeError, match="nothing to update"):
-            update_prototype("hand", tlon_paths=p)
+            update_prototype(created_1.name, tlon_paths=p)
 
     def test_missing_prototype_rejected(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -215,68 +210,69 @@ class TestApprovePreservesLineage:
 
     def test_approve_keeps_parent_generation_note(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("base", VALID_BEHAVIOR, tlon_paths=p)
-        write_staging_prototype(
-            "child",
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_2 = write_staging_prototype(
             VALID_BEHAVIOR_V2,
             author_id="adam",
-            parent="base",
+            parent=created_1.name,
             proposal_note="改转发目标",
             tlon_paths=p,
+            display_name="定址转发",
         )
-
-        info = approve_prototype("child", tlon_paths=p)
-
+        info = approve_prototype(created_2.name, tlon_paths=p)
         assert info.trusted is True
-        assert info.parent == "base"
+        assert info.parent == created_1.name
         assert info.generation == 2
         assert info.proposal_note == "改转发目标"
-        # On-disk metadata round-trips too.
-        metadata = (p.prototypes_dir() / "child" / "prototype.tlon").read_text(encoding="utf-8")
-        assert ":parent :base" in metadata
+        metadata = (p.prototypes_dir() / created_2.name / "prototype.tlon").read_text(
+            encoding="utf-8"
+        )
+        assert f":parent :{created_1.name}" in metadata
         assert ":generation 2" in metadata
         assert ":proposal-note" in metadata
 
     def test_update_keeps_lineage_fields(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("base", VALID_BEHAVIOR, tlon_paths=p)
-        write_staging_prototype(
-            "child",
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_2 = write_staging_prototype(
             VALID_BEHAVIOR_V2,
             author_id="adam",
-            parent="base",
+            parent=created_1.name,
             proposal_note="改转发目标",
             tlon_paths=p,
+            display_name="定址转发",
         )
-
-        info = update_prototype("child", display_name="新名字", staging=True, tlon_paths=p)
-
-        assert info.parent == "base"
+        info = update_prototype(created_2.name, display_name="新名字", staging=True, tlon_paths=p)
+        assert info.parent == created_1.name
         assert info.generation == 2
         assert info.proposal_note == "改转发目标"
 
     def test_update_can_relink_parent(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("base", VALID_BEHAVIOR, tlon_paths=p)
-        write_trusted_prototype("base2", VALID_BEHAVIOR, parent="base", tlon_paths=p)
-        write_staging_prototype("child", VALID_BEHAVIOR_V2, author_id="adam", tlon_paths=p)
-
-        info = update_prototype(
-            "child", parent="base2", proposal_note="重新挂到 base2", staging=True, tlon_paths=p
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        created_2 = write_trusted_prototype(
+            VALID_BEHAVIOR, parent=created_1.name, tlon_paths=p, display_name="定址转发"
         )
-
-        assert info.parent == "base2"
+        created_3 = write_staging_prototype(
+            VALID_BEHAVIOR_V2, author_id="adam", tlon_paths=p, display_name="定址转发"
+        )
+        info = update_prototype(
+            created_3.name,
+            parent=created_2.name,
+            proposal_note="重新挂到 base2",
+            staging=True,
+            tlon_paths=p,
+        )
+        assert info.parent == created_2.name
         assert info.generation == 3
         assert info.proposal_note == "重新挂到 base2"
 
     def test_update_unknown_parent_rejected_disk_untouched(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
         with pytest.raises(PrototypeError, match="parent prototype 'ghost' not found"):
-            update_prototype("hand", parent="ghost", tlon_paths=p)
-
-        info, behavior, _, _reviews = get_prototype_detail("hand", tlon_paths=p)
+            update_prototype(created_1.name, parent="ghost", tlon_paths=p)
+        info, behavior, _, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert info.parent is None
         assert behavior == VALID_BEHAVIOR
 
@@ -287,64 +283,67 @@ class TestLessonsFile:
 
     def test_staging_write_persists_lessons(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype(
-            "staged", VALID_BEHAVIOR, author_id="adam", lessons="- 教训甲\n", tlon_paths=p
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR,
+            author_id="adam",
+            lessons="- 教训甲\n",
+            tlon_paths=p,
+            display_name="定址转发",
         )
-
-        lessons_file = p.prototypes_staging_dir() / "staged" / "LESSONS.md"
+        lessons_file = p.prototypes_staging_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训甲\n"
         _info, _behavior, lessons, _reviews = get_prototype_detail(
-            "staged", staging=True, tlon_paths=p
+            created_1.name, staging=True, tlon_paths=p
         )
         assert lessons == "- 教训甲\n"
 
     def test_trusted_write_persists_lessons(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 教训乙\n", tlon_paths=p)
-
-        lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR, lessons="- 教训乙\n", tlon_paths=p, display_name="定址转发"
+        )
+        lessons_file = p.prototypes_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 教训乙\n"
-        _info, _behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
+        _info, _behavior, lessons, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert lessons == "- 教训乙\n"
 
     def test_no_lessons_no_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        assert not (p.prototypes_dir() / "hand" / "LESSONS.md").exists()
-        _info, _behavior, lessons, _reviews = get_prototype_detail("hand", tlon_paths=p)
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        assert not (p.prototypes_dir() / created_1.name / "LESSONS.md").exists()
+        _info, _behavior, lessons, _reviews = get_prototype_detail(created_1.name, tlon_paths=p)
         assert lessons is None
 
     def test_update_writes_lessons(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        update_prototype("hand", lessons="- 新教训\n", tlon_paths=p)
-
-        lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        update_prototype(created_1.name, lessons="- 新教训\n", tlon_paths=p)
+        lessons_file = p.prototypes_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 新教训\n"
 
     def test_update_none_preserves_lessons(self, tmp_path):
         """None = keep (same semantics as parent/proposal_note)."""
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 保留我\n", tlon_paths=p)
-
-        update_prototype("hand", description="只改描述", tlon_paths=p)
-
-        lessons_file = p.prototypes_dir() / "hand" / "LESSONS.md"
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR, lessons="- 保留我\n", tlon_paths=p, display_name="定址转发"
+        )
+        update_prototype(created_1.name, description="只改描述", tlon_paths=p)
+        lessons_file = p.prototypes_dir() / created_1.name / "LESSONS.md"
         assert lessons_file.read_text(encoding="utf-8") == "- 保留我\n"
 
     def test_approve_carries_lessons_to_trusted(self, tmp_path):
         """Approval is a whole-directory move — LESSONS.md rides along."""
         p = TlonPaths(home=tmp_path)
-        write_staging_prototype(
-            "staged", VALID_BEHAVIOR, author_id="adam", lessons="- 随包\n", tlon_paths=p
+        created_1 = write_staging_prototype(
+            VALID_BEHAVIOR,
+            author_id="adam",
+            lessons="- 随包\n",
+            tlon_paths=p,
+            display_name="定址转发",
         )
-
-        approve_prototype("staged", tlon_paths=p)
-
-        assert (p.prototypes_dir() / "staged" / "LESSONS.md").exists()
-        assert not (p.prototypes_staging_dir() / "staged").exists()
+        approve_prototype(created_1.name, tlon_paths=p)
+        assert (p.prototypes_dir() / created_1.name / "LESSONS.md").exists()
+        assert not (p.prototypes_staging_dir() / created_1.name).exists()
 
 
 class TestInstantiateModel:
@@ -353,20 +352,12 @@ class TestInstantiateModel:
     member's agent.yaml as ``llm.model_name``; a spec's top-level
     ``:llm`` key is rejected by the grammar."""
 
-    BEHAVIOR_WITH_LLM = """\
-{:version 1
- :llm {:model "deepseek/deepseek-chat"}
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+    BEHAVIOR_WITH_LLM = '{:version 1\n :llm {:model "deepseek/deepseek-chat"}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
 
     def test_model_param_lands_in_agent_yaml(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        cfg = instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert cfg.llm is not None
         assert cfg.llm.model_name == "openai/gpt-5"
         on_disk = yaml_load_file(p.agent_config_file("agent1"))
@@ -379,16 +370,14 @@ class TestInstantiateModel:
         sees one (ADR 0016: the key is gone from the grammar, a load
         error rather than silently ignored)."""
         p = TlonPaths(home=tmp_path)
-
         with pytest.raises(PrototypeError, match=":llm"):
-            write_trusted_prototype("hand", self.BEHAVIOR_WITH_LLM, tlon_paths=p)
+            write_trusted_prototype(self.BEHAVIOR_WITH_LLM, tlon_paths=p, display_name="定址转发")
 
     def test_missing_model_raises(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
         with pytest.raises(PrototypeError, match="model is required"):
-            instantiate("hand", "agent1", "新成员", model="", tlon_paths=p)
+            instantiate(created_1.name, "agent1", "新成员", model="", tlon_paths=p)
 
 
 class TestInstantiateLessons:
@@ -397,19 +386,17 @@ class TestInstantiateLessons:
 
     def test_copies_lessons_next_to_behavior(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, lessons="- 前辈教训\n", tlon_paths=p)
-
-        instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(
+            VALID_BEHAVIOR, lessons="- 前辈教训\n", tlon_paths=p, display_name="定址转发"
+        )
+        instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         lessons_file = p.agent_lessons_file("agent1")
         assert lessons_file.read_text(encoding="utf-8") == "- 前辈教训\n"
 
     def test_no_lessons_no_file(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert not (tmp_path / "agent1" / "config" / "LESSONS.md").exists()
 
 
@@ -419,20 +406,12 @@ class TestInstantiateExecutionLevel:
     docs/design/execution-device.md); without the section the config
     default ("L1") applies unchanged."""
 
-    L1_BEHAVIOR = """\
-{:version 1
- :execution {:level :L1}
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+    L1_BEHAVIOR = '{:version 1\n :execution {:level :L1}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
 
     def test_execution_section_projects_docker_level(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", self.L1_BEHAVIOR, tlon_paths=p)
-
-        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(self.L1_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        cfg = instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert cfg.docker.level == "L1"
         on_disk = yaml_load_file(p.agent_config_file("agent1"))
         assert on_disk is not None
@@ -440,21 +419,17 @@ class TestInstantiateExecutionLevel:
 
     def test_absent_section_keeps_default(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        cfg = instantiate("hand", "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
-
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        cfg = instantiate(created_1.name, "agent1", "新成员", model="openai/gpt-5", tlon_paths=p)
         assert cfg.docker.level == "L1"
 
 
 class TestDeletePrototype:
     def test_deletes_trusted_directory(self, tmp_path):
         p = TlonPaths(home=tmp_path)
-        write_trusted_prototype("hand", VALID_BEHAVIOR, tlon_paths=p)
-
-        delete_prototype("hand", tlon_paths=p)
-
-        assert not (p.prototypes_dir() / "hand").exists()
+        created_1 = write_trusted_prototype(VALID_BEHAVIOR, tlon_paths=p, display_name="定址转发")
+        delete_prototype(created_1.name, tlon_paths=p)
+        assert not (p.prototypes_dir() / created_1.name).exists()
 
     def test_missing_raises(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -466,3 +441,61 @@ class TestDeletePrototype:
         for bad in ("..", "../x", "a/b", "a\\b"):
             with pytest.raises(PrototypeError):
                 delete_prototype(bad, tlon_paths=p)
+
+
+@pytest.mark.parametrize("writer", [write_trusted_prototype, write_staging_prototype])
+def test_generated_ids_are_stable_opaque_and_unique(
+    tmp_path: Path, writer: Callable[..., PrototypeInfo]
+) -> None:
+    from uuid import UUID
+
+    p = TlonPaths(home=tmp_path)
+    first = writer(VALID_BEHAVIOR, display_name="定址转发", tlon_paths=p)
+    second = writer(VALID_BEHAVIOR, display_name="定址转发", tlon_paths=p)
+    assert first.name != second.name
+    assert first.name.startswith("p-")
+    assert UUID(hex=first.name.removeprefix("p-")).version == 4
+    detail, _, _, _ = get_prototype_detail(first.name, staging=not first.trusted, tlon_paths=p)
+    assert detail.name == first.name
+    assert detail.display_name == "定址转发"
+
+
+@pytest.mark.parametrize("writer", [write_trusted_prototype, write_staging_prototype])
+def test_writer_rejects_caller_supplied_id(
+    tmp_path: Path, writer: Callable[..., PrototypeInfo]
+) -> None:
+    p = TlonPaths(home=tmp_path)
+    with pytest.raises(TypeError, match="name"):
+        writer(VALID_BEHAVIOR, name="developer", display_name="定址转发", tlon_paths=p)
+    assert not p.prototypes_dir().exists()
+    assert not p.prototypes_staging_dir().exists()
+
+
+@pytest.mark.parametrize("label", ["", " ", "\n\t"])
+@pytest.mark.parametrize("writer", [write_trusted_prototype, write_staging_prototype])
+def test_empty_label_fails_before_id_allocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    writer: Callable[..., PrototypeInfo],
+    label: str,
+) -> None:
+    from unittest.mock import Mock
+
+    allocator = Mock(side_effect=AssertionError("must validate before assigning ID"))
+    monkeypatch.setattr(f"{writer.__module__}.new_prototype_id", allocator)
+    p = TlonPaths(home=tmp_path)
+    with pytest.raises(PrototypeError, match="display_name"):
+        writer(VALID_BEHAVIOR, display_name=label, tlon_paths=p)
+    allocator.assert_not_called()
+    assert not p.prototypes_dir().exists()
+    assert not p.prototypes_staging_dir().exists()
+
+
+def test_update_cannot_clear_behavior_label_or_write_other_fields(tmp_path: Path) -> None:
+    p = TlonPaths(home=tmp_path)
+    info = write_trusted_prototype(VALID_BEHAVIOR, display_name="定址转发", tlon_paths=p)
+    with pytest.raises(PrototypeError, match="display_name"):
+        update_prototype(info.name, display_name="  ", behavior_edn=VALID_BEHAVIOR_V2, tlon_paths=p)
+    stored, behavior, _, _ = get_prototype_detail(info.name, tlon_paths=p)
+    assert stored.display_name == "定址转发"
+    assert behavior == VALID_BEHAVIOR

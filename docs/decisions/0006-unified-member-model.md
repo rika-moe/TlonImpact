@@ -1,5 +1,7 @@
 # ADR 0006：统一成员模型——一类成员 + 世代更替
 
+> 原型及新成员的技术 ID 与行为显示名由 [ADR 0035](0035-generated-ids-and-behavior-prototypes.md) 修订；历史职业名和 ID 示例不再是当前创建接口。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [unified-member-model](../design/unified-member-model.md)、[prototypes](../design/prototypes.md)。当前适用范围：统一成员与世代模型；人格边界由 ADR 0024 澄清，档案保留不排除人类显式治理删除。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-08-16，方向讨论拍板）；阶段 1–3 已实施（2026-08，统一装配、档案归档），阶段 4（世代通道 `proposeBehavior`）已实施（2026-09）——进度见 [docs/design/unified-member-model.md](../design/unified-member-model.md)。后续：选择压（代谢经济学）与审批社会化的具体形态由 [ADR 0014](0014-environment-agent-coevolution.md) 拍板。

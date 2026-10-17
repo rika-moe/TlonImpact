@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.prototype_helpers import builtin_id
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.paths import TlonPaths
 from tlon.base.settings import Settings
@@ -29,7 +30,13 @@ async def test_restart_rejects_offline_identity_collision(
     paths = TlonPaths(tmp_path)
     await _first_boot(paths)
     LocalIdentity(paths.webui_identity_file()).initialize("alice")
-    instantiate("developer", agent_id, "Offline member", model="openai/gpt-test", tlon_paths=paths)
+    instantiate(
+        builtin_id("长预算工具迭代"),
+        agent_id,
+        "Offline member",
+        model="openai/gpt-test",
+        tlon_paths=paths,
+    )
 
     # Observe process-level teardown without replacing the real runtime.
     tracing_shutdown = Mock(wraps=serverapp.shutdown_tracing)
@@ -63,7 +70,13 @@ async def test_restart_accepts_distinct_agent_or_uninitialized_identity(
     await _first_boot(paths)
     if username is not None:
         LocalIdentity(paths.webui_identity_file()).initialize(username)
-    instantiate("developer", "bob", "Offline member", model="openai/gpt-test", tlon_paths=paths)
+    instantiate(
+        builtin_id("长预算工具迭代"),
+        "bob",
+        "Offline member",
+        model="openai/gpt-test",
+        tlon_paths=paths,
+    )
     app = ServerApp(tlon_paths=paths, settings=Settings.from_env())
     try:
         await app.initialize()

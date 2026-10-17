@@ -21,7 +21,7 @@ class ListPrototypesTool(Tool):
             name="listPrototypes",
             description=(
                 "列出可用的 behavior prototype（行为原型）。每个 prototype 是一套预制的"
-                "行为规约 + 人格模板，可作为创建新 Agent 的模板。返回名称、显示名与描述。"
+                "行为规约，可作为创建新成员的行为模板；不携带人格，也不赋予职业或职位。返回系统生成的 ID、行为显示名与描述。"
             ),
             parameters={
                 "type": "object",

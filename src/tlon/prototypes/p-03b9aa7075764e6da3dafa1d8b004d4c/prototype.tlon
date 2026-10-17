@@ -1,0 +1,4 @@
+{:name :p-03b9aa7075764e6da3dafa1d8b004d4c
+ :display-name "标准无执行迭代"
+ :description "L0 执行能力；最多 10 次迭代、1000000 token，完整上下文与交卷前自评审，每 15 分钟反思。"
+ :trusted true}

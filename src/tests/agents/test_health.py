@@ -9,16 +9,18 @@ and answered threads excluded; report truncation).
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from tlon.agents.health import PublicHealthMonitor
+from tlon.agents.health import PublicHealthMonitor, collect_orphan_mails
 from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.store import MailStore
 
 
 class _AgentInfoStub(AgentInfoProvider):
@@ -148,7 +150,7 @@ class TestOrphanScan:
         monitor = _monitor(bus, tmp_path, agent_ids=["alice"], orphan_mail_days=3)
         payload = await monitor.scan_orphan_mail()
 
-        assert payload["scanned_members"] == 1
+        assert payload["scanned_members"] == ["adam", "alice"]
         assert payload["orphan_count"] == 1
         orphan = payload["orphans"][0]
         assert orphan["mail_id"] == root.id
@@ -264,5 +266,39 @@ class TestOrphanScan:
         await monitor.scan_and_report()
         await _wait_for(lambda: len(scans) == 1)
         payload = scans[0].payload
-        assert payload["scanned_members"] == 1
+        assert payload["scanned_members"] == ["adam", "alice"]
         assert payload["orphan_count"] == 1
+
+
+async def test_failed_scan_is_identified_and_not_counted(tmp_path: Path) -> None:
+    async def scan(member_id: str, *_args: object) -> list[dict[str, object]]:
+        if member_id == "human:rika":
+            raise OSError("cannot read mailbox")
+        return []
+
+    with patch("tlon.agents.health._orphans_for", side_effect=scan):
+        report = await collect_orphan_mails(
+            {"rika": "human:rika", "adam": "adam"},
+            tlon_paths=TlonPaths(home=tmp_path),
+            orphan_mail_days=3,
+        )
+    assert report["scanned_members"] == ["adam"]
+    assert report["scanned_count"] == 1
+    assert report["failed_members"] == ["rika"]
+
+
+async def test_directory_scan_reads_human_storage_key(bus: EventBus, tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    old = _mail(
+        datetime.now(UTC) - timedelta(days=4),
+        from_address="rika@tlon.internal",
+        to=["adam@tlon.internal"],
+        content="question",
+    )
+    MailStore(paths.mail_database_file()).register_member("human:rika")
+    await Mailbox(paths.mail_database_file(), "human:rika").append_sent(old)
+    report = await _monitor(bus, tmp_path).scan_orphan_mail()
+    assert report["scanned_members"] == ["adam", "rika"]
+    assert report["scanned_count"] == 2
+    assert report["failed_members"] == []
+    assert report["orphans"][0]["mail_id"] == old.id

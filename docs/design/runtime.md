@@ -205,7 +205,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 ### spawn 出的成员：与手建成员同构
 
-spawn 出的成员与手建成员**同构**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`c-{prototype}-{8hex}`，调用方不能指定），boot/lazy 判定由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（sleep，不删）。自动生命周期回收保留成员档案；显式退休与删除的区别见成员模型。
+spawn 出的成员与手建成员**同构**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`m-<uuid4 hex>`，调用方不能指定），boot/lazy 判定由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（sleep，不删）。自动生命周期回收保留成员档案；显式退休与删除的区别见成员模型。
 
 ## 当前演化接口与未实施方向
 

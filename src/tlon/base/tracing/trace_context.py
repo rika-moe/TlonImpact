@@ -78,7 +78,7 @@ def start_span(
         SpanCtx for the new span
 
     Example:
-        >>> with start_span("message.routing", source="mail_delivery") as ctx:
+        >>> with start_span("message.routing", source="post_office") as ctx:
         ...     await route(ctx, message)
     """
     attrs: dict[str, Any] = {SOURCE_ATTRIBUTE: source}
@@ -109,7 +109,7 @@ def continue_trace(
 
     Example:
         >>> with continue_trace(event.trace_id, event.span_id):
-        ...     with start_span("message.routing", source="mail_delivery") as ctx:
+        ...     with start_span("message.routing", source="post_office") as ctx:
         ...         await route(ctx, message)
     """
     try:

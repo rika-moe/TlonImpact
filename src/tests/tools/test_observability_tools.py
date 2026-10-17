@@ -7,11 +7,13 @@ mail stats from the agents-layer provider over the agent's own mailbox.
 
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import collect_mail_stats, mail_stats_provider
+from tlon.base.config import AgentConfig, AgentInfoProvider
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import SpanRecord, TraceRecord, TraceStore
 from tlon.organization.mail.mail import Mail
@@ -72,7 +74,12 @@ class TestGetMetricsTool:
         result = await tool.execute()
 
         assert result.success
-        assert result.data == snapshot_data
+        assert result.data["metrics"]["tlon.llm.calls"]["points"] == [
+            {"attributes": {"member_id": AGENT_ID}, "value": 7}
+        ]
+        assert snapshot_data["metrics"]["tlon.llm.calls"]["points"][0]["attributes"] == {
+            "agent_id": AGENT_ID
+        }
 
     def test_is_read_only(self):
         tool = GetMetricsTool(snapshot=lambda: {"metrics": {}})
@@ -333,10 +340,10 @@ class TestGetReputationTool:
 
     @staticmethod
     def _fake_provider(seen: list[str]):
-        async def provider(agent_id: str) -> dict[str, Any]:
-            seen.append(agent_id)
+        async def provider(member_id: str) -> dict[str, Any]:
+            seen.append(member_id)
             return {
-                "agent_id": agent_id,
+                "member_id": member_id,
                 "endorsements_given": 1,
                 "endorsements_received": 2,
                 "top_endorsed_mails": [],
@@ -348,7 +355,7 @@ class TestGetReputationTool:
     @pytest.mark.asyncio
     async def test_default_subject_is_the_caller(self):
         seen: list[str] = []
-        tool = GetReputationTool(provider=self._fake_provider(seen), agent_id=AGENT_ID)
+        tool = GetReputationTool(provider=self._fake_provider(seen), member_id=AGENT_ID)
 
         result = await tool.execute()
 
@@ -357,24 +364,24 @@ class TestGetReputationTool:
         assert result.data["endorsements_received"] == 2
 
     @pytest.mark.asyncio
-    async def test_explicit_agent_id_queries_another_member(self):
+    async def test_explicit_member_id_queries_another_member(self):
         seen: list[str] = []
-        tool = GetReputationTool(provider=self._fake_provider(seen), agent_id=AGENT_ID)
+        tool = GetReputationTool(provider=self._fake_provider(seen), member_id=AGENT_ID)
 
-        result = await tool.execute(agent_id="b-002")
+        result = await tool.execute(member_id="b-002")
 
         assert result.success
         assert seen == ["b-002"]
-        assert result.data["agent_id"] == "b-002"
+        assert result.data["member_id"] == "b-002"
 
     def test_tool_schema(self):
-        async def provider(agent_id: str) -> dict[str, Any]:
+        async def provider(member_id: str) -> dict[str, Any]:
             return {}
 
-        tool = GetReputationTool(provider=provider, agent_id=AGENT_ID)
+        tool = GetReputationTool(provider=provider, member_id=AGENT_ID)
         assert tool.name == "getReputation"
         assert tool.parameters["required"] == []
-        assert "agent_id" in tool.parameters["properties"]
+        assert "member_id" in tool.parameters["properties"]
 
 
 class TestGetSocialHealthTool:
@@ -383,10 +390,13 @@ class TestGetSocialHealthTool:
 
     @staticmethod
     def _tool(tlon_paths: TlonPaths, member_ids: list[str]) -> GetSocialHealthTool:
+        info = Mock(spec=AgentInfoProvider)
+        info.get_all_ids.return_value = set(member_ids)
+        info.get_config.side_effect = lambda key: (
+            AgentConfig(id=key, name=key) if key in member_ids else None
+        )
         return GetSocialHealthTool(
-            provider=orphan_mail_provider(
-                tlon_paths, member_ids=lambda: member_ids, orphan_mail_days=3
-            )
+            provider=orphan_mail_provider(tlon_paths, info, orphan_mail_days=3)
         )
 
     @pytest.mark.asyncio
@@ -400,7 +410,7 @@ class TestGetSocialHealthTool:
         result = await tool.execute()
 
         assert result.success
-        assert result.data["scanned_members"] == 1
+        assert result.data["scanned_members"] == [AGENT_ID, "adam"]
         assert result.data["orphan_count"] == 1
         assert result.data["orphans"][0]["mail_id"] == "old1"
 
@@ -424,7 +434,7 @@ class TestGetSocialHealthTool:
         result = await tool.execute()
 
         assert result.success
-        assert result.data["scanned_members"] == 1
+        assert result.data["scanned_members"] == ["adam", "ghost-member"]
         assert not tlon_paths.mail_database_file().exists()
         assert not (tlon_paths._home / "ghost-member").exists()
 
@@ -435,3 +445,56 @@ class TestGetSocialHealthTool:
         tool = GetSocialHealthTool(provider=provider)
         assert tool.name == "getSocialHealth"
         assert tool.parameters["required"] == []
+
+
+async def test_metrics_member_view_hides_categories_and_preserves_totals() -> None:
+    snapshot = {
+        "metrics": {
+            "tlon.mail.sent": {
+                "type": "counter",
+                "description": "internal",
+                "points": [
+                    {"attributes": {"agent": "human:rika"}, "value": 2},
+                    {"attributes": {"agent": AGENT_ID}, "value": 3},
+                ],
+            },
+            "tlon.mail.delivered": {
+                "type": "counter",
+                "description": "kind=human|agent",
+                "points": [
+                    {"attributes": {"kind": "human"}, "value": 4},
+                    {"attributes": {"kind": "agent"}, "value": 6},
+                ],
+            },
+            "tlon.mail.endorsed": {
+                "type": "counter",
+                "description": "",
+                "points": [
+                    {"attributes": {"endorser": "human:rika"}, "value": 1},
+                ],
+            },
+        }
+    }
+    result = await GetMetricsTool(snapshot=lambda: snapshot).execute()
+    metrics = result.data["metrics"]
+    assert metrics["tlon.mail.sent"]["points"] == [
+        {"attributes": {"member_id": "rika"}, "value": 2},
+        {"attributes": {"member_id": AGENT_ID}, "value": 3},
+    ]
+    assert metrics["tlon.mail.delivered"]["points"] == [{"attributes": {}, "value": 10}]
+    assert metrics["tlon.mail.endorsed"]["points"][0]["attributes"] == {"endorser": "rika"}
+    assert "human:" not in str(result.data)
+    assert snapshot["metrics"]["tlon.mail.delivered"]["points"][0]["attributes"] == {
+        "kind": "human"
+    }
+
+
+@pytest.mark.parametrize("arguments", [{"agent_id": "rika"}, {"member_id": "human:rika"}])
+async def test_reputation_rejects_internal_identity_inputs(arguments: dict[str, str]) -> None:
+    seen: list[str] = []
+    tool = GetReputationTool(
+        provider=TestGetReputationTool._fake_provider(seen), member_id=AGENT_ID
+    )
+    result = await tool.execute(**arguments)
+    assert not result.success
+    assert seen == []

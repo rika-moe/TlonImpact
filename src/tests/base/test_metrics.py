@@ -534,3 +534,32 @@ async def test_no_container_provider_means_no_gauges(
     assert "tlon.container.cpu_percent" not in snapshot["metrics"]
     assert "tlon.society.container_memory_bytes" not in snapshot["metrics"]
     assert "tlon.society.containers" not in snapshot["metrics"]
+
+
+async def test_mail_and_start_counters_count_events_not_members(
+    metric_setup: tuple[InMemoryMetricReader, MetricsService],
+) -> None:
+    _, service = metric_setup
+    mail = _make_mail()
+    service._on_mail_new(Event(type=EventType.MAIL_NEW, payload=mail, source="adam"))
+    for recipient in ["alice", "bob", "human:rika"]:
+        service._on_mail_delivered(
+            Event(
+                type=EventType.MAIL_DELIVERED,
+                payload={"mail": mail, "recipient": recipient},
+                source="post_office",
+            )
+        )
+    for _ in range(2):
+        service._on_agent_started(
+            Event(
+                type=EventType.AGENT_STARTED,
+                payload={"agent_id": "alice"},
+                source="agent_registry",
+            )
+        )
+    snapshot = service.snapshot()
+    assert _point(snapshot, "tlon.mail.sent", agent="adam")["value"] == 1
+    assert _point(snapshot, "tlon.mail.delivered", kind="agent")["value"] == 2
+    assert _point(snapshot, "tlon.mail.delivered", kind="human")["value"] == 1
+    assert _point(snapshot, "tlon.agent.started", agent_id="alice")["value"] == 2

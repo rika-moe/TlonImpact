@@ -15,12 +15,16 @@
 server 直接从本模块取。
 """
 
+from collections.abc import Collection
 from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.config import AgentConfig
+from tlon.base.identifiers import new_member_id
 from tlon.base.paths import TlonPaths
+from tlon.organization.mail.mail import HUMAN_ID_PREFIX
+from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member_info import MemberInfo
 from tlon.tools.agents.ports import StopRejectedError
 from tlon.tools.prototypes.ports import PrototypeError
@@ -130,12 +134,12 @@ class MembersFacade:
     def create(
         self,
         prototype: str,
-        agent_id: str,
         name: str,
         model: str,
         *,
         params: dict[str, Any] | None = None,
         persona: dict[str, Any] | None = None,
+        reserved_ids: Collection[str] = (),
     ) -> AgentConfig:
         """Create a member from a prototype (config + persona on disk).
 
@@ -148,11 +152,11 @@ class MembersFacade:
 
         Args:
             prototype: Prototype directory name (behavior genome)
-            agent_id: New member id
             name: Display name
             model: Member-level LLM in ``provider/model`` form (ADR 0016)
             params: Template parameter values for parameterized prototypes
             persona: Optional creation-time persona (identity/profile/behavior)
+            reserved_ids: Internal addresses reserved by the serving layer
 
         Returns:
             The created AgentConfig
@@ -160,6 +164,19 @@ class MembersFacade:
         Raises:
             PrototypeError: prototype missing, id taken, bad model/params
         """
+        occupied = {value.casefold() for value in reserved_ids}
+        occupied.update(
+            value.removeprefix(HUMAN_ID_PREFIX).casefold()
+            for value in MailStore(self._paths.mail_database_file()).known_human_ids()
+        )
+        occupied.update(value.casefold() for value in self._registry.get_all_ids())
+        while True:
+            agent_id = new_member_id()
+            if (
+                agent_id.casefold() not in occupied
+                and not self._paths.agent_config_dir(agent_id).exists()
+            ):
+                break
         cfg = instantiate(
             prototype,
             agent_id,
@@ -169,7 +186,7 @@ class MembersFacade:
             tlon_paths=self._paths,
         )
         if persona:
-            _write_persona_files(self._paths, agent_id, persona)
+            _write_persona_files(self._paths, cfg.id, persona)
         return cfg
 
     def write_persona(self, agent_id: str, persona: dict[str, Any]) -> None:

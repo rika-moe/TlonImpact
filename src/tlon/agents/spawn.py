@@ -51,7 +51,6 @@ annotation only).
 import json
 import math
 import os
-import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -60,7 +59,10 @@ from tlon.agents.prototypes.catalog import get_prototype_info
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.base.config import AgentConfig, yaml_save
 from tlon.base.events.event import Event, EventType
+from tlon.base.identifiers import new_member_id
 from tlon.base.logger import get_logger
+from tlon.organization.mail.mail import HUMAN_ID_PREFIX
+from tlon.organization.mail.store import MailStore
 from tlon.tools.agents.ports import SpawnRejectedError
 
 if TYPE_CHECKING:
@@ -348,10 +350,18 @@ class SpawnManager:
                 ),
             )
 
-        # Id is generated here (never caller-supplied): sanitize the
-        # prototype fragment so the id stays within the AgentConfig charset
-        safe_prototype = "".join(c for c in prototype if c.isalnum() or c in "-_")
-        agent_id = f"c-{safe_prototype}-{uuid.uuid4().hex[:8]}"
+        occupied = {
+            value.removeprefix(HUMAN_ID_PREFIX).casefold()
+            for value in MailStore(tlon_paths.mail_database_file()).known_human_ids()
+        }
+        occupied.update(value.casefold() for value in registry.get_all_ids())
+        while True:
+            agent_id = new_member_id()
+            if (
+                agent_id.casefold() not in occupied
+                and not tlon_paths.agent_config_dir(agent_id).exists()
+            ):
+                break
 
         # Writes persona + behavior + agent.yaml (copy semantics; behavior
         # frozen at creation time). PrototypeError propagates to the caller.

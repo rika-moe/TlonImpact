@@ -19,7 +19,7 @@ from typing import Any
 
 from tlon.agents.mail_stats import collect_mail_stats
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mail import address_for_member
+from tlon.organization.mail.mail import HUMAN_ID_PREFIX, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.observability.ports import ReputationProvider
 
@@ -111,7 +111,7 @@ async def collect_reputation(
     }
 
     return {
-        "agent_id": agent_id,
+        "member_id": agent_id.removeprefix(HUMAN_ID_PREFIX),
         "address": own_address,
         "endorsements_given": given,
         "endorsements_received": len(received),
@@ -136,9 +136,11 @@ def reputation_provider(
         against the given ``TlonPaths``
     """
 
-    async def collect(agent_id: str) -> dict[str, Any]:
-        return await collect_reputation(
-            agent_id, tlon_paths=tlon_paths, member_ids=await asyncio.to_thread(member_ids)
-        )
+    async def collect(member_id: str) -> dict[str, Any]:
+        roster = await asyncio.to_thread(member_ids)
+        owner = member_id
+        if member_id not in roster and f"{HUMAN_ID_PREFIX}{member_id}" in roster:
+            owner = f"{HUMAN_ID_PREFIX}{member_id}"
+        return await collect_reputation(owner, tlon_paths=tlon_paths, member_ids=roster)
 
     return collect

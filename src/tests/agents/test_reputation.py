@@ -90,7 +90,7 @@ class TestCollectReputation:
 
         report = await collect_reputation(TARGET, tlon_paths=tlon_paths, member_ids=MEMBERS)
 
-        assert report["agent_id"] == TARGET
+        assert report["member_id"] == TARGET
         assert report["address"] == TARGET_ADDR
         assert report["endorsements_given"] == 1
         # b-002 twice + c-003 once, deduplicated per (endorser, mail)
@@ -163,3 +163,29 @@ class TestReputationProvider:
         report = await provider(TARGET)
 
         assert report["endorsements_received"] == 2
+
+
+async def test_public_member_query_resolves_internal_mailbox(tlon_paths: TlonPaths) -> None:
+    from tlon.tools.observability.reputation import GetReputationTool
+
+    roster = [TARGET, "human:rika"]
+    await Mailbox(tlon_paths.mail_database_file(), "human:rika").append_sent(
+        _mail("rika1", "rika@tlon.internal", [TARGET_ADDR], endorsing="mail1")
+    )
+    tool = GetReputationTool(
+        provider=reputation_provider(tlon_paths, member_ids=lambda: roster),
+        member_id=TARGET,
+    )
+    result = await tool.execute(member_id="rika")
+    assert result.success
+    assert result.data["member_id"] == "rika"
+    assert result.data["address"] == "rika@tlon.internal"
+    assert result.data["endorsements_given"] == 1
+    assert result.data["mail_behavior"]["total_sent"] == 1
+    assert "agent_id" not in result.data
+    assert "human:" not in str(result.data)
+    # The same address precedence as delivery: a configured member wins.
+    roster.append("rika")
+    other = await tool.execute(member_id="rika")
+    assert other.data["endorsements_given"] == 0
+    assert other.data["mail_behavior"]["total_sent"] == 0

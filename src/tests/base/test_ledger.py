@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tests.prototype_helpers import builtin_id
 from tlon.base.config import AgentConfig, LLMConfig, yaml_save
 from tlon.base.ledger import (
     LedgerWriter,
@@ -353,8 +354,14 @@ class TestCollectAgentLedgerByModel:
 class TestCollectLineageLedgers:
     async def test_aggregates_members_by_prototype(self, tmp_path: Path) -> None:
         tlon_paths = TlonPaths(home=tmp_path)
-        yaml_save(AgentConfig(id="dev-001", name="Dev 1", prototype="developer"), tmp_path)
-        yaml_save(AgentConfig(id="dev-002", name="Dev 2", prototype="developer"), tmp_path)
+        yaml_save(
+            AgentConfig(id="dev-001", name="Dev 1", prototype=builtin_id("长预算工具迭代")),
+            tmp_path,
+        )
+        yaml_save(
+            AgentConfig(id="dev-002", name="Dev 2", prototype=builtin_id("长预算工具迭代")),
+            tmp_path,
+        )
         yaml_save(AgentConfig(id="scribe", name="Scribe"), tmp_path)
         await _write_records(
             tlon_paths.agent_ledger_file("dev-001"),
@@ -370,13 +377,13 @@ class TestCollectLineageLedgers:
 
         lineages = await collect_lineage_ledgers(tlon_paths=tlon_paths)
 
-        developer = lineages["developer"]
-        assert developer["prototype"] == "developer"
-        assert developer["members"] == ["dev-001", "dev-002"]
-        assert developer["calls"] == 3
-        assert developer["prompt_tokens"] == 35
-        assert developer["completion_tokens"] == 7
-        assert developer["total_tokens"] == 42
+        lineage = lineages[builtin_id("长预算工具迭代")]
+        assert lineage["prototype"] == builtin_id("长预算工具迭代")
+        assert lineage["members"] == ["dev-001", "dev-002"]
+        assert lineage["calls"] == 3
+        assert lineage["prompt_tokens"] == 35
+        assert lineage["completion_tokens"] == 7
+        assert lineage["total_tokens"] == 42
         # A member with no ledger still shows up, counting zero.
         manual = lineages["manual"]
         assert manual["prototype"] is None
@@ -387,8 +394,14 @@ class TestCollectLineageLedgers:
     async def test_lineage_merges_members_by_model(self, tmp_path: Path) -> None:
         """A bloodline's by_model merges every member's per-model split."""
         tlon_paths = TlonPaths(home=tmp_path)
-        yaml_save(AgentConfig(id="dev-001", name="Dev 1", prototype="developer"), tmp_path)
-        yaml_save(AgentConfig(id="dev-002", name="Dev 2", prototype="developer"), tmp_path)
+        yaml_save(
+            AgentConfig(id="dev-001", name="Dev 1", prototype=builtin_id("长预算工具迭代")),
+            tmp_path,
+        )
+        yaml_save(
+            AgentConfig(id="dev-002", name="Dev 2", prototype=builtin_id("长预算工具迭代")),
+            tmp_path,
+        )
         await _write_records(
             tlon_paths.agent_ledger_file("dev-001"),
             [_record(model="moonshot/kimi-k2.5", prompt_tokens=10, completion_tokens=2)],
@@ -403,7 +416,7 @@ class TestCollectLineageLedgers:
 
         lineages = await collect_lineage_ledgers(tlon_paths=tlon_paths)
 
-        by_model = lineages["developer"]["by_model"]
+        by_model = lineages[builtin_id("长预算工具迭代")]["by_model"]
         assert by_model["moonshot/kimi-k2.5"]["calls"] == 2
         assert by_model["moonshot/kimi-k2.5"]["total_tokens"] == 36
         assert by_model["deepseek/deepseek-chat"]["calls"] == 1

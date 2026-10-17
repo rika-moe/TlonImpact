@@ -410,7 +410,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 ## 8. 完整示例
 
-### 8.1 带 `:loop`：`deep-thinker`（[src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon)）
+### 8.1 带 `:loop`：「超长预算迭代」（[src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon](../../src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon)）
 
 ```clojure
 {:version 1
@@ -442,9 +442,9 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :actions []}]}                                        ; 无动作也要写空向量或省略
 ```
 
-> 注：仓库中 [src/tlon/prototypes/deep-thinker/behavior.tlon](../../src/tlon/prototypes/deep-thinker/behavior.tlon) 的规则一 map 曾少一个闭合 `}`（历史问题，已修复）；抄写时以上例的闭合层次为准。
+> 注：仓库中 [src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon](../../src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon) 的规则一 map 曾少一个闭合 `}`（历史问题，已修复）；抄写时以上例的闭合层次为准。
 
-### 8.2 无 `:loop`：`relay`（[src/tlon/prototypes/relay/behavior.tlon](../../src/tlon/prototypes/relay/behavior.tlon)）
+### 8.2 无 `:loop`：「定址转发」（[src/tlon/prototypes/p-39c280594c5b4e4084ce8aad72e6b07f/behavior.tlon](../../src/tlon/prototypes/p-39c280594c5b4e4084ce8aad72e6b07f/behavior.tlon)）
 
 ```clojure
 {:version 1

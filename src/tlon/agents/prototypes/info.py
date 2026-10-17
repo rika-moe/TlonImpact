@@ -151,3 +151,9 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
     except Exception as e:
         logger.warning("prototype_metadata_invalid", path=str(metadata_file), error=str(e))
         return PrototypeInfo(name=name, display_name=name, description="")
+
+
+def _validate_display_name(display_name: str) -> None:
+    """Require a non-empty behavior label before writing metadata."""
+    if not isinstance(display_name, str) or not display_name.strip():
+        raise PrototypeError("display_name must be a non-empty behavior label")
