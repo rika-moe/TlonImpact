@@ -1,5 +1,7 @@
 # ADR 0011：DSL 语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [dsl](../design/dsl.md)。当前适用范围：SCI 语义锚定方向；函数能力按 ADR 0021 扩展，不表示已迁移 JVM。完整关系见 [决策索引](README.md)。
+
 - 状态：已接受（2026-08-28，方向讨论拍板）
 - 相关：[0001-edn-as-dsl.md](0001-edn-as-dsl.md)（DSL 语法选型）、[../design/dsl.md](../design/dsl.md)（DSL 整体设计）
 

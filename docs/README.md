@@ -1,54 +1,60 @@
 # Tlon 文档地图
 
-语言：全中文；代码标识符、EDN 关键字、API 字段名保持原文。
+新开发者从 [architecture](architecture.md) 开始，再阅读自己负责领域的 design；无需先遍历决策记录。目标与价值判断见 [vision](vision.md)，文档归属和更新流程见 [开发文档维护规则](documentation.md)。
 
-## 分层原则
+## 按问题找文档
 
-| 层 | 回答 | 变化频率 | 更新触发 |
-|---|---|---|---|
-| [vision.md](./vision.md) | 为什么做 | 慢 | 方向讨论拍板后 |
-| [architecture.md](./architecture.md) | 系统骨架是什么 | 慢 | 分层/装配/通信结构变化 |
-| [design/](./design) | 各域为什么这样设计 | 中 | 对应域的设计决策变化 |
-| [reference/](./reference) | 怎么写/怎么配/怎么调 | 快 | 代码变化时**必须同步** |
-| [guides/](./guides) | 怎么做某件事 | 中 | 对应流程变化 |
-| [decisions/](./decisions) | 当初为什么这样定（ADR） | 只增不改 | 新决策拍板；废止用删除线或新 ADR 覆盖 |
+| 想了解什么 | 入口 |
+|---|---|
+| 系统目标与演化方向 | [vision](vision.md) |
+| 系统概念、跨域约束、包/进程边界和数据所有权 | [architecture](architecture.md) |
+| 当前某个领域如何工作、必须遵守哪些规则 | 下方领域设计 |
+| 某次选择的背景、备选与代价 | [决策索引](decisions/README.md) |
+| 精确字段、格式、接口与配置 | 下方参考文档 |
+| 如何启动或完成一个具体任务 | 下方操作指南 |
 
-规则：
+architecture 区分规范与当前实现；design 负责当前领域模型和机制；ADR 保留历史理由。已接受但未实现的方向单独标注，不能当作当前能力。目录中的文件表示内容归属，不代表未经复核即可保证每句话与代码一致。
 
-- 引用代码时写**文件路径 + 符号名**（如 [agents/member_spec.py](../src/tlon/agents/member_spec.py) 的 `MemberSpec`），不写行号——行号会随修改漂移。
-- reference 类文档未来会进 prompt，按精确、自包含的标准写。
-- 不写未实现的规划进 reference；规划只放 [vision.md](./vision.md) 和对应 design 文档的"方向"小节。
-- 文档与代码同步是验收标准的一部分（见根目录 AGENTS.md）。
+## 领域设计
 
-## 文件清单
+下面是阅读分组，不是新的软件分层。每个契约在所属领域完整定义，其他文档引用并说明如何遵守。
 
-| 文件 | 内容 | 状态 |
+| 分组 | 文档 | 负责的问题 |
 |---|---|---|
-| [vision.md](./vision.md) | 愿景、哲学、路线 | ✅ |
-| [architecture.md](./architecture.md) | 分层、依赖方向、装配、运行时数据流、存储布局 | ✅ |
-| [design/dsl.md](./design/dsl.md) | DSL 设计哲学：为何 EDN、为何受限、机制/策略分离 | ✅ |
-| [design/runtime.md](./design/runtime.md) | MemberRuntime、认知循环、stage、effects-as-data | ✅ |
-| [design/mail.md](./design/mail.md) | Republic of Letters：投递、线程、唤醒、人类接入 | ✅ |
-| [design/memory.md](./design/memory.md) | 双层记忆与 Summarizer | ✅ |
-| [design/prototypes.md](./design/prototypes.md) | 原型库、spawn、信任分级 | ✅ |
-| [design/unified-member-model.md](./design/unified-member-model.md) | **统一成员模型**（2026-08 拍板并实施）：一类成员 + 世代更替，概念、9 条决策与代码锚点 | ✅ |
-| [design/identity.md](./design/identity.md) | 主观身份与自组织社会（ADR 0024）：身份四正交层、联系簿、名册黄页化 | ✅ |
-| [design/server-protocol.md](./design/server-protocol.md) | REST + SSE 协议 v2 的设计取舍 | ✅ |
-| [design/webui.md](./design/webui.md) | WebUI（apps/webui）：React+Vite、/ui/ 静态托管、cyberpunk 视觉规范 | ✅ |
-| [design/skills.md](./design/skills.md) | Skill 能力：开放标准 SKILL.md、三层目录、progressive disclosure | ✅ |
-| [design/execution-device.md](./design/execution-device.md) | Execution device 设计哲学：能力阶梯、五条宪法、DockerRuntime 现状评估与加固方向 | ✅ |
-| [design/telegram.md](./design/telegram.md) | Telegram 客户端（MVP）：单用户白名单、回复式收发、SDK 接入 | ✅ |
-| [design/bridge-api.md](./design/bridge-api.md) | Bridge API：Python 机制底座 ↔ tlosure 策略层的桥——四类端口、版本纪律、四阶段迁移路线 | ✅ |
-| [design/society-policy.md](./design/society-policy.md) | 社会政策语境：policy.tlon、pull 型求值点、数据物化注入、fitness/trust 政策数据化 | ✅ |
-| [design/arena.md](./design/arena.md) | 演武场：staging 原型的动态行为评估——隔离宇宙架构、运行协议、语料、报告、成本界 | ✅ |
-| [design/capabilities.md](./design/capabilities.md) | 能力数据化：复合能力成为 tlosure 函数 artifact——env 契约、纯度分区、staging 复用、词汇桥、退役纪律 | ✅ |
-| [reference/tlosure-reference.md](./reference/tlosure-reference.md) | tlosure 语言核心：EDN 语法、求值器、燃料计量、特殊形式、通用词汇 | ✅ |
-| [reference/dsl-reference.md](./reference/dsl-reference.md) | tlon 宿主侧：MemberSpec 全字段、领域 builtin、stage/section 清单 | ✅ |
-| [reference/config-reference.md](./reference/config-reference.md) | agent.yaml、环境变量、`~/.tlon` 目录布局 | ✅ |
-| [reference/tools-reference.md](./reference/tools-reference.md) | 全部工具的参数与语义 | ✅ |
-| [reference/api-reference.md](./reference/api-reference.md) | REST/SSE 端点与事件帧格式 | ✅ |
-| [guides/quickstart.md](./guides/quickstart.md) | uv tool install → tlon dream → WebUI 创建成员发信 | ✅ |
-| [guides/writing-a-prototype.md](./guides/writing-a-prototype.md) | 手写一个 prototype 的完整走查 | ✅ |
-| [decisions/](./decisions) | ADR：0001 EDN、0002 邮件唯一通道、0003 机制/策略分离、0004 stage 纯度、0005 SSE、0006 统一成员模型、0007 session 事件溯源、0008 上下文压力、0009 working memory 退役、0010 skill 能力、0011 SCI 兼容子集、0012 litellm 传输层、0013 admin token 鉴权、0014 环境-agent 协同演化、0015 prompt 缓存、0016 成员级 LLM 配置、0017 claim 记忆、0018 DSL 抽包 tlosure、0019 runtime/server/client 拆分、0020 Bridge API、0021 tlosure 完整函数能力、0022 社会政策语境、0023 token 预算停机线、0024 主观身份、0025 mail-history 两段式、0027 终止回复只发人类触发者、0028 收件箱驱动单 session、0029 认知成员转发走 forwardMail 工具、0030 SQLite 邮局与投信契约、0031 WebUI 邮箱一致性、0032 SQLite session journal | ✅ |
+| 成员与演化 | [统一成员模型](design/unified-member-model.md) | 成员、原型与生命周期的基本关系 |
+| 成员与演化 | [身份](design/identity.md) | 客观寻址、人格、联系簿与社会身份 |
+| 成员与演化 | [原型](design/prototypes.md) | 提案、准入、实例化、spawn 与谱系 |
+| 行为与执行 | [DSL](design/dsl.md) | 行为表达、语言安全与规则权威 |
+| 行为与执行 | [Bridge API](design/bridge-api.md) | 宿主查询、效果、环境与语境边界 |
+| 行为与执行 | [运行时](design/runtime.md) | 唤醒、session、认知循环、journal 与效果执行 |
+| 行为与执行 | [基础设施](design/infrastructure.md) | 装配、EventBus、路径、配置与进程级观测 |
+| 行为与执行 | [执行装置](design/execution-device.md) | L0/L1/L2、容器、文件和代码执行边界 |
+| 通信与知识 | [邮件](design/mail.md) | 地址、邮局事务、邮箱、线程与已读语义 |
+| 通信与知识 | [记忆](design/memory.md) | Claim、蒸馏、反思、检索和代际出口 |
+| 治理与扩展 | [社会政策](design/society-policy.md) | 社会事实物化、政策 hook 与失败处理 |
+| 治理与扩展 | [能力](design/capabilities.md) | 函数 artifact、准入、权限与退役 |
+| 治理与扩展 | [演武场](design/arena.md) | 隔离评估、语料、报告与审批边界 |
+| 治理与扩展 | [Skills](design/skills.md) | SKILL.md 发现、索引、正文读取与信任边界 |
+| 人类接入 | [服务端协议](design/server-protocol.md) | REST/SSE、客户端会话、通知与同步契约 |
+| 人类接入 | [WebUI](design/webui.md) | 页面状态、邮箱同步、线程展示与管理交互 |
+| 人类接入 | [Telegram](design/telegram.md) | SDK 接入、回复关联与失败处理 |
 
-✅ = 已写并与代码同步；📝 = 计划内未写。新增文档先登记进本表。
+## 参考文档与操作指南
+
+| 文档 | 内容 |
+|---|---|
+| [tlosure-reference](reference/tlosure-reference.md) | EDN 语法、求值器、fuel、特殊形式与通用词汇 |
+| [dsl-reference](reference/dsl-reference.md) | MemberSpec、领域词汇、stage/section 与政策格式 |
+| [config-reference](reference/config-reference.md) | agent.yaml、环境变量、人格/记忆配置与目录布局 |
+| [tools-reference](reference/tools-reference.md) | 工具参数与语义 |
+| [api-reference](reference/api-reference.md) | REST/SSE 端点、字段、错误与事件 |
+| [quickstart](guides/quickstart.md) | 安装、启动、创建成员与发信 |
+| [writing-a-prototype](guides/writing-a-prototype.md) | 编写一个行为原型 |
+
+## 维护约定
+
+- 中文叙述；代码标识符、EDN 关键字和 API 字段保持原文。
+- 代码引用用文件路径与符号名，不依赖漂移的行号；本地相对链接应可解析。
+- 新增或调整文档先明确职责并登记入口。改变当前设计时同步 architecture/design/reference，历史取舍通过 ADR 追溯。
+- reference 不承载未实施规划；已完成施工记录保留在原 ADR 或 Issue/PR 的历史上下文，不继续累加到当前 design。
+- reference 中生成的清单通过 `gen_reference_docs.py --check` 验证新鲜度。统一质量门为 `scripts/check_all.sh`；文档链接和跨文档语义仍需复核。

@@ -1,5 +1,7 @@
 # ADR 0031：WebUI 邮箱同步、线程展示与人类已读管理
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [webui](../design/webui.md)、[server-protocol](../design/server-protocol.md)、[mail](../design/mail.md)。当前适用范围：客户端同步及已读管理；旧验收流水作为历史证据保留。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-10-17）
 
 ## 决策

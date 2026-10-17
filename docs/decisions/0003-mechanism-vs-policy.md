@@ -1,5 +1,7 @@
 # ADR 0003：机制与策略分离——注册表纯机制，策略集中于 Adam
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[society-policy](../design/society-policy.md)。当前适用范围：机制/策略分离保留；政策求值面由 ADR 0022 扩展。完整关系见 [决策索引](README.md)。
+
 状态：已接受（回溯记录，2026-08-15）
 
 ## 背景

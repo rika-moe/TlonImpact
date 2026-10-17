@@ -1,6 +1,6 @@
 # 主观身份与自组织社会（Subjective Identity）
 
-> **状态：已落地（2026-10-07，ADR 0024）**——五个施工 EPIC 完成：#104（文档基线）/ #100（人格自编辑）/ #101（联系簿）/ #102（all@ 退役）/ #103（名册黄页化）；远期 #105（社交图谱派生观测）待规模驱动。本文是身份域的语义锚点；决策记录与理由见 [ADR 0024](../decisions/0024-subjective-identity.md)。
+> 本文定义人格、地址、主观社会身份和组织的边界。当前机制可直接从本文阅读；选择的背景与备选见 [ADR 0024](../decisions/0024-subjective-identity.md)，成员行为的约束见 [统一成员模型](unified-member-model.md)。
 
 ## 概念：身份的四个正交层
 
@@ -10,12 +10,12 @@
 | --- | --- | --- | --- |
 | **骨架**（基因型） | `behavior.tlon`（MemberSpec） | 不可自改，更新走世代更替（ADR 0006 决策 4） | staging 评审 + 人类批准 |
 | **叙事人格** | `IDENTITY.md` / `SOUL.md` | **成员自主**：自由自改、私有（不能读写他人的） | 留痕可问责（ledger 事件），不是审批 |
-| **社会身份** | 朋友们的联系簿条目 | 分布式、主观、无需一致 | errata 更正 + 通信检验 |
+| **社会身份** | 朋友们的联系簿条目 | 分布式、主观、无需一致 | 邮件更正 + 通信检验 |
 | **社会归属** | 自己的联系簿 `CONTACTS.md` + 记忆 | 高度可变，随社会流动 | 无需闸（规模机制） |
 
 两个易混边界：
 
-- **人格文件不是 spec**。spec 是可执行的行为规则（结构化、定义能力边界）；人格文件是叙事（影响倾向，不定义能力边界）。ADR 0006 决策 4 禁的是前者，不管后者——「换工作、改自我表达」不需要死一次重生。
+- **人格文件不是 spec**。spec 是可执行的行为规则（结构化、声明行为与能力需求）；人格文件是叙事（影响倾向，不定义能力边界）。ADR 0006 决策 4 禁的是前者，不管后者——「换工作、改自我表达」不需要死一次重生。
 - **RULES.md 与 behavior.tlon 同侧**。RULES 是行为约束的自然语言版，太接近 spec，不可自改，维持人类编辑（ADR 0024 备选方案已否）。
 
 ## 客观层：只剩地址与事实
@@ -23,31 +23,31 @@
 系统不为「身份内容」提供任何权威数据源。系统维护的客观层只有两样：
 
 1. **地址**：`agent_id@tlon.internal`，投递层签发、不可伪造。这是一切信任的锚——B 可以在联系簿里把 A 描述错，但「这封信确实来自 A」是机制事实。
-2. **事实**：ledger、邮件存档、谱系（`spawned_by` / `spawn_depth` / `prototype`）。发生过的事不可篡改。
+2. **事实**：ledger、邮件存档、谱系（`spawned_by` / `spawn_depth` / `prototype`）。这些事实与主观叙事分开维护；它们不为某个人格叙述背书。
 
-**名册黄页化**：`member-roster` / `listAgents` 退化为寻址目录（id / name / 地址），不携带身份内容。黄页全员可读——它是路由层，不是身份层。名册瘦身前 prompt 里「名册不构成社会身份」的防御性声明（`prompt_builder.py`）在瘦身后删除：边界由数据结构本身保证，不再靠告诫。
+**名册是寻址黄页**：`member-roster` / `listAgents` 提供 id / name / 地址，不携带身份叙事、运行状态或谱系；`listAgents` 过滤退休成员；`member-roster` 当前直接投影注册表，可能仍列出已退休配置，不能据此保证可投递。黄页全员可读，它是路由层，不是身份层。
 
 ## 自我文件三件套
 
 每成员 `~/.tlon/{id}/config/` 下三个人格文件，两种待遇：
 
-- `IDENTITY.md`（核心自我认知）/ `SOUL.md`（角色定位、工作风格）——**成员自主**：经 `updatePersona` 工具自由修改（EPIC #100），只能读写自己的，工具层结构性禁止访问他人文件。变更落 ledger 事件（agent_id / file / hash）——可问责是放权的前提。
+- `IDENTITY.md`（核心自我认知）/ `SOUL.md`（角色定位、工作风格）——**成员自主**：经 `updatePersona` 工具自由修改，只能读写自己的，工具层结构性禁止访问他人文件。变更落 ledger 事件（agent_id / file / hash）——可问责是放权的前提。
 - `RULES.md`（行为约束、工作流程）——人类编辑，成员不可自改。
 
-热生效既有机制不动：system prompt 按 persona 文件 mtime 签名重建缓存（`context_builder.py`），文件一改下次组装即生效。
+热生效机制：system prompt 按 persona 文件 mtime 签名重建缓存（`context_builder.py`），文件一改下次组装即生效。
 
-**SOUL 不再被系统喂给别人**。全员 SOUL 注入（team_profiles）退役后，「我怎么向别人描述自己」只通过言行传递——SOUL 是写给自己的锚，不是贴出去的名片。自我介绍信、介绍信、推荐信成为真实的社会仪式（惯例，不是机制）。
+**SOUL 不向其他成员注入**。「我怎么向别人描述自己」只通过言行传递——SOUL 是写给自己的锚，不是贴出去的名片。自我介绍信、介绍信、推荐信成为真实的社会仪式（惯例，不是机制）。
 
 ## 联系簿：社会身份的唯一载体
 
-每成员一本私有 `CONTACTS.md`（一等文件，EPIC #101），条目为自由文本 + 宽松结构：**名字 / 地址 / 我对 ta 的描述**。规则：
+每成员一本私有 `CONTACTS.md`（一等文件），条目为自由文本 + 宽松结构：**名字 / 地址 / 我对 ta 的描述**。规则：
 
 - **自写、私有**：只能读写自己的联系簿；B 对 A 的评价 B 不说，A 就不知道——隐私是差序格局的一部分，也是声誉真实的前提。
-- **注入自己的 prompt**：取代全员 SOUL 注入（「团队成员」段 → 「联系簿」段），社会注意力收敛到小圈层，O(N) prompt 膨胀随之消解。
+- **注入自己的 prompt**：取代全员 SOUL 注入，社会注意力收敛到小圈层，O(N) prompt 膨胀随之消解。
 - **成员自己维护**：收到信、合作过、打听过——是否记入、怎么描述，是成员自己的判断。通信自动沉淀是后续候选，第一版不做。
 - **主观无需一致**：A 的 SOUL 自称开朗，B 记 A 聪明，C 记 A 博学，B 与 C 互不相识——全部合法。成员的社会身份 = 朋友们在各自联系簿中认识的总和，不存在、也不需要一份「正确答案」。
 
-**errata 是承重墙**：没有权威数据源的社会里，纠错通道是唯一的误差修正机制。错误认识靠通信更正（当事人澄清、知情人反驳），更正落在书信上（#99 建议二，后续独立立项）。
+**通信承担纠错**：错误认识靠当事人澄清、知情人反驳等邮件更正，再由接收者判断是否更新联系簿。专门的 errata 信封字段与索引尚未实施，见未实施方向。
 
 ## 组织即共识
 
@@ -60,24 +60,20 @@
 - **组织资源不存在**。预算、声誉、谱系都是成员级的；「组织的财富」是其成员各自的账。组织级资源是未来议题，届时需要显式决策。
 - **知识基础设施由社会自长**。没有共享事实的沉淀处，「我们的刊出了没有」答案分散在各人邮箱——缺的基础设施会催生对应职业：archivist 自愿编纂年鉴/期刊并发布，读者自判可信度。新闻业、史学是涌现的社会角色，不是系统功能。
 
-**all@ 退役**（EPIC #102）：全员广播是「全员互认」的制度化，大社会里既是噪音源也无社会意义。投递层删除全员展开，发往 all@ 按无效地址整封拒绝（ADR 0030；#102 时的退信已废止）。all@ 的消亡同时消解了「all@ 按社会已知成员展开，已知的定义是什么」的问题（#99 小观察之三）——不再存在需要定义的全员集合。
+**不提供全员广播与组地址**。`all@` 按无效地址整封拒绝；成员通过黄页寻址，组织通信由成员转发承担。投递与地址校验的契约见 [mail.md](mail.md)。
 
 ## 信任闸总览
 
-按「每一步扩张自主权，先回答信任闸在哪」（vision）：
+按「每一步扩张自主权，先回答信任闸在哪」（[vision](../vision.md)）：
 
 | 新自主权 | 信任闸 |
 | --- | --- |
-| 自改 IDENTITY / SOUL | 变更留痕（ledger）+ 言行公开接受社会更正（errata）+ RULES/spec 不动的能力边界 |
+| 自改 IDENTITY / SOUL | 变更留痕（ledger）+ 言行接受邮件更正+ RULES/spec 不动的能力边界 |
 | 维护联系簿 | 无需闸——只影响自己的认知，错误自有通信检验 |
 | 声称组织身份 | 无需闸——声称是叙事，他人信不信用自己的联系簿判断 |
-| ~~all@ 全员广播~~ | 退役——大社会里这个能力本身不被授予 |
+| 全员广播 | 不提供此能力；`all@` 无效 |
 
-## 人类观测：派生不落盘
-
-组织对社会内部自明，对人类不可见——无法问系统「现在有哪些组织」，只能去问 agent。这与「人类退得越远越要能度量」（vision）存在缺口，由远期派生视图补（EPIC #105，P2，规模驱动）：从事实层（邮件流）派生社会结构报告给人类看，**只读派生、绝不回写为权威数据**，与声誉、谱系、信任阶梯同一纪律。联系簿聚合视图（「谁认为谁是朋友」）涉及主观层隐私，届时单独拍板。
-
-## 与 ADR 0006 的关系
+## 与行为演化的关系
 
 本设计是对统一成员模型的**澄清而非冲突**：世代更替防的是「运行中热更新行为」的一致性/审计难题与「学习成果归个体」。人格自改不触发一致性问题（mtime 缓存已支持热生效），人格是表达不是能力。学习成果归种群的通道（经验 → 原型提案 → 新世代）不变；「换个身份介绍自己」不归种群管，就像人类换工作不需要基因突变。
 
@@ -85,18 +81,22 @@
 
 | 机制 | 位置 |
 | --- | --- |
-| 人格自编辑工具 `updatePersona`（自写 IDENTITY/SOUL，私有） | `src/tlon/tools/agents/update_persona.py`（#100，已落地） |
-| 人格变更留痕（ledger 事件） | `src/tlon/base/ledger.py`（`persona_update` 记录）+ `src/tlon/tools/agents/update_persona.py` 写侧（#100，已落地） |
-| 联系簿一等文件 `CONTACTS.md` 路径与缺省 | `src/tlon/base/paths.py` `agent_contacts_file`（#101，已落地；缺省语义：文件不存在即空联系簿，不 eager 创建） |
-| 联系簿读写工具 `readContacts` / `updateContact`（私有） | `src/tlon/tools/agents/contacts.py`（#101，已落地；`updateContact` 为条目级 upsert——同名更新地址/描述、节内自由文本保留、空描述删条目，不做整本重写） |
-| prompt 注入：「联系簿」段取代「团队成员」段 | `src/tlon/agents/context_builder.py`、`prompt_builder.py`、`prompt_context.py`（#101，已落地：只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
-| all@ 展开删除、无效地址拒绝 | `src/tlon/organization/mail/post_office.py`（#102 删除组地址；ADR 0030 将旧退信改为整封拒绝） |
-| 名册黄页化：`listAgents` 瘦身（id / name / 地址） | `src/tlon/tools/agents/list_agents.py`（#103，已落地：工具内投影三字段，registry 完整 status 不动——REST 管理端继续消费） |
-| 名册黄页化：`member-roster` 宿主词瘦身 | `src/tlon/agents/agent_registry.py`、`vocabulary.py`（#103，已落地：`名字（id） — id@tlon.internal`，prototype/描述段删除） |
+| 人格自编辑工具 `updatePersona`（自写 IDENTITY/SOUL，私有） | [src/tlon/tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) |
+| 人格变更留痕（ledger 事件） | [src/tlon/base/ledger.py](../../src/tlon/base/ledger.py)（`persona_update` 记录）+ [src/tlon/tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 写侧 |
+| 联系簿一等文件 `CONTACTS.md` 路径与缺省 | [src/tlon/base/paths.py](../../src/tlon/base/paths.py) `agent_contacts_file`（缺省语义：文件不存在即空联系簿，不 eager 创建） |
+| 联系簿读写工具 `readContacts` / `updateContact`（私有） | [src/tlon/tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py)（`updateContact` 为条目级 upsert——同名更新地址/描述、节内自由文本保留、空描述删条目，不做整本重写） |
+| prompt 注入：「联系簿」段取代「团队成员」段 | [src/tlon/agents/context_builder.py](../../src/tlon/agents/context_builder.py)、`prompt_builder.py`、`prompt_context.py`（只注入自己的 CONTACTS.md，缺省即空；mtime 签名不再含他人 SOUL） |
+| all@ 展开删除、无效地址拒绝 | [src/tlon/organization/mail/post_office.py](../../src/tlon/organization/mail/post_office.py)（无效地址整封拒绝） |
+| 名册黄页化：`listAgents` 瘦身（id / name / 地址） | [src/tlon/tools/agents/list_agents.py](../../src/tlon/tools/agents/list_agents.py)（工具内投影三字段，registry 完整 status 不动——REST 管理端继续消费） |
+| 名册黄页化：`member-roster` 宿主词瘦身 | [src/tlon/agents/agent_registry.py](../../src/tlon/agents/agent_registry.py)、`vocabulary.py`（`名字（id） — id@tlon.internal`，prototype/描述段删除） |
 
-## 后续未决项（不阻塞当前设计）
+## 未实施方向：社会观测与纠错
+
+组织对社会内部自明，对人类不可见——无法问系统「现在有哪些组织」，只能去问 agent。这与「人类退得越远越要能度量」（[vision](../vision.md)）存在缺口，由远期派生视图补（规模驱动）：从事实层（邮件流）派生社会结构报告给人类看，**只读派生、绝不回写为权威数据**，与声誉、谱系、信任阶梯同一纪律。联系簿聚合视图（「谁认为谁是朋友」）涉及主观层隐私，届时单独拍板。
+
+### 其他未实施方向
 
 - **通信自动沉淀联系簿**：收到信即认识，是机制还是惯例？第一版靠成员自觉，待观察真实社会行为再定。
-- **errata 机制**（#99 建议二）：信封字段 + 索引的最小形态，身份基础设施的另一半，独立立项。
+- **errata 机制**：信封字段 + 索引的最小形态，身份基础设施的另一半，独立立项。
 - **组织级资源与治理**：组织内部的决策机制（编辑部谁说了算）、组织级预算——全是社会惯例层，待真实组织涌现后再议是否需要机制支撑。
 - **介绍信的结构化**：纯自由文本信件能否支撑大社会的信任传递，还是需要一个「介绍」信封约定——待规模驱动。

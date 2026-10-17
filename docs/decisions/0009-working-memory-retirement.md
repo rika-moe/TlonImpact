@@ -1,5 +1,7 @@
 # ADR 0009：Working Memory 退役——session journal 是唯一交互真相
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [memory](../design/memory.md)、[runtime](../design/runtime.md)。当前适用范围：Working Memory 退役保留；摘要管线由 ADR 0017 部分替代，journal 存储由 ADR 0032 修订。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-08-22，方向讨论拍板；同日实施）（2026-09-17 起被 ADR 0017 部分取代：摘要流替换为蒸馏管线）
 
 ## 背景与决策

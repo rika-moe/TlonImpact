@@ -1,5 +1,7 @@
 # ADR 0016：LLM 配置成员级化——删除进程级 LLM_* 设置
 
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[webui](../design/webui.md)。当前适用范围：成员级模型配置与不自动创建标准团队。完整关系见 [决策索引](README.md)。
+
 状态：已接受（2026-09-16，方向讨论拍板；修订 ADR 0012）
 
 ## 背景

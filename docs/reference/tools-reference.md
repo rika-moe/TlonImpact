@@ -6,7 +6,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### Tool 基类契约
 
-[tools/base.py](../../src/tlon/tools/base.py) 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。`execute(**kwargs)` 是唯一执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，[data](../../data) 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用（目前只有 `ExecuteBashTool` 用 `shutdown` 取消未完成的后台任务）。
+[tools/base.py](../../src/tlon/tools/base.py) 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。`execute(**kwargs)` 是唯一执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，`data` 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用（目前只有 `ExecuteBashTool` 用 `shutdown` 取消未完成的后台任务）。
 
 `Tool.validate_arguments` 在执行前按 schema 校验：缺必填、未知参数、类型不符都会拒绝执行，返回 `success=False, error="Argument validation failed: ..."`；数值参数的 `minimum`/`maximum` 也在此强制（被拒时错误含真实界限值），`enum` 等其余约束不进 `validate_arguments`，靠各工具自己 clamp 或报错。
 
@@ -137,7 +137,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 |---|---|---|---|---|
 | `reason` | string | 否 | — | 停止原因（只进本轮上下文，不落任何存储） |
 
-返回行为：恒 `success=True`，[data](../../data) 为 `{"silenced": true, "reason": ...}`。收割时不计入 `final_content`、不产生 interaction 记录——silence 是一轮"什么都没说"的结束。
+返回行为：恒 `success=True`，`data` 为 `{"silenced": true, "reason": ...}`。收割时不计入 `final_content`、不产生 interaction 记录——silence 是一轮"什么都没说"的结束。
 
 注意事项：
 

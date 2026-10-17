@@ -1,14 +1,14 @@
 # 演武场（arena）：staging 原型的动态行为评估
 
-> 本文是演武场的设计拍板（issue #29，EPIC #31 P3 项，2026-10-05 讨论拍板）。现状：三个施工切片全部落地（见文末「施工切片」）；2026-10-12 适配 ADR 0028 收件箱驱动单 session 模型——语料与 session 不再一一对应（一个 session 可批处理多封语料），等待条件定为 drained，报告按 session 组织（见「运行协议」「报告」节）。演武场把 staging 原型的信任闸从「代码审查」升级为「行为审查」——评审看的不是「它写了什么」，而是「它在围墙里做了什么」。
+演武场把 staging 原型放入独立 runtime，用合成邮件运行真实认知循环，归档行为证据供人类审批。一个 session 可处理多封语料；收工以 drained 判定，报告按 session 组织。演武结果不会自动批准原型。
 
 ## 问题：静态可读 ≠ 行为可测
 
 staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载期静态校验 + 人类读 spec 审批 + 异质评审（reviewPrototype 工具，advisory）。spec 是受限 DSL、全文可读，但成员行为是 **spec × 模型 × 输入语料**的联合产物——一份读起来无害的 spec，喂进真实邮件后可能调错工具、回错信、陷入错误循环。静态审查覆盖不了这一维。
 
-演武场的回答：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实认知循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」——这正是 execution-device.md 宪法五所说的选择压：演武场是选择器（宪法五的 mutation 起源 2026-10-05 起由 workspace 改为 agent 直接起草 tlosure artifact，选择器的角色不变）。
+当前机制：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实认知循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」。复合能力直接起草与准入见 [capabilities](capabilities.md)。
 
-## 已拍板的设计决策（2026-10-05）
+## 领域约束
 
 | 决策点 | 结论 |
 |---|---|
@@ -29,16 +29,16 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 ```
 
 - **拷入即可信**：staging 原型拷进隔离宇宙的 trusted 库后，`instantiate`（只读 trusted 库）与 spawn 信任闸原样工作——生产信任路径一行不改，「staging 不可实例化」在生产侧仍是铁律
-- **`build_runtime(arena_paths)`**（[api/bootstrap.py](../src/tlon/api/bootstrap.py) 的 `build_runtime`）装配隔离 runtime：独立 EventBus、不开 REST、不挂通道适配器（Telegram/GitHub 进不了隔离宇宙）。邮件投递全部只发生在隔离宇宙内——邮件泄漏从结构上不存在
-- **临时成员**：id 为 `arena-<run-id>`，经 `instantiate` 正常装配。docker level 用 spec 自己声明的 `:execution`——**这正是被测对象**（声明 L1 的原型在演武场里就是 L1，试图 bash 会被装置层拒绝，拒绝本身进报告）；network 强制 none（config 默认即是）；mem/cpu 收紧
-- **ADR 0006 兼容**：演武场成员与容器是**试验装置**不是成员——用完即拆与「成员永不删除」不冲突，正如 ephemeral 执行单元（#25）与文件柜的关系
+- **`build_runtime(arena_paths)`**（[api/bootstrap.py](../../src/tlon/api/bootstrap.py) 的 `build_runtime`）装配隔离 runtime：独立 EventBus、不开 REST、不挂通道适配器（Telegram/GitHub 进不了隔离宇宙）。邮件投递全部只发生在隔离宇宙内——邮件泄漏从结构上不存在
+- **临时成员**：id 为 `arena-<run-id>`，经 `instantiate` 正常装配。docker level 用 spec 自己声明的 `:execution`——**这正是被测对象**（声明 L1 的原型在演武场里就是 L1，试图 bash 会被装置层拒绝，拒绝本身进报告）；network 沿用实例化配置（当前默认 none，runner 不另设强制断网）；mem/cpu 收紧
+- **临时数据生命周期**：演武场成员不进入生产社会，用完拆除其隔离数据和容器。生产成员自动停止不隐式删除档案的规则，不要求保留试验家园；评审证据另行归档
 
 ## 运行协议
 
-1. **准备**：建隔离家园 → 拷原型 → `build_runtime` → `instantiate`（模型见「成本界」）
+1. **准备**：建隔离家园 → 拷原型 → `instantiate` → 收紧资源 → 归档语料 → `build_runtime` → adopt 临时成员（模型见「成本界」）
 2. **语料**：内置对抗套件 + 按原型职责生成的典型场景邮件（见下节），归档为数据
-3. **喂信**：经隔离 EventBus 逐封发 `MAIL_NEW`。ADR 0028 收件箱驱动单 session 模型下，语料与 session 不再一一对应——一个 session 可批处理多封语料，触发语是「你有 N 封未读邮件」模板，该 session 收编的未读 id 快照落在 journal `session/start` 的 `responsibility`
-4. **等待**：收工条件是 **drained**，不是「每封信一个完成 session」——全部语料已投递进收件箱（投递确认门：喂信与投递异步，空收件箱 ≠ 处理完）∧ 无未读 ∧ 无存活 session（scheduler 只在未读邮件上开 session，未读为空即不会有新 session 收编语料），且稳定跨一个轮询间隔（覆盖成员自发信投递落在单次观测之后的残余竞态）。DONE = drained；agent 看过不标读（搁置）是合法行为——残留未读使 drained 不成立，慢速 rescan（`mail_rescan_interval_seconds`，默认 900s）通常长于时间盒，run 撞盒收场（部分轨迹也是数据）
+3. **喂信**：经隔离 runtime 的 `post_office.post(mail)` 逐封投递。ADR 0028 收件箱驱动单 session 模型下，语料与 session 不再一一对应——一个 session 可批处理多封语料，触发语是「你有 N 封未读邮件」模板，该 session 收编的未读 id 快照落在 journal `session/start` 的 `responsibility`
+4. **等待**：收工条件是 **drained**，不是「每封信一个完成 session」——全部语料已投递进收件箱（投递确认门：所有语料 id 均在邮箱视图中，不能只凭空收件箱判定完成）∧ 无未读 ∧ 无存活 session（scheduler 只在未读邮件上开 session，未读为空即不会有新 session 收编语料），且稳定跨一个轮询间隔（覆盖成员自发信投递落在单次观测之后的残余竞态）。DONE = drained；agent 看过不标读（搁置）是合法行为——残留未读使 drained 不成立，慢速 rescan（`mail_rescan_interval_seconds`，默认 900s）通常长于时间盒，run 撞盒收场（部分轨迹也是数据）
 5. **采集**：从隔离成员的 `sessions.sqlite3` 逐 session 导出 `archive/sessions/{session_id}.jsonl` + 隔离邮箱的实际投递结果；不 copy、不读取旧 `sessions/` 目录
 6. **报告**：生成 ARENA.md / report.json，连语料与导出的 session 事件一起归档进 **staging 原型目录**（见「报告」节）；导出物只是报告原料，不是运行时 fallback
 7. **拆除**：shutdown 隔离 runtime → 按名强删 `tlon-agent-arena-*` 容器（文件柜 + 残留 exec 单元）→ 归档完成后删隔离家园
@@ -52,7 +52,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 
 ## 报告
 
-**落点**：staging 原型目录内——`ARENA.md`（人读，**双落点**：`arena/<run-id>/ARENA.md` + staging 原型根目录 `ARENA.md`，根目录那份是最新 run 的人读入口，评审界面第一眼看到的，覆盖旧版）+ `arena/<run-id>/`（`corpus.json`、`run.json`（含 `fed` 映射：mail_id ↔ 语料）、`report.json`、从 SQLite 导出的全部 session 事件 `sessions/*.jsonl`、`ledger.jsonl`、`sent.jsonl`/`inbox.jsonl`）。宪法二（可读性）：证据随提案走，approve 时随目录一起进 trusted 库，成为该原型永久的「体检档案」。
+**落点**：staging 原型目录内——`ARENA.md`（人读，**双落点**：`arena/<run-id>/ARENA.md` + staging 原型根目录 `ARENA.md`，根目录那份是最新 run 的人读入口，评审界面第一眼看到的，覆盖旧版）+ `arena/<run-id>/`（`corpus.json`、`run.json`（含 `fed` 映射：mail_id ↔ 语料）、`report.json`、从 SQLite 导出的全部 session 事件 `sessions/*.jsonl`、`ledger.jsonl`、`sent.jsonl`/`inbox.jsonl`）。证据随提案走，approve 时随目录一起进 trusted 库，成为该原型永久的「体检档案」。
 
 **内容**：按 **session** 组织（ADR 0028 适配）——每个 session 一节：触发语（「你有 N 封未读邮件」）、责任集（`session/start` 的 `responsibility` 快照）、迭代数、token、工具调用分布、结束原因、回复与思考要点；语料邮件（正文 + 回信全文）作为责任集条目挂在收编它的 session 下（一封语料归第一个收编它的 session，归属从 `responsibility` 反解，不靠猜）；未被任何 session 收编的语料单列一节（`unmatched_mails`）并记 session-incomplete 红旗。全局汇总：session 完成率、语料收编数（covered/uncovered）、drained、总 token、耗时。
 
@@ -85,10 +85,16 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 - 演武场成员不进生产注册表、声誉、metrics、spawn 配额账本
 - 不做成员间的演武（如 staging 原型 vs 现有成员交互）——v1 语料全部来自剧本
 
-## 施工切片
+## 当前实现与故障边界
 
-1. **runner 核心**：`tlon.arena` 域（隔离家园/拷原型/语料/有界运行/拆除与容器 GC）+ `tlon.api` facade ✅（2026-10-05，issue #29 切片 1/3）：`tlon.arena.runner.ArenaRunner` 状态机 preparing → running → collecting → done/timed_out/failed；模型解析 run 参数 → `TLON_ARENA_MODEL` → 拒绝；语料（内置 5 封对抗套件 + LLM 典型场景，fail-soft 记 note）先落盘后喂信；证据归档在 staging 原型目录内 `arena/<run-id>/`（corpus.json / sessions/ / run.json），归档后拆除（shutdown → 容器 GC → 删隔离家园）；进程内单并发；`tlon.api.arena.ArenaFacade` 薄透传，start_run 后后台 task 推进
-2. **报告生成器**：journal → ARENA.md / report.json + 红旗派生 ✅（2026-10-05，issue #29 切片 2/3）：`tlon.arena.report.generate_report` 纯函数式读归档目录（不碰隔离家园——家园已拆）；归档补全三样原料（ledger.jsonl / sent.jsonl / inbox.jsonl）+ run.json 带 `fed` 映射（mail_id ↔ 语料，~~经 `session_id_for` 精确对应 session 文件~~——ADR 0028 起 session id 为 `{agent_id}-{uuid12}`，改经 `session/start` 的 `responsibility` 反解归属，报告按 session 组织，见「报告」节）；`report.json` 写回归档目录，`ARENA.md` 双落点（归档目录 + staging 原型根目录，根目录为最新 run 的人读入口，覆盖旧版）；八类自动红旗各带证据指针（session 文件 + seq / sent.jsonl 行号），特征锚定具体报错文案出处；runner 在归档后自动调报告，fail-soft——报告失败只记 error 日志 + run.json 加 `report_error`，不毁证据不跳过拆除
-3. **admin 端点 + 呈现**：触发（异步）/状态/结果端点，staging detail payload 携带报告，WebUI 评审界面呈现 ✅（2026-10-05，issue #29 切片 3/3）：`Runtime` 装配第七个 facade `arena`（`ArenaFacade(tlon_paths=runtime_paths)`，无自持资源不进 shutdown——v1 语义：进程重启丢失进行中的 run 记录，磁盘证据不受影响）；`rest/admin_arena.py` 四个端点——`POST /admin/prototypes/staging/{name}/arena-runs`（202 触发，body 全可选，`ArenaError` → 400）、`GET /admin/arena-runs[/{run_id}]`（状态/list，未知 id 404）、`GET /admin/prototypes/staging/{name}/arena-runs/{run_id}/report`（归档 report.json + ARENA.md，缺失 404），全部走 ADR 0013 admin token 同一罩；staging detail payload 加 `arena` 字段（最新 run 摘要 + 报告红旗，与 execution-level `red_flags` 分开字段）；facade 增 `get_report`/`latest_report` 读侧方法直读归档目录；WebUI PROTOTYPES staging 详情加「演武场」面板（触发按钮 + 可选 model 输入、活跃 run 轮询、红旗徽章复用 red_flags 呈现、ARENA.md `<pre>` 原文）
+- [arena/runner.py](../../src/tlon/arena/runner.py) 的 `ArenaRunner` 管理 preparing → running → collecting → done/timed_out/failed；`_feed` 经隔离邮局投信，`_wait_sessions` 连续两次观测 drained。
+- [arena/report.py](../../src/tlon/arena/report.py) 的 `generate_report` 读取归档证据生成报告，不依赖已经拆除的试验家园。生成失败只记录日志及 `run.json` 的 `report_error`，保留证据并继续拆除。
+- [api/arena.py](../../src/tlon/api/arena.py) 的 `ArenaFacade` 提供启动、状态及归档报告读侧；[rest/admin_arena.py](../../src/tlon_server/api/rest/admin_arena.py) 提供 admin 端点，使用现有 admin token 边界。精确路径与字段见 [API reference](../reference/api-reference.md)。
+- WebUI staging 详情提供演武入口、模型输入、状态轮询、报告与红旗。报告摘要位于 staging detail 的 `arena` 字段，与 execution level 的 `red_flags` 分开。
+- 活跃 run 状态保存在进程内；重启后不恢复进行中的 run 记录，已归档证据仍在磁盘。
 
-后续（非本文范围）：Adam 侧自助申请演武、token 硬熔断、并发 run、典型场景语料的人工 review 环节。
+## 历史与未实施方向
+
+设计与交付记录见 Issue #29；单 session 的语料归属与排空模型来自 [ADR 0028](../decisions/0028-inbox-driven-single-session.md)。
+
+尚未实施：Adam 自助申请演武、token 硬熔断、并发 run、典型场景语料的人工 review 环节。当前原型演武也不等同于候选能力 artifact 的动态行为评估，能力现有验证是纯 examples 断言。

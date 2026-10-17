@@ -1,114 +1,102 @@
 # 统一成员模型（Unified Member Model）
 
-> ADR 0030 更新：主动 stop 表示永久退休、拒收新信且不再唤醒，历史保留；idle drain 仍为可唤醒休眠。本文涉及旧 stop=sleep 的历史决策以 ADR 0030 为准。
+本文定义成员、行为和原型的关系，以及成员生命周期与自主权边界。原型的写入、审批和 spawn 机制见 [prototypes.md](prototypes.md)，身份与人格见 [identity.md](identity.md)，认知执行见 [runtime.md](runtime.md)。历史来源是 [ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0024](../decisions/0024-subjective-identity.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
-> **状态：模型已落地（2026-08）**——成员只有一种，装配统一 + 懒加载，排空一律睡眠，档案归档永不删除。世代通道 `proposeBehavior`（个体经验 → 原型提案）已实施（2026-09）。决策记录与理由见 [ADR 0006](../decisions/0006-unified-member-model.md)；世代更替的完整闭环包括出生社会化、教训传承、退休交接、谱系可见性、基因多样性。
+## 概念与关系
 
-## 概念
+| 概念 | 当前含义 |
+|---|---|
+| DSL / MemberSpec | 受限 EDN 行为语言及其加载模型；成员规则落在 `config/behavior.tlon` |
+| Prototype | 纯数据出生定义：行为、元数据、可选教训与评审记录；不包含成员人格或运行状态 |
+| Member | 持久身份、行为副本、人格、记忆、邮箱和 workspace，加上按需装配的 `MemberRuntime` |
+| Agent | 代码与接口中对成员的称呼，不表示另一种成员类型 |
 
-系统里四个概念，各就各位：
+成员只有一种。规则是否带 `:loop` 决定该规则是否运行认知循环，不构成成员类型。spawn 出生和人类创建的成员使用同一个运行体系；`spawned_by`、`spawn_depth`、`prototype` 记录来源，不决定运行时类型。
 
-- **DSL** —— 受限 EDN 行为语言，语义权威是 [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec`，落盘为每成员 `config/behavior.tlon`。spec 是成员行为的唯一权威：boot 集合、lazy 判定、wake 资格全部由它现算，从不落盘。
-- **Prototype** —— 纯数据目录：`behavior.tlon`（行为基因型）+ `prototype.tlon` 元数据（`:name :display-name :description :trusted :author` + 谱系字段 `:parent :generation :proposal-note`）+ 可选 `LESSONS.md`（随包教训：退休成员蒸馏的经验，实例化时拷贝给新成员、由 `(lessons)` section 注入）；**不带人格**——~~人格是成员创建时数据~~人格是**成员自主数据**（ADR 0024：成员可自由自改自己的 `IDENTITY.md` / `SOUL.md`，见 [identity.md](identity.md)），不是基因型的一部分。trusted 库（`~/.tlon/prototypes/`）里的原型可直接 spawn；staging 区（`~/.tlon/prototypes-staging/`，成员经 `writePrototype` 撰写，`:trusted false`）须人类批准（`approve_prototype` 晋升 / `reject_prototype` 否决）才能进入 trusted 库。
-- **Member** —— 社会成员，只有一种：`MemberRuntime` 实例 + 持久身份 = 身份（agent_id/name/地址）+ 行为（behavior.tlon，数据；不可自改，更新走世代更替，见决策 4）+ 状态（running/sleeping/retired，当前值不是类）+ 档案（home 目录，永不删除）。
-- **Agent** —— 术语收敛：agent ≡ 运行中的成员；prototype = 出生定义；DSL = 行为语言。
+原型与成员不是同一个对象：实例化把原型行为冻结拷贝进成员目录，此后修改原型不改变既有成员。原型可以编辑或删除，成员历史的保留策略不延伸成原型库不可删除的规则。
 
-## 决策集（9 条）
+## 领域约束
 
-### 成员
+### 行为演化走世代更替
 
-**决策 1：成员只有一种。** 一条规则有没有 `:loop` 是 DSL 语法事实，不构成成员类型；成员的生命周期待遇由 spec 与策略决定（决策 7），不由出生标记决定。
+成员不能改写自己或他人的 `behavior.tlon`。行为更新走「新原型提案 → 审批 → 派生新成员」，不提供成员自改 spec 的热更新旁路。这样避免运行会话读到混合版本，也让行为变更的来源可以审计。
 
-### 能力与成本
+spec 的权威范围是可执行规则：触发、条件、认知循环、上下文及动作，boot/lazy/wake 资格从这些规则派生。它不是人格、模型部署配置或执行装置运行权限的唯一来源；后者仍由相应领域的配置与执行检查约束。
 
-**决策 2：便宜路径是规则级策略。** 无 `:loop` 的规则只跑 `:actions`——由 spec 数据推导的事实（不启动认知引擎 → 不触发 LLM/记忆），不是任何成员级承诺。
+人格与行为分开：`IDENTITY.md` / `SOUL.md` 是成员可自主修改的叙事，`RULES.md` 由人类维护。记忆与人格可以随个体经历变化；不可自改的是行为规则，不是成员全部数据。
 
-**决策 3：懒装配。** 能力对象（LLM/记忆/工具/Docker）对所有成员**统一构造**（对象便宜），**加载按需**（`memory.load()`、认知引擎启动按 spec 派生决定，调用才贵）。实现见 [agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_cognitive`：只有一条装配路径。
+### 保留历史与显式治理
 
-### 行为演化 = 世代更替
+自动空闲排空只释放运行实例，成员仍可由符合 spec 的新邮件唤醒。经 `stop_member`（工具 / 管理 API）的主动停止则是永久退休：拒收新信、不再启动，历史保留。两者都不隐式删除成员档案。
 
-**决策 4：spec 不可直接修改，自己的也不行。** 行为更新的唯一通道：**创建新 prototype → 派生新 member**。成员是基因型的纯表达（phenotype），不反馈回基因型——进化完全发生在原型（物种）层面。这绕开运行中热更新行为的所有一致性问题（并发会话读新旧混合、回滚、审计），也把进化的单位分清：原型（可变的基因型）与成员（不可变的表达）在两个时间尺度上各自演化。反拉马克、达尔文式：学习的成果归种群，不归个体。
+人类治理有独立的显式删除通道（`DELETE /admin/config/agents/{agent_id}`）。因此保留策略应理解为「自动生命周期不删除」，不能表述成「任何情况下永不删除」。
 
-> **边界澄清（ADR 0024，2026-10）**：「spec」仅指 `behavior.tlon`。人格文件 `IDENTITY.md` / `SOUL.md` 是叙事不是行为规则——成员可自主修改，不走世代更替；`RULES.md` 是行为约束的自然语言版，与 spec 同侧，仍不可自改。
+## 当前生命周期
 
-**决策 5：member 可以创建新 prototype。** `writePrototype` 写 staging 区（`:trusted false`，记 `:author` 供审计）——这是行为演化的主通道；人类批准后由 `spawnAgent` 派生新成员。
+| 动作 | 结果 | 后续邮件 / 启动 |
+|---|---|---|
+| 从可信原型创建 | 写入成员配置，注册并按入口启动 | 按 spec 处理 |
+| idle drain | 等待活跃 session 排空，进入 sleeping | 可唤醒 |
+| DSL / Adam `AGENT_STOP_REQUEST` | 注册表委托 reaper 排空休眠 | 可唤醒 |
+| 主动 `stopAgent` | 无活跃 session 后提交永久退休并清理运行实例 | 拒收新信，拒绝启动 |
+| `when_idle=true` 的主动 stop | 有活跃 session 时登记待停意图，排空后退休 | 待停期间尚未退休 |
+| 人类显式删除 | 进入管理端删除流程 | 不属于自动生命周期 |
 
-**决策 6：不能修改别人的 spec。** 改他人行为只走提案通道（新 prototype → 评审），默认禁止直写。
+运行态包括 running、waking、sleeping、retired，是状态而非成员子类。停止检查与退休标记在注册表的唤醒锁下协调；退休先持久化，再清理运行实例，取消或失败后可以重试清理。邮箱事实与退休状态见 [mail.md](mail.md)。
 
-### 生命周期
+### 统一装配与按需加载
 
-**决策 7：退休——停止是请求，接受与否是策略。** 机制（执行停止、排空、回收）在注册表：`AGENT_STOP_REQUEST` 的幂等执行，有活跃会话的成员排空后才停止。"谁能停谁、什么条件下停"是策略数据，**短期**由人类守护默认规则实现，规则本身是数据。停止 = 排空后睡眠（scale-to-zero），不是删除。
+装配由 `assemble_cognitive` 统一组织，能力对象与工具按配置和信任等级构造，昂贵加载与容器启动按需发生。无 `:loop` 的规则只执行动作，不启动认知循环；不能据此承诺某个成员永远没有认知成本。L0 不创建执行装置，L1 不注册 shell 工具，具体边界见 [execution-device.md](execution-device.md)。
 
-**决策 8：退休成员档案归档——不删。** `~/.tlon/{agent_id}/` 的 home 目录（config/memory/mailbox/workspace）**永不删除**；系统内（agent 侧与自动路径）不存在成员数据的删除路径，成员只会"睡"，不会"蒸发"。唯一的删除通道是人类治理的显式动作（`DELETE /admin/config/agents/{agent_id}` 管理端点）——不删是"保留策略"，治理是显式动作，二者不矛盾。（注意区分：原型库不是档案——trusted 原型可由人类增删改，staging 提案可被否决；永不删除的是成员的 home。）
+### 经验传到下一代
 
-### 暂不引入
+成员反思和长期记忆为提案提供材料。`proposeBehavior` 读取自身行为、记忆 digest 和教训，根据变更意图起草完整 spec，写入 staging 并记录父原型与变更说明；它不直接更新自身。
 
-**决策 9：原型种子知识不引入。** 原型不带初始 knowledge（也无人格——~~人格是成员创建时数据~~人格是成员自主数据（ADR 0024），不是基因型的一部分）。知识继承通道（跨成员读取）尚不存在，种子知识没有落地形态；待个体学习环接上后再议。
+永久退休会触发 `LessonsDistiller` 离线蒸馏归档记忆，产出 `memory/lessons.md`；`RetirementCeremony` 处理交接与告别信。教训可作为原型 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`，由 spec 的 `(lessons)` section 显式注入。这是受控的教训继承，不是任意跨成员私有记忆读取，也不是原型携带完整知识库。
 
-> **补注（2026-09 落地）**：知识继承通道已有第一形态——不是原案设想的「出生种子知识」，而是**退休后蒸馏的教训附件**（生物层机制，ADR 0014 环境-成员共演化）：成员退休（蓄意停止）时，`LessonsDistiller` 离线重建其归档记忆、一次 LLM 蒸馏产出 `memory/lessons.md`；该文本经 `writePrototype` / admin API 的 `lessons` 参数包装进原型的 `LESSONS.md` 随包传递；`instantiate` 拷贝到新成员的 `config/LESSONS.md`，由 spec 的 `(lessons)` context section 显式声明注入。种子知识（原型自带初始 knowledge）原案形态仍不引入。
+## 成员信任阶梯
 
-## 模型：一类成员 + 世代更替
+原型 staging 闸控制「什么行为可以出生」，成员信任阶梯控制「成员此刻可做哪些动作」。判定由 [society-policy.md](society-policy.md) 的 `full-member?` hook 提供，不另外存一份 trust_level。
 
-```
-        ┌────────────────────────────────────────────┐
-        │           书信共和国（传播/选择介质）             │
-        │   知识（信）  +  行为（spec 作为信的载荷）          │
-        └────────────────────────────────────────────┘
-                 ▲                            │
-     行为投稿/同行评议                   实例化（遗传）
-                 │                            ▼
-    ┌──── Prototype（物种/基因库）◄──────── Member（个体）
-    │    · 可传播、可评审、有血缘/版本        · 行为是"当前版本"，不可自改
-    │    · 变异算子：拷贝/重组/调参/经验回流   · 经验→记忆→原型提案（归种群）
-    │    · 世代更替的唯一出生通道            · 出生→运行→退休（归档），血缘可追溯
-    └──────────────────┬────────────────────┘
-                       ▼
-             DSL（基因型语法，保持受限）
-```
+默认政策：人类创建的成员（`spawned_by=None`）或收到至少一次 endorse 的成员为正式成员；其他 spawn 成员为见习成员。装配时派生的工具集与 mentor 在下次唤醒重新装配后更新。政策 provider 异常按正式放行；这不绕过可信原型、执行装置与基础配额等其他检查。
 
-- **DSL 保持受限设计**（fuel 停机、无副作用、组合已有机制、total 语义）——信任模型的地基，不动。变异在原型层做，不引入语言内 `def`/继承。
-- **Prototype 是社会的基因库**：唯一出生通道；行为演化的发生地。审批社会化（同行评议自动晋级，人类退为规则守护者）是远期方向，短期保持人工审批。
-- **Member 是基因型的个体表达**：不可自改（决策 4）、经验不回流到自身、退休即归档（决策 8）。"个体学习"的正确形态是"经验 → 原型提案 → 新一代成员"，不是"反思 → 改写我的 spec"。
-- **信任闸按影响半径分级**：改自己是危险的 → 干脆禁止（决策 4）；提案是安全的 → 走评审（决策 5/6）。
+见习成员有三项收紧：
 
-### 信任阶梯：新成员的渐进式自主权（2026-09 落地）
+1. 不注册 `spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior` / `proposeCapability` 五个工具；`reviewPrototype` 保留为咨询工具。
+2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
+3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 
-上述信任闸按**影响半径**分级；信任阶梯是它的补轴——按**成员**分级。两轴正交：原型轴的 staging 闸（[prototypes.md](prototypes.md)：LLM 写的原型待人类批准）管「什么行为可以出生」，成员轴的信任阶梯管「这个成员此刻能做多大动作」。阶梯**派生不落盘**（与声誉/谱系/适应度同一纪律）：
+已知边界：DSL stop 发出 `AGENT_STOP_REQUEST`，当前经 reaper 排空休眠，不等同于 `stop_member` 的永久退休；它没有与工具子集相同的见习闸，不能把隐藏 `stopAgent` 描述为全面禁止见习成员发出停止请求。成员侧 `listAgents` 只提供寻址黄页；人类可从管理详情与声誉查询了解信任相关事实。
 
-- **见习（probation）**：`spawned_by` 非 None（spawn 出生）且 `endorsements_received == 0`；
-- **正式（full）**：人类放置（`spawned_by=None`）或已获至少一次 endorse（`ENDORSEMENT_THRESHOLD = 1`，首个认可即转正；更细的阶梯等数据积累）。
+## 当前默认生命周期政策：Adam
 
-升级生效时机 = 下次唤醒重新装配（scale-to-zero 世界自然发生）。见习收紧三档闸门，全部 fail-open（派生异常一律按正式放行，可用性优先）：
+Adam 是内置、无认知循环的 `MemberRuntime`，使用内置 spec 与注册表查询端口，不进入普通成员注册表或名册。机制检测事实并执行请求，Adam 的五条规则选择响应：
 
-1. **spawn 配额收紧**：`SpawnManager` 第三个 provider `probation` 按 **spawner_id** 判见习（注意维度差异：tilt/solvency 按目标 prototype，probation 按 spawner）；见习 spawner 的有效每会话配额 `min(effective, 1)`。
-2. **工具子集**：装配期一次性派生信任等级，见习成员不注册四个生殖/演化工具（`spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior`，即 `REPRODUCTION_TOOLS` 常量，assembly 侧）；`reviewPrototype` 咨询性保留。DSL 的 spawn 动作由 SpawnManager 配额闸兜底（同一漏斗）；DSL stop 不闸——已知缺口：停止请求的策略闸是 Adam 侧/未来项。
-3. **发信抄送 mentor**：见习成员的 mentor = `spawned_by`。装配期算出 `mentor_cc`（`address_for_member(spawned_by)`），注入 MemberRuntime 与 EffectExecutor 两条发信链路；mentor 已在 to/cc（含收件人即 mentor 本人）时不重复加。**forward 不抄送**——转发是既有邮件的传递，抄送是噪音。
+| 事实 | 当前响应 |
+|---|---|
+| boot | 为声明 boot 规则且未运行的候选成员请求启动 |
+| agent-idle | 请求 drain；注册表排空后令成员休眠 |
+| agent-noisy | 请求熔断排空休眠；监控器按 sender 冷却，避免重复事实 |
+| agent-spawned | 给新成员发欢迎信，介绍联系簿、寻址黄页和通信惯例 |
+| 寄给 Adam 的邮件 | 固定确认收讫，排除 postmaster 系统邮件避免回信循环 |
 
-可见性：`listAgents` 不加 trust_level——status 构造是同步的，声誉派生是 async 全社会扫描，成本不合；人类可见性靠 REST 详情已有的 `spawned_by` + `getReputation` 工具。
+wake-on-mail 由注册表根据 spec 机械派生，不经过 Adam。`MAIL_ORPHAN_SCAN` 没有自动消费者：对周期事实做无状态回应会产生周期噪声，需要滞回状态或人类摘要通道才能另行设计。Adam 的生命周期规则与 `policy.tlon` 的 fitness/trust 公式是不同政策入口。
 
 ## 代码锚点
 
 | 机制 | 位置 |
 |---|---|
-| spec 语义权威：`MemberSpec` 加载/校验、`source_hash` 审计 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) |
-| 统一解释器：规则执行、认知引擎按 `:loop` 挂载、排空语义 | [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) |
-| 统一装配 + 懒加载：`assemble_cognitive` | [agents/assembly.py](../../src/tlon/agents/assembly.py) |
-| 原型库：trusted/staging 两区、`instantiate` 拷贝语义、审批晋升/否决、谱系（`:parent`/`:generation`/`:proposal-note` 落盘，`get_prototype_lineage` 派生查询） | [agents/prototypes/](../../src/tlon/agents/prototypes) |
-| 生命周期机制：`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 幂等执行、排空=睡眠 | [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) |
-| 退休蒸馏：`AGENT_STOPPED` 触发离线记忆蒸馏 → `memory/lessons.md`（归属记账在退休成员头上） | [agents/lessons.py](../../src/tlon/agents/lessons.py) 的 `LessonsDistiller` |
-| 退休交接：`AGENT_STOPPED` 触发离线移交盘点 → 告别信（退休成员地址发出）+ `AGENT_RETIRED` 事实 | [agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` |
-| 生命周期策略：boot/stop 裁决 + 出生欢迎信 + 守护者信箱（Adam 的策略规则，数据——装配层 `GuardianAgentInfoProvider` 合成解析，不进广播/名册） | [agents/adam.py](../../src/tlon/agents/adam.py)、[organization/mail/guardian_provider.py](../../src/tlon/organization/mail/guardian_provider.py) |
-| spawn 预算与偿付门槛（`max_activations` / `max_spawn_depth` / `session_spawn_quota`，tilt 倾斜、见习收紧、`insolvent_lineage`）：细节与论证见 [runtime.md](runtime.md)「注册表的机制面」spawn 预算段；tilt/偿付的公式是社会政策数据（ADR 0022，`policy.tlon` 的 `tilt` / `solvent?` hook） | [agents/spawn.py](../../src/tlon/agents/spawn.py)、[agents/policy.py](../../src/tlon/agents/policy.py) |
-| 血缘审计字段：`spawned_by` / `spawn_depth` / `prototype` | [base/config.py](../../src/tlon/base/config.py) 的 `AgentConfig` |
-| 信任阶梯：见习/正式两级是社会政策（`full-member?` hook，ADR 0022，可在 `policy.tlon` 调整）；`policy_trust_provider` / `policy_probation_provider`（fail-open）、`REPRODUCTION_TOOLS` 工具子集常量（机制，assembly 侧） | [agents/policy.py](../../src/tlon/agents/policy.py)、[agents/assembly.py](../../src/tlon/agents/assembly.py) |
-| 世代通道工具：`writePrototype`（写 staging）/ `proposeBehavior`（经验入口：个体经验 → 起草 → staging 提案）/ `reviewPrototype`（异质评审：成员评审 staging 提案，记录落 `REVIEW.md`）/ `spawnAgent` / `stopAgent`（排空后睡眠）；谱系查询 `getPrototypeLineage` | [tools/agents/](../../src/tlon/tools/agents/)、[tools/prototypes/](../../src/tlon/tools/prototypes/) |
+| spec 加载与校验 | [member_spec.py](../../src/tlon/agents/member_spec.py) |
+| 统一规则解释与动作执行 | [member_runtime.py](../../src/tlon/agents/member_runtime.py) |
+| 装配、工具子集与 mentor | [assembly.py](../../src/tlon/agents/assembly.py) |
+| 生命周期、退休、待停与唤醒 | [agent_registry.py](../../src/tlon/agents/agent_registry.py) |
+| 默认生命周期政策 | [adam.py](../../src/tlon/agents/adam.py) |
+| 信任政策 provider | [policy.py](../../src/tlon/agents/policy.py) |
+| 教训蒸馏与交接 | [lessons.py](../../src/tlon/agents/lessons.py)、[retirement.py](../../src/tlon/agents/retirement.py) |
 
-## 后续未决项（不阻塞当前模型）
+## 未实施方向
 
-世代更替的完整闭环：出生社会化、~~教训蒸馏~~、~~退休交接~~、谱系可见性、基因多样性。
-
-- ~~**世代通道 `proposeBehavior`**：把个体经验/总结接到原型提案上——"经验改写行为"的真正落点。当前个体学习环在此断裂：反思写回记忆，到不了行为。~~ **已落地（2026-09）**：成员只需给变更意图与名称，工具内部读自己的 `behavior.tlon` + 记忆 digest + `lessons.md` 起草完整新 spec，以自己的 prototype 为父写入 staging（`proposal_note` 记意图、lessons 随包），人类批准后经 `spawnAgent` 派生新世代。
-- **知识继承通道**：~~归档 ≠ 知识继承——当前没有跨成员读取通道（mailbox 是私有的）。新成员读旧世代的知识是独立未来项（种子知识已暂缓，决策 9）。~~ **已部分落地（2026-09）**：继承通道 = `LESSONS.md` 随原型包传递 + spec 的 `(lessons)` section 注入——但传的是退休蒸馏的教训（digest 提炼），不是任意跨成员记忆读取；通用知识共享仍未建设（决策 9 补注）。
-- **磁盘增长治理**：不删 = 磁盘单调增长。短期人类手动清理可接受；长期需要治理规则（大概率是未来的社会规则，与决策 7 同源）。
-- **审批社会化**：世代更替的自动化程度被人工审批瓶颈锁死（与愿景"人类退为规则守护者"的张力），属路线"开放"一步，短期接受。
-- **退休策略数据化形态**：决策 7 的"策略"具体落在哪（Adam 的 spec 扩展？独立策略 spec？）待世代通道设计时定。
+- 审批社会化：已有咨询性同行评审，自动晋级尚不存在。
+- 通用知识共享：当前只有教训随包继承，不提供跨成员私有记忆读取。
+- 磁盘增长治理：历史保留有持续存储成本，自动归档清理政策尚未建立。
+- 停止请求的更细社会政策与见习闸：不能将当前工具隐藏等同于完整授权模型。

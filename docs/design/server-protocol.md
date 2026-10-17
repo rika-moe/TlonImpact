@@ -6,7 +6,7 @@ Tlon 服务端对外只暴露一个 HTTP 端口：纯 REST + SSE，没有 WebSoc
 
 协议 v2（`SESSION_PROTOCOL_VERSION = "2.0.0"`，`rest/sessions.py` 中 `POST /sessions` 唯一接受的版本）只有两种数据流向：
 
-- **客户端 → 服务端：普通 HTTP 请求**。发信、建会话、改过滤、查状态，全是无状态 REST。
+- **客户端 → 服务端：普通 HTTP 请求**。发信、建会话、改过滤、查状态，全使用 REST 请求。
 - **服务端 → 客户端：一条 SSE 长连接**。`GET /events` 返回 `text/event-stream`，事件帧是 JSON（`{"type": "event", "event_type", "payload", "source", "timestamp", ...}`，含 trace 字段），一个 SSE `data:` 块一帧；每 `SSE_HEARTBEAT_SECONDS = 25` 秒发一行 `: ping` 注释作为心跳——写心跳失败即判定客户端已走。
 
 版本协商只有一个检查点：建立会话时客户端声明 `protocol_version`，不等于当前版本即拒绝（`unsupported_protocol_version`，响应带支持版本列表）。会话建立后整个生命周期内协议不变——没有逐帧版本号、没有能力协商位图。这是「协议面小」原则在演进策略上的延伸：版本升级就是换掉整个会话语义，而不是让新旧帧格式长期共存（项目规范：不保留向后兼容）。
@@ -37,7 +37,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 - **条件注册**：admin 配置路由在 configs facade 注入时才注册，traces 路由在 observability facade 注入时才注册，`/metrics` 无观测 facade 时返回 503。装配层（`ServerApp`）决定哪些能力上线，API 层不猜测——缺失的能力以明确的 503/缺路由表达，不伪装成功。
 - **热重载走管理面**：`POST /admin/config/agents/{agent_id}/reload` 让运行中的服务端注册并启动一个磁盘上已存在的 agent（或登记为 lazy）——创建类管理操作的收尾。配置的唯一权威仍是磁盘文件，端点只是触发重读。
 
-会话即存在（presence）：SSE 流建立时才把会话 attach 到对应人类的 `HumanAdapter` 并注册事件处理器；流断开（客户端断连、心跳写失败、主动 DELETE）即可靠地 detach 并关闭会话——**SSE 断开等于离线**，客户端重连需重新 `POST /sessions` 拿新 session id 和新快照。
+会话即存在（presence）：SSE 流建立时才把会话 attach 到对应人类的 `HumanAdapter` 并注册事件处理器；流断开（客户端断连、心跳写失败、主动 DELETE）即可靠地 detach 并关闭会话——**会话 SSE 断开即结束该 attachment**，客户端重连需重新 `POST /sessions` 拿新 session id 和新快照。
 
 ## 会话生命周期
 
@@ -46,9 +46,19 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 1. **建立**：`POST /sessions` 只创建会话记录（身份、mode、filters），返回 session id 和 participants/agents 快照。此时没有事件处理器、没有 adapter attach——客户端还没开流，推了也没人收。
 2. **开流**：`GET /events` 带着 session id 到来时才接线：`handle_events` 先把该会话的帧队列登记进 `_sse_queues`（在第一个 await 之前，让并发的重复开流撞上 409 而不是竞争），再注册事件处理器、attach HumanAdapter，**然后**才 `prepare()` 响应——客户端看到 200 响应头时，服务端保证它已经能收到事件。这个「先接线后放行」的顺序消掉了「响应到了但事件还在丢」的窗口。开流时注册的事件处理器和 attach 给 adapter 的推送回调是**同一个闭包**：事件经它入帧队列，发给这个人类的邮件也经它入帧队列——单轨投递在协议层就体现为「一个会话一个帧队列」，不存在第二条到客户端的路。
 3. **存续**：事件处理器把帧写入队列，循环消费写出；队列里放 `None` 哨兵是流结束的内部信号（DELETE 路径用）。同一会话只允许一条活跃流（409 `stream_active`）——多端登录是多个会话 attach 同一个 adapter，不是一个会话多条流。帧队列是无界 `asyncio.Queue`：慢客户端的积压只涨自己队列的内存，不反压事件源；这与 EventBus 的有界订阅队列取向不同，取舍是「会话是短命凭据，客户端跟不上时断流重建比丢事件更直白」之外的另一层——实际上极慢的客户端会先被心跳写失败判定为离线。
-4. **终结**：三种触发（客户端断连、心跳写失败、`DELETE /sessions/{id}`）走同一条清理路径：detach adapter、注销处理器、关闭会话。DELETE 是幂等的，清理步骤重复执行无害。服务端不尝试区分「网络抖动」和「客户端走了」——心跳写失败即离线，简单且不会错杀慢客户端（25 秒心跳下，写失败只发生在连接真的断了的时候）。
+4. **终结**：三种触发（客户端断连、心跳写失败、`DELETE /sessions/{id}`）走同一条清理路径：detach adapter、注销处理器、关闭会话。DELETE 是幂等的，清理步骤重复执行无害。服务端不尝试区分「网络抖动」和「客户端走了」——心跳写失败即离线，不承诺靠心跳为极慢客户端提供确定的积压上限。
 
-会话状态全部在内存（`SessionManager`），服务端重启即清空——这不丢任何东西：邮件在磁盘邮箱里，客户端重连后重新建会话、拉 inbox 即可恢复全部状态。会话是廉价的、可随时重建的「在线凭据」，不是需要保护的资产。
+会话状态全部在内存（`SessionManager`），服务端重启即清空——邮件仍在持久邮箱，但断线期间瞬时事件不会重放；客户端重连后重新建会话并同步持久状态。会话是廉价的、可随时重建的「在线凭据」，不是需要保护的资产。
+
+## 邮箱快照、实时通知与分页
+
+SSE 不提供持久事件游标，也不以 `Last-Event-ID` 补播邮件。邮件完整性由 SQLite 快照承担；客户端必须先注册事件监听，等 SSE 实际开流就绪后再读快照，不能把 `POST /sessions` 成功当成流已就绪。
+
+`GET /inbox` 与观察成员邮箱接口返回 inbox + sent 的合并页，按数据库 timestamp/rowid 稳定排序。`before` 表示上一页最早邮件 id，`has_more` 与 `next_before` 指示是否还有更早历史；它们是邮箱历史游标，不是 SSE 断点。观察接口不暴露他人 read。
+
+初次同步可以只取最近一页并明确还有历史。重连补信应从最新页向前分页，直到覆盖上一次**完整成功快照**的最新邮件边界或到达历史末尾，不能只取固定条数，也不能把断线期间本地发出的新信当作补信边界。加载期间实时邮件与快照按 id 合并；快照能更新同 id 的已读状态。具体页面竞态控制见 [webui.md](./webui.md)。
+
+`POST /inbox/read` 只修改指定人类成员的收件关系，目标为单封或完整线程；线程更新在一个事务中包含尚未加载的历史，返回实际受影响邮件 id。查看、打开线程、重连均不自动标读，观察他人保持只读。精确字段和错误见 [API reference](../reference/api-reference.md)，邮局语义见 [mail.md](./mail.md)。
 
 ## 推送分工：单轨邮件 + 通知服务
 
@@ -77,7 +87,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 协议没有认证层：`POST /messages` 的发件人身份来自请求体的 `username`，`GET /inbox` 的身份来自 query 参数，`POST /sessions` 同理。这是刻意的——服务端默认绑定 `127.0.0.1:8080`，信任边界是本机。这不是「尚未实现认证」，而是和邮件系统的身份模型对齐：书信共和国的成员按名字存在，名字即身份；在本机单用户场景里，声明 `username` 就是出示身份。
 
-唯一的输入防御是路径安全：username 会变成邮箱目录名（`~/.tlon/human-{username}/`），所以 `rest/common.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。
+唯一的输入防御是路径安全：username 是人类身份输入，也涉及本地路径安全，因此 `rest/common.py` 的 `_validate_username` 拒绝空值和任何携带路径分隔符的输入（traversal guard）。CORS 全开（`Access-Control-Allow-Origin: *`），同样是本地开发工具的取向。debug 模式的 `/test/ping`、`/test/echo` 只用于冒烟，生产永不开启。
 
 绑定非回环地址（`--host 0.0.0.0` 或任何局域网/公网地址）时，服务端不阻止——显式给出 `--host` 本身就是知情动作——但会在两处留下醒目记录：启动 banner 追加「NO authentication」警告块，日志打 `server_exposed_non_loopback` warning（判定逻辑是 [tlon_server/serverapp.py](../../src/tlon_server/serverapp.py) 的 `_LOOPBACK_HOSTS` 白名单：`127.0.0.1` / `localhost` / `::1`）。
 
@@ -85,12 +95,14 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 ## 客户端
 
-两个官方客户端，都只经 REST + SSE 与服务端通信：
+官方客户端都只经 REST + SSE 与服务端通信：
 
 - [apps/operator](../../apps/operator)（TypeScript/Ink TUI）：`src/client/sseClient.ts` 的 `SseClient` 用 fetch 实现整个协议——`POST /sessions` 开流前拿快照，`GET /events` 读流，PATCH 改 mode，断线后指数退避重连（`backoffDelay`，1s 起步、30s 封顶）并**从零重建会话**（新 session id、新快照），断连期间的事件丢弃。`dispose` 中止流并尽力 DELETE 会话。整个客户端协议实现只有这一个文件、两百余行——这是协议面小的直接证据。
+- [WebUI](./webui.md)：浏览器 EventSource + REST，真实开流后报告 connected；邮箱另以持久快照同步。
+- [Telegram](./telegram.md)：经 Python SDK 的 chat 会话接入，仅收自己身份的邮件。
 - [src/tlon_client/sdk/](../../src/tlon_client/sdk)（Python SDK）：`client.py` 的 `TlonClient` = `base_client.py` 的 `BaseClient`（REST + SSE 传输、自动重连、重连后重新 `POST /sessions`）+ `adapter.py` 的 `ClientAdapter`（按客户端类型声明 client_type/mode/filters 等默认行为）。契约上不依赖 `tlon` 包（import-linter 强制）——SDK 能用的就是协议暴露的，没有后门。
 
-两个客户端共同的约定值得强调：**过滤声明在服务端执行**。adapter 把想要的 mode 和 filters 随 `POST /sessions` / `PATCH` 发给服务端，本地收到什么就展示什么，不再二次过滤。这让「客户端看到什么」的语义只有一个权威实现（`NotificationService`），客户端类型再怎么增加也不会各自漂移出自己的过滤规则。
+客户端共同的约定值得强调：**过滤声明在服务端执行**。adapter 把想要的 mode 和 filters 随 `POST /sessions` / `PATCH` 发给服务端，本地收到什么就展示什么，不再二次过滤。这让「客户端看到什么」的语义只有一个权威实现（`NotificationService`），客户端类型再怎么增加也不会各自漂移出自己的过滤规则。
 
 ## 设计取舍
 
@@ -98,10 +110,10 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 - 人类客户端的读模型是「历史 + 增量」：历史用 `GET /inbox` 直接拉持久邮箱（邮箱本来就是磁盘上可重读的事实），增量靠 SSE。两条都是 HTTP 原语，不需要会话级协议状态。重连语义因此极其简单：断了就重新建会话、打开 SSE 流，流就绪后分页补拉 inbox，直到覆盖断线前的最新邮件；加载期间的事件与快照按邮件 id 合并。邮箱游标用于历史分页，不是 SSE 事件断点。
 - `POST /messages` 成功回执列出本地已入箱成员、网关尝试结果与请求 ID。本地事务已提交，阅读与处理仍是异步的；网关只承诺尝试，不保证网关入箱或外部接收。任一地址无效或成员退休整封拒绝，返回结构化问题列表，不另发退信。超时是结果未知，重试复用 `request_id`；同键同内容返回既有结果，同键不同内容冲突，不重复入箱或尝试网关。
-- agent 不需要这个协议：它们活在服务端进程内，通信走 EventBus 和邮箱。协议面只需服务人类客户端，单边推送 + 普通 POST 恰好覆盖，全双工是无谓的复杂度。
+- agent 不需要这个协议：它们活在 runtime 中，成员间通信经邮局，EventBus 传递进程内通知。协议面只需服务人类客户端，单边推送 + 普通 POST 恰好覆盖，全双工是无谓的复杂度。
 - 协议面小的好处是可接入性：任何能发 HTTP 请求、能读 SSE 的客户端（curl、脚本、第三方 TUI）都是一等公民，不需要专用 SDK 或 WebSocket 库。
 
-这套协议本质上是邮件系统的「人类终端适配层」：它不发明自己的消息语义，只把邮箱（`GET /inbox`）、发言（`POST /messages`）、成员在场（sessions + adapter attach）和总线观察（SSE 事件流）翻译成 HTTP。所以它的复杂度上限被邮件系统封住了——邮件模型不变，协议就没有理由长大；协议里任何一个端点都能回答「这对应邮件/成员模型的哪个动作」。
+这套协议本质上是邮件系统的「人类终端适配层」：它不发明自己的消息语义，只把邮箱（`GET /inbox`）、发言（`POST /messages`）、成员在场（sessions + adapter attach）和总线观察（SSE 事件流）翻译成 HTTP。协议也承载管理与观测；各端点应明确对应领域动作，不在 HTTP 层重新发明领域语义。
 
 **代价与边界**：
 

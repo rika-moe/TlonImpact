@@ -1,228 +1,112 @@
 # Tlon 系统架构
 
-> 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种；排空一律是睡眠、档案归档、成员永不删除。模型总览见 [docs/design/unified-member-model.md](./design/unified-member-model.md)。
+本文是当前系统的入口：先定义跨领域必须遵守的边界，再描述当前采用的结构与协作链路。领域内部的规则和机制在对应 design 完整定义；历史选择见 [决策索引](decisions/README.md)，文档维护规则见 [documentation.md](documentation.md)。
 
-Tlon 是一个单进程 asyncio 多智能体协作系统：一组 agent 以邮件为唯一通信方式，模拟一个软件工程团队；人类用户以普通成员身份加入同一个邮件网络。本文描述当前实现的整体结构、依赖方向、装配顺序与运行时数据流。
+## 系统概念
 
-## 总览
+Tlon 让一组成员通过邮件协作，人类也以成员身份收发邮件。成员以原型为行为来源，由宿主运行其行为规则。当前实现支持认知循环和不调用 LLM 的规则路径，二者使用同一成员模型。
 
-```
-┌──────────────────────────── 客户端层 ────────────────────────────┐
-│  apps/operator   TypeScript/Ink TUI（tlon ops 拉起的 Node 进程）  │
-│  tlon_client/sdk TlonClient —— 纯协议层 SDK，不依赖 tlon 包      │
-│  任意 HTTP 客户端（REST + SSE 即可接入）                          │
-└──────────────┬───────────────────────────────┬───────────────────┘
-               │ HTTP REST                     │ SSE（GET /events）
-┌──────────────▼───────────────────────────────▼───────────────────┐
-│ 服务端装配层 tlon_server（ADR 0019：只经 tlon.api + tlon.base     │
-│   触达 runtime，import-linter 固话）                              │
-│   ServerApp —— serving 侧装配（session/notification/HTTP 生命周期）│
-│   api/rest/ RESTServer —— aiohttp，REST + SSE，无 WebSocket       │
-│   core/ —— ClientGateway / SessionManager / NotificationService / │
-│            MemberDirectory                                        │
-├──────────────────── runtime 北向 API（tlon/api）─────────────────┤
-│   members / mail / prototypes / observability / configs / events /    │
-│   arena / capabilities —— 8 个 domain facade + build_runtime          │
-│   （runtime 装配，ADR 0019）                                          │
-├──────────────────────────── 领域层 ──────────────────────────────┤
-│ agents —— AgentRegistry（机制）/ Adam（策略）/ MemberRuntime /    │
-│           SessionScheduler / AgentSession / LoopDriver / stages / │
-│           EffectExecutor                                          │
-│ organization —— mail（Mail / Mailbox / PostOffice / Resolver）、│
-│           messaging（HumanAdapter）                               │
-│ tools —— mail / filesystem / shell / memory / tasks / agents /    │
-│          prototypes / system（经 ports.py 依赖倒置）               │
-├────────────────────────── 基础设施层 ────────────────────────────┤
-│ base —— Component / EventBus / ConfigService / TlonPaths /        │
-│         LLMClient / tracing / metrics / logger                    │
-│ memory —— claim 记忆（MemoryManager + sqlite-vec 索引）           │
-│ sandbox —— DockerRuntime                                          │
-└───────────────────────────────────────────────────────────────────┘
-         EventBus 横贯各层：组件间通信的唯一通道（发布/订阅）
-```
+| 概念 | 含义与边界 | 领域设计 |
+|---|---|---|
+| 成员 | 有地址、行为与生命周期的个体；运行状态与主观身份分开 | [统一成员模型](design/unified-member-model.md)、[身份](design/identity.md) |
+| 原型 | 可提案、评审、实例化的行为来源；不等于成员档案 | [原型](design/prototypes.md) |
+| 行为 spec | 成员规则的权威描述，不包含模型配置、人格、记忆等全部输入 | [DSL](design/dsl.md) |
+| 邮件与邮箱 | 成员间通信及每个收件人的持久收件事实 | [邮件](design/mail.md) |
+| Session | 一次认知处理过程；journal 保存事件与生命周期元数据 | [运行时](design/runtime.md) |
+| Claim | 成员长期记忆的断言，可由蒸馏、主动记录或反思产生 | [记忆](design/memory.md) |
+| 能力 artifact | 组合已有词汇的 tlosure 函数，准入后可被行为调用 | [能力](design/capabilities.md) |
 
-整个系统只有一个服务端进程（`tlon dream`），入口 [src/tlon_launcher/main.py](../src/tlon_launcher/main.py) 的 `main`，最终由 [tlon_server/serverapp.py](../src/tlon_server/serverapp.py) 的 `run_server` 创建并运行 `ServerApp`。对外只暴露一个 aiohttp HTTP 端口：REST + SSE，默认 `127.0.0.1:8080`，路由集中在 [tlon_server/api/rest/](../src/tlon_server/api/rest) 包的 `RESTServer`（`rest/app.py` 的 `create_app` 注册全部路由，handler 按域拆在 `rest/` 各模块），没有 WebSocket。
+## 系统约束
 
-REST 端点全表（每条路由的注册条件、错误枚举、SSE 帧格式）以 [reference/api-reference.md](./reference/api-reference.md) 为单一事实源，本文不再罗列。
+以下规则约束跨领域协作。变更须先讨论并同步相关领域设计；实现类名、默认值和技术选型在下一节描述，不自动成为永久规则。
 
-客户端侧有两类接入方式：`tlon ops`（[tlon_launcher/commands/ops.py](../src/tlon_launcher/commands/ops.py)）定位仓库内 [apps/operator/](../apps/operator) 并以 Node 拉起这个 TypeScript/Ink TUI——优先用构建产物 `dist/cli.js`，未构建时回退 tsx 开发模式；TUI 与任意第三方客户端一样，只经 REST + SSE 与服务端通信。[tlon_client/sdk/](../src/tlon_client/sdk) 是给外部 Python 客户端用的 SDK（`client.py` 的客户端、`adapter.py` 的事件适配），契约上不依赖 `tlon` 包（日志直接用 structlog），只经 REST + SSE 与服务端通信。
+1. **依赖单向、公开边界明确。** tlosure 不依赖 tlon；runtime 不依赖 server/client/launcher；serving 经 runtime 的公开 facade 触达领域能力。工具通过注入端口使用上层能力，不反向 import 调用方。具体包边界见下表。
+2. **成员间通信走邮件。** 邮件与进程内事件是不同通道：EventBus 通知内部事实和生命周期意图，不能替代成员投信。显式注入的服务、facade 和查询端口可以直接调用，不存在「所有方法调用都必须改成事件」的要求。
+3. **机制与策略分离。** 宿主掌握 IO、调度、预算执行和准入检查；策略通过行为 spec、社会政策等明确入口使用机制，不能绕过宿主的执行边界。策略入口及其权限各有契约，不能统称为可任意修改的数据。
+4. **规则权威与派生状态分开。** 成员规则由 spec 定义；唤醒资格等派生属性不能另存为独立可改的规则来源。模型、执行授权、人格与记忆各有自己的归属，不能从「spec 权威」推出成员可自行改写这些配置。
+5. **效果先声明，再由宿主执行。** DSL 的效果意图和 stage 的状态更新以数据返回，执行侧应用变更并执行检查。求值不直接执行这些外部效果；具体纯度与汇聚契约见 DSL、Bridge 和 runtime design。
+6. **持久事实先于通知。** 投信必须经过邮局；成功提交后发布通知，通知失败不撤销已提交的邮件。邮箱是待处理邮件的持久依据，唤醒信号不是第二份队列；漏通知后的恢复回到持久邮箱。
+7. **成员模型统一，行为演化经过准入。** 认知与确定规则是行为形态而非不同成员种类。成员不能直接修改自身或他人的行为规则；行为提案经原型信任通道形成新成员。休眠、退休、删除是不同操作，自动排空或停止不隐式删除档案，人类显式治理删除另有入口。
+8. **依赖显式，装配无环。** 实例依赖经构造器或明确的装配参数传入；业务组件不能依赖隐藏的 runtime 单例。runtime 与 serving 各自负责装配和资源清理，不由一个类包办全部层次。
+9. **业务状态按 runtime 隔离。** 路径、注册表、邮箱等实例状态由显式的 `TlonPaths` 和依赖对象限定。进程级观测设施是已知例外，不能据此宣称所有观测数据也完全隔离。
+10. **访问权限由宿主控制。** 成员私有数据和执行能力的访问经明确的工具、路径与授权边界；提案和评估结果不自动授权生产执行。具体隔离保证及现有缺口见执行装置、能力和演武场 design。
 
-成员配置的创建与审批走服务端管理面：首启只播种原型库与技能（[agents/bootstrap.py](../src/tlon/agents/bootstrap.py)），**空社会不再自动初始化标准团队**（ADR 0016）——成员由人类经管理面创建（创建时选模型，成员级 LLM 配置），成员/原型管理经 ops 的管理 API（`POST/PATCH/DELETE /admin/config/agents`、`/admin/prototypes/staging` 审批），`POST /admin/config/agents/{agent_id}/reload` 热重载单个 agent 配置。
+## 当前实现：包与进程
 
-## 分层与依赖方向
+当前常规部署是一个 asyncio 服务端进程（`tlon dream`），以 aiohttp 提供单端口 REST + SSE，并在 `/ui/` 托管 WebUI。Operator 是独立的 TypeScript/Ink 客户端，Python SDK 和 Telegram 也是协议客户端。默认监听 `127.0.0.1:8080`。这些是当前选择，改变仍需设计评估。
 
-依赖方向由两道关卡强制：pyproject.toml 里的 import-linter 契约（`uv run lint-imports`）和 [scripts/](../scripts) 下的静态检查脚本。各包的职责与允许依赖：
+```text
+WebUI / Operator / Python SDK / Telegram
+                 │ REST + SSE
+            tlon_server
+                 │ domain facades
+              tlon.api
+                 │
+   agents ── organization / memory / tools / sandbox
+                 │
+              tlon.base
 
-| 包 | 职责 | 允许依赖 | 强制手段 |
-|---|---|---|---|
-| `tlosure` | DSL 语言核心（ADR 0018）：EDN 解析、通用 builtin 词汇、静态校验、fuel 计量求值（tlon 领域词汇在 `tlon/agents/vocabulary.py`） | 不依赖 tlon 的任何层（最底层） | import-linter「tlosure 独立于 tlon」 |
-| `tlon.base` | 组件基类、事件总线、配置、路径、日志、LLM 客户端、tracing/metrics | 不依赖任何上层 | import-linter「base 不依赖任何上层域」 |
-| `tlon.memory` | claim 记忆存储、蒸馏与向量检索 | 仅 base | import-linter |
-| `tlon.organization` | 邮件模型、邮箱、投递、地址解析、人类适配器 | 仅 base | import-linter |
-| `tlon.sandbox` | Docker 沙箱运行时 | 仅 base | import-linter |
-| `tlon.tools` | agent 可用工具（邮件/文件/Shell/记忆/任务/生命周期/原型） | base、sandbox；不依赖 agents/app/prototypes | import-linter；生命周期与原型工具经 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py)、[tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py) 声明端口，由装配层注入实现（依赖倒置） |
-| `tlon.agents` | 领域核心：注册表、成员运行时、认知循环 | base/memory/organization/tools/sandbox；不依赖 app/prototypes | import-linter |
-| `tlon.prototypes` | 内置行为原型库（随包携带，启动时播种到 `~/.tlon/prototypes/`） | —（无独立契约） | — |
-| `tlon.api` | runtime 公共北向 API（ADR 0019）：8 个 domain facade + `build_runtime()` 装配 | runtime 各层；不依赖 server/client/launcher | import-linter「api 不依赖 server/client/launcher」 |
-| `tlon_server` | REST/SSE handlers + 客户端连接管理 + WebUI 静态托管 | 仅 tlon.api + tlon.base（只禁直接 import） | import-linter「server 只依赖 tlon.api + tlon.base」 |
-| `tlon_client` | 客户端包：`sdk/`（外部客户端用的纯协议层 SDK）、`telegram/`（Telegram bot 客户端） | sdk 不依赖 tlon；telegram 仅 sdk/第三方 | import-linter「client.sdk 不依赖 tlon」「client.telegram 只依赖 sdk/第三方」 |
-| `tlon_launcher` | 命令行入口（composition root） | 仅 tlon.base + tlon_server + tlon_client | import-linter「launcher 不直摸 runtime」 |
-
-除 import-linter 外，[scripts/](../scripts) 下还有两个 AST 检查脚本：
-
-- [scripts/check_no_reexport.py](../scripts/check_no_reexport.py)：`__init__.py` 禁止 re-export，防止 IDE 重命名重构跨包静默断裂。
-- [scripts/check_stage_purity.py](../scripts/check_stage_purity.py)：认知循环的 stage 模块必须是纯变换，禁止直接改 session 状态（见下文「effects-as-data」）。
-
-组件层的规则本身写在基类文档里：[base/component.py](../src/tlon/base/component.py) 的 `Component` 要求所有依赖构造器注入、组件间只经 EventBus 通信、依赖图必须是 DAG；生命周期分 `__init__`（只存依赖）→ `initialize()`（订阅事件、起后台任务）→ `shutdown()`（反序清理）三段。
-
-事件总线是 [base/events/event_bus.py](../src/tlon/base/events/event_bus.py) 的 `EventBus`：每个订阅者一条有界 `asyncio.Queue`（上限 `SUBSCRIBER_QUEUE_MAX_SIZE = 1000`）加一个长驻消费 task，`publish` 只做入队、从不阻塞；慢订阅者只会积压自己的队列，溢出时丢新事件并记 `event_queue_overflow` 警告。事件类型枚举在 [base/events/event.py](../src/tlon/base/events/event.py) 的 `EventType`。语义细节：单个订阅者内严格按发布顺序逐个处理（FIFO）；订阅者之间不保证顺序；处理器抛异常只记日志，不影响本订阅者的后续事件和其他订阅者；`unsubscribe` 会取消消费 task 并丢弃队列里未消费的事件；对未运行的总线 `publish` 直接抛 `RuntimeError`（fail fast）。
-
-## 启动与装配顺序
-
-装配分两段（ADR 0019），此阶段不开任何网络端口：
-
-**runtime 段**——`build_runtime()`（[api/bootstrap.py](../src/tlon/api/bootstrap.py)）按依赖拓扑序构造 runtime 组件，并在其上构造 8 个 domain facade，返回 `Runtime` 容器：
-
-1. **可观测性先行**：`init_tracing` + `init_metrics`，先于任何 span 创建。
-2. **基础设施**：`seed_prototypes()`（幂等地把内置原型写入 `~/.tlon/prototypes/`，须在任何 agent 启动前）→ `EventBus` → `ConfigService` → `MetricsService` → `FileTraceStore`。
-3. **领域组件**：`AgentRegistry`（此时只按 ConfigService 里的配置 `register`，不启动 agent）→ Adam（[agents/adam.py](../src/tlon/agents/adam.py) 的 `make_adam`，在注册表之后初始化并随后发出 boot 启动请求）→ `AdapterManager`（人类适配器生命周期，共享 `PostOffice` 与 resolver）→ 可选 `GitHubAdapter`（配了 webhook secret 才存在）。
-4. **facade 装配**：members / mail / prototypes / observability / configs / events / arena / capabilities（[api/](../src/tlon/api) 下的 8 个小类，构造器注入 runtime 对象，薄透传）。
-
-**serving 段**——`ServerApp.initialize()`（[tlon_server/serverapp.py](../src/tlon_server/serverapp.py)）只装配自己的连接管理与 HTTP 生命周期：
-
-5. **客户端网关**：`SessionManager` → `NotificationService`（经 events facade 订阅 runtime 事件，不直摸 EventBus）→ `MemberDirectory`（成员通讯录，经 members/events facade 聚合）→ `ClientGateway`（协调各组件的门面）。
-6. **API 层**：构造 `RESTServer`（注入 ClientGateway 及 8 个 facade），尚未开始监听。
-7. 发布 `SYSTEM_STARTUP` 事件。
-
-随后 `ServerApp.start()` 调用 `RESTServer.start()` 才真正监听端口，然后阻塞在 shutdown 信号上。`shutdown()` 严格反序：先停 RESTServer 与 ClientGateway，再 `Runtime.shutdown()`（Adam（PID 1）先于它驱动的注册表停，EventBus 几乎最后停，tracing/metrics 收尾）。
-
-装配阶段不开任何端口；装配失败时 `run_server` 返回非零退出码，并在 `finally` 里走一遍 `shutdown()` 做清理。
-
-## 运行时数据流：一封邮件的全链路
-
-以「人类从客户端发一封邮件给 agent，agent 处理后回邮」为例：
-
-1. **统一投信入口**。人类 REST 经 facade、`AdapterManager` 和 `HumanAdapter` 调用 `PostOffice`；agent 工具由引擎实际执行后返回真实回执，DSL、cron、退休交接和 GitHub 入站同样调用邮局。不能发布 `MAIL_NEW` 来替代投信。工具拒绝即时返回错误，不生成退信，也不误结束 session。
-
-2. **原子本地入箱**。`PostOffice` 解析并验证全部 `to/cc`，任一无效或退休地址整封拒绝。SQLite 单事务保存邮件正文、全部本地邮箱归属、按发件人去重的请求记录与网关初始未知状态。成功表示本地已入箱，不表示阅读或处理。提交后尽力尝试已注册网关信箱，记录成功/失败/未知，不承诺网关入箱或外部接收，不自动重试。提交后才发布 `MAIL_NEW` 与 `MAIL_DELIVERED`，通知失败不影响本地事实。
-
-3. **收件人是 agent：唤醒或置信号**。
-   - 若收件人未在运行，`AgentRegistry._on_mail_delivered`（[agents/agent_registry.py](../src/tlon/agents/agent_registry.py)）检查其 spec 是否声明了 `:on :mail-delivered`，是则发布 `AGENT_START_REQUEST{reason="wake"}` 将其唤醒。唤醒不带触发事件——邮件已持久化在收件箱，成员启动时自行扫描未读邮件。
-   - 若收件人在运行，`MemberRuntime`（[agents/member_runtime.py](../src/tlon/agents/member_runtime.py)）收到 `MAIL_DELIVERED`：先过 `:when` 门控——拒绝的邮件立即标读、永不计入唤醒；通过的邮件保持未读（标读是 agent 自己的显式行为，`markRead` 工具），无存活 session 时给调度器置唤醒信号，有存活 session 则不打扰——邮件躺在收件箱里等链式唤醒或重扫。自己发给自己的邮件直接标记已读、永不处理。
-   - 每个认知成员有且只有一个后台重扫任务，按 `mail_rescan_interval_seconds`（默认 15 分钟，ADR 0028 决策 4）的慢速节拍周期重扫未读——搁置未读与漏网来信的兜底唤醒。boot 成员（`:on :boot`）从不睡眠、从不重新 boot，live 路径遗漏的邮件靠这个周期重扫拾起，不用等进程重启。扫描本身幂等且不调 LLM：只重放未读邮件过规则与门控，无未读时什么都不做。
-
-4. **认知循环**。`SessionScheduler`（[agents/scheduler.py](../src/tlon/agents/scheduler.py)）被唤醒信号触发后重读可唤醒未读，以这份快照为责任集开一个 `AgentSession`（[agents/session.py](../src/tlon/agents/session.py)，触发语是固定模板「你有 N 封未读邮件」），交给 `LoopDriver`（[agents/loop_driver.py](../src/tlon/agents/loop_driver.py)）逐步推进：think / plan / act / critique / revise 五个 stage（[agents/stages/](../src/tlon/agents/stages) 下各文件）是纯函数 `Session × StageServices → StageOutcome`，循环有 `max_iterations` 与 `max_tokens` 双硬顶（ADR 0023，任一到顶即停），耗尽时不丢中间成果：引擎用一次额外的 LLM 调用把 session 已完成的工作蒸馏成给发件人的回信（说明做了什么、做到哪、为何没做完），蒸馏失败则回落固定文案。stage 声明的外部效果由 `EffectExecutor` 真正执行：发邮件（回到第 2 步的邮局接口，形成 agent 间多轮通信）。stage 跑哪些、以什么顺序跑，由 spec 里 loop 规则的 `stages` 向量决定；`act` 只声明工具分发列表，并发（每个工具调用一个后台 task）是引擎的。
-
-   一个认知成员同一时刻至多一个存活 session（收件箱驱动的单 session 模型，ADR 0028）；`SessionScheduler` 负责推进、回收完成与超时的 session，收割时做链式唤醒判定——责任集之外出现新未读立即开下一个 session，责任集内的搁置遗留交给慢速 rescan。session 因空闲超时或 stage 异常被终止时，调度器给责任集内每个人类发件人各回一封固定文案的失败通知（按地址去重，经 `LoopDriver` 的 MailEffect → `EffectExecutor` 管道，与正常回信同一出口；agent 发件人只记 journal），保证「邮件必有回音」。agent 的整体状态在读取时从存活会话派生，不靠回调维护。反思引擎（[agents/reflection.py](../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）按交互计数触发，由调度器在循环间隙经注入的 `check_reflection` 委托检查；反思跑在引擎持有的后台 task 里——进行中计入成员活跃（不会被判空闲 drain 掉），成员 shutdown 时统一取消。
-
-   每次唤醒开一个新 session，但同一话题的往复不是失忆重逢：`ContextBuilder`（[agents/context_builder.py](../src/tlon/agents/context_builder.py)）组装上下文时，`(thread-recap)` section 从 session journal（ADR 0007）确定性重建最近一个已完成 session 的简报（触发语、调了哪些工具、结论是什么），不调 LLM、不等批触发摘要；与 `mail-history` 的邮件原文互补——原文给「说了什么」，简报给「我做了什么」。只注入最近一轮，成本不随历史膨胀。
-
-5. **收件人是人类：推送或拉取**。`HumanAdapter` 与其他成员一样订阅 `MAIL_DELIVERED`，把发给自己成员 id 的邮件 fan-out 给 attach 上来的客户端会话；客户端通过 `GET /events` 的 SSE 长连接实时收信（推送侧由 [tlon_server/core/notification_service.py](../src/tlon_server/core/notification_service.py) 的 `NotificationService` 管理），也可随时 `GET /inbox` 直接读邮箱文件。人类离线时邮件留在其持久邮箱里，上线后再读。
-
-全链路的背压策略一致：EventBus 的 per-subscriber 队列是有界的，溢出时丢新保旧，绝不阻塞总线；认知侧无内存邮件队列（ADR 0028）——邮箱即唯一队列，未读事实在磁盘上。
-
-链路追踪贯穿全程：发信时注入当前 trace，唤醒请求加入投递的 trace 树（`AgentRegistry._fulfill_wake` 续接同一 trace），span 由 [base/tracing/trace_store.py](../src/tlon/base/tracing/trace_store.py) 的 `FileTraceStore` 落盘到 `~/.tlon/shared/traces/` 的 JSONL 文件，经 `GET /traces` 查询；也可配置 OTLP endpoint 外发（可选依赖 `opentelemetry-exporter-otlp-proto-http`）。
-
-## 关键设计要点
-
-### 策略/机制分离
-
-`AgentRegistry`（[agents/agent_registry.py](../src/tlon/agents/agent_registry.py)）是纯机制：装配与运行表、启动/停止请求的幂等执行（wake lock、`_waking` 去重）、空闲*事实*检测（发布 `AGENT_IDLE`，不决定后果）、成员的 spawn/stop（统一成员模型，ADR 0006：spawn 出的成员与手建成员同构，停止/排空一律是睡眠，永不删除）。spawn 预算是硬编码默认值：全局同时运行上限 `max_activations = 8`、spawn 深度 `max_spawn_depth = 3`、每 (spawner, session) 配额 `session_spawn_quota = 2`。三者只有 (spawner, session) 配额是账本，且落盘在 `~/.tlon/shared/spawn-quota.json`（原子替换写入，损坏时告警并从头开始，绝不阻碍启动）：session 本身经 journal 重放跨重启存活（ADR 0007），纯内存账本会让 spawner 靠重启刷满配额，防失控闸失效。`max_activations` 是运行时事实（重启后运行表本来就空，持久化反而把死成员的激活数带进新进程）、`max_spawn_depth` 从成员 `agent.yaml` 里已持久化的 lineage（`spawn_depth`）派生，两者无需也不应落盘。
-
-策略只有一个实例：Adam（[agents/adam.py](../src/tlon/agents/adam.py)），agent 世界的内置 init 进程（PID 1）。策略是数据而不是代码——`ADAM_SPEC_EDN` 是一段内置 MemberSpec 文本，五条规则：`:on :boot` 时对候选集合发 `AGENT_START_REQUEST{reason="boot"}`，`:on :agent-idle` 时把空闲事实转成 `AGENT_STOP_REQUEST{reason="drain"}`，`:on :agent-noisy` 时把 PublicHealthMonitor 的噪声事实转成 `AGENT_STOP_REQUEST{reason="noisy-circuit-breaker"}`（熔断：刷屏成员排空为睡眠，监控器自带的每 sender 冷却防重复），`:on :agent-spawned` 时给新成员发出生欢迎信（出生社会化是 spec 描述的行为，不是专门机制——指引新成员用自己的联系簿结识同伴、用 listAgents 寻址黄页查地址，惯例是静态文本），`:on :mail-delivered` 时对寄给 Adam 的信回固定确认信（守护者信箱：`:when` 用 `addressed-to-me?` 收窄到本人、用 `from?` 排除 postmaster 系统信；Adam 带 SQLite 成员邮箱，已读标记与 boot 未读重放免费获得）。监控器的另一项事实 `MAIL_ORPHAN_SCAN` 刻意无消费者：它是周期事实，任何无状态反应都会自身变成周期噪声（亚当 docstring 记录了该决策）。Adam 是一个普通的 `MemberRuntime` 实例，不进注册表、不出现在 MemberDirectory；依赖单向（Adam import 注册表，反之永不），DAG 保持无环。
-
-wake-on-mail 不是策略线而是机制：注册表从成员 spec 派生唤醒资格（声明了 `:on :mail-delivered` 的睡眠收件人会被唤醒），不需要 Adam 参与。
-
-### spec 是唯一权威
-
-每个成员的行为完全由一份 spec 描述：[agents/member_spec.py](../src/tlon/agents/member_spec.py) 的 `MemberSpec`（规则 = `:on` + `:when` + 可选 `:loop` + `:actions`），落盘为每成员唯一的 `config/behavior.tlon` 文件。[agents/member_runtime.py](../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 是统一解释器；认知引擎（LoopDriver + SessionScheduler + 记忆 + 反思）只对带 `:loop` 规则的成员挂载，无 `:loop` 的规则只跑 `:actions`。boot 集合、lazy 集合、wake 门控全部从 spec 的 `:on` 规则派生。
-
-### effects-as-data
-
-认知循环里每个 stage 是纯变换，所有对外部状态的意图都声明在返回的 `StageOutcome`（[agents/stages/outcome.py](../src/tlon/agents/stages/outcome.py)）里。`LoopDriver` 负责应用 session 本地字段与工具并发分发，外部效果（`MailEffect` 发信）由 `EffectExecutor` 执行。stage 不允许碰 session 的 mutator 方法，这条纯度由 [scripts/check_stage_purity.py](../scripts/check_stage_purity.py) 静态强制——引擎与策略的边界是机器可检查的。
-
-### mailbox 即队列
-
-邮箱由 [Mailbox](../src/tlon/organization/mail/mailbox.py) 提供成员视图，权威数据在 `shared/mail.sqlite3`。正文只存一份，发件箱按发件人查询，收件箱按归属查询，已读位属于收件人。查看或开启 session 不自动标读；阅读与任务完成分开。SQLite 事务处理并发与重启恢复，没有模块级邮箱锁表、JSONL 扫描缓存或内存投递去重集合。EventBus 只提醒邮箱变化，启动检查与周期重扫从持久未读恢复。详见 [ADR 0030](decisions/0030-sqlite-post-office.md)。
-
-### DAG 组件装配
-
-全部组件继承 `Component`，依赖只走构造器，通信只走 EventBus；`ServerApp` 是唯一装配者。这条规则由 [base/component.py](../src/tlon/base/component.py) 的约定文档和 import-linter 的依赖方向契约两层维持（曾有第三个 AST 检查脚本 check_architecture.py，因纯名字启发式不可靠已删除，见 #144）。
-
-### 记忆与沙箱
-
-`tlon.memory` 的 `MemoryManager`（[memory/manager.py](../src/tlon/memory/manager.py)）为每个 agent 管理长期记忆：claim 存于 [memory/claim_store.py](../src/tlon/memory/claim_store.py)（`claims.jsonl`，append-only），批量蒸馏（journal → claims）由 [memory/distiller.py](../src/tlon/memory/distiller.py) 完成，进度以标量时间戳水位线持久化在 `distillation.json`（ADR 0017）。检索走 [memory/vector_index.py](../src/tlon/memory/vector_index.py) 的 sqlite-vec 索引（`claims_vec.db`，claims 的纯派生视图）+ [base/embedding_client.py](../src/tlon/base/embedding_client.py) 的 embedding 客户端（成员级 `llm.embedding_model_name` 配置；未配置或失败时降级时间序注入）。agent 侧通过 `tlon.tools.memory` 下的工具（`rememberFact`、`searchMemories`、`forget`）读写自己的记忆。`tlon.sandbox` 的 `DockerRuntime`（[sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py)）封装 Docker 容器执行，供 Shell 类工具使用。
-
-### 工具层与依赖倒置
-
-`tlon.tools` 按域分包：`mail`（`sendEmail`，agent 唯一发信出口）、`filesystem`（读/写/编辑/列目录/检索文件）、`shell`（`execute_bash` 及后台任务查询）、[memory](../src/tlon/memory)（记忆读写）、`tasks`（`TaskManager` 及任务生命周期工具）、[agents](../src/tlon/agents)（`spawnAgent` / `stopAgent` / `listAgents` / `writePrototype`）、`prototypes`（`listPrototypes`）、`system`（`getCurrentTime`，宿主机本地时间，不依赖沙箱）。工具的实例化与注册发生在装配成员能力时（[agents/assembly.py](../src/tlon/agents/assembly.py) 的 `assemble_cognitive`，由 `AgentRegistry._start_agent` 调用）；声明 `docker.level: L0` 的成员（issue #26，无执行装置）不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具；`docker.level: L1` 的成员（issue #40，文件层）创建运行时并注册 filesystem 五个工具，但不注册 shell 两个——结构性零代码执行。
-
-生命周期与原型工具天然需要触碰 agents/prototypes 层，但契约禁止 tools 反向依赖；解法是依赖倒置——端口与异常（`SpawnRejectedError`、`StopRejectedError` 等）声明在 [tools/agents/ports.py](../src/tlon/tools/agents/ports.py) 和 [tools/prototypes/ports.py](../src/tlon/tools/prototypes/ports.py)，装配层（注册表）把自身实现注入工具实例，import 方向保持 tools → 端口，不倒流。
-
-### 进程级全局状态（2026-09-22 审计）
-
-runtime 实例状态零残留：paths 单例注入改造（ADR 0019 收尾）后，文件系统访问、EventBus、注册表、投递全部是实例状态，同进程多实例由 [tests/integration/test_multi_runtime.py](../src/tests/integration/test_multi_runtime.py) 钉住（双向隔离断言是常驻哨兵）。进程级 env 配置同样无单例：`Settings` 是入口构造一次、显式注入的不可变快照（[base/settings.py](../src/tlon/base/settings.py)，#144）。以下进程级共享状态是**全部**存量，各有正当理由：
-
-| 状态 | 位置 | 为什么合法 |
-| --- | --- | --- |
-| OTel TracerProvider + `_initialized` 守卫 | [base/tracing/otel.py](../src/tlon/base/tracing/otel.py) | OTel provider 模型本身是进程级；幂等守卫下**首调参数生效**——多实例时后续实例的 `trace_store_dir`/`otlp_endpoint` 被忽略，观测共享进程级管道（已知语义） |
-| MeterProvider + `_initialized`/`_reader` | [base/metrics.py](../src/tlon/base/metrics.py) | 同上 |
-| `structlog.configure` | [base/logger.py](../src/tlon/base/logger.py) `configure_logging` | 进程级输出格式，仅 launcher 入口调用 |
-| structlog contextvars | member_runtime / stages/services / spawn_agent | task-local by design，非共享状态 |
-
-模块级 dict/set（词汇注册表、`_ADAM_CONFIG`、各 `_CAP`）是常量，惯例不可变。审计方法：模块级赋值 + 可变容器 + 单例模式（`lru_cache`/`_instance`/`_initialized`）三轮 grep 扫描；新增全局状态应在 review 时对照本表。
-
-## 存储布局
-
-所有状态落盘在 `~/.tlon/`（可用 `$TLON_HOME` 覆盖），路径的唯一权威是 [base/paths.py](../src/tlon/base/paths.py) 的 `TlonPaths`——无模块级单例，实例在进程入口构造一次后显式注入贯穿各层（同进程可并存多个 runtime，各有独立 home）；任何模块不应硬编码目录结构。仓库根目录下的 [data/](../data) 是历史遗留，当前代码不引用它。
-
-`$TLON_HOME` 显式设置时必须指向一个已存在的目录，否则报错拒绝启动（fail-fast，绝不静默回落真实数据根——typo 不该让进程跑在真实社会数据上）；缺省 `~/.tlon` 不存在时自动创建——见 `paths.py` 的 `_resolve_tlon_home`。
-
-```
-~/.tlon/
-├── .env                     # 进程级环境配置（API key 等，可选；真实环境变量优先）
-├── cron.yaml                # 声明式周期任务邮件（可选；启动时读一次）
-├── policy.tlon              # 社会政策文件（可选，ADR 0022；缺失即内嵌默认政策）
-├── shared/
-│   ├── mail.sqlite3          # 邮局权威数据：邮件、邮箱归属、已读、幂等与退休状态
-│   ├── traces/
-│   │   └── trace-{uuid}.jsonl
-│   ├── logs/
-│   │   └── server-{date}.jsonl
-│   └── spawn-quota.json     # spawn 配额账本（原子替换，跨重启存活）
-├── prototypes/              # 行为原型库（启动时从 tlon.prototypes 播种）
-├── prototypes-staging/      # LLM 撰写、待审批的原型
-├── capabilities/            # 受信能力库（能力数据化，design/capabilities.md）
-├── capabilities-staging/    # LLM 撰写、待审批的能力（与原型同一信任闸模式）
-├── {agent_id}/
-│   ├── config/
-│   │   ├── agent.yaml
-│   │   ├── behavior.tlon    # 成员 spec（唯一权威）
-│   │   ├── IDENTITY.md / SOUL.md / RULES.md
-│   │   └── CONTACTS.md      # 联系簿（成员自写、私有，ADR 0024）
-│   ├── memory/
-│   │   ├── config.json
-│   │   ├── claims.jsonl     # 记忆 claim（ADR 0017，append-only）
-│   │   └── distillation.json # 蒸馏水位线
-│   ├── sessions.sqlite3     # session 事件与生命周期元数据（ADR 0007/0032：交互唯一真相）
-│   ├── tasks.jsonl
-│   └── workspace/            # 成员工作目录
+   tlon ──使用──> tlosure（宿主无关语言核心）
+   tlon_launcher 装配进程入口与客户端命令
 ```
 
-旧成员 `sessions/` 中的 JSONL 与 `mail/` 中的 JSONL、cursor 只作离线档案，新 session journal 与邮局均不读取、导入、双写或删除。人类邮箱归属在共享 SQLite 中注册，不依赖 `human-{username}/mail/` 目录。
+包依赖的执行契约在 [pyproject.toml](../pyproject.toml) 的 import-linter 配置中；图是职责概览，不替代完整依赖表。
 
-人类成员 id 为 `human:<username>`，首次 attach 或投信时在 SQLite 注册。
-
-容器视角：每个成员有两类容器（issue #25，混合方案 D'；声明 `docker.level: L0` 的成员无执行装置、没有任何容器，issue #26；`docker.level: L1` 的成员只有文件柜——exec 单元从不存在，issue #40）——**文件柜**（常驻容器 `tlon-agent-{agent_id}`，创建后**从不启动**，只经 get_archive/put_archive 服务文件 I/O，不执行就不会被污染）与**一次性执行单元**（`run()` 每条命令新建 `tlon-agent-{agent_id}-exec-{uuid8}`，跑完取 stdout/stderr 即删；进程泄漏、/tmp 累积、环境污染随容器蒸发）。两类容器的创建参数同源于 [sandbox/docker_runtime.py](../src/tlon/sandbox/docker_runtime.py) 的 `_container_kwargs`：`{agent_id}/workspace/` 以读写方式 bind-mount 为工作目录（默认 `/workspace`），整个 `{agent_id}/` 家目录再以**只读**方式挂载到 `/tlon-home`——agent 经 readFile/listDirectory/searchFiles 读自己的行为定义与记忆；邮箱通过成员工具查询共享邮局（行为即数据，自我感知是自进化的前提），写/编辑工具的白名单不含 `/tlon-home`，行为变更走原型提案通道。每个容器只挂自己的家目录，其他成员的家目录从不进入容器，跨 agent 读取在结构上不可能。容器 rootfs 整体只读（`read_only=True`），另有 tmpfs `/tmp`（64m）做 scratch，可写面 = `/workspace` 是内核级事实（issue #22）——跨命令唯一持久状态就是 workspace。文件柜跨睡眠/重启保留（ADR 0006），但 `ensure_running` 会做配置漂移 reconcile：实际配置与期望配置（镜像/挂载/限额/网络/ro rootfs）不符时自动移除重建，旧容器无需手工处理。
-
-`config/` 下的三个 Markdown 人格文件（`IDENTITY.md`、`SOUL.md`、`RULES.md`）在构造 prompt 时由 [agents/context_builder.py](../src/tlon/agents/context_builder.py) 的 `ContextBuilder` 读入；`behavior.tlon` 则经 [agents/loader.py](../src/tlon/agents/loader.py) 的 `load_member_spec` 解析为 `MemberSpec` 并在加载时校验。
-
-## 架构约束检查工具
-
-| 工具 | 检查内容 |
+| 包 | 职责与依赖边界 |
 |---|---|
-| `uv run lint-imports` | pyproject.toml 中 import-linter 契约：各包依赖方向（base 不依赖上层、memory/organization/sandbox 只依赖 base、tools 不反向依赖 agents/server/client/launcher/prototypes、agents 不依赖 server/client/launcher/prototypes、sdk 只依赖 base、server 只经 api+base、launcher 不直摸 runtime） |
-| `uv run python scripts/check_no_reexport.py` | `__init__.py` 禁止 re-export |
-| `uv run python scripts/check_stage_purity.py` | [agents/stages/](../src/tlon/agents/stages) 下 stage 纯度：禁止直接修改 session 状态 |
+| `tlosure` | EDN、求值、校验、通用词汇；不依赖 tlon |
+| `tlon.base` | 配置、路径、事件与观测基础设施；不依赖上层领域 |
+| `tlon.organization` | 邮局、邮箱、地址解析与人类/外部适配；不依赖其他业务域 |
+| `tlon.memory` | claim 存储、蒸馏与检索；不依赖 agents/organization/tools/sandbox |
+| `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/memory/tools |
+| `tlon.tools` | 成员工具；不得依赖 agents/server/client/launcher/prototypes，生命周期操作经注入端口 |
+| `tlon.agents` | 成员装配、调度、认知循环和策略接入；不依赖 server/client/launcher/prototypes |
+| `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |
+| `tlon.api` | 当前有 members/mail/prototypes/observability/configs/events/arena/capabilities 八个 facade 与 runtime 装配；不依赖 server/client/launcher |
+| `tlon_server` | HTTP、客户端会话、通知、WebUI 托管；直接 runtime import 限于 api/base |
+| `tlon_client` | SDK 与 Telegram；不依赖 tlon、server、launcher |
+| `tlon_launcher` | dream/ops/telegram 命令；通过 server/client 和 base 装配，不直摸 runtime 或 api |
 
-通用质量工具（ruff、mypy strict、pytest）见 [AGENTS.md](../AGENTS.md) 的验证质量门，不属于架构约束本身。
+## 当前实现：装配与生命周期
+
+进程入口创建 `TlonPaths` 与 `Settings` 快照。[ServerApp](../src/tlon_server/serverapp.py) 初始化进程级 tracing/metrics，再调用 [build_runtime](../src/tlon/api/bootstrap.py)。runtime 装配包含播种原型与技能、基础设施、邮局、注册表、退休服务、Adam 与通道适配器，并返回 facade。首启不自动创建标准团队。
+
+serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTTP 服务；`start()` 才打开监听端口。关闭时先停止 serving，再关闭 runtime 组件，最后结束进程级观测设施。详细顺序、异常清理及资源所有权见 [基础设施设计](design/infrastructure.md)。成员的启动与退休不是进程启停，见 [运行时](design/runtime.md) 和 [成员模型](design/unified-member-model.md)。
+
+## 当前实现：一封邮件的协作链路
+
+1. 人类客户端、agent 工具、DSL、周期任务及外部适配器通过各自入口调用同一个邮局。
+2. 邮局校验收件人并提交邮件、收件归属和请求记录，随后发布变化通知。提交语义与外部网关尝试的结果分开。
+3. 注册表和成员运行时依据规则检查是否唤醒；调度器从持久未读建立认知 session。当前每个认知成员至多一个存活 session。
+4. 引擎按 spec 推进 stage，应用状态结果并执行工具与效果；交互写入 journal。成员主动读取和标读邮件，开启 session 本身不等于已读或完成任务。
+5. 回信再次经过邮局。人类客户端通过 SSE 获得通知，通过邮箱接口读取事实；断线恢复依靠快照补齐，不能只依赖实时流。
+6. 已完成 session 可被蒸馏为私有长期记忆；记忆不是邮件，也不自动成为其他成员共享的知识。
+
+邮局事务见 [mail](design/mail.md)，唤醒、责任集、预算与 journal 见 [runtime](design/runtime.md)，客户端同步见 [server-protocol](design/server-protocol.md) 和 [webui](design/webui.md)。
+
+## 数据所有权
+
+以下是当前权威与派生关系，不是完整文件清单。实际路径统一由 [TlonPaths](../src/tlon/base/paths.py) 构造，目录树与环境变量见 [配置参考](reference/config-reference.md)。
+
+| 数据 | 当前归属 | 派生关系与边界 |
+|---|---|---|
+| 行为规则 | 成员 `behavior.tlon` | 解析为 MemberSpec；规则相关运行属性由它派生 |
+| 模型与执行配置 | 成员 `agent.yaml` | 原型实例化可投影初始配置；运行时授权不随成员自改 spec 提升 |
+| 主观身份与联系簿 | 成员配置文件 | 与客观地址、行为约束分开；各文件写权限见 identity |
+| 邮件、归属、已读、请求幂等 | 共享 `mail.sqlite3`，邮局负责写入 | Mailbox 是成员视图；SSE/EventBus 是通知，不是账本 |
+| Session 事件与生命周期 | 每成员 `sessions.sqlite3` | journal 重放不重新执行副作用；旧 JSONL 仅作离线档案 |
+| 长期记忆 | 成员 `claims.jsonl` | 追加优先但允许删除/重写；向量索引可重建，主动写入的 claim 不能笼统视作 journal 的可重建副本 |
+| 原型与能力 | 受信库、staging 库 | 提案经准入后使用；评审和演武报告是证据，不自动批准 |
+| 社会政策 | `policy.tlon` 与内嵌默认政策 | 宿主物化事实后求值；可写身份与失败处理见 society-policy |
+| 运行状态、指标、追踪 | runtime 状态与观测设施 | 是观测或派生结果，不能替代邮件和 journal 的权威事实 |
+
+## 约束如何验证
+
+| 规则 | 验证方式与范围 |
+|---|---|
+| 包依赖方向 | import-linter；检查 import 边界，不证明所有调用、注入和权限规则 |
+| Stage 不直接修改 session | `check_stage_purity.py`；属于 runtime 领域约束 |
+| runtime 业务隔离 | [多 runtime 集成测试](../src/tests/integration/test_multi_runtime.py)；不包括进程级观测设施完全隔离 |
+| 数据与跨域行为契约 | 领域测试、集成测试、隔离 dream + SDK 冒烟与文档复核 |
+
+统一质量门为 `scripts/check_all.sh`。禁止 re-export 属于开发规范，由脚本检查；ruff、类型检查和测试也由同一质量门编排。自动检查覆盖不到的设计边界仍需评审，不能将「检查全绿」等同于所有架构声明均已被机器证明。
