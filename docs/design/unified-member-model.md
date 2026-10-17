@@ -66,11 +66,11 @@ spec 的权威范围是可执行规则：触发、条件、认知循环、上下
 2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
 3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 
-已知边界：DSL stop 发出 `AGENT_STOP_REQUEST`，当前经 reaper 排空休眠，不等同于 `stop_member` 的永久退休；它没有与工具子集相同的见习闸，不能把隐藏 `stopAgent` 描述为全面禁止见习成员发出停止请求。成员侧 `listAgents` 只提供寻址黄页；人类可从管理详情与声誉查询了解信任相关事实。
+已知边界：DSL stop 发出 `AGENT_STOP_REQUEST`，当前经 reaper 排空休眠，不等同于 `stop_member` 的永久退休；它没有与工具子集相同的见习闸，不能把隐藏 `stopAgent` 描述为全面禁止见习成员发出停止请求。成员侧 `listMembers` 只提供寻址黄页；人类可从管理详情与声誉查询了解信任相关事实。
 
 ## 当前默认生命周期政策：Adam
 
-Adam 是内置、无认知循环的 `MemberRuntime`，使用内置 spec 与注册表查询端口，不进入普通成员注册表或名册。机制检测事实并执行请求，Adam 的五条规则选择响应：
+Adam 是内置、无认知循环的 `MemberRuntime`，使用内置 spec 与注册表查询端口，不进入普通 agent 生命周期注册表，但列入统一成员寻址黄页。机制检测事实并执行请求，Adam 的五条规则选择响应：
 
 | 事实 | 当前响应 |
 |---|---|

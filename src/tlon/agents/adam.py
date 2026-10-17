@@ -19,7 +19,7 @@ into the evaluator. Five policy lines live in the spec:
 3. welcome (birth socialization, ADR 0003) — AGENT_SPAWNED triggers a
    welcome mail to the newborn member: a greeting naming the new member,
    pointers to its own discovery surfaces (its contact book and the
-   listAgents addressing yellow page) and the static communication
+   listMembers addressing yellow page) and the static communication
    conventions. The recipient address
    is assembled in the spec with ``str`` — emit recipients are mail
    addresses (``Mail.create`` rejects bare ids). Adam is v1's mentor:
@@ -79,7 +79,7 @@ from tlosure.edn import loads
 #: :func:`make_adam`. Five rules: boot (start-all), drain (idle → stop),
 #: welcome (ADR 0003 — a birth-socialization mail to every spawned
 #: member; it points the newborn at its system prompt's team section and
-#: the listAgents tool for discovering peers, the conventions are static
+#: the listMembers tool for discovering peers, the conventions are static
 #: text), guardian-inbox (docs/design/mail.md 「守护者信箱」 — a fixed
 #: acknowledgement reply to mail
 #: addressed to Adam; postmaster senders are excluded so a bounce never
@@ -102,7 +102,7 @@ ADAM_SPEC_EDN = r"""{:version 1
                                "认识其他成员：通信即结识——把对一个人的认识记进你自己的联系簿"
                                "（updateContact：名字 / 地址 / 我对 ta 的描述），"
                                "它会注入你的系统提示词；"
-                               "查谁的地址用 listAgents 寻址黄页（id / 名字 / 地址）。\n\n"
+                               "查谁的地址用 listMembers 成员寻址黄页（公开 id / 名字 / 地址），黄页可以引用和转告，不认证职务，也不公开私人材料。\n\n"
                                "通信惯例：\n"
                                "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
                                "- 有事找守护者，写信到 adam@tlon.internal。\n")

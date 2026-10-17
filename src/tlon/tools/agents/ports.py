@@ -1,6 +1,6 @@
 """Ports for the agent lifecycle tools (dependency inversion, ).
 
-The spawn/stop/list tools live in ``tlon.tools`` while their implementation
+The spawn/stop and directory tools live in ``tlon.tools`` while their implementation
 (``AgentRegistry``) lives in ``tlon.agents``. To keep the dependency
 one-directional (agents → tools), the slice of the registry the tools need
 is declared here as a ``Protocol``, together with the rejection errors both
@@ -11,6 +11,7 @@ sides share. The registry satisfies the protocol structurally; the assembler
 from typing import Any, Protocol
 
 from tlon.base.config import AgentConfig
+from tlon.organization.mail.resolver import MemberAddress
 
 
 class SpawnRejectedError(ValueError):
@@ -62,6 +63,12 @@ class StopRejectedError(ValueError):
         self.reason = reason
 
 
+class MemberDirectory(Protocol):
+    """Public member addresses from the delivery layer."""
+
+    def list_members(self) -> list[MemberAddress]: ...
+
+
 class AgentLifecycle(Protocol):
     """The slice of ``AgentRegistry`` the lifecycle tools depend on."""
 
@@ -79,5 +86,3 @@ class AgentLifecycle(Protocol):
         when ``when_idle`` registered a pending stop instead (a member with
         live sessions). Raises ``StopRejectedError`` otherwise."""
         ...
-
-    async def get_all_agent_status(self) -> list[dict[str, Any]]: ...

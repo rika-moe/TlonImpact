@@ -80,9 +80,9 @@ from tlon.base.metrics import MetricsService
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace, start_span
 from tlon.base.tracing.trace_store import TraceStore
-from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.post_office import PostOffice
+from tlon.organization.mail.resolver import MemberAddress
 from tlon.organization.mail.store import MailStore
 from tlon.tools.agents.ports import StopRejectedError
 from tlosure.builtins import Builtin
@@ -130,22 +130,11 @@ class RegistryQueries(ScriptHostQueries):
         return self._registry.boot_candidates()
 
     def member_roster(self) -> str:
-        """The addressing yellow page (ADR 0024 决策 3): one line per
-        registered member.
-
-        Format: ``名字（id） — id@tlon.internal`` — exactly the three
-        yellow-page fields (id / name / address), no identity content.
-        Sleeping members stay listed — the page answers "who can be
-        reached by letter", not "who is awake". Adam is not registered,
-        so it never lists itself.
-        """
-        lines: list[str] = []
-        for agent_id in self._registry.get_all_ids():
-            config = self._registry.get_config(agent_id)
-            if config is None:
-                continue
-            lines.append(f"{config.name}（{agent_id}） — {address_for_member(agent_id)}")
-        return "\n".join(lines)
+        """Render the public delivery directory, including offline members."""
+        return "\n".join(
+            f"{member['name']}（{member['id']}） — {member['address']}"
+            for member in self._registry.list_members()
+        )
 
 
 class AgentRegistry(Component):
@@ -1139,6 +1128,12 @@ class AgentRegistry(Component):
             List of active MemberRuntime instances
         """
         return list(self._agents.values())
+
+    def list_members(self) -> list[MemberAddress]:
+        """Query the delivery layer without changing lifecycle enumeration."""
+        if self._post_office is None:
+            raise RuntimeError("member directory requires a post office")
+        return self._post_office.list_members()
 
     def get_all_ids(self) -> list[str]:
         """Get all registered agent IDs.

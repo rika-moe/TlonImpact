@@ -278,7 +278,7 @@
 ### 4.6 宿主查询端口（闭包注入）
 
 <!-- BEGIN GENERATED: bridge-query-ports -->
-`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=True`，全部读注册表状态、无宿主即不在注册表；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | DSL 词 | 宿主方法 | 说明 |
 |---|---|---|
@@ -457,7 +457,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :actions []}]}
 ```
 
-更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`，五条规则：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员；`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员；`:on :agent-noisy` 时 `(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})` 熔断刷屏成员（事件负载取自 `:agent_id`，与 drain 同一形态——健康监控器只发事实，后果由 spec 决定）；`:on :agent-spawned` 时给新成员发出生欢迎信（出生社会化，见 [design/dsl.md](../design/dsl.md)）——正文用 `(str ...)` 拼接待成员名字、认识同伴的指引（自己的联系簿 + listAgents 寻址黄页）与静态通信惯例，收件人地址也由 `(str (get event :agent_id) "@tlon.internal")` 装配（`emit` 的 `to` 必须是完整邮件地址，`Mail.create` 拒绝裸 id）；`:on :mail-delivered` 时对寄给 Adam 的信回固定确认信（守护者信箱，见 [design/mail.md](../design/mail.md)）——`:when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal")))` 展示门控组合：确定规则对总线上每封送达邮件都会执行，必须自带收件人门控；`from?` 排除 postmaster 发件人，退信永不回信。这个例子展示了选项 map 里嵌表达式、字符串拼接、宿主注入查询与纯谓词门控的用法。
+更复杂的无 `:loop` 例子见 [src/tlon/agents/adam.py](../../src/tlon/agents/adam.py) 的 `ADAM_SPEC_EDN`，五条规则：boot 时 `(start-all {:reason "boot"})` 拉起全部 boot 成员；`:on :agent-idle` 时 `(stop {:agent (get event :agent_id) :reason "drain"})` 排干空闲成员；`:on :agent-noisy` 时 `(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})` 熔断刷屏成员（事件负载取自 `:agent_id`，与 drain 同一形态——健康监控器只发事实，后果由 spec 决定）；`:on :agent-spawned` 时给新成员发出生欢迎信（出生社会化，见 [design/dsl.md](../design/dsl.md)）——正文用 `(str ...)` 拼接待成员名字、认识同伴的指引（自己的联系簿 + listMembers 寻址黄页）与静态通信惯例，收件人地址也由 `(str (get event :agent_id) "@tlon.internal")` 装配（`emit` 的 `to` 必须是完整邮件地址，`Mail.create` 拒绝裸 id）；`:on :mail-delivered` 时对寄给 Adam 的信回固定确认信（守护者信箱，见 [design/mail.md](../design/mail.md)）——`:when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal")))` 展示门控组合：确定规则对总线上每封送达邮件都会执行，必须自带收件人门控；`from?` 排除 postmaster 发件人，退信永不回信。这个例子展示了选项 map 里嵌表达式、字符串拼接、宿主注入查询与纯谓词门控的用法。
 
 ## 9. 常见错误与加载失败行为
 

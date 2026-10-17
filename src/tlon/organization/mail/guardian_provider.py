@@ -7,7 +7,7 @@ agent.yaml`` does not exist), so the plain ConfigService cannot resolve
 delegates every query to the injected provider and answers exactly one
 extra id: ``get_config("adam")`` returns a synthesized AgentConfig.
 
-``get_all_ids`` is *not* extended — Adam stays out of the roster and
+``get_all_ids`` is *not* extended — Adam stays out of agent lifecycle enumeration and
 every enumeration-driven scan (trust/ledger/spawn), keeping those
 surfaces exactly as they were.
 
@@ -37,7 +37,8 @@ class GuardianAgentInfoProvider(AgentInfoProvider):
     ``adam@tlon.internal`` deliverable on both resolution directions.
     Addressing by display name ("Adam") is intentionally unsupported —
     ``get_all_ids`` delegates unchanged, so name lookup and
-    enumeration-driven scans never see Adam.
+    enumeration-driven lifecycle scans never see Adam. The public member
+    directory includes Adam separately without changing this enumeration.
 
     Example:
         >>> provider = GuardianAgentInfoProvider(config_service)

@@ -215,12 +215,12 @@ class TestAdamDecisions:
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
         # Greeting names the newborn and points it at its own discovery
-        # channels (its contact book, the listAgents yellow page); the
+        # channels (its contact book, the listMembers yellow page); the
         # roster is no longer embedded (docs/design/mail.md).
         assert "小新" in mail.content
         assert "worker-1（worker-1）" not in mail.content
         assert "updateContact" in mail.content
-        assert "listAgents" in mail.content
+        assert "listMembers" in mail.content
         assert "adam@tlon.internal" in mail.content
 
         await adam.shutdown()

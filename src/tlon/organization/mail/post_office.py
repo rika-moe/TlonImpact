@@ -12,7 +12,7 @@ from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import get_current_trace, start_span
 from tlon.organization.mail.mail import Mail, is_external_address
 from tlon.organization.mail.mailbox import Mailbox
-from tlon.organization.mail.resolver import RecipientResolver
+from tlon.organization.mail.resolver import MemberAddress, RecipientResolver
 from tlon.organization.mail.store import MailStore, RetiredRecipients, StoredPost
 
 logger = get_logger(__name__)
@@ -35,6 +35,10 @@ class PostOffice:
         self._resolver = resolver
         self._paths = tlon_paths
         self.store = MailStore(tlon_paths.mail_database_file())
+
+    def list_members(self) -> list[MemberAddress]:
+        """Return the delivery layer's current public member directory."""
+        return self._resolver.list_members()
 
     async def send(
         self,

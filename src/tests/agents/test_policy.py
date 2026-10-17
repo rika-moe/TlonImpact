@@ -332,7 +332,7 @@ class TestAssemblyToolSubset:
         names = set(caps.tool_executor.list_tools())
         assert names.isdisjoint(REPRODUCTION_TOOLS)
         assert "reviewPrototype" in names
-        assert "listAgents" in names
+        assert "listMembers" in names
         # The probation mentor cc rides along for the send paths.
         assert caps.mentor_cc == "mentor@tlon.internal"
 

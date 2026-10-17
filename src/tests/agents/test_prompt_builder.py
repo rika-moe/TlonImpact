@@ -26,9 +26,19 @@ def test_protocol_declares_subjective_identity() -> None:
     """ADR 0024: no authoritative identity source — SOUL is private, the
     contact book is one's own subjective record, the roster is a mere
     yellow page. The retired 团队成员/人设自述 wording never comes back."""
-    assert "不存在权威的身份数据源" in _PROTOCOL
+    assert "系统不权威认证成员的职务、组织、能力或可信程度" in _PROTOCOL
     assert "联系簿" in _PROTOCOL
     assert "寻址黄页" in _PROTOCOL
     assert "团队成员" not in _PROTOCOL
     assert "人设自述" not in _PROTOCOL
     assert "队友也会看到" not in _PROTOCOL
+
+
+def test_protocol_distinguishes_public_directory_from_private_material() -> None:
+    """Address discovery is public without expanding access to private files or mail."""
+    assert "listMembers" in _PROTOCOL
+    assert "member-roster" in _PROTOCOL
+    assert "可以查询、引用和转告名字与地址" in _PROTOCOL
+    assert "尚不了解来信者不构成禁止其查询公开黄页的理由" in _PROTOCOL
+    assert "列举通信对象不授权读取或转交他人的私有材料" in _PROTOCOL
+    assert "listAgents" not in _PROTOCOL
