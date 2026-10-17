@@ -80,7 +80,10 @@ export class MailboxController {
     if (!this.active || event.eventType !== "mail.delivered") return;
     const mail = (event.payload as { mail?: MailItem } | undefined)?.mail;
     if (!mail || typeof mail.id !== "string" || !involvesMe(mail, this.address)) return;
-    this.addLocal(mail);
+    // Delivery is an immutable fact, not a local write. In particular it
+    // carries no read state and must not outrank an authoritative snapshot.
+    if (this.state.mails.some((existing) => existing.id === mail.id)) return;
+    this.update({ mails: [...this.state.mails, this.normalize(mail, true)] });
   };
   addLocal(mail: MailItem, notice?: string): void {
     if (!this.active || !involvesMe(mail, this.address)) return;

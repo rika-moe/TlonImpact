@@ -33,7 +33,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 
 - **错误形态统一**：所有 4xx 都返回 `{"error", "reason"}`，`reason` 是机器可读的稳定枚举（`invalid_json`、`invalid_username`、`unsupported_protocol_version`、`recipient_unresolved` 等），`error` 是给人看的消息。客户端分支判 `reason`，不解析文案。
 - **快照随会话建立返回**：`POST /sessions` 的 201 响应内嵌 participants/agents 快照，省掉客户端启动时的一轮级联查询；之后的变化靠 SSE 事件增量。这是「历史 + 增量」读模型在成员目录上的复用。
-- **写少读多**：写端点只有 `POST /messages` 和会话管理三个，其余全是 GET。人类对系统能做的动作本来就只有「写信」和「调整自己的接收方式」，端点表是这个事实的直译。
+- **读写职责明确**：邮件写操作包括 `POST /messages` 投信与 `POST /inbox/read` 显式修改人类收件关系的已读状态；会话管理使用 POST/PATCH/DELETE，管理面另有配置写入接口。读取邮箱和观察成员不改变已读状态。
 - **条件注册**：admin 配置路由在 configs facade 注入时才注册，traces 路由在 observability facade 注入时才注册，`/metrics` 无观测 facade 时返回 503。装配层（`ServerApp`）决定哪些能力上线，API 层不猜测——缺失的能力以明确的 503/缺路由表达，不伪装成功。
 - **热重载走管理面**：`POST /admin/config/agents/{agent_id}/reload` 让运行中的服务端注册并启动一个磁盘上已存在的 agent（或登记为 lazy）——创建类管理操作的收尾。配置的唯一权威仍是磁盘文件，端点只是触发重读。
 

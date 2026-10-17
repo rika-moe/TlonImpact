@@ -100,6 +100,21 @@ test("later authoritative snapshot can update read state", async () => {
   box.stop();
 });
 
+test("duplicate delivery during refresh cannot block authoritative read state", async () => {
+  const snapshot = deferred<MailPage>();
+  let calls = 0;
+  const { box, sse } = setup(() => ++calls === 1
+    ? Promise.resolve(page([mail("a", { read: false })])) : snapshot.promise);
+  sse.changeStatus(true); await flush();
+  const refresh = box.refresh();
+  sse.delivery(mail("a", { read: undefined, content: "event" }));
+  snapshot.resolve(page([mail("a", { read: true, content: "snapshot" })]));
+  await refresh;
+  assert.equal(box.getSnapshot().mails[0]?.read, true);
+  assert.equal(box.getSnapshot().mails[0]?.content, "snapshot");
+  box.stop();
+});
+
 test("old mailbox requests, sends and mutation acknowledgements cannot publish after stop", async () => {
   const snapshot = deferred<MailPage>();
   const mutation = deferred<{ mail_ids: string[]; read: boolean }>();

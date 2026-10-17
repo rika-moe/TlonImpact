@@ -177,15 +177,15 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 请求 JSON 必须包含 `username`（非空且不含路径分隔符）、`read`（严格布尔值），以及 `mail_id` 或 `thread_id` 恰好一个非空字符串。线程操作在一个事务中覆盖该人类收到的所有该线程邮件，包括尚未加载的历史。仅发件副本不可操作，其他收件人的状态不会改变。
 
 - 200：`{"mail_ids": ["..."], "read": bool}`，包含全部匹配的收件邮件 id（含原本已处于目标状态的邮件）。
-- 400：JSON、身份、布尔值或选择条件无效。
-- 404：没有匹配的收件关系。
+- 400：`{"error": "...", "reason": "..."}`。reason 为 `invalid_json`（语法）、`invalid_body`（非对象）、`invalid_username`、`invalid_read`（非布尔值）、`invalid_selector`（未恰好指定一个范围）、`invalid_mail_id` 或 `invalid_thread_id`（空值/类型错误）。
+- 404：没有匹配的收件关系，reason 为 `mail_not_found`。
 - 503：未装配 mail facade。
 
 ### GET /members/{member_id}/mail
 
 观察者视角读任意成员邮箱，处理函数 `handle_member_mail`，调用 `MailFacade.member_inbox_page`。`member_id` 使用 agent 裸 id 或人类 `human:<username>`。成员存在于运行注册表或历史邮件库即可以观察；未知成员返回 404。纯只读，不注册成员，不暴露 `read`。
 
-Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相同，但邮件没有 `read` 字段。已知空邮箱返回空页。非法 member id 或不可见游标返回 400，未装配 facade 返回 503。
+Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相同，但邮件没有 `read` 字段。已知空邮箱返回空页。非法 member id 或不可见游标返回 400，reason 分别为 `invalid_member_id`、`invalid_cursor`；未知成员的 404 reason 为 `member_not_found`，未装配 facade 返回 503。`GET /inbox` 的无效游标同样返回 `invalid_cursor`。
 
 ### POST /sessions
 

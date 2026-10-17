@@ -18,6 +18,7 @@ class Request:
     def __init__(self, body: Any = None, query: dict[str, str] | None = None) -> None:
         self.body = body
         self.query = query or {}
+        self.match_info: dict[str, str] = {}
 
     async def json(self) -> Any:
         return self.body
@@ -65,6 +66,12 @@ async def test_same_timestamp_pagination_and_cursor_visibility(tmp_path: Path) -
             Request(query={"username": "alice", "before": cursor})
         )
         assert response.status == 400
+        assert json.loads(response.text)["reason"] == "invalid_cursor"
+        request = Request(query={"before": cursor})
+        request.match_info["member_id"] = "human:alice"
+        observed = await handler.handle_member_mail(request)
+        assert observed.status == 400
+        assert json.loads(observed.text)["reason"] == "invalid_cursor"
 
 
 async def test_thread_read_covers_unloaded_history_and_only_own_incoming(tmp_path: Path) -> None:
@@ -93,6 +100,7 @@ async def test_thread_read_covers_unloaded_history_and_only_own_incoming(tmp_pat
         Request({"username": "alice", "read": False, "mail_id": sent.id})
     )
     assert response.status == 404
+    assert json.loads(response.text)["reason"] == "mail_not_found"
     response = await handler.handle_inbox_read(
         Request({"username": "bob", "read": True, "mail_id": root.id})
     )
@@ -100,23 +108,36 @@ async def test_thread_read_covers_unloaded_history_and_only_own_incoming(tmp_pat
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "reason"),
     [
-        None,
-        [],
-        {},
-        {"username": "alice", "read": 1, "mail_id": "x"},
-        {"username": "../alice", "read": True, "mail_id": "x"},
-        {"username": "alice", "read": False},
-        {"username": "alice", "read": True, "mail_id": "x", "thread_id": "x"},
-        {"username": "alice", "read": True, "mail_id": None},
-        {"username": "alice", "read": True, "mail_id": " "},
+        (None, "invalid_body"),
+        ([], "invalid_body"),
+        ({}, "invalid_username"),
+        ({"username": "alice", "read": 1, "mail_id": "x"}, "invalid_read"),
+        ({"username": "../alice", "read": True, "mail_id": "x"}, "invalid_username"),
+        ({"username": "alice", "read": False}, "invalid_selector"),
+        ({"username": "alice", "read": True, "mail_id": "x", "thread_id": "x"}, "invalid_selector"),
+        ({"username": "alice", "read": True, "mail_id": None}, "invalid_mail_id"),
+        ({"username": "alice", "read": True, "mail_id": " "}, "invalid_mail_id"),
+        ({"username": "alice", "read": True, "thread_id": " "}, "invalid_thread_id"),
     ],
 )
-async def test_read_validation(tmp_path: Path, body: Any) -> None:
+async def test_read_validation(tmp_path: Path, body: Any, reason: str) -> None:
     _, handler = setup(tmp_path)
     response = await handler.handle_inbox_read(Request(body))
     assert response.status == 400
+    assert json.loads(response.text)["reason"] == reason
+
+
+async def test_read_invalid_json_has_machine_reason(tmp_path: Path) -> None:
+    class InvalidJSON(Request):
+        async def json(self) -> Any:
+            raise json.JSONDecodeError("invalid", "{", 0)
+
+    _, handler = setup(tmp_path)
+    response = await handler.handle_inbox_read(InvalidJSON())
+    assert response.status == 400
+    assert json.loads(response.text)["reason"] == "invalid_json"
 
 
 def test_missing_database_page_does_not_create_database(tmp_path: Path) -> None:
