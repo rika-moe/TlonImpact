@@ -242,12 +242,26 @@ class TestGuardianInbox:
             **kwargs,
         )
 
-    async def test_mail_to_adam_gets_acknowledgement_reply(self, bus, tlon_paths):
+    async def test_mail_to_adam_gets_acknowledgement_reply(
+        self, bus: EventBus, tlon_paths: TlonPaths, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         registry = _RegistryStub({"worker-1": _worker()}, running={"worker-1"})
         adam = _make_adam(bus, registry, tlon_paths)
         mails: list[Event] = []
         bus.subscribe(EventType.MAIL_NEW, lambda e: mails.append(e))
         await adam.initialize()
+
+        assert adam._mailbox is not None
+        mark_read = adam._mailbox.mark_read
+        allow_mark_read = asyncio.Event()
+        marked_read = asyncio.Event()
+
+        async def controlled_mark_read(mail_id: str) -> None:
+            await allow_mark_read.wait()
+            await mark_read(mail_id)
+            marked_read.set()
+
+        monkeypatch.setattr(adam._mailbox, "mark_read", controlled_mark_read)
 
         incoming = self._mail_to_adam()
         # Simulate delivery: the mail sits unread in Adam's inbox, then
@@ -270,8 +284,11 @@ class TestGuardianInbox:
         assert reply.thread_id == incoming.thread_id
         assert "收讫" in reply.content
 
-        # The triggering mail is marked read after processing (D6.1) —
-        # Adam's mailbox is real since .
+        # Reply acceptance precedes the asynchronous read mark. A reply
+        # notification cannot serve as the completion barrier for that write.
+        assert [m.id for m in await inbox.unread()] == [incoming.id]
+        allow_mark_read.set()
+        await asyncio.wait_for(marked_read.wait(), timeout=2)
         assert [m.id for m in await inbox.unread()] == []
 
         await adam.shutdown()
