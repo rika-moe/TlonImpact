@@ -27,10 +27,11 @@ class MailHandlers(RestHandlerBase):
             username: Human username (default: "guest"); the inbox of
                 "human:<username>" is served
             limit: Maximum number of mails (default: 50, max: 200)
+            before: Earliest mail id from previous page; must be visible in this mailbox
 
         Returns:
-            The member's recent mail (inbox + sent merged, chronological)
-            or 400 if the username is invalid
+            Chronological mails, count, has_more and next_before.
+            Invalid username or inaccessible cursor returns 400.
         """
         if not self.mail:
             return self._json_response(
@@ -46,18 +47,20 @@ class MailHandlers(RestHandlerBase):
             # anything carrying a path separator (traversal guard)
             if not username or "/" in username or "\\" in username:
                 return self._json_response(
-                    {"error": f"Invalid username: {username_raw!r}"}, status=400
+                    {"error": f"Invalid username: {username_raw!r}", "reason": "invalid_username"},
+                    status=400,
                 )
 
         limit = _parse_limit(request, default=50, maximum=200)
-        result = await self.mail.inbox(username, limit)
-
-        return self._json_response(
-            {
-                "mails": result,
-                "count": len(result),
-            }
-        )
+        if limit <= 0:
+            return self._json_response(
+                {"error": "limit must be positive", "reason": "invalid_limit"}, status=400
+            )
+        try:
+            result = await self.mail.inbox_page(username, limit, request.query.get("before"))
+        except ValueError as exc:
+            return self._json_response({"error": str(exc), "reason": "invalid_cursor"}, status=400)
+        return self._json_response(result)
 
     async def handle_member_mail(self, request: web.Request) -> web.Response:
         """GET /members/{member_id}/mail - Any member's mailbox, read-only.
@@ -72,6 +75,7 @@ class MailHandlers(RestHandlerBase):
 
         Query Parameters:
             limit: Maximum number of mails (default: 50, max: 200)
+            before: Earliest mail id from previous page; must be visible in this mailbox
 
         Returns:
             The member's recent mail, 404 when the member does not exist,
@@ -86,19 +90,90 @@ class MailHandlers(RestHandlerBase):
         # The id becomes a directory name — reject empty and anything
         # carrying a path separator (traversal guard)
         if not member_id or "/" in member_id or "\\" in member_id:
-            return self._json_response({"error": f"Invalid member_id: {member_id!r}"}, status=400)
+            return self._json_response(
+                {"error": f"Invalid member_id: {member_id!r}", "reason": "invalid_member_id"},
+                status=400,
+            )
 
         limit = _parse_limit(request, default=50, maximum=200)
-        result = await self.mail.member_inbox(member_id, limit)
+        if limit <= 0:
+            return self._json_response(
+                {"error": "limit must be positive", "reason": "invalid_limit"}, status=400
+            )
+        try:
+            result = await self.mail.member_inbox_page(
+                member_id, limit, request.query.get("before")
+            )
+        except ValueError as exc:
+            return self._json_response({"error": str(exc), "reason": "invalid_cursor"}, status=400)
         if result is None:
-            return self._json_response({"error": f"Member '{member_id}' not found"}, status=404)
+            return self._json_response(
+                {"error": f"Member '{member_id}' not found", "reason": "member_not_found"},
+                status=404,
+            )
 
-        return self._json_response(
-            {
-                "mails": result,
-                "count": len(result),
-            }
+        return self._json_response(result)
+
+    async def handle_inbox_read(self, request: web.Request) -> web.Response:
+        """POST /inbox/read explicitly changes this human's incoming read state.
+
+        JSON requires username, read (boolean), and exactly one non-empty
+        mail_id or thread_id. A thread includes all incoming history in one
+        transaction. Returns mail_ids/read; malformed input is 400 and no
+        matching incoming relation is 404. Sent-only copies are not writable.
+        """
+        if not self.mail:
+            return self._json_response({"error": "Mail storage not available"}, status=503)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return self._json_response(
+                {"error": "Invalid JSON", "reason": "invalid_json"}, status=400
+            )
+        if not isinstance(body, dict):
+            return self._json_response(
+                {"error": "Request body must be a JSON object", "reason": "invalid_body"},
+                status=400,
+            )
+        username = body.get("username")
+        if (
+            not isinstance(username, str)
+            or not username.strip()
+            or "/" in username
+            or "\\" in username
+        ):
+            return self._json_response(
+                {"error": "Invalid username", "reason": "invalid_username"}, status=400
+            )
+        if not isinstance(body.get("read"), bool):
+            return self._json_response(
+                {"error": "Field 'read' must be a boolean", "reason": "invalid_read"}, status=400
+            )
+        selectors = [key for key in ("mail_id", "thread_id") if key in body]
+        if len(selectors) != 1:
+            return self._json_response(
+                {
+                    "error": "Exactly one of mail_id and thread_id is required",
+                    "reason": "invalid_selector",
+                },
+                status=400,
+            )
+        selector = selectors[0]
+        value = body[selector]
+        if not isinstance(value, str) or not value.strip():
+            return self._json_response(
+                {"error": f"Invalid {selector}", "reason": f"invalid_{selector}"}, status=400
+            )
+        mail_ids = await self.mail.set_read(
+            username.strip(),
+            body["read"],
+            **{selector: value.strip()},
         )
+        if not mail_ids:
+            return self._json_response(
+                {"error": "Incoming mail not found", "reason": "mail_not_found"}, status=404
+            )
+        return self._json_response({"mail_ids": mail_ids, "read": body["read"]})
 
     async def handle_send_message(self, request: web.Request) -> web.Response:
         """POST /messages - Send a mail as a human member (protocol v2, PR-1).

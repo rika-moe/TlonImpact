@@ -82,7 +82,7 @@ class TestHandleInbox:
 
         assert response.status == 200
         body = json.loads(response.text)
-        assert body == {"mails": [], "count": 0}
+        assert body == {"mails": [], "count": 0, "has_more": False, "next_before": None}
 
     async def test_limit_is_capped(self, paths: TlonPaths, handler: RESTAPIHandler):
         await _seed_mailbox(paths, "alice", count=5)

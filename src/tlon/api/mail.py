@@ -5,9 +5,8 @@ from typing import Any
 
 from tlon.agents.agent_registry import AgentRegistry
 from tlon.base.paths import TlonPaths
-from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.post_office import PostRejected
-from tlon.organization.mail.store import IdempotencyConflict, MailStore
+from tlon.organization.mail.store import IdempotencyConflict, MailPage, MailStore
 from tlon.organization.messaging.human_adapter import (
     DEFAULT_USERNAME,
     HUMAN_ID_PREFIX,
@@ -67,43 +66,57 @@ class MailFacade:
         Returns:
             Mail dicts (Mail.to_dict) with an added "read" flag
         """
+        return (await self.inbox_page(username, limit))["mails"]
+
+    async def inbox_page(
+        self,
+        username: str,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> MailPage:
+        """Page through human inbox and sent mail without marking read."""
         member_id = f"{HUMAN_ID_PREFIX}{username}"
         store = MailStore(self._paths.mail_database_file())
         await asyncio.to_thread(store.register_member, member_id)
-        mailbox = Mailbox(self._paths.mail_database_file(), member_id)
-        mails = await mailbox.recent(limit)
-        unread_ids = {m.id for m in await mailbox.unread()}
-        result = []
-        for mail in mails:
-            item = mail.to_dict()
-            item["read"] = mail.id not in unread_ids
-            result.append(item)
-        return result
+        return await asyncio.to_thread(store.page, member_id, limit, before, include_read=True)
 
     async def member_inbox(self, member_id: str, limit: int = 50) -> list[dict[str, Any]] | None:
-        """Any member's mailbox for observers (inbox + sent merged, chronological).
+        """Observe recent mail without exposing recipient read state."""
+        page = await self.member_inbox_page(member_id, limit)
+        return None if page is None else page["mails"]
 
-        Read-only observation (``GET /members/{member_id}/mail``): unlike
-        :meth:`inbox` it does not register a member and
-        synthesizes no ``read`` flag — the read state is the member's
-        own state, not the observer's business.
-
-        Args:
-            member_id: Agent id (``gu-yanxi``) or human id (``human:<username>``)
-            limit: Maximum number of mails
-
-        Returns:
-            Mail dicts (Mail.to_dict), or None when the member does not
-            exist in either the registry or the historical mail database
-        """
+    async def member_inbox_page(
+        self,
+        member_id: str,
+        limit: int = 50,
+        before: str | None = None,
+    ) -> MailPage | None:
+        """Observe chronological pages without creating unknown mailboxes."""
         store = MailStore(self._paths.mail_database_file())
         exists = await asyncio.to_thread(store.member_exists, member_id)
         if not exists and (
             member_id.startswith(HUMAN_ID_PREFIX) or self._registry.get_config(member_id) is None
         ):
             return None
-        mailbox = Mailbox(self._paths.mail_database_file(), member_id)
-        return [mail.to_dict() for mail in await mailbox.recent(limit)]
+        return await asyncio.to_thread(store.page, member_id, limit, before)
+
+    async def set_read(
+        self,
+        username: str,
+        read: bool,
+        *,
+        mail_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> list[str]:
+        """Explicitly mark a human's incoming mail; observation never calls this."""
+        store = MailStore(self._paths.mail_database_file())
+        return await asyncio.to_thread(
+            store.set_read,
+            f"{HUMAN_ID_PREFIX}{username}",
+            read,
+            mail_id=mail_id,
+            thread_id=thread_id,
+        )
 
     async def send(
         self,
