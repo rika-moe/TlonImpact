@@ -498,7 +498,7 @@ async def assemble_cognitive(
                     + MailStore(tlon_paths.mail_database_file()).known_human_ids()
                 ),
             ),
-            agent_id=config.id,
+            member_id=config.id,
         )
     )
     # Social health (docs/design/mail.md): the orphan-mail scan is the

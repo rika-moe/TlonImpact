@@ -15,14 +15,14 @@ class GetReputationTool(Tool):
     queried, not just the caller's own.
     """
 
-    def __init__(self, provider: ReputationProvider, agent_id: str) -> None:
+    def __init__(self, provider: ReputationProvider, member_id: str) -> None:
         """Initialize the tool.
 
         Args:
             provider: Async callable deriving a member's reputation
                 (implemented in the agents layer; mailboxes stay out of
                 the tools layer)
-            agent_id: Owning agent id — the default query subject
+            member_id: Owning agent id — the default query subject
         """
         super().__init__(
             name="getReputation",
@@ -39,23 +39,24 @@ class GetReputationTool(Tool):
             parameters={
                 "type": "object",
                 "properties": {
-                    "agent_id": {
+                    "member_id": {
                         "type": "string",
-                        "description": (
-                            "可选。要查询的成员 id（agent 用裸 id，人类用 "
-                            "'human:<username>'）；留空则查询你自己。"
-                        ),
+                        "description": ("可选。成员寻址黄页中的公开 member_id；留空则查询你自己。"),
                     },
                 },
                 "required": [],
             },
         )
         self._provider = provider
-        self._agent_id = agent_id
+        self._member_id = member_id
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Return the queried member's derived reputation (read-only)."""
-        subject = kwargs.get("agent_id") or self._agent_id
+        if "agent_id" in kwargs:
+            return ToolResult(success=False, data={}, error="Use member_id")
+        subject = kwargs.get("member_id") or self._member_id
+        if not isinstance(subject, str) or ":" in subject:
+            return ToolResult(success=False, data={}, error="Expected a public member_id")
         reputation = await self._provider(subject)
         return ToolResult(
             success=True,
