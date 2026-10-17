@@ -169,6 +169,7 @@ class RESTAPIHandler(
         app.router.add_get("/health", self.handle_health)
         app.router.add_get("/config", self.handle_config)
         app.router.add_get("/inbox", self.handle_inbox)
+        app.router.add_post("/inbox/read", self.handle_inbox_read)
         app.router.add_get("/members/{member_id}/mail", self.handle_member_mail)
         app.router.add_post("/messages", self.handle_send_message)
         app.router.add_get("/agents", self.handle_list_agents)

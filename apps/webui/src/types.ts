@@ -95,7 +95,7 @@ export interface MailItem {
   forward_of: string | null;
   timestamp: string;
   /**
-   * Whether the recipient has read this mail (inbox cursor semantics).
+   * Whether this recipient has explicitly marked their inbox copy read.
    * Absent when the payload has no per-recipient read state: the observer
    * endpoint (`GET /members/{id}/mail`) and `mail.delivered` SSE events
    * never carry it.
@@ -106,15 +106,29 @@ export interface MailItem {
 /** A conversation thread: mails sharing one `thread_id`. */
 export interface ThreadGroup {
   threadId: string;
+  title: string;
+  rootLoaded: boolean;
+  unreadCount: number;
   /** Mails in chronological order (oldest first). */
   mails: MailItem[];
-  /** Local parts of every participant address except my own (deduplicated). */
+  /** Full addresses of every participant except my own (deduplicated). */
   participants: string[];
   /** Latest mail in the thread (drives list ordering and previews). */
   latest: MailItem;
   count: number;
   /** Whether the thread contains any unread mail (attention marker). */
   unread: boolean;
+}
+
+export interface MailPage {
+  mails: MailItem[];
+  has_more: boolean;
+  next_before: string | null;
+}
+
+export interface MailReadResult {
+  mail_ids: string[];
+  read: boolean;
 }
 
 /** A participant entry from `GET /participants`. */

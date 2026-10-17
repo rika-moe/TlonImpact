@@ -13,7 +13,7 @@
  *
  * On stream loss (EventSource `onerror`) the client closes the stream,
  * backs off exponentially (1s -> 30s) and re-establishes the session from
- * scratch — events during the outage are lost, same as the TUI.
+ * scratch. Mail views reconcile durable snapshots once the new stream opens.
  * `dispose()` closes the stream and best-effort DELETEs the session.
  */
 
@@ -90,6 +90,7 @@ export class SseClient extends Emitter {
   private attempt = 0;
   private disposed = false;
   private running = false;
+  private generation = 0;
   private status: ConnectionStatus = { state: "disconnected", attempt: 0 };
 
   constructor(private readonly options: SseClientOptions = {}) {
@@ -118,7 +119,7 @@ export class SseClient extends Emitter {
       state: this.attempt === 0 ? "connecting" : "reconnecting",
       attempt: this.attempt,
     });
-    void this.run();
+    void this.run(++this.generation);
   }
 
   /** Switch server-side session mode via PATCH /sessions/{id}. */
@@ -147,6 +148,7 @@ export class SseClient extends Emitter {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.generation += 1;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -167,22 +169,32 @@ export class SseClient extends Emitter {
   }
 
   /** One connect attempt: open a session, switch to event mode, stream. */
-  private async run(): Promise<void> {
+  private async run(generation: number): Promise<void> {
     try {
-      await this.openSession();
-      await this.setMode("event");
+      await this.openSession(generation);
+      if (this.disposed || generation !== this.generation) return;
+      const changed = await this.setMode("event");
+      if (this.disposed || generation !== this.generation) return;
+      if (!changed) throw new Error("Could not subscribe to event mode");
       this.openStream();
     } catch (err) {
+      if (this.disposed || generation !== this.generation) return;
       if (!this.disposed) {
         this.status = { ...this.status, lastError: err instanceof Error ? err.message : String(err) };
       }
       this.running = false;
+      const sessionId = this.sessionId;
       this.sessionId = null;
+      if (sessionId) {
+        void fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}`, {
+          method: "DELETE",
+        }).catch(() => {});
+      }
       this.scheduleReconnect();
     }
   }
 
-  private async openSession(): Promise<void> {
+  private async openSession(generation: number): Promise<void> {
     const response = await fetch(`${this.baseUrl}/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -201,9 +213,13 @@ export class SseClient extends Emitter {
     if (typeof data["session_id"] !== "string") {
       throw new Error("POST /sessions: response missing session_id");
     }
+    if (this.disposed || generation !== this.generation) {
+      void fetch(`${this.baseUrl}/sessions/${encodeURIComponent(data["session_id"])}`, {
+        method: "DELETE",
+      }).catch(() => {});
+      return;
+    }
     this.sessionId = data["session_id"];
-    this.attempt = 0;
-    this.setStatus({ state: "connected", attempt: 0, sessionId: this.sessionId });
     this.emit("session", data);
     if (Array.isArray(data["agents"])) this.emit("agents", data["agents"]);
     if (Array.isArray(data["participants"])) {
@@ -224,7 +240,13 @@ export class SseClient extends Emitter {
       `${this.baseUrl}/events?session_id=${encodeURIComponent(sessionId)}`,
     );
     this.source = source;
+    source.onopen = () => {
+      if (this.source !== source || this.disposed) return;
+      this.attempt = 0;
+      this.setStatus({ state: "connected", attempt: 0, sessionId });
+    };
     source.onmessage = (msg: MessageEvent<string>) => {
+      if (this.source !== source || this.disposed) return;
       this.handleMessage(msg.data);
     };
     source.onerror = () => {
@@ -242,6 +264,8 @@ export class SseClient extends Emitter {
   private closeStream(): void {
     if (this.source) {
       this.source.onerror = null;
+      this.source.onopen = null;
+      this.source.onmessage = null;
       this.source.close();
       this.source = null;
     }

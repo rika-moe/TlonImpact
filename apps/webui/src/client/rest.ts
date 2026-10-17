@@ -11,7 +11,7 @@
  */
 
 import type { MetricsSnapshot } from "../lib/snapshot";
-import type { MailItem, ParticipantInfo } from "../types";
+import type { MailItem, MailPage, MailReadResult, ParticipantInfo } from "../types";
 
 export class RestError extends Error {
   constructor(
@@ -462,6 +462,33 @@ export class RestClient {
       `/inbox?username=${encodeURIComponent(username)}&limit=${limit}`,
     );
     return data.mails ?? [];
+  }
+
+  async getInboxPage(
+    username: string,
+    options: { before?: string; limit?: number } = {},
+  ): Promise<MailPage> {
+    const query = new URLSearchParams({ username, limit: String(options.limit ?? 100) });
+    if (options.before) query.set("before", options.before);
+    return this.get(`/inbox?${query.toString()}`);
+  }
+
+  async getMemberMailPage(
+    memberId: string,
+    options: { before?: string; limit?: number } = {},
+  ): Promise<MailPage> {
+    const query = new URLSearchParams({ limit: String(options.limit ?? 100) });
+    if (options.before) query.set("before", options.before);
+    return this.get(`/members/${encodeURIComponent(memberId)}/mail?${query.toString()}`);
+  }
+
+  /** Explicitly change only this human's received copies; viewing never marks read. */
+  async setMailRead(
+    username: string,
+    read: boolean,
+    target: { mail_id?: string; thread_id?: string },
+  ): Promise<MailReadResult> {
+    return this.send("POST", "/inbox/read", { username, read, ...target });
   }
 
   /**

@@ -115,6 +115,8 @@ ADR 0030 已替代原来的 `MAIL_NEW → MailDelivery → JSONL` 写入链路�
 
 [Mailbox](../../src/tlon/organization/mail/mailbox.py) 是共享 SQLite 数据库的成员视图。正文只保存一份，发件箱按发件人查询，收件箱按邮箱归属查询，每个收件人单独保存已读位。查看不自动标读，`mark_read` 幂等，不向发件人提供已读回执。
 
+[ADR 0031](../decisions/0031-webui-mail-consistency.md) 增加人类客户端的显式已读管理：`POST /inbox/read` 只修改指定人类的收件关系，支持单封或整个线程，线程操作包括尚未加载的历史邮件。本人邮箱展示未读数，观察其他成员邮箱仍纯只读。WebUI 在 SSE 真正就绪后拉快照，重连分页补齐缺口；历史页使用 `before` 游标，不因只加载最近一页而把线程误当作完整记录。
+
 EventBus 只降低发现新信的延迟，不承担可靠存储。成员启动检查与周期 rescan 发现已提交未读；通知丢失或队列溢出不会删除邮件。数据库写入经工作线程执行，事务与唯一约束承担并发一致性，不再维护 JSONL 扫描缓存或按目录锁表。
 
 不引入外部消息中间件：本地入箱已经在单个数据库事务中完成，不需要额外的接纳/投递状态机。邮局不保存 thinking、processing、completed 等认知状态，任务进度由 session、journal 和任务系统管理。

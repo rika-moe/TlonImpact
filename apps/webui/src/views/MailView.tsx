@@ -1,33 +1,13 @@
-/**
- * MAIL view — three columns: thread list (unread ●) | conversation cards |
- * compose modal (To/Cc autocomplete, reply pre-fills in_reply_to/thread_id).
- *
- * The toolbar observation picker switches whose mailbox is being viewed:
- * myself (GET /inbox — read flags shown, compose/reply enabled) or any
- * member (GET /members/{member_id}/mail — read-only: no unread markers,
- * no compose/reply). SSE mail.delivered increments are filtered to the
- * observed member's address.
- *
- * Each conversation card shows the mail's metadata: an unread marker for
- * unread mail, a "↩ RE" reference line resolving in_reply_to against the
- * loaded mails (silently dropped when the parent is not in the inbox), and
- * a "⤳ FWD OF" origin line when the mail is a forward.
- *
- * Ported from apps/operator/src/views/MailView.tsx: same REST/SSE semantics
- * (GET /inbox, GET /participants, POST /messages, SSE mail.delivered),
- * rendering layer rewritten from ink to DOM.
- */
-
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent, ReactElement } from "react";
 import { MailSendError } from "../client/rest";
 import type { RestClient } from "../client/rest";
-import { groupByThread, involvesMe, localPart, mergeMails } from "../lib/threads";
+import { groupByThread, localPart, threadMatchesFilter } from "../lib/threads";
+import { MailboxController } from "../lib/mailbox";
 import { memberAddress, selfMemberId } from "../lib/members";
 import type {
   MailItem,
   ParticipantInfo,
-  ServerEvent,
   ThreadGroup,
   ViewProps,
 } from "../types";
@@ -35,7 +15,7 @@ import "../styles/mail.css";
 
 function formatTime(timestamp: string): string {
   try {
-    return new Date(timestamp).toLocaleTimeString("en-GB", { hour12: false });
+    return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
   } catch {
     return "??:??:??";
   }
@@ -78,16 +58,25 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
   const selfId = selfMemberId(username);
   // Whose mailbox is being observed; defaults to myself.
   const [observedId, setObservedId] = useState<string>(selfId);
-  const [mails, setMails] = useState<MailItem[]>([]);
   const [participants, setParticipants] = useState<ParticipantInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [notice, setNotice] = useState<string | null>(null);
   const [compose, setCompose] = useState<ComposeRequest | null>(null);
 
   const readOnly = observedId !== selfId;
   const observedAddress = memberAddress(observedId);
+  const mailbox = useMemo(() => new MailboxController(rest, sse, username, observedId,
+    observedAddress, readOnly), [rest, sse, username, observedId, observedAddress, readOnly]);
+  const { mails, loading, loadingMore, syncing, marking, hasMore, notice } = useSyncExternalStore(
+    mailbox.subscribe, mailbox.getSnapshot);
+  useEffect(() => {
+    mailbox.start();
+    setSelectedId(null);
+    setFilter("");
+    setCompose(null);
+    return () => mailbox.stop();
+  }, [mailbox]);
+
 
   // Address book load (once; it also feeds the observation picker).
   useEffect(() => {
@@ -103,51 +92,6 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
     };
   }, [rest]);
 
-  // Mailbox load for the observed member: my own inbox (with read flags)
-  // or the read-only observer endpoint. Switching the observation target
-  // clears everything loaded for the previous one.
-  useEffect(() => {
-    let cancelled = false;
-    setMails([]);
-    setSelectedId(null);
-    setFilter("");
-    setNotice(null);
-    setCompose(null);
-    setLoading(true);
-    const load = observedId === selfId ? rest.getInbox(username) : rest.getMemberMail(observedId);
-    load
-      .then((inbox) => {
-        if (cancelled) return;
-        setMails(inbox);
-        setLoading(false);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setNotice(`MAIL 加载失败: ${err instanceof Error ? err.message : String(err)}`);
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [rest, username, observedId, selfId]);
-
-  // Live delivery events (deduplicated by mail id — the server emits one
-  // event per recipient): keep only mail involving the observed member.
-  useEffect(() => {
-    const onEvent = (ev: ServerEvent): void => {
-      if (ev.eventType !== "mail.delivered") return;
-      const payload = ev.payload as { mail?: MailItem } | undefined;
-      const mail = payload?.mail;
-      if (!mail || typeof mail.id !== "string") return;
-      if (!involvesMe(mail, observedAddress)) return;
-      setMails((prev) => mergeMails(prev, [mail]));
-    };
-    sse.on("event", onEvent);
-    return () => {
-      sse.off("event", onEvent);
-    };
-  }, [sse, observedAddress]);
-
   const threads = useMemo(
     () => groupByThread(mails, observedAddress),
     [mails, observedAddress],
@@ -155,20 +99,22 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
 
   /** Display name of a participant id (fallback: the id itself). */
   const displayName = (id: string): string =>
-    participants.find((p) => p.id === id)?.name ?? id;
+    participants.find((p) => p.id === id || p.id === `human:${id}`)?.name ?? id;
 
   /** Threads matching the filter (participant name/id, subject, content). */
   const visibleThreads = useMemo(() => {
     const f = filter.trim().toLowerCase();
     if (!f) return threads;
-    return threads.filter((t) => {
-      const who = t.participants
-        .map((id) => participants.find((p) => p.id === id)?.name ?? id)
-        .join(" ");
-      const haystack = `${who} ${t.latest.subject ?? ""} ${t.latest.content}`.toLowerCase();
-      return haystack.includes(f);
-    });
+    return threads.filter((thread) => threadMatchesFilter(thread, f) ||
+      thread.participants.some((address) => displayName(localPart(address)).toLowerCase().includes(f)));
+
   }, [threads, filter, participants]);
+
+  useEffect(() => {
+    if (visibleThreads.length && !visibleThreads.some((thread) => thread.threadId === selectedId)) {
+      setSelectedId(visibleThreads[0]!.threadId);
+    }
+  }, [visibleThreads, selectedId]);
 
   const selectedThread: ThreadGroup | null =
     visibleThreads.find((t) => t.threadId === selectedId) ?? visibleThreads[0] ?? null;
@@ -184,11 +130,12 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
     });
   };
 
+  const activeMailbox = useRef(mailbox);
+  activeMailbox.current = mailbox;
+
   const onSent = (mail: MailItem, message: string): void => {
-    setNotice(message);
-    // Own sends are not delivered back via SSE, so append on the ack.
-    setMails((prev) => mergeMails(prev, [mail]));
-    setCompose(null);
+    mailbox.addLocal(mail, message);
+    if (mailbox === activeMailbox.current) setCompose(null);
   };
 
   return (
@@ -205,6 +152,8 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
         <span className="tech-label">{visibleThreads.length} THREADS</span>
         <span className="mail-spacer" />
         {notice ? <span className="mail-notice">{notice}</span> : null}
+        <button type="button" className="btn btn--secondary" disabled={syncing}
+          onClick={() => void mailbox.refresh()}>{syncing ? "同步中…" : "刷新邮箱"}</button>
         {readOnly ? null : (
           <button
             type="button"
@@ -238,12 +187,16 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
                   showUnread={!readOnly}
                   onSelect={() => {
                     setSelectedId(thread.threadId);
-                    setNotice(null);
                   }}
                 />
               ))
             )}
           </div>
+          {hasMore ? <div className="mail-history-notice">
+            <span>历史邮件尚未全部加载</span>
+            <button type="button" className="btn btn--secondary" disabled={loadingMore}
+              onClick={() => void mailbox.loadMore()}>{loadingMore ? "LOADING…" : "加载更早邮件"}</button>
+          </div> : null}
         </section>
         <section className="panel mail-conversation-panel">
           <Conversation
@@ -253,6 +206,8 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
             displayName={displayName}
             readOnly={readOnly}
             onReply={openReply}
+            marking={marking}
+            onRead={(read, target) => { void mailbox.setRead(read, target); }}
           />
         </section>
       </div>
@@ -355,8 +310,7 @@ function ThreadItem({
   showUnread: boolean;
   onSelect: () => void;
 }): ReactElement {
-  const who = thread.participants.map(displayName).join(", ") || "(me)";
-  const snippet = thread.latest.subject ?? thread.latest.content.slice(0, 24);
+  const who = thread.participants.map((address) => `${displayName(localPart(address))} <${address}>`).join(", ") || "(me)";
   const unread = showUnread && thread.unread;
   return (
     <div
@@ -366,14 +320,17 @@ function ThreadItem({
       <div className="mail-thread-line">
         {unread ? <span className="unread-dot">●</span> : null}
         <span className={`mail-thread-who${unread ? " mail-thread-who--unread" : ""}`}>
-          {who}
+          {thread.title}
         </span>
         <span className="mail-thread-meta">
           {formatTime(thread.latest.timestamp)}
           {thread.count > 1 ? ` (${String(thread.count)})` : ""}
         </span>
       </div>
-      <div className="mail-thread-snippet">{snippet}</div>
+      <div className="mail-thread-participants">{who}</div>
+      <div className="mail-thread-meta">#{thread.threadId.slice(0, 8)} · {thread.count} 封
+        {showUnread ? ` · ${thread.unreadCount} 未读` : ""}
+        {!thread.rootLoaded ? " · 根邮件未加载" : ""}</div>
     </div>
   );
 }
@@ -386,6 +343,8 @@ function Conversation({
   displayName,
   readOnly,
   onReply,
+  marking,
+  onRead,
 }: {
   thread: ThreadGroup | null;
   /** All loaded mails, used to resolve in_reply_to / forward_of references. */
@@ -395,10 +354,17 @@ function Conversation({
   /** True when observing another member: no unread markers, no REPLY. */
   readOnly: boolean;
   onReply: (mail: MailItem) => void;
+  marking: boolean;
+  onRead: (read: boolean, target: { mail_id?: string; thread_id?: string }) => void;
 }): ReactElement {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const threadId = thread?.threadId ?? null;
-  const mailCount = thread?.mails.length ?? 0;
+  const position = useRef({ threadId: null as string | null, firstId: "", height: 0, top: 0, atBottom: true });
+  const savePosition = (): void => {
+    const el = scrollRef.current;
+    if (el) position.current = { threadId, firstId: thread?.mails[0]?.id ?? "", height: el.scrollHeight,
+      top: el.scrollTop, atBottom: el.scrollHeight - el.scrollTop - el.clientHeight < 32 };
+  };
 
   const byId = useMemo(() => {
     const map = new Map<string, MailItem>();
@@ -406,25 +372,40 @@ function Conversation({
     return map;
   }, [mails]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [threadId, mailCount]);
+    if (!el) return;
+    const previous = position.current;
+    if (previous.threadId !== threadId) el.scrollTop = el.scrollHeight;
+    else if (previous.firstId && thread?.mails[0]?.id !== previous.firstId) {
+      el.scrollTop = previous.top + el.scrollHeight - previous.height;
+    } else if (previous.atBottom) el.scrollTop = el.scrollHeight;
+    else el.scrollTop = previous.top;
+    savePosition();
+  }, [threadId, thread?.mails]);
 
   if (!thread) {
     return <p className="mail-empty">(no thread selected)</p>;
   }
   return (
-    <div className="mail-conversation" ref={scrollRef}>
+    <div className="mail-conversation-layout">
+      <div className="mail-conversation-head">
+        <h3>{thread.title}</h3>
+        <span className="tech-label">THREAD {thread.threadId}</span>
+        {!thread.rootLoaded ? <p className="mail-history-notice">根邮件未加载或不在此邮箱；当前显示已加载片段。</p> : null}
+        {!readOnly && thread.mails.some((mail) => mail.to.includes(myAddress) || mail.cc.includes(myAddress)) ?
+          <div className="mail-thread-actions">
+            <button type="button" className="btn btn--secondary" disabled={marking}
+              onClick={() => onRead(true, { thread_id: thread.threadId })}>整线程标为已读</button>
+            <button type="button" className="btn btn--secondary" disabled={marking}
+              onClick={() => onRead(false, { thread_id: thread.threadId })}>整线程标为未读</button>
+          </div> : null}
+      </div>
+      <div className="mail-conversation" ref={scrollRef} onScroll={savePosition}>
       {thread.mails.map((mail) => {
         const own = mail.from_address === myAddress;
-        const to = [...mail.to, ...mail.cc.map((addr) => `(cc) ${addr}`)]
-          .map(localPart)
-          .map(displayName)
-          .join(", ");
-        // Reference lines: an unresolved in_reply_to is dropped silently
-        // (the parent may live outside the loaded inbox); an unresolved
-        // forward_of falls back to the id prefix.
+        const to = [...mail.to, ...mail.cc.map((addr) => `(cc) ${addr}`)].join(", ");
+        // Missing reference targets stay visible so partial history is explicit.
         const parent = mail.in_reply_to ? byId.get(mail.in_reply_to) : undefined;
         const forwardSource = mail.forward_of ? byId.get(mail.forward_of) : undefined;
         // Observer payloads carry no read flag — treat "read only when
@@ -441,7 +422,7 @@ function Conversation({
                 <span className="tech-label mail-card-unread">● UNREAD</span>
               ) : null}
               <span className="tech-label mail-card-from">
-                {displayName(localPart(mail.from_address))}
+                {mail.from_address}
               </span>
               <span className="tech-label mail-card-to">→ {to}</span>
               <span className="mail-card-time">{formatTime(mail.timestamp)}</span>
@@ -451,7 +432,7 @@ function Conversation({
                 ↩ RE {displayName(localPart(parent.from_address))} ·{" "}
                 {parent.subject ?? parent.content.slice(0, 24)} · {formatTime(parent.timestamp)}
               </div>
-            ) : null}
+            ) : mail.in_reply_to ? <div className="mail-card-ref">↩ RE #{mail.in_reply_to.slice(0, 8)} · 父邮件未加载或不在此邮箱</div> : null}
             {mail.forward_of ? (
               <div className="mail-card-ref">
                 ⤳ FWD OF{" "}
@@ -462,20 +443,27 @@ function Conversation({
             ) : null}
             {mail.subject ? <div className="mail-card-subject">{mail.subject}</div> : null}
             <div className="mail-card-body">{mail.content}</div>
-            {!own && !readOnly ? (
+            {!readOnly ? (
               <div className="mail-card-actions">
+                {mail.to.includes(myAddress) || mail.cc.includes(myAddress) ?
+                  <button type="button" className="btn btn--secondary" disabled={marking}
+                    onClick={() => onRead(mail.read !== true, { mail_id: mail.id })}>
+                    {mail.read === true ? "标为未读" : "标为已读"}
+                  </button> : null}
+                {!own ?
                 <button
                   type="button"
                   className="btn btn--secondary"
                   onClick={() => onReply(mail)}
                 >
                   REPLY
-                </button>
+                </button> : null}
               </div>
             ) : null}
           </article>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -506,7 +494,9 @@ function ComposeModal({
   const [sending, setSending] = useState(false);
   const [requestId] = useState(() => crypto.randomUUID());
 
+  const submitting = useRef(false);
   const submit = async (): Promise<void> => {
+    if (submitting.current) return;
     const toList = splitList(to);
     if (toList.length === 0) {
       setError("TO 不能为空（逗号分隔，支持名字 / id / 地址）");
@@ -520,6 +510,7 @@ function ComposeModal({
     const ccList = splitList(cc);
     const subjectTrimmed = subject.trim() || undefined;
 
+    submitting.current = true;
     setSending(true);
     setError(null);
     try {
@@ -555,6 +546,7 @@ function ComposeModal({
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
+      submitting.current = false;
       setSending(false);
     }
   };

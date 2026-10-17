@@ -7,9 +7,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from tlon.organization.mail.mail import Mail
+
+
+class MailPage(TypedDict):
+    mails: list[dict[str, Any]]
+    count: int
+    has_more: bool
+    next_before: str | None
 
 
 class IdempotencyConflict(ValueError):  # noqa: N818
@@ -362,6 +369,85 @@ class MailStore:
 
     def earliest(self, member_id: str, limit: int = 50) -> list[Mail]:
         return self._query(self._visible(), (member_id, member_id), limit=limit)
+
+    def page(
+        self,
+        member_id: str,
+        limit: int = 50,
+        before: str | None = None,
+        *,
+        include_read: bool = False,
+    ) -> MailPage:
+        """Read a stable chronological page and recipient state in one snapshot."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if not self._initialized():
+            if before is not None:
+                raise ValueError("Invalid mailbox cursor")
+            return {"mails": [], "count": 0, "has_more": False, "next_before": None}
+        with self._connection(write=False) as connection:
+            connection.execute("BEGIN")
+            condition = self._visible()
+            arguments: list[str | int] = [member_id, member_id]
+            if before is not None:
+                cursor = connection.execute(
+                    f"SELECT m.timestamp,m.rowid FROM messages m WHERE m.mail_id=? AND {condition}",
+                    (before, member_id, member_id),
+                ).fetchone()
+                if cursor is None:
+                    raise ValueError("Invalid mailbox cursor")
+                condition += " AND (m.timestamp,m.rowid) < (?,?)"
+                arguments.extend(cursor)
+            rows = connection.execute(
+                "SELECT m.body,COALESCE((SELECT r.read FROM recipients r "
+                "WHERE r.member_id=? AND r.mail_id=m.mail_id),1) "
+                f"FROM messages m WHERE {condition} "
+                "ORDER BY m.timestamp DESC,m.rowid DESC LIMIT ?",
+                (member_id, *arguments, limit + 1),
+            ).fetchall()
+            has_more = len(rows) > limit
+            mails: list[dict[str, Any]] = []
+            for body, read in reversed(rows[:limit]):
+                item = Mail.from_dict(json.loads(body)).to_dict()
+                if include_read:
+                    item["read"] = bool(read)
+                mails.append(item)
+        return {
+            "mails": mails,
+            "count": len(mails),
+            "has_more": has_more,
+            "next_before": mails[0]["id"] if has_more else None,
+        }
+
+    def set_read(
+        self,
+        member_id: str,
+        read: bool,
+        *,
+        mail_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> list[str]:
+        """Change only incoming relations, atomically for the entire thread."""
+        if (mail_id is None) == (thread_id is None):
+            raise ValueError("Exactly one of mail_id and thread_id is required")
+        if not self._initialized():
+            return []
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            column, value = (
+                ("mail_id", mail_id) if mail_id is not None else ("thread_id", thread_id)
+            )
+            rows = connection.execute(
+                "SELECT m.mail_id FROM messages m JOIN recipients r ON r.mail_id=m.mail_id "
+                f"WHERE r.member_id=? AND m.{column}=? ORDER BY m.timestamp,m.rowid",
+                (member_id, value),
+            ).fetchall()
+            mail_ids = [row[0] for row in rows]
+            connection.executemany(
+                "UPDATE recipients SET read=? WHERE member_id=? AND mail_id=?",
+                [(int(read), member_id, mid) for mid in mail_ids],
+            )
+            return mail_ids
 
     def unread_member_ids(self) -> list[str]:
         """Recovery scan of active mailboxes, without loading message bodies."""

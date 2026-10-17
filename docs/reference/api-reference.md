@@ -59,13 +59,14 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 52 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 53 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
 | GET | `/health` | `handle_health` | 无条件 |
 | GET | `/config` | `handle_config` | 无条件 |
 | GET | `/inbox` | `handle_inbox` | 无条件 |
+| POST | `/inbox/read` | `handle_inbox_read` | 无条件 |
 | GET | `/members/{member_id}/mail` | `handle_member_mail` | 无条件 |
 | POST | `/messages` | `handle_send_message` | 无条件 |
 | GET | `/agents` | `handle_list_agents` | 无条件 |
@@ -157,28 +158,34 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 
 ### GET /inbox
 
-读人类成员的持久邮箱，处理函数 `handle_inbox`，直接读磁盘 mailbox（[organization/mail/mailbox.py](../../src/tlon/organization/mail/mailbox.py) 的 `Mailbox.recent`），inbox 与 sent 合并按时间序。
+读人类成员的持久邮箱，处理函数 `handle_inbox`，调用 `MailFacade.inbox_page`。inbox 与 sent 合并，按 SQLite timestamp/rowid 稳定分页，页内按时间正序返回。读取不修改已读状态。
 
 | Query 参数 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `username` | string | `guest` | 读 `human:<username>` 的邮箱；空或含路径分隔符返回 400（`{"error"}`，无 reason） |
+| `username` | string | `guest` | 读 `human:<username>` 的邮箱；空或含路径分隔符返回 400 |
 | `limit` | int | 50（上限 200） | 非整数回落默认值 |
+| `before` | string | 无 | 上一页最早邮件 id，读取更早记录；必须属于当前可见邮箱，否则 400 |
 
-- 200：`{"mails": [<Mail.to_dict()>], "count": n}`。Mail 字段：`id`、`from_address`、`to`、`cc`、`subject`、`content`、`in_reply_to`、`thread_id`、`forward_of`、`timestamp`（[organization/mail/mail.py](../../src/tlon/organization/mail/mail.py) 的 `Mail.to_dict`）；handler 额外注入 `read: bool`——收件箱邮件按 SQLite 中的收件人已读位判定（id 不在未读集合即已读），已发邮件恒为 `true`
-- 503：未装配 `paths`
+- 200：`{"mails": [...], "count": n, "has_more": bool, "next_before": string|null}`。`has_more` 为 true 时，`next_before` 是本页最早邮件 id；否则为 null。
+- Mail 字段见 `Mail.to_dict`；额外含 `read: bool`，来自该人类的收件关系。仅发件记录显示为 true；发给自己的邮件按自己的收件关系判定。
+- 503：未装配 mail facade。
+
+### POST /inbox/read
+
+显式设置人类收件关系的已读状态，处理函数 `handle_inbox_read`。本机信任边界与发信一致，身份来自 `username`；没有替任意 agent 修改状态的接口。
+
+请求 JSON 必须包含 `username`（非空且不含路径分隔符）、`read`（严格布尔值），以及 `mail_id` 或 `thread_id` 恰好一个非空字符串。线程操作在一个事务中覆盖该人类收到的所有该线程邮件，包括尚未加载的历史。仅发件副本不可操作，其他收件人的状态不会改变。
+
+- 200：`{"mail_ids": ["..."], "read": bool}`，包含全部匹配的收件邮件 id（含原本已处于目标状态的邮件）。
+- 400：JSON、身份、布尔值或选择条件无效。
+- 404：没有匹配的收件关系。
+- 503：未装配 mail facade。
 
 ### GET /members/{member_id}/mail
 
-观察者视角读**任意成员**（agent 或人类）的邮箱，处理函数 `handle_member_mail`，走 [tlon/api/mail.py](../../src/tlon/api/mail.py) 的 `MailFacade.member_inbox`。`member_id` 语义：agent 用裸 id（`gu-yanxi`），人类用 `human:<username>`（路径段里的冒号 aiohttp 直接匹配）。存在性校验：agent 必须在 `AgentRegistry` 注册，人类必须有持久邮箱（`TlonPaths.known_human_ids()`）。纯只读观测——不像 `GET /inbox` 那样 mkdir 邮箱，也**不合成 `read` 字段**（已读游标是成员自己的状态，不是观察者该看到的）。
+观察者视角读任意成员邮箱，处理函数 `handle_member_mail`，调用 `MailFacade.member_inbox_page`。`member_id` 使用 agent 裸 id 或人类 `human:<username>`。成员存在于运行注册表或历史邮件库即可以观察；未知成员返回 404。纯只读，不注册成员，不暴露 `read`。
 
-| Query 参数 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `limit` | int | 50（上限 200） | 非整数回落默认值 |
-
-- 200：`{"mails": [<Mail.to_dict()>], "count": n}`（与 `GET /inbox` 同形状，但无 `read` 字段）；成员存在但邮箱为空时 `count` 为 0
-- 400：`member_id` 为空或含 `/`、`\`（`{"error"}`，无 reason）
-- 404：成员不存在（`{"error"}`，无 reason）
-- 503：未装配 mail facade
+Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相同，但邮件没有 `read` 字段。已知空邮箱返回空页。非法 member id 或不可见游标返回 400，未装配 facade 返回 503。
 
 ### POST /sessions
 

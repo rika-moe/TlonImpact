@@ -350,3 +350,66 @@ textarea.mail-content {
   max-height: 40vh;
   overflow-y: auto;
 }
+
+/* Stable topic identity and explicit partial-history / read controls. */
+.mail-thread-title {
+  color: var(--text);
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-thread-participants {
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+
+.mail-history-notice {
+  color: var(--neon-yellow);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mail-conversation-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.25);
+  overflow-wrap: anywhere;
+}
+
+.mail-conversation-head h3 {
+  margin: 0;
+  color: var(--neon-cyan);
+}
+
+.mail-thread-actions,
+.mail-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .mail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .mail-thread-list {
+    max-height: 28vh;
+  }
+
+  .mail-card {
+    max-width: 95%;
+  }
+
+  .mail-card-head,
+  .mail-toolbar {
+    flex-wrap: wrap;
+  }
+}

@@ -27,7 +27,7 @@ payload 里的 `Mail` 等对象序列化为 `to_dict()` 的平直 JSON；trace �
 
 ## 端点分组
 
-路由集中在 `RESTAPIHandler.create_app` 注册。端点全表（每条路由的注册条件、请求/响应细节、错误枚举）以 [reference/api-reference.md](../reference/api-reference.md) 的生成总表为单一事实源，本文不手工复制清单（双写必漂移）。按职责粗分：消息（`POST /messages` 发信、`GET /inbox` 读邮箱）、会话（`POST/PATCH/DELETE /sessions` + `GET /events` SSE 流）、成员与配置（含 `/admin/*` 管理面）、可观测性（traces/metrics/logs）。
+路由集中在 `RESTAPIHandler.create_app` 注册。端点全表（每条路由的注册条件、请求/响应细节、错误枚举）以 [reference/api-reference.md](../reference/api-reference.md) 的生成总表为单一事实源，本文不手工复制清单（双写必漂移）。按职责粗分：消息（`POST /messages` 发信、`GET /inbox` 分页读邮箱、`POST /inbox/read` 显式标读）、会话（`POST/PATCH/DELETE /sessions` + `GET /events` SSE 流）、成员与配置（含 `/admin/*` 管理面）、可观测性（traces/metrics/logs）。
 
 几个端点层面的设计选择：
 
@@ -96,7 +96,7 @@ mode 与 filters 都可经 `PATCH /sessions/{id}` 在线修改，立即生效，
 
 **为什么无状态 REST + 单轨 SSE 够用**：
 
-- 人类客户端的读模型是「历史 + 增量」：历史用 `GET /inbox` 直接拉持久邮箱（邮箱本来就是磁盘上可重读的事实），增量靠 SSE。两条都是 HTTP 原语，不需要会话级协议状态。重连语义因此极其简单：断了就重新建会话、重新拉 inbox、重新开流，没有断点续传要协商——断连期间丢的推送事件，inbox 拉一遍就回来了。
+- 人类客户端的读模型是「历史 + 增量」：历史用 `GET /inbox` 直接拉持久邮箱（邮箱本来就是磁盘上可重读的事实），增量靠 SSE。两条都是 HTTP 原语，不需要会话级协议状态。重连语义因此极其简单：断了就重新建会话、打开 SSE 流，流就绪后分页补拉 inbox，直到覆盖断线前的最新邮件；加载期间的事件与快照按邮件 id 合并。邮箱游标用于历史分页，不是 SSE 事件断点。
 - `POST /messages` 成功回执列出本地已入箱成员、网关尝试结果与请求 ID。本地事务已提交，阅读与处理仍是异步的；网关只承诺尝试，不保证网关入箱或外部接收。任一地址无效或成员退休整封拒绝，返回结构化问题列表，不另发退信。超时是结果未知，重试复用 `request_id`；同键同内容返回既有结果，同键不同内容冲突，不重复入箱或尝试网关。
 - agent 不需要这个协议：它们活在服务端进程内，通信走 EventBus 和邮箱。协议面只需服务人类客户端，单边推送 + 普通 POST 恰好覆盖，全双工是无谓的复杂度。
 - 协议面小的好处是可接入性：任何能发 HTTP 请求、能读 SSE 的客户端（curl、脚本、第三方 TUI）都是一等公民，不需要专用 SDK 或 WebSocket 库。
