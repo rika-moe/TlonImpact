@@ -199,19 +199,9 @@ def test_render_index_empty(tmp_path: Path) -> None:
 def _spec_with_sections(sections: str) -> MemberSpec:
     return MemberSpec.from_edn(
         loads(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections SECTIONS}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-""".replace("SECTIONS", sections)
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections SECTIONS} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'.replace(
+                "SECTIONS", sections
+            )
         )
     )
 

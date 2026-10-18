@@ -32,11 +32,11 @@ Replay rules:
   which is also appended to the log (self-healing). Together they are
   ``pending_collect`` — the input of the first collect after resume.
 - ``session/start`` carries ``responsibility`` (ADR 0028): the wake-time
-  snapshot of wakeable unread mail ids. Replay reads it back (logs
+  snapshot of trigger mail ids. Replay reads it back (logs
   predating the field fall back to the empty set); the scheduler's chain
   wake compares fresh unread against it even after a crash.
 
-Replay never re-executes side effects — mails and on-complete actions
+Replay never re-executes side effects — mail effects
 happened (or did not) in the previous process; replay only rebuilds data
 fields. Completed session metadata (``list_completed``) also feeds the
 journal → claims distillation trigger (ADR 0017): the database is the sole
@@ -104,6 +104,9 @@ class SessionReplay:
     agent_id: str
     trigger_content: str
     carrier: dict[str, str | None] | None
+    recipe_source: str = ""
+    source_mail_id: str | None = None
+    invocation: dict[str, Any] = field(default_factory=dict)
     responsibility: list[str] = field(default_factory=list)
     context: list[dict[str, Any]] = field(default_factory=list)
     anchor_len: int = 0
@@ -293,10 +296,10 @@ class SessionJournal:
             agent_id=str(start.get("agent_id") or self._agent_id),
             trigger_content=str(start.get("trigger_content") or ""),
             carrier=start.get("carrier"),
-            # ADR 0028: the journaled responsibility id snapshot; logs
-            # predating the field fall back to the empty set (no compat
-            # layer — an empty set just disables chain-wake protection
-            # for that one restored session).
+            recipe_source=str(start.get("recipe") or ""),
+            source_mail_id=start.get("source_mail_id"),
+            invocation=dict(start.get("invocation") or {}),
+            # Responsibility references remain independent from read state.
             responsibility=[str(mail_id) for mail_id in start.get("responsibility") or []],
             context=context,
             anchor_len=anchor_len,

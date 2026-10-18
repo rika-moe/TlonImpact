@@ -49,28 +49,8 @@ BOOT_ONLY_EDN = """\
           :actions []}]}
 """
 
-#: Phase F mixed member for the wake smoke: cheap auto-optout + cognitive
-#: respond + boot (a complete, valid total spec).
-MIXED_MEMBER_EDN = """\
-{:version 1
- :rules [{:name "auto-optout"
-          :on :mail-delivered
-          :when (content-matches? msg "退订")
-          :actions [(emit "已为您处理退订" [])]}
-         {:name "respond"
-          :on :mail-delivered
-          :when (and (addressed-to-me? msg) (not (content-matches? msg "退订")))
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}
-         {:name "boot"
-          :on :boot
-          :actions []}]}
-"""
+#: A member program with auto-optout, session response and boot rules.
+MIXED_MEMBER_EDN = '{:version 1 :rules [{:name "auto-optout" :on :mail-delivered :when (content-matches? msg "退订") :actions [(emit "已为您处理退订" [])]} {:name "respond" :on :mail-delivered :when (and (addressed-to-me? msg) (not (content-matches? msg "退订"))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]} {:name "boot" :on :boot :actions []}]}'
 
 
 class _StaticProvider(AgentInfoProvider):
@@ -111,8 +91,8 @@ def _write_behavior(p: TlonPaths, agent_id: str, text: str) -> None:
 
 
 class TestRegistryStart:
-    async def test_start_deterministic_member(self, bus, tmp_path, monkeypatch):
-        """The unified assembler starts a loop-less member inline."""
+    async def test_start_forwarding_member(self, bus, tmp_path, monkeypatch):
+        """The unified assembler starts a forwarding program."""
         p = TlonPaths(home=tmp_path)
         _write_behavior(p, "relay-1", RELAY_EDN)
 
@@ -428,13 +408,8 @@ class TestWakeOnMail:
         await _wait_for(lambda: registry.get_agent("worker-1") is not None)
         await registry.shutdown()
 
-    async def test_wake_mixed_member_scan_fires_deterministic_rule(
-        self, bus, tmp_path, monkeypatch
-    ):
-        """Smoke (phase F): a 退订 mail that arrived while a mixed member
-        slept is answered by the deterministic auto-optout on wake — the
-        woken member's unread scan runs the cheap path even though a
-        cognitive rule also matches the event."""
+    async def test_wake_scan_executes_matching_optout_rule(self, bus, tmp_path, monkeypatch):
+        """A queued opt-out mail selects the opt-out rule on wake."""
         p = TlonPaths(home=tmp_path)
         _write_behavior(p, "gu-yanxi-9", MIXED_MEMBER_EDN)
         registry = AgentRegistry(

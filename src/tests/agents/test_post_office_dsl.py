@@ -5,14 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.agents.test_stage_purity import _make_driver
 from tests.mail_helpers import make_office
 from tlon.agents.member_runtime import MemberRuntime
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
-from tlon.agents.on_complete import OnCompleteRunner
-from tlon.agents.session import AgentSession
-from tlon.agents.stages.outcome import StageOutcome
-from tlon.agents.trigger import AgentIdentity
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.events.event_bus import EventBus
 from tlon.base.paths import TlonPaths
@@ -41,7 +36,7 @@ def runtime_at(tmp_path: Path) -> MemberRuntime:
     )
 
 
-async def test_deterministic_rejection_does_not_abort_later_actions(tmp_path: Path) -> None:
+async def test_rule_rejection_does_not_abort_later_actions(tmp_path: Path) -> None:
     member = runtime_at(tmp_path)
     member._logger = MagicMock()
     await member._run_rule(member.spec.rules[0], trigger_event=None)
@@ -50,32 +45,6 @@ async def test_deterministic_rejection_does_not_abort_later_actions(tmp_path: Pa
     rejection = member._logger.warning.call_args
     assert rejection.args[0] == "dsl_mail_rejected"
     assert rejection.kwargs["invalid_recipients"] == ["missing@tlon.internal"]
-
-
-async def test_actual_on_complete_rejection_is_isolated(tmp_path: Path) -> None:
-    member = runtime_at(tmp_path)
-    runner = OnCompleteRunner(
-        AgentIdentity(id="a", name="A", address="a@tlon.internal"),
-        member.spec.rules[0],
-        MagicMock(),
-        execute_action=member._execute_action,
-    )
-    session = AgentSession(session_id="complete", trigger_content="work")
-    driver = _make_driver(MagicMock(), tmp_path)
-    driver._on_complete = runner
-    await driver._apply_outcome(
-        session,
-        None,
-        StageOutcome(
-            final_reply="done",
-            run_on_complete=True,
-            complete=True,
-        ),
-    )
-    assert session.is_completed
-    inbox = await Mailbox(TlonPaths(home=tmp_path).mail_database_file(), "b").inbox()
-    assert [mail.content for mail in inbox] == ["accepted"]
-    assert session.error_count == 0
 
 
 async def test_dsl_infrastructure_failure_is_observable_not_a_rejection(tmp_path: Path) -> None:

@@ -17,7 +17,6 @@ dependencies — the executor never holds a reference to the Agent.
 
 from typing import TYPE_CHECKING
 
-from tlon.agents.member_spec import MemberRule
 from tlon.agents.stages.outcome import MailEffect
 from tlon.agents.stages.services import EventPublisher
 from tlon.agents.trigger import AgentIdentity
@@ -37,7 +36,6 @@ class EffectExecutor:
     def __init__(
         self,
         identity: AgentIdentity,
-        rule: MemberRule,
         mailbox: Mailbox | None,
         publish: EventPublisher,
         logger: "structlog.stdlib.BoundLogger",
@@ -48,7 +46,6 @@ class EffectExecutor:
 
         Args:
             identity: Agent identity snapshot (id/name/address)
-            rule: The cognitive rule the effects are declared by
             mailbox: The agent's own mailbox (used to validate reply and
             endorsement references against its contents); None in bare
             test setups lets declared references pass through unresolved
@@ -59,7 +56,6 @@ class EffectExecutor:
                 composed mail; None for full members
         """
         self.identity = identity
-        self.rule = rule
         self.publish = publish
         self._mailbox = mailbox
         self._logger = logger

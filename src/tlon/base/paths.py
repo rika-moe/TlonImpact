@@ -236,7 +236,7 @@ class TlonPaths:
     def agent_behavior_file(self, agent_id: str) -> Path:
         """~/.tlon/{agent_id}/config/behavior.tlon (unified rules-form spec).
 
-        Every member — cognitive or deterministic — carries exactly this
+        Every member carries exactly this
         one file (phase C unified the format; ``script.tlon`` is gone).
         """
         return self._home / agent_id / "config" / "behavior.tlon"

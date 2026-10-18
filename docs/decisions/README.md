@@ -38,16 +38,17 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
+| [ADR 0042：统一成员规则与会话效果](0042-unified-member-rule-execution.md) | [runtime](../design/runtime.md)、[dsl](../design/dsl.md) | 删除规则分类和顶层 loop；普通程序组合 run-loop 与其他效果 |
 | [ADR 0041：管理员四态操作与提前唤醒](0041-admin-scheduling-controls.md) | [agent-scheduling-states](../design/agent-scheduling-states.md) | 管理员可提前唤醒、排空后等待或定时睡眠；死亡仍不可恢复 |
 | [ADR 0040：未执行草稿与预算通知的事实边界](0040-unsent-drafts-and-budget-notices.md) | [runtime](../design/runtime.md) | 修订保留未执行草稿；预算通知仅依据真实工具回执 |
 | [ADR 0039：成员四态调度与邮件工具解耦](0039-four-state-scheduling.md) | [agent-scheduling-states](../design/agent-scheduling-states.md) | active/waiting/sleeping/dead；独立结束、睡眠和退出工具 |
-| [ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相](0007-session-event-sourcing.md) | [runtime](../design/runtime.md) | 事件溯源保留；session 身份/触发语由 ADR 0028 修订，JSONL 物理存储由 ADR 0032 替代 |
-| [ADR 0008：上下文压力管理——存储不动，视图分级减压](0008-context-pressure.md) | [runtime](../design/runtime.md)、[memory](../design/memory.md) | 减压模型保留；anchor 由 ADR 0017、唤醒模板由 ADR 0028 修订 |
+| [ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相](0007-session-event-sourcing.md) | [runtime](../design/runtime.md) | 事件溯源保留；session 身份由 ADR 0028 修订，配方与执行来源由 ADR 0042 修订，JSONL 物理存储由 ADR 0032 替代 |
+| [ADR 0008：上下文压力管理——存储不动，视图分级减压](0008-context-pressure.md) | [runtime](../design/runtime.md)、[memory](../design/memory.md) | 减压模型保留；anchor 由 ADR 0017、触发内容由 ADR 0042 按程序请求构造 |
 | [ADR 0015：主动利用 LLM 前缀缓存——度量先行、稳定段靠前、显式断点](0015-prompt-caching.md) | [runtime](../design/runtime.md) | 前缀缓存与上下文排序选择 |
-| [ADR 0023：Session 级 token 预算——认知循环的第二条停机线](0023-token-budget.md) | [runtime](../design/runtime.md) | Session token 预算停机线 |
+| [ADR 0023：Session 级 token 预算——会话循环的第二条停机线](0023-token-budget.md) | [runtime](../design/runtime.md) | Session token 预算停机线 |
 | [ADR 0025：mail-history 两段式——冻结段 + 滑动段](0025-two-tier-mail-history.md) | [runtime](../design/runtime.md) | Mail-history 冻结段与滑动段 |
 | [ADR 0027：终止回复只发给人类触发者](0027-termination-reply-human-only.md) | [runtime](../design/runtime.md) | 仅回复人类的抑制语义保留；单一触发者锚点由 ADR 0028 责任集替代 |
-| [ADR 0028：收件箱驱动的单 session 模型](0028-inbox-driven-single-session.md) | [runtime](../design/runtime.md)、[mail](../design/mail.md) | 收件箱驱动单 session；替代旧来信队列/触发邮件模型 |
+| [ADR 0028：收件箱驱动的单 session 模型](0028-inbox-driven-single-session.md) | [runtime](../design/runtime.md)、[mail](../design/mail.md) | 持久邮箱与单会话不变量保留；触发及执行由 ADR 0042 修订 |
 | [ADR 0032：SQLite session journal——事件与生命周期元数据同一事实存储](0032-sqlite-session-journal.md) | [runtime](../design/runtime.md)、[memory](../design/memory.md) | SQLite journal；替代 ADR 0007 的 JSONL 存储，保留事件溯源不变式 |
 
 ## 通信与记忆
@@ -56,7 +57,7 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 |---|---|---|
 | [ADR 0009：Working Memory 退役——session journal 是唯一交互真相](0009-working-memory-retirement.md) | [memory](../design/memory.md)、[runtime](../design/runtime.md) | Working Memory 退役保留；摘要管线由 ADR 0017 部分替代，journal 存储由 ADR 0032 修订 |
 | [ADR 0017：记忆系统重设计——claim 模型 + 向量检索 + JIT 注入，整体替换旧 episodic 记忆](0017-claim-based-memory.md) | [memory](../design/memory.md)、[runtime](../design/runtime.md) | Claim 模型与检索；journal 物理存储由 ADR 0032 修订 |
-| [ADR 0029：认知成员转发走 forwardMail 工具](0029-forwardmail-tool.md) | [mail](../design/mail.md) | 转发归因、线程及引用选择保留；postmaster 失败通知由 ADR 0030 废止 |
+| [ADR 0029：成员转发走 forwardMail 工具](0029-forwardmail-tool.md) | [mail](../design/mail.md) | 转发归因、线程及引用选择保留；规则范围由 ADR 0042 修订，失败通知由 ADR 0030 修订 |
 | [ADR 0030：SQLite 邮局与明确的投信契约](0030-sqlite-post-office.md) | [mail](../design/mail.md) | SQLite 邮局、事务提交与明确回执；旧验收流水作为历史证据保留 |
 
 ## 行为与扩展

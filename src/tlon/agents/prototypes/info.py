@@ -28,9 +28,8 @@ class PrototypeInfo:
 
     ``trusted`` defaults to True for user-installed prototypes (handwritten
     implies trusted); only the staging area writes ``:trusted false``.
-    ``runtime`` is **derived** from the behavior file's rules (phase C: any
-    rule with a ``:loop`` ⇒ ``"react"``, else ``"script"``) — it is never a
-    metadata keyword anymore. ``parameters`` (phase F) is the template's
+    Metadata describes the program without assigning a member category.
+    ``parameters`` is the template's
     declared ``:parameters`` (empty for a concrete behavior), so callers
     can prompt for values before instantiation.
 
@@ -117,7 +116,7 @@ def _read_metadata(proto_dir: Any) -> PrototypeInfo:
 
     No runtime is derived or declared (ADR 0006, unified member model):
     a prototype is a behavior template, not a member class — whether a
-    spawned member gets the cognitive engine follows from its spec.
+    spawned member invokes session services through its program.
     """
     name = proto_dir.name
     parameters = _read_parameters(proto_dir)

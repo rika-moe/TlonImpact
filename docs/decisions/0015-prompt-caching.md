@@ -33,7 +33,7 @@ litellm 1.98 已提供所需基础设施：各家缓存 usage 字段归一化到
 
 ### 3. Anthropic 系显式断点
 
-`LLMClient.chat()` 新增 `cache_prefix_len` 参数（调用方声明稳定前缀长度，认知循环传 `session.anchor_len`）。仅当 provider ∈ {anthropic, bedrock, vertex_ai} 时注入两个断点（上限四个）：
+`LLMClient.chat()` 新增 `cache_prefix_len` 参数（调用方声明稳定前缀长度，会话循环传 `session.anchor_len`）。仅当 provider ∈ {anthropic, bedrock, vertex_ai} 时注入两个断点（上限四个）：
 
 - **system 消息**——Anthropic 缓存层级 tools → system → messages，system 断点同时覆盖工具 schema；
 - **锚点最后一条消息**——护住跨会话稳定前缀。

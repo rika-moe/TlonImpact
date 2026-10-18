@@ -1,15 +1,1 @@
-{:version 1
- :execution {:level :L0}
- :rules [{:name "respond"
-          :on :mail-delivered
-          :when (or (addressed-to-me? msg) (cc-ed? msg))
-          :loop {:context {:sections [(persona) (protocol) (current-task) (mail-history 5) (thread-recap)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
-                 :max-iterations 3
-                 :max-consecutive-errors 3
-                 :max-tokens 32000
-                 :reflect {:enabled true :interval-minutes 15}}}
-         {:name "boot"
-          :on :boot
-          :actions []}]}
+{:version 1 :execution {:level :L0} :rules [{:name "respond" :on :mail-delivered :when (or (addressed-to-me? msg) (cc-ed? msg)) :actions [(run-loop (quote {:context {:sections [(persona) (protocol) (current-task) (mail-history 5) (thread-recap)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?)) :max-iterations 3 :max-consecutive-errors 3 :max-tokens 32000 :reflect {:enabled true :interval-minutes 15}}))]} {:name "boot" :on :boot :actions []}]}

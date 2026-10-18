@@ -21,9 +21,9 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ### 效果
 
-`spawn`、`emit`、`start`、`stop`、`start-all`、`forward` 登记为 `pure=False`，只构造请求。新增效果需要同时定义参数校验、请求执行分支和必要的权限/配额检查。
+`spawn`、`emit`、`start`、`stop`、`start-all`、`forward`、`run-loop`、`mark-read` 登记为 `pure=False`，只构造请求。新增效果需要同时定义参数校验、请求执行分支和必要的权限/配额检查。
 
-确定规则按 form 返回值收集请求；认知规则的完成动作使用 collector 捕获多动作体中的请求。两条路径均由宿主执行，表达式不能同步观察自己所声明效果的执行结果。完整运行流程见 [runtime](runtime.md)。
+所有动作统一由 collector 捕获，包括函数、条件和传统循环中的请求。会话请求也是普通效果；同一程序可以先执行会话，再转发原始邮件。表达式仍不能同步观察自己效果的实际结果。完整流程见 [runtime](runtime.md)。
 
 ### 环境
 
@@ -31,18 +31,18 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 | 语境 | 环境契约 | 可见内容 |
 |---|---|---|
-| 规则门控、确定动作 | `RuleEnv` | `msg`、`event`、`self` |
-| 认知规则完成动作 | `OnCompleteEnv` | `msg`（当前为 nil）、`result`、`self`；没有 `event` |
+| 规则门控和动作 | `RuleEnv` | `msg`、`event`、`self` |
+
 | 循环终止条件 | `LoopEnv` | `self`、`state`、`limits` |
 | stage 条件 | `StageCondEnv` | `state`、`scratch`、`round` |
 
-ADR 0028 的单 session 模型没有唯一触发邮件，因此完成动作不能把 `msg` 当作原始来信。加载期动作作用域是两条执行路径的并集，不代表每条路径都绑定全部符号；作者应遵守对应运行环境。
+规则始终保留原始事件与邮件引用。会话完成后继续的是已构造的效果序列，不新增完成动作求值环境，也不绑定 `result`。
 
 社会政策是独立的 pull 型求值语境，其 hook 数据由调用点物化，见 [society-policy](society-policy.md)。
 
 ### 注册表
 
-成员、循环和 stage 条件分别使用 `make_member_builtins`、`LOOP_BUILTINS`、`STAGE_COND_BUILTINS` 等注册表。加载校验与运行时必须使用相匹配的词汇。受信能力以 closure-backed builtin 注入成员门控与确定动作注册表，函数体消耗调用方 fuel/depth；循环条件、stage 条件与认知完成动作仍有接线缺口，机制及限制见 [capabilities](capabilities.md)。
+成员动作、会话终止条件和 stage 条件分别使用 `make_member_builtins`、`LOOP_BUILTINS`、`STAGE_COND_BUILTINS`。加载校验与执行须使用相同词汇；受信能力注入成员词汇，暂不扩展到固定的会话条件注册表，详见 [capabilities](capabilities.md)。
 
 ## 当前政策数据的归属
 
@@ -52,7 +52,7 @@ ADR 0028 的单 session 模型没有唯一触发邮件，因此完成动作不�
 |---|---|---|
 | 启停、噪声熔断 | Adam 内置 spec | 注册表与健康事实生产 |
 | 检索权重、冲突阈值、蒸馏与反思参数 | 成员 `memory/config.json`、spec `:reflect` | memory / runtime |
-| 终止回信措辞 | spec `:loop/:replies`，未声明时使用引擎默认措辞 | runtime 的终止路径 |
+| 终止回信措辞 | 会话配方 `:replies`，未声明时使用引擎默认措辞 | runtime 的终止路径 |
 | fitness 与 trust | `policy.tlon` hook | society-policy |
 | 复合能力 | 受信能力 artifact | 加载准入与效果执行 |
 

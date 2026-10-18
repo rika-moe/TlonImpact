@@ -1,7 +1,6 @@
 """Write an LLM-authored behavior prototype to the staging area (stage 4a).
 
-Supports both rule forms — cognitive rules carrying a ``:loop`` session
-and loop-less deterministic rules — in one unified rules-form format
+All rules use one event-driven program format
 (phase C). Unified member model (ADR 0006): prototypes carry no persona —
 a member's persona files are seeded at creation and member-owned
 afterwards (self-editable via ``updatePersona``, ADR 0024), never part of
@@ -18,29 +17,17 @@ from tlon.tools.prototypes.ports import PrototypeError, PrototypeSummary
 logger = get_logger(__name__)
 
 _BEHAVIOR_HINT = (
-    "behavior 必须是 v1 schema 的 EDN map：:version 1 必填；"
-    ":rules [{:name str :on event-keyword :when (纯谓词表达式，可选) "
-    ":loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) "
-    "(current-task) (mail-history N) (thread-recap)]} "
-    ":stages [(think) (act)] "
-    ":until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?)) "
-    ":max-iterations int :max-consecutive-errors int :max-tokens int "
-    ":reflect {:enabled bool :interval-minutes int}} "
-    ":actions [(动作表达式) ...]} ...]。认知规则（带 :loop）的默认命中谓词是 "
-    "(or (addressed-to-me? msg) (cc-ed? msg))。"
-    "可混排（cost routing）：一份 spec 至多一条带 :loop 的认知规则，可外加若干"
-    "确定性规则（无 :loop）在前——确定性规则先处理便宜路径，认知规则的 :when "
-    "用 (not ...) 排除它已处理的（deflection）。"
+    "behavior 必须是 v1 EDN map：{:version 1 :rules [{:name str :on event-keyword-or-:boot "
+    ":when (可选纯谓词) :actions [(动作表达式) ...]} ...]}。"
+    "所有规则使用相同的执行机制，普通 if、while、函数可以组合动作。"
+    "需要运行会话时在动作中使用 (run-loop (quote {:context {:sections [(persona) (protocol) "
+    "(lessons) (skills) (knowledge) (current-task) (mail-history 20) (thread-recap)]} "
+    ":stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?) "
+    "(token-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 "
+    ":reflect {:enabled false :interval-minutes 15}}))。"
+    "会话是普通效果请求，可由任意规则调用；规则顶层没有 :loop。"
+    "forward 使用实际触发邮件；mark-read 显式标读触发邮件。"
     "可选 :parameters 声明模板变量（:type :string 或 :string-list），引用时用 ${变量名}。"
-)
-
-_SCRIPT_HINT = (
-    "behavior 必须是 v1 schema 的 EDN map：:version 1 必填；"
-    ":rules [{:name str :on event-keyword-or-:boot "
-    ":when (纯谓词表达式，可选) :actions [(动作表达式) ...]} ...]。"
-    "确定性规则（无 :loop）：命中后直接执行 :actions（start/stop/forward）。"
-    "可选 :parameters 声明模板变量（:type :string 或 :string-list），"
-    "引用时用 ${变量名}。"
 )
 
 # Signature of the injected near-kin check (): (behavior text,
@@ -82,9 +69,7 @@ def _check_near_kin(
 class WritePrototypeTool(Tool):
     """Tool to author a new behavior prototype (pure-data spec).
 
-    Accepts both rule forms (a cognitive rule with a ``:loop``, or
-    loop-less deterministic rules) — the output is one unified rules-form
-    behavior.tlon either way. Prototypes carry no persona (unified member
+    Accepts one unified rules-form behavior.tlon program. Prototypes carry no persona (unified member
     model, ADR 0006). The prototype lands in
     ``~/.tlon/prototypes-staging/`` marked untrusted: it cannot be spawned
     until a human approves it (ops/WebUI — the Gatekeeper model of
@@ -104,11 +89,10 @@ class WritePrototypeTool(Tool):
             name="writePrototype",
             description=(
                 "创作一个新的 behavior prototype（纯行为规约，无人格），写入 staging 区。"
-                "两种规则形态都输出统一的 rules-form behavior.tlon："
-                "带 :loop 的规则（挂认知循环）与无 :loop 的规则（命中后直接执行 :actions）。"
+                "规则统一使用 on、when、actions；会话通过 run-loop 动作调用。"
                 "新 prototype 默认不可信：需人类批准（ops/WebUI）后才能被 spawnAgent 使用。"
                 "behavior 是 v1 schema 的纯数据 EDN（只描述行为，无法授予工具）。"
-                "无 :loop 的规则可声明 :parameters 以支持 spawn 时参数化。"
+                "可声明 :parameters 以支持 spawn 时参数化。"
                 "可选 parent 记录谱系（从哪个既有原型派生），generation 由服务端推导。"
             ),
             parameters={
@@ -117,8 +101,8 @@ class WritePrototypeTool(Tool):
                     "behavior": {
                         "type": "string",
                         "description": (
-                            "行为规约（EDN 字符串）。统一 rules-form：带 :loop 的规则是"
-                            "认知规则，无 :loop 的是确定性规则（可选 :parameters，引用变量用 ${name}）"
+                            "行为规约（EDN 字符串）。统一 on/when/actions；会话使用 run-loop 动作。"
+                            "可选 :parameters，引用变量用 ${name}。"
                         ),
                     },
                     "display_name": {
@@ -208,7 +192,7 @@ class WritePrototypeTool(Tool):
         proposal_note: str | None = kwargs.get("proposal_note") or None
         lessons: str | None = kwargs.get("lessons") or None
 
-        hint = _BEHAVIOR_HINT if ":loop" in behavior else _SCRIPT_HINT
+        hint = _BEHAVIOR_HINT
         # Near-kin check (): the exempted parent is the explicit
         # ``parent`` argument when given, else the author's own prototype
         # (explicit parent > own prototype).

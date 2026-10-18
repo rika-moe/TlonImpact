@@ -34,12 +34,11 @@ def load_member_spec(
     other members are unaffected).
 
     ``builtins`` is the registry validated against — host-less by default
-    (matching the deterministic branch: script-instance specs may not use
-    the host predicates, those are Adam's vocabulary). Adam passes its host
-    builtins explicitly.
+    Host query words are available only when explicitly injected by the
+    caller. Adam passes its registry query builtins explicitly.
 
     The source hash is computed over the raw file bytes for **every**
-    member (sha256, first 12 hex chars), not just cognitive ones — one
+    member (sha256, first 12 hex chars) — one
     semantics across the unified format.
 
     Raises:

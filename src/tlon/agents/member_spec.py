@@ -1,21 +1,7 @@
-"""MemberSpec — the unified member behavior spec (semantic authority).
+"""Member behavior: event gates and ordinary DSL action expressions.
 
-Per the unified DSL design (docs/design/dsl.md), the two legacy
-specs — AgentSpec (``behavior.tlon``, the ReactAgent cognitive loop) and
-ScriptSpec (``script.tlon``, the ScriptMember deterministic rules) —
-converge on a single record::
-
-    rule = :on + :when + optional :loop + :actions
-
-This module is the data model of that merge: a typed, pure-data dataclass
-tree plus a serialization frontend — EDN is only syntax, the dataclass is
-the semantics authority. The legacy specs and their projections
-(``agents/spec_mapping.py``) were deleted in phase C: the loader parses
-the single rules-form ``behavior.tlon`` directly into MemberSpec, the two
-runtimes converge on one interpreter (``agents/member_runtime.py``). The EDN front
-performs structural validation (types, form shapes); the builtin-scope
-validation of ``:when`` / ``:actions`` / ``:until`` / stage and section
-forms lives in the single validator :func:`validate_member_spec`.
+SessionRecipe is independent request data for the run-loop action. A member
+can invoke several recipes from different rules, conditions, or loops.
 """
 
 from dataclasses import dataclass, field
@@ -73,13 +59,13 @@ def has_section(sections: tuple[Form, ...], name: str) -> bool:
 
 @dataclass(frozen=True)
 class ReflectSpec:
-    """Periodic background memory audit settings (on a cognitive loop)."""
+    """Periodic background memory audit settings (for a session recipe)."""
 
     enabled: bool
     interval_minutes: int
 
 
-#: ``:loop/:replies`` 允许的键（加载期 total 校验，未知键拒载）：三条面向
+#: ``:recipe/:replies`` 允许的键（加载期 total 校验，未知键拒载）：三条面向
 #: 用户的终止回信措辞。引擎内置文案（``loop_driver`` 的常量）是未声明键的兜底。
 REPLY_KINDS = frozenset({"iteration_limit", "error", "timeout"})
 
@@ -94,8 +80,8 @@ class MemberSpecValidationError(ValueError):
 
 
 @dataclass(frozen=True)
-class MemberLoop:
-    """The cognitive session a rule runs before its actions.
+class SessionRecipe:
+    """Configuration for one requested session.
 
     ``context_sections`` is the section vector the engine assembles into the
     LLM context; ``stages`` the stage vector and ``until`` the termination
@@ -103,8 +89,7 @@ class MemberLoop:
     ``max_tokens`` are the engine's two hard ceilings (ADR 0023): the
     iteration count and the session-cumulative stage-LLM token budget,
     whichever is exhausted first ends the session. ``reflect`` is the
-    session-completion reflection setting, folded here from the
-    legacy ``OnCompleteSpec``. ``fuel`` (phase D) is the self-declared
+    session reflection setting. ``fuel`` (phase D) is the self-declared
     budget of the iron-law revision (docs/design/dsl-agents.md): it caps
     the DSL evaluation of the loop's ``:until`` and stage conditions
     (``None`` = the engine default). Bounded above by
@@ -125,6 +110,16 @@ class MemberLoop:
     replies: dict[str, str] = field(default_factory=dict)
 
     # ── Serialization ──
+
+    @classmethod
+    def from_edn(cls, data: Any) -> "SessionRecipe":
+        """Parse an independent EDN session recipe."""
+        return _recipe_from(_normalize_data(data), "run-loop")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SessionRecipe":
+        """Parse the journal's plain-data representation."""
+        return _recipe_from(data, "run-loop")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict (snake_case keys)."""
@@ -168,30 +163,15 @@ class MemberLoop:
 
 @dataclass(frozen=True)
 class MemberRule:
-    """One policy rule: on an event, gated by a pure predicate, act.
+    """An event, optional pure gate, and a sequence of ordinary DSL expressions.
 
-    ``on`` is the triggering event type; ``None`` marks a ``:boot`` rule
-    that runs once after subscriptions are in place. ``when`` is an
-    optional pure predicate (None = always true) evaluated under the
-    unified member env scope ``{msg, event, self}`` (phase C). ``loop``
-    when present makes this a cognitive rule: the engine runs the session
-    first, then ``actions``; with no loop it is a deterministic rule that
-    runs ``actions`` directly. Actions are collected as data
-    (ActionRequest) and executed by the engine.
-
-    ``fuel`` (phase D) is the rule's self-declared evaluation budget: for
-    a deterministic rule the ``:when`` gate and the ``:actions`` share it
-    as one combined counter; a cognitive rule's gate and completion
-    actions are temporally separated, so each phase is capped at
-    ``fuel``. ``None`` uses the engine defaults (when 200, actions 1000).
-    Bounded above by :data:`tlosure.eval.MAX_FUEL` — a spec exceeding
-    it is rejected at load (total semantics).
+    The gate and actions share one optional evaluation fuel allowance.
+    Session execution is an effect requested from actions, like mail delivery.
     """
 
     name: str
     on: EventType | None
     when: Form | None
-    loop: "MemberLoop | None"
     actions: tuple[Form, ...]
     fuel: int | None = None
 
@@ -203,7 +183,6 @@ class MemberRule:
             "name": self.name,
             "on": _on_to_str(self.on),
             "when": dumps(self.when) if self.when is not None else None,
-            "loop": self.loop.to_dict() if self.loop is not None else None,
             "actions": [dumps(form) for form in self.actions],
             "fuel": self.fuel,
         }
@@ -217,8 +196,6 @@ class MemberRule:
         }
         if self.when is not None:
             data[Keyword("when")] = self.when
-        if self.loop is not None:
-            data[Keyword("loop")] = self.loop.to_edn_data()
         if self.fuel is not None:
             data[Keyword("fuel")] = self.fuel
         return data
@@ -275,7 +252,7 @@ class MemberSpec:
         section expressions are only shape-checked here — builtin-scope
         validation happens in :func:`validate_member_spec` (called by the
         loader, never by this factory, so roundtrips of host-dependent
-        deterministic rules are not rejected).
+        rules are not rejected).
         """
         if "llm" in data:
             raise MemberSpecValidationError(
@@ -347,78 +324,36 @@ def validate_member_spec(
     actions validate as a sequence against the *full* member registry
     under :data:`~tlon.agents.vocabulary.ACTION_SCOPE` via
     :func:`~tlon.agents.vocabulary.validate_member_actions` (ADR 0021:
-    no syntax partition, sequential ``defn`` threading); a cognitive
-    rule's sections, stages and ``:until`` validate against the
-    whitelisted names / loop builtins.
+    no syntax partition, sequential ``defn`` threading). Literal session
+    recipes are checked against the section, stage, and loop vocabulary.
 
     ``builtins`` is the registry to validate against (host predicates
     included, e.g. Adam's ``sleeping?``); it defaults to the host-less
     unified registry. This is the loader's gate, never
     ``from_dict``/``from_edn`` — the EDN front stays structural so that
-    serialization roundtrips of host-dependent deterministic rules are
+    serialization roundtrips of host-dependent rules are
     not rejected. Returns ``member`` unchanged (usable as a chainable
     gate).
     """
-    cognitive = [rule for rule in member.rules if rule.loop is not None]
-    if len(cognitive) > 1:
-        raise MemberSpecValidationError(
-            "at most one cognitive rule per member (D6.7): "
-            f"spec declares {len(cognitive)} rules with :loop — "
-            "the cognitive engine binds to a single rule"
-        )
+    names = [rule.name for rule in member.rules]
+    if len(names) != len(set(names)):
+        raise MemberSpecValidationError("rule names must be unique within one member")
     registry = builtins or make_member_builtins()
     pure = {name: builtin for name, builtin in registry.items() if builtin.pure}
     for rule in member.rules:
         label = f"rule {rule.name!r}"
         _validate_when(rule, label, pure)
-        if rule.loop is not None:
-            _validate_cognitive(rule, label)
-            _reject_cognitive_forward(rule, label)
         _validate_actions(rule, label, registry)
+        _validate_literal_recipes(rule.actions, label)
         _validate_fuel(rule, label)
     return member
-
-
-def _reject_cognitive_forward(rule: MemberRule, label: str) -> None:
-    """Reject a cognitive rule whose ``:actions`` statically call ``forward``.
-
-    The DSL ``forward`` action reads the triggering event's mail — which
-    no longer exists on the cognitive path (ADR 0028 retired the trigger
-    mail), so it silently no-ops there. Forwarding is a runtime decision
-    carried by the ``forwardMail`` tool instead (ADR 0029); the DSL
-    action stays reserved for deterministic rules. The walk is syntactic:
-    any nested form headed by the ``forward`` symbol rejects the spec
-    (tlosure has no quote form, so no false positives from quoting).
-    """
-    if _calls_forward(rule.actions):
-        raise MemberSpecValidationError(
-            f"{label}: 认知规则的 :actions 不允许 forward——触发邮件已退役（ADR 0028），"
-            "forward 在认知路径上静默失效；认知成员请用 forwardMail 工具（ADR 0029）"
-        )
-
-
-def _calls_forward(forms: tuple[Form, ...]) -> bool:
-    """Whether any (nested) action form is headed by the ``forward`` symbol."""
-
-    def scan(node: Any) -> bool:
-        if isinstance(node, Form):
-            if node and isinstance(node[0], Symbol) and str(node[0]) == "forward":
-                return True
-            return any(scan(item) for item in node)
-        if isinstance(node, list):
-            return any(scan(item) for item in node)
-        if isinstance(node, dict):
-            return any(scan(value) for value in node.values())
-        return False
-
-    return any(scan(form) for form in forms)
 
 
 def _validate_fuel(rule: MemberRule, label: str) -> None:
     """Total-semantics fuel checks (phase D): positive, under the engine cap.
 
     ``None`` means "use the engine defaults" and passes. A rule-level
-    ``:fuel`` or a loop-level ``:loop/:fuel`` that is non-positive or
+    ``:fuel`` that is non-positive or
     exceeds :data:`~tlosure.eval.MAX_FUEL` rejects the spec at load.
     """
     if rule.fuel is not None:
@@ -429,15 +364,6 @@ def _validate_fuel(rule: MemberRule, label: str) -> None:
         if rule.fuel > MAX_FUEL:
             raise MemberSpecValidationError(
                 f"{label}: :fuel {rule.fuel} exceeds engine hard cap {MAX_FUEL}"
-            )
-    if rule.loop is not None and rule.loop.fuel is not None:
-        if rule.loop.fuel <= 0:
-            raise MemberSpecValidationError(
-                f"{label}: :loop/:fuel must be a positive int, got {rule.loop.fuel}"
-            )
-        if rule.loop.fuel > MAX_FUEL:
-            raise MemberSpecValidationError(
-                f"{label}: :loop/:fuel {rule.loop.fuel} exceeds engine hard cap {MAX_FUEL}"
             )
 
 
@@ -464,16 +390,38 @@ def _validate_actions(rule: MemberRule, label: str, registry: dict[str, Builtin]
         raise MemberSpecValidationError(f"{label}: invalid action: {e}") from e
 
 
-def _validate_cognitive(rule: MemberRule, label: str) -> None:
-    """Validate a cognitive rule's loop: sections, stages, until."""
-    loop = rule.loop
-    assert loop is not None
-    _validate_sections(loop.context_sections, label)
-    _validate_stages(loop.stages, label)
+def validate_session_recipe(recipe: SessionRecipe, label: str = "run-loop") -> SessionRecipe:
+    """Validate one session request independently of its rule and event."""
+    _validate_sections(recipe.context_sections, label)
+    _validate_stages(recipe.stages, label)
+    if recipe.fuel is not None and not 0 < recipe.fuel <= MAX_FUEL:
+        raise MemberSpecValidationError(
+            f"{label}: :fuel must be positive and under hard cap {MAX_FUEL}"
+        )
     try:
-        validate_form(loop.until, LOOP_BUILTINS, scope=set())
+        validate_form(recipe.until, LOOP_BUILTINS, scope=set())
     except EvalError as e:
-        raise MemberSpecValidationError(f"{label}: invalid :loop/:until expression: {e}") from e
+        raise MemberSpecValidationError(f"{label}: invalid :until expression: {e}") from e
+    return recipe
+
+
+def _validate_literal_recipes(value: Any, label: str) -> None:
+    """Check literal session recipes wherever calls occur, leaving data quoted."""
+    if isinstance(value, Form):
+        if value and value[0] == Symbol("quote"):
+            return
+        if len(value) == 2 and value[0] == Symbol("run-loop"):
+            argument = value[1]
+            if isinstance(argument, Form) and len(argument) == 2 and argument[0] == Symbol("quote"):
+                validate_session_recipe(SessionRecipe.from_edn(argument[1]), label)
+        for item in value:
+            _validate_literal_recipes(item, label)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_literal_recipes(item, label)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _validate_literal_recipes(item, label)
 
 
 def _validate_sections(sections: tuple[Form, ...], label: str) -> None:
@@ -692,8 +640,8 @@ def _warn_unknown_keys(raw: dict[str, Any], section: str) -> None:
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "top": frozenset({"version", "source_hash", "execution", "rules"}),
-    "rule": frozenset({"name", "on", "when", "loop", "actions", "fuel"}),
-    "loop": frozenset(
+    "rule": frozenset({"name", "on", "when", "actions", "fuel"}),
+    "recipe": frozenset(
         {
             "context",
             "stages",
@@ -741,12 +689,15 @@ def _rule_from(item: Any, rule_name: str) -> MemberRule:
         raise MemberSpecValidationError(
             f"rule {rule_name!r}: must be a map, got {_type_name(item)}: {item!r}"
         )
+    if "loop" in item:
+        raise MemberSpecValidationError(
+            "rule :loop was removed; use (run-loop (quote {...})) in :actions"
+        )
     _warn_unknown_keys(item, "rule")
     return MemberRule(
         name=_read(item, "name", path=f"rule {rule_name!r}: :name", kind=str),
         on=_on_from(_require(item, "on", f"rule {rule_name!r}: :on"), rule_name),
         when=_expr_from(item.get("when"), ":when", rule_name, required=False),
-        loop=_loop_from(item.get("loop"), rule_name),
         actions=_actions_from(item.get("actions"), rule_name),
         fuel=_read_optional_int(item, "fuel", f"rule {rule_name!r}: :fuel"),
     )
@@ -838,67 +789,65 @@ def _forms_from(value: Any, path: str, rule_name: str) -> tuple[Form, ...]:
     return tuple(forms)
 
 
-def _loop_from(value: Any, rule_name: str) -> "MemberLoop | None":
-    """Optional :loop section — the cognitive session (None = deterministic)."""
-    if value is None:
-        return None
+def _recipe_from(value: Any, rule_name: str) -> SessionRecipe:
+    """Read a session recipe map."""
     if not isinstance(value, dict):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :loop must be a map, got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: recipe must be a map, got {_type_name(value)}: {value!r}"
         )
-    _warn_unknown_keys(value, "loop")
-    raw_context = _require(value, "context", f"rule {rule_name!r}: :loop/:context")
+    _warn_unknown_keys(value, "recipe")
+    raw_context = _require(value, "context", f"rule {rule_name!r}: :recipe/:context")
     if not isinstance(raw_context, dict):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :loop/:context must be a map, "
+            f"rule {rule_name!r}: :recipe/:context must be a map, "
             f"got {_type_name(raw_context)}: {raw_context!r}"
         )
     _warn_unknown_keys(raw_context, "context")
-    return MemberLoop(
+    return SessionRecipe(
         context_sections=_forms_from(
             _require(
                 raw_context,
                 "sections",
-                f"rule {rule_name!r}: :loop/:context/:sections",
+                f"rule {rule_name!r}: :recipe/:context/:sections",
             ),
-            ":loop/:context/:sections",
+            ":recipe/:context/:sections",
             rule_name,
         ),
         stages=_forms_from(
-            _require(value, "stages", f"rule {rule_name!r}: :loop/:stages"),
-            ":loop/:stages",
+            _require(value, "stages", f"rule {rule_name!r}: :recipe/:stages"),
+            ":recipe/:stages",
             rule_name,
         ),
-        until=_required_expr(value.get("until"), ":loop/:until", rule_name),
+        until=_required_expr(value.get("until"), ":recipe/:until", rule_name),
         max_iterations=_read(
             value,
             "max_iterations",
-            f"rule {rule_name!r}: :loop/:max-iterations",
+            f"rule {rule_name!r}: :recipe/:max-iterations",
             kind=int,
         ),
         max_consecutive_errors=_read(
             value,
             "max_consecutive_errors",
-            f"rule {rule_name!r}: :loop/:max-consecutive-errors",
+            f"rule {rule_name!r}: :recipe/:max-consecutive-errors",
             kind=int,
         ),
         max_tokens=_read(
             value,
             "max_tokens",
-            f"rule {rule_name!r}: :loop/:max-tokens",
+            f"rule {rule_name!r}: :recipe/:max-tokens",
             kind=int,
         ),
         reflect=_reflect_from(
-            _require(value, "reflect", f"rule {rule_name!r}: :loop/:reflect"),
+            _require(value, "reflect", f"rule {rule_name!r}: :recipe/:reflect"),
             rule_name,
         ),
-        fuel=_read_optional_int(value, "fuel", f"rule {rule_name!r}: :loop/:fuel"),
+        fuel=_read_optional_int(value, "fuel", f"rule {rule_name!r}: :recipe/:fuel"),
         replies=_replies_from(value.get("replies"), rule_name),
     )
 
 
 def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
-    """Optional :loop/:replies map — termination reply wording overrides.
+    """Optional :recipe/:replies map — termination reply wording overrides.
 
     Total semantics (strict like stage opts): unknown kinds and non-string
     or empty values reject the spec at load. The texts are plain data,
@@ -908,19 +857,19 @@ def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
         return {}
     if isinstance(value, Form) or not isinstance(value, dict):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :loop/:replies must be a map, got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: :recipe/:replies must be a map, got {_type_name(value)}: {value!r}"
         )
     replies: dict[str, str] = {}
     for key, text in value.items():
         if key not in REPLY_KINDS:
             allowed = sorted(k.replace("_", "-") for k in REPLY_KINDS)
             raise MemberSpecValidationError(
-                f"rule {rule_name!r}: unknown :loop/:replies key "
+                f"rule {rule_name!r}: unknown :recipe/:replies key "
                 f":{str(key).replace('_', '-')} (allowed: {allowed})"
             )
         if not isinstance(text, str) or not text:
             raise MemberSpecValidationError(
-                f"rule {rule_name!r}: :loop/:replies/:{str(key).replace('_', '-')} "
+                f"rule {rule_name!r}: :recipe/:replies/:{str(key).replace('_', '-')} "
                 f"must be a non-empty string, got {_type_name(text)}: {text!r}"
             )
         replies[str(key)] = text
@@ -930,15 +879,17 @@ def _replies_from(value: Any, rule_name: str) -> dict[str, str]:
 def _reflect_from(value: Any, rule_name: str) -> ReflectSpec:
     if not isinstance(value, dict):
         raise MemberSpecValidationError(
-            f"rule {rule_name!r}: :loop/:reflect must be a map, got {_type_name(value)}: {value!r}"
+            f"rule {rule_name!r}: :recipe/:reflect must be a map, got {_type_name(value)}: {value!r}"
         )
     _warn_unknown_keys(value, "reflect")
     return ReflectSpec(
-        enabled=_read(value, "enabled", f"rule {rule_name!r}: :loop/:reflect/:enabled", kind=bool),
+        enabled=_read(
+            value, "enabled", f"rule {rule_name!r}: :recipe/:reflect/:enabled", kind=bool
+        ),
         interval_minutes=_read(
             value,
             "interval_minutes",
-            f"rule {rule_name!r}: :loop/:reflect/:interval-minutes",
+            f"rule {rule_name!r}: :recipe/:reflect/:interval-minutes",
             kind=int,
         ),
     )

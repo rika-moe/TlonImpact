@@ -9,7 +9,6 @@ has no archive to inspect and is skipped. Historical records remain unchanged.
 from datetime import UTC, datetime
 from typing import Any
 
-from tlon.agents.member_spec import MemberSpec
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.component import Component
 from tlon.base.config import yaml_load_file
@@ -24,7 +23,6 @@ from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.tasks.manager import TaskManager
 from tlon.tools.tasks.models import TaskStatus
-from tlosure.edn import loads
 
 logger = get_logger(__name__)
 
@@ -117,21 +115,6 @@ class RetirementCeremony(Component, Device):
 
     # ── Offline inventory (the member runtime is already shut down) ──
 
-    def _is_cognitive(self, agent_id: str) -> bool:
-        """Whether the archived spec makes this a cognitive member (any
-        rule carries a ``:loop``). Same skip discipline as the
-        LessonsDistiller: a missing/unparseable behavior file means there
-        is no memory worth reading."""
-        behavior_file = self._paths.agent_behavior_file(agent_id)
-        if not behavior_file.exists():
-            return False
-        try:
-            spec = MemberSpec.from_edn(loads(behavior_file.read_text(encoding="utf-8")))
-        except Exception as e:
-            logger.warning("retirement_spec_unreadable", agent_id=agent_id, error=str(e))
-            return False
-        return any(rule.loop is not None for rule in spec.rules)
-
     def _open_tasks(self, agent_id: str) -> list[str]:
         """Unfinished task titles (todo/doing/paused) from the archive."""
         tasks = TaskManager(agent_id, self._paths)
@@ -177,10 +160,7 @@ class RetirementCeremony(Component, Device):
         return open_threads
 
     async def _memory_digest(self, agent_id: str) -> dict[str, Any] | None:
-        """The archived memory digest for cognitive members; None for
-        non-cognitive ones (no memory worth reading)."""
-        if not self._is_cognitive(agent_id):
-            return None
+        """Read existing archived memory, independent of the member's program."""
         memory = MemoryManager(
             agent_id,
             MemoryConfig(),
@@ -188,4 +168,5 @@ class RetirementCeremony(Component, Device):
             tlon_paths=self._paths,
         )
         journal = SessionJournal(agent_id, self._paths)
-        return await memory.get_memory_digest(journal)
+        digest = await memory.get_memory_digest(journal)
+        return digest if digest["claim_count"] else None

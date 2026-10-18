@@ -23,7 +23,6 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.tools.agents.write_prototype import (
     _BEHAVIOR_HINT,
-    _SCRIPT_HINT,
     NearKinCheck,
     _check_near_kin,
 )
@@ -233,7 +232,7 @@ class ProposeBehaviorTool(Tool):
                 message="起草失败：LLM 响应不含 spec，请重试",
             )
 
-        hint = _BEHAVIOR_HINT if ":loop" in draft else _SCRIPT_HINT
+        hint = _BEHAVIOR_HINT
         # Near-kin rejection () sits after drafting: the draft text is
         # the thing being compared, so the check cannot run earlier. The
         # proposal's parent is always the member's own prototype, which is

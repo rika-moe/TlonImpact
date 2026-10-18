@@ -80,8 +80,7 @@ def write_staging_prototype(
 
     Validation happens **before** anything touches disk.
 
-    Both rule forms are accepted (a cognitive rule carrying a ``:loop``,
-    or loop-less deterministic rules); the output is a single unified
+    All rules share the same program format; the output is a unified
     rules-form ``behavior.tlon`` — prototypes carry no persona (unified
     member model, ADR 0006); a member's persona files are seeded at
     creation and member-owned afterwards (self-editable via

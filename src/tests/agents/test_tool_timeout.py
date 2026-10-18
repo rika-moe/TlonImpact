@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import tlon.agents.loop_driver as loop_driver_module
+from tests.recipe_helpers import recipe_for
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
@@ -28,18 +29,7 @@ from tlon.tools.base import Tool, ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
-COGNITIVE_EDN = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-"""
+SESSION_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
 class _SelfLimitedTool(Tool):
@@ -87,17 +77,16 @@ class _PlainTool(Tool):
 def _make_driver(
     tmp_path: Path, tool_executor: ToolExecutor, per_tool_timeout: float = 0.1
 ) -> LoopDriver:
-    spec = MemberSpec.from_edn(loads(COGNITIVE_EDN))
+    spec = MemberSpec.from_edn(loads(SESSION_EDN))
     validate_member_spec(spec)
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     return LoopDriver(
         identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-        rule=spec.rules[0],
+        recipe=recipe_for(spec.rules[0]),
         services=MagicMock(),
         executor=MagicMock(),
         tool_executor=tool_executor,
         per_tool_timeout=per_tool_timeout,
-        on_complete=MagicMock(),
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         pressure=ContextPressure(MagicMock(), journal, 262144),

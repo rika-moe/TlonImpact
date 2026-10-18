@@ -73,7 +73,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 :context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
 ```
 
-不加该 section 的成员没有任何 skill 开销（无 `:loop` 的成员天然如此）。
+不加该 section 的成员没有任何 skill 开销；是否使用该 section 由本次会话配方决定。
 
 **按需加载意图**：模型从索引选择技能，再读取正文；引擎不注入正文，也没有 `use_skill` 工具。
 

@@ -8,7 +8,7 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 - **开放**——成员凭名字相互寻址，新成员出生即可加入，无需改造任何既有成员。实现上就是一个扁平的地址域加一张名称解析表，没有房间、没有订阅关系、没有权限矩阵。
 - **沉淀**——信件持久、可检索、可流传。实现上邮件正文与邮箱归属存入 SQLite，邮件先落盘后处理，知识随书信积累而不是随会话蒸发。
-- **平等**——人类不是管理员，而是社会的一员。实现上人类和 agent 走同一条投递管线、同一种邮箱、同一个事件流，人类只是「没有认知循环的成员」。
+- **平等**——人类不是管理员，而是社会的一员。实现上人类和 agent 走同一条投递管线、同一种邮箱、同一个事件流，人类通过客户端发言与收信，成员程序通过 runtime 执行，邮局按同一邮件契约服务两者。
 
 这三条合起来排除了聊天室、消息队列、RPC 直连等方案：它们要么没有开放寻址，要么没有持久沉淀，要么把人类和 agent 分成两个通道。
 
@@ -121,19 +121,19 @@ Tlon 的邮件不是众多通信方式之一，而是**唯一**的通信通道�
 
 EventBus 只降低发现新信的延迟，不承担可靠存储。成员启动检查与周期 rescan 发现已提交未读；通知丢失或队列溢出不会删除邮件。数据库写入经工作线程执行，事务与唯一约束承担并发一致性，不再维护 JSONL 扫描缓存或按目录锁表。
 
-不引入外部消息中间件：本地入箱已经在单个数据库事务中完成，不需要额外的接纳/投递状态机。邮局不保存 thinking、processing、completed 等认知状态，任务进度由 session、journal 和任务系统管理。
+不引入外部消息中间件：本地入箱已经在单个数据库事务中完成，不需要额外的接纳/投递状态机。邮局不保存 thinking、processing、completed 等执行状态，任务进度由 session、journal 和任务系统管理。
 
 ## agent 收发
 
-agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控唤醒，发信经引擎执行工具后调用邮局。两侧都把「邮件」与「认知」解耦——邮件层不知道认知循环的存在，认知循环不知道邮箱的文件布局，中间是邮局接口、已提交的事实通知和 SQLite 邮箱。
+agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控唤醒，发信经引擎执行工具后调用邮局。两侧都把「邮件」与「程序执行」解耦——邮件层不知道会话循环的存在，会话循环不知道邮箱的文件布局，中间是邮局接口、已提交的事实通知和 SQLite 邮箱。
 
 ### 收信：门控唤醒
 
-邮局只负责入箱与通知，`MemberRuntime` 决定如何消费。认知门控拒绝、自寄守卫、确定性规则处理可标读；认知门控通过的邮件保留未读，只有成员显式 `markRead` 才标读，完成 session 不代标。可唤醒未读、单 session、责任集、链式唤醒与恢复扫描完整定义在 [runtime.md](./runtime.md)「唤醒与补偿」，邮件层不复制这些调度规则。
+邮局只负责入箱与通知，`MemberRuntime` 统一执行规则程序。命中规则、完成会话、进入等待均不代标读；程序用 `(mark-read)`，模型用 `markRead` 显式选择。事件接纳与周期扫描按邮件和规则去重；已排队、执行中及完成的分派不重复启动。完整定义见 [runtime](runtime.md)。
 
 ### 发信：统一邮局入口
 
-认知工具 `sendEmail`、`forwardMail` 由引擎实际执行，只有邮局返回后才把真实结果交给模型；拒绝返回结构化工具错误，不生成退信，不把失败当成最终回复结束 session。DSL、周期任务和退休交接同样调用邮局，不能通过发布 `MAIL_NEW` 绕过持久化。
+邮件工具 `sendEmail`、`forwardMail` 由引擎实际执行，只有邮局返回后才把真实结果交给模型；拒绝返回结构化工具错误，不生成退信，不把失败当成最终回复结束 session。DSL、周期任务和退休交接同样调用邮局，不能通过发布 `MAIL_NEW` 绕过持久化。
 
 回复显式选择 `in_reply_to`，引擎从自己的邮箱校验引用并继承线程根；转发校验原信并组装自包含归因正文。引用不存在则拒绝发送。`endorsing` 校验致谢对象真实存在且不是自寄，提交后发布 `MAIL_ENDORSED`；声誉从已存邮件派生。
 
@@ -143,7 +143,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 ## 周期任务：tick 即邮件
 
-系统需要周期性触发的工作不引入新的 timer 事件类型，也不改认知运行时——周期触发本身就是一封邮件。[agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler`（归 `AgentRegistry` 拥有，与 `IdleReaper` / `PublicHealthMonitor` 同族）把「tick 即邮件」泛化为通用机制（早期的单用途 `DigestScheduler` 已被它取代）：每个周期任务是一个条目 `{name, schedule, to, subject, content}`，到点以 `postmaster@tlon.internal` 名义给目标成员发一封任务邮件；收件人的普通 `:on :mail-delivered` 认知规则被触发，做什么由收件人自己的 spec 决定。
+系统需要周期性触发的工作不引入新的 timer 事件类型，也不改成员运行时——周期触发本身就是一封邮件。[agents/cron.py](../../src/tlon/agents/cron.py) 的 `CronScheduler`（归 `AgentRegistry` 拥有，与 `IdleReaper` / `PublicHealthMonitor` 同族）把「tick 即邮件」泛化为通用机制（早期的单用途 `DigestScheduler` 已被它取代）：每个周期任务是一个条目 `{name, schedule, to, subject, content}`，到点以 `postmaster@tlon.internal` 名义给目标成员发一封任务邮件；收件人的普通 `:on :mail-delivered` 规则被触发，做什么由收件人自己的 spec 决定。
 
 条目来自两个来源，合并管理：
 
@@ -180,7 +180,7 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 WebUI 采用本地单人实例身份（[ADR 0033](../decisions/0033-local-webui-identity.md)）：首次填写 username 后保存在服务端，后续自动进入，不设账号密码或 admin token。REST 发信、个人邮箱、标读和 SSE session 都从实例身份派生，客户端不能自报 username；来源校验隔离非同源网页，不提供本机进程隔离。邮件本身不增加认证徽章、人类等级或管理员标签，agents 仍把该地址当作普通通信成员。历史 guest 保留为另一成员，不迁移或关联；死亡归档不向 guest 或其他地址自动发信。
 
-人类不是协议层的特殊存在，而是总线上的一个普通成员。[organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。
+人类不是协议层的特殊存在，而是总线上的一个普通成员。[organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些由成员程序所需的 runtime 服务提供；人类只有「说」和「收」，与任何成员的最低公分母一致。
 
 adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以来可以走（断线、重连、多端），成员身份与邮箱恒定。WebUI 断开 SSE 只是 detach 了一个 attachment，社会里的 `alice@tlon.internal` 依然存在、依然可达——这就是为什么「SSE 断开等于离线」在协议层成立而邮件不丢（见 [docs/design/server-protocol.md](./server-protocol.md)）。
 
@@ -201,7 +201,7 @@ adapter 与客户端会话的关系是「成员 vs 附着物」：会话可以�
 - `MAIL_NEW` / `MAIL_DELIVERED` 是已提交事实通知，不是投信命令。
 - 未读事实在 SQLite；查看、开启 session 不自动标读，阅读不等于完成任务。
 - 幂等记录持久化；重放不重复入箱或自动重试网关。
-- 邮局与成员认知分离，外部来信的信任边界由地址域派生。
+- 邮局与程序执行分离，外部来信的信任边界由地址域派生。
 
 ## 客户端与历史来源
 

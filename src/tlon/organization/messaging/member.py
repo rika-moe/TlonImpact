@@ -17,7 +17,7 @@ class Member(Component, Device):
     Member makes the implicit "who can speak" contract explicit. Unification
     happens at the Member layer, not the Agent layer: an AdapterAgent (human
     presence) has identity, lifecycle and bus I/O without going through the
-    LLM / memory / Docker machinery of a cognitive member (MemberRuntime).
+    LLM / memory / Docker capabilities of a member (MemberRuntime).
 
     Following project convention, Member defines no ``__init__`` — subclasses
     call ``Component.__init__(self, name=...)`` and

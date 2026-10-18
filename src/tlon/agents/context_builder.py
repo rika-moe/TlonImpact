@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tlon.agents.member_spec import MemberRule, has_section
+from tlon.agents.member_spec import SessionRecipe, has_section
 from tlon.agents.prompt_builder import SystemPromptBuilder
 from tlon.agents.prompt_context import AgentPromptContext
 from tlon.agents.session_journal import SessionJournal
@@ -149,7 +149,7 @@ class ContextBuilder:
         mailbox: Mailbox | None,
         memory: MemoryManager,
         task_manager: TaskManager,
-        rule: MemberRule,
+        recipe: SessionRecipe,
         address: str,
         journal: SessionJournal | None = None,
         *,
@@ -159,10 +159,7 @@ class ContextBuilder:
         self._mailbox = mailbox
         self._memory = memory
         self._task_manager = task_manager
-        # A context builder serves a cognitive agent — its rule carries a loop.
-        assert rule.loop is not None, "ContextBuilder requires a cognitive rule"
-        self._rule = rule
-        self._loop = rule.loop
+        self._loop = recipe
         self._address = address
         # Session journal (ADR 0007): read-only, feeds the thread-recap
         # section; None degrades that section to empty.

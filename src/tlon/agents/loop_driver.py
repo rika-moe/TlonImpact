@@ -37,8 +37,7 @@ from typing import Any
 from tlon.agents.budget_notice import resource_limit_notice
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
-from tlon.agents.member_spec import MemberLoop, MemberRule
-from tlon.agents.on_complete import OnCompleteRunner
+from tlon.agents.member_spec import SessionRecipe
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import (
@@ -73,7 +72,7 @@ from tlosure.eval import DEFAULT_FUEL, eval_form
 logger = get_logger(__name__)
 
 #: User-facing fixed termination replies — the engine's built-in fallback
-#: wording, used for any kind the member's ``:loop/:replies`` does not
+#: wording, used for any kind the member's recipe's ``:replies`` does not
 #: override (replies are load-time-validated plain data, used verbatim).
 #: Termination replies go to human senders only (ADR 0027, anchor revised
 #: by ADR 0028 决策 7): every human sender in the session's
@@ -105,12 +104,11 @@ class LoopDriver:
     def __init__(
         self,
         identity: AgentIdentity,
-        rule: MemberRule,
+        recipe: SessionRecipe,
         services: StageServices,
         executor: EffectExecutor,
         tool_executor: ToolExecutor,
         per_tool_timeout: float,
-        on_complete: OnCompleteRunner,
         journal: SessionJournal,
         spill: ToolSpill,
         pressure: ContextPressure,
@@ -120,10 +118,7 @@ class LoopDriver:
     ):
         self._prepare_scheduling_request = prepare_scheduling_request
         self._identity = identity
-        # A loop driver serves a cognitive agent — its rule carries a loop.
-        assert rule.loop is not None, "LoopDriver requires a cognitive rule"
-        self._rule = rule
-        self._loop: MemberLoop = rule.loop
+        self._loop = recipe
         # Phase D: the loop's self-declared :fuel caps the DSL evaluation of
         # its :until / stage conditions (None = engine default). The loop's
         # control flow (max_iterations, stage whitelist, until timing) is
@@ -133,7 +128,6 @@ class LoopDriver:
         self._executor = executor
         self._tool_executor = tool_executor
         self._per_tool_timeout = per_tool_timeout
-        self._on_complete = on_complete
         # Session event journal (ADR 0007): every state change is appended
         # before the in-memory mutation — the log is the truth.
         self._journal = journal
@@ -189,6 +183,9 @@ class LoopDriver:
                 "session/start",
                 agent_id=self._identity.id,
                 trigger_content=session.trigger_content,
+                recipe=session.recipe_source,
+                source_mail_id=session.source_mail_id,
+                invocation=session.invocation,
                 carrier=session.carrier,
                 responsibility=[mail.id for mail in session.responsibility],
                 context=built.messages,
@@ -384,8 +381,6 @@ class LoopDriver:
             session.dispatch_tools(outcome.tool_dispatches, tasks)
             await self._journal.append(session.id, "state", value=SessionState.WAITING.value)
             session.mark_waiting()
-        if outcome.run_on_complete:
-            await self._on_complete.run(session, outcome.final_reply or "")
         if outcome.complete:
             request = session.loop_scratch.get("scheduling_request")
             if request and self._prepare_scheduling_request is not None:
@@ -428,7 +423,7 @@ class LoopDriver:
         return reached
 
     def _termination_reply(self, kind: str, default: str) -> str:
-        """The member's ``:loop/:replies`` override for ``kind``, or the
+        """The member's recipe's ``:replies`` override for ``kind``, or the
         engine's built-in fallback. Pure data lookup — the termination
         path must never fail, so no evaluation or templating happens here.
         """

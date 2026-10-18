@@ -4,9 +4,9 @@ Inspired by deepseek-harness's doc generation + freshness gate.
 Handwritten narrative stays
 handwritten; only the drift-prone inventories are generated:
 
-- ``tool-registry`` in docs/reference/tools-reference.md — the cognitive
+- ``tool-registry`` in docs/reference/tools-reference.md — the
   member's tool registration table, in the exact registration order of
-  ``assemble_cognitive`` (agents/assembly.py), joined
+  ``assemble_member_capabilities`` (agents/assembly.py), joined
   with the ``Tool`` subclasses under src/tlon/tools/.
 - ``event-types`` in docs/reference/api-reference.md — the flat EventType
   enum table from base/events/event.py (wire value + trailing comment).
@@ -168,11 +168,11 @@ def scan_tools() -> dict[str, ToolInfo]:
 
 
 def registration_order() -> list[str]:
-    """Class names in the exact order ``assemble_cognitive`` registers them."""
+    """Class names in the exact order ``assemble_member_capabilities`` registers them."""
     tree = ast.parse(REGISTRY_FILE.read_text(encoding="utf-8"), filename=str(REGISTRY_FILE))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-            node.name == "assemble_cognitive"
+            node.name == "assemble_member_capabilities"
         ):
             # Track simple `var = XxxTool(...)` bindings so registrations via
             # a variable (`register_tool(execute_bash_tool)`) resolve too.
@@ -208,7 +208,7 @@ def registration_order() -> list[str]:
                     )
             # ast.walk is BFS, not source order — sort by line number.
             return [class_name for _, class_name in sorted(found)]
-    raise GenerationError(f"{REGISTRY_FILE}: assemble_cognitive not found")
+    raise GenerationError(f"{REGISTRY_FILE}: assemble_member_capabilities not found")
 
 
 @dataclass(frozen=True)
@@ -667,7 +667,7 @@ def render_tool_registry() -> str:
         )
     count = len(rows)
     header = (
-        f"`assemble_cognitive`（agents/assembly.py）为满配成员注册 {count} 个工具"
+        f"`assemble_member_capabilities`（agents/assembly.py）为满配成员注册 {count} 个工具"
         f"（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的"
         f"无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，"
         f"`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：{GENERATED_NOTE}\n\n"
@@ -813,7 +813,7 @@ def render_env_vars() -> str:
 #: configuration — the source defines the value, the doc defines why).
 _FUEL_CONSTANT_PURPOSES = {
     "DEFAULT_WHEN_FUEL": "`:when` 门控的默认预算",
-    "DEFAULT_FUEL": "`:actions` / `:loop` 求值的默认预算",
+    "DEFAULT_FUEL": "动作与会话条件求值的默认预算",
     "MAX_FUEL": "`:fuel` 自声明的硬顶（超过即加载拒绝）",
     "DEFAULT_MAX_DEPTH": "form 嵌套深度上限",
 }
@@ -840,7 +840,6 @@ def render_dsl_fuel_defaults() -> str:
 #: Top-level environment contract -> its single construction point.
 _ENV_CONTRACT_BUILDERS = {
     "RuleEnv": "rule_env",
-    "OnCompleteEnv": "on_complete_env",
     "LoopEnv": "loop_until_env",
     "StageCondEnv": "stage_cond_env",
 }
@@ -959,7 +958,7 @@ def render_dsl_action_kinds() -> str:
         f"| `{kind}` | {'、'.join(f'`{key}`' for key in keys)} |" for kind, keys in kinds.items()
     ]
     header = (
-        f"六个动作 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
+        f"动作 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
         f"生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——"
         f"它按宿主查询 `start_all_candidates` 的候选集展开为多个 "
         f'`kind="start"` 请求）：{GENERATED_NOTE}\n\n'

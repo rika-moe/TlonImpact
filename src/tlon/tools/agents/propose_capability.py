@@ -47,11 +47,11 @@ logger = get_logger(__name__)
 #: ``agents/capabilities/spec.py`` — a test anchors the two equal).
 _PURE_WORDS = sorted({**CORE_BUILTINS, **ARITHMETIC_BUILTINS})
 
-#: The six member action words a non-pure impl may additionally compose
+#: The member action words a non-pure impl may additionally compose
 #: (``MEMBER_ACTION_NAMES`` in ``agents/vocabulary.py``; ``tlon.tools``
 #: cannot import ``tlon.agents``, so the names are restated here under a
 #: test anchor against the real registry).
-_ACTION_WORDS = ["emit", "forward", "spawn", "start", "start-all", "stop"]
+_ACTION_WORDS = ["emit", "forward", "mark-read", "run-loop", "spawn", "start", "start-all", "stop"]
 
 _ARTIFACT_HINT = (
     "artifact 是一个 v1 schema 的 EDN map，形状：\n"
@@ -70,7 +70,7 @@ _ARTIFACT_HINT = (
     "字面量，定长参数（不支持 & rest），参数数 == :args 数。\n"
     f"- :pure true 的 :impl 只能组合这 {len(_PURE_WORDS)} 个纯词："
     f"{' '.join(_PURE_WORDS)}。\n"
-    f"- :pure false 的 :impl 可另组合六个动作词：{' '.join(_ACTION_WORDS)}"
+    f"- :pure false 的 :impl 可另组合以下动作词：{' '.join(_ACTION_WORDS)}"
     "（产出 ActionRequest 数据）。\n"
     "- :examples 仅 :pure true 可携带：{:args [字面数据] :expect 值} 的"
     "输入/输出断言，准入时在沙盒求值器跑——鼓励纯词携带 :examples 自证"

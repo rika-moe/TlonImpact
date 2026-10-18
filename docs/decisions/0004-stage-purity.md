@@ -6,7 +6,7 @@
 
 ## 背景
 
-认知循环的 stage（think / plan / critique / revise / act）需要满足三个要求：
+会话循环的 stage（think / plan / critique / revise / act）需要满足三个要求：
 
 1. **可组合**：spec 的 `LoopSpec.stages` 是白名单向量，DSL 可以选哪些 stage、以什么顺序、带什么 `:if` 条件组合它们。
 2. **可测试**：每个 stage 是一个语义单元，要能脱离 asyncio 调度与外部系统独立验证。

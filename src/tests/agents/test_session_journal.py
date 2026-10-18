@@ -4,9 +4,8 @@ Pins the append/resume roundtrip (including the journaled responsibility
 snapshot), the orphan-dispatch self-healing, the "model-visible ⇒
 journaled" invariant (derive_context == session.context after a full
 driver run), crash recovery via resume_collect, boot recovery through
-``find_unfinished``/``_restore_unfinished``, the wake semantics
-(edge-triggered admission, chain wake on new ids, shelved leftovers never
-re-wake), and the abnormal-termination failure replies — anchored on the
+``find_unfinished``/``_restore_unfinished``, original recipe and invocation
+recovery, and the abnormal-termination failure replies — anchored on the
 responsibility set's human senders (ADR 0027 as revised by ADR 0028).
 """
 
@@ -15,10 +14,12 @@ import contextlib
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.recipe_helpers import recipe_for
 from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
@@ -35,23 +36,12 @@ from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
-from tlosure.edn import loads
+from tlosure.edn import dumps, loads
 
-COGNITIVE_EDN = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-"""
+SESSION_PROGRAM_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
-#: Same cognitive rule with all three :loop/:replies overrides declared.
-REPLIES_EDN = COGNITIVE_EDN.replace(
+#: Same session recipe with all three session :replies overrides declared.
+REPLIES_EDN = SESSION_PROGRAM_EDN.replace(
     ":reflect {:enabled false :interval-minutes 5}",
     ":reflect {:enabled false :interval-minutes 5}\n"
     '                 :replies {:iteration-limit "想太久了，简单说。"\n'
@@ -95,6 +85,9 @@ async def _start(
         "session/start",
         agent_id="agent1",
         trigger_content=TRIGGER,
+        recipe=dumps(
+            recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0]).to_edn_data()
+        ),
         carrier={"trace_id": "t-1"},
         responsibility=responsibility or [],
         context=[{"role": "user", "content": "hi"}],
@@ -411,7 +404,7 @@ def _make_driver(
     tmp_path: Path,
     responses: list[LLMResponse],
     tool_execute: object = None,
-    edn: str = COGNITIVE_EDN,
+    edn: str = SESSION_PROGRAM_EDN,
     is_human_sender: Callable[[str], bool] = lambda address: True,
 ) -> tuple[LoopDriver, SessionJournal, MagicMock, MagicMock]:
     spec = MemberSpec.from_edn(loads(edn))
@@ -452,12 +445,11 @@ def _make_driver(
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     driver = LoopDriver(
         identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-        rule=rule,
+        recipe=recipe_for(rule),
         services=services,
         executor=executor,
         tool_executor=tool_executor,
         per_tool_timeout=5.0,
-        on_complete=on_complete,
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         # Default context window: the threshold is never crossed here.
@@ -524,7 +516,7 @@ class TestDriverJournaling:
 
     async def test_responsibility_snapshot_journaled(self, tmp_path: Path) -> None:
         """ADR 0028: session/start persists the responsibility-set id
-        snapshot, so crash recovery can read it back for the chain-wake
+        snapshot, so crash recovery can read it back for the program-continuation
         comparison."""
         mail = _mail()
         response = LLMResponse(
@@ -702,7 +694,7 @@ class TestCrashRecovery:
     ) -> None:
         """ADR 0028: a crashed session's responsibility ids come back from
         the journal and resolve to Mail objects through the mailbox, so
-        the failure-reply anchors and the chain-wake comparison survive
+        the failure-reply anchors and the program continuation survive
         the crash."""
         mailbox = Mailbox(tmp_path / "mail.sqlite3", "agent1")
         mail = _mail()
@@ -719,27 +711,27 @@ class TestCrashRecovery:
         assert [m.id for m in session.responsibility] == [mail.id]
 
 
-# ── Boot recovery + wake semantics (ADR 0028) ───────────────────────────
+# ── Boot recovery and explicit session invocations (ADR 0028) ───────────────────────────
 
 
 def _make_scheduler(
     journal: SessionJournal,
     loop_driver: object = None,
     config: AgentConfig | None = None,
-    provider: Callable[[], object] | None = None,
     mailbox: Mailbox | None = None,
 ) -> SessionScheduler:
-    return SessionScheduler(
+    scheduler = SessionScheduler(
         config or AgentConfig(id="agent1", name="agent1"),
         memory=MagicMock(),
         session_span=lambda session: contextlib.nullcontext(),
         check_reflection=AsyncMock(),
         note_interaction=MagicMock(),
-        loop_driver=loop_driver or MagicMock(),
+        make_driver=lambda recipe: loop_driver or MagicMock(),
         journal=journal,
-        wakeable_unread=provider or AsyncMock(return_value=[]),
         mailbox=mailbox,
     )
+    scheduler._loop_driver = loop_driver or MagicMock()
+    return scheduler
 
 
 class _CompletingDriver:
@@ -826,113 +818,6 @@ class TestBootRecovery:
         assert len(ends) == 1
 
 
-class TestWakeSemantics:
-    """ADR 0028 wake rules: edge-triggered admission, chain wake on new
-    ids, shelved leftovers never re-wake, delivery during a live session
-    is a no-op, and concurrent deliveries dedup to one session (R6)."""
-
-    async def test_double_delivery_opens_one_session(self, journal: SessionJournal) -> None:
-        """R6: two notify_wake calls (concurrent deliveries) before the
-        loop runs collapse into a single session over one provider
-        snapshot."""
-        m1, m2 = _mail("one"), _mail("two")
-        reads = 0
-
-        async def provider() -> list[Mail]:
-            nonlocal reads
-            reads += 1
-            return [m1, m2] if reads == 1 else []  # the session "read" them
-
-        driver = _CompletingDriver()
-        scheduler = _make_scheduler(journal, loop_driver=driver, provider=provider)
-        scheduler.notify_wake({})
-        scheduler.notify_wake({})
-        scheduler.start()
-        try:
-            await _wait_for(lambda: len(driver.sessions) == 1)
-            await _wait_for(lambda: scheduler.active_session_count == 0)
-            await asyncio.sleep(0.1)
-        finally:
-            await scheduler.stop()
-
-        assert len(driver.sessions) == 1
-        # R5: the trigger N and the responsibility set come from the same
-        # provider snapshot.
-        assert driver.sessions[0].trigger_content == "你有 2 封未读邮件"
-        assert [m.id for m in driver.sessions[0].responsibility] == [m1.id, m2.id]
-
-    async def test_chain_wake_opens_new_session_for_new_mail(self, journal: SessionJournal) -> None:
-        """Reap-time chain wake: an unread id outside the just-finished
-        responsibility set opens the next session immediately."""
-        m1, m2 = _mail("one"), _mail("two")
-        inbox = [m1]
-
-        async def provider() -> list[Mail]:
-            return list(inbox)
-
-        release = asyncio.Event()
-        driver = _CompletingDriver()
-
-        async def slow_first_step(session: AgentSession) -> None:
-            driver.sessions.append(session)
-            if len(driver.sessions) == 1:
-                await release.wait()  # m2 arrives while session 1 runs
-            session.mark_completed()
-
-        driver.step_session = slow_first_step  # type: ignore[method-assign]
-        scheduler = _make_scheduler(journal, loop_driver=driver, provider=provider)
-        scheduler.notify_wake({})
-        scheduler.start()
-        try:
-            await _wait_for(lambda: len(driver.sessions) == 1)
-            inbox.append(m2)  # new mail mid-session: no disturbance
-            await asyncio.sleep(0.05)
-            assert len(driver.sessions) == 1
-            release.set()  # session 1 completes; m2 chains a new session
-            await _wait_for(lambda: len(driver.sessions) == 2)
-            assert [m.id for m in driver.sessions[1].responsibility] == [m1.id, m2.id]
-            inbox.clear()  # the second session "read" everything
-            await _wait_for(lambda: scheduler.active_session_count == 0)
-            await asyncio.sleep(0.1)
-        finally:
-            await scheduler.stop()
-
-        assert len(driver.sessions) == 2
-
-    async def test_leftover_ids_never_rewake(self, journal: SessionJournal) -> None:
-        """Hot-loop protection (ADR 0028 决策 5): a responsibility mail the
-        agent saw and shelved (still unread) does not re-open a session —
-        the slow rescan owns it."""
-        m1 = _mail("shelved")
-
-        async def provider() -> list[Mail]:
-            return [m1]  # never marked read
-
-        driver = _CompletingDriver()
-        scheduler = _make_scheduler(journal, loop_driver=driver, provider=provider)
-        scheduler.notify_wake({})
-        scheduler.start()
-        try:
-            await _wait_for(lambda: len(driver.sessions) == 1)
-            await _wait_for(lambda: scheduler.active_session_count == 0)
-            await asyncio.sleep(0.3)  # well past several loop passes
-        finally:
-            await scheduler.stop()
-
-        assert len(driver.sessions) == 1
-        assert not scheduler._wake.is_set()
-
-    async def test_notify_wake_is_a_no_op_with_live_session(self, journal: SessionJournal) -> None:
-        """ADR 0028 决策 1: a delivery while a session is live never
-        disturbs it — the wake event is not even set."""
-        scheduler = _make_scheduler(journal)
-        scheduler._session = _session("s-live")
-
-        scheduler.notify_wake({})
-
-        assert not scheduler._wake.is_set()
-
-
 # ── Abnormal termination: the responsibility set's humans get an answer ──
 # (ADR 0027, anchor revised by ADR 0028 决策 7)
 
@@ -1000,7 +885,7 @@ class TestFailureReply:
         assert executor.send_mail.await_args.args[0].to == ["user@tlon.internal"]
 
     async def test_send_failure_reply_uses_member_replies(self, tmp_path: Path) -> None:
-        """A member declaring :loop/:replies gets its own wording on the
+        """A member declaring session :replies gets its own wording on the
         abnormal-termination paths (timeout / stage error)."""
         driver, _, executor, _ = _make_driver(tmp_path, [], edn=REPLIES_EDN)
         session = _session("s1", _mail())
@@ -1105,7 +990,7 @@ class TestTokenBudget:
 
     async def test_max_tokens_sends_factual_notice_without_extra_llm(self, tmp_path: Path) -> None:
         mail = _mail()
-        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens 1000")
+        edn = SESSION_PROGRAM_EDN.replace(":max-tokens 1000000", ":max-tokens 1000")
         driver, journal, executor, services = _make_driver(
             tmp_path,
             [LLMResponse(content="已发送三封邮件", usage={"total_tokens": 1500})],
@@ -1200,7 +1085,7 @@ class TestConsecutiveErrorLimit:
 
 
 class TestTerminationReplyOverrides:
-    """`:loop/:replies` overrides the `_terminate_loop` wording per kind;
+    """`session :replies` overrides the `_terminate_loop` wording per kind;
     undeclared kinds keep the engine's built-in texts."""
 
     async def test_error_limit_uses_member_reply(self, tmp_path: Path) -> None:
@@ -1341,15 +1226,17 @@ class TestSchedulerFailureReply:
             journal,
             loop_driver=loop_driver,
             config=AgentConfig(id="agent1", name="agent1", session_timeout_seconds=0),
-            provider=AsyncMock(return_value=[mail]),
         )
 
-        scheduler.notify_wake({})
+        recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
         scheduler.start()
+        await scheduler.ready.wait()
+        invocation = asyncio.create_task(scheduler.run_invocation(recipe, TRIGGER, [mail], {}, {}))
         try:
             await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
             await self._wait_reaped(scheduler)
         finally:
+            await invocation
             await scheduler.stop()
 
         session, reason = loop_driver.send_failure_reply.await_args.args
@@ -1362,16 +1249,17 @@ class TestSchedulerFailureReply:
         loop_driver = MagicMock()
         loop_driver.send_failure_reply = AsyncMock()
         loop_driver.step_session = AsyncMock(side_effect=RuntimeError("boom"))
-        scheduler = _make_scheduler(
-            journal, loop_driver=loop_driver, provider=AsyncMock(return_value=[mail])
-        )
+        scheduler = _make_scheduler(journal, loop_driver=loop_driver)
 
-        scheduler.notify_wake({})
+        recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
         scheduler.start()
+        await scheduler.ready.wait()
+        invocation = asyncio.create_task(scheduler.run_invocation(recipe, TRIGGER, [mail], {}, {}))
         try:
             await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
             await self._wait_reaped(scheduler)
         finally:
+            await invocation
             await scheduler.stop()
 
         session, reason = loop_driver.send_failure_reply.await_args.args
@@ -1383,16 +1271,17 @@ class TestSchedulerFailureReply:
         loop_driver = MagicMock()
         loop_driver.send_failure_reply = AsyncMock(side_effect=OSError("bus down"))
         loop_driver.step_session = AsyncMock(side_effect=RuntimeError("boom"))
-        scheduler = _make_scheduler(
-            journal, loop_driver=loop_driver, provider=AsyncMock(return_value=[mail])
-        )
+        scheduler = _make_scheduler(journal, loop_driver=loop_driver)
 
-        scheduler.notify_wake({})
+        recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
         scheduler.start()
+        await scheduler.ready.wait()
+        invocation = asyncio.create_task(scheduler.run_invocation(recipe, TRIGGER, [mail], {}, {}))
         try:
             await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
             await self._wait_reaped(scheduler)
         finally:
+            await invocation
             await scheduler.stop()
 
         # The reply failed, but the session still ended and was reaped.
@@ -1440,3 +1329,114 @@ class TestSchedulingIntentJournal:
         assert await journal.end_reason(session.id) is None
         replay = await journal.resume(session.id)
         assert replay is not None and replay.loop_scratch["scheduling_request"] == request
+
+
+class TestExplicitInvocationRecovery:
+    async def test_recovery_uses_journaled_recipe_and_source(self, journal: SessionJournal) -> None:
+        from tlon.agents.member_spec import SessionRecipe
+
+        sid = "agent1-original-program"
+        recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
+        raw = recipe.to_edn_data()
+        from tlosure.edn import Keyword
+
+        raw[Keyword("max-iterations")] = 7
+        source = _mail("original source")
+        tail = [
+            {"kind": "forward", "data_edn": '{"to" ["sink@tlon.internal"] "cc" [] "subject" nil}'}
+        ]
+        await journal.append(
+            sid,
+            "session/start",
+            agent_id="agent1",
+            recipe=dumps(raw),
+            source_mail_id=source.id,
+            invocation={"rule_name": "second", "tail": tail},
+            trigger_content="original trigger",
+            context=[{"role": "user", "content": "original"}],
+        )
+        selected: list[SessionRecipe] = []
+        driver = _CompletingDriver()
+        scheduler = _make_scheduler(journal, loop_driver=driver)
+
+        def make_driver(actual: SessionRecipe) -> Any:
+            selected.append(actual)
+            return driver
+
+        scheduler._make_driver = make_driver
+        scheduler._resume_invocation = AsyncMock()
+        scheduler.start()
+        try:
+            await scheduler.ready.wait()
+            assert len(selected) == 1 and selected[0].max_iterations == 7
+            resumed = driver.sessions[0]
+            assert resumed.source_mail_id == source.id
+            assert resumed.invocation == {"rule_name": "second", "tail": tail}
+            assert resumed.trigger_content == "original trigger"
+            scheduler._resume_invocation.assert_awaited_once_with(resumed)
+            assert await journal.end_reason(sid) == "complete"
+        finally:
+            await scheduler.stop()
+
+
+async def test_completed_session_resumes_tail_without_model_reexecution(
+    journal: SessionJournal,
+) -> None:
+    sid = "agent1-completed-before-tail"
+    recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
+    await journal.append(
+        sid,
+        "session/start",
+        agent_id="agent1",
+        recipe=dumps(recipe.to_edn_data()),
+        source_mail_id="source-7",
+        invocation={
+            "rule_name": "publish",
+            "tail": [
+                {"kind": "emit", "data_edn": '{"content" "frozen" "to" ["sink@tlon.internal"]}'}
+            ],
+        },
+        trigger_content="source",
+        context=[{"role": "user", "content": "source"}],
+    )
+    await journal.append(sid, "session/end", reason="complete")
+    driver = _CompletingDriver()
+    scheduler = _make_scheduler(journal, loop_driver=driver)
+    scheduler._resume_invocation = AsyncMock()
+    scheduler.start()
+    try:
+        await scheduler.wait_ready()
+        assert driver.sessions == []
+        scheduler._resume_invocation.assert_awaited_once()
+        resumed = scheduler._resume_invocation.await_args.args[0]
+        assert resumed.id == sid and resumed.invocation["rule_name"] == "publish"
+    finally:
+        await scheduler.stop()
+
+
+async def test_recovery_chooses_latest_session_continuation_per_mail_rule(
+    journal: SessionJournal,
+) -> None:
+    for sid, tail in (("agent1-z-first", "old"), ("agent1-a-second", "latest")):
+        await journal.append(
+            sid,
+            "session/start",
+            agent_id="agent1",
+            recipe="unused",
+            source_mail_id="same-source",
+            invocation={"rule_name": "publish", "tail": [tail]},
+            trigger_content="source",
+            context=[],
+        )
+        await journal.append(sid, "session/end", reason="complete")
+    scheduler = _make_scheduler(journal)
+    scheduler._resume_invocation = AsyncMock()
+    scheduler.start()
+    try:
+        await scheduler.wait_ready()
+        scheduler._resume_invocation.assert_awaited_once()
+        resumed = scheduler._resume_invocation.await_args.args[0]
+        assert resumed.id == "agent1-a-second"
+        assert resumed.invocation["tail"] == ["latest"]
+    finally:
+        await scheduler.stop()

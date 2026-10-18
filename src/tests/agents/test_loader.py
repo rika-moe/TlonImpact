@@ -9,6 +9,7 @@ import hashlib
 
 import pytest
 
+from tests.recipe_helpers import recipe_for
 from tlon.agents.behavior_template import analyze
 from tlon.agents.loader import load_member_spec
 from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
@@ -45,26 +46,14 @@ class TestLoadMemberSpec:
         # Source hash over the raw bytes, first 12 hex chars (every member).
         assert spec.source_hash == hashlib.sha256(SCRIPT_EDN.encode("utf-8")).hexdigest()[:12]
 
-    def test_reads_cognitive_rules_form(self, tlon):
+    def test_reads_session_request_form(self, tlon):
         _write_behavior(
             tlon,
             "thinker-1",
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :when (addressed-to-me? msg)
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-""",
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :when (addressed-to-me? msg) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}',
         )
         spec = load_member_spec("thinker-1", tlon_paths=tlon)
-        assert spec.rules[0].loop is not None
+        assert recipe_for(spec.rules[0]) is not None
         assert spec.source_hash is not None
 
     def test_missing_file_refuses_boot(self, tlon):

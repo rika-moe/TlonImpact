@@ -26,7 +26,7 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 成员与演化 | [原型](design/prototypes.md) | 提案、准入、实例化、spawn 与谱系 |
 | 行为与执行 | [DSL](design/dsl.md) | 行为表达、语言安全与规则权威 |
 | 行为与执行 | [Bridge API](design/bridge-api.md) | 宿主查询、效果、环境与语境边界 |
-| 行为与执行 | [运行时](design/runtime.md) | 唤醒、session、认知循环、journal 与效果执行 |
+| 行为与执行 | [运行时](design/runtime.md) | 唤醒、session、会话循环、journal 与效果执行 |
 | 行为与执行 | [基础设施](design/infrastructure.md) | 装配、EventBus、路径、配置与进程级观测 |
 | 行为与执行 | [执行装置](design/execution-device.md) | L0/L1/L2、容器、文件和代码执行边界 |
 | 通信与知识 | [邮件](design/mail.md) | 地址、邮局事务、邮箱、线程与已读语义 |

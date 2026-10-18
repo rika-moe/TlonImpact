@@ -22,10 +22,8 @@ genome):
   whole-directory move carries it into the trusted library.
 
 A directory qualifies as a prototype when it contains ``behavior.tlon``.
-The member type (cognitive ``react`` vs deterministic ``script``) is no
-longer a metadata keyword — it is **derived** from the spec's rules
-(any rule with a ``:loop`` ⇒ react), so ``prototype.tlon`` never declares
-a runtime.
+Members all execute rules. Prototypes declare reusable programs rather than
+member categories; a program requests session execution through run-loop.
 
 Built-in prototypes ship inside the package (``tlon/prototypes/``) and are
 seeded to ``~/.tlon/prototypes/`` on startup; seeding never overwrites

@@ -60,3 +60,6 @@ context/compact {kind: "prune"|"summary", reason, tokens_before, tokens_after, c
 - journal 仍是唯一真相：压缩历史可从 `context/compact` 事件审计（tokens_before/after），重放保真。
 - 摘要质量依赖 prompt 调优，遵循 Anthropic 建议「先保 recall 再调 precision」；~~摘要器失败的回退是 prune 占位 + 保留窗口原文。~~（**2026-09 修订**：摘要器失败时整个中段坍缩为单条占位消息 `[前文摘要]\n\n历史消息摘要失败，已省略。`——prune 后的中段不保留，留存的只有 anchor + 保留窗口原文；丢历史细节好过丢 session。）
 - 明确不做：token 精确计数（依赖不值得）、memory 层正名（PR-B 另行）、摘要触发挪到空闲时（邮件系统 idle 期利用，后续优化）。
+
+
+后续修订：ADR 0042 将会话变为普通程序效果，触发来源与会话配方一起持久记录；不再保证所有触发内容都是单一邮箱模板。锚点及模型前缀仍按实际构建结果记录。

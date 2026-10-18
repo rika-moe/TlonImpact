@@ -204,7 +204,7 @@ class DockerRuntime:
 
         Ownership: whoever assembles the runtime closes it — assembly
         (``agents/assembly.py``) creates one ``DockerRuntime`` per member
-        wake and stashes it on ``CognitiveCapabilities.docker_runtime``;
+        wake and stashes it on ``MemberCapabilities.docker_runtime``;
         ``MemberRuntime.shutdown`` closes it. The cabinet container is
         unaffected: per ADR 0006 a member's container survives sleep
         (removed only on config drift — see ``ensure_running``), so the

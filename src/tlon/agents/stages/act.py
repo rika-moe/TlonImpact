@@ -166,7 +166,6 @@ async def act_stage_collect(
         # never affect the session lifecycle. The engine runs them
         # inside the session span, so the spawn quota can attribute
         # spawns to this session.
-        outcome.run_on_complete = True
         outcome.complete = True
     elif not session.has_pending_tools:
         outcome.advance_iteration = True

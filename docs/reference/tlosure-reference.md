@@ -37,11 +37,12 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 无 `def`、无宏、无可变全局状态；除下列形式外，form 头必须解析为环境中的闭包（用户函数）或已注册的 builtin 名（分辨顺序：特殊形式 → env → builtin）。`defn` / `fn` 是 [ADR 0021](../decisions/0021-tlosure-full-functions.md) 引入的完整函数能力，语义见 §2.1.1。
 
 <!-- BEGIN GENERATED: dsl-special-forms -->
-封闭白名单（12 个）：`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`、`defn`、`fn`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+封闭白名单（13 个）：`quote`、`if`、`when`、`let`、`and`、`or`、`while`、`recur`、`map`、`filter`、`reduce`、`defn`、`fn`。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 <!-- END GENERATED: dsl-special-forms -->
 
 | 形式 | 形状 | 语义 |
 |---|---|---|
+| `quote` | `(quote data)` | 恰有一个参数，原样返回语法数据；不校验或求值其内部调用，适合向宿主传递会话配方 |
 | `if` | `(if test then [else])` | 2 或 3 参；无 else 且 test 为假时得 `nil` |
 | `when` | `(when test body...)` | test 为假得 `nil`；否则依次求值 body，返回最后一个 |
 | `let` | `(let [name init ...] body...)` | 绑定向量须偶数项；init 按序求值、后者可见前者 |
@@ -95,7 +96,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 - `max_depth` 至少为 1，否则同样 `ValueError`；
 - 耗尽抛 `FuelExhaustedError`，异常携带 `budget` 属性（本次求值的启动预算）供宿主结构化记日志/打点；嵌套超顶抛 `EvalDepthError`。
 
-**预算分摊**：一个 `Evaluator` 实例 = 一个预算计数器。单表达式走 `eval_form`；宿主若要让多个表达式共用一个总预算（如 tlon 确定性规则的 `:when` 门控 + `:actions` 共享 `:fuel`），直接构造 `Evaluator` 连续 `eval`——每次调用从同一个计数器扣。共享还是分段由宿主决定。
+**预算分摊**：一个 `Evaluator` 实例 = 一个预算计数器。单表达式走 `eval_form`；宿主若要让多个表达式共用一个总预算（如 tlon 规则的 `:when` 门控 + `:actions` 共享 `:fuel`），直接构造 `Evaluator` 连续 `eval`——每次调用从同一个计数器扣。共享还是分段由宿主决定。
 
 计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；`DEFAULT_WHEN_FUEL = 200`（供宿主给门控类求值用的更紧默认值）；硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
 

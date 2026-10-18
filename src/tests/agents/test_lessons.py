@@ -1,8 +1,8 @@
 """LessonsDistiller — retirement lessons distillation (docs/design/memory.md).
 
-Pins the closed loop: publishing AGENT_STOPPED for a cognitive member
+Pins the closed loop: publishing AGENT_STOPPED for a member
 distills its archived memory into ``memory/lessons.md`` via one LLM call
-attributed to the retired member; non-cognitive members and empty digests
+attributed to the retired member; empty digests
 are skipped; an LLM failure is logged, never raised (retirement
 bookkeeping must not break the bus).
 """
@@ -13,6 +13,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tlon.agents.lessons import LessonsDistiller
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
@@ -21,21 +23,9 @@ from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 
-_COGNITIVE_SPEC = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(persona)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+_SESSION_PROGRAM = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
 
-_DETERMINISTIC_SPEC = """\
+_RELAY_PROGRAM = """\
 {:version 1
  :rules [{:name "relay"
           :on :mail-delivered
@@ -90,10 +80,11 @@ async def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> bool
     return False
 
 
-async def test_agent_stopped_distills_lessons(tmp_path: Path) -> None:
+@pytest.mark.parametrize("program", [_SESSION_PROGRAM, _RELAY_PROGRAM])
+async def test_agent_stopped_distills_lessons(tmp_path: Path, program: str) -> None:
     """Full bus path: AGENT_STOPPED -> offline digest -> LLM -> lessons.md."""
     p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "retiree", _COGNITIVE_SPEC)
+    _write_behavior(p, "retiree", program)
     await _remember(p, "retiree", "部署前先跑质量门")
 
     bus = EventBus()
@@ -127,9 +118,9 @@ async def test_agent_stopped_distills_lessons(tmp_path: Path) -> None:
         await bus.shutdown()
 
 
-async def test_non_cognitive_member_skipped(tmp_path: Path) -> None:
+async def test_empty_relay_memory_is_skipped(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "relay-1", _DETERMINISTIC_SPEC)
+    _write_behavior(p, "relay-1", _RELAY_PROGRAM)
     llm = _FakeLLM("- 不该被调用\n")
     distiller = LessonsDistiller(
         event_bus=EventBus(), tlon_paths=p, llm_client_factory=lambda _id: llm
@@ -143,7 +134,7 @@ async def test_non_cognitive_member_skipped(tmp_path: Path) -> None:
 
 async def test_empty_digest_skipped(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "fresh", _COGNITIVE_SPEC)
+    _write_behavior(p, "fresh", _SESSION_PROGRAM)
     llm = _FakeLLM("- 不该被调用\n")
     distiller = LessonsDistiller(
         event_bus=EventBus(), tlon_paths=p, llm_client_factory=lambda _id: llm
@@ -169,7 +160,7 @@ async def test_missing_behavior_file_skipped(tmp_path: Path) -> None:
 
 async def test_llm_failure_is_logged_never_raised(tmp_path: Path) -> None:
     p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "retiree", _COGNITIVE_SPEC)
+    _write_behavior(p, "retiree", _SESSION_PROGRAM)
     await _remember(p, "retiree", "一条事实")
     distiller = LessonsDistiller(
         event_bus=EventBus(), tlon_paths=p, llm_client_factory=lambda _id: _FailingLLM()
@@ -178,3 +169,16 @@ async def test_llm_failure_is_logged_never_raised(tmp_path: Path) -> None:
     await distiller._on_agent_stopped(_stopped_event("retiree"))  # must not raise
 
     assert not (tmp_path / "retiree" / "memory" / "lessons.md").exists()
+
+
+async def test_removed_member_does_not_recreate_archive(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    llm = _FakeLLM("不得调用")
+    distiller = LessonsDistiller(
+        event_bus=EventBus(), tlon_paths=paths, llm_client_factory=lambda _: llm
+    )
+    event = _stopped_event("removed")
+    event.payload["removed"] = True
+    await distiller._on_agent_stopped(event)
+    assert not paths.agent_dir("removed").exists()
+    assert llm.calls == []

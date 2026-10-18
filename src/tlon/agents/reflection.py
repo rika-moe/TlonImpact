@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from importlib import resources
 from typing import Any, cast
 
-from tlon.agents.member_spec import MemberRule
+from tlon.agents.member_spec import SessionRecipe
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
@@ -36,12 +36,11 @@ class ReflectionEngine:
     """Runs background memory reflections for an agent.
 
     Owns the reflection scheduling state (interval, session counter,
-    running flag). Initial enabled/interval come from the cognitive rule's
-    loop (``rule.loop.reflect``, projected from the legacy ``:on-complete``
-    section); ``enabled`` stays a runtime switch.
+    running flag). Initial enabled/interval come from the session recipe;
+    ``enabled`` stays a runtime switch.
 
     The engine receives its services (memory, LLM client, session
-    journal) and the cognitive rule directly — no back-reference to the
+    journal) and the session recipe directly — no back-reference to the
     owning member runtime.
     """
 
@@ -49,7 +48,7 @@ class ReflectionEngine:
         self,
         memory: MemoryManager,
         llm_client: LLMClient,
-        rule: MemberRule,
+        recipe: SessionRecipe,
         journal: SessionJournal,
         state_changed: Callable[[], Awaitable[None]] | None = None,
     ):
@@ -58,9 +57,7 @@ class ReflectionEngine:
         self._llm_client = llm_client
         self._journal = journal
 
-        # Reflection settings live on the cognitive rule's loop.
-        assert rule.loop is not None, "ReflectionEngine requires a cognitive rule"
-        reflect = rule.loop.reflect
+        reflect = recipe.reflect
         self.enabled: bool = reflect.enabled
         self._interval: float = reflect.interval_minutes * 60
         self._min_interactions: int = memory.config.reflection_min_interactions

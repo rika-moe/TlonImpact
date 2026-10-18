@@ -160,7 +160,7 @@ async def test_admin_termination_waits_for_background_work(registry: AgentRegist
     assert not MailStore(registry._paths.mail_database_file()).is_retired("member")
     agent.shutdown.assert_not_awaited()
     agent.active_session_count = 0
-    await settle(lambda: "member" in registry._dead)
+    await settle(lambda: "member" in registry._dead and agent.shutdown.await_count == 1)
     agent.shutdown.assert_awaited_once()
 
 
@@ -276,7 +276,7 @@ async def test_self_exit_overrides_admin_drain(registry: AgentRegistry) -> None:
     assert registry._scheduling_intents["member"][0] == "exit"
     agent.active_session_count = 0
     await registry.apply_scheduling_request("member", {"action": "exit"})
-    await settle(lambda: "member" in registry._dead)
+    await settle(lambda: "member" in registry._dead and agent.shutdown.await_count == 1)
     agent.shutdown.assert_awaited_once()
 
 

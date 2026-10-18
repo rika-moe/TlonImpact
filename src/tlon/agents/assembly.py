@@ -1,8 +1,8 @@
-"""Cognitive capability assembly for members (split from agent_registry).
+"""Member capability assembly for members (split from agent_registry).
 
-``assemble_cognitive`` builds the full capability set one member gets —
+``assemble_member_capabilities`` builds the full capability set one member gets —
 LLM client, memory, task manager, Docker runtime, and the tool list —
-and returns it as ``CognitiveCapabilities`` for ``MemberRuntime``. It is
+and returns it as ``MemberCapabilities`` for ``MemberRuntime``. It is
 a pure function of its parameters: the registry injects itself (it
 satisfies the ``AgentLifecycle`` port structurally) plus the config
 provider and paths, keeping the import direction agents → tools (the
@@ -18,7 +18,7 @@ from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_inbox import mark_read_actor, unread_mails_provider
 from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
-from tlon.agents.member_runtime import CognitiveCapabilities
+from tlon.agents.member_runtime import MemberCapabilities
 from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
@@ -184,7 +184,7 @@ def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig
     )
 
 
-async def assemble_cognitive(
+async def assemble_member_capabilities(
     config: AgentConfig,
     *,
     registry: "AgentRegistry",
@@ -192,16 +192,14 @@ async def assemble_cognitive(
     tlon_paths: TlonPaths,
     metrics_service: MetricsService | None = None,
     trace_store: TraceStore | None = None,
-) -> CognitiveCapabilities:
+) -> MemberCapabilities:
     """Assemble the capability set for a member.
 
     Unified member model (ADR 0006): every member gets the full
     capability set — LLM client, memory, task manager, Docker runtime,
-    tools, and the team roster. Whether the cognitive engine (loop /
-    scheduler) is actually attached is derived from the spec inside
-    ``MemberRuntime``; a member without a loop rule simply never uses
-    these objects (lazy assembly: objects are cheap, loading is on
-    demand). Exception (issue #26): a member declaring
+    tools, and the team roster. Rules can request a session whenever their
+    program requires one; capability availability does not classify a member.
+    Resource loading stays on demand. A member declaring
     ``docker.level: L0`` gets no execution device — no DockerRuntime and
     none of the device-dependent shell/filesystem tools; L1 (issue #40,
     文件层) gets the runtime but only the filesystem five — no bash tools,
@@ -243,7 +241,7 @@ async def assemble_cognitive(
     # Create Docker runtime (shared by shell + filesystem tools), wrapped
     # in the interface-level exec audit (issue #21): every run() emits a
     # device.exec trace span + device_exec log. Tools and
-    # CognitiveCapabilities.docker_runtime both hold the wrapped instance;
+    # MemberCapabilities.docker_runtime both hold the wrapped instance;
     # close() passes through, so MemberRuntime's shutdown path is unchanged.
     # 能力阶梯（issue #26/#40）：L0 无执行装置——不创建 DockerRuntime，
     # 下方也不注册装置工具；L1（文件层）与 L2 都创建 runtime——文件 I/O
@@ -316,7 +314,7 @@ async def assemble_cognitive(
         )
     tool_executor.register_tool(GetCurrentTimeTool())
     tool_executor.register_tool(SendEmailTool())
-    # forwardMail (ADR 0029): the cognitive member's forwarding outlet —
+    # forwardMail (ADR 0029): explicit source-mail forwarding —
     # declarative like sendEmail; the engine validates mail_id against the
     # agent's own mailbox and composes the self-contained forward body.
     tool_executor.register_tool(ForwardMailTool())
@@ -542,7 +540,7 @@ async def assemble_cognitive(
     # Read tool timeout from agent config
     per_tool_timeout = config.tool.per_timeout
 
-    return CognitiveCapabilities(
+    return MemberCapabilities(
         # Swap in the merged LLM config so consumers (context pressure,
         # member_runtime.py) see the resolved context_window int.
         config=config.model_copy(update={"llm": llm_config}),

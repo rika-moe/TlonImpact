@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_cognitive
+from tlon.agents.assembly import REPRODUCTION_TOOLS, assemble_member_capabilities
 from tlon.agents.policy import (
     TILT_NEUTRAL,
     PolicyValidationError,
@@ -319,7 +319,7 @@ class TestAssemblyToolSubset:
             llm=LLMConfig(model_name="test/model"),
         )
         yaml_save(config, tlon_paths.tlon_home())
-        return await assemble_cognitive(
+        return await assemble_member_capabilities(
             config,
             registry=None,  # type: ignore[arg-type]
             agent_info=_FakeAgentInfo({"rookie": config}),  # type: ignore[arg-type]

@@ -24,7 +24,13 @@ class AgentSession:
         trigger_content: str,
         carrier: dict[str, str | None] | None = None,
         responsibility: "list[Mail] | None" = None,
+        recipe_source: str = "",
+        source_mail_id: str | None = None,
+        invocation: dict[str, Any] | None = None,
     ):
+        self.recipe_source = recipe_source
+        self.source_mail_id = source_mail_id
+        self.invocation = invocation or {}
         self.id = session_id
         self.context: list[dict[str, Any]] = []
         # Length of the initial context block (knowledge + mail history +
@@ -38,7 +44,7 @@ class AgentSession:
         self.trigger_content = trigger_content
 
         # Responsibility set (ADR 0028): the wake-time snapshot of the
-        # wakeable unread mails this session is accountable for. In-memory
+        # trigger mails this session is accountable for. In-memory
         # only — the journal persists the id list (session/start), and the
         # failure-reply anchors read these Mail objects.
         self.responsibility: list[Mail] = list(responsibility or [])

@@ -5,6 +5,7 @@ import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.recipe_helpers import recipe_for
 from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
@@ -21,21 +22,7 @@ from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
 
-GATED_EDN = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think)
-                          (critique {:if (sending-mail?)})
-                          (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
-                          (revise {:if (critique-failed?)})]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-"""
+GATED_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (critique {:if (sending-mail?)}) (act {:if (or (not (sending-mail?)) (not (critique-failed?)))}) (revise {:if (critique-failed?)})] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
 def _mail() -> Mail:
@@ -99,18 +86,14 @@ def _make_driver(
     tool_executor = MagicMock()
     tool_executor.execute = AsyncMock(side_effect=_send_tool)
 
-    on_complete = MagicMock()
-    on_complete.run = AsyncMock()
-
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     driver = LoopDriver(
         identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-        rule=rule,
+        recipe=recipe_for(rule),
         services=services,
         executor=executor,
         tool_executor=tool_executor,
         per_tool_timeout=5.0,
-        on_complete=on_complete,
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         pressure=ContextPressure(MagicMock(), journal, 262144),

@@ -1,6 +1,6 @@
 # 统一成员模型（Unified Member Model）
 
-本文定义成员、行为和原型的关系，以及成员生命周期与自主权边界。原型的写入、审批和 spawn 机制见 [prototypes.md](prototypes.md)，身份与人格见 [identity.md](identity.md)，认知执行见 [runtime.md](runtime.md)。历史来源是 [ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0024](../decisions/0024-subjective-identity.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
+本文定义成员、行为和原型的关系，以及成员生命周期与自主权边界。原型的写入、审批和 spawn 机制见 [prototypes.md](prototypes.md)，身份与人格见 [identity.md](identity.md)，程序执行见 [runtime.md](runtime.md)。历史来源是 [ADR 0006](../decisions/0006-unified-member-model.md)、[ADR 0024](../decisions/0024-subjective-identity.md) 与 [ADR 0030](../decisions/0030-sqlite-post-office.md)。
 
 ## 概念与关系
 
@@ -11,7 +11,7 @@
 | Member | 持久身份、行为副本、人格、记忆、邮箱和 workspace，加上按需装配的 `MemberRuntime` |
 | Agent | 代码与接口中对成员的称呼，不表示另一种成员类型 |
 
-成员只有一种。规则是否带 `:loop` 决定该规则是否运行认知循环，不构成成员类型。spawn 出生和人类创建的成员使用同一个运行体系；`spawned_by`、`spawn_depth`、`prototype` 记录来源，不决定运行时类型。
+成员只有一种，执行的是 `on / when / actions` 程序。模型会话是可组合的 `run-loop` 效果，不产生规则或成员类型。spawn 与手建成员使用相同运行体系；来源字段用于审计。
 
 原型与成员不是同一个对象：实例化把原型行为冻结拷贝进成员目录，此后修改原型不改变既有成员。原型可以编辑或删除，成员历史的保留策略不延伸成原型库不可删除的规则。
 
@@ -21,7 +21,7 @@
 
 成员不能改写自己或他人的 `behavior.tlon`。行为更新走「新原型提案 → 审批 → 派生新成员」，不提供成员自改 spec 的热更新旁路。这样避免运行会话读到混合版本，也让行为变更的来源可以审计。
 
-spec 的权威范围是可执行规则：触发、条件、认知循环、上下文及动作，boot/lazy/wake 资格从这些规则派生。它不是人格、模型部署配置或执行装置运行权限的唯一来源；后者仍由相应领域的配置与执行检查约束。
+spec 的权威范围是可执行规则：触发、条件、会话配方、上下文及动作，boot/lazy/wake 资格从这些规则派生。它不是人格、模型部署配置或执行装置运行权限的唯一来源；后者仍由相应领域的配置与执行检查约束。
 
 人格与行为分开：`IDENTITY.md` / `SOUL.md` 是成员可自主修改的叙事，`RULES.md` 由人类维护。记忆与人格可以随个体经历变化；不可自改的是行为规则，不是成员全部数据。
 
@@ -39,7 +39,7 @@ finishTurn 结束自己的本次工作；sleepUntil 定时睡眠；exitAgent 自
 
 ### 统一装配与按需加载
 
-装配由 `assemble_cognitive` 统一组织，能力对象与工具按配置和信任等级构造，昂贵加载与容器启动按需发生。无 `:loop` 的规则只执行动作，不启动认知循环；不能据此承诺某个成员永远没有认知成本。L0 不创建执行装置，L1 不注册 shell 工具，具体边界见 [execution-device.md](execution-device.md)。
+装配由 `assemble_member_capabilities` 统一组织，按配置和信任等级构造服务，模型调用与容器启动按需发生。程序是否调用模型不改变装配或权限模型。L0 不创建执行装置，L1 不注册 shell 工具，见 [execution-device](execution-device.md)。
 
 ### 经验传到下一代
 
@@ -59,11 +59,11 @@ finishTurn 结束自己的本次工作；sleepUntil 定时睡眠；exitAgent 自
 2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
 3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 
-普通成员的状态工具只绑定自身；管理他人的终止仅在人类管理端提供。DSL 生命周期请求必须验证发起主体，不能通过确定性规则绕过工具权限。
+普通成员的状态工具只绑定自身；管理他人的终止仅在人类管理端提供。DSL 生命周期请求必须验证发起主体，不能通过 DSL 规则绕过工具权限。
 
 ## 当前默认生命周期政策：Adam
 
-Adam 是内置、无认知循环的 `MemberRuntime`，使用内置 spec 与注册表查询端口，不进入普通 agent 生命周期注册表，但列入统一成员寻址黄页。机制检测事实并执行请求，Adam 的五条规则选择响应：
+Adam 是内置 `MemberRuntime`，使用同一种规则程序与注册表查询端口，不进入普通 agent 生命周期注册表，但列入成员寻址黄页。其内置程序目前不请求模型，五条规则选择响应：
 
 | 事实 | 当前响应 |
 |---|---|

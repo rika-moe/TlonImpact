@@ -12,7 +12,7 @@ Tlon 的愿景是 agent 社会自进化（见 [../vision.md](../vision.md)）：
 
 由此推出本文其余部分的全部设计取向：这门语言的预期作者不只是人类，还包括 LLM（[tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` 让 agent 自己撰写新成员的 spec）。所以 DSL 被**故意**设计得受限——表达能力让渡给安全性，一门语言只有足够安全，才配交给 agent 自己书写。
 
-一个补充事实：spec 只有一种。`MemberSpec` 用统一规则形态 `规则 = :on + :when + 可选 :loop + :actions` 覆盖所有成员——规则带不带 `:loop` 只是形态差异——由统一解释器 [agents/member_runtime.py](../../src/tlon/agents/member_runtime.py) 的 `MemberRuntime` 执行。统一的理由是面向作者的：LLM 只需学会一种格式，`writePrototype` 输出永远是同一个 rules-form 的 `behavior.tlon`。格式每多一种，作者要学的、校验器要管的、文档要讲的都多一份。
+成员的规则统一为 `:on + :when + :actions`，可选 `:fuel`。`run-loop` 是普通效果词，配方独立于规则；同一成员可以按条件调用不同配方，也可以用 `while` 完成不涉及模型的计算。`quote` 将配方表达式保留为数据。成员不再按有无会话分类，具体决定见 [ADR 0042](../decisions/0042-unified-member-rule-execution.md)。
 
 愿景的判断标准是"人类退得越远，社会是否依然进步"。DSL 的受限程度直接决定人类能退多远：语言每安全一分，审批者就可以少看一行；反过来，语言里任何一处不受约束的能力，最终都会变成一个人类必须亲自盯住的岗位。本文后面描述的每一道限制，都可以换算成"人类往后退了一步"。
 
@@ -28,13 +28,13 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 值得说明的是，这门语言**并非**靠表达能力残缺来保证停机：`while`/`recur`（Clojure 风格有界循环对）加进来之后，语言在图灵等价意义下是完备的，终止性完全由 fuel 预算保证。这是刻意的取舍——"足够弱以至于显然停机"的语言写不出真实策略（比如对一组收件人逐个 `forward`）；正确的做法是让语言够用，同时让任何求值都有一个不可逾越的步数上界。无论 LLM 写出什么样的表达式，求值都必然终止，且代价可预测。
 
-确定规则显式声明 `:fuel` 时，门控与全部动作共享预算；未声明时门控使用默认门控预算，每个动作各用默认动作预算。认知规则的门控与完成动作在时间上分离；当前完成路径每个 form 独立使用规则声明值或默认动作预算。`:loop/:fuel` 约束每次 `:until` 与 stage `:if` 求值。因此 fuel 是相应求值片段的上界，不能笼统解释为整个 session 的总预算。
+规则显式声明 `:fuel` 时，门控与全部动作共享预算；未声明时门控与各动作使用默认预算。会话配方的 `:fuel` 单独约束每次 `:until` 与 stage `:if` 求值；会话总成本另由轮次和累计 token 硬上限约束。
 
 ### 词汇表按语境切分
 
 受限不是只有"少"，还有"各归各位"。builtin 注册表按使用语境切成互不混淆的几份：`:when` 门控用成员统一注册表的纯子集（`make_member_builtins` 里 `pure=True` 的部分）；`:until` 只能见 `LOOP_BUILTINS`（迭代/错误上限谓词）；stage `:if` 只能见 `STAGE_COND_BUILTINS`（对会话 scratchpad 的只读谓词）。这些纯语境的注册表只含纯词，所以三个语境的求值都是无副作用的**构造性**结论——不是靠约定"作者别乱写"，而是乱写的词汇根本不在注册表里。`:when` 里引用 `iteration-limit-reached?`、`:until` 里引用 `addressed-to-me?`，都在加载校验时因"未注册"被拒。
 
-环境同理：表达式能看到的只有显式绑定的几个符号（门控是 `{msg, event, self}`，认知完成动作绑定 `result`、`self`，`msg` 为 nil 且不绑定 `event`），非邮件事件的 `msg` 绑定为 `nil` 且所有邮件相关 builtin 对此 nil-safe。事件负载来自总线、形状不完全可控，所以 builtin 对畸形输入的默认行为是安全返回（缺键得 `false`/`nil`），而不是抛错——抛错留给真正的 spec bug（如类型用错），运行时噪音因此有区分度。
+规则的门控与动作都使用 `{msg, event, self}`。非邮件事件的 `msg` 为 `nil`，邮件谓词对此安全返回；动作不再有另一套完成环境或隐式 `result`。模型结果不能在本阶段作为普通表达式值继续求值。
 
 ### 函数能力与信任边界
 
@@ -53,7 +53,7 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 
 宿主查询读取注册表状态，由 `make_member_builtins` 的调用方闭包注入——它们是 Adam 的词汇表，普通成员不能因使用同一种语法就获得宿主查询权限。
 
-请求从求值器到引擎有两条路径，按规则形态分开：确定规则取每个动作 form 的求值**返回值**（`(spawn ...)` 求值即其请求，`start-all` 求值为请求列表）；认知规则的完成动作（on-complete）允许 `(when cond (spawn ...) (emit ...))` 这样的多动作体，而 `when` 只求值出最后一个 body 值，所以这条路径给注册表附一个 collector，动作 builtin 在纯求值过程中把每个请求追加进去。两条路径共用同一组 builtin 实现（`_record` 同时追加并返回）。时序上的关键点不变：无论哪条路径，请求的执行都发生在整个求值结束之后——表达式永远观察不到自己意图的执行结果，查询可能读取当前宿主状态，重放还需要相同输入与宿主视图；无外部效果不等于结果永远不变。
+所有规则统一使用效果收集器：动作 builtin 追加并返回 `ActionRequest`，所以函数、条件和传统循环中产生的每个请求都能保留，外层返回 `nil` 也不遗失。规则全部求值成功后，宿主按产生顺序执行效果；`run-loop` 完成后继续剩余效果。这仍不能让表达式在当前求值过程中读取自己的实际执行结果。
 
 参数校验同样前置在纯求值期完成：动作 builtin 在产出请求前就把参数查完（`spawn` 的 prototype 必须是字符串、`start`/`stop` 的 `:reason` 必须非空、`forward` 的 `:to` 必须是非空地址向量），引擎执行侧拿到的 `ActionRequest` 是已验证的数据，执行侧仍检查当前权限、配额、收件人及生命周期状态。描述侧负责参数合法性，执行侧负责是否允许执行，二者不能互相替代。
 
@@ -76,13 +76,13 @@ spec 的作者是 LLM，这意味着 DSL 面对的是不可信输入。把"不�
 DSL 的设计前提是看清哪一半在语言内、哪一半在语言外：
 
 - **机制是 Python 固定实现**：工具（发邮件、读写文件、Shell、记忆、spawn）、stage（think / act / plan / critique / revise）、section（persona / protocol / knowledge / skills / current-task / thread-recap / mail-history）、求值器本身、事件总线。这些由引擎提供，有单元测试，不随 spec 变化。
-- **策略是 spec 数据**：何时醒（`:on` + `:when`）、如何思考（`:loop` 的 stage 编排、上下文组装、`:until` 终止条件）、何时完成、完成后做什么（`:actions`）。Adam 是最纯粹的例子：作为 agent 世界的 init 进程，它的全部策略就是 [agents/adam.py](../../src/tlon/agents/adam.py) 里一段内置 spec 文本（`ADAM_SPEC_EDN`），boot 时 `start-all`、空闲时 `stop`、新成员出生时发欢迎信（出生社会化：指引新成员用自己的联系簿结识同伴（通信即结识、updateContact 记录）并用 listMembers 寻址黄页查地址，通信惯例是 spec 里的静态文本），机制上一个普通的 `MemberRuntime` 实例。这个例子的分量在于：系统里权限最高的成员（能启停其他所有成员）恰恰是用最受限的方式写成的——它的权力不来自语言能力的豁免，只来自注入给它的宿主谓词与动作。权限是注入的，不是语法授予的。
+- **策略是 spec 数据**：`:on` 和 `:when` 决定触发，`:actions` 组合普通计算与效果；`run-loop` 配方声明上下文、阶段和终止条件。Adam 同样用内置规则表达启动、空闲卸载和噪声治理，权限来自注入的宿主端口。
 
 由此得到 DSL 表达能力的天花板：**组合已有机制**。spec 可以决定 act 之前先 plan、critique 失败才 revise、只对 To 里点了自己的邮件启动会话；但 spec 不能创造新的 stage、section 或宿主效果原语。受信复合能力可以新增 DSL 词，但只能组合已有原语，见 [capabilities](capabilities.md)。这个天花板是特性而非缺陷：机制是可信的（人类写的、有测试的），策略是可进化的（LLM 写的、受限的），边界正好落在信任边界上。
 
-机制/策略的界线在认知循环内部同样清晰。`:stages` 向量决定跑哪些 stage、以什么顺序、各自带什么条件（`:if`），但每个 stage 的语义——`think` 是一次 LLM 调用、`act` 是执行本轮全部工具调用、`critique` 失败如何软降级——是 [agents/stages/](../../src/tlon/agents/stages) 下的 Python 实现。spec 里的 `act` 只声明"执行这轮的工具分发列表"，每个工具一个后台 task 的并发执行是引擎的事。更关键的是引擎保留了 spec 无法覆盖的否决权：`:max-iterations` 与 `:max-tokens` 是双停机线（ADR 0023），任一到顶、在任何 `:until` 求值之前无条件生效——spec 可以声明终止条件，但声明不出"永不终止"。策略可以自由，自由有边。
+机制/策略的界线在会话循环内部同样清晰。`:stages` 向量决定跑哪些 stage、以什么顺序、各自带什么条件（`:if`），但每个 stage 的语义——`think` 是一次 LLM 调用、`act` 是执行本轮全部工具调用、`critique` 失败如何软降级——是 [agents/stages/](../../src/tlon/agents/stages) 下的 Python 实现。spec 里的 `act` 只声明"执行这轮的工具分发列表"，每个工具一个后台 task 的并发执行是引擎的事。更关键的是引擎保留了 spec 无法覆盖的否决权：`:max-iterations` 与 `:max-tokens` 是双停机线（ADR 0023），任一到顶、在任何 `:until` 求值之前无条件生效——spec 可以声明终止条件，但声明不出"永不终止"。策略可以自由，自由有边。
 
-触发面也在机制侧收敛：认知规则（带 `:loop`）只在 `:mail-delivered` 上生效，订阅其他事件的认知规则在运行时记 warning 并跳过（`MemberRuntime`）。spec 的 `:on` 词汇表虽然覆盖全部 `EventType`（确定规则如 Adam 确实需要感知生命周期事件——`:on :agent-spawned` 的出生欢迎信就是一例），但"启动一次昂贵的认知会话"的入口只有邮件一个。这与愿景的书信共和国一致：邮件是社会唯一的公共通道，也是唯一值得动用 LLM 思考的刺激源；可观测性事件可以有确定规则盯着，但不该触发认知。
+所有已订阅事件都使用同一种执行机制，包括非邮件事件。是否请求模型由普通程序决定，不以事件名称或成员类别作特殊分派；外部通信仍由邮件层负责。
 
 生命周期管理也是同一个划法的示范：wake-on-mail 不是策略而是机制——注册表从 spec 派生唤醒资格（声明了 `:on :mail-delivered` 的睡眠收件人会被唤醒），唤醒动作本身是幂等的机制执行，任何 spec 都不需要写"收到邮件时叫醒我"这样的规则；反过来，空闲检测也是机制（注册表只发布 `AGENT_IDLE` 这个事实），而"空闲了要不要停"是策略——Adam 的 spec 里那条 `:on :agent-idle` 规则。事实由机制生产，后果由 spec 决定，这条线让整个社会的启停行为也可进化：换一种排空策略只是改 Adam 的 spec 文本，不动一行引擎代码。
 
@@ -96,10 +96,10 @@ spec 的加载是全有或全无的：缺必填字段是错误而不是默认值
 
 当前解析器对未知键会记 warning 后忽略（`_warn_unknown_keys`）；这描述现有校验行为，不构成维护旧格式、兼容层或迁移程序的要求。缺失必填项和错误值仍拒绝加载。
 
-total 还体现在两条结构性约束上，都在加载时拒绝而非运行时兜底：
+total 还体现在配方与预算的校验上，都在加载时拒绝而非运行时兜底：
 
-- **一个成员至多一条认知规则**（`validate_member_spec`）：认知引擎绑定单条规则的 loop——stage 编排、`:until`、反思设置都是成员级的单例配置，两条认知规则意味着两套循环语义无法调和，与其定义优先级仲裁不如直接禁止。认知规则之外可以混排若干确定规则（cost routing：便宜路径先用确定规则挡掉，认知规则的 `:when` 用 `(not ...)` 排除已处理的），这是 spec 表达能力内的组合，不是第二条认知规则。
-- **fuel 声明在加载时定界**：规则级 `:fuel` 与 loop 级 `:loop/:fuel` 必须为正且不超过引擎硬顶 `MAX_FUEL`——spec 可以在预算内申请更多燃料，但申请不了无限燃料。自声明预算的意义是让"这条规则值得更多计算"成为显式的、可审查的 spec 内容，而不是隐藏在表达式复杂度里。
+- **会话配方独立校验**：同一成员可以在不同规则和事件里请求不同配方。并发约束是每个成员串行执行程序，不是限制成员只能拥有一个配方。
+- **fuel 声明在加载时定界**：规则与会话配方的 fuel 必须为正且不超过 `MAX_FUEL`；语法数据中的阶段、section 与终止条件仍按各自词汇表校验。
 
 加载时还有一份不参与语义只参与审计的产物：`load_member_spec` 对原始文件字节算 sha256 短哈希挂到 `MemberSpec.source_hash`，随可观测性事件上报——这份 spec 是从哪个文件来的有据可查，但哈希永远不写回 behavior 文件（provenance 不是 semantics）。
 
@@ -125,7 +125,7 @@ DSL 的实现分五层，各层职责单一、失败模式明确。语言核心�
 | 层 | 位置 | 职责 | 失败即 |
 |---|---|---|---|
 | EDN 解析 | [tlosure/edn.py](../../src/tlosure/edn.py) 的 `loads` / `dumps` | 文本 → 纯 Python 数据，不求值 | `EDNParseError`（带行列号） |
-| 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `MemberLoop` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
+| 语义模型 | [agents/member_spec.py](../../src/tlon/agents/member_spec.py) 的 `MemberSpec` / `MemberRule` / `SessionRecipe` | 语义权威：typed frozen dataclass 树 + 结构校验 | `MemberSpecValidationError` |
 | 受限求值器 | [tlosure/eval.py](../../src/tlosure/eval.py) 的 `eval_form` 与 [tlosure/validate.py](../../src/tlosure/validate.py) 的 `validate_form` | fuel 计量求值与静态校验；动作产出 `ActionRequest` | `EvalError` 家族 |
 | 领域词汇 | [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的四个纯注册表 + `make_member_builtins` + `validate_member_actions` | tlon 的 DSL 词汇表：mail/loop/stage 谓词、动作族、`ScriptHostQueries` 宿主端口；通用词汇与契约类型来自 tlosure | 未注册词汇在加载校验被拒 |
 | 加载校验 | [agents/loader.py](../../src/tlon/agents/loader.py) 的 `load_member_spec` | 唯一读盘路径：解析 → 模型 → 校验 → 挂 provenance | 成员拒绝启动（注册表隔离） |

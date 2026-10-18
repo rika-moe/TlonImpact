@@ -8,7 +8,7 @@
 |---|---|---|
 | uv | 已安装（Python ≥ 3.11 由 uv 自动提供） | 安装并运行 Tlon |
 | Docker | 可选 | shell/filesystem 工具的执行沙箱；没有也能起服务，只是这些工具会返回错误 |
-| LLM API Key | 见下 | 认知 agent 的推理后端；按所用 provider 各配各的（`{PROVIDER}_API_KEY`） |
+| LLM API Key | 见下 | 成员调用模型时使用的推理后端；按所用 provider 各配各的（`{PROVIDER}_API_KEY`） |
 
 ## 1. 安装
 
