@@ -64,7 +64,7 @@ export function groupByThread(mails: readonly MailItem[], myAddress: string): Th
     const unreadCount = sorted.filter((mail) => mail.read === false).length;
     const root = sorted.find((mail) => mail.id === threadId);
     const topic = root ?? (sorted[0] as MailItem);
-    const title = topic.subject?.trim() || topic.content.replace(/\s+/g, " ").trim().slice(0, 80) || "（无主题）";
+    const title = topic.subject?.trim() || topic.content.replace(/\s+/g, " ").trim().slice(0, 80) || "(no subject)";
     threads.push({
       threadId, mails: sorted, participants, latest, count: sorted.length,
       unread: unreadCount > 0, unreadCount, title, rootLoaded: root !== undefined,

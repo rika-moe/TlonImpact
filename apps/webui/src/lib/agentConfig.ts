@@ -1,9 +1,9 @@
 import type { AgentConfig, AgentPersona } from "../client/rest";
 
 export const PERSONA_FIELDS = [
-  { key: "identity", name: "IDENTITY.md", description: "我如何定义自己：名字、自称、身份叙述、当前自认的角色；这是成员自述，不代表系统认证。成员可以自行修改。" },
-  { key: "profile", name: "SOUL.md", description: "我重视什么，以及如何表达和判断：价值观、性格、语气、面对不确定和分歧的倾向。成员可以自行修改。" },
-  { key: "behavior", name: "RULES.md", description: "我必须遵循哪些工作规则：流程和明确约束。由人类维护，成员不能自行修改。" },
+  { key: "identity", name: "IDENTITY.md", description: "How I define myself: name, self-reference, identity narrative, and current self-described role. This is a member's own account, not a system certification. Members can edit this file." },
+  { key: "profile", name: "SOUL.md", description: "What I value and how I express myself and make judgments: values, personality, tone, and responses to uncertainty and disagreement. Members can edit this file." },
+  { key: "behavior", name: "RULES.md", description: "The working rules I must follow: procedures and explicit constraints. Maintained by humans; members cannot edit this file." },
 ] as const;
 
 export type AgentUpdate = { persona?: Partial<AgentPersona>; llm?: { model_name: string } };
@@ -14,9 +14,9 @@ export function buildAgentUpdate(
   persona: AgentPersona,
   modelName: string,
 ): AgentUpdate {
-  if (!initial) throw new Error("配置尚未加载，无法保存");
+  if (!initial) throw new Error("Configuration has not loaded; cannot save");
   const model = modelName.trim();
-  if (!model && model !== initial.llm.model_name) throw new Error("MODEL 不能为空");
+  if (!model && model !== initial.llm.model_name) throw new Error("MODEL is required");
   const changed: Partial<AgentPersona> = {};
   for (const { key } of PERSONA_FIELDS) {
     if (persona[key] !== initial.persona[key]) changed[key] = persona[key];

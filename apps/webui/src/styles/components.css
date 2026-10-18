@@ -39,12 +39,11 @@ body {
   );
 }
 
-/* ---------- tech label: mono, uppercase, tracked ---------- */
+/* ---------- tech label: mono, tracked; preserve content casing ---------- */
 
 .tech-label {
   font-family: var(--font-mono);
   font-size: 11px;
-  text-transform: uppercase;
   letter-spacing: 0.2em;
   color: var(--text-dim);
 }
@@ -92,7 +91,6 @@ body {
 .btn {
   font-family: var(--font-mono);
   font-size: 12px;
-  text-transform: uppercase;
   letter-spacing: 0.2em;
   padding: 8px 16px;
   border-radius: var(--radius);

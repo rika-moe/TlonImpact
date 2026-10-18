@@ -484,7 +484,7 @@ export class RestClient {
         body: JSON.stringify({ ...msg, request_id: requestId }),
       });
     } catch (err) {
-      throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试 (${String(err)})`, "submission_unknown", undefined, requestId);
+      throw new MailSendError(`Delivery result unknown; retry with the original request_id ${requestId} (${String(err)})`, "submission_unknown", undefined, requestId);
     }
     const data = (await response.json().catch(() => ({}))) as {
       mail_id?: string;
@@ -504,11 +504,11 @@ export class RestClient {
       );
     }
     if (typeof data.mail_id !== "string") {
-      throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试`, "submission_unknown", undefined, requestId);
+      throw new MailSendError(`Delivery result unknown; retry with the original request_id ${requestId}`, "submission_unknown", undefined, requestId);
     }
     if (typeof data.request_id !== "string" || typeof data.message !== "string"
         || !Array.isArray(data.local_recipients) || !Array.isArray(data.gateways)) {
-      throw new MailSendError(`投信结果未知；使用原 request_id ${requestId} 重试`, "submission_unknown", undefined, requestId);
+      throw new MailSendError(`Delivery result unknown; retry with the original request_id ${requestId}`, "submission_unknown", undefined, requestId);
     }
     return data as MailReceipt;
   }

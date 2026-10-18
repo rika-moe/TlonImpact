@@ -36,7 +36,7 @@ test("clearing each persona file explicitly PATCHes an empty string", async (t) 
 test("failed reads remain errors and cannot produce a save", async (t) => {
   t.mock.method(globalThis, "fetch", async () => new Response('{"detail":"not found"}', { status: 404 }));
   await assert.rejects(new RestClient().getAgentConfig("missing"));
-  assert.throws(() => buildAgentUpdate(null, config.persona, config.llm.model_name), /配置尚未加载/);
+  assert.throws(() => buildAgentUpdate(null, config.persona, config.llm.model_name), /Configuration has not loaded/);
 });
 test("model changes require a value; existing absent models permit persona edits", () => {
   assert.deepEqual(buildAgentUpdate(config, config.persona, " next/model "), { llm: { model_name: "next/model" } });
