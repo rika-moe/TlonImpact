@@ -5,14 +5,15 @@
           :actions []
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
-                 :stages [(think)
+                 :stages [(plan {:if (first-iteration?) :max-steps 5})
+                          (think)
                           (critique {:if (completing?)})
                           (act {:if (or (not (completing?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
-                 :max-iterations 100
+                 :max-iterations 30
                  :max-consecutive-errors 3
-                 :max-tokens 8000000
+                 :max-tokens 1000000
                  :reflect {:enabled true :interval-minutes 15}}}
          {:name "boot"
           :on :boot

@@ -87,6 +87,33 @@ class TestRoundtrip:
         assert _action_kind(_parse(spec.to_edn())) == "forward"
 
 
+class TestCritiqueInstructions:
+    def test_instructions_validate_and_roundtrip(self) -> None:
+        text = COGNITIVE_EDN.replace(
+            "(think) (act)",
+            '(think) (critique {:if (completing?) :instructions "检查来源与计算"}) (act)',
+        )
+        spec = _parse(text)
+        validate_member_spec(spec)
+        assert _parse(spec.to_edn()) == spec
+
+    @pytest.mark.parametrize(
+        "value", ['""', '"   "', "nil", "false", "3", "[]", "{}", ":source", "source"]
+    )
+    def test_invalid_instructions_rejected(self, value: str) -> None:
+        text = COGNITIVE_EDN.replace(
+            "(think) (act)", f"(think) (critique {{:instructions {value}}}) (act)"
+        )
+        with pytest.raises(MemberSpecValidationError, match="non-empty string"):
+            validate_member_spec(_parse(text))
+
+    @pytest.mark.parametrize("stage", ["think", "act", "plan", "revise"])
+    def test_instructions_only_allowed_for_critique(self, stage: str) -> None:
+        text = COGNITIVE_EDN.replace("(think) (act)", f'({stage} {{:instructions "检查证据"}})')
+        with pytest.raises(MemberSpecValidationError, match="unknown opts key :instructions"):
+            validate_member_spec(_parse(text))
+
+
 class TestSerializationProvenance:
     """source_hash is provenance; never written back into a behavior file."""
 

@@ -1,4 +1,0 @@
-{:name :p-40e0759fe02b45f9a6b06d42ad023865
- :display-name "超长预算迭代"
- :description "L0 执行能力；最多 300 次迭代、10000000 token，完整上下文与交卷前自评审，每 10 分钟反思。"
- :trusted true}

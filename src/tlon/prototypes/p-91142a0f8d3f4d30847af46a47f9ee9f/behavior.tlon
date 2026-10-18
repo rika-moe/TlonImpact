@@ -1,0 +1,14 @@
+{:version 1
+ :execution {:level :L0}
+ :parameters {:sender {:type :string :required true}
+              :pattern {:type :string :required true}
+              :to {:type :string-list :required true}}
+ :rules [{:name "route"
+          :on :mail-delivered
+          :when (and (= (get event :recipient) (get self :id))
+                     (from? msg ${sender})
+                     (content-matches? msg ${pattern}))
+          :actions [(forward {:to ${to}})]}
+         {:name "boot"
+          :on :boot
+          :actions []}]}

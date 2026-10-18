@@ -358,14 +358,14 @@
 
 ### 5.2 五个 stage（`STAGE_NAMES`）
 
-stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>`（用 4.3 的谓词；条件为假或求值失败都跳过该 stage）。仅 `plan` 额外支持 `:max-steps <正整数>`（默认 5）。其余 opts 键加载即拒绝。
+stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>`（用 4.3 的谓词；条件为假或求值失败都跳过该 stage）。`plan` 额外支持 `:max-steps <正整数>`（默认 5）；`critique` 额外支持 `:instructions <非空字符串>`，追加专项评审标准，不替代 PASS/FAIL 输出协议。其余 opts 键加载即拒绝。
 
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
 | `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出声明的邮件（`to` / `in_reply_to` 完全是模型显式声明的值，ADR 0028——无触发邮件缺省）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
-| `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审草稿（响应链上尚未入 context 的响应，渲染为 assistant 消息）+ 评审指令；首行 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、不写 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不按 PASS 放行。失败软降级 |
+| `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审草稿（响应链上尚未入 context 的响应，渲染为 assistant 消息）+ 评审指令；首行去空白后必须恰好是 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、清除旧 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不记录为 PASS。异常同样清除旧 verdict；完成动作是否要求明确 PASS 由后续 stage 的 `:if` 决定。失败软降级 |
 | `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |
 
 stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/tlon/agents/stages/outcome.py](../../src/tlon/agents/stages/outcome.py)），由 `LoopDriver._apply_outcome` 统一落地——应用顺序为：上下文追加 → scratch → 计数器/状态 → 工具结果 → 响应链 → 工具派发 → 邮件 → on-complete 动作 → 完成标记。
@@ -410,39 +410,29 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 ## 8. 完整示例
 
-### 8.1 带 `:loop`：「超长预算迭代」（[src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon](../../src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon)）
+### 8.1 带 `:loop`：「标准无执行迭代」（[behavior.tlon](../../src/tlon/prototypes/p-03b9aa7075764e6da3dafa1d8b004d4c/behavior.tlon)）
 
 ```clojure
 {:version 1
+ :execution {:level :L0}
  :rules [{:name "respond"
-          :on :mail-delivered                                   ; 邮件送达触发
-          :when (or (addressed-to-me? msg) (cc-ed? msg))        ; 只理会在 To/CC 里点了我的邮件
-          :loop {:context {:sections [(persona) (protocol)      ; system prompt：人格 + 协议
-                                      (lessons)                 ; 对话上下文：传承教训
-                                      (skills)                  ; 对话上下文：技能索引（ADR 0010）
-                                      (knowledge)               ; 对话上下文：记忆块（固定注入最末位，ADR 0017 阶段 4）
-                                      (current-task)            ; 对话上下文：当前 doing 任务
-                                      (mail-history 20 10)      ; 对话上下文：最早 20 封（冻结段）+ 最近 10 封（滑动段，ADR 0025）
-                                      (thread-recap)]}          ; 对话上下文：本线程上一轮处理摘要
-                 :stages [(think)                                  ; 想：一次 LLM 调用
-                          (critique {:if (completing?)})             ; 只在即将交卷时评审待交回复
-                          (act {:if (or (not (completing?))          ; 做：评审 FAIL 时拦截本轮完成
-                                        (not (critique-failed?)))})
-                          (revise {:if (critique-failed?)})]         ; FAIL 时把反馈喂回，下轮修正后重审
-                 :until (or (iteration-limit-reached?)          ; 兜底终止：迭代/错误/token 到顶
-                            (error-limit-reached?)
-                            (token-limit-reached?))
-                 :max-iterations 300                            ; 引擎硬顶（先于 :until 生效）
+          :on :mail-delivered
+          :actions []
+          :when (or (addressed-to-me? msg) (cc-ed? msg))
+          :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
+                 :stages [(think)
+                          (critique {:if (completing?)})
+                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (revise {:if (critique-failed?)})]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
+                 :max-iterations 10
                  :max-consecutive-errors 3
-                 :max-tokens 10000000                           ; token 预算硬顶（ADR 0023，与迭代取或）
-                 :reflect {:enabled true :interval-minutes 10}}  ; 每 10 分钟级后台记忆审计
-         }                                                      ; ← 注意：此处必须有 } 闭合规则 map
+                 :max-tokens 1000000
+                 :reflect {:enabled true :interval-minutes 15}}}
          {:name "boot"
-          :on :boot                                             ; 启动即跑（声明 boot 集成员身份）
-          :actions []}]}                                        ; 无动作也要写空向量或省略
+          :on :boot
+          :actions []}]}
 ```
-
-> 注：仓库中 [src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon](../../src/tlon/prototypes/p-40e0759fe02b45f9a6b06d42ad023865/behavior.tlon) 的规则一 map 曾少一个闭合 `}`（历史问题，已修复）；抄写时以上例的闭合层次为准。
 
 ### 8.2 无 `:loop`：「定址转发」（[src/tlon/prototypes/p-39c280594c5b4e4084ce8aad72e6b07f/behavior.tlon](../../src/tlon/prototypes/p-39c280594c5b4e4084ce8aad72e6b07f/behavior.tlon)）
 
@@ -470,7 +460,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 | `:execution` 不是 map、缺 `:level`、`:level` 非 `:L0`/`:L1`/`:L2` | 同上（`_execution_from`） |
 | 类型错误（int 位置写 bool/string 等） | 同上（bool 永不被接受为 int） |
 | 未知 section / stage 名，section 重复，`mail-history` 参数个数不是 1~2 个或参数不是非负 int | 同上（`_validate_sections` / `_validate_stages`） |
-| stage opts 键非 `:if`（`plan` 可加 `:max-steps`） | 同上（`_validate_stage_opts`） |
+| stage opts 键非 `:if`（`plan` 可加 `:max-steps`，`critique` 可加 `:instructions`） | 同上（`_validate_stage_opts`） |
 | `:loop/:replies` 键超出 `:iteration-limit` / `:error` / `:timeout`，或值不是非空字符串 | 同上（`_replies_from`） |
 | `:when` / `:until` / `:if` 引用未注册 builtin 或作用域外符号 | 同上（`validate_member_spec` 统一静态校验） |
 | 一个成员声明多条带 `:loop` 的规则 | 同上（D6.7：至多一条认知规则） |

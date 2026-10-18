@@ -1,0 +1,19 @@
+{:version 1
+ :execution {:level :L2}
+ :rules [{:name "respond"
+          :on :mail-delivered
+          :actions []
+          :when (or (addressed-to-me? msg) (cc-ed? msg))
+          :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
+                 :stages [(think)
+                          (critique {:if (completing?) :instructions "核验待交付结论是否有具体来源、计算过程或实际工具结果支撑；明确区分事实、推断和未核实内容。不得把未执行的查询、计算或测试写成已完成查证。没有可验证来源时必须明确说明局限；无法支持的断言应修订或删除。"})
+                          (act {:if (or (not (completing?)) (critique-passed?))})
+                          (revise {:if (and (completing?) (not (critique-passed?)))})]
+                 :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
+                 :max-iterations 10
+                 :max-consecutive-errors 3
+                 :max-tokens 1000000
+                 :reflect {:enabled true :interval-minutes 15}}}
+         {:name "boot"
+          :on :boot
+          :actions []}]}

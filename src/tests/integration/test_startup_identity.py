@@ -31,7 +31,7 @@ async def test_restart_rejects_offline_identity_collision(
     await _first_boot(paths)
     LocalIdentity(paths.webui_identity_file()).initialize("alice")
     instantiate(
-        builtin_id("长预算工具迭代"),
+        builtin_id("计划后执行"),
         agent_id,
         "Offline member",
         model="openai/gpt-test",
@@ -71,7 +71,7 @@ async def test_restart_accepts_distinct_agent_or_uninitialized_identity(
     if username is not None:
         LocalIdentity(paths.webui_identity_file()).initialize(username)
     instantiate(
-        builtin_id("长预算工具迭代"),
+        builtin_id("计划后执行"),
         "bob",
         "Offline member",
         model="openai/gpt-test",

@@ -1,4 +1,0 @@
-{:name :p-290cd3e4bcae4a93a04a3ebbbb1d0615
- :display-name "频繁反思迭代"
- :description "L0 执行能力；最多 10 次迭代、1000000 token，完整上下文与交卷前自评审，每 5 分钟反思。"
- :trusted true}
