@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 打包内容验证：校验 wheel 该含的东西都含了（五包齐全、原型 DSL 数据文件、WebUI 静态资源）。
+# 打包内容验证：校验 wheel 该含的东西都含了（五包齐全、原型 DSL 数据文件、初始社会人物资源、WebUI 静态资源）。
 # 检查项的唯一事实源——正式打包脚本（scripts/build_package.sh）与质量门
 # （scripts/check_all.sh 的 verify-package 组）都调本脚本，检查项只在这里定义。
 #
@@ -58,6 +58,31 @@ for pkg in tlon tlosure tlon_server tlon_client tlon_launcher; do
     check "$pkg/__init__.py" "wheel 含 $pkg 包"
 done
 check "behavior.tlon" "wheel 含原型 DSL 数据文件"
+# Verify the complete catalog rather than merely one matching Markdown file.
+if uv run python - "$wheel" <<'PYCODE'
+import json
+import sys
+from zipfile import ZipFile
+
+with ZipFile(sys.argv[1]) as archive:
+    root = "tlon/initial_society/"
+    manifest = json.loads(archive.read(root + "manifest.json"))
+    members = manifest["members"]
+    assert len(members) == 30, "initial society must contain 30 members"
+    names = set(archive.namelist())
+    for member in members:
+        for filename in ("IDENTITY.md", "SOUL.md", "RULES.md"):
+            path = root + member["key"] + "/" + filename
+            assert path in names, f"missing packaged persona: {path}"
+            assert archive.read(path).strip(), f"empty packaged persona: {path}"
+print("✅ wheel 含初始社会清单与全部 90 份中文人格文件")
+PYCODE
+then
+    :
+else
+    echo "❌ wheel 初始社会资源不完整"
+    fail=1
+fi
 if [ "$bundle" -eq 1 ]; then
     check "tlon_server/webui_dist/index.html" "wheel 含 WebUI 静态资源"
 fi

@@ -79,4 +79,6 @@ Tlon 的架构围绕三个支柱——**DSL**（行为如何描述）、**Runtim
 本项目以 [PolyForm Noncommercial License 1.0.0](./LICENSE) 发布：个人、学习、研究等非商业用途可自由使用、修改和再分发（须保留版权与许可证声明）；任何商业用途均需另行获得授权。
 
 
+全新实例首次启动会创建 30 位预设人物，带中文人格、稀疏联系和五个可自由演化的初始组织；默认模型为 `deepseek/deepseek-flash`，需配置 `DEEPSEEK_API_KEY` 才能使用模型。已有实例不补种，详见 [初始社会](docs/design/initial-society.md)。
+
 WebUI 首次打开时设置本实例的 username，对应固定地址 `<username>@tlon.internal`；之后自动进入，换浏览器也使用同一身份。身份保存在 `{TLON_HOME}/webui-identity.json`。仅支持本机回环访问，无账号密码或 admin token；WebUI 与 API 同源，其他网页的跨域业务请求会被拒绝。详见 [ADR 0033](docs/decisions/0033-local-webui-identity.md)。旧 TUI、SDK、Telegram 的协议可用性不在此模式的维护范围内。

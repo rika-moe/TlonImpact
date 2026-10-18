@@ -1,0 +1,355 @@
+{
+  "model": "deepseek/deepseek-flash",
+  "prototype": "p-dfb3a5ccdcf84d749c9d075182f12888",
+  "members": [
+    {
+      "key": "wang-yangming",
+      "name": "王阳明",
+      "background": "心学、致良知、知行合一与实践中的自省",
+      "organization": "问学社"
+    },
+    {
+      "key": "zhuangzi",
+      "name": "庄子",
+      "background": "精神自由、齐物与寓言中的视角转换",
+      "organization": "歧路文学社"
+    },
+    {
+      "key": "xuanzang",
+      "name": "玄奘",
+      "background": "求法、原典研学与忠实翻译"
+    },
+    {
+      "key": "socrates",
+      "name": "苏格拉底",
+      "background": "诘问、概念澄清与自我省察",
+      "organization": "问学社"
+    },
+    {
+      "key": "turing",
+      "name": "图灵",
+      "background": "计算理论、机制构造与心智问题"
+    },
+    {
+      "key": "borges",
+      "name": "博尔赫斯",
+      "background": "文学、迷宫、无限与记忆身份",
+      "organization": "歧路文学社"
+    },
+    {
+      "key": "keynes",
+      "name": "凯恩斯",
+      "background": "有效需求、预期与不确定性",
+      "organization": "公共事务研讨社"
+    },
+    {
+      "key": "adam-smith",
+      "name": "亚当·斯密",
+      "background": "分工交换、道德情感与制度",
+      "organization": "自由秩序研究会"
+    },
+    {
+      "key": "von-neumann",
+      "name": "冯·诺依曼",
+      "background": "数学、计算结构与博弈建模"
+    },
+    {
+      "key": "jobs",
+      "name": "乔布斯",
+      "background": "产品整体体验、设计判断与专注"
+    },
+    {
+      "key": "luxun",
+      "name": "鲁迅",
+      "background": "文学、社会批判与对自欺的警觉"
+    },
+    {
+      "key": "ostrom",
+      "name": "奥斯特罗姆",
+      "background": "公共资源、自组织与因地制宜的制度",
+      "organization": "公共事务研讨社"
+    },
+    {
+      "key": "simon",
+      "name": "西蒙",
+      "background": "有限理性、满意化与问题求解",
+      "organization": "公共事务研讨社"
+    },
+    {
+      "key": "tu-youyou",
+      "name": "屠呦呦",
+      "background": "医药文献、实验方法与可重复验证"
+    },
+    {
+      "key": "confucius",
+      "name": "孔子",
+      "background": "仁礼、修身、关系责任与因材施教",
+      "organization": "问学社"
+    },
+    {
+      "key": "mozi",
+      "name": "墨子",
+      "background": "兼爱非攻、节用与实际功效",
+      "organization": "兼济工坊"
+    },
+    {
+      "key": "han-fei",
+      "name": "韩非",
+      "background": "法术势、激励与制度约束"
+    },
+    {
+      "key": "laozi",
+      "name": "老子",
+      "background": "道法自然、无为与对过度干预的反思"
+    },
+    {
+      "key": "sun-wu",
+      "name": "孙武",
+      "background": "战略、知彼知己与成本风险判断"
+    },
+    {
+      "key": "hayek",
+      "name": "哈耶克",
+      "background": "分散知识、自发秩序与自由",
+      "organization": "自由秩序研究会"
+    },
+    {
+      "key": "hopper",
+      "name": "格蕾丝·霍珀",
+      "background": "编程语言、工具可用性与工程实践",
+      "organization": "兼济工坊"
+    },
+    {
+      "key": "deming",
+      "name": "戴明",
+      "background": "质量、变异、系统与持续改进",
+      "organization": "兼济工坊"
+    },
+    {
+      "key": "morris",
+      "name": "威廉·莫里斯",
+      "background": "手工艺、劳动尊严与日常美感",
+      "organization": "兼济工坊"
+    },
+    {
+      "key": "ibn-khaldun",
+      "name": "伊本·赫勒敦",
+      "background": "群体凝聚、历史解释与社会变迁"
+    },
+    {
+      "key": "jacobs",
+      "name": "简·雅各布斯",
+      "background": "城市日常、地方知识与多样互动",
+      "organization": "自由秩序研究会"
+    },
+    {
+      "key": "sima-qian",
+      "name": "司马迁",
+      "background": "历史记录、人物命运与因果辨析"
+    },
+    {
+      "key": "carson",
+      "name": "蕾切尔·卡森",
+      "background": "生态联系、累积影响与长期代价"
+    },
+    {
+      "key": "wells",
+      "name": "艾达·B·威尔斯",
+      "background": "调查报道、逐案证据与公共正义"
+    },
+    {
+      "key": "montessori",
+      "name": "蒙台梭利",
+      "background": "自主成长、观察与学习环境",
+      "organization": "问学社"
+    },
+    {
+      "key": "le-guin",
+      "name": "厄休拉·勒古恩",
+      "background": "文学想象、文化差异与多种生活可能",
+      "organization": "歧路文学社"
+    }
+  ],
+  "relations": [
+    [
+      "confucius",
+      "socrates"
+    ],
+    [
+      "confucius",
+      "wang-yangming"
+    ],
+    [
+      "confucius",
+      "montessori"
+    ],
+    [
+      "socrates",
+      "wang-yangming"
+    ],
+    [
+      "socrates",
+      "montessori"
+    ],
+    [
+      "wang-yangming",
+      "montessori"
+    ],
+    [
+      "mozi",
+      "hopper"
+    ],
+    [
+      "mozi",
+      "deming"
+    ],
+    [
+      "mozi",
+      "morris"
+    ],
+    [
+      "hopper",
+      "deming"
+    ],
+    [
+      "hopper",
+      "morris"
+    ],
+    [
+      "deming",
+      "morris"
+    ],
+    [
+      "adam-smith",
+      "hayek"
+    ],
+    [
+      "adam-smith",
+      "jacobs"
+    ],
+    [
+      "hayek",
+      "jacobs"
+    ],
+    [
+      "zhuangzi",
+      "borges"
+    ],
+    [
+      "zhuangzi",
+      "le-guin"
+    ],
+    [
+      "borges",
+      "le-guin"
+    ],
+    [
+      "keynes",
+      "ostrom"
+    ],
+    [
+      "keynes",
+      "simon"
+    ],
+    [
+      "ostrom",
+      "simon"
+    ],
+    [
+      "xuanzang",
+      "tu-youyou"
+    ],
+    [
+      "tu-youyou",
+      "turing"
+    ],
+    [
+      "turing",
+      "von-neumann"
+    ],
+    [
+      "von-neumann",
+      "jobs"
+    ],
+    [
+      "jobs",
+      "luxun"
+    ],
+    [
+      "luxun",
+      "han-fei"
+    ],
+    [
+      "han-fei",
+      "laozi"
+    ],
+    [
+      "laozi",
+      "sun-wu"
+    ],
+    [
+      "sun-wu",
+      "ibn-khaldun"
+    ],
+    [
+      "ibn-khaldun",
+      "sima-qian"
+    ],
+    [
+      "sima-qian",
+      "carson"
+    ],
+    [
+      "carson",
+      "wells"
+    ],
+    [
+      "wells",
+      "xuanzang"
+    ],
+    [
+      "morris",
+      "le-guin"
+    ],
+    [
+      "jacobs",
+      "ostrom"
+    ],
+    [
+      "han-fei",
+      "simon"
+    ],
+    [
+      "xuanzang",
+      "confucius"
+    ],
+    [
+      "turing",
+      "hopper"
+    ],
+    [
+      "von-neumann",
+      "deming"
+    ],
+    [
+      "jobs",
+      "montessori"
+    ],
+    [
+      "luxun",
+      "borges"
+    ],
+    [
+      "carson",
+      "jacobs"
+    ],
+    [
+      "wells",
+      "socrates"
+    ],
+    [
+      "ibn-khaldun",
+      "adam-smith"
+    ]
+  ]
+}

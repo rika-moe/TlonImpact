@@ -17,6 +17,9 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
     async with _server(tmp_path) as (url, app):
         assert app._runtime is not None
         runtime = app._runtime
+        seeded_ids = set(runtime.members.list_ids())
+        baseline = (await ListMembersTool(directory=runtime.agent_registry).execute()).data
+        assert len(seeded_ids) == 30
         async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
             async with http.post(
                 f"{url}/admin/config/agents",
@@ -33,11 +36,13 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             tool = ListMembersTool(directory=runtime.agent_registry)
             result = await tool.execute()
             assert result.success
-            assert result.data == [
-                {"id": "adam", "name": "Adam", "address": "adam@tlon.internal"},
-                {"id": "alice", "name": "alice", "address": "alice@tlon.internal"},
-                {"id": bob_id, "name": "Bob", "address": f"{bob_id}@tlon.internal"},
-            ]
+            assert result.data == sorted(
+                [
+                    *baseline,
+                    {"id": bob_id, "name": "Bob", "address": f"{bob_id}@tlon.internal"},
+                ],
+                key=lambda member: member["id"],
+            )
             assert RegistryQueries(runtime.agent_registry).member_roster() == "\n".join(
                 f"{member['name']}（{member['id']}） — {member['address']}"
                 for member in result.data
@@ -47,20 +52,19 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             assert report["scanned_count"] == len(result.data)
             assert report["failed_members"] == []
             # Merely listing the unified directory does not change lifecycle targets.
-            assert set(runtime.agent_registry.get_all_ids()) == {bob_id}
+            assert set(runtime.agent_registry.get_all_ids()) == seeded_ids | {bob_id}
             receipt = await _send_mail(http, url, "directory address is deliverable", to=["alice"])
             assert _read_inbox(tmp_path, "human:alice")[0]["id"] == receipt["mail_id"]
         await asyncio.to_thread(runtime.post_office.store.retire, bob_id)
-        assert [member["id"] for member in (await tool.execute()).data] == ["adam", "alice"]
-        assert (await runtime.agent_registry._health.scan_orphan_mail())["scanned_members"] == [
-            "adam",
-            "alice",
-        ]
+        assert (await tool.execute()).data == baseline
+        assert (await runtime.agent_registry._health.scan_orphan_mail())[
+            "scanned_members"
+        ] == sorted(member["id"] for member in baseline)
 
     async with _server(tmp_path) as (_, restarted):
         assert restarted._runtime is not None
         tool = ListMembersTool(directory=restarted._runtime.agent_registry)
         result = await tool.execute()
-        assert [member["id"] for member in result.data] == ["adam", "alice"]
+        assert result.data == baseline
         assert all(set(member) == {"id", "name", "address"} for member in result.data)
         assert all("human:" not in member["id"] for member in result.data)

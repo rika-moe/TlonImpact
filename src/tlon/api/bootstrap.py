@@ -127,8 +127,8 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     """
     # ========== Core infrastructure ==========
     # First-boot seeding (idempotent; before any agent starts):
-    # built-in prototypes + skills only — members are never seeded
-    # (ADR 0016): the human creates them via WebUI / admin API.
+    # prototypes + skills, then the one-time packaged society for fresh homes
+    # (ADR 0036). Existing societies retain their members and private state.
     bootstrap_society(runtime_paths)
 
     # EventBus - event bus for inter-component communication (create first)

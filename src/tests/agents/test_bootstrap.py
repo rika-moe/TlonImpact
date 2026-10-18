@@ -1,10 +1,4 @@
-"""First-boot seeding (ADR 0016).
-
-Pins the empty-society semantics: bootstrap seeds the built-in prototype
-library and skills only — members are NEVER seeded. The first boot is an
-empty society; the human creates members via the WebUI / admin API and
-picks a model per member (there is no process-level model fallback).
-"""
+"""First-boot packaged society and reusable library seeding (ADR 0036)."""
 
 from pathlib import Path
 
@@ -13,18 +7,14 @@ from tlon.base.config import yaml_load_all
 from tlon.base.paths import TlonPaths
 
 
-def _paths(tmp_path) -> TlonPaths:
+def _paths(tmp_path: Path) -> TlonPaths:
     return TlonPaths(home=tmp_path)
 
 
-def test_bootstrap_seeds_prototypes_but_never_members(tmp_path: Path) -> None:
-    """An empty society stays empty: no agent.yaml is written, but the
-    prototype library is there for the human to instantiate from."""
+def test_bootstrap_seeds_prototypes_and_initial_members(tmp_path: Path) -> None:
     p = _paths(tmp_path)
-
     bootstrap_society(p)
-
-    assert yaml_load_all(p.tlon_home()) == {}
+    assert len(yaml_load_all(p.tlon_home())) == 30
     assert any(p.prototypes_dir().iterdir())
 
 
@@ -34,7 +24,7 @@ def test_bootstrap_is_idempotent(tmp_path: Path) -> None:
     bootstrap_society(p)
     bootstrap_society(p)  # must not raise nor duplicate
 
-    assert yaml_load_all(p.tlon_home()) == {}
+    assert len(yaml_load_all(p.tlon_home())) == 30
 
 
 def test_existing_agent_untouched(tmp_path: Path) -> None:
