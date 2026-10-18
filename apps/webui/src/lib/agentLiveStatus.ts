@@ -1,15 +1,8 @@
-/**
- * Per-agent live status derived from the SSE event stream (pure reducer,
- * unit-tested). Driven by agent.thinking_start/end, agent.llm_response
- * and tool.execute_end/error; lifecycle events clear transient flags.
- */
+/** Per-agent LLM/tool history derived from SSE; current state comes from the server. */
 
 import type { ServerEvent } from "../types";
 
 export interface AgentLiveStatus {
-  thinking: boolean;
-  /** Duration of the last completed thinking round (ms). */
-  lastThinkMs?: number;
   /** Duration of the last LLM call (ms). */
   lastLlmMs?: number;
   lastLlmModel?: string;
@@ -18,7 +11,7 @@ export interface AgentLiveStatus {
 
 export type LiveStatusMap = Record<string, AgentLiveStatus>;
 
-const EMPTY: AgentLiveStatus = { thinking: false };
+const EMPTY: AgentLiveStatus = {};
 
 type Payload = Record<string, unknown>;
 
@@ -59,15 +52,6 @@ export function applyEvent(map: LiveStatusMap, ev: ServerEvent): LiveStatusMap {
   const p = payloadOf(ev);
 
   switch (ev.eventType) {
-    case "agent.thinking_start":
-      return withStatus(map, id, { thinking: true });
-    case "agent.thinking_end": {
-      const ms = num(p["duration_ms"]);
-      return withStatus(map, id, {
-        thinking: false,
-        ...(ms !== undefined ? { lastThinkMs: ms } : {}),
-      });
-    }
     case "agent.llm_response": {
       const ms = num(p["duration_ms"]);
       const model = str(p["model"]);
@@ -90,9 +74,6 @@ export function applyEvent(map: LiveStatusMap, ev: ServerEvent): LiveStatusMap {
         lastTool: { name, success: false, at: ev.receivedAt },
       });
     }
-    case "agent.stopped":
-    case "agent.sleeping":
-      return withStatus(map, id, { thinking: false });
     default:
       return map;
   }

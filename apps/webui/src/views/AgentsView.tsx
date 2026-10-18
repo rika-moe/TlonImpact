@@ -7,8 +7,7 @@
  * registry-unlisted values stay allowed as free text.
  *
  * Cards carry an event-driven live status line (lib/agentLiveStatus.ts):
- * THINKING badge while agent.thinking_start is open, last LLM call
- * duration + model, most recent tool call. Structural changes
+ * Last LLM call duration + model and most recent tool call. Structural changes
  * (spawned/stopped/…) and config.updated still trigger a full reload.
  *
  * Ported from apps/operator/src/views/AgentsView.tsx: same REST/SSE semantics
@@ -46,10 +45,19 @@ type StateTone = "cyan" | "dim" | "magenta" | "yellow";
 /** Card/badge color from a state value. */
 function stateTone(state: string): StateTone {
   const s = state.toLowerCase();
-  if (["running", "active", "idle", "online"].includes(s)) return "cyan";
+  if (["running", "active", "idle", "online", "thinking"].includes(s)) return "cyan";
   if (["error", "failed"].includes(s)) return "magenta";
   if (["sleeping", "stopped", "offline"].includes(s)) return "dim";
   return "yellow";
+}
+
+/** The server state is the sole current-status indicator. */
+function StateBadge({ state }: { state: string }): ReactElement {
+  return (
+    <span className={`state-badge state-badge--${stateTone(state)}${state.toLowerCase() === "thinking" ? " state-badge--thinking" : ""}`}>
+      {state}
+    </span>
+  );
 }
 
 function protoLabel(p: ProtoRecord): string {
@@ -91,7 +99,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
 
   // Real-time refresh: the session's agents snapshot replaces the list;
   // any agent* event (or a config change) triggers a reload. Every event
-  // also feeds the per-agent live status reducer (thinking/LLM/tool).
+  // also feeds the per-agent history reducer (LLM/tool).
   useEffect(() => {
     const onAgents = (list: unknown[]): void => {
       setAgents(list as AgentSummary[]);
@@ -180,9 +188,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
               >
                 <div className="agent-card-head">
                   <span className="agent-card-id">{id}</span>
-                  <span className={`state-badge state-badge--${stateTone(agent.state)}`}>
-                    {agent.state}
-                  </span>
+                  <StateBadge state={agent.state} />
                 </div>
                 {agent.name !== id ? (
                   <div className="tech-label agent-card-name">{agent.name}</div>
@@ -190,7 +196,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
                 <div className="tech-label agent-card-meta">
                   {agent.prototype ?? "MANUAL"} · GEN {agent.spawn_depth}
                 </div>
-                {live[id] ? <AgentLiveLine status={live[id]} /> : null}
+                <AgentLiveLine status={live[id]} />
                 <div className="agent-card-actions">
                   <button
                     type="button"
@@ -288,31 +294,22 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   );
 }
 
-/**
- * Event-driven live status line on a member card (lib/agentLiveStatus.ts):
- * THINKING badge while a thinking round is open, last LLM call duration
- * + model, and the most recent tool call (✓/✗). Renders nothing until
- * the first relevant event for this agent arrives.
- */
-function AgentLiveLine({ status }: { status: AgentLiveStatus }): ReactElement | null {
-  const llmMs = status.lastLlmMs;
-  if (!status.thinking && llmMs === undefined && status.lastTool === undefined) return null;
+/** Two reserved history rows keep event updates from resizing cards. */
+function AgentLiveLine({ status }: { status?: AgentLiveStatus }): ReactElement {
+  const llm = status?.lastLlmMs !== undefined
+    ? `LLM ${formatDurationMs(status.lastLlmMs)}${status.lastLlmModel ? ` · ${status.lastLlmModel}` : ""}`
+    : "LLM —";
+  const tool = status?.lastTool;
+  const toolLabel = tool ? `${tool.name} ${tool.success ? "✓" : "✗"}` : "TOOL —";
   return (
     <div className="tech-label agent-card-live">
-      {status.thinking ? <span className="live-badge">THINKING</span> : null}
-      {llmMs !== undefined ? (
-        <span className="live-item">
-          LLM {formatDurationMs(llmMs)}
-          {status.lastLlmModel ? ` · ${status.lastLlmModel}` : ""}
-        </span>
-      ) : null}
-      {status.lastTool ? (
-        <span
-          className={`live-item ${status.lastTool.success ? "live-tool--ok" : "live-tool--fail"}`}
-        >
-          {status.lastTool.name} {status.lastTool.success ? "✓" : "✗"}
-        </span>
-      ) : null}
+      <span className="live-item" title={llm}>{llm}</span>
+      <span
+        className={`live-item${tool ? ` ${tool.success ? "live-tool--ok" : "live-tool--fail"}` : ""}`}
+        title={toolLabel}
+      >
+        {toolLabel}
+      </span>
     </div>
   );
 }
@@ -355,9 +352,7 @@ function AgentDetailPanel({
   return (
     <div className="agent-detail-fields">
       <DetailRow label="STATE">
-        <span className={`state-badge state-badge--${stateTone(detail.state)}`}>
-          {detail.state}
-        </span>
+        <StateBadge state={listItem?.state ?? detail.state} />
       </DetailRow>
       <DetailRow label="NAME">{detail.name}</DetailRow>
       <DetailRow label="PROTOTYPE">{prototype}</DetailRow>
