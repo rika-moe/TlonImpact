@@ -3,12 +3,12 @@
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
-          :loop {:context {:sections [(persona) (protocol) (mail-history 5)]}
+          :loop {:context {:sections [(persona) (protocol) (current-task) (mail-history 5) (thread-recap)]}
                  :stages [(think) (act)]
                  :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
-                 :max-iterations 10
+                 :max-iterations 3
                  :max-consecutive-errors 3
-                 :max-tokens 1000000
+                 :max-tokens 32000
                  :reflect {:enabled true :interval-minutes 15}}}
          {:name "boot"
           :on :boot

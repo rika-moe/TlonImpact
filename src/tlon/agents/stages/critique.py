@@ -13,7 +13,7 @@ async def critique_stage(
     svc: StageServices,
     session: AgentSession,
     response: "LLMResponse | None",
-    _opts: dict[str, Any] | None = None,
+    opts: dict[str, Any] | None = None,
 ) -> StageOutcome:
     """critique stage (phase 7c): review the round's latest output.
 
@@ -29,7 +29,7 @@ async def critique_stage(
     with the remaining text as feedback; an unparseable first line is
     "we don't know the review outcome" — treating it as PASS would be
     fail-open, so the critique is skipped like a soft failure (warning
-    logged, no verdict written: neither critique-passed? nor
+    logged, any previous verdict cleared: neither critique-passed? nor
     critique-failed? fires, revise is not triggered). The verdict is
     declared for the loop scratchpad. Fails soft like plan; does not
     consume or produce the round's response.
@@ -39,14 +39,14 @@ async def critique_stage(
         draft = _render_draft(response)
         if draft:
             messages.append({"role": "assistant", "content": draft})
+    instruction = "请评审上述最新输出是否充分回应了当前邮件。"
+    if extra_instructions := (opts or {}).get("instructions"):
+        instruction += f"\n额外评审标准：\n{extra_instructions}\n"
+    instruction += "第一行只写 PASS 或 FAIL；FAIL 时从第二行起给出具体改进意见。"
     messages.append(
         {
             "role": "user",
-            "content": (
-                "请评审上述最新输出是否充分回应了当前邮件。"
-                "第一行只写 PASS 或 FAIL；"
-                "FAIL 时从第二行起给出具体改进意见。"
-            ),
+            "content": instruction,
         }
     )
     try:
@@ -65,18 +65,18 @@ async def critique_stage(
         svc.logger.warning(
             "loop_stage_failed", session_id=session.id, stage="critique", error=str(e)
         )
-        return StageOutcome(response=response)
+        return StageOutcome(response=response, scratch_updates={"critique": None})
     text = (verdict_response.content or "").strip()
     first_line, _, rest = text.partition("\n")
     verdict = first_line.strip()
-    if verdict.startswith("PASS"):
+    if verdict == "PASS":
         passed, feedback = True, ""
-    elif verdict.startswith("FAIL"):
+    elif verdict == "FAIL":
         passed, feedback = False, rest.strip()
     else:
         # Unparseable verdict: an unknown review outcome must not be
         # recorded as PASS (fail-open). Skip this critique like the
-        # soft-failure path above — no verdict in scratch, so neither
+        # soft-failure path above — clear any previous verdict, so neither
         # critique-passed? nor critique-failed? fires and revise is not
         # triggered — but leave a visible warning.
         svc.logger.warning(
@@ -87,6 +87,7 @@ async def critique_stage(
         )
         return StageOutcome(
             response=response,
+            scratch_updates={"critique": None},
             token_usage=usage_total_tokens(verdict_response.usage),
         )
     return StageOutcome(

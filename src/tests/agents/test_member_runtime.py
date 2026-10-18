@@ -84,7 +84,7 @@ SCRIPT_SPAWN = """\
  :rules [{:name "hire"
           :on :mail-delivered
           :actions [(spawn "BUILTIN_PROTOTYPE")]}]}
-""".replace("BUILTIN_PROTOTYPE", builtin_id("长预算工具迭代"))
+""".replace("BUILTIN_PROTOTYPE", builtin_id("计划后执行"))
 
 COGNITIVE_EDN = """\
 {:version 1
@@ -404,7 +404,7 @@ class TestDeterministicDispatch:
         )
         await bus.publish(_deliver(mail, member.member_id))
         await _wait_for(lambda: len(registry.calls) == 1)
-        assert registry.calls[0][0] == builtin_id("长预算工具迭代")
+        assert registry.calls[0][0] == builtin_id("计划后执行")
         assert registry.calls[0][2] == "admin-2"  # spawner_id
         assert registry.calls[0][3] is None  # no session context
 

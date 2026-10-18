@@ -60,6 +60,8 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
+| [ADR 0037：动态工作方式与长期行动习惯](0037-adaptive-working-methods.md) | [prototypes](../design/prototypes.md) | 远期方向；动态上下文与流程自主调整尚未实施 |
+| [ADR 0038：以稳定行动习惯区分行为原型](0038-distinct-behavior-prototypes.md) | [prototypes](../design/prototypes.md) | 近期计划后执行、短回合交流、证据核验与条件路由 |
 | [ADR 0010：Skill 能力——开放标准 SKILL.md，三层目录，DSL `(skills)` section，模型自读正文](0010-skills.md) | [skills](../design/skills.md) | Skill 发现与渐进加载选择；当前正文访问限制见 design |
 | [ADR 0011：DSL 语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）](0011-sci-compatible-subset.md) | [dsl](../design/dsl.md) | SCI 语义锚定方向；函数能力按 ADR 0021 扩展，不表示已迁移 JVM |
 | [ADR 0020：Bridge API——机制底座与策略层之间桥的形式化](0020-bridge-api.md) | [bridge-api](../design/bridge-api.md)、[capabilities](../design/capabilities.md) | 桥的形式化；函数约束由 ADR 0021 修订，能力数据化的当前落地见 design |

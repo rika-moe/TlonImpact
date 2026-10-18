@@ -119,6 +119,8 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 默认循环是 think + act，外加一道**交卷前自查**：`(critique {:if (completing?)})` 只在本轮响应会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence`，判定与 act 的完成/冲突规则一致）时评审待交草稿；FAIL 则 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截本轮派发、`(revise {:if (critique-failed?)})` 把反馈喂回上下文让下一轮 think 修正后重审。评审成本与轮数无关（每次交卷尝试一次全量评审），不随长 session 平方放大；plan 与更密的 critique 排布仍是 spec 可选插入的自省积木。把自省拆成独立 stage 而不是做进 think 的理由：自省是**程序级的选择**——一个成员要不要规划、要不要自我评审、评审几次，应该写在 spec 里可审计、可改写，而不是埋在 prompt 工程里。拆成积木后，"带自我评审的 ReAct"与"朴素 ReAct"是同一个引擎跑两份不同的 stage 向量，引擎零改动。
 
+critique 可用非空 `:instructions` 追加专项标准，首行去空白后必须恰好是 PASS 或 FAIL。异常或无法解析时清除旧 verdict；默认原型仅在明确 FAIL 时拦截，证据核验原型则要求本轮明确 PASS 才派发完成动作。核验是模型对材料的评审，不等于独立真实性证明。
+
 ### 认知规则的唯一性
 
 一个成员至多一条认知规则（D6.7）。这不是表达力的损失而是刻意的收窄：认知循环需要唯一一份 loop 配置（stage 向量、until、max_iterations、reflect），多条认知规则意味着多套循环配置竞争同一套会话与记忆基础设施，语义上说不清谁拥有循环。需要"对不同邮件做不同认知处理"时，答案是 spec 内的 `:when` 门控与无 `:loop` 规则的廉价前置路径（如自动婉拒），而不是第二条认知规则。带 `:loop` 与不带 `:loop` 的规则可以在同一成员内混编：邮件命中时无 `:loop` 的规则内联执行，带 `:loop` 的规则走会话——贵的能力只花在门控放行的邮件上。

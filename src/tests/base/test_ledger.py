@@ -355,11 +355,11 @@ class TestCollectLineageLedgers:
     async def test_aggregates_members_by_prototype(self, tmp_path: Path) -> None:
         tlon_paths = TlonPaths(home=tmp_path)
         yaml_save(
-            AgentConfig(id="dev-001", name="Dev 1", prototype=builtin_id("长预算工具迭代")),
+            AgentConfig(id="dev-001", name="Dev 1", prototype=builtin_id("计划后执行")),
             tmp_path,
         )
         yaml_save(
-            AgentConfig(id="dev-002", name="Dev 2", prototype=builtin_id("长预算工具迭代")),
+            AgentConfig(id="dev-002", name="Dev 2", prototype=builtin_id("计划后执行")),
             tmp_path,
         )
         yaml_save(AgentConfig(id="scribe", name="Scribe"), tmp_path)
@@ -377,8 +377,8 @@ class TestCollectLineageLedgers:
 
         lineages = await collect_lineage_ledgers(tlon_paths=tlon_paths)
 
-        lineage = lineages[builtin_id("长预算工具迭代")]
-        assert lineage["prototype"] == builtin_id("长预算工具迭代")
+        lineage = lineages[builtin_id("计划后执行")]
+        assert lineage["prototype"] == builtin_id("计划后执行")
         assert lineage["members"] == ["dev-001", "dev-002"]
         assert lineage["calls"] == 3
         assert lineage["prompt_tokens"] == 35
@@ -395,11 +395,11 @@ class TestCollectLineageLedgers:
         """A bloodline's by_model merges every member's per-model split."""
         tlon_paths = TlonPaths(home=tmp_path)
         yaml_save(
-            AgentConfig(id="dev-001", name="Dev 1", prototype=builtin_id("长预算工具迭代")),
+            AgentConfig(id="dev-001", name="Dev 1", prototype=builtin_id("计划后执行")),
             tmp_path,
         )
         yaml_save(
-            AgentConfig(id="dev-002", name="Dev 2", prototype=builtin_id("长预算工具迭代")),
+            AgentConfig(id="dev-002", name="Dev 2", prototype=builtin_id("计划后执行")),
             tmp_path,
         )
         await _write_records(
@@ -416,7 +416,7 @@ class TestCollectLineageLedgers:
 
         lineages = await collect_lineage_ledgers(tlon_paths=tlon_paths)
 
-        by_model = lineages[builtin_id("长预算工具迭代")]["by_model"]
+        by_model = lineages[builtin_id("计划后执行")]["by_model"]
         assert by_model["moonshot/kimi-k2.5"]["calls"] == 2
         assert by_model["moonshot/kimi-k2.5"]["total_tokens"] == 36
         assert by_model["deepseek/deepseek-chat"]["calls"] == 1

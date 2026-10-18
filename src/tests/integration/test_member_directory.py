@@ -24,7 +24,7 @@ async def test_member_directory_matches_delivery_offline_and_after_restart(tmp_p
             async with http.post(
                 f"{url}/admin/config/agents",
                 json={
-                    "prototype": builtin_id("长预算工具迭代"),
+                    "prototype": builtin_id("计划后执行"),
                     "name": "Bob",
                     "model": "openai/gpt-test",
                 },

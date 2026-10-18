@@ -10,10 +10,15 @@ log as the visible signal.
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.revise import revise_stage
-from tlon.base.llm_client import LLMResponse, ToolCall
+from tlon.agents.vocabulary import STAGE_COND_BUILTINS
+from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
+from tlosure.edn import loads
+from tlosure.eval import eval_form
 
 
 def _make_services(verdict_text: str) -> MagicMock:
@@ -60,9 +65,9 @@ class TestCritiqueVerdict:
 
         outcome = await critique_stage(svc, session, response)
 
-        # Not PASS, not REVISE: no verdict is declared at all.
+        # Not PASS, not REVISE: clear any previous verdict.
         assert outcome.response is response
-        assert outcome.scratch_updates == {}
+        assert outcome.scratch_updates == {"critique": None}
         assert session.loop_scratch == {}
         svc.logger.warning.assert_called_once()
         assert svc.logger.warning.call_args.args[0] == "critique_verdict_unparseable"
@@ -73,8 +78,25 @@ class TestCritiqueVerdict:
 
         outcome = await critique_stage(svc, session, None)
 
-        assert outcome.scratch_updates == {}
+        assert outcome.scratch_updates == {"critique": None}
         svc.logger.warning.assert_called_once()
+        assert svc.logger.warning.call_args.args[0] == "critique_verdict_unparseable"
+
+    @pytest.mark.parametrize(
+        "verdict", ["PASSING", "PASS但没有核实", "PASS 只是猜测", "FAILED", "FAIL缺少来源"]
+    )
+    async def test_verdict_prefix_is_not_a_valid_verdict(self, verdict: str) -> None:
+        svc = _make_services(verdict)
+        session = _make_session()
+        session.loop_scratch["critique"] = {"passed": True, "feedback": ""}
+
+        outcome = await critique_stage(svc, session, None)
+
+        assert outcome.scratch_updates == {"critique": None}
+        session.loop_scratch.update(outcome.scratch_updates)
+        env = {"scratch": session.loop_scratch}
+        assert not eval_form(loads("(critique-passed?)"), env, STAGE_COND_BUILTINS)
+        assert not eval_form(loads("(critique-failed?)"), env, STAGE_COND_BUILTINS)
         assert svc.logger.warning.call_args.args[0] == "critique_verdict_unparseable"
 
     async def test_skipped_critique_does_not_trigger_revise(self) -> None:
@@ -87,13 +109,59 @@ class TestCritiqueVerdict:
         session.loop_scratch.update(outcome.scratch_updates)
         revise_outcome = await revise_stage(svc, session, None)
 
-        assert "critique" not in session.loop_scratch
+        assert session.loop_scratch["critique"] is None
         assert revise_outcome.context_appends == []
+
+    @pytest.mark.parametrize("previous_passed", [True, False])
+    @pytest.mark.parametrize("failure", ["unknown", "error"])
+    async def test_failed_review_clears_previous_verdict(
+        self, previous_passed: bool, failure: str
+    ) -> None:
+        svc = _make_services("未知")
+        if failure == "error":
+            svc.think.side_effect = RuntimeError("provider unavailable")
+        session = _make_session()
+        previous = {"passed": previous_passed, "feedback": "旧评审"}
+        session.loop_scratch["critique"] = previous
+        response = LLMResponse(content="新草稿")
+
+        outcome = await critique_stage(svc, session, response)
+
+        assert outcome.response is response
+        assert outcome.scratch_updates == {"critique": None}
+        assert session.loop_scratch["critique"] == previous  # pure stage
+        session.loop_scratch.update(outcome.scratch_updates)
+        env = {"scratch": session.loop_scratch}
+        assert not eval_form(loads("(critique-passed?)"), env, STAGE_COND_BUILTINS)
+        assert not eval_form(loads("(critique-failed?)"), env, STAGE_COND_BUILTINS)
+        svc.logger.warning.assert_called_once()
+
+    async def test_context_overflow_propagates_for_engine_retry(self) -> None:
+        svc = _make_services("unused")
+        svc.think.side_effect = ContextWindowExceededError("too long")
+
+        with pytest.raises(ContextWindowExceededError):
+            await critique_stage(svc, _make_session(), None)
 
 
 class TestCritiqueReviewInput:
     """The reviewer sees the round's pending draft (the pre-submission
     gate reviews the reply about to be sent, not just the context)."""
+
+    async def test_custom_instructions_keep_verdict_protocol(self) -> None:
+        svc = _make_services("FAIL\n缺少计算依据")
+        session = _make_session()
+        instructions = "检查来源、计算或工具结果；区分事实、推断与未核实事项。"
+
+        outcome = await critique_stage(svc, session, None, {"instructions": instructions})
+
+        prompt = svc.think.await_args.args[0][-1]["content"]
+        assert instructions in prompt
+        assert "充分回应了当前邮件" in prompt
+        assert prompt.endswith("第一行只写 PASS 或 FAIL；FAIL 时从第二行起给出具体改进意见。")
+        assert outcome.scratch_updates == {
+            "critique": {"passed": False, "feedback": "缺少计算依据"}
+        }
 
     async def test_pending_draft_is_included_in_review_input(self) -> None:
         svc = _make_services("PASS")

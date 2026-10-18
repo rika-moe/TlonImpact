@@ -20,7 +20,7 @@
 
 [base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig` 默认 `level="L1"`。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型声明一次性投影到成员配置；[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_cognitive` 按成员配置装配。即使 Docker 不可用，L1/L2 仍按声明注册工具，调用时返回装置未初始化错误。
 
-内置原型按实际行为声明：定址转发、精简上下文响应、低频反思迭代、超长预算迭代、标准无执行迭代、频繁反思迭代为 L0；标准文件迭代为 L1；长预算工具迭代、标准工具迭代为 L2。原型技术 ID 均为系统生成的 p-UUID，显示名不代表职业（ADR 0035）。L2 声明在原型评审中作为红旗呈现，不自动构成拒绝。
+内置原型按实际行为声明：定址转发、条件路由、短回合交流、标准无执行迭代为 L0；标准文件迭代为 L1；计划后执行、标准工具迭代、证据核验为 L2。原型技术 ID 均为系统生成的 p-UUID，显示名不代表职业（ADR 0035）。L2 声明在原型评审中作为红旗呈现，不自动构成拒绝。
 
 L1 是文件层，没有 WASM/WASI 运行时。更强隔离的 gVisor/microVM 也不是当前实现。
 

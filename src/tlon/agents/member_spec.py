@@ -553,7 +553,11 @@ def _validate_stages(stages: tuple[Form, ...], label: str) -> None:
 
 def _validate_stage_opts(name: str, opts: dict[Any, Any], form: Form, label: str) -> None:
     """Validate one stage's opts map (mirrored the legacy AgentSpec's phase 7c checks)."""
-    allowed = {"if", "max-steps"} if name == "plan" else {"if"}
+    allowed = {"if"}
+    if name == "plan":
+        allowed.add("max-steps")
+    elif name == "critique":
+        allowed.add("instructions")
     for key, value in opts.items():
         if not isinstance(key, Keyword):
             raise MemberSpecValidationError(
@@ -569,6 +573,12 @@ def _validate_stage_opts(name: str, opts: dict[Any, Any], form: Form, label: str
                 validate_form(value, STAGE_COND_BUILTINS, scope=set())
             except EvalError as e:
                 raise MemberSpecValidationError(f"{label}: stage {name!r} :if: {e}") from e
+        elif str(key) == "instructions":
+            if type(value) is not str or not value.strip():
+                raise MemberSpecValidationError(
+                    f"{label}: stage 'critique' :instructions must be a non-empty string, "
+                    f"got {dumps(value)}"
+                )
         elif not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise MemberSpecValidationError(
                 f"{label}: stage 'plan' :max-steps must be a positive int, got {dumps(value)}"
