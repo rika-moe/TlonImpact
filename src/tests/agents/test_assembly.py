@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tlon.agents.assembly import _build_llm_config, assemble_cognitive
+from tlon.agents.assembly import _build_llm_config, assemble_member_capabilities
 from tlon.base.config import (
     DEFAULT_CONTEXT_WINDOW,
     AgentConfig,
@@ -168,7 +168,7 @@ class TestExecutionLevelAssembly:
             llm=LLMConfig(model_name="test/model"),
             docker=DockerRuntimeConfig(level=level),
         )
-        return await assemble_cognitive(
+        return await assemble_member_capabilities(
             config,
             registry=None,  # type: ignore[arg-type]
             agent_info=_FakeAgentInfo({config.id: config}),  # type: ignore[arg-type]

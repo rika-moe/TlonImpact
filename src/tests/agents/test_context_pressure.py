@@ -19,6 +19,7 @@ import httpx
 import litellm
 import pytest
 
+from tests.recipe_helpers import recipe_for
 from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import (
     PRUNED_PLACEHOLDER,
@@ -42,18 +43,7 @@ from tlosure.edn import loads
 TEST_WINDOW = 1000
 TEST_THRESHOLD = 800
 
-COGNITIVE_EDN = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-"""
+SESSION_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
 @pytest.fixture
@@ -393,9 +383,8 @@ class TestReplay:
             session_span=lambda session: contextlib.nullcontext(),
             check_reflection=AsyncMock(),
             note_interaction=MagicMock(),
-            loop_driver=MagicMock(),
+            make_driver=MagicMock(),
             journal=journal,
-            wakeable_unread=AsyncMock(return_value=[]),
             mailbox=None,
         )
         session = await scheduler._restore_session(replay)
@@ -498,7 +487,7 @@ class TestDriverEmergency:
     async def test_force_compact_and_retry_once(self, tmp_path: Path) -> None:
         """think raises ContextWindowExceededError: the driver force-compacts
         (tightened window) and retries the stage once; the retry succeeds."""
-        spec = MemberSpec.from_edn(loads(COGNITIVE_EDN))
+        spec = MemberSpec.from_edn(loads(SESSION_EDN))
         validate_member_spec(spec)
         rule = spec.rules[0]
 
@@ -520,12 +509,11 @@ class TestDriverEmergency:
         journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
         driver = LoopDriver(
             identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-            rule=rule,
+            recipe=recipe_for(rule),
             services=services,
             executor=executor,
             tool_executor=MagicMock(),
             per_tool_timeout=5.0,
-            on_complete=MagicMock(),
             journal=journal,
             spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
             pressure=_make_pressure(journal, context_window=TEST_WINDOW),

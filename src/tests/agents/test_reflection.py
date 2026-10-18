@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
-from tlon.agents.member_spec import MemberLoop, MemberRule, ReflectSpec
+from tlon.agents.member_spec import ReflectSpec, SessionRecipe
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.llm_client import LLMClient, LLMResponse
@@ -33,28 +33,22 @@ class _FakeLLM:
         return LLMResponse(content=self._content)
 
 
-def _rule() -> MemberRule:
-    return MemberRule(
-        name="test",
-        on=None,
-        when=None,
-        loop=MemberLoop(
-            context_sections=(),
-            stages=(),
-            until=Form(),
-            max_iterations=1,
-            max_consecutive_errors=1,
-            max_tokens=1000000,
-            reflect=ReflectSpec(enabled=True, interval_minutes=0),
-        ),
-        actions=(),
+def _recipe() -> SessionRecipe:
+    return SessionRecipe(
+        context_sections=(),
+        stages=(),
+        until=Form(),
+        max_iterations=1,
+        max_consecutive_errors=1,
+        max_tokens=1000000,
+        reflect=ReflectSpec(enabled=True, interval_minutes=0),
     )
 
 
 def _engine(tmp_path: Path, llm_content: str = "{}") -> tuple[ReflectionEngine, MemoryManager]:
     manager = MemoryManager("agent1", MemoryConfig(), data_dir=tmp_path / "agent1")
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
-    engine = ReflectionEngine(manager, cast(LLMClient, _FakeLLM(llm_content)), _rule(), journal)
+    engine = ReflectionEngine(manager, cast(LLMClient, _FakeLLM(llm_content)), _recipe(), journal)
     return engine, manager
 
 
@@ -127,7 +121,7 @@ class TestRunEndToEnd:
             ensure_ascii=False,
         )
         journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
-        engine = ReflectionEngine(manager, cast(LLMClient, _FakeLLM(response)), _rule(), journal)
+        engine = ReflectionEngine(manager, cast(LLMClient, _FakeLLM(response)), _recipe(), journal)
 
         await engine._run()
 
@@ -162,7 +156,7 @@ class TestLifecycle:
         await manager.remember_fact("一条供反思审视的记忆")
         journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
         llm = _BlockingLLM()
-        engine = ReflectionEngine(manager, cast(LLMClient, llm), _rule(), journal)
+        engine = ReflectionEngine(manager, cast(LLMClient, llm), _recipe(), journal)
         for _ in range(5):  # reflection_min_interactions default
             engine.note_interaction()
         await engine.check_trigger()

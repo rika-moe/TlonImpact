@@ -58,7 +58,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from tlon.agents.assembly import assemble_cognitive
+from tlon.agents.assembly import assemble_member_capabilities
 from tlon.agents.capabilities.bridge import load_capability_builtins
 from tlon.agents.cron import CronScheduler
 from tlon.agents.health import PublicHealthMonitor
@@ -270,7 +270,7 @@ class AgentRegistry(Component):
         # expose shutdown / get_state / active_session_count / idle_seconds
         self._agents: dict[str, MemberRuntime] = {}
 
-        # Docker runtimes are built during cognitive assembly, keyed by
+        # Docker runtimes are built during session assembly, keyed by
         # agent id — but the registry deliberately does NOT hold handles
         # for reclaim: a sleeping member keeps its container (zero-cost
         # wake / lazy reuse on next boot, unified member model — members
@@ -547,12 +547,10 @@ class AgentRegistry(Component):
         """Assemble and start one agent (unified member model, ADR 0006).
 
         This is the sole assembler for members and their infrastructure.
-        Every member gets the full capability set (``assemble_cognitive`` in
+        Every member gets the full capability set (``assemble_member_capabilities`` in
         ``agents/assembly.py``: LLM client, memory, task manager, Docker
-        runtime, tools); whether the cognitive engine (scheduler / loop) is
-        attached is derived from the spec — a rule with a ``:loop`` gets
-        it, one without does not (lazy assembly: objects are cheap,
-        loading is on demand).
+        runtime, tools). The same rule executor handles all members;
+        session services are used only when a program requests them.
 
         Args:
             agent_id: ID of the agent to start
@@ -581,15 +579,15 @@ class AgentRegistry(Component):
             logger.info("agent_starting", agent_id=agent_id, agent_name=config.name)
 
             # Unified assembly (ADR 0006): every member gets the full
-            # capability set; the cognitive engine attachment is derived
-            # from the spec inside MemberRuntime. Host builtins gate
+            # capability set. Rules request session execution when needed.
+            # Host builtins gate
             # validation too (D6.6: host predicates open to registry
             # members).
             builtins = self._member_builtins()
             spec = load_member_spec(agent_id, tlon_paths=self._paths, builtins=builtins)
             self._profiles[agent_id] = spec  # cache the profile (phase E)
             mailbox = Mailbox(self._paths.mail_database_file(), config.id)
-            capabilities = await assemble_cognitive(
+            capabilities = await assemble_member_capabilities(
                 config,
                 registry=self,
                 agent_info=self._agent_info,
@@ -605,7 +603,7 @@ class AgentRegistry(Component):
                 spec=spec,
                 builtins=builtins,
                 mailbox=mailbox,
-                cognitive=capabilities,
+                capabilities=capabilities,
                 registry=self,
                 post_office=self._post_office,
             )

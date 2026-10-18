@@ -158,6 +158,10 @@ def _validate(
                 _validate(arg, builtins, scope, _non_tail(loop))
             return
         name = str(head)
+        if name == "quote":
+            if len(value) != 2:
+                raise EvalError(f"quote expects 1 argument, got {len(value) - 1}")
+            return
         if name == "let":
             _validate_let(value, builtins, scope, loop)
             return

@@ -10,22 +10,23 @@ import pytest
 from tlon.agents.member_spec import (
     MemberSpec,
     MemberSpecValidationError,
+    SessionRecipe,
     validate_member_spec,
 )
 from tlosure.edn import Keyword, loads
 
-COGNITIVE_EDN = """\
+SESSION_EDN = """\
 {:version 1
  :rules [{:name "respond"
           :on :mail-delivered
           :when (or (addressed-to-me? msg) (cc-ed? msg))
-          :loop {:context {:sections [(persona) (protocol)]}
+          :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]}
                  :stages [(think) (act)]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
                  :max-consecutive-errors 3
                  :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
+                 :reflect {:enabled false :interval-minutes 5}}))]}]}
 """
 
 SCRIPT_EDN = """\
@@ -49,6 +50,10 @@ def _parse(text: str) -> MemberSpec:
     return MemberSpec.from_edn(loads(text))
 
 
+def _recipe(spec: MemberSpec) -> SessionRecipe:
+    return SessionRecipe.from_edn(spec.rules[0].actions[0][1][1])
+
+
 def _action_kind(spec: MemberSpec) -> str:
     """Evaluate a rule's first action form and return its ActionRequest kind."""
     from tlon.agents.vocabulary import make_member_builtins
@@ -65,31 +70,30 @@ def _action_kind(spec: MemberSpec) -> str:
 class TestRoundtrip:
     """EDN → MemberSpec → EDN → MemberSpec preserves semantics."""
 
-    def test_cognitive_rule_roundtrip(self):
-        spec = _parse(COGNITIVE_EDN)
+    def test_session_rule_roundtrip(self):
+        spec = _parse(SESSION_EDN)
         assert spec.version == 1
         rule = spec.rules[0]
         assert rule.name == "respond"
-        assert rule.loop is not None
-        assert rule.loop.max_iterations == 10
-        assert rule.loop.max_tokens == 1000000
-        assert rule.loop.reflect.enabled is False
-        assert rule.actions == ()
+        recipe = _recipe(spec)
+        assert recipe.max_iterations == 10
+        assert recipe.max_tokens == 1000000
+        assert recipe.reflect.enabled is False
+        assert len(rule.actions) == 1
 
         again = _parse(spec.to_edn())
         assert again == spec
 
-    def test_deterministic_rule_roundtrip(self):
+    def test_forward_rule_roundtrip(self):
         spec = _parse(SCRIPT_EDN)
         rule = spec.rules[0]
-        assert rule.loop is None
         assert len(rule.actions) == 1
         assert _action_kind(_parse(spec.to_edn())) == "forward"
 
 
 class TestCritiqueInstructions:
     def test_instructions_validate_and_roundtrip(self) -> None:
-        text = COGNITIVE_EDN.replace(
+        text = SESSION_EDN.replace(
             "(think) (act)",
             '(think) (critique {:if (completing?) :instructions "检查来源与计算"}) (act)',
         )
@@ -101,7 +105,7 @@ class TestCritiqueInstructions:
         "value", ['""', '"   "', "nil", "false", "3", "[]", "{}", ":source", "source"]
     )
     def test_invalid_instructions_rejected(self, value: str) -> None:
-        text = COGNITIVE_EDN.replace(
+        text = SESSION_EDN.replace(
             "(think) (act)", f"(think) (critique {{:instructions {value}}}) (act)"
         )
         with pytest.raises(MemberSpecValidationError, match="non-empty string"):
@@ -109,7 +113,7 @@ class TestCritiqueInstructions:
 
     @pytest.mark.parametrize("stage", ["think", "act", "plan", "revise"])
     def test_instructions_only_allowed_for_critique(self, stage: str) -> None:
-        text = COGNITIVE_EDN.replace("(think) (act)", f'({stage} {{:instructions "检查证据"}})')
+        text = SESSION_EDN.replace("(think) (act)", f'({stage} {{:instructions "检查证据"}})')
         with pytest.raises(MemberSpecValidationError, match="unknown opts key :instructions"):
             validate_member_spec(_parse(text))
 
@@ -260,85 +264,32 @@ class TestSingleValidator:
         with pytest.raises(MemberSpecValidationError, match="rules"):
             _parse("{:version 1 :rules []}")
 
-    def test_two_cognitive_rules_rejected(self):
-        """D6.7 (phase F): at most one cognitive rule per member — the
-        engine binds to a single loop rule."""
-        spec = _parse(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :when (addressed-to-me? msg)
-          :loop {:context {:sections [(persona)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 5
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}
-         {:name "second-brain"
-          :on :mail-delivered
-          :when (addressed-to-me? msg)
-          :loop {:context {:sections [(persona)]}
-                 :stages [(think)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 5
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-"""
-        )
-        with pytest.raises(MemberSpecValidationError, match="one cognitive rule"):
-            validate_member_spec(spec)
+    def test_multiple_session_rules_pass(self) -> None:
+        from dataclasses import replace
 
-    def test_valid_cognitive_spec_passes(self):
-        validate_member_spec(_parse(COGNITIVE_EDN))
+        spec = _parse(SESSION_EDN)
+        first = spec.rules[0]
+        another = replace(first, name="publish", on=None)
+        validate_member_spec(replace(spec, rules=(first, another)))
+
+    def test_valid_session_spec_passes(self):
+        validate_member_spec(_parse(SESSION_EDN))
 
     def test_valid_script_spec_passes(self):
         validate_member_spec(_parse(SCRIPT_EDN))
 
 
-class TestCognitiveForwardRejected:
-    """ADR 0029: the DSL ``forward`` action reads the triggering event's
-    mail, which the cognitive path no longer has (ADR 0028) — a cognitive
-    rule calling it in ``:actions`` is a load error pointing at the
-    forwardMail tool; deterministic rules keep it."""
-
-    COGNITIVE_WITH_FORWARD = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :loop {:context {:sections [(persona)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 5
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}
-          :actions [%s]}]}
-"""
-
-    def test_top_level_forward_rejected(self):
-        spec = _parse(self.COGNITIVE_WITH_FORWARD % '(forward {:to ["x@tlon.internal"]})')
-        with pytest.raises(MemberSpecValidationError, match="forwardMail"):
-            validate_member_spec(spec)
-
-    def test_nested_forward_rejected(self):
-        """The walk is syntactic: forward inside any expression depth
-        (here a when body) is still caught."""
-        spec = _parse(
-            self.COGNITIVE_WITH_FORWARD
-            % '(when true (emit "x" ["sink@tlon.internal"]) (forward {:to ["x@tlon.internal"]}))'
+class TestComposableActions:
+    def test_session_and_forward_are_allowed_in_one_rule(self) -> None:
+        text = SESSION_EDN.replace(
+            "))]}]}",
+            ')) (forward {:to ["x@tlon.internal"]})]}]}',
         )
-        with pytest.raises(MemberSpecValidationError, match="forwardMail"):
-            validate_member_spec(spec)
+        validate_member_spec(_parse(text))
 
-    def test_deterministic_forward_unaffected(self):
-        validate_member_spec(_parse(SCRIPT_EDN))
-
-    def test_cognitive_without_forward_passes(self):
-        spec = _parse(self.COGNITIVE_WITH_FORWARD % '(emit "x" ["sink@tlon.internal"])')
-        validate_member_spec(spec)
+    def test_removed_top_level_loop_is_rejected(self) -> None:
+        with pytest.raises(MemberSpecValidationError, match="rule :loop was removed"):
+            _parse('{:version 1 :rules [{:name "old" :on :boot :loop {}}]}')
 
 
 class TestRuleFuel:
@@ -378,41 +329,39 @@ class TestRuleFuel:
     def test_loop_fuel_over_hard_cap_rejected(self):
         from tlosure.eval import MAX_FUEL
 
-        edn = COGNITIVE_EDN.replace(
-            ":max-iterations 10", f":max-iterations 10 :fuel {MAX_FUEL + 1}"
-        )
+        edn = SESSION_EDN.replace(":max-iterations 10", f":max-iterations 10 :fuel {MAX_FUEL + 1}")
         spec = _parse(edn)
         with pytest.raises(MemberSpecValidationError, match="hard cap"):
             validate_member_spec(spec)
 
 
 class TestLoopMaxTokens:
-    """:loop/:max-tokens (ADR 0023): session token budget — required int,
+    """:recipe/:max-tokens (ADR 0023): session token budget — required int,
     rejected at load when missing or mistyped."""
 
     def test_max_tokens_missing_rejected(self):
-        edn = COGNITIVE_EDN.replace("                 :max-tokens 1000000\n", "")
+        edn = SESSION_EDN.replace("                 :max-tokens 1000000\n", "")
         with pytest.raises(MemberSpecValidationError, match=":max-tokens"):
-            _parse(edn)
+            validate_member_spec(_parse(edn))
 
     def test_max_tokens_non_int_rejected(self):
-        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ':max-tokens "many"')
+        edn = SESSION_EDN.replace(":max-tokens 1000000", ':max-tokens "many"')
         with pytest.raises(MemberSpecValidationError, match=":max-tokens"):
-            _parse(edn)
+            validate_member_spec(_parse(edn))
 
     def test_max_tokens_bool_rejected(self):
-        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens true")
+        edn = SESSION_EDN.replace(":max-tokens 1000000", ":max-tokens true")
         with pytest.raises(MemberSpecValidationError, match=":max-tokens"):
-            _parse(edn)
+            validate_member_spec(_parse(edn))
 
     def test_max_tokens_roundtrip(self):
-        spec = _parse(COGNITIVE_EDN)
-        assert spec.to_dict()["rules"][0]["loop"]["max_tokens"] == 1000000
+        spec = _parse(SESSION_EDN)
+        assert _recipe(spec).max_tokens == 1000000
         assert _parse(spec.to_edn()) == spec
 
 
 class TestLoopReplies:
-    """:loop/:replies：成员可覆盖三条面向用户的终止回信措辞（纯数据，
+    """:recipe/:replies：成员可覆盖三条面向用户的终止回信措辞（纯数据，
     引擎内置文案兜底）。加载期 total 校验（同 stage opts 的严格先例）：
     未知键、非字符串、空串均拒载。"""
 
@@ -422,14 +371,14 @@ class TestLoopReplies:
 
     @staticmethod
     def _with_replies(replies: str) -> str:
-        return COGNITIVE_EDN.replace(
+        return SESSION_EDN.replace(
             ":reflect {:enabled false :interval-minutes 5}",
             f":reflect {{:enabled false :interval-minutes 5}} {replies}",
         )
 
     def test_replies_roundtrip(self):
         spec = _parse(self._with_replies(self.REPLIES))
-        loop = spec.rules[0].loop
+        loop = _recipe(spec)
         assert loop is not None
         assert loop.replies == {
             "iteration_limit": "想太久了，简单说。",
@@ -438,37 +387,37 @@ class TestLoopReplies:
         }
         again = _parse(spec.to_edn())
         assert again == spec
-        assert again.rules[0].loop is not None
-        assert again.rules[0].loop.replies == loop.replies
+        assert _recipe(again) is not None
+        assert _recipe(again).replies == loop.replies
 
     def test_replies_undeclared_defaults_empty(self):
-        spec = _parse(COGNITIVE_EDN)
-        assert spec.rules[0].loop is not None
-        assert spec.rules[0].loop.replies == {}
-        assert Keyword("replies") not in spec.to_edn_data()["rules"][0]["loop"]
+        spec = _parse(SESSION_EDN)
+        assert _recipe(spec) is not None
+        assert _recipe(spec).replies == {}
+        assert Keyword("replies") not in _recipe(spec).to_edn_data()
 
     def test_replies_partial_override_roundtrip(self):
         spec = _parse(self._with_replies(':replies {:timeout "超时了。"}'))
-        loop = spec.rules[0].loop
+        loop = _recipe(spec)
         assert loop is not None
         assert loop.replies == {"timeout": "超时了。"}
         assert _parse(spec.to_edn()) == spec
 
     def test_replies_non_map_rejected(self):
         with pytest.raises(MemberSpecValidationError, match=":replies must be a map"):
-            _parse(self._with_replies(':replies "出错了。"'))
+            validate_member_spec(_parse(self._with_replies(':replies "出错了。"')))
 
     def test_replies_unknown_key_rejected(self):
-        with pytest.raises(MemberSpecValidationError, match="unknown :loop/:replies key"):
-            _parse(self._with_replies(':replies {:on-limit "x"}'))
+        with pytest.raises(MemberSpecValidationError, match="unknown :recipe/:replies key"):
+            validate_member_spec(_parse(self._with_replies(':replies {:on-limit "x"}')))
 
     def test_replies_empty_string_rejected(self):
         with pytest.raises(MemberSpecValidationError, match="non-empty string"):
-            _parse(self._with_replies(':replies {:error ""}'))
+            validate_member_spec(_parse(self._with_replies(':replies {:error ""}')))
 
     def test_replies_non_string_value_rejected(self):
         with pytest.raises(MemberSpecValidationError, match="non-empty string"):
-            _parse(self._with_replies(":replies {:error 42}"))
+            validate_member_spec(_parse(self._with_replies(":replies {:error 42}")))
 
     def test_replies_valid_spec_passes_validator(self):
         validate_member_spec(_parse(self._with_replies(self.REPLIES)))
@@ -560,7 +509,7 @@ class TestMailHistorySection:
 
     @staticmethod
     def _spec_with_sections(sections: str) -> MemberSpec:
-        return _parse(COGNITIVE_EDN.replace("[(persona) (protocol)]", sections))
+        return _parse(SESSION_EDN.replace("[(persona) (protocol)]", sections))
 
     def test_sliding_form_accepted(self):
         validate_member_spec(self._spec_with_sections("[(mail-history 20)]"))
@@ -595,3 +544,61 @@ class TestMailHistorySection:
     def test_non_int_count_rejected(self):
         with pytest.raises(MemberSpecValidationError, match="non-negative int"):
             validate_member_spec(self._spec_with_sections('[(mail-history "20")]'))
+
+
+class TestSessionRequests:
+    def test_conditional_request_does_not_execute_recipe_forms(self) -> None:
+        from tlon.agents.vocabulary import make_member_builtins
+        from tlosure.eval import eval_form
+
+        request_form = _parse(SESSION_EDN).rules[0].actions[0]
+        # Build syntax directly so the recipe stays code-as-data.
+        from tlosure.edn import Form, Symbol
+
+        guarded = Form([Symbol("if"), True, request_form, None])
+        collector = []
+        request = eval_form(guarded, {}, make_member_builtins(collector=collector))
+        assert request.kind == "run_loop"
+        assert collector == [request]
+        assert (
+            SessionRecipe.from_edn(request.data["recipe"]).stages
+            == _recipe(_parse(SESSION_EDN)).stages
+        )
+        guarded[1] = False
+        assert eval_form(guarded, {}, make_member_builtins(collector=collector)) is None
+        assert collector == [request]
+
+    def test_dynamic_invalid_recipe_is_rejected_when_requested(self) -> None:
+        from tlon.agents.vocabulary import make_member_builtins
+        from tlosure.eval import EvalError, eval_form
+
+        with pytest.raises(EvalError, match="missing"):
+            eval_form(loads("(run-loop recipe)"), {"recipe": {}}, make_member_builtins())
+
+    def test_run_loop_is_not_available_in_pure_gate(self) -> None:
+        from dataclasses import replace
+
+        spec = _parse(SESSION_EDN)
+        rule = replace(spec.rules[0], when=spec.rules[0].actions[0])
+        with pytest.raises(MemberSpecValidationError, match="run-loop"):
+            validate_member_spec(replace(spec, rules=(rule,)))
+
+    def test_mark_read_can_be_collected_inside_a_loop(self) -> None:
+        from tlon.agents.vocabulary import make_member_builtins
+        from tlosure.eval import eval_form
+
+        requests = []
+        eval_form(
+            loads("(while [n 0] (< n 2) (mark-read) (recur (+ n 1)))"),
+            {},
+            make_member_builtins(collector=requests),
+        )
+        assert [request.kind for request in requests] == ["mark_read", "mark_read"]
+
+
+def test_duplicate_rule_names_are_rejected() -> None:
+    from dataclasses import replace
+
+    spec = _parse(SESSION_EDN)
+    with pytest.raises(MemberSpecValidationError, match="rule names must be unique"):
+        validate_member_spec(replace(spec, rules=(spec.rules[0], spec.rules[0])))

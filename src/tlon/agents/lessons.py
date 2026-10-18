@@ -18,7 +18,6 @@ decision via ``writePrototype`` / the admin API.
 
 Skip conditions (retirement bookkeeping must never block or fail the
 stop flow — the stop is already done, this is post-hoc):
-- non-cognitive member (no behavior file, or no rule with a ``:loop``)
 - empty memory digest (nothing to distill)
 - LLM failure — logged, never raised
 """
@@ -29,7 +28,6 @@ from typing import Any
 import aiofiles
 
 from tlon.agents.assembly import _build_llm_config
-from tlon.agents.member_spec import MemberSpec
 from tlon.agents.session_journal import SessionJournal
 from tlon.base.component import Component
 from tlon.base.config import yaml_load_file
@@ -41,7 +39,6 @@ from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
-from tlosure.edn import loads
 
 logger = get_logger(__name__)
 
@@ -62,7 +59,7 @@ def build_retiree_llm_client(agent_id: str, tlon_paths: TlonPaths) -> LLMClient:
     member's name (ADR 0014: its ledger gets this last entry).
 
     The config comes from the member's archived ``agent.yaml`` ``llm``
-    section, same as ``assemble_cognitive`` (member-level only, ADR 0016).
+    section, same as ``assemble_member_capabilities`` (member-level only, ADR 0016).
     """
     agent = yaml_load_file(tlon_paths.agent_config_file(agent_id))
     llm_config = _build_llm_config(agent.llm if agent is not None else None, agent_id)
@@ -114,6 +111,8 @@ class LessonsDistiller(Component, Device):
         """Distill one stopped member; failures are logged, never raised."""
         agent_id = ""
         if isinstance(event.payload, dict):
+            if event.payload.get("removed"):
+                return
             agent_id = str(event.payload.get("agent_id") or "")
         if not agent_id:
             logger.warning("lessons_distill_no_agent_id")
@@ -123,26 +122,10 @@ class LessonsDistiller(Component, Device):
         except Exception as e:
             logger.warning("lessons_distill_failed", agent_id=agent_id, error=str(e))
 
-    def _is_cognitive(self, agent_id: str) -> bool:
-        """Whether the archived spec makes this a cognitive member (any
-        rule carries a ``:loop``). A missing/unparseable behavior file
-        means there is nothing meaningful to distill — skip."""
-        behavior_file = self._paths.agent_behavior_file(agent_id)
-        if not behavior_file.exists():
-            return False
-        try:
-            spec = MemberSpec.from_edn(loads(behavior_file.read_text(encoding="utf-8")))
-        except Exception as e:
-            logger.warning("lessons_spec_unreadable", agent_id=agent_id, error=str(e))
-            return False
-        return any(rule.loop is not None for rule in spec.rules)
-
     async def _distill(self, agent_id: str) -> None:
         """Rebuild the archive offline and run the one distillation call."""
-        if not self._is_cognitive(agent_id):
-            logger.info("lessons_distill_skipped", agent_id=agent_id, reason="not_cognitive")
+        if not self._paths.agent_dir(agent_id).exists():
             return
-
         memory = MemoryManager(
             agent_id,
             MemoryConfig(),

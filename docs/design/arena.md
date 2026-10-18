@@ -1,12 +1,12 @@
 # 演武场（arena）：staging 原型的动态行为评估
 
-演武场把 staging 原型放入独立 runtime，用合成邮件运行真实认知循环，归档行为证据供人类审批。一个 session 可处理多封语料；收工以 drained 判定，报告按 session 组织。演武结果不会自动批准原型。
+演武场把 staging 原型放入独立 runtime，用合成邮件运行真实会话循环，归档行为证据供人类审批。一个 session 可处理多封语料；收工以 drained 判定，报告按 session 组织。演武结果不会自动批准原型。
 
 ## 问题：静态可读 ≠ 行为可测
 
 staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载期静态校验 + 人类读 spec 审批 + 异质评审（reviewPrototype 工具，advisory）。spec 是受限 DSL、全文可读，但成员行为是 **spec × 模型 × 输入语料**的联合产物——一份读起来无害的 spec，喂进真实邮件后可能调错工具、回错信、陷入错误循环。静态审查覆盖不了这一维。
 
-当前机制：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实认知循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」。复合能力直接起草与准入见 [capabilities](capabilities.md)。
+当前机制：把 staging 原型实例化成**临时成员**，放进隔离宇宙，喂一批合成邮件跑真实会话循环，把完整 journal 轨迹蒸馏成评审报告。信任闸因此从「读基因型」扩展到「看表型」。复合能力直接起草与准入见 [capabilities](capabilities.md)。
 
 ## 领域约束
 

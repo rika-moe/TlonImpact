@@ -85,34 +85,7 @@ from tlosure.edn import loads
 #: addressed to Adam; postmaster senders are excluded so a bounce never
 #: gets an answer) and noisy-circuit-breaker (AGENT_NOISY → stop the
 #: flooding member; sleep, never delete).
-ADAM_SPEC_EDN = r"""{:version 1
- :rules [{:name "boot"
-          :on :boot
-          :actions [(start-all {:reason "boot"})]}
-         {:name "drain"
-          :on :agent-idle
-          :actions [(stop {:agent (get event :agent_id) :reason "drain"})]}
-         {:name "noisy-circuit-breaker"
-          :on :agent-noisy
-          :actions [(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})]}
-         {:name "welcome"
-          :on :agent-spawned
-          :actions [(emit (str "亲爱的 " (get event :name) "：\n\n"
-                               "欢迎出生。我是 Adam，这个世界的守护者。\n\n"
-                               "认识其他成员：通信即结识——把对一个人的认识记进你自己的联系簿"
-                               "（updateContact：名字 / 地址 / 我对 ta 的描述），"
-                               "它会注入你的系统提示词；"
-                               "查谁的地址用 listMembers 成员寻址黄页（公开 id / 名字 / 地址），黄页可以引用和转告，不认证职务，也不公开私人材料。\n\n"
-                               "通信惯例：\n"
-                               "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\n"
-                               "- 有事找守护者，写信到 adam@tlon.internal。\n")
-                          [(str (get event :agent_id) "@tlon.internal")])]}
-         {:name "guardian-inbox"
-          :on :mail-delivered
-          :when (and (addressed-to-me? msg)
-                     (not (from? msg "postmaster@tlon.internal")))
-          :actions [(emit "已收到你的来信。\n\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员只通过 exitAgent 管理自己的退出；终止其他成员由人类管理端处理。\n\n本信箱是留言箱——这封回信仅确认收讫。")]}]}
-"""
+ADAM_SPEC_EDN = '{:version 1 :rules [{:name "boot" :on :boot :actions [(start-all {:reason "boot"})]} {:name "drain" :on :agent-idle :actions [(stop {:agent (get event :agent_id) :reason "drain"})]} {:name "noisy-circuit-breaker" :on :agent-noisy :actions [(stop {:agent (get event :agent_id) :reason "noisy-circuit-breaker"})]} {:name "welcome" :on :agent-spawned :actions [(emit (str "亲爱的 " (get event :name) "：\\n\\n" "欢迎出生。我是 Adam，这个世界的守护者。\\n\\n" "认识其他成员：通信即结识——把对一个人的认识记进你自己的联系簿" "（updateContact：名字 / 地址 / 我对 ta 的描述），" "它会注入你的系统提示词；" "查谁的地址用 listMembers 成员寻址黄页（公开 id / 名字 / 地址），黄页可以引用和转告，不认证职务，也不公开私人材料。\\n\\n" "通信惯例：\\n" "- 成员之间以邮件往来，收件人写对方的名字或地址（名字@tlon.internal）。\\n" "- 有事找守护者，写信到 adam@tlon.internal。\\n") [(str (get event :agent_id) "@tlon.internal")])]} {:name "guardian-inbox" :on :mail-delivered :when (and (addressed-to-me? msg) (not (from? msg "postmaster@tlon.internal"))) :actions [(emit "已收到你的来信。\\n\\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员只通过 exitAgent 管理自己的退出；终止其他成员由人类管理端处理。\\n\\n本信箱是留言箱——这封回信仅确认收讫。") (mark-read)]}]}'
 
 
 def make_adam(
@@ -123,7 +96,7 @@ def make_adam(
 ) -> MemberRuntime:
     """Assemble Adam: the built-in spec plus registry query closures.
 
-    Adam is a deterministic member (no cognitive rule → cognitive=None): it
+    Adam uses rule effects and registry query closures: it
     holds no registry reference beyond the injected query closures — the
     shared ``RegistryQueries`` implementation imported from the registry
     module (one-directional dependency: Adam → registry, never reverse).
@@ -140,7 +113,7 @@ def make_adam(
     spec = MemberSpec.from_edn(loads(ADAM_SPEC_EDN))
     # Single-validator gate with the host builtins: the boot rule's
     # ``start-all`` action needs the registry host for candidate expansion,
-    # which the host-less deterministic branch would reject.
+    # which the host-less rule-based branch would reject.
     spec = validate_member_spec(spec, builtins=builtins)
     return MemberRuntime(
         member_id="adam",
@@ -149,6 +122,7 @@ def make_adam(
         spec=spec,
         builtins=builtins,
         mailbox=Mailbox(tlon_paths.mail_database_file(), "adam"),
-        cognitive=None,
+        capabilities=None,
+        tlon_paths=tlon_paths,
         post_office=post_office,
     )

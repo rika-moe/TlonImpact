@@ -1,6 +1,6 @@
 # Runtime 基础设施设计
 
-本文负责组件装配、事件通知、路径与配置注入、进程级观测设施。成员调度和认知循环见 [runtime](runtime.md)，服务端客户端会话见 [server-protocol](server-protocol.md)。系统边界在 [architecture](../architecture.md)，拆包的历史理由见 [ADR 0019](../decisions/0019-runtime-server-client-split.md)。
+本文负责组件装配、事件通知、路径与配置注入、进程级观测设施。成员调度和会话循环见 [runtime](runtime.md)，服务端客户端会话见 [server-protocol](server-protocol.md)。系统边界在 [architecture](../architecture.md)，拆包的历史理由见 [ADR 0019](../decisions/0019-runtime-server-client-split.md)。
 
 ## 领域约束
 

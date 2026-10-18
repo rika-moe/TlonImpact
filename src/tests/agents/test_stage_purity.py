@@ -14,6 +14,7 @@ import pytest
 
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
+from tlon.agents.member_spec import ReflectSpec, SessionRecipe
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import act_stage_collect, act_stage_step
@@ -24,6 +25,7 @@ from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
+from tlosure.edn import Form
 
 
 def _make_services() -> MagicMock:
@@ -34,17 +36,15 @@ def _make_services() -> MagicMock:
 
 
 def _make_driver(executor: MagicMock, tmp_path: Path) -> LoopDriver:
-    rule = MagicMock()
-    rule.loop.fuel = None
+    recipe = SessionRecipe((), (), Form(), 10, 3, 1000000, ReflectSpec(False, 0))
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     return LoopDriver(
         identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon"),
-        rule=rule,
+        recipe=recipe,
         services=_make_services(),
         executor=executor,
         tool_executor=MagicMock(),
         per_tool_timeout=1.0,
-        on_complete=MagicMock(),
         journal=journal,
         spill=ToolSpill(TlonPaths(home=tmp_path), "agent1"),
         # Default context window: the threshold is never crossed here.
@@ -96,7 +96,6 @@ class TestStagePurity:
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
         assert outcome.complete is True
-        assert outcome.run_on_complete is True
         assert outcome.final_reply is None
         assert outcome.scratch_updates["scheduling_request"]["action"] == "finish"
         assert session.is_completed is False
@@ -195,25 +194,13 @@ class TestEngineApplication:
         assert chain is response
         assert session.last_llm_response is response
 
-    async def test_tool_results_and_final_reply_applied(self, tmp_path: Path) -> None:
-        executor = MagicMock()
-        on_complete = MagicMock()
-        on_complete.run = AsyncMock()
-        driver = _make_driver(executor, tmp_path)
-        driver._on_complete = on_complete
+    async def test_tool_results_applied(self, tmp_path: Path) -> None:
+        driver = _make_driver(MagicMock(), tmp_path)
         session = AgentSession(session_id="s1", trigger_content="trigger")
         tc = ToolCall(id="t1", function_name="someTool", arguments={})
         result = ToolResult(success=True, data={})
-        outcome = StageOutcome(
-            tool_results=[(tc, result)], final_reply="final", run_on_complete=True
-        )
-
-        await driver._apply_outcome(session, None, outcome)
-
-        # The harvested results land on the session; the final reply is
-        # the on-complete env's `result` (ADR 0009: no memory save).
+        await driver._apply_outcome(session, None, StageOutcome(tool_results=[(tc, result)]))
         assert session.all_tool_results == [{"tool_call": tc, "result": result}]
-        on_complete.run.assert_awaited_once_with(session, "final")
 
     async def test_mark_active_and_iteration_applied(self, tmp_path: Path) -> None:
         driver = _make_driver(MagicMock(), tmp_path)
@@ -252,7 +239,7 @@ class TestEngineApplication:
 
     async def test_act_collect_finish_turn_completes_without_mail(self) -> None:
         """finishTurn is a completion signal: loop ends, no mail, no final
-        reply (there is no reply content to pass to on-complete)."""
+        reply."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.set_last_llm_response(LLMResponse(content="working"))
@@ -264,7 +251,6 @@ class TestEngineApplication:
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
         assert outcome.complete is True
-        assert outcome.run_on_complete is True
         assert outcome.final_reply is None  # nothing to pass on
         assert session.is_completed is False
 

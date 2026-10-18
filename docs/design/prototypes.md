@@ -17,7 +17,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 两个「不声明」值得注意：
 
-- **不声明运行时类型**。原型是行为模板——元数据里没有 `:runtime` 字段（`PrototypeInfo` 也不派生它）。一条规则带不带 `:loop` 是实例 spec 的语法事实，不构成任何类型标记。
+- **不声明运行时类型**。原型是行为程序模板，元数据不含 `:runtime`；条件、传统循环、模型会话都通过统一 actions 组合，不能按某个动作的有无给成员分类。
 - **不提供任意行为 overrides**。规则、循环和上下文来自完整 spec，模板只能填声明过的常量槽位。`:execution` 声明实例化时投影为 `docker.level`；运行时权限还受装置配置、挂载和工具注册约束，不能把 spec 称为所有权限的唯一来源。
 
 元数据里 `trusted` 的默认值是 true：读不到 `:trusted` 键的目录视为可信。这不是疏忽而是信任模型的编码——能往 `~/.tlon/prototypes/` 写文件的是人类（或包内播种），手写即可信；只有 staging 区的写入路径会显式写 `:trusted false`。可信是默认，不可信必须显式声明，方向不能反——反过来的话，一次元数据读取失败就会把可信原型降级成不可用。
@@ -31,9 +31,9 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 | 标准文件迭代 | L1 | 标准 ReAct；合并原 pm/product 的相同行为 |
 | 标准无执行迭代 | L0 | 标准 ReAct，无执行装置 |
 | 短回合交流 | L0 | 3 次迭代、32000 token；人格、协议、当前任务、最近 5 封邮件和最近会话摘要；无额外自评 |
-| 定址转发 | L0 | 无认知循环，`to` 参数指定转发目标 |
+| 定址转发 | L0 | 按程序直接转发，`to` 参数指定转发目标 |
 | 证据核验 | L2 | 交付前专项核验来源、计算或工具结果；明确 PASS 才放行完成动作 |
-| 条件路由 | L0 | 无认知循环；投递给自己，且指定发件人和正文正则同时匹配才转发 |
+| 条件路由 | L0 | 按条件直接转发；投递给自己，且指定发件人和正文正则同时匹配才转发 |
 
 这里的预算是会话累计 stage token，不是单次上下文窗口长度，也不包含压缩调用；预算耗尽通知为确定性报告，不调用模型（ADR 0040）。计划后执行在首次迭代尝试规划，规划失败沿用 stage 的软失败语义；不自动重规划。证据核验通过通用 critique `:instructions` 指定标准，属于模型对现有材料的核验，不等于独立查证或自动运行测试；没有来源时应明确未核实，不能伪称验证成功。其邮件派发仅在本轮明确通过时执行，未知结果与异常均不作为通过。
 
@@ -138,7 +138,7 @@ agent 侧入口是 `SpawnAgentTool`（[tools/agents/spawn_agent.py](../../src/tl
 
 人类手写有直达入口（WebUI 的 PROTOTYPES 视图，`POST /admin/prototypes`（behavior + 必填 display_name）→ `write_trusted_prototype`）：直接写进正式库、`:trusted true`、无 `:author`——handwritten implies trusted，与元数据读取的默认方向一致；写前跑的是与 staging 完全相同的校验链（`_validate_behavior`），失败不落盘。编辑（`update_prototype`，`PATCH /admin/prototypes/{name}` 及 staging 变体）可改 `display-name`/`description`、`lessons`（重写 `LESSONS.md`，不传则保留）和/或重写 `behavior.tlon`：behavior 变更先跑校验链、失败则磁盘原样，元数据改写保留既有 `:trusted`/`:author`（于是 staging 原型可以在审批前被人类修正，晋级语义不变）。删除分两侧：正式库走 `delete_prototype`（`DELETE /admin/prototypes/{name}`，与 `reject_prototype` 同款路径穿越防护），staging 的删除即 reject。
 
-`writePrototype` 对带不带 `:loop` 的规则形态输出同一种统一 rules 形态的 `behavior.tlon`，不写人格文件。staging 闸对两种形态是同一条校验链，没有旁路。
+`writePrototype` 输出统一 rules-form 的 `behavior.tlon`，不写人格文件。所有规则共用同一条 staging 校验链；字面会话配方在加载时校验，动态配方在实际请求时再校验。
 
 提案资格还有第二道闸——血脉偿付门槛（agent 侧）：`writePrototype` / `proposeBehavior` 在执行开头检查作者血脉的偿付能力（`agents/policy.py` 的 `solvent?` 政策 hook，ADR 0022——默认公式与阈值见 [society-policy.md](society-policy.md)，可由人类在 `~/.tlon/policy.tlon` 调整），失去偿付能力的血脉提案被直接拒绝（staging 无残留），指引是「先用手上成员做出被 endorse 的产出再提案」。这道闸不进 `write_staging_prototype` 域函数：admin REST 的人类直写不受闸——信任闸按影响半径分级，人类不受影响半径约束。闸本身 fail-open：偿付派生任何异常都放行。
 
@@ -167,7 +167,7 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 - [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)——`AgentLifecycle` Protocol（`spawn_member` / `stop_member` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
 - [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)——`PrototypeError`（原型库抛、工具捕）与 `PrototypeSummary`（只读元数据视图，`PrototypeInfo` 结构化满足）。
 
-装配层（`assemble_cognitive`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）把实现注入工具实例：注册表把自己注入 `SpawnAgentTool` / `StopAgentTool`（结构化满足 `AgentLifecycle` Protocol），`ListMembersTool` 使用独立的只读目录端口，委托同一邮局目录，把 `list_prototypes` / `write_staging_prototype` 作为普通 callable 注入 `ListPrototypesTool` / `WritePrototypeTool`。import 方向保持 tools → ports，永不倒流，由 `uv run lint-imports` 强制。
+装配层（`assemble_member_capabilities`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）把实现注入工具实例：注册表把自己注入 `SpawnAgentTool` / `StopAgentTool`（结构化满足 `AgentLifecycle` Protocol），`ListMembersTool` 使用独立的只读目录端口，委托同一邮局目录，把 `list_prototypes` / `write_staging_prototype` 作为普通 callable 注入 `ListPrototypesTool` / `WritePrototypeTool`。import 方向保持 tools → ports，永不倒流，由 `uv run lint-imports` 强制。
 
 为什么不用直接 import 加契约豁免：反向依赖一旦开一个口子，tools 层就会逐渐长出对 agents 内部的随意引用，分层检查从「方向强制」退化为「逐个评审」。Protocol + 注入的额外收益是工具可独立测试——测试注入一个假的 `AgentLifecycle` 实现即可，不必拉起整个注册表。异常类型放 ports 而不是抛方模块，是因为 catch 发生在 tools 侧：异常是接口的一部分，不是实现的细节。
 

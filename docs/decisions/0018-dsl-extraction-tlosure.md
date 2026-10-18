@@ -66,3 +66,6 @@ tlosure 只依赖标准库。import-linter 增加契约固话此方向（`root_p
 - `MailView` 结构协议意味着任何满足 `to` / `cc` / `from_address` / `content` 形状的对象都可进入 DSL env——宿主替换 mail 实现时 tlosure 无感。
 - env 契约变化：`self` map 新增 `address` 键（DSL 表达式可读 `(get self :address)`，算顺带能力）。
 - 文档同步：`docs/design/dsl.md` 分层表、`docs/architecture.md` 层表、`docs/reference/dsl-reference.md`（重新生成）。
+
+
+后续修订：ADR 0042 删除独立的 on_complete 模块和完成环境，所有规则效果由统一成员程序执行；语言核心继续保持宿主无关。

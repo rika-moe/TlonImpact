@@ -1,44 +1,4 @@
-"""MemberRuntime — the unified member interpreter (phase C).
-
-Phase A built the :class:`~tlon.agents.member_spec.MemberSpec`; phase B made
-it the single spec flowing through the system; phase C collapses the two
-runtimes (the cognitive ``Agent`` / LoopDriver engine and the deterministic
-``ScriptMember`` shell) into one interpreter whose behavior is entirely
-described by a member's spec (``:on`` + ``:when`` + optional ``:loop`` +
-``:actions`` — a hit runs the loop first, then the actions; no loop, actions
-only).
-
-The runtime is the ScriptMember outer shell generalized: per-rule ``:on``
-subscriptions (deduped), ``:boot`` rules, the unread-mail rescue scan, the
-own-mail guard, and read-marking — plus, when the registry assembles
-:class:`CognitiveCapabilities`, the cognitive engine (LoopDriver +
-SessionScheduler + context builder + reflection + on-complete runner)
-attached to the member's one cognitive rule. The two former runtimes' envs
-unify to the superset ``{msg, event, self}`` (completion adds ``result``),
-and all five action kinds (``spawn`` / ``emit`` / ``start`` / ``stop`` /
-``forward``) execute through one executor.
-
-Derived values: ``state`` / ``active_session_count`` /
-``idle_seconds`` delegate to the scheduler when cognitive, else to
-deterministic idle bookkeeping — with real background activity (an
-in-flight reflection) folded into ``idle_seconds`` so a member mid-audit
-is never reported idle.
-
-Mail semantics (ADR 0028 — 收件箱驱动的单 session 模型): the mailbox is
-the only queue. A delivered mail addressed to this member first passes
-the cognitive rule's ``:when`` gate — a rejected mail is marked read
-immediately (D6.1 延续, and it never counts as wakeable unread); a
-passing mail stays *unread* — read-marking is the agent's own explicit
-act (the ``markRead`` tool). Wake is edge-triggered: gate passed and no
-live session → ``notify_wake``; a live session is never disturbed (the
-mail lies unread in the inbox; the session sees it via checkInbox or the
-next session's mail-history). Deterministic rules still run inline and
-read the mail immediately. Own mail (sent by this member) is never
-processed and is marked read at once. The one background rescan task
-re-scans unread mail on a single slow cadence
-(``mail_rescan_interval_seconds``) — the self-healing path for mail the
-agent shelved and for anything a crash swallowed.
-"""
+"""Member programs execute one serial stream of effects per member."""
 
 import asyncio
 import contextlib
@@ -55,15 +15,15 @@ from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.lifecycle import StartRequest, StopRequest
 from tlon.agents.loop_driver import LoopDriver
-from tlon.agents.member_spec import MemberRule, MemberSpec
-from tlon.agents.on_complete import OnCompleteRunner
+from tlon.agents.member_spec import MemberRule, MemberSpec, SessionRecipe
 from tlon.agents.reflection import ReflectionEngine
 from tlon.agents.scheduler import SessionScheduler
+from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.services import StageServices, make_event_publisher
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
-from tlon.agents.vocabulary import rule_env
+from tlon.agents.vocabulary import collect_member_effects, rule_env
 from tlon.base.component import Component
 from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig
 from tlon.base.device import Device
@@ -82,12 +42,12 @@ from tlon.organization.messaging.member import Member
 from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
 from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
+from tlosure.edn import dumps, loads
 from tlosure.eval import (
     DEFAULT_FUEL,
     DEFAULT_MAX_DEPTH,
     DEFAULT_WHEN_FUEL,
     Evaluator,
-    eval_form,
 )
 
 if TYPE_CHECKING:
@@ -101,8 +61,7 @@ Carrier = tuple[str | None, str | None, str | None]
 
 
 class MemberState(Enum):
-    """Member lifecycle states (cognitive members; deterministic ones are
-    simply active/offline)."""
+    """Internal lifecycle diagnostics, separate from public scheduling states."""
 
     INITIALIZING = "initializing"  # Starting up
     ACTIVE = "active"  # Running and processing messages
@@ -112,17 +71,8 @@ class MemberState(Enum):
 
 
 @dataclass
-class CognitiveCapabilities:
-    """The full capability set every member gets (unified member model,
-    ADR 0006): LLM client, memory, task manager, Docker runtime, and
-    tools.
-
-    Assembly is unconditional (lazy assembly: objects are cheap, loading
-    is on demand); whether the cognitive *engine* (scheduler / loop) is
-    attached is derived from the spec inside ``MemberRuntime`` — a member
-    without a loop rule simply never uses these objects. ``None`` is only
-    used by built-in instances like Adam (no capabilities at all).
-    """
+class MemberCapabilities:
+    """Services available to a member program; assembled lazily by the runtime."""
 
     config: AgentConfig
     llm_client: LLMClient
@@ -149,14 +99,7 @@ class CognitiveCapabilities:
 
 
 class MemberRuntime(Member):
-    """Unified member interpreter: spec-driven, cognitive or deterministic.
-
-    All work happens in the EventBus dispatch context (no worker task; the
-    bus already isolates handler exceptions). Cognitive work is woken into
-    the scheduler's single-session main loop (ADR 0028) — delivery only
-    signals; the mailbox is the queue. Decisions are request events on the
-    bus; execution is the registry's job.
-    """
+    """Execute matching event rules through one serial member-owned worker."""
 
     def __init__(
         self,
@@ -168,9 +111,10 @@ class MemberRuntime(Member):
         builtins: dict[str, Builtin],
         mailbox: Mailbox | None = None,
         post_office: PostOffice | None = None,
-        cognitive: CognitiveCapabilities | None = None,
+        capabilities: MemberCapabilities | None = None,
         registry: "AgentRegistry | None" = None,
-    ):
+        tlon_paths: TlonPaths | None = None,
+    ) -> None:
         """Initialize the member runtime.
 
         Args:
@@ -184,11 +128,9 @@ class MemberRuntime(Member):
                 read-marking (None only for bare test instances; Adam
                 carries ``~/.tlon/adam/mail/`` — docs/design/mail.md
                 「守护者信箱」)
-            cognitive: The member's capability set (LLM/memory/tools).
-                The registry assembles it for every member; None is only
-                used by built-in instances like Adam. The cognitive
-                engine (scheduler / loop) is attached iff the spec has a
-                loop rule — derived, never stored.
+            capabilities: The member's capability set (LLM/memory/tools).
+                Programs request sessions explicitly with run-loop.
+                Bare host-service members may omit these services.
             registry: Agent registry for ``spawn`` actions (None, e.g.
                 Adam, disables them)
         """
@@ -199,26 +141,22 @@ class MemberRuntime(Member):
         self._builtins = builtins
         self._mailbox = mailbox
         self._post_office = post_office
-        self._cognitive = cognitive
+        self._capabilities = capabilities
         self._registry = (
-            registry if registry is not None else (cognitive.registry if cognitive else None)
+            registry if registry is not None else (capabilities.registry if capabilities else None)
         )
         # Trust ladder (docs/design/unified-member-model.md): the
         # probation mentor's address, cc'd on composed outbound mail
-        # (_send_mail; the cognitive path's
-        # EffectExecutor gets it in _assemble_cognitive). Forwarding is
+        # (_send_mail; the session path's
+        # EffectExecutor gets it in _assemble_session). Forwarding is
         # not cc'd — passing along an existing mail is noise to the mentor.
-        self._mentor_cc = cognitive.mentor_cc if cognitive is not None else None
-        # The one cognitive rule, if any (D6.7: at most one per member).
-        self._cognitive_rule = next(
-            (rule for rule in self._spec.rules if rule.loop is not None), None
-        )
-        # Deterministic idle bookkeeping (registry drain): initialize time
+        self._mentor_cc = capabilities.mentor_cc if capabilities is not None else None
+        # Rule idle bookkeeping (registry drain): initialize time
         # and the last executed rule action, both monotonic.
         self._initialized_at: float | None = None
         self._last_action_at: float | None = None
         self._active_actions = 0
-        # Cognitive subsystem slots; None for deterministic members.
+        # Session services are initialized when a program requests a session.
         self._scheduler: SessionScheduler | None = None
         self._loop_driver: LoopDriver | None = None
         self._effect_executor: EffectExecutor | None = None
@@ -230,18 +168,17 @@ class MemberRuntime(Member):
         # The one background mail-rescan task (ADR 0028 决策 4: boot scan +
         # the slow periodic sweep share it).
         self._rescan_task: asyncio.Task[None] | None = None
-        # Cognitive engine attachment is spec-derived (ADR 0006): a member
-        # with a loop rule gets the engine, one without keeps the full
-        # capability set unused (lazy assembly — objects are cheap,
-        # loading is on demand).
-        if cognitive is not None and self._cognitive_rule is not None:
-            self._assemble_cognitive(cognitive)
-        with bound_contextvars(agent_id=self._member_id):
-            logger.info(
-                "member_initialized",
-                member_id=member_id,
-                cognitive_engine=self._cognitive_rule is not None,
-            )
+        self._queue: asyncio.Queue[Event] = asyncio.Queue()
+        self._queued_mail: set[str] = set()
+        self._completed_dispatches: set[tuple[str, str]] = set()
+        self._program_task: asyncio.Task[None] | None = None
+        self._journal = (
+            SessionJournal(member_id, capabilities.tlon_paths)
+            if capabilities
+            else (SessionJournal(member_id, tlon_paths) if tlon_paths is not None else None)
+        )
+        if capabilities is not None:
+            self._assemble_scheduler(capabilities)
 
     # ── Identity / derived values ──
 
@@ -265,7 +202,7 @@ class MemberRuntime(Member):
 
     @property
     def active_session_count(self) -> int:
-        """Count all live work: sessions, reflection and deterministic handlers.
+        """Count all live work: sessions, reflection and rule handlers.
 
         Draining must wait for every kind of work, including external I/O.
         """
@@ -279,79 +216,41 @@ class MemberRuntime(Member):
 
     @property
     def idle_seconds(self) -> float:
-        """Seconds since the last activity.
-
-        Cognitive: the scheduler's session activity clock, with real
-        background activity folded in — an in-flight reflection LLM call
-        is work in progress and counts as active, so the member is not
-        reported idle and drained mid-audit. The rescan task's mere
-        existence does not count: it sleeps between sweeps.
-        Deterministic: time since the last executed rule action (from
-        initialize when no action has run yet); 0 before initialization.
-        """
-        if self._scheduler is not None:
-            if self._reflection is not None and self._reflection.is_running:
-                return 0.0
-            return self._scheduler.idle_seconds
-        if self._initialized_at is None:
+        """Idle time covers rule effects, sessions and background maintenance."""
+        if self.active_session_count > 0 or self._initialized_at is None:
             return 0.0
-        since = self._last_action_at if self._last_action_at is not None else self._initialized_at
-        return time.monotonic() - since
+        since = self._last_action_at or self._initialized_at
+        elapsed = time.monotonic() - since
+        return min(elapsed, self._scheduler.idle_seconds) if self._scheduler else elapsed
 
     # ── Lifecycle ──
 
     async def initialize(self) -> None:
-        """Subscribe the rules' event types (deduped), run boot rules, the
-        unread-mail rescue scan, and (cognitive) load memory and start the
-        scheduler's main loop.
-
-        Boot rules run before the scan; requests are published and
-        initialize() returns without waiting for their recipients — the
-        registry executes them in background tasks. The unread scan replays
-        mail that arrived while the member slept (the mailbox is the durable
-        queue).
-        """
-        with bound_contextvars(agent_id=self._member_id):
-            if self._cognitive_rule is not None:
-                assert self._cognitive is not None
-                await self._cognitive.memory.load()
-                self._cognitive.task_manager.load()
-                self._state = MemberState.INITIALIZING
-
-            event_types = {rule.on for rule in self._spec.rules if rule.on is not None}
-            for event_type in sorted(event_types, key=str):
-                self.subscribe(event_type, self._on_event)
-
-            boot_rules = [rule for rule in self._spec.rules if rule.on is None]
-            for rule in boot_rules:
+        """Load services, recover sessions, and start the one program worker."""
+        self._state = MemberState.INITIALIZING
+        if self._capabilities is not None:
+            await self._capabilities.memory.load()
+            self._capabilities.task_manager.load()
+        self._initialized = True
+        self._initialized_at = time.monotonic()
+        if self._scheduler is not None:
+            self._scheduler.start()
+            await self._scheduler.wait_ready()
+        event_types = {rule.on for rule in self._spec.rules if rule.on is not None}
+        for event_type in sorted(event_types, key=str):
+            self.subscribe(event_type, self._on_event)
+        for rule in self._spec.rules:
+            if rule.on is None:
                 await self._run_rule(rule, trigger_event=None)
-
-            self._initialized = True
-            self._initialized_at = time.monotonic()
-
-            await self._scan_unread_mail()
-
-            if self._cognitive_rule is not None:
-                assert self._scheduler is not None
-                self._scheduler.start()
-                self._state = MemberState.ACTIVE
-                # One rescan task per member (ADR 0028 决策 4): a single
-                # slow cadence re-scans unread mail — the self-healing
-                # path for shelved mail and crash-swallowed deliveries (a
-                # boot member never reboots, so there is no "next boot
-                # scan" for it).
-                self._rescan_task = asyncio.create_task(self._rescan_loop())
-
-            logger.info(
-                "member_runtime_initialized",
-                member_id=self._member_id,
-                subscriptions=sorted(event_type.value for event_type in event_types),
-                boot_rules=[rule.name for rule in boot_rules],
-            )
+        self._program_task = asyncio.create_task(self._program_loop())
+        await self._scan_unread_mail()
+        if self._mailbox is not None:
+            self._rescan_task = asyncio.create_task(self._rescan_loop())
+        self._state = MemberState.ACTIVE
 
     async def shutdown(self) -> None:
         """Shutdown the member: cancel the background tasks (rescan,
-        in-flight reflection), stop the cognitive loop, release
+        in-flight reflection), stop the session loop, release
         subscriptions, shut down tools (cancelling background bash tasks),
         and close the Docker client (its connection pool must not leak
         across sleep→wake re-assembly)."""
@@ -361,6 +260,11 @@ class MemberRuntime(Member):
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._rescan_task
                 self._rescan_task = None
+            if self._program_task is not None:
+                self._program_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._program_task
+                self._program_task = None
             if self._scheduler is not None:
                 await self._scheduler.stop()
             if self._reflection is not None:
@@ -369,14 +273,14 @@ class MemberRuntime(Member):
                 # free-floating task survives the member.
                 await self._reflection.shutdown()
             self.unsubscribe_all()
-            if self._cognitive is not None:
-                await self._cognitive.tool_executor.shutdown()
+            if self._capabilities is not None:
+                await self._capabilities.tool_executor.shutdown()
                 # Tools first (a background bash task may still be using
                 # the runtime), then the Docker client — its connection
                 # pool must not leak across sleep→wake re-assembly
                 # (docs/design/execution-device.md). A close failure is
                 # logged, never blocking.
-                docker_runtime = self._cognitive.docker_runtime
+                docker_runtime = self._capabilities.docker_runtime
                 if docker_runtime is not None:
                     try:
                         docker_runtime.close()
@@ -395,158 +299,86 @@ class MemberRuntime(Member):
     # ── Event dispatch ──
 
     async def _on_event(self, event: Event) -> None:
-        if self._registry is not None and not self._registry.can_schedule(self._member_id):
+        if not self._can_schedule():
             return
-        self._active_actions += 1
-        try:
-            if self._registry is not None and event.type is not EventType.AGENT_STATE_CHANGED:
-                await self._registry.publish_scheduling_state(self._member_id)
-            await self._dispatch_event(event)
-        finally:
-            self._active_actions -= 1
-            if self._registry is not None and event.type is not EventType.AGENT_STATE_CHANGED:
-                await self._registry.publish_scheduling_state(self._member_id)
+        mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
+        if event.type is EventType.MAIL_DELIVERED:
+            if not isinstance(mail, Mail) or event.payload.get("recipient") != self._member_id:
+                return
+            if mail.from_address == self.address:
+                await self._mark_read(mail)
+                return
+            if mail.id in self._queued_mail:
+                return
+            self._queued_mail.add(mail.id)
+        self._queue.put_nowait(event)
+
+    def _can_schedule(self) -> bool:
+        return self._registry is None or self._registry.can_schedule(self._member_id)
+
+    async def _program_loop(self) -> None:
+        while True:
+            event = await self._queue.get()
+            mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
+            try:
+                if self._can_schedule():
+                    self._active_actions += 1
+                    try:
+                        if (
+                            self._registry is not None
+                            and event.type is not EventType.AGENT_STATE_CHANGED
+                        ):
+                            await self._registry.publish_scheduling_state(self._member_id)
+                        await self._dispatch_event(event)
+                    finally:
+                        self._active_actions -= 1
+                        if (
+                            self._registry is not None
+                            and event.type is not EventType.AGENT_STATE_CHANGED
+                        ):
+                            await self._registry.publish_scheduling_state(self._member_id)
+            except Exception as error:
+                logger.error(
+                    "member_program_failed",
+                    member_id=self._member_id,
+                    error=str(error),
+                    exc_info=True,
+                )
+            finally:
+                if isinstance(mail, Mail):
+                    self._queued_mail.discard(mail.id)
+                self._queue.task_done()
 
     async def _dispatch_event(self, event: Event) -> None:
-        """Dispatch one bus event to every rule subscribed to its type.
-
-        A cognitive rule on MAIL_DELIVERED gates the mail (ADR 0028):
-        gate rejected → marked read immediately (D6.1 延续); gate passed →
-        the mail stays unread (read-marking is the agent's own act) and,
-        with no live session, the scheduler is woken. Deterministic rules
-        evaluate and execute their actions inline, then the mail is
-        marked read. Mail sent by the member itself is ignored (own-mail
-        guard) and marked read immediately — a self-copy (cc-to-self or
-        a misrouted self-delivery) must not linger as unread until the
-        next scan.
-        """
         mail = event.payload.get("mail") if isinstance(event.payload, dict) else None
-        is_own_mail = (
-            event.type is EventType.MAIL_DELIVERED
-            and isinstance(mail, Mail)
-            and mail.from_address == self.address
-        )
-        if is_own_mail:
-            await self._mark_read(mail)
-            return
-        delivered_to_me = (
-            event.type is EventType.MAIL_DELIVERED
-            and isinstance(mail, Mail)
-            and event.payload.get("recipient") == self._member_id
-        )
-
-        cognitive_keeps_unread = False
         for rule in self._spec.rules:
-            if rule.on is None or rule.on != event.type:
+            if rule.on != event.type or rule.on is None or not self._can_schedule():
                 continue
-            if rule.loop is not None:
-                if event.type is not EventType.MAIL_DELIVERED:
-                    logger.warning(
-                        "cognitive_rule_non_mail_event",
-                        member_id=self._member_id,
-                        rule=rule.name,
-                        event_name=event.type.value,
-                    )
-                    continue
-                if delivered_to_me:
-                    assert isinstance(mail, Mail)
-                    if self._should_respond(rule, mail):
-                        cognitive_keeps_unread = self._wake_cognitive(mail, event)
-                    else:
-                        # Gate rejected: system marks read now (ADR 0028
-                        # 决策 6) — the mail never counts as wakeable.
-                        await self._mark_read(mail)
-            else:
-                await self._run_rule(rule, trigger_event=event)
+            if isinstance(mail, Mail) and await self._dispatch_completed(mail.id, rule.name):
+                continue
+            await self._run_rule(rule, trigger_event=event)
+            if isinstance(mail, Mail):
+                await self._complete_dispatch(mail.id, rule.name)
 
-        if delivered_to_me and not cognitive_keeps_unread:
-            await self._mark_read(mail)
-
-    def _wake_cognitive(self, mail: Mail, trigger_event: Event | None) -> bool:
-        """A gate-passed delivery: wake the scheduler when no session is
-        live; leave the mail unread either way (ADR 0028 决策 1/3).
-
-        Returns True when the mail's read is now the agent's own affair
-        (always, for a cognitive member with a scheduler) — the caller
-        skips its deterministic-path read-marking. With a live session
-        this only logs: the running session's prompt is never disturbed;
-        the mail waits unread in the inbox.
-        """
-        scheduler = self._scheduler
-        if scheduler is None:
-            logger.warning(
-                "mail_without_scheduler",
-                member_id=self._member_id,
-                sender=mail.from_address,
-                mail_id=mail.id,
-            )
-            return False
-        if scheduler.active_session_count > 0:
-            logger.debug(
-                "mail_awaits_live_session",
-                member_id=self._member_id,
-                mail_id=mail.id,
-            )
+    async def _dispatch_completed(self, mail_id: str, rule_name: str) -> bool:
+        key = (mail_id, rule_name)
+        if key in self._completed_dispatches:
             return True
-        carrier = {
-            "trace_id": trigger_event.trace_id if trigger_event else None,
-            "span_id": trigger_event.span_id if trigger_event else None,
-        }
-        logger.info(
-            "member_wake",
-            member_id=self._member_id,
-            sender=mail.from_address,
-            mail_id=mail.id,
-        )
-        scheduler.notify_wake(carrier)
-        return True
+        if self._journal is not None:
+            events = await self._journal.read_events(f"dispatch:{mail_id}:{rule_name}")
+            if any(event["type"] == "dispatch/complete" for event in events):
+                self._completed_dispatches.add(key)
+                return True
+        return False
 
-    @staticmethod
-    def _rule_fuel(rule: MemberRule, default: int) -> int:
-        """A rule's evaluation budget: ``:fuel`` when declared, else ``default``."""
-        return rule.fuel if rule.fuel is not None else default
+    async def _complete_dispatch(self, mail_id: str, rule_name: str) -> None:
+        if self._journal is not None:
+            await self._journal.append(f"dispatch:{mail_id}:{rule_name}", "dispatch/complete")
+        self._completed_dispatches.add((mail_id, rule_name))
+        if len(self._completed_dispatches) > 4096:
+            self._completed_dispatches.pop()
 
-    def _should_respond(self, rule: MemberRule, mail: Mail) -> bool:
-        """Run the cognitive rule's ``:when`` gate (own-mail already checked
-        by the caller); a None :when is ungated — always respond. A gate
-        evaluation failure safely defaults to no response.
-
-        The gate runs under the rule's ``:fuel`` when declared (phase D),
-        else the independent small :data:`DEFAULT_WHEN_FUEL`. Fuel
-        exhaustion is logged distinctly from a plain gate failure
-        (dsl-agents.md phase D).
-        """
-        if rule.when is None:
-            return True
-        env = self._env({"mail": mail, "recipient": self._member_id})
-        try:
-            return bool(
-                eval_form(
-                    rule.when,
-                    env,
-                    self._builtins,
-                    fuel=self._rule_fuel(rule, DEFAULT_WHEN_FUEL),
-                )
-            )
-        except FuelExhaustedError as e:
-            logger.warning(
-                "member_rule_gate_fuel_exhausted",
-                member_id=self._member_id,
-                rule=rule.name,
-                budget=e.budget,
-                error=str(e),
-            )
-            return False
-        except EvalError as e:
-            logger.warning(
-                "member_rule_gate_failed",
-                member_id=self._member_id,
-                rule=rule.name,
-                error=str(e),
-            )
-            return False
-
-    # ── Deterministic rule evaluation ──
+    # ── Rule evaluation ──
 
     async def _run_rule(
         self,
@@ -609,22 +441,22 @@ class MemberRuntime(Member):
             rule=rule.name,
             action_count=len(requests),
         )
-        # The triggering mail doubles as the session mail so a deterministic
-        # ``emit`` with empty recipients replies to the sender (phase F: the
-        # reply-to-sender semantics of ``_execute_emit`` now holds on the
-        # deterministic path and the boot unread scan, not only on the
-        # cognitive completion path).
         session_mail = payload.get("mail") if isinstance(payload, dict) else None
-        for request in requests:
-            await self._execute_action(
-                request,
-                session_mail=session_mail,
-                trigger_event=trigger_event,
-                payload=payload,
-            )
+        for index, request in enumerate(requests):
+            if request.kind == "run_loop":
+                await self._run_session_effect(
+                    request, rule.name, requests[index + 1 :], session_mail, trigger_event
+                )
+            else:
+                await self._execute_action(
+                    request,
+                    session_mail=session_mail,
+                    trigger_event=trigger_event,
+                    payload=payload,
+                )
 
     def _evaluate_rule(self, rule: MemberRule, env: dict[str, Any]) -> list[ActionRequest]:
-        """Evaluate a deterministic rule's ``:when`` gate and action forms.
+        """Evaluate a rule's ``:when`` gate and action forms.
 
         With ``rule.fuel`` set (phase D) the gate and all actions share one
         combined fuel counter — ``:fuel`` is the rule's total evaluation
@@ -640,37 +472,21 @@ class MemberRuntime(Member):
         persist across forms; the two paths differ only in how many fuel
         budgets the forms draw from.
         """
-        if rule.fuel is not None:
-            evaluator = Evaluator(self._builtins, rule.fuel, DEFAULT_MAX_DEPTH)
-            if rule.when is not None and not evaluator.eval(rule.when, env, 0):
+        with collect_member_effects() as requests:
+            if rule.fuel is not None:
+                evaluator = Evaluator(self._builtins, rule.fuel, DEFAULT_MAX_DEPTH)
+                if rule.when is not None and not evaluator.eval(rule.when, env, 0):
+                    return []
+                for action in rule.actions:
+                    evaluator.eval(action, env, 0)
+                return requests
+            if rule.when is not None and not Evaluator(
+                self._builtins, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH
+            ).eval(rule.when, env, 0):
                 return []
-            results = [evaluator.eval(action, env, 0) for action in rule.actions]
-            return self._collect_results(results)
-        if rule.when is not None and not Evaluator(
-            self._builtins, DEFAULT_WHEN_FUEL, DEFAULT_MAX_DEPTH
-        ).eval(rule.when, env, 0):
-            return []
-        results = [
-            Evaluator(self._builtins, DEFAULT_FUEL, DEFAULT_MAX_DEPTH).eval(action, env, 0)
-            for action in rule.actions
-        ]
-        return self._collect_results(results)
-
-    @staticmethod
-    def _collect_results(results: list[Any]) -> list[ActionRequest]:
-        """Extract the ActionRequests a rule's action forms produced.
-
-        Each action evaluates to a single request, a list of requests
-        (``start-all``, or a ``while`` loop collecting several), or
-        nothing — all other values are ignored.
-        """
-        requests: list[ActionRequest] = []
-        for result in results:
-            if isinstance(result, ActionRequest):
-                requests.append(result)
-            elif isinstance(result, list):
-                requests.extend(item for item in result if isinstance(item, ActionRequest))
-        return requests
+            for action in rule.actions:
+                Evaluator(self._builtins, DEFAULT_FUEL, DEFAULT_MAX_DEPTH).eval(action, env, 0)
+            return requests
 
     # ── Unified action executor ──
 
@@ -699,7 +515,9 @@ class MemberRuntime(Member):
             and request.data["agent_id"] != self._member_id
         ):
             raise ValueError("members may only manage their own scheduling state")
-        if kind == "spawn":
+        if kind == "mark_read":
+            await self._mark_read(session_mail)
+        elif kind == "spawn":
             await self._execute_spawn(request)
         elif kind == "emit":
             await self._execute_emit(request, session_mail, trigger_event)
@@ -759,11 +577,7 @@ class MemberRuntime(Member):
         session_mail: Mail | None,
         trigger_event: Event | None,
     ) -> None:
-        """Emit a mail; an emit without explicit recipients replies to the
-        sender of ``session_mail`` (deterministic rules: the triggering
-        mail). On the cognitive completion path ``session_mail`` is always
-        None (ADR 0028 — no trigger mail), so an emit without explicit
-        recipients sends to nobody there."""
+        """Send a mail, replying to the actual trigger when recipients are omitted."""
         to = request.data["to"] or ([session_mail.from_address] if session_mail else [])
         carrier = self._carrier_for(trigger_event)
         await self._send_mail(
@@ -950,133 +764,128 @@ class MemberRuntime(Member):
                 error=str(e),
             )
 
-    # ── Unread rescue scan (the mailbox is the durable queue) ──
-
     async def _scan_unread_mail(self) -> None:
-        """Replay unread inbox mail through the matching rules.
-
-        Runs at boot (mail that arrived while the member slept) and from
-        the rescan task's slow periodic sweep (ADR 0028 决策 4). Per mail:
-        own mail is marked read without processing; a mail the cognitive
-        ``:when`` gate rejects is marked read (D6.1 延续 — it never counts
-        as wakeable); deterministic MAIL_DELIVERED rules always run (a
-        mixed member's cheap path — auto-optout deflection — fires even
-        when a cognitive rule also matches this mail) and, for
-        deterministic-only members, the mail is then marked read. A
-        gate-passed mail stays unread — read-marking is the agent's own
-        explicit act. The scan ends with one wake when wakeable unread
-        exists and no session is live. Failures of the scan itself are
-        logged and skip the scan only.
-        """
-        if self._registry is not None and not self._registry.can_schedule(self._member_id):
-            return
-        if self._mailbox is None:
+        if not self._can_schedule() or self._mailbox is None:
             return
         try:
-            unread = await self._mailbox.unread()
-        except Exception as e:
+            for mail in await self._mailbox.unread():
+                if all(
+                    [
+                        await self._dispatch_completed(mail.id, rule.name)
+                        for rule in self._spec.rules
+                        if rule.on is EventType.MAIL_DELIVERED
+                    ]
+                ):
+                    continue
+                await self._on_event(
+                    Event(
+                        type=EventType.MAIL_DELIVERED,
+                        payload={"mail": mail, "recipient": self._member_id},
+                        source="mail-scan",
+                    )
+                )
+        except Exception as error:
             logger.error(
-                "member_mail_unread_scan_failed",
-                member_id=self._member_id,
-                error=str(e),
+                "member_mail_unread_scan_failed", member_id=self._member_id, error=str(error)
             )
-            return
-        cognitive_scan = (
-            self._cognitive is not None
-            and self._cognitive_rule is not None
-            and self._cognitive_rule.on is EventType.MAIL_DELIVERED
-        )
-        for mail in unread:
-            if mail.from_address == self.address:
-                await self._mark_read(mail)
-                continue
-            # Deterministic MAIL_DELIVERED rules always run (a mixed
-            # member's cheap path — auto-optout deflection — fires even
-            # when the cognitive gate rejects this mail).
-            payload = {"mail": mail, "recipient": self._member_id}
-            for rule in self._spec.rules:
-                if rule.on is EventType.MAIL_DELIVERED and rule.loop is None:
-                    await self._run_rule(rule, trigger_event=None, payload=payload)
-            if not cognitive_scan:
-                await self._mark_read(mail)  # deterministic member: processed → read
-        # The wake decision reuses the one wakeable-unread provider (R1):
-        # it re-reads the inbox (deterministic rules may have marked mail
-        # read), applies the gate, and marks gate-rejected mail read.
-        wake = False
-        if cognitive_scan:
-            wake = bool(await self._wakeable_unread())
-        if wake and self._scheduler is not None and self._scheduler.active_session_count == 0:
-            logger.info("member_wake", member_id=self._member_id, source="scan")
-            self._scheduler.notify_wake(None)
-        if unread:
-            logger.info(
-                "member_mail_unread_scanned",
-                member_id=self._member_id,
-                count=len(unread),
-                wake=wake,
-            )
-
-    async def _wakeable_unread(self) -> list[Mail]:
-        """可唤醒未读 (ADR 0028 决策 5/6) — the single implementation shared
-        by the delivery admission, this scan, and the scheduler's reap
-        chain-wake comparison (R1: the three can never drift apart).
-
-        Unread inbox mail minus own mail, gated by the cognitive rule's
-        ``:when``; a gate-rejected mail is marked read as a side effect
-        (D6.1 延续). A mailbox read failure degrades to "nothing wakeable"
-        (logged) — a transient read error must never wake a session.
-        """
-        if self._registry is not None and not self._registry.can_schedule(self._member_id):
-            return []
-        if self._mailbox is None or self._cognitive_rule is None:
-            return []
-        try:
-            unread = await self._mailbox.unread()
-        except Exception as e:
-            logger.error(
-                "member_mail_unread_scan_failed",
-                member_id=self._member_id,
-                error=str(e),
-            )
-            return []
-        wakeable: list[Mail] = []
-        for mail in unread:
-            if mail.from_address == self.address:
-                continue
-            if self._should_respond(self._cognitive_rule, mail):
-                wakeable.append(mail)
-            else:
-                await self._mark_read(mail)
-        return wakeable
 
     async def _rescan_loop(self) -> None:
-        """The member's one background mail-rescan task (ADR 0028 决策 4).
-
-        One slow cadence — every ``mail_rescan_interval_seconds`` the
-        unread scan runs: shelved mail (leftover responsibility ids the
-        agent chose not to answer) gets re-evaluated, and anything a
-        crash swallowed is picked up — a boot member never reboots, so
-        there is no "next boot scan" for it. The scan is idempotent and
-        LLM-free: with no wakeable unread (or a live session) it wakes
-        nothing.
-        """
-        assert self._cognitive is not None
-        interval = self._cognitive.config.mail_rescan_interval_seconds
+        interval = (
+            self._capabilities.config.mail_rescan_interval_seconds if self._capabilities else 30
+        )
         while True:
             await asyncio.sleep(interval)
-            if not self._initialized or self._scheduler is None:
-                return
             await self._scan_unread_mail()
 
-    # ── Cognitive assembly (member_spec rule → LoopDriver engine) ──
+    def _assemble_scheduler(self, caps: MemberCapabilities) -> None:
+        assert self._journal is not None
+        registry = self._registry
 
-    def _assemble_cognitive(self, caps: CognitiveCapabilities) -> None:
-        """Assemble the cognitive engine from capabilities — the injected
+        async def check_reflection() -> None:
+            if self._reflection is not None:
+                await self._reflection.check_trigger()
+
+        def note_interaction() -> None:
+            if self._reflection is not None:
+                self._reflection.note_interaction()
+
+        def session_span(session: AgentSession) -> Any:
+            assert self._stage_services is not None
+            return self._stage_services.session_span(session)
+
+        self._scheduler = SessionScheduler(
+            caps.config,
+            caps.memory,
+            session_span,
+            check_reflection,
+            note_interaction,
+            lambda recipe: self._assemble_session(caps, recipe),
+            self._journal,
+            self._mailbox,
+            can_schedule=self._can_schedule,
+            state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
+            if registry
+            else None,
+            apply_scheduling_request=(
+                lambda request: registry.apply_scheduling_request(self._member_id, request)
+            )
+            if registry
+            else None,
+            resume_invocation=self._resume_invocation,
+        )
+
+    async def _run_session_effect(
+        self,
+        request: ActionRequest,
+        rule_name: str,
+        tail: list[ActionRequest],
+        mail: Mail | None,
+        event: Event | None,
+    ) -> None:
+        if self._scheduler is None:
+            raise RuntimeError("run-loop requires member services")
+        recipe = SessionRecipe.from_edn(request.data["recipe"])
+        invocation = {
+            "rule_name": rule_name,
+            "tail": [{"kind": action.kind, "data_edn": dumps(action.data)} for action in tail],
+        }
+        trigger = mail.content if mail else f"Event: {event.type.value if event else 'boot'}"
+        await self._scheduler.run_invocation(
+            recipe,
+            trigger,
+            [mail] if mail else [],
+            {
+                "trace_id": event.trace_id if event else None,
+                "span_id": event.span_id if event else None,
+            },
+            invocation,
+        )
+
+    async def _resume_invocation(self, session: AgentSession) -> None:
+        mail = (
+            await self._mailbox.find(session.source_mail_id)
+            if self._mailbox is not None and session.source_mail_id
+            else None
+        )
+        requests = [
+            ActionRequest(kind=item["kind"], data=loads(item["data_edn"]))
+            for item in session.invocation.get("tail", [])
+        ]
+        for index, request in enumerate(requests):
+            if request.kind == "run_loop":
+                await self._run_session_effect(
+                    request, session.invocation["rule_name"], requests[index + 1 :], mail, None
+                )
+            else:
+                await self._execute_action(request, session_mail=mail, payload={"mail": mail})
+        if session.source_mail_id and session.invocation.get("rule_name"):
+            await self._complete_dispatch(session.source_mail_id, session.invocation["rule_name"])
+
+    def _assemble_session(self, caps: MemberCapabilities, recipe: SessionRecipe) -> LoopDriver:
+        """Assemble the session engine from capabilities — the injected
         services, plain data, and closures over the event bus — never a
         back-reference to this runtime."""
         registry = caps.registry
-        rule = self._cognitive_rule
-        assert rule is not None and rule.loop is not None
 
         self._logger = logger.bind(agent_id=self._member_id)
 
@@ -1086,26 +895,31 @@ class MemberRuntime(Member):
         # written by the driver, read by the scheduler (resume on boot), the
         # reflection digest, the distillation trigger (ADR 0017) and the
         # context builder (thread-recap section).
-        journal = SessionJournal(self._member_id, caps.tlon_paths)
+        journal = self._journal
+        assert journal is not None
         self._context_builder = ContextBuilder(
             caps.config,
             self._mailbox,
             caps.memory,
             caps.task_manager,
-            rule,
+            recipe,
             self.address,
             journal,
             tlon_paths=caps.tlon_paths,
         )
-        self._reflection = ReflectionEngine(
-            caps.memory,
-            caps.llm_client,
-            rule,
-            journal,
-            state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
-            if registry is not None
-            else None,
-        )
+        if self._reflection is None:
+            self._reflection = ReflectionEngine(
+                caps.memory,
+                caps.llm_client,
+                recipe,
+                journal,
+                state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
+                if registry is not None
+                else None,
+            )
+        else:
+            self._reflection.enabled = recipe.reflect.enabled
+            self._reflection._interval = recipe.reflect.interval_minutes * 60
         self._stage_services = StageServices(
             identity=identity,
             source_hash=self._spec.source_hash,
@@ -1117,15 +931,11 @@ class MemberRuntime(Member):
         )
         self._effect_executor = EffectExecutor(
             identity=identity,
-            rule=rule,
             mailbox=self._mailbox,
             publish=publisher,
             logger=self._logger,
             mentor_cc=self._mentor_cc,
             post_office=self._post_office,
-        )
-        on_complete = OnCompleteRunner(
-            identity, rule, self._logger, execute_action=self._execute_action
         )
 
         def is_human_sender(address: str) -> bool:
@@ -1140,12 +950,11 @@ class MemberRuntime(Member):
 
         self._loop_driver = LoopDriver(
             identity=identity,
-            rule=rule,
+            recipe=recipe,
             services=self._stage_services,
             executor=self._effect_executor,
             tool_executor=caps.tool_executor,
             per_tool_timeout=caps.per_tool_timeout,
-            on_complete=on_complete,
             journal=journal,
             spill=ToolSpill(caps.tlon_paths, self._member_id),
             # Context pressure relief (ADR 0008): same journal, the
@@ -1163,31 +972,7 @@ class MemberRuntime(Member):
                 registry.prepare_scheduling_request if registry is not None else None
             ),
         )
-        self._scheduler = SessionScheduler(
-            caps.config,
-            caps.memory,
-            self._stage_services.session_span,
-            self._reflection.check_trigger,
-            self._reflection.note_interaction,
-            self._loop_driver,
-            journal,
-            # 可唤醒未读 provider (ADR 0028 决策 5/6): one implementation,
-            # read by the delivery admission, the scan, and the
-            # scheduler's reap chain-wake comparison.
-            self._wakeable_unread,
-            self._mailbox,
-            state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
-            if registry is not None
-            else None,
-            can_schedule=(lambda: registry.can_schedule(self._member_id))
-            if registry is not None
-            else None,
-            apply_scheduling_request=(
-                lambda request: registry.apply_scheduling_request(self._member_id, request)
-            )
-            if registry is not None
-            else None,
-        )
+        return self._loop_driver
 
     def _env(self, payload: Any) -> dict[str, Any]:
         """The unified evaluation env — the shape is the :class:`RuleEnv`

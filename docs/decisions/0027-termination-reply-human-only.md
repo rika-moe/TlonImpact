@@ -20,7 +20,7 @@
 2. `_terminate_loop`（`:until` 触发：error_limit / iteration_limit）；
 3. `send_failure_reply`（调度器异常终止：超时 / stage 未捕获错误）。
 
-正常 act 完成的回复（`sendEmail is_complete=true`）不受影响——那是认知循环的正常产出，不是兜底反馈。`:loop/:replies` 的措辞覆盖语义不变（人类触发时仍生效）。
+正常 act 完成的回复（`sendEmail is_complete=true`）不受影响——那是会话循环的正常产出，不是兜底反馈。配方 `:replies` 的措辞覆盖语义不变（人类触发时仍生效）。
 
 「人类」的判定：构造器注入的 `is_human_sender` 闭包，基于 `TlonPaths.known_human_ids()`（有持久邮箱的人类 id）+ `address_for_member` 比对地址；每次判定实时重查，不缓存——人类集合随首次投递增长，且人类来信在处理时刻必然已落邮箱、必然已知。
 

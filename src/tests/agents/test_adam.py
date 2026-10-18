@@ -210,14 +210,7 @@ class TestAdamDecisions:
                 source="agent_registry",
             )
         )
-        # Complete the producer before draining its emitted notification. The
-        # welcome includes a real SQLite commit, whose latency is not a 2s SLA.
-        # Keep a bound for hangs, then assert the actual behavior after completion.
-        async with asyncio.timeout(10):
-            for event_type in (EventType.AGENT_SPAWNED, EventType.MAIL_NEW):
-                await asyncio.gather(
-                    *(subscription.queue.join() for subscription in bus._subscribers[event_type])
-                )
+        await _wait_for(lambda: len(mails) == 1)
         assert len(mails) == 1
         mail = mails[0].payload
         assert mail.from_address == "adam@tlon.internal"
@@ -226,6 +219,7 @@ class TestAdamDecisions:
         # channels (its contact book, the listMembers yellow page); the
         # roster is no longer embedded (docs/design/mail.md).
         assert "小新" in mail.content
+        assert "：\n\n欢迎出生。" in mail.content
         assert "worker-1（worker-1）" not in mail.content
         assert "updateContact" in mail.content
         assert "listMembers" in mail.content
@@ -237,8 +231,7 @@ class TestAdamDecisions:
 class TestGuardianInbox:
     """Issue : mail addressed to Adam gets a fixed acknowledgement.
 
-    The guardian-inbox rule is deterministic (``:on :mail-delivered``, no
-    ``:loop``); its ``:when`` gate restricts replies to mail addressed to
+    The guardian-inbox rule handles ``:mail-delivered``; its ``:when`` gate restricts replies to mail addressed to
     Adam and never answers postmaster (a bounce must not be bounced back).
     """
 

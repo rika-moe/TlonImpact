@@ -1,4 +1,4 @@
-"""Real HTTP → mailbox → cognitive loop → scheduling → mailbox integration."""
+"""Real HTTP → mailbox → session request → scheduling → mailbox integration."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta

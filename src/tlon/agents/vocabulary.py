@@ -6,7 +6,7 @@ module is their single source of truth:
 
 - **Context registries** — which vocabulary each evaluation context may
   name: :data:`TRIGGER_BUILTINS` (rule ``:when`` gates),
-  :data:`LOOP_BUILTINS` (``:loop`` ``:until``), :data:`STAGE_COND_BUILTINS`
+  :data:`LOOP_BUILTINS` (session ``:until``), :data:`STAGE_COND_BUILTINS`
   (stage ``:if``) and :data:`SCRIPT_BUILTINS` (pure accessors merged into
   the member registry). All pure, so evaluation against any of them is
   side-effect free by construction; each registry's comment states its
@@ -33,15 +33,14 @@ module is their single source of truth:
   is full-registry validation — unregistered vocabulary and undefined
   symbols are still rejected at load — plus sequential ``defn``
   threading across the form sequence (define-before-use), mirroring the
-  runtime's shared env dict. The collector (on-complete) and
-  return-value collection (deterministic rules) are the actual
-  action-convergence mechanism.
+  runtime's shared env dict. A shared effect collector preserves every
+  emitted request, including effects nested in functions and loops.
 
 Environment contracts: typed, with a single construction point — see
 the ``*Env`` TypedDicts and builders in the "Environment contracts"
 section below. Rule evaluation binds ``{msg, event, self}``
-(:data:`RULE_SCOPE`; ``MemberRuntime._env``), on-complete bodies add
-``result`` (:data:`ACTION_SCOPE`; ``on_complete``), ``:until`` binds
+(:data:`RULE_SCOPE`; ``MemberRuntime._env``), actions use the same
+scope (:data:`ACTION_SCOPE`), ``:until`` binds
 ``{self, state, limits}`` and stage ``:if`` binds
 ``{state, scratch, round}`` (both ``loop_driver``); the latter two
 expose no *symbols* — their builtins read the env directly, so load-time
@@ -60,6 +59,9 @@ and the general vocabulary (``=`` / ``not`` / ``contains?`` / ``get`` /
 """
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
 from tlon.organization.mail.mail import Mail, address_for_member
@@ -106,7 +108,7 @@ class SelfEnv(TypedDict):
 
 
 class RuleEnv(TypedDict):
-    """Rule evaluation context (``:when`` gates, deterministic ``:actions``).
+    """Rule evaluation context (``:when`` gates and ``:actions``).
 
     ``msg`` is the payload's mail, or None for non-mail events (every mail
     predicate is None-safe); ``event`` is the raw event payload — a dict
@@ -116,22 +118,6 @@ class RuleEnv(TypedDict):
 
     msg: Mail | None
     event: Any
-    self: SelfEnv
-
-
-class OnCompleteEnv(TypedDict):
-    """Cognitive-rule completion actions (``on_complete``).
-
-    ``msg`` was the session's trigger mail; ADR 0028 retired the trigger
-    mail, so it is always None on this path (the env shape is kept — the
-    vocabulary contract is unchanged). ``result`` is the session's final
-    reply text. ``event`` is *not* bound on this path: ACTION_SCOPE is the
-    union of the two action evaluation paths (deterministic actions run
-    under RuleEnv, completion actions under this one).
-    """
-
-    msg: Mail | None
-    result: str
     self: SelfEnv
 
 
@@ -152,7 +138,7 @@ class LoopLimitsEnv(TypedDict):
 
 
 class LoopEnv(TypedDict):
-    """``:loop`` ``:until`` context (``loop_driver``)."""
+    """session ``:until`` context (``loop_driver``)."""
 
     self: SelfEnv
     state: LoopStateEnv
@@ -178,9 +164,8 @@ class StageCondEnv(TypedDict):
 #: Load-time validation scope for ``:when`` gates (mirrors RuleEnv).
 RULE_SCOPE: frozenset[str] = frozenset({"msg", "event", "self"})
 
-#: Load-time validation scope for ``:actions`` — the union of RuleEnv
-#: (deterministic rules) and OnCompleteEnv (cognitive completion).
-ACTION_SCOPE: frozenset[str] = frozenset({"msg", "event", "result", "self"})
+#: Actions use the same bindings as the event gate.
+ACTION_SCOPE: frozenset[str] = RULE_SCOPE
 
 
 def self_env(member_id: str, name: str) -> SelfEnv:
@@ -192,11 +177,6 @@ def rule_env(payload: Any, *, member_id: str, name: str) -> RuleEnv:
     """The rule evaluation env (``MemberRuntime._env`` delegates here)."""
     mail = payload.get("mail") if isinstance(payload, dict) else None
     return {"msg": mail, "event": payload, "self": self_env(member_id, name)}
-
-
-def on_complete_env(msg: Mail | None, result: str, *, member_id: str, name: str) -> OnCompleteEnv:
-    """The completion-actions env (``on_complete`` delegates here)."""
-    return {"msg": msg, "result": result, "self": self_env(member_id, name)}
 
 
 def loop_until_env(
@@ -332,7 +312,7 @@ TRIGGER_BUILTINS: dict[str, Builtin] = {
 }
 
 
-# ── Loop context: ``:loop`` ``:until`` termination ──
+# ── Loop context: session ``:until`` termination ──
 # Environment contract: :class:`LoopEnv`, built by :func:`loop_until_env`.
 
 
@@ -451,8 +431,7 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 
 
 # ── Script pure accessors ──
-# Environment contract: :class:`RuleEnv` (deterministic rules) /
-# :class:`OnCompleteEnv` (cognitive completion actions). Merged into the
+# Environment contract: :class:`RuleEnv`. Merged into the
 # unified member registry by :func:`make_member_builtins`.
 
 
@@ -583,13 +562,10 @@ class ScriptHostQueries(Protocol):
 # reach past the engine's quotas and trust gates.
 
 
-#: The unified action vocabulary. With one exception every rule kind —
-#: cognitive or deterministic — may use any of these actions in its
-#: ``:actions``: ``forward`` reads the triggering event's mail, which the
-#: cognitive path no longer has (ADR 0028), so it is deterministic-only
-#: (ADR 0029 — cognitive members forward through the ``forwardMail``
-#: tool; ``validate_member_spec`` rejects it in a cognitive rule).
-MEMBER_ACTION_NAMES = frozenset({"spawn", "emit", "start", "stop", "start-all", "forward"})
+#: Effects available to every rule, independent of its event or other actions.
+MEMBER_ACTION_NAMES = frozenset(
+    {"spawn", "emit", "start", "stop", "start-all", "forward", "run-loop", "mark-read"}
+)
 
 
 def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[str, str]:
@@ -624,11 +600,7 @@ def _script_forward_fields(options: Any) -> dict[str, Any]:
     ``:to`` is a required non-empty vector of address strings; ``:cc`` is
     an optional address vector; ``:subject`` is an optional string. The
     forwarded mail's content comes from the triggering event at execution
-    time — the action data only carries routing. That makes ``forward``
-    a deterministic-rules-only action: on the cognitive path there is no
-    trigger mail (ADR 0028), so ``validate_member_spec`` rejects a
-    cognitive rule whose ``:actions`` call it; cognitive members forward
-    through the ``forwardMail`` tool instead (ADR 0029).
+    time — the action data only carries routing.
     """
     if not isinstance(options, dict):
         raise EvalError(f"forward expects an options map, got {type(options).__name__}")
@@ -657,46 +629,52 @@ def _script_forward_fields(options: Any) -> dict[str, Any]:
     return {"to": to, "cc": cc, "subject": subject}
 
 
+_EFFECT_COLLECTOR: ContextVar[list[ActionRequest] | None] = ContextVar(
+    "tlon_effect_collector", default=None
+)
+
+
+@contextmanager
+def collect_member_effects() -> Iterator[list[ActionRequest]]:
+    """Collect one synchronous evaluation, including isolated capability closures."""
+    requests: list[ActionRequest] = []
+    token = _EFFECT_COLLECTOR.set(requests)
+    try:
+        yield requests
+    finally:
+        _EFFECT_COLLECTOR.reset(token)
+
+
 def make_member_builtins(
     host: ScriptHostQueries | None = None,
     collector: list[ActionRequest] | None = None,
 ) -> dict[str, Builtin]:
-    """Build the unified member registry.
+    """Build the member vocabulary with optional effect collection.
 
-    The pure predicates/accessors of the trigger and script vocabularies
-    are merged with the arithmetic vocabulary, plus all six action
-    builtins (``spawn`` / ``emit`` / ``start`` / ``stop`` / ``start-all``
-    / ``forward``) which validate their arguments and produce
-    :class:`ActionRequest` data without side effects.
-
-    How a request reaches the engine depends on the rule kind:
-
-    - deterministic rules collect the *return value* of each action form
-      (``collector=None``) — ``(spawn ...)`` evaluates to its request,
-      ``(start-all ...)`` to a list of requests;
-    - on-complete bodies append every request into ``collector`` when one
-      is attached, so ``(when cond (spawn ...) (emit ...))`` records all
-      body actions even though ``when`` evaluates to its last body value.
-
-    ``_record`` does both when a collector is given — appends *and*
-    returns — so the two paths share one implementation.
-
-    Host predicates (``sleeping?`` / ``running?`` / ``lazy?``), the
-    ``member-roster`` addressing yellow page and the ``start-all``
-    candidate set
-    are closure-injected via ``host`` — they read registry state or the delivery directory, so they
-    are never registered module-level. ``start-all`` without a host raises
-    at evaluation time; ``member-roster`` without a host is simply absent
-    from the registry (static validation rejects it), like ``sleeping?``.
-    Action arguments may be pure expressions referencing ``event`` / ``msg`` /
-    ``result`` (e.g. ``(get event :recipient)``); option-map values are
-    evaluated before the builtin sees them.
+    Every effect returns an ActionRequest. With a collector attached it also
+    records the request, preserving nested effects in functions and loops.
+    Host queries are injected closures; evaluation performs no actual I/O.
     """
 
     def _record(request: ActionRequest) -> ActionRequest:
-        if collector is not None:
-            collector.append(request)
+        target = _EFFECT_COLLECTOR.get()
+        if target is None:
+            target = collector
+        if target is not None:
+            target.append(request)
         return request
+
+    def _run_loop(env: dict[str, Any], recipe: Any) -> ActionRequest:
+        from tlon.agents.member_spec import SessionRecipe, validate_session_recipe
+
+        try:
+            validate_session_recipe(SessionRecipe.from_edn(recipe))
+        except ValueError as exc:
+            raise EvalError(str(exc)) from exc
+        return _record(ActionRequest(kind="run_loop", data={"recipe": recipe}))
+
+    def _mark_read(env: dict[str, Any]) -> ActionRequest:
+        return _record(ActionRequest(kind="mark_read", data={}))
 
     def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> ActionRequest:
         if type(prototype) is not str:
@@ -730,16 +708,20 @@ def make_member_builtins(
 
     def _start(env: dict[str, Any], options: Any) -> ActionRequest:
         fields = _script_action_fields("start", options, require_agent=True)
-        return ActionRequest(
-            kind="start",
-            data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
+        return _record(
+            ActionRequest(
+                kind="start",
+                data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
+            ),
         )
 
     def _stop(env: dict[str, Any], options: Any) -> ActionRequest:
         fields = _script_action_fields("stop", options, require_agent=True)
-        return ActionRequest(
-            kind="stop",
-            data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
+        return _record(
+            ActionRequest(
+                kind="stop",
+                data={"agent_id": fields["agent_id"], "reason": fields["reason"]},
+            ),
         )
 
     def _start_all(env: dict[str, Any], options: Any) -> list[ActionRequest]:
@@ -747,21 +729,29 @@ def make_member_builtins(
         if host is None:
             raise EvalError("start-all unavailable: no host queries injected")
         return [
-            ActionRequest(kind="start", data={"agent_id": agent_id, "reason": fields["reason"]})
+            _record(
+                ActionRequest(
+                    kind="start", data={"agent_id": agent_id, "reason": fields["reason"]}
+                ),
+            )
             for agent_id in host.start_all_candidates()
         ]
 
     def _forward(env: dict[str, Any], options: Any) -> ActionRequest:
         fields = _script_forward_fields(options)
-        return ActionRequest(
-            kind="forward",
-            data={"to": fields["to"], "cc": fields["cc"], "subject": fields["subject"]},
+        return _record(
+            ActionRequest(
+                kind="forward",
+                data={"to": fields["to"], "cc": fields["cc"], "subject": fields["subject"]},
+            ),
         )
 
     builtins: dict[str, Builtin] = {
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
         **ARITHMETIC_BUILTINS,
+        "run-loop": Builtin(_run_loop, pure=False),
+        "mark-read": Builtin(_mark_read, pure=False),
         "spawn": Builtin(_spawn, pure=False),
         "emit": Builtin(_emit, pure=False),
         "start": Builtin(_start, pure=False),
@@ -788,8 +778,7 @@ def validate_member_actions(
     The action position is no longer syntax-partitioned: any expression
     validates here, and a function body may carry actions — "where
     actions may occur" is not statically enumerable, so convergence is a
-    runtime fact (the on-complete collector and the deterministic rules'
-    return-value collection). What remains is full-registry validation:
+    runtime fact handled by the effect collector. What remains is full-registry validation:
     every form is checked by :func:`tlosure.validate.validate_form`
     against the *full* member registry (action builtins included) under
     ``scope``, so unregistered vocabulary and undefined symbols are

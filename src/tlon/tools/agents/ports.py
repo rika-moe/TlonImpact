@@ -5,7 +5,7 @@ The spawn, self-scheduling and directory tools live in ``tlon.tools`` while thei
 one-directional (agents → tools), the slice of the registry the tools need
 is declared here as a ``Protocol``, together with the rejection errors both
 sides share. The registry satisfies the protocol structurally; the assembler
-(``assemble_cognitive`` in ``tlon.agents.assembly``) injects it.
+(``assemble_member_capabilities`` in ``tlon.agents.assembly``) injects it.
 """
 
 from typing import Any, Protocol

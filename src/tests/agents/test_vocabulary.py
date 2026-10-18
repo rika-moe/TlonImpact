@@ -121,7 +121,7 @@ class TestActionCollection:
         assert all(request.kind == "emit" for request in collector)
 
     def test_map_returns_request_list(self):
-        # Deterministic rules collect the action's return value: a map of
+        # Rule programs collect the action's return value: a map of
         # emits is a list of requests, all of which reach the engine.
         result = eval_form(loads('(map i (emit "x") [1 2 3])'), {}, make_member_builtins())
         assert len(result) == 3

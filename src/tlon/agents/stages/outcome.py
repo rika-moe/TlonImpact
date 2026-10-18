@@ -89,13 +89,10 @@ class StageOutcome:
     final_reply: str | None = None
     """The session's final reply text (C2).
 
-    Bound as ``result`` in the on-complete action env — the DSL's
-    documented completion input. Memory persistence is NOT derived from
+    Captures the final reply text without executing rule actions.
+    Memory persistence is not derived from
     this anymore (ADR 0009: summaries read the journal directly).
     """
-
-    run_on_complete: bool = False
-    """Run the spec's on-complete action expressions (C2)."""
 
     complete: bool = False
     """Mark the session completed (C2)."""

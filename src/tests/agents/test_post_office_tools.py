@@ -10,6 +10,7 @@ import pytest
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.loop_driver import LoopDriver
+from tlon.agents.member_spec import ReflectSpec, SessionRecipe
 from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import act_stage_collect
@@ -26,6 +27,7 @@ from tlon.organization.mail.resolver import RecipientResolver
 from tlon.organization.mail.store import MailStore
 from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.spill import ToolSpill
+from tlosure.edn import Form
 
 
 @pytest.fixture
@@ -45,14 +47,12 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
     office = PostOffice(bus, resolver, paths)
     office.store.register_member("human:bob")
     identity = AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal")
-    rule = MagicMock()
-    rule.loop.fuel = None
+    recipe = SessionRecipe((), (), Form(), 10, 3, 1000000, ReflectSpec(False, 0))
     services = MagicMock()
     services.identity = identity
     services.publish_event = AsyncMock()
     executor = EffectExecutor(
         identity=identity,
-        rule=rule,
         mailbox=Mailbox(paths.mail_database_file(), "agent1"),
         publish=AsyncMock(),
         logger=MagicMock(),
@@ -61,16 +61,13 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
     tools = ToolExecutor()
     tools.register_tool(SendEmailTool())
     journal = SessionJournal("agent1", paths)
-    on_complete = MagicMock()
-    on_complete.run = AsyncMock()
     driver = LoopDriver(
         identity=identity,
-        rule=rule,
+        recipe=recipe,
         services=services,
         executor=executor,
         tool_executor=tools,
         per_tool_timeout=5,
-        on_complete=on_complete,
         journal=journal,
         spill=ToolSpill(paths, "agent1"),
         pressure=ContextPressure(MagicMock(), journal, 262144),

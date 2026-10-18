@@ -17,18 +17,7 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.store import StoredPost
 from tlosure.edn import loads
 
-EDN = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :loop {:context {:sections [(persona) (protocol)]}
-                 :stages [(think) (act)]
-                 :until (or (iteration-limit-reached?) (error-limit-reached?))
-                 :max-iterations 10
-                 :max-consecutive-errors 3
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 5}}}]}
-"""
+EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
 
 def _rule() -> MemberRule:
@@ -54,7 +43,6 @@ def _make_executor(
     publish = publish or AsyncMock()
     executor = EffectExecutor(
         identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-        rule=_rule(),
         mailbox=mailbox,
         publish=publish,
         post_office=_office(publish),
@@ -133,7 +121,6 @@ class TestReplyHeaderResolution:
         publish = AsyncMock()
         executor = EffectExecutor(
             identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-            rule=_rule(),
             mailbox=None,
             publish=publish,
             post_office=_office(publish),
@@ -337,7 +324,6 @@ class TestForwardMail:
         publish = AsyncMock()
         executor = EffectExecutor(
             identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-            rule=_rule(),
             mailbox=None,
             publish=publish,
             post_office=_office(publish),
@@ -360,7 +346,6 @@ class TestForwardMail:
         publish = AsyncMock()
         executor = EffectExecutor(
             identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-            rule=_rule(),
             mailbox=mailbox,
             publish=publish,
             post_office=_office(publish),
@@ -386,7 +371,6 @@ class TestMentorCc:
         publish = AsyncMock()
         executor = EffectExecutor(
             identity=AgentIdentity(id="agent1", name="Agent", address="agent1@tlon.internal"),
-            rule=_rule(),
             mailbox=mailbox,
             publish=publish,
             post_office=_office(publish),

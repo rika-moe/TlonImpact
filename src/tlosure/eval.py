@@ -117,6 +117,7 @@ MAX_FUEL = 10000
 
 SPECIAL_FORMS = frozenset(
     {
+        "quote",
         "if",
         "when",
         "let",
@@ -313,6 +314,10 @@ class Evaluator:
 
     def _eval_special(self, name: str, form: Form, env: dict[str, Any], depth: int) -> Any:
         args = form[1:]
+        if name == "quote":
+            if len(args) != 1:
+                raise EvalError(f"quote expects 1 argument, got {len(args)}")
+            return args[0]
         if name == "if":
             if len(args) not in (2, 3):
                 raise EvalError(f"if expects 2 or 3 arguments, got {len(args)}")

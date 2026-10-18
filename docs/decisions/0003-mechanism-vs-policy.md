@@ -17,7 +17,7 @@
 具体边界：
 
 - **注册表 = 机制**。装配与运行表、`AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 的幂等执行（wake lock、`_waking` 去重、锁下条件复查）、空闲*事实*检测（发布 `AGENT_IDLE`，不决定后果）、spawn 预算。注册表从不回答"该不该"，只回答"怎么做到"。
-- **Adam = 策略，且策略是数据**。Adam 是一个普通的 `MemberRuntime` 实例（无 `:loop` 规则，不进注册表、不出现在 MemberDirectory），其全部策略是内置的 `ADAM_SPEC_EDN` 文本，只有两条规则：`:on :boot` 时对候选集合发 `AGENT_START_REQUEST{reason="boot"}`（`start-all`）；`:on :agent-idle` 时把空闲事实转成 `AGENT_STOP_REQUEST{reason="drain"}`。
+- **Adam = 策略，且策略是数据**。Adam 是一个普通的 `MemberRuntime` 实例（使用普通规则，不进普通生命周期注册表，列入统一寻址目录），其全部策略是内置的 `ADAM_SPEC_EDN` 文本，只有两条规则：`:on :boot` 时对候选集合发 `AGENT_START_REQUEST{reason="boot"}`（`start-all`）；`:on :agent-idle` 时把空闲事实转成 `AGENT_STOP_REQUEST{reason="drain"}`。
 - **依赖单向**。Adam import 注册表（复用 `RegistryQueries` 读取运行状态），注册表永不 import Adam——kernel 先行、PID 1 随后，组件 DAG 保持无环。
 - **wake-on-mail 是机制，不是策略**。唤醒资格由注册表从各成员 spec 派生（声明了 `:on :mail-delivered` 的睡眠收件人被 `AgentRegistry._on_mail_delivered` 唤醒），不需要 Adam 参与——唤醒资格本质是 spec 声明的订阅事实，不是一条可自由裁量的策略。
 
@@ -42,5 +42,5 @@
 
 - **2026-09**：`ADAM_SPEC_EDN` 增至三条规则——新增 `:on :agent-spawned` 的出生欢迎信（出生社会化：名册经宿主查询 `member-roster` 现算，通信惯例为 spec 内静态文本；收件人地址由 `(str (get event :agent_id) "@tlon.internal")` 装配）。mentor 行为按本 ADR 的划法落在策略侧（spec 数据），未新增专门机制；宿主注入面同决策时（`make_adam` 与 `AgentRegistry._host_builtins` 两处，`member-roster` 随 `RegistryQueries` 对两方同份开放）。
 - **2026-09**：`ADAM_SPEC_EDN` 增至四条规则——新增 `:on :mail-delivered` 的守护者信箱（寄给 `adam@tlon.internal` 的信回一封固定确认信；`:when` 用 `addressed-to-me?` 收窄到本人、用新增的纯谓词 `from?` 排除 postmaster 发件人防退信循环）。可投递性不动 base/agents 数据：装配层加 `GuardianAgentInfoProvider`（现位于 organization/mail/guardian_provider.py；ADR 0019 归位 runtime）包装 ConfigService，仅 `get_config("adam")` 合成应答，`get_all_ids()` 原样委托——Adam 不进广播、名册与枚举扫描。Adam 自此携带真实邮箱（`~/.tlon/adam/mail/`，已读标记与 boot 未读重放复用统一运行时机制）。顺带按邮差惯例修复退信套娃：寄给 postmaster 的信静默丢弃、来自 postmaster 的信不再退信。
-- **2026-10**：欢迎信不再内嵌名册——「认识同伴」改为指引新成员自查（`listAgents` 寻址黄页 + 自己的联系簿），`member-roster` 宿主词保留可用、Adam 不再使用。配套确立「人设 vs 骨架」两轴口径：成员的身份/职位/社会关系以人设自述为准，`prototype` 仅表示认知骨架的技术来源——落在 `SystemPromptBuilder` 的框架话、`_PROTOCOL`「人格文件来源」段的裁决规则、listAgents 工具描述与内置原型 description 的行为语言改写（ADR 0006「原型=行为基因型，无人格」的提示词侧落地）。
+- **2026-10**：欢迎信不再内嵌名册——「认识同伴」改为指引新成员自查（`listAgents` 寻址黄页 + 自己的联系簿），`member-roster` 宿主词保留可用、Adam 不再使用。配套确立「人设 vs 骨架」两轴口径：成员的身份/职位/社会关系以人设自述为准，`prototype` 仅表示行为程序的技术来源——落在 `SystemPromptBuilder` 的框架话、`_PROTOCOL`「人格文件来源」段的裁决规则、listAgents 工具描述与内置原型 description 的行为语言改写（ADR 0006「原型=行为基因型，无人格」的提示词侧落地）。
 - **2026-10**：`ADAM_SPEC_EDN` 增至五条规则——新增 `:on :agent-noisy` 的熔断：PublicHealthMonitor 的噪声事实转成 `AGENT_STOP_REQUEST{reason="noisy-circuit-breaker"}`，刷屏成员排空为睡眠（监控器自带的每 sender 冷却防重复）。另：上一条补注所述的指引形态已随 ADR 0024 定稿为联系簿——新成员用 `updateContact` 把对同伴的认识记进自己的 `CONTACTS.md`（注入系统提示词），`listAgents` 只是寻址黄页。

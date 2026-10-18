@@ -2,10 +2,10 @@
 「周期任务：tick 即邮件」).
 
 "Tick is a mail", generalized: instead of a new timer event type or any
-change to the cognitive runtime, each periodic task is one mail from the
+change to the member runtime, each periodic task is one mail from the
 ``postmaster`` system address to a target member, fired on a schedule.
 The mail body carries the full work instructions; the recipient's
-ordinary ``:on :mail-delivered`` cognitive rule fires. A system sender
+ordinary ``:on :mail-delivered`` rule fires. A system sender
 has no local mailbox; PostOffice stores the accepted message and
 recipient inbox copies in SQLite.
 

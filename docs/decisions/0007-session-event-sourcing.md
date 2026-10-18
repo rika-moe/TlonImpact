@@ -6,7 +6,7 @@
 
 ## 背景
 
-邮件是磁盘事实（mailbox 即队列，先持久化后处理），但认知循环的 `AgentSession` 是纯内存态：进程重启后，进行中的 session 整体蒸发——context、迭代计数、工具结果、后台工具任务全丢。邮件侧靠「未读集合 + 启动扫描」补偿，会话侧没有任何真相源；traces 落盘是观测而非事实。外部调研（deepseek-harness 的 session 子系统）给出已验证的范式：session 是 append-only 事件日志，模型历史由日志推导，崩溃恢复靠重放。
+邮件是磁盘事实（mailbox 即队列，先持久化后处理），但会话循环的 `AgentSession` 是纯内存态：进程重启后，进行中的 session 整体蒸发——context、迭代计数、工具结果、后台工具任务全丢。邮件侧靠「未读集合 + 启动扫描」补偿，会话侧没有任何真相源；traces 落盘是观测而非事实。外部调研（deepseek-harness 的 session 子系统）给出已验证的范式：session 是 append-only 事件日志，模型历史由日志推导，崩溃恢复靠重放。
 
 这与「行为即数据」哲学同构：**认知过程也是数据**。
 
@@ -57,7 +57,7 @@ context 仅两个写入点（初始构建、`_apply_outcome`），都先 append 
 - **`AgentSession` 仍是易失投影**：内存对象可以随时丢弃，真相在 journal；`runtime.md` 的「不持久化会话」论断被本决策取代。
 - **写放大可控**：事件只追加，无快照、无压缩；session 完成即不再增长。清理策略（归档/删除老事件）留待后续治理决策，与 ADR 0006 的「存储只增不减」同源。
 - **测试基建**：`derive_context` 为断言而生；崩溃恢复端到端测试用「工具派发后丢弃内存态 → resume → resume_collect 续跑」模拟 kill。
-- **引擎层签名变化**：`LoopDriver` / `SessionScheduler` 构造注入同一 `SessionJournal`（永远开启，不做可选）；`CognitiveCapabilities` 增加 `tlon_paths` 字段，由注册表装配。
+- **引擎层签名变化**：`LoopDriver` / `SessionScheduler` 构造注入同一 `SessionJournal`（永远开启，不做可选）；`MemberCapabilities` 增加 `tlon_paths` 字段，由注册表装配。
 
 ## 演进补注
 

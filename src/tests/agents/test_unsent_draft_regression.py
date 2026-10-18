@@ -70,7 +70,6 @@ def _real_mail_engine(
     driver._tool_executor = tools
     driver._executor = EffectExecutor(
         identity=driver._identity,
-        rule=driver._rule,
         mailbox=Mailbox(paths.mail_database_file(), "agent1"),
         publish=AsyncMock(),
         logger=MagicMock(),

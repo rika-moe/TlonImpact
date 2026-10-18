@@ -629,3 +629,27 @@ class TestFlippedAssertions:
         # a special form and the shape error is about its binding vector.
         with pytest.raises(EvalError, match="while bindings must be a vector"):
             validate_form(loads("(while true 1)"), _BUILTINS, scope=set())
+
+
+class TestQuote:
+    @pytest.mark.parametrize(
+        "source",
+        ["(quote unbound)", "(quote (unregistered! x))", "(quote {:stages [(think)]})"],
+    )
+    def test_code_is_returned_as_data(self, source: str) -> None:
+        form = loads(source)
+        validate_form(form, _BUILTINS, scope=set())
+        assert eval_form(form, {}, _BUILTINS) == form[1]
+
+    @pytest.mark.parametrize("source", ["(quote)", "(quote 1 2)"])
+    def test_exactly_one_argument(self, source: str) -> None:
+        with pytest.raises(EvalError, match="quote expects 1 argument"):
+            eval_form(loads(source), {}, _BUILTINS)
+        with pytest.raises(EvalError, match="quote expects 1 argument"):
+            validate_form(loads(source), _BUILTINS, scope=set())
+
+    def test_quoted_effect_does_not_execute(self) -> None:
+        recorded: list = []
+        form = loads('(quote (record "not executed"))')
+        assert eval_form(form, {}, _recorded(recorded)) == form[1]
+        assert recorded == []

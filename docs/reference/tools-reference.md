@@ -14,7 +14,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 [agents/tool_executor.py](../../src/tlon/agents/tool_executor.py) 的 `ToolExecutor` 是每 agent 一个的工具注册表：直接 async 调用，不经过 EventBus。`execute(tool_name, arguments)` 包住一层 tracing span（`tool.{name}`，参数截断到 200 字符），三类失败都转成 `ToolResult(success=False)` 而不是抛异常：工具未注册、参数校验失败、`execute` 内部抛异常（记日志后返回 `error="Execution error: ..."`）。
 
-认知循环里的并发分发不在 ToolExecutor，而在引擎侧：
+会话循环里的并发分发不在 ToolExecutor，而在引擎侧：
 
 - act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
 - [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for`。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `executeBashCommand`）时，引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
@@ -24,12 +24,12 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 
 ### 工具装配
 
-每个成员都经 `assemble_cognitive`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；声明 `docker.level: L0` 的成员例外（issue #26）——无执行装置，不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具；`docker.level: L1` 的文件层成员（issue #40）创建运行时、注册 filesystem 五个工具，但不注册 shell 两个（结构性零代码执行）。无 `:loop` 的成员只是从不启动会话引擎，工具不被调用、不消耗 token。`proposeBehavior` 是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`），`proposeCapability` 同型（能力通道的经验入口）；`reviewPrototype` 是拿到 `llm_client` 的 prototypes 域工具——评审调用用评审者自己的模型，异质性来自评审者的模型血统。
+每个成员都经 `assemble_member_capabilities`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配 LLM 客户端、记忆、TaskManager、Docker 运行时和全套工具（懒装配：对象便宜、加载按需）；声明 `docker.level: L0` 的成员例外（issue #26）——无执行装置，不创建 DockerRuntime，也不注册 shell/filesystem 七个装置工具；`docker.level: L1` 的文件层成员（issue #40）创建运行时、注册 filesystem 五个工具，但不注册 shell 两个（结构性零代码执行）。程序只在实际请求模型或工具时产生相应调用成本；不存在按是否声明会话给成员分类的装配分支。`proposeBehavior` 是首个拿到 `llm_client` / `memory` 的 agents 域工具（此前这对依赖只喂给记忆域工具与反思引擎；它的 journal 以 `SessionLogReader` 端口注入，保持 `tlon.tools` 不反向依赖 `tlon.agents`），`proposeCapability` 同型（能力通道的经验入口）；`reviewPrototype` 是拿到 `llm_client` 的 prototypes 域工具——评审调用用评审者自己的模型，异质性来自评审者的模型血统。
 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为满配成员注册 46 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_member_capabilities`（agents/assembly.py）为满配成员注册 46 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -81,7 +81,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 46 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员不注册 spawnAgent、writePrototype、proposeBehavior、proposeCapability 四个生殖/演化工具；所有认知成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
+上表是正式成员的满配。见习成员不注册 spawnAgent、writePrototype、proposeBehavior、proposeCapability 四个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
@@ -112,7 +112,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 ### forwardMail
 
-转发自己邮箱里的一封邮件（ADR 0029）——认知成员的转发出口（DSL 的 `forward` 动作是确定性规则专用，见 dsl-reference.md 第 4.5 节）。与 sendEmail 同为声明式工具：工具本身不投递，参数打包进 `ToolResult.data`（`action="forward_mail"`），引擎在工具结果落 journal 前由 `EffectExecutor` 验证来源、组信并调用邮局；act 收割不再重发。
+转发自己邮箱里的一封邮件（ADR 0029）；模型可以显式选择来源邮件，DSL `forward` 则转发当前规则来源，两者均可组合在同一程序中。与 sendEmail 同为声明式工具：工具本身不投递，参数打包进 `ToolResult.data`（`action="forward_mail"`），引擎在工具结果落 journal 前由 `EffectExecutor` 验证来源、组信并调用邮局；act 收割不再重发。
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
@@ -417,7 +417,7 @@ prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `suc
 | `proposal_note` | string | 否 | — | 本代变更说明（相对父原型改了什么、为什么） |
 | `lessons` | string | 否 | — | 随包教训文本（退休成员蒸馏的经验），落盘为原型的 `LESSONS.md`；实例化时拷贝给新成员，由其 spec 的 `(lessons)` section 注入对话 |
 
-失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带按提交内容选择的 schema 提示（含 `:loop` 用 `_BEHAVIOR_HINT`，否则 `_SCRIPT_HINT`），供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
+失败行为：EDN 校验失败抛 `PrototypeError`，返回 `success=False` 且 `data.hint` 携带统一的 rules/action schema 提示，供 LLM 修正后重试；未写入任何文件。behavior 是纯数据 spec，无法授予工具。EDN 字段细节见 docs/reference/dsl-reference.md。
 
 另有血脉偿付闸（仅 agent 侧，ADR 0022 政策 hook）：作者血脉失去偿付能力时提案在写入前被拒（`success=False`，staging 无残留，提示先挣回 endorse 再提案）；偿付派生异常时 fail-open 放行。无 prototype 的 manual 成员无血脉可判，不受闸。
 

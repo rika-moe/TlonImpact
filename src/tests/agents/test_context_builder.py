@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.recipe_helpers import recipe_for
 from tlon.agents.context_builder import ContextBuilder, _render_thread_recap
 from tlon.agents.member_spec import (
     MemberRule,
@@ -47,23 +48,13 @@ class _MemoryStub:
 def _rule_with_sections(sections: str) -> MemberRule:
     spec = MemberSpec.from_edn(
         loads(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections SECTIONS}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-""".replace("SECTIONS", sections)
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections SECTIONS} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'.replace(
+                "SECTIONS", sections
+            )
         )
     )
     rule = spec.rules[0]
-    assert rule.loop is not None
+    assert recipe_for(rule) is not None
     return rule
 
 
@@ -74,7 +65,7 @@ def _make_builder(tmp_path: Path, sections: str) -> tuple[ContextBuilder, TaskMa
         None,
         _MemoryStub(),  # type: ignore[arg-type]
         task_manager,
-        _rule_with_sections(sections),
+        recipe_for(_rule_with_sections(sections)),
         ADDRESS,
         tlon_paths=TlonPaths(home=tmp_path),
     )
@@ -93,7 +84,7 @@ def _make_thread_builder(
         mailbox,
         _MemoryStub(),  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=tlon_paths),
-        _rule_with_sections(sections),
+        recipe_for(_rule_with_sections(sections)),
         ADDRESS,
         journal,
         tlon_paths=tlon_paths,
@@ -154,38 +145,14 @@ async def _build(
 def test_current_task_section_accepted() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(persona) (current-task) (mail-history 5)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (current-task) (mail-history 5)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     validate_member_spec(spec)
 
 
 def test_current_task_section_rejects_arguments() -> None:
-    rule_spec = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(current-task 3)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+    rule_spec = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(current-task 3)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
     spec = MemberSpec.from_edn(loads(rule_spec))
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
         validate_member_spec(spec)
@@ -338,38 +305,14 @@ async def test_section_follows_vector_order(tmp_path: Path) -> None:
 def test_thread_recap_section_accepted() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(thread-recap) (mail-history 5)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(thread-recap) (mail-history 5)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     validate_member_spec(spec)
 
 
 def test_thread_recap_section_rejects_arguments() -> None:
-    rule_spec = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(thread-recap 3)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+    rule_spec = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(thread-recap 3)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
     spec = MemberSpec.from_edn(loads(rule_spec))
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
         validate_member_spec(spec)
@@ -571,7 +514,7 @@ def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
         None,
         _MemoryStub(),  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
-        _rule_with_sections(sections),
+        recipe_for(_rule_with_sections(sections)),
         ADDRESS,
         None,
         tlon_paths=TlonPaths(home=tmp_path),
@@ -581,19 +524,7 @@ def _make_lessons_builder(tmp_path: Path, sections: str) -> ContextBuilder:
 def test_lessons_section_accepted() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(persona) (lessons) (mail-history 5)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (lessons) (mail-history 5)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     validate_member_spec(spec)
@@ -602,19 +533,7 @@ def test_lessons_section_accepted() -> None:
 def test_lessons_section_rejects_arguments() -> None:
     spec = MemberSpec.from_edn(
         loads(
-            """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(lessons 3)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+            '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(lessons 3)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
         )
     )
     with pytest.raises(MemberSpecValidationError, match="takes no arguments"):
@@ -690,7 +609,7 @@ def _make_knowledge_builder(tmp_path: Path) -> tuple[ContextBuilder, _RecordingM
         None,
         memory,  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
-        _rule_with_sections("[(knowledge)]"),
+        recipe_for(_rule_with_sections("[(knowledge)]")),
         ADDRESS,
         tlon_paths=TlonPaths(home=tmp_path),
     )
@@ -739,7 +658,7 @@ async def test_knowledge_lands_last_after_trigger(tmp_path: Path) -> None:
         memory,  # type: ignore[arg-type]
         tasks,
         # knowledge declared mid-vector: its position no longer matters.
-        _rule_with_sections("[(knowledge) (current-task)]"),
+        recipe_for(_rule_with_sections("[(knowledge) (current-task)]")),
         ADDRESS,
         tlon_paths=TlonPaths(home=tmp_path),
     )
@@ -779,7 +698,7 @@ async def test_empty_knowledge_leaves_anchor_unchanged(tmp_path: Path) -> None:
         None,
         _EmptyMemory(),  # type: ignore[arg-type]
         TaskManager(agent_id=AGENT, tlon_paths=TlonPaths(home=tmp_path)),
-        _rule_with_sections("[(knowledge)]"),
+        recipe_for(_rule_with_sections("[(knowledge)]")),
         ADDRESS,
         tlon_paths=TlonPaths(home=tmp_path),
     )

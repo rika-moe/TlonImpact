@@ -1,13 +1,7 @@
-"""Forward mail tool — the cognitive member's forwarding outlet (ADR 0029).
+"""Forward an explicitly selected mail through the post office.
 
-ADR 0028 retired the trigger mail, so the DSL ``forward`` action (which
-reads the triggering event's mail) has no source on the cognitive path.
-Forwarding is a runtime decision — which mail, to whom — so it is carried
-by this declarative tool, mirroring :class:`SendEmailTool`: ``execute``
-only declares the intent as data; the act stage turns a successful result
-into a ``MailEffect`` and ``EffectExecutor`` composes and sends the actual
-forward (subject ``Fwd: <原主题>``, self-contained body with an
-attribution header, ``forward_of`` linking the original mail).
+The tool validates a mailbox-owned source reference and returns a real receipt.
+DSL forward uses the current rule invocation's source mail instead.
 """
 
 from typing import Any

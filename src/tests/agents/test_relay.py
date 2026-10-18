@@ -1,4 +1,4 @@
-"""Relay — the migrated deterministic prototype (phase C file unification).
+"""Relay — a forwarding program carried by a prototype.
 
 relay's ``script.tlon`` became a rules-form ``behavior.tlon`` with a
 write-side ``:parameters`` template. Pins: the derived ``runtime == "script"``
@@ -51,8 +51,7 @@ class TestRelayPrototype:
 
         spec = MemberSpec.from_edn(loads(text))
         assert spec.rules[0].name == "relay"
-        assert spec.rules[0].loop is None
-        assert len(spec.rules[0].actions) == 1
+        assert len(spec.rules[0].actions) == 2
 
     def test_missing_params_refused(self, tmp_path):
         p = _paths(tmp_path)

@@ -21,21 +21,9 @@ from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.store import MailStore
 from tlon.tools.tasks.manager import TaskManager
 
-_COGNITIVE_SPEC = """\
-{:version 1
- :rules [{:name "respond"
-          :on :mail-delivered
-          :actions []
-          :loop {:context {:sections [(persona)]}
-                 :stages [(think)]
-                 :until (iteration-limit-reached?)
-                 :max-iterations 1
-                 :max-consecutive-errors 1
-                 :max-tokens 1000000
-                 :reflect {:enabled false :interval-minutes 15}}}]}
-"""
+_SESSION_PROGRAM = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
 
-_DETERMINISTIC_SPEC = """\
+_RELAY_PROGRAM = """\
 {:version 1
  :rules [{:name "relay"
           :on :mail-delivered
@@ -110,7 +98,7 @@ async def test_dead_member_inventory_preserves_archive_without_llm_or_mail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = TlonPaths(home=tmp_path)
-    _write_behavior(paths, "retiree", _COGNITIVE_SPEC)
+    _write_behavior(paths, "retiree", _SESSION_PROGRAM)
     _write_config(paths, "retiree", "老张", "spawner-1")
     await _remember(paths, "retiree", "部署前先跑质量门")
     tasks = TaskManager("retiree", paths)
@@ -187,7 +175,7 @@ async def test_removed_member_skips_inventory(tmp_path: Path) -> None:
         await bus.shutdown()
 
 
-@pytest.mark.parametrize("spec", [_COGNITIVE_SPEC, _DETERMINISTIC_SPEC])
+@pytest.mark.parametrize("spec", [_SESSION_PROGRAM, _RELAY_PROGRAM])
 async def test_empty_inventory_is_still_published(tmp_path: Path, spec: str) -> None:
     paths = TlonPaths(home=tmp_path)
     _write_behavior(paths, "fresh", spec)
@@ -206,9 +194,9 @@ async def test_empty_inventory_is_still_published(tmp_path: Path, spec: str) -> 
         await bus.shutdown()
 
 
-async def test_non_cognitive_inventory_includes_unfinished_tasks(tmp_path: Path) -> None:
+async def test_relay_inventory_includes_unfinished_tasks(tmp_path: Path) -> None:
     paths = TlonPaths(home=tmp_path)
-    _write_behavior(paths, "relay-1", _DETERMINISTIC_SPEC)
+    _write_behavior(paths, "relay-1", _RELAY_PROGRAM)
     tasks = TaskManager("relay-1", paths)
     tasks.create_task("还没转完的信")
     bus = EventBus()

@@ -4,7 +4,7 @@ Every package-carried prototype must produce a bootable member: seeding
 copies the files verbatim, instantiation writes ``behavior.tlon`` into
 the new agent's home, and that file must parse as EDN and pass the single
 validator — otherwise a spawned member refuses to boot. This is the
-regression guard for the known issue where the three cognitive
+regression guard for the known issue where the three session
 prototypes shipped invalid EDN (an unbalanced ``}`` in the first rule),
 masked by the listing/instantiation tolerance until spawn
 (docs/design/prototypes.md).
@@ -19,9 +19,10 @@ import pytest
 import tlon
 from tests.agents.test_completion_gate import _completing, _drive, _make_driver
 from tests.prototype_helpers import builtin_id
+from tests.recipe_helpers import recipe_for
 from tlon.agents.behavior_template import analyze, render_template
 from tlon.agents.member_runtime import MemberRuntime
-from tlon.agents.member_spec import MemberLoop, MemberSpec, validate_member_spec
+from tlon.agents.member_spec import MemberSpec, SessionRecipe, validate_member_spec
 from tlon.agents.prototypes.catalog import get_prototype_info, seed_prototypes
 from tlon.agents.prototypes.instantiate import instantiate
 from tlon.agents.session import AgentSession, SessionState
@@ -100,10 +101,8 @@ class TestBuiltinPrototypes:
         text = p.agent_behavior_file(cfg.id).read_text(encoding="utf-8")
         spec = validate_member_spec(MemberSpec.from_edn(loads(text)))
 
-        # Every built-in declares a boot rule; at most one cognitive rule
-        # (the unified spec is total — the derived runtime comes from here).
+        # Every built-in declares a boot rule.
         assert any(rule.on is None for rule in spec.rules)
-        assert sum(rule.loop is not None for rule in spec.rules) <= 1
 
         # The :execution declaration (genotype) is projected once into
         # agent.yaml's docker.level by instantiate — the runtime authority.
@@ -111,19 +110,19 @@ class TestBuiltinPrototypes:
         assert cfg.docker.level == EXPECTED_LEVELS[name]
 
 
-#: The default cognitive loop (docs/design/runtime.md): a lightweight
+#: The default session recipe (docs/design/runtime.md): a lightweight
 #: pre-submission review. critique fires only when the round's pending response would
 #: end the session (``completing?``) — one review per completion attempt,
 #: independent of the round count; a FAIL blocks act and revise feeds the
 #: feedback back for the next think.
-DEFAULT_COGNITIVE_STAGES = [
+DEFAULT_REVIEW_STAGES = [
     "(think)",
     "(critique {:if (sending-mail?)})",
     "(act {:if (or (not (sending-mail?)) (not (critique-failed?)))})",
     "(revise {:if (critique-failed?)})",
 ]
 
-#: Minimal-context and deterministic behaviors deliberately omit the default loop.
+#: Minimal-context and forwarding programs deliberately omit the default loop.
 GATED_PROTOTYPES = [
     name
     for name in BUILTIN_PARAMS
@@ -137,9 +136,9 @@ GATED_PROTOTYPES = [
 
 class TestDefaultStageVector:
     @pytest.mark.parametrize("name", GATED_PROTOTYPES)
-    def test_cognitive_prototypes_carry_the_lightweight_critique(self, name: str) -> None:
+    def test_session_recipes_carry_the_lightweight_critique(self, name: str) -> None:
         loop = _prototype_loop(name)
-        assert [dumps(form) for form in loop.stages] == DEFAULT_COGNITIVE_STAGES
+        assert [dumps(form) for form in loop.stages] == DEFAULT_REVIEW_STAGES
 
     def test_fast_responder_stays_bare(self) -> None:
         loop = _prototype_loop(builtin_id("短回合交流"))
@@ -168,9 +167,9 @@ def _prototype_spec(name: str) -> MemberSpec:
     return validate_member_spec(MemberSpec.from_edn(loads(text)))
 
 
-def _prototype_loop(name: str) -> MemberLoop:
-    """The validated cognitive loop of a package-carried prototype."""
-    loop = _prototype_spec(name).rules[0].loop
+def _prototype_loop(name: str) -> SessionRecipe:
+    """The validated session recipe of a package-carried prototype."""
+    loop = recipe_for(_prototype_spec(name).rules[0])
     assert loop is not None
     return loop
 
@@ -231,7 +230,7 @@ class TestDistinctBehaviorPrototypes:
         svc.think.assert_awaited_once()
         assert "不超过 5 步" in svc.think.call_args.args[0][-1]["content"]
         assert session.loop_scratch["plan"].startswith("1. 检查输入")
-        assert [dumps(stage) for stage in loop.stages[1:]] == DEFAULT_COGNITIVE_STAGES
+        assert [dumps(stage) for stage in loop.stages[1:]] == DEFAULT_REVIEW_STAGES
 
     def test_short_conversation_bounds_and_task_context(self) -> None:
         loop = _prototype_loop(builtin_id("短回合交流"))
@@ -299,7 +298,6 @@ class TestDistinctBehaviorPrototypes:
         path = Path(tlon.__file__).parent / "prototypes" / name / "behavior.tlon"
         text = render_template(path.read_text(), BUILTIN_PARAMS[name])
         spec = validate_member_spec(MemberSpec.from_edn(loads(text)))
-        assert all(rule.loop is None for rule in spec.rules)
         member = MemberRuntime(
             member_id="router",
             name="router",
@@ -315,7 +313,8 @@ class TestDistinctBehaviorPrototypes:
             [
                 ActionRequest(
                     kind="forward", data={"to": ["a@tlon.internal"], "cc": [], "subject": None}
-                )
+                ),
+                ActionRequest(kind="mark_read", data={}),
             ]
             if matches
             else []
