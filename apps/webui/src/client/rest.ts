@@ -28,6 +28,19 @@ export const WEBUI_HEADERS = { "X-Tlon-WebUI": "1" };
 
 export type WebuiIdentity = { username: string | null; address: string | null };
 
+export interface AgentPersona {
+  identity: string;
+  profile: string;
+  behavior: string;
+}
+
+export interface AgentConfig {
+  status: string;
+  agent_id: string;
+  persona: AgentPersona;
+  llm: { model_name: string };
+}
+
 /** A mail send request (see `sendMail`). */
 export interface MailReceipt {
   mail_id: string;
@@ -748,16 +761,22 @@ export class RestClient {
     );
   }
 
+  /** Full persona file contents and current model for human editing. */
+  async getAgentConfig(agentId: string): Promise<AgentConfig> {
+    return this.get(`/admin/config/agents/${encodeURIComponent(agentId)}`);
+  }
+
   /** Create a member from a prototype. `persona` is seeded here at creation;
-   * afterwards it is member-owned (self-editable via updatePersona, ADR 0024) —
-   * humans can still edit via REST PATCH or `tlon mirror`.
+   * afterwards IDENTITY/SOUL are self-editable via updatePersona (ADR 0024);
+   * RULES remains human-maintained —
+   * humans can view and edit all three files through the WebUI / REST API.
    * `model` is required (ADR 0016): provider/model form, member-level. */
   async createAgent(body: {
     prototype: string;
     name: string;
     model: string;
     params?: Record<string, unknown>;
-    persona?: Record<string, string>;
+    persona?: Partial<AgentPersona>;
   }): Promise<Record<string, unknown>> {
     return this.send("POST", "/admin/config/agents", body);
   }
@@ -766,7 +785,7 @@ export class RestClient {
   async updateAgent(
     agentId: string,
     body: {
-      persona?: Record<string, string>;
+      persona?: Partial<AgentPersona>;
       llm?: { model_name?: string };
     },
   ): Promise<Record<string, unknown>> {

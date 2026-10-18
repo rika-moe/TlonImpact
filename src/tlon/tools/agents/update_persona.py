@@ -57,11 +57,11 @@ class UpdatePersonaTool(Tool):
             name="updatePersona",
             description=(
                 "全文替换你自己的人格文件（IDENTITY.md / SOUL.md），用于自主更新自我认知。\n"
-                "- file=identity：IDENTITY.md —— 你是谁、你的核心自我认知。\n"
-                "- file=soul：SOUL.md —— 你的角色定位、工作风格（写给自己的锚，只有你自己看得到）。\n"
+                "- file=identity：IDENTITY.md —— 我如何定义自己：名字、自称、身份叙述、当前自认的角色。\n"
+                "- file=soul：SOUL.md —— 我重视什么、如何表达和判断：价值观、性格、语气、判断倾向（写给自己的锚，只有你自己看得到）。\n"
                 "使用纪律：\n"
                 "- content 是全文替换，不是追加——先想清楚完整新文本再写，去空白后为空会被拒绝。\n"
-                "- 只能改你自己的文件；想改 RULES.md（行为约束）不行，那是人类编辑的，"
+                "- 只能改你自己的文件；想改 RULES.md（工作规则、流程与明确约束）不行，那是人类编辑的，"
                 "有诉求发邮件找人类。\n"
                 "- 修改在下一次组装系统提示词时生效，不中断当前思考。\n"
                 "- 每次修改都会在你的账本留痕（内容哈希），可问责——写你能为之负责的内容。"
@@ -73,8 +73,8 @@ class UpdatePersonaTool(Tool):
                         "type": "string",
                         "enum": ["identity", "soul"],
                         "description": (
-                            "要重写的人格文件：identity（核心自我认知）或 soul"
-                            "（角色定位、工作风格）"
+                            "要重写的人格文件：identity（自我定义与身份叙述）或 soul"
+                            "（价值观、性格、语气、判断倾向）"
                         ),
                     },
                     "content": {

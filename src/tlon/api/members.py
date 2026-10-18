@@ -44,14 +44,13 @@ _PERSONA_FILES = (
 )
 
 
-def _write_persona_files(tlon_paths: TlonPaths, agent_id: str, persona: dict[str, Any]) -> None:
-    """Write the non-empty persona fields into the member's config dir."""
+def _write_persona_files(tlon_paths: TlonPaths, agent_id: str, persona: dict[str, str]) -> None:
+    """Write supplied persona fields verbatim; empty strings clear files."""
     config_dir = tlon_paths.agent_config_dir(agent_id)
     config_dir.mkdir(parents=True, exist_ok=True)
     for field, filename in _PERSONA_FILES:
-        content = persona.get(field)
-        if content:
-            (config_dir / filename).write_text(str(content).strip() + "\n", encoding="utf-8")
+        if field in persona:
+            (config_dir / filename).write_text(persona[field], encoding="utf-8")
 
 
 class MembersFacade:
@@ -138,15 +137,15 @@ class MembersFacade:
         model: str,
         *,
         params: dict[str, Any] | None = None,
-        persona: dict[str, Any] | None = None,
+        persona: dict[str, str] | None = None,
         reserved_ids: Collection[str] = (),
     ) -> AgentConfig:
         """Create a member from a prototype (config + persona on disk).
 
         Writes the instance's behavior/config (instantiate), then the
-        persona seed files (creation-time seeding, ADR 0006; persona is
-        member-owned afterwards — self-editable via ``updatePersona``,
-        ADR 0024). The caller hot-adopts the
+        self files (creation-time seeding, ADR 0006). IDENTITY and SOUL
+        are member-owned and self-editable via ``updatePersona`` (ADR
+        0024); RULES is maintained by humans. The caller hot-adopts the
         new member separately (``adopt``) so it can report the adopt
         result.
 
@@ -189,7 +188,17 @@ class MembersFacade:
             _write_persona_files(self._paths, cfg.id, persona)
         return cfg
 
-    def write_persona(self, agent_id: str, persona: dict[str, Any]) -> None:
-        """Write persona fields of an existing member (PATCH semantics:
-        non-empty fields only; prompt cache keys on the file mtimes)."""
+    def read_persona(self, agent_id: str) -> dict[str, str]:
+        """Read all three self files verbatim, returning empty strings for absent files."""
+        config_dir = self._paths.agent_config_dir(agent_id)
+        persona: dict[str, str] = {}
+        for field, filename in _PERSONA_FILES:
+            try:
+                persona[field] = (config_dir / filename).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                persona[field] = ""
+        return persona
+
+    def write_persona(self, agent_id: str, persona: dict[str, str]) -> None:
+        """Write supplied fields; omitted fields stay untouched and empty values clear."""
         _write_persona_files(self._paths, agent_id, persona)

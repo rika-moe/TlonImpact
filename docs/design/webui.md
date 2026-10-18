@@ -80,3 +80,7 @@ MAIL 是线程列表、信件内容与写信抽屉的组合。线程标题优先
 开发使用 Vite dev proxy；生产构建写入 `apps/webui/dist/`，dream 同一 HTTP 端口托管于 `/ui/`，`/ui` 重定向。无构建产物时不注册静态路由，启动 banner 提供构建提示。运行操作见 [快速开始](../guides/quickstart.md)。
 
 WebUI 采用本地单人身份设置（[ADR 0033](../decisions/0033-local-webui-identity.md)）：启动先查询 `/identity`，未设置时填写 username，保存到实例 `{TLON_HOME}/webui-identity.json`；已设置自动进入。身份不再来自 URL 或 localStorage，无密码、登录会话或 admin token。所有 API fetch 带 `X-Tlon-WebUI: 1`，原生 EventSource 由同源 Fetch Metadata 校验；生产 `/ui/` 与 API 同源，开发继续走 Vite 代理，拒绝跨域来源。固定地址是普通 member 地址，不向 agents 添加特殊身份信息。完整来源边界见 [server-protocol.md](./server-protocol.md)。
+
+### 人格文件查看与编辑
+
+成员创建与编辑表单展示 IDENTITY.md（自我定义）、SOUL.md（价值观、性格、表达与判断倾向）、RULES.md（工作规则、流程与明确约束），分工见 [identity](identity.md)。编辑表单先读取三个文件的当前全文与模型；读取失败时禁止保存。保存只提交改动字段，清空文本表示清空对应文件，未改字段不覆盖。人类可编辑三者，成员自主修改仍限于 IDENTITY/SOUL。

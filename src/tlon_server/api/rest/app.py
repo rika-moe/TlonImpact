@@ -193,6 +193,7 @@ class RESTAPIHandler(
         # Admin routes for agent CRUD + prototype approval (wizard removal,
         # A2): creation/editing/removal of members and staging approval.
         app.router.add_post("/admin/config/agents", self.handle_create_agent)
+        app.router.add_get("/admin/config/agents/{agent_id}", self.handle_get_agent_config)
         app.router.add_patch("/admin/config/agents/{agent_id}", self.handle_update_agent)
         app.router.add_delete("/admin/config/agents/{agent_id}", self.handle_delete_agent)
         # Admin LLM registry (ADR 0016 §4): model metadata for the WebUI dropdown
