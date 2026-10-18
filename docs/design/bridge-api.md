@@ -6,7 +6,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 - 调度、并发、持久化、LLM 调用、Docker 和权限检查留在宿主机制层；策略组合已有机制。
 - 查询只暴露受控视图，不向 DSL 开放任意 Python 属性或方法调用。
-- 效果词产出 `ActionRequest` 数据，求值结束后才由宿主执行。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
+- 效果词产出 `ActionRequest` 数据；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
 - 每个语境有自己的词汇注册表、符号作用域和 fuel 预算；新增词汇必须明确适用语境。
 - 函数可以返回动作意图，也可以在函数体内调用效果词。动作位置不再靠语法分区枚举；纯语境通过可见词汇约束效果。
 - tlosure 核心保持宿主无关；领域端口位于 tlon。纯度标记描述效果权限，不能将“读取宿主状态”误解成可重放的常量计算。
@@ -17,13 +17,22 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 [agents/vocabulary.py](../../src/tlon/agents/vocabulary.py) 的 `ScriptHostQueries` 声明宿主查询协议，`make_member_builtins(host)` 通过闭包注入查询。实现由 [agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `RegistryQueries` 提供。Adam 获得注册表状态查询，普通成员不因此获得同样权限。
 
-查询词登记为 `pure=True`，表示不执行外部效果；结果来自当前宿主视图，未必在不同时刻相同。能力 artifact 不能直接引用这些依赖隐式上下文的查询，必须由调用方显式传入数据。
+查询词登记为 `pure=True`，表示不执行外部写入；结果来自当前宿主视图，未必在不同时刻相同。生产程序驱动器将这些动态查询作为需记录的读取，恢复时复用原结果。能力 artifact 不能直接引用这些依赖隐式上下文的查询，必须由调用方显式传入数据。
 
 ### 效果
 
-`spawn`、`emit`、`start`、`stop`、`start-all`、`forward`、`run-loop`、`mark-read` 登记为 `pure=False`，只构造请求。新增效果需要同时定义参数校验、请求执行分支和必要的权限/配额检查。
+`spawn`、`emit`、`start`、`stop`、`start-all`、`forward`、`run-loop`、`mark-read`、`state-get`、`state-put`、`llm-call`、`send-mail` 登记为 `pure=False`，只构造请求。新增效果需要同时定义参数校验、请求执行分支和必要的权限/配额检查。
 
-所有动作统一由 collector 捕获，包括函数、条件和传统循环中的请求。会话请求也是普通效果；同一程序可以先执行会话，再转发原始邮件。表达式仍不能同步观察自己效果的实际结果。完整流程见 [runtime](runtime.md)。
+生产程序使用可暂停求值内核，函数、条件和传统循环中的效果都在各自调用处执行，返回值可绑定到 `let` 或用于 `if`。同步入口和 collector 可分析效果意图；ADR 0042 中先完整求值再执行的生产流程由 [ADR 0043](../decisions/0043-newspaper-member-workflow.md) 替代。完整恢复边界见 [runtime](runtime.md)。
+
+| 效果 | 返回值与边界 |
+| --- | --- |
+| `(state-get "key")` | 成员私有状态值，缺失为 `nil`；读取结果参与重放 |
+| `(state-put "key" value)` | 返回写入值；状态与该效果结果同事务提交 |
+| `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
+| `(send-mail {:to ["地址"] :content "正文" :request-id "稳定键"})` | 真实邮局结果；接受带邮件 ID，拒收不带成功 ID，未知异常传播 |
+
+`send-mail` 可选 `:subject`。结果键使用关键字与连字符，如 `:mail-id`、`:request-id`、`:local-recipients`、`:completion-tokens`。`mail-field` 是纯的字段适配器，从真实触发邮件读取 ID、发件地址、主题、正文等白名单字段；不开放对象属性访问。
 
 ### 环境
 
@@ -36,7 +45,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 | 循环终止条件 | `LoopEnv` | `self`、`state`、`limits` |
 | stage 条件 | `StageCondEnv` | `state`、`scratch`、`round` |
 
-规则始终保留原始事件与邮件引用。会话完成后继续的是已构造的效果序列，不新增完成动作求值环境，也不绑定 `result`。
+规则始终保留原始事件与邮件快照。效果完成后继续原表达式；返回值由程序显式命名，不新增完成动作求值环境，也不隐式绑定 `result`。
 
 社会政策是独立的 pull 型求值语境，其 hook 数据由调用点物化，见 [society-policy](society-policy.md)。
 

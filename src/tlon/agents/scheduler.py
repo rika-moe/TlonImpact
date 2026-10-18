@@ -64,13 +64,20 @@ class SessionScheduler:
         self._last_activity_at = datetime.now(UTC)
         self._worker_task: asyncio.Task[None] | None = None
         self.ready = asyncio.Event()
+        self.recovery_ready = asyncio.Event()
 
     def start(self) -> None:
         self._worker_task = asyncio.create_task(self.run())
 
     async def wait_ready(self) -> None:
-        """Wait for recovery and propagate startup errors."""
+        """Wait for scheduler startup; recovery continues in the background."""
         await self.ready.wait()
+        if self._worker_task is not None and self._worker_task.done():
+            self._worker_task.result()
+
+    async def wait_recovered(self) -> None:
+        """Wait until session recovery finishes before executing member programs."""
+        await self.recovery_ready.wait()
         if self._worker_task is not None and self._worker_task.done():
             self._worker_task.result()
 
@@ -95,6 +102,7 @@ class SessionScheduler:
         return (datetime.now(UTC) - self.last_activity_at).total_seconds()
 
     async def run(self) -> None:
+        self.ready.set()
         recovered: set[str] = set()
         try:
             while True:
@@ -107,11 +115,11 @@ class SessionScheduler:
                 recovered.add(session.id)
                 if self._resume_invocation is not None:
                     await self._resume_invocation(session)
-            # A committed session/end may precede the enclosing mail rule's
-            # completion. Resume its recorded continuation, never rerun the
-            # rule's preceding effects or choose a recipe from today's spec.
+            # A committed session/end may precede its program effect result.
+            # Recover each effect independently, including non-mail programs;
+            # two run-loop calls in one program are distinct continuations.
             if self._resume_invocation is not None:
-                continuations: dict[tuple[str, str], tuple[str, SessionReplay]] = {}
+                continuations: dict[tuple[str, int], tuple[str, SessionReplay]] = {}
                 for sid in await self._journal.list_completed():
                     if sid in recovered:
                         continue
@@ -119,20 +127,24 @@ class SessionScheduler:
                     start = next(
                         (event for event in events if event["type"] == "session/start"), None
                     )
-                    if start is None or not start.get("source_mail_id"):
+                    if start is None:
                         continue
                     invocation = start.get("invocation") or {}
-                    rule_name = invocation.get("rule_name")
-                    if not rule_name:
+                    effect = invocation.get("program_effect")
+                    if effect is None:
                         continue
-                    mail_id = str(start["source_mail_id"])
-                    key = (mail_id, rule_name)
+                    key = (effect["run_id"], effect["index"])
+                    mail_id = start.get("source_mail_id")
+                    rule_name = invocation.get("rule_name")
+                    if mail_id and rule_name:
+                        dispatch = await self._journal.read_events(
+                            f"dispatch:{mail_id}:{rule_name}"
+                        )
+                        if any(event["type"] == "dispatch/complete" for event in dispatch):
+                            continue
                     stamp = str(start["ts"])
                     previous = continuations.get(key)
                     if previous is not None and previous[0] >= stamp:
-                        continue
-                    dispatch = await self._journal.read_events(f"dispatch:{mail_id}:{rule_name}")
-                    if any(event["type"] == "dispatch/complete" for event in dispatch):
                         continue
                     replay = await self._journal.resume(sid)
                     if replay is not None:
@@ -140,7 +152,7 @@ class SessionScheduler:
                 for _, replay in sorted(continuations.values(), key=lambda item: item[0]):
                     await self._resume_invocation(await self._restore_session(replay))
         finally:
-            self.ready.set()
+            self.recovery_ready.set()
         while True:
             if self._can_schedule() and self._session is None:
                 await self._check_reflection()

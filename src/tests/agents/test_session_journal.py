@@ -1230,7 +1230,7 @@ class TestSchedulerFailureReply:
 
         recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
         scheduler.start()
-        await scheduler.ready.wait()
+        await scheduler.wait_recovered()
         invocation = asyncio.create_task(scheduler.run_invocation(recipe, TRIGGER, [mail], {}, {}))
         try:
             await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
@@ -1253,7 +1253,7 @@ class TestSchedulerFailureReply:
 
         recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
         scheduler.start()
-        await scheduler.ready.wait()
+        await scheduler.wait_recovered()
         invocation = asyncio.create_task(scheduler.run_invocation(recipe, TRIGGER, [mail], {}, {}))
         try:
             await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
@@ -1275,7 +1275,7 @@ class TestSchedulerFailureReply:
 
         recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
         scheduler.start()
-        await scheduler.ready.wait()
+        await scheduler.wait_recovered()
         invocation = asyncio.create_task(scheduler.run_invocation(recipe, TRIGGER, [mail], {}, {}))
         try:
             await _wait_for(lambda: loop_driver.send_failure_reply.await_count == 1)
@@ -1342,16 +1342,14 @@ class TestExplicitInvocationRecovery:
 
         raw[Keyword("max-iterations")] = 7
         source = _mail("original source")
-        tail = [
-            {"kind": "forward", "data_edn": '{"to" ["sink@tlon.internal"] "cc" [] "subject" nil}'}
-        ]
+        effect = {"run_id": "original-run", "index": 1, "name": "run-loop", "args_edn": "[]"}
         await journal.append(
             sid,
             "session/start",
             agent_id="agent1",
             recipe=dumps(raw),
             source_mail_id=source.id,
-            invocation={"rule_name": "second", "tail": tail},
+            invocation={"rule_name": "second", "program_effect": effect},
             trigger_content="original trigger",
             context=[{"role": "user", "content": "original"}],
         )
@@ -1367,11 +1365,11 @@ class TestExplicitInvocationRecovery:
         scheduler._resume_invocation = AsyncMock()
         scheduler.start()
         try:
-            await scheduler.ready.wait()
+            await scheduler.wait_recovered()
             assert len(selected) == 1 and selected[0].max_iterations == 7
             resumed = driver.sessions[0]
             assert resumed.source_mail_id == source.id
-            assert resumed.invocation == {"rule_name": "second", "tail": tail}
+            assert resumed.invocation == {"rule_name": "second", "program_effect": effect}
             assert resumed.trigger_content == "original trigger"
             scheduler._resume_invocation.assert_awaited_once_with(resumed)
             assert await journal.end_reason(sid) == "complete"
@@ -1379,10 +1377,10 @@ class TestExplicitInvocationRecovery:
             await scheduler.stop()
 
 
-async def test_completed_session_resumes_tail_without_model_reexecution(
+async def test_completed_session_records_effect_without_model_reexecution(
     journal: SessionJournal,
 ) -> None:
-    sid = "agent1-completed-before-tail"
+    sid = "agent1-completed-before-effect"
     recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
     await journal.append(
         sid,
@@ -1392,9 +1390,12 @@ async def test_completed_session_resumes_tail_without_model_reexecution(
         source_mail_id="source-7",
         invocation={
             "rule_name": "publish",
-            "tail": [
-                {"kind": "emit", "data_edn": '{"content" "frozen" "to" ["sink@tlon.internal"]}'}
-            ],
+            "program_effect": {
+                "run_id": "source-7:publish",
+                "index": 0,
+                "name": "run-loop",
+                "args_edn": "[]",
+            },
         },
         trigger_content="source",
         context=[{"role": "user", "content": "source"}],
@@ -1405,7 +1406,7 @@ async def test_completed_session_resumes_tail_without_model_reexecution(
     scheduler._resume_invocation = AsyncMock()
     scheduler.start()
     try:
-        await scheduler.wait_ready()
+        await scheduler.wait_recovered()
         assert driver.sessions == []
         scheduler._resume_invocation.assert_awaited_once()
         resumed = scheduler._resume_invocation.await_args.args[0]
@@ -1414,17 +1415,26 @@ async def test_completed_session_resumes_tail_without_model_reexecution(
         await scheduler.stop()
 
 
-async def test_recovery_chooses_latest_session_continuation_per_mail_rule(
+async def test_recovery_chooses_latest_session_for_the_same_program_effect(
     journal: SessionJournal,
 ) -> None:
-    for sid, tail in (("agent1-z-first", "old"), ("agent1-a-second", "latest")):
+    for sid, marker in (("agent1-z-first", "old"), ("agent1-a-second", "latest")):
         await journal.append(
             sid,
             "session/start",
             agent_id="agent1",
             recipe="unused",
             source_mail_id="same-source",
-            invocation={"rule_name": "publish", "tail": [tail]},
+            invocation={
+                "rule_name": "publish",
+                "marker": marker,
+                "program_effect": {
+                    "run_id": "same-run",
+                    "index": 0,
+                    "name": "run-loop",
+                    "args_edn": "[]",
+                },
+            },
             trigger_content="source",
             context=[],
         )
@@ -1433,10 +1443,177 @@ async def test_recovery_chooses_latest_session_continuation_per_mail_rule(
     scheduler._resume_invocation = AsyncMock()
     scheduler.start()
     try:
-        await scheduler.wait_ready()
+        await scheduler.wait_recovered()
         scheduler._resume_invocation.assert_awaited_once()
         resumed = scheduler._resume_invocation.await_args.args[0]
         assert resumed.id == "agent1-a-second"
-        assert resumed.invocation["tail"] == ["latest"]
+        assert resumed.invocation["marker"] == "latest"
     finally:
         await scheduler.stop()
+
+
+@pytest.mark.parametrize("source_mail_id", [None, "same-mail"], ids=["event", "mail"])
+async def test_completed_sessions_recover_every_effect_in_same_program(
+    journal: SessionJournal,
+    tmp_path: Path,
+    source_mail_id: str | None,
+) -> None:
+    from tlon.agents.program_store import ProgramStore
+
+    store = ProgramStore(tmp_path / "program.sqlite3")
+    expected: list[dict[str, Any]] = []
+    for index in range(2):
+        effect = {
+            "run_id": "event:publish",
+            "index": index,
+            "name": "run-loop",
+            "args_edn": dumps([{"index": index}]),
+        }
+        expected.append(effect)
+        sid = f"agent1-event-loop-{index}"
+        await journal.append(
+            sid,
+            "session/start",
+            agent_id="agent1",
+            recipe="unused",
+            source_mail_id=source_mail_id,
+            invocation={"rule_name": "publish", "program_effect": effect},
+            trigger_content="scheduled edition",
+            context=[],
+        )
+        await journal.append(sid, "session/end", reason="complete")
+    driver = _CompletingDriver()
+    scheduler = _make_scheduler(journal, loop_driver=driver)
+    resumed: list[dict[str, Any]] = []
+
+    async def record_result(session: AgentSession) -> None:
+        effect = session.invocation["program_effect"]
+        store.record_effect(
+            effect["run_id"],
+            effect["index"],
+            effect["name"],
+            effect["args_edn"],
+            dumps(None),
+        )
+        resumed.append(effect)
+
+    scheduler._resume_invocation = record_result
+    scheduler.start()
+    try:
+        await scheduler.wait_recovered()
+        assert driver.sessions == []
+        assert resumed == expected
+        for effect in expected:
+            assert store.get_effect(
+                effect["run_id"],
+                effect["index"],
+                effect["name"],
+                effect["args_edn"],
+            ) == (True, "nil")
+    finally:
+        await scheduler.stop()
+
+
+async def test_completed_dispatch_skips_completed_session_effect_recovery(
+    journal: SessionJournal,
+) -> None:
+    await journal.append(
+        "agent1-already-dispatched",
+        "session/start",
+        agent_id="agent1",
+        recipe="unused",
+        source_mail_id="done-mail",
+        invocation={
+            "rule_name": "publish",
+            "program_effect": {
+                "run_id": "done-mail:publish",
+                "index": 0,
+                "name": "run-loop",
+                "args_edn": "[]",
+            },
+        },
+        trigger_content="done",
+        context=[],
+    )
+    await journal.append("agent1-already-dispatched", "session/end", reason="complete")
+    await journal.append("dispatch:done-mail:publish", "dispatch/complete")
+    scheduler = _make_scheduler(journal)
+    scheduler._resume_invocation = AsyncMock()
+    scheduler.start()
+    try:
+        await scheduler.wait_recovered()
+        scheduler._resume_invocation.assert_not_awaited()
+    finally:
+        await scheduler.stop()
+
+
+async def test_slow_session_recovery_does_not_block_scheduler_startup(
+    journal: SessionJournal,
+) -> None:
+    recipe = recipe_for(MemberSpec.from_edn(loads(SESSION_PROGRAM_EDN)).rules[0])
+    await journal.append(
+        "agent1-slow-recovery",
+        "session/start",
+        agent_id="agent1",
+        recipe=dumps(recipe.to_edn_data()),
+        trigger_content="restore",
+        context=[],
+        invocation={
+            "rule_name": "publish",
+            "program_effect": {
+                "run_id": "restore-program",
+                "index": 0,
+                "name": "run-loop",
+                "args_edn": "[]",
+            },
+        },
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowRecoveryDriver(_CompletingDriver):
+        async def step_session(self, session: AgentSession) -> None:
+            entered.set()
+            await release.wait()
+            await super().step_session(session)
+
+    scheduler = _make_scheduler(journal, loop_driver=SlowRecoveryDriver())
+    scheduler._resume_invocation = AsyncMock()
+    scheduler.start()
+    waiter = asyncio.create_task(scheduler.wait_recovered())
+    try:
+        await asyncio.wait_for(scheduler.wait_ready(), 0.5)
+        await asyncio.wait_for(entered.wait(), 0.5)
+        assert scheduler.ready.is_set()
+        assert not scheduler.recovery_ready.is_set()
+        assert not waiter.done()
+        scheduler._resume_invocation.assert_not_awaited()
+        release.set()
+        await asyncio.wait_for(waiter, 1)
+        scheduler._resume_invocation.assert_awaited_once()
+        assert scheduler.recovery_ready.is_set()
+    finally:
+        release.set()
+        waiter.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await waiter
+        await scheduler.stop()
+
+
+async def test_wait_recovered_propagates_background_recovery_failure(
+    journal: SessionJournal,
+) -> None:
+    scheduler = _make_scheduler(journal)
+    scheduler._restore_unfinished = AsyncMock(side_effect=OSError("journal unavailable"))
+    scheduler.start()
+    assert scheduler._worker_task is not None
+    try:
+        with pytest.raises(OSError, match="journal unavailable"):
+            await asyncio.wait_for(scheduler.wait_recovered(), 0.5)
+        assert scheduler.ready.is_set()
+        assert scheduler.recovery_ready.is_set()
+    finally:
+        # The worker has failed; consume that failure without asking stop()
+        # to turn an operational error into cancellation.
+        with contextlib.suppress(OSError):
+            await scheduler._worker_task

@@ -18,6 +18,7 @@ import pytest
 
 import tlon
 from tests.agents.test_completion_gate import _completing, _drive, _make_driver
+from tests.mail_helpers import make_office
 from tests.prototype_helpers import builtin_id
 from tests.recipe_helpers import recipe_for
 from tlon.agents.behavior_template import analyze, render_template
@@ -33,12 +34,14 @@ from tlon.agents.vocabulary import (
     make_member_builtins,
     stage_cond_env,
 )
+from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mailbox import Mailbox
 from tlosure.edn import dumps, loads
-from tlosure.eval import ActionRequest, eval_form
+from tlosure.eval import eval_form
 
 # Fixed package IDs are discovered by behavioral labels, never by historical roles.
 BUILTIN_PARAMS: dict[str, dict] = {
@@ -291,34 +294,52 @@ class TestDistinctBehaviorPrototypes:
             ("sender@tlon.internal", "日常问候", "router", False),
         ],
     )
-    def test_conditional_router_evaluates_sender_and_content(
-        self, sender: str, content: str, recipient: str | None, matches: bool
+    async def test_conditional_router_evaluates_sender_and_content(
+        self, tmp_path: Path, sender: str, content: str, recipient: str | None, matches: bool
     ) -> None:
         name = builtin_id("条件路由")
         path = Path(tlon.__file__).parent / "prototypes" / name / "behavior.tlon"
         text = render_template(path.read_text(), BUILTIN_PARAMS[name])
         spec = validate_member_spec(MemberSpec.from_edn(loads(text)))
+        paths = TlonPaths(home=tmp_path)
+        bus = EventBus()
+        office = make_office(bus, tmp_path, ["router", "a", "sender", "other"])
+        mailbox = Mailbox(paths.mail_database_file(), "router")
         member = MemberRuntime(
             member_id="router",
             name="router",
-            event_bus=EventBus(),
+            event_bus=bus,
             spec=spec,
             builtins=make_member_builtins(),
+            mailbox=mailbox,
+            post_office=office,
+            tlon_paths=paths,
         )
         mail = Mail.create(from_address=sender, content=content, to=["router@tlon.internal"])
-        actions = member._evaluate_rule(
-            spec.rules[0], member._env({"mail": mail, "recipient": recipient})
+        await mailbox.append_inbox(mail)
+        event = Event(
+            type=EventType.MAIL_DELIVERED,
+            payload={"mail": mail, "recipient": recipient},
+            source="test",
         )
-        assert actions == (
-            [
-                ActionRequest(
-                    kind="forward", data={"to": ["a@tlon.internal"], "cc": [], "subject": None}
-                ),
-                ActionRequest(kind="mark_read", data={}),
-            ]
-            if matches
-            else []
-        )
+
+        assert await member._run_rule(spec.rules[0], trigger_event=event)
+
+        delivered = await Mailbox(paths.mail_database_file(), "a").inbox()
+        sent = await mailbox.sent()
+        unread = await mailbox.unread()
+        if matches:
+            assert len(delivered) == len(sent) == 1
+            forwarded = delivered[0]
+            assert sent[0].id == forwarded.id
+            assert forwarded.from_address == "router@tlon.internal"
+            assert forwarded.to == ["a@tlon.internal"]
+            assert forwarded.forward_of == mail.id
+            assert forwarded.content == mail.content
+            assert not unread
+        else:
+            assert not delivered and not sent
+            assert [item.id for item in unread] == [mail.id]
 
 
 class TestEvidencePrototypeExecution:

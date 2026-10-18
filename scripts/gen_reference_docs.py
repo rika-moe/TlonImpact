@@ -958,10 +958,10 @@ def render_dsl_action_kinds() -> str:
         f"| `{kind}` | {'、'.join(f'`{key}`' for key in keys)} |" for kind, keys in kinds.items()
     ]
     header = (
-        f"动作 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
+        f"效果 builtin 实际产出的 `ActionRequest` 形状（{len(kinds)} 种 kind，"
         f"生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——"
         f"它按宿主查询 `start_all_candidates` 的候选集展开为多个 "
-        f'`kind="start"` 请求）：{GENERATED_NOTE}\n\n'
+        f'`kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：{GENERATED_NOTE}\n\n'
         "| kind | data 字段 |\n"
         "|---|---|"
     )

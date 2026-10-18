@@ -114,7 +114,7 @@ async def test_following_forward_keeps_original_mail(tmp_path: Path) -> None:
     order: list[str] = []
     release = asyncio.Event()
 
-    async def run(*args: Any) -> None:
+    async def run(*args: Any, **kwargs: Any) -> None:
         order.append("session")
         await release.wait()
 
@@ -124,14 +124,18 @@ async def test_following_forward_keeps_original_mail(tmp_path: Path) -> None:
     mail = _mail()
     try:
         await member._on_event(_event(mail))
-        while not order:
-            await asyncio.sleep(0)
+
+        async def wait_started() -> None:
+            while not order:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_started(), 2)
         assert order == ["session"]
         assert member.get_state() == "active"
         release.set()
         await _drain(member)
         assert order == ["session", "forward"]
-        assert member._execute_action.await_args.kwargs["session_mail"] is mail
+        assert member._execute_action.await_args.kwargs["session_mail"] == mail
     finally:
         release.set()
         await member.shutdown()
@@ -215,8 +219,10 @@ async def test_distinct_deliveries_execute_serially(tmp_path: Path) -> None:
 
 async def test_shared_rule_fuel_and_definitions(tmp_path: Path) -> None:
     member = _member(tmp_path, _spec('(defn f [x] (emit x ["sink@tlon.internal"])) (f "done")'))
-    requests = member._evaluate_rule(member.spec.rules[0], member._env(None))
-    assert len(requests) == 1 and requests[0].data["content"] == "done"
+    member._execute_action = AsyncMock()
+    assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+    member._execute_action.assert_awaited_once()
+    assert member._execute_action.await_args.args[0].data["content"] == "done"
 
 
 async def test_inflight_scan_cannot_duplicate_and_shutdown_cancels_work(tmp_path: Path) -> None:
@@ -246,8 +252,14 @@ async def test_nested_loops_keep_all_effects(tmp_path: Path) -> None:
     member = _member(
         tmp_path, _spec('(map x (map y (emit (str x y) ["sink@tlon.internal"]) [3 4]) [1 2])')
     )
-    requests = member._evaluate_rule(member.spec.rules[0], member._env(None))
-    assert [request.data["content"] for request in requests] == ["13", "14", "23", "24"]
+    member._execute_action = AsyncMock()
+    assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+    assert [call.args[0].data["content"] for call in member._execute_action.await_args_list] == [
+        "13",
+        "14",
+        "23",
+        "24",
+    ]
 
 
 async def test_real_forward_preserves_mail_reference_and_read_state(tmp_path: Path) -> None:
@@ -269,8 +281,11 @@ async def test_real_forward_preserves_mail_reference_and_read_state(tmp_path: Pa
 async def test_boot_action_and_reply_keep_common_executor(tmp_path: Path) -> None:
     member = _member(tmp_path, _spec('(emit "boot" ["sink@tlon.internal"])', "boot"))
     member._execute_action = AsyncMock()
+    executed = asyncio.Event()
+    member._execute_action.side_effect = lambda *args, **kwargs: executed.set()
     await member.initialize()
     try:
+        await asyncio.wait_for(executed.wait(), 2)
         member._execute_action.assert_awaited_once()
         assert member._execute_action.await_args.args[0].data["content"] == "boot"
     finally:
@@ -313,16 +328,22 @@ async def test_rule_gate_has_no_implicit_read_effect(tmp_path: Path) -> None:
 
 
 async def test_rule_fuel_is_shared_by_gate_and_actions(tmp_path: Path) -> None:
-    from tlosure.builtins import FuelExhaustedError
-
     spec = MemberSpec.from_edn(
         loads(
             '{:version 1 :rules [{:name "budget" :on :mail-delivered :fuel 30 :actions [(while [n 0] (< n 1000) (recur (inc n)))]}]}'
         )
     )
     member = _member(tmp_path, spec)
-    with pytest.raises(FuelExhaustedError):
-        member._evaluate_rule(spec.rules[0], member._env(None))
+    member._execute_action = AsyncMock()
+    event = _event(_mail())
+    assert await member._run_rule_body(spec.rules[0], event)
+    member._execute_action.assert_not_awaited()
+    assert member._program_store.pending() == []
+    record = member._program_store.ensure(
+        *member._program_record_data(spec.rules[0], event, None, None)
+    )
+    assert record.completed is False
+    assert record.error is not None and "fuel exhausted" in record.error
 
 
 async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> None:
@@ -427,11 +448,15 @@ async def test_when_and_bound_effect_values_do_not_repeat_requests(tmp_path: Pat
             '(when true (let [request (emit "first" ["sink@tlon.internal"])] [request request]) (emit "second" ["sink@tlon.internal"]))'
         ),
     )
-    requests = member._evaluate_rule(member.spec.rules[0], member._env(None))
-    assert [request.data["content"] for request in requests] == ["first", "second"]
+    member._execute_action = AsyncMock()
+    assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+    assert [call.args[0].data["content"] for call in member._execute_action.await_args_list] == [
+        "first",
+        "second",
+    ]
 
 
-async def test_collector_preserves_host_start_all_once(tmp_path: Path) -> None:
+async def test_host_start_all_preserves_order_and_executes_once(tmp_path: Path) -> None:
     host = MagicMock()
     host.start_all_candidates.return_value = ["worker-a", "worker-b"]
     member = _member(
@@ -439,69 +464,105 @@ async def test_collector_preserves_host_start_all_once(tmp_path: Path) -> None:
         _spec('(when true (start-all {:reason "boot"}) (emit "done" ["sink@tlon.internal"]))'),
     )
     member._builtins = make_member_builtins(host)
-    requests = member._evaluate_rule(member.spec.rules[0], member._env(None))
+    member._execute_action = AsyncMock()
+    assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+    requests = [call.args[0] for call in member._execute_action.await_args_list]
     assert [request.kind for request in requests] == ["start", "start", "emit"]
     assert [request.data["agent_id"] for request in requests[:2]] == ["worker-a", "worker-b"]
     host.start_all_candidates.assert_called_once()
 
 
-async def test_failed_evaluation_does_not_submit_collected_effects(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(emit "must not send" ["sink@tlon.internal"]) (/ 1 0)'))
+async def test_later_evaluation_failure_keeps_committed_effects_without_repeating(
+    tmp_path: Path,
+) -> None:
+    member = _member(
+        tmp_path,
+        _spec(
+            '(emit "committed before failure" ["sink@tlon.internal"]) (/ 1 0)',
+            extra='{:name "next" :on :agent-idle :actions [(state-put "next" true)]}',
+        ),
+    )
     member._execute_action = AsyncMock()
+    event = _event(_mail())
     await member.initialize()
     try:
-        await member._on_event(_event(_mail()))
+        await member._on_event(event)
         await _drain(member)
-        member._execute_action.assert_not_awaited()
+        member._execute_action.assert_awaited_once()
+        assert member._program_store.pending() == []
+        record = member._program_store.ensure(
+            *member._program_record_data(
+                member.spec.rules[0],
+                event,
+                None,
+                None,
+            )
+        )
+        assert record.completed is False
+        assert record.error is not None and "division by zero" in record.error
+        assert await member._run_rule_body(member.spec.rules[0], event)
+        member._execute_action.assert_awaited_once()
+        await member._on_event(
+            Event(
+                type=EventType.AGENT_IDLE,
+                payload={"agent_id": "member"},
+                source="test",
+            )
+        )
+        await _drain(member)
+        assert member._program_store.state_get("next") is True
     finally:
         await member.shutdown()
 
 
 async def test_resumed_second_session_keeps_remaining_effects(tmp_path: Path) -> None:
     from tlon.agents.session import AgentSession
-    from tlon.agents.vocabulary import make_member_builtins
-    from tlosure.edn import dumps
-    from tlosure.eval import eval_form
 
-    member = _member(tmp_path, _spec('(emit "unused" ["sink@tlon.internal"])'))
-    session_request = eval_form(loads(f"(run-loop (quote {RECIPE}))"), {}, make_member_builtins())
-    forward_request = eval_form(
-        loads('(forward {:to ["sink@tlon.internal"]})'), {}, make_member_builtins()
+    member = _member(
+        tmp_path,
+        _spec(
+            f"(run-loop (quote {RECIPE})) (run-loop (quote {RECIPE})) "
+            '(forward {:to ["sink@tlon.internal"]})'
+        ),
     )
-    session = AgentSession(
-        "resumed-first",
-        "source",
-        invocation={
-            "rule_name": "main",
-            "tail": [
-                {"kind": request.kind, "data_edn": dumps(request.data)}
-                for request in [session_request, forward_request]
-            ],
-        },
-    )
+    event = _event(_mail())
+    rule = member.spec.rules[0]
+    interrupted: list[dict[str, Any]] = []
 
-    async def interrupted(*args: Any) -> None:
-        assert args[2] == [forward_request]
+    async def crash(*args: Any, **kwargs: Any) -> None:
+        interrupted.append(kwargs["program_effect"])
         raise asyncio.CancelledError()
 
-    member._run_session_effect = AsyncMock(side_effect=interrupted)
-    with pytest.raises(asyncio.CancelledError):
-        await member._resume_invocation(session)
-    assert member._run_session_effect.await_count == 1
-    # A second crash uses exactly the tail handed to the second session.
-    tail = member._run_session_effect.await_args.args[2]
-    second = AgentSession(
-        "resumed-second",
-        "source",
-        invocation={
-            "rule_name": "main",
-            "tail": [{"kind": request.kind, "data_edn": dumps(request.data)} for request in tail],
-        },
-    )
+    member._run_session_effect = AsyncMock(side_effect=crash)
     member._execute_action = AsyncMock()
-    await member._resume_invocation(second)
+    with pytest.raises(asyncio.CancelledError):
+        await member._run_rule_body(rule, event)
+    first = interrupted[0]
+    await member._resume_invocation(
+        AgentSession(
+            "session-first",
+            "source",
+            invocation={"program_effect": first},
+        )
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await member._run_rule_body(rule, event)
+    second = interrupted[1]
+    assert first["run_id"] == second["run_id"]
+    assert first["index"] == 0 and second["index"] == 1
+    assert member._run_session_effect.await_count == 2
+    await member._resume_invocation(
+        AgentSession(
+            "session-second",
+            "source",
+            invocation={"program_effect": second},
+        )
+    )
+    assert await member._run_rule_body(rule, event)
+    assert member._run_session_effect.await_count == 2
     member._execute_action.assert_awaited_once()
     assert member._execute_action.await_args.args[0].kind == "forward"
+    assert member._program_store.pending() == []
 
 
 async def test_empty_env_capability_closure_keeps_nested_effects_once(tmp_path: Path) -> None:
@@ -521,6 +582,138 @@ async def test_empty_env_capability_closure_keeps_nested_effects_once(tmp_path: 
         name="publish-pair",
     )
     member._builtins["publish-pair"] = Builtin.from_closure(closure, pure=False)
-    requests = member._evaluate_rule(member.spec.rules[0], member._env(None))
-    assert [request.data["content"] for request in requests] == ["0", "0!", "1", "1!"]
+    member._execute_action = AsyncMock()
+    assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+    assert [call.args[0].data["content"] for call in member._execute_action.await_args_list] == [
+        "0",
+        "0!",
+        "1",
+        "1!",
+    ]
     assert closure.env == {}
+
+
+async def test_recovery_executes_frozen_program_after_behavior_update(tmp_path: Path) -> None:
+    original = _member(tmp_path, _spec('(emit "before") (emit "after")'))
+    seen: list[str] = []
+
+    async def interrupt(request: Any, **kwargs: Any) -> None:
+        if request.data["content"] == "after":
+            raise asyncio.CancelledError()
+        seen.append(request.data["content"])
+
+    original._execute_action = AsyncMock(side_effect=interrupt)
+    event = _event(_mail())
+    with pytest.raises(asyncio.CancelledError):
+        await original._run_rule_body(original.spec.rules[0], event)
+    assert seen == ["before"]
+    restored = _member(tmp_path, _spec('(emit "new behavior")'))
+    restored._execute_action = AsyncMock()
+    await restored._restore_programs()
+    restored._execute_action.assert_awaited_once()
+    assert restored._execute_action.await_args.args[0].data["content"] == "after"
+    assert restored._program_store.pending() == []
+
+
+async def test_unknown_mail_submission_keeps_program_pending(tmp_path: Path) -> None:
+    member = _member(
+        tmp_path,
+        _spec('(send-mail {:to ["sink@tlon.internal"] :content "edition" :request-id "p:a"})'),
+    )
+    member._program_effects.execute = AsyncMock(side_effect=OSError("submission unknown"))
+    with pytest.raises(OSError, match="submission unknown"):
+        await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+    pending = member._program_store.pending()
+    assert len(pending) == 1
+    assert pending[0].completed is False and pending[0].error is None
+    member._program_effects.execute.assert_awaited_once()
+
+
+async def test_pending_failure_blocks_new_state_updates_until_recovery(tmp_path: Path) -> None:
+    member = _member(
+        tmp_path,
+        _spec(
+            '(emit "blocked")',
+            extra='{:name "new" :on :agent-idle :actions [(state-put "new" true)]}',
+        ),
+    )
+    blocked = True
+    delivered: list[str] = []
+    retry_entered = asyncio.Event()
+    attempts = 0
+
+    async def execute(request: Any, **kwargs: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        if blocked:
+            if attempts >= 2:
+                retry_entered.set()
+            raise OSError("previous effect still unavailable")
+        delivered.append(request.data["content"])
+
+    member._execute_action = AsyncMock(side_effect=execute)
+    idle = Event(type=EventType.AGENT_IDLE, payload={"agent_id": "member"}, source="test")
+    await member.initialize()
+    try:
+        await member._on_event(_event(_mail()))
+        await _drain(member)
+        assert len(member._program_store.pending()) == 1
+        await member._on_event(idle)
+        await asyncio.wait_for(retry_entered.wait(), 2)
+        assert member._program_store.state_get("new") is None
+        assert delivered == []
+        assert member._queue.qsize() == 1
+        blocked = False
+        await _drain(member)
+        assert delivered == ["blocked"]
+        assert member._program_store.state_get("new") is True
+    finally:
+        await member.shutdown()
+
+
+async def test_boot_io_failure_recovers_without_stopping_actor(tmp_path: Path) -> None:
+    member = _member(
+        tmp_path,
+        _spec(
+            '(state-put "boot" true)',
+            "boot",
+            extra='{:name "later" :on :agent-idle :actions [(state-put "later" true)]}',
+        ),
+    )
+    first_attempt = asyncio.Event()
+    recovered = asyncio.Event()
+    execute = member._program_effects.execute
+    attempts = 0
+
+    async def transient(request: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal attempts
+        if request.data.get("key") == "boot":
+            attempts += 1
+            if attempts == 1:
+                first_attempt.set()
+                raise OSError("temporary boot storage failure")
+            result = await execute(request, *args, **kwargs)
+            recovered.set()
+            return result
+        return await execute(request, *args, **kwargs)
+
+    member._program_effects.execute = transient
+    await member.initialize()
+    try:
+        await asyncio.wait_for(first_attempt.wait(), 2)
+        await member._on_event(
+            Event(
+                type=EventType.AGENT_IDLE,
+                payload={"agent_id": "member"},
+                source="test",
+            )
+        )
+        await asyncio.wait_for(recovered.wait(), 3)
+        await _drain(member)
+        assert attempts == 2
+        assert member._program_store.state_get("boot") is True
+        assert member._program_store.state_get("later") is True
+        assert member._program_store.pending() == []
+        assert member._program_task is not None and not member._program_task.done()
+    finally:
+        await member.shutdown()

@@ -68,7 +68,7 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 - **递归**：直接自引用（`(defn fact [n] (if (< n 2) 1 (* n (fact (dec n)))))`）。深层递归撞 `max_depth`（`EvalDepthError`），指数扇出撞 fuel（`FuelExhaustedError`）——终止性仍由两道闸保证。
 - **`recur` 不跨函数边界**（Clojure 语义）：进入函数应用时保存并清空 enclosing loop 上下文，退出时恢复；函数体内的 `recur` 报「recur outside while」，外层 `while` 在函数返回后继续正常工作。静态校验镜像同一规则（fn/defn body 以无 enclosing loop 校验）。
 - **静态校验的作用域规则是「先定义后使用」**：body 按序穿线，`defn` 的名字只对其后的兄弟 form 可见；`defn` 体内引用后定义的兄弟函数在加载期被拒（尽管按引用捕获在运行期能解析）。
-- **函数体不受纯度限制**：动作 builtin 在函数体内被调用时照常产出 `ActionRequest` 数据（effects-as-data 不变），由宿主引擎在求值结束后执行。
+- **函数体不受纯度限制**：动作 builtin 在函数体内被调用时照常产出 `ActionRequest` 数据（effects-as-data 不变），同步驱动返回请求数据；异步驱动在调用处交给宿主，拿到实际结果后继续求值。
 
 ### 2.1.2 注册表里的闭包词（closure-backed builtin）
 
@@ -100,11 +100,15 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 
 计量常量（[src/tlosure/eval.py](../../src/tlosure/eval.py) 顶部）：默认预算 `DEFAULT_FUEL = 1000`；`DEFAULT_WHEN_FUEL = 200`（供宿主给门控类求值用的更紧默认值）；硬顶 `MAX_FUEL = 10000`；嵌套深度硬顶 `DEFAULT_MAX_DEPTH = 100`。
 
-### 2.3 无副作用与 `ActionRequest`（"DSL 描述，宿主引擎执行"）
+### 2.3 效果调用与 `ActionRequest`
 
-- 求值永不产生副作用。宿主注册的动作 builtin 标记 `pure=False`，只校验参数并产出 `ActionRequest` 数据（`kind` + `data`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)），由宿主引擎在求值结束后执行。
-- 环境值对表达式不透明：没有属性/方法访问语法，`env` 里的宿主对象只能经宿主注册的 builtin 检查。
-- map 是数据：键保持字面量，值会被求值——选项 map 里可嵌表达式，如 `{:to [(get env-value :recipient)]}`。
+语言内核不直接执行 I/O。宿主注册的效果 builtin 标记 `pure=False`；同一个 generator 内核供 `Evaluator.eval` 同步驱动和 `Evaluator.eval_async` 异步驱动使用，两者共享燃料与深度计量。
+
+同步驱动直接调用 builtin，返回其数据；宿主可由此分析 `ActionRequest` 意图。异步驱动在每个效果调用处产出 `BuiltinCall`，宿主执行并将实际结果送回表达式，因此 `let`、`if`、函数和循环都能组合 I/O 返回值。未选分支不触发调用。纯 registry 不含效果词，仍按构造保证不发生外部效果。
+
+环境对象没有属性/方法访问语法，只能经宿主注册的 builtin 读取；map 的键保持字面量，值会被求值。
+
+效果执行、持久化与恢复由宿主负责，语言核心不依赖 Tlon。宿主已经提交的效果不会因后续求值失败而自动回滚；通用词汇、fuel 和深度限制也不能替代宿主的 I/O 超时与权限检查。Tlon 的具体契约见 [runtime](../design/runtime.md) 和 [ADR 0043](../decisions/0043-newspaper-member-workflow.md)。
 
 ## 3. 通用词汇
 
@@ -113,10 +117,15 @@ tlosure（[src/tlosure/](../../src/tlosure/)）是 Tlon 行为 DSL 的**语言�
 ### 3.1 `CORE_BUILTINS`（通用谓词与访问器）
 
 <!-- BEGIN GENERATED: dsl-builtins-core -->
-`CORE_BUILTINS`（9 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`CORE_BUILTINS`（14 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
+| `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
+| `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
+| `keys` | 是 | Return map keys in insertion order. |
+| `vals` | 是 | Return map values in insertion order, matching ``keys``. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 | `contains?` | 是 |  |

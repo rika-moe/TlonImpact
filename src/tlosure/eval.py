@@ -67,11 +67,10 @@ validation in ``tlosure/validate.py`` (:func:`validate_form`); the
 contract types and ``validate_form`` are re-exported here so existing
 imports keep working.
 
-Action expressions keep one rule: evaluation never performs side
-effects. Action builtins are registered by the host (tlon), marked
-``pure=False``; they validate their arguments and produce an
-:class:`ActionRequest` — the engine executes the requests after
-evaluation completes ("the DSL describes, the engine executes").
+The shared kernel suspends before invoking an impure host builtin.
+Synchronous evaluation invokes it directly and returns its declared data;
+asynchronous evaluation delegates the call to a host handler and resumes
+with the actual result. The language itself owns no I/O implementation.
 
 Environment values are opaque to expressions: there is no attribute or
 method access syntax, so a host object in ``env`` can only be inspected
@@ -80,11 +79,13 @@ like ``self`` / ``msg`` / ``event``) is the host's contract, not the
 language's (ADR 0018 修订).
 """
 
+from collections.abc import Awaitable, Callable, Generator
 from typing import Any
 
 from tlosure.builtins import (
     ActionRequest,
     Builtin,
+    BuiltinCall,
     Closure,
     EvalDepthError,
     EvalError,
@@ -101,6 +102,7 @@ __all__ = [
     "SPECIAL_FORMS",
     "ActionRequest",
     "Builtin",
+    "BuiltinCall",
     "Closure",
     "EvalDepthError",
     "EvalError",
@@ -213,6 +215,55 @@ class Evaluator:
         return self._fuel
 
     def eval(self, value: Any, env: dict[str, Any], depth: int) -> Any:
+        """Drive the shared kernel synchronously, preserving builtin return data."""
+        program = self._eval(value, env, depth)
+        result: Any = None
+        try:
+            while True:
+                try:
+                    call = program.send(result)
+                except StopIteration as done:
+                    return done.value
+                try:
+                    result = call.invoke()
+                except EvalError:
+                    raise
+                except Exception as error:
+                    raise EvalError(f"{call.name} failed: {error}") from error
+        finally:
+            program.close()
+
+    async def eval_async(
+        self,
+        value: Any,
+        env: dict[str, Any],
+        depth: int,
+        handler: Callable[[BuiltinCall], Awaitable[Any]],
+    ) -> Any:
+        """Resume impure host calls with results supplied by an async handler.
+
+        Closure-backed words always run through the kernel, regardless of
+        their purity marker. Cancellation closes suspended frames so loop
+        and function scopes cannot leak into later evaluations.
+        """
+        program = self._eval(value, env, depth)
+        result: Any = None
+        try:
+            while True:
+                try:
+                    call = program.send(result)
+                except StopIteration as done:
+                    return done.value
+                # Host failures retain their type: the runtime distinguishes
+                # retryable I/O from invalid expressions. Pure builtin errors
+                # are still normalized by the shared kernel.
+                result = await handler(call)
+        finally:
+            program.close()
+
+    def _eval(
+        self, value: Any, env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, Any]:
         if depth > self._max_depth:
             raise EvalDepthError(f"evaluation depth exceeds {self._max_depth} at {dumps(value)}")
         self._fuel -= 1
@@ -222,21 +273,29 @@ class Evaluator:
                 budget=self._budget,
             )
         if isinstance(value, Form):
-            return self._eval_form(value, env, depth)
+            return (yield from self._eval_form(value, env, depth))
         if isinstance(value, Symbol):
             name = str(value)
             if name not in env:
                 raise EvalError(f"undefined symbol: {name}")
             return env[name]
         if isinstance(value, list):
-            return [self.eval(item, env, depth + 1) for item in value]
+            items: list[Any] = []
+            for item in value:
+                items.append((yield from self._eval(item, env, depth + 1)))
+            return items
         if isinstance(value, dict):
             # map keys stay literal (keywords in practice); values evaluate
-            return {key: self.eval(item, env, depth + 1) for key, item in value.items()}
+            mapping: dict[Any, Any] = {}
+            for key, item in value.items():
+                mapping[key] = yield from self._eval(item, env, depth + 1)
+            return mapping
         # nil / bool / number / string / Keyword: self-evaluating
         return value
 
-    def _eval_form(self, form: Form, env: dict[str, Any], depth: int) -> Any:
+    def _eval_form(
+        self, form: Form, env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, Any]:
         if not form:
             raise EvalError("cannot evaluate empty form ()")
         head = form[0]
@@ -246,33 +305,35 @@ class Evaluator:
             # shape error.
             if not isinstance(head, Form):
                 raise EvalError(f"form head must be a symbol, got {dumps(head)}")
-            fn_value = self.eval(head, env, depth + 1)
+            fn_value = yield from self._eval(head, env, depth + 1)
             if not isinstance(fn_value, Closure):
                 raise EvalError(f"form head is not callable: {dumps(head)}")
-            args = [self.eval(arg, env, depth + 1) for arg in form[1:]]
-            return self._apply(fn_value, args, depth)
+            args = yield from self._eval_values(form[1:], env, depth)
+            return (yield from self._apply(fn_value, args, depth))
         name = str(head)
         if name in SPECIAL_FORMS:
-            return self._eval_special(name, form, env, depth)
+            return (yield from self._eval_special(name, form, env, depth))
         if name in env:
             # Environment bindings shadow builtins (ADR 0021 head
             # resolution: special form → env Closure → builtin).
             bound = env[name]
             if not isinstance(bound, Closure):
                 raise EvalError(f"{name} is not callable (in form {dumps(form)})")
-            args = [self.eval(arg, env, depth + 1) for arg in form[1:]]
-            return self._apply(bound, args, depth)
+            args = yield from self._eval_values(form[1:], env, depth)
+            return (yield from self._apply(bound, args, depth))
         builtin = self._builtins.get(name)
         if builtin is None:
             raise EvalError(f"unknown function: {name} (in form {dumps(form)})")
-        args = [self.eval(arg, env, depth + 1) for arg in form[1:]]
+        args = yield from self._eval_values(form[1:], env, depth)
         if builtin.closure is not None:
             # Data-defined word (closure-backed entry): applied like any
             # closure — the body draws fuel and depth from this run,
             # unlike a host builtin's unmetered internals.
-            return self._apply(builtin.closure, args, depth)
+            return (yield from self._apply(builtin.closure, args, depth))
         fn = builtin.fn
         assert fn is not None  # Builtin.__post_init__: exactly one of fn / closure
+        if not builtin.pure:
+            return (yield BuiltinCall(name=name, builtin=builtin, args=args, env=env))
         try:
             return fn(env, *args)
         except EvalError:
@@ -280,7 +341,9 @@ class Evaluator:
         except Exception as e:
             raise EvalError(f"{name} failed: {e} (in form {dumps(form)})") from e
 
-    def _apply(self, closure: Closure, args: list[Any], depth: int) -> Any:
+    def _apply(
+        self, closure: Closure, args: list[Any], depth: int
+    ) -> Generator[BuiltinCall, Any, Any]:
         """Apply a closure: arity check, bind parameters, run the body.
 
         The body evaluates in ``dict(closure.env)`` extended with the
@@ -307,12 +370,14 @@ class Evaluator:
         try:
             result: Any = None
             for body_form in closure.body:
-                result = self.eval(body_form, local, depth + 1)
+                result = yield from self._eval(body_form, local, depth + 1)
             return result
         finally:
             self._loop_stack = saved_loop_stack
 
-    def _eval_special(self, name: str, form: Form, env: dict[str, Any], depth: int) -> Any:
+    def _eval_special(
+        self, name: str, form: Form, env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, Any]:
         args = form[1:]
         if name == "quote":
             if len(args) != 1:
@@ -321,31 +386,31 @@ class Evaluator:
         if name == "if":
             if len(args) not in (2, 3):
                 raise EvalError(f"if expects 2 or 3 arguments, got {len(args)}")
-            if self.eval(args[0], env, depth + 1):
-                return self.eval(args[1], env, depth + 1)
-            return self.eval(args[2], env, depth + 1) if len(args) == 3 else None
+            if (yield from self._eval(args[0], env, depth + 1)):
+                return (yield from self._eval(args[1], env, depth + 1))
+            return (yield from self._eval(args[2], env, depth + 1)) if len(args) == 3 else None
         if name == "when":
             if not args:
                 raise EvalError("when expects a test form")
-            if not self.eval(args[0], env, depth + 1):
+            if not (yield from self._eval(args[0], env, depth + 1)):
                 return None
-            return self._eval_body(args[1:], env, depth)
+            return (yield from self._eval_body(args[1:], env, depth))
         if name == "let":
             if len(args) < 2:
                 raise EvalError("let expects a binding vector and at least one body form")
-            local = self._eval_bindings(args[0], env, depth)
-            return self._eval_body(args[1:], local, depth)
+            local = yield from self._eval_bindings(args[0], env, depth)
+            return (yield from self._eval_body(args[1:], local, depth))
         if name == "and":
             result: Any = True
             for arg in args:
-                result = self.eval(arg, env, depth + 1)
+                result = yield from self._eval(arg, env, depth + 1)
                 if not result:
                     return result
             return result
         if name == "or":
             result = None
             for arg in args:
-                result = self.eval(arg, env, depth + 1)
+                result = yield from self._eval(arg, env, depth + 1)
                 if result:
                     return result
             return result
@@ -353,17 +418,17 @@ class Evaluator:
             if len(args) < 2:
                 raise EvalError("while expects a binding vector and a test")
             names = _binding_names(args[0], "while")
-            local = self._eval_bindings(args[0], env, depth)
+            local = yield from self._eval_bindings(args[0], env, depth)
             test, body = args[1], args[2:]
             self._loop_stack.append(names)
             try:
                 while True:
                     try:
-                        if not self.eval(test, local, depth + 1):
+                        if not (yield from self._eval(test, local, depth + 1)):
                             return None
                         last: Any = None
                         for form in body:
-                            last = self.eval(form, local, depth + 1)
+                            last = yield from self._eval(form, local, depth + 1)
                         return last
                     except _Recur as r:
                         # Rebinding with the recurred values, loop again.
@@ -378,7 +443,7 @@ class Evaluator:
                 raise EvalError(f"recur expects {len(names)} arguments, got {len(args)}")
             # All recur arguments evaluate in the old env, then rebind
             # simultaneously (Clojure semantics).
-            new_vals = [self.eval(arg, env, depth + 1) for arg in args]
+            new_vals = yield from self._eval_values(args, env, depth)
             new_local = dict(env)
             for nm, val in zip(names, new_vals, strict=True):
                 new_local[nm] = val
@@ -412,7 +477,7 @@ class Evaluator:
             binder = args[0]
             if not isinstance(binder, Symbol):
                 raise EvalError(f"{name} binding must be a symbol, got {dumps(binder)}")
-            coll = self.eval(args[2], env, depth + 1)
+            coll = yield from self._eval(args[2], env, depth + 1)
             if isinstance(coll, Form) or not isinstance(coll, list):
                 raise EvalError(f"{name} expects a vector collection, got {dumps(coll)}")
             body = args[1]
@@ -420,7 +485,7 @@ class Evaluator:
             for item in coll:
                 item_env = dict(env)
                 item_env[str(binder)] = item
-                value = self.eval(body, item_env, depth + 1)
+                value = yield from self._eval(body, item_env, depth + 1)
                 if name == "map":
                     out.append(value)
                 elif value:
@@ -432,27 +497,39 @@ class Evaluator:
             acc_name, x_name = args[0], args[1]
             if not isinstance(acc_name, Symbol) or not isinstance(x_name, Symbol):
                 raise EvalError("reduce bindings must be symbols")
-            acc = self.eval(args[3], env, depth + 1)
-            coll = self.eval(args[4], env, depth + 1)
+            acc = yield from self._eval(args[3], env, depth + 1)
+            coll = yield from self._eval(args[4], env, depth + 1)
             if isinstance(coll, Form) or not isinstance(coll, list):
                 raise EvalError(f"reduce expects a vector collection, got {dumps(coll)}")
             for item in coll:
                 item_env = dict(env)
                 item_env[str(acc_name)] = acc
                 item_env[str(x_name)] = item
-                acc = self.eval(args[2], item_env, depth + 1)
+                acc = yield from self._eval(args[2], item_env, depth + 1)
             return acc
         raise EvalError(f"unknown special form: {name}")
 
-    def _eval_bindings(self, bindings: Any, env: dict[str, Any], depth: int) -> dict[str, Any]:
+    def _eval_bindings(
+        self, bindings: Any, env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, dict[str, Any]]:
         names = _binding_names(bindings, "let")
         local = dict(env)
         for name, init in zip(names, bindings[1::2], strict=True):
-            local[name] = self.eval(init, local, depth + 1)
+            local[name] = yield from self._eval(init, local, depth + 1)
         return local
 
-    def _eval_body(self, body: list[Any], env: dict[str, Any], depth: int) -> Any:
+    def _eval_body(
+        self, body: list[Any], env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, Any]:
         result: Any = None
         for form in body:
-            result = self.eval(form, env, depth + 1)
+            result = yield from self._eval(form, env, depth + 1)
+        return result
+
+    def _eval_values(
+        self, values: list[Any], env: dict[str, Any], depth: int
+    ) -> Generator[BuiltinCall, Any, list[Any]]:
+        result: list[Any] = []
+        for value in values:
+            result.append((yield from self._eval(value, env, depth + 1)))
         return result

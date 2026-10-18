@@ -1,0 +1,440 @@
+"""The shipped newspaper DSL against durable program state and the real post office."""
+
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+
+from tests.mail_helpers import make_office
+from tlon.agents.member_spec import MemberSpec
+from tlon.agents.program_driver import ProgramDriver
+from tlon.agents.program_effects import ProgramEffects
+from tlon.agents.program_store import ProgramStore
+from tlon.agents.vocabulary import make_member_builtins, rule_env
+from tlon.base.events.event_bus import EventBus
+from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mailbox import Mailbox
+from tlosure.builtins import ActionRequest
+from tlosure.edn import Keyword, dumps, loads
+
+EXAMPLE = Path(__file__).parents[2] / "tlon/resources/examples/newspaper/behavior.tlon"
+ADDRESS = "newspaper@tlon.internal"
+ADMIN = "operator@tlon.internal"
+
+
+class PowerLoss(BaseException):
+    """A process interruption, including the committed-mail/unrecorded-result window."""
+
+
+class NewspaperHarness:
+    """Generic program interpreter fixture; all business decisions stay in the DSL."""
+
+    def __init__(self, home: Path) -> None:
+        self.home = home
+        self.spec = MemberSpec.from_edn(loads(EXAMPLE.read_text()))
+        self.store = ProgramStore(home / "newspaper/program.sqlite3")
+        self.office = make_office(
+            EventBus(), home, ["newspaper", "a", "b", "c", "d", "reporter", "operator"]
+        )
+        self.llm = SimpleNamespace(
+            chat=AsyncMock(
+                return_value=SimpleNamespace(
+                    content="来信简报：两位投稿人报告了各自观察，相关陈述尚待独立核实。",
+                    usage={"completion_tokens": 30},
+                    tool_calls=[],
+                )
+            )
+        )
+        self.effects = ProgramEffects(
+            from_address=ADDRESS,
+            llm_client=self.llm,
+            system_prompt=AsyncMock(return_value="保留投稿来源，诚实编辑。"),
+            post_office=self.office,
+        )
+        self.crash_after_address: str | None = None
+        self.fail_before_address: str | None = None
+
+    @staticmethod
+    def message(sender: str, subject: str, content: str = "命令") -> Mail:
+        return Mail.create(from_address=sender, to=[ADDRESS], subject=subject, content=content)
+
+    async def execute(self, mail: Mail, invocation: str = "") -> None:
+        rule = self.spec.rules[0]
+        run_id = f"mail:{mail.id}:{rule.name}:{invocation}"
+        run = self.store.ensure(run_id, dumps(rule.to_edn_data()), dumps(mail.to_dict()))
+        if run.completed:
+            return
+        env = rule_env({"mail": mail}, member_id="newspaper", name="来信报")
+
+        async def effect(request: ActionRequest, name: str, index: int, args: str) -> Any:
+            if request.kind == "mark_read":
+                await Mailbox(self.home / "shared/mail.sqlite3", "newspaper").mark_read(mail.id)
+                return None
+            if request.kind == "send_mail":
+                address = request.data["to"][0]
+                if address == self.fail_before_address:
+                    self.fail_before_address = None
+                    raise OSError("temporary delivery failure")
+                receipt = await self.effects.execute(
+                    request, run_id, run_id, index, self.store, args
+                )
+                if address == self.crash_after_address:
+                    self.crash_after_address = None
+                    raise PowerLoss()
+                return receipt
+            return await self.effects.execute(request, run_id, run_id, index, self.store, args)
+
+        await ProgramDriver(self.store, run_id, make_member_builtins(), effect).run(rule, env)
+        self.store.complete(run_id)
+
+    def restart(self) -> None:
+        self.store = ProgramStore(self.home / "newspaper/program.sqlite3")
+
+    async def inbox(self, member: str) -> list[Mail]:
+        return await Mailbox(self.home / "shared/mail.sqlite3", member).inbox()
+
+
+async def test_newsroom_freezes_sources_and_recovers_each_real_delivery(tmp_path: Path) -> None:
+    paper = NewspaperHarness(tmp_path)
+    for person in ("a", "b", "c"):
+        await paper.execute(paper.message(f"{person}@tlon.internal", "subscribe"))
+    await paper.execute(paper.message("c@tlon.internal", "unsubscribe"))
+    first = paper.message("reporter@tlon.internal", "submit", "第一条观察。")
+    second = paper.message("a@tlon.internal", "submit", "第二条观察。")
+    await paper.execute(first)
+    # Reimporting the same mail in a distinct invocation also exercises DSL de-duplication.
+    await paper.execute(first, invocation="reimport")
+    await paper.execute(second)
+    assert paper.store.state_get("pending") == [first.id, second.id]
+    publish = paper.message(ADMIN, "publish:001")
+    paper.crash_after_address = "a@tlon.internal"
+    with pytest.raises(PowerLoss):
+        await paper.execute(publish)
+    frozen = paper.store.state_get("edition:001")
+    assert frozen[Keyword("source-ids")] == [first.id, second.id]
+    assert frozen[Keyword("subscribers")] == ["a@tlon.internal", "b@tlon.internal"]
+    assert len(await paper.inbox("a")) == 1
+    assert await paper.inbox("b") == []
+    assert frozen[Keyword("delivered")] == {}
+
+    paper.restart()
+    paper.fail_before_address = "b@tlon.internal"
+    with pytest.raises(OSError, match="temporary delivery failure"):
+        await paper.execute(publish)
+    assert len(await paper.inbox("a")) == 1
+    assert "a@tlon.internal" in paper.store.state_get("edition:001")[Keyword("delivered")]
+    paper.restart()
+    await paper.execute(publish)
+    assert paper.llm.chat.await_count == 1
+    for person in ("a", "b"):
+        inbox = await paper.inbox(person)
+        assert len(inbox) == 1
+        assert inbox[0].content == frozen[Keyword("content")]
+        assert first.id in inbox[0].content and second.id in inbox[0].content
+    assert await paper.inbox("c") == []
+
+    # A new command for an existing issue must use its frozen recipient/content snapshot.
+    await paper.execute(paper.message("d@tlon.internal", "subscribe"))
+    third = paper.message("reporter@tlon.internal", "submit", "后续投稿。")
+    await paper.execute(third)
+    await paper.execute(paper.message(ADMIN, "publish:001"))
+    assert paper.llm.chat.await_count == 1
+    assert await paper.inbox("d") == []
+    assert paper.store.state_get("pending") == [third.id]
+    assert len(await paper.inbox("a")) == 1
+    assert len(await paper.inbox("b")) == 1
+    await paper.execute(paper.message(ADMIN, "publish:002"))
+    assert paper.llm.chat.await_count == 2
+    assert paper.store.state_get("edition:002")[Keyword("source-ids")] == [third.id]
+    assert len(await paper.inbox("d")) == 1
+
+
+async def test_empty_issue_and_unprivileged_publish_do_not_call_model(tmp_path: Path) -> None:
+    paper = NewspaperHarness(tmp_path)
+    await paper.execute(paper.message("a@tlon.internal", "subscribe", "替 b 订阅"))
+    assert paper.store.state_get("subscribers") == ["a@tlon.internal"]
+    await paper.execute(paper.message(ADMIN, "publish:empty"))
+    assert paper.store.state_get("edition:empty")[Keyword("source-ids")] == []
+    paper.llm.chat.assert_not_awaited()
+    await paper.execute(paper.message("reporter@tlon.internal", "submit", "消息"))
+    await paper.execute(paper.message("a@tlon.internal", "publish:forbidden"))
+    assert paper.store.state_get("edition:forbidden") is None
+    paper.llm.chat.assert_not_awaited()
+    assert await paper.inbox("a") == []
+
+
+@pytest.mark.parametrize("body", ["", " \n\t"])
+async def test_blank_editorial_is_not_frozen_or_sent(tmp_path: Path, body: str) -> None:
+    paper = NewspaperHarness(tmp_path)
+    paper.llm.chat.return_value.content = body
+    await paper.execute(paper.message("a@tlon.internal", "subscribe"))
+    story = paper.message("reporter@tlon.internal", "submit", "消息")
+    await paper.execute(story)
+    await paper.execute(paper.message(ADMIN, "publish:invalid"))
+    assert paper.store.state_get("edition:invalid") is None
+    assert paper.store.state_get("pending") == [story.id]
+    assert await paper.inbox("a") == []
+
+
+async def test_member_runtime_recovers_a_read_publication_before_program_completion(
+    tmp_path: Path,
+) -> None:
+    """Real event delivery and startup recovery do not depend on unread mail."""
+    import asyncio
+
+    from tlon.agents.member_runtime import MemberRuntime
+    from tlon.base.paths import TlonPaths
+
+    paper = NewspaperHarness(tmp_path)
+    bus = EventBus()
+    paper.office = make_office(bus, tmp_path, ["newspaper", "a", "reporter", "operator"])
+    paper.effects = ProgramEffects(
+        from_address=ADDRESS,
+        llm_client=paper.llm,
+        system_prompt=AsyncMock(return_value="诚实编辑，保留来源。"),
+        post_office=paper.office,
+    )
+
+    def runtime() -> MemberRuntime:
+        member = MemberRuntime(
+            member_id="newspaper",
+            name="来信报",
+            event_bus=bus,
+            spec=paper.spec,
+            builtins=make_member_builtins(),
+            mailbox=Mailbox(tmp_path / "shared/mail.sqlite3", "newspaper"),
+            post_office=paper.office,
+            tlon_paths=TlonPaths(home=tmp_path),
+        )
+        member._program_effects = paper.effects
+        return member
+
+    member = runtime()
+    await bus.initialize()
+    await member.initialize()
+    mailbox = Mailbox(tmp_path / "shared/mail.sqlite3", "newspaper")
+
+    async def send_and_drain(sender: str, subject: str, content: str = "命令") -> Mail:
+        receipt = await paper.office.send(
+            from_address=sender, to=[ADDRESS], subject=subject, content=content
+        )
+
+        async def completed() -> None:
+            for _ in range(300):
+                if (
+                    receipt.mail.id not in [mail.id for mail in await mailbox.unread()]
+                    and not member._program_store.pending()
+                ):
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError(f"program did not complete: {subject}")
+
+        await asyncio.wait_for(completed(), 5)
+        return receipt.mail
+
+    try:
+        await send_and_drain("a@tlon.internal", "subscribe")
+        story = await send_and_drain("reporter@tlon.internal", "submit", "真实触发投稿。")
+        crashed = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def interrupt_before_complete(run_id: str) -> None:
+            loop.call_soon_threadsafe(crashed.set)
+            raise asyncio.CancelledError()
+
+        member._program_store.complete = interrupt_before_complete
+        await paper.office.send(
+            from_address=ADMIN, to=[ADDRESS], subject="publish:runtime", content="出版"
+        )
+        await asyncio.wait_for(crashed.wait(), 5)
+        assert await mailbox.unread() == []
+        assert len(member._program_store.pending()) == 1
+        assert len(await paper.inbox("a")) == 1
+        await member.shutdown()
+
+        member = runtime()
+        await asyncio.wait_for(member.initialize(), 5)
+
+        async def recovery_completed() -> None:
+            for _ in range(300):
+                if not member._program_store.pending():
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("startup recovery did not complete")
+
+        await asyncio.wait_for(recovery_completed(), 5)
+        await asyncio.wait_for(member._queue.join(), 5)
+        assert member._program_store.pending() == []
+        assert await mailbox.unread() == []
+        assert len(await paper.inbox("a")) == 1
+        assert story.id in (await paper.inbox("a"))[0].content
+        paper.llm.chat.assert_awaited_once()
+    finally:
+        await member.shutdown()
+        await bus.shutdown()
+
+
+@pytest.mark.parametrize("mail_event", [True, False], ids=["read-mail", "non-mail-event"])
+async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
+    tmp_path: Path, mail_event: bool
+) -> None:
+    """Accept all matching rules durably before the first one can consume its trigger."""
+    import asyncio
+
+    from tlon.agents.member_runtime import MemberRuntime
+    from tlon.base.events.event import Event, EventType
+    from tlon.base.paths import TlonPaths
+
+    on = "mail-delivered" if mail_event else "agent-idle"
+    mark_read = "(mark-read)" if mail_event else ""
+    spec = MemberSpec.from_edn(
+        loads(
+            f"""{{:version 1 :execution {{:level :L0}} :rules [
+            {{:name "first" :on :{on}
+              :actions [(state-put "first" true) {mark_read}]}}
+            {{:name "second" :on :{on} :actions [(state-put "second" true)]}}]}}"""
+        )
+    )
+    bus = EventBus()
+    office = make_office(bus, tmp_path, ["newspaper", "operator"])
+    mailbox = Mailbox(tmp_path / "shared/mail.sqlite3", "newspaper")
+
+    def runtime() -> MemberRuntime:
+        return MemberRuntime(
+            member_id="newspaper",
+            name="多规则恢复",
+            event_bus=bus,
+            spec=spec,
+            builtins=make_member_builtins(),
+            mailbox=mailbox,
+            post_office=office,
+            tlon_paths=TlonPaths(home=tmp_path),
+        )
+
+    member = runtime()
+    await bus.initialize()
+    await member.initialize()
+    crashed = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    complete = member._program_store.complete
+
+    def interrupt_first(run_id: str) -> None:
+        if run_id.endswith(":first"):
+            loop.call_soon_threadsafe(crashed.set)
+            raise asyncio.CancelledError()
+        complete(run_id)
+
+    member._program_store.complete = interrupt_first
+    try:
+        if mail_event:
+            await office.send(from_address=ADMIN, to=[ADDRESS], content="真实事件")
+        else:
+            await bus.publish(
+                Event(type=EventType.AGENT_IDLE, payload={"agent_id": "operator"}, source="test")
+            )
+        await asyncio.wait_for(crashed.wait(), 5)
+        assert member._program_store.state_get("first") is True
+        assert member._program_store.state_get("second") is None
+        assert len(member._program_store.pending()) == 2
+        assert await mailbox.unread() == []
+        await member.shutdown()
+
+        member = runtime()
+        await asyncio.wait_for(member.initialize(), 5)
+
+        async def recovered() -> None:
+            for _ in range(300):
+                if (
+                    member._program_store.state_get("second") is True
+                    and not member._program_store.pending()
+                ):
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("later matching rule was lost at the first rule interruption")
+
+        await asyncio.wait_for(recovered(), 5)
+        assert await mailbox.unread() == []
+        assert member._program_store.state_get("first") is True
+        assert member._program_store.state_get("second") is True
+    finally:
+        await member.shutdown()
+        await bus.shutdown()
+
+
+async def test_terminal_expression_error_preserves_effects_and_does_not_block_new_mail(
+    tmp_path: Path,
+) -> None:
+    """A failed program remains visibly failed, while later mail can make progress."""
+    import asyncio
+
+    from tlon.agents.member_runtime import MemberRuntime
+    from tlon.base.paths import TlonPaths
+
+    spec = MemberSpec.from_edn(
+        loads("""{:version 1 :execution {:level :L0} :rules [
+          {:name "work" :on :mail-delivered :actions [
+            (state-put "seen" (mail-field msg :id))
+            (if (= (mail-field msg :subject) "broken")
+              (/ 1 0)
+              (state-put "healthy" true))
+            (mark-read)]}]}""")
+    )
+    bus = EventBus()
+    office = make_office(bus, tmp_path, ["newspaper", "operator"])
+    mailbox = Mailbox(tmp_path / "shared/mail.sqlite3", "newspaper")
+    member = MemberRuntime(
+        member_id="newspaper",
+        name="失败隔离",
+        event_bus=bus,
+        spec=spec,
+        builtins=make_member_builtins(),
+        mailbox=mailbox,
+        post_office=office,
+        tlon_paths=TlonPaths(home=tmp_path),
+    )
+    await bus.initialize()
+    await member.initialize()
+
+    async def settled(mail_id: str) -> None:
+        for _ in range(300):
+            if (
+                member._program_store.state_get("seen") == mail_id
+                and not member._program_store.pending()
+            ):
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("program never reached completed or failed state")
+
+    try:
+        broken = await office.send(
+            from_address=ADMIN, to=[ADDRESS], subject="broken", content="表达式将失败"
+        )
+        await asyncio.wait_for(settled(broken.mail.id), 5)
+        run_id = f"{broken.mail.id}:work"
+        failed = member._program_store.ensure(run_id, "unused", "unused")
+        assert not failed.completed
+        assert failed.error
+        assert member._program_store.pending() == []
+        found, recorded = member._program_store.get_effect(
+            run_id, 0, "state-put", dumps(("seen", broken.mail.id))
+        )
+        assert found and loads(recorded) == broken.mail.id
+        assert [mail.id for mail in await mailbox.unread()] == [broken.mail.id]
+
+        good = await office.send(
+            from_address=ADMIN, to=[ADDRESS], subject="healthy", content="后续信仍须运行"
+        )
+        await asyncio.wait_for(settled(good.mail.id), 5)
+        assert member._program_store.state_get("healthy") is True
+        assert member._program_store.pending() == []
+        failed_after = member._program_store.ensure(run_id, "unused", "unused")
+        assert failed_after.error == failed.error
+        assert not failed_after.completed
+        assert member._program_store.get_effect(
+            run_id, 0, "state-put", dumps(("seen", broken.mail.id))
+        ) == (found, recorded)
+    finally:
+        await member.shutdown()
+        await bus.shutdown()

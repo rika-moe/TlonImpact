@@ -165,6 +165,10 @@ class TlonPaths:
         """~/.tlon/{agent_id}/sessions.sqlite3 — session events (ADR 0032)."""
         return self.agent_dir(agent_id) / "sessions.sqlite3"
 
+    def agent_program_database_file(self, agent_id: str) -> Path:
+        """Member private structured state and program effect records (ADR 0043)."""
+        return self.agent_dir(agent_id) / "program.sqlite3"
+
     def agent_mail_dir(self, agent_id: str) -> Path:
         return self._home / agent_id / "mail"
 

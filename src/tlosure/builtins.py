@@ -10,12 +10,12 @@ naming a host business concept):
   either a host ``fn`` or a data-defined :class:`Closure`),
   :class:`Closure` (the user function value ``defn`` / ``fn`` produce,
   ADR 0021), and :class:`ActionRequest` (the side-effect *data* an action
-  builtin produces; the host engine executes the requests after
-  evaluation completes — "the DSL describes, the engine executes");
+  builtin produces), and :class:`BuiltinCall` (a suspended host call
+  whose result an asynchronous host supplies back to the expression);
 - the general vocabulary: pure, total functions any host composes into
   its own registries — :data:`CORE_BUILTINS` (``=`` / ``not`` /
   ``contains?`` / ``get`` / ``str`` / ``split`` / ``join`` /
-  ``substring``) and :data:`ARITHMETIC_BUILTINS`
+  ``substring`` / immutable collection updates) and :data:`ARITHMETIC_BUILTINS`
   (``+`` / ``-`` / ``*`` / ``/`` / ``inc`` / ``dec`` / comparisons). Pure only,
   so evaluation against either registry is side-effect free by
   construction.
@@ -115,13 +115,35 @@ class Builtin:
 
 
 @dataclass(frozen=True)
+class BuiltinCall:
+    """A suspended impure host call, before its function has been invoked.
+
+    Hosts may return a recorded result without invoking the function. The
+    environment and registry entry are runtime objects; durable journals
+    record the name, positional arguments and result instead.
+    """
+
+    name: str
+    builtin: Builtin
+    args: list[Any]
+    env: dict[str, Any]
+
+    def invoke(self) -> Any:
+        """Invoke the host function to validate arguments and produce its data."""
+        fn = self.builtin.fn
+        if fn is None:
+            raise EvalError("closure-backed words must run through the evaluator")
+        return fn(self.env, *self.args)
+
+
+@dataclass(frozen=True)
 class ActionRequest:
     """A side-effecting action recorded during pure evaluation.
 
-    Evaluation of an action builtin performs no side effect; it validates
-    its arguments and either appends one of these to a collector (when the
-    host attached one) or returns it as the action form's value. The host
-    engine executes the produced requests after evaluation completes.
+    A host builtin validates its arguments and returns this data. A
+    synchronous caller can collect the requests; an asynchronous handler
+    can execute them at the call boundary and resume with actual results.
+    The language core never implements or dispatches a host action.
     """
 
     kind: str  # the action name (the host's action vocabulary)
@@ -237,10 +259,89 @@ def builtin_count(env: dict[str, Any], coll: Any) -> int:
     raise EvalError(f"count expects a vector, map or string, got {type(coll).__name__}")
 
 
+def builtin_assoc(env: dict[str, Any], target: Any, *pairs: Any) -> dict[Any, Any] | list[Any]:
+    """Return a map/vector copy with key-value pairs applied in order.
+
+    Vector indices must already exist, or equal its length to append.
+    Maps use literal EDN keys; no input collection is mutated.
+    """
+    if len(pairs) % 2:
+        raise EvalError("assoc expects key-value pairs")
+    if isinstance(target, dict):
+        mapping = dict(target)
+        for key, value in zip(pairs[::2], pairs[1::2], strict=True):
+            try:
+                mapping[key] = value
+            except TypeError as error:
+                raise EvalError("assoc map key must be hashable") from error
+        return mapping
+    if type(target) is list:
+        vector = list(target)
+        for key, value in zip(pairs[::2], pairs[1::2], strict=True):
+            if type(key) is not int or not 0 <= key <= len(vector):
+                raise EvalError("assoc vector index must be an integer within [0, count]")
+            if key == len(vector):
+                vector.append(value)
+            else:
+                vector[key] = value
+        return vector
+    raise EvalError("assoc expects a map or vector")
+
+
+def builtin_dissoc(env: dict[str, Any], target: Any, *keys: Any) -> dict[Any, Any]:
+    """Return a map copy without the supplied keys; missing keys are harmless."""
+    if not isinstance(target, dict):
+        raise EvalError("dissoc expects a map")
+    result = dict(target)
+    for key in keys:
+        try:
+            hash(key)
+            result.pop(key, None)
+        except TypeError as error:
+            raise EvalError("dissoc map key must be hashable") from error
+    return result
+
+
+def builtin_conj(env: dict[str, Any], target: Any, *items: Any) -> dict[Any, Any] | list[Any]:
+    """Append to a vector, or add two-element entry vectors to a map copy."""
+    if type(target) is list:
+        return [*target, *items]
+    if isinstance(target, dict):
+        result = dict(target)
+        for item in items:
+            if type(item) is not list or len(item) != 2:
+                raise EvalError("conj map entries must be two-element vectors")
+            try:
+                result[item[0]] = item[1]
+            except TypeError as error:
+                raise EvalError("conj map key must be hashable") from error
+        return result
+    raise EvalError("conj expects a map or vector")
+
+
+def builtin_keys(env: dict[str, Any], target: Any) -> list[Any]:
+    """Return map keys in insertion order."""
+    if not isinstance(target, dict):
+        raise EvalError("keys expects a map")
+    return list(target)
+
+
+def builtin_vals(env: dict[str, Any], target: Any) -> list[Any]:
+    """Return map values in insertion order, matching ``keys``."""
+    if not isinstance(target, dict):
+        raise EvalError("vals expects a map")
+    return list(target.values())
+
+
 #: General-purpose pure vocabulary: host-agnostic building blocks any
 #: host registry may include verbatim. Pure only; evaluation against it
 #: is side-effect free by construction.
 CORE_BUILTINS: dict[str, Builtin] = {
+    "assoc": Builtin(builtin_assoc, pure=True),
+    "dissoc": Builtin(builtin_dissoc, pure=True),
+    "conj": Builtin(builtin_conj, pure=True),
+    "keys": Builtin(builtin_keys, pure=True),
+    "vals": Builtin(builtin_vals, pure=True),
     "=": Builtin(builtin_eq, pure=True),
     "not": Builtin(builtin_not, pure=True),
     "contains?": Builtin(builtin_contains, pure=True),
