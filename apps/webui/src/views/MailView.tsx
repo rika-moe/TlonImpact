@@ -1,10 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent, ReactElement } from "react";
 import { MailSendError } from "../client/rest";
 import type { RestClient } from "../client/rest";
 import { groupByThread, localPart, threadMatchesFilter } from "../lib/threads";
 import { MailboxController } from "../lib/mailbox";
 import { memberAddress, selfMemberId } from "../lib/members";
+import { RecipientInput } from "../components/RecipientInput";
+import { commitRecipients } from "../lib/recipients";
+import type { RecipientField } from "../lib/recipients";
 import type {
   MailItem,
   ParticipantInfo,
@@ -21,14 +24,6 @@ function formatTime(timestamp: string): string {
   }
 }
 
-/** Split a comma-separated recipient field into trimmed entries. */
-function splitList(value: string): string[] {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
-
 /** A human participant is online while it has at least one live session. */
 function isOnlineHuman(p: ParticipantInfo): boolean {
   return (
@@ -36,12 +31,6 @@ function isOnlineHuman(p: ParticipantInfo): boolean {
     typeof p.metadata?.session_count === "number" &&
     p.metadata.session_count > 0
   );
-}
-
-/** The recipient segment currently being typed (after the last comma). */
-function currentSegment(value: string): string {
-  const idx = value.lastIndexOf(",");
-  return (idx >= 0 ? value.slice(idx + 1) : value).trim();
 }
 
 /** Open compose/reply request handed to the modal. */
@@ -59,6 +48,9 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
   // Whose mailbox is being observed; defaults to myself.
   const [observedId, setObservedId] = useState<string>(selfId);
   const [participants, setParticipants] = useState<ParticipantInfo[]>([]);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [participantsError, setParticipantsError] = useState<string | null>(null);
+  const participantsRequest = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [compose, setCompose] = useState<ComposeRequest | null>(null);
@@ -78,19 +70,30 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
   }, [mailbox]);
 
 
-  // Address book load (once; it also feeds the observation picker).
-  useEffect(() => {
-    let cancelled = false;
-    rest
-      .listParticipants()
-      .then((list) => {
-        if (!cancelled) setParticipants(list);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+  const loadParticipants = useCallback(async (): Promise<void> => {
+    const generation = ++participantsRequest.current;
+    setParticipantsLoading(true);
+    setParticipantsError(null);
+    try {
+      const list = await rest.listParticipants();
+      if (generation === participantsRequest.current) setParticipants(list);
+    } catch (error) {
+      if (generation === participantsRequest.current) {
+        setParticipantsError(`Address book unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } finally {
+      if (generation === participantsRequest.current) setParticipantsLoading(false);
+    }
   }, [rest]);
+
+  useEffect(() => {
+    void loadParticipants();
+    return () => { ++participantsRequest.current; };
+  }, [loadParticipants]);
+
+  useEffect(() => {
+    if (compose) void loadParticipants();
+  }, [compose, loadParticipants]);
 
   const threads = useMemo(
     () => groupByThread(mails, observedAddress),
@@ -153,7 +156,7 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
         <span className="mail-spacer" />
         {notice ? <span className="mail-notice">{notice}</span> : null}
         <button type="button" className="btn btn--secondary" disabled={syncing}
-          onClick={() => void mailbox.refresh()}>{syncing ? "SYNCING…" : "REFRESH MAIL"}</button>
+          onClick={() => { void mailbox.refresh(); void loadParticipants(); }}>{syncing ? "SYNCING…" : "REFRESH MAIL"}</button>
         {readOnly ? null : (
           <button
             type="button"
@@ -164,6 +167,8 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
           </button>
         )}
       </div>
+      {!compose ? <AddressBookStatus loading={participantsLoading} error={participantsError}
+        onRetry={() => void loadParticipants()} /> : null}
       <div className="mail-body">
         <div className="mail-layout">
           <section className="panel mail-threads-panel">
@@ -219,10 +224,28 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
           rest={rest}
           myAddress={myAddress}
           participants={participants}
+          participantsLoading={participantsLoading}
+          participantsError={participantsError}
+          onRetryParticipants={() => void loadParticipants()}
           onSent={onSent}
           onClose={() => setCompose(null)}
         />
       ) : null}
+    </div>
+  );
+}
+
+function AddressBookStatus({ loading, error, onRetry }: {
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}): ReactElement | null {
+  if (loading) return <p className="mail-addressbook-status" role="status">Loading address book…</p>;
+  if (!error) return null;
+  return (
+    <div className="mail-addressbook-status">
+      <span role="alert">{error} You can still enter complete addresses.</span>
+      <button type="button" className="btn btn--secondary" onClick={onRetry}>RETRY ADDRESS BOOK</button>
     </div>
   );
 }
@@ -475,6 +498,9 @@ function ComposeModal({
   rest,
   myAddress,
   participants,
+  participantsLoading,
+  participantsError,
+  onRetryParticipants,
   onSent,
   onClose,
 }: {
@@ -482,11 +508,14 @@ function ComposeModal({
   rest: RestClient;
   myAddress: string;
   participants: ParticipantInfo[];
+  participantsLoading: boolean;
+  participantsError: string | null;
+  onRetryParticipants: () => void;
   onSent: (mail: MailItem, message: string) => void;
   onClose: () => void;
 }): ReactElement {
-  const [to, setTo] = useState(request.to);
-  const [cc, setCc] = useState("");
+  const [to, setTo] = useState<RecipientField>(() => commitRecipients({ recipients: [], draft: request.to }, participants).field);
+  const [cc, setCc] = useState<RecipientField>({ recipients: [], draft: "" });
   const [subject, setSubject] = useState(request.subject);
   const [content, setContent] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -496,9 +525,19 @@ function ComposeModal({
   const submitting = useRef(false);
   const submit = async (): Promise<void> => {
     if (submitting.current) return;
-    const toList = splitList(to);
+    // Parse both drafts synchronously so a send shortcut never uses stale selection state.
+    const resolvedTo = commitRecipients(to, participants);
+    const resolvedCc = commitRecipients(cc, participants);
+    setTo(resolvedTo.field);
+    setCc(resolvedCc.field);
+    if (resolvedTo.error || resolvedCc.error) {
+      setError(`${resolvedTo.error ? "TO" : "CC"}: ${resolvedTo.error ?? resolvedCc.error}`);
+      return;
+    }
+    const toList = resolvedTo.field.recipients.map((recipient) => recipient.address);
+    const ccList = resolvedCc.field.recipients.map((recipient) => recipient.address);
     if (toList.length === 0) {
-      setError("TO is required (comma-separated names, IDs, or addresses).");
+      setError("TO is required. Add at least one recipient.");
       return;
     }
     const body = content.trim();
@@ -506,7 +545,6 @@ function ComposeModal({
       setError("CONTENT is required.");
       return;
     }
-    const ccList = splitList(cc);
     const subjectTrimmed = subject.trim() || undefined;
 
     submitting.current = true;
@@ -551,6 +589,7 @@ function ComposeModal({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    if (e.defaultPrevented || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === "Escape") {
       onClose();
       return;
@@ -568,163 +607,62 @@ function ComposeModal({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
-        <h3 className="tech-label mail-modal-title">
-          {request.kind === "compose" ? "✉ COMPOSE" : "✉ REPLY"}
-        </h3>
-        <RecipientInput
-          label="TO"
-          value={to}
-          onChange={setTo}
-          participants={participants}
-          autoFocus={request.kind === "compose"}
-        />
-        <RecipientInput label="CC" value={cc} onChange={setCc} participants={participants} />
-        <div className="mail-form-row">
-          <span className="tech-label">SUBJECT</span>
-          <input
-            className="input"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-          />
-        </div>
-        <div className="mail-form-row">
-          <span className="tech-label">CONTENT</span>
-          <textarea
-            className="input mail-content"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            autoFocus={request.kind === "reply"}
-          />
-        </div>
-        {error ? <div className="mail-error-bar">{error}</div> : null}
-        <div className="mail-modal-actions">
-          <span className="tech-label">CTRL+ENTER SEND</span>
-          <span className="mail-spacer" />
-          <button
-            type="button"
-            className="btn btn--secondary"
-            onClick={onClose}
+        <div className="mail-modal-body">
+          <h3 className="tech-label mail-modal-title">
+            {request.kind === "compose" ? "✉ COMPOSE" : "✉ REPLY"}
+          </h3>
+          <AddressBookStatus loading={participantsLoading} error={participantsError} onRetry={onRetryParticipants} />
+          <RecipientInput
+            label="TO"
+            value={to}
+            onChange={setTo}
+            participants={participants}
+            autoFocus={request.kind === "compose"}
             disabled={sending}
-          >
-            CANCEL
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() => void submit()}
-            disabled={sending}
-          >
-            {sending ? "SENDING…" : "SEND"}
-          </button>
+          />
+          <RecipientInput label="CC" value={cc} onChange={setCc} participants={participants} disabled={sending} />
+          <div className="mail-form-row">
+            <span className="tech-label">SUBJECT</span>
+            <input
+              className="input"
+              value={subject}
+              disabled={sending}
+              onChange={(e) => setSubject(e.target.value)}
+            />
+          </div>
+          <div className="mail-form-row">
+            <span className="tech-label">CONTENT</span>
+            <textarea
+              className="input mail-content"
+              value={content}
+              disabled={sending}
+              onChange={(e) => setContent(e.target.value)}
+              autoFocus={request.kind === "reply"}
+            />
+          </div>
+          {error ? <div className="mail-error-bar">{error}</div> : null}
+          <div className="mail-modal-actions">
+            <span className="tech-label">CTRL+ENTER SEND</span>
+            <span className="mail-spacer" />
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={onClose}
+              disabled={sending}
+            >
+              CANCEL
+            </button>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void submit()}
+              disabled={sending}
+            >
+              {sending ? "SENDING…" : "SEND"}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-/** Recipient field with a participant autocomplete dropdown. */
-function RecipientInput({
-  label,
-  value,
-  onChange,
-  participants,
-  autoFocus,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  participants: ParticipantInfo[];
-  autoFocus?: boolean;
-}): ReactElement {
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
-
-  const segment = currentSegment(value);
-  const candidates = participants
-    .filter((p) => {
-      const name = p.name ?? "";
-      return segment === "" || name.startsWith(segment) || p.id.startsWith(segment);
-    })
-    .slice(0, 5);
-  const showDropdown = open && candidates.length > 0;
-  const activeIndex = highlight % Math.max(1, candidates.length);
-
-  /** A name shared by multiple participants falls back to the stable id. */
-  const isDup = (c: ParticipantInfo): boolean =>
-    participants.filter((p) => p.name && c.name && p.name === c.name).length > 1;
-  const labelOf = (c: ParticipantInfo): string =>
-    isDup(c) ? `${c.name ?? c.id} (${c.id})` : (c.name ?? c.id);
-
-  /** Fill the current recipient segment with a candidate. */
-  const fill = (c: ParticipantInfo): void => {
-    const idx = value.lastIndexOf(",");
-    const prefix = idx >= 0 ? `${value.slice(0, idx + 1)} ` : "";
-    onChange(prefix + (isDup(c) ? c.id : (c.name ?? c.id)));
-    setHighlight(0);
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
-    if (!showDropdown) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlight((h) => (h + 1) % candidates.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlight((h) => (h - 1 + candidates.length) % candidates.length);
-    } else if (e.key === "Enter" || e.key === "Tab") {
-      e.preventDefault();
-      const candidate = candidates[activeIndex];
-      if (candidate) fill(candidate);
-    } else if (e.key === "Escape") {
-      // Close just the dropdown, not the whole modal.
-      e.stopPropagation();
-      setOpen(false);
-    }
-  };
-
-  return (
-    <div className="mail-form-row">
-      <span className="tech-label">{label}</span>
-      <input
-        className="input"
-        value={value}
-        autoFocus={autoFocus}
-        onChange={(e) => {
-          onChange(e.target.value);
-          setHighlight(0);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        onKeyDown={onKeyDown}
-      />
-      {showDropdown ? (
-        <div className="mail-suggest">
-          {candidates.map((c, i) => (
-            <div
-              key={c.id}
-              className={`mail-suggest-item${i === activeIndex ? " mail-suggest-item--active" : ""}`}
-              // onMouseDown fires before the input's blur closes the dropdown.
-              onMouseDown={(e) => {
-                e.preventDefault();
-                fill(c);
-              }}
-            >
-              <span className="mail-suggest-label">{labelOf(c)}</span>
-              <span className="mail-suggest-badges">
-                {isOnlineHuman(c) ? (
-                  <span className="tech-label mail-online">● ONLINE</span>
-                ) : null}
-                <span
-                  className={`tech-label mail-suggest-type mail-suggest-type--${c.type ?? "agent"}`}
-                >
-                  {(c.type ?? "agent").toUpperCase()}
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }

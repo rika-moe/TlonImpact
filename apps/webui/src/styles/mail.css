@@ -234,13 +234,22 @@
   width: min(560px, 100%);
   max-width: 100%;
   max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Keep the panel's neon frame stationary while its form scrolls inside. */
+.mail-modal-body {
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.mail-modal > * {
+.mail-modal-body > * {
   flex-shrink: 0;
 }
 
@@ -432,4 +441,167 @@ textarea.mail-content {
   .mail-card {
     max-width: 78%;
   }
+}
+
+/* Multi-recipient fields: labels keep stable addresses; only the options scroll. */
+.mail-addressbook-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--neon-yellow);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recipient-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recipient-control {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg);
+  border: var(--border-neon);
+  border-radius: var(--radius);
+}
+
+.recipient-control:focus-within {
+  box-shadow: var(--glow-cyan);
+}
+
+.recipient-chip {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  color: var(--neon-cyan);
+  font-size: 12px;
+}
+
+.recipient-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipient-remove {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.recipient-remove:hover {
+  color: var(--neon-magenta);
+}
+
+.recipient-query {
+  flex: 1 1 160px;
+  width: 0;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.recipient-query::placeholder {
+  color: var(--text-dim);
+}
+
+.recipient-options {
+  min-width: 0;
+  max-height: min(220px, 30dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 4px;
+  padding: 4px;
+  margin: 0;
+  border: var(--border-neon);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  list-style: none;
+}
+
+.recipient-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recipient-option--active,
+.recipient-option:hover {
+  border: var(--border-neon);
+  color: var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.08);
+}
+
+.recipient-option-name,
+.recipient-option-address {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.recipient-option-address {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.recipient-option-type {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.recipient-error {
+  color: var(--neon-magenta);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recipient-empty {
+  padding: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.recipient-remove:focus-visible,
+.recipient-option:focus-visible {
+  outline: 1px solid var(--neon-cyan);
+  outline-offset: 2px;
 }
