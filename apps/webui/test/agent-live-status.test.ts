@@ -7,30 +7,10 @@ function ev(eventType: string, payload: unknown, receivedAt = 1000): ServerEvent
   return { eventType, payload, receivedAt };
 }
 
-test("thinking_start opens the flag, thinking_end closes it with the duration", () => {
-  let map: LiveStatusMap = {};
-  map = applyEvent(
-    map,
-    ev("agent.thinking_start", { agent_id: "a", context_length: 3 }),
-  );
-  assert.equal(map["a"]?.thinking, true);
-  assert.equal(map["a"]?.lastThinkMs, undefined);
-
-  map = applyEvent(map, ev("agent.thinking_end", { agent_id: "a", duration_ms: 1800 }));
-  assert.equal(map["a"]?.thinking, false);
-  assert.equal(map["a"]?.lastThinkMs, 1800);
-});
-
-test("llm_response records duration and model without touching thinking", () => {
-  let map: LiveStatusMap = applyEvent(
-    {},
-    ev("agent.thinking_start", { agent_id: "a" }),
-  );
-  map = applyEvent(
-    map,
-    ev("agent.llm_response", { agent_id: "a", duration_ms: 2300, model: "openai/gpt-5" }),
-  );
-  assert.equal(map["a"]?.thinking, true);
+test("llm_response records duration and model", () => {
+  const map = applyEvent({}, ev("agent.llm_response", {
+    agent_id: "a", duration_ms: 2300, model: "openai/gpt-5",
+  }));
   assert.equal(map["a"]?.lastLlmMs, 2300);
   assert.equal(map["a"]?.lastLlmModel, "openai/gpt-5");
 });
@@ -57,39 +37,32 @@ test("tool.error records a failed tool call", () => {
   assert.deepEqual(map["a"]?.lastTool, { name: "readFile", success: false, at: 7000 });
 });
 
-test("agent.stopped and agent.sleeping clear the thinking flag", () => {
-  let map: LiveStatusMap = applyEvent({}, ev("agent.thinking_start", { agent_id: "a" }));
-  map = applyEvent(map, ev("agent.stopped", { agent_id: "a", stopped_by: "adam" }));
-  assert.equal(map["a"]?.thinking, false);
-
-  map = applyEvent(map, ev("agent.thinking_start", { agent_id: "a" }));
-  map = applyEvent(map, ev("agent.sleeping", { agent_id: "a", idle_seconds: 30 }));
-  assert.equal(map["a"]?.thinking, false);
-});
-
 test("events are tracked per agent independently", () => {
-  let map: LiveStatusMap = applyEvent({}, ev("agent.thinking_start", { agent_id: "a" }));
-  map = applyEvent(map, ev("agent.thinking_start", { agent_id: "b" }));
-  map = applyEvent(map, ev("agent.thinking_end", { agent_id: "a", duration_ms: 100 }));
-  assert.equal(map["a"]?.thinking, false);
-  assert.equal(map["b"]?.thinking, true);
+  let map = applyEvent({}, ev("agent.llm_response", { agent_id: "a", duration_ms: 100 }));
+  map = applyEvent(map, ev("agent.llm_response", { agent_id: "b", duration_ms: 200 }));
+  map = applyEvent(map, ev("agent.llm_response", { agent_id: "a", duration_ms: 300 }));
+  assert.equal(map["a"]?.lastLlmMs, 300);
+  assert.equal(map["b"]?.lastLlmMs, 200);
 });
 
 test("irrelevant events and missing agent_id return the map unchanged", () => {
-  const map: LiveStatusMap = { a: { thinking: true } };
+  const map: LiveStatusMap = { a: { lastLlmMs: 100 } };
   assert.equal(applyEvent(map, ev("mail.new", { from_address: "x@tlon.internal" })), map);
   assert.equal(applyEvent(map, ev("config.updated", { agent_id: "a" })), map);
   assert.equal(applyEvent(map, ev("system.startup", { agents: 2 })), map);
+  for (const eventType of ["agent.thinking_start", "agent.thinking_end", "agent.stopped", "agent.sleeping"]) {
+    assert.equal(applyEvent(map, ev(eventType, { agent_id: "a" })), map);
+  }
   // Relevant type but no agent_id in the payload: nothing to key on.
-  assert.equal(applyEvent(map, ev("agent.thinking_start", {})), map);
-  assert.equal(applyEvent(map, ev("agent.thinking_start", null)), map);
+  assert.equal(applyEvent(map, ev("agent.llm_response", {})), map);
+  assert.equal(applyEvent(map, ev("agent.llm_response", null)), map);
 });
 
 test("missing duration fields leave the previous value in place", () => {
   let map: LiveStatusMap = applyEvent(
     {},
-    ev("agent.thinking_end", { agent_id: "a", duration_ms: 100 }),
+    ev("agent.llm_response", { agent_id: "a", duration_ms: 100 }),
   );
-  map = applyEvent(map, ev("agent.thinking_end", { agent_id: "a" }));
-  assert.equal(map["a"]?.lastThinkMs, 100);
+  map = applyEvent(map, ev("agent.llm_response", { agent_id: "a" }));
+  assert.equal(map["a"]?.lastLlmMs, 100);
 });
