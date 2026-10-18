@@ -38,7 +38,8 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
-| [ADR 0042：统一成员规则与会话效果](0042-unified-member-rule-execution.md) | [runtime](../design/runtime.md)、[dsl](../design/dsl.md) | 删除规则分类和顶层 loop；普通程序组合 run-loop 与其他效果 |
+| [ADR 0043：以报社验证可返回结果的成员程序](0043-newspaper-member-workflow.md) | [runtime](../design/runtime.md)、[dsl](../design/dsl.md)、[bridge-api](../design/bridge-api.md) | 效果在调用边界返回实际结果；私有状态、冻结程序与重放，报社随包示例 |
+| [ADR 0042：统一成员规则与会话效果](0042-unified-member-rule-execution.md) | [runtime](../design/runtime.md)、[dsl](../design/dsl.md) | 删除规则分类和顶层 loop；效果求值与恢复由 ADR 0043 扩展 |
 | [ADR 0041：管理员四态操作与提前唤醒](0041-admin-scheduling-controls.md) | [agent-scheduling-states](../design/agent-scheduling-states.md) | 管理员可提前唤醒、排空后等待或定时睡眠；死亡仍不可恢复 |
 | [ADR 0040：未执行草稿与预算通知的事实边界](0040-unsent-drafts-and-budget-notices.md) | [runtime](../design/runtime.md) | 修订保留未执行草稿；预算通知仅依据真实工具回执 |
 | [ADR 0039：成员四态调度与邮件工具解耦](0039-four-state-scheduling.md) | [agent-scheduling-states](../design/agent-scheduling-states.md) | active/waiting/sleeping/dead；独立结束、睡眠和退出工具 |

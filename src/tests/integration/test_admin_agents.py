@@ -9,6 +9,8 @@ assertion relies on RetirementCeremony skipping administrative removals
 (``removed=True``) instead of resurrecting the deleted home.
 """
 
+import asyncio
+import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any
@@ -61,6 +63,30 @@ async def test_agent_config_crud_lifecycle(inproc_server: tuple[str, Path]) -> N
             assert updated["agent_id"] == agent_id
             assert "integration-test persona" in (config_dir / "IDENTITY.md").read_text()
         finally:
+            # Adoption returns after assembly; the empty boot rule finishes in its worker.
+            async def boot_idle() -> None:
+                database = tlon_home / agent_id / "program.sqlite3"
+                for _ in range(300):
+                    async with http.get(f"{base_url}/agents/{agent_id}") as status_response:
+                        assert status_response.status == 200
+                        status = await status_response.json()
+                    if database.exists():
+                        with sqlite3.connect(database) as connection:
+                            runs = connection.execute(
+                                "SELECT rule_edn,completed,error FROM runs"
+                            ).fetchall()
+                        boot_finished = any(
+                            ':name "boot"' in source and completed for source, completed, _ in runs
+                        )
+                        settled = all(
+                            completed or error is not None for _, completed, error in runs
+                        )
+                        if status["state"] == "waiting" and boot_finished and settled:
+                            return
+                    await asyncio.sleep(0.01)
+                raise AssertionError("new member did not finish its empty boot rule")
+
+            await asyncio.wait_for(boot_idle(), 5)
             async with http.delete(f"{base_url}/admin/config/agents/{agent_id}") as resp:
                 assert resp.status == 200
                 deleted: dict[str, Any] = await resp.json()

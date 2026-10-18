@@ -1,6 +1,7 @@
 """Real WebUI HTTP contracts: committed inboxes, restarts and whole-post refusal."""
 
 import asyncio
+import sqlite3
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -81,6 +82,29 @@ async def test_retired_and_unknown_addresses_refuse_entire_post(tmp_path: Path) 
             ) as response:
                 assert response.status == 200
                 retired_id = (await response.json())["agent_id"]
+
+            # The empty boot program is asynchronous; retirement still requires idle.
+            async def boot_idle() -> None:
+                database = TlonPaths(home=tmp_path).agent_program_database_file(retired_id)
+                for _ in range(300):
+                    member = runtime.agent_registry.get_agent(retired_id)
+                    if member is not None and database.exists():
+                        with sqlite3.connect(database) as connection:
+                            runs = connection.execute(
+                                "SELECT rule_edn,completed,error FROM runs"
+                            ).fetchall()
+                        boot_finished = any(
+                            ':name "boot"' in source and completed for source, completed, _ in runs
+                        )
+                        settled = all(
+                            completed or error is not None for _, completed, error in runs
+                        )
+                        if member.active_session_count == 0 and boot_finished and settled:
+                            return
+                    await asyncio.sleep(0.01)
+                raise AssertionError("new member did not finish its empty boot rule")
+
+            await asyncio.wait_for(boot_idle(), 5)
             store = runtime.post_office.store
             history = Mail.create(
                 from_address="guest@tlon.internal",

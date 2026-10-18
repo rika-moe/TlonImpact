@@ -1,6 +1,7 @@
 """Administrative state controls drive real HTTP, runtime, mailbox and timers."""
 
 import asyncio
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -71,11 +72,40 @@ async def test_admin_sleep_wake_drain_wait_and_terminal_death(tmp_path: Path) ->
                             return snapshot
                         await asyncio.sleep(0.01)
 
+            async def boot_idle() -> None:
+                # Assembly returns before the worker commits its empty boot rule.
+                database = tmp_path / member_id / "program.sqlite3"
+                async with asyncio.timeout(10):
+                    while True:
+                        snapshot = await registry.get_agent_status(member_id)
+                        assert snapshot is not None
+                        if database.exists():
+                            with sqlite3.connect(database) as connection:
+                                runs = connection.execute(
+                                    "SELECT rule_edn,completed,error FROM runs"
+                                ).fetchall()
+                            boot_finished = any(
+                                ':name "boot"' in source and completed
+                                for source, completed, _ in runs
+                            )
+                            settled = all(
+                                completed or error is not None for _, completed, error in runs
+                            )
+                            if (
+                                snapshot["state"] == "waiting"
+                                and not snapshot["waking"]
+                                and boot_finished
+                                and settled
+                            ):
+                                return
+                        await asyncio.sleep(0.01)
+
             def deadline(seconds: float = 3600) -> str:
                 return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat()
 
             with patch.object(LLMClient, "chat", new=AsyncMock(side_effect=infer)):
                 # Empty-mailbox wake must not manufacture an active task.
+                await boot_idle()
                 await action("sleep", {"wake_at": deadline()})
                 assert (await state("sleeping"))["wake_at"] is not None
                 await action("wake")

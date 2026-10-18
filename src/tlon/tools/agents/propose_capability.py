@@ -51,7 +51,20 @@ _PURE_WORDS = sorted({**CORE_BUILTINS, **ARITHMETIC_BUILTINS})
 #: (``MEMBER_ACTION_NAMES`` in ``agents/vocabulary.py``; ``tlon.tools``
 #: cannot import ``tlon.agents``, so the names are restated here under a
 #: test anchor against the real registry).
-_ACTION_WORDS = ["emit", "forward", "mark-read", "run-loop", "spawn", "start", "start-all", "stop"]
+_ACTION_WORDS = [
+    "emit",
+    "forward",
+    "llm-call",
+    "mark-read",
+    "run-loop",
+    "send-mail",
+    "spawn",
+    "start",
+    "start-all",
+    "state-get",
+    "state-put",
+    "stop",
+]
 
 _ARTIFACT_HINT = (
     "artifact 是一个 v1 schema 的 EDN map，形状：\n"

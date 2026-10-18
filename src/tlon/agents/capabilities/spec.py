@@ -17,7 +17,7 @@ The validation registries below are the structural enforcement of the
 Their composition was verified word by word against the sources:
 
 - :data:`CAPABILITY_PURE_BUILTINS` = ``CORE_BUILTINS`` +
-  ``ARITHMETIC_BUILTINS`` (19 words). Every builtin fn in both
+  ``ARITHMETIC_BUILTINS`` (general words). Every builtin fn in both
   dictionaries was read line by line (``tlosure/builtins.py``): each
   takes ``(env, *args)`` and **never touches ``env``** — they are total
   functions of their positional arguments. This is the same composition
@@ -33,7 +33,7 @@ Their composition was verified word by word against the sources:
   read registry state and are likewise excluded. Narrowing beats
   widening: a word that needs context is composed at the call site with
   explicit arguments instead.
-- :data:`CAPABILITY_ACTION_BUILTINS` = the six member action words
+- :data:`CAPABILITY_ACTION_BUILTINS` = the member action words
   (``MEMBER_ACTION_NAMES``). Their fns were verified to not read
   ``env`` either: they validate their arguments and produce
   :class:`ActionRequest` data. ``start-all`` reads the closure-injected
@@ -102,7 +102,7 @@ class CapabilityError(CapabilityProposalError):
 #: registry — naming an action word is a load-time rejection.
 CAPABILITY_PURE_BUILTINS: dict[str, Builtin] = {**CORE_BUILTINS, **ARITHMETIC_BUILTINS}
 
-#: The six member action words, lifted from the unified member registry
+#: The member action words, lifted from the unified member registry
 #: (host-less, collector-less: validation only needs the names and the
 #: purity markers — ``validate_form`` never calls the fns).
 CAPABILITY_ACTION_BUILTINS: dict[str, Builtin] = {
@@ -413,7 +413,7 @@ def validate_capability(spec: CapabilitySpec, *, taken_names: Iterable[str] = ()
     Purity admission: a ``:pure true`` impl must statically validate
     against :data:`CAPABILITY_PURE_BUILTINS` — naming an action word is
     rejected as unknown vocabulary. A non-pure impl validates against
-    :data:`CAPABILITY_FULL_BUILTINS` (pure builtins + the six action
+    :data:`CAPABILITY_FULL_BUILTINS` (pure builtins + the member action
     words, producing ActionRequest data). The validation scope is empty:
     the impl sees its fn parameters and nothing else (the env contract,
     enforced statically).

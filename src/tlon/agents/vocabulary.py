@@ -19,11 +19,11 @@ module is their single source of truth:
   (``RegistryQueries`` in ``tlon.agents/agent_registry.py``) is injected at
   assembly time.
 - **Effect ports** (DSL → host, effects-as-data) — the action family
-  (``spawn`` / ``emit`` / ``start`` / ``stop`` / ``start-all`` /
-  ``forward``, ``pure=False``, names in :data:`MEMBER_ACTION_NAMES`):
-  each validates its arguments and produces :class:`ActionRequest` data
-  without side effects; the engine executes the requests after evaluation
-  ends (``MemberRuntime._execute_action``). :func:`make_member_builtins`
+  (names in :data:`MEMBER_ACTION_NAMES`, ``pure=False``): each validates
+  its arguments and produces :class:`ActionRequest` data without performing
+  I/O. The program driver executes each request at the call boundary and
+  returns its committed result to the expression (ADR 0043).
+  :func:`make_member_builtins`
   builds the unified member registry — the merged pure vocabularies plus
   the action builtins plus any host-injected queries.
 - **Static gate** — :func:`validate_member_actions`, the load-time check
@@ -33,8 +33,8 @@ module is their single source of truth:
   is full-registry validation — unregistered vocabulary and undefined
   symbols are still rejected at load — plus sequential ``defn``
   threading across the form sequence (define-before-use), mirroring the
-  runtime's shared env dict. A shared effect collector preserves every
-  emitted request, including effects nested in functions and loops.
+  runtime's shared env dict. Function and loop calls use the same effect
+  boundaries as top-level calls.
 
 Environment contracts: typed, with a single construction point — see
 the ``*Env`` TypedDicts and builders in the "Environment contracts"
@@ -72,16 +72,10 @@ from tlosure.builtins import (
     Builtin,
     EvalError,
     builtin_contains,
-    builtin_count,
     builtin_eq,
-    builtin_get,
-    builtin_join,
     builtin_not,
-    builtin_split,
-    builtin_str,
-    builtin_substring,
 )
-from tlosure.edn import Form
+from tlosure.edn import Form, Keyword
 from tlosure.validate import _is_defn, _validate_defn, validate_form
 
 # ── Environment contracts (the data each context may see) ──
@@ -442,16 +436,28 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
 #: may compose resolves in the caller's registry at runtime — the
 #: vocabulary bridge's runtime contract (a regression test in
 #: ``tests/agents/capabilities/test_bridge.py`` pins the subset relation).
+def _mail_field(env: dict[str, Any], mail: Any, field: Any) -> Any:
+    fields = {
+        "id": "id",
+        "from": "from_address",
+        "to": "to",
+        "cc": "cc",
+        "subject": "subject",
+        "content": "content",
+        "timestamp": "timestamp",
+        "thread-id": "thread_id",
+        "in-reply-to": "in_reply_to",
+        "forward-of": "forward_of",
+        "endorsing": "endorsing",
+    }
+    if not isinstance(field, Keyword) or str(field) not in fields:
+        raise EvalError(f"mail-field: unknown field {field!r}")
+    return getattr(mail, fields[str(field)]) if isinstance(mail, Mail) else None
+
+
 SCRIPT_BUILTINS: dict[str, Builtin] = {
-    "get": Builtin(builtin_get, pure=True),
-    "str": Builtin(builtin_str, pure=True),
-    "split": Builtin(builtin_split, pure=True),
-    "join": Builtin(builtin_join, pure=True),
-    "substring": Builtin(builtin_substring, pure=True),
-    "contains?": Builtin(builtin_contains, pure=True),
-    "count": Builtin(builtin_count, pure=True),
-    "=": Builtin(builtin_eq, pure=True),
-    "not": Builtin(builtin_not, pure=True),
+    **CORE_BUILTINS,
+    "mail-field": Builtin(_mail_field, pure=True),
 }
 
 
@@ -557,14 +563,27 @@ class ScriptHostQueries(Protocol):
 # ── Effect ports (DSL → host, effects-as-data) ──
 #
 # Action builtins validate their arguments during pure evaluation and
-# produce ActionRequest data; execution happens in the engine after
-# evaluation ends (``MemberRuntime._execute_action``), so a spec can never
-# reach past the engine's quotas and trust gates.
+# produce ActionRequest data; the program driver executes each request
+# and records its result before evaluation continues. Host quotas and
+# trust gates remain outside the member program.
 
 
 #: Effects available to every rule, independent of its event or other actions.
 MEMBER_ACTION_NAMES = frozenset(
-    {"spawn", "emit", "start", "stop", "start-all", "forward", "run-loop", "mark-read"}
+    {
+        "spawn",
+        "emit",
+        "start",
+        "stop",
+        "start-all",
+        "forward",
+        "run-loop",
+        "mark-read",
+        "state-get",
+        "state-put",
+        "llm-call",
+        "send-mail",
+    }
 )
 
 
@@ -746,10 +765,73 @@ def make_member_builtins(
             ),
         )
 
+    def _state_get(env: dict[str, Any], key: Any) -> ActionRequest:
+        if type(key) is not str or not key:
+            raise EvalError("state-get key must be a nonempty string")
+        return _record(ActionRequest(kind="state_get", data={"key": key}))
+
+    def _state_put(env: dict[str, Any], key: Any, value: Any) -> ActionRequest:
+        if type(key) is not str or not key:
+            raise EvalError("state-put key must be a nonempty string")
+        return _record(ActionRequest(kind="state_put", data={"key": key, "value": value}))
+
+    def _options(name: str, options: Any, required: set[str], optional: set[str]) -> dict[str, Any]:
+        if not isinstance(options, dict) or any(not isinstance(key, Keyword) for key in options):
+            raise EvalError(f"{name} options must be a keyword map")
+        data = {str(key): value for key, value in options.items()}
+        if not required <= data.keys() or data.keys() - required - optional:
+            raise EvalError(f"{name}: missing or unknown options")
+        return data
+
+    def _llm_call(env: dict[str, Any], options: Any) -> ActionRequest:
+        data = _options("llm-call", options, {"prompt", "max-tokens"}, set())
+        if (
+            type(data["prompt"]) is not str
+            or type(data["max-tokens"]) is not int
+            or data["max-tokens"] <= 0
+        ):
+            raise EvalError("llm-call requires a string prompt and positive integer max-tokens")
+        return _record(
+            ActionRequest(
+                kind="llm_call", data={"prompt": data["prompt"], "max_tokens": data["max-tokens"]}
+            )
+        )
+
+    def _send_mail(env: dict[str, Any], options: Any) -> ActionRequest:
+        data = _options("send-mail", options, {"to", "content", "request-id"}, {"subject"})
+        if (
+            not isinstance(data["to"], list)
+            or not data["to"]
+            or any(type(item) is not str or not item for item in data["to"])
+        ):
+            raise EvalError("send-mail to must be a nonempty vector of addresses")
+        if (
+            type(data["content"]) is not str
+            or type(data["request-id"]) is not str
+            or not data["request-id"]
+            or ("subject" in data and type(data["subject"]) is not str)
+        ):
+            raise EvalError("send-mail content, subject and request-id must be strings")
+        return _record(
+            ActionRequest(
+                kind="send_mail",
+                data={
+                    "to": data["to"],
+                    "content": data["content"],
+                    "subject": data.get("subject"),
+                    "request_id": data["request-id"],
+                },
+            )
+        )
+
     builtins: dict[str, Builtin] = {
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
         **ARITHMETIC_BUILTINS,
+        "state-get": Builtin(_state_get, pure=False),
+        "state-put": Builtin(_state_put, pure=False),
+        "llm-call": Builtin(_llm_call, pure=False),
+        "send-mail": Builtin(_send_mail, pure=False),
         "run-loop": Builtin(_run_loop, pure=False),
         "mark-read": Builtin(_mark_read, pure=False),
         "spawn": Builtin(_spawn, pure=False),

@@ -114,18 +114,18 @@
 
 ### 2.3 命中后的执行顺序
 
-规则按 spec 顺序匹配。统一求值 `:actions`，共享 collector 保留函数、条件和传统循环内产生的全部 `ActionRequest`；求值成功后按产生顺序执行。`run-loop` 按本次配方执行会话，完成后继续剩余效果，同一成员串行推进程序。
+规则按 spec 顺序匹配。生产程序通过可暂停求值内核在效果调用处等待宿主执行，记录并返回实际结果，再继续函数、条件或传统循环。`run-loop` 按本次配方执行会话并返回 `nil`，同一成员串行推进程序。
 
-后续效果已在原始规则求值时构造，没有另一个完成动作求值环境，不额外绑定 `result`。当前阶段不能将实际模型返回值作为普通表达式结果继续分支。
+效果结果可显式绑定至 `let` 并用于后续分支，没有另一个完成动作求值环境，不隐式绑定 `result`。原始程序、触发输入和已完成效果保存在成员私有 `program.sqlite3`，恢复复用原结果（ADR 0043）。
 
 ## 3. 纯度约束与求值托管（宿主视角）
 
-求值器机制本身——特殊形式白名单、fuel 计量与终止保证、求值无副作用与 `ActionRequest` 数据机制——是语言规范，见 [tlosure-reference.md](./tlosure-reference.md) 第 2 节，不在这里重复。本节只记 tlon 宿主侧的闸与记账方式（"DSL 描述，引擎执行"）：
+求值器机制本身——特殊形式白名单、fuel 计量与终止保证、效果交接与 `ActionRequest` 数据机制——是语言规范，见 [tlosure-reference.md](./tlosure-reference.md) 第 2 节，不在这里重复。本节只记 tlon 宿主侧的闸与记账方式（"DSL 描述，引擎执行"）：
 
-- 动作 builtin（`pure=False`，见第 4.5 节）只校验参数并产出 `ActionRequest` 数据，由引擎在求值结束后执行；求值过程本身永不产生副作用。
+- 动作 builtin（`pure=False`，见第 4.5 节）只校验参数并产出 `ActionRequest` 数据，由宿主在调用边界执行并返回实际结果；tlosure 不直接执行系统 I/O。
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
-- **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。统一 collector 收集全部嵌套效果，外层返回 `nil` 不会丢失请求。纯门控只能使用纯子集词汇。
+- **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。生产程序对每次实际经过的调用进行效果交接；同步分析仍可使用 collector。纯门控只能使用纯子集词汇。
 - fuel 记账：规则声明 `:fuel` 时，门控与所有动作共享一个计数器；未声明时分别用默认门控与动作预算。配方的 `:fuel` 单独约束会话终止条件和 stage 条件；硬上限见下表。
 
 <!-- BEGIN GENERATED: dsl-fuel-defaults -->
@@ -228,22 +228,43 @@
 环境 `{event, self}`：`event` 是触发事件的负载 map。
 
 <!-- BEGIN GENERATED: dsl-builtins-script -->
-`SCRIPT_BUILTINS`（9 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`SCRIPT_BUILTINS`（15 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
+| `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
+| `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
+| `keys` | 是 | Return map keys in insertion order. |
+| `vals` | 是 | Return map values in insertion order, matching ``keys``. |
+| `=` | 是 |  |
+| `not` | 是 |  |
+| `contains?` | 是 |  |
 | `get` | 是 | Read ``key`` from a dict payload; missing keys yield ``default``. |
 | `str` | 是 | Concatenate arguments into one string. |
 | `split` | 是 | Split a string on a separator into a vector of strings. |
 | `join` | 是 | Join a vector of strings with a separator into one string. |
 | `substring` | 是 | ``s[start:end]`` — Python slice semantics, total by construction. |
-| `contains?` | 是 |  |
 | `count` | 是 | Item count of a vector / map / string; ``nil`` counts as 0. |
-| `=` | 是 |  |
-| `not` | 是 |  |
+| `mail-field` | 是 |  |
 <!-- END GENERATED: dsl-builtins-script -->
 
 ### 4.5 动作 builtin（`pure=False`，产出 `ActionRequest`，引擎执行）
+
+通用工作流效果：
+
+| 调用 | 返回值 |
+| --- | --- |
+| `(state-get "key")` | 成员私有状态；缺失返回 `nil`，读取结果被记录供重放 |
+| `(state-put "key" value)` | 写入值；状态更新与效果记录同事务提交 |
+| `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`，usage 使用 `:completion-tokens` 等关键字 |
+| `(send-mail {:to ["成员地址"] :subject "主题" :content "正文" :request-id "稳定键"})` | 接受时 `{:status "accepted" :mail-id "..." :request-id "..." :local-recipients [...] :gateways [...] :message "..."}`；拒收时 `{:status "rejected" :reason "..." :invalid-recipients [...]}`；未知异常传播 |
+
+`send-mail` 的 `:subject` 可省略。接受仅证明本地信箱提交，网关字段不证明外部送达。请求 ID 相同但内容不同会冲突；邮局已有回执可覆盖已入箱而程序未记结果的崩溃窗口。`emit`、`forward` 的日志式失败处理不能充当业务成功回执。
+
+`llm-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；每次调用按请求上限预留共享额度，重放也预留。已记录结果直接复用，未记录的上游成功可能导致再次调用。
+
+`mail-field` 读取真实 `Mail` 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；非邮件值返回 `nil`，未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
 
 动作由 `make_member_builtins` 注入，能力白名单为 `MEMBER_ACTION_NAMES`。所有规则共用这些词；它们可以出现在函数、条件和传统循环中。效果执行受实时权限和四态门控约束。
 
@@ -259,7 +280,7 @@
 | `mark-read` | `(mark-read)` | 显式标读当前触发邮件；无来源时不操作 |
 
 <!-- BEGIN GENERATED: dsl-action-kinds -->
-动作 builtin 实际产出的 `ActionRequest` 形状（7 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+效果 builtin 实际产出的 `ActionRequest` 形状（11 种 kind，生成自 `vocabulary.py` 的调用点；`start-all` 不产出自己的 kind——它按宿主查询 `start_all_candidates` 的候选集展开为多个 `kind="start"` 请求；生产程序在效果调用处执行并返回实际结果）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | kind | data 字段 |
 |---|---|
@@ -270,6 +291,10 @@
 | `start` | `agent_id`、`reason` |
 | `stop` | `agent_id`、`reason` |
 | `forward` | `to`、`cc`、`subject` |
+| `state_get` | `key` |
+| `state_put` | `key`、`value` |
+| `llm_call` | `prompt`、`max_tokens` |
+| `send_mail` | `to`、`content`、`subject`、`request_id` |
 <!-- END GENERATED: dsl-action-kinds -->
 
 ### 4.6 宿主查询端口（闭包注入）
@@ -384,7 +409,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 ## 6. 普通程序与邮件读状态
 
-所有规则使用 `{msg, event, self}`，动作共享求值环境，所以前一个表达式定义的函数可在后续使用。共享 collector 保留循环或函数中产生的多个请求；每个成员按同一条效果执行路径处理它们。
+所有规则使用 `{msg, event, self}`，动作共享求值环境，所以前一个表达式定义的函数可在后续使用。循环或函数中的效果使用同一调用边界，结果记录后继续表达式；同步 collector 只用于分析请求数据。
 
 邮件的读状态不表示规则类型或调度状态。处理结束、进入等待均不隐式标读。程序用 `(mark-read)` 标记当前来源邮件，模型工具 `markRead` 可选择具体邮件。重复通知、启动和周期扫描按邮件及规则身份去重，已排队、执行中及已完成分派不会重复启动。
 
@@ -493,10 +518,15 @@ MemberSpec 之外还有一种 DSL 文件：society 级政策文件 `policy.tlon`
 政策语境注册表是成员注册表的**纯子集**（语言核心通用词汇 + 算术）：无动作词、无宿主查询回调——求值副作用自由由构造保证。特殊形式（`if` / `let` / `and` / `or` / `defn` / `fn` / `map` / `filter` / `reduce` 等）由求值器提供，不在注册表内。
 
 <!-- BEGIN GENERATED: dsl-builtins-policy -->
-`POLICY_BUILTINS`（19 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`POLICY_BUILTINS`（24 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
+| `assoc` | 是 | Return a map/vector copy with key-value pairs applied in order. |
+| `dissoc` | 是 | Return a map copy without the supplied keys; missing keys are harmless. |
+| `conj` | 是 | Append to a vector, or add two-element entry vectors to a map copy. |
+| `keys` | 是 | Return map keys in insertion order. |
+| `vals` | 是 | Return map values in insertion order, matching ``keys``. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 | `contains?` | 是 |  |

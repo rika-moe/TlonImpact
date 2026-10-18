@@ -268,6 +268,7 @@ class LLMClient:
         purpose: str | None = None,
         session_id: str | None = None,
         cache_prefix_len: int | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send a chat completion request with retry logic.
 
@@ -279,6 +280,7 @@ class LLMClient:
             purpose: Ledger attribution label (e.g. "think",
                 "summarize"); None = unattributed
             session_id: Session the call belongs to, when known
+            max_tokens: Optional output cap, bounded by the member model configuration
             cache_prefix_len: How many leading entries of ``messages``
                 form the stable prefix (the session anchor). Only used by
                 explicit-caching providers (Anthropic family) to place a
@@ -317,7 +319,7 @@ class LLMClient:
             start_cpu = time.process_time()
             try:
                 response = await self._chat_with_retries(
-                    all_messages, tools, timeout, cache_prefix_len
+                    all_messages, tools, timeout, cache_prefix_len, max_tokens
                 )
             except Exception as e:
                 # _chat_with_retries already logged the failure (llm_error);
@@ -402,6 +404,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None,
         timeout: float | None,
         cache_prefix_len: int | None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Send the chat completion request with exponential backoff retry.
 
@@ -445,6 +448,9 @@ class LLMClient:
                 f"{key_env}（写入 ~/.tlon/.env 或进程环境）"
             )
 
+        if max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0):
+            raise ValueError("max_tokens must be a positive integer")
+
         # Prepare request parameters. num_retries=0 disables litellm's own
         # retry: the loop below owns all retries (no double backoff). A
         # member-level ``api_base`` (ADR 0016) overrides the registry
@@ -456,6 +462,9 @@ class LLMClient:
             "timeout": timeout if timeout is not None else self.config.request_timeout,
             "api_base": self.config.api_base or None,
             "num_retries": 0,
+            "max_tokens": min(self.config.max_tokens, max_tokens)
+            if max_tokens is not None
+            else self.config.max_tokens,
         }
 
         if tools:
