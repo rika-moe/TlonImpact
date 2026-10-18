@@ -114,7 +114,7 @@ class TestBuiltinDigestTick:
         assert "alice@tlon.internal" in mail.content
         assert "getSocialHealth" in mail.content
         assert "listStagingPrototypes" in mail.content
-        assert "is_complete=true" in mail.content
+        assert "finishTurn" in mail.content
 
     async def test_tick_lists_all_known_humans(self, bus, tmp_path, monkeypatch):
         _make_human(tmp_path, "alice")

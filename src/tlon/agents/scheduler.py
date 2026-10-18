@@ -36,6 +36,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
+from typing import Any
 
 from structlog.contextvars import bound_contextvars
 
@@ -78,7 +79,13 @@ class SessionScheduler:
         journal: SessionJournal,
         wakeable_unread: WakeableUnread,
         mailbox: Mailbox | None,
+        can_schedule: Callable[[], bool] | None = None,
+        state_changed: Callable[[], Awaitable[None]] | None = None,
+        apply_scheduling_request: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ):
+        self._state_changed = state_changed
+        self._can_schedule = can_schedule or (lambda: True)
+        self._apply_scheduling_request = apply_scheduling_request
         self._id = config.id
         self._config = config
         self._memory = memory
@@ -94,6 +101,7 @@ class SessionScheduler:
         # The one live-session slot (ADR 0028 决策 1). Read by the
         # registry's idle monitor via the properties below.
         self._session: AgentSession | None = None
+        self._maintenance_running = False
         # Wake signal (delivery / scan / chain-wake at reap). Setting an
         # already-set event is the dedup of concurrent deliveries (R6) —
         # the admission check always re-reads the mailbox anyway.
@@ -138,7 +146,7 @@ class SessionScheduler:
     def active_session_count(self) -> int:
         """0 or 1 — the single-session model (kept numeric for the registry's
         idle monitor, which only compares against 0)."""
-        return 1 if self._session is not None else 0
+        return int(self._session is not None) + int(self._maintenance_running)
 
     @property
     def last_activity_at(self) -> datetime:
@@ -196,9 +204,13 @@ class SessionScheduler:
 
             while self._worker_running:
                 # ── 0. Reflection trigger (timer-driven, no mail needed) ──
-                await self._check_reflection()
+                if self._can_schedule():
+                    await self._check_reflection()
 
                 session = self._session
+                if session is None and not self._can_schedule():
+                    await asyncio.sleep(0.05)
+                    continue
                 if session is None:
                     # ── 1. Admission: edge-triggered by the wake event ──
                     # R6 order: wake first, then re-read the provider. The
@@ -215,6 +227,8 @@ class SessionScheduler:
                     if not wakeable:
                         continue  # stale wake (mail read meanwhile)
                     self._open_session(wakeable)
+                    if self._state_changed is not None:
+                        await self._state_changed()
                     continue
 
                 # ── 2. Advance the live session ──
@@ -253,13 +267,30 @@ class SessionScheduler:
                 if session.is_completed:
                     await self._ensure_session_end(session)
                     await session.cancel_pending()
+                    self._maintenance_running = self._can_schedule()
                     self._session = None
                     self._last_activity_at = datetime.now(UTC)
+                    request = session.loop_scratch.get("scheduling_request")
+                    if request is not None and self._apply_scheduling_request is not None:
+                        await self._apply_scheduling_request(request)
+                    if self._state_changed is not None:
+                        await self._state_changed()
+                    if not self._can_schedule():
+                        self._maintenance_running = False
+                        continue
                     # Session completed: feed the reflection counter
                     # and check the batch distillation trigger (ADR 0017 —
                     # journal -> claims, threshold config.distillation_window).
                     self._note_interaction()
-                    await self._check_session_distillation()
+                    self._maintenance_running = True
+                    try:
+                        if self._state_changed is not None:
+                            await self._state_changed()
+                        await self._check_session_distillation()
+                    finally:
+                        self._maintenance_running = False
+                        if self._state_changed is not None:
+                            await self._state_changed()
                     # Chain wake (ADR 0028 决策 5): only unread ids
                     # *outside* the reaped session's responsibility set
                     # wake the next session immediately; leftover

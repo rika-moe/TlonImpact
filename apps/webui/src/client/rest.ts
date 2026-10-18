@@ -1,3 +1,4 @@
+import type { AgentState } from "../lib/agentState";
 /**
  * REST client for the Tlon server (browser version).
  *
@@ -102,7 +103,13 @@ export interface LogList {
 export type AgentSummary = {
   id: string;
   name: string;
-  state: string;
+  state: AgentState;
+  wake_at?: string | null;
+  resident?: boolean;
+  waking?: boolean;
+  error?: string | null;
+  stop_pending?: boolean;
+  scheduling_pending?: string | null;
   prototype: string | null;
   spawned_by: string | null;
   spawn_depth: number;
@@ -116,8 +123,22 @@ export type AgentSummary = {
 export type AgentDetail = {
   id: string;
   name: string;
-  state: string;
+  state: AgentState;
+  wake_at?: string | null;
+  resident?: boolean;
+  waking?: boolean;
+  error?: string | null;
+  stop_pending?: boolean;
+  scheduling_pending?: string | null;
   config: { prototype: string | null } & Record<string, unknown>;
+};
+
+export type AgentSchedulingResponse = {
+  status: "success" | "pending";
+  agent_id: string;
+  agent: AgentSummary;
+  scheduling_pending?: string | null;
+  stop_pending: boolean;
 };
 
 /** A declared parameter of a prototype (from prototype.tlon). */
@@ -790,6 +811,23 @@ export class RestClient {
     },
   ): Promise<Record<string, unknown>> {
     return this.send("PATCH", `/admin/config/agents/${encodeURIComponent(agentId)}`, body);
+  }
+
+  /** Drain current work and permanently exit, retaining history. */
+  async terminateAgent(agentId: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/terminate`);
+  }
+
+  async wakeAgent(agentId: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/wake`);
+  }
+
+  async waitAgent(agentId: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/wait`);
+  }
+
+  async sleepAgent(agentId: string, wakeAt: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/sleep`, { wake_at: wakeAt });
   }
 
   /** Administratively remove a member (records + home archive deleted). */

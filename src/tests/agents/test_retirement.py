@@ -1,31 +1,23 @@
-"""RetirementCeremony — farewell letter and task handover (docs/design/mail.md).
-
-Pins the closed loop: publishing AGENT_STOPPED for a member with
-unfinished business takes the offline inventory (unfinished tasks,
-unreplied threads, memory digest), mails one farewell letter from the
-retired member's own address to its spawner (or the guest human), and
-always publishes the AGENT_RETIRED fact — empty handover skips the LLM,
-an LLM failure is logged and never raised, and the event goes out either
-way.
-"""
+"""Permanent exit only inventories archives; no LLM farewell or outgoing mail."""
 
 import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from unittest.mock import AsyncMock
 
-from tests.mail_helpers import make_office
+import pytest
+
 from tlon.agents.retirement import RetirementCeremony
-from tlon.base.config import AgentConfig
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.llm_client import LLMResponse
+from tlon.base.llm_client import LLMClient
 from tlon.base.paths import TlonPaths
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.store import MailStore
 from tlon.tools.tasks.manager import TaskManager
 
@@ -49,38 +41,6 @@ _DETERMINISTIC_SPEC = """\
           :on :mail-delivered
           :actions [(forward {:to ["x@tlon.internal"]})]}]}
 """
-
-
-class _FakeLLM:
-    """Duck-typed LLMClient returning one canned response."""
-
-    def __init__(self, content: str) -> None:
-        self._content = content
-        self.calls: list[dict[str, Any]] = []
-
-    async def chat(self, **kwargs: Any) -> LLMResponse:
-        self.calls.append(kwargs)
-        return LLMResponse(content=self._content)
-
-
-class _FailingLLM:
-    """Duck-typed LLMClient whose chat always raises."""
-
-    async def chat(self, **kwargs: Any) -> LLMResponse:
-        raise RuntimeError("provider down")
-
-
-class _StaticAgentInfo:
-    """Minimal AgentInfoProvider for the delivery path."""
-
-    def __init__(self, configs: dict[str, AgentConfig]) -> None:
-        self._configs = configs
-
-    def get_config(self, agent_id: str) -> AgentConfig | None:
-        return self._configs.get(agent_id)
-
-    def get_all_ids(self) -> set[str]:
-        return set(self._configs)
 
 
 def _write_behavior(p: TlonPaths, agent_id: str, spec: str) -> None:
@@ -140,116 +100,126 @@ async def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> bool
     return False
 
 
-def _make_ceremony(bus: EventBus, p: TlonPaths, llm: Any) -> tuple[RetirementCeremony, list[Event]]:
-    """A ceremony on the bus plus a capture list for AGENT_RETIRED."""
+def _make_ceremony(bus: EventBus, paths: TlonPaths) -> tuple[RetirementCeremony, list[Event]]:
     retired: list[Event] = []
     bus.subscribe(EventType.AGENT_RETIRED, lambda event: retired.append(event))
-    office = make_office(bus, p.tlon_home(), ["retiree", "spawner-1", "relay-1", "fresh"])
-    office.store.register_member("human:guest")
-    ceremony = RetirementCeremony(
-        event_bus=bus, tlon_paths=p, llm_client_factory=lambda _id: llm, post_office=office
+    return RetirementCeremony(event_bus=bus, tlon_paths=paths), retired
+
+
+async def test_dead_member_inventory_preserves_archive_without_llm_or_mail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = TlonPaths(home=tmp_path)
+    _write_behavior(paths, "retiree", _COGNITIVE_SPEC)
+    _write_config(paths, "retiree", "老张", "spawner-1")
+    await _remember(paths, "retiree", "部署前先跑质量门")
+    tasks = TaskManager("retiree", paths)
+    tasks.create_task("写完文档")
+    box = Mailbox(paths.mail_database_file(), "retiree")
+    incoming = _mail(
+        "m1",
+        "other@tlon.internal",
+        "retiree@tlon.internal",
+        "t1",
+        "2026-09-01T10:00:00+00:00",
+        "评审提案",
     )
-    return ceremony, retired
-
-
-async def test_removed_member_skips_ceremony(tmp_path: Path) -> None:
-    """AGENT_STOPPED with removed=True (administrative removal) skips the
-    whole ceremony: no archive resurrection on disk, no AGENT_RETIRED."""
-    p = TlonPaths(home=tmp_path)
+    await box.append_inbox(incoming)
+    MailStore(paths.mail_database_file()).retire("retiree")
+    chat = AsyncMock(side_effect=AssertionError("dead member must not call LLM"))
+    post = AsyncMock(side_effect=AssertionError("dead member must not send mail"))
+    monkeypatch.setattr(LLMClient, "chat", chat)
+    monkeypatch.setattr(PostOffice, "post", post)
     bus = EventBus()
     await bus.initialize()
-    llm = _FakeLLM("不该被调用")
-    ceremony, retired = _make_ceremony(bus, p, llm)
-    try:
-        await ceremony._on_agent_stopped(
-            Event(
-                type=EventType.AGENT_STOPPED,
-                payload={"agent_id": "gone", "stopped_by": "admin-api", "removed": True},
-                source="agent_registry",
-            )
-        )
-
-        await asyncio.sleep(0.05)  # give any misfired handler a chance
-        assert not (tmp_path / "gone").exists()
-        assert retired == []
-        assert llm.calls == []
-    finally:
-        await bus.shutdown()
-
-
-async def test_farewell_letter_delivered_to_spawner(tmp_path: Path) -> None:
-    """Full bus path: AGENT_STOPPED -> inventory -> farewell letter lands
-    in the spawner's inbox + AGENT_RETIRED with the handover payload."""
-    p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "retiree", _COGNITIVE_SPEC)
-    _write_config(p, "retiree", name="老张", spawned_by="spawner-1")
-    await _remember(p, "retiree", "部署前先跑质量门")
-    tasks = TaskManager("retiree", p)
-    tasks.create_task("写完退休文档")
-    box = Mailbox(p.mail_database_file(), "retiree")
-    await box.append_inbox(
-        _mail(
-            "m1",
-            "gu-yanxi@tlon.internal",
-            "retiree@tlon.internal",
-            "t1",
-            "2026-09-01T10:00:00",
-            subject="评审提案",
-        )
-    )
-
-    bus = EventBus()
-    await bus.initialize()
-    llm = _FakeLLM("# 告别信\n各位再见。")
-    ceremony, retired = _make_ceremony(bus, p, llm)
+    ceremony, retired = _make_ceremony(bus, paths)
     await ceremony.initialize()
     try:
         await bus.publish(_stopped_event("retiree"))
-
         assert await _wait_for(lambda: len(retired) == 1)
-
-        letter = (await Mailbox(p.mail_database_file(), "spawner-1").inbox())[0]
-        assert letter.from_address == "retiree@tlon.internal"
-        assert letter.content == "# 告别信\n各位再见。"
-        assert letter.subject == "告别与交接：老张"
-
         payload = retired[0].payload
         assert payload["agent_id"] == "retiree"
         assert payload["name"] == "老张"
         assert payload["stopped_by"] == "adam"
-        assert payload["open_tasks"] == ["写完退休文档"]
-        assert payload["open_threads"] == ["评审提案"]
-        assert payload["farewell_sent"] is True
-        assert payload["farewell_to"] == "spawner-1@tlon.internal"
-
-        assert llm.calls[0]["purpose"] == "farewell"
-        assert "temperature" not in llm.calls[0]
-        assert llm.calls[0]["timeout"] == 60.0
+        assert payload["open_tasks"] == ["写完文档"]
+        assert payload["open_threads"] == [
+            {
+                "thread_id": "t1",
+                "subject": "评审提案",
+                "from": "other@tlon.internal",
+            }
+        ]
+        assert payload["memory_digest"]["claim_count"] == 1
+        assert set(payload) == {
+            "agent_id",
+            "name",
+            "stopped_by",
+            "open_tasks",
+            "open_threads",
+            "memory_digest",
+        }
+        chat.assert_not_called()
+        post.assert_not_called()
+        assert await box.inbox() == [incoming]
+        assert await box.sent() == []
+        assert tasks.list_tasks()[0].title == "写完文档"
+        assert paths.agent_config_file("retiree").exists()
     finally:
         await ceremony.shutdown()
         await bus.shutdown()
 
 
-async def test_farewell_falls_back_to_guest_human(tmp_path: Path) -> None:
-    """No spawned_by in the archive -> the letter goes to the guest human."""
-    p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "retiree", _COGNITIVE_SPEC)
-    _write_config(p, "retiree", name="老王")
-    await _remember(p, "retiree", "一条事实")
-    MailStore(p.mail_database_file()).register_member("human:guest")
-
+async def test_removed_member_skips_inventory(tmp_path: Path) -> None:
     bus = EventBus()
     await bus.initialize()
-    ceremony, retired = _make_ceremony(bus, p, _FakeLLM("告别。"))
-    await ceremony.initialize()
+    ceremony, retired = _make_ceremony(bus, TlonPaths(home=tmp_path))
     try:
-        await bus.publish(_stopped_event("retiree"))
-
-        assert await _wait_for(lambda: len(retired) == 1)
-        assert retired[0].payload["farewell_sent"] is True
-        assert retired[0].payload["farewell_to"] == address_for_member("human:guest")
+        await ceremony._on_agent_stopped(
+            Event(
+                type=EventType.AGENT_STOPPED,
+                payload={"agent_id": "gone", "removed": True},
+                source="registry",
+            )
+        )
+        assert retired == []
+        assert not (tmp_path / "gone").exists()
     finally:
-        await ceremony.shutdown()
+        await bus.shutdown()
+
+
+@pytest.mark.parametrize("spec", [_COGNITIVE_SPEC, _DETERMINISTIC_SPEC])
+async def test_empty_inventory_is_still_published(tmp_path: Path, spec: str) -> None:
+    paths = TlonPaths(home=tmp_path)
+    _write_behavior(paths, "fresh", spec)
+    bus = EventBus()
+    await bus.initialize()
+    ceremony, retired = _make_ceremony(bus, paths)
+    try:
+        await ceremony._on_agent_stopped(_stopped_event("fresh"))
+        assert await _wait_for(lambda: len(retired) == 1)
+        payload = retired[0].payload
+        assert payload["open_tasks"] == []
+        assert payload["open_threads"] == []
+        assert payload["name"] == "fresh"
+        assert not any(key.startswith("farewell") for key in payload)
+    finally:
+        await bus.shutdown()
+
+
+async def test_non_cognitive_inventory_includes_unfinished_tasks(tmp_path: Path) -> None:
+    paths = TlonPaths(home=tmp_path)
+    _write_behavior(paths, "relay-1", _DETERMINISTIC_SPEC)
+    tasks = TaskManager("relay-1", paths)
+    tasks.create_task("还没转完的信")
+    bus = EventBus()
+    await bus.initialize()
+    ceremony, retired = _make_ceremony(bus, paths)
+    try:
+        await ceremony._on_agent_stopped(_stopped_event("relay-1"))
+        assert await _wait_for(lambda: len(retired) == 1)
+        assert retired[0].payload["open_tasks"] == ["还没转完的信"]
+        assert retired[0].payload["memory_digest"] is None
+    finally:
         await bus.shutdown()
 
 
@@ -267,7 +237,7 @@ async def test_open_tasks_inventory(tmp_path: Path) -> None:
     tasks.complete_task(done.id)
 
     bus = EventBus()
-    ceremony, _ = _make_ceremony(bus, p, _FakeLLM("x"))
+    ceremony, _ = _make_ceremony(bus, p)
 
     assert sorted(ceremony._open_tasks("retiree")) == ["待办事项", "暂停事项", "进行中事项"]
 
@@ -286,7 +256,7 @@ async def test_open_threads_unreplied_counted(tmp_path: Path) -> None:
         )
     )
 
-    ceremony, _ = _make_ceremony(EventBus(), p, _FakeLLM("x"))
+    ceremony, _ = _make_ceremony(EventBus(), p)
     threads = await ceremony._open_threads("retiree")
 
     assert [t["subject"] for t in threads] == ["未回复的事"]
@@ -305,7 +275,7 @@ async def test_open_threads_answered_excluded(tmp_path: Path) -> None:
     )
     await box.append_sent(_mail("m2", own, "gu-yanxi@tlon.internal", "t1", "2026-09-01T11:00:00"))
 
-    ceremony, _ = _make_ceremony(EventBus(), p, _FakeLLM("x"))
+    ceremony, _ = _make_ceremony(EventBus(), p)
 
     assert await ceremony._open_threads("retiree") == []
 
@@ -321,78 +291,13 @@ async def test_open_threads_newer_incoming_reopens(tmp_path: Path) -> None:
         _mail("m3", "gu-yanxi@tlon.internal", own, "t1", "2026-09-01T12:00:00", subject="追问")
     )
 
-    ceremony, _ = _make_ceremony(EventBus(), p, _FakeLLM("x"))
+    ceremony, _ = _make_ceremony(EventBus(), p)
     threads = await ceremony._open_threads("retiree")
 
     assert [t["subject"] for t in threads] == ["追问"]
 
 
 async def test_open_threads_no_mailbox(tmp_path: Path) -> None:
-    ceremony, _ = _make_ceremony(EventBus(), TlonPaths(home=tmp_path), _FakeLLM("x"))
+    ceremony, _ = _make_ceremony(EventBus(), TlonPaths(home=tmp_path))
 
     assert await ceremony._open_threads("ghost") == []
-
-
-async def test_empty_handover_skips_llm_but_publishes_event(tmp_path: Path) -> None:
-    """Nothing to hand over -> no LLM call, farewell_sent=false, event out."""
-    p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "fresh", _COGNITIVE_SPEC)
-    bus = EventBus()
-    await bus.initialize()
-    llm = _FakeLLM("不该被调用")
-    ceremony, retired = _make_ceremony(bus, p, llm)
-    try:
-        await ceremony._on_agent_stopped(_stopped_event("fresh"))
-
-        assert await _wait_for(lambda: len(retired) == 1)
-        assert llm.calls == []
-        payload = retired[0].payload
-        assert payload["open_tasks"] == []
-        assert payload["open_threads"] == []
-        assert payload["farewell_sent"] is False
-        assert payload["farewell_to"] is None
-        assert payload["name"] == "fresh"  # no agent.yaml: id is the fallback
-    finally:
-        await bus.shutdown()
-
-
-async def test_non_cognitive_with_open_tasks_still_writes(tmp_path: Path) -> None:
-    """A non-cognitive member with unfinished business still gets a letter
-    (only 'nothing to hand over' skips it)."""
-    p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "relay-1", _DETERMINISTIC_SPEC)
-    tasks = TaskManager("relay-1", p)
-    tasks.create_task("还没转完的信")
-    bus = EventBus()
-    await bus.initialize()
-    llm = _FakeLLM("交接：还有一封信没转完。")
-    ceremony, retired = _make_ceremony(bus, p, llm)
-    try:
-        await ceremony._on_agent_stopped(_stopped_event("relay-1"))
-
-        assert await _wait_for(lambda: len(retired) == 1)
-        assert len(llm.calls) == 1
-        payload = retired[0].payload
-        assert payload["open_tasks"] == ["还没转完的信"]
-        assert payload["farewell_sent"] is True
-        assert payload["farewell_to"] == address_for_member("human:guest")
-    finally:
-        await bus.shutdown()
-
-
-async def test_llm_failure_logged_never_raised_event_published(tmp_path: Path) -> None:
-    p = TlonPaths(home=tmp_path)
-    _write_behavior(p, "retiree", _COGNITIVE_SPEC)
-    await _remember(p, "retiree", "一条事实")
-    bus = EventBus()
-    await bus.initialize()
-    ceremony, retired = _make_ceremony(bus, p, _FailingLLM())
-    try:
-        await ceremony._on_agent_stopped(_stopped_event("retiree"))  # must not raise
-
-        assert await _wait_for(lambda: len(retired) == 1)
-        payload = retired[0].payload
-        assert payload["farewell_sent"] is False
-        assert payload["farewell_to"] is None
-    finally:
-        await bus.shutdown()

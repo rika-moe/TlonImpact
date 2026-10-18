@@ -50,8 +50,13 @@ from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
 from tlon.tools.agents.list_members import ListMembersTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
 from tlon.tools.agents.propose_capability import ProposeCapabilityTool
+from tlon.tools.agents.scheduling import (
+    ExitAgentTool,
+    FinishTurnTool,
+    GetSelfStateTool,
+    SleepUntilTool,
+)
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
-from tlon.tools.agents.stop_agent import StopAgentTool
 from tlon.tools.agents.update_persona import UpdatePersonaTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.filesystem.edit_file import EditFileTool
@@ -64,7 +69,6 @@ from tlon.tools.mail.forward_mail import ForwardMailTool
 from tlon.tools.mail.mark_read import MarkReadTool
 from tlon.tools.mail.search_mails import SearchMailsTool
 from tlon.tools.mail.send_email import SendEmailTool
-from tlon.tools.mail.silence import SilenceTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.read_session import ReadSessionTool
 from tlon.tools.memory.remember_fact import RememberFactTool
@@ -103,7 +107,7 @@ logger = get_logger(__name__)
 #: deliberately absent: reviewing a staging proposal is advisory (approve
 #: stays human).
 REPRODUCTION_TOOLS: frozenset[str] = frozenset(
-    {"spawnAgent", "stopAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
+    {"spawnAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
 )
 
 
@@ -265,7 +269,7 @@ async def assemble_cognitive(
     # (natural in a scale-to-zero world). The level is the society
     # policy's ``full-member?`` hook (ADR 0022); fail-open reads as full
     # trust (availability first). A probationary member (spawned, not yet
-    # endorsed, per the default policy) is assembled without the five
+    # endorsed, per the default policy) is assembled without the four
     # reproduction/evolution tools (REPRODUCTION_TOOLS; reviewPrototype
     # stays — advisory only) and gets its mentor (the spawner) cc'd on
     # composed outbound mail.
@@ -316,7 +320,10 @@ async def assemble_cognitive(
     # declarative like sendEmail; the engine validates mail_id against the
     # agent's own mailbox and composes the self-contained forward body.
     tool_executor.register_tool(ForwardMailTool())
-    tool_executor.register_tool(SilenceTool())
+    tool_executor.register_tool(FinishTurnTool())
+    tool_executor.register_tool(SleepUntilTool())
+    tool_executor.register_tool(ExitAgentTool())
+    tool_executor.register_tool(GetSelfStateTool(registry=registry, agent_id=config.id))
     # Persona self-edit (ADR 0024, docs/design/identity.md): the member
     # rewrites its own IDENTITY.md / SOUL.md on the host (outside the
     # container /workspace). agent_id binds at construction — touching
@@ -377,18 +384,16 @@ async def assemble_cognitive(
             append_review=partial(append_staging_review, tlon_paths=tlon_paths),
         )
     )
-    # Spawn/stop lifecycle tools (stage 6b): the registry is the
+    # Reproduction tool: the registry is the
     # assembler, so it injects itself (it satisfies the AgentLifecycle
     # port structurally); spawner_id binds the tool to the owning
     # agent for budget accounting and audit. Trust ladder
     # (docs/design/unified-member-model.md):
     # probationary members don't get these (REPRODUCTION_TOOLS) — the
     # DSL spawn action is backstopped by the SpawnManager probation
-    # quota (same funnel); the DSL stop action is not gated (known gap:
-    # the stop-request policy gate is Adam-side / future work).
+    # quota (same funnel). Self scheduling tools above are always available.
     if is_full:
         tool_executor.register_tool(SpawnAgentTool(registry=registry, spawner_id=config.id))
-        tool_executor.register_tool(StopAgentTool(registry=registry, spawner_id=config.id))
     tool_executor.register_tool(ListMembersTool(directory=registry))
     # Spec authoring (stage 4a): writes untrusted prototypes to the
     # staging area; author_id is recorded as the :author for audit.

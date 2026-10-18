@@ -78,7 +78,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 55 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 59 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -100,6 +100,10 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/participants` | `handle_list_participants` | 无条件 |
 | GET | `/admin/config/agents` | `handle_list_agent_configs` | configs |
 | POST | `/admin/config/agents/{agent_id}/reload` | `handle_reload_agent` | configs |
+| POST | `/admin/agents/{agent_id}/wake` | `handle_wake_agent` | 无条件 |
+| POST | `/admin/agents/{agent_id}/wait` | `handle_wait_agent` | 无条件 |
+| POST | `/admin/agents/{agent_id}/sleep` | `handle_sleep_agent` | 无条件 |
+| POST | `/admin/agents/{agent_id}/terminate` | `handle_terminate_agent` | 无条件 |
 | POST | `/admin/config/agents` | `handle_create_agent` | 无条件 |
 | GET | `/admin/config/agents/{agent_id}` | `handle_get_agent_config` | 无条件 |
 | PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
@@ -261,14 +265,33 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 |---|---|
 | `id` | agent id |
 | `name` | 显示名 |
-| `state` | 运行时状态；未运行时派生为 `waking` / `sleeping`（lazy）/ `unknown` |
+| `state` | 四态：`active`、`waiting`、`sleeping`、`dead`；根据实际工作、睡眠期限和永久死亡标记派生 |
+| `wake_at` | 睡眠的 UTC ISO 到期时间，其余状态为 null |
+| `scheduling_pending` | 当前等待/睡眠/退出意图；活跃且非空表示排空中，sleeping 的 sleep 表示已入睡 |
+| `stop_pending` | 管理员永久退出正在排空 |
+| `resident` / `waking` / `error` | 实例驻留、装配中、故障诊断，均不改变四态定义 |
 | `prototype` | 行为原型 |
 | `spawned_by` | spawn 者 id |
 | `spawn_depth` | spawn 深度 |
 
 ### GET /agents/{agent_id}
 
-单个 agent。200：`{"id", "name", "state", "config": {"prototype", "spawned_by", "spawn_depth"}}`——形状与 `GET /agents` 的列表元素**不同**：血缘字段嵌在 `config` 下；`state` 派生也不同，未运行时一律为 `unknown`（列表元素会区分 `waking`/`sleeping`）。404：agent 未注册（`{"error"}`，无 reason）。
+单个 agent。200 返回与列表相同的权威状态字段，并附加 `config: {prototype, spawned_by, spawn_depth}`。等待实例即使尚未装配或已卸载仍为 waiting；死亡不可通过 reload/start 复活。404：agent 未注册（`{"error"}`，无 reason）。
+
+### POST /admin/agents/{agent_id}/wake、wait、sleep、terminate
+
+管理员调度控制，独立于邮件 API 与成员工具。按钮名称与状态转换见 [四态设计](../design/agent-scheduling-states.md#9-管理员状态操作)。
+
+| 操作 | 请求 | 效果 |
+|---|---|---|
+| `wake` | 无请求参数 | 提前结束已有睡眠并检查真实邮箱；有可处理邮件才活跃，否则等待 |
+| `wait` | 无请求参数 | 活跃成员排空当前工作后恢复正常调度；未读邮件仍可使其再次活跃 |
+| `sleep` | JSON `{"wake_at": "2030-01-01T12:00:00+08:00"}` | 未来且带时区，归一 UTC；当前工作排空后睡眠，也可调整已有期限 |
+| `terminate` | 无请求参数 | 排空当前工作后永久死亡，拒收新邮件并保留历史；不可撤销 |
+
+200 表示请求已完成；202 表示已接受，仍在等待当前工作结束，此时成员仍可显示 active。响应包含 `status: success|pending`、`agent_id`、`stop_pending` 和权威 `agent` 快照；wake/wait/sleep 另带 `scheduling_pending`。SSE `agent.state_changed` 推送相同状态。不存在强制设置 active 的接口。202 中的管理等待/睡眠请求若遇服务重启会清除，应重新发起；已正式入睡后的期限跨重启保留，未结束会话按 journal 恢复。
+
+无效睡眠时间、非对象 JSON、额外字段或格式错误返回 400；未知成员 404；死亡、永久退出中或冲突的转换请求返回 409。普通来信不提前唤醒。唤醒或修改期限会撤销旧计时器；死亡不会因旧回调、管理员唤醒或服务重启复活。
 
 ### GET /participants
 
@@ -431,7 +454,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 <!-- BEGIN GENERATED: event-types -->
-枚举全集（35 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+枚举全集（36 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
@@ -444,9 +467,10 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `agent.response` | `AGENT_RESPONSE` |  |
 | `agent.started` | `AGENT_STARTED` |  |
 | `agent.stopped` | `AGENT_STOPPED` |  |
-| `agent.retired` | `AGENT_RETIRED` | Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」) |
+| `agent.retired` | `AGENT_RETIRED` | Offline handover inventory after permanent exit |
 | `agent.error` | `AGENT_ERROR` |  |
 | `agent.state_changed` | `AGENT_STATE_CHANGED` |  |
+| `agent.waiting` | `AGENT_WAITING` | Waiting remains waiting when its runtime is unloaded |
 | `agent.waking` | `AGENT_WAKING` |  |
 | `agent.woken` | `AGENT_WOKEN` |  |
 | `agent.wake_failed` | `AGENT_WAKE_FAILED` |  |
@@ -479,7 +503,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `mail.new` | `PostOffice`（source 为发件人成员 id 或外部地址） | Mail 对象（本地事务已提交，仅通知，不驱动投递） |
 | `mail.delivered` | `PostOffice`（source `post_office`，本地入箱及网关信箱成功尝试后通知；不表示已读或外部平台收到） | `mail`（Mail）、`recipient`（成员 id） |
 | `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
-| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
+| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`（标题数组）、`open_threads`（thread_id/subject/from 对象数组）、`memory_digest` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
@@ -503,7 +527,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 
 | mode | 事件模式 |
 |---|---|
-| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.retired`、`agent.error`、`system.*` |
+| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.retired`、`agent.state_changed`、`agent.sleeping`、`agent.error`、`system.*` |
 | `agent` | `agent.*` |
 <!-- END GENERATED: mode-patterns -->
 

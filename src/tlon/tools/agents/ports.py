@@ -1,6 +1,6 @@
 """Ports for the agent lifecycle tools (dependency inversion, ).
 
-The spawn/stop and directory tools live in ``tlon.tools`` while their implementation
+The spawn, self-scheduling and directory tools live in ``tlon.tools`` while their implementation
 (``AgentRegistry``) lives in ``tlon.agents``. To keep the dependency
 one-directional (agents → tools), the slice of the registry the tools need
 is declared here as a ``Protocol``, together with the rejection errors both
@@ -81,8 +81,8 @@ class AgentLifecycle(Protocol):
         params: dict[str, Any] | None = None,
     ) -> AgentConfig: ...
 
-    async def stop_member(self, agent_id: str, stopped_by: str, when_idle: bool = False) -> bool:
-        """Stop a member. Returns True when it was stopped now; False only
-        when ``when_idle`` registered a pending stop instead (a member with
-        live sessions). Raises ``StopRejectedError`` otherwise."""
-        ...
+
+class SelfStateReader(Protocol):
+    """Read-only self scheduling status, bound by the assembler."""
+
+    async def get_agent_status(self, agent_id: str) -> dict[str, Any] | None: ...

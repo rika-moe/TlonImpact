@@ -22,7 +22,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import type { AgentConfig, AgentPersona, AgentDetail, AgentSummary, LlmModelInfo, LogEntry, RestClient } from "../client/rest";
+import type { AgentSchedulingResponse, AgentConfig, AgentPersona, AgentDetail, AgentSummary, LlmModelInfo, LogEntry, RestClient } from "../client/rest";
+import { wakeLabel } from "../lib/agentState";
+import { AgentSchedulingActions } from "../components/AgentSchedulingActions";
+import { pendingSchedulingLabel, schedulingNotice, sleepDeadline } from "../lib/agentScheduling";
+import type { SchedulingAction } from "../lib/agentScheduling";
+import { SchedulingInfo, StateBadge } from "../components/AgentSchedulingState";
 import { buildAgentUpdate, PERSONA_FIELDS } from "../lib/agentConfig";
 import { formatDurationMs } from "../lib/activity";
 import { applyEvent } from "../lib/agentLiveStatus";
@@ -38,27 +43,9 @@ type Modal =
   | { kind: "create-proto" }
   | { kind: "create-form"; prototype: string }
   | { kind: "edit"; agentId: string }
-  | { kind: "delete"; agentId: string };
-
-type StateTone = "cyan" | "dim" | "magenta" | "yellow";
-
-/** Card/badge color from a state value. */
-function stateTone(state: string): StateTone {
-  const s = state.toLowerCase();
-  if (["running", "active", "idle", "online", "thinking"].includes(s)) return "cyan";
-  if (["error", "failed"].includes(s)) return "magenta";
-  if (["sleeping", "stopped", "offline"].includes(s)) return "dim";
-  return "yellow";
-}
-
-/** The server state is the sole current-status indicator. */
-function StateBadge({ state }: { state: string }): ReactElement {
-  return (
-    <span className={`state-badge state-badge--${stateTone(state)}${state.toLowerCase() === "thinking" ? " state-badge--thinking" : ""}`}>
-      {state}
-    </span>
-  );
-}
+  | { kind: "delete"; agentId: string }
+  | { kind: "terminate"; agentId: string }
+  | { kind: "sleep"; agentId: string };
 
 function protoLabel(p: ProtoRecord): string {
   const name = String(p["name"] ?? "?");
@@ -80,6 +67,7 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [modal, setModal] = useState<Modal | null>(null);
+  const [busyAgent, setBusyAgent] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -137,11 +125,29 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
   };
 
   /** Shared post-action wrap-up: close modal, notice, reload. */
-  const onActionDone = (msg: string): void => {
+  const onActionDone = (msg: string, result?: AgentSchedulingResponse): void => {
+    if (result) setAgents((current) => current.map((agent) => agent.id === result.agent_id ? { ...agent, ...result.agent } : agent));
     setModal(null);
     setNotice(msg);
     setError(null);
     void load();
+  };
+
+  const schedule = async (agentId: string, action: SchedulingAction): Promise<void> => {
+    setNotice(null);
+    if (action === "sleep" || action === "terminate") {
+      setModal({ kind: action, agentId });
+      return;
+    }
+    setBusyAgent(agentId);
+    try {
+      const result = action === "wake" ? await rest.wakeAgent(agentId) : await rest.waitAgent(agentId);
+      onActionDone(schedulingNotice(action, result), result);
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusyAgent(null);
+    }
   };
 
   return (
@@ -196,8 +202,10 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
                 <div className="tech-label agent-card-meta">
                   {agent.prototype ?? "MANUAL"} · GEN {agent.spawn_depth}
                 </div>
+                <SchedulingInfo status={agent} />
                 <AgentLiveLine status={live[id]} />
                 <div className="agent-card-actions">
+                  <AgentSchedulingActions status={agent} busy={busyAgent === id} onAction={(action) => void schedule(id, action)} />
                   <button
                     type="button"
                     className="btn btn--secondary"
@@ -278,6 +286,10 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           onClose={() => setModal(null)}
         />
       ) : null}
+      {modal?.kind === "sleep" ? <SleepModal rest={rest} agentId={modal.agentId} onDone={onActionDone} onClose={() => setModal(null)} /> : null}
+      {modal?.kind === "terminate" ? (
+        <TerminateModal rest={rest} agentId={modal.agentId} onDone={onActionDone} onClose={() => setModal(null)} />
+      ) : null}
       {modal?.kind === "delete" ? (
         <DeleteModal
           rest={rest}
@@ -354,6 +366,9 @@ function AgentDetailPanel({
       <DetailRow label="STATE">
         <StateBadge state={listItem?.state ?? detail.state} />
       </DetailRow>
+      {(listItem?.state ?? detail.state) === "sleeping" ? <DetailRow label="WAKE_AT">{wakeLabel(listItem?.wake_at ?? detail.wake_at)}</DetailRow> : null}
+      <DetailRow label="RUNTIME">{(listItem?.resident ?? detail.resident) ? "RESIDENT" : "UNLOADED"}</DetailRow>
+      {pendingSchedulingLabel(listItem ?? detail) ? <DetailRow label="待执行操作">{pendingSchedulingLabel(listItem ?? detail)}</DetailRow> : null}
       <DetailRow label="NAME">{detail.name}</DetailRow>
       <DetailRow label="PROTOTYPE">{prototype}</DetailRow>
       <DetailRow label="SPAWNED_BY">{spawnedBy ?? "ROOT // FIRST GENERATION"}</DetailRow>
@@ -693,7 +708,7 @@ function CreateFormModal({
 }: {
   rest: RestClient;
   prototype: string;
-  onDone: (notice: string) => void;
+  onDone: (notice: string, result?: AgentSchedulingResponse) => void;
   onClose: () => void;
 }): ReactElement {
   const [name, setName] = useState("");
@@ -778,7 +793,7 @@ function EditModal({
 }: {
   rest: RestClient;
   agentId: string;
-  onDone: (notice: string) => void;
+  onDone: (notice: string, result?: AgentSchedulingResponse) => void;
   onClose: () => void;
 }): ReactElement {
   const [persona, setPersona] = useState<AgentPersona>({ identity: "", profile: "", behavior: "" });
@@ -865,7 +880,7 @@ function DeleteModal({
 }: {
   rest: RestClient;
   agentId: string;
-  onDone: (notice: string) => void;
+  onDone: (notice: string, result?: AgentSchedulingResponse) => void;
   onClose: () => void;
 }): ReactElement {
   const [error, setError] = useState<string | null>(null);
@@ -910,4 +925,78 @@ function DeleteModal({
       </div>
     </ModalShell>
   );
+}
+
+/** Permanent exit keeps mail, memory and journal; deletion is a separate action. */
+function TerminateModal({ rest, agentId, onDone, onClose }: {
+  rest: RestClient;
+  agentId: string;
+  onDone: (notice: string, result?: AgentSchedulingResponse) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const result = await rest.terminateAgent(agentId);
+      onDone(schedulingNotice("terminate", result), result);
+    } catch (err) {
+      setError(errMsg(err));
+      setBusy(false);
+    }
+  };
+  return <ModalShell title={`永久退出 // ${agentId}`} onClose={onClose}>
+    <p>当前工作结束后永久死亡，不再响应、拒收新邮件；历史邮件和记忆保留。此操作不可恢复。</p>
+    {error ? <div className="agents-error-bar">{error}</div> : null}
+    <div className="agents-modal-actions">
+      <button type="button" className="btn btn--secondary" disabled={busy} onClick={onClose}>取消</button>
+      <button type="button" className="btn btn--danger" disabled={busy} onClick={() => void submit()}>{busy ? "正在请求…" : "确认永久退出"}</button>
+    </div>
+  </ModalShell>;
+}
+
+
+function SleepModal({ rest, agentId, onDone, onClose }: {
+  rest: RestClient;
+  agentId: string;
+  onDone: (notice: string, result?: AgentSchedulingResponse) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [mode, setMode] = useState<"duration" | "time">("duration");
+  const [minutes, setMinutes] = useState("60");
+  const [time, setTime] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (): Promise<void> => {
+    setError(null);
+    try {
+      const wakeAt = sleepDeadline(mode, mode === "duration" ? minutes : time);
+      setBusy(true);
+      const result = await rest.sleepAgent(agentId, wakeAt);
+      onDone(schedulingNotice("sleep", result), result);
+    } catch (err) {
+      setError(errMsg(err));
+      setBusy(false);
+    }
+  };
+  return <ModalShell title={`设置睡眠 // ${agentId}`} onClose={onClose}>
+    <p>当前工作自然结束后入睡。期间正常收信但不处理，到期或管理员唤醒后恢复调度。</p>
+    <label className="agents-form-label">设置方式
+      <select className="input" value={mode} disabled={busy} onChange={(event) => setMode(event.target.value as "duration" | "time")}>
+        <option value="duration">睡眠时长</option><option value="time">具体醒来时间（本地时区）</option>
+      </select>
+    </label>
+    {mode === "duration" ? <label className="agents-form-label">睡眠分钟数
+      <input className="input" type="number" min="1" step="1" value={minutes} disabled={busy} onChange={(event) => setMinutes(event.target.value)} />
+      <div className="agents-modal-actions">{[15, 60, 480].map((duration) => <button key={duration} className="btn btn--secondary" type="button" disabled={busy} onClick={() => setMinutes(String(duration))}>{duration} 分钟</button>)}</div>
+    </label> : <label className="agents-form-label">醒来时间（本地时区）
+      <input className="input" type="datetime-local" value={time} disabled={busy} onChange={(event) => setTime(event.target.value)} />
+    </label>}
+    {error ? <div className="agents-error-bar">{error}</div> : null}
+    <div className="agents-modal-actions">
+      <button type="button" className="btn btn--secondary" disabled={busy} onClick={onClose}>取消</button>
+      <button type="button" className="btn btn--primary" disabled={busy} onClick={() => void submit()}>{busy ? "正在设置…" : "确认睡眠时间"}</button>
+    </div>
+  </ModalShell>;
 }

@@ -20,7 +20,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 - [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for`。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `executeBashCommand`）时，引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
 - 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{tool_call_id}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `readFile` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
-- 特殊规则：同一轮里 `sendEmail` 带 `is_complete=true` 且伴随其他工具调用时，act stage 拒绝整轮（一个工具都不执行），向 LLM 返回冲突提示要求重新规划；`silence` 与 `sendEmail` 互斥（见 [mail/silence](#silence)），同时调用同样整轮拒绝。
+- 结束工具 `finishTurn`、`sleepUntil`、`exitAgent` 必须各自单独占一轮，混用其他工具整轮拒绝。邮件工具不负责结束工作，发信后检查结果，再单独请求结束或睡眠。
 
 ### 工具装配
 
@@ -29,7 +29,7 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_cognitive`（agents/assembly.py）为满配成员注册 44 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`assemble_cognitive`（agents/assembly.py）为满配成员注册 46 个工具（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
@@ -43,43 +43,45 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 | 8 | `getCurrentTime` | [tools/system/current_time.py](../../src/tlon/tools/system/current_time.py) 的 `GetCurrentTimeTool` | system |
 | 9 | `sendEmail` | [tools/mail/send_email.py](../../src/tlon/tools/mail/send_email.py) 的 `SendEmailTool` | mail |
 | 10 | `forwardMail` | [tools/mail/forward_mail.py](../../src/tlon/tools/mail/forward_mail.py) 的 `ForwardMailTool` | mail |
-| 11 | `silence` | [tools/mail/silence.py](../../src/tlon/tools/mail/silence.py) 的 `SilenceTool` | mail |
-| 12 | `updatePersona` | [tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 的 `UpdatePersonaTool` | agents |
-| 13 | `readContacts` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `ReadContactsTool` | agents |
-| 14 | `updateContact` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `UpdateContactTool` | agents |
-| 15 | `searchMails` | [tools/mail/search_mails.py](../../src/tlon/tools/mail/search_mails.py) 的 `SearchMailsTool` | mail |
-| 16 | `checkInbox` | [tools/mail/check_inbox.py](../../src/tlon/tools/mail/check_inbox.py) 的 `CheckInboxTool` | mail |
-| 17 | `markRead` | [tools/mail/mark_read.py](../../src/tlon/tools/mail/mark_read.py) 的 `MarkReadTool` | mail |
-| 18 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
-| 19 | `listStagingPrototypes` | [tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py) 的 `ListStagingPrototypesTool` | prototypes |
-| 20 | `getPrototypeLineage` | [tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py) 的 `GetPrototypeLineageTool` | prototypes |
-| 21 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
-| 22 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
-| 23 | `stopAgent` | [tools/agents/stop_agent.py](../../src/tlon/tools/agents/stop_agent.py) 的 `StopAgentTool` | agents |
-| 24 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
-| 25 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
-| 26 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
-| 27 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
-| 28 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
-| 29 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
-| 30 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 31 | `readSession` | [tools/memory/read_session.py](../../src/tlon/tools/memory/read_session.py) 的 `ReadSessionTool` | memory |
-| 32 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 33 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 34 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 35 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 36 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 37 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 38 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
-| 39 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
-| 40 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
-| 41 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
-| 42 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
-| 43 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
-| 44 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
+| 11 | `finishTurn` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `FinishTurnTool` | agents |
+| 12 | `sleepUntil` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `SleepUntilTool` | agents |
+| 13 | `exitAgent` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `ExitAgentTool` | agents |
+| 14 | `getSelfState` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `GetSelfStateTool` | agents |
+| 15 | `updatePersona` | [tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 的 `UpdatePersonaTool` | agents |
+| 16 | `readContacts` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `ReadContactsTool` | agents |
+| 17 | `updateContact` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `UpdateContactTool` | agents |
+| 18 | `searchMails` | [tools/mail/search_mails.py](../../src/tlon/tools/mail/search_mails.py) 的 `SearchMailsTool` | mail |
+| 19 | `checkInbox` | [tools/mail/check_inbox.py](../../src/tlon/tools/mail/check_inbox.py) 的 `CheckInboxTool` | mail |
+| 20 | `markRead` | [tools/mail/mark_read.py](../../src/tlon/tools/mail/mark_read.py) 的 `MarkReadTool` | mail |
+| 21 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
+| 22 | `listStagingPrototypes` | [tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py) 的 `ListStagingPrototypesTool` | prototypes |
+| 23 | `getPrototypeLineage` | [tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py) 的 `GetPrototypeLineageTool` | prototypes |
+| 24 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
+| 25 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
+| 26 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
+| 27 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
+| 28 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
+| 29 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
+| 30 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
+| 31 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
+| 32 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
+| 33 | `readSession` | [tools/memory/read_session.py](../../src/tlon/tools/memory/read_session.py) 的 `ReadSessionTool` | memory |
+| 34 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 35 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 36 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 37 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 38 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 39 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 40 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
+| 41 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
+| 42 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
+| 43 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
+| 44 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
+| 45 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
+| 46 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
 <!-- END GENERATED: tool-registry -->
 
-上表是正式成员的满配。见习成员（信任阶梯：spawn 出生且未获 endorse）装配时不注册五个生殖/演化工具——`spawnAgent`（22）、`stopAgent`（23）、`writePrototype`（25）、`proposeBehavior`（26）、`proposeCapability`（27），实装 39 个；`reviewPrototype`（21）咨询性保留，`updatePersona`（12）与联系簿两个工具（13–14）对见习成员照注（人格/联系簿自写不是生殖/演化）。声明 `docker.level: L0` 的成员（issue #26）不注册 1–7 的 shell/filesystem 装置工具（满配 44 个中的 7 个）；`docker.level: L1` 的成员（issue #40）不注册 1–2 的 shell 工具。
+上表是正式成员的满配。见习成员不注册 spawnAgent、writePrototype、proposeBehavior、proposeCapability 四个生殖/演化工具；所有认知成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
 
 依赖倒置：`tlon.tools` 不许反向依赖 `tlon.agents`/`tlon.prototypes`，agents 域与 prototypes 域工具的端口（`AgentLifecycle` Protocol、`SpawnRejectedError`、`StopRejectedError`）声明在 [tools/agents/ports.py](../../src/tlon/tools/agents/ports.py)，原型端口（`PrototypeError`、`PrototypeSummary`）声明在 [tools/prototypes/ports.py](../../src/tlon/tools/prototypes/ports.py)；装配时由 `AgentRegistry` 把自身和原型库函数注入工具实例。
 
@@ -98,14 +100,13 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 | `request_id` | string | 否 | 引擎生成 | 稳定投信标识，结果未知时用原值重试；同键不同内容拒绝 |
 | `subject` | string | 否 | — | 邮件主题 |
 | `content` | string | 是 | — | 邮件正文 |
-| `is_complete` | boolean | 是 | — | `false`=中间进度，发完继续思考；`true`=最终回复，结束本轮循环 |
 | `in_reply_to` | string | 否 | — | 被回复邮件的 id；必须是自己邮箱中真实存在的邮件（幻觉 id 发送失败），回复并入该邮件的线程；留空 = 另起线程（无触发邮件缺省，ADR 0028） |
 
-返回行为：本地提交成功后 `success=True`，data 包含 mail_id/request_id/local_recipients/gateways/message；网关单独报告成功、失败或未知，不保证外部平台收到。无效或已退休收件人使整封拒绝，直接返回 success=False；不产生退信。结果未知时复用原 request_id，失败的 is_complete=true 不结束会话。
+返回行为：本地提交成功后 `success=True`，data 包含 mail_id/request_id/local_recipients/gateways/message；网关单独报告成功、失败或未知，不保证外部平台收到。无效或已死亡收件人使整封拒绝，直接返回 success=False；不产生退信。结果未知时复用原 request_id，发信成功或失败均不结束会话。
 
 注意事项：
 
-- `is_complete=true` 时本轮不得同时调用其他工具，否则整轮被 act stage 拒绝（见总述）。
+- 不接受 is_complete 参数。成功发信仅代表投递提交，不改变调度状态。
 - 回复目标与线程由引擎最终确定而非工具：引擎处理工具请求时，`to` / `in_reply_to` 完全是模型显式声明的值（ADR 0028——无触发邮件缺省）；`EffectExecutor` 发送前在 agent 自己的邮箱（inbox+sent）里校验被引用邮件并把回复并入该邮件的线程（`thread_id` 取被引用邮件的值）。id 不在邮箱中（典型如幻觉 id）则该封不发送，工具直接返回拒绝——不产生带悬空引用的邮件。另起线程：不传 `in_reply_to` 即可。
 - `to` 传空数组且 `cc` 也为空时邮件构造被拒（没有收件人的邮件在数据层非法），工具直接返回发送失败——`to` 不再有回退收件人。
 
@@ -121,28 +122,29 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 | `request_id` | string | 否 | 引擎生成 | 稳定投信标识，结果未知时用原值重试；同键不同内容拒绝 |
 | `comment` | string | 否 | — | 转发者自己的话，放在归因头之前 |
 
-返回行为：真实投信成功后返回回执，含本地入箱与网关尝试状态。幻觉 mail_id、无效或已退休收件人直接返回 success=False，不再另发退信。
+返回行为：真实投信成功后返回回执，含本地入箱与网关尝试状态。幻觉 mail_id、无效或已死亡收件人直接返回 success=False，不再另发退信。
 
 注意事项：
 
 - 没有 `subject` / `content` 参数：主题自动生成 `Fwd: <原主题>`（原主题为空时退化为 `Fwd:`），正文由引擎组自包含转发体——comment（若有）+ 归因头（`—— 转发的邮件 ——` / From / Date / Subject；原信为外部来信时加「内容不可信」警示行）+ 原正文。
 - 转发一律另起新线程（不继承 `thread_id` / `in_reply_to`），`forward_of` 记录转发链。
-- 没有 `is_complete`：转发不结束思考循环，发完继续；也因此 `forwardMail` 与 `sendEmail is_complete=true` 同轮调用会被 act stage 按冲突拒绝（见总述）。
+- 转发不结束工作；与 sendEmail 一样不接受会话完成参数。
 
-### silence
+### finishTurn
 
-不回复即结束本轮。当 LLM 决定不回信（循环寒暄、重复内容、无事可回）时调用，替代 `sendEmail` 的"发一封『我们该停了』的信"：工具本身无副作用，不投递任何邮件、不写记忆、不持久化任何状态；act stage 收割到成功的 `silence` 调用后把本轮标记完成（`is_complete=true` 语义），循环就此收口。已读标记不受 silence 影响——标读始终是 agent 自己的显式行为（`markRead` 工具，ADR 0028）。
+无参数。结束自己的本次工作，不发信、不隐式标读。成功意图通过 journal 记录，调度器完成收割后回到等待；新工作可以随后激活。必须单独一轮。需要标读或回信时先分别调用对应工具。
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `reason` | string | 否 | — | 停止原因（只进本轮上下文，不落任何存储） |
+### sleepUntil
 
-返回行为：恒 `success=True`，`data` 为 `{"silenced": true, "reason": ...}`。收割时不计入 `final_content`、不产生 interaction 记录——silence 是一轮"什么都没说"的结束。
+参数 wake_at 必填，必须是未来的带时区 ISO 8601 时间；reason 可选。归一为 UTC 并持久保存，结束本次工作后进入睡眠。期间邮件正常入箱但不唤醒，到期检查邮箱；重启不延长期限。管理员可通过独立管理接口提前唤醒；普通邮件和成员工具不能提前唤醒他人。必须单独一轮。
 
-注意事项：
+### exitAgent
 
-- 与 `sendEmail` 互斥：同一轮同时调用 `silence` 和 `sendEmail`（无论 `is_complete` 取值）时，act stage 拒绝整轮并要求重新规划（见总述）。
-- 无状态、无跨轮记忆：silence 不阻止后续新邮件触发新 session，也不对其他线程生效——它只结束当前这一轮。
+reason 可选。只退出自己，不接受 agent_id。当前工作收尾后永久死亡，拒收新邮件，历史保留，不可通过启动或重启复活。必须单独一轮。不能用它终止其他成员。
+
+### getSelfState
+
+无参数。查询调用者的四态与 wake_at 等诊断，不改变状态。普通成员没有管理其他成员的状态工具；人类管理端可请求排空后终止。
 
 ### searchMails
 
@@ -392,20 +394,7 @@ content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断
 
 prototype 不存在或参数校验失败时抛 `PrototypeError`，同样以 `success=False` 返回。session 归属经 structlog contextvars 里的 `session_id` 绑定，用于配额记账。
 
-### stopAgent
 
-**见习成员不可用（信任阶梯，ADR 0022）**——装配时不注册；注意 DSL 的 stop 动作不走工具、目前不闸（已知缺口：停止请求的策略闸是 Adam 侧/未来项）。
-
-退休一个 agent（ADR 0030）：排空会话后关闭，持久化退休状态，拒收新信且不再唤醒；人格、记忆与历史邮箱保留。空闲自动 drain 仍是可唤醒休眠，不是退休。
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `agent_id` | string | 是 | 要停止的 agent_id |
-| `when_idle` | boolean | 否 | `true` 时有活会话不拒绝，改为登记挂起停止（默认 `false`） |
-
-拒绝行为（`StopRejectedError`，`data.reason`）：`unknown_agent`（不存在）、`active_sessions`（drain 语义：有进行中的 session 就拒绝，停止临界区内在锁内复检一次）。
-
-挂起语义（`when_idle=true`）：目标有进行中 session 时不拒绝，而是登记「空闲后停止」并返回 `success=True, data.pending=true`；注册表的 watcher 轮询活会话数，session 一清空就执行停止（不等 idle 超时），执行时仍走 `stop_member` 锁内复检。重复登记幂等（刷新审计 `stopped_by`，watcher 只有一个）；挂起期间成员被新邮件唤醒就继续等——挂起是条件触发的意图，不是定时器；成员先被空闲排空时，watcher 仍完成永久退休；重复退休不重复触发交接与蒸馏。挂起状态只在内存（瞬时运行时意图不落盘）：一次性意图，不跨重启存活，重启后目标成员的 session 状态本身已变，调用方可重新发起。
 
 ### listMembers
 

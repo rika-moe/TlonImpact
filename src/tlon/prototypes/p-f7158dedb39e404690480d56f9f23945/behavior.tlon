@@ -7,8 +7,8 @@
           :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
                  :stages [(plan {:if (first-iteration?) :max-steps 5})
                           (think)
-                          (critique {:if (completing?)})
-                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (critique {:if (sending-mail?)})
+                          (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
                  :max-iterations 30

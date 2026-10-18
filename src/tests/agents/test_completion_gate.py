@@ -1,23 +1,4 @@
-"""Pre-submission critique gate (docs/design/runtime.md): the lightweight
-default loop.
-
-The default cognitive stage vector gates the completing act on a critique
-of the pending draft:
-
-    [(think)
-     (critique {:if (completing?)})
-     (act {:if (or (not (completing?)) (not (critique-failed?)))})
-     (revise {:if (critique-failed?)})]
-
-``completing?`` is true exactly when the round's pending response would
-end the session (a sole ``sendEmail is_complete=true`` or ``silence``
-call). critique therefore costs one extra LLM call per completion
-*attempt* — independent of the round count — and a FAIL blocks the
-dispatch, feeds the feedback back via revise (which clears the consumed
-verdict), and lets the next think revise the draft. An unparseable
-verdict writes no verdict (), so the gate stays open (fail-open,
-matching critique's soft-failure semantics).
-"""
+"""Mail-delivery critique gates are independent of turn completion."""
 
 import asyncio
 import contextlib
@@ -46,8 +27,8 @@ GATED_EDN = """\
           :on :mail-delivered
           :loop {:context {:sections [(persona) (protocol)]}
                  :stages [(think)
-                          (critique {:if (completing?)})
-                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (critique {:if (sending-mail?)})
+                          (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?))
                  :max-iterations 10
@@ -68,7 +49,7 @@ def _tc(tc_id: str, name: str = "someTool", arguments: dict | None = None) -> To
 def _completing(content: str, tc_id: str = "c-final") -> LLMResponse:
     return LLMResponse(
         content="done",
-        tool_calls=[_tc(tc_id, "sendEmail", {"content": content, "is_complete": True})],
+        tool_calls=[_tc(tc_id, "sendEmail", {"content": content})],
     )
 
 
@@ -76,7 +57,11 @@ async def _send_tool(name: str, args: dict) -> ToolResult:
     if name == "sendEmail":
         return ToolResult(
             success=True,
-            data={"content": args["content"], "is_complete": args.get("is_complete")},
+            data={"content": args["content"]},
+        )
+    if name == "finishTurn":
+        return ToolResult(
+            success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
         )
     return ToolResult(success=True, data={"ok": name})
 
@@ -95,7 +80,12 @@ def _make_driver(
     services.build_context = AsyncMock(
         return_value=BuiltContext(messages=[{"role": "user", "content": "hi"}], anchor_len=1)
     )
-    services.think = AsyncMock(side_effect=list(responses))
+    services.think = AsyncMock(
+        side_effect=[
+            *responses,
+            LLMResponse(content=None, tool_calls=[_tc("finish", "finishTurn")]),
+        ]
+    )
     services.session_span = lambda session: contextlib.nullcontext()
 
     executor = MagicMock()
@@ -157,17 +147,17 @@ class TestAttemptsCompletion:
         assert attempts_completion(None) is False
         assert attempts_completion(LLMResponse(content="thinking")) is False
 
-    def test_send_email_is_complete_completes(self) -> None:
-        assert attempts_completion(_completing("reply")) is True
+    def test_send_email_does_not_complete(self) -> None:
+        assert attempts_completion(_completing("reply")) is False
 
-    def test_silence_alone_completes(self) -> None:
-        response = LLMResponse(content=None, tool_calls=[_tc("c1", "silence")])
+    def test_finish_turn_alone_completes(self) -> None:
+        response = LLMResponse(content=None, tool_calls=[_tc("c1", "finishTurn")])
         assert attempts_completion(response) is True
 
     def test_progress_mail_does_not_complete(self) -> None:
         response = LLMResponse(
             content=None,
-            tool_calls=[_tc("c1", "sendEmail", {"content": "wip", "is_complete": False})],
+            tool_calls=[_tc("c1", "sendEmail", {"content": "wip"})],
         )
         assert attempts_completion(response) is False
 
@@ -177,7 +167,7 @@ class TestAttemptsCompletion:
         response = LLMResponse(
             content=None,
             tool_calls=[
-                _tc("c1", "sendEmail", {"content": "reply", "is_complete": True}),
+                _tc("c1", "finishTurn"),
                 _tc("c2", "someTool"),
             ],
         )
@@ -255,7 +245,7 @@ class TestCompletionGate:
 
         assert session.is_completed
         # Two thinks + exactly one critique (the completing round only).
-        assert len(_calls_by_span(services, "agent.think")) == 2
+        assert len(_calls_by_span(services, "agent.think")) == 3
         assert len(_calls_by_span(services, "agent.critique")) == 1
 
     async def test_conflicting_completion_skips_critique(self, tmp_path: Path) -> None:
@@ -263,7 +253,7 @@ class TestCompletionGate:
         conflict = LLMResponse(
             content=None,
             tool_calls=[
-                _tc("c1", "sendEmail", {"content": "reply", "is_complete": True}),
+                _tc("c1", "finishTurn"),
                 _tc("c2", "someTool"),
             ],
         )
@@ -296,20 +286,12 @@ class TestCompletionGate:
         assert executor.send_mail.await_args.args[0].content == "reply"
         assert session.loop_scratch.get("critique") is None
 
-    async def test_silence_decision_is_reviewed(self, tmp_path: Path) -> None:
-        """silence is also a completion signal: it goes through the gate."""
-        mail = _mail()
-        silent = LLMResponse(content=None, tool_calls=[_tc("c1", "silence")])
+    async def test_finish_decision_does_not_trigger_mail_critique(self, tmp_path: Path) -> None:
         driver, _, executor, services = _make_driver(
-            tmp_path, [silent, LLMResponse(content="FAIL\n不应沉默，应回复确认收到")]
+            tmp_path, [LLMResponse(content=None, tool_calls=[_tc("c1", "finishTurn")])]
         )
-        session = AgentSession(session_id=f"agent1-{mail.id}", trigger_content=mail.content)
-
-        await driver.step_session(session)
-
-        # The silence call was blocked; the feedback is queued for the
-        # next think instead.
+        session = AgentSession(session_id="agent1-finish", trigger_content="notice")
+        await _drive(driver, session)
+        assert session.is_completed
         executor.send_mail.assert_not_awaited()
-        assert session.state == SessionState.ACTIVE
-        assert len(_calls_by_span(services, "agent.critique")) == 1
-        assert any("不应沉默" in str(m.get("content")) for m in session.context)
+        assert not _calls_by_span(services, "agent.critique")

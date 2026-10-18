@@ -85,7 +85,7 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
 def _call(
     *, recipient: str = "bob", request_id: str | None = None, call_id: str = "tool1"
 ) -> ToolCall:
-    args = {"to": [recipient], "content": "completed work", "is_complete": True}
+    args = {"to": [recipient], "content": "completed work"}
     if request_id is not None:
         args["request_id"] = request_id
     return ToolCall(id=call_id, function_name="sendEmail", arguments=args)
@@ -104,9 +104,9 @@ async def test_tool_receipt_is_durable_before_collect_and_replay_does_not_send_a
     assert [mail.id for mail in fresh_store.mails("human:bob")] == [result.data["mail_id"]]
     session = AgentSession(session_id="session1", trigger_content="work")
     outcome = await act_stage_collect(services, session, [completed])
-    assert outcome.complete
+    assert not outcome.complete
     await driver._apply_outcome(session, None, outcome)
-    assert session.is_completed
+    assert not session.is_completed
     assert len(fresh_store.mails("human:bob")) == 1
     replay = await driver.execute_one_tool("session1", call)
     assert replay[1].data["mail_id"] == result.data["mail_id"]
@@ -114,7 +114,7 @@ async def test_tool_receipt_is_durable_before_collect_and_replay_does_not_send_a
 
 
 @pytest.mark.parametrize("recipient", ["unknown", "bob"])
-async def test_rejection_never_completes_session_even_with_is_complete(
+async def test_rejection_never_completes_session(
     engine: tuple[LoopDriver, PostOffice, MagicMock],
     recipient: str,
 ) -> None:

@@ -223,3 +223,20 @@ class TestPromptDataFile:
         # operations the engine cannot apply.
         for action in ("record_claim", "delete_claim", "noop"):
             assert action in REFLECTION_SYSTEM_PROMPT
+
+
+async def test_reflection_notifies_active_and_waiting(tmp_path: Path) -> None:
+    engine, manager = _engine(tmp_path)
+    observed: list[bool] = []
+
+    async def changed() -> None:
+        observed.append(engine.is_running)
+
+    engine._state_changed = changed
+    for _ in range(manager.config.reflection_min_interactions):
+        engine.note_interaction()
+    await engine.check_trigger()
+    task = engine._task
+    assert task is not None
+    await task
+    assert observed == [True, False]

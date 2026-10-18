@@ -435,7 +435,15 @@ def _make_driver(
 
     tool_executor = MagicMock()
     tool_executor.execute = AsyncMock(
-        side_effect=tool_execute or (lambda name, args: ToolResult(success=True, data={"ok": name}))
+        side_effect=tool_execute
+        or (
+            lambda name, args: ToolResult(
+                success=True,
+                data={"scheduling_request": {"action": "finish", "reason": ""}}
+                if name == "finishTurn"
+                else {"ok": name},
+            )
+        )
     )
 
     on_complete = MagicMock()
@@ -484,7 +492,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
         )
         driver, journal, _, services = _make_driver(tmp_path, [response])
         services.build_context = AsyncMock(
@@ -521,7 +529,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
         )
         driver, journal, _, services = _make_driver(tmp_path, [response])
         session = _session("agent1-resp", mail)
@@ -542,11 +550,13 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
+            return ToolResult(
+                success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+            )
 
         driver, journal, executor, _ = _make_driver(tmp_path, [response], tool_execute=tool_execute)
         session = _session(f"agent1-{mail.id}", mail)
@@ -557,7 +567,7 @@ class TestDriverJournaling:
         # The invariant: everything the model saw is in the log.
         assert await journal.derive_context(session.id) == session.context
         assert await journal.end_reason(session.id) == "complete"
-        executor.send_mail.assert_awaited_once()
+        executor.send_mail.assert_not_awaited()
         # ADR 0009: no interaction save — the journal is the truth; the
         # batch summary trigger reads it at the scheduler's reap point.
 
@@ -588,14 +598,14 @@ class TestDriverJournaling:
         )
         round2 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c2", "sendEmail", {"content": "final", "is_complete": True})],
+            tool_calls=[_tc("c2", "finishTurn", {})],
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            if name == "sendEmail":
+            if name == "finishTurn":
                 return ToolResult(
                     success=True,
-                    data={"content": args["content"], "is_complete": True},
+                    data={"scheduling_request": {"action": "finish", "reason": ""}},
                 )
             return ToolResult(success=True, data={"stdout": big_stdout})
 
@@ -631,7 +641,7 @@ class TestCrashRecovery:
         round1 = LLMResponse(content="working", tool_calls=[fast, slow])
         round2 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c2", "sendEmail", {"content": "final", "is_complete": True})],
+            tool_calls=[_tc("c2", "finishTurn", {})],
         )
 
         executed: list[str] = []
@@ -641,10 +651,10 @@ class TestCrashRecovery:
             executed.append(name)
             if name == "slowTool":
                 await never.wait()  # in-flight when the "process" dies
-            if name == "sendEmail":
+            if name == "finishTurn":
                 return ToolResult(
                     success=True,
-                    data={"content": args["content"], "is_complete": True},
+                    data={"scheduling_request": {"action": "finish", "reason": ""}},
                 )
             return ToolResult(success=True, data={"ok": name})
 
@@ -679,8 +689,8 @@ class TestCrashRecovery:
         await _drive(driver, resumed)
         assert resumed.is_completed
         assert executed.count("someTool") == 1  # replayed, not re-run
-        assert executed.count("sendEmail") == 1
-        executor.send_mail.assert_awaited_once()
+        assert executed.count("finishTurn") == 1
+        executor.send_mail.assert_not_awaited()
         # The healed log replays cleanly end to end.
         final = await journal.resume(sid)
         assert final is not None and final.completed and final.end_reason == "complete"
@@ -1005,27 +1015,17 @@ class TestFailureReply:
         assert executor.send_mail.await_args.args[0].content == "出错了。"
 
 
-# ── Max-iterations exhaustion: the reply distills the work done ─────────
+# ── Deterministic resource-limit notices ──────────────────────────────
 
 
-class TestMaxIterationsDistillReply:
-    """The hard-ceiling termination distills the session's intermediate
-    work into the reply via one extra LLM call; a failed distillation
-    falls back to the fixed text (the termination path must never fail)."""
-
-    @staticmethod
-    def _responses(rounds: int) -> list[LLMResponse]:
-        # Content-only rounds: act appends the no-tool reminder and
-        # advances the iteration, so the loop burns to the hard ceiling.
-        return [LLMResponse(content=f"working {i}") for i in range(rounds)]
-
-    async def test_max_iterations_sends_distilled_reply(self, tmp_path: Path) -> None:
+class TestResourceLimitNotice:
+    async def test_drafts_and_feedback_cannot_claim_submitted_mail(self, tmp_path: Path) -> None:
         mail = _mail()
-        driver, journal, executor, services = _make_driver(tmp_path, self._responses(10))
-        services.distill = AsyncMock(
-            return_value=LLMResponse(content="已查到三份资料并整理了大纲，但报告尚未写完。")
+        driver, journal, executor, services = _make_driver(
+            tmp_path, [LLMResponse(content="前函已经发送，现更正错误") for _ in range(10)]
         )
         session = _session(f"agent1-{mail.id}", mail)
+        session.loop_scratch["critique_feedback"] = "前函错误"
 
         await _drive(driver, session)
 
@@ -1033,51 +1033,34 @@ class TestMaxIterationsDistillReply:
         assert await journal.end_reason(session.id) == "max_iterations"
         executor.send_mail.assert_awaited_once()
         effect = executor.send_mail.await_args.args[0]
-        assert effect.to == ["user@tlon.internal"]
+        assert effect.to == [mail.from_address]
         assert effect.in_reply_to == mail.id
         assert effect.thread_id == mail.thread_id
-        assert effect.content == "已查到三份资料并整理了大纲，但报告尚未写完。"
-        # The distillation input is the context tail plus the instruction
-        # carrying the session's trigger text.
-        distill_messages = services.distill.await_args.args[1]
-        assert TRIGGER in distill_messages[-1]["content"]
-        assert any("working 9" in str(m.get("content")) for m in distill_messages)
+        assert effect.subject == "运行时通知：处理达到资源上限"
+        assert "已确认提交邮局：0 封。" in effect.content
+        assert "本次任务未完成" in effect.content
+        assert "前函" not in effect.content
+        assert services.think.await_count == 10
+        services.distill.assert_not_called()
 
-    async def test_max_iterations_distill_failure_falls_back(self, tmp_path: Path) -> None:
+    async def test_member_hint_cannot_replace_factual_report(self, tmp_path: Path) -> None:
         mail = _mail()
-        driver, journal, executor, services = _make_driver(tmp_path, self._responses(10))
-        services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
+        driver, _, executor, _ = _make_driver(
+            tmp_path, [LLMResponse(content="working") for _ in range(10)], edn=REPLIES_EDN
+        )
         session = _session(f"agent1-{mail.id}", mail)
-
         await _drive(driver, session)
-
-        assert session.is_completed
-        assert await journal.end_reason(session.id) == "max_iterations"
-        executor.send_mail.assert_awaited_once()
-        effect = executor.send_mail.await_args.args[0]
-        assert effect.content == "思考时间过长，请简化您的问题。"
-
-    async def test_distill_failure_falls_back_to_member_reply(self, tmp_path: Path) -> None:
-        """The fixed-text fallback honors the member's :iteration-limit
-        override — the reply override, not the distillation, is data."""
-        mail = _mail()
-        driver, _, executor, services = _make_driver(tmp_path, self._responses(10), edn=REPLIES_EDN)
-        services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
-        session = _session(f"agent1-{mail.id}", mail)
-
-        await _drive(driver, session)
-
-        assert session.is_completed
-        executor.send_mail.assert_awaited_once()
-        effect = executor.send_mail.await_args.args[0]
-        assert effect.content == "想太久了，简单说。"
+        content = executor.send_mail.await_args.args[0].content
+        assert content.startswith("[运行时通知：处理达到资源上限]")
+        assert "已确认提交邮局：0 封。" in content
+        assert "附加提示（成员预设文案，不属于执行记录）：想太久了，简单说。" in content
 
 
 class TestTokenBudget:
     """Session token budget (ADR 0023): every stage LLM call's usage is
     journaled (absolute total) and accumulated on the session; the
-    engine's second hard ceiling ends the session via the same
-    distillation path as max_iterations, with reason ``max_tokens``."""
+    engine's second hard ceiling ends the session with a deterministic
+    notice, with reason ``max_tokens``."""
 
     async def test_stage_llm_usage_accumulates(self, tmp_path: Path) -> None:
         mail = _mail()
@@ -1091,12 +1074,14 @@ class TestTokenBudget:
         )
         round3 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
             usage={"prompt_tokens": 600, "completion_tokens": 100, "total_tokens": 700},
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
+            return ToolResult(
+                success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+            )
 
         driver, journal, _, _ = _make_driver(
             tmp_path, [round1, round2, round3], tool_execute=tool_execute
@@ -1118,107 +1103,28 @@ class TestTokenBudget:
         replay = await journal.resume(session.id)
         assert replay is not None and replay.token_usage == 850
 
-    async def test_max_tokens_sends_distilled_reply(self, tmp_path: Path) -> None:
+    async def test_max_tokens_sends_factual_notice_without_extra_llm(self, tmp_path: Path) -> None:
         mail = _mail()
         edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens 1000")
         driver, journal, executor, services = _make_driver(
             tmp_path,
-            [LLMResponse(content="working", usage={"total_tokens": 1500})],
+            [LLMResponse(content="已发送三封邮件", usage={"total_tokens": 1500})],
             edn=edn,
         )
-        services.distill = AsyncMock(
-            return_value=LLMResponse(content="已查到三份资料，但 token 预算用尽。")
-        )
         session = _session(f"agent1-{mail.id}", mail)
-
         await _drive(driver, session)
-
         assert session.is_completed
-        # One round blew the budget; the next step's hard ceiling fired
-        # before any further LLM call.
         assert services.think.await_count == 1
+        services.distill.assert_not_called()
         assert session.token_usage == 1500
         assert await journal.end_reason(session.id) == "max_tokens"
         executor.send_mail.assert_awaited_once()
         effect = executor.send_mail.await_args.args[0]
-        assert effect.to == ["user@tlon.internal"]
+        assert effect.to == [mail.from_address]
         assert effect.in_reply_to == mail.id
-        assert effect.content == "已查到三份资料，但 token 预算用尽。"
-
-    async def test_max_tokens_distill_failure_falls_back(self, tmp_path: Path) -> None:
-        """A failed distillation falls back to the iteration-limit fixed
-        text — the token ceiling reuses that wording (ADR 0023)."""
-        mail = _mail()
-        edn = COGNITIVE_EDN.replace(":max-tokens 1000000", ":max-tokens 1000")
-        driver, journal, executor, services = _make_driver(
-            tmp_path,
-            [LLMResponse(content="working", usage={"total_tokens": 1500})],
-            edn=edn,
-        )
-        services.distill = AsyncMock(side_effect=RuntimeError("LLM down"))
-        session = _session(f"agent1-{mail.id}", mail)
-
-        await _drive(driver, session)
-
-        assert session.is_completed
-        assert await journal.end_reason(session.id) == "max_tokens"
-        executor.send_mail.assert_awaited_once()
-        assert executor.send_mail.await_args.args[0].content == "思考时间过长，请简化您的问题。"
-
-
-class TestDistillTailToolPairs:
-    """``_distill_messages`` 的预算截取不得切断 tool_call/tool 配对
-    （#128）：切断点落在 tool 消息上时，tail 首条是孤儿 tool 消息，
-    DeepSeek 400 拒收（"tool must follow a message with tool_calls"），
-    触顶蒸馏回信因此必然失败。"""
-
-    @staticmethod
-    def _session_with_tool_rounds() -> AgentSession:
-        session = _session("s1")
-        session.context = [
-            {"role": "user", "content": TRIGGER},
-            {
-                "role": "assistant",
-                "content": "",
-                # 超大的 tool_calls 载荷：反推预算截取时停在这条之前，
-                # 使 tail 以孤儿 tool 消息开头
-                "tool_calls": [
-                    {
-                        "id": "c1",
-                        "type": "function",
-                        "function": {"name": "search", "arguments": "垫" * 500},
-                    }
-                ],
-            },
-            {"role": "tool", "tool_call_id": "c1", "content": "结果一"},
-            {"role": "assistant", "content": "结论"},
-        ]
-        return session
-
-    @staticmethod
-    def _assert_pairs_intact(messages: list[dict]) -> None:
-        for i, m in enumerate(messages):
-            if m.get("role") == "tool":
-                assert i > 0 and messages[i - 1].get("tool_calls"), f"孤儿 tool 消息 at {i}"
-
-    def test_budget_cut_drops_orphan_tool_head(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("tlon.agents.loop_driver._DISTILL_TOKEN_BUDGET", 100)
-        session = self._session_with_tool_rounds()
-
-        messages = LoopDriver._distill_messages(session)
-
-        assert messages[0]["role"] != "tool"
-        self._assert_pairs_intact(messages)
-        assert messages[-1]["role"] == "user"  # 指令消息仍在末尾
-        assert TRIGGER in messages[-1]["content"]
-
-    def test_no_cut_keeps_pairs_together(self) -> None:
-        session = self._session_with_tool_rounds()
-
-        messages = LoopDriver._distill_messages(session)
-
-        assert messages[0]["content"] == TRIGGER
-        self._assert_pairs_intact(messages)
+        assert "累计 token 预算已用尽（max_tokens）" in effect.content
+        assert "已确认提交邮局：0 封。" in effect.content
+        assert "三封" not in effect.content
 
 
 class TestConsecutiveErrorLimit:
@@ -1233,11 +1139,13 @@ class TestConsecutiveErrorLimit:
         working = LLMResponse(content="working")  # no tool calls: act advances
         final = LLMResponse(
             content="done",
-            tool_calls=[_tc("c-final", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c-final", "finishTurn", {})],
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
+            return ToolResult(
+                success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+            )
 
         # err - ok - err - ok - err - ok: three errors, never consecutive.
         driver, journal, executor, services = _make_driver(
@@ -1398,24 +1306,21 @@ class TestTerminationReplyHumanOnly:
 
         executor.send_mail.assert_not_awaited()
 
-    async def test_hard_ceiling_suppression_skips_distill(self, tmp_path: Path) -> None:
-        """The max_iterations/max_tokens path skips even the distillation
-        LLM call when no human sender is in the responsibility set
-        (ADR 0027)."""
+    async def test_hard_ceiling_suppression_skips_notification(self, tmp_path: Path) -> None:
+        """Agent-only responsibility sets never receive runtime mail."""
         mail = self._agent_mail()
         driver, journal, executor, services = _make_driver(
             tmp_path,
             [LLMResponse(content=f"working {i}") for i in range(10)],
             is_human_sender=self._human_only,
         )
-        services.distill = AsyncMock(return_value=LLMResponse(content="进展"))
         session = _session(f"agent1-{mail.id}", mail)
 
         await _drive(driver, session)
 
         assert session.is_completed
         assert await journal.end_reason(session.id) == "max_iterations"
-        services.distill.assert_not_awaited()
+        services.distill.assert_not_called()
         executor.send_mail.assert_not_awaited()
 
 
@@ -1493,3 +1398,45 @@ class TestSchedulerFailureReply:
         # The reply failed, but the session still ended and was reaped.
         session, reason = loop_driver.send_failure_reply.await_args.args
         assert await journal.end_reason(session.id) == "error"
+
+
+class TestSchedulingIntentJournal:
+    async def test_sleep_request_survives_replay_before_completion(self, tmp_path: Path) -> None:
+        """A crash after scratch append retains the exact requested UTC deadline."""
+        driver, journal, _, _ = _make_driver(tmp_path, [])
+        session = _session("agent1-sleep-request")
+        await journal.append(session.id, "session/start", context=[], responsibility=[])
+        request = {"action": "sleep", "wake_at": "2040-01-01T00:00:00+00:00", "reason": "休息"}
+        from tlon.agents.stages.outcome import StageOutcome
+
+        await driver._apply_outcome(
+            session, None, StageOutcome(scratch_updates={"scheduling_request": request})
+        )
+        replay = await journal.resume(session.id)
+        assert replay is not None
+        assert replay.loop_scratch["scheduling_request"] == request
+        assert not replay.completed
+
+    async def test_runtime_intent_is_durable_before_session_end(self, tmp_path: Path) -> None:
+        """A failed lifecycle write must not make the journal appear completed."""
+        driver, journal, _, _ = _make_driver(tmp_path, [])
+        session = _session("agent1-exit-request")
+        await journal.append(session.id, "session/start", context=[], responsibility=[])
+        from tlon.agents.stages.outcome import StageOutcome
+
+        driver._prepare_scheduling_request = AsyncMock(side_effect=OSError("disk full"))
+        request = {"action": "exit", "reason": "done"}
+        with pytest.raises(OSError, match="disk full"):
+            await driver._apply_outcome(
+                session,
+                None,
+                StageOutcome(
+                    scratch_updates={"scheduling_request": request},
+                    complete=True,
+                ),
+            )
+        driver._prepare_scheduling_request.assert_awaited_once_with("agent1", request, session.id)
+        assert not session.is_completed
+        assert await journal.end_reason(session.id) is None
+        replay = await journal.resume(session.id)
+        assert replay is not None and replay.loop_scratch["scheduling_request"] == request

@@ -27,22 +27,15 @@ spec 的权威范围是可执行规则：触发、条件、认知循环、上下
 
 ### 保留历史与显式治理
 
-自动空闲排空只释放运行实例，成员仍可由符合 spec 的新邮件唤醒。经 `stop_member`（工具 / 管理 API）的主动停止则是永久退休：拒收新信、不再启动，历史保留。两者都不隐式删除成员档案。
+自动空闲排空只释放运行实例，成员仍可由符合 spec 的新邮件唤醒。经 exitAgent 或管理 API 的主动终止则是永久死亡：拒收新信、不再启动，历史保留。两者都不隐式删除成员档案。
 
 人类治理有独立的显式删除通道（`DELETE /admin/config/agents/{agent_id}`）。因此保留策略应理解为「自动生命周期不删除」，不能表述成「任何情况下永不删除」。
 
 ## 当前生命周期
 
-| 动作 | 结果 | 后续邮件 / 启动 |
-|---|---|---|
-| 从可信原型创建 | 写入成员配置，注册并按入口启动 | 按 spec 处理 |
-| idle drain | 等待活跃 session 排空，进入 sleeping | 可唤醒 |
-| DSL / Adam `AGENT_STOP_REQUEST` | 注册表委托 reaper 排空休眠 | 可唤醒 |
-| 主动 `stopAgent` | 无活跃 session 后提交永久退休并清理运行实例 | 拒收新信，拒绝启动 |
-| `when_idle=true` 的主动 stop | 有活跃 session 时登记待停意图，排空后退休 | 待停期间尚未退休 |
-| 人类显式删除 | 进入管理端删除流程 | 不属于自动生命周期 |
+成员对外为 active、waiting、sleeping、dead 四态。active 包括 LLM、工具执行与结果等待；waiting 可因符合规则的邮件激活；sleeping 在持久 UTC 期限之前不处理邮件；dead 拒收新信，保留历史。内部 session 的 WAITING 指工具等待，归属成员 active。实例装卸与启动属于诊断，不能显示为额外调度状态。
 
-运行态包括 running、waking、sleeping、retired，是状态而非成员子类。停止检查与退休标记在注册表的唤醒锁下协调；退休先持久化，再清理运行实例，取消或失败后可以重试清理。邮箱事实与退休状态见 [mail.md](mail.md)。
+finishTurn 结束自己的本次工作；sleepUntil 定时睡眠；exitAgent 自我退出。普通成员没有管理他人的状态工具。管理终止先排空，强制取消和提前唤醒均不提供。完整转换、持久化与竞争契约见 [agent-scheduling-states.md](agent-scheduling-states.md) 和 [ADR 0039](../decisions/0039-four-state-scheduling.md)。
 
 ### 统一装配与按需加载
 
@@ -52,7 +45,7 @@ spec 的权威范围是可执行规则：触发、条件、认知循环、上下
 
 成员反思和长期记忆为提案提供材料。`proposeBehavior` 读取自身行为、记忆 digest 和教训，根据变更意图起草完整 spec，写入 staging 并记录父原型与变更说明；它不直接更新自身。
 
-永久退休会触发 `LessonsDistiller` 离线蒸馏归档记忆，产出 `memory/lessons.md`；`RetirementCeremony` 处理交接与告别信。教训可作为原型 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`，由 spec 的 `(lessons)` section 显式注入。这是受控的教训继承，不是任意跨成员私有记忆读取，也不是原型携带完整知识库。
+永久退休会触发 `LessonsDistiller` 离线蒸馏归档记忆，产出 `memory/lessons.md`；`RetirementCeremony` 记录交接清点事件，不再发送死亡后的告别信。教训可作为原型 `LESSONS.md` 随包传递，实例化后落入新成员 `config/LESSONS.md`，由 spec 的 `(lessons)` section 显式注入。这是受控的教训继承，不是任意跨成员私有记忆读取，也不是原型携带完整知识库。
 
 ## 成员信任阶梯
 
@@ -62,11 +55,11 @@ spec 的权威范围是可执行规则：触发、条件、认知循环、上下
 
 见习成员有三项收紧：
 
-1. 不注册 `spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior` / `proposeCapability` 五个工具；`reviewPrototype` 保留为咨询工具。
+1. 不注册 `spawnAgent` / `writePrototype` / `proposeBehavior` / `proposeCapability` 四个工具；`reviewPrototype` 保留为咨询工具。
 2. DSL spawn 仍经 SpawnManager，按 spawner id 判定见习，最终每会话配额收紧到最多 1；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)。
 3. 撰写发信抄送 mentor（`spawned_by` 对应地址）；已在收件人或抄送中时不重复加入。MemberRuntime 与 EffectExecutor 两条发信路径均应用，转发不抄送。
 
-已知边界：DSL stop 发出 `AGENT_STOP_REQUEST`，当前经 reaper 排空休眠，不等同于 `stop_member` 的永久退休；它没有与工具子集相同的见习闸，不能把隐藏 `stopAgent` 描述为全面禁止见习成员发出停止请求。成员侧 `listMembers` 只提供寻址黄页；人类可从管理详情与声誉查询了解信任相关事实。
+普通成员的状态工具只绑定自身；管理他人的终止仅在人类管理端提供。DSL 生命周期请求必须验证发起主体，不能通过确定性规则绕过工具权限。
 
 ## 当前默认生命周期政策：Adam
 
@@ -75,8 +68,8 @@ Adam 是内置、无认知循环的 `MemberRuntime`，使用内置 spec 与注�
 | 事实 | 当前响应 |
 |---|---|
 | boot | 为声明 boot 规则且未运行的候选成员请求启动 |
-| agent-idle | 请求 drain；注册表排空后令成员休眠 |
-| agent-noisy | 请求熔断排空休眠；监控器按 sender 冷却，避免重复事实 |
+| agent-idle | 请求回收；注册表卸载等待实例，逻辑状态仍为等待 |
+| agent-noisy | 请求熔断回收等待实例；监控器按 sender 冷却，避免重复事实 |
 | agent-spawned | 给新成员发欢迎信，介绍联系簿、寻址黄页和通信惯例 |
 | 寄给 Adam 的邮件 | 固定确认收讫，排除 postmaster 系统邮件避免回信循环 |
 

@@ -90,7 +90,7 @@ async def _make_reaper(
     idle_events: list[Event] = []
     sleeping_events: list[Event] = []
     bus.subscribe(EventType.AGENT_IDLE, lambda event: idle_events.append(event))
-    bus.subscribe(EventType.AGENT_SLEEPING, lambda event: sleeping_events.append(event))
+    bus.subscribe(EventType.AGENT_WAITING, lambda event: sleeping_events.append(event))
     registry = _FakeRegistry(bus, configs, lazy)
     return IdleReaper(cast(AgentRegistry, registry)), registry, bus, idle_events, sleeping_events
 
@@ -176,7 +176,7 @@ async def test_drain_sleeps_idle_member() -> None:
         assert "a" not in registry._agents
         assert agent.shutdown_calls == 1
         assert await _wait_for(lambda: len(sleeping_events) == 1)
-        assert sleeping_events[0].payload == {"agent_id": "a", "idle_seconds": 700}
+        assert sleeping_events[0].payload == {"agent_id": "a", "state": "waiting"}
     finally:
         await bus.shutdown()
 

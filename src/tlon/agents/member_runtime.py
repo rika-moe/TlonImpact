@@ -217,6 +217,7 @@ class MemberRuntime(Member):
         # and the last executed rule action, both monotonic.
         self._initialized_at: float | None = None
         self._last_action_at: float | None = None
+        self._active_actions = 0
         # Cognitive subsystem slots; None for deterministic members.
         self._scheduler: SessionScheduler | None = None
         self._loop_driver: LoopDriver | None = None
@@ -255,23 +256,26 @@ class MemberRuntime(Member):
         return self._spec
 
     def get_state(self) -> str:
-        """Member state: cognitive derives ACTIVE/THINKING from live
-        sessions on read; deterministic is simply active once initialized."""
-        if self._scheduler is not None:
-            if self._state in (MemberState.ACTIVE, MemberState.THINKING):
-                if self._scheduler.active_session_count > 0:
-                    return MemberState.THINKING.value
-                return MemberState.ACTIVE.value
-            return self._state.value if self._state else "unknown"
-        return "active" if self._initialized else "offline"
+        """Public scheduling state; I/O and background reflection remain active."""
+        return "active" if self.active_session_count > 0 else "waiting"
+
+    def get_diagnostic_error(self) -> str | None:
+        """Runtime failure is a diagnostic, never a scheduling state."""
+        return "runtime error" if self._state is MemberState.ERROR else None
 
     @property
     def active_session_count(self) -> int:
-        """Live sessions (cognitive) or 0 (deterministic); the registry's
-        idle monitor and drain decisions read this."""
+        """Count all live work: sessions, reflection and deterministic handlers.
+
+        Draining must wait for every kind of work, including external I/O.
+        """
         if self._scheduler is not None:
-            return self._scheduler.active_session_count
-        return 0
+            return (
+                self._scheduler.active_session_count
+                + self._active_actions
+                + int(self._reflection is not None and self._reflection.is_running)
+            )
+        return self._active_actions
 
     @property
     def idle_seconds(self) -> float:
@@ -391,6 +395,19 @@ class MemberRuntime(Member):
     # ── Event dispatch ──
 
     async def _on_event(self, event: Event) -> None:
+        if self._registry is not None and not self._registry.can_schedule(self._member_id):
+            return
+        self._active_actions += 1
+        try:
+            if self._registry is not None and event.type is not EventType.AGENT_STATE_CHANGED:
+                await self._registry.publish_scheduling_state(self._member_id)
+            await self._dispatch_event(event)
+        finally:
+            self._active_actions -= 1
+            if self._registry is not None and event.type is not EventType.AGENT_STATE_CHANGED:
+                await self._registry.publish_scheduling_state(self._member_id)
+
+    async def _dispatch_event(self, event: Event) -> None:
         """Dispatch one bus event to every rule subscribed to its type.
 
         A cognitive rule on MAIL_DELIVERED gates the mail (ADR 0028):
@@ -537,6 +554,24 @@ class MemberRuntime(Member):
         trigger_event: Event | None,
         payload: Any = None,
     ) -> None:
+        if self._registry is not None and not self._registry.can_schedule(self._member_id):
+            return
+        self._active_actions += 1
+        try:
+            if trigger_event is None and self._registry is not None:
+                await self._registry.publish_scheduling_state(self._member_id)
+            await self._run_rule_body(rule, trigger_event, payload)
+        finally:
+            self._active_actions -= 1
+            if trigger_event is None and self._registry is not None:
+                await self._registry.publish_scheduling_state(self._member_id)
+
+    async def _run_rule_body(
+        self,
+        rule: MemberRule,
+        trigger_event: Event | None,
+        payload: Any = None,
+    ) -> None:
         """Evaluate one rule against an event and execute its decisions.
 
         ``payload`` overrides the environment's ``event`` value; it is used
@@ -658,6 +693,12 @@ class MemberRuntime(Member):
         """
         self._last_action_at = time.monotonic()
         kind = request.kind
+        if (
+            kind in {"start", "stop"}
+            and self._member_id != "adam"
+            and request.data["agent_id"] != self._member_id
+        ):
+            raise ValueError("members may only manage their own scheduling state")
         if kind == "spawn":
             await self._execute_spawn(request)
         elif kind == "emit":
@@ -927,6 +968,8 @@ class MemberRuntime(Member):
         exists and no session is live. Failures of the scan itself are
         logged and skip the scan only.
         """
+        if self._registry is not None and not self._registry.can_schedule(self._member_id):
+            return
         if self._mailbox is None:
             return
         try:
@@ -983,6 +1026,8 @@ class MemberRuntime(Member):
         (D6.1 延续). A mailbox read failure degrades to "nothing wakeable"
         (logged) — a transient read error must never wake a session.
         """
+        if self._registry is not None and not self._registry.can_schedule(self._member_id):
+            return []
         if self._mailbox is None or self._cognitive_rule is None:
             return []
         try:
@@ -1029,6 +1074,7 @@ class MemberRuntime(Member):
         """Assemble the cognitive engine from capabilities — the injected
         services, plain data, and closures over the event bus — never a
         back-reference to this runtime."""
+        registry = caps.registry
         rule = self._cognitive_rule
         assert rule is not None and rule.loop is not None
 
@@ -1051,7 +1097,15 @@ class MemberRuntime(Member):
             journal,
             tlon_paths=caps.tlon_paths,
         )
-        self._reflection = ReflectionEngine(caps.memory, caps.llm_client, rule, journal)
+        self._reflection = ReflectionEngine(
+            caps.memory,
+            caps.llm_client,
+            rule,
+            journal,
+            state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
+            if registry is not None
+            else None,
+        )
         self._stage_services = StageServices(
             identity=identity,
             source_hash=self._spec.source_hash,
@@ -1105,6 +1159,9 @@ class MemberRuntime(Member):
                 or DEFAULT_CONTEXT_WINDOW,
             ),
             is_human_sender=is_human_sender,
+            prepare_scheduling_request=(
+                registry.prepare_scheduling_request if registry is not None else None
+            ),
         )
         self._scheduler = SessionScheduler(
             caps.config,
@@ -1119,6 +1176,17 @@ class MemberRuntime(Member):
             # scheduler's reap chain-wake comparison.
             self._wakeable_unread,
             self._mailbox,
+            state_changed=(lambda: registry.publish_scheduling_state(self._member_id))
+            if registry is not None
+            else None,
+            can_schedule=(lambda: registry.can_schedule(self._member_id))
+            if registry is not None
+            else None,
+            apply_scheduling_request=(
+                lambda request: registry.apply_scheduling_request(self._member_id, request)
+            )
+            if registry is not None
+            else None,
         )
 
     def _env(self, payload: Any) -> dict[str, Any]:

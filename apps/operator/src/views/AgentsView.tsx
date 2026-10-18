@@ -37,13 +37,17 @@ function agentLabel(agent: AgentRecord): string {
   const id = String(agent["id"] ?? agent["name"] ?? "?");
   const name = typeof agent["name"] === "string" && agent["name"] !== id ? ` ${agent["name"]}` : "";
   const state = typeof agent["state"] === "string" ? agent["state"] : "unknown";
-  return `${id}${name} [${state}]`;
+  const wakeAt = state === "sleeping" && typeof agent["wake_at"] === "string"
+    ? ` until ${new Date(agent["wake_at"]).toLocaleString()}` : "";
+  const pending = agent["stop_pending"] ? " · termination pending" : "";
+  return `${id}${name} [${state}]${wakeAt}${pending}`;
 }
 
 function stateColor(agent: AgentRecord): string {
   const state = String(agent["state"] ?? "").toLowerCase();
-  if (["running", "active", "idle", "online"].includes(state)) return "green";
-  if (["stopped", "offline", "error", "failed"].includes(state)) return "red";
+  if (state === "active") return "green";
+  if (state === "dead") return "red";
+  if (state === "sleeping") return "gray";
   return "yellow";
 }
 

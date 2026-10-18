@@ -171,8 +171,7 @@
   }
 }
 
-/* State badge tones: running/active/thinking cyan, sleeping/stopped dim,
- * error/failed magenta, anything else yellow. */
+/* Scheduling state tones: active cyan, waiting yellow, sleeping dim, dead magenta. */
 .state-badge {
   flex-shrink: 0;
   min-width: 12ch;
@@ -194,12 +193,12 @@
   box-shadow: var(--glow-cyan);
 }
 
-.state-badge--thinking {
+.state-badge--active {
   animation: live-pulse 1.2s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .state-badge--thinking {
+  .state-badge--active {
     animation: none;
   }
 }

@@ -250,9 +250,9 @@ async def test_status_queries_read_retirement_off_event_loop(
 
     monkeypatch.setattr(MailStore, "is_retired", checked_is_retired)
     status = await registry.get_agent_status("worker")
-    assert status is not None and status["state"] == "sleeping"
+    assert status is not None and status["state"] == "waiting"
     await asyncio.to_thread(MailStore(registry._paths.mail_database_file()).retire, "worker")
     statuses = await registry.get_all_agent_status()
-    assert len(statuses) == 1 and statuses[0]["state"] == "retired"
+    assert len(statuses) == 1 and statuses[0]["state"] == "dead"
     assert await registry.get_agent_status("missing") is None
     assert len(query_threads) == 2

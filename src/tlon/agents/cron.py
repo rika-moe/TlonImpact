@@ -108,7 +108,7 @@ def _digest_task_content(scribe_id: str, human_addresses: list[str]) -> str:
 本期人类收件人地址（全发）：
 {recipients}
 
-发信方式：一封 sendEmail，to 填以上全部人类地址，is_complete=true。不要回复本邮件（postmaster 是系统地址，没有邮箱）。"""
+发信方式：一封 sendEmail，to 填以上全部人类地址，检查投信结果后单独调用 finishTurn。不要回复本邮件（postmaster 是系统地址，没有邮箱）。"""
 
 
 class CronScheduler:

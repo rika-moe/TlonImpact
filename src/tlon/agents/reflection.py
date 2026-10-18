@@ -8,6 +8,7 @@ claims). Extracted from the Agent god class.
 import asyncio
 import contextlib
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from importlib import resources
 from typing import Any, cast
@@ -50,7 +51,9 @@ class ReflectionEngine:
         llm_client: LLMClient,
         rule: MemberRule,
         journal: SessionJournal,
+        state_changed: Callable[[], Awaitable[None]] | None = None,
     ):
+        self._state_changed = state_changed
         self._memory = memory
         self._llm_client = llm_client
         self._journal = journal
@@ -122,6 +125,8 @@ class ReflectionEngine:
         task to avoid blocking the main loop.
         """
         try:
+            if self._state_changed is not None:
+                await self._state_changed()
             digest = await self._memory.get_memory_digest(self._journal)
 
             if digest["claim_count"] == 0:
@@ -148,6 +153,8 @@ class ReflectionEngine:
         finally:
             self._running = False
             self._task = None
+            if self._state_changed is not None:
+                await self._state_changed()
 
     def _build_prompt(self, digest: dict[str, Any]) -> str:
         """Build the reflection prompt from memory digest."""

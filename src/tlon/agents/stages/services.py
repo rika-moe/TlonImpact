@@ -179,30 +179,6 @@ class StageServices:
             return "unknown"
         return self._llm_client.config.model_name or "unknown"
 
-    async def distill(
-        self,
-        system_prompt: str,
-        messages: list[dict[str, Any]],
-        *,
-        span: str,
-        session_id: str | None = None,
-    ) -> LLMResponse:
-        """One auxiliary LLM call with an explicit system prompt, no tools.
-
-        Unlike :meth:`think` this is not a round of the cognitive loop:
-        the caller supplies the prompt and messages outright, and no tool
-        schemas are attached (a tool-emitting answer is useless here).
-        Used by the engine for the resource-ceiling reply distillation
-        (max_iterations / max_tokens, ADR 0023).
-        """
-        async with self.traced_span(span):
-            return await self._llm_client.chat(
-                system_prompt=system_prompt,
-                messages=messages,
-                purpose="distill",
-                session_id=session_id,
-            )
-
     async def think(
         self,
         context: list[dict[str, Any]],

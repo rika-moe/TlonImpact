@@ -38,6 +38,9 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
+| [ADR 0041：管理员四态操作与提前唤醒](0041-admin-scheduling-controls.md) | [agent-scheduling-states](../design/agent-scheduling-states.md) | 管理员可提前唤醒、排空后等待或定时睡眠；死亡仍不可恢复 |
+| [ADR 0040：未执行草稿与预算通知的事实边界](0040-unsent-drafts-and-budget-notices.md) | [runtime](../design/runtime.md) | 修订保留未执行草稿；预算通知仅依据真实工具回执 |
+| [ADR 0039：成员四态调度与邮件工具解耦](0039-four-state-scheduling.md) | [agent-scheduling-states](../design/agent-scheduling-states.md) | active/waiting/sleeping/dead；独立结束、睡眠和退出工具 |
 | [ADR 0007：Session 事件溯源——append-only 日志是 session 的唯一真相](0007-session-event-sourcing.md) | [runtime](../design/runtime.md) | 事件溯源保留；session 身份/触发语由 ADR 0028 修订，JSONL 物理存储由 ADR 0032 替代 |
 | [ADR 0008：上下文压力管理——存储不动，视图分级减压](0008-context-pressure.md) | [runtime](../design/runtime.md)、[memory](../design/memory.md) | 减压模型保留；anchor 由 ADR 0017、唤醒模板由 ADR 0028 修订 |
 | [ADR 0015：主动利用 LLM 前缀缓存——度量先行、稳定段靠前、显式断点](0015-prompt-caching.md) | [runtime](../design/runtime.md) | 前缀缓存与上下文排序选择 |

@@ -135,16 +135,16 @@ test("lifecycle events map with their payload specifics", () => {
     ev("agent.woken", { agent_id: "a", wake_duration_seconds: 1.234 }),
   );
   assert.equal(woken.kind, "lifecycle");
-  assert.equal(woken.title, "a woke up · 1.2s");
+  assert.equal(woken.title, "a runtime loaded · 1.2s");
 
-  assert.equal(toActivity(ev("agent.waking", { agent_id: "a" })).title, "a is waking");
-  assert.equal(toActivity(ev("agent.wake_failed", { agent_id: "a" })).title, "a failed to wake");
+  assert.equal(toActivity(ev("agent.waking", { agent_id: "a" })).title, "a runtime is loading");
+  assert.equal(toActivity(ev("agent.wake_failed", { agent_id: "a" })).title, "a runtime failed to load");
 
   const sleeping = toActivity(
-    ev("agent.sleeping", { agent_id: "a", idle_seconds: 61.6 }),
+    ev("agent.sleeping", { agent_id: "a", wake_at: "2030-01-01T00:00:00Z" }),
   );
-  assert.equal(sleeping.title, "a is going to sleep");
-  assert.equal(sleeping.detail, "idle 62s");
+  assert.equal(sleeping.title, "a is sleeping");
+  assert.equal(sleeping.detail, "until 2030-01-01T00:00:00Z");
 
   assert.equal(
     toActivity(ev("agent.idle", { agent_id: "a", idle_seconds: 90 })).title,
@@ -160,7 +160,7 @@ test("lifecycle events map with their payload specifics", () => {
   const stopped = toActivity(
     ev("agent.stopped", { agent_id: "a", stopped_by: "adam" }),
   );
-  assert.equal(stopped.title, "a stopped");
+  assert.equal(stopped.title, "a is dead");
   assert.equal(stopped.detail, "by adam");
 
   const spawned = toActivity(
@@ -239,4 +239,10 @@ test("English feed copy preserves user content, technical identifiers and diagno
     finish_reason: "Custom_结束",
   }));
   assert.equal(response.detail, "Custom_结束 · Provider/Model-MixedCase");
+});
+
+
+test("unloading a waiting runtime is not timed sleep", () => {
+  assert.equal(toActivity(ev("agent.waiting", { agent_id: "a" })).title, "a runtime unloaded");
+  assert.equal(toActivity(ev("agent.state_changed", { agent_id: "a", state: "active" })).title, "a is active");
 });

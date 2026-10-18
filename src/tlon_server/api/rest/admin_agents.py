@@ -37,6 +37,82 @@ def _validate_self_file_body(body: Any) -> dict[str, str]:
 class AdminAgentHandlers(RestHandlerBase):
     """Admin agent route handlers, mixed into ``RESTAPIHandler``."""
 
+    async def handle_terminate_agent(self, request: web.Request) -> web.Response:
+        """POST /admin/agents/{agent_id}/terminate — drain, then permanently exit.
+
+        This management action preserves history. It never cancels active work.
+        """
+        if not self.members:
+            return self._json_response({"error": "Agent registry not available"}, status=503)
+        agent_id = request.match_info["agent_id"]
+        if self.members.get_config(agent_id) is None:
+            return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
+        try:
+            terminated = await self.members.terminate(agent_id, stopped_by="admin-api")
+        except StopRejectedError as exc:
+            return self._json_response({"error": str(exc), "reason": exc.reason}, status=409)
+        return self._json_response(
+            {
+                "status": "success" if terminated else "pending",
+                "agent_id": agent_id,
+                "stop_pending": not terminated,
+                "agent": await self.members.get_status(agent_id),
+            },
+            status=200 if terminated else 202,
+        )
+
+    async def handle_wake_agent(self, request: web.Request) -> web.Response:
+        """End timed sleep early; actual unread mail determines whether work starts."""
+        return await self._handle_scheduling_action(request, "wake")
+
+    async def handle_wait_agent(self, request: web.Request) -> web.Response:
+        """Drain current work and return to normal mailbox-driven waiting."""
+        return await self._handle_scheduling_action(request, "wait")
+
+    async def handle_sleep_agent(self, request: web.Request) -> web.Response:
+        """Drain current work and sleep until a future timezone-aware deadline."""
+        return await self._handle_scheduling_action(request, "sleep")
+
+    async def _handle_scheduling_action(self, request: web.Request, action: str) -> web.Response:
+        """Keep management validation and authoritative response semantics aligned."""
+        if self.members is None:
+            return self._json_response({"error": "Agent registry not available"}, status=503)
+        agent_id = request.match_info["agent_id"]
+        if self.members.get_config(agent_id) is None:
+            return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
+        try:
+            if action == "sleep":
+                body = await request.json()
+                if (
+                    not isinstance(body, dict)
+                    or set(body) != {"wake_at"}
+                    or not isinstance(body["wake_at"], str)
+                ):
+                    raise ValueError("body must contain only a string wake_at")
+                completed = await self.members.sleep(agent_id, body["wake_at"])
+            elif action == "wake":
+                completed = await self.members.wake(agent_id)
+            else:
+                completed = await self.members.wait(agent_id)
+        except StopRejectedError as exc:
+            return self._json_response(
+                {"error": str(exc), "reason": exc.reason},
+                status=404 if exc.reason == "unknown_agent" else 409,
+            )
+        except ValueError as exc:
+            return self._json_response({"error": str(exc)}, status=400)
+        status = await self.members.get_status(agent_id)
+        return self._json_response(
+            {
+                "status": "success" if completed else "pending",
+                "agent_id": agent_id,
+                "scheduling_pending": status["scheduling_pending"] if status else None,
+                "stop_pending": status["stop_pending"] if status else False,
+                "agent": status,
+            },
+            status=200 if completed else 202,
+        )
+
     async def handle_list_agent_configs(self, request: web.Request) -> web.Response:
         """GET /admin/config/agents - List current agent configurations.
 
@@ -268,7 +344,7 @@ class AdminAgentHandlers(RestHandlerBase):
         """DELETE /admin/config/agents/{agent_id} - administratively remove
         a member (wizard removal, ADR 0006).
 
-        The member is stopped (sleeps) if running, unregistered, and its
+        The member is terminated if running, unregistered, and its
         home directory (archive) is deleted. This is the explicit
         management action — the runtime never removes members on its own.
 
