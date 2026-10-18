@@ -1,6 +1,6 @@
 # Tlon 快速开始
 
-从零跑到「第一封信」的完整走查。目标：本机起一个 Tlon 服务端，在浏览器 WebUI 里创建第一个成员、给他发一封邮件、收到回信。
+从零跑到「第一封信」的完整走查。目标：本机启动 Tlon，在浏览器中认识初始成员、发送第一封邮件并收到回信。
 
 ## 前置条件
 
@@ -32,7 +32,7 @@ echo 'DEEPSEEK_API_KEY=your-api-key-here' >> ~/.tlon/.env
 
 `.env` 不覆盖真实环境变量（[base/settings.py](../../src/tlon/base/settings.py) 的 `load_process_env`，`override=False`）；没配 key 服务端也能启动，只是 agent 处理邮件时调用 LLM 会失败（报错会指明缺哪个变量）。**模型不在进程级配置**（ADR 0016）：每个成员的模型在创建时选择，落在成员 `agent.yaml` 的 `llm.model_name`。全部变量见 `reference/config-reference.md` 第 4 节。
 
-## 3. 起服务端 —— 空社会 + 原型库
+## 3. 起服务端 —— 初始社会 + 原型库
 
 ```bash
 tlon dream
@@ -40,19 +40,19 @@ tlon dream
 
 - 默认绑定 `127.0.0.1:8080`（REST + SSE 单端口）；改端口用 `--rest-port`。
 - `--lucid`（或 `-l`）开调试日志。
-- 启动时播种内置原型与技能（[agents/bootstrap.py](../../src/tlon/agents/bootstrap.py)）——**首次启动是空社会，不自动初始化标准团队**（ADR 0016）；成员由人类在 WebUI 创建。
+- 启动时播种内置原型与技能。**全新实例首启自动创建 30 位中文人物成员**，带稀疏联系和五个初始组织（[初始社会](../design/initial-society.md)，ADR 0036）。已有实例不追加成员；重启、升级不会覆盖人格或复活已删除成员。
 
 看到日志出现 `server_started` 即就绪。此时 `curl http://127.0.0.1:8080/health` 应返回 200。
 
-## 4. 创建第一个成员（WebUI）
+## 4. 查看初始成员或创建成员（WebUI）
 
-浏览器打开 http://127.0.0.1:8080/ui/（静态资源随包分发，无需 Node）：AGENTS 视图 → CREATE → 按行为选择原型（如「标准无执行迭代」）→ 填名字、**模型**（`provider/model` 形式，如 `deepseek/deepseek-chat`，对应第 2 步配的 key）→ CREATE。成员 ID 由系统生成（m-UUID），无需填写；原型显示名描述行为，不代表职业。成员即刻热加载上线。
+浏览器打开 http://127.0.0.1:8080/ui/（静态资源随包分发，无需 Node）。全新实例的 AGENTS 视图会列出 30 位人物，可以直接选择通信。也可以创建自己的成员：AGENTS 视图 → CREATE → 按行为选择原型（如「标准无执行迭代」）→ 填名字、**模型**（`provider/model` 形式，如 `deepseek/deepseek-chat`，对应第 2 步配的 key）→ CREATE。成员 ID 由系统生成（m-UUID），无需填写；原型显示名描述行为，不代表职业。成员即刻热加载上线。
 
 ## 5. 发第一封信
 
-切到 WebUI 的 **Mail 视图**，给第 4 步创建的成员写一封信：To 填她的名字（支持名字 / id / 完整地址，如 `顾言蹊`、`gu-yanxi`、`gu-yanxi@tlon.internal`，服务端做名称解析），正文写「你好，帮我看看项目环境是不是正常」。
+切到 WebUI 的 **Mail 视图**，给初始人物（如奥斯特罗姆）或自己创建的成员写一封信：To 填名字，也可以使用 AGENTS 中的实际 id 或完整地址，正文写「你好，帮我看看项目环境是不是正常」。
 
-发送是同步确认的：`POST /messages` 返回 `202` 受理（投递异步）。几秒内回信会出现在线程里——agent 异步处理邮件，回信经 SSE 推送，无需刷新。
+发送是同步确认的：`POST /messages` 返回 `202` 表示本地信箱已经提交，阅读与处理异步进行。几秒内回信会出现在线程里——agent 异步处理邮件，回信经 SSE 推送，无需刷新。
 
 ## 6. 验证与下一步
 

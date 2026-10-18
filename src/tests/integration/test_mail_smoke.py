@@ -24,8 +24,8 @@ from .conftest import WEBUI_HEADERS, _assert_delivered, _register_human, _send_m
 async def test_mail_to_agent_lands_in_inbox(tlon_server: tuple[str, Path]) -> None:
     """POST /messages commits the agent inbox before returning.
 
-    The member is created through the admin API first (ADR 0016: first
-    boot is an empty society — no standard team is seeded anymore).
+    Create an explicit test-model member alongside the initial society,
+    so this delivery test does not invoke the seeded DeepSeek models.
     """
     base_url, tlon_home = tlon_server
     token = f"smoke-{uuid.uuid4().hex}"

@@ -1,6 +1,6 @@
 # ADR 0016：LLM 配置成员级化——删除进程级 LLM_* 设置
 
-> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[webui](../design/webui.md)。当前适用范围：成员级模型配置与不自动创建标准团队。完整关系见 [决策索引](README.md)。
+> 阅读定位：本文保留当时的选择与理由；当前设计见 [infrastructure](../design/infrastructure.md)、[webui](../design/webui.md)。当前适用范围：成员级模型配置；不自动创建标准团队的条款已由 [ADR 0036](0036-initial-society.md) 覆盖。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-09-16，方向讨论拍板；修订 ADR 0012）
 
@@ -31,7 +31,7 @@ ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，后续迭代补
 
 - admin API `POST /admin/config/agents` 的 body 必填 `model`；
 - spawn 的子成员默认继承父成员的模型（成本/能力画像随谱系，ADR 0014 的选择压语义）；
-- **bootstrap 不再自动播种标准团队成员**（首次启动由人类经 WebUI/admin API 创建成员并选模型——模型下拉来自第 4 点的注册表端点）；`default_team.py` 角色卡随之退役删除；原型播种（`seed_prototypes`）保留。
+- ~~**bootstrap 不再自动播种标准团队成员**（首次启动由人类经 WebUI/admin API 创建成员并选模型）。~~ 已由 [ADR 0036](0036-initial-society.md) 覆盖：全新实例首启创建 30 位初始成员并明确写入成员级模型；已有实例不补种。`default_team.py` 保持退役，初始人物与行为原型分开管理。
 
 ### 3. spec 删除 `:llm` 声明
 
@@ -45,5 +45,5 @@ ADR 0012 把 LLM 配置统一到进程级 `LLM_*` 环境变量，后续迭代补
 
 - 配置真相只剩一层：成员 agent.yaml。没有静默兜底，没有写了不生效的假旋钮。
 - 密钥管理回归供应商/工具链原生约定（litellm 生态文档直接适用），Tlon 不再维护 key 路由代码。
-- 开箱流程变化：首次启动是空社会 + 原型库，人类在 WebUI 创建成员时选模型——以一步手工换取配置显式性。
+- 历史开箱流程（已由 ADR 0036 覆盖）：首次启动是空社会 + 原型库，人类在 WebUI 创建成员时选模型——以一步手工换取配置显式性。
 - quickstart / README / config-reference / ADR 0012 同步修订（ADR 0012 被本文废止的部分用删除线标注）。

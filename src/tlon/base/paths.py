@@ -117,6 +117,18 @@ class TlonPaths:
         """Instance-local WebUI member identity (ADR 0033)."""
         return self._home / "webui-identity.json"
 
+    def initial_society_state_file(self) -> Path:
+        """One-time initial society plan and completion status (ADR 0036)."""
+        return self._home / "initial-society.json"
+
+    def initial_society_lock_file(self) -> Path:
+        """SQLite initialization mutex, independent of application databases."""
+        return self._home / "initial-society-lock.sqlite3"
+
+    def initial_society_staging_dir(self) -> Path:
+        """Private staging root; members are published only when complete."""
+        return self._home / ".initial-society-staging"
+
     def shared_dir(self) -> Path:
         return self._home / "shared"
 
@@ -216,8 +228,8 @@ class TlonPaths:
         book (entries: 名字 / 地址 / 我对 ta 的描述). Default semantics:
         an absent file IS an empty contact book — the read side treats a
         missing file as empty; the write side creates it (with parents)
-        on first write. Nothing seeds it eagerly, same as the persona
-        files.
+        on first write. The initial society seeds a sparse contact graph; manually
+        created members start with an empty book.
         """
         return self.agent_config_dir(agent_id) / "CONTACTS.md"
 

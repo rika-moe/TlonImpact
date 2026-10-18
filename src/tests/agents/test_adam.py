@@ -210,7 +210,15 @@ class TestAdamDecisions:
                 source="agent_registry",
             )
         )
-        await _wait_for(lambda: len(mails) == 1)
+        # Complete the producer before draining its emitted notification. The
+        # welcome includes a real SQLite commit, whose latency is not a 2s SLA.
+        # Keep a bound for hangs, then assert the actual behavior after completion.
+        async with asyncio.timeout(10):
+            for event_type in (EventType.AGENT_SPAWNED, EventType.MAIL_NEW):
+                await asyncio.gather(
+                    *(subscription.queue.join() for subscription in bus._subscribers[event_type])
+                )
+        assert len(mails) == 1
         mail = mails[0].payload
         assert mail.from_address == "adam@tlon.internal"
         assert mail.to == ["c-xin-1a2b3c4d@tlon.internal"]
