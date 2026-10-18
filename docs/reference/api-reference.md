@@ -78,7 +78,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 55 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 56 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -100,6 +100,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/participants` | `handle_list_participants` | 无条件 |
 | GET | `/admin/config/agents` | `handle_list_agent_configs` | configs |
 | POST | `/admin/config/agents/{agent_id}/reload` | `handle_reload_agent` | configs |
+| POST | `/admin/agents/{agent_id}/terminate` | `handle_terminate_agent` | 无条件 |
 | POST | `/admin/config/agents` | `handle_create_agent` | 无条件 |
 | GET | `/admin/config/agents/{agent_id}` | `handle_get_agent_config` | 无条件 |
 | PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
@@ -431,7 +432,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 事件类型枚举在 [base/events/event.py](../../src/tlon/base/events/event.py) 的 `EventType`：
 
 <!-- BEGIN GENERATED: event-types -->
-枚举全集（35 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+枚举全集（36 个，生成自源码，注释即源码行内注释）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | event_type | 枚举成员 | 说明 |
 |---|---|---|
@@ -444,9 +445,10 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `agent.response` | `AGENT_RESPONSE` |  |
 | `agent.started` | `AGENT_STARTED` |  |
 | `agent.stopped` | `AGENT_STOPPED` |  |
-| `agent.retired` | `AGENT_RETIRED` | Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」) |
+| `agent.retired` | `AGENT_RETIRED` | Offline handover inventory after permanent exit |
 | `agent.error` | `AGENT_ERROR` |  |
 | `agent.state_changed` | `AGENT_STATE_CHANGED` |  |
+| `agent.waiting` | `AGENT_WAITING` | Waiting remains waiting when its runtime is unloaded |
 | `agent.waking` | `AGENT_WAKING` |  |
 | `agent.woken` | `AGENT_WOKEN` |  |
 | `agent.wake_failed` | `AGENT_WAKE_FAILED` |  |
@@ -479,7 +481,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 | `mail.new` | `PostOffice`（source 为发件人成员 id 或外部地址） | Mail 对象（本地事务已提交，仅通知，不驱动投递） |
 | `mail.delivered` | `PostOffice`（source `post_office`，本地入箱及网关信箱成功尝试后通知；不表示已读或外部平台收到） | `mail`（Mail）、`recipient`（成员 id） |
 | `agent.started` / `agent.stopped` | `AgentRegistry` | `agent_id`、`name`、`runtime`、`spec_hash` / `agent_id`、`stopped_by` |
-| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`、`open_threads`、`farewell_sent`、`farewell_to` |
+| `agent.retired` | `RetirementCeremony`（source `retirement_ceremony`） | `agent_id`、`name`、`stopped_by`、`open_tasks`（标题数组）、`open_threads`（thread_id/subject/from 对象数组）、`memory_digest` |
 | `agent.waking` / `agent.woken` / `agent.wake_failed` / `agent.sleeping` | `AgentRegistry` | `agent_id` 等（woken 带 `wake_duration_seconds`） |
 | `agent.start_request` / `agent.stop_request` / `agent.idle` | Adam / `AgentRegistry` | `agent_id`、`reason` / `agent_id`、`idle_seconds` |
 | `agent.spawned` | `AgentRegistry` | `agent_id`、`name`、`prototype`、`spawner_id`、`spawn_depth`、`started` |
@@ -503,7 +505,7 @@ Query 接受 `limit` 与 `before`，分页及响应元数据与 `GET /inbox` 相
 
 | mode | 事件模式 |
 |---|---|
-| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.retired`、`agent.error`、`system.*` |
+| `chat` | `mail.*`、`agent.response`、`agent.started`、`agent.stopped`、`agent.retired`、`agent.state_changed`、`agent.sleeping`、`agent.error`、`system.*` |
 | `agent` | `agent.*` |
 <!-- END GENERATED: mode-patterns -->
 

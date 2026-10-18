@@ -201,13 +201,11 @@ async def build_runtime(runtime_paths: TlonPaths, settings: Settings) -> Runtime
     # 「退休交接信」).
     # Same pure-event-consumer mold as the LessonsDistiller, on the
     # same AGENT_STOPPED trigger: inventory the retiree's archive
-    # offline, mail a farewell letter when there is anything to hand
-    # over, and always publish the AGENT_RETIRED fact. Administrative
+    # offline and publish the AGENT_RETIRED inventory without LLM or
+    # mail activity from the dead member. Administrative
     # removals (payload ``removed=True``) skip the ceremony entirely —
     # removal is not retirement: the archive is already deleted.
-    retirement_ceremony = RetirementCeremony(
-        event_bus=event_bus, tlon_paths=runtime_paths, post_office=post_office
-    )
+    retirement_ceremony = RetirementCeremony(event_bus=event_bus, tlon_paths=runtime_paths)
     await retirement_ceremony.initialize()
     logger.info("component_initialized", component="retirement_ceremony")
 

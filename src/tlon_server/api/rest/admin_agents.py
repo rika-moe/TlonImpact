@@ -37,6 +37,30 @@ def _validate_self_file_body(body: Any) -> dict[str, str]:
 class AdminAgentHandlers(RestHandlerBase):
     """Admin agent route handlers, mixed into ``RESTAPIHandler``."""
 
+    async def handle_terminate_agent(self, request: web.Request) -> web.Response:
+        """POST /admin/agents/{agent_id}/terminate — drain, then permanently exit.
+
+        This management action preserves history. It never cancels active work.
+        """
+        if not self.members:
+            return self._json_response({"error": "Agent registry not available"}, status=503)
+        agent_id = request.match_info["agent_id"]
+        if self.members.get_config(agent_id) is None:
+            return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
+        try:
+            terminated = await self.members.terminate(agent_id, stopped_by="admin-api")
+        except StopRejectedError as exc:
+            return self._json_response({"error": str(exc), "reason": exc.reason}, status=409)
+        return self._json_response(
+            {
+                "status": "success" if terminated else "pending",
+                "agent_id": agent_id,
+                "stop_pending": not terminated,
+                "agent": await self.members.get_status(agent_id),
+            },
+            status=200 if terminated else 202,
+        )
+
     async def handle_list_agent_configs(self, request: web.Request) -> web.Response:
         """GET /admin/config/agents - List current agent configurations.
 
@@ -268,7 +292,7 @@ class AdminAgentHandlers(RestHandlerBase):
         """DELETE /admin/config/agents/{agent_id} - administratively remove
         a member (wizard removal, ADR 0006).
 
-        The member is stopped (sleeps) if running, unregistered, and its
+        The member is terminated if running, unregistered, and its
         home directory (archive) is deleted. This is the explicit
         management action — the runtime never removes members on its own.
 

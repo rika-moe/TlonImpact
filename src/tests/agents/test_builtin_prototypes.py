@@ -118,8 +118,8 @@ class TestBuiltinPrototypes:
 #: feedback back for the next think.
 DEFAULT_COGNITIVE_STAGES = [
     "(think)",
-    "(critique {:if (completing?)})",
-    "(act {:if (or (not (completing?)) (not (critique-failed?)))})",
+    "(critique {:if (sending-mail?)})",
+    "(act {:if (or (not (sending-mail?)) (not (critique-failed?)))})",
     "(revise {:if (critique-failed?)})",
 ]
 
@@ -270,7 +270,12 @@ class TestDistinctBehaviorPrototypes:
         scratch = {} if passed is None else {"critique": {"passed": passed}}
         env = dict(
             stage_cond_env(
-                iteration=0, error_count=0, token_usage=0, scratch=scratch, completing=True
+                iteration=0,
+                error_count=0,
+                token_usage=0,
+                scratch=scratch,
+                completing=False,
+                sending_mail=True,
             )
         )
         assert eval_form(options[0]["if"], env, STAGE_COND_BUILTINS) is True

@@ -184,29 +184,29 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
       );
 
     case "agent.waking":
-      return entry("lifecycle", `${name} is waking`, ev, undefined, agentId);
+      return entry("lifecycle", `${name} runtime is loading`, ev, undefined, agentId);
     case "agent.woken": {
       const secs = num(p["wake_duration_seconds"]);
       return entry(
         "lifecycle",
-        `${name} woke up${secs !== undefined ? ` · ${secs.toFixed(1)}s` : ""}`,
+        `${name} runtime loaded${secs !== undefined ? ` · ${secs.toFixed(1)}s` : ""}`,
         ev,
         undefined,
         agentId,
       );
     }
     case "agent.wake_failed":
-      return entry("lifecycle", `${name} failed to wake`, ev, undefined, agentId);
+      return entry("lifecycle", `${name} runtime failed to load`, ev, undefined, agentId);
     case "agent.sleeping": {
-      const idle = num(p["idle_seconds"]);
-      return entry(
-        "lifecycle",
-        `${name} is going to sleep`,
-        ev,
-        idle !== undefined ? `idle ${Math.round(idle)}s` : undefined,
-        agentId,
-      );
+      const wakeAt = str(p["wake_at"]);
+      return entry("lifecycle", `${name} is sleeping`, ev,
+        wakeAt ? `until ${wakeAt}` : undefined, agentId);
     }
+    case "agent.waiting":
+      return entry("lifecycle", `${name} runtime unloaded`, ev, undefined, agentId);
+    case "agent.state_changed":
+      return entry("lifecycle", `${name} is ${str(p["state"]) ?? "waiting"}`, ev,
+        str(p["wake_at"]), agentId);
     case "agent.idle": {
       const idle = num(p["idle_seconds"]);
       return entry(
@@ -223,7 +223,7 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
       const stoppedBy = str(p["stopped_by"]);
       return entry(
         "lifecycle",
-        `${name} stopped`,
+        `${name} is dead`,
         ev,
         stoppedBy !== undefined ? `by ${stoppedBy}` : undefined,
         agentId,

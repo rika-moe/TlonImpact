@@ -82,10 +82,14 @@ class MembersFacade:
         """The member's config, or None when unknown."""
         return self._registry.get_config(agent_id)
 
-    def get_state(self, agent_id: str) -> str:
-        """The member's runtime state ("unknown" when not running)."""
-        agent = self._registry.get_agent(agent_id)
-        return agent.get_state() if agent else "unknown"
+    async def get_status(self, agent_id: str) -> dict[str, Any] | None:
+        """Read the authoritative scheduling state and runtime diagnostics."""
+        return await self._registry.get_agent_status(agent_id)
+
+    async def get_state(self, agent_id: str) -> str | None:
+        """The member's scheduling state, or None for an unknown member."""
+        status = await self.get_status(agent_id)
+        return status["state"] if status is not None else None
 
     def list_ids(self) -> list[str]:
         """Ids of all registered agents."""
@@ -119,6 +123,13 @@ class MembersFacade:
             "started", "start-failed" (AgentRegistry.adopt_agent)
         """
         return await self._registry.adopt_agent(agent_id)
+
+    async def terminate(self, agent_id: str, stopped_by: str) -> bool:
+        """Permanently terminate after draining work, preserving all history.
+
+        Return True when dead, False when termination is pending.
+        """
+        return await self._registry.stop_member(agent_id, stopped_by=stopped_by, when_idle=True)
 
     async def remove(self, agent_id: str, removed_by: str) -> bool:
         """Administratively remove a member (stop, unregister, delete home).

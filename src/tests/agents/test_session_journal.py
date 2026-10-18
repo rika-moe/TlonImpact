@@ -435,7 +435,15 @@ def _make_driver(
 
     tool_executor = MagicMock()
     tool_executor.execute = AsyncMock(
-        side_effect=tool_execute or (lambda name, args: ToolResult(success=True, data={"ok": name}))
+        side_effect=tool_execute
+        or (
+            lambda name, args: ToolResult(
+                success=True,
+                data={"scheduling_request": {"action": "finish", "reason": ""}}
+                if name == "finishTurn"
+                else {"ok": name},
+            )
+        )
     )
 
     on_complete = MagicMock()
@@ -484,7 +492,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
         )
         driver, journal, _, services = _make_driver(tmp_path, [response])
         services.build_context = AsyncMock(
@@ -521,7 +529,7 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
         )
         driver, journal, _, services = _make_driver(tmp_path, [response])
         session = _session("agent1-resp", mail)
@@ -542,11 +550,13 @@ class TestDriverJournaling:
         mail = _mail()
         response = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
+            return ToolResult(
+                success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+            )
 
         driver, journal, executor, _ = _make_driver(tmp_path, [response], tool_execute=tool_execute)
         session = _session(f"agent1-{mail.id}", mail)
@@ -557,7 +567,7 @@ class TestDriverJournaling:
         # The invariant: everything the model saw is in the log.
         assert await journal.derive_context(session.id) == session.context
         assert await journal.end_reason(session.id) == "complete"
-        executor.send_mail.assert_awaited_once()
+        executor.send_mail.assert_not_awaited()
         # ADR 0009: no interaction save — the journal is the truth; the
         # batch summary trigger reads it at the scheduler's reap point.
 
@@ -588,14 +598,14 @@ class TestDriverJournaling:
         )
         round2 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c2", "sendEmail", {"content": "final", "is_complete": True})],
+            tool_calls=[_tc("c2", "finishTurn", {})],
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            if name == "sendEmail":
+            if name == "finishTurn":
                 return ToolResult(
                     success=True,
-                    data={"content": args["content"], "is_complete": True},
+                    data={"scheduling_request": {"action": "finish", "reason": ""}},
                 )
             return ToolResult(success=True, data={"stdout": big_stdout})
 
@@ -631,7 +641,7 @@ class TestCrashRecovery:
         round1 = LLMResponse(content="working", tool_calls=[fast, slow])
         round2 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c2", "sendEmail", {"content": "final", "is_complete": True})],
+            tool_calls=[_tc("c2", "finishTurn", {})],
         )
 
         executed: list[str] = []
@@ -641,10 +651,10 @@ class TestCrashRecovery:
             executed.append(name)
             if name == "slowTool":
                 await never.wait()  # in-flight when the "process" dies
-            if name == "sendEmail":
+            if name == "finishTurn":
                 return ToolResult(
                     success=True,
-                    data={"content": args["content"], "is_complete": True},
+                    data={"scheduling_request": {"action": "finish", "reason": ""}},
                 )
             return ToolResult(success=True, data={"ok": name})
 
@@ -679,8 +689,8 @@ class TestCrashRecovery:
         await _drive(driver, resumed)
         assert resumed.is_completed
         assert executed.count("someTool") == 1  # replayed, not re-run
-        assert executed.count("sendEmail") == 1
-        executor.send_mail.assert_awaited_once()
+        assert executed.count("finishTurn") == 1
+        executor.send_mail.assert_not_awaited()
         # The healed log replays cleanly end to end.
         final = await journal.resume(sid)
         assert final is not None and final.completed and final.end_reason == "complete"
@@ -1091,12 +1101,14 @@ class TestTokenBudget:
         )
         round3 = LLMResponse(
             content="done",
-            tool_calls=[_tc("c1", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c1", "finishTurn", {})],
             usage={"prompt_tokens": 600, "completion_tokens": 100, "total_tokens": 700},
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
+            return ToolResult(
+                success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+            )
 
         driver, journal, _, _ = _make_driver(
             tmp_path, [round1, round2, round3], tool_execute=tool_execute
@@ -1233,11 +1245,13 @@ class TestConsecutiveErrorLimit:
         working = LLMResponse(content="working")  # no tool calls: act advances
         final = LLMResponse(
             content="done",
-            tool_calls=[_tc("c-final", "sendEmail", {"content": "reply", "is_complete": True})],
+            tool_calls=[_tc("c-final", "finishTurn", {})],
         )
 
         async def tool_execute(name: str, args: dict) -> ToolResult:
-            return ToolResult(success=True, data={"content": args["content"], "is_complete": True})
+            return ToolResult(
+                success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+            )
 
         # err - ok - err - ok - err - ok: three errors, never consecutive.
         driver, journal, executor, services = _make_driver(
@@ -1493,3 +1507,45 @@ class TestSchedulerFailureReply:
         # The reply failed, but the session still ended and was reaped.
         session, reason = loop_driver.send_failure_reply.await_args.args
         assert await journal.end_reason(session.id) == "error"
+
+
+class TestSchedulingIntentJournal:
+    async def test_sleep_request_survives_replay_before_completion(self, tmp_path: Path) -> None:
+        """A crash after scratch append retains the exact requested UTC deadline."""
+        driver, journal, _, _ = _make_driver(tmp_path, [])
+        session = _session("agent1-sleep-request")
+        await journal.append(session.id, "session/start", context=[], responsibility=[])
+        request = {"action": "sleep", "wake_at": "2040-01-01T00:00:00+00:00", "reason": "休息"}
+        from tlon.agents.stages.outcome import StageOutcome
+
+        await driver._apply_outcome(
+            session, None, StageOutcome(scratch_updates={"scheduling_request": request})
+        )
+        replay = await journal.resume(session.id)
+        assert replay is not None
+        assert replay.loop_scratch["scheduling_request"] == request
+        assert not replay.completed
+
+    async def test_runtime_intent_is_durable_before_session_end(self, tmp_path: Path) -> None:
+        """A failed lifecycle write must not make the journal appear completed."""
+        driver, journal, _, _ = _make_driver(tmp_path, [])
+        session = _session("agent1-exit-request")
+        await journal.append(session.id, "session/start", context=[], responsibility=[])
+        from tlon.agents.stages.outcome import StageOutcome
+
+        driver._prepare_scheduling_request = AsyncMock(side_effect=OSError("disk full"))
+        request = {"action": "exit", "reason": "done"}
+        with pytest.raises(OSError, match="disk full"):
+            await driver._apply_outcome(
+                session,
+                None,
+                StageOutcome(
+                    scratch_updates={"scheduling_request": request},
+                    complete=True,
+                ),
+            )
+        driver._prepare_scheduling_request.assert_awaited_once_with("agent1", request, session.id)
+        assert not session.is_completed
+        assert await journal.end_reason(session.id) is None
+        replay = await journal.resume(session.id)
+        assert replay is not None and replay.loop_scratch["scheduling_request"] == request

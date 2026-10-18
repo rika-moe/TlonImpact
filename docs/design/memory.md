@@ -120,7 +120,7 @@ agent 通过 [src/tlon/tools/memory/](../../src/tlon/tools/memory) 下的四个�
 
 蒸馏调用沿用反思的参数先例（timeout 60 秒；采样参数不配置，供应商默认生效），`purpose="lessons"`，并且**用退休成员自己的 agent_id 构造 LLMClient**——最后一笔账记在它头上（per-member 账本自然覆盖）。产出落盘为 `~/.tlon/{agent_id}/memory/lessons.md`：不是全量记忆的复述，而是「能传给下一代的教训」的提炼（prompt 明确约束）。
 
-`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md)）。退休交接信由 `RetirementCeremony`（见 [mail.md](./mail.md)「退休交接信」）——蒸馏沉淀给下一代，交接信盘点给同代的接管者。
+`lessons.md` 只是原材料。它进入基因库的通道在原型侧：经 `writePrototype` / admin API 的 `lessons` 参数包装成原型的 `LESSONS.md` 随包传递，`instantiate` 拷贝到新成员的 `config/LESSONS.md`，spec 的 `(lessons)` context section 声明后才注入对话（见 [prototypes.md](./prototypes.md) 与 [unified-member-model.md](./unified-member-model.md)）。死亡归档清点由 `RetirementCeremony`（见 [mail.md](./mail.md)「死亡归档清点」）——蒸馏沉淀给下一代，归档清点给同代的接管者。
 
 ## 一次交互的完整链路
 

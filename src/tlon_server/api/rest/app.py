@@ -174,7 +174,7 @@ class RESTAPIHandler(
         app.router.add_post("/messages", self.handle_send_message)
         app.router.add_get("/agents", self.handle_list_agents)
         app.router.add_get("/agents/{agent_id}", self.handle_get_agent)
-        # Wake/stop endpoints removed - all agents start at system startup
+        # Sleeping members wake only at their deadline; dead members cannot restart.
         app.router.add_get("/sessions", self.handle_list_sessions)
         app.router.add_post("/sessions", self.handle_create_session)
         app.router.add_patch("/sessions/{session_id}", self.handle_update_session)
@@ -192,6 +192,7 @@ class RESTAPIHandler(
 
         # Admin routes for agent CRUD + prototype approval (wizard removal,
         # A2): creation/editing/removal of members and staging approval.
+        app.router.add_post("/admin/agents/{agent_id}/terminate", self.handle_terminate_agent)
         app.router.add_post("/admin/config/agents", self.handle_create_agent)
         app.router.add_get("/admin/config/agents/{agent_id}", self.handle_get_agent_config)
         app.router.add_patch("/admin/config/agents/{agent_id}", self.handle_update_agent)
@@ -448,12 +449,11 @@ class RESTAPIHandler(
         if config is None:
             return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
 
-        state = self.members.get_state(agent_id)
-
+        status = await self.members.get_status(agent_id)
+        if status is None:
+            return self._json_response({"error": f"Agent '{agent_id}' not found"}, status=404)
         status = {
-            "id": agent_id,
-            "name": config.name,
-            "state": state,
+            **status,
             "config": {
                 "prototype": config.prototype,
                 "spawned_by": config.spawned_by,

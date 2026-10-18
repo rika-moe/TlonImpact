@@ -285,7 +285,7 @@ class TestProbationProvider:
 class TestReproductionTools:
     def test_reproduction_tools_inventory(self) -> None:
         expected = frozenset(
-            {"spawnAgent", "stopAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
+            {"spawnAgent", "writePrototype", "proposeBehavior", "proposeCapability"}
         )
         assert expected == REPRODUCTION_TOOLS
         # reviewPrototype stays available to probationary members

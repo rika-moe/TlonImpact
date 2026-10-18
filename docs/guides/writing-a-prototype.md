@@ -47,8 +47,8 @@
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
                  :stages [(think)
-                          (critique {:if (completing?)})
-                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (critique {:if (sending-mail?)})
+                          (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
                  :max-iterations 3
@@ -68,7 +68,7 @@
 - **`:rules [...]`** 是规则向量。`:name "respond"` 规则：**`:on :mail-delivered`** 触发（收到投递事件）、**`:when`** 门控（收件人含自己才响应——没有这个门，系统里每一封邮件都会唤醒它）。
 - **`:loop`** 使它挂认知引擎：
   - `:context :sections` 注入什么上下文段（`persona`/`protocol`/`lessons`/`skills`/`knowledge`/`current-task`/`mail-history N`（或两段式 `mail-history F R`，ADR 0025）/`thread-recap` 八种，见 dsl-reference §5.1）；段的排列按缓存友好原则——几乎不变的段靠前，每会话必变的段靠后；
-  - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (completing?)})` 只在即将完成时评审待交回复，FAIL 时 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §5.2）；
+  - `:stages` 认知循环的阶段程序。默认形态是 `think` + `act` 加一道交卷前自查：`(critique {:if (sending-mail?)})` 只在即将派发邮件时评审待交回复，FAIL 时 `(act {:if (or (not (sending-mail?)) (not (critique-failed?)))})` 拦截派发、`(revise {:if (critique-failed?)})` 把反馈喂回下轮修正；还可以加 `plan` 等自省积木（见 dsl-reference §5.2）；
   - `:until` 停机条件 + `:max-iterations` 迭代上限 + `:max-tokens` token 预算（ADR 0023：两条引擎硬顶取或、先到先停；DSL 的停机性靠预算，不靠砍循环）；
   - `:reflect` 反思开关，`enabled` 与 `interval-minutes` **都必填**（`ReflectSpec`）。
 - **`:on :boot` 规则**：带它的成员开机即启动；不带的按需唤醒（startup 模式由此派生，`agent.yaml` 不再控制）。

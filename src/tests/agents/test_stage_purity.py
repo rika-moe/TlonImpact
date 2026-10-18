@@ -10,11 +10,13 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
-from tlon.agents.stages.act import act_stage_collect
+from tlon.agents.stages.act import act_stage_collect, act_stage_step
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.think import think_stage
 from tlon.agents.trigger import AgentIdentity
@@ -86,14 +88,17 @@ class TestStagePurity:
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.set_last_llm_response(LLMResponse(content="working"))
-        tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
-        result = ToolResult(success=True, data={"content": "done", "is_complete": True})
+        tc = ToolCall(id="t1", function_name="finishTurn", arguments={})
+        result = ToolResult(
+            success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+        )
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
         assert outcome.complete is True
         assert outcome.run_on_complete is True
-        assert outcome.final_reply == "done"
+        assert outcome.final_reply is None
+        assert outcome.scratch_updates["scheduling_request"]["action"] == "finish"
         assert session.is_completed is False
 
     async def test_act_collect_still_waiting_declares_nothing(self) -> None:
@@ -115,7 +120,7 @@ class TestStagePurity:
         tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
         result = ToolResult(
             success=True,
-            data={"to": ["user@tlon.internal"], "content": "回复", "is_complete": True},
+            data={"to": ["user@tlon.internal"], "content": "回复"},
         )
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
@@ -136,7 +141,6 @@ class TestStagePurity:
             data={
                 "to": ["other@tlon.internal"],
                 "content": "回复更早的那封",
-                "is_complete": False,
                 "in_reply_to": "m-earlier",
             },
         )
@@ -246,14 +250,16 @@ class TestEngineApplication:
         assert session.state == SessionState.ACTIVE
         assert session.iteration == 1
 
-    async def test_act_collect_silence_completes_without_mail(self) -> None:
-        """silence is a completion signal: loop ends, no mail, no final
+    async def test_act_collect_finish_turn_completes_without_mail(self) -> None:
+        """finishTurn is a completion signal: loop ends, no mail, no final
         reply (there is no reply content to pass to on-complete)."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.set_last_llm_response(LLMResponse(content="working"))
-        tc = ToolCall(id="t1", function_name="silence", arguments={"reason": "循环"})
-        result = ToolResult(success=True, data={"silenced": True, "reason": "循环"})
+        tc = ToolCall(id="t1", function_name="finishTurn", arguments={})
+        result = ToolResult(
+            success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
+        )
 
         outcome = await act_stage_collect(svc, session, [(tc, result)])
 
@@ -262,19 +268,17 @@ class TestEngineApplication:
         assert outcome.final_reply is None  # nothing to pass on
         assert session.is_completed is False
 
-    async def test_act_step_silence_conflicts_with_send_email(self) -> None:
-        """A silence round must be the only tool call (like sendEmail
-        is_complete=true): silence + sendEmail in the same round is
+    async def test_act_step_finish_turn_conflicts_with_send_email(self) -> None:
+        """A finishTurn round must be the only tool call:
+        finishTurn + sendEmail in the same round is
         refused with a corrective prompt."""
-        from tlon.agents.stages.act import act_stage_step
-
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         response = LLMResponse(
             content="done",
             tool_calls=[
-                ToolCall(id="s1", function_name="silence", arguments={}),
-                ToolCall(id="m1", function_name="sendEmail", arguments={"is_complete": True}),
+                ToolCall(id="s1", function_name="finishTurn", arguments={}),
+                ToolCall(id="m1", function_name="sendEmail", arguments={}),
             ],
         )
 
@@ -283,3 +287,33 @@ class TestEngineApplication:
         assert outcome.tool_dispatches == []  # refused
         assert any("冲突" in str(a.get("content")) for a in outcome.context_appends)
         assert outcome.advance_iteration is True
+
+
+@pytest.mark.parametrize("ending", ["finishTurn", "sleepUntil", "exitAgent"])
+async def test_scheduling_request_cannot_share_a_round(ending: str) -> None:
+    svc = _make_services()
+    session = AgentSession(session_id="s-mixed", trigger_content="work")
+    response = LLMResponse(
+        content=None,
+        tool_calls=[
+            ToolCall(id="end", function_name=ending, arguments={}),
+            ToolCall(id="mail", function_name="sendEmail", arguments={"content": "hi"}),
+        ],
+    )
+    outcome = await act_stage_step(svc, session, response)
+    assert not outcome.tool_dispatches
+    assert not outcome.complete
+    assert outcome.advance_iteration
+
+
+async def test_failed_sleep_does_not_end_work() -> None:
+    from tlon.tools.agents.scheduling import SleepUntilTool
+
+    svc = _make_services()
+    session = AgentSession(session_id="s-invalid-sleep", trigger_content="work")
+    call = ToolCall(id="sleep", function_name="sleepUntil", arguments={"wake_at": "yesterday"})
+    result = await SleepUntilTool().execute(**call.arguments)
+    outcome = await act_stage_collect(svc, session, [(call, result)])
+    assert not outcome.complete
+    assert not outcome.scratch_updates
+    assert outcome.mark_active

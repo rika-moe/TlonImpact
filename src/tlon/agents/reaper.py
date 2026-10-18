@@ -131,13 +131,13 @@ class IdleReaper:
                 return
 
             # Unified member model (ADR 0006): draining always means
-            # sleep — members are never discarded, their home directories
+            # unloading a waiting member — members are never discarded, their home directories
             # are archived forever.
-            logger.info("agent_sleeping", agent_id=agent_id, idle_seconds=idle, reason=reason)
+            logger.info("agent_waiting", agent_id=agent_id, idle_seconds=idle, reason=reason)
             await registry.event_bus.publish(
                 Event(
-                    type=EventType.AGENT_SLEEPING,
-                    payload={"agent_id": agent_id, "idle_seconds": idle},
+                    type=EventType.AGENT_WAITING,
+                    payload={"agent_id": agent_id, "state": "waiting"},
                     source="agent_registry",
                 )
             )

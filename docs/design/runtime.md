@@ -1,6 +1,6 @@
 # 成员运行时设计
 
-成员共用一种运行模型；空闲排空使成员睡眠并保留档案，蓄意停止与人类显式删除另有治理语义。成员模型见 [unified-member-model.md](./unified-member-model.md)。
+成员共用四态调度：活跃、等待、定时睡眠、死亡。等待实例可卸载，卸载不等于睡眠；死亡拒信并保留历史。完整契约见 [agent-scheduling-states.md](agent-scheduling-states.md)。成员模型见 [unified-member-model.md](./unified-member-model.md)。
 
 本文解释 `tlon.agents` 里成员运行时为什么是现在这个样子：统一解释器、认知循环管线、effects-as-data、唤醒补偿、注册表的机制面。系统骨架与装配顺序见 [docs/architecture.md](../architecture.md)，DSL 本身的取舍见 [docs/design/dsl.md](./dsl.md)，邮件层见 [docs/design/mail.md](./mail.md)，方向锚点是 [docs/vision.md](../vision.md)。
 
@@ -29,7 +29,7 @@
 
 ### 派生而非存储
 
-生命周期归属是从 spec **派生**的值，从不存储。存一份冗余的归属字段只会制造与 spec 不一致的可能；派生值则永远与权威一致。同一原则贯穿整个运行时：boot 集合看 `:on :boot` 规则是否存在，lazy 判定看 spec 是否声明了 boot 规则，唤醒资格看是否订阅 `:mail-delivered`。
+boot/lazy 归属是从 spec **派生**的值，从不存储；它决定启动与回收资格，不是当前调度状态。当前睡眠期限由 SchedulingStore 持久化，死亡以邮箱事务标记为唯一事实源，活跃/等待由真实工作派生。存一份冗余的归属字段只会制造与 spec 不一致的可能；派生值则永远与权威一致。同一原则贯穿整个运行时：boot 集合看 `:on :boot` 规则是否存在，lazy 判定看 spec 是否声明了 boot 规则，唤醒资格看是否订阅 `:mail-delivered`。
 
 ### 统一的具体内容
 
@@ -69,7 +69,7 @@ MAIL_DELIVERED → MemberRuntime（:when 门控、唤醒信号）
 
 为什么把循环拆成调度器、驱动器、stage、执行器四层，而不是一个大循环函数：每一层各有一个独立的变更理由。调度器的变更理由是"会话生命周期策略"（超时、回收、唤醒准入）；驱动器的是"循环语义"（stage 顺序、终止判定）；stage 的是"单步认知内容"；执行器的是"效果怎么落地"。分离后，每层对上只暴露声明（Outcome）或委托（闭包），对下只认能力——这也使 ADR 0004 的纯度检查有一个清晰的适用边界（`stages/` 目录）。
 
-[agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的 `SessionScheduler` 拥有认知成员的连续主循环 task。它是收件箱驱动的**单 session 模型**（ADR 0028）：一个认知成员同一时刻至多一个存活 session，邮箱是唯一的队列——调度器没有收件队列，只有一句话的准入规则：*无存活 session 且可唤醒未读 > 0 → 开一个 session*。它负责以下工作：
+[agents/scheduler.py](../../src/tlon/agents/scheduler.py) 的 `SessionScheduler` 拥有认知成员的连续主循环 task。它是收件箱驱动的**单 session 模型**（ADR 0028）：一个认知成员同一时刻至多一个存活 session，邮箱是唯一的队列——调度器没有收件队列，只有一句话的准入规则：*允许调度、无存活 session 且可唤醒未读 > 0 → 开一个 session*。它负责以下工作：
 
 1. **边缘触发的唤醒准入**。`notify_wake` 是纯信号（`asyncio.Event`，无载荷）：投递路径、boot/周期扫描、收割时的链式唤醒三个来源都只会置位。主循环看到置位后先清位、再经注入的 `wakeable_unread` provider 重读邮箱——陈旧唤醒（邮件已被读走）自然空转一圈，并发投递被 Event 的幂等置位去重。provider 是 MemberRuntime 的「可唤醒未读」唯一实现（未读减去自己发的、减去门控拒绝的——拒绝的顺手标读），投递准入、扫描、链式唤醒判定三处共用，语义不会漂移。
 2. **责任集与会话开启**。准入通过时，provider 的这份快照同时成为新 session 的责任集与触发语素材（一次读取，两处使用）：触发语是固定模板「你有 N 封未读邮件」（N = 快照大小），session id 是全新 uuid。责任集 id 列表随 `session/start` 事件持久化进 journal——崩溃恢复后链式唤醒判定不丢。
@@ -117,9 +117,9 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 - `revise`：把评审反馈写回 context，并清除已消费的 verdict；
 - `act`：工具执行。它按 asyncio 的"分发后收割"模型拆成两半——`act_stage_step` 声明分发列表，`act_stage_collect` 声明收割结果的含义；两半都是纯变换，并发与收割本身是引擎的。
 
-默认循环是 think + act，外加一道**交卷前自查**：`(critique {:if (completing?)})` 只在本轮响应会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence`，判定与 act 的完成/冲突规则一致）时评审待交草稿；FAIL 则 `(act {:if (or (not (completing?)) (not (critique-failed?)))})` 拦截本轮派发、`(revise {:if (critique-failed?)})` 把反馈喂回上下文让下一轮 think 修正后重审。评审成本与轮数无关（每次交卷尝试一次全量评审），不随长 session 平方放大；plan 与更密的 critique 排布仍是 spec 可选插入的自省积木。把自省拆成独立 stage 而不是做进 think 的理由：自省是**程序级的选择**——一个成员要不要规划、要不要自我评审、评审几次，应该写在 spec 里可审计、可改写，而不是埋在 prompt 工程里。拆成积木后，"带自我评审的 ReAct"与"朴素 ReAct"是同一个引擎跑两份不同的 stage 向量，引擎零改动。
+默认循环在 `(sending-mail?)` 时通过 critique 检查尚未派发的邮件，失败则拦截该轮并反馈修订。`completing?` 只识别独立结束工具，不能用于补审已经发出的邮件。finishTurn/sleepUntil/exitAgent 是会话收尾信号，sendEmail 与 forwardMail 不结束工作。规划、评审和修订仍由 DSL stage 向量声明。
 
-critique 可用非空 `:instructions` 追加专项标准，首行去空白后必须恰好是 PASS 或 FAIL。异常或无法解析时清除旧 verdict；默认原型仅在明确 FAIL 时拦截，证据核验原型则要求本轮明确 PASS 才派发完成动作。核验是模型对材料的评审，不等于独立真实性证明。
+critique 可用非空 `:instructions` 追加专项标准，首行去空白后必须恰好是 PASS 或 FAIL。异常或无法解析时清除旧 verdict；默认原型仅在明确 FAIL 时拦截，证据核验原型则要求本轮明确 PASS 才派发邮件动作。核验是模型对材料的评审，不等于独立真实性证明。
 
 ### 认知规则的唯一性
 
@@ -147,7 +147,7 @@ critique 可用非空 `:instructions` 追加专项标准，首行去空白后必
 
 管线上的每个组件都由**能力**装配，而非由宿主对象装配：
 
-- `SessionScheduler` 收到的是 config、memory、五个委托闭包与 LoopDriver；
+- `SessionScheduler` 收到的是 config、memory、状态与调度委托及 LoopDriver；
 - `LoopDriver` 收到的是 identity、`MemberRule`、`StageServices`、`EffectExecutor`、ToolExecutor 与 OnCompleteRunner；
 - `EffectExecutor`、`OnCompleteRunner`、`ReflectionEngine` 收到的都是 identity / rule / memory / 闭包这类纯数据与函数；
 - 事件发布走 `make_event_publisher`（[agents/stages/services.py](../../src/tlon/agents/stages/services.py)）闭包——闭包只封住 EventBus 与默认 source，不封住任何 Member。
@@ -187,7 +187,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 会话的收尾有两台机器，都在循环之外、由引擎在固定时点触发：
 
 - **反思引擎**（[agents/reflection.py](../../src/tlon/agents/reflection.py) 的 `ReflectionEngine`）：按**间隔 + 最少完成会话数双门控**触发（`reflect.interval_minutes` 与 `reflection_min_interactions`，两者都满足才跑），由调度器在主循环间隙经注入的 `check_reflection` 委托检查，实际反思跑在独立后台 task 里，不阻塞会话推进——task 由引擎持有：进行中计入成员活跃（`idle_seconds` 不判空闲，drain 不会打断审计），成员 shutdown 时被取消并 await，不留游离协程。双门控的理由：纯时间触发会在沉默期空转 LLM 调用，纯计数触发会在高频期反思过密；取两者的"与"，反思频率才与"确有新经验"挂钩。反思对记忆做体检：LLM 审视记忆快照，产出 `record_claim` / `delete_claim` / `noop` 操作并应用。会话计数由调度器在 session 回收点经 `note_interaction` 喂入——只有真正完成的会话才算数（ADR 0017：蒸馏触发也挂在这个回收点上，pending 达 `distillation_window` 即从 journal 批量蒸馏成 claims，无需反思催办）。
-- **完成动作**（[agents/on_complete.py](../../src/tlon/agents/on_complete.py) 的 `OnCompleteRunner`）：认知会话产出最终回复后，把认知规则的 `:actions` 求值一次——环境在统一环境上追加 `result`（最终回复文本，由 act stage 经 `StageOutcome.final_reply` 声明），收集到的动作请求走 `MemberRuntime._execute_action` 统一执行；可用性仍受语境约束。认知规则不能使用依赖触发邮件的 `forward`，转发应使用 `forwardMail` 工具；`start-all` 需要宿主查询，而完成动作求值器不注入该查询。调用时点在会话标记完成之前，仍在会话 span 内，因此 spawn 配额的会话归属（contextvars 携带 session_id）不受影响。任何求值或执行失败只记日志，不打断剩余动作与会话生命周期。
+- **完成动作**（[agents/on_complete.py](../../src/tlon/agents/on_complete.py) 的 `OnCompleteRunner`）：认知会话产出最终回复后，把认知规则的 `:actions` 求值一次——环境在统一环境上追加 `result`（独立结束工具不隐式复用上一封邮件，默认空字符串），收集到的动作请求走 `MemberRuntime._execute_action` 统一执行；可用性仍受语境约束。认知规则不能使用依赖触发邮件的 `forward`，转发应使用 `forwardMail` 工具；`start-all` 需要宿主查询，而完成动作求值器不注入该查询。调用时点在会话标记完成之前，仍在会话 span 内，因此 spawn 配额的会话归属（contextvars 携带 session_id）不受影响。任何求值或执行失败只记日志，不打断剩余动作与会话生命周期。
 
 两者都挂在引擎的固定时点上，而非任意 stage 中；是否配置反思、完成时执行哪些动作仍由认知规则声明。
 
@@ -195,11 +195,11 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 [agents/agent_registry.py](../../src/tlon/agents/agent_registry.py) 的 `AgentRegistry` 是纯机制组件（策略在 Adam，论证见 ADR 0003）。它持有的机制：
 
-- **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；注册表调用 `assemble_cognitive` 构造成员能力对象，按装置等级和信任政策裁剪工具；`MemberRuntime._assemble_cognitive` 仅为带 `:loop` 的成员接上调度器与循环。统一装配流程不等于无条件分配全部能力。执行权限由装置等级控制：声明 `docker.level: L0` 的成员无执行装置——不创建 Docker 运行时、不注册 shell/filesystem 装置工具；`docker.level: L1` 的成员（文件层）创建运行时、注册 filesystem 五个工具，但 shell 两个不注册、`run()` 由装置层直接拒绝（结构性零代码执行）。装配期还派生一次信任等级（信任阶梯——判定是社会政策数据：`agents/policy.py` 的 `full-member?` hook（ADR 0022），可在 `~/.tlon/policy.tlon` 调整，fail-open 按正式放行）：见习成员（spawn 出生且未获 endorse）不注册 `REPRODUCTION_TOOLS` 中的五个生殖/演化工具（`spawnAgent` / `stopAgent` / `writePrototype` / `proposeBehavior` / `proposeCapability`），且其撰写发出的邮件抄送 mentor（= spawner；转发不抄送）——升级在下次唤醒重新装配时生效。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
+- **运行表与装配**。`_start_agent` 是成员的唯一装配点：加载并校验 spec、建邮箱；注册表调用 `assemble_cognitive` 构造成员能力对象，按装置等级和信任政策裁剪工具；`MemberRuntime._assemble_cognitive` 仅为带 `:loop` 的成员接上调度器与循环。统一装配流程不等于无条件分配全部能力。执行权限由装置等级控制：声明 `docker.level: L0` 的成员无执行装置——不创建 Docker 运行时、不注册 shell/filesystem 装置工具；`docker.level: L1` 的成员（文件层）创建运行时、注册 filesystem 五个工具，但 shell 两个不注册、`run()` 由装置层直接拒绝（结构性零代码执行）。装配期还派生一次信任等级（信任阶梯——判定是社会政策数据：`agents/policy.py` 的 `full-member?` hook（ADR 0022），可在 `~/.tlon/policy.tlon` 调整，fail-open 按正式放行）：见习成员（spawn 出生且未获 endorse）不注册 `REPRODUCTION_TOOLS` 中的四个生殖/演化工具（`spawnAgent` / `writePrototype` / `proposeBehavior` / `proposeCapability`），且其撰写发出的邮件抄送 mentor（= spawner；转发不抄送）——升级在下次唤醒重新装配时生效。Docker 容器不在装配时启动，首次使用时懒起：为纯对话唤醒一个 agent 不花容器成本。
 - **幂等的生命周期执行**。注册表订阅 `AGENT_START_REQUEST` / `AGENT_STOP_REQUEST` 并幂等执行：`_waking` 集合在派发上下文里同步去重（背靠背请求折叠为一次装配）；每个 persona 一把 wake lock 串行化启动与排空；装配有 60 秒超时兜底——挂起的启动不能永远占住锁。
-- **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。空闲计时含 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，成员不会在审计中途被判空闲。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。统一成员模型（ADR 0006）：空闲排空是睡眠，保留 home 并发 `AGENT_SLEEPING`；这不排除人类通过管理面显式删除成员。
+- **空闲事实检测，不决定后果**。空闲监视器每 30 秒扫描一次，对"lazy 且空闲超时且无存活会话"的成员发布 `AGENT_IDLE`——这是事实，不是决策。空闲计时含 session 之外的真实后台活动：进行中的反思 LLM 调用算作活跃，成员不会在审计中途被判空闲。排空执行（`_drain_agent`）在锁下**复查**条件：竞态窗口里新开的会话能保住成员。统一成员模型（ADR 0006）：空闲排空只卸载等待实例，保留 home 并发 `AGENT_WAITING`；这不排除人类通过管理面显式删除成员。
 - **spawn 准入与预算执行**。注册表委托 SpawnManager 执行受信原型、激活总量、世代深度和会话配额检查。配额跨重启持久化，社会政策提供倾斜、偿付和见习判定；完整预算定义见 [prototypes.md](prototypes.md#spawn-预算落盘账本)，默认公式与失败处理见 [society-policy.md](society-policy.md)。
-- **spec 派生的生命周期档案**。boot 集合（`boot_candidates`）、lazy 判定（`is_lazy`）、唤醒资格全部从缓存的 spec profile 派生；加载失败缓存为 None，热重载/收养时才失效重试。spec 是生命周期归属的唯一权威，注册表不维护第二份事实。
+- **spec 派生的生命周期档案**。boot 集合（`boot_candidates`）、lazy 判定（`is_lazy`）、唤醒资格全部从缓存的 spec profile 派生；加载失败缓存为 None，热重载/收养时才失效重试。spec 决定启动与回收资格；睡眠期限、死亡与待终止意图另外约束调度，不能由 spec 的 boot 规则绕过。
 
 ### 热收养：运行中的系统接纳新成员
 
@@ -207,10 +207,10 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 ### spawn 出的成员：与手建成员同构
 
-spawn 出的成员与手建成员**同构**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`m-<uuid4 hex>`，调用方不能指定），boot/lazy 判定由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（sleep，不删）。自动生命周期回收保留成员档案；显式退休与删除的区别见成员模型。
+spawn 出的成员与手建成员**同构**：同一个 `MemberRuntime`、同一个注册表，身份由注册表生成（`m-<uuid4 hex>`，调用方不能指定），boot/lazy 判定由原型 spec 的 `:on :boot` 规则派生，`spawned_by` / `spawn_depth` / `prototype` 保留为血缘审计。孤儿策略是 reparent 而非 kill——成员独立注册，spawner 睡眠或停止不影响它，由自己的空闲策略回收（卸载等待实例，不删）。自动生命周期回收保留成员档案；显式退休与删除的区别见成员模型。
 
 ## 当前演化接口与未实施方向
 
-个体经验已可经 `proposeBehavior` 生成新原型提案，进入 staging、人工批准后派生新世代；它不原地改写当前成员的 spec。退休教训与交接信分别服务下一代与同代接管者，见 [memory.md](./memory.md)、[prototypes.md](./prototypes.md)。社会政策的可配置执行边界见 [society-policy.md](./society-policy.md)。
+个体经验已可经 `proposeBehavior` 生成新原型提案，进入 staging、人工批准后派生新世代；它不原地改写当前成员的 spec。退休教训与归档清点分别服务下一代与同代接管者，见 [memory.md](./memory.md)、[prototypes.md](./prototypes.md)。社会政策的可配置执行边界见 [society-policy.md](./society-policy.md)。
 
 社会自主批准行为提案、自动替换治理政策等方向不属于当前运行机制；本篇不以未实施闭环作为现有接口的能力承诺。

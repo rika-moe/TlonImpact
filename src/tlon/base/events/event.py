@@ -29,10 +29,11 @@ class EventType(StrEnum):
     AGENT_RESPONSE = "agent.response"
     AGENT_STARTED = "agent.started"
     AGENT_STOPPED = "agent.stopped"
-    AGENT_RETIRED = "agent.retired"  # Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」)
+    AGENT_RETIRED = "agent.retired"  # Offline handover inventory after permanent exit
     AGENT_ERROR = "agent.error"
     AGENT_STATE_CHANGED = "agent.state_changed"
-    # Dynamic registry (wake/sleep) lifecycle events
+    AGENT_WAITING = "agent.waiting"  # Waiting remains waiting when its runtime is unloaded
+    # Runtime assembly diagnostics and explicit timed sleep
     AGENT_WAKING = "agent.waking"
     AGENT_WOKEN = "agent.woken"
     AGENT_WAKE_FAILED = "agent.wake_failed"

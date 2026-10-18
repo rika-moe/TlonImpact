@@ -352,7 +352,7 @@ class TestDeterministicDispatch:
         await member.shutdown()
 
     async def test_start_stop_requests(self, bus):
-        member = _make_member("admin-1", SCRIPT_START_STOP, bus)
+        member = _make_member("adam", SCRIPT_START_STOP, bus)
         starts: list[Event] = []
         stops: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, partial(_capture, starts))
@@ -391,6 +391,12 @@ class TestDeterministicDispatch:
         class _StubRegistry:
             def __init__(self) -> None:
                 self.calls: list[tuple] = []
+
+            def can_schedule(self, member_id: str) -> bool:
+                return True
+
+            async def publish_scheduling_state(self, member_id: str) -> None:
+                pass
 
             async def spawn_member(self, *, prototype, name, spawner_id, session_id):
                 self.calls.append((prototype, name, spawner_id, session_id))
@@ -695,7 +701,7 @@ class TestMarkReadSemantics:
 
 class TestBootAndUnread:
     async def test_boot_rule_runs_on_initialize(self, bus):
-        member = _make_member("admin-1", SCRIPT_START_STOP, bus)
+        member = _make_member("adam", SCRIPT_START_STOP, bus)
         starts: list[Event] = []
         bus.subscribe(EventType.AGENT_START_REQUEST, partial(_capture, starts))
         await member.initialize()
@@ -1151,9 +1157,12 @@ class TestIdleAwareBackground:
         # An in-flight reflection is real activity — not idle.
         reflection._running = True
         assert member.idle_seconds == 0.0
+        assert member.get_state() == "active"
+        assert member.active_session_count == 1
 
         reflection._running = False
         assert member.idle_seconds > 600
+        assert member.get_state() == "waiting"
 
     async def test_shutdown_cancels_in_flight_reflection(self, bus, mail_dir):
         mailbox = Mailbox(mail_dir.parent / "shared" / "mail.sqlite3", "relay")

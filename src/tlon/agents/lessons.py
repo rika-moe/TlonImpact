@@ -1,8 +1,8 @@
 """Retirement lessons distillation (docs/design/memory.md 「退休蒸馏」).
 
-When a member is deliberately stopped (``AGENT_STOPPED`` — the stopAgent
-tool / DSL stop action path through ``AgentRegistry.stop_member``, never
-the everyday scale-to-zero ``AGENT_SLEEPING`` drain), its experience
+When a member is deliberately stopped (``AGENT_STOPPED`` — the self-exit
+or administrative path through ``AgentRegistry.stop_member``, never
+the everyday waiting-instance unload), its experience
 should not die with it: this component rebuilds the retired member's
 archived memory **offline** (the member runtime is already shut down, so
 there is no in-flight reflection to race — the reason this is not a

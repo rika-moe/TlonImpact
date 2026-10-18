@@ -40,7 +40,12 @@ from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
-from tlon.agents.stages.act import act_stage_collect, act_stage_step, attempts_completion
+from tlon.agents.stages.act import (
+    act_stage_collect,
+    act_stage_step,
+    attempts_completion,
+    attempts_mail_delivery,
+)
 from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.outcome import MailEffect, StageOutcome
 from tlon.agents.stages.plan import plan_stage
@@ -124,7 +129,10 @@ class LoopDriver:
         spill: ToolSpill,
         pressure: ContextPressure,
         is_human_sender: Callable[[str], bool],
+        prepare_scheduling_request: Callable[[str, dict[str, Any], str], Awaitable[None]]
+        | None = None,
     ):
+        self._prepare_scheduling_request = prepare_scheduling_request
         self._identity = identity
         # A loop driver serves a cognitive agent — its rule carries a loop.
         assert rule.loop is not None, "LoopDriver requires a cognitive rule"
@@ -402,6 +410,9 @@ class LoopDriver:
         if outcome.run_on_complete:
             await self._on_complete.run(session, outcome.final_reply or "")
         if outcome.complete:
+            request = session.loop_scratch.get("scheduling_request")
+            if request and self._prepare_scheduling_request is not None:
+                await self._prepare_scheduling_request(self._identity.id, request, session.id)
             await self._journal.append(session.id, "session/end", reason="complete")
             session.mark_completed()
         return response
@@ -625,6 +636,7 @@ class LoopDriver:
                 token_usage=session.token_usage,
                 scratch=session.loop_scratch,
                 completing=attempts_completion(response),
+                sending_mail=attempts_mail_delivery(response),
             )
         )
         try:

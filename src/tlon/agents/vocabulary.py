@@ -163,6 +163,7 @@ class RoundEnv(TypedDict):
     """The ``round`` binding: facts about the round being gated."""
 
     completing: bool
+    sending_mail: bool
 
 
 class StageCondEnv(TypedDict):
@@ -232,6 +233,7 @@ def stage_cond_env(
     token_usage: int,
     scratch: dict[str, Any],
     completing: bool,
+    sending_mail: bool = False,
 ) -> StageCondEnv:
     """The stage ``:if`` env (``loop_driver`` delegates here)."""
     return {
@@ -241,7 +243,7 @@ def stage_cond_env(
             "token_usage": token_usage,
         },
         "scratch": scratch,
-        "round": {"completing": completing},
+        "round": {"completing": completing, "sending_mail": sending_mail},
     }
 
 
@@ -420,11 +422,17 @@ def _builtin_first_iteration(env: dict[str, Any]) -> bool:
 def _builtin_completing(env: dict[str, Any]) -> bool:
     """The round's pending response would end the session if dispatched.
 
-    True for a completion signal — ``sendEmail`` with ``is_complete=true``
-    or ``silence`` — with no conflicting tool calls (act's conflict rule).
+    True for a sole ``finishTurn``, ``sleepUntil`` or ``exitAgent`` call.
+    Sending mail is independent of completing work.
     """
     round_map = env.get("round")
     return isinstance(round_map, dict) and round_map.get("completing") is True
+
+
+def _builtin_sending_mail(env: dict[str, Any]) -> bool:
+    """The round would dispatch an outgoing mail tool, independently of completion."""
+    round_map = env.get("round")
+    return isinstance(round_map, dict) and round_map.get("sending_mail") is True
 
 
 #: Stage ``:if`` condition predicates. Pure only; evaluation is
@@ -436,6 +444,7 @@ STAGE_COND_BUILTINS: dict[str, Builtin] = {
     "plan-exists?": Builtin(_builtin_plan_exists, pure=True),
     "first-iteration?": Builtin(_builtin_first_iteration, pure=True),
     "completing?": Builtin(_builtin_completing, pure=True),
+    "sending-mail?": Builtin(_builtin_sending_mail, pure=True),
     "=": Builtin(builtin_eq, pure=True),
     "not": Builtin(builtin_not, pure=True),
 }

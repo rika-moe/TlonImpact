@@ -906,7 +906,14 @@ class TestGetAgentLineageFields:
             spawned_by="gu-yanxi",
             spawn_depth=1,
         )
-        reg.get_agent.return_value = None
+        reg.get_agent_status = AsyncMock(
+            return_value={
+                "id": "dev-1",
+                "name": "新工程师",
+                "state": "waiting",
+                "wake_at": None,
+            }
+        )
         handler = RESTAPIHandler(
             None,
             identity=make_identity(),
@@ -920,3 +927,58 @@ class TestGetAgentLineageFields:
         assert body["config"]["prototype"] == builtin_id("计划后执行")
         assert body["config"]["spawned_by"] == "gu-yanxi"
         assert body["config"]["spawn_depth"] == 1
+
+
+class TestSchedulingStateAPI:
+    @pytest.mark.parametrize("state", ["active", "waiting", "sleeping", "dead"])
+    async def test_detail_matches_authoritative_status(self, tmp_path: Path, state: str):
+        handler, reg, _ = _handler(tmp_path)
+        reg.get_config.return_value = MagicMock(prototype=None, spawned_by=None, spawn_depth=0)
+        wake_at = "2030-01-01T00:00:00+00:00" if state == "sleeping" else None
+        snapshot = {
+            "id": "member",
+            "name": "成员",
+            "state": state,
+            "wake_at": wake_at,
+            "resident": False,
+            "waking": False,
+            "stop_pending": False,
+            "error": None,
+        }
+        reg.get_agent_status = AsyncMock(return_value=snapshot)
+        response = await handler.handle_get_agent(StubRequest(agent_id="member"))
+        assert response.status == 200
+        result = json.loads(response.text)
+        assert result["state"] == state
+        assert result["wake_at"] == wake_at
+        assert result["resident"] is False
+        reg.get_agent_status.assert_awaited_once_with("member")
+
+    @pytest.mark.parametrize("finished,code", [(False, 202), (True, 200)])
+    async def test_management_termination_drains_and_preserves_history(
+        self, tmp_path: Path, finished: bool, code: int
+    ):
+        handler, reg, _ = _handler(tmp_path)
+        reg.stop_member = AsyncMock(return_value=finished)
+        reg.get_agent_status = AsyncMock(
+            return_value={
+                "id": "member",
+                "state": "dead" if finished else "active",
+                "stop_pending": not finished,
+                "wake_at": None,
+            }
+        )
+        response = await handler.handle_terminate_agent(StubRequest(agent_id="member"))
+        assert response.status == code
+        body = json.loads(response.text)
+        assert body["stop_pending"] is not finished
+        assert body["agent"]["state"] == ("dead" if finished else "active")
+        reg.stop_member.assert_awaited_once_with("member", stopped_by="admin-api", when_idle=True)
+        reg.remove_member.assert_not_called()
+
+    async def test_terminate_unknown_member(self, tmp_path: Path):
+        handler, reg, _ = _handler(tmp_path)
+        reg.get_config.return_value = None
+        response = await handler.handle_terminate_agent(StubRequest(agent_id="unknown"))
+        assert response.status == 404
+        reg.stop_member.assert_not_called()

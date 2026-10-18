@@ -30,7 +30,6 @@ class TestSendEmailTool:
         result = await tool.execute(
             to=["a-001@tlon.internal"],
             content="结论如下",
-            is_complete=True,
             cc=["a-002@tlon.internal"],
             subject="汇报",
         )
@@ -40,20 +39,20 @@ class TestSendEmailTool:
         assert result.data["cc"] == ["a-002@tlon.internal"]
         assert result.data["subject"] == "汇报"
         assert result.data["content"] == "结论如下"
-        assert result.data["is_complete"] is True
+        assert "is_complete" not in result.data
         assert result.data["action"] == "send_email"
 
     @pytest.mark.asyncio
     async def test_defaults(self):
         tool = SendEmailTool()
-        result = await tool.execute(to=["b-002@tlon.internal"], content="进度", is_complete=False)
+        result = await tool.execute(to=["b-002@tlon.internal"], content="进度")
 
         assert result.success
         assert result.data["cc"] == []
         assert result.data["subject"] is None
         assert result.data["in_reply_to"] is None
         assert result.data["endorsing"] is None
-        assert result.data["is_complete"] is False
+        assert "is_complete" not in result.data
 
     @pytest.mark.asyncio
     async def test_endorsing_passes_through(self):
@@ -63,7 +62,6 @@ class TestSendEmailTool:
         result = await tool.execute(
             to=["a-001@tlon.internal"],
             content="这封信帮到了我",
-            is_complete=True,
             endorsing="m-helpful",
         )
 
@@ -74,7 +72,7 @@ class TestSendEmailTool:
         tool = SendEmailTool()
         assert tool.name == "sendEmail"
         required = tool.parameters["required"]
-        assert set(required) == {"to", "content", "is_complete"}
+        assert set(required) == {"to", "content"}
 
 
 class TestForwardMailTool:
@@ -497,3 +495,9 @@ class TestMarkReadTool:
         assert result.data["not_found"] == ["b1"]
         assert result.data["marked"] == ["m1"]
         assert [m.id for m in await bobs.unread()] == ["b1"]
+
+
+def test_send_email_rejects_removed_completion_parameter() -> None:
+    assert SendEmailTool().validate_arguments(
+        {"to": ["a@tlon.internal"], "content": "hi", "is_complete": True}
+    )

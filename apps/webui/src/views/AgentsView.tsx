@@ -23,6 +23,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import type { AgentConfig, AgentPersona, AgentDetail, AgentSummary, LlmModelInfo, LogEntry, RestClient } from "../client/rest";
+import { wakeLabel } from "../lib/agentState";
+import { SchedulingInfo, StateBadge } from "../components/AgentSchedulingState";
 import { buildAgentUpdate, PERSONA_FIELDS } from "../lib/agentConfig";
 import { formatDurationMs } from "../lib/activity";
 import { applyEvent } from "../lib/agentLiveStatus";
@@ -38,27 +40,8 @@ type Modal =
   | { kind: "create-proto" }
   | { kind: "create-form"; prototype: string }
   | { kind: "edit"; agentId: string }
-  | { kind: "delete"; agentId: string };
-
-type StateTone = "cyan" | "dim" | "magenta" | "yellow";
-
-/** Card/badge color from a state value. */
-function stateTone(state: string): StateTone {
-  const s = state.toLowerCase();
-  if (["running", "active", "idle", "online", "thinking"].includes(s)) return "cyan";
-  if (["error", "failed"].includes(s)) return "magenta";
-  if (["sleeping", "stopped", "offline"].includes(s)) return "dim";
-  return "yellow";
-}
-
-/** The server state is the sole current-status indicator. */
-function StateBadge({ state }: { state: string }): ReactElement {
-  return (
-    <span className={`state-badge state-badge--${stateTone(state)}${state.toLowerCase() === "thinking" ? " state-badge--thinking" : ""}`}>
-      {state}
-    </span>
-  );
-}
+  | { kind: "delete"; agentId: string }
+  | { kind: "terminate"; agentId: string };
 
 function protoLabel(p: ProtoRecord): string {
   const name = String(p["name"] ?? "?");
@@ -196,8 +179,18 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
                 <div className="tech-label agent-card-meta">
                   {agent.prototype ?? "MANUAL"} · GEN {agent.spawn_depth}
                 </div>
+                <SchedulingInfo status={agent} />
                 <AgentLiveLine status={live[id]} />
                 <div className="agent-card-actions">
+                  {agent.state !== "dead" ? <button
+                    type="button"
+                    className="btn btn--danger"
+                    disabled={agent.stop_pending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModal({ kind: "terminate", agentId: id });
+                    }}
+                  >TERMINATE</button> : null}
                   <button
                     type="button"
                     className="btn btn--secondary"
@@ -278,6 +271,9 @@ export function AgentsView({ rest, sse }: ViewProps): ReactElement {
           onClose={() => setModal(null)}
         />
       ) : null}
+      {modal?.kind === "terminate" ? (
+        <TerminateModal rest={rest} agentId={modal.agentId} onDone={onActionDone} onClose={() => setModal(null)} />
+      ) : null}
       {modal?.kind === "delete" ? (
         <DeleteModal
           rest={rest}
@@ -354,6 +350,9 @@ function AgentDetailPanel({
       <DetailRow label="STATE">
         <StateBadge state={listItem?.state ?? detail.state} />
       </DetailRow>
+      {(listItem?.state ?? detail.state) === "sleeping" ? <DetailRow label="WAKE_AT">{wakeLabel(listItem?.wake_at ?? detail.wake_at)}</DetailRow> : null}
+      <DetailRow label="RUNTIME">{(listItem?.resident ?? detail.resident) ? "RESIDENT" : "UNLOADED"}</DetailRow>
+      {(listItem?.stop_pending ?? detail.stop_pending) ? <DetailRow label="TERMINATION">PENDING · DRAINING WORK</DetailRow> : null}
       <DetailRow label="NAME">{detail.name}</DetailRow>
       <DetailRow label="PROTOTYPE">{prototype}</DetailRow>
       <DetailRow label="SPAWNED_BY">{spawnedBy ?? "ROOT // FIRST GENERATION"}</DetailRow>
@@ -910,4 +909,33 @@ function DeleteModal({
       </div>
     </ModalShell>
   );
+}
+
+/** Permanent exit keeps mail, memory and journal; deletion is a separate action. */
+function TerminateModal({ rest, agentId, onDone, onClose }: {
+  rest: RestClient;
+  agentId: string;
+  onDone: (notice: string) => void;
+  onClose: () => void;
+}): ReactElement {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const result = await rest.terminateAgent(agentId);
+      onDone(result.stop_pending ? `TERMINATION PENDING ${agentId} · DRAINING WORK` : `DEAD ${agentId} · HISTORY RETAINED`);
+    } catch (err) {
+      setError(errMsg(err));
+      setBusy(false);
+    }
+  };
+  return <ModalShell title={`TERMINATE // ${agentId}`} onClose={onClose}>
+    <p>Finish current work, then permanently stop responding and reject new mail. History is retained. This cannot be undone.</p>
+    {error ? <div className="agents-error-bar">{error}</div> : null}
+    <div className="agents-modal-actions">
+      <button type="button" className="btn btn--secondary" disabled={busy} onClick={onClose}>CANCEL</button>
+      <button type="button" className="btn btn--danger" disabled={busy} onClick={() => void submit()}>{busy ? "REQUESTING…" : "CONFIRM TERMINATE"}</button>
+    </div>
+  </ModalShell>;
 }

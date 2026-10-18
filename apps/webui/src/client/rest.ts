@@ -1,3 +1,4 @@
+import type { AgentState } from "../lib/agentState";
 /**
  * REST client for the Tlon server (browser version).
  *
@@ -102,7 +103,12 @@ export interface LogList {
 export type AgentSummary = {
   id: string;
   name: string;
-  state: string;
+  state: AgentState;
+  wake_at?: string | null;
+  resident?: boolean;
+  waking?: boolean;
+  error?: string | null;
+  stop_pending?: boolean;
   prototype: string | null;
   spawned_by: string | null;
   spawn_depth: number;
@@ -116,7 +122,12 @@ export type AgentSummary = {
 export type AgentDetail = {
   id: string;
   name: string;
-  state: string;
+  state: AgentState;
+  wake_at?: string | null;
+  resident?: boolean;
+  waking?: boolean;
+  error?: string | null;
+  stop_pending?: boolean;
   config: { prototype: string | null } & Record<string, unknown>;
 };
 
@@ -790,6 +801,11 @@ export class RestClient {
     },
   ): Promise<Record<string, unknown>> {
     return this.send("PATCH", `/admin/config/agents/${encodeURIComponent(agentId)}`, body);
+  }
+
+  /** Drain current work and permanently exit, retaining history. */
+  async terminateAgent(agentId: string): Promise<{ stop_pending: boolean }> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/terminate`);
   }
 
   /** Administratively remove a member (records + home archive deleted). */

@@ -29,7 +29,7 @@ into the evaluator. Five policy lines live in the spec:
    fixed acknowledgement reply: the guardian's mailbox is a message box,
    and the enforcer of the guardian rules is currently the human
    (staging proposals are approved by humans on the admin surface;
-   retirement/stop requests go through the stopAgent flow). Mail from
+   retirement/stop requests go through the management termination flow). Mail from
    postmaster is excluded (``from?``) so a bounce never gets answered.
    Adam carries a real mailbox (``~/.tlon/adam/mail/``), so read-marking
    and the boot unread replay come for free.
@@ -111,7 +111,7 @@ ADAM_SPEC_EDN = r"""{:version 1
           :on :mail-delivered
           :when (and (addressed-to-me? msg)
                      (not (from? msg "postmaster@tlon.internal")))
-          :actions [(emit "已收到你的来信。\n\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员的退休/停止请求走 stopAgent 流程。\n\n本信箱是留言箱——这封回信仅确认收讫。")]}]}
+          :actions [(emit "已收到你的来信。\n\n我是 Adam，这个世界的守护者。守护规则的执行者当前是人类：staging 原型提案由人类在管理面审批，成员只通过 exitAgent 管理自己的退出；终止其他成员由人类管理端处理。\n\n本信箱是留言箱——这封回信仅确认收讫。")]}]}
 """
 
 

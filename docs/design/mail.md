@@ -139,9 +139,7 @@ agent 与邮件系统的接口只有两条：收信经 `MemberRuntime` 门控唤
 
 stage 继续声明数据，外部效果由引擎执行；区别在于工具回执现在反映实际投信结果。本地成功表示已经入箱，网关仅表示尝试及已知结果，均不表示阅读或工作完成。
 
-`is_complete` 参数把「发邮件」和「结束本轮思考」绑定：`false` 表示发中间进度、继续思考（一封协作过程中的中间信，随后还会有别的工具调用和信件）；`true` 表示这是最终回复、结束循环（且本轮只能调 `sendEmail`，不能与其他工具混用——最终回复就是本轮的句号）。这把「agent 每轮思考的产出」与「一封信」对齐：认知循环不是跑到燃料耗尽才停，而是以「回信了」为自然终止条件。对社会而言这意味着每个 session 的产出都落在邮件层可见——没有停留在内存里、随 session 结束蒸发的思考结果；最终答复一定是一封可检索的信。
-
-这也解释了为什么中间信和最终信要区分：中间信让长任务中的协作方尽早看到进展（人类社会里叫「抄送进展」），最终信给出结论；两者都是信，但对收件人的紧迫性和对循环的控制语义不同。
+发信与成员调度正交：sendEmail/forwardMail 成功或失败都不结束当前工作。需要标读先 markRead；发送回复并查看真实回执后，成员下一轮单独调用 finishTurn、sleepUntil 或 exitAgent。也可以不发信直接结束。睡眠期间正常入箱，到期才处理；死亡拒收新信，保留历史。状态、期限和安全转换见 [agent-scheduling-states.md](agent-scheduling-states.md)。
 
 ## 周期任务：tick 即邮件
 
@@ -172,17 +170,15 @@ stage 继续声明数据，外部效果由引擎执行；区别在于工具回�
 
 配套的两个只读工具把「待人类处置」可查询化：`getSocialHealth`（[tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py)）按需实时返回孤儿邮件清单（与 `PublicHealthMonitor` 的 MAIL_ORPHAN_SCAN 共用同一个采集器，派生不存储）；`listStagingPrototypes`（[tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py)）列出原型暂存区里待人类信任批准的提案。人类由此从「读全部邮件」退为「读摘要 + 处置例外」。
 
-## 退休交接信
+## 死亡归档清点
 
-成员被蓄意停止（`AGENT_STOPPED`，与退休蒸馏同一触发点）时，[agents/retirement.py](../../src/tlon/agents/retirement.py) 的 `RetirementCeremony` 离线盘点它的归档：未完成任务（todo/doing/paused）、未回复的邮件线程（inbox 按 thread 分组，组内最后一封来自他人且 sent 里没有更晚的本人回复）、记忆（claims）。有东西可交接或可说（digest 非空、有未完成任务或有未回复线程）时，一次 LLM 调用（`purpose="farewell"`，归属退休成员账本）写一封告别信——任期总结 + 未竟事项 + 移交清单 + 给继任者的建议。
+成员死亡（AGENT_STOPPED）后，RetirementCeremony 只读盘点未完成任务、未回复线程及记忆摘要，发布 AGENT_RETIRED 归档事件。该消费者不调用模型、不通过邮局发信，尤其不能以死亡成员身份生成“最后一封告别信”。事件包含 open_tasks、open_threads 和 memory_digest，历史仍保留在原处。
 
-这封信的特殊之处在于发件人：**以退休成员自己的地址发出**（退休拒收新信，但交接服务可以代表退休成员发出最后的交接信，历史发件可查）。收件人是它的「负责人」：`spawned_by` 指向的成员，非 spawn 成员（标准团队）则兜底给 guest 人类。无论信是否发出（LLM 失败、空移交），都发布 `AGENT_RETIRED` 事实事件携带移交清单——可见性不依赖 LLM 成败。
-
-**任务认领不做自动化**：信把清单送达即完成「死亡不丢东西」；认领哪件、由谁认领，是收件者（成员或人类）的决定。
+系统离线 LessonsDistiller 仍可从归档蒸馏可继承教训，但这是系统档案处理，不恢复成员、不执行其工具、不发送邮件。任务认领由后续成员或人类决定，不自动移交。
 
 ## 人类接入
 
-WebUI 采用本地单人实例身份（[ADR 0033](../decisions/0033-local-webui-identity.md)）：首次填写 username 后保存在服务端，后续自动进入，不设账号密码或 admin token。REST 发信、个人邮箱、标读和 SSE session 都从实例身份派生，客户端不能自报 username；来源校验隔离非同源网页，不提供本机进程隔离。邮件本身不增加认证徽章、人类等级或管理员标签，agents 仍把该地址当作普通通信成员。历史 guest 保留为另一成员，不迁移或关联；退休交接等现有 guest 兜底行为未因本次修改而改变。
+WebUI 采用本地单人实例身份（[ADR 0033](../decisions/0033-local-webui-identity.md)）：首次填写 username 后保存在服务端，后续自动进入，不设账号密码或 admin token。REST 发信、个人邮箱、标读和 SSE session 都从实例身份派生，客户端不能自报 username；来源校验隔离非同源网页，不提供本机进程隔离。邮件本身不增加认证徽章、人类等级或管理员标签，agents 仍把该地址当作普通通信成员。历史 guest 保留为另一成员，不迁移或关联；死亡归档不向 guest 或其他地址自动发信。
 
 人类不是协议层的特殊存在，而是总线上的一个普通成员。[organization/messaging/human_adapter.py](../../src/tlon/organization/messaging/human_adapter.py) 的 `HumanAdapter` 是人类的总线化身：携带身份（成员 id `human:<username>`，地址 `alice@tlon.internal`）、生命周期和发言能力，客户端会话是它的 attachment（`attach_session` / `detach_session`，同一用户名多个会话共享一个 adapter，引用计数语义）。它刻意不携带任何 LLM、记忆、沙箱机器——那些是认知成员（`MemberRuntime`）的东西；人类只有「说」和「收」，与任何成员的最低公分母一致。
 

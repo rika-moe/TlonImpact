@@ -53,6 +53,7 @@ import asyncio
 import time
 from collections.abc import Coroutine
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from tlon.agents.assembly import assemble_cognitive
@@ -69,6 +70,7 @@ from tlon.agents.policy import (
     policy_tilt_provider,
 )
 from tlon.agents.reaper import IdleReaper
+from tlon.agents.scheduling_store import SchedulingStore
 from tlon.agents.spawn import SpawnManager
 from tlon.agents.vocabulary import ScriptHostQueries, make_member_builtins
 from tlon.base.component import Component
@@ -110,10 +112,8 @@ class RegistryQueries(ScriptHostQueries):
         """Registered (config known) but not running."""
         if not isinstance(agent_id, str) or not agent_id:
             return False
-        return (
-            self._registry.get_agent(agent_id) is None
-            and self._registry.get_config(agent_id) is not None
-        )
+        intent = self._registry._scheduling_intents.get(agent_id)
+        return intent is not None and intent[0] == "sleep"
 
     def is_running(self, agent_id: Any) -> bool:
         """Currently in the run table."""
@@ -213,6 +213,11 @@ class AgentRegistry(Component):
         self.event_bus = event_bus
         self._agent_info = agent_info_provider
         self._paths = tlon_paths
+        self._scheduling_store = SchedulingStore(tlon_paths.mail_database_file())
+        self._scheduling_intents: dict[str, tuple[str, str | None, str]] = {}
+        self._sleep_tasks: dict[str, asyncio.Task[None]] = {}
+        self._dead: set[str] = set()
+        self._terminating: set[str] = set()
         self._post_office = post_office
         self._mail_rescue_task: asyncio.Task[None] | None = None
         self._mail_rescue_not_before: dict[str, float] = {}
@@ -421,6 +426,17 @@ class AgentRegistry(Component):
         that did start.
         """
         self._shutting_down = False
+        self._scheduling_intents = await asyncio.to_thread(self._scheduling_store.load)
+        for member_id, (action, wake_at, _) in list(self._scheduling_intents.items()):
+            if action == "exit":
+                await asyncio.to_thread(
+                    MailStore(self._paths.mail_database_file()).retire, member_id
+                )
+                self._dead.add(member_id)
+                await asyncio.to_thread(self._scheduling_store.delete, member_id)
+                self._scheduling_intents.pop(member_id, None)
+            elif wake_at is not None:
+                self._schedule_deadline(member_id, wake_at)
         logger.info("agent_registry_initializing", agent_ids=self._registered_ids)
 
         # Lifecycle request subscriptions (idempotent across re-initialize)
@@ -458,6 +474,12 @@ class AgentRegistry(Component):
     async def shutdown(self) -> None:
         """Shutdown all agents and cleanup."""
         self._shutting_down = True
+        sleepers = list(self._sleep_tasks.values())
+        for task in sleepers:
+            task.cancel()
+        if sleepers:
+            await asyncio.gather(*sleepers, return_exceptions=True)
+        self._sleep_tasks.clear()
         logger.info("agent_registry_shutdown_started")
 
         if self._mail_rescue_task is not None:
@@ -534,6 +556,8 @@ class AgentRegistry(Component):
         Returns:
             The started MemberRuntime instance, or None if not found
         """
+        if not self.can_schedule(agent_id):
+            return None
         if await asyncio.to_thread(
             MailStore(self._paths.mail_database_file()).is_retired, agent_id
         ):
@@ -668,6 +692,8 @@ class AgentRegistry(Component):
         recipient = event.payload.get("recipient")
         if not isinstance(recipient, str):
             return
+        if not self.can_schedule(recipient):
+            return
         if await asyncio.to_thread(
             MailStore(self._paths.mail_database_file()).is_retired, recipient
         ):
@@ -690,7 +716,7 @@ class AgentRegistry(Component):
             )
         )
 
-    def _launch_lifecycle(self, coroutine: Coroutine[object, object, None]) -> None:
+    def _launch_lifecycle(self, coroutine: Coroutine[object, object, Any]) -> None:
         task = asyncio.create_task(coroutine)
         self._lifecycle_tasks.add(task)
         task.add_done_callback(self._lifecycle_done)
@@ -931,36 +957,46 @@ class AgentRegistry(Component):
         # retryable even when a previous cancellation already committed it.
         lock = self._wake_locks.setdefault(agent_id, asyncio.Lock())
         async with lock:
-            retired = await asyncio.to_thread(
-                MailStore(self._paths.mail_database_file()).is_retired, agent_id
-            )
-            agent = self._agents.get(agent_id)
-            if not retired and agent is not None and agent.active_session_count > 0:
-                if when_idle:
-                    self._register_pending_stop(agent_id, stopped_by)
-                    return False
-                raise StopRejectedError(
-                    "active_sessions",
-                    f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
-                    "wait for them to finish (drain), or stop with when_idle=true",
+            self._terminating.add(agent_id)
+            try:
+                retired = await asyncio.to_thread(
+                    MailStore(self._paths.mail_database_file()).is_retired, agent_id
                 )
-            if not retired:
-                await asyncio.to_thread(
-                    MailStore(self._paths.mail_database_file()).retire, agent_id
-                )
-            if agent is not None:
-                # Keep the live reference on cancellation or failure. A
-                # retired marker alone must never short-circuit this work.
-                await agent.shutdown()
-                self._agents.pop(agent_id, None)
-            if not retired or agent is not None:
-                await self.event_bus.publish(
-                    Event(
-                        type=EventType.AGENT_STOPPED,
-                        payload={"agent_id": agent_id, "stopped_by": stopped_by},
-                        source="agent_registry",
+                agent = self._agents.get(agent_id)
+                if not retired and agent is not None and agent.active_session_count > 0:
+                    if when_idle:
+                        self._register_pending_stop(agent_id, stopped_by)
+                        return False
+                    raise StopRejectedError(
+                        "active_sessions",
+                        f"agent '{agent_id}' has {agent.active_session_count} live session(s); "
+                        "wait for them to finish (drain), or stop with when_idle=true",
                     )
-                )
+                if not retired:
+                    await asyncio.to_thread(
+                        MailStore(self._paths.mail_database_file()).retire, agent_id
+                    )
+                self._dead.add(agent_id)
+                await asyncio.to_thread(self._scheduling_store.delete, agent_id)
+                self._scheduling_intents.pop(agent_id, None)
+                timer = self._sleep_tasks.pop(agent_id, None)
+                if timer is not None:
+                    timer.cancel()
+                if agent is not None:
+                    # Keep the live reference on cancellation or failure. A
+                    # retired marker alone must never short-circuit this work.
+                    await agent.shutdown()
+                    self._agents.pop(agent_id, None)
+                if not retired or agent is not None:
+                    await self.event_bus.publish(
+                        Event(
+                            type=EventType.AGENT_STOPPED,
+                            payload={"agent_id": agent_id, "stopped_by": stopped_by},
+                            source="agent_registry",
+                        )
+                    )
+            finally:
+                self._terminating.discard(agent_id)
 
         # The stop fulfills any pending intent for this member (cancel the
         # watcher outside the wake lock; never cancel ourselves — the
@@ -972,6 +1008,7 @@ class AgentRegistry(Component):
             with suppress(asyncio.CancelledError):
                 await watcher
 
+        await self.publish_scheduling_state(agent_id)
         logger.info("agent_stopped", agent_id=agent_id, stopped_by=stopped_by)
         return True
 
@@ -1011,7 +1048,6 @@ class AgentRegistry(Component):
                     return
                 if agent.active_session_count > 0:
                     continue
-                self._pending_stops.pop(agent_id, None)
                 try:
                     stopped_now = await self.stop_member(
                         agent_id, stopped_by=stopped_by, when_idle=True
@@ -1156,6 +1192,107 @@ class AgentRegistry(Component):
         """
         return self._agent_info.get_config(agent_id)
 
+    async def publish_scheduling_state(self, member_id: str) -> None:
+        """Publish the same authoritative snapshot served by the status API."""
+        status = await self.get_agent_status(member_id)
+        if status is not None:
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.AGENT_STATE_CHANGED,
+                    payload={"agent_id": member_id, **status},
+                    source="agent_registry",
+                )
+            )
+
+    def can_schedule(self, member_id: str) -> bool:
+        """One admission gate shared by delivery, scans, reflection and DSL."""
+        return (
+            member_id not in self._dead
+            and member_id not in self._terminating
+            and member_id not in self._pending_stops
+            and member_id not in self._scheduling_intents
+            and not self._shutting_down
+        )
+
+    async def prepare_scheduling_request(
+        self, member_id: str, request: dict[str, Any], session_id: str
+    ) -> None:
+        """Commit an intention before journaling session/end (crash recovery)."""
+        action = request["action"]
+        if action == "finish":
+            return
+        if action not in {"sleep", "exit"}:
+            raise ValueError("unknown scheduling action")
+        wake_at = None
+        if action == "sleep":
+            deadline = datetime.fromisoformat(request["wake_at"])
+            if deadline.tzinfo is None:
+                raise ValueError("wake_at must include timezone")
+            wake_at = deadline.astimezone(UTC).isoformat()
+        await asyncio.to_thread(self._scheduling_store.put, member_id, action, wake_at, session_id)
+        self._scheduling_intents[member_id] = (action, wake_at, session_id)
+
+    async def apply_scheduling_request(self, member_id: str, request: dict[str, Any]) -> None:
+        """Reap has released the session slot; shutdown runs in a separate task."""
+        action = request["action"]
+        if action == "finish":
+            return
+        if member_id not in self._scheduling_intents:
+            await self.prepare_scheduling_request(member_id, request, "")
+        if action == "sleep":
+            wake_at = self._scheduling_intents[member_id][1]
+            assert wake_at is not None
+            self._launch_lifecycle(self._sleep_member(member_id, wake_at))
+        else:
+            self._launch_lifecycle(
+                self.stop_member(member_id, stopped_by=member_id, when_idle=True)
+            )
+
+    async def _sleep_member(self, member_id: str, wake_at: str) -> None:
+        lock = self._wake_locks.setdefault(member_id, asyncio.Lock())
+        async with lock:
+            agent = self._agents.get(member_id)
+            if agent is not None:
+                while agent.active_session_count > 0:
+                    await asyncio.sleep(0.05)
+                await agent.shutdown()
+                self._agents.pop(member_id, None)
+            await self.publish_scheduling_state(member_id)
+            self._schedule_deadline(member_id, wake_at)
+
+    def _schedule_deadline(self, member_id: str, wake_at: str) -> None:
+        previous = self._sleep_tasks.get(member_id)
+        if previous is not None:
+            previous.cancel()
+        self._sleep_tasks[member_id] = asyncio.create_task(
+            self._wake_at_deadline(member_id, wake_at)
+        )
+
+    async def _wake_at_deadline(self, member_id: str, wake_at: str) -> None:
+        try:
+            delay = (datetime.fromisoformat(wake_at) - datetime.now(UTC)).total_seconds()
+            await asyncio.sleep(max(0.0, delay))
+            lock = self._wake_locks.setdefault(member_id, asyncio.Lock())
+            async with lock:
+                intent = self._scheduling_intents.get(member_id)
+                if intent is None or intent[0:2] != ("sleep", wake_at):
+                    return
+                await asyncio.to_thread(self._scheduling_store.delete, member_id)
+                self._scheduling_intents.pop(member_id, None)
+            await self.publish_scheduling_state(member_id)
+            store = MailStore(self._paths.mail_database_file())
+            if member_id in await asyncio.to_thread(store.unread_member_ids):
+                await self._on_mail_delivered(
+                    Event(
+                        type=EventType.MAIL_DELIVERED,
+                        payload={"recipient": member_id},
+                        source="sleep_timer",
+                    )
+                )
+        finally:
+            if self._sleep_tasks.get(member_id) is asyncio.current_task():
+                self._sleep_tasks.pop(member_id, None)
+
     async def get_agent_status(self, agent_id: str) -> dict[str, Any] | None:
         """Get status of a specific agent.
 
@@ -1174,20 +1311,34 @@ class AgentRegistry(Component):
         )
         agent = self._agents.get(agent_id)
         if retired:
-            state = "retired"
+            state = "dead"
+            self._dead.add(agent_id)
+        elif agent is not None and agent.active_session_count > 0:
+            state = "active"
+        elif (
+            agent_id in self._scheduling_intents
+            and self._scheduling_intents[agent_id][0] == "sleep"
+        ):
+            state = "sleeping"
         elif agent:
             state = agent.get_state()
         elif agent_id in self._waking:
-            state = "waking"
-        elif self.is_lazy(agent_id):
-            state = "sleeping"
+            state = "waiting"
         else:
-            state = "unknown"
+            state = "waiting"
 
         return {
             "id": agent_id,
             "name": config.name,
             "state": state,
+            "resident": agent is not None,
+            "waking": agent_id in self._waking,
+            "error": agent.get_diagnostic_error() if isinstance(agent, MemberRuntime) else None,
+            "scheduling_pending": self._scheduling_intents.get(agent_id, (None, None, ""))[0],
+            "stop_pending": agent_id in self._pending_stops,
+            "wake_at": self._scheduling_intents.get(agent_id, ("", None, ""))[1]
+            if state == "sleeping"
+            else None,
             "prototype": config.prototype,
             "spawned_by": config.spawned_by,
             "spawn_depth": config.spawn_depth,

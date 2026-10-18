@@ -21,26 +21,27 @@ from tlon.base.events.event import EventType
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.tools.base import ToolResult
 
+ENDING_TOOLS = frozenset({"finishTurn", "sleepUntil", "exitAgent"})
 
-def attempts_completion(response: "LLMResponse | None") -> bool:
-    """Whether dispatching this response would end the session.
 
-    True exactly when the response carries a completion signal (a
-    ``sendEmail`` call with ``is_complete=true``, or a ``silence`` call)
-    that act would actually dispatch — i.e. without the conflict act
-    rejects (a completion signal mixed with other tool calls). Used by
-    the engine to expose ``round.completing`` to stage ``:if``
-    conditions; must stay in lockstep with the conflict rule in
-    :func:`act_stage_step`.
-    """
-    if response is None or not response.tool_calls:
-        return False
-    calls = response.tool_calls
-    send_calls = [tc for tc in calls if tc.function_name == "sendEmail"]
-    silence_calls = [tc for tc in calls if tc.function_name == "silence"]
-    other_calls = [tc for tc in calls if tc.function_name not in ("sendEmail", "silence")]
-    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(silence_calls)
-    return bool(has_complete and not (other_calls or (silence_calls and send_calls)))
+def attempts_completion(response: LLMResponse | None) -> bool:
+    """Ending requests are dispatched only when they are the sole tool call."""
+    return bool(
+        response
+        and response.tool_calls
+        and len(response.tool_calls) == 1
+        and response.tool_calls[0].function_name in ENDING_TOOLS
+    )
+
+
+def attempts_mail_delivery(response: LLMResponse | None) -> bool:
+    """Whether act would dispatch mail delivery in this response."""
+    return bool(
+        response
+        and response.tool_calls
+        and not any(tc.function_name in ENDING_TOOLS for tc in response.tool_calls)
+        and any(tc.function_name in {"sendEmail", "forwardMail"} for tc in response.tool_calls)
+    )
 
 
 async def act_stage_step(
@@ -69,25 +70,15 @@ async def act_stage_step(
             context_appends=_no_tool_reminder_appends(response), advance_iteration=True
         )
 
-    # Conflict detection: a completion signal (sendEmail is_complete=true
-    # or a silence call) must be the round's only tool call.
-    send_calls = [tc for tc in response.tool_calls if tc.function_name == "sendEmail"]
-    silence_calls = [tc for tc in response.tool_calls if tc.function_name == "silence"]
-    other_calls = [
-        tc for tc in response.tool_calls if tc.function_name not in ("sendEmail", "silence")
-    ]
-    has_complete = any(tc.arguments.get("is_complete") for tc in send_calls) or bool(silence_calls)
-
-    if has_complete and (other_calls or (silence_calls and send_calls)):
+    if (
+        any(tc.function_name in ENDING_TOOLS for tc in response.tool_calls)
+        and len(response.tool_calls) != 1
+    ):
         return StageOutcome(
             context_appends=[
                 {
                     "role": "user",
-                    "content": (
-                        "冲突：当 sendEmail 的 is_complete 设为 true 或调用 silence "
-                        "时，本轮不得与其他工具（含 sendEmail）同时调用。\n"
-                        "请重新规划。"
-                    ),
+                    "content": "冲突：finishTurn、sleepUntil、exitAgent 必须单独调用，不能与其他工具同时调用。请另起一轮。",
                 }
             ],
             advance_iteration=True,
@@ -110,7 +101,7 @@ async def act_stage_collect(
     record, the sendEmail reply mails, the context appends, the
     iteration advance / ACTIVE transition (continue thinking), or the
     final reply + on-complete actions + completion signal (done).
-    Completion is event-driven by act (``is_complete``), not a loop
+    Completion is event-driven by explicit scheduling tools, not a loop
     boundary condition, so it stays outside the until expression.
 
     The engine applies the Outcome in this order: context appends ->
@@ -122,7 +113,6 @@ async def act_stage_collect(
 
     outcome = StageOutcome()
     is_complete = False
-    final_content = ""
 
     for tc, result in completed:
         outcome.tool_results.append((tc, result))
@@ -145,16 +135,11 @@ async def act_stage_collect(
                 },
             )
 
-        if tc.function_name == "sendEmail" and result.success:
-            content = result.data.get("content", "")
-            if result.data.get("is_complete"):
+        if tc.function_name in ENDING_TOOLS and result.success:
+            request = result.data.get("scheduling_request")
+            if request:
                 is_complete = True
-                final_content = content
-        elif tc.function_name == "silence" and result.success:
-            # Completion without any reply: the loop ends, no mail is
-            # emitted, and read-marking stays the agent's own explicit
-            # act (ADR 0028 — markRead tool).
-            is_complete = True
+                outcome.scratch_updates["scheduling_request"] = request
 
         # Append to context
         assistant_msg: dict[str, Any] = {
@@ -175,8 +160,7 @@ async def act_stage_collect(
         )
 
     if is_complete:
-        outcome.final_reply = final_content or None
-        svc.logger.info("session_completed", session_id=session.id, content=final_content)
+        svc.logger.info("session_completed", session_id=session.id)
         # On-complete action expressions (phase 4b): declared here,
         # executed by the engine with full failure isolation — they
         # never affect the session lifecycle. The engine runs them
@@ -192,35 +176,24 @@ async def act_stage_collect(
 
 
 def _no_tool_reminder_appends(response: LLMResponse) -> list[dict[str, Any]]:
-    """Reminder messages for an LLM response without tool calls."""
+    """Require explicit actions and keep mail delivery separate from scheduling."""
+    appends: list[dict[str, Any]] = []
     if response.content:
         msg: dict[str, Any] = {"role": "assistant", "content": response.content}
         if response.reasoning_content:
             msg["reasoning_content"] = response.reasoning_content
-        return [
-            msg,
-            {
-                "role": "user",
-                "content": (
-                    "注意：你必须调用至少一个工具，禁止直接输出文本。\n"
-                    "请使用 sendEmail 工具发送邮件：\n"
-                    "- 最终回复：sendEmail(to=['发件人地址'], content='你的回复', is_complete=true)\n"
-                    "- 中间进度：sendEmail(to=['发件人地址'], content='进度报告', is_complete=false)，"
-                    "然后继续调用其他工具。"
-                ),
-            },
-        ]
-    return [
+        appends.append(msg)
+    appends.append(
         {
             "role": "user",
             "content": (
-                "你必须调用至少一个工具。"
-                "请使用 sendEmail 工具发送邮件，并设置 is_complete 参数：\n"
-                "- is_complete=true：最终回复，结束本轮\n"
-                "- is_complete=false：中间进度，继续思考"
+                "你必须调用工具，不能直接输出文本。需要发信时调用 sendEmail 或 forwardMail；"
+                "发信不会结束工作。完成后另起一轮单独调用 finishTurn，"
+                "或使用 sleepUntil 定时睡眠、exitAgent 永久退出。"
             ),
         }
-    ]
+    )
+    return appends
 
 
 def _tool_call_to_dict(tool_call: ToolCall) -> dict[str, Any]:

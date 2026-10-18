@@ -173,7 +173,7 @@ class TestCritiqueReviewInput:
                 ToolCall(
                     id="c1",
                     function_name="sendEmail",
-                    arguments={"content": "草稿回复", "is_complete": True},
+                    arguments={"content": "草稿回复"},
                 )
             ],
         )

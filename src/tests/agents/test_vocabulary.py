@@ -11,7 +11,13 @@ are tested in ``src/tests/tlosure/test_eval.py``.
 
 import pytest
 
-from tlon.agents.vocabulary import LOOP_BUILTINS, make_member_builtins, validate_member_actions
+from tlon.agents.vocabulary import (
+    LOOP_BUILTINS,
+    STAGE_COND_BUILTINS,
+    make_member_builtins,
+    stage_cond_env,
+    validate_member_actions,
+)
 from tlon.organization.mail.mail import Mail
 from tlosure.edn import loads
 from tlosure.eval import ActionRequest, EvalError, eval_form, validate_form
@@ -240,3 +246,26 @@ class TestTokenLimitPredicate:
         """The word is registered loop vocabulary — load-time validation
         of an ``:until`` using it passes (empty scope, as the engine does)."""
         validate_form(loads("(token-limit-reached?)"), LOOP_BUILTINS, scope=set())
+
+
+class TestIndependentRoundFacts:
+    @pytest.mark.parametrize("sending,ending", [(False, False), (True, False), (False, True)])
+    def test_mail_and_completion_conditions_are_independent(
+        self, sending: bool, ending: bool
+    ) -> None:
+        env = dict(
+            stage_cond_env(
+                iteration=0,
+                error_count=0,
+                token_usage=0,
+                scratch={},
+                completing=ending,
+                sending_mail=sending,
+            )
+        )
+        assert eval_form(loads("(sending-mail?)"), env, STAGE_COND_BUILTINS) is sending
+        assert eval_form(loads("(completing?)"), env, STAGE_COND_BUILTINS) is ending
+
+    def test_absent_round_is_neither_mail_nor_completion(self) -> None:
+        assert not eval_form(loads("(sending-mail?)"), {}, STAGE_COND_BUILTINS)
+        assert not eval_form(loads("(completing?)"), {}, STAGE_COND_BUILTINS)

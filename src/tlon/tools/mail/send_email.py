@@ -14,18 +14,8 @@ class SendEmailTool(Tool):
     for humans. There are no group addresses (ADR 0024): one-to-many
     communication lists every recipient in ``to`` / ``cc``.
 
-    Use ``is_complete`` to control whether the thinking loop terminates:
-
-    - ``is_complete=false`` → send the mail and continue thinking.
-    - ``is_complete=true``  → send the final reply and end the loop.
-
-    The Agent's ReAct loop detects this tool call and declares the
-    reply mail: ``to`` / ``in_reply_to`` are exactly what the model
-    declared (ADR 0028 — there is no trigger mail to default to), and
-    the engine validates the reference against the agent's own mailbox
-    — deriving ``thread_id`` from the referenced mail — before
-    committing through the post office; successful ``is_complete`` decides whether the loop
-    returns.
+    Sending mail never ends the session. Use a separate scheduling tool
+    after delivery to finish, sleep, or exit.
 
     ``endorsing`` marks the mail as an endorsement of another mail
     ("this mail helped me", issue ): the reference is validated
@@ -38,7 +28,6 @@ class SendEmailTool(Tool):
         >>> result = await tool.execute(
         ...     to=["gu-yanxi@tlon.internal"],
         ...     content="分析完成，结论如下...",
-        ...     is_complete=True,
         ... )
     """
 
@@ -50,9 +39,7 @@ class SendEmailTool(Tool):
                 "发送邮件。本地成功表示已入箱，不代表已阅读或处理；网关只尝试投递，不保证成功或外部接收。无效或已退休收件人使整封拒绝。\n"
                 "- to：收件人地址列表（必填），如 'gu-yanxi@tlon.internal'；"
                 "多人就把每个地址逐个列进 to 或 cc（不存在组地址）。\n"
-                "- is_complete=false：发送中间进度/阶段性发现，发送后 Agent 继续思考。\n"
-                "- is_complete=true：发送最终回复，发送后结束本轮思考。\n"
-                "注意：当 is_complete=true 时，本轮只能调用 sendEmail，不能同时调用其他工具。"
+                "发送成功后继续工作；结束工作请另起一轮单独调用 finishTurn、sleepUntil 或 exitAgent。"
             ),
             parameters={
                 "type": "object",
@@ -80,10 +67,6 @@ class SendEmailTool(Tool):
                         "type": "string",
                         "description": "邮件正文",
                     },
-                    "is_complete": {
-                        "type": "boolean",
-                        "description": "是否为最终回复。true=结束本轮思考，false=继续后续工具调用",
-                    },
                     "in_reply_to": {
                         "type": "string",
                         "description": (
@@ -104,7 +87,7 @@ class SendEmailTool(Tool):
                         ),
                     },
                 },
-                "required": ["to", "content", "is_complete"],
+                "required": ["to", "content"],
             },
         )
 
@@ -117,7 +100,6 @@ class SendEmailTool(Tool):
         Args:
             to: Primary recipient addresses.
             content: Mail body.
-            is_complete: Whether this mail ends the thinking loop.
             cc: Optional carbon-copy recipients.
             subject: Optional subject.
             in_reply_to: Optional id of the mail being replied to.
@@ -128,7 +110,6 @@ class SendEmailTool(Tool):
         """
         to: list[str] = kwargs["to"]
         content: str = kwargs["content"]
-        is_complete: bool = kwargs["is_complete"]
         cc: list[str] | None = kwargs.get("cc")
         subject: str | None = kwargs.get("subject")
         in_reply_to: str | None = kwargs.get("in_reply_to")
@@ -141,7 +122,6 @@ class SendEmailTool(Tool):
                 "cc": cc or [],
                 "subject": subject,
                 "content": content,
-                "is_complete": is_complete,
                 "in_reply_to": in_reply_to,
                 "endorsing": endorsing,
                 "action": "send_email",

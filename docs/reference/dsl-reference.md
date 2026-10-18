@@ -65,7 +65,7 @@
 `:on` 关键字经 kebab-case → `SCREAMING_SNAKE` 映射到 `EventType` 枚举（[src/tlon/base/events/event.py](../../src/tlon/base/events/event.py)，转换逻辑在 `member_spec._on_from`）。合法值：
 
 <!-- BEGIN GENERATED: dsl-on-events -->
-合法值共 36 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+合法值共 37 个（`:boot` + 全部 `EventType` 成员，转换逻辑 `member_spec._on_from` / `_on_to_str`）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | `:on` 关键字 | 事件值 | 说明 |
 |---|---|---|
@@ -79,9 +79,10 @@
 | `:agent-response` | `agent.response` |  |
 | `:agent-started` | `agent.started` |  |
 | `:agent-stopped` | `agent.stopped` |  |
-| `:agent-retired` | `agent.retired` | Retirement ceremony fact: handover inventory + farewell outcome (see docs/design/mail.md 「退休交接信」) |
+| `:agent-retired` | `agent.retired` | Offline handover inventory after permanent exit |
 | `:agent-error` | `agent.error` |  |
 | `:agent-state-changed` | `agent.state_changed` |  |
+| `:agent-waiting` | `agent.waiting` | Waiting remains waiting when its runtime is unloaded |
 | `:agent-waking` | `agent.waking` |  |
 | `:agent-woken` | `agent.woken` |  |
 | `:agent-wake-failed` | `agent.wake_failed` |  |
@@ -169,7 +170,7 @@
 - `SelfEnv`：`id: str`、`name: str`、`address: str`
 - `LoopStateEnv`：`iteration: int`、`error_count: int`、`token_usage: int`
 - `LoopLimitsEnv`：`max_iterations: int`、`max_consecutive_errors: int`、`max_tokens: int`
-- `RoundEnv`：`completing: bool`
+- `RoundEnv`：`completing: bool`、`sending_mail: bool`
 <!-- END GENERATED: bridge-env-contracts -->
 
 ## 4. Builtin 完整清单
@@ -214,10 +215,10 @@
 
 ### 4.3 `STAGE_COND_BUILTINS`（stage `:if` 谓词）
 
-环境 `{state, scratch, round}`；`scratch` 是会话循环暂存区（plan/critique stage 写入，见第 5 节）；`round` = `{:completing bool}`——响应链上的本轮响应若派发是否会让会话完成（单独的 `sendEmail is_complete=true` 或 `silence` 调用，判定与 act 的完成/冲突规则一致）。
+环境 `{state, scratch, round}`；scratch 是会话暂存区，round 同时提供 completing 与 sending_mail：前者表示单独的 finishTurn/sleepUntil/exitAgent，后者表示将派发邮件工具。`completing?` 与 `sending-mail?` 是独立谓词；交付评审应使用后者。
 
 <!-- BEGIN GENERATED: dsl-builtins-stage-cond -->
-`STAGE_COND_BUILTINS`（7 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`STAGE_COND_BUILTINS`（8 个，按源码定义顺序）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 名称 | pure | 说明 |
 |---|---|---|
@@ -226,6 +227,7 @@
 | `plan-exists?` | 是 | Scratch holds a non-empty plan string. |
 | `first-iteration?` | 是 | ``state.iteration`` is 0 (the loop's first round). |
 | `completing?` | 是 | The round's pending response would end the session if dispatched. |
+| `sending-mail?` | 是 | The round would dispatch an outgoing mail tool, independently of completion. |
 | `=` | 是 |  |
 | `not` | 是 |  |
 <!-- END GENERATED: dsl-builtins-stage-cond -->
@@ -312,8 +314,8 @@
 ```clojure
 :loop {:context {:sections [(persona) (protocol) (knowledge) (mail-history 20)]}
        :stages [(think)
-                (critique {:if (completing?)})
-                (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                (critique {:if (sending-mail?)})
+                (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
                 (revise {:if (critique-failed?)})]
        :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
        :max-iterations 300
@@ -363,7 +365,7 @@ stage form：`(name)` 或 `(name {opts})`。所有 stage 支持 `:if <表达式>
 | stage | 语义（实现见 [src/tlon/agents/stages/](../../src/tlon/agents/stages)） |
 |---|---|
 | `think` | 一次 LLM 调用，产出本轮响应（进响应链）。成功：清零连续错误计数。失败：记一次错误 + 推进迭代，不发邮件，由 `:until` 后续终止循环 |
-| `act` | 执行本轮**全部**工具调用。无工具调用：追加提醒消息并推进迭代；`sendEmail is_complete=true` 与其他工具并发属冲突：追加冲突提示并推进迭代；否则每个工具一个后台任务并发执行。收集半程：`sendEmail` 成功即发出声明的邮件（`to` / `in_reply_to` 完全是模型显式声明的值，ADR 0028——无触发邮件缺省）；`is_complete=true` 触发会话完成——声明最终回复（on-complete 的 `result`）、跑 on-complete 的 `:actions`、标记完成 |
+| `act` | 声明并发工具执行并收集结果；邮件工具只投递，不完成会话。finishTurn/sleepUntil/exitAgent 必须单独一轮，成功后记录调度意图并完成当前会话；混用其他工具整轮拒绝。 |
 | `plan` | 额外一次 LLM 调用生成 ≤ `:max-steps` 步计划；写入 `scratch.plan` 并以 `[执行计划]` 用户消息入上下文。失败软降级（跳过，不记错误） |
 | `critique` | 额外一次 LLM 评审：评审输入 = 会话 context + 本轮待审草稿（响应链上尚未入 context 的响应，渲染为 assistant 消息）+ 评审指令；首行去空白后必须恰好是 `PASS`/`FAIL`，结论写入 `scratch.critique = {:passed bool :feedback str}`；首行无法解析时跳过本次评审（记 warning、清除旧 verdict——`critique-passed?` 与 `critique-failed?` 均不成立，revise 不触发），不记录为 PASS。异常同样清除旧 verdict；完成动作是否要求明确 PASS 由后续 stage 的 `:if` 决定。失败软降级 |
 | `revise` | 不调 LLM；把 `scratch.critique.feedback` 以 `[评审反馈]` 用户消息喂回上下文，供下一轮 `think` 修正；无反馈则空操作。消费过的 verdict 随之清除（`scratch.critique` 置 nil），避免陈旧 FAIL 在 critique 被条件跳过的后续轮次重复触发 |
@@ -381,7 +383,7 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 
 **token 计量口径（ADR 0023）**：session 内每次经 `StageServices.think` 的 stage LLM 调用（think / critique / plan）计入 `token_usage`——取 `response.usage.total_tokens`，缺失回落 `prompt_tokens + completion_tokens`，无 usage 计 0。stage 在 `StageOutcome.token_usage` 声明用量，引擎先 journal（`tokens` 事件，累加后绝对值）再改内存。compaction 摘要调用与终止蒸馏调用不计入。
 
-正常的会话完成不经过 `:until`：由 `act` 收集到 `sendEmail is_complete=true` 事件驱动。`:until` 只是兜底。
+正常会话完成由 act 收集到独立结束工具的成功结果驱动；邮件工具没有结束语义。`:until` 只是限额与故障的兜底。
 
 ## 6. 确定性成员的 `:actions`
 
@@ -421,8 +423,8 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
           :when (or (addressed-to-me? msg) (cc-ed? msg))
           :loop {:context {:sections [(persona) (protocol) (lessons) (skills) (knowledge) (current-task) (mail-history 20 10) (thread-recap)]}
                  :stages [(think)
-                          (critique {:if (completing?)})
-                          (act {:if (or (not (completing?)) (not (critique-failed?)))})
+                          (critique {:if (sending-mail?)})
+                          (act {:if (or (not (sending-mail?)) (not (critique-failed?)))})
                           (revise {:if (critique-failed?)})]
                  :until (or (iteration-limit-reached?) (error-limit-reached?) (token-limit-reached?))
                  :max-iterations 10

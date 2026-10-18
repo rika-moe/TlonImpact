@@ -143,7 +143,7 @@ class TestRegistryStart:
         await _wait_for(lambda: registry.get_agent("relay-1") is not None)
         member = registry.get_agent("relay-1")
         assert member is not None
-        assert member.get_state() == "active"
+        assert member.get_state() == "waiting"
 
         # AGENT_STARTED carries the spec provenance.
         await _wait_for(lambda: len(started) == 1)
@@ -560,7 +560,7 @@ class TestMemberStopAndDrain:
         await self._start(bus, registry, agent_id)
 
         sleeping: list[Event] = []
-        bus.subscribe(EventType.AGENT_SLEEPING, lambda e: sleeping.append(e))
+        bus.subscribe(EventType.AGENT_WAITING, lambda e: sleeping.append(e))
 
         await registry._drain_agent(agent_id, reason="drain")
 
