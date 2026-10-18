@@ -1,6 +1,6 @@
 # 成员运行时设计
 
-成员共用四态调度：活跃、等待、定时睡眠、死亡。等待实例可卸载，卸载不等于睡眠；死亡拒信并保留历史。完整契约见 [agent-scheduling-states.md](agent-scheduling-states.md)。成员模型见 [unified-member-model.md](./unified-member-model.md)。
+成员共用四态调度：活跃、等待、定时睡眠、死亡。等待实例可卸载，卸载不等于睡眠；死亡拒信并保留历史。管理员通过独立管理接口请求排空后等待、定时睡眠、提前唤醒或永久退出（ADR 0041）；活跃由真实工作派生。完整契约见 [agent-scheduling-states.md](agent-scheduling-states.md)。成员模型见 [unified-member-model.md](./unified-member-model.md)。
 
 本文解释 `tlon.agents` 里成员运行时为什么是现在这个样子：统一解释器、认知循环管线、effects-as-data、唤醒补偿、注册表的机制面。系统骨架与装配顺序见 [docs/architecture.md](../architecture.md)，DSL 本身的取舍见 [docs/design/dsl.md](./dsl.md)，邮件层见 [docs/design/mail.md](./mail.md)，方向锚点是 [docs/vision.md](../vision.md)。
 

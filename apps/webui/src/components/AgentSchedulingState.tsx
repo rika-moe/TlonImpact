@@ -1,4 +1,5 @@
 import type { ReactElement } from "react";
+import { pendingSchedulingLabel } from "../lib/agentScheduling";
 import type { AgentState } from "../lib/agentState";
 import { stateTone, wakeLabel } from "../lib/agentState";
 
@@ -14,11 +15,12 @@ export function SchedulingInfo({ status }: { status: {
   wake_at?: string | null;
   waking?: boolean;
   stop_pending?: boolean;
+  scheduling_pending?: string | null;
   error?: string | null;
 } }): ReactElement {
   return <>
     {status.state === "sleeping" ? <div className="tech-label">{wakeLabel(status.wake_at)}</div> : null}
-    {status.stop_pending ? <div className="tech-label">TERMINATION PENDING · DRAINING WORK</div> : null}
+    {pendingSchedulingLabel(status) ? <div className="tech-label">{pendingSchedulingLabel(status)}</div> : null}
     {status.waking ? <div className="tech-label">LOADING RUNTIME</div> : null}
     {status.error ? <div className="agents-error-bar">{status.error}</div> : null}
   </>;

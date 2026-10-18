@@ -192,6 +192,9 @@ class RESTAPIHandler(
 
         # Admin routes for agent CRUD + prototype approval (wizard removal,
         # A2): creation/editing/removal of members and staging approval.
+        app.router.add_post("/admin/agents/{agent_id}/wake", self.handle_wake_agent)
+        app.router.add_post("/admin/agents/{agent_id}/wait", self.handle_wait_agent)
+        app.router.add_post("/admin/agents/{agent_id}/sleep", self.handle_sleep_agent)
         app.router.add_post("/admin/agents/{agent_id}/terminate", self.handle_terminate_agent)
         app.router.add_post("/admin/config/agents", self.handle_create_agent)
         app.router.add_get("/admin/config/agents/{agent_id}", self.handle_get_agent_config)

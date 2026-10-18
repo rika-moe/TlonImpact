@@ -49,7 +49,7 @@ test("sleep rendering shows the deadline and pending exit remains a separate dia
   }));
   assert.ok(html.includes("WAKE AT"));
   assert.ok(html.includes(new Date(deadline).toLocaleString()));
-  assert.ok(html.includes("TERMINATION PENDING"));
+  assert.ok(html.includes("永久退出待执行"));
   const waiting = renderToStaticMarkup(createElement(SchedulingInfo, {
     status: { state: "waiting", waking: true },
   }));

@@ -109,6 +109,7 @@ export type AgentSummary = {
   waking?: boolean;
   error?: string | null;
   stop_pending?: boolean;
+  scheduling_pending?: string | null;
   prototype: string | null;
   spawned_by: string | null;
   spawn_depth: number;
@@ -128,7 +129,16 @@ export type AgentDetail = {
   waking?: boolean;
   error?: string | null;
   stop_pending?: boolean;
+  scheduling_pending?: string | null;
   config: { prototype: string | null } & Record<string, unknown>;
+};
+
+export type AgentSchedulingResponse = {
+  status: "success" | "pending";
+  agent_id: string;
+  agent: AgentSummary;
+  scheduling_pending?: string | null;
+  stop_pending: boolean;
 };
 
 /** A declared parameter of a prototype (from prototype.tlon). */
@@ -804,8 +814,20 @@ export class RestClient {
   }
 
   /** Drain current work and permanently exit, retaining history. */
-  async terminateAgent(agentId: string): Promise<{ stop_pending: boolean }> {
+  async terminateAgent(agentId: string): Promise<AgentSchedulingResponse> {
     return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/terminate`);
+  }
+
+  async wakeAgent(agentId: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/wake`);
+  }
+
+  async waitAgent(agentId: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/wait`);
+  }
+
+  async sleepAgent(agentId: string, wakeAt: string): Promise<AgentSchedulingResponse> {
+    return this.send("POST", `/admin/agents/${encodeURIComponent(agentId)}/sleep`, { wake_at: wakeAt });
   }
 
   /** Administratively remove a member (records + home archive deleted). */

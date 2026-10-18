@@ -177,3 +177,254 @@ async def test_retirement_failure_does_not_claim_death(
     assert registry.can_schedule("member")
     status = await registry.get_agent_status("member")
     assert status is not None and status["state"] == "waiting"
+
+
+async def test_admin_wake_without_mail_does_not_start_work(registry: AgentRegistry) -> None:
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    assert await registry.sleep_member("member", deadline)
+    timer = registry._sleep_tasks["member"]
+    registry._start_agent_guarded = AsyncMock()
+    assert await registry.wake_member("member")
+    await asyncio.sleep(0)
+    assert timer.cancelled()
+    assert registry.can_schedule("member")
+    assert SchedulingStore(registry._paths.mail_database_file()).load() == {}
+    registry._start_agent_guarded.assert_not_awaited()
+    assert (await registry.get_agent_status("member"))["state"] == "waiting"
+
+
+async def test_admin_wake_with_mail_uses_normal_delivery(registry: AgentRegistry) -> None:
+    database = registry._paths.mail_database_file()
+    MailStore(database).register_member("member")
+    mailbox = Mailbox(database, "member")
+    mail = Mail.create(
+        from_address="sender@tlon.internal", to=["member@tlon.internal"], content="hi"
+    )
+    await mailbox.append_inbox(mail)
+    registry._start_agent_guarded = AsyncMock(return_value=None)
+    starts: list[Event] = []
+    registry.event_bus.subscribe(EventType.AGENT_START_REQUEST, lambda event: starts.append(event))
+    await registry.sleep_member("member", (datetime.now(UTC) + timedelta(hours=1)).isoformat())
+    await registry.wake_member("member")
+    await settle(lambda: bool(starts))
+    assert len(starts) == 1
+    assert await mailbox.unread() == [mail]
+
+
+async def test_admin_sleep_adjustment_rejects_stale_timer_even_same_deadline(
+    registry: AgentRegistry,
+) -> None:
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    await registry.sleep_member("member", deadline)
+    old = registry._scheduling_intents["member"]
+    await registry.sleep_member("member", deadline)
+    new = registry._scheduling_intents["member"]
+    assert old != new
+    # Simulate an obsolete timer already past its sleep, after a same-deadline replacement.
+    await registry._wake_at_deadline("member", datetime.now(UTC).isoformat(), old)
+    assert registry._scheduling_intents["member"] == new
+    assert not registry.can_schedule("member")
+    await registry.wake_member("member")
+    await registry._wake_at_deadline("member", datetime.now(UTC).isoformat(), new)
+    assert registry.can_schedule("member")
+
+
+@pytest.mark.parametrize("action", ["sleep", "wait"])
+async def test_admin_drain_allows_session_to_finish_and_commit_self_intent(
+    registry: AgentRegistry, action: str
+) -> None:
+    from types import SimpleNamespace
+
+    agent = SimpleNamespace(
+        active_session_count=1, shutdown=AsyncMock(), get_state=lambda: "active"
+    )
+    registry._agents["member"] = agent
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    completed = (
+        await registry.sleep_member("member", deadline)
+        if action == "sleep"
+        else await registry.wait_member("member")
+    )
+    assert not completed and not registry.can_schedule("member")
+    status = await registry.get_agent_status("member")
+    assert status is not None and status["state"] == "active"
+    assert status["scheduling_pending"] == action
+    # Committing a concurrent self sleep must neither deadlock nor replace admin intent.
+    async with asyncio.timeout(1):
+        await registry.prepare_scheduling_request(
+            "member", {"action": "sleep", "wake_at": deadline}, "self-session"
+        )
+    assert registry._scheduling_intents["member"][0] == action
+    assert registry._scheduling_intents["member"][2].startswith("admin:")
+    agent.shutdown.assert_not_awaited()
+    agent.active_session_count = 0
+    await settle(lambda: agent.shutdown.await_count == 1)
+    await settle(lambda: registry.can_schedule("member") == (action == "wait"))
+    status = await registry.get_agent_status("member")
+    assert status is not None and status["state"] == ("waiting" if action == "wait" else "sleeping")
+
+
+async def test_self_exit_overrides_admin_drain(registry: AgentRegistry) -> None:
+    from types import SimpleNamespace
+
+    agent = SimpleNamespace(
+        active_session_count=1, shutdown=AsyncMock(), get_state=lambda: "active"
+    )
+    registry._agents["member"] = agent
+    assert not await registry.wait_member("member")
+    await registry.prepare_scheduling_request("member", {"action": "exit"}, "self-exit")
+    assert registry._scheduling_intents["member"][0] == "exit"
+    agent.active_session_count = 0
+    await registry.apply_scheduling_request("member", {"action": "exit"})
+    await settle(lambda: "member" in registry._dead)
+    agent.shutdown.assert_awaited_once()
+
+
+@pytest.mark.parametrize("operation", ["wake", "wait", "sleep"])
+@pytest.mark.parametrize("terminal", ["retired", "pending", "self_exit"])
+async def test_no_admin_operation_revives_terminal_member(
+    registry: AgentRegistry, operation: str, terminal: str
+) -> None:
+    from tlon.tools.agents.ports import StopRejectedError
+
+    if terminal == "retired":
+        await registry.stop_member("member", "operator")
+    elif terminal == "pending":
+        registry._pending_stops["member"] = "operator"
+    else:
+        await registry.prepare_scheduling_request("member", {"action": "exit"}, "session")
+    with pytest.raises(StopRejectedError, match="dead or permanently exiting"):
+        if operation == "sleep":
+            await registry.sleep_member(
+                "member", (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+            )
+        elif operation == "wait":
+            await registry.wait_member("member")
+        else:
+            await registry.wake_member("member")
+    assert not registry.can_schedule("member")
+
+
+@pytest.mark.parametrize("operation", ["wake", "wait", "sleep"])
+async def test_admin_operation_unknown_member(registry: AgentRegistry, operation: str) -> None:
+    from tlon.tools.agents.ports import StopRejectedError
+
+    with pytest.raises(StopRejectedError) as error:
+        if operation == "sleep":
+            await registry.sleep_member(
+                "missing", (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+            )
+        elif operation == "wait":
+            await registry.wait_member("missing")
+        else:
+            await registry.wake_member("missing")
+    assert error.value.reason == "unknown_agent"
+
+
+@pytest.mark.parametrize(
+    "deadline", ["2020-01-01T00:00:00+00:00", "2099-01-01T00:00:00", "invalid"]
+)
+async def test_admin_sleep_requires_future_timezone(registry: AgentRegistry, deadline: str) -> None:
+    with pytest.raises(ValueError):
+        await registry.sleep_member("member", deadline)
+    assert registry.can_schedule("member")
+
+
+async def test_admin_sleep_normalizes_timezone_and_survives_restart(
+    registry: AgentRegistry,
+) -> None:
+    deadline = datetime.now(UTC) + timedelta(hours=1)
+    from datetime import timezone
+
+    local = deadline.astimezone(timezone(timedelta(hours=8))).isoformat()
+    await registry.sleep_member("member", local)
+    assert registry._scheduling_intents["member"][1] == deadline.isoformat()
+    await registry.shutdown()
+    await registry.initialize()
+    assert (await registry.get_agent_status("member"))["wake_at"] == deadline.isoformat()
+    await registry.wake_member("member")
+    assert registry.can_schedule("member")
+
+
+async def test_wait_drain_recovers_without_stuck_gate(registry: AgentRegistry) -> None:
+    SchedulingStore(registry._paths.mail_database_file()).put(
+        "member", "wait", None, "admin:restart"
+    )
+    await registry.shutdown()
+    await registry.initialize()
+    assert registry.can_schedule("member")
+    assert SchedulingStore(registry._paths.mail_database_file()).load() == {}
+
+
+async def test_wait_checks_mail_queued_during_drain(registry: AgentRegistry) -> None:
+    from types import SimpleNamespace
+
+    database = registry._paths.mail_database_file()
+    MailStore(database).register_member("member")
+    agent = SimpleNamespace(
+        active_session_count=1, shutdown=AsyncMock(), get_state=lambda: "active"
+    )
+    registry._agents["member"] = agent
+    registry._start_agent_guarded = AsyncMock(return_value=None)
+    starts: list[Event] = []
+    registry.event_bus.subscribe(EventType.AGENT_START_REQUEST, lambda event: starts.append(event))
+    assert not await registry.wait_member("member")
+    mailbox = Mailbox(database, "member")
+    mail = Mail.create(
+        from_address="sender@tlon.internal", to=["member@tlon.internal"], content="new"
+    )
+    await mailbox.append_inbox(mail)
+    await registry._on_mail_delivered(
+        Event(type=EventType.MAIL_DELIVERED, payload={"recipient": "member"}, source="test")
+    )
+    assert starts == []
+    agent.active_session_count = 0
+    await settle(lambda: bool(starts))
+    assert len(starts) == 1
+    assert await mailbox.unread() == [mail]
+
+
+async def test_conflicting_admin_transitions_are_rejected(registry: AgentRegistry) -> None:
+    from types import SimpleNamespace
+
+    from tlon.tools.agents.ports import StopRejectedError
+
+    with pytest.raises(StopRejectedError):
+        await registry.wake_member("member")
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    await registry.sleep_member("member", deadline)
+    with pytest.raises(StopRejectedError):
+        await registry.wait_member("member")
+    await registry.wake_member("member")
+    agent = SimpleNamespace(
+        active_session_count=1, shutdown=AsyncMock(), get_state=lambda: "active"
+    )
+    registry._agents["member"] = agent
+    await registry.sleep_member("member", deadline)
+    for action in (
+        registry.wake_member("member"),
+        registry.wait_member("member"),
+        registry.sleep_member("member", deadline),
+    ):
+        with pytest.raises(StopRejectedError):
+            await action
+    agent.active_session_count = 0
+
+
+async def test_unfinished_admin_sleep_is_not_committed_across_restart(
+    registry: AgentRegistry,
+) -> None:
+    from types import SimpleNamespace
+
+    agent = SimpleNamespace(
+        active_session_count=1, shutdown=AsyncMock(), get_state=lambda: "active"
+    )
+    registry._agents["member"] = agent
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    assert not await registry.sleep_member("member", deadline)
+    assert registry._scheduling_intents["member"][2].startswith("admin:pending:")
+    await registry.shutdown()
+    await registry.initialize()
+    assert registry.can_schedule("member")
+    assert SchedulingStore(registry._paths.mail_database_file()).load() == {}
+    assert (await registry.get_agent_status("member"))["state"] == "waiting"

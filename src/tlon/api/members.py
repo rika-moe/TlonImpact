@@ -131,6 +131,18 @@ class MembersFacade:
         """
         return await self._registry.stop_member(agent_id, stopped_by=stopped_by, when_idle=True)
 
+    async def wake(self, agent_id: str) -> bool:
+        """Wake a sleeping member early; actual mail determines activity."""
+        return await self._registry.wake_member(agent_id)
+
+    async def wait(self, agent_id: str) -> bool:
+        """Drain current work into waiting; False means draining is pending."""
+        return await self._registry.wait_member(agent_id)
+
+    async def sleep(self, agent_id: str, wake_at: str) -> bool:
+        """Sleep until a timezone-aware future deadline, after draining work."""
+        return await self._registry.sleep_member(agent_id, wake_at)
+
     async def remove(self, agent_id: str, removed_by: str) -> bool:
         """Administratively remove a member (stop, unregister, delete home).
 
