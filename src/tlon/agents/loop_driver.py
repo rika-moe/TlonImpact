@@ -34,7 +34,8 @@ from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
-from tlon.agents.context_pressure import ContextPressure, estimate_tokens
+from tlon.agents.budget_notice import resource_limit_notice
+from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.member_spec import MemberLoop, MemberRule
 from tlon.agents.on_complete import OnCompleteRunner
@@ -88,21 +89,6 @@ _TIMEOUT_REPLY = "抱歉，处理超时了，请稍后重试。"
 #: (R5). Short and structurally stable, so the prefix cache hits
 #: everything before it.
 WAKE_TRIGGER_TEMPLATE = "你有 {n} 封未读邮件"
-
-#: Distillation prompt for the resource-ceiling reply: an engine hard
-#: ceiling (iteration count or token budget, ADR 0023) fired mid-work, so
-#: one extra LLM call condenses the session's intermediate results into
-#: the reply instead of a bare apology.
-_MAX_ITERATIONS_SYSTEM_PROMPT = (
-    "你是通过邮件工作的智能体。你处理一封来信时达到了内部资源上限（迭代轮数或 token 预算），任务未能彻底完成。"
-    "请根据给出的工作记录，给来信人写一封简短的中文回信：说明已经做了什么、"
-    "进展到哪一步、为什么没能完成。语气诚恳简洁，只输出回信正文。"
-)
-
-#: Token budget (estimate_tokens units) for the distillation input tail:
-#: a session that hit the ceiling may sit near the context-window cap,
-#: so the input is the key tail, never the full context.
-_DISTILL_TOKEN_BUDGET = 40_000
 
 #: Engine grace added on top of a tool's own declared timeout. A tool that
 #: declares a `timeout` parameter is its own timeout authority (e.g.
@@ -230,8 +216,8 @@ class LoopDriver:
         # Engine hard ceilings (ADR 0023): max_iterations and max_tokens
         # are infrastructure caps, enforced no matter what the until
         # expression says — either one firing ends the session. Exhaustion
-        # is not failure — the session's intermediate work is distilled
-        # into the reply by one extra LLM call (fixed-text fallback).
+        # produces a deterministic notification based on actual tool results.
+        # No additional LLM call may invent progress after the ceiling.
         # Replies go to the human senders of the responsibility set only
         # (ADR 0027, anchor revised by ADR 0028 决策 7).
         iteration_capped = session.iteration >= loop.max_iterations
@@ -251,17 +237,8 @@ class LoopDriver:
                     max_iterations=loop.max_iterations,
                 )
             reason = "max_tokens" if token_capped else "max_iterations"
-            # ADR 0027: replies go to human senders only; with no human
-            # sender in the responsibility set the distillation LLM call is
-            # skipped too — it would only produce suppressed replies.
-            content = (
-                await self._distill_reply(session)
-                if await asyncio.to_thread(
-                    lambda: any(
-                        self._is_human_sender(mail.from_address) for mail in session.responsibility
-                    )
-                )
-                else ""
+            content = resource_limit_notice(
+                session, reason, self._loop.replies.get("iteration_limit")
             )
             await self._send_termination_reply(session, reason, content)
             await self._journal.append(session.id, "session/end", reason=reason)
@@ -489,7 +466,13 @@ class LoopDriver:
             try:
                 await self._executor.send_mail(
                     MailEffect(
-                        to=[sender], content=content, in_reply_to=mail.id, thread_id=mail.thread_id
+                        to=[sender],
+                        content=content,
+                        subject="运行时通知：处理达到资源上限"
+                        if reason in ("max_tokens", "max_iterations")
+                        else None,
+                        in_reply_to=mail.id,
+                        thread_id=mail.thread_id,
                     ),
                     request_id=f"{session.id}:termination:{reason}:{sender}",
                 )
@@ -531,66 +514,6 @@ class LoopDriver:
         await self._send_termination_reply(session, reason, content)
         await self._journal.append(session.id, "session/end", reason="until", detail=reason)
         session.mark_completed()
-
-    async def _distill_reply(self, session: AgentSession) -> str:
-        """Distill the session's intermediate work into the ceiling reply.
-
-        One extra LLM call over the context tail turns the completed
-        rounds (thoughts, tool results) into a reply saying what was
-        done, how far it got, and why it stopped (iteration count or
-        token budget, ADR 0023). Fully defensive: any
-        failure (LLM error, timeout, empty answer) falls back to the
-        fixed text (or the member's `:replies` override of it) — the
-        termination path itself must never fail.
-        """
-        log = self._services.logger
-        try:
-            response = await self._services.distill(
-                _MAX_ITERATIONS_SYSTEM_PROMPT,
-                self._distill_messages(session),
-                span="agent.distill",
-                session_id=session.id,
-            )
-            content = (response.content or "").strip()
-            if not content:
-                raise ValueError("empty distillation")
-            return content
-        except Exception as e:
-            log.warning("max_iterations_distill_failed", session_id=session.id, error=str(e))
-            return self._termination_reply("iteration_limit", _ITERATION_LIMIT_REPLY)
-
-    @staticmethod
-    def _distill_messages(session: AgentSession) -> list[dict[str, Any]]:
-        """Build the distillation input: context tail under a token budget.
-
-        The session may sit near the context-window cap after hitting the
-        ceiling, so the input is the key tail (most recent rounds, where
-        the progress lives) rather than the full context. The instruction
-        carries the original request, which the tail may no longer reach.
-        """
-        tail: list[dict[str, Any]] = []
-        tokens = 0
-        for message in reversed(session.context):
-            cost = estimate_tokens([message])
-            if tail and tokens + cost > _DISTILL_TOKEN_BUDGET:
-                break
-            tail.append(message)
-            tokens += cost
-        tail.reverse()
-        # The budget cut must not split a tool_call/tool pair: a tail
-        # starting with a tool message is rejected by providers (DeepSeek
-        # 400 — a tool message must follow an assistant message carrying
-        # its tool_calls). The orphan results belong to an assistant
-        # message before the tail, so dropping them keeps every remaining
-        # pair intact (an assistant's tool results always follow it inside
-        # the tail).
-        while tail and tail[0].get("role") == "tool":
-            tail.pop(0)
-        instruction = (
-            "以上是你在方才这个会话里的工作记录（可能不完整）。会话的触发语：\n\n"
-            f"{session.trigger_content}\n\n请写回信正文。"
-        )
-        return [*tail, {"role": "user", "content": instruction}]
 
     async def send_failure_reply(self, session: AgentSession, reason: str) -> None:
         """Notify the responsibility set's human senders when the scheduler

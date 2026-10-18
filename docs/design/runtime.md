@@ -99,7 +99,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 
 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver` 把 loop 规则（`MemberLoop`）解释为逐步执行。关键边界：
 
-- **双停机线是引擎的硬上限**（ADR 0023）：`max_iterations`（迭代轮数）与 `max_tokens`（session 级累计 stage LLM token 预算）任一到顶即终止，先到先停，任何 `:until` 表达式都无法越过。token 计量走 effects-as-data——stage 在 `StageOutcome.token_usage` 声明自己那次 LLM 调用的用量，引擎先落 `tokens` 事件（累加后绝对值）再改内存；compaction 摘要与终止蒸馏调用不计入。终止表达式求值失败时回落到引擎默认检查（迭代数/错误数/token 用量），保证循环必然停机。这是"DSL 必须可停机"这条愿景承诺在循环层的工程兜底：程序可以写错，引擎不能不停。
+- **双停机线是引擎的硬上限**（ADR 0023）：`max_iterations`（迭代轮数）与 `max_tokens`（session 级累计 stage LLM token 预算）任一到顶即终止，先到先停，任何 `:until` 表达式都无法越过。token 计量走 effects-as-data——stage 在 `StageOutcome.token_usage` 声明自己那次 LLM 调用的用量，引擎先落 `tokens` 事件（累加后绝对值）再改内存；compaction 摘要调用不计入；预算耗尽通知不调用模型（ADR 0040）。终止表达式求值失败时回落到引擎默认检查（迭代数/错误数/token 用量），保证循环必然停机。这是"DSL 必须可停机"这条愿景承诺在循环层的工程兜底：程序可以写错，引擎不能不停。
 - **stage 向量是白名单组合**。跑哪些 stage、什么顺序，由 spec 的 `LoopSpec.stages` 决定；每个 stage 可选带 `:if` 条件（纯谓词，求值失败一律跳过——安全默认是"不跑"）。DSL 只能选择与排序既有积木，不能发明新 stage。
 - **响应链由引擎串接**。think 产出本轮 LLM 响应，act 消费它，辅助 stage（plan / critique / revise）原样透传。
 - **终止判定只在轮首发生**。`:until` 在每轮 think 之前求值一次，不在 stage 向量中途检查——循环要么完整地跑完一轮声明的 stage，要么整轮不开始，不存在"跑到一半的轮"这种需要定义语义的中间态。think 失败也只记错误并提前结束本轮，留给下一轮的 until 走统一终止路径收口。
@@ -114,7 +114,7 @@ context 是模型可见的视图，可以在不动日志真相的前提下被压
 - `think`：一次 LLM 调用，产出本轮响应；
 - `plan`：轮前规划，结论写草稿板；
 - `critique`：评审本轮最新产出（含响应链上待派发、尚未入 context 的草稿）；
-- `revise`：把评审反馈写回 context，并清除已消费的 verdict；
+- `revise`：将 FAIL 意见、完整待审输出及逐项真实执行状态写回 context（空意见也处理），明确区分未派发草稿、已派发结果未知与真实回执，并清除已消费的 verdict；
 - `act`：工具执行。它按 asyncio 的"分发后收割"模型拆成两半——`act_stage_step` 声明分发列表，`act_stage_collect` 声明收割结果的含义；两半都是纯变换，并发与收割本身是引擎的。
 
 默认循环在 `(sending-mail?)` 时通过 critique 检查尚未派发的邮件，失败则拦截该轮并反馈修订。`completing?` 只识别独立结束工具，不能用于补审已经发出的邮件。finishTurn/sleepUntil/exitAgent 是会话收尾信号，sendEmail 与 forwardMail 不结束工作。规划、评审和修订仍由 DSL stage 向量声明。
@@ -176,7 +176,7 @@ lazy 成员可以睡眠（scale-to-zero），但邮件是持久的，所以唤�
 
 `LoopDriver` 在每轮 stage 运行前执行 `max_iterations` 与会话累计 `max_tokens` 硬上限，两者先到者终止；自定义 `:until` 不能绕过。即使 stage 向量没有 act，引擎也推进迭代计数。错误阈值与 `:until` 在统一终止路径收口；工具有单调用超时，调度器另有 session 超时。
 
-预算耗尽时，有人类发件人的责任集会触发一次额外 LLM 调用，把已做工作提炼为交付说明；失败用固定终止文本。超时与未捕获错误发送失败说明。终止回复仅发给责任集中的已知人类发件人，每个发件人一封，以其责任集中最后一封信作为回复锚点；无人类发件人时跳过预算蒸馏及回复，避免 agent 间故障通知放大。通知失败记录日志，不阻塞会话收尾。此规则与正常 `sendEmail` 的自由寻址不同。
+预算耗尽时，运行时生成确定性通知（ADR 0040）：明确任务未完成，仅依据本次会话已收集的邮件工具回执统计确认提交、拒绝、结果未知，按 request_id/mail_id 去重；草稿、评审意见及自然语言上下文均不能作为发信事实。通知自身不计入统计，邮局提交不等于已读或外部送达，不额外调用模型。超时与未捕获错误发送失败说明。终止回复仅发给责任集中的已知人类发件人，每个发件人一封，以其责任集中最后一封信作为回复锚点；无人类发件人时不回复，避免 agent 间故障通知放大。通知失败记录日志，不阻塞会话收尾。此规则与正常 `sendEmail` 的自由寻址不同。
 
 ## 跨 session 上下文
 

@@ -8,6 +8,8 @@ failure (no verdict in scratch, so neither ``critique-passed?`` nor
 log as the visible signal.
 """
 
+import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +19,7 @@ from tlon.agents.stages.critique import critique_stage
 from tlon.agents.stages.revise import revise_stage
 from tlon.agents.vocabulary import STAGE_COND_BUILTINS
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, ToolCall
+from tlon.tools.base import ToolResult
 from tlosure.edn import loads
 from tlosure.eval import eval_form
 
@@ -187,6 +190,7 @@ class TestCritiqueReviewInput:
         assert messages[-2]["role"] == "assistant"
         assert "草稿回复" in messages[-2]["content"]
         assert "sendEmail" in messages[-2]["content"]
+        assert "邮件尚未发送" in messages[-2]["content"]
         assert session.context == [{"role": "user", "content": "来信正文"}]
 
     async def test_no_pending_response_keeps_context_only_input(self) -> None:
@@ -202,6 +206,134 @@ class TestCritiqueReviewInput:
 
 
 class TestReviseConsumesVerdict:
+    @pytest.mark.parametrize("verdict", [None, {"passed": True, "feedback": ""}])
+    async def test_pass_or_skip_does_not_repeat_draft(
+        self, verdict: dict[str, object] | None
+    ) -> None:
+        session = _make_session()
+        session.loop_scratch["critique"] = verdict
+        response = LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(id="c1", function_name="sendEmail", arguments={"content": "正文"})
+            ],
+        )
+
+        outcome = await revise_stage(_make_services("unused"), session, response)
+
+        assert outcome.context_appends == []
+        assert outcome.scratch_updates == {}
+        assert session.loop_scratch["critique"] == verdict
+
+    @pytest.mark.parametrize("feedback", ["前函已经发出，需更正", ""])
+    async def test_blocked_mail_drafts_survive_as_plain_text(self, feedback: str) -> None:
+        svc = _make_services(f"FAIL\n{feedback}")
+        session = _make_session()
+        session.context = [{"role": "user", "content": "来信"}]
+        calls = [
+            ToolCall(
+                id=f"draft-{index}",
+                function_name="sendEmail",
+                arguments={
+                    "to": [f"agent-{index}@tlon"],
+                    "cc": ["observer@tlon"],
+                    "subject": f"主题 {index}",
+                    "in_reply_to": f"original-{index}",
+                    "content": f"完整草稿 {index}\n第二段正文",
+                },
+            )
+            for index in range(2)
+        ]
+        response = LLMResponse(content="本轮说明", tool_calls=calls)
+        review = await critique_stage(svc, session, response)
+        session.loop_scratch.update(review.scratch_updates)
+
+        outcome = await revise_stage(svc, session, response)
+
+        assert outcome.response is response
+        assert outcome.scratch_updates == {"critique": None}
+        assert len(outcome.context_appends) == 1
+        message = outcome.context_appends[0]
+        assert set(message) == {"role", "content"}
+        assert message["role"] == "user"
+        for call in calls:
+            for rendered in (svc.think.await_args.args[0][-2]["content"], message["content"]):
+                assert call.id in rendered
+                assert call.function_name in rendered
+                assert json.dumps(call.arguments, ensure_ascii=False) in rendered
+                assert "邮件尚未发送" in rendered
+        assert "已被评审拦截" in message["content"]
+        assert "评审意见不构成执行回执" in message["content"]
+        assert session.context == [{"role": "user", "content": "来信"}]
+        assert session.loop_scratch == {"critique": {"passed": False, "feedback": feedback}}
+        assert session.all_tool_results == []
+        assert not session.has_pending_tools
+        assert outcome.tool_dispatches == []
+        assert outcome.tool_results == []
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            ToolResult(success=True, data={"mail_id": "sent-mail"}),
+            ToolResult(success=False, data={}, error="拒收"),
+            ToolResult(success=False, data={"delivery_status": "unknown"}, error="timeout"),
+        ],
+    )
+    async def test_post_act_review_preserves_actual_receipt(self, result: ToolResult) -> None:
+        svc = _make_services("FAIL\n请核查")
+        session = _make_session()
+        call = ToolCall(id="executed", function_name="sendEmail", arguments={"content": "正文"})
+        session.add_tool_result(call, result)
+        response = LLMResponse(content=None, tool_calls=[call])
+
+        review = await critique_stage(svc, session, response)
+        session.loop_scratch.update(review.scratch_updates)
+        revision = await revise_stage(svc, session, response)
+
+        for rendered in (
+            svc.think.await_args.args[0][-2]["content"],
+            revision.context_appends[0]["content"],
+        ):
+            assert "已收集工具回执" in rendered
+            assert json.dumps(result.to_dict(), ensure_ascii=False) in rendered
+            assert "邮件尚未发送" not in rendered
+            assert "已被评审拦截" not in rendered
+        assert session.all_tool_results == [{"tool_call": call, "result": result}]
+
+    @pytest.mark.parametrize("done", [False, True])
+    async def test_dispatched_uncollected_call_is_not_an_unsent_draft(self, done: bool) -> None:
+        svc = _make_services("FAIL")
+        session = _make_session()
+        call = ToolCall(id="pending", function_name="sendEmail", arguments={"content": "正文"})
+        response = LLMResponse(content=None, tool_calls=[call])
+        gate = asyncio.Event()
+
+        async def execute() -> ToolResult:
+            await gate.wait()
+            return ToolResult(success=True, data={"mail_id": "actual-mail"})
+
+        task = asyncio.create_task(execute())
+        session.dispatch_tools([call], {call.id: task})
+        try:
+            if done:
+                gate.set()
+                await task
+            review = await critique_stage(svc, session, response)
+            session.loop_scratch.update(review.scratch_updates)
+            revision = await revise_stage(svc, session, response)
+
+            for rendered in (
+                svc.think.await_args.args[0][-2]["content"],
+                revision.context_appends[0]["content"],
+            ):
+                assert "已派发，结果尚未收集" in rendered
+                assert "邮件尚未发送" not in rendered
+                assert "已被评审拦截" not in rendered
+            assert session.get_pending_tasks() == {call.id: task}
+            assert session.all_tool_results == []
+        finally:
+            await session.cancel_pending()
+
     async def test_feedback_appended_and_verdict_cleared(self) -> None:
         svc = _make_services("unused")
         session = _make_session()

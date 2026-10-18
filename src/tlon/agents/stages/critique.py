@@ -1,9 +1,9 @@
 """critique stage (phase 7c): review the round's latest output."""
 
-import json
 from typing import Any
 
 from tlon.agents.session import AgentSession
+from tlon.agents.stages.draft import render_review_output
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, usage_total_tokens
@@ -19,11 +19,12 @@ async def critique_stage(
 
     The review input is the session context plus, when the stage runs
     before ``act`` (the pre-submission gate), the round's pending
-    response rendered as the latest assistant message — the draft under
+    response rendered as plain text with explicit execution status — the draft under
     review has not entered the context yet, and a reviewer that cannot
     see it could never confirm a revision (a FAIL would loop to the
     iteration ceiling). The render is input-only: the session's context
-    is untouched (declared effects only).
+    is untouched (declared effects only). Post-act reviews preserve collected
+    receipts or the dispatched/unknown status rather than relabeling them as drafts.
 
     Parses the verdict's first line: PASS -> passed; FAIL -> failed
     with the remaining text as feedback; an unparseable first line is
@@ -36,10 +37,13 @@ async def critique_stage(
     """
     messages = list(session.context)
     if response is not None:
-        draft = _render_draft(response)
+        draft = render_review_output(session, response)
         if draft:
             messages.append({"role": "assistant", "content": draft})
-    instruction = "请评审上述最新输出是否充分回应了当前邮件。"
+    instruction = (
+        "请评审上述最新输出是否充分回应了当前邮件。"
+        "调用状态以运行时标记和真实工具回执为准；尚未执行的草稿不是已发邮件或历史事实。"
+    )
     if extra_instructions := (opts or {}).get("instructions"):
         instruction += f"\n额外评审标准：\n{extra_instructions}\n"
     instruction += "第一行只写 PASS 或 FAIL；FAIL 时从第二行起给出具体改进意见。"
@@ -95,19 +99,3 @@ async def critique_stage(
         scratch_updates={"critique": {"passed": passed, "feedback": feedback}},
         token_usage=usage_total_tokens(verdict_response.usage),
     )
-
-
-def _render_draft(response: LLMResponse) -> str:
-    """Render the round's pending response as reviewable text.
-
-    The reply text lives in the ``sendEmail`` arguments for completing
-    rounds, so tool calls are rendered alongside any direct content.
-    """
-    parts: list[str] = []
-    if response.content:
-        parts.append(response.content)
-    for tc in response.tool_calls or []:
-        parts.append(
-            f"[调用工具] {tc.function_name}({json.dumps(tc.arguments, ensure_ascii=False)})"
-        )
-    return "\n".join(parts)
