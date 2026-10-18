@@ -2,6 +2,7 @@
 
 .events-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
@@ -21,8 +22,7 @@
 }
 
 .events-terminal {
-  height: calc(100vh - 260px);
-  min-height: 320px;
+  height: max(180px, calc(100dvh - 260px));
 }
 
 .events-empty {
@@ -31,6 +31,7 @@
 
 .event-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   cursor: pointer;
   border-radius: var(--radius);
@@ -90,4 +91,9 @@
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.event-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

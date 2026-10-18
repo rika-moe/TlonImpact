@@ -153,192 +153,194 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
       {loading ? (
         <p className="capabilities-empty">LOADING…</p>
       ) : (
-        <div className="capabilities-body">
-          <div className="capabilities-list">
-            <section className="cap-section">
-              <h3 className="tech-label cap-section-title">
-                TRUSTED LIBRARY ({trusted.length})
-              </h3>
-              {trusted.length === 0 ? (
-                <p className="capabilities-empty">NO TRUSTED CAPABILITIES</p>
-              ) : (
-                trusted.map((c) => (
-                  <CapCard
-                    key={c.name}
-                    cap={c}
-                    staging={false}
-                    selected={
-                      selected !== null && !selected.staging && selected.name === c.name
-                    }
-                    onSelect={() => selectCap({ name: c.name, staging: false })}
-                  />
-                ))
-              )}
-            </section>
-            {staging.length > 0 ? (
+        <div className="capabilities-layout">
+          <div className="capabilities-body">
+            <div className="capabilities-list">
               <section className="cap-section">
-                <h3 className="tech-label cap-section-title cap-section-title--staging">
-                  STAGING ({staging.length})
+                <h3 className="tech-label cap-section-title">
+                  TRUSTED LIBRARY ({trusted.length})
                 </h3>
-                {staging.map((c) => (
-                  <CapCard
-                    key={c.name}
-                    cap={c}
-                    staging={true}
-                    selected={
-                      selected !== null && selected.staging && selected.name === c.name
-                    }
-                    onSelect={() => selectCap({ name: c.name, staging: true })}
-                  />
-                ))}
+                {trusted.length === 0 ? (
+                  <p className="capabilities-empty">NO TRUSTED CAPABILITIES</p>
+                ) : (
+                  trusted.map((c) => (
+                    <CapCard
+                      key={c.name}
+                      cap={c}
+                      staging={false}
+                      selected={
+                        selected !== null && !selected.staging && selected.name === c.name
+                      }
+                      onSelect={() => selectCap({ name: c.name, staging: false })}
+                    />
+                  ))
+                )}
               </section>
-            ) : null}
-          </div>
+              {staging.length > 0 ? (
+                <section className="cap-section">
+                  <h3 className="tech-label cap-section-title cap-section-title--staging">
+                    STAGING ({staging.length})
+                  </h3>
+                  {staging.map((c) => (
+                    <CapCard
+                      key={c.name}
+                      cap={c}
+                      staging={true}
+                      selected={
+                        selected !== null && selected.staging && selected.name === c.name
+                      }
+                      onSelect={() => selectCap({ name: c.name, staging: true })}
+                    />
+                  ))}
+                </section>
+              ) : null}
+            </div>
 
-          {selected ? (
-            <section className="panel cap-detail">
-              <div className="cap-detail-head">
-                <span className="tech-label">
-                  {selected.staging ? "STAGING" : "TRUSTED"} // {selected.name}
-                </span>
-                <span className="capabilities-spacer" />
-                {selected.staging ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn--primary"
-                      disabled={busy}
-                      onClick={() => void approve(selected.name)}
-                    >
-                      APPROVE
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--danger"
-                      disabled={busy}
-                      onClick={() => setModal({ kind: "reject", name: selected.name })}
-                    >
-                      REJECT
-                    </button>
-                  </>
-                ) : null}
-                <button
-                  type="button"
-                  className="btn btn--secondary"
-                  onClick={() => {
-                    setSelected(null);
-                    setDetail(null);
-                  }}
-                >
-                  CLOSE
-                </button>
-              </div>
-              {detailLoading ? (
-                <p className="capabilities-empty">LOADING…</p>
-              ) : detail ? (
-                <>
-                  <div className="cap-meta">
-                    <div className="cap-meta-row">
-                      <span className="tech-label">NAME</span>
-                      <span className="cap-meta-value">{detail.name}</span>
-                    </div>
-                    <div className="cap-meta-row">
-                      <span className="tech-label">PURITY</span>
-                      <span
-                        className={`cap-purity${
-                          detail.pure === false ? " cap-purity--impure" : ""
-                        }`}
-                      >
-                        {pureLabel(detail.pure)}
-                      </span>
-                    </div>
-                    <div className="cap-meta-row">
-                      <span className="tech-label">AUTHOR</span>
-                      <span className="cap-meta-value">{detail.author || "unknown"}</span>
-                    </div>
-                    <div className="cap-meta-row">
-                      <span className="tech-label">TRUSTED</span>
-                      <span className="cap-meta-value">{String(detail.trusted)}</span>
-                    </div>
-                    {detail.deprecated ? (
-                      <div className="cap-meta-row">
-                        <span className="tech-label">DEPRECATED</span>
-                        <span className="cap-deprecated-badge">DEPRECATED</span>
-                      </div>
-                    ) : null}
-                    {detail.description ? (
-                      <div className="cap-meta-row">
-                        <span className="tech-label">DESCRIPTION</span>
-                        <span className="cap-meta-value">{detail.description}</span>
-                      </div>
-                    ) : null}
-                    {detail.proposal_note ? (
-                      <div className="cap-meta-row">
-                        <span className="tech-label">PROPOSAL_NOTE</span>
-                        <span className="cap-meta-value">{detail.proposal_note}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                  <span className="tech-label">capability.tlon</span>
-                  <pre className="terminal cap-artifact">{detail.artifact}</pre>
-                  {detail.examples && detail.examples.length > 0 ? (
+            {selected ? (
+              <section className="panel cap-detail">
+                <div className="cap-detail-head">
+                  <span className="tech-label">
+                    {selected.staging ? "STAGING" : "TRUSTED"} // {selected.name}
+                  </span>
+                  <span className="capabilities-spacer" />
+                  {selected.staging ? (
                     <>
-                      <span className="tech-label">EXAMPLES ({detail.examples.length})</span>
-                      <div className="cap-examples">
-                        {detail.examples.map((ex, i) => (
-                          <div key={i} className="cap-example">
-                            <div className="cap-example-head">
-                              <span className="tech-label">#{i}</span>
-                              <span
-                                className={`cap-example-badge${
-                                  ex.passed ? "" : " cap-example-badge--fail"
-                                }`}
-                              >
-                                {ex.passed ? "PASS" : "FAIL"}
-                              </span>
-                            </div>
-                            <div className="cap-meta-row">
-                              <span className="tech-label">ARGS</span>
-                              <span className="cap-meta-value">{ex.args}</span>
-                            </div>
-                            <div className="cap-meta-row">
-                              <span className="tech-label">EXPECT</span>
-                              <span className="cap-meta-value">{ex.expect}</span>
-                            </div>
-                            {ex.error !== undefined ? (
-                              <div className="cap-meta-row">
-                                <span className="tech-label">ERROR</span>
-                                <span className="cap-meta-value cap-example-error">
-                                  {ex.error}
+                      <button
+                        type="button"
+                        className="btn btn--primary"
+                        disabled={busy}
+                        onClick={() => void approve(selected.name)}
+                      >
+                        APPROVE
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--danger"
+                        disabled={busy}
+                        onClick={() => setModal({ kind: "reject", name: selected.name })}
+                      >
+                        REJECT
+                      </button>
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn--secondary"
+                    onClick={() => {
+                      setSelected(null);
+                      setDetail(null);
+                    }}
+                  >
+                    CLOSE
+                  </button>
+                </div>
+                {detailLoading ? (
+                  <p className="capabilities-empty">LOADING…</p>
+                ) : detail ? (
+                  <>
+                    <div className="cap-meta">
+                      <div className="cap-meta-row">
+                        <span className="tech-label">NAME</span>
+                        <span className="cap-meta-value">{detail.name}</span>
+                      </div>
+                      <div className="cap-meta-row">
+                        <span className="tech-label">PURITY</span>
+                        <span
+                          className={`cap-purity${
+                            detail.pure === false ? " cap-purity--impure" : ""
+                          }`}
+                        >
+                          {pureLabel(detail.pure)}
+                        </span>
+                      </div>
+                      <div className="cap-meta-row">
+                        <span className="tech-label">AUTHOR</span>
+                        <span className="cap-meta-value">{detail.author || "unknown"}</span>
+                      </div>
+                      <div className="cap-meta-row">
+                        <span className="tech-label">TRUSTED</span>
+                        <span className="cap-meta-value">{String(detail.trusted)}</span>
+                      </div>
+                      {detail.deprecated ? (
+                        <div className="cap-meta-row">
+                          <span className="tech-label">DEPRECATED</span>
+                          <span className="cap-deprecated-badge">DEPRECATED</span>
+                        </div>
+                      ) : null}
+                      {detail.description ? (
+                        <div className="cap-meta-row">
+                          <span className="tech-label">DESCRIPTION</span>
+                          <span className="cap-meta-value">{detail.description}</span>
+                        </div>
+                      ) : null}
+                      {detail.proposal_note ? (
+                        <div className="cap-meta-row">
+                          <span className="tech-label">PROPOSAL_NOTE</span>
+                          <span className="cap-meta-value">{detail.proposal_note}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <span className="tech-label">capability.tlon</span>
+                    <pre className="terminal cap-artifact">{detail.artifact}</pre>
+                    {detail.examples && detail.examples.length > 0 ? (
+                      <>
+                        <span className="tech-label">EXAMPLES ({detail.examples.length})</span>
+                        <div className="cap-examples">
+                          {detail.examples.map((ex, i) => (
+                            <div key={i} className="cap-example">
+                              <div className="cap-example-head">
+                                <span className="tech-label">#{i}</span>
+                                <span
+                                  className={`cap-example-badge${
+                                    ex.passed ? "" : " cap-example-badge--fail"
+                                  }`}
+                                >
+                                  {ex.passed ? "PASS" : "FAIL"}
                                 </span>
                               </div>
-                            ) : (
                               <div className="cap-meta-row">
-                                <span className="tech-label">ACTUAL</span>
-                                <span className="cap-meta-value">{ex.actual}</span>
+                                <span className="tech-label">ARGS</span>
+                                <span className="cap-meta-value">{ex.args}</span>
                               </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : null}
-                  {detail.reviews ? (
-                    <>
-                      <span className="tech-label">REVIEW.md</span>
-                      <pre className="terminal cap-artifact">{detail.reviews}</pre>
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                <p className="capabilities-empty">NO DETAIL</p>
-              )}
-            </section>
-          ) : (
-            <section className="panel cap-detail cap-detail--empty">
-              <p className="capabilities-empty">SELECT A CAPABILITY ON THE LEFT TO VIEW DETAILS</p>
-            </section>
-          )}
+                              <div className="cap-meta-row">
+                                <span className="tech-label">EXPECT</span>
+                                <span className="cap-meta-value">{ex.expect}</span>
+                              </div>
+                              {ex.error !== undefined ? (
+                                <div className="cap-meta-row">
+                                  <span className="tech-label">ERROR</span>
+                                  <span className="cap-meta-value cap-example-error">
+                                    {ex.error}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="cap-meta-row">
+                                  <span className="tech-label">ACTUAL</span>
+                                  <span className="cap-meta-value">{ex.actual}</span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                    {detail.reviews ? (
+                      <>
+                        <span className="tech-label">REVIEW.md</span>
+                        <pre className="terminal cap-artifact">{detail.reviews}</pre>
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="capabilities-empty">NO DETAIL</p>
+                )}
+              </section>
+            ) : (
+              <section className="panel cap-detail cap-detail--empty">
+                <p className="capabilities-empty">SELECT A CAPABILITY ON THE LEFT TO VIEW DETAILS</p>
+              </section>
+            )}
+          </div>
         </div>
       )}
 

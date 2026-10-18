@@ -49,38 +49,45 @@ export function SessionsView({ rest }: ViewProps): ReactElement {
           REFRESH
         </button>
       </div>
-      <table className="sessions-table">
-        <thead>
-          <tr>
-            <th className="tech-label">ID</th>
-            <th className="tech-label">CLIENT</th>
-            <th className="tech-label">MODE</th>
-            <th className="tech-label">CONNECTED</th>
-            <th className="tech-label">FILTERS</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sessions.length === 0 ? (
+      <div
+        className="sessions-table-scroll"
+        role="region"
+        aria-label="Active sessions table, scroll horizontally to view all columns"
+        tabIndex={0}
+      >
+        <table className="sessions-table">
+          <thead>
             <tr>
-              <td className="sessions-empty" colSpan={5}>
-                no active sessions
-              </td>
+              <th className="tech-label">ID</th>
+              <th className="tech-label">CLIENT</th>
+              <th className="tech-label">MODE</th>
+              <th className="tech-label">CONNECTED</th>
+              <th className="tech-label">FILTERS</th>
             </tr>
-          ) : (
-            sessions.map((session) => (
-              <tr key={session.id}>
-                <td className="session-id" title={session.id}>
-                  {session.id}
+          </thead>
+          <tbody>
+            {sessions.length === 0 ? (
+              <tr>
+                <td className="sessions-empty" colSpan={5}>
+                  no active sessions
                 </td>
-                <td className="session-client-type">{session.client_type}</td>
-                <td className="session-mode">{session.mode}</td>
-                <td className="session-connected">{formatConnectedAt(session.connected_at)}</td>
-                <td className="session-filters">{formatFilters(session.filters)}</td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              sessions.map((session) => (
+                <tr key={session.id}>
+                  <td className="session-id" title={session.id}>
+                    {session.id}
+                  </td>
+                  <td className="session-client-type">{session.client_type}</td>
+                  <td className="session-mode">{session.mode}</td>
+                  <td className="session-connected">{formatConnectedAt(session.connected_at)}</td>
+                  <td className="session-filters">{formatFilters(session.filters)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

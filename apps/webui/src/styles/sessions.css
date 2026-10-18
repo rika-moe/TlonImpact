@@ -2,6 +2,7 @@
 
 .sessions-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
@@ -17,6 +18,7 @@
 
 .sessions-table {
   width: 100%;
+  min-width: 640px;
   border-collapse: collapse;
   font-family: var(--font-mono);
   font-size: 13px;
@@ -61,4 +63,20 @@
 .sessions-empty {
   color: var(--text-dim);
   padding: 12px 0;
+}
+
+/* Preserve readable columns; only this region scrolls horizontally. */
+.sessions-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.sessions-table-scroll:focus-visible {
+  outline: 1px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+.sessions-error,
+.sessions-table td {
+  overflow-wrap: anywhere;
 }

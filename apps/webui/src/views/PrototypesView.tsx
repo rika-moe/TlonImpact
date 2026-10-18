@@ -185,170 +185,172 @@ export function PrototypesView({ rest }: ViewProps): ReactElement {
       {loading ? (
         <p className="prototypes-empty">LOADING…</p>
       ) : (
-        <div className="prototypes-body">
-          <div className="prototypes-list">
-            <section className="proto-section">
-              <h3 className="tech-label proto-section-title">
-                TRUSTED LIBRARY ({trusted.length})
-              </h3>
-              {trusted.length === 0 ? (
-                <p className="prototypes-empty">NO TRUSTED PROTOTYPES</p>
-              ) : (
-                trusted.map((p) => (
-                  <ProtoCard
-                    key={p.name}
-                    proto={p}
-                    staging={false}
-                    selected={
-                      selected !== null && !selected.staging && selected.name === p.name
-                    }
-                    onSelect={() => selectProto({ name: p.name, staging: false })}
-                  />
-                ))
-              )}
-            </section>
-            {staging.length > 0 ? (
+        <div className="prototypes-layout">
+          <div className="prototypes-body">
+            <div className="prototypes-list">
               <section className="proto-section">
-                <h3 className="tech-label proto-section-title proto-section-title--staging">
-                  STAGING ({staging.length})
+                <h3 className="tech-label proto-section-title">
+                  TRUSTED LIBRARY ({trusted.length})
                 </h3>
-                {staging.map((p) => (
-                  <ProtoCard
-                    key={p.name}
-                    proto={p}
-                    staging={true}
-                    selected={
-                      selected !== null && selected.staging && selected.name === p.name
-                    }
-                    onSelect={() => selectProto({ name: p.name, staging: true })}
-                  />
-                ))}
+                {trusted.length === 0 ? (
+                  <p className="prototypes-empty">NO TRUSTED PROTOTYPES</p>
+                ) : (
+                  trusted.map((p) => (
+                    <ProtoCard
+                      key={p.name}
+                      proto={p}
+                      staging={false}
+                      selected={
+                        selected !== null && !selected.staging && selected.name === p.name
+                      }
+                      onSelect={() => selectProto({ name: p.name, staging: false })}
+                    />
+                  ))
+                )}
               </section>
-            ) : null}
-          </div>
+              {staging.length > 0 ? (
+                <section className="proto-section">
+                  <h3 className="tech-label proto-section-title proto-section-title--staging">
+                    STAGING ({staging.length})
+                  </h3>
+                  {staging.map((p) => (
+                    <ProtoCard
+                      key={p.name}
+                      proto={p}
+                      staging={true}
+                      selected={
+                        selected !== null && selected.staging && selected.name === p.name
+                      }
+                      onSelect={() => selectProto({ name: p.name, staging: true })}
+                    />
+                  ))}
+                </section>
+              ) : null}
+            </div>
 
-          {selected ? (
-            <section className="panel proto-detail">
-              <div className="proto-detail-head">
-                <span className="tech-label">
-                  {selected.staging ? "STAGING" : "TRUSTED"} // {detail?.display_name || selected.name}
-                </span>
-                <span className="prototypes-spacer" />
-                <button
-                  type="button"
-                  className="btn btn--secondary"
-                  disabled={busy || detail === null}
-                  onClick={() => {
-                    if (detail) setModal({ kind: "edit", selection: selected, detail });
-                  }}
-                >
-                  EDIT
-                </button>
-                {selected.staging ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn--primary"
-                      disabled={busy}
-                      onClick={() => void approve(selected.name, true)}
-                    >
-                      APPROVE
-                    </button>
+            {selected ? (
+              <section className="panel proto-detail">
+                <div className="proto-detail-head">
+                  <span className="tech-label">
+                    {selected.staging ? "STAGING" : "TRUSTED"} // {detail?.display_name || selected.name}
+                  </span>
+                  <span className="prototypes-spacer" />
+                  <button
+                    type="button"
+                    className="btn btn--secondary"
+                    disabled={busy || detail === null}
+                    onClick={() => {
+                      if (detail) setModal({ kind: "edit", selection: selected, detail });
+                    }}
+                  >
+                    EDIT
+                  </button>
+                  {selected.staging ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--primary"
+                        disabled={busy}
+                        onClick={() => void approve(selected.name, true)}
+                      >
+                        APPROVE
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--danger"
+                        disabled={busy}
+                        onClick={() => void approve(selected.name, false)}
+                      >
+                        REJECT
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
                       className="btn btn--danger"
                       disabled={busy}
-                      onClick={() => void approve(selected.name, false)}
+                      onClick={() => setModal({ kind: "delete", name: selected.name })}
                     >
-                      REJECT
+                      DELETE
                     </button>
-                  </>
-                ) : (
+                  )}
                   <button
                     type="button"
-                    className="btn btn--danger"
-                    disabled={busy}
-                    onClick={() => setModal({ kind: "delete", name: selected.name })}
+                    className="btn btn--secondary"
+                    onClick={() => {
+                      setSelected(null);
+                      setDetail(null);
+                    }}
                   >
-                    DELETE
+                    CLOSE
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn--secondary"
-                  onClick={() => {
-                    setSelected(null);
-                    setDetail(null);
-                  }}
-                >
-                  CLOSE
-                </button>
-              </div>
-              {detailLoading ? (
-                <p className="prototypes-empty">LOADING…</p>
-              ) : detail ? (
-                <>
-                  <div className="proto-meta">
-                    <div className="proto-meta-row">
-                      <span className="tech-label">ID</span>
-                      <span className="proto-meta-value">{detail.name}</span>
-                    </div>
-                    <div className="proto-meta-row">
-                      <span className="tech-label">BEHAVIOR DISPLAY NAME</span>
-                      <span className="proto-meta-value">
-                        {detail.display_name || "—"}
-                      </span>
-                    </div>
-                    <div className="proto-meta-row">
-                      <span className="tech-label">AUTHOR</span>
-                      <span className="proto-meta-value">{detail.author || "unknown"}</span>
-                    </div>
-                    <div className="proto-meta-row">
-                      <span className="tech-label">TRUSTED</span>
-                      <span className="proto-meta-value">{String(detail.trusted)}</span>
-                    </div>
-                    {detail.description ? (
+                </div>
+                {detailLoading ? (
+                  <p className="prototypes-empty">LOADING…</p>
+                ) : detail ? (
+                  <>
+                    <div className="proto-meta">
                       <div className="proto-meta-row">
-                        <span className="tech-label">DESCRIPTION</span>
-                        <span className="proto-meta-value">{detail.description}</span>
+                        <span className="tech-label">ID</span>
+                        <span className="proto-meta-value">{detail.name}</span>
+                      </div>
+                      <div className="proto-meta-row">
+                        <span className="tech-label">BEHAVIOR DISPLAY NAME</span>
+                        <span className="proto-meta-value">
+                          {detail.display_name || "—"}
+                        </span>
+                      </div>
+                      <div className="proto-meta-row">
+                        <span className="tech-label">AUTHOR</span>
+                        <span className="proto-meta-value">{detail.author || "unknown"}</span>
+                      </div>
+                      <div className="proto-meta-row">
+                        <span className="tech-label">TRUSTED</span>
+                        <span className="proto-meta-value">{String(detail.trusted)}</span>
+                      </div>
+                      {detail.description ? (
+                        <div className="proto-meta-row">
+                          <span className="tech-label">DESCRIPTION</span>
+                          <span className="proto-meta-value">{detail.description}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <span className="tech-label">PARAMETERS</span>
+                    {detail.parameters.length > 0 ? (
+                      <ProtoParams parameters={detail.parameters} />
+                    ) : (
+                      <p className="prototypes-empty">NO PARAMETERS</p>
+                    )}
+                    <span className="tech-label">behavior.tlon</span>
+                    {detail.red_flags.length > 0 ? (
+                      <div className="proto-redflags">
+                        {detail.red_flags.map((flag) => (
+                          <span className="proto-redflag" key={flag}>
+                            RED FLAG // {flag}
+                          </span>
+                        ))}
                       </div>
                     ) : null}
-                  </div>
-                  <span className="tech-label">PARAMETERS</span>
-                  {detail.parameters.length > 0 ? (
-                    <ProtoParams parameters={detail.parameters} />
-                  ) : (
-                    <p className="prototypes-empty">NO PARAMETERS</p>
-                  )}
-                  <span className="tech-label">behavior.tlon</span>
-                  {detail.red_flags.length > 0 ? (
-                    <div className="proto-redflags">
-                      {detail.red_flags.map((flag) => (
-                        <span className="proto-redflag" key={flag}>
-                          RED FLAG // {flag}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  <pre className="terminal proto-behavior">{detail.behavior}</pre>
-                  {selected.staging ? (
-                    <ArenaPanel
-                      rest={rest}
-                      protoName={selected.name}
-                      arena={detail.arena ?? null}
-                      onRefreshDetail={refreshDetail}
-                    />
-                  ) : null}
-                </>
-              ) : (
-                <p className="prototypes-empty">NO DETAIL</p>
-              )}
-            </section>
-          ) : (
-            <section className="panel proto-detail proto-detail--empty">
-              <p className="prototypes-empty">SELECT A PROTOTYPE ON THE LEFT TO VIEW DETAILS</p>
-            </section>
-          )}
+                    <pre className="terminal proto-behavior">{detail.behavior}</pre>
+                    {selected.staging ? (
+                      <ArenaPanel
+                        rest={rest}
+                        protoName={selected.name}
+                        arena={detail.arena ?? null}
+                        onRefreshDetail={refreshDetail}
+                      />
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="prototypes-empty">NO DETAIL</p>
+                )}
+              </section>
+            ) : (
+              <section className="panel proto-detail proto-detail--empty">
+                <p className="prototypes-empty">SELECT A PROTOTYPE ON THE LEFT TO VIEW DETAILS</p>
+              </section>
+            )}
+          </div>
         </div>
       )}
 
