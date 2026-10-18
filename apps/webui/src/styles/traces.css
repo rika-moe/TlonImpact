@@ -2,6 +2,7 @@
 
 .traces-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
@@ -28,7 +29,7 @@
 .traces-list {
   flex: 0 0 38%;
   min-width: 0;
-  max-height: calc(100vh - 240px);
+  max-height: max(180px, calc(100dvh - 240px));
   overflow: auto;
   padding: 8px;
 }
@@ -36,7 +37,7 @@
 .traces-detail {
   flex: 1;
   min-width: 0;
-  max-height: calc(100vh - 240px);
+  max-height: max(180px, calc(100dvh - 240px));
   overflow: auto;
 }
 
@@ -95,6 +96,7 @@
 
 .span-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -153,4 +155,37 @@
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.traces-view {
+  container-type: inline-size;
+}
+
+.traces-error,
+.trace-meta-row > *,
+.span-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Deep span indentation scrolls inside the detail, without widening the page. */
+.span-tree,
+.traces-json {
+  overflow: auto;
+}
+
+@container (max-width: 720px) {
+  .traces-body {
+    flex-direction: column;
+  }
+
+  .traces-list,
+  .traces-detail {
+    flex: auto;
+    max-height: none;
+  }
+
+  .traces-list {
+    max-height: 240px;
+  }
 }

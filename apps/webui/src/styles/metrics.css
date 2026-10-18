@@ -2,6 +2,7 @@
 
 .metrics-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 12px;
@@ -17,7 +18,7 @@
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
   gap: 16px;
 }
 
@@ -38,6 +39,7 @@
 
 .metric-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
@@ -93,7 +95,8 @@
 
 .llm-usage-id {
   color: var(--text);
-  min-width: 180px;
+  min-width: min(180px, 100%);
+  overflow-wrap: anywhere;
 }
 
 .llm-usage-stat {
@@ -115,4 +118,13 @@
 .llm-usage-total .llm-usage-id {
   color: var(--neon-cyan);
   text-shadow: var(--glow-cyan);
+}
+
+/* Long technical names and model IDs remain inside their cards. */
+.metrics-error,
+.metric-name,
+.metric-desc,
+.llm-usage-stat {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

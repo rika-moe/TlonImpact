@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactElement } from "react";
 import { IdentityController } from "./lib/identity";
 import { RestClient } from "./client/rest";
@@ -63,6 +63,25 @@ function Operator({ rest, username }: { rest: RestClient; username: string }): R
   const [health, setHealth] = useState<HealthState>(null);
   const [view, setView] = useState<ViewName>("mail");
 
+  const navRef = useRef<HTMLElement>(null);
+  const activeNavRef = useRef<HTMLButtonElement>(null);
+
+  // Scroll only the navigation strip; selecting a page must not scroll the shell.
+  useEffect(() => {
+    const revealActive = (): void => {
+      const nav = navRef.current;
+      const active = activeNavRef.current;
+      if (!nav || !active || nav.scrollWidth <= nav.clientWidth) return;
+      const bounds = nav.getBoundingClientRect();
+      const item = active.getBoundingClientRect();
+      if (item.left < bounds.left) nav.scrollLeft += item.left - bounds.left;
+      else if (item.right > bounds.right) nav.scrollLeft += item.right - bounds.right;
+    };
+    revealActive();
+    window.addEventListener("resize", revealActive);
+    return () => window.removeEventListener("resize", revealActive);
+  }, [view]);
+
   useEffect(() => {
     const onStatus = (s: ConnectionStatus): void => setStatus(s);
     sse.on("status", onStatus);
@@ -106,10 +125,12 @@ function Operator({ rest, username }: { rest: RestClient; username: string }): R
         <span className="tech-label">USER: {username}</span>
         <span className={`badge badge--${kind}`}>{BADGE_TEXT[kind]}</span>
       </header>
-      <nav className="sidenav">
+      <nav className="sidenav" ref={navRef} aria-label="Main navigation">
         {VIEWS.map((name) => (
           <button
             key={name}
+            ref={name === view ? activeNavRef : null}
+            aria-current={name === view ? "page" : undefined}
             type="button"
             className={`nav-item${name === view ? " nav-item--active" : ""}`}
             onClick={() => setView(name)}

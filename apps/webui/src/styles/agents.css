@@ -4,6 +4,7 @@
  */
 
 .agents-view {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -11,6 +12,7 @@
 
 .agents-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
@@ -64,6 +66,7 @@
 
 .staging-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -72,6 +75,8 @@
 }
 
 .staging-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--text);
 }
 
@@ -79,7 +84,7 @@
 
 .agents-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
   gap: 12px;
 }
 
@@ -111,6 +116,7 @@
 }
 
 .agent-card-id {
+  min-width: 0;
   color: var(--text);
   font-weight: bold;
   overflow: hidden;
@@ -212,6 +218,7 @@
 }
 
 .agent-card-actions {
+  flex-wrap: wrap;
   margin-top: auto;
   display: flex;
   gap: 8px;
@@ -220,18 +227,22 @@
 /* ---------- detail panel (structured fields) ---------- */
 
 .agent-detail {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
 .agent-detail-head {
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
 .agent-detail-fields {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -244,12 +255,14 @@
 }
 
 .agent-detail-label {
+  overflow-wrap: anywhere;
   width: 120px;
   flex-shrink: 0;
   color: var(--text-dim);
 }
 
 .agent-detail-value {
+  min-width: 0;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -286,6 +299,7 @@
 /* ---------- modals ---------- */
 
 .agents-modal-overlay {
+  padding: 16px;
   position: fixed;
   inset: 0;
   background: rgba(10, 10, 18, 0.85);
@@ -297,12 +311,16 @@
 
 .agents-modal {
   width: 680px;
-  max-width: 92vw;
-  max-height: 90vh;
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.agents-modal > * {
+  flex-shrink: 0;
 }
 
 .agents-modal-title {
@@ -311,6 +329,7 @@
 }
 
 .agents-modal-actions {
+  flex-wrap: wrap;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
@@ -326,6 +345,8 @@
 }
 
 .proto-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 10px 12px;
   border: 1px solid rgba(0, 240, 255, 0.25);
   border-radius: var(--radius);
@@ -347,6 +368,7 @@
 
 /* Create / edit forms. */
 .agents-form {
+  min-width: 0;
   border: 0;
   padding: 0;
   margin: 0;
@@ -404,6 +426,8 @@ textarea.agents-form-textarea {
 }
 
 .model-select-item {
+  flex-shrink: 0;
+  overflow-wrap: anywhere;
   padding: 8px 10px;
   cursor: pointer;
   display: flex;
@@ -420,6 +444,7 @@ textarea.agents-form-textarea {
 }
 
 .model-select-name {
+  flex-wrap: wrap;
   color: var(--text);
   font-weight: bold;
   display: flex;
@@ -443,4 +468,26 @@ textarea.agents-form-textarea {
   color: var(--neon-magenta);
   font-size: 13px;
   margin: 0;
+}
+
+/* Detail labels yield their column before values become hard to read. */
+@container (max-width: 420px) {
+  .agent-detail-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .agent-detail-label {
+    width: auto;
+  }
+}
+
+.agents-notice,
+.agents-error-bar,
+.agents-modal-title,
+.agents-form-row,
+.model-select-hint,
+.delete-warning {
+  overflow-wrap: anywhere;
 }

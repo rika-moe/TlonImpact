@@ -5,6 +5,12 @@
 
 /* ---------- global background: dark + faint grid + scanlines ---------- */
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html,
 body {
   margin: 0;
@@ -51,6 +57,7 @@ body {
 /* ---------- panel / card: bg-2 + neon border + HUD corner brackets ---------- */
 
 .panel {
+  min-width: 0;
   position: relative;
   background: var(--bg-2);
   border: var(--border-neon);
@@ -89,6 +96,8 @@ body {
 /* ---------- buttons ---------- */
 
 .btn {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.2em;
@@ -171,6 +180,8 @@ body {
 /* ---------- inputs ---------- */
 
 .input {
+  min-width: 0;
+  max-width: 100%;
   background: var(--bg);
   color: var(--text);
   border: var(--border-neon);
@@ -222,22 +233,31 @@ body {
 
 .app-shell {
   display: grid;
-  grid-template-rows: auto 1fr;
-  grid-template-columns: 180px 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: 180px minmax(0, 1fr);
   grid-template-areas:
     "topbar topbar"
     "nav main";
-  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
 }
 
 .topbar {
+  min-width: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
   grid-area: topbar;
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 12px 24px;
   padding: 12px 20px;
   background: var(--bg-2);
   border-bottom: var(--border-neon);
+}
+
+.topbar > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .topbar .spacer {
@@ -245,6 +265,9 @@ body {
 }
 
 .sidenav {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   grid-area: nav;
   display: flex;
   flex-direction: column;
@@ -279,6 +302,8 @@ body {
 }
 
 .main {
+  min-width: 0;
+  min-height: 0;
   grid-area: main;
   padding: 20px;
   overflow: auto;
@@ -296,7 +321,63 @@ body {
   color: var(--neon-yellow);
 }
 
-.identity-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-.identity-panel { width: min(100%, 560px); }
-.identity-panel .input { display: block; width: 100%; margin-top: 8px; }
-.identity-panel [role="alert"] { color: var(--color-danger, #ff6b81); }
+.identity-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow-wrap: anywhere;
+}
+
+.identity-panel {
+  width: min(100%, 560px);
+}
+
+.identity-panel .input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.identity-panel [role="alert"] {
+  color: var(--neon-magenta);
+}
+
+@media (max-width: 800px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas: "topbar" "nav" "main";
+  }
+
+  .topbar {
+    gap: 8px 12px;
+    padding: 12px;
+  }
+
+  .topbar .spacer {
+    display: none;
+  }
+
+  .sidenav {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: var(--border-neon);
+  }
+
+  .nav-item {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .main {
+    padding: 12px;
+  }
+
+  .identity-screen {
+    padding: 16px;
+  }
+}

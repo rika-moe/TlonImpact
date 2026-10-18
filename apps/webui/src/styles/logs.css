@@ -21,7 +21,7 @@
 }
 
 .logs-filter-input {
-  width: 160px;
+  width: min(160px, 100%);
 }
 
 .logs-error {
@@ -29,8 +29,7 @@
 }
 
 .logs-terminal {
-  height: calc(100vh - 280px);
-  min-height: 320px;
+  height: max(180px, calc(100dvh - 280px));
 }
 
 .logs-empty {
@@ -93,4 +92,9 @@
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.logs-error,
+.log-row {
+  overflow-wrap: anywhere;
 }

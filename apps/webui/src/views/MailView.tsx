@@ -164,52 +164,54 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
           </button>
         )}
       </div>
-      <div className="mail-layout">
-        <section className="panel mail-threads-panel">
-          <input
-            className="input mail-filter"
-            placeholder="FILTER // participants / subject / content"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          <div className="mail-thread-list">
-            {loading ? (
-              <p className="mail-empty">LOADING…</p>
-            ) : visibleThreads.length === 0 ? (
-              <p className="mail-empty">NO MAIL</p>
-            ) : (
-              visibleThreads.map((thread) => (
-                <ThreadItem
-                  key={thread.threadId}
-                  thread={thread}
-                  active={selectedThread?.threadId === thread.threadId}
-                  displayName={displayName}
-                  showUnread={!readOnly}
-                  onSelect={() => {
-                    setSelectedId(thread.threadId);
-                  }}
-                />
-              ))
-            )}
-          </div>
-          {hasMore ? <div className="mail-history-notice">
-            <span>Earlier mail is available.</span>
-            <button type="button" className="btn btn--secondary" disabled={loadingMore}
-              onClick={() => void mailbox.loadMore()}>{loadingMore ? "LOADING…" : "LOAD EARLIER MAIL"}</button>
-          </div> : null}
-        </section>
-        <section className="panel mail-conversation-panel">
-          <Conversation
-            thread={selectedThread}
-            mails={mails}
-            myAddress={observedAddress}
-            displayName={displayName}
-            readOnly={readOnly}
-            onReply={openReply}
-            marking={marking}
-            onRead={(read, target) => { void mailbox.setRead(read, target); }}
-          />
-        </section>
+      <div className="mail-body">
+        <div className="mail-layout">
+          <section className="panel mail-threads-panel">
+            <input
+              className="input mail-filter"
+              placeholder="FILTER // participants / subject / content"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            <div className="mail-thread-list">
+              {loading ? (
+                <p className="mail-empty">LOADING…</p>
+              ) : visibleThreads.length === 0 ? (
+                <p className="mail-empty">NO MAIL</p>
+              ) : (
+                visibleThreads.map((thread) => (
+                  <ThreadItem
+                    key={thread.threadId}
+                    thread={thread}
+                    active={selectedThread?.threadId === thread.threadId}
+                    displayName={displayName}
+                    showUnread={!readOnly}
+                    onSelect={() => {
+                      setSelectedId(thread.threadId);
+                    }}
+                  />
+                ))
+              )}
+            </div>
+            {hasMore ? <div className="mail-history-notice">
+              <span>Earlier mail is available.</span>
+              <button type="button" className="btn btn--secondary" disabled={loadingMore}
+                onClick={() => void mailbox.loadMore()}>{loadingMore ? "LOADING…" : "LOAD EARLIER MAIL"}</button>
+            </div> : null}
+          </section>
+          <section className="panel mail-conversation-panel">
+            <Conversation
+              thread={selectedThread}
+              mails={mails}
+              myAddress={observedAddress}
+              displayName={displayName}
+              readOnly={readOnly}
+              onReply={openReply}
+              marking={marking}
+              onRead={(read, target) => { void mailbox.setRead(read, target); }}
+            />
+          </section>
+        </div>
       </div>
       {compose ? (
         <ComposeModal
