@@ -114,9 +114,9 @@ agent:
 
 | 文件 | 内容 |
 |---|---|
-| `IDENTITY.md` | 叙事身份：我是谁 |
-| `SOUL.md` | 性格/价值观/语气 |
-| `RULES.md` | 硬性行为规则 |
+| `IDENTITY.md` | 自我定义：名字、自称、身份叙述、当前自认的角色（成员可自改） |
+| `SOUL.md` | 价值观、性格、语气、表达与判断倾向（成员可自改） |
+| `RULES.md` | 必须遵循的工作规则、流程与明确约束（人类维护；实际权限由代码执行） |
 | `behavior.tlon` | **成员的全部行为规约**——EDN rules-form，语法见 `reference/dsl-reference.md`；spec 是 total 的，规则带不带 `:loop` 由此文件决定，`agent.yaml` 不再控制 |
 
 ## 3. 记忆配置 memory/config.json

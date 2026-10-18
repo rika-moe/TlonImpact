@@ -115,3 +115,49 @@ async def test_agent_config_validation(inproc_server: tuple[str, Path]) -> None:
             assert resp.status == 409
             data: dict[str, Any] = await resp.json()
             assert data["reason"] == "unknown_agent"
+
+
+async def test_self_file_read_and_patch(inproc_server: tuple[str, Path]) -> None:
+    """Admin edits preserve full Markdown, omitted files and explicit empty values."""
+    base_url, home = inproc_server
+    original = {"identity": "# 自我\n\n我是研究者。\n", "profile": "重视证据", "behavior": "附来源"}
+    async with aiohttp.ClientSession(headers=WEBUI_HEADERS) as http:
+        async with http.post(
+            f"{base_url}/admin/config/agents",
+            json={
+                "prototype": builtin_id("长预算工具迭代"),
+                "name": "自我文件测试",
+                "model": "openai/gpt-test",
+                "persona": original,
+            },
+        ) as response:
+            assert response.status == 200
+            agent_id = (await response.json())["agent_id"]
+        url = f"{base_url}/admin/config/agents/{agent_id}"
+        async with http.get(url) as response:
+            assert response.status == 200
+            data = await response.json()
+            assert data["persona"] == original
+            assert data["llm"] == {"model_name": "openai/gpt-test"}
+        async with http.patch(url, json={"persona": {"profile": ""}}) as response:
+            assert response.status == 200
+        async with http.get(url) as response:
+            assert (await response.json())["persona"] == {**original, "profile": ""}
+        assert (home / agent_id / "config" / "SOUL.md").read_text() == ""
+        (home / agent_id / "config" / "RULES.md").unlink()
+        async with http.get(url) as response:
+            assert (await response.json())["persona"]["behavior"] == ""
+        for body in [
+            [],
+            {"persona": None},
+            {"persona": []},
+            {"persona": {"identity": 1}},
+            {"persona": {"identity": "changed", "unknown": "bad"}},
+            {"persona": {"identity": "changed"}, "llm": "bad"},
+        ]:
+            async with http.patch(url, json=body) as response:
+                assert response.status == 400
+        async with http.get(url) as response:
+            assert (await response.json())["persona"]["identity"] == original["identity"]
+        async with http.get(f"{base_url}/admin/config/agents/m-missing") as response:
+            assert response.status == 404

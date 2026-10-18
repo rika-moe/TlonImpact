@@ -23,7 +23,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
-import type { AgentDetail, AgentSummary, LlmModelInfo, LogEntry, RestClient } from "../client/rest";
+import type { AgentConfig, AgentPersona, AgentDetail, AgentSummary, LlmModelInfo, LogEntry, RestClient } from "../client/rest";
+import { buildAgentUpdate, PERSONA_FIELDS } from "../lib/agentConfig";
 import { formatDurationMs } from "../lib/activity";
 import { applyEvent } from "../lib/agentLiveStatus";
 import type { AgentLiveStatus, LiveStatusMap } from "../lib/agentLiveStatus";
@@ -670,7 +671,25 @@ function CreateProtoModal({
   );
 }
 
-/** Create step 2: name / model / identity? -> POST /admin/config/agents. */
+/** Human-facing file semantics, independent of API field names. */
+function PersonaFields({ value, onChange }: {
+  value: AgentPersona;
+  onChange: (persona: AgentPersona) => void;
+}): ReactElement {
+  return <>{PERSONA_FIELDS.map(({ key, name, description }) => (
+    <label className="agents-form-row" key={key}>
+      <span className="tech-label">{name}</span>
+      <span>{description}</span>
+      <textarea
+        className="input agents-form-textarea"
+        value={value[key]}
+        onChange={(e) => onChange({ ...value, [key]: e.target.value })}
+      />
+    </label>
+  ))}</>;
+}
+
+/** Create step 2: name, model and optional persona file contents. */
 function CreateFormModal({
   rest,
   prototype,
@@ -684,7 +703,7 @@ function CreateFormModal({
 }): ReactElement {
   const [name, setName] = useState("");
   const [model, setModel] = useState("");
-  const [identity, setIdentity] = useState("");
+  const [persona, setPersona] = useState<AgentPersona>({ identity: "", profile: "", behavior: "" });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -704,7 +723,7 @@ function CreateFormModal({
         prototype,
         name: name.trim(),
         model: model.trim(),
-        persona: identity.trim() ? { identity: identity.trim() } : undefined,
+        persona,
       });
       onDone(`CREATED ${name.trim()} · ${String(result["agent_id"])}`);
     } catch (err) {
@@ -730,14 +749,7 @@ function CreateFormModal({
           <ModelSelect rest={rest} value={model} onChange={setModel} />
         </label>
         <p>成员地址由系统生成，与原型和社会身份无关。</p>
-        <label className="agents-form-row">
-          <span className="tech-label">IDENTITY (可选)</span>
-          <textarea
-            className="input agents-form-textarea"
-            value={identity}
-            onChange={(e) => setIdentity(e.target.value)}
-          />
-        </label>
+        <PersonaFields value={persona} onChange={setPersona} />
       </div>
       {error ? <div className="agents-error-bar">{error}</div> : null}
       <div className="agents-modal-actions">
@@ -762,7 +774,7 @@ function CreateFormModal({
   );
 }
 
-/** Edit persona.identity / llm.model_name (PATCH). */
+/** Load all persona files, then save only the changed fields. */
 function EditModal({
   rest,
   agentId,
@@ -774,28 +786,41 @@ function EditModal({
   onDone: (notice: string) => void;
   onClose: () => void;
 }): ReactElement {
-  const [identity, setIdentity] = useState("");
+  const [persona, setPersona] = useState<AgentPersona>({ identity: "", profile: "", behavior: "" });
+  const [initial, setInitial] = useState<AgentConfig | null>(null);
   const [modelName, setModelName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (): Promise<void> => {
-    const identityTrimmed = identity.trim();
-    const modelTrimmed = modelName.trim();
-    if (!identityTrimmed && !modelTrimmed) {
-      setError("未填写任何修改项");
-      return;
-    }
-    const llm: { model_name?: string } = {};
-    if (modelTrimmed) llm.model_name = modelTrimmed;
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setInitial(null);
+    setError(null);
+    rest.getAgentConfig(agentId).then((config) => {
+      if (cancelled) return;
+      setInitial(config);
+      setPersona(config.persona);
+      setModelName(config.llm.model_name);
+    }).catch((err: unknown) => {
+      if (!cancelled) setError(errMsg(err));
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [rest, agentId]);
 
-    setBusy(true);
+  const submit = async (): Promise<void> => {
     setError(null);
     try {
-      await rest.updateAgent(agentId, {
-        persona: identityTrimmed ? { identity: identityTrimmed } : undefined,
-        llm: Object.keys(llm).length > 0 ? llm : undefined,
-      });
+      const update = buildAgentUpdate(initial, persona, modelName);
+      if (!update.persona && !update.llm) {
+        setError("未修改任何配置");
+        return;
+      }
+      setBusy(true);
+      await rest.updateAgent(agentId, update);
       onDone(`UPDATED ${agentId}`);
     } catch (err) {
       setError(errMsg(err));
@@ -805,21 +830,14 @@ function EditModal({
 
   return (
     <ModalShell title={`EDIT // ${agentId}`} onClose={onClose}>
-      <div className="agents-form">
+      {loading ? <p>LOADING…</p> : null}
+      <fieldset className="agents-form" disabled={busy || !initial}>
+        <PersonaFields value={persona} onChange={setPersona} />
         <label className="agents-form-row">
-          <span className="tech-label">IDENTITY (留空不改)</span>
-          <textarea
-            className="input agents-form-textarea"
-            value={identity}
-            autoFocus
-            onChange={(e) => setIdentity(e.target.value)}
-          />
-        </label>
-        <label className="agents-form-row">
-          <span className="tech-label">MODEL_NAME (留空不改)</span>
+          <span className="tech-label">MODEL_NAME</span>
           <ModelSelect rest={rest} value={modelName} onChange={setModelName} />
         </label>
-      </div>
+      </fieldset>
       {error ? <div className="agents-error-bar">{error}</div> : null}
       <div className="agents-modal-actions">
         <button
@@ -834,7 +852,7 @@ function EditModal({
           type="button"
           className="btn btn--primary"
           onClick={() => void submit()}
-          disabled={busy}
+          disabled={busy || !initial}
         >
           {busy ? "SAVING…" : "SAVE"}
         </button>

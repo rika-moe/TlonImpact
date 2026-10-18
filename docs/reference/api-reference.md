@@ -78,7 +78,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 ## 端点总表
 
 <!-- BEGIN GENERATED: rest-endpoints -->
-`create_app` 共注册 54 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`create_app` 共注册 55 条路由（按源码行号排序；「注册条件」是条件挂载的守卫，`无条件` = 总是注册）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | 方法 | 路径 | handler | 注册条件 |
 |---|---|---|---|
@@ -101,6 +101,7 @@ Tlon 服务端对外的完整协议面。实现：[src/tlon_server/api/rest/](..
 | GET | `/admin/config/agents` | `handle_list_agent_configs` | configs |
 | POST | `/admin/config/agents/{agent_id}/reload` | `handle_reload_agent` | configs |
 | POST | `/admin/config/agents` | `handle_create_agent` | 无条件 |
+| GET | `/admin/config/agents/{agent_id}` | `handle_get_agent_config` | 无条件 |
 | PATCH | `/admin/config/agents/{agent_id}` | `handle_update_agent` | 无条件 |
 | DELETE | `/admin/config/agents/{agent_id}` | `handle_delete_agent` | 无条件 |
 | GET | `/admin/llm/models` | `handle_list_llm_models` | 无条件 |
@@ -574,3 +575,9 @@ const source = new EventSource(`/events?session_id=${encodeURIComponent(sessionI
 ### 系统分配的技术 ID（ADR 0035）
 
 POST /admin/config/agents 的请求为 `{prototype, name, model, params?, persona?}`，其中 prototype 是原型 ID、name 是成员显示名；agent_id 由系统生成 m-UUID，携带 agent_id（包括空值）返回 400 `managed_id`，不留下新成员。响应的 agent_id 用于收信、详情和管理。POST /admin/prototypes 不接受自报 name，返回的 prototype.name 是系统分配的 p-UUID。原型 display_name 创建必填、编辑不可清空；名字和描述应表达行为，不授予成员职业。已有用户文件不迁移或重编号，无旧职业名映射。
+
+### 成员人格文件管理
+
+`GET /admin/config/agents/{agent_id}` 返回 `{status, agent_id, persona: {identity, profile, behavior}, llm: {model_name}}`；三个 persona 字段分别是 IDENTITY.md、SOUL.md、RULES.md 的全文，缺失文件返回空字符串，未知成员返回 404。仅管理面提供此接口，不改变成员之间的人格私有边界。
+
+创建和 PATCH 使用相同的 persona 字段名。IDENTITY 定义自我叙述，SOUL 定义价值观、性格、表达与判断倾向，RULES 定义工作规则与流程。PATCH 中省略字段表示不改，空字符串表示清空；persona 必须是仅包含上述字段的字符串对象，无效输入返回 400。
