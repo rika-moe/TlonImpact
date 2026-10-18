@@ -140,24 +140,24 @@ export default function App(): ReactElement {
         <h1 className="glow-title">TLON</h1>
         {state.identity === null ? (
           <>
-            <p>{state.busy ? "正在读取你的身份…" : "无法读取 Tlon 身份"}</p>
+            <p>{state.busy ? "Loading your identity…" : "Unable to load your Tlon identity"}</p>
             {state.error && <p role="alert">{state.error}</p>}
-            {!state.busy && <button className="btn btn--primary" onClick={() => void identity.load()}>重试</button>}
+            {!state.busy && <button className="btn btn--primary" onClick={() => void identity.load()}>RETRY</button>}
           </>
         ) : (
           <form onSubmit={(event) => { event.preventDefault(); void identity.initialize(username); }}>
-            <h2>你在 Tlon 中叫什么？</h2>
-            <p>设置一次，此后打开即可进入。身份保存在本机 Tlon 实例中。</p>
-            <label htmlFor="identity-username">用户名</label>
+            <h2>What should Tlon call you?</h2>
+            <p>Set your username once to enter automatically next time. Your identity is stored in this local Tlon instance.</p>
+            <label htmlFor="identity-username">Username</label>
             <input id="identity-username" className="input" value={username}
               onChange={(event) => setUsername(event.target.value)} required maxLength={64}
               pattern={"[A-Za-z0-9][A-Za-z0-9._\\-]*"} autoComplete="off" spellCheck={false}
               disabled={state.busy} />
-            <p>地址：{username.trim() || "username"}@tlon.internal</p>
-            <p>使用英文字母、数字、点、下划线或连字符，以字母或数字开头。地址设置后不可更改。</p>
+            <p>Address: {username.trim() || "username"}@tlon.internal</p>
+            <p>Use letters, numbers, dots, underscores, or hyphens, starting with a letter or number. Your address cannot be changed after setup.</p>
             {state.error && <p role="alert">{state.error}</p>}
             <button className="btn btn--primary" type="submit" disabled={state.busy || !username.trim()}>
-              {state.busy ? "正在设置…" : "设置身份并进入"}
+              {state.busy ? "SETTING UP…" : "SET IDENTITY AND ENTER"}
             </button>
           </form>
         )}

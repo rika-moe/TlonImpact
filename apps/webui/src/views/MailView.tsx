@@ -15,7 +15,7 @@ import "../styles/mail.css";
 
 function formatTime(timestamp: string): string {
   try {
-    return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
+    return new Date(timestamp).toLocaleString("en-GB", { hour12: false });
   } catch {
     return "??:??:??";
   }
@@ -153,7 +153,7 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
         <span className="mail-spacer" />
         {notice ? <span className="mail-notice">{notice}</span> : null}
         <button type="button" className="btn btn--secondary" disabled={syncing}
-          onClick={() => void mailbox.refresh()}>{syncing ? "同步中…" : "刷新邮箱"}</button>
+          onClick={() => void mailbox.refresh()}>{syncing ? "SYNCING…" : "REFRESH MAIL"}</button>
         {readOnly ? null : (
           <button
             type="button"
@@ -168,7 +168,7 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
         <section className="panel mail-threads-panel">
           <input
             className="input mail-filter"
-            placeholder="FILTER // 参与者 / 主题 / 内容"
+            placeholder="FILTER // participants / subject / content"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
@@ -176,7 +176,7 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
             {loading ? (
               <p className="mail-empty">LOADING…</p>
             ) : visibleThreads.length === 0 ? (
-              <p className="mail-empty">NO MAIL // 收件箱为空</p>
+              <p className="mail-empty">NO MAIL</p>
             ) : (
               visibleThreads.map((thread) => (
                 <ThreadItem
@@ -193,9 +193,9 @@ export function MailView({ rest, sse, username }: ViewProps): ReactElement {
             )}
           </div>
           {hasMore ? <div className="mail-history-notice">
-            <span>历史邮件尚未全部加载</span>
+            <span>Earlier mail is available.</span>
             <button type="button" className="btn btn--secondary" disabled={loadingMore}
-              onClick={() => void mailbox.loadMore()}>{loadingMore ? "LOADING…" : "加载更早邮件"}</button>
+              onClick={() => void mailbox.loadMore()}>{loadingMore ? "LOADING…" : "LOAD EARLIER MAIL"}</button>
           </div> : null}
         </section>
         <section className="panel mail-conversation-panel">
@@ -327,9 +327,9 @@ function ThreadItem({
         </span>
       </div>
       <div className="mail-thread-participants">{who}</div>
-      <div className="mail-thread-meta">#{thread.threadId.slice(0, 8)} · {thread.count} 封
-        {showUnread ? ` · ${thread.unreadCount} 未读` : ""}
-        {!thread.rootLoaded ? " · 根邮件未加载" : ""}</div>
+      <div className="mail-thread-meta">#{thread.threadId.slice(0, 8)} · {thread.count} {thread.count === 1 ? "message" : "messages"}
+        {showUnread ? ` · ${thread.unreadCount} unread` : ""}
+        {!thread.rootLoaded ? " · root message not loaded" : ""}</div>
     </div>
   );
 }
@@ -391,13 +391,13 @@ function Conversation({
       <div className="mail-conversation-head">
         <h3>{thread.title}</h3>
         <span className="tech-label">THREAD {thread.threadId}</span>
-        {!thread.rootLoaded ? <p className="mail-history-notice">根邮件未加载或不在此邮箱；当前显示已加载片段。</p> : null}
+        {!thread.rootLoaded ? <p className="mail-history-notice">The root message is not loaded or is outside this mailbox. Showing loaded messages.</p> : null}
         {!readOnly && thread.mails.some((mail) => mail.to.includes(myAddress) || mail.cc.includes(myAddress)) ?
           <div className="mail-thread-actions">
             <button type="button" className="btn btn--secondary" disabled={marking}
-              onClick={() => onRead(true, { thread_id: thread.threadId })}>整线程标为已读</button>
+              onClick={() => onRead(true, { thread_id: thread.threadId })}>MARK THREAD AS READ</button>
             <button type="button" className="btn btn--secondary" disabled={marking}
-              onClick={() => onRead(false, { thread_id: thread.threadId })}>整线程标为未读</button>
+              onClick={() => onRead(false, { thread_id: thread.threadId })}>MARK THREAD AS UNREAD</button>
           </div> : null}
       </div>
       <div className="mail-conversation" ref={scrollRef} onScroll={savePosition}>
@@ -431,7 +431,7 @@ function Conversation({
                 ↩ RE {displayName(localPart(parent.from_address))} ·{" "}
                 {parent.subject ?? parent.content.slice(0, 24)} · {formatTime(parent.timestamp)}
               </div>
-            ) : mail.in_reply_to ? <div className="mail-card-ref">↩ RE #{mail.in_reply_to.slice(0, 8)} · 父邮件未加载或不在此邮箱</div> : null}
+            ) : mail.in_reply_to ? <div className="mail-card-ref">↩ RE #{mail.in_reply_to.slice(0, 8)} · parent message not loaded or outside this mailbox</div> : null}
             {mail.forward_of ? (
               <div className="mail-card-ref">
                 ⤳ FWD OF{" "}
@@ -447,7 +447,7 @@ function Conversation({
                 {mail.to.includes(myAddress) || mail.cc.includes(myAddress) ?
                   <button type="button" className="btn btn--secondary" disabled={marking}
                     onClick={() => onRead(mail.read !== true, { mail_id: mail.id })}>
-                    {mail.read === true ? "标为未读" : "标为已读"}
+                    {mail.read === true ? "MARK AS UNREAD" : "MARK AS READ"}
                   </button> : null}
                 {!own ?
                 <button
@@ -496,12 +496,12 @@ function ComposeModal({
     if (submitting.current) return;
     const toList = splitList(to);
     if (toList.length === 0) {
-      setError("TO 不能为空（逗号分隔，支持名字 / id / 地址）");
+      setError("TO is required (comma-separated names, IDs, or addresses).");
       return;
     }
     const body = content.trim();
     if (!body) {
-      setError("CONTENT 不能为空");
+      setError("CONTENT is required.");
       return;
     }
     const ccList = splitList(cc);

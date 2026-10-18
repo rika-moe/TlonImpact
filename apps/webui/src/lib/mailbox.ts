@@ -132,14 +132,14 @@ export class MailboxController {
           this.update({ hasMore: page.has_more });
         }
         if (!wasInitialized || !page.has_more || page.mails.some((mail) => mail.id === anchor)) break;
-        if (!page.next_before || page.next_before === before) throw new Error("邮箱分页游标未前进");
+        if (!page.next_before || page.next_before === before) throw new Error("Mailbox pagination cursor did not advance");
         before = page.next_before;
       } while (this.active);
       this.snapshotAnchor = nextAnchor;
       this.initialized = true;
     } catch (error) {
       if (generation !== this.generation) return;
-      this.update({ notice: `MAIL 同步失败: ${error instanceof Error ? error.message : String(error)}` });
+      this.update({ notice: `Mail sync failed: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       if (generation !== this.generation) return;
       this.refreshing = false;
@@ -161,7 +161,7 @@ export class MailboxController {
       this.update({ hasMore: page.has_more });
     } catch (error) {
       if (generation !== this.generation) return;
-      this.update({ notice: `历史邮件加载失败: ${error instanceof Error ? error.message : String(error)}` });
+      this.update({ notice: `Failed to load earlier mail: ${error instanceof Error ? error.message : String(error)}` });
     } finally { if (generation === this.generation) this.update({ loadingMore: false }); }
   }
   async setRead(read: boolean, target: { mail_id?: string; thread_id?: string }): Promise<void> {
@@ -177,10 +177,10 @@ export class MailboxController {
         this.readOverrides.set(id, result.read);
         this.versions.set(id, { local: this.revision, snapshot: 0 });
       });
-      this.update({ mails: this.state.mails.map((mail) => ids.has(mail.id) ? { ...mail, read: result.read } : mail), notice: result.read ? "已标记为已读" : "已标记为未读" });
+      this.update({ mails: this.state.mails.map((mail) => ids.has(mail.id) ? { ...mail, read: result.read } : mail), notice: result.read ? "Marked as read" : "Marked as unread" });
     } catch (error) {
       if (generation !== this.generation) return;
-      this.update({ notice: `标记失败: ${error instanceof Error ? error.message : String(error)}` });
+      this.update({ notice: `Failed to update read status: ${error instanceof Error ? error.message : String(error)}` });
     } finally { if (generation === this.generation) this.update({ marking: false }); }
   }
 }

@@ -115,6 +115,13 @@ test("stable root title survives newer replies and incomplete history is explici
   assert.equal(groupByThread([mail({ id: "t1", content: " hello\n  world " })], ME)[0]?.title, "hello world");
 });
 
+test("thread title localizes only the empty fallback and preserves user content", () => {
+  assert.equal(groupByThread([mail({ subject: null, content: "" })], ME)[0]?.title, "(no subject)");
+  const original = mail({ subject: "项目进展 MixedCase", content: "保留正文 MixedCase" });
+  assert.equal(groupByThread([original], ME)[0]?.title, original.subject);
+  assert.equal(groupByThread([original], ME)[0]?.mails[0]?.content, original.content);
+});
+
 test("same participants and subjects never merge distinct thread ids", () => {
   assert.equal(groupByThread([mail({ id: "t1", thread_id: "t1" }), mail({ id: "t2", thread_id: "t2" })], ME).length, 2);
   const sameName = mail({ to: [ME, "xie-yunshu@external.example"] });

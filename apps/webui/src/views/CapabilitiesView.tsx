@@ -106,7 +106,7 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
     setError(null);
     try {
       await rest.approveCapability(name);
-      setNotice(`APPROVED ${name} // 成员下次 wake 可用`);
+      setNotice(`APPROVED ${name} // AVAILABLE ON NEXT MEMBER WAKE`);
       // The entry left staging; drop its detail panel.
       if (selected?.staging && selected.name === name) {
         setSelected(null);
@@ -160,7 +160,7 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                 TRUSTED LIBRARY ({trusted.length})
               </h3>
               {trusted.length === 0 ? (
-                <p className="capabilities-empty">NO CAPABILITIES // 受信库为空</p>
+                <p className="capabilities-empty">NO TRUSTED CAPABILITIES</p>
               ) : (
                 trusted.map((c) => (
                   <CapCard
@@ -263,7 +263,7 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                     {detail.deprecated ? (
                       <div className="cap-meta-row">
                         <span className="tech-label">DEPRECATED</span>
-                        <span className="cap-deprecated-badge">DEPRECATED // 已退役</span>
+                        <span className="cap-deprecated-badge">DEPRECATED</span>
                       </div>
                     ) : null}
                     {detail.description ? (
@@ -279,7 +279,7 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                       </div>
                     ) : null}
                   </div>
-                  <span className="tech-label">CAPABILITY.TLON</span>
+                  <span className="tech-label">capability.tlon</span>
                   <pre className="terminal cap-artifact">{detail.artifact}</pre>
                   {detail.examples && detail.examples.length > 0 ? (
                     <>
@@ -325,7 +325,7 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
                   ) : null}
                   {detail.reviews ? (
                     <>
-                      <span className="tech-label">REVIEW.MD</span>
+                      <span className="tech-label">REVIEW.md</span>
                       <pre className="terminal cap-artifact">{detail.reviews}</pre>
                     </>
                   ) : null}
@@ -336,7 +336,7 @@ export function CapabilitiesView({ rest }: ViewProps): ReactElement {
             </section>
           ) : (
             <section className="panel cap-detail cap-detail--empty">
-              <p className="capabilities-empty">SELECT A CAPABILITY // 选择左侧能力查看详情</p>
+              <p className="capabilities-empty">SELECT A CAPABILITY ON THE LEFT TO VIEW DETAILS</p>
             </section>
           )}
         </div>
@@ -408,7 +408,7 @@ function CapCard({
         </span>
       </div>
       {cap.deprecated ? (
-        <span className="cap-deprecated-badge">DEPRECATED // 已退役</span>
+        <span className="cap-deprecated-badge">DEPRECATED</span>
       ) : null}
       {cap.description ? <div className="cap-card-desc">{cap.description}</div> : null}
       <div className="tech-label">AUTHOR: {cap.author || "unknown"}</div>
@@ -464,7 +464,7 @@ function NewProposalModal({
 
   const submit = async (): Promise<void> => {
     if (!artifact.trim()) {
-      setError("ARTIFACT 不能为空");
+      setError("ARTIFACT is required");
       return;
     }
     setBusy(true);
@@ -474,7 +474,7 @@ function NewProposalModal({
         artifact,
         proposal_note: proposalNote.trim() || undefined,
       })) as { capability?: { name?: string } };
-      onDone(`STAGED ${data.capability?.name ?? "capability"} // 等待人工批准`);
+      onDone(`STAGED ${data.capability?.name ?? "capability"} // AWAITING HUMAN APPROVAL`);
     } catch (err) {
       setError(writeErrMsg(err));
       setBusy(false);
@@ -485,7 +485,7 @@ function NewProposalModal({
     <ModalShell title="NEW PROPOSAL // CAPABILITY ARTIFACT" onClose={onClose}>
       <div className="cap-form">
         <label className="cap-form-row">
-          <span className="tech-label">CAPABILITY.TLON (EDN 全文) *</span>
+          <span className="tech-label">capability.tlon (full EDN text) *</span>
           <textarea
             className="input cap-form-artifact"
             value={artifact}
@@ -496,7 +496,7 @@ function NewProposalModal({
           />
         </label>
         <label className="cap-form-row">
-          <span className="tech-label">PROPOSAL_NOTE (可选)</span>
+          <span className="tech-label">PROPOSAL NOTE (optional)</span>
           <input
             className="input"
             value={proposalNote}

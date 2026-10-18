@@ -149,7 +149,7 @@ test("read requests prevent duplicates and display failures", async () => {
   await box.setRead(false, { mail_id: "a" });
   assert.equal(calls, 1);
   mutation.reject(new Error("write failed")); await first;
-  assert.match(box.getSnapshot().notice ?? "", /标记失败.*write failed/);
+  assert.match(box.getSnapshot().notice ?? "", /Failed to update read status.*write failed/);
   assert.equal(box.getSnapshot().marking, false);
   box.stop();
 });
@@ -186,7 +186,7 @@ test("failed gap recovery does not move the last completed snapshot boundary", a
   });
   sse.changeStatus(true); await flush(); reconnect = true;
   sse.changeStatus(false); sse.changeStatus(true); await flush();
-  assert.match(box.getSnapshot().notice ?? "", /同步失败/);
+  assert.match(box.getSnapshot().notice ?? "", /Mail sync failed/);
   fail = false;
   sse.changeStatus(false); sse.changeStatus(true); await flush();
   assert.equal(box.getSnapshot().mails.length, 3);
@@ -203,7 +203,7 @@ test("explicit refresh recovers REST failure while SSE stays connected", async (
   sse.changeStatus(true); await flush();
   assert.equal(box.getSnapshot().loading, false);
   assert.equal(box.getSnapshot().syncing, false);
-  assert.match(box.getSnapshot().notice ?? "", /同步失败/);
+  assert.match(box.getSnapshot().notice ?? "", /Mail sync failed/);
   failed = false;
   await box.refresh();
   assert.equal(box.getSnapshot().mails[0]?.id, "recovered");

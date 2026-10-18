@@ -24,7 +24,7 @@ export type ActivityKind =
 /** One semantic feed row derived from a raw ServerEvent. */
 export interface ActivityEntry {
   kind: ActivityKind;
-  /** Human-readable one-liner, e.g. "林知遥 正在思考（上下文 12 条）". */
+  /** Human-readable one-liner, e.g. "林知遥 is thinking (12 context messages)". */
   title: string;
   /** Secondary fields, rendered dimmed. */
   detail?: string;
@@ -84,12 +84,12 @@ function mailEntry(ev: ServerEvent, p: Payload): ActivityEntry {
   const from = str(mail["from_address"]);
   const subject = str(mail["subject"]);
   const recipient = str(p["recipient"]);
-  const fromText = from !== undefined ? ` · 来自 ${localPart(from)}` : "";
+  const fromText = from !== undefined ? ` · from ${localPart(from)}` : "";
   const toText =
     ev.eventType === "mail.delivered" && recipient !== undefined
       ? ` → ${recipient}`
       : "";
-  return entry("mail", `新邮件${fromText}${toText}`, ev, subject);
+  return entry("mail", `New mail${fromText}${toText}`, ev, subject);
 }
 
 function toolDetail(p: Payload): string | undefined {
@@ -120,13 +120,13 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
     case "agent.thinking_start": {
       const contextLength = num(p["context_length"]);
       const suffix =
-        contextLength !== undefined ? `（上下文 ${contextLength} 条）` : "";
-      return entry("thinking", `${name} 正在思考${suffix}`, ev, undefined, agentId);
+        contextLength !== undefined ? ` (${contextLength} context messages)` : "";
+      return entry("thinking", `${name} is thinking${suffix}`, ev, undefined, agentId);
     }
     case "agent.thinking_end": {
       const ms = num(p["duration_ms"]);
       const suffix = ms !== undefined ? ` · ${formatDurationMs(ms)}` : "";
-      return entry("thinking", `${name} 思考结束${suffix}`, ev, undefined, agentId);
+      return entry("thinking", `${name} finished thinking${suffix}`, ev, undefined, agentId);
     }
 
     case "agent.llm_request": {
@@ -134,11 +134,11 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
       const messages = num(p["messages_count"]);
       const tools = num(p["tools_count"]);
       const parts: string[] = [];
-      if (messages !== undefined) parts.push(`${messages} 条消息`);
-      if (tools !== undefined) parts.push(`${tools} 个工具`);
+      if (messages !== undefined) parts.push(`${messages} messages`);
+      if (tools !== undefined) parts.push(`${tools} tools`);
       return entry(
         "llm",
-        `${name} LLM 请求${model !== undefined ? ` · ${model}` : ""}`,
+        `${name} LLM request${model !== undefined ? ` · ${model}` : ""}`,
         ev,
         parts.length > 0 ? parts.join(" · ") : undefined,
         agentId,
@@ -148,14 +148,14 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
       const ms = num(p["duration_ms"]);
       const toolCalls = num(p["tool_call_count"]);
       const parts: string[] = [];
-      if (toolCalls !== undefined && toolCalls > 0) parts.push(`${toolCalls} 次工具调用`);
+      if (toolCalls !== undefined && toolCalls > 0) parts.push(`${toolCalls} tool calls`);
       const finish = str(p["finish_reason"]);
       if (finish !== undefined) parts.push(finish);
       const model = str(p["model"]);
       if (model !== undefined) parts.push(model);
       return entry(
         "llm",
-        `${name} LLM 调用${ms !== undefined ? ` ${formatDurationMs(ms)}` : ""}`,
+        `${name} LLM response${ms !== undefined ? ` ${formatDurationMs(ms)}` : ""}`,
         ev,
         parts.length > 0 ? parts.join(" · ") : undefined,
         agentId,
@@ -163,12 +163,12 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
     }
 
     case "tool.execute_start":
-      return entry("tool", `${name} 调用工具 ${str(p["tool_name"]) ?? "?"}`, ev, toolDetail(p), agentId);
+      return entry("tool", `${name} is calling tool ${str(p["tool_name"]) ?? "?"}`, ev, toolDetail(p), agentId);
     case "tool.execute_end": {
       const ok = p["success"] !== false;
       return entry(
         "tool",
-        `${name} 工具 ${str(p["tool_name"]) ?? "?"} ${ok ? "成功" : "失败"}`,
+        `${name} tool ${str(p["tool_name"]) ?? "?"} ${ok ? "succeeded" : "failed"}`,
         ev,
         undefined,
         agentId,
@@ -177,33 +177,33 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
     case "tool.error":
       return entry(
         "tool",
-        `${name} 工具 ${str(p["tool_name"]) ?? "?"} 出错`,
+        `${name} tool ${str(p["tool_name"]) ?? "?"} error`,
         ev,
         toolDetail(p),
         agentId,
       );
 
     case "agent.waking":
-      return entry("lifecycle", `${name} 正在唤醒`, ev, undefined, agentId);
+      return entry("lifecycle", `${name} is waking`, ev, undefined, agentId);
     case "agent.woken": {
       const secs = num(p["wake_duration_seconds"]);
       return entry(
         "lifecycle",
-        `${name} 已唤醒${secs !== undefined ? ` · ${secs.toFixed(1)}s` : ""}`,
+        `${name} woke up${secs !== undefined ? ` · ${secs.toFixed(1)}s` : ""}`,
         ev,
         undefined,
         agentId,
       );
     }
     case "agent.wake_failed":
-      return entry("lifecycle", `${name} 唤醒失败`, ev, undefined, agentId);
+      return entry("lifecycle", `${name} failed to wake`, ev, undefined, agentId);
     case "agent.sleeping": {
       const idle = num(p["idle_seconds"]);
       return entry(
         "lifecycle",
-        `${name} 进入休眠`,
+        `${name} is going to sleep`,
         ev,
-        idle !== undefined ? `空闲 ${Math.round(idle)}s` : undefined,
+        idle !== undefined ? `idle ${Math.round(idle)}s` : undefined,
         agentId,
       );
     }
@@ -211,35 +211,35 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
       const idle = num(p["idle_seconds"]);
       return entry(
         "lifecycle",
-        `${name} 空闲${idle !== undefined ? ` ${Math.round(idle)}s` : ""}`,
+        `${name} idle${idle !== undefined ? ` ${Math.round(idle)}s` : ""}`,
         ev,
         undefined,
         agentId,
       );
     }
     case "agent.started":
-      return entry("lifecycle", `${name} 已启动`, ev, undefined, agentId);
+      return entry("lifecycle", `${name} started`, ev, undefined, agentId);
     case "agent.stopped": {
       const stoppedBy = str(p["stopped_by"]);
       return entry(
         "lifecycle",
-        `${name} 已停止`,
+        `${name} stopped`,
         ev,
-        stoppedBy !== undefined ? `由 ${stoppedBy}` : undefined,
+        stoppedBy !== undefined ? `by ${stoppedBy}` : undefined,
         agentId,
       );
     }
     case "agent.spawned": {
       const parts: string[] = [];
       const prototype = str(p["prototype"]);
-      if (prototype !== undefined) parts.push(`原型 ${prototype}`);
+      if (prototype !== undefined) parts.push(`prototype ${prototype}`);
       const depth = num(p["spawn_depth"]);
       if (depth !== undefined) parts.push(`GEN ${depth}`);
       const spawner = str(p["spawner_id"]);
-      if (spawner !== undefined) parts.push(`由 ${spawner}`);
+      if (spawner !== undefined) parts.push(`by ${spawner}`);
       return entry(
         "lifecycle",
-        `${name} 已孵化`,
+        `${name} spawned`,
         ev,
         parts.length > 0 ? parts.join(" · ") : undefined,
         agentId,
@@ -247,19 +247,19 @@ export function toActivity(ev: ServerEvent): ActivityEntry {
     }
 
     case "config.updated":
-      return entry("config", `配置已更新 · ${agentId ?? "?"}`, ev, str(p["action"]), agentId);
+      return entry("config", `Configuration updated · ${agentId ?? "?"}`, ev, str(p["action"]), agentId);
 
     case "system.startup": {
       const count = num(p["agents"]);
       return entry(
         "system",
-        "系统启动",
+        "System started",
         ev,
-        count !== undefined ? `${count} 个成员` : undefined,
+        count !== undefined ? `${count} agents` : undefined,
       );
     }
     case "system.shutdown":
-      return entry("system", "系统关闭", ev);
+      return entry("system", "System shut down", ev);
 
     default:
       return entry("unknown", ev.eventType, ev);

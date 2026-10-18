@@ -27,12 +27,14 @@ test("mail receipt preserves failed gateway status without claiming delivery", a
 
 test("lost response exposes original request id for safe retry", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => { throw new TypeError("connection lost"); }) as typeof fetch;
+  globalThis.fetch = (async () => { throw new TypeError("连接中断 MixedCase"); }) as typeof fetch;
   try {
     await assert.rejects(
       new RestClient().sendMail({ request_id: "stable", to: ["alice"], content: "hello" }),
       (error: unknown) => error instanceof MailSendError
-        && error.reason === "submission_unknown" && error.requestId === "stable",
+        && error.reason === "submission_unknown" && error.requestId === "stable"
+        && error.message.startsWith("Delivery result unknown; retry with the original request_id stable")
+        && error.message.includes("连接中断 MixedCase"),
     );
   } finally {
     globalThis.fetch = originalFetch;
