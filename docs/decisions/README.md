@@ -63,6 +63,8 @@ ADR 按历史编号保留，不按重要程度搬迁。理解当前系统先读 
 
 ## 行为与扩展
 
+[ADR 0044：统一操作](0044-unified-operations.md) 的方向已认可、代码尚未实施；目标与阶段见 [operations](../design/operations.md) / [plan](../design/operations-plan.md)。现有词汇、工具与恢复机制尚未被替换。
+
 | 决策 | 当前设计 | 有效范围与修订关系 |
 |---|---|---|
 | [ADR 0037：动态工作方式与长期行动习惯](0037-adaptive-working-methods.md) | [prototypes](../design/prototypes.md) | 远期方向；动态上下文与流程自主调整尚未实施 |

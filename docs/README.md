@@ -39,6 +39,12 @@ architecture 区分规范与当前实现；design 负责当前领域模型和机
 | 人类接入 | [WebUI](design/webui.md) | 页面状态、邮箱同步、线程展示与管理交互 |
 | 人类接入 | [Telegram](design/telegram.md) | SDK 接入、回复关联与失败处理 |
 
+## 已认可方向、尚未实施的方案
+
+- [统一操作与可组合行为](design/operations.md)：能力定义与 DSL/LLM 入口分离、共享执行、复合依赖及动态工具视图。
+- [分阶段实施计划](design/operations-plan.md)：两个串行 EPIC、十个独立 PR 任务及验收标准；方案已认可并获准开工 EPIC A，按阶段验收推进。
+- [ADR 0044](decisions/0044-unified-operations.md)：接受方向与目标替代范围。上述目标不代替下方 reference 的当前机制。
+
 ## 参考文档与操作指南
 
 | 文档 | 内容 |
