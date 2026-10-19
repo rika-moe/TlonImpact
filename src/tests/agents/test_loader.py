@@ -16,12 +16,7 @@ from tlon.agents.member_spec import MemberSpec, MemberSpecValidationError
 from tlon.base.paths import TlonPaths
 from tlosure.edn import EDNParseError, loads
 
-SCRIPT_EDN = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["a@tlon.internal"]})]}]}
-"""
+SCRIPT_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["a@tlon.internal"]})]}]}\n'
 
 
 @pytest.fixture
@@ -90,26 +85,14 @@ class TestLoadMemberSpec:
         _write_behavior(
             tlon,
             "relay-2",
-            """\
-{:version 1
- :parameters {:to {:type :string-list :required true}}
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["a@tlon.internal"]})]}]}
-""",
+            '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["a@tlon.internal"]})]}]}\n',
         )
         spec = load_member_spec("relay-2", tlon_paths=tlon)
         assert spec.rules[0].actions
 
     def test_parses_standin_text_when_template(self, tlon):
         """The write-side template's stand-in text parses as a valid spec."""
-        template = """\
-{:version 1
- :parameters {:to {:type :string-list :required true}}
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ${to}})]}]}
-"""
+        template = '{:version 1\n :parameters {:to {:type :string-list :required true}}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ${to}})]}]}\n'
         analyzed = analyze(template)
         member = MemberSpec.from_edn(loads(analyzed.standin_text))
         assert member.rules[0].actions

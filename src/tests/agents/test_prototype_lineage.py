@@ -18,9 +18,9 @@ from tlon.tools.agents.write_prototype import WritePrototypeTool
 from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
 from tlon.tools.prototypes.ports import PrototypeError
 
-SPEC_V1 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
-SPEC_V2 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["y@tlon.internal"]})]}]}\n'
-SPEC_V3 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(forward {:to ["z@tlon.internal"]})]}]}\n'
+SPEC_V1 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+SPEC_V2 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
+SPEC_V3 = '{:version 1\n :rules [{:name "respond"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["z@tlon.internal"]})]}]}\n'
 
 
 def _three_generations(p: TlonPaths) -> tuple[str, str, str]:
@@ -67,8 +67,14 @@ class TestGetPrototypeLineage:
         diff12 = chain[1]["diff_from_parent"]
         assert f"--- {gen1}/behavior.tlon" in diff12
         assert f"+++ {gen2}/behavior.tlon" in diff12
-        assert '-          :actions [(forward {:to ["x@tlon.internal"]})]}' in diff12
-        assert '+          :actions [(forward {:to ["y@tlon.internal"]})]}' in diff12
+        assert (
+            '-          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}'
+            in diff12
+        )
+        assert (
+            '+          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}'
+            in diff12
+        )
         diff23 = chain[2]["diff_from_parent"]
         assert "y@tlon.internal" in diff23 and "z@tlon.internal" in diff23
 

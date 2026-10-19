@@ -235,21 +235,21 @@ async def test_tool_counters(
     service._on_tool_execute_end(
         Event(
             type=EventType.TOOL_EXECUTE_END,
-            payload={"agent_id": "a", "tool_name": "sendEmail", "success": True},
+            payload={"agent_id": "a", "tool_name": "mail-send", "success": True},
             source="a",
         )
     )
     service._on_tool_error(
         Event(
             type=EventType.TOOL_ERROR,
-            payload={"agent_id": "a", "tool_name": "sendEmail", "error": "boom"},
+            payload={"agent_id": "a", "tool_name": "mail-send", "error": "boom"},
             source="a",
         )
     )
 
     snapshot = service.snapshot()
-    assert _point(snapshot, "tlon.tool.executions", tool_name="sendEmail")["value"] == 1
-    assert _point(snapshot, "tlon.tool.errors", tool_name="sendEmail")["value"] == 1
+    assert _point(snapshot, "tlon.tool.executions", tool_name="mail-send")["value"] == 1
+    assert _point(snapshot, "tlon.tool.errors", tool_name="mail-send")["value"] == 1
 
 
 async def test_mail_endorsed_counts_by_endorser(
@@ -320,7 +320,7 @@ async def test_handler_failure_does_not_propagate(
 
     event = Event(
         type=EventType.TOOL_ERROR,
-        payload={"agent_id": "a", "tool_name": "sendEmail"},
+        payload={"agent_id": "a", "tool_name": "mail-send"},
         source="a",
     )
     service._on_tool_error(event)  # must not raise

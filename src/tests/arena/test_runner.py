@@ -43,12 +43,7 @@ from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.store import StoredPost
 
-_RELAY_SPEC = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+_RELAY_SPEC = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
 _TYPICAL_JSON = json.dumps(
     [

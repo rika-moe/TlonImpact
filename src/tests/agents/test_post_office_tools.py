@@ -20,12 +20,15 @@ from tlon.base.config import AgentConfig
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import ToolCall
 from tlon.base.paths import TlonPaths
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.member_mail import MemberMailService
 from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.resolver import RecipientResolver
 from tlon.organization.mail.store import MailStore
-from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import Form
 
@@ -59,7 +62,16 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
         post_office=office,
     )
     tools = ToolExecutor()
-    tools.register_tool(SendEmailTool())
+    operations = OperationExecutor(
+        OperationRegistry(
+            make_mail_operations(
+                MemberMailService("agent1", Mailbox(paths.mail_database_file(), "agent1"), office)
+            )
+        ),
+        CallContext("agent1", "assembly", "assembly"),
+    )
+    for operation in operations.registry.definitions():
+        tools.register_tool(OperationTool(operations, operation.name))
     journal = SessionJournal("agent1", paths)
     driver = LoopDriver(
         identity=identity,
@@ -85,7 +97,7 @@ def _call(
     args = {"to": [recipient], "content": "completed work"}
     if request_id is not None:
         args["request_id"] = request_id
-    return ToolCall(id=call_id, function_name="sendEmail", arguments=args)
+    return ToolCall(id=call_id, function_name="mail-send", arguments=args)
 
 
 async def test_tool_receipt_is_durable_before_collect_and_replay_does_not_send_again(
@@ -96,7 +108,7 @@ async def test_tool_receipt_is_durable_before_collect_and_replay_does_not_send_a
     completed = await driver.execute_one_tool("session1", call)
     result = completed[1]
     assert result.success
-    assert result.data["request_id"] == "session1:tool1"
+    assert result.data["request_id"] == "session:session1:tool1"
     fresh_store = MailStore(office.store.database)
     assert [mail.id for mail in fresh_store.mails("human:bob")] == [result.data["mail_id"]]
     session = AgentSession(session_id="session1", trigger_content="work")
@@ -120,7 +132,7 @@ async def test_rejection_never_completes_session(
         office.store.retire("human:bob")
     completed = await driver.execute_one_tool("session1", _call(recipient=recipient))
     assert not completed[1].success
-    assert completed[1].data["request_id"] == "session1:tool1"
+    assert completed[1].data["request_id"] == "session:session1:tool1"
     session = AgentSession(session_id="session1", trigger_content="work")
     outcome = await act_stage_collect(services, session, [completed])
     assert not outcome.complete
@@ -147,12 +159,12 @@ async def test_timeout_after_real_commit_preserves_key_and_safe_retry(
     completed = await driver.execute_one_tool("session1", _call())
     assert committed.is_set(), "timeout should occur after the real database commit"
     assert not completed[1].success
-    assert completed[1].data == {"request_id": "session1:tool1", "outcome": "unknown"}
+    assert completed[1].data == {"request_id": "session:session1:tool1", "outcome": "unknown"}
     assert len(office.store.mails("human:bob")) == 1
     monkeypatch.setattr(office, "_notify", original_notify)
     replay = await driver.execute_one_tool(
         "session2",
-        _call(request_id="session1:tool1", call_id="retry"),
+        _call(request_id="session:session1:tool1", call_id="retry"),
     )
     assert replay[1].success
     assert len(office.store.mails("human:bob")) == 1
@@ -183,3 +195,46 @@ async def test_gateway_failure_is_reported_in_actual_tool_receipt(
     ]
     assert "gateway unavailable" in result.message
     assert office.store.mails("gateway:test") == []
+
+
+async def test_orphan_dispatch_preserves_prejournaled_unknown_request_key(
+    engine: tuple[LoopDriver, PostOffice, MagicMock],
+) -> None:
+    driver, _, _ = engine
+    journal = driver._journal
+    call = _call(request_id="explicit-stable")
+    await journal.append("orphan", "session/start", context=[], trigger_content="work")
+    await journal.append(
+        "orphan",
+        "tool/dispatch",
+        tool_calls=[call.to_dict()],
+        operation_recovery={call.id: driver._operation_recovery("orphan", call)},
+    )
+    replay = await journal.resume("orphan")
+    assert replay is not None
+    assert replay.pending_collect[0][1].data == {
+        "request_id": "explicit-stable",
+        "outcome": "unknown",
+    }
+    assert not replay.pending_collect[0][1].success
+
+
+async def test_journaled_receipt_recovers_for_collection_without_resending(
+    engine: tuple[LoopDriver, PostOffice, MagicMock],
+) -> None:
+    driver, office, _ = engine
+    journal = driver._journal
+    call = _call()
+    await journal.append("session1", "session/start", context=[], trigger_content="work")
+    await journal.append(
+        "session1",
+        "tool/dispatch",
+        tool_calls=[call.to_dict()],
+        operation_recovery={call.id: driver._operation_recovery("session1", call)},
+    )
+    completed = await driver.execute_one_tool("session1", call)
+    replay = await journal.resume("session1")
+    assert replay is not None
+    assert replay.pending_collect[0][1].data == completed[1].data
+    assert replay.pending_collect[0][1].success
+    assert len(office.store.mails("human:bob")) == 1

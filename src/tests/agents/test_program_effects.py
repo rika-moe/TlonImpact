@@ -7,14 +7,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.unit.test_post_office import office_at
 from tlon.agents.program_effects import ProgramEffects
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins
 from tlon.base.config import LLMConfig
 from tlon.base.llm_client import LLMClient
 from tlon.organization.mail.mail import Mail
-from tlon.organization.mail.mailbox import Mailbox
 from tlosure.builtins import ActionRequest, EvalError
 from tlosure.edn import Keyword, dumps, loads
 from tlosure.eval import eval_form
@@ -61,43 +59,9 @@ def test_state_and_effect_commit_together_and_replay_does_not_overwrite(
     assert restarted.state_get("key") == 3
 
 
-async def test_send_returns_actual_receipt_and_crash_retry_never_duplicates(tmp_path: Path) -> None:
-    office = office_at(tmp_path)
-    effects = ProgramEffects(from_address="a@tlon.internal", post_office=office)
-    request = ActionRequest(
-        "send_mail",
-        {"to": ["b"], "content": "frozen edition", "subject": "P1", "request_id": "P1:b"},
-    )
-    store = ProgramStore(tmp_path / "program.sqlite3")
-    first = await effects.execute(request, "ignored", "r", 0, store, "[]")
-    # Simulated process loss before the driver records the result.
-    replay = await effects.execute(request, "ignored", "r", 0, ProgramStore(store.database), "[]")
-    inbox = await Mailbox(office._paths.mail_database_file(), "b").inbox()
-    assert len(inbox) == 1
-    assert first[Keyword("status")] == "accepted"
-    assert replay[Keyword("mail-id")] == first[Keyword("mail-id")] == inbox[0].id
-    assert first[Keyword("request-id")] == "P1:b"
-
-
-async def test_rejection_is_explicit_and_unknown_submission_propagates(
-    tmp_path: Path, monkeypatch
-) -> None:
-    office = office_at(tmp_path)
-    effects = ProgramEffects(from_address="a@tlon.internal", post_office=office)
-    request = ActionRequest(
-        "send_mail", {"to": ["unknown"], "content": "draft", "request_id": "request"}
-    )
-    result = await effects.execute(request, "fallback", "r", 0, ProgramStore(None), "[]")
-    assert result[Keyword("status")] == "rejected"
-    assert Keyword("mail-id") not in result
-    monkeypatch.setattr(office, "send", AsyncMock(side_effect=OSError("unknown commit")))
-    with pytest.raises(OSError, match="unknown commit"):
-        await effects.execute(request, "fallback", "r", 0, ProgramStore(None), "[]")
-
-
 async def test_state_effect_uses_original_call_arguments() -> None:
     store = ProgramStore(None)
-    effects = ProgramEffects(from_address="a@tlon.internal")
+    effects = ProgramEffects()
     request = ActionRequest("state_put", {"key": "edition", "value": {Keyword("body"): "fixed"}})
     args = dumps(["edition", request.data["value"]])
     result = await effects.execute(request, "unused", "r", 0, store, args)
@@ -114,9 +78,7 @@ async def test_llm_effect_keeps_system_prompt_and_disables_tools() -> None:
         )
     )
     system = AsyncMock(return_value="identity + rules + protocol")
-    effects = ProgramEffects(
-        from_address="a@tlon.internal", llm_client=client, system_prompt=system
-    )
+    effects = ProgramEffects(llm_client=client, system_prompt=system)
     result = await effects.execute(
         ActionRequest("llm_call", {"prompt": "source data", "max_tokens": 12}),
         "unused",
@@ -169,8 +131,8 @@ def test_failed_run_is_terminal_without_erasing_committed_facts(tmp_path: Path, 
     store = ProgramStore(database)
     store.ensure("bad", "original", "input")
     store.atomic_state_put_record("bad", 0, "state-put", '["key" 1]', "key", 1)
-    receipt = '{:status "accepted" :mail-id "real-committed-mail"}'
-    store.record_effect("bad", 1, "send-mail", '[{:request-id "stable"}]', receipt)
+    receipt = '{:status "accepted" :mail_id "real-committed-mail"}'
+    store.record_effect("bad", 1, "mail-send", '[{:request_id "stable"}]', receipt)
     store.fail("bad", "division by zero")
     restarted = ProgramStore(database) if disk else store
     failed = restarted.ensure("bad", "edited", "other input")
@@ -178,7 +140,7 @@ def test_failed_run_is_terminal_without_erasing_committed_facts(tmp_path: Path, 
     assert failed.error == "division by zero" and not failed.completed
     assert not restarted.pending()
     assert restarted.state_get("key") == 1
-    assert restarted.get_effect("bad", 1, "send-mail", '[{:request-id "stable"}]') == (
+    assert restarted.get_effect("bad", 1, "mail-send", '[{:request_id "stable"}]') == (
         True,
         receipt,
     )

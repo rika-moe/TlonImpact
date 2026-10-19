@@ -110,22 +110,22 @@ class TestMemberRoster:
 
 
 class TestActionCollection:
-    """Phase D invariant: loop body actions are just more recorded requests."""
+    """Retained state action collection is independent from host mail calls."""
 
-    def test_while_body_collects_each_emit(self):
+    def test_while_body_collects_each_state_write(self):
         collector: list[ActionRequest] = []
         builtins = make_member_builtins(collector=collector)
-        result = eval_form(loads('(while [i 0] (< i 3) (emit "x") (recur (inc i)))'), {}, builtins)
+        result = eval_form(
+            loads('(while [i 0] (< i 3) (state-put "last" i) (recur (inc i)))'), {}, builtins
+        )
         assert result is None
-        assert len(collector) == 3
-        assert all(request.kind == "emit" for request in collector)
+        assert [request.data["value"] for request in collector] == [0, 1, 2]
 
     def test_map_returns_request_list(self):
-        # Rule programs collect the action's return value: a map of
-        # emits is a list of requests, all of which reach the engine.
-        result = eval_form(loads('(map i (emit "x") [1 2 3])'), {}, make_member_builtins())
-        assert len(result) == 3
-        assert all(request.kind == "emit" for request in result)
+        result = eval_form(
+            loads('(map i (state-put "last" i) [1 2 3])'), {}, make_member_builtins()
+        )
+        assert [request.kind for request in result] == ["state_put"] * 3
 
 
 class TestValidateMemberActions:
@@ -141,7 +141,7 @@ class TestValidateMemberActions:
 
     def test_direct_action_form_passes(self):
         validate_member_actions(
-            (loads('(emit "x" ["sink@tlon.internal"])'),),
+            (loads('(mail-send {:to ["sink@tlon.internal"] :content "x"})'),),
             registry=_BUILTINS,
             scope={"msg", "self"},
         )
@@ -152,8 +152,10 @@ class TestValidateMemberActions:
         # partition admitted only when/while/map wrappers).
         validate_member_actions(
             (
-                loads('(if (addressed-to-me? msg) (emit "a") (emit "b"))'),
-                loads('(let [x "hi"] (emit x))'),
+                loads(
+                    '(if (addressed-to-me? msg) (mail-send {:to ["sink@tlon.internal"] :content "a"}) (mail-send {:to ["sink@tlon.internal"] :content "b"}))'
+                ),
+                loads('(let [x "hi"] (mail-send {:to ["sink@tlon.internal"] :content x}))'),
                 loads('(str "just" " compute")'),
             ),
             registry=_BUILTINS,
@@ -166,12 +168,16 @@ class TestValidateMemberActions:
 
     def test_undefined_symbol_still_rejected(self):
         with pytest.raises(EvalError, match="undefined symbol: foo"):
-            validate_member_actions((loads("(emit foo)"),), registry=_BUILTINS, scope=set())
+            validate_member_actions(
+                (loads('(mail-send {:to ["sink@tlon.internal"] :content foo})'),),
+                registry=_BUILTINS,
+                scope=set(),
+            )
 
     def test_defn_threads_to_later_forms(self):
         validate_member_actions(
             (
-                loads('(defn notify [x] (emit x ["sink@tlon.internal"]))'),
+                loads('(defn notify [x] (mail-send {:to ["sink@tlon.internal"] :content x}))'),
                 loads('(notify "hi")'),
             ),
             registry=_BUILTINS,
@@ -183,7 +189,7 @@ class TestValidateMemberActions:
             validate_member_actions(
                 (
                     loads('(notify "hi")'),
-                    loads("(defn notify [x] (emit x))"),
+                    loads('(defn notify [x] (mail-send {:to ["sink@tlon.internal"] :content x}))'),
                 ),
                 registry=_BUILTINS,
                 scope=set(),

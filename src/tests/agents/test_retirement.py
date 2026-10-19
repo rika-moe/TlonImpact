@@ -23,12 +23,7 @@ from tlon.tools.tasks.manager import TaskManager
 
 _SESSION_PROGRAM = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona)]} :stages [(think)] :until (iteration-limit-reached?) :max-iterations 1 :max-consecutive-errors 1 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 15}}))]}]}'
 
-_RELAY_PROGRAM = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+_RELAY_PROGRAM = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
 
 def _write_behavior(p: TlonPaths, agent_id: str, spec: str) -> None:

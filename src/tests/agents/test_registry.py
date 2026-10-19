@@ -23,23 +23,10 @@ from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.agents.ports import StopRejectedError
 
-RELAY_EDN = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["sink@tlon.internal"]})]}]}
-"""
+RELAY_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}]}\n'
 
 #: Mail rule + a boot rule: belongs to the boot set and subscribes to mail.
-BOOTY_EDN = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["sink@tlon.internal"]})]}
-         {:name "boot"
-          :on :boot
-          :actions []}]}
-"""
+BOOTY_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})]}\n         {:name "boot"\n          :on :boot\n          :actions []}]}\n'
 
 #: Boot rule only — no mail subscription (cannot be woken by mail).
 BOOT_ONLY_EDN = """\
@@ -50,7 +37,7 @@ BOOT_ONLY_EDN = """\
 """
 
 #: A member program with auto-optout, session response and boot rules.
-MIXED_MEMBER_EDN = '{:version 1 :rules [{:name "auto-optout" :on :mail-delivered :when (content-matches? msg "退订") :actions [(emit "已为您处理退订" [])]} {:name "respond" :on :mail-delivered :when (and (addressed-to-me? msg) (not (content-matches? msg "退订"))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]} {:name "boot" :on :boot :actions []}]}'
+MIXED_MEMBER_EDN = '{:version 1 :rules [{:name "auto-optout" :on :mail-delivered :when (content-matches? msg "退订") :actions [(mail-send {:to [(mail-field msg :from)] :content "已为您处理退订" :in_reply_to (mail-field msg :id)})]} {:name "respond" :on :mail-delivered :when (and (addressed-to-me? msg) (not (content-matches? msg "退订"))) :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]} {:name "boot" :on :boot :actions []}]}'
 
 
 class _StaticProvider(AgentInfoProvider):

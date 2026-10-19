@@ -64,6 +64,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
+from tlon.operations.mail import mail_builtin_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
@@ -572,17 +573,18 @@ class ScriptHostQueries(Protocol):
 MEMBER_ACTION_NAMES = frozenset(
     {
         "spawn",
-        "emit",
         "start",
         "stop",
         "start-all",
-        "forward",
         "run-loop",
-        "mark-read",
         "state-get",
         "state-put",
         "llm-call",
-        "send-mail",
+        "mail-send",
+        "mail-forward",
+        "mail-check-inbox",
+        "mail-search",
+        "mail-mark-read",
     }
 )
 
@@ -611,41 +613,6 @@ def _script_action_fields(name: str, options: Any, require_agent: bool) -> dict[
     elif agent is not None:
         raise EvalError(f"{name} takes no :agent option")
     return out
-
-
-def _script_forward_fields(options: Any) -> dict[str, Any]:
-    """Validate a ``forward`` action's options map; return the normalized fields.
-
-    ``:to`` is a required non-empty vector of address strings; ``:cc`` is
-    an optional address vector; ``:subject`` is an optional string. The
-    forwarded mail's content comes from the triggering event at execution
-    time — the action data only carries routing.
-    """
-    if not isinstance(options, dict):
-        raise EvalError(f"forward expects an options map, got {type(options).__name__}")
-    fields = {str(key): value for key, value in options.items()}
-    unknown = set(fields) - {"to", "cc", "subject"}
-    if unknown:
-        raise EvalError(f"forward options: unknown keys {sorted(unknown)}")
-
-    def _addresses(name: str, value: Any) -> list[str]:
-        if (
-            not isinstance(value, list)
-            or not value
-            or not all(type(address) is str and address for address in value)
-        ):
-            raise EvalError(
-                f"forward :{name} must be a non-empty vector of address strings, got {value!r}"
-            )
-        return list(value)
-
-    to = _addresses("to", fields.get("to"))
-    cc_value = fields.get("cc")
-    cc = _addresses("cc", cc_value) if cc_value is not None else []
-    subject = fields.get("subject")
-    if subject is not None and type(subject) is not str:
-        raise EvalError(f"forward :subject must be a string, got {subject!r}")
-    return {"to": to, "cc": cc, "subject": subject}
 
 
 _EFFECT_COLLECTOR: ContextVar[list[ActionRequest] | None] = ContextVar(
@@ -692,9 +659,6 @@ def make_member_builtins(
             raise EvalError(str(exc)) from exc
         return _record(ActionRequest(kind="run_loop", data={"recipe": recipe}))
 
-    def _mark_read(env: dict[str, Any]) -> ActionRequest:
-        return _record(ActionRequest(kind="mark_read", data={}))
-
     def _spawn(env: dict[str, Any], prototype: Any, options: Any = None) -> ActionRequest:
         if type(prototype) is not str:
             raise EvalError(f"spawn prototype must be a string, got {type(prototype).__name__}")
@@ -711,19 +675,6 @@ def make_member_builtins(
                     raise EvalError(f"spawn :name must be a string, got {type(raw_name).__name__}")
                 name = raw_name
         return _record(ActionRequest(kind="spawn", data={"prototype": prototype, "name": name}))
-
-    def _emit(env: dict[str, Any], content: Any, to: Any = None) -> ActionRequest:
-        if type(content) is not str:
-            raise EvalError(f"emit content must be a string, got {type(content).__name__}")
-        resolved: list[str] = []
-        if to is not None:
-            if not isinstance(to, (list, tuple)):
-                raise EvalError(f"emit recipients must be a vector, got {type(to).__name__}")
-            for item in to:
-                if not isinstance(item, str):
-                    raise EvalError(f"emit recipient must be a string, got {type(item).__name__}")
-                resolved.append(str(item))
-        return _record(ActionRequest(kind="emit", data={"content": content, "to": resolved}))
 
     def _start(env: dict[str, Any], options: Any) -> ActionRequest:
         fields = _script_action_fields("start", options, require_agent=True)
@@ -755,15 +706,6 @@ def make_member_builtins(
             )
             for agent_id in host.start_all_candidates()
         ]
-
-    def _forward(env: dict[str, Any], options: Any) -> ActionRequest:
-        fields = _script_forward_fields(options)
-        return _record(
-            ActionRequest(
-                kind="forward",
-                data={"to": fields["to"], "cc": fields["cc"], "subject": fields["subject"]},
-            ),
-        )
 
     def _state_get(env: dict[str, Any], key: Any) -> ActionRequest:
         if type(key) is not str or not key:
@@ -797,49 +739,19 @@ def make_member_builtins(
             )
         )
 
-    def _send_mail(env: dict[str, Any], options: Any) -> ActionRequest:
-        data = _options("send-mail", options, {"to", "content", "request-id"}, {"subject"})
-        if (
-            not isinstance(data["to"], list)
-            or not data["to"]
-            or any(type(item) is not str or not item for item in data["to"])
-        ):
-            raise EvalError("send-mail to must be a nonempty vector of addresses")
-        if (
-            type(data["content"]) is not str
-            or type(data["request-id"]) is not str
-            or not data["request-id"]
-            or ("subject" in data and type(data["subject"]) is not str)
-        ):
-            raise EvalError("send-mail content, subject and request-id must be strings")
-        return _record(
-            ActionRequest(
-                kind="send_mail",
-                data={
-                    "to": data["to"],
-                    "content": data["content"],
-                    "subject": data.get("subject"),
-                    "request_id": data["request-id"],
-                },
-            )
-        )
-
     builtins: dict[str, Builtin] = {
+        **mail_builtin_definitions(),
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
         **ARITHMETIC_BUILTINS,
         "state-get": Builtin(_state_get, pure=False),
         "state-put": Builtin(_state_put, pure=False),
         "llm-call": Builtin(_llm_call, pure=False),
-        "send-mail": Builtin(_send_mail, pure=False),
         "run-loop": Builtin(_run_loop, pure=False),
-        "mark-read": Builtin(_mark_read, pure=False),
         "spawn": Builtin(_spawn, pure=False),
-        "emit": Builtin(_emit, pure=False),
         "start": Builtin(_start, pure=False),
         "stop": Builtin(_stop, pure=False),
         "start-all": Builtin(_start_all, pure=False),
-        "forward": Builtin(_forward, pure=False),
     }
     if host is not None:
         builtins["sleeping?"] = Builtin(lambda env, aid: host.is_sleeping(aid), pure=True)

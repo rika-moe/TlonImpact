@@ -11,7 +11,7 @@ def _record(
     call_id: str,
     request_id: str,
     result: ToolResult,
-    name: str = "sendEmail",
+    name: str = "mail-send",
 ) -> None:
     session.add_tool_result(
         ToolCall(id=call_id, function_name=name, arguments={"request_id": request_id}), result
@@ -25,7 +25,7 @@ def test_receipts_rejections_unknown_and_no_receipt_are_distinct() -> None:
     _record(session, "b", "r2", ToolResult(False, {}, error="退信正文不应泄露"))
     _record(session, "c", "r3", ToolResult(False, {"outcome": "unknown"}))
     _record(session, "d", "r4", ToolResult(True, {"to": ["peer@tlon.internal"]}))
-    _record(session, "e", "r5", ToolResult(True, {"mail_id": "not-mail"}), name="searchMails")
+    _record(session, "e", "r5", ToolResult(True, {"mail_id": "not-mail"}), name="mail-search")
     content = resource_limit_notice(session, "max_iterations")
     assert "已确认提交邮局：1 封。" in content
     assert "明确拒绝：1 个请求。" in content
@@ -43,7 +43,7 @@ def test_retries_converge_to_receipt_and_deduplicate_mail_ids() -> None:
     _record(session, "a", "r1", ToolResult(False, {"outcome": "unknown"}))
     _record(session, "b", "r1", ToolResult(True, {"mail_id": "m1"}))
     _record(session, "c", "r1", ToolResult(False, {"outcome": "unknown"}))
-    _record(session, "d", "r2", ToolResult(True, {"mail_id": "m1"}), name="forwardMail")
+    _record(session, "d", "r2", ToolResult(True, {"mail_id": "m1"}), name="mail-forward")
     _record(session, "e", "r3", ToolResult(False, {}))
     _record(session, "f", "r3", ToolResult(False, {}))
     content = resource_limit_notice(session, "max_iterations")

@@ -44,10 +44,10 @@ stateDiagram-v2
 
 | 工具 | 职责 | 对调度的影响 |
 |---|---|---|
-| `sendEmail(to, content, ...)` | 发送邮件，返回真实投信结果 | 无；删除 `is_complete` 参数 |
-| `forwardMail(...)` | 转发邮件 | 无 |
-| `checkInbox` / `searchMails` | 查询自己的邮箱 | 无 |
-| `markRead(mail_ids)` | 标读自己的邮件 | 影响以后哪些邮件可触发工作；不直接转换当前状态 |
+| `mail-send(to, content, ...)` | 发送邮件，返回真实投信结果 | 无；删除 `is_complete` 参数 |
+| `mail-forward(...)` | 转发邮件 | 无 |
+| `mail-check-inbox` / `mail-search` | 查询自己的邮箱 | 无 |
+| `mail-mark-read(mail_ids)` | 标读自己的邮件 | 影响以后哪些邮件可触发工作；不直接转换当前状态 |
 | `finishTurn()` | 结束本次工作，不发送邮件 | 活跃 → 等待；有新工作可紧接着再活跃 |
 | `sleepUntil(wake_at, reason?)` | 结束本次工作，睡至指定 UTC 时刻 | 活跃 → 睡眠 |
 | `exitAgent(reason?)` | 自己永久退出，保留历史 | 活跃 → 死亡 |
@@ -59,11 +59,11 @@ stateDiagram-v2
 
 推荐的交互序列：
 
-1. `markRead(...)`：明确标记已处理的信。
-2. `sendEmail(...)`：发送必要回复，检查投递结果，失败时可处理失败。
+1. `mail-mark-read(...)`：明确标记已处理的信。
+2. `mail-send(...)`：发送必要回复，检查投递结果，失败时可处理失败。
 3. 下一轮调用 `finishTurn()`、`sleepUntil(...)` 或 `exitAgent()`，明确表达后续调度意图。
 
-这会比现有 `sendEmail(is_complete=true)` 多一次模型工具调用轮次，是解耦的成本。本轮不预设批处理或“发信后自动 finish”的隐藏优化。可以发多封邮件后结束，也可以完全不发信直接结束或睡眠。删除 `silence`，由 `finishTurn` 承担不回信结束工作的语义，不保留别名。
+这会比现有 `mail-send(is_complete=true)` 多一次模型工具调用轮次，是解耦的成本。本轮不预设批处理或“发信后自动 finish”的隐藏优化。可以发多封邮件后结束，也可以完全不发信直接结束或睡眠。删除 `silence`，由 `finishTurn` 承担不回信结束工作的语义，不保留别名。
 
 业务任务的 `pauseTask` / `completeTask` 只改变任务记录，不代表成员睡眠或本次会话结束；继续保持独立。
 
@@ -96,11 +96,11 @@ runtime 恢复活跃成员时沿用 session journal 恢复机制，不从已完�
 | `agents/member_runtime.py` | active/thinking 等运行状态，邮件扫描与反思 | 四态派生；统一工作计数与睡眠闸门；分离实例装卸诊断 |
 | `agents/agent_registry.py`、`agents/reaper.py` | 状态聚合、来信唤醒、idle drain、退休 | 统一生命周期入口、持久睡眠、计时恢复；等待实例回收不改逻辑状态 |
 | `agents/scheduler.py`、`agents/session.py` | session ACTIVE/WAITING/COMPLETED，结束后链式唤醒 | 保留内部执行阶段，明确待工具与成员等待的区别；结束意图在安全点落地 |
-| `agents/stages/act.py`、`agents/loop_driver.py`、`agents/executor.py`、`agents/stages/outcome.py` | 识别 sendEmail/silence 作为结束信号 | 改为独立状态效果；成功发信不结束；sleep/exit 不发信、不隐式标读 |
+| `agents/stages/act.py`、`agents/loop_driver.py`、`agents/executor.py`、`agents/stages/outcome.py` | 识别 mail-send/silence 作为结束信号 | 改为独立状态效果；成功发信不结束；sleep/exit 不发信、不隐式标读 |
 | `tools/mail/send_email.py`、`tools/mail/silence.py` | 邮件和会话完成耦合 | 删除 is_complete 与 silence，保持投信结果语义 |
 | `tools/agents/stop_agent.py`、`agents/assembly.py` | 可按信任层装配 stopAgent，目标是任意成员 | 自我结束/睡眠/退出工具与管理终止权限分离 |
 | `organization/mail/store.py`、`post_office.py` 及生命周期持久化接口 | 退休拒收与入箱事务排序 | 保留原子拒收；睡眠正常入箱；死亡状态单一权威 |
-| `agents/vocabulary.py`、`member_spec.py`、`agents/adam.py` | completing? 依赖 sendEmail/silence；DSL start/stop、idle/noisy 政策 | 明确工作结束与邮件派发谓词；更新 DSL 管理动作、Adam 回收政策，避免 stop 同时表示卸载和死亡 |
+| `agents/vocabulary.py`、`member_spec.py`、`agents/adam.py` | completing? 依赖 mail-send/silence；DSL start/stop、idle/noisy 政策 | 明确工作结束与邮件派发谓词；更新 DSL 管理动作、Adam 回收政策，避免 stop 同时表示卸载和死亡 |
 | `prototypes/`、公共提示词、工具参考 | 交卷前自评基于 completing?，说明用发信结束 | 全部同步独立结束工具；证据核验应在实际邮件派发前审查，不能挪到 finishTurn 时才检查已发邮件 |
 | `tlon_server` 生命周期 API/SSE、`tlon_client`、WebUI | retired/thinking/sleeping 等状态展示及启停操作 | 一致输出四态与 wake_at；启动/错误显示为诊断；死亡无启动按钮，睡眠显示到期时间 |
 

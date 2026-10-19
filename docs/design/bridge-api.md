@@ -1,6 +1,6 @@
 # Bridge API：宿主机制与 tlosure 策略的接口
 
-> 后续方案（尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 后续方案（邮件 P2 已接线，待验收；其余分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值语境能使用哪些词汇。它由 Python 协议、builtin 注册表、环境契约和 `ActionRequest` 组成；不是通用 FFI。语言及行为模型见 [DSL 设计](dsl.md)，字段与词汇见 [DSL reference](../reference/dsl-reference.md)。
 
@@ -8,7 +8,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 - 调度、并发、持久化、LLM 调用、Docker 和权限检查留在宿主机制层；策略组合已有机制。
 - 查询只暴露受控视图，不向 DSL 开放任意 Python 属性或方法调用。
-- 效果词产出 `ActionRequest` 数据；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
+- 非邮件效果词产出 `ActionRequest` 数据；邮件直接进入共享 Operation；异步求值在调用处交给宿主执行，记录实际结果后继续表达式。参数形状在构造请求时校验；配额、信任和实时状态仍由执行侧检查。
 - 每个语境有自己的词汇注册表、符号作用域和 fuel 预算；新增词汇必须明确适用语境。
 - 函数可以返回动作意图，也可以在函数体内调用效果词。动作位置不再靠语法分区枚举；纯语境通过可见词汇约束效果。
 - tlosure 核心保持宿主无关；领域端口位于 tlon。纯度标记描述效果权限，不能将“读取宿主状态”误解成可重放的常量计算。
@@ -23,7 +23,7 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 
 ### 效果
 
-`spawn`、`emit`、`start`、`stop`、`start-all`、`forward`、`run-loop`、`mark-read`、`state-get`、`state-put`、`llm-call`、`send-mail` 登记为 `pure=False`，只构造请求。新增效果需要同时定义参数校验、请求执行分支和必要的权限/配额检查。
+`spawn`、`start`、`stop`、`start-all`、`run-loop`、`state-get`、`state-put`、`llm-call` 保留 `ActionRequest` 路径。邮件五操作通过 DSLAdapter 的 BuiltinCall 直接进入共享 OperationExecutor 和成员邮件服务，结果仍由 ProgramStore 记录；不再创建邮件 ActionRequest。
 
 生产程序使用可暂停求值内核，函数、条件和传统循环中的效果都在各自调用处执行，返回值可绑定到 `let` 或用于 `if`。同步入口和 collector 可分析效果意图；ADR 0042 中先完整求值再执行的生产流程由 [ADR 0043](../decisions/0043-newspaper-member-workflow.md) 替代。完整恢复边界见 [runtime](runtime.md)。
 
@@ -32,9 +32,9 @@ Bridge API 定义宿主向策略暴露哪些数据和操作，以及每个求值
 | `(state-get "key")` | 成员私有状态值，缺失为 `nil`；读取结果参与重放 |
 | `(state-put "key" value)` | 返回写入值；状态与该效果结果同事务提交 |
 | `(llm-call {:prompt "任务数据" :max-tokens 256})` | `{:content "..." :usage {...}}`；不附工具，保留人格、RULES 与协议，额度受成员与规则预算约束 |
-| `(send-mail {:to ["地址"] :content "正文" :request-id "稳定键"})` | 真实邮局结果；接受带邮件 ID，拒收不带成功 ID，未知异常传播 |
+| `(mail-send {:to ["地址"] :content "正文" :request_id "稳定键"})` | 真实邮局回执；拒收抛 RejectedError，未知抛 UnknownOutcomeError，均带结构化 data |
 
-`send-mail` 可选 `:subject`。结果键使用关键字与连字符，如 `:mail-id`、`:request-id`、`:local-recipients`、`:completion-tokens`。`mail-field` 是纯的字段适配器，从真实触发邮件读取 ID、发件地址、主题、正文等白名单字段；不开放对象属性访问。
+`mail-send` 可选 `:subject` 和 `:request_id`；邮件参数/结果键保留 snake_case，如 `:mail_id`、`:request_id`、`:local_recipients`。`llm-call` 仍使用既有 `:completion-tokens` 等键。`mail-field` 是纯的字段适配器，从真实触发邮件读取 ID、发件地址、主题、正文等白名单字段；不开放对象属性访问。
 
 ### 环境
 

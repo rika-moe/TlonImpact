@@ -247,7 +247,7 @@ class TestBuiltinSkillPin:
     def test_builtin_skill_body_teaches_evidence_discipline(self) -> None:
         body = _builtin_skill_file().read_text(encoding="utf-8")
         # 三条证据源与回答纪律的关键词必须都在正文里。
-        for keyword in ("listTraces", "getTrace", "searchMemories", "searchMails", "无据可查"):
+        for keyword in ("listTraces", "getTrace", "searchMemories", "mail-search", "无据可查"):
             assert keyword in body
 
 

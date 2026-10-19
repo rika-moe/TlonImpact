@@ -1,5 +1,7 @@
 # ADR 0043：以报社验证可返回结果的成员程序
 
+> 邮件接口由统一操作 P2 修订：当前使用 `mail-send` / `mail-forward` / `mail-mark-read`，参数与回执采用 snake_case；本文保留当时的决策与验收记录。现行契约见 [Operation reference](../reference/operations-reference.md)。
+
 状态：已实施（2026-10-18）。承接 ADR 0042，用户批准继续报社端到端阶段。
 
 ## 决策

@@ -14,8 +14,12 @@ from tlon.agents.program_effects import ProgramEffects
 from tlon.agents.program_store import ProgramStore
 from tlon.agents.vocabulary import make_member_builtins, rule_env
 from tlon.base.events.event_bus import EventBus
+from tlon.operations.adapters import DSLAdapter
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.member_mail import MemberMailService
 from tlosure.builtins import ActionRequest
 from tlosure.edn import Keyword, dumps, loads
 
@@ -48,10 +52,8 @@ class NewspaperHarness:
             )
         )
         self.effects = ProgramEffects(
-            from_address=ADDRESS,
             llm_client=self.llm,
             system_prompt=AsyncMock(return_value="保留投稿来源，诚实编辑。"),
-            post_office=self.office,
         )
         self.crash_after_address: str | None = None
         self.fail_before_address: str | None = None
@@ -68,25 +70,41 @@ class NewspaperHarness:
             return
         env = rule_env({"mail": mail}, member_id="newspaper", name="来信报")
 
+        mailbox = Mailbox(self.home / "shared/mail.sqlite3", "newspaper")
+        await mailbox.append_inbox(mail)
+        service = MemberMailService("newspaper", mailbox, self.office)
+        send = service.send
+
+        async def interrupted_send(arguments: dict[str, Any], request_id: str) -> dict[str, Any]:
+            address = arguments["to"][0]
+            if address == self.fail_before_address:
+                self.fail_before_address = None
+                raise OSError("temporary delivery failure")
+            receipt = await send(arguments, request_id)
+            if address == self.crash_after_address:
+                self.crash_after_address = None
+                raise PowerLoss()
+            return receipt
+
+        service.send = interrupted_send
+        operations = DSLAdapter(
+            OperationExecutor(
+                OperationRegistry(make_mail_operations(service)),
+                CallContext("newspaper", run_id, run_id),
+            )
+        )
+
         async def effect(request: ActionRequest, name: str, index: int, args: str) -> Any:
-            if request.kind == "mark_read":
-                await Mailbox(self.home / "shared/mail.sqlite3", "newspaper").mark_read(mail.id)
-                return None
-            if request.kind == "send_mail":
-                address = request.data["to"][0]
-                if address == self.fail_before_address:
-                    self.fail_before_address = None
-                    raise OSError("temporary delivery failure")
-                receipt = await self.effects.execute(
-                    request, run_id, run_id, index, self.store, args
-                )
-                if address == self.crash_after_address:
-                    self.crash_after_address = None
-                    raise PowerLoss()
-                return receipt
             return await self.effects.execute(request, run_id, run_id, index, self.store, args)
 
-        await ProgramDriver(self.store, run_id, make_member_builtins(), effect).run(rule, env)
+        await ProgramDriver(
+            self.store,
+            run_id,
+            {**make_member_builtins(), **operations.builtins()},
+            effect,
+            operations=operations,
+            member_id="newspaper",
+        ).run(rule, env)
         self.store.complete(run_id)
 
     def restart(self) -> None:
@@ -191,10 +209,8 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
     bus = EventBus()
     paper.office = make_office(bus, tmp_path, ["newspaper", "a", "reporter", "operator"])
     paper.effects = ProgramEffects(
-        from_address=ADDRESS,
         llm_client=paper.llm,
         system_prompt=AsyncMock(return_value="诚实编辑，保留来源。"),
-        post_office=paper.office,
     )
 
     def runtime() -> MemberRuntime:
@@ -288,7 +304,7 @@ async def test_runtime_recovers_later_rules_after_first_rule_interrupts(
     from tlon.base.paths import TlonPaths
 
     on = "mail-delivered" if mail_event else "agent-idle"
-    mark_read = "(mark-read)" if mail_event else ""
+    mark_read = "(mail-mark-read {:mail_ids [(mail-field msg :id)]})" if mail_event else ""
     spec = MemberSpec.from_edn(
         loads(
             f"""{{:version 1 :execution {{:level :L0}} :rules [
@@ -373,13 +389,9 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
     from tlon.base.paths import TlonPaths
 
     spec = MemberSpec.from_edn(
-        loads("""{:version 1 :execution {:level :L0} :rules [
-          {:name "work" :on :mail-delivered :actions [
-            (state-put "seen" (mail-field msg :id))
-            (if (= (mail-field msg :subject) "broken")
-              (/ 1 0)
-              (state-put "healthy" true))
-            (mark-read)]}]}""")
+        loads(
+            '{:version 1 :execution {:level :L0} :rules [\n          {:name "work" :on :mail-delivered :actions [\n            (state-put "seen" (mail-field msg :id))\n            (if (= (mail-field msg :subject) "broken")\n              (/ 1 0)\n              (state-put "healthy" true))\n            (mail-mark-read {:mail_ids [(mail-field msg :id)]})]}]}'
+        )
     )
     bus = EventBus()
     office = make_office(bus, tmp_path, ["newspaper", "operator"])

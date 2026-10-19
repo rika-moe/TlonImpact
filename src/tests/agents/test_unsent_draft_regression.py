@@ -15,11 +15,14 @@ from tlon.agents.tool_executor import ToolExecutor
 from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse
 from tlon.base.paths import TlonPaths
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.member_mail import MemberMailService
 from tlon.organization.mail.post_office import PostOffice
 from tlon.tools.agents.scheduling import FinishTurnTool
-from tlon.tools.mail.send_email import SendEmailTool
 
 
 def _drafts() -> LLMResponse:
@@ -28,7 +31,7 @@ def _drafts() -> LLMResponse:
         tool_calls=[
             _tc(
                 "draft-reader",
-                "sendEmail",
+                "mail-send",
                 {
                     "to": ["user@tlon.internal"],
                     "subject": "未通过的回复",
@@ -37,7 +40,7 @@ def _drafts() -> LLMResponse:
             ),
             _tc(
                 "draft-peer",
-                "sendEmail",
+                "mail-send",
                 {
                     "to": ["peer@tlon.internal"],
                     "subject": "未通过的请教",
@@ -65,7 +68,16 @@ def _real_mail_engine(
     office = make_office(bus, tmp_path, ["agent1", "peer"])
     office.store.register_member("human:user")
     tools = ToolExecutor()
-    tools.register_tool(SendEmailTool())
+    operations = OperationExecutor(
+        OperationRegistry(
+            make_mail_operations(
+                MemberMailService("agent1", Mailbox(paths.mail_database_file(), "agent1"), office)
+            )
+        ),
+        CallContext("agent1", "assembly", "assembly"),
+    )
+    for operation in operations.registry.definitions():
+        tools.register_tool(OperationTool(operations, operation.name))
     tools.register_tool(FinishTurnTool())
     driver._tool_executor = tools
     driver._executor = EffectExecutor(
@@ -93,7 +105,7 @@ async def test_rejected_multi_mail_draft_survives_revision_without_becoming_sent
         tool_calls=[
             _tc(
                 "corrected-reader",
-                "sendEmail",
+                "mail-send",
                 {
                     "to": ["user@tlon.internal"],
                     "content": "修订后回复：同伴信尚未发送",

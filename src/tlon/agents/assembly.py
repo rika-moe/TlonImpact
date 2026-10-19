@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING
 from tlon.agents.capabilities.catalog import list_trusted_capabilities
 from tlon.agents.capabilities.staging import write_staging_capability
 from tlon.agents.health import orphan_mail_provider
-from tlon.agents.mail_inbox import mark_read_actor, unread_mails_provider
-from tlon.agents.mail_search import mailbox_mails_provider
 from tlon.agents.mail_stats import mail_stats_provider
 from tlon.agents.member_runtime import MemberCapabilities
 from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
@@ -64,11 +62,6 @@ from tlon.tools.filesystem.list_directory import ListDirectoryTool
 from tlon.tools.filesystem.read_file import ReadFileTool
 from tlon.tools.filesystem.search_files import SearchFilesTool
 from tlon.tools.filesystem.write_file import WriteFileTool
-from tlon.tools.mail.check_inbox import CheckInboxTool
-from tlon.tools.mail.forward_mail import ForwardMailTool
-from tlon.tools.mail.mark_read import MarkReadTool
-from tlon.tools.mail.search_mails import SearchMailsTool
-from tlon.tools.mail.send_email import SendEmailTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.read_session import ReadSessionTool
 from tlon.tools.memory.remember_fact import RememberFactTool
@@ -313,11 +306,6 @@ async def assemble_member_capabilities(
             SearchFilesTool(config.docker, docker_runtime, read_allowed_paths)
         )
     tool_executor.register_tool(GetCurrentTimeTool())
-    tool_executor.register_tool(SendEmailTool())
-    # forwardMail (ADR 0029): explicit source-mail forwarding —
-    # declarative like sendEmail; the engine validates mail_id against the
-    # agent's own mailbox and composes the self-contained forward body.
-    tool_executor.register_tool(ForwardMailTool())
     tool_executor.register_tool(FinishTurnTool())
     tool_executor.register_tool(SleepUntilTool())
     tool_executor.register_tool(ExitAgentTool())
@@ -336,20 +324,6 @@ async def assemble_member_capabilities(
     # unconditionally.
     tool_executor.register_tool(ReadContactsTool(tlon_paths=tlon_paths, agent_id=config.id))
     tool_executor.register_tool(UpdateContactTool(tlon_paths=tlon_paths, agent_id=config.id))
-    # searchMails (docs/design/skills.md): read-only structured query over
-    # the agent's own
-    # mailbox — the mail evidence source of the explain-decision skill.
-    tool_executor.register_tool(
-        SearchMailsTool(provider=mailbox_mails_provider(tlon_paths), agent_id=config.id)
-    )
-    # checkInbox / markRead (ADR 0028 收件箱驱动模型): the agent pulls its
-    # own unread mail and manages the read cursor explicitly — delivery no
-    # longer injects mail bodies into the session prompt. agent_id binds at
-    # construction: only the owning member's mailbox is reachable.
-    tool_executor.register_tool(
-        CheckInboxTool(provider=unread_mails_provider(tlon_paths), agent_id=config.id)
-    )
-    tool_executor.register_tool(MarkReadTool(actor=mark_read_actor(tlon_paths), agent_id=config.id))
     tool_executor.register_tool(
         ListPrototypesTool(lister=partial(list_prototypes, tlon_paths=tlon_paths))
     )

@@ -64,7 +64,7 @@ staging 通道的现状信任闸（[prototypes.md](./prototypes.md)）：加载�
 - `path-escape-attempt`：试图越界文件访问（path_guard 白名单拒绝文案）
 - `fuel-exhaustion` / `session-incomplete`：迭代硬顶耗尽；session 未结束或非正常结束；语料未被任何 session 的责任集收录
 
-**可观测性边界**：DSL 规则的 `:actions`（spawn/stop/emit/forward）求值只进 structlog 日志，不落 session journal——spawn/stop 意图只能从工具调用观测，emit/forward 从 sent.jsonl 观测；DSL fuel 耗尽同理，journal 上可观测的预算耗尽信号是引擎迭代硬顶（`session/end` reason `max_iterations`）。
+**可观测性边界**：DSL 程序由 ProgramStore 记录冻结输入和效果结果，LLM 会话由 session journal 记录；邮件两入口共享操作和 PostOffice 回执，但不合并两个日志权威。Arena 的会话指标只涵盖 session journal，不能据此宣称覆盖全部 DSL 工作。
 
 **定位**：报告是证据不是判决。评估结论永远是人下的——与 reviewPrototype 的 advisory 定位一致，报告进 staging detail payload 供评审界面呈现，不进 approve 的任何逻辑。
 

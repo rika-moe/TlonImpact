@@ -18,9 +18,9 @@ test("llm_response records duration and model", () => {
 test("tool.execute_end records the last tool with its success flag", () => {
   let map: LiveStatusMap = applyEvent(
     {},
-    ev("tool.execute_end", { agent_id: "a", tool_name: "sendEmail", success: true }, 5000),
+    ev("tool.execute_end", { agent_id: "a", tool_name: "mail-send", success: true }, 5000),
   );
-  assert.deepEqual(map["a"]?.lastTool, { name: "sendEmail", success: true, at: 5000 });
+  assert.deepEqual(map["a"]?.lastTool, { name: "mail-send", success: true, at: 5000 });
 
   map = applyEvent(
     map,

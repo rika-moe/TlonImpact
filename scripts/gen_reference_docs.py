@@ -53,6 +53,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tlon.operations.mail import mail_operation_definitions
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "tlon"
 TLOSURE_SRC = REPO_ROOT / "src" / "tlosure"
@@ -665,16 +667,46 @@ def render_tool_registry() -> str:
         rows.append(
             f"| {index} | `{info.tool_name}` | {link} 的 `{info.class_name}` | {info.domain} |"
         )
+    # Mail operations are projected at MemberRuntime assembly, after legacy tools.
+    for operation in mail_operation_definitions():
+        rows.append(
+            f"| {len(rows) + 1} | `{operation.name}` | "
+            "[operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |"
+        )
     count = len(rows)
     header = (
-        f"`assemble_member_capabilities`（agents/assembly.py）为满配成员注册 {count} 个工具"
-        f"（注册顺序即下表顺序；同名注册会覆盖并记 warning；`docker.level: L0` 的"
+        f"`assemble_member_capabilities` 与 `MemberRuntime` 为满配成员注册 {count} 个工具"
+        f"（旧 Tool 按 assembly 顺序，邮件 Operation 随后投影；`docker.level: L0` 的"
         f"无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，"
         f"`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：{GENERATED_NOTE}\n\n"
         "| # | 工具名 | 实现 | 域 |\n"
         "|---|---|---|---|"
     )
     return header + "\n" + "\n".join(rows)
+
+
+def render_mail_operations() -> str:
+    """Mail schemas come from the same definitions used by both runtime adapters."""
+    blocks = [f"邮件 Operation 单一契约；输入与输出字段保留 snake_case。{GENERATED_NOTE}"]
+    for operation in mail_operation_definitions():
+        blocks.extend([f"### {operation.name}", operation.description])
+        for label, schema in (("输入", operation.input_schema), ("输出", operation.output_schema)):
+            blocks.append(f"{label}：")
+            rows = ["| 字段 | 类型 | 必填 | 说明 |", "|---|---|---|---|"]
+            required = schema.get("required", [])
+            for name, field in schema["properties"].items():
+                kind = field["type"]
+                if isinstance(kind, list):
+                    kind = " / ".join(kind)
+                if kind == "array":
+                    item_type = field["items"]["type"]
+                    kind = f"array[{item_type}]"
+                rows.append(
+                    f"| `{name}` | {_cell(str(kind))} | {'是' if name in required else '否'} | "
+                    f"{_cell(field.get('description', '—'))} |"
+                )
+            blocks.append("\n".join(rows))
+    return "\n\n".join(blocks)
 
 
 def render_event_types() -> str:
@@ -1077,6 +1109,7 @@ def render_bridge_query_ports() -> str:
 def _render_sections() -> dict[tuple[Path, str], str]:
     return {
         (TOOLS_REF, "tool-registry"): render_tool_registry(),
+        (TOOLS_REF, "mail-operations"): render_mail_operations(),
         (API_REF, "event-types"): render_event_types(),
         (TLOSURE_REF, "dsl-special-forms"): render_dsl_special_forms(),
         (TLOSURE_REF, "dsl-builtins-core"): render_builtin_table("CORE_BUILTINS", BUILTINS_FILE),

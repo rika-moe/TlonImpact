@@ -12,6 +12,8 @@ from opentelemetry.trace import Status, StatusCode
 
 from tlon.base.logger import get_logger
 from tlon.base.tracing.trace_context import start_span
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext
 from tlon.tools.base import Tool, ToolResult
 
 logger = get_logger(__name__)
@@ -122,7 +124,9 @@ class ToolExecutor:
         """
         return tool_name in self._tools
 
-    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self, tool_name: str, arguments: dict[str, Any], context: CallContext | None = None
+    ) -> ToolResult:
         """Execute a tool directly.
 
         Args:
@@ -147,7 +151,7 @@ class ToolExecutor:
         ):
             logger.info("tool_call", tool_name=tool_name, arguments=log_arguments)
             span = trace.get_current_span()
-            result = await self._execute_inner(tool_name, arguments)
+            result = await self._execute_inner(tool_name, arguments, context)
             span.set_attribute("tool.success", result.success)
             if not result.success:
                 span.set_attribute("tool.error", result.error)
@@ -160,7 +164,9 @@ class ToolExecutor:
             )
             return result
 
-    async def _execute_inner(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def _execute_inner(
+        self, tool_name: str, arguments: dict[str, Any], context: CallContext | None = None
+    ) -> ToolResult:
         """Validate arguments and run the tool, converting failures to ToolResult.
 
         Args:
@@ -187,6 +193,8 @@ class ToolExecutor:
             )
 
         try:
+            if isinstance(tool, OperationTool):
+                return await tool.execute_context(arguments, context)
             return await tool.execute(**arguments)
         except Exception as e:
             logger.error("tool_error", tool_name=tool_name, error=str(e), exc_info=True)

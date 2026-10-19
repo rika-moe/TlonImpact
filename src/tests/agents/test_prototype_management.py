@@ -28,8 +28,8 @@ from tlon.base.config import yaml_load_file
 from tlon.base.paths import TlonPaths
 from tlon.tools.prototypes.ports import PrototypeError
 
-VALID_BEHAVIOR = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
-VALID_BEHAVIOR_V2 = '{:version 1\n :rules [{:name "relay-v2"\n          :on :mail-delivered\n          :actions [(forward {:to ["y@tlon.internal"]})]}]}\n'
+VALID_BEHAVIOR = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
+VALID_BEHAVIOR_V2 = '{:version 1\n :rules [{:name "relay-v2"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["y@tlon.internal"]})]}]}\n'
 INVALID_BEHAVIOR = '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(jump {:to ["x@tlon.internal"]})]}]}\n'
 
 
@@ -352,7 +352,7 @@ class TestInstantiateModel:
     member's agent.yaml as ``llm.model_name``; a spec's top-level
     ``:llm`` key is rejected by the grammar."""
 
-    BEHAVIOR_WITH_LLM = '{:version 1\n :llm {:model "deepseek/deepseek-chat"}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
+    BEHAVIOR_WITH_LLM = '{:version 1\n :llm {:model "deepseek/deepseek-chat"}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
     def test_model_param_lands_in_agent_yaml(self, tmp_path):
         p = TlonPaths(home=tmp_path)
@@ -406,7 +406,7 @@ class TestInstantiateExecutionLevel:
     docs/design/execution-device.md); without the section the config
     default ("L1") applies unchanged."""
 
-    L1_BEHAVIOR = '{:version 1\n :execution {:level :L1}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(forward {:to ["x@tlon.internal"]})]}]}\n'
+    L1_BEHAVIOR = '{:version 1\n :execution {:level :L1}\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
     def test_execution_section_projects_docker_level(self, tmp_path):
         p = TlonPaths(home=tmp_path)

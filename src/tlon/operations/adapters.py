@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from tlon.operations.core import OperationExecutor
+from tlon.operations.core import CallContext, OperationExecutor
 from tlon.operations.schema import InputError, OperationError, edn_value, json_value
 from tlon.tools.base import Tool, ToolResult
 from tlosure.builtins import Builtin, BuiltinCall
@@ -34,11 +34,14 @@ class DSLAdapter:
     def builtins(self) -> dict[str, Builtin]:
         return dict(self._builtins)
 
-    async def handle(self, call: BuiltinCall) -> Any:
+    def owns(self, call: BuiltinCall) -> bool:
+        return self._builtins.get(call.name) is call.builtin
+
+    async def handle(self, call: BuiltinCall, context: CallContext | None = None) -> Any:
         """Handle only this adapter's suspended effectful builtins."""
         if self._builtins.get(call.name) is not call.builtin:
             raise OperationError(f"not an operation call from this adapter: {call.name}")
-        result = await self._executor.call(call.name, self._arguments(call.args))
+        result = await self._executor.call(call.name, self._arguments(call.args), context)
         return edn_value(result)
 
 
@@ -64,9 +67,34 @@ class OperationTool(Tool):
         """Defer once to the shared boundary; bypass the legacy shallow validator."""
         return []
 
+    def recovery_metadata(self, arguments: dict[str, Any], context: CallContext) -> dict[str, Any]:
+        if "write" not in self._operation.effects:
+            return {}
+        return {"request_id": arguments.get("request_id") or context.call_id, "outcome": "unknown"}
+
+    def timeout_result(self, arguments: dict[str, Any], context: CallContext) -> ToolResult:
+        data = self.recovery_metadata(arguments, context)
+        return ToolResult(
+            success=False,
+            data=data,
+            error="Operation interrupted; outcome unknown" if data else "Operation interrupted",
+        )
+
     async def execute(self, /, **kwargs: Any) -> ToolResult:
+        return await self.execute_context(kwargs)
+
+    async def execute_context(
+        self, arguments: dict[str, Any], context: CallContext | None = None
+    ) -> ToolResult:
         try:
-            result = await self._executor.call(self._operation.name, kwargs)
+            result = await self._executor.call(self._operation.name, arguments, context)
         except OperationError as error:
-            return ToolResult(success=False, data=None, error=f"{type(error).__name__}: {error}")
-        return ToolResult(success=True, data=result)
+            return ToolResult(
+                success=False,
+                data=getattr(error, "data", None),
+                error=f"{type(error).__name__}: {error}",
+            )
+        message = result.get("message", "") if isinstance(result, dict) else ""
+        return ToolResult(
+            success=True, data=result, message=message if isinstance(message, str) else ""
+        )

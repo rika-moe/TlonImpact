@@ -62,15 +62,19 @@ async def _drain(member: MemberRuntime) -> None:
 
 
 async def test_plain_loop_uses_no_session(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(map n (emit (str n) ["sink@tlon.internal"]) [1 2 3])'))
-    member._execute_action = AsyncMock()
+    member = _member(
+        tmp_path, _spec('(map n (mail-send {:to ["sink@tlon.internal"] :content (str n)}) [1 2 3])')
+    )
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     await member.initialize()
     try:
         await member._on_event(_event(_mail()))
         await _drain(member)
-        assert [
-            call.args[0].data["content"] for call in member._execute_action.await_args_list
-        ] == ["1", "2", "3"]
+        assert [call.kwargs["content"] for call in member._post_office.send.await_args_list] == [
+            "1",
+            "2",
+            "3",
+        ]
         assert member._scheduler is None
     finally:
         await member.shutdown()
@@ -109,7 +113,10 @@ async def test_non_mail_event_runs_all_rules_in_order(tmp_path: Path) -> None:
 
 async def test_following_forward_keeps_original_mail(tmp_path: Path) -> None:
     member = _member(
-        tmp_path, _spec(f'(run-loop (quote {RECIPE})) (forward {{:to ["sink@tlon.internal"]}})')
+        tmp_path,
+        _spec(
+            f'(run-loop (quote {RECIPE})) (mail-forward {{:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]}})'
+        ),
     )
     order: list[str] = []
     release = asyncio.Event()
@@ -119,9 +126,16 @@ async def test_following_forward_keeps_original_mail(tmp_path: Path) -> None:
         await release.wait()
 
     member._run_session_effect = run
-    member._execute_action = AsyncMock(side_effect=lambda *args, **kwargs: order.append("forward"))
+    send = member._post_office.send
+
+    async def forward(**kwargs: Any) -> Any:
+        order.append("forward")
+        return await send(**kwargs)
+
+    member._post_office.send = AsyncMock(side_effect=forward)
     await member.initialize()
     mail = _mail()
+    await member._mailbox.append_inbox(mail)
     try:
         await member._on_event(_event(mail))
 
@@ -135,15 +149,15 @@ async def test_following_forward_keeps_original_mail(tmp_path: Path) -> None:
         release.set()
         await _drain(member)
         assert order == ["session", "forward"]
-        assert member._execute_action.await_args.kwargs["session_mail"] == mail
+        assert member._post_office.send.await_args.kwargs["forward_of"] == mail.id
     finally:
         release.set()
         await member.shutdown()
 
 
 async def test_scan_and_delivery_deduplicate_and_preserve_unread(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(emit "hello" ["sink@tlon.internal"])'))
-    member._execute_action = AsyncMock()
+    member = _member(tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "hello"})'))
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     mail = _mail()
     await member._mailbox.append_inbox(mail)
     await member.initialize()
@@ -152,23 +166,23 @@ async def test_scan_and_delivery_deduplicate_and_preserve_unread(tmp_path: Path)
         await _drain(member)
         await member._scan_unread_mail()
         await _drain(member)
-        member._execute_action.assert_awaited_once()
+        member._post_office.send.assert_awaited_once()
         assert [item.id for item in await member._mailbox.unread()] == [mail.id]
     finally:
         await member.shutdown()
     restored = _member(tmp_path, member.spec)
-    restored._execute_action = AsyncMock()
+    restored._post_office.send = AsyncMock(wraps=restored._post_office.send)
     await restored.initialize()
     try:
         await _drain(restored)
-        restored._execute_action.assert_not_awaited()
+        restored._post_office.send.assert_not_awaited()
         assert len(await restored._mailbox.unread()) == 1
     finally:
         await restored.shutdown()
 
 
 async def test_mark_read_is_explicit_effect(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec("(mark-read)"))
+    member = _member(tmp_path, _spec("(mail-mark-read {:mail_ids [(mail-field msg :id)]})"))
     mail = _mail()
     await member._mailbox.append_inbox(mail)
     await member.initialize()
@@ -184,30 +198,35 @@ async def test_state_gate_covers_all_rule_effects(tmp_path: Path, allowed: bool)
     registry = MagicMock()
     registry.can_schedule.return_value = allowed
     registry.publish_scheduling_state = AsyncMock()
-    member = _member(tmp_path, _spec('(emit "x" ["sink@tlon.internal"])'), registry)
-    member._execute_action = AsyncMock()
+    member = _member(
+        tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "x"})'), registry
+    )
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     await member.initialize()
     try:
         await member._on_event(_event(_mail()))
         await _drain(member)
-        assert member._execute_action.await_count == int(allowed)
+        assert member._post_office.send.await_count == int(allowed)
     finally:
         await member.shutdown()
 
 
 async def test_distinct_deliveries_execute_serially(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(emit "x" ["sink@tlon.internal"])'))
+    member = _member(tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "x"})'))
     active = 0
     peak = 0
 
-    async def execute(*args: Any, **kwargs: Any) -> None:
+    send = member._post_office.send
+
+    async def execute(*args: Any, **kwargs: Any) -> Any:
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
         await asyncio.sleep(0.01)
         active -= 1
+        return await send(**kwargs)
 
-    member._execute_action = execute
+    member._post_office.send = execute
     await member.initialize()
     try:
         await asyncio.gather(*(member._on_event(_event(_mail())) for _ in range(5)))
@@ -218,15 +237,18 @@ async def test_distinct_deliveries_execute_serially(tmp_path: Path) -> None:
 
 
 async def test_shared_rule_fuel_and_definitions(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(defn f [x] (emit x ["sink@tlon.internal"])) (f "done")'))
-    member._execute_action = AsyncMock()
+    member = _member(
+        tmp_path,
+        _spec('(defn f [x] (mail-send {:to ["sink@tlon.internal"] :content x})) (f "done")'),
+    )
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
-    member._execute_action.assert_awaited_once()
-    assert member._execute_action.await_args.args[0].data["content"] == "done"
+    member._post_office.send.assert_awaited_once()
+    assert member._post_office.send.await_args.kwargs["content"] == "done"
 
 
 async def test_inflight_scan_cannot_duplicate_and_shutdown_cancels_work(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(emit "x" ["sink@tlon.internal"])'))
+    member = _member(tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "x"})'))
     entered = asyncio.Event()
     release = asyncio.Event()
 
@@ -234,7 +256,7 @@ async def test_inflight_scan_cannot_duplicate_and_shutdown_cancels_work(tmp_path
         entered.set()
         await release.wait()
 
-    member._execute_action = AsyncMock(side_effect=execute)
+    member._post_office.send = AsyncMock(side_effect=execute)
     mail = _mail()
     await member._mailbox.append_inbox(mail)
     await member.initialize()
@@ -250,11 +272,14 @@ async def test_inflight_scan_cannot_duplicate_and_shutdown_cancels_work(tmp_path
 
 async def test_nested_loops_keep_all_effects(tmp_path: Path) -> None:
     member = _member(
-        tmp_path, _spec('(map x (map y (emit (str x y) ["sink@tlon.internal"]) [3 4]) [1 2])')
+        tmp_path,
+        _spec(
+            '(map x (map y (mail-send {:to ["sink@tlon.internal"] :content (str x y)}) [3 4]) [1 2])'
+        ),
     )
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
-    assert [call.args[0].data["content"] for call in member._execute_action.await_args_list] == [
+    assert [call.kwargs["content"] for call in member._post_office.send.await_args_list] == [
         "13",
         "14",
         "23",
@@ -263,7 +288,9 @@ async def test_nested_loops_keep_all_effects(tmp_path: Path) -> None:
 
 
 async def test_real_forward_preserves_mail_reference_and_read_state(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(forward {:to ["sink@tlon.internal"]})'))
+    member = _member(
+        tmp_path, _spec('(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})')
+    )
     mail = _mail()
     await member._mailbox.append_inbox(mail)
     await member.initialize()
@@ -272,35 +299,44 @@ async def test_real_forward_preserves_mail_reference_and_read_state(tmp_path: Pa
         delivered = await Mailbox(tmp_path / "shared/mail.sqlite3", "sink").inbox()
         assert len(delivered) == 1
         assert delivered[0].forward_of == mail.id
-        assert delivered[0].content == mail.content
+        assert delivered[0].content.endswith(mail.content)
         assert [item.id for item in await member._mailbox.unread()] == [mail.id]
     finally:
         await member.shutdown()
 
 
 async def test_boot_action_and_reply_keep_common_executor(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(emit "boot" ["sink@tlon.internal"])', "boot"))
-    member._execute_action = AsyncMock()
+    member = _member(
+        tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "boot"})', "boot")
+    )
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     executed = asyncio.Event()
-    member._execute_action.side_effect = lambda *args, **kwargs: executed.set()
+    send = member._post_office.send
+
+    async def boot_send(**kwargs: Any) -> Any:
+        result = await send(**kwargs)
+        executed.set()
+        return result
+
+    member._post_office.send = AsyncMock(side_effect=boot_send)
     await member.initialize()
     try:
         await asyncio.wait_for(executed.wait(), 2)
-        member._execute_action.assert_awaited_once()
-        assert member._execute_action.await_args.args[0].data["content"] == "boot"
+        member._post_office.send.assert_awaited_once()
+        assert member._post_office.send.await_args.kwargs["content"] == "boot"
     finally:
         await member.shutdown()
 
 
 async def test_own_mail_is_not_processed(tmp_path: Path) -> None:
-    member = _member(tmp_path, _spec('(emit "x" ["sink@tlon.internal"])'))
-    member._execute_action = AsyncMock()
+    member = _member(tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "x"})'))
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     mail = Mail.create(from_address=member.address, to=[member.address], content="self")
     await member._mailbox.append_inbox(mail)
     await member.initialize()
     try:
         await _drain(member)
-        member._execute_action.assert_not_awaited()
+        member._post_office.send.assert_not_awaited()
         assert await member._mailbox.unread() == []
     finally:
         await member.shutdown()
@@ -309,17 +345,17 @@ async def test_own_mail_is_not_processed(tmp_path: Path) -> None:
 async def test_rule_gate_has_no_implicit_read_effect(tmp_path: Path) -> None:
     spec = MemberSpec.from_edn(
         loads(
-            '{:version 1 :rules [{:name "reject" :on :mail-delivered :when (not true) :actions [(emit "x" ["sink@tlon.internal"])]}]}'
+            '{:version 1 :rules [{:name "reject" :on :mail-delivered :when (not true) :actions [(mail-send {:to ["sink@tlon.internal"] :content "x"})]}]}'
         )
     )
     member = _member(tmp_path, spec)
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     mail = _mail()
     await member._mailbox.append_inbox(mail)
     await member.initialize()
     try:
         await _drain(member)
-        member._execute_action.assert_not_awaited()
+        member._post_office.send.assert_not_awaited()
         assert len(await member._mailbox.unread()) == 1
         await member._scan_unread_mail()
         assert member._queue.qsize() == 0
@@ -334,10 +370,10 @@ async def test_rule_fuel_is_shared_by_gate_and_actions(tmp_path: Path) -> None:
         )
     )
     member = _member(tmp_path, spec)
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     event = _event(_mail())
     assert await member._run_rule_body(spec.rules[0], event)
-    member._execute_action.assert_not_awaited()
+    member._post_office.send.assert_not_awaited()
     assert member._program_store.pending() == []
     record = member._program_store.ensure(
         *member._program_record_data(spec.rules[0], event, None, None)
@@ -355,7 +391,10 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     from tlon.tools.agents.scheduling import FinishTurnTool
 
     shell = _member(
-        tmp_path, _spec(f'(run-loop (quote {RECIPE})) (forward {{:to ["sink@tlon.internal"]}})')
+        tmp_path,
+        _spec(
+            f'(run-loop (quote {RECIPE})) (mail-forward {{:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]}})'
+        ),
     )
     llm = MagicMock()
     llm.config = LLMConfig(model_name="openai/gpt-4o-mini")
@@ -397,7 +436,7 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
         llm.chat.assert_awaited_once()
         delivered = await Mailbox(tmp_path / "shared/mail.sqlite3", "sink").inbox()
         assert len(delivered) == 1 and delivered[0].forward_of == mail.id
-        assert delivered[0].content == mail.content
+        assert delivered[0].content.endswith(mail.content)
         assert len(await member._mailbox.unread()) == 1
         sessions = await member._journal.list_completed()
         assert len(sessions) == 1
@@ -413,7 +452,9 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
 async def test_while_effects_deliver_two_real_mails(tmp_path: Path) -> None:
     member = _member(
         tmp_path,
-        _spec('(while [i 0] (< i 2) (emit (str i) ["sink@tlon.internal"]) (recur (inc i)))'),
+        _spec(
+            '(while [i 0] (< i 2) (mail-send {:to ["sink@tlon.internal"] :content (str i)}) (recur (inc i)))'
+        ),
     )
     await member._event_bus.initialize()
     await member.initialize()
@@ -445,12 +486,12 @@ async def test_when_and_bound_effect_values_do_not_repeat_requests(tmp_path: Pat
     member = _member(
         tmp_path,
         _spec(
-            '(when true (let [request (emit "first" ["sink@tlon.internal"])] [request request]) (emit "second" ["sink@tlon.internal"]))'
+            '(when true (let [request (mail-send {:to ["sink@tlon.internal"] :content "first"})] [request request]) (mail-send {:to ["sink@tlon.internal"] :content "second"}))'
         ),
     )
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
-    assert [call.args[0].data["content"] for call in member._execute_action.await_args_list] == [
+    assert [call.kwargs["content"] for call in member._post_office.send.await_args_list] == [
         "first",
         "second",
     ]
@@ -461,14 +502,18 @@ async def test_host_start_all_preserves_order_and_executes_once(tmp_path: Path) 
     host.start_all_candidates.return_value = ["worker-a", "worker-b"]
     member = _member(
         tmp_path,
-        _spec('(when true (start-all {:reason "boot"}) (emit "done" ["sink@tlon.internal"]))'),
+        _spec(
+            '(when true (start-all {:reason "boot"}) (mail-send {:to ["sink@tlon.internal"] :content "done"}))'
+        ),
     )
-    member._builtins = make_member_builtins(host)
+    member._builtins = {**make_member_builtins(host), **member._operations.builtins()}
     member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
     requests = [call.args[0] for call in member._execute_action.await_args_list]
-    assert [request.kind for request in requests] == ["start", "start", "emit"]
-    assert [request.data["agent_id"] for request in requests[:2]] == ["worker-a", "worker-b"]
+    assert [request.kind for request in requests] == ["start", "start"]
+    assert [request.data["agent_id"] for request in requests] == ["worker-a", "worker-b"]
+    assert member._post_office.send.await_args.kwargs["content"] == "done"
     host.start_all_candidates.assert_called_once()
 
 
@@ -478,17 +523,17 @@ async def test_later_evaluation_failure_keeps_committed_effects_without_repeatin
     member = _member(
         tmp_path,
         _spec(
-            '(emit "committed before failure" ["sink@tlon.internal"]) (/ 1 0)',
+            '(mail-send {:to ["sink@tlon.internal"] :content "committed before failure"}) (/ 1 0)',
             extra='{:name "next" :on :agent-idle :actions [(state-put "next" true)]}',
         ),
     )
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     event = _event(_mail())
     await member.initialize()
     try:
         await member._on_event(event)
         await _drain(member)
-        member._execute_action.assert_awaited_once()
+        member._post_office.send.assert_awaited_once()
         assert member._program_store.pending() == []
         record = member._program_store.ensure(
             *member._program_record_data(
@@ -501,7 +546,7 @@ async def test_later_evaluation_failure_keeps_committed_effects_without_repeatin
         assert record.completed is False
         assert record.error is not None and "division by zero" in record.error
         assert await member._run_rule_body(member.spec.rules[0], event)
-        member._execute_action.assert_awaited_once()
+        member._post_office.send.assert_awaited_once()
         await member._on_event(
             Event(
                 type=EventType.AGENT_IDLE,
@@ -522,10 +567,11 @@ async def test_resumed_second_session_keeps_remaining_effects(tmp_path: Path) ->
         tmp_path,
         _spec(
             f"(run-loop (quote {RECIPE})) (run-loop (quote {RECIPE})) "
-            '(forward {:to ["sink@tlon.internal"]})'
+            '(mail-forward {:mail_id (mail-field msg :id) :to ["sink@tlon.internal"]})'
         ),
     )
     event = _event(_mail())
+    await member._mailbox.append_inbox(event.payload["mail"])
     rule = member.spec.rules[0]
     interrupted: list[dict[str, Any]] = []
 
@@ -534,7 +580,7 @@ async def test_resumed_second_session_keeps_remaining_effects(tmp_path: Path) ->
         raise asyncio.CancelledError()
 
     member._run_session_effect = AsyncMock(side_effect=crash)
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     with pytest.raises(asyncio.CancelledError):
         await member._run_rule_body(rule, event)
     first = interrupted[0]
@@ -560,8 +606,8 @@ async def test_resumed_second_session_keeps_remaining_effects(tmp_path: Path) ->
     )
     assert await member._run_rule_body(rule, event)
     assert member._run_session_effect.await_count == 2
-    member._execute_action.assert_awaited_once()
-    assert member._execute_action.await_args.args[0].kind == "forward"
+    member._post_office.send.assert_awaited_once()
+    assert member._post_office.send.await_args.kwargs["forward_of"] == event.payload["mail"].id
     assert member._program_store.pending() == []
 
 
@@ -575,16 +621,16 @@ async def test_empty_env_capability_closure_keeps_nested_effects_once(tmp_path: 
         params=["text"],
         rest=None,
         body=[
-            loads('(emit text ["sink@tlon.internal"])'),
-            loads('(emit (str text "!") ["sink@tlon.internal"])'),
+            loads('(mail-send {:to ["sink@tlon.internal"] :content text})'),
+            loads('(mail-send {:to ["sink@tlon.internal"] :content (str text "!")})'),
         ],
         env={},
         name="publish-pair",
     )
     member._builtins["publish-pair"] = Builtin.from_closure(closure, pure=False)
-    member._execute_action = AsyncMock()
+    member._post_office.send = AsyncMock(wraps=member._post_office.send)
     assert await member._run_rule_body(member.spec.rules[0], _event(_mail()))
-    assert [call.args[0].data["content"] for call in member._execute_action.await_args_list] == [
+    assert [call.kwargs["content"] for call in member._post_office.send.await_args_list] == [
         "0",
         "0!",
         "1",
@@ -594,46 +640,62 @@ async def test_empty_env_capability_closure_keeps_nested_effects_once(tmp_path: 
 
 
 async def test_recovery_executes_frozen_program_after_behavior_update(tmp_path: Path) -> None:
-    original = _member(tmp_path, _spec('(emit "before") (emit "after")'))
+    original = _member(
+        tmp_path,
+        _spec(
+            '(mail-send {:to [(mail-field msg :from)] :content "before" :in_reply_to (mail-field msg :id)}) (mail-send {:to [(mail-field msg :from)] :content "after" :in_reply_to (mail-field msg :id)})'
+        ),
+    )
     seen: list[str] = []
 
-    async def interrupt(request: Any, **kwargs: Any) -> None:
-        if request.data["content"] == "after":
-            raise asyncio.CancelledError()
-        seen.append(request.data["content"])
+    send = original._post_office.send
 
-    original._execute_action = AsyncMock(side_effect=interrupt)
+    async def interrupt(**kwargs: Any) -> Any:
+        if kwargs["content"] == "after":
+            raise asyncio.CancelledError()
+        seen.append(kwargs["content"])
+        return await send(**kwargs)
+
+    original._post_office.send = AsyncMock(side_effect=interrupt)
     event = _event(_mail())
+    await original._mailbox.append_inbox(event.payload["mail"])
     with pytest.raises(asyncio.CancelledError):
         await original._run_rule_body(original.spec.rules[0], event)
     assert seen == ["before"]
-    restored = _member(tmp_path, _spec('(emit "new behavior")'))
-    restored._execute_action = AsyncMock()
+    restored = _member(
+        tmp_path,
+        _spec(
+            '(mail-send {:to [(mail-field msg :from)] :content "new behavior" :in_reply_to (mail-field msg :id)})'
+        ),
+    )
+    restored._post_office.send = AsyncMock(wraps=restored._post_office.send)
     await restored._restore_programs()
-    restored._execute_action.assert_awaited_once()
-    assert restored._execute_action.await_args.args[0].data["content"] == "after"
+    restored._post_office.send.assert_awaited_once()
+    assert restored._post_office.send.await_args.kwargs["content"] == "after"
     assert restored._program_store.pending() == []
 
 
 async def test_unknown_mail_submission_keeps_program_pending(tmp_path: Path) -> None:
     member = _member(
         tmp_path,
-        _spec('(send-mail {:to ["sink@tlon.internal"] :content "edition" :request-id "p:a"})'),
+        _spec('(mail-send {:to ["sink@tlon.internal"] :content "edition" :request_id "p:a"})'),
     )
-    member._program_effects.execute = AsyncMock(side_effect=OSError("submission unknown"))
-    with pytest.raises(OSError, match="submission unknown"):
+    member._post_office.send = AsyncMock(side_effect=OSError("submission unknown"))
+    from tlon.operations.schema import UnknownOutcomeError
+
+    with pytest.raises(UnknownOutcomeError, match="submission unknown"):
         await member._run_rule_body(member.spec.rules[0], _event(_mail()))
     pending = member._program_store.pending()
     assert len(pending) == 1
     assert pending[0].completed is False and pending[0].error is None
-    member._program_effects.execute.assert_awaited_once()
+    member._post_office.send.assert_awaited_once()
 
 
 async def test_pending_failure_blocks_new_state_updates_until_recovery(tmp_path: Path) -> None:
     member = _member(
         tmp_path,
         _spec(
-            '(emit "blocked")',
+            '(mail-send {:to [(mail-field msg :from)] :content "blocked" :in_reply_to (mail-field msg :id)})',
             extra='{:name "new" :on :agent-idle :actions [(state-put "new" true)]}',
         ),
     )
@@ -642,20 +704,25 @@ async def test_pending_failure_blocks_new_state_updates_until_recovery(tmp_path:
     retry_entered = asyncio.Event()
     attempts = 0
 
-    async def execute(request: Any, **kwargs: Any) -> None:
+    send = member._post_office.send
+
+    async def execute(**kwargs: Any) -> Any:
         nonlocal attempts
         attempts += 1
         if blocked:
             if attempts >= 2:
                 retry_entered.set()
             raise OSError("previous effect still unavailable")
-        delivered.append(request.data["content"])
+        delivered.append(kwargs["content"])
+        return await send(**kwargs)
 
-    member._execute_action = AsyncMock(side_effect=execute)
+    member._post_office.send = AsyncMock(side_effect=execute)
     idle = Event(type=EventType.AGENT_IDLE, payload={"agent_id": "member"}, source="test")
     await member.initialize()
     try:
-        await member._on_event(_event(_mail()))
+        mail = _mail()
+        await member._mailbox.append_inbox(mail)
+        await member._on_event(_event(mail))
         await _drain(member)
         assert len(member._program_store.pending()) == 1
         await member._on_event(idle)
@@ -717,3 +784,47 @@ async def test_boot_io_failure_recovers_without_stopping_actor(tmp_path: Path) -
         assert member._program_task is not None and not member._program_task.done()
     finally:
         await member.shutdown()
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_mail_only_rule_updates_activity_only_when_invoked(
+    tmp_path: Path, allowed: bool
+) -> None:
+    from unittest.mock import patch
+
+    member = _member(
+        tmp_path,
+        MemberSpec.from_edn(
+            loads(
+                '{:version 1 :rules [{:name "mail" :on :mail-delivered :when '
+                + ("(= 1 1)" if allowed else "(= 1 2)")
+                + ' :actions [(mail-send {:to ["sink@tlon.internal"] :content "activity"})]}]}'
+            )
+        ),
+    )
+    member._initialized_at = 100.0
+    with patch("tlon.agents.member_runtime.time.monotonic", return_value=200.0):
+        await member._run_rule_body(member.spec.rules[0], _event(_mail()))
+        assert member._last_action_at == (200.0 if allowed else None)
+        assert member.idle_seconds == (0.0 if allowed else 100.0)
+
+
+async def test_mail_program_continues_trigger_trace(tmp_path: Path) -> None:
+    from tlon.base.tracing.trace_context import get_current_trace
+
+    member = _member(tmp_path, _spec('(mail-send {:to ["sink@tlon.internal"] :content "traced"})'))
+    send = member._post_office.send
+    traces: list[str] = []
+
+    async def traced_send(**kwargs: Any) -> Any:
+        context = get_current_trace()
+        assert context is not None
+        traces.append(context.trace_id)
+        return await send(**kwargs)
+
+    member._post_office.send = traced_send
+    event = _event(_mail())
+    event.trace_id = "12345678901234567890123456789012"
+    event.span_id = "1234567890123456"
+    await member._run_rule_body(member.spec.rules[0], event)
+    assert traces == [event.trace_id]

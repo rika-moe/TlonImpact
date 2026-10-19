@@ -84,7 +84,7 @@ Tlon 的新成员不从代码里长出来，而从**原型**里派生：原型�
 
 「写侧专属」是安全设计：模板语法只存在于 authoring 时刻，不进入 DSL 的运行时语义。DSL 保持受限、可停机，参数化没有给它增加任何表达能力——只是让同一份行为可以带着不同常量被拷贝多次。
 
-以 relay 为完整例：它的 `behavior.tlon` 声明 `:parameters {:to {:type :string-list :required true}}`，规则体里是 `(forward {:to ${to}})`。spawn 时传 `params={"to": ["a@tlon.internal", "b@tlon.internal"]}`，渲染后落盘的实例文件里是 `(forward {:to ["a@tlon.internal" "b@tlon.internal"]})`——占位符消失，值已是序列化好的 EDN 字面量。同一个转发原型由此可以派生出转发目标各异的任意多个 relay 实例，而原型本身保持一份。
+以 relay 为完整例：它的 `behavior.tlon` 声明 `:parameters {:to {:type :string-list :required true}}`，规则体里是 `(mail-forward {:mail_id (mail-field msg :id) :to ${to}})`。spawn 时传 `params={"to": ["a@tlon.internal", "b@tlon.internal"]}`，渲染后落盘的实例文件里是 `(mail-forward {:mail_id (mail-field msg :id) :to ["a@tlon.internal" "b@tlon.internal"]})`——占位符消失，值已是序列化好的 EDN 字面量。同一个转发原型由此可以派生出转发目标各异的任意多个 relay 实例，而原型本身保持一份。
 
 ## spawn：从原型派生新成员
 

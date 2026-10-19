@@ -38,7 +38,7 @@ const SAMPLE: MetricsSnapshot = {
       unit: "ms",
       points: [{ attributes: { agent_id: "gu-yanxi" }, count: 2, sum: 200, min: 80, max: 120 }],
     },
-    "tlon.tool.executions": counter(5, { tool_name: "sendEmail" }),
+    "tlon.tool.executions": counter(5, { tool_name: "mail-send" }),
   },
 };
 

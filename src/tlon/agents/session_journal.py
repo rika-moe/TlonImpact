@@ -193,6 +193,7 @@ class SessionJournal:
         completed = False
         end_reason: str | None = None
 
+        operation_recovery: dict[str, dict[str, Any]] = {}
         for event in events:
             event_type = event.get("type")
             if start is None:
@@ -228,6 +229,7 @@ class SessionJournal:
                 raw = event.get("response")
                 last_response = LLMResponse.from_dict(raw) if raw else None
             elif event_type == "tool/dispatch":
+                operation_recovery.update(event.get("operation_recovery") or {})
                 for tc_dict in event.get("tool_calls") or []:
                     tc = ToolCall.from_dict(tc_dict)
                     dispatched[tc.id] = tc
@@ -272,7 +274,9 @@ class SessionJournal:
             if pair is not None:
                 pending_collect.append(pair)
                 continue
-            synthetic = ToolResult(success=False, data={}, error=INTERRUPTED_ERROR)
+            synthetic = ToolResult(
+                success=False, data=operation_recovery.get(tc_id, {}), error=INTERRUPTED_ERROR
+            )
             logger.warning(
                 "session_journal_orphan_tool",
                 session_id=session_id,

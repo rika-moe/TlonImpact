@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.operations.mail import mail_operation_definitions
 from tlon.tools.agents.ports import CapabilityProposalError, CapabilitySummary
 from tlon.tools.agents.propose_behavior import _extract_edn, _render_digest
 from tlon.tools.base import Tool, ToolResult
@@ -52,12 +53,8 @@ _PURE_WORDS = sorted({**CORE_BUILTINS, **ARITHMETIC_BUILTINS})
 #: cannot import ``tlon.agents``, so the names are restated here under a
 #: test anchor against the real registry).
 _ACTION_WORDS = [
-    "emit",
-    "forward",
     "llm-call",
-    "mark-read",
     "run-loop",
-    "send-mail",
     "spawn",
     "start",
     "start-all",
@@ -65,6 +62,8 @@ _ACTION_WORDS = [
     "state-put",
     "stop",
 ]
+
+_ACTION_WORDS.extend(operation.name for operation in mail_operation_definitions())
 
 _ARTIFACT_HINT = (
     "artifact 是一个 v1 schema 的 EDN map，形状：\n"

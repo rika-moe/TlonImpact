@@ -105,18 +105,18 @@ test("tool events map to tool entries with success/failure", () => {
   const start = toActivity(
     ev("tool.execute_start", {
       agent_id: "a",
-      tool_name: "sendEmail",
+      tool_name: "mail-send",
       arguments: { to: "guest" },
     }),
   );
   assert.equal(start.kind, "tool");
-  assert.equal(start.title, "a is calling tool sendEmail");
+  assert.equal(start.title, "a is calling tool mail-send");
   assert.equal(start.detail, '{"to":"guest"}');
 
   const ok = toActivity(
-    ev("tool.execute_end", { agent_id: "a", tool_name: "sendEmail", success: true }),
+    ev("tool.execute_end", { agent_id: "a", tool_name: "mail-send", success: true }),
   );
-  assert.equal(ok.title, "a tool sendEmail succeeded");
+  assert.equal(ok.title, "a tool mail-send succeeded");
 
   const fail = toActivity(
     ev("tool.execute_end", { agent_id: "a", tool_name: "readFile", success: false }),

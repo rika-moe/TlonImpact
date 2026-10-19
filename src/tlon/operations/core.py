@@ -20,6 +20,7 @@ class CallContext:
 
     member_id: str
     run_id: str
+    call_id: str
 
 
 Handler = Callable[[CallContext, dict[str, Any]], Any]
@@ -105,31 +106,37 @@ class OperationRegistry:
 class OperationExecutor:
     """Shared input/output boundary, bound to a host-created call context.
 
-    This P1 executor has no authorization, budgets or persistence. Production
-    business operations remain on their existing paths until subsequent stages.
+    Each invocation may bind its own context without mutating the member scope.
+    Domain handlers and their host services own effect submission and persistence.
     """
 
     def __init__(self, registry: OperationRegistry, context: CallContext) -> None:
         self.registry = registry
         self.context = context
 
-    def call_pure(self, name: str, arguments: Any) -> Any:
+    def call_pure(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
         operation = self.registry.get(name)
         if operation.effects:
             raise OperationError(f"{name}: effectful operation requires async invocation")
         inputs = validate(operation.input_schema, arguments)
-        result = cast(Handler, operation.handler)(self.context, inputs)
+        result = cast(Handler, operation.handler)(self._context(context), inputs)
         if inspect.isawaitable(result):
             if inspect.iscoroutine(result):
                 result.close()
             raise OperationError(f"{name}: pure handler returned an awaitable")
         return validate(operation.output_schema, result, output=True)
 
-    async def call(self, name: str, arguments: Any) -> Any:
+    async def call(self, name: str, arguments: Any, context: CallContext | None = None) -> Any:
         operation = self.registry.get(name)
         if not operation.effects:
-            return self.call_pure(name, arguments)
+            return self.call_pure(name, arguments, context)
         inputs = validate(operation.input_schema, arguments)
         handler = cast(AsyncHandler, operation.handler)
-        result = await handler(self.context, inputs)
+        result = await handler(self._context(context), inputs)
         return validate(operation.output_schema, result, output=True)
+
+    def _context(self, context: CallContext | None) -> CallContext:
+        bound = context or self.context
+        if bound.member_id != self.context.member_id:
+            raise OperationError("operation context belongs to another member")
+        return bound

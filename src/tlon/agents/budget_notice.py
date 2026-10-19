@@ -29,13 +29,13 @@ def resource_limit_notice(session: AgentSession, reason: str, hint: str | None =
     attempts: dict[str, _Submission] = {}
     for entry in session.all_tool_results:
         call, result = entry["tool_call"], entry["result"]
-        if call.function_name not in ("sendEmail", "forwardMail"):
+        if call.function_name not in ("mail-send", "mail-forward"):
             continue
         data = result.data if isinstance(result.data, dict) else {}
         request_id = (
             _identifier(data.get("request_id"))
             or _identifier(call.arguments.get("request_id"))
-            or f"{session.id}:{call.id}"
+            or f"session:{session.id}:{call.id}"
         )
         mail_id = _identifier(data.get("mail_id")) if result.success else None
         status = (

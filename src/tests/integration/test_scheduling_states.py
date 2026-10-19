@@ -39,12 +39,12 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
             return LLMResponse(content="[]")
         calls += 1
         if calls == 1:
-            return response("sendEmail", {"to": ["alice@tlon.internal"], "content": "收到"})
+            return response("mail-send", {"to": ["alice@tlon.internal"], "content": "收到"})
         if calls == 2:
             second_think.set()
             await allow_sleep.wait()
             unread = store.mails(member_id, "unread")
-            return response("markRead", {"mail_ids": [mail.id for mail in unread]})
+            return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
         if calls == 3:
             return response(
                 "sleepUntil",
@@ -56,7 +56,7 @@ async def test_real_tools_sleep_wake_finish_and_permanent_exit(tmp_path: Path) -
         if calls == 4:
             woke.set()
             unread = store.mails(member_id, "unread")
-            return response("markRead", {"mail_ids": [mail.id for mail in unread]})
+            return response("mail-mark-read", {"mail_ids": [mail.id for mail in unread]})
         if calls == 5:
             return response("finishTurn", {})
         if calls == 6:

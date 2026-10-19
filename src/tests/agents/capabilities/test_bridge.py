@@ -22,14 +22,7 @@ PURE_CAPABILITY = """\
  :pure true}
 """
 
-IMPURE_CAPABILITY = """\
-{:version 1
- :name "notify-adam"
- :description "给 Adam 发一封通知邮件"
- :args [{:name "content" :type :string :doc "通知正文"}]
- :impl (fn [content] (emit content ["adam@tlon.internal"]))
- :pure false}
-"""
+IMPURE_CAPABILITY = '{:version 1\n :name "notify-adam"\n :description "给 Adam 发一封通知邮件"\n :args [{:name "content" :type :string :doc "通知正文"}]\n :impl (fn [content] (mail-send {:to ["adam@tlon.internal"] :content content}))\n :pure false}\n'
 
 #: Fails the load gate: the impl composes unregistered vocabulary.
 INVALID_CAPABILITY = """\

@@ -7,6 +7,8 @@ from typing import Any
 
 from tlon.agents.member_spec import MemberRule
 from tlon.agents.program_store import ProgramStore
+from tlon.operations.adapters import DSLAdapter
+from tlon.operations.core import CallContext
 from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, EvalError
 from tlosure.edn import dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, DEFAULT_WHEN_FUEL, Evaluator
@@ -26,7 +28,13 @@ class ProgramDriver:
         execute: ExecuteEffect,
         *,
         token_budget: int = 4096,
+        operations: DSLAdapter | None = None,
+        member_id: str = "",
+        on_operation: Callable[[], None] | None = None,
     ) -> None:
+        self.operations = operations
+        self.member_id = member_id
+        self.on_operation = on_operation
         self.store = store
         self.run_id = run_id
         self.builtins = {
@@ -63,6 +71,19 @@ class ProgramDriver:
             result = loads(result_edn)
             if call.name == "llm-call":
                 self._charge(result, call)
+            return result
+        if self.operations is not None and self.operations.owns(call):
+            if self.on_operation is not None:
+                self.on_operation()
+            result = await self.operations.handle(
+                call,
+                CallContext(
+                    self.member_id, self.run_id, f"program:{self.run_id}:{index}:{call.name}"
+                ),
+            )
+            await asyncio.to_thread(
+                self.store.record_effect, self.run_id, index, call.name, args_edn, dumps(result)
+            )
             return result
         try:
             request = call.invoke()

@@ -303,6 +303,7 @@ class TestDistinctBehaviorPrototypes:
         spec = validate_member_spec(MemberSpec.from_edn(loads(text)))
         paths = TlonPaths(home=tmp_path)
         bus = EventBus()
+        await bus.initialize()
         office = make_office(bus, tmp_path, ["router", "a", "sender", "other"])
         mailbox = Mailbox(paths.mail_database_file(), "router")
         member = MemberRuntime(
@@ -323,7 +324,10 @@ class TestDistinctBehaviorPrototypes:
             source="test",
         )
 
-        assert await member._run_rule(spec.rules[0], trigger_event=event)
+        try:
+            assert await member._run_rule(spec.rules[0], trigger_event=event)
+        finally:
+            await bus.shutdown()
 
         delivered = await Mailbox(paths.mail_database_file(), "a").inbox()
         sent = await mailbox.sent()
@@ -335,7 +339,10 @@ class TestDistinctBehaviorPrototypes:
             assert forwarded.from_address == "router@tlon.internal"
             assert forwarded.to == ["a@tlon.internal"]
             assert forwarded.forward_of == mail.id
-            assert forwarded.content == mail.content
+            assert forwarded.content.endswith(mail.content)
+            assert "—— 转发的邮件 ——" in forwarded.content
+            assert f"From: {sender}" in forwarded.content
+            assert forwarded.subject == "Fwd:"
             assert not unread
         else:
             assert not delivered and not sent
@@ -361,14 +368,14 @@ class TestEvidencePrototypeExecution:
         await driver.step_session(session)
 
         assert session.state == SessionState.ACTIVE
-        executor.send_mail.assert_not_awaited()
+        executor.send.assert_not_awaited()
         assert any("缺少实际计算依据" in str(message.get("content")) for message in session.context)
 
         await _drive(driver, session)
 
         assert session.is_completed
-        executor.send_mail.assert_awaited_once()
-        assert executor.send_mail.await_args.args[0].content == "修订：计算结果为 4"
+        executor.send.assert_awaited_once()
+        assert executor.send.await_args.args[0]["content"] == "修订：计算结果为 4"
         critiques = [
             call
             for call in services.think.await_args_list
@@ -393,5 +400,5 @@ class TestEvidencePrototypeExecution:
 
         assert session.is_completed
         assert session.iteration == _prototype_loop(name).max_iterations
-        executor.send_mail.assert_not_awaited()
+        executor.send.assert_not_awaited()
         assert len(services.think.await_args_list) == 2 * _prototype_loop(name).max_iterations

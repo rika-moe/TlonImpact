@@ -5,6 +5,7 @@ import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.mail_helpers import make_office
 from tests.recipe_helpers import recipe_for
 from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
@@ -13,11 +14,19 @@ from tlon.agents.member_spec import MemberSpec, validate_member_spec
 from tlon.agents.session import AgentSession, SessionState
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import attempts_completion
+from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
 from tlon.agents.vocabulary import STAGE_COND_BUILTINS
+from tlon.base.events.event_bus import EventBus
 from tlon.base.llm_client import LLMResponse, ToolCall
 from tlon.base.paths import TlonPaths
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.mail import make_mail_operations
 from tlon.organization.mail.mail import Mail
+from tlon.organization.mail.mailbox import Mailbox
+from tlon.organization.mail.member_mail import MemberMailService
+from tlon.tools.agents.scheduling import FinishTurnTool
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import loads
@@ -36,27 +45,14 @@ def _tc(tc_id: str, name: str = "someTool", arguments: dict | None = None) -> To
 def _completing(content: str, tc_id: str = "c-final") -> LLMResponse:
     return LLMResponse(
         content="done",
-        tool_calls=[_tc(tc_id, "sendEmail", {"content": content})],
+        tool_calls=[_tc(tc_id, "mail-send", {"to": ["user@tlon.internal"], "content": content})],
     )
-
-
-async def _send_tool(name: str, args: dict) -> ToolResult:
-    if name == "sendEmail":
-        return ToolResult(
-            success=True,
-            data={"content": args["content"]},
-        )
-    if name == "finishTurn":
-        return ToolResult(
-            success=True, data={"scheduling_request": {"action": "finish", "reason": ""}}
-        )
-    return ToolResult(success=True, data={"ok": name})
 
 
 def _make_driver(
     tmp_path: Path,
     responses: list[LLMResponse],
-) -> tuple[LoopDriver, SessionJournal, MagicMock, MagicMock]:
+) -> tuple[LoopDriver, SessionJournal, MemberMailService, MagicMock]:
     spec = MemberSpec.from_edn(loads(GATED_EDN))
     validate_member_spec(spec)
     rule = spec.rules[0]
@@ -76,15 +72,27 @@ def _make_driver(
     services.session_span = lambda session: contextlib.nullcontext()
 
     executor = MagicMock()
-    executor.send_mail = AsyncMock(
-        return_value=__import__("types").SimpleNamespace(
-            to_dict=lambda: {"mail_id": "sent", "message": "已入箱"}
-        )
-    )
     executor.publish = AsyncMock()
 
-    tool_executor = MagicMock()
-    tool_executor.execute = AsyncMock(side_effect=_send_tool)
+    paths = TlonPaths(home=tmp_path)
+    bus = MagicMock(spec=EventBus)
+    bus.publish = AsyncMock()
+    mail_service = MemberMailService(
+        "agent1", Mailbox(paths.mail_database_file(), "agent1"), make_office(bus, tmp_path)
+    )
+    mail_service.send = AsyncMock(wraps=mail_service.send)
+    operations = OperationExecutor(
+        OperationRegistry(make_mail_operations(mail_service)), CallContext("agent1", "test", "test")
+    )
+    tool_executor = ToolExecutor()
+    for operation in operations.registry.definitions():
+        tool_executor.register_tool(OperationTool(operations, operation.name))
+    tool_executor.register_tool(FinishTurnTool())
+    working_tool = MagicMock()
+    working_tool.name = "someTool"
+    working_tool.validate_arguments.return_value = []
+    working_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
+    tool_executor.register_tool(working_tool)
 
     journal = SessionJournal("agent1", TlonPaths(home=tmp_path))
     driver = LoopDriver(
@@ -99,7 +107,7 @@ def _make_driver(
         pressure=ContextPressure(MagicMock(), journal, 262144),
         is_human_sender=lambda address: True,
     )
-    return driver, journal, executor, services
+    return driver, journal, mail_service, services
 
 
 async def _drive(driver: LoopDriver, session: AgentSession) -> None:
@@ -140,7 +148,7 @@ class TestAttemptsCompletion:
     def test_progress_mail_does_not_complete(self) -> None:
         response = LLMResponse(
             content=None,
-            tool_calls=[_tc("c1", "sendEmail", {"content": "wip"})],
+            tool_calls=[_tc("c1", "mail-send", {"content": "wip"})],
         )
         assert attempts_completion(response) is False
 
@@ -176,8 +184,8 @@ class TestCompletionGate:
         await _drive(driver, session)
 
         assert session.is_completed
-        executor.send_mail.assert_awaited_once()
-        assert executor.send_mail.await_args.args[0].content == "reply"
+        executor.send.assert_awaited_once()
+        assert executor.send.await_args.args[0]["content"] == "reply"
         # think + one critique: the reviewer saw the pending draft.
         assert len(_calls_by_span(services, "agent.critique")) == 1
         critique_input = _calls_by_span(services, "agent.critique")[0].args[0]
@@ -199,7 +207,7 @@ class TestCompletionGate:
         # Round 1: the FAILed draft must never reach act's dispatch.
         await driver.step_session(session)
         assert session.state == SessionState.ACTIVE  # not WAITING: nothing dispatched
-        executor.send_mail.assert_not_awaited()
+        executor.send.assert_not_awaited()
         # revise fed the feedback into context and consumed the verdict.
         assert any("没有回答来信的问题" in str(m.get("content")) for m in session.context)
         assert session.loop_scratch.get("critique") is None
@@ -208,8 +216,8 @@ class TestCompletionGate:
         await _drive(driver, session)
 
         assert session.is_completed
-        executor.send_mail.assert_awaited_once()
-        assert executor.send_mail.await_args.args[0].content == "draft-2"
+        executor.send.assert_awaited_once()
+        assert executor.send.await_args.args[0]["content"] == "draft-2"
         # The revising think saw the feedback.
         second_think = _calls_by_span(services, "agent.think")[1].args[0]
         assert any("没有回答来信的问题" in str(m.get("content")) for m in second_think)
@@ -265,8 +273,8 @@ class TestCompletionGate:
         await _drive(driver, session)
 
         assert session.is_completed
-        executor.send_mail.assert_awaited_once()
-        assert executor.send_mail.await_args.args[0].content == "reply"
+        executor.send.assert_awaited_once()
+        assert executor.send.await_args.args[0]["content"] == "reply"
         assert session.loop_scratch.get("critique") is None
 
     async def test_finish_decision_does_not_trigger_mail_critique(self, tmp_path: Path) -> None:
@@ -276,5 +284,5 @@ class TestCompletionGate:
         session = AgentSession(session_id="agent1-finish", trigger_content="notice")
         await _drive(driver, session)
         assert session.is_completed
-        executor.send_mail.assert_not_awaited()
+        executor.send.assert_not_awaited()
         assert not _calls_by_span(services, "agent.critique")

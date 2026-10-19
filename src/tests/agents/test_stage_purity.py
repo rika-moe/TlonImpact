@@ -116,7 +116,7 @@ class TestStagePurity:
         re-derives it from the referenced mail, docs/design/mail.md)."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
-        tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
+        tc = ToolCall(id="t1", function_name="mail-send", arguments={})
         result = ToolResult(
             success=True,
             data={"to": ["user@tlon.internal"], "content": "回复"},
@@ -134,7 +134,7 @@ class TestStagePurity:
         """Collection preserves the result headers already submitted by the tool."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
-        tc = ToolCall(id="t1", function_name="sendEmail", arguments={})
+        tc = ToolCall(id="t1", function_name="mail-send", arguments={})
         result = ToolResult(
             success=True,
             data={
@@ -158,7 +158,7 @@ class TestStagePurity:
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
         session.mark_waiting()
-        tc = ToolCall(id="t1", function_name="forwardMail", arguments={})
+        tc = ToolCall(id="t1", function_name="mail-forward", arguments={})
         result = ToolResult(
             success=True,
             data={
@@ -256,7 +256,7 @@ class TestEngineApplication:
 
     async def test_act_step_finish_turn_conflicts_with_send_email(self) -> None:
         """A finishTurn round must be the only tool call:
-        finishTurn + sendEmail in the same round is
+        finishTurn + mail-send in the same round is
         refused with a corrective prompt."""
         svc = _make_services()
         session = AgentSession(session_id="s1", trigger_content="trigger")
@@ -264,7 +264,7 @@ class TestEngineApplication:
             content="done",
             tool_calls=[
                 ToolCall(id="s1", function_name="finishTurn", arguments={}),
-                ToolCall(id="m1", function_name="sendEmail", arguments={}),
+                ToolCall(id="m1", function_name="mail-send", arguments={}),
             ],
         )
 
@@ -283,7 +283,7 @@ async def test_scheduling_request_cannot_share_a_round(ending: str) -> None:
         content=None,
         tool_calls=[
             ToolCall(id="end", function_name=ending, arguments={}),
-            ToolCall(id="mail", function_name="sendEmail", arguments={"content": "hi"}),
+            ToolCall(id="mail", function_name="mail-send", arguments={"content": "hi"}),
         ],
     )
     outcome = await act_stage_step(svc, session, response)

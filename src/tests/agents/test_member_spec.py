@@ -29,21 +29,9 @@ SESSION_EDN = """\
                  :reflect {:enabled false :interval-minutes 5}}))]}]}
 """
 
-SCRIPT_EDN = """\
-{:version 1
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["a@tlon.internal"]})]}]}
-"""
+SCRIPT_EDN = '{:version 1\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["a@tlon.internal"]})]}]}\n'
 
-FUELED_EDN = """\
-{:version 1
- :rules [{:name "loopy"
-          :on :mail-delivered
-          :when (addressed-to-me? msg)
-          :fuel 50
-          :actions [(emit "x" ["sink@tlon.internal"])]}]}
-"""
+FUELED_EDN = '{:version 1\n :rules [{:name "loopy"\n          :on :mail-delivered\n          :when (addressed-to-me? msg)\n          :fuel 50\n          :actions [(mail-send {:to ["sink@tlon.internal"] :content "x"})]}]}\n'
 
 
 def _parse(text: str) -> MemberSpec:
@@ -52,19 +40,6 @@ def _parse(text: str) -> MemberSpec:
 
 def _recipe(spec: MemberSpec) -> SessionRecipe:
     return SessionRecipe.from_edn(spec.rules[0].actions[0][1][1])
-
-
-def _action_kind(spec: MemberSpec) -> str:
-    """Evaluate a rule's first action form and return its ActionRequest kind."""
-    from tlon.agents.vocabulary import make_member_builtins
-    from tlosure.eval import eval_form
-
-    request = eval_form(
-        spec.rules[0].actions[0],
-        {"msg": None, "event": None, "self": None},
-        make_member_builtins(),
-    )
-    return request.kind
 
 
 class TestRoundtrip:
@@ -88,7 +63,7 @@ class TestRoundtrip:
         spec = _parse(SCRIPT_EDN)
         rule = spec.rules[0]
         assert len(rule.actions) == 1
-        assert _action_kind(_parse(spec.to_edn())) == "forward"
+        assert str(_parse(spec.to_edn()).rules[0].actions[0][0]) == "mail-forward"
 
 
 class TestCritiqueInstructions:
@@ -138,11 +113,7 @@ class TestLlmKeyRejected:
     selection is deployment policy, not genotype — any residual ``:llm``
     key is a load error, not a warning."""
 
-    RULES = """\
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+    RULES = ' :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
     def test_llm_map_rejected(self):
         with pytest.raises(MemberSpecValidationError, match=":llm"):
@@ -164,13 +135,7 @@ class TestLlmKeyRejected:
     def test_unknown_top_level_key_still_tolerated(self):
         """Warn-only forward compatibility still holds for other keys."""
         spec = _parse(
-            """\
-{:version 1
- :future-key 42
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+            '{:version 1\n :future-key 42\n :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
         )
         assert spec.rules[0].name == "relay"
 
@@ -180,11 +145,7 @@ class TestExecutionSection:
     (constitution 1, docs/design/execution-device.md): genotype, reviewed
     with the proposal, projected once into agent.yaml at instantiation."""
 
-    RULES = """\
- :rules [{:name "relay"
-          :on :mail-delivered
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+    RULES = ' :rules [{:name "relay"\n          :on :mail-delivered\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
 
     @pytest.mark.parametrize("level", ["L0", "L1", "L2"])
     def test_levels_parse(self, level: str):
@@ -245,13 +206,7 @@ class TestSingleValidator:
     def test_unknown_when_builtin_rejected_by_validator(self):
         """Expression-level builtin scope is the validator's job (phase C)."""
         spec = _parse(
-            """\
-{:version 1
- :rules [{:name "wild"
-          :on :mail-delivered
-          :when (no-such-predicate? msg)
-          :actions [(forward {:to ["x@tlon.internal"]})]}]}
-"""
+            '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :when (no-such-predicate? msg)\n          :actions [(mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}\n'
         )
         with pytest.raises(MemberSpecValidationError, match=":when"):
             validate_member_spec(spec)
@@ -283,7 +238,7 @@ class TestComposableActions:
     def test_session_and_forward_are_allowed_in_one_rule(self) -> None:
         text = SESSION_EDN.replace(
             "))]}]}",
-            ')) (forward {:to ["x@tlon.internal"]})]}]}',
+            ')) (mail-forward {:mail_id (mail-field msg :id) :to ["x@tlon.internal"]})]}]}',
         )
         validate_member_spec(_parse(text))
 
@@ -433,25 +388,14 @@ class TestPhaseDActions:
     def test_while_action_loads(self):
         """The canonical form — a while of emits — is a loadable action."""
         spec = _parse(
-            """\
-{:version 1
- :rules [{:name "fanout"
-          :on :mail-delivered
-          :when (addressed-to-me? msg)
-          :actions [(while [i 0] (< i 3) (emit "x" ["sink@tlon.internal"]) (recur (inc i)))]}]}
-"""
+            '{:version 1\n :rules [{:name "fanout"\n          :on :mail-delivered\n          :when (addressed-to-me? msg)\n          :actions [(while [i 0] (< i 3) (mail-send {:to ["sink@tlon.internal"] :content "x"}) (recur (inc i)))]}]}\n'
         )
         validate_member_spec(spec)
         assert len(spec.rules[0].actions) == 1
 
     def test_map_action_loads(self):
         spec = _parse(
-            """\
-{:version 1
- :rules [{:name "fanout"
-          :on :mail-delivered
-          :actions [(map i (emit "x" ["sink@tlon.internal"]) [1 2 3])]}]}
-"""
+            '{:version 1\n :rules [{:name "fanout"\n          :on :mail-delivered\n          :actions [(map i (mail-send {:to ["sink@tlon.internal"] :content "x"}) [1 2 3])]}]}\n'
         )
         validate_member_spec(spec)
 
@@ -460,12 +404,7 @@ class TestPhaseDActions:
         position validates like any other expression (action convergence
         is a runtime fact, not a static one)."""
         spec = _parse(
-            """\
-{:version 1
- :rules [{:name "wild"
-          :on :mail-delivered
-          :actions [(while [i 0] (emit "x") (recur (inc i)))]}]}
-"""
+            '{:version 1\n :rules [{:name "wild"\n          :on :mail-delivered\n          :actions [(while [i 0] (mail-send {:to ["sink@tlon.internal"] :content "x"}) (recur (inc i)))]}]}\n'
         )
         validate_member_spec(spec)
 
@@ -474,13 +413,7 @@ class TestDefnThreading:
     """ADR 0021: defn names thread across a rule's :actions sequence
     (define-before-use), at load validation and in evaluation order."""
 
-    DEFN_EDN = """\
-{:version 1
- :rules [{:name "notify"
-          :on :mail-delivered
-          :actions [(defn notify [x] (emit x ["sink@tlon.internal"]))
-                    (notify "hi")]}]}
-"""
+    DEFN_EDN = '{:version 1\n :rules [{:name "notify"\n          :on :mail-delivered\n          :actions [(defn notify [x] (mail-send {:to ["sink@tlon.internal"] :content x}))\n                    (notify "hi")]}]}\n'
 
     def test_defn_define_before_use_loads(self):
         spec = _parse(self.DEFN_EDN)
@@ -489,13 +422,7 @@ class TestDefnThreading:
 
     def test_defn_use_before_define_rejected(self):
         spec = _parse(
-            """\
-{:version 1
- :rules [{:name "notify"
-          :on :mail-delivered
-          :actions [(notify "hi")
-                    (defn notify [x] (emit x))]}]}
-"""
+            '{:version 1\n :rules [{:name "notify"\n          :on :mail-delivered\n          :actions [(notify "hi")\n                    (defn notify [x] (mail-send {:to ["sink@tlon.internal"] :content x}))]}]}\n'
         )
         with pytest.raises(
             MemberSpecValidationError, match="unknown function or special form: notify"
@@ -583,17 +510,15 @@ class TestSessionRequests:
         with pytest.raises(MemberSpecValidationError, match="run-loop"):
             validate_member_spec(replace(spec, rules=(rule,)))
 
-    def test_mark_read_can_be_collected_inside_a_loop(self) -> None:
+    def test_mark_read_operation_validates_inside_a_loop(self) -> None:
         from tlon.agents.vocabulary import make_member_builtins
-        from tlosure.eval import eval_form
+        from tlosure.validate import validate_form
 
-        requests = []
-        eval_form(
-            loads("(while [n 0] (< n 2) (mark-read) (recur (+ n 1)))"),
-            {},
-            make_member_builtins(collector=requests),
-        )
-        assert [request.kind for request in requests] == ["mark_read", "mark_read"]
+        form = loads('(while [n 0] (< n 2) (mail-mark-read {:mail_ids ["m1"]}) (recur (+ n 1)))')
+        builtins = make_member_builtins()
+        validate_form(form, builtins, set())
+        assert not builtins["mail-mark-read"].pure
+        assert "mark-read" not in builtins
 
 
 def test_duplicate_rule_names_are_rejected() -> None:
