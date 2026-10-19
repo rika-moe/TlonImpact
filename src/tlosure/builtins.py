@@ -259,6 +259,16 @@ def builtin_count(env: dict[str, Any], coll: Any) -> int:
     raise EvalError(f"count expects a vector, map or string, got {type(coll).__name__}")
 
 
+def _put_map_entry(
+    mapping: dict[Any, Any], key_types: dict[Any, type], key: Any, value: Any
+) -> None:
+    """Reject cross-type equal keys before Python dict silently erases one."""
+    if key in key_types and key_types[key] is not type(key):
+        raise EvalError("map keys collide across EDN types")
+    key_types[key] = type(key)
+    mapping[key] = value
+
+
 def builtin_assoc(env: dict[str, Any], target: Any, *pairs: Any) -> dict[Any, Any] | list[Any]:
     """Return a map/vector copy with key-value pairs applied in order.
 
@@ -269,9 +279,10 @@ def builtin_assoc(env: dict[str, Any], target: Any, *pairs: Any) -> dict[Any, An
         raise EvalError("assoc expects key-value pairs")
     if isinstance(target, dict):
         mapping = dict(target)
+        key_types = {key: type(key) for key in mapping}
         for key, value in zip(pairs[::2], pairs[1::2], strict=True):
             try:
-                mapping[key] = value
+                _put_map_entry(mapping, key_types, key, value)
             except TypeError as error:
                 raise EvalError("assoc map key must be hashable") from error
         return mapping
@@ -308,11 +319,12 @@ def builtin_conj(env: dict[str, Any], target: Any, *items: Any) -> dict[Any, Any
         return [*target, *items]
     if isinstance(target, dict):
         result = dict(target)
+        key_types = {key: type(key) for key in result}
         for item in items:
             if type(item) is not list or len(item) != 2:
                 raise EvalError("conj map entries must be two-element vectors")
             try:
-                result[item[0]] = item[1]
+                _put_map_entry(result, key_types, item[0], item[1])
             except TypeError as error:
                 raise EvalError("conj map key must be hashable") from error
         return result

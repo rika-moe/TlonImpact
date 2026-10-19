@@ -132,13 +132,20 @@ class ToolExecutor:
         Returns:
             ToolResult with execution outcome
         """
-        args_summary = json.dumps(arguments, ensure_ascii=False, default=str)[:200]
+        try:
+            args_summary = json.dumps(arguments, ensure_ascii=False, default=str)[:200]
+        except (TypeError, ValueError, RecursionError):
+            # Logging must not bypass the tool's actual argument boundary.
+            args_summary = "<unserializable arguments>"
+        log_arguments: Any = (
+            args_summary if args_summary == "<unserializable arguments>" else arguments
+        )
         with start_span(
             f"tool.{tool_name}",
             source="tool_executor",
             attributes={"tool.name": tool_name, "tool.arguments": args_summary},
         ):
-            logger.info("tool_call", tool_name=tool_name, arguments=arguments)
+            logger.info("tool_call", tool_name=tool_name, arguments=log_arguments)
             span = trace.get_current_span()
             result = await self._execute_inner(tool_name, arguments)
             span.set_attribute("tool.success", result.success)

@@ -59,6 +59,7 @@ WebUI / Operator / Python SDK / Telegram
 | `tlon.organization` | 邮局、邮箱、地址解析与人类/外部适配；不依赖其他业务域 |
 | `tlon.memory` | claim 存储、蒸馏与检索；不依赖 agents/organization/tools/sandbox |
 | `tlon.sandbox` | 执行装置与资源监控；不依赖 agents/organization/memory/tools |
+| `tlon.operations` | P1 共享操作契约、成员作用域调用与 DSL/Tool 薄入口；尚未接生产装配，不依赖 agents/server/client/launcher。见 [reference](reference/operations-reference.md) |
 | `tlon.tools` | 成员工具；不得依赖 agents/server/client/launcher/prototypes，生命周期操作经注入端口 |
 | `tlon.agents` | 成员装配、调度、会话循环和策略接入；不依赖 server/client/launcher/prototypes |
 | `tlon.prototypes` | 随包携带的原型数据，启动时播种；不是原型管理服务 |

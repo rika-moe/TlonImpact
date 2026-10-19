@@ -246,8 +246,15 @@ class _Parser:
         if len(items) % 2 != 0:
             raise self.error("map literal must contain an even number of forms")
         result: dict[Any, Any] = {}
+        key_types: dict[Any, type] = {}
         for i in range(0, len(items), 2):
-            result[items[i]] = items[i + 1]
+            key = items[i]
+            # Keyword/Symbol inherit str equality. Reject cross-type collisions
+            # before dict insertion erases information at a host data boundary.
+            if key in key_types and key_types[key] is not type(key):
+                raise self.error("map keys collide across EDN types")
+            key_types[key] = type(key)
+            result[key] = items[i + 1]
         return result
 
     def parse_string(self) -> str:
