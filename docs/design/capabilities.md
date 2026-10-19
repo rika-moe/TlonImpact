@@ -1,5 +1,7 @@
 # 能力数据化：复合能力成为可审批的数据 artifact
 
+> 后续方案（尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+
 复合能力是可审批的 tlosure 函数 artifact，批准后成为成员 spec 可调用的词。本文定义当前准入、注册、执行和提案机制；行为语言见 [dsl](dsl.md)，宿主接口见 [bridge-api](bridge-api.md)。
 
 ## 复合能力与宿主原语
@@ -15,7 +17,7 @@
 | 数据形态 | **tlosure 函数 artifact**（`{:name :args :impl (fn ...)}`），非宿主代码、非 WASM |
 | 信任通道 | **staging + 人工批准**原样套用（与原型同一模式） |
 | 权限 | **不放大**：能力产出 ActionRequest 数据，引擎按**调用者**的配额与信任级执行 |
-| 能力天花板 | **复合可进化、原语不可进化**：组合既有词汇的能力走本通道；新原语（LLM 调用、新 IO、Docker、异步）永远 Python + 人类写 + 发版 |
+| 能力天花板 | **复合可进化、原语不可进化**：组合既有词汇的能力走本通道；新增模型服务、IO、Docker 或异步机制等宿主原语仍需 Python + 人类写 + 发版；可组合已准入的 llm-call 等动作 |
 | env 契约 | **最小化：只见 args**，零注入 |
 | artifact 粒度 | **一个 artifact 一个词** |
 | 语境可见性 | 准入声明纯度；纯词可进门控语境，非纯词仅 `:actions` |
@@ -38,7 +40,7 @@
 - **`:args` 是显式声明的位置参数 schema**。类型注解（`:string` / `:number` / `:boolean` / `:list` / `:map`）是**评审材料不是静态保证**——tlosure 无类型系统，元数由 fn 应用在运行时兜住（与 builtin 同）。写清楚是为了评审时能判断「这个词的契约是什么」
 - **`:pure` 是准入声明**，不是作者自觉——加载期校验强制（见「语境可见性」）
 - **`:examples` 是可选的输入/输出断言**（仅 `:pure true` 可携带——非纯 impl 产出 ActionRequest 宿主对象，无法与 EDN 值比对）：`{:args [...] :expect <值>}` 列表，`:args` 是**字面数据不求值**，数量须等于 `:args` 声明数。准入校验时在沙盒求值器跑断言（纯注册表 + 零注入 env + DEFAULT_FUEL 计量），任一失败即拒载；detail 端点同步呈现逐条 PASS/FAIL 与实际值/错误（见「信任通道」）
-- v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计。当前词汇：纯词注册表 = `CORE_BUILTINS` + `ARITHMETIC_BUILTINS`（19 词，逐词核实不读 env，与 `POLICY_BUILTINS` 同组成同契约）；非纯词注册表 = 纯词 + 六个动作词。**不含** trigger/loop/stage-cond 语境谓词（`addressed-to-me?`、`iteration-limit-reached?` 等直接读 env 的 `self`/`state`/`scratch` 段）与 host 查询词（`sleeping?` 等读注册表状态）——它们依赖隐式上下文，在零注入 env 下会静默退化；需要上下文一律调用点显式传参
+- v1 边界：**`:impl` 只能组合内置词汇**（builtin 注册表 + 动作词），不能引用其他能力词——能力引能力的依赖图与退役级联留待真实需求出现再设计。当前词汇：纯词注册表 = `CORE_BUILTINS` + `ARITHMETIC_BUILTINS`（24 词，不读 env，与 `POLICY_BUILTINS` 同组成同契约）；非纯词注册表 = 纯词 + `MEMBER_ACTION_NAMES` 的 12 个动作词。**不含** trigger/loop/stage-cond 语境谓词（`addressed-to-me?`、`iteration-limit-reached?` 等直接读 env 的 `self`/`state`/`scratch` 段）与 host 查询词（`sleeping?` 等读注册表状态）——它们依赖隐式上下文，在零注入 env 下会静默退化；需要上下文一律调用点显式传参
 
 ## env 契约：只见 args
 
@@ -84,7 +86,7 @@
 ## 信任边界（不做什么）
 
 - **权限不放大**：能力产出的是 ActionRequest **数据**，引擎按调用者身份执行——一个能力词做不到调用者本人做不到的事
-- **能力碰不到原语**：LLM 调用、新 IO、Docker、异步永不在 `:impl` 的表达力内（fuel 限得住步数限不住钱——LLM 类能力留在 Python 层的根本原因）
+- **能力不能新增宿主原语**：`:impl` 可组合已准入动作，包括 llm-call、state-get/state-put 等；模型服务、IO、Docker 或异步机制的新增实现仍在 Python 宿主层。fuel 不约束宿主内部成本，模型调用还受程序驱动的 token 预算限制
 - **v1 能力词只在 DSL 语境**（spec 的 rules/actions），不进 LLM 工具面——ToolExecutor 注册（LLM 可动态调用的工具）需要 参数 schema → tool schema 的映射设计，是独立后续决策。这收窄了 issue #45 原清单的「ToolExecutor 从 artifact 注册」一项：DSL 词汇先行，当前使用入口是成员 **spec** 中的词汇组合
 - 能力引能力（`:impl` 引用其他能力词）v1 不做
 

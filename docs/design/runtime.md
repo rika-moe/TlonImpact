@@ -1,5 +1,7 @@
 # 成员运行时设计
 
+> 后续方案（尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+
 成员共用四态调度：活跃、等待、定时睡眠、死亡。活跃由实际执行、模型或工具调用及后台维护派生；等待实例可以卸载，卸载不等于睡眠；死亡拒收新邮件并保留历史。管理员可请求排空后等待、定时睡眠、提前唤醒或永久退出，完整契约见 [agent-scheduling-states](agent-scheduling-states.md)。
 
 [ADR 0042](../decisions/0042-unified-member-rule-execution.md) 删除了按是否包含会话循环区分成员或规则的模型。每个成员执行同一种事件程序：`规则 = :on + :when + :actions`，可选 `:fuel`。传统循环、条件分支和模型会话可以组合；是否调用模型不是成员类型。成员与原型关系见 [unified-member-model](unified-member-model.md)，语言设计见 [dsl](dsl.md)，字段见 [DSL reference](../reference/dsl-reference.md)。

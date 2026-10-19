@@ -1,5 +1,7 @@
 # DSL 设计：行为即数据
 
+> 后续方案（尚未实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
 语言规范（EDN 语法、求值器、燃料计量、特殊形式、通用词汇）见 [../reference/tlosure-reference.md](../reference/tlosure-reference.md)；MemberSpec 全字段与领域词汇清单见 [../reference/dsl-reference.md](../reference/dsl-reference.md)；本文定义当前行为模型、信任边界和加载机制，并解释必要的取舍。选择 EDN 作为语法的决策记录见 [../decisions/0001-edn-as-dsl.md](../decisions/0001-edn-as-dsl.md)；语义演进锚定 SCI 兼容子集（为 JVM 迁移铺路）的决策见 [../decisions/0011-sci-compatible-subset.md](../decisions/0011-sci-compatible-subset.md)。
