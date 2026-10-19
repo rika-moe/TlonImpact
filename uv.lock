@@ -2411,6 +2411,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "croniter" },
     { name = "docker" },
+    { name = "jsonschema" },
     { name = "litellm" },
     { name = "opentelemetry-sdk" },
     { name = "pydantic" },
@@ -2441,6 +2442,7 @@ dev = [
     { name = "types-aiofiles" },
     { name = "types-croniter" },
     { name = "types-docker" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 
@@ -2450,6 +2452,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "croniter", specifier = ">=6.2.4" },
     { name = "docker", specifier = ">=6.0.0" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "litellm", specifier = "==1.105.*" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otlp'", specifier = ">=1.30" },
     { name = "opentelemetry-sdk", specifier = ">=1.30" },
@@ -2475,6 +2478,7 @@ dev = [
     { name = "types-aiofiles", specifier = ">=25.1.0" },
     { name = "types-croniter", specifier = ">=6.2.4.20260711" },
     { name = "types-docker", specifier = ">=7.2.0" },
+    { name = "types-jsonschema", specifier = ">=4.26.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12" },
 ]
 
@@ -2600,6 +2604,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ce/4f/7e8c7ab8fa5c04e92c00289e126ea5c467f211f98161e6d88cc87f1d8a50/types_docker-7.2.0.20260806.tar.gz", hash = "sha256:5f1dd8f10c64d37675a9694cad96c4163a7c8f4e7b1f40faf69855e6da8051c2", size = 36624, upload-time = "2026-08-06T04:52:42.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/48/48febbf2f34f158732495d7de1adf8904ea8915557d55a4c4d5f3ad4574d/types_docker-7.2.0.20260806-py3-none-any.whl", hash = "sha256:a426388646f115bf85554734ff0b7eb308903fbe5081a5588d1a271b7845d473", size = 51174, upload-time = "2026-08-06T04:52:41.174Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20261006"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/d2/1f742605f5a6d39f993134885b8de41c98af606871d3ebddaf3e776bd1eb/types_jsonschema-4.26.0.20261006.tar.gz", hash = "sha256:3eb7db61b6819d40addfdaac7173e749071a7d4a9a4394f0c844598ec84b2500", size = 16843, upload-time = "2026-10-06T08:16:07.318Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/a0/4f2e3c0dc3d5cad958006f2e0307065cc8fe4fbf0393ff0b69d55ee9bbe5/types_jsonschema-4.26.0.20261006-py3-none-any.whl", hash = "sha256:29301f4e65e3928540cdf5e23ad716e38bb0c0b416a48dada213edd3d70206ec", size = 16113, upload-time = "2026-10-06T08:16:06.355Z" },
 ]
 
 [[package]]

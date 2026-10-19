@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。全部阶段尚未实施，合并仍由人类确认。
+状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已实现并通过本地验收，待 PR 合并，生产业务尚未切换，合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -199,4 +199,4 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 - [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4，六个串行 PR。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-当前全部未实施；issues 的未勾选项不是完成声明。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+当前 P1 最小契约已实现并通过本地验收，待 PR 合并，其余任务未实施；所有任务在合并前保持未勾选。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。

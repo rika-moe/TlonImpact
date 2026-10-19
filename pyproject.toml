@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     # Core
     "pydantic>=2.0.0",
+    "jsonschema>=4.26.0",
     "PyYAML>=6.0",
     "python-dotenv>=1.0.0",
     "aiofiles>=23.0.0",
@@ -148,6 +149,7 @@ dev = [
     "pytest-cov>=4.0.0",
     # 三方类型 stub：全量 mypy 检查所需
     "types-PyYAML>=6.0.12",
+    "types-jsonschema>=4.26.0",
     "types-aiofiles>=25.1.0",
     "types-docker>=7.2.0",
     # otlp 可选导出器装进 dev，让 mypy 能静态解析 otel.py 的延迟导入
@@ -327,3 +329,10 @@ name = "tlosure 独立于 tlon"
 type = "forbidden"
 source_modules = "tlosure"
 forbidden_modules = ["tlon"]
+
+# Shared operation contracts receive domain ports; never import the caller.
+[[tool.importlinter.contracts]]
+name = "operations 不依赖 agents/server/client/launcher"
+type = "forbidden"
+source_modules = "tlon.operations"
+forbidden_modules = ["tlon.agents", "tlon_server", "tlon_client", "tlon_launcher"]
