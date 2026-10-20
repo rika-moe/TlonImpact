@@ -1,6 +1,7 @@
 """Replay one frozen member program, returning committed effect values to DSL."""
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from typing import Any
@@ -10,7 +11,7 @@ from tlon.agents.program_store import ProgramStore
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.control import CONTROL_NAMES, validate_control_forms
 from tlon.operations.core import CallContext
-from tlon.operations.schema import UnknownOutcomeError, json_value
+from tlon.operations.schema import json_value
 from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, EvalError
 from tlosure.edn import Form, dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, DEFAULT_WHEN_FUEL, Evaluator
@@ -51,6 +52,7 @@ class ProgramDriver:
         self.remaining_tokens = token_budget
 
     async def run(self, rule: MemberRule, env: dict[str, Any]) -> None:
+        await asyncio.to_thread(self.store.ensure_root, self.run_id)
         validate_control_forms(rule.actions)
         self._control_allowed = False
         shared = (
@@ -79,60 +81,48 @@ class ProgramDriver:
         index = self.index
         self.index += 1
         args_edn = dumps(call.args)
+        if self.operations is not None and self.operations.owns(call):
+            inputs = self.operations._arguments(call.args)
+            self.operations.prepare(call)
+            context = CallContext(
+                self.member_id,
+                self.run_id,
+                f"program:{self.run_id}:{index}:{call.name}",
+                call_path=(str(index),),
+                origin="program",
+                arguments_json=json.dumps(
+                    inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ),
+            )
+            found, result = await self.operations.replay(call, context)
+            if not found:
+                if call.name == "model-call" and self.remaining_tokens <= 0:
+                    raise EvalError("member program LLM output budget exhausted")
+                if self.on_operation is not None:
+                    self.on_operation()
+                dispatched_call = call
+                if call.name == "model-call":
+                    dispatched_call = replace(
+                        call,
+                        args=[
+                            {
+                                **inputs,
+                                "max_tokens": min(inputs["max_tokens"], self.remaining_tokens),
+                            }
+                        ],
+                    )
+                result = await self.operations.handle(dispatched_call, context)
+            if call.name == "model-call":
+                self._charge(result, call)
+            if call.name in CONTROL_NAMES and self.on_control is not None:
+                await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
+            return result
         found, result_edn = await asyncio.to_thread(
             self.store.get_effect, self.run_id, index, call.name, args_edn
         )
         if found:
             assert result_edn is not None
-            result = loads(result_edn)
-            if call.name == "model-call":
-                self._charge(result, call)
-            if call.name in CONTROL_NAMES and self.on_control is not None:
-                await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
-            return result
-        if self.operations is not None and self.operations.owns(call):
-            call_id = f"program:{self.run_id}:{index}:{call.name}"
-            unsafe = self.operations.prepare(call)
-            if call.name == "model-call" and self.remaining_tokens <= 0:
-                raise EvalError("member program LLM output budget exhausted")
-            if unsafe:
-                claimed = await asyncio.to_thread(
-                    self.store.claim_intent, self.run_id, index, call.name, args_edn
-                )
-                if not claimed:
-                    raise UnknownOutcomeError(
-                        "Previous operation dispatch has no recorded result; automatic retry refused",
-                        {"call_id": call_id, "outcome": "unknown", "retry_safe": False},
-                    )
-            if self.on_operation is not None:
-                self.on_operation()
-            dispatched_call = call
-            if call.name == "model-call":
-                inputs = self.operations._arguments(call.args)
-                dispatched_call = replace(
-                    call,
-                    args=[
-                        {**inputs, "max_tokens": min(inputs["max_tokens"], self.remaining_tokens)}
-                    ],
-                )
-            result = await self.operations.handle(
-                dispatched_call,
-                CallContext(
-                    self.member_id,
-                    self.run_id,
-                    call_id,
-                    effect_index=index,
-                    arguments_edn=args_edn,
-                ),
-            )
-            await asyncio.to_thread(
-                self.store.record_effect, self.run_id, index, call.name, args_edn, dumps(result)
-            )
-            if call.name == "model-call":
-                self._charge(result, call)
-            if call.name in CONTROL_NAMES and self.on_control is not None:
-                await self.on_control(json_value(result, edn_keys=True)["scheduling_request"])
-            return result
+            return loads(result_edn)
         try:
             request = call.invoke()
         except (TypeError, ValueError) as error:

@@ -33,7 +33,7 @@ def make_model_operations(
                 messages=[{"role": "user", "content": arguments["prompt"]}],
                 tools=None,
                 max_tokens=arguments["max_tokens"],
-                purpose="program" if context.effect_index is not None else "tool",
+                purpose="program" if context.origin == "program" else "tool",
                 session_id=context.run_id,
             )
             if response.tool_calls:

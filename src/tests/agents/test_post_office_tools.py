@@ -11,6 +11,7 @@ from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.executor import EffectExecutor
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import ReflectSpec, SessionRecipe
+from tlon.agents.program_store import ProgramStore
 from tlon.agents.session import AgentSession
 from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.act import act_stage_collect
@@ -62,6 +63,7 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
         post_office=office,
     )
     tools = ToolExecutor()
+    store = ProgramStore(paths.agent_program_database_file("agent1"), build_id="mail-test")
     operations = OperationExecutor(
         OperationRegistry(
             make_mail_operations(
@@ -69,10 +71,16 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
             )
         ),
         CallContext("agent1", "assembly", "assembly"),
+        store,
     )
     for operation in operations.registry.definitions():
         tools.register_tool(OperationTool(operations, operation.name))
-    journal = SessionJournal("agent1", paths)
+
+    async def verify_root(sid: str) -> str:
+        await asyncio.to_thread(store.ensure_root, sid)
+        return store.build_id
+
+    journal = SessionJournal("agent1", paths, verify_root=verify_root)
     driver = LoopDriver(
         identity=identity,
         recipe=recipe,
@@ -85,6 +93,7 @@ async def engine(tmp_path: Path) -> AsyncGenerator[tuple[LoopDriver, PostOffice,
         pressure=ContextPressure(MagicMock(), journal, 262144),
         is_human_sender=lambda address: True,
     )
+    journal.resolve_dispatch = driver.resolve_dispatch
     try:
         yield driver, office, services
     finally:
@@ -108,7 +117,7 @@ async def test_tool_receipt_is_durable_before_collect_and_replay_does_not_send_a
     completed = await driver.execute_one_tool("session1", call)
     result = completed[1]
     assert result.success
-    assert result.data["request_id"] == "session:session1:tool1"
+    assert result.data["request_id"] == "session:session1:round:0:tool1"
     fresh_store = MailStore(office.store.database)
     assert [mail.id for mail in fresh_store.mails("human:bob")] == [result.data["mail_id"]]
     session = AgentSession(session_id="session1", trigger_content="work")
@@ -132,7 +141,7 @@ async def test_rejection_never_completes_session(
         office.store.retire("human:bob")
     completed = await driver.execute_one_tool("session1", _call(recipient=recipient))
     assert not completed[1].success
-    assert completed[1].data["request_id"] == "session:session1:tool1"
+    assert completed[1].data["request_id"] == "session:session1:round:0:tool1"
     session = AgentSession(session_id="session1", trigger_content="work")
     outcome = await act_stage_collect(services, session, [completed])
     assert not outcome.complete
@@ -159,12 +168,15 @@ async def test_timeout_after_real_commit_preserves_key_and_safe_retry(
     completed = await driver.execute_one_tool("session1", _call())
     assert committed.is_set(), "timeout should occur after the real database commit"
     assert not completed[1].success
-    assert completed[1].data == {"request_id": "session:session1:tool1", "outcome": "unknown"}
+    assert completed[1].data == {
+        "request_id": "session:session1:round:0:tool1",
+        "outcome": "unknown",
+    }
     assert len(office.store.mails("human:bob")) == 1
     monkeypatch.setattr(office, "_notify", original_notify)
     replay = await driver.execute_one_tool(
         "session2",
-        _call(request_id="session:session1:tool1", call_id="retry"),
+        _call(request_id="session:session1:round:0:tool1", call_id="retry"),
     )
     assert replay[1].success
     assert len(office.store.mails("human:bob")) == 1
@@ -197,26 +209,30 @@ async def test_gateway_failure_is_reported_in_actual_tool_receipt(
     assert office.store.mails("gateway:test") == []
 
 
-async def test_orphan_dispatch_preserves_prejournaled_unknown_request_key(
+async def test_prejournaled_dispatch_recovers_unsubmitted_mail_once_with_frozen_key(
     engine: tuple[LoopDriver, PostOffice, MagicMock],
 ) -> None:
-    driver, _, _ = engine
+    driver, office, _ = engine
     journal = driver._journal
     call = _call(request_id="explicit-stable")
-    await journal.append("orphan", "session/start", context=[], trigger_content="work")
+    await journal.append(
+        "orphan", "session/start", context=[], trigger_content="work", build_id="mail-test"
+    )
     await journal.append(
         "orphan",
         "tool/dispatch",
         tool_calls=[call.to_dict()],
-        operation_recovery={call.id: driver._operation_recovery("orphan", call)},
+        operation_recovery={call.id: driver._operation_recovery("orphan", call, 0, "mail-test")},
     )
     replay = await journal.resume("orphan")
     assert replay is not None
-    assert replay.pending_collect[0][1].data == {
-        "request_id": "explicit-stable",
-        "outcome": "unknown",
-    }
-    assert not replay.pending_collect[0][1].success
+    assert replay.pending_collect[0][1].data["request_id"] == "explicit-stable"
+    assert replay.pending_collect[0][1].success
+    assert len(office.store.mails("human:bob")) == 1
+    again = await journal.resume("orphan")
+    assert again is not None
+    assert again.pending_collect[0][1] == replay.pending_collect[0][1]
+    assert len(office.store.mails("human:bob")) == 1
 
 
 async def test_journaled_receipt_recovers_for_collection_without_resending(
@@ -225,12 +241,14 @@ async def test_journaled_receipt_recovers_for_collection_without_resending(
     driver, office, _ = engine
     journal = driver._journal
     call = _call()
-    await journal.append("session1", "session/start", context=[], trigger_content="work")
+    await journal.append(
+        "session1", "session/start", context=[], trigger_content="work", build_id="mail-test"
+    )
     await journal.append(
         "session1",
         "tool/dispatch",
         tool_calls=[call.to_dict()],
-        operation_recovery={call.id: driver._operation_recovery("session1", call)},
+        operation_recovery={call.id: driver._operation_recovery("session1", call, 0, "mail-test")},
     )
     completed = await driver.execute_one_tool("session1", call)
     replay = await journal.resume("session1")

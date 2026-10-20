@@ -1,5 +1,7 @@
 # ADR 0043：以报社验证可返回结果的成员程序
 
+> P4a 当前说明：session journal 保留会话历史；DSL 与模型 Tool 的叶子操作提交统一由 ProgramStore roots/invocations 判定，state 与同次回执原子提交。恢复核对构建和契约指纹，未知非幂等写不自动重做。本文保留历史决策，现行边界见 [调用恢复](../design/invocation-recovery.md)。
+
 > P3c 当前实现：宿主能力统一定义为 Operation；Tool 与 DSL 共用定义和执行边界。旧工具名和类名仅记录当时设计，当前入口见 [工具手册](../reference/tools-reference.md)。
 > 邮件接口由统一操作 P2 修订：当前使用 `mail-send` / `mail-forward` / `mail-mark-read`，参数与回执采用 snake_case；本文保留当时的决策与验收记录。现行契约见 [Operation reference](../reference/operations-reference.md)。
 

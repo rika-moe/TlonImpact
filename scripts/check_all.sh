@@ -57,6 +57,7 @@ if [ "$want_static" -eq 1 ]; then
     run "stage-purity"      uv run python scripts/check_stage_purity.py
     run "mypy"              uv run mypy src/tlon src/tlosure src/tlon_server src/tlon_client src/tlon_launcher
     run "lint-imports"      uv run lint-imports
+    run "runtime-identity"  uv run python scripts/gen_runtime_identity.py --check
     run "docs-freshness"    uv run python scripts/gen_reference_docs.py --check
     run "dev-proxy"         uv run python scripts/check_dev_proxy.py
     ts_run "webui-tests"    webui test

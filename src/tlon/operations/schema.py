@@ -14,6 +14,10 @@ class OperationError(EvalError):
     """A failure at the shared operation boundary."""
 
 
+class RecoveryMismatchError(OperationError):
+    """A frozen root or leaf identity differs from the active runtime."""
+
+
 class ReplayConflictError(ValueError):
     """A durable invocation key conflicts with its committed identity or result."""
 

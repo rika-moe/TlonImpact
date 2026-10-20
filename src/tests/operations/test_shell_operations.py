@@ -21,11 +21,12 @@ from tlosure.edn import Keyword, loads
 from tlosure.eval import Evaluator
 
 
-def bindings(device):
+def bindings(device, store: ProgramStore | None = None):
     service = MemberShellService(DockerRuntimeConfig(level="L2"), device)
     executor = OperationExecutor(
         OperationRegistry((*make_shell_operations(service), *time_operation_definitions())),
         CallContext("a", "r", "c"),
+        store,
     )
     return service, executor, DSLAdapter(executor)
 
@@ -43,14 +44,14 @@ def program():
 async def test_unknown_intent_never_reexecutes(tmp_path: Path, disk, after_submit):
     device = AsyncMock()
     device.run.return_value = ExecutionResult(0, "ok", "")
-    _, executor, adapter = bindings(device)
-    store = ProgramStore(tmp_path / "program.db" if disk else None)
+    store = ProgramStore(tmp_path / "program.db" if disk else None, build_id="test")
+    _, executor, adapter = bindings(device, store)
     if after_submit:
 
         def interrupted(*args):
             raise asyncio.CancelledError()
 
-        store.record_effect = interrupted
+        store.commit_invocation = interrupted
     else:
         device.run.side_effect = asyncio.CancelledError()
 
@@ -63,7 +64,8 @@ async def test_unknown_intent_never_reexecutes(tmp_path: Path, disk, after_submi
         await driver().run(program(), {})
     calls = device.run.await_count
     if disk:
-        store = ProgramStore(tmp_path / "program.db")
+        store = ProgramStore(tmp_path / "program.db", build_id="test")
+        _, executor, adapter = bindings(device, store)
     with pytest.raises(UnknownOutcomeError) as error:
         await driver().run(program(), {})
     assert error.value.data["retry_safe"] is False
@@ -73,8 +75,8 @@ async def test_unknown_intent_never_reexecutes(tmp_path: Path, disk, after_submi
 async def test_recorded_result_replays_without_device():
     device = AsyncMock()
     device.run.return_value = ExecutionResult(0, "ok", "")
-    _, _, adapter = bindings(device)
-    store = ProgramStore(None)
+    store = ProgramStore(None, build_id="test")
+    _, _, adapter = bindings(device, store)
     for _ in range(2):
         await ProgramDriver(
             store, "r", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
@@ -84,8 +86,8 @@ async def test_recorded_result_replays_without_device():
 
 async def test_invalid_input_does_not_claim_intent():
     device = AsyncMock()
-    _, _, adapter = bindings(device)
-    store = ProgramStore(None)
+    store = ProgramStore(None, build_id="test")
+    _, _, adapter = bindings(device, store)
     bad = MemberSpec.from_edn(
         loads(
             '{:version 1 :rules [{:name "bad" :on :boot :actions [(shell-run {:command "x" :timeout 0})]}]}'
@@ -95,7 +97,7 @@ async def test_invalid_input_does_not_claim_intent():
         await ProgramDriver(
             store, "r", adapter.builtins(), AsyncMock(), operations=adapter, member_id="a"
         ).run(bad, {})
-    assert not store._intents
+    assert not store._invocations
     device.run.assert_not_called()
 
 

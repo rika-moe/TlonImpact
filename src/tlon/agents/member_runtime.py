@@ -33,7 +33,7 @@ from tlon.base.config import DEFAULT_CONTEXT_WINDOW, AgentConfig
 from tlon.base.device import Device
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
-from tlon.base.llm_client import LLMClient
+from tlon.base.llm_client import LLMClient, ToolCall
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace
@@ -41,6 +41,7 @@ from tlon.lifecycle.service import LifecycleService
 from tlon.memory.manager import MemoryManager
 from tlon.operations.adapters import DSLAdapter, OperationTool
 from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
+from tlon.operations.invocation import registry_identity
 from tlon.operations.lifecycle import make_lifecycle_operations
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
@@ -55,6 +56,7 @@ from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
 from tlon.sandbox.shell import MemberShellService
 from tlon.tasks.manager import TaskManager
+from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
 from tlosure.edn import dumps, loads
@@ -153,7 +155,8 @@ class MemberRuntime(Member):
         self._capabilities = capabilities
         self._paths = capabilities.tlon_paths if capabilities else tlon_paths
         self._program_store = ProgramStore(
-            self._paths.agent_program_database_file(member_id) if self._paths else None
+            self._paths.agent_program_database_file(member_id) if self._paths else None,
+            build_id=registry_identity(builtins),
         )
         self._registry = (
             registry if registry is not None else (capabilities.registry if capabilities else None)
@@ -188,7 +191,9 @@ class MemberRuntime(Member):
             )
             operations.extend(make_mail_operations(mail_service))
         operation_executor = OperationExecutor(
-            OperationRegistry(operations), CallContext(member_id, "member", "member")
+            OperationRegistry(operations),
+            CallContext(member_id, "member", "member"),
+            self._program_store,
         )
         self._operations = DSLAdapter(operation_executor)
         self._builtins = {**builtins, **self._operations.builtins()}
@@ -228,12 +233,34 @@ class MemberRuntime(Member):
         self._program_task: asyncio.Task[None] | None = None
         self._deferred_boot: list[MemberRule] = []
         self._journal = (
-            SessionJournal(member_id, capabilities.tlon_paths)
+            SessionJournal(
+                member_id, capabilities.tlon_paths, verify_root=self._verify_session_root
+            )
             if capabilities
-            else (SessionJournal(member_id, tlon_paths) if tlon_paths is not None else None)
+            else (
+                SessionJournal(member_id, tlon_paths, verify_root=self._verify_session_root)
+                if tlon_paths is not None
+                else None
+            )
         )
         if capabilities is not None:
+            assert self._journal is not None
+            self._journal.resolve_dispatch = self._resolve_session_dispatch
             self._assemble_scheduler(capabilities)
+
+    async def _resolve_session_dispatch(
+        self, session_id: str, tool_call: ToolCall, metadata: dict[str, Any]
+    ) -> ToolResult:
+        assert self._journal is not None and self._capabilities is not None
+        events = await self._journal.read_events(session_id)
+        start = next(event for event in events if event["type"] == "session/start")
+        recipe = SessionRecipe.from_edn(loads(start["recipe"]))
+        driver = self._assemble_session(self._capabilities, recipe)
+        return await driver.resolve_dispatch(session_id, tool_call, metadata)
+
+    async def _verify_session_root(self, session_id: str) -> str:
+        await asyncio.to_thread(self._program_store.ensure_root, session_id)
+        return self._program_store.build_id
 
     # ── Identity / derived values ──
 

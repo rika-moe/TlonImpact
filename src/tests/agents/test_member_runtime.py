@@ -768,23 +768,23 @@ async def test_boot_io_failure_recovers_without_stopping_actor(tmp_path: Path) -
     )
     first_attempt = asyncio.Event()
     recovered = asyncio.Event()
-    execute = member._program_store.atomic_state_put_record
+    execute = member._program_store.atomic_state_put
     attempts = 0
     loop = asyncio.get_running_loop()
 
-    def transient(run_id: str, index: int, name: str, args_edn: str, key: str, value: Any) -> Any:
+    def transient(invocation: Any, key: str, value: Any) -> Any:
         nonlocal attempts
         if key == "boot":
             attempts += 1
             if attempts == 1:
                 loop.call_soon_threadsafe(first_attempt.set)
                 raise OSError("temporary boot storage failure")
-            result = execute(run_id, index, name, args_edn, key, value)
+            result = execute(invocation, key, value)
             loop.call_soon_threadsafe(recovered.set)
             return result
-        return execute(run_id, index, name, args_edn, key, value)
+        return execute(invocation, key, value)
 
-    member._program_store.atomic_state_put_record = transient
+    member._program_store.atomic_state_put = transient
     await member.initialize()
     try:
         await asyncio.wait_for(first_attempt.wait(), 2)

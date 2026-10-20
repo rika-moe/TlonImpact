@@ -1,5 +1,6 @@
 """The shipped newspaper DSL against durable program state and the real post office."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,8 +16,10 @@ from tlon.agents.vocabulary import make_member_builtins, rule_env
 from tlon.base.events.event_bus import EventBus
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.invocation import Invocation, registry_identity
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.model import make_model_operations
+from tlon.operations.schema import UnknownOutcomeError
 from tlon.operations.state import make_state_operations
 from tlon.organization.mail.mail import Mail
 from tlon.organization.mail.mailbox import Mailbox
@@ -39,7 +42,9 @@ class NewspaperHarness:
     def __init__(self, home: Path) -> None:
         self.home = home
         self.spec = MemberSpec.from_edn(loads(EXAMPLE.read_text()))
-        self.store = ProgramStore(home / "newspaper/program.sqlite3")
+        self.store = ProgramStore(
+            home / "newspaper/program.sqlite3", build_id=registry_identity(make_member_builtins())
+        )
         self.office = make_office(
             EventBus(), home, ["newspaper", "a", "b", "c", "d", "reporter", "operator"]
         )
@@ -96,6 +101,7 @@ class NewspaperHarness:
                     )
                 ),
                 CallContext("newspaper", run_id, run_id),
+                store=self.store,
             )
         )
 
@@ -113,7 +119,10 @@ class NewspaperHarness:
         self.store.complete(run_id)
 
     def restart(self) -> None:
-        self.store = ProgramStore(self.home / "newspaper/program.sqlite3")
+        self.store = ProgramStore(
+            self.home / "newspaper/program.sqlite3",
+            build_id=registry_identity(make_member_builtins()),
+        )
 
     async def inbox(self, member: str) -> list[Mail]:
         return await Mailbox(self.home / "shared/mail.sqlite3", member).inbox()
@@ -144,7 +153,7 @@ async def test_newsroom_freezes_sources_and_recovers_each_real_delivery(tmp_path
 
     paper.restart()
     paper.fail_before_address = "b@tlon.internal"
-    with pytest.raises(OSError, match="temporary delivery failure"):
+    with pytest.raises(UnknownOutcomeError, match="temporary delivery failure"):
         await paper.execute(publish)
     assert len(await paper.inbox("a")) == 1
     assert "a@tlon.internal" in paper.store.state_get("edition:001")[Keyword("delivered")]
@@ -236,6 +245,7 @@ async def test_member_runtime_recovers_a_read_publication_before_program_complet
                     )
                 ),
                 CallContext("newspaper", "member", "member"),
+                store=member._program_store,
             )
         )
         member._operations = adapter
@@ -444,13 +454,23 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         assert not failed.completed
         assert failed.error
         assert member._program_store.pending() == []
-        found, recorded = member._program_store.get_effect(
-            run_id,
-            0,
-            "state-put",
-            dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},)),
+        operation = member._operations._executor.registry.get("state-put")
+        invocation = Invocation(
+            call_id=f"program:{run_id}:0:state-put",
+            root_id=run_id,
+            path=("0",),
+            name="state-put",
+            arguments_json=json.dumps(
+                {"key": "seen", "value": broken.mail.id},
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+            definition_id=OperationExecutor.definition_id(operation),
+            build_id=member._program_store.build_id,
         )
-        assert found and loads(recorded) == broken.mail.id
+        recorded = member._program_store.lookup_invocation(invocation)
+        assert recorded is not None and recorded.success and recorded.value == broken.mail.id
         assert [mail.id for mail in await mailbox.unread()] == [broken.mail.id]
 
         good = await office.send(
@@ -462,12 +482,8 @@ async def test_terminal_expression_error_preserves_effects_and_does_not_block_ne
         failed_after = member._program_store.ensure(run_id, "unused", "unused")
         assert failed_after.error == failed.error
         assert not failed_after.completed
-        assert member._program_store.get_effect(
-            run_id,
-            0,
-            "state-put",
-            dumps(({Keyword("key"): "seen", Keyword("value"): broken.mail.id},)),
-        ) == (found, recorded)
+        assert member._program_store.lookup_invocation(invocation) == recorded
+
     finally:
         await member.shutdown()
         await bus.shutdown()

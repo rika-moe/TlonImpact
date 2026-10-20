@@ -25,20 +25,17 @@ Replay rules:
   ``session/start.context`` — restored onto the session by the scheduler.
 - ``_all_tool_results`` = the ``tool/result`` events whose ids appear in
   some ``tool/collect`` (in collect order).
-- Orphaned dispatches (a ``tool/dispatch`` with no matching
-  ``tool/collect``): a journaled ``tool/result`` is kept; a dispatched
-  call without a result gets a synthetic
-  ``ToolResult(success=False, error="interrupted: process restart")``
-  which is also appended to the log (self-healing). Together they are
-  ``pending_collect`` — the input of the first collect after resume.
+- Orphaned dispatches keep journaled results. Missing results are resolved
+  through the runtime's injected invocation authority, then journaled before
+  becoming ``pending_collect``. A reader cannot guess an effect outcome.
 - ``session/start`` carries ``responsibility`` (ADR 0028): the wake-time
   snapshot of trigger mail ids. Replay reads it back (logs
   predating the field fall back to the empty set); the scheduler's chain
   wake compares fresh unread against it even after a crash.
 
-Replay never re-executes side effects — mail effects
-happened (or did not) in the previous process; replay only rebuilds data
-fields. Completed session metadata (``list_completed``) also feeds the
+The operation store decides whether recovery replays a committed outcome,
+retries a safe invocation, or reports an unsafe submitted call as unknown.
+Completed session metadata (``list_completed``) also feeds the
 journal → claims distillation trigger (ADR 0017): the database is the sole
 interaction truth, and watermark filtering happens before event reads.
 
@@ -51,6 +48,7 @@ consistent.
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -64,10 +62,6 @@ from tlon.base.paths import TlonPaths
 from tlon.tools.base import ToolResult
 
 logger = get_logger(__name__)
-
-#: Error text of the synthetic ToolResult replay fabricates for a tool
-#: call that was dispatched but never completed (process restart).
-INTERRUPTED_ERROR = "interrupted: process restart"
 
 #: Bound on the shared lock table (same magnitude as the mailbox's).
 _LOCKS_CAP = 4096
@@ -130,16 +124,30 @@ class SessionJournal:
     what to write and when.
     """
 
-    def __init__(self, agent_id: str, tlon_paths: TlonPaths) -> None:
+    def __init__(
+        self,
+        agent_id: str,
+        tlon_paths: TlonPaths,
+        *,
+        verify_root: Callable[[str], Awaitable[str]] | None = None,
+        resolve_dispatch: Callable[[str, ToolCall, dict[str, Any]], Awaitable[ToolResult]]
+        | None = None,
+    ) -> None:
         """Initialize the journal for one agent.
 
         Args:
             agent_id: Owning agent id (the session database lives under its home)
             tlon_paths: Path resolver (tests inject an isolated home)
         """
+        self._verify_root = verify_root
+        self.resolve_dispatch = resolve_dispatch
         self._agent_id = agent_id
         self._database = tlon_paths.agent_sessions_database_file(agent_id)
         self._store = SessionStore(self._database)
+
+    async def verify_root(self, session_id: str) -> str | None:
+        """Freeze or verify runtime identity before session work."""
+        return await self._verify_root(session_id) if self._verify_root is not None else None
 
     async def append(self, session_id: str, event_type: str, **payload: Any) -> None:
         """Commit one event and its lifecycle metadata atomically.
@@ -170,9 +178,8 @@ class SessionJournal:
         """Replay a session's log, rebuilding its state.
 
         Returns None when there is no log (or no ``session/start`` in it)
-        — the caller proceeds as for a fresh session. Orphaned tool
-        dispatches are healed: a synthetic interrupted result is appended
-        for each dispatched call that never produced a result.
+        — the caller proceeds as for a fresh session. Missing tool results
+        are resolved through the injected operation authority.
         """
         events = await self.read_events(session_id)
         if not events:
@@ -232,6 +239,7 @@ class SessionJournal:
                 operation_recovery.update(event.get("operation_recovery") or {})
                 for tc_dict in event.get("tool_calls") or []:
                     tc = ToolCall.from_dict(tc_dict)
+                    results.pop(tc.id, None)
                     dispatched[tc.id] = tc
             elif event_type == "tool/result":
                 tc = ToolCall.from_dict(event["tool_call"])
@@ -265,28 +273,27 @@ class SessionJournal:
             logger.warning("session_journal_no_start", session_id=session_id)
             return None
 
-        # Orphan dispatches (dispatch without collect): keep journaled
-        # results; synthesize an interrupted result for the rest — and
-        # persist it, so a second resume sees a healed log.
+        if self._verify_root is not None:
+            if not start.get("build_id"):
+                raise ValueError("Session runtime build is missing or changed")
+            build_id = await self.verify_root(session_id)
+            if start["build_id"] != build_id:
+                raise ValueError("Session runtime build is missing or changed")
         pending_collect: list[tuple[ToolCall, ToolResult]] = []
         for tc_id, tc in dispatched.items():
             pair = results.get(tc_id)
             if pair is not None:
                 pending_collect.append(pair)
                 continue
-            synthetic = ToolResult(
-                success=False, data=operation_recovery.get(tc_id, {}), error=INTERRUPTED_ERROR
-            )
-            logger.warning(
-                "session_journal_orphan_tool",
-                session_id=session_id,
-                tool_call_id=tc_id,
-                tool_name=tc.function_name,
+            if self.resolve_dispatch is None:
+                raise ValueError("Dispatch recovery requires an invocation resolver")
+            recovered = await self.resolve_dispatch(
+                session_id, tc, operation_recovery.get(tc_id, {})
             )
             await self.append(
-                session_id, "tool/result", tool_call=tc.to_dict(), result=synthetic.to_dict()
+                session_id, "tool/result", tool_call=tc.to_dict(), result=recovered.to_dict()
             )
-            pending_collect.append((tc, synthetic))
+            pending_collect.append((tc, recovered))
 
         if not completed and state == SessionState.WAITING and not pending_collect:
             # Crash window between the tool/collect append and the state

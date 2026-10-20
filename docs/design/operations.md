@@ -1,8 +1,8 @@
 # 统一操作与可组合行为：目标设计
 
-状态：完整方案已于 2026-10-19 由用户认可，并授权提交设计 PR、开工 EPIC A；P1 最小契约已通过 #184 合并 main；P2 邮件双入口通过 #185 合并 main；P3a 文件、Shell 与时间双入口正在实施。实现计划见 [operations-plan](operations-plan.md)，决策摘要见 [ADR 0044](../decisions/0044-unified-operations.md)。按阶段验收推进；分支、提交和 PR 已获授权，合并仍由人类确认。
+状态：完整方案已于 2026-10-19 由用户认可，并授权提交设计 PR、开工 EPIC A；P1 最小契约已通过 #184 合并 main；P2 邮件双入口通过 #185 合并 main；P3a/P3b/P3c 已分别通过 #186/#187/#188 合并 main；P4a 调用记录与恢复正在实施。实现计划见 [operations-plan](operations-plan.md)，决策摘要见 [ADR 0044](../decisions/0044-unified-operations.md)。按阶段验收推进；分支、提交和 PR 已获授权，合并仍由人类确认。
 
-当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。下文涉及授权、复合依赖、日志、动态工具视图等仍是后续阶段目标，不能视为当前保证。
+当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。下文涉及共享预算、复合依赖、动态工具视图等仍是后续阶段目标，不能视为当前保证。
 
 ## 1. 目标与范围
 

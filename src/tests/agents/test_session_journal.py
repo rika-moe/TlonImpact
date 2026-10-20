@@ -11,6 +11,7 @@ responsibility set's human senders (ADR 0027 as revised by ADR 0028).
 
 import asyncio
 import contextlib
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -24,9 +25,10 @@ from tlon.agents.context_builder import BuiltContext
 from tlon.agents.context_pressure import ContextPressure
 from tlon.agents.loop_driver import LoopDriver
 from tlon.agents.member_spec import MemberSpec, validate_member_spec
+from tlon.agents.program_store import ProgramStore
 from tlon.agents.scheduler import SessionScheduler
 from tlon.agents.session import AgentSession, SessionState
-from tlon.agents.session_journal import INTERRUPTED_ERROR, SessionJournal
+from tlon.agents.session_journal import SessionJournal
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.trigger import AgentIdentity
@@ -41,6 +43,13 @@ from tlon.organization.mail.mailbox import Mailbox
 from tlon.tools.base import ToolResult
 from tlon.tools.spill import ToolSpill
 from tlosure.edn import dumps, loads
+
+INTERRUPTED_ERROR = "known unknown from invocation authority"
+
+
+async def _unknown_dispatch(sid: str, tc: ToolCall, metadata: dict[str, Any]) -> ToolResult:
+    return ToolResult(success=False, data={"outcome": "unknown"}, error=INTERRUPTED_ERROR)
+
 
 SESSION_PROGRAM_EDN = '{:version 1 :rules [{:name "respond" :on :mail-delivered :actions [(run-loop (quote {:context {:sections [(persona) (protocol)]} :stages [(think) (act)] :until (or (iteration-limit-reached?) (error-limit-reached?)) :max-iterations 10 :max-consecutive-errors 3 :max-tokens 1000000 :reflect {:enabled false :interval-minutes 5}}))]}]}'
 
@@ -219,6 +228,7 @@ class TestJournalReplay:
         )
         await journal.append(sid, "state", value="waiting")
 
+        journal.resolve_dispatch = _unknown_dispatch
         replay = await journal.resume(sid)
 
         assert replay is not None and replay.state == SessionState.WAITING
@@ -457,7 +467,7 @@ def _make_driver(
             },
             True,
             handler,
-            effects=frozenset({"read"}),
+            effects=frozenset({"write" if name == "slowTool" else "read"}),
             control=name == "finish-turn",
         )
 
@@ -466,6 +476,7 @@ def _make_driver(
             definition(name) for name in ("someTool", "slowTool", "shell-run", "finish-turn")
         ),
         CallContext("agent1", "test", "test"),
+        ProgramStore(tmp_path / "program.sqlite3", build_id="journal-test"),
     )
     tool_executor = ToolExecutor()
     for operation in execution.registry.definitions():
@@ -488,6 +499,7 @@ def _make_driver(
         pressure=ContextPressure(MagicMock(), journal, 262144),
         is_human_sender=is_human_sender,
     )
+    journal.resolve_dispatch = driver.resolve_dispatch
     return driver, journal, executor, services
 
 
@@ -645,12 +657,13 @@ class TestDriverJournaling:
         entry = replay.all_tool_results[0]
         locator = entry["result"].data
         assert locator["_spilled"] is True
-        assert locator["spill_path"] == f"spills/{session.id}/c1.json"
+        spill_id = hashlib.sha256(f"session:{session.id}:round:0:c1".encode()).hexdigest()
+        assert locator["spill_path"] == f"spills/{session.id}/{spill_id}.json"
         # The model's context holds the locator too (invariant preserved).
         assert await journal.derive_context(session.id) == session.context
         assert big_stdout not in json.dumps(session.context)
         # The full payload is on disk, readable as JSON.
-        spill_file = tmp_path / "agent1" / "workspace" / "spills" / session.id / "c1.json"
+        spill_file = tmp_path / "agent1" / "workspace" / "spills" / session.id / f"{spill_id}.json"
         assert json.loads(spill_file.read_text(encoding="utf-8"))["stdout"] == big_stdout
 
 
@@ -698,7 +711,8 @@ class TestCrashRecovery:
         assert replay is not None and not replay.completed
         by_id = {tc.id: result for tc, result in replay.pending_collect}
         assert by_id["c-fast"].success is True
-        assert by_id["c-slow"].error == INTERRUPTED_ERROR
+        assert by_id["c-slow"].data["outcome"] == "unknown"
+        assert executed.count("slowTool") == 1
 
         scheduler = _make_scheduler(journal, loop_driver=driver)
         resumed = await scheduler._restore_session(replay)
@@ -801,6 +815,7 @@ class TestBootRecovery:
         journal.resume = AsyncMock(  # type: ignore[method-assign]
             side_effect=AssertionError("boot replayed a completed session")
         )
+        journal.resolve_dispatch = _unknown_dispatch
         scheduler = _make_scheduler(journal)
 
         pending = await scheduler._restore_unfinished()
@@ -816,6 +831,7 @@ class TestBootRecovery:
         await _start(journal, sid, responsibility=["m9"])
         await journal.append(sid, "tool/dispatch", tool_calls=[_tc("c1").to_dict()])
         await journal.append(sid, "state", value="waiting")
+        journal.resolve_dispatch = _unknown_dispatch
         scheduler = _make_scheduler(journal)
 
         pending = await scheduler._restore_unfinished()
@@ -1649,3 +1665,250 @@ async def test_wait_recovered_propagates_background_recovery_failure(
         # to turn an operational error into cancellation.
         with contextlib.suppress(OSError):
             await scheduler._worker_task
+
+
+async def test_reader_cannot_invent_missing_operation_result(journal: SessionJournal) -> None:
+    await _start(journal, "orphan-no-authority")
+    await journal.append("orphan-no-authority", "tool/dispatch", tool_calls=[_tc("lost").to_dict()])
+    with pytest.raises(ValueError, match="requires an invocation resolver"):
+        await journal.resume("orphan-no-authority")
+    assert not any(
+        e["type"] == "tool/result" for e in await journal.read_events("orphan-no-authority")
+    )
+
+
+async def test_root_checked_before_build_context(tmp_path: Path) -> None:
+    driver, journal, _, services = _make_driver(tmp_path, [])
+    journal._verify_root = AsyncMock(side_effect=ValueError("runtime changed"))
+    with pytest.raises(ValueError, match="runtime changed"):
+        await driver.step_session(_session("freeze-first"))
+    services.build_context.assert_not_awaited()
+    assert await journal.read_events("freeze-first") == []
+
+
+@pytest.mark.parametrize("saved_build", [None, "old-build"])
+async def test_resume_refuses_missing_or_changed_build_before_resolver(
+    tmp_path: Path, saved_build: str | None
+) -> None:
+    resolver = AsyncMock(return_value=ToolResult(success=True, data="must not run"))
+    journal = SessionJournal(
+        "agent1",
+        TlonPaths(home=tmp_path),
+        verify_root=AsyncMock(return_value="current-build"),
+        resolve_dispatch=resolver,
+    )
+    await journal.append("frozen", "session/start", context=[], build_id=saved_build)
+    await journal.append("frozen", "tool/dispatch", tool_calls=[_tc("lost").to_dict()])
+    with pytest.raises(ValueError, match="build is missing or changed"):
+        await journal.resume("frozen")
+    resolver.assert_not_awaited()
+    if saved_build is None:
+        assert isinstance(journal._verify_root, AsyncMock)
+        journal._verify_root.assert_not_awaited()
+
+
+async def test_committed_operation_recovery_spills_without_second_business_call(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    async def invoke(name: str, args: dict[str, Any], context: CallContext) -> ToolResult:
+        nonlocal calls
+        calls += 1
+        return ToolResult(success=True, data={"large": "x" * 20000})
+
+    driver, journal, _, _ = _make_driver(tmp_path, [], tool_execute=invoke)
+    tc = _tc("same-model-id")
+    sid = "commit-before-journal"
+    await _start(journal, sid)
+    metadata = driver._operation_recovery(sid, tc, 3, None)
+    await journal.append(
+        sid, "tool/dispatch", tool_calls=[tc.to_dict()], operation_recovery={tc.id: metadata}
+    )
+    # The operation commits and spills, but the process loses its session result.
+    _, original = await driver.execute_one_tool(
+        sid, tc, driver._operation_context(sid, tc, 3), journal_result=False
+    )
+    assert original.data["_spilled"]
+    replay = await journal.resume(sid)
+    assert replay is not None
+    assert calls == 1
+    assert replay.pending_collect[0][1] == original
+    assert replay.pending_collect[0][1].data["_spilled"]
+
+
+async def test_reused_model_call_id_has_new_round_and_does_not_reuse_old_journal_result(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    async def invoke(name: str, args: dict[str, Any], context: CallContext) -> ToolResult:
+        calls.append(context.call_id)
+        return ToolResult(success=True, data={"round": len(calls)})
+
+    driver, journal, _, _ = _make_driver(tmp_path, [], tool_execute=invoke)
+    sid = "distinct-rounds"
+    tc = _tc("repeated")
+    await _start(journal, sid)
+    for iteration in (1, 2):
+        metadata = driver._operation_recovery(sid, tc, iteration, None)
+        await journal.append(
+            sid, "tool/dispatch", tool_calls=[tc.to_dict()], operation_recovery={tc.id: metadata}
+        )
+        if iteration == 1:
+            await driver.execute_one_tool(sid, tc, driver._operation_context(sid, tc, iteration))
+            await journal.append(sid, "tool/collect", tool_call_ids=[tc.id])
+    replay = await journal.resume(sid)
+    assert replay is not None
+    assert replay.all_tool_results[0]["result"].data == {"round": 1}
+    assert replay.pending_collect[0][1].data == {"round": 2}
+    assert calls == [f"session:{sid}:round:1:repeated", f"session:{sid}:round:2:repeated"]
+
+
+async def test_same_model_id_spills_to_distinct_files_across_rounds(tmp_path: Path) -> None:
+    async def invoke(name: str, args: dict[str, Any], context: CallContext) -> ToolResult:
+        return ToolResult(success=True, data={"large": context.call_id * 1000})
+
+    driver, _, _, _ = _make_driver(tmp_path, [], tool_execute=invoke)
+    tc = _tc("repeated")
+    first = await driver.execute_one_tool(
+        "round-spill", tc, driver._operation_context("round-spill", tc, 1)
+    )
+    second = await driver.execute_one_tool(
+        "round-spill", tc, driver._operation_context("round-spill", tc, 2)
+    )
+    assert first[1].data["spill_path"] != second[1].data["spill_path"]
+    workspace = tmp_path / "agent1" / "workspace"
+    assert "round:1:" in (workspace / first[1].data["spill_path"]).read_text()
+    assert "round:2:" in (workspace / second[1].data["spill_path"]).read_text()
+
+
+def test_registry_identity_freezes_loaded_closure_semantics() -> None:
+    from tlon.operations.invocation import registry_identity
+    from tlosure.builtins import Builtin, Closure
+
+    def identity(
+        *,
+        params: list[str],
+        rest: str | None,
+        body: list[Any],
+        env: dict[str, Any],
+        pure: bool = False,
+    ) -> str:
+        return registry_identity(
+            {"compose": Builtin(pure=pure, closure=Closure(params, rest, body, env))}
+        )
+
+    baseline = identity(params=["x"], rest=None, body=loads("[(+ x 1)]"), env={})
+    assert baseline == identity(params=["x"], rest=None, body=loads("[(+ x 1)]"), env={})
+    assert baseline != identity(params=["other"], rest=None, body=loads("[(+ x 1)]"), env={})
+    assert baseline != identity(params=["x"], rest="more", body=loads("[(+ x 1)]"), env={})
+    assert baseline != identity(params=["x"], rest=None, body=loads("[(+ x 2)]"), env={})
+    assert baseline != identity(params=["x"], rest=None, body=loads("[(+ x 1)]"), env={"saved": 1})
+    assert baseline != identity(params=["x"], rest=None, body=loads("[(+ x 1)]"), env={}, pure=True)
+
+
+@pytest.mark.parametrize("completed", [False, True], ids=["unfinished", "completed-continuation"])
+async def test_both_scheduler_recovery_paths_verify_root_before_business(
+    tmp_path: Path, completed: bool
+) -> None:
+    journal = SessionJournal(
+        "agent1", TlonPaths(home=tmp_path), verify_root=AsyncMock(return_value="new-build")
+    )
+    await journal.append(
+        "drifted",
+        "session/start",
+        build_id="old-build",
+        context=[],
+        invocation={"program_effect": {"run_id": "program", "index": 0}},
+    )
+    if completed:
+        await journal.append("drifted", "session/end", reason="complete")
+    scheduler = _make_scheduler(journal)
+    scheduler._resume_invocation = AsyncMock()
+    with pytest.raises(ValueError, match="build is missing or changed"):
+        await scheduler.run()
+    scheduler._resume_invocation.assert_not_awaited()
+    assert scheduler.recovery_ready.is_set()
+
+
+async def test_unknown_tool_recovers_known_rejection_after_result_journal_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    business = AsyncMock()
+    driver, journal, _, _ = _make_driver(tmp_path, [], tool_execute=business)
+    journal._verify_root = AsyncMock(return_value="frozen-build")
+    sid = "unknown-tool-crash"
+    tc = _tc("unknown-call", "not-registered")
+    await journal.append(sid, "session/start", context=[], build_id="frozen-build")
+    metadata = driver._operation_recovery(sid, tc, 2, "frozen-build")
+    assert metadata == {
+        "root_id": sid,
+        "call_id": f"session:{sid}:round:2:{tc.id}",
+        "call_path": ["round:2", f"tool:{tc.id}"],
+        "build_id": "frozen-build",
+        "definition_id": None,
+    }
+    await journal.append(
+        sid, "tool/dispatch", tool_calls=[tc.to_dict()], operation_recovery={tc.id: metadata}
+    )
+    append = journal.append
+    fail_result = True
+
+    async def lost_result(session_id: str, event_type: str, **payload: Any) -> None:
+        if event_type == "tool/result" and fail_result:
+            raise OSError("crash before result was journaled")
+        await append(session_id, event_type, **payload)
+
+    monkeypatch.setattr(journal, "append", lost_result)
+    with pytest.raises(OSError, match="before result was journaled"):
+        await driver.execute_one_tool(sid, tc, driver._operation_context(sid, tc, 2))
+    assert not any(event["type"] == "tool/result" for event in await journal.read_events(sid))
+    fail_result = False
+    replay = await journal.resume(sid)
+    assert replay is not None
+    result = replay.pending_collect[0][1]
+    assert result == ToolResult(success=False, data={}, error="Tool not found: not-registered")
+    again = await journal.resume(sid)
+    assert again is not None and again.pending_collect[0][1] == result
+    assert (
+        len([event for event in await journal.read_events(sid) if event["type"] == "tool/result"])
+        == 1
+    )
+    business.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "missing", ["root_id", "call_id", "call_path", "build_id", "definition_id"]
+)
+async def test_unknown_tool_recovery_requires_all_frozen_metadata(
+    tmp_path: Path, missing: str
+) -> None:
+    driver, _, _, _ = _make_driver(tmp_path, [])
+    tc = _tc("unknown-call", "not-registered")
+    metadata = driver._operation_recovery("frozen", tc, 0, None)
+    del metadata[missing]
+    with pytest.raises(ValueError, match="lacks frozen invocation identity"):
+        await driver.resolve_dispatch("frozen", tc, metadata)
+
+
+async def test_unknown_tool_recovery_refuses_later_registration(tmp_path: Path) -> None:
+    driver, _, _, _ = _make_driver(tmp_path, [])
+    tc = _tc("unknown-call", "not-registered")
+    metadata = driver._operation_recovery("frozen", tc, 0, None)
+    business = AsyncMock(return_value="must not execute")
+    operation = Operation(
+        "not-registered",
+        "later registration",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        True,
+        business,
+        effects=frozenset({"write"}),
+    )
+    execution = OperationExecutor(
+        OperationRegistry([operation]), CallContext("agent1", "frozen", "unused")
+    )
+    driver._tool_executor.register_tool(OperationTool(execution, operation.name))
+    with pytest.raises(ValueError, match="operation definition changed"):
+        await driver.resolve_dispatch("frozen", tc, metadata)
+    business.assert_not_awaited()
