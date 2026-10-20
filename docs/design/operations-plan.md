@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a 正在实现与验证，合并仍由人类确认。
+状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已通过 #186 合并 main；P3b 已通过 #187 合入 main；P3c 已通过 #188 合并 main；P4a 已通过 #189 合并 main；P4b 正在实现与验证，合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -248,7 +248,7 @@ P3c 边界细化：DSL 控制请求仅允许规则唯一的直接动作，参数
 
 代码审计确认 P4 同时跨操作提交、程序重放、会话恢复，以及三处模型调用/多种预算计量。按第 1 节允许的实施前切片原则，拆为两个严格串行 PR，不把未落地的一半称为 P4 完成：
 
-- **P4a：调用记录与恢复权威**（本次）：OperationExecutor 统一两入口的叶子 lookup/begin/commit；ProgramStore 保存稳定 root/path/call_id、规范化输入、契约与宿主构建指纹、结果或结构化错误；state-put 与同一 invocation 行原子提交。session journal 仍记录交互，dispatch 保存调用引用，恢复查询 ProgramStore，修复操作已提交但 tool/result 未写入时误报 interrupted。程序与会话在恢复之前核对构建身份。已提交 read 重放原采样；未提交 read 可重采样；幂等写只使用原键重试，其他 intent 无回执保持 unknown。输出契约错误保留原回执及错误，不重做效果。旧调用格式明确拒绝，不做 migration 或清库。
+- **P4a：调用记录与恢复权威**（已通过 #189 合并）：OperationExecutor 统一两入口的叶子 lookup/begin/commit；ProgramStore 保存稳定 root/path/call_id、规范化输入、契约与宿主构建指纹、结果或结构化错误；state-put 与同一 invocation 行原子提交。session journal 仍记录交互，dispatch 保存调用引用，恢复查询 ProgramStore，修复操作已提交但 tool/result 未写入时误报 interrupted。程序与会话在恢复之前核对构建身份。已提交 read 重放原采样；未提交 read 可重采样；幂等写只使用原键重试，其他 intent 无回执保持 unknown。输出契约错误保留原回执及错误，不重做效果。旧调用格式明确拒绝，不做 migration 或清库。
 - **P4b：共享预算、取消与并发边界**（P4a 合并后）：根调用统一预算/取消/截止时间，覆盖 stage、压缩与嵌套 model-call，预留原子化、恢复不重置；成员写按声明顺序串行并允许同一持锁上下文重入；删除 _HOST_QUERIES 的 pure 重写，MemberCapabilities 改名 MemberServices。P4a 保留当前预算、并发和服务名称，不提前声称这些保证。
 
 P4a 的记录位于原 ProgramStore SQLite，不增加另一套交互日志。纯计算不写叶子记录；run-loop 的程序生命周期结果仍由原 effects 记录负责，不和操作回执重复。宿主指纹保守覆盖 tlon/tlosure 运行代码、锁定依赖指纹、已安装依赖版本；操作契约另存内容指纹。根创建时冻结、恢复先核对，失配明确拒绝；不加载旧宿主实现。相同 root/path 不能换参数、名称或契约，编号不能依赖完成先后。
@@ -263,3 +263,26 @@ P4a 验收：DSL/Tool 对同一协议都以 ProgramStore 的真实回执恢复�
 主会话审 diff 并亲自重跑完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2594 passed / 15 skipped，集成 34 passed。新增依赖指纹新鲜度检查接入同一质量门及打包流程；前端测试/build、类型、依赖、reference 与 wheel 检查通过。交叉审查发现未知 Tool 的孤立 dispatch 缺少冻结元数据，已修复并新增 7 项回归。报纸工作流重放暴露输出 map 排序改变后续 prompt 的问题，已改为只规范化输入身份、保留输出顺序，并通过 8 项真实工作流集成测试。初轮导入排序失败已修正，以最终全量全绿结果为准。
 
 真实隔离 dream + SDK 邮件链覆盖生命周期目录、原型提案、作者与未审批状态、回信、finish 与持久化 sleep；直接核对 SQLite 的 12 条唯一 invocation 回执、根/契约指纹和状态值，确认没有重复的 Operation effects 记录。服务、临时数据清理且 8080 无残留。故障/恢复覆盖由 fake provider 与可重复提交窗口注入验证，未调用真实模型服务；SDK 显式携带服务端要求的标头。当前只交付 P4a，P4b 及 P4 总项保持未完成，PR 面向 main，仍由人类合并。
+
+## P4b 实施细化（2026-10-20，#189 合并后）
+
+P4a #189 已合入 main。本阶段采用 Python asyncio 的任务取消、上下文传播及锁机制，不新增工作流框架或第三份结果日志。实现宿主 ExecutionScope，携带预算根、稳定调用路径、取消信号与 UTC 截止时间；模型参数不能覆盖。程序直接调用维持 output 额度口径（成员 llm.max_tokens），run-loop 明确创建 recipe.max_tokens 的 total 预算根，继承父取消与更早截止时间；不把整个会话误限为程序默认输出额度。同一套账本显式保存 measure，删除驱动按操作名维护的局部计数。会话内部 stage、上下文压缩、Tool 内嵌的提案/评审/model-call 全经成员 LLMClient 入口继承同一预算；后台反思/蒸馏另建宿主维护根，不继承已结束会话的额度。
+
+模型请求先在 ProgramStore 原子检查余额并预留；请求自己的完整响应仍存同一 invocations，响应与预算结算同事务提交。历史响应直接还原，不发第二次请求、不重复记额度。output 根保持原请求额度预留不退款；total 根按实际 total 结算，缺 usage 或提交未知保留预留；实际高于估算的消费如实记入并拒绝后续请求。输入估算是准入依据，不能证明 provider 实际 total 的硬上界。未知提交不自动重试，明确的 provider 拒绝才允许释放该次预留。冻结额度、计量口径和截止时间，恢复不得重置。
+
+成员共用 task-owner 可重入写 gate；仅同一 asyncio task 的嵌套 await 可重入，同根的不同并行 task 仍互斥。同一批 Tool 的写操作显式按声明顺序建立等待链，读操作不入链。先登记全部子任务再发布分发事件，取消时等待已登记任务清理。历史调用先重放，新效果在等锁后、写 intent 前及 handler 前检查取消/截止时间；不声称取消能撤销已提交的外部效果。正常 session 结束不取消父程序延续。
+
+删除 _HOST_QUERIES 的运行时 pure 重写：四个宿主查询直接声明非 pure 与 read_only，规则 when 仅按确定性或只读准入；until、stage-if、policy、Capability 的独立词表不扩张。MemberCapabilities/assemble_member_capabilities 改为 MemberServices/assemble_member_services，不留别名，artifact 与 API facade 的 capability 概念不改。
+
+验收覆盖并发预留、历史响应与结算原子性、usage 缺失/超额、同进程及重启不换 ID 绕过未知模型请求、stage/压缩/内嵌调用共享额度、写顺序/读并发/同 task 重入、等锁取消与分发事件取消窗口、冻结截止恢复，以及查询采样与各词表权限边界。最终完整质量门、真实 dream + SDK 冒烟及 main PR 均完成后交付，仍由人类合并。
+
+
+### P4b 本地验收（2026-10-20）
+
+主会话亲自审 diff，并重跑最终完整 `bash scripts/check_all.sh`：15/15 全绿，单元 2665 passed / 15 skipped，集成 34 passed；相比 P4a 新增 71 项回归。前端测试/build、222 个源文件类型检查、依赖、生成 reference 和 wheel 检查通过。独立交叉组 84 项通过，无新增代码阻塞；文档已限定 fuel 仍由现有 Evaluator 管理，不将复合 fuel 协作称为本阶段已完成。
+
+真实隔离 dream + SDK + 本地 OpenAI 兼容 fake provider 跑通程序直接模型请求、run-loop、stage 与 Tool 内嵌模型请求、跨轮重复 ToolCall.id、实际回信/标读/状态及父程序延续；共 5 次 provider 请求，程序 output 记 8，会话 4 次请求 total 记 60，核对 SQLite 没有未结预留。模型服务为本地 fake，未调用真实外部模型；SDK 显式携带服务端要求的标头。进程、临时 home、provider 和端口均清理，8080 无残留。
+
+真实冒烟发现 LiteLLM 工具计数器不支持合法 boolean 子 schema，已改用同一库分别统计消息和完整工具 JSON，并以真实完整装配工具表补回归；修复维护轮询没有任务也落空预算的问题。故障审查另修锁序死锁、模型未知被预算/until 误终止、调用位置按输入 hash 绕过身份检查，以及先创建任务后登记的取消窗口。最终集成遇到已有管理测试把文件存在当作 schema 就绪的竞态，改为明确查询 sqlite_master 等待 runs 表提交，保留原断言，3 项针对性及最终 34 项集成均通过；未删除失败测试。
+
+本阶段保留两个既有 token 计量口径并统一账本与内部调用入口；旧数据库版本明确拒绝，无迁移或清库。PR 面向 main 等待人类合并；P4 与 EPIC A 只有在 P4b 合并后才能标记完成，EPIC B 未开工。

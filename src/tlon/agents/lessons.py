@@ -59,7 +59,7 @@ def build_retiree_llm_client(agent_id: str, tlon_paths: TlonPaths) -> LLMClient:
     member's name (ADR 0014: its ledger gets this last entry).
 
     The config comes from the member's archived ``agent.yaml`` ``llm``
-    section, same as ``assemble_member_capabilities`` (member-level only, ADR 0016).
+    section, same as ``assemble_member_services`` (member-level only, ADR 0016).
     """
     agent = yaml_load_file(tlon_paths.agent_config_file(agent_id))
     llm_config = _build_llm_config(agent.llm if agent is not None else None, agent_id)

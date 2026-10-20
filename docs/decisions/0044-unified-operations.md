@@ -38,3 +38,5 @@ Capability artifact 与 Python Tool 分别绑定了实现形态和调用入口�
 需要统一宿主输出 schema、增加依赖/定义快照与请求视图、处理旧 schema 的明确拒绝。不会自动迁移用户数据，也不会静默删除旧运行。
 
 完整契约见 [目标设计](../design/operations.md)，阶段边界和验收见 [实施计划](../design/operations-plan.md)。每任务独立 PR、严格串行；用户已授权分支、提交、推送和创建 PR，未授权自动合并。
+
+P4b 实施说明：成员服务容器已统一命名 `MemberServices`，装配函数为 `assemble_member_services`，不提供旧名别名；Capability artifact 的目录、管理 facade 与符号保持其原有含义。

@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from tlon.operations.core import CallContext, OperationExecutor
+from tlon.base.execution import BudgetExceededError, ExecutionDeadlineError
+from tlon.operations.core import CallContext, Effect, OperationExecutor
 from tlon.operations.schema import InputError, OperationError, edn_value, json_value, validate
 from tlon.tools.base import ToolResult
 from tlosure.builtins import Builtin, BuiltinCall
@@ -61,6 +62,10 @@ class OperationTool:
     def __init__(self, executor: OperationExecutor, name: str) -> None:
         self._executor = executor
         self._operation = executor.registry.get(name)
+
+    @property
+    def effects(self) -> frozenset[Effect]:
+        return self._operation.effects
 
     @property
     def definition_id(self) -> str:
@@ -125,7 +130,7 @@ class OperationTool:
     ) -> ToolResult:
         try:
             result = await self._executor.call(self._operation.name, arguments, context)
-        except OperationError as error:
+        except (OperationError, BudgetExceededError, ExecutionDeadlineError) as error:
             return ToolResult(
                 success=False,
                 data=getattr(error, "data", None),

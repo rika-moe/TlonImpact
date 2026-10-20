@@ -319,8 +319,8 @@ def validate_member_spec(
     """Statically validate a MemberSpec at load time (no execution).
 
     Every expression field of every rule is checked against the unified
-    member vocabulary: ``:when`` validates against the pure subset of the
-    member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
+    member vocabulary: ``:when`` admits deterministic computation and
+    declared read-only queries from the member registry under :data:`~tlon.agents.vocabulary.RULE_SCOPE`;
     actions validate as a sequence against the *full* member registry
     under :data:`~tlon.agents.vocabulary.ACTION_SCOPE` via
     :func:`~tlon.agents.vocabulary.validate_member_actions` (ADR 0021:
@@ -339,7 +339,9 @@ def validate_member_spec(
     if len(names) != len(set(names)):
         raise MemberSpecValidationError("rule names must be unique within one member")
     registry = builtins or make_member_builtins()
-    pure = {name: builtin for name, builtin in registry.items() if builtin.pure}
+    pure = {
+        name: builtin for name, builtin in registry.items() if builtin.pure or builtin.read_only
+    }
     for rule in member.rules:
         label = f"rule {rule.name!r}"
         _validate_when(rule, label, pure)
@@ -368,7 +370,7 @@ def _validate_fuel(rule: MemberRule, label: str) -> None:
 
 
 def _validate_when(rule: MemberRule, label: str, pure: dict[str, Builtin]) -> None:
-    """Validate ``:when`` against the pure subset, unified env scope."""
+    """Validate ``:when`` against deterministic/read-only words, unified env scope."""
     if rule.when is None:
         return
     try:

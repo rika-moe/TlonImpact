@@ -1,5 +1,7 @@
 # ADR 0023：Session 级 token 预算——会话循环的第二条停机线
 
+> P4b 当前说明：程序 output 根保持获准输出预留不退款；session total 根统一覆盖 stage、压缩及工具内模型调用，按可靠 usage 结算，未知保留预留。ProgramStore 保存模型回执与额度事实，journal 只投影；预算与 UTC deadline 冻结，进程取消不是永久撤销。本文保留历史，现行契约见 [执行作用域](../design/execution-scope.md)。
+
 > 阅读定位：本文保留当时的选择与理由；当前设计见 [runtime](../design/runtime.md)。当前适用范围：Session token 预算停机线。完整关系见 [决策索引](README.md)。
 
 状态：已接受（2026-10-07 拍板；同日实施）

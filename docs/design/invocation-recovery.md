@@ -1,6 +1,6 @@
 # 调用记录与恢复权威（P4a）
 
-状态：P3c 已通过 #188 合并；本文描述 P4a 当前实现。总体设计见 [operations](operations.md)，施工边界见 [operations-plan](operations-plan.md)。共享预算、取消、截止时间和成员写排序属于后续 P4b，当前不提供这些保证。
+状态：P4a 已通过 #189 合并；本文描述当前调用恢复契约。总体设计见 [operations](operations.md)，施工边界见 [operations-plan](operations-plan.md)。P4b 在此基础上增加 [共享执行作用域](execution-scope.md)，覆盖预算、取消、截止时间及成员写排序。
 
 ## 所有权
 
@@ -32,11 +32,11 @@ root 首次创建时冻结宿主身份。宿主身份覆盖 tlon/tlosure Python 
 
 调用在 handler 前写 intent，之后提交成功或结构化错误。取消、超时或提交窗口故障不能证明效果未发生；没有终态回执时保留 unknown 语义。输出 schema 违约也是已执行调用的结果，保存违约错误与可序列化原回执，不能用重试修补一次写入。无法 JSON 编码的原始返回只保留诊断描述。
 
-同一存储的同一 root/path 在进程内用共享异步锁合并并发重试；SQLite 唯一约束保护调用位置。该锁不等于成员全部写入的顺序保证，也不是多进程执行租约。普通领域写入和 SQLite 回执不能自动形成跨系统事务；只有 state-put 在同一事务中原子保存状态与结果，邮件等重试安全操作依赖领域幂等键。
+同一存储的同一 root/path 在进程内用共享异步锁合并并发重试；SQLite 唯一约束保护调用位置。成员写操作另有 task-owner 可重入 gate，同批 Tool 的写入按声明顺序执行；这些进程内锁不是多进程执行租约。普通领域写入和 SQLite 回执不能自动形成跨系统事务；只有 state-put 在同一事务中原子保存状态与结果，邮件等重试安全操作依赖领域幂等键。
 
 ## 程序与会话协作
 
-ProgramDriver 不再为 Operation 另写 effects 和 intents：它构造稳定调用上下文并交给 executor。已提交模型调用先重放结果，再应用原有预算计量，不能因为当前剩余额度变化而重新请求模型。
+ProgramDriver 不再为 Operation 另写 effects 和 intents：它构造稳定调用上下文并交给 executor。已提交模型调用先重放结果，额度已经由统一账本提交，不再次扣减；不能因为当前剩余额度变化而重新请求模型。
 
 LoopDriver 的 tool/dispatch 保存 root/path/call_id/build_id/definition_id。SessionJournal 恢复缺少 tool/result 的 dispatch 时，让已冻结会话配方重建的运行时查询或执行同一调用：提交过的效果返回原回执；尚无 intent 的分发可以首次执行；不安全写入的孤立 intent 保持 unknown。已有 journal 结果也必须先通过根身份校验。未注册 Tool 的分发同样保存完整身份，definition_id 为 null；同构建且仍未注册时恢复确定性的不存在错误，缺失元数据或定义改变则拒绝。journal 不再把所有孤立 dispatch 一律伪造成 interrupted。
 
@@ -46,4 +46,7 @@ LoopDriver 的 tool/dispatch 保存 root/path/call_id/build_id/definition_id。S
 
 新 ProgramStore 使用明确的 SQLite user_version。包含旧表而没有新版本标记的数据库直接拒绝打开，不转换、不清库，不改写原历史。旧 session 缺少冻结身份时同样拒绝恢复；只读浏览已有 session 事件不受影响。使用者需要自行决定旧运行的处理方式，不能为通过恢复测试删除真实 ~/.tlon。
 
-P4a 保留现有预算计量、并发策略、_HOST_QUERIES 的 pure 重写和 MemberCapabilities 名称。P4b 将处理共享预算、取消、截止时间、成员写排序与重入，再删除这些既有机制。只有两部分都验收合并后，才能将 P4 标记完成。
+P4b 使用同一数据库的 budgets/model_allocations 记录额度与预留，模型完整响应仍保存在 invocations；删除驱动局部计数、_HOST_QUERIES pure 重写与旧 MemberCapabilities 装配容器名。新 ProgramStore 格式版本为 2，旧版本明确拒绝，不转换、不清库。P4 只有在 P4a/P4b 均验收合并后才完成。
+
+
+P4b 宿主查询收敛：`sleeping?`、`running?`、`lazy?`、`member-roster` 在注册时直接声明非确定性只读；`Builtin.read_only` 只控制规则 `:when` 准入，`pure` 控制确定性求值与挂起。ProgramDriver 不再按名称改写 pure；每次外部读取采样并记录，重放返回原值。until、stage 条件、社会政策和能力 artifact 的词表不扩大。装配容器与入口现为 MemberServices / assemble_member_services，构造参数 services，无旧名称别名。

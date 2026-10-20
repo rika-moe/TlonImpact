@@ -1,5 +1,6 @@
 """Durable member program inputs, effects and private structured state."""
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tlon.base.execution import BudgetExceededError
 from tlon.operations.invocation import Invocation, InvocationOutcome
 from tlon.operations.schema import RecoveryMismatchError, ReplayConflictError, edn_value, json_value
 from tlosure.edn import dumps, loads
@@ -32,6 +34,8 @@ class ProgramStore:
 
             build_id = runtime_identity()
         self.build_id = build_id
+        self._budgets: dict[str, dict[str, Any]] = {}
+        self._allocations: dict[str, dict[str, Any]] = {}
         self._roots: dict[str, str] = {}
         self._invocations: dict[str, tuple[Invocation, str | None]] = {}
         self.database = database
@@ -52,7 +56,7 @@ class ProgramStore:
             tables = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
-            if version not in (0, 1) or (version == 0 and tables):
+            if version not in (0, 2) or (version == 0 and tables):
                 raise RecoveryMismatchError(
                     "Unsupported program database format; refusing to alter existing history"
                 )
@@ -64,7 +68,9 @@ class ProgramStore:
                 "PRIMARY KEY(run_id,ordinal));"
                 "CREATE TABLE IF NOT EXISTS roots (root_id TEXT PRIMARY KEY, build_id TEXT NOT NULL);"
                 "CREATE TABLE IF NOT EXISTS invocations (call_id TEXT PRIMARY KEY, identity_json TEXT NOT NULL, outcome_json TEXT, root_id TEXT NOT NULL, path_json TEXT NOT NULL, UNIQUE(root_id,path_json));"
-                "PRAGMA user_version=1;"
+                "PRAGMA user_version=2;"
+                "CREATE TABLE IF NOT EXISTS budgets (root_id TEXT PRIMARY KEY, token_limit INTEGER NOT NULL, measure TEXT NOT NULL, deadline REAL);"
+                "CREATE TABLE IF NOT EXISTS model_allocations (call_id TEXT PRIMARY KEY, root_id TEXT NOT NULL, reserved INTEGER NOT NULL, output_limit INTEGER NOT NULL, charged INTEGER);"
                 "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value_edn TEXT NOT NULL);"
             )
             with connection:
@@ -385,6 +391,281 @@ class ProgramStore:
                     )
                     self._commit(invocation, outcome, connection)
         return json.loads(json.dumps(result, allow_nan=False))
+
+    def ensure_budget(
+        self, root_id: str, token_limit: int, measure: str, deadline: float | None = None
+    ) -> dict[str, Any]:
+        if type(token_limit) is not int or token_limit < 0 or measure not in ("output", "total"):
+            raise ValueError("Invalid execution budget")
+        with self._lock:
+            if self.database is None:
+                self._root(root_id)
+                previous = self._budgets.get(root_id)
+                value = {"token_limit": token_limit, "measure": measure, "deadline": deadline}
+                if previous is not None:
+                    if deadline is None:
+                        value["deadline"] = previous["deadline"]
+                    if previous != value:
+                        raise RecoveryMismatchError("Frozen execution budget changed")
+                self._budgets[root_id] = value
+                return dict(value)
+            else:
+                with self._connection() as connection:
+                    self._root(root_id, connection)
+                    row = connection.execute(
+                        "SELECT token_limit,measure,deadline FROM budgets WHERE root_id=?",
+                        (root_id,),
+                    ).fetchone()
+                    if row is not None and deadline is None:
+                        deadline = row[2]
+                    if row is not None and row != (token_limit, measure, deadline):
+                        raise RecoveryMismatchError("Frozen execution budget changed")
+                    connection.execute(
+                        "INSERT OR IGNORE INTO budgets VALUES (?,?,?,?)",
+                        (root_id, token_limit, measure, deadline),
+                    )
+                    return {"token_limit": token_limit, "measure": measure, "deadline": deadline}
+
+    def _budget(self, root_id: str, connection: sqlite3.Connection | None = None) -> dict[str, Any]:
+        if connection is None:
+            value = self._budgets.get(root_id)
+            if value is None:
+                raise RecoveryMismatchError("Execution budget is not initialized")
+            allocations = [v for v in self._allocations.values() if v["root_id"] == root_id]
+        else:
+            row = connection.execute(
+                "SELECT token_limit,measure,deadline FROM budgets WHERE root_id=?", (root_id,)
+            ).fetchone()
+            if row is None:
+                raise RecoveryMismatchError("Execution budget is not initialized")
+            value = dict(zip(("token_limit", "measure", "deadline"), row, strict=True))
+            allocations = [
+                dict(zip(("reserved", "charged"), row, strict=True))
+                for row in connection.execute(
+                    "SELECT reserved,charged FROM model_allocations WHERE root_id=?", (root_id,)
+                )
+            ]
+        used = sum(v["charged"] if v["charged"] is not None else v["reserved"] for v in allocations)
+        return {
+            **value,
+            "used": used,
+            "remaining": max(value["token_limit"] - used, 0),
+            "pending_count": sum(v["charged"] is None for v in allocations),
+        }
+
+    def budget_usage(self, root_id: str) -> dict[str, Any]:
+        with self._lock:
+            if self.database is None:
+                self._root(root_id)
+                return self._budget(root_id)
+            with self._connection() as connection:
+                self._root(root_id, connection)
+                return self._budget(root_id, connection)
+
+    def _model_invocation(
+        self, root_id: str, path: tuple[str, ...], request_json: str
+    ) -> Invocation:
+        digest = hashlib.sha256(json.dumps(path).encode()).hexdigest()
+        return Invocation(
+            f"model:{root_id}:{digest}",
+            root_id,
+            ("__model__", *path),
+            "_model-request",
+            request_json,
+            "model-request-v1",
+            self.build_id,
+        )
+
+    def _allocation(
+        self, call_id: str, connection: sqlite3.Connection | None = None
+    ) -> dict[str, Any] | None:
+        if connection is None:
+            return self._allocations.get(call_id)
+        row = connection.execute(
+            "SELECT root_id,reserved,output_limit,charged FROM model_allocations WHERE call_id=?",
+            (call_id,),
+        ).fetchone()
+        return (
+            dict(zip(("root_id", "reserved", "output_limit", "charged"), row, strict=True))
+            if row is not None
+            else None
+        )
+
+    def _peek_model(
+        self, invocation: Invocation, connection: sqlite3.Connection | None = None
+    ) -> dict[str, Any] | None:
+        row = self._invocation_row(invocation, connection)
+        if row is None:
+            return None
+        outcome = self._decode(row[1])
+        if outcome is None:
+            return {"status": "unknown"}
+        if outcome.success:
+            return {"status": "replay", "response": outcome.value}
+        return {
+            "status": "rejected",
+            "error_type": outcome.error_type,
+            "message": outcome.error_message,
+        }
+
+    def peek_model(
+        self, root_id: str, path: tuple[str, ...], request_json: str
+    ) -> dict[str, Any] | None:
+        invocation = self._model_invocation(root_id, path, request_json)
+        with self._lock:
+            if self.database is None:
+                return self._peek_model(invocation)
+            with self._connection() as connection:
+                return self._peek_model(invocation, connection)
+
+    def _reserve_model(
+        self,
+        root_id: str,
+        path: tuple[str, ...],
+        request_json: str,
+        output_limit: int,
+        estimated_input: int,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        invocation = self._model_invocation(root_id, path, request_json)
+        previous = self._peek_model(invocation, connection)
+        if previous is not None:
+            return previous
+        budget = self._budget(root_id, connection)
+        prompt = estimated_input if budget["measure"] == "total" else 0
+        allowed = min(output_limit, budget["remaining"] - prompt)
+        if allowed <= 0:
+            raise BudgetExceededError("Execution token allowance exhausted")
+        allocation = {
+            "root_id": root_id,
+            "reserved": allowed + prompt,
+            "output_limit": allowed,
+            "charged": None,
+        }
+        if connection is None:
+            self._invocations[invocation.call_id] = (invocation, None)
+            self._allocations[invocation.call_id] = allocation
+        else:
+            connection.execute(
+                "INSERT INTO invocations VALUES (?,?,NULL,?,?)",
+                (
+                    invocation.call_id,
+                    self._identity(invocation),
+                    root_id,
+                    json.dumps(invocation.path),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO model_allocations VALUES (?,?,?,?,NULL)",
+                (invocation.call_id, root_id, allocation["reserved"], allowed),
+            )
+        return {"status": "new", "output_limit": allowed, "reserved": allocation["reserved"]}
+
+    def reserve_model(
+        self,
+        root_id: str,
+        path: tuple[str, ...],
+        request_json: str,
+        output_limit: int,
+        estimated_input: int,
+    ) -> dict[str, Any]:
+        if (
+            type(output_limit) is not int
+            or output_limit <= 0
+            or type(estimated_input) is not int
+            or estimated_input < 0
+        ):
+            raise ValueError("Invalid model reservation")
+        with self._lock:
+            if self.database is None:
+                return self._reserve_model(
+                    root_id, path, request_json, output_limit, estimated_input
+                )
+            with self._connection() as connection:
+                return self._reserve_model(
+                    root_id, path, request_json, output_limit, estimated_input, connection
+                )
+
+    def _finish_model(
+        self,
+        root_id: str,
+        path: tuple[str, ...],
+        response: dict[str, Any] | None,
+        actual: int | None,
+        error_type: str = "",
+        message: str = "",
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        call_id = self._model_invocation(root_id, path, "").call_id
+        if connection is None:
+            record = self._invocations.get(call_id)
+            if record is None:
+                raise RecoveryMismatchError("Model reservation is missing")
+            invocation = record[0]
+        else:
+            row = connection.execute(
+                "SELECT identity_json FROM invocations WHERE call_id=?", (call_id,)
+            ).fetchone()
+            if row is None:
+                raise RecoveryMismatchError("Model reservation is missing")
+            value = json.loads(row[0])
+            value["path"] = tuple(value["path"])
+            invocation = Invocation(**value)
+        allocation = self._allocation(call_id, connection)
+        if allocation is None:
+            raise RecoveryMismatchError("Model allocation is missing")
+        outcome = InvocationOutcome(
+            response is not None, value=response, error_type=error_type, error_message=message
+        )
+        previous = self._invocation_row(invocation, connection)
+        committed = self._decode(previous[1]) if previous is not None else None
+        if committed is not None:
+            if committed != outcome:
+                raise RecoveryMismatchError("Model settlement changed")
+            return committed.value if committed.success else {}
+        budget = self._budget(root_id, connection)
+        charge = (
+            allocation["reserved"] if actual is None or budget["measure"] == "output" else actual
+        )
+        if response is None:
+            charge = 0
+        if connection is None:
+            previous_record = self._invocations[call_id]
+            try:
+                self._commit(invocation, outcome)
+                self._allocations[call_id] = {**allocation, "charged": charge}
+            except BaseException:
+                self._invocations[call_id] = previous_record
+                self._allocations[call_id] = allocation
+                raise
+        else:
+            self._commit(invocation, outcome, connection)
+            connection.execute(
+                "UPDATE model_allocations SET charged=? WHERE call_id=?", (charge, call_id)
+            )
+        return response or {}
+
+    def commit_model(
+        self, root_id: str, path: tuple[str, ...], response: dict[str, Any], actual: int | None
+    ) -> dict[str, Any]:
+        response = json_value(response)
+        if actual is not None and (type(actual) is not int or actual < 0):
+            raise ValueError("Invalid actual model usage")
+        with self._lock:
+            if self.database is None:
+                return self._finish_model(root_id, path, response, actual)
+            with self._connection() as connection:
+                return self._finish_model(root_id, path, response, actual, connection=connection)
+
+    def reject_model(
+        self, root_id: str, path: tuple[str, ...], error_type: str, message: str
+    ) -> None:
+        with self._lock:
+            if self.database is None:
+                self._finish_model(root_id, path, None, 0, error_type, message)
+            else:
+                with self._connection() as connection:
+                    self._finish_model(root_id, path, None, 0, error_type, message, connection)
 
     def complete(self, run_id: str) -> None:
         with self._lock:

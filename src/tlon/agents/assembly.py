@@ -1,8 +1,8 @@
-"""Member capability assembly for members (split from agent_registry).
+"""Member service assembly (split from agent_registry).
 
-``assemble_member_capabilities`` builds the full capability set one member gets —
+``assemble_member_services`` builds the services one member receives —
 LLM client, memory, task manager, Docker runtime, and the tool list —
-and returns it as ``MemberCapabilities`` for ``MemberRuntime``. It is
+and returns it as ``MemberServices`` for ``MemberRuntime``. It is
 a pure function of its parameters: the registry injects itself (it
 satisfies the ``AgentLifecycle`` port structurally) plus the config
 provider and paths, keeping the import direction agents → tools (the
@@ -16,7 +16,7 @@ from tlon.agents.capabilities.catalog import list_trusted_capabilities
 from tlon.agents.capabilities.staging import write_staging_capability
 from tlon.agents.health import orphan_mail_provider
 from tlon.agents.mail_stats import mail_stats_provider
-from tlon.agents.member_runtime import MemberCapabilities
+from tlon.agents.member_runtime import MemberServices
 from tlon.agents.policy import policy_solvency_provider, policy_trust_provider
 from tlon.agents.prototypes.catalog import (
     get_prototype_detail,
@@ -154,7 +154,7 @@ def _build_llm_config(file_config: LLMConfig | None, agent_id: str) -> LLMConfig
     )
 
 
-async def assemble_member_capabilities(
+async def assemble_member_services(
     config: AgentConfig,
     *,
     registry: "AgentRegistry",
@@ -162,7 +162,7 @@ async def assemble_member_capabilities(
     tlon_paths: TlonPaths,
     metrics_service: MetricsService | None = None,
     trace_store: TraceStore | None = None,
-) -> MemberCapabilities:
+) -> MemberServices:
     """Assemble the capability set for a member.
 
     Unified member model (ADR 0006): every member gets the full
@@ -211,7 +211,7 @@ async def assemble_member_capabilities(
     # Create Docker runtime (shared by shell + filesystem tools), wrapped
     # in the interface-level exec audit (issue #21): every run() emits a
     # device.exec trace span + device_exec log. Tools and
-    # MemberCapabilities.docker_runtime both hold the wrapped instance;
+    # MemberServices.docker_runtime both hold the wrapped instance;
     # close() passes through, so MemberRuntime's shutdown path is unchanged.
     # 能力阶梯（issue #26/#40）：L0 无执行装置——不创建 DockerRuntime，
     # 下方也不注册装置工具；L1（文件层）与 L2 都创建 runtime——文件 I/O
@@ -348,7 +348,7 @@ async def assemble_member_capabilities(
     # Read tool timeout from agent config
     per_tool_timeout = config.tool.per_timeout
 
-    return MemberCapabilities(
+    return MemberServices(
         # Swap in the merged LLM config so consumers (context pressure,
         # member_runtime.py) see the resolved context_window int.
         config=config.model_copy(update={"llm": llm_config}),

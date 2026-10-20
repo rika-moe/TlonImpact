@@ -169,7 +169,7 @@ spawn/stop/list/write 这些工具天然要触碰 agents 层（注册表）和 p
 - [lifecycle/ports.py](../../src/tlon/lifecycle/ports.py)——`AgentLifecycle` Protocol（`spawn_member` / `stop_member` / `get_all_agent_status` 的切片）加共享异常 `SpawnRejectedError` / `StopRejectedError`。
 - [evolution/ports.py](../../src/tlon/evolution/ports.py)——`PrototypeError`（原型库抛、工具捕）与 `PrototypeSummary`（只读元数据视图，`PrototypeInfo` 结构化满足）。
 
-装配层（`assemble_member_capabilities`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 只负责契约投影。生命周期端口在 `tlon.lifecycle.ports`，演化端口在 `tlon.evolution.ports`；领域服务不反向依赖 agents。依赖方向由 `uv run lint-imports` 检查。
+装配层（`assemble_member_services`，[agents/assembly.py](../../src/tlon/agents/assembly.py)）将成员身份、注册表和 callable 绑定到 LifecycleService 与演化领域服务，Operation handler 只负责契约投影。生命周期端口在 `tlon.lifecycle.ports`，演化端口在 `tlon.evolution.ports`；领域服务不反向依赖 agents。依赖方向由 `uv run lint-imports` 检查。
 
 为什么不用直接 import 加契约豁免：反向依赖一旦开一个口子，tools 层就会逐渐长出对 agents 内部的随意引用，分层检查从「方向强制」退化为「逐个评审」。Protocol + 注入的额外收益是工具可独立测试——测试注入一个假的 `AgentLifecycle` 实现即可，不必拉起整个注册表。异常类型放 ports 而不是抛方模块，是因为 catch 发生在 tools 侧：异常是接口的一部分，不是实现的细节。
 

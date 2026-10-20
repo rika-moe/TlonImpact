@@ -19,7 +19,7 @@ agent 通过 OpenAI function calling 调用的全部工具。所有参数与结�
 会话循环里的并发分发不在 ToolExecutor，而在引擎侧：
 
 - act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
-- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for`。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `shell-run`）时，未显式传 timeout 时读取操作的 default_timeout（shell-run 为 60 秒）；引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
+- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 登记后台 asyncio task：读取可并发，写入按模型声明顺序进入成员写 gate；同一 task 的嵌套 await 可重入，不同 task 不可借相同 root ID 重入。外层套 `asyncio.wait_for`，等待还受根剩余截止时间限制。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `shell-run`）时，未显式传 timeout 时读取操作的 default_timeout（shell-run 为 60 秒）；引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
 - 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{sha256(call_id)}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `file-read` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
 - 结束工具 `finish-turn`、`sleep-until`、`exit-agent` 必须各自单独占一轮，混用其他工具整轮拒绝。邮件工具不负责结束工作，发信后检查结果，再单独请求结束或睡眠。
@@ -28,7 +28,13 @@ agent 通过 OpenAI function calling 调用的全部工具。所有参数与结�
 
 DSL 与模型 Tool 的操作提交共同使用成员 ProgramStore 的 roots/invocations。session journal 保存 dispatch/result/collect 和供模型消费的结果，不是操作已提交的另一份权威。模型调用身份包含 session、轮次与 tool call ID；spill 文件名使用宿主 call_id 的哈希，避免模型跨轮复用 ID 时覆盖旧输出。
 
-恢复先验证 root 构建身份和操作定义指纹，即使已经存在 journal result 也不能跳过。孤立 dispatch 尚无 intent 可以开始执行；已有回执直接还原；非幂等写只有 intent 而无回执时保留 unknown，安全写复用同键对账，未提交读取可以重新采样。未知提交不承诺 exactly-once，具体见 [调用恢复](../design/invocation-recovery.md)。共享根预算、统一取消/截止时间及成员写排序留给 P4b；当前同轮工具仍按既有方式并发执行。
+恢复先验证 root 构建身份和操作定义指纹，即使已经存在 journal result 也不能跳过。孤立 dispatch 尚无 intent 可以开始执行；已有回执直接还原；非幂等写只有 intent 而无回执时保留 unknown，安全写复用同键对账，未提交读取可以重新采样。未知提交不承诺 exactly-once，具体见 [调用恢复](../design/invocation-recovery.md)。P4b 通过 [执行作用域](../design/execution-scope.md) 统一预算、取消/截止时间及成员写排序，历史回执先于当前控制检查返回。
+
+### 共享模型额度 P4b
+
+session 的 total 根由 recipe.max_tokens 建立，stage、压缩、model-call 及提案/评审内部的模型调用共享同一持久预算。输入估算加输出上限用于原子预留，可靠 usage 用于实际结算；缺失 usage 或结果未知不退额，实际超额记录真实消费并阻止后续调用。估算不能保证 provider 的实际用量永不越界。程序直接模型调用则使用 output 根，保持获准输出预留不退款的原口径。
+
+响应与结算同事务提交，恢复不重复扣额，也不自动重发未知模型请求。维护任务使用独立根；预算、口径及有效 UTC deadline 冻结保存。取消只约束当前进程的任务树，shutdown 后可按原记录恢复，并非永久撤销。当前 ProgramStore user_version=2，旧格式明确拒绝，不迁移、不清库。
 
 ### 工具装配
 

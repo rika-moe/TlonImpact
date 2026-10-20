@@ -95,14 +95,15 @@ class Builtin:
     registry like any other form head.
 
     Exactly one of ``fn`` / ``closure`` must be set. ``pure`` marks
-    absence of side effects; hosts that reserve an evaluation context
-    for pure functions enforce that at registration time, via this
-    marker.
+    deterministic computation. External reads suspend like writes but
+    may declare ``read_only`` for host condition admission; it never
+    changes evaluation or grants access to other vocabularies.
     """
 
     fn: Callable[..., Any] | None = None
     pure: bool = True
     closure: Closure | None = None
+    read_only: bool = False
 
     def __post_init__(self) -> None:
         if (self.fn is None) == (self.closure is None):

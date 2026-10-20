@@ -1,8 +1,8 @@
 # 统一操作与可组合行为：目标设计
 
-状态：完整方案已于 2026-10-19 由用户认可，并授权提交设计 PR、开工 EPIC A；P1 最小契约已通过 #184 合并 main；P2 邮件双入口通过 #185 合并 main；P3a/P3b/P3c 已分别通过 #186/#187/#188 合并 main；P4a 调用记录与恢复正在实施。实现计划见 [operations-plan](operations-plan.md)，决策摘要见 [ADR 0044](../decisions/0044-unified-operations.md)。按阶段验收推进；分支、提交和 PR 已获授权，合并仍由人类确认。
+状态：完整方案已于 2026-10-19 由用户认可，并授权提交设计 PR、开工 EPIC A；P1 最小契约已通过 #184 合并 main；P2 邮件双入口通过 #185 合并 main；P3a/P3b/P3c 已分别通过 #186/#187/#188 合并 main；P4a 已通过 #189 合并 main；P4b 共享执行作用域正在实施。实现计划见 [operations-plan](operations-plan.md)，决策摘要见 [ADR 0044](../decisions/0044-unified-operations.md)。按阶段验收推进；分支、提交和 PR 已获授权，合并仍由人类确认。
 
-当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。下文涉及共享预算、复合依赖、动态工具视图等仍是后续阶段目标，不能视为当前保证。
+当前落地范围：宿主 Operation、单份 schema、成员上下文与 DSL/Tool 薄入口，见 [当前操作契约](../reference/operations-reference.md)。当前调用记录与恢复边界见 [invocation-recovery](invocation-recovery.md)。当前共享预算和并发边界见 [execution-scope](execution-scope.md)。复合依赖和动态工具视图仍是后续阶段目标，不能视为当前保证。
 
 ## 1. 目标与范围
 
@@ -19,14 +19,14 @@
 | 当前机制与位置 | 已核实事实 | 目标处理 |
 |---|---|---|
 | [Tool / ToolResult](../../src/tlon/tools/base.py)、[ToolExecutor](../../src/tlon/agents/tool_executor.py) | Python Tool 同时定义 schema、实现和 LLM 协议；参数校验是手写浅层子集；返回 ToolResult | 拆出 Operation 契约和实现；Tool 只做协议适配；删除手写参数校验 |
-| [assemble_member_capabilities](../../src/tlon/agents/assembly.py) | 满配 46 个工具，按装置/信任/服务装配；LLM 工具面来自注册列表 | 保留装置和信任约束，工具视图从操作集合投影，不再靠复制注册代码区分成员 |
+| [assemble_member_services](../../src/tlon/agents/assembly.py) | 满配 46 个工具，按装置/信任/服务装配；LLM 工具面来自注册列表 | 保留装置和信任约束，工具视图从操作集合投影，不再靠复制注册代码区分成员 |
 | [CapabilitySpec](../../src/tlon/agents/capabilities/spec.py)、[词汇桥](../../src/tlon/agents/capabilities/bridge.py) | 一个 artifact 一个闭包；只见参数；纯度准入；不能依赖其他能力；只进入 DSL | artifact 成为复合 Operation；保留零隐式 env 和审批；开放显式可分析依赖及 Tool 投影 |
 | [MemberSpec](../../src/tlon/agents/member_spec.py)、[vocabulary](../../src/tlon/agents/vocabulary.py) | when/actions、until、stage-if 使用不同注册表，复合词不能自然用于所有纯条件 | 统一纯函数准入；保留各位置明确的数据作用域 |
 | [ProgramDriver](../../src/tlon/agents/program_driver.py)、[ProgramStore](../../src/tlon/agents/program_store.py) | 冻结规则/输入；按调用序号及名称/参数核对重放；state-put 与结果可同事务提交 | 保留并扩展定义快照、嵌套调用标识；不重做另一套执行数据库 |
 | [LoopDriver](../../src/tlon/agents/loop_driver.py)、[ProgramEffects](../../src/tlon/operations/model.py)、[EffectExecutor](../../src/tlon/agents/executor.py) | Tool 邮件返回数据后由 LoopDriver 按工具名提交；DSL 邮件走 ProgramEffects；底层均已使用 PostOffice | 邮件领域逻辑和提交统一；两种驱动仍各自负责程序与会话生命周期 |
-| [ProgramDriver._HOST_QUERIES](../../src/tlon/agents/program_driver.py) | 宿主查询在词汇表是 pure，驱动又改为非 pure 以便记录 | 分开确定性计算、外部读取、外部写入；不再用 pure 同时表达三种含义 |
+| [宿主查询注册](../../src/tlon/agents/vocabulary.py) | 外部查询直接注册为非 pure、read_only；驱动不改写 | read_only 仅声明规则条件准入；外部读取采样与重放独立于纯计算 |
 | [StageServices.think](../../src/tlon/agents/stages/services.py) | 每次模型请求读取工具定义；尚无请求级工具快照与状态准入契约 | 在该边界生成并记录请求快照，执行时重新授权 |
-| [instantiate](../../src/tlon/agents/prototypes/instantiate.py)、[MemberCapabilities](../../src/tlon/agents/member_runtime.py) | 原型复制完整 Behavior；MemberCapabilities 实际为成员服务装配容器 | 保留复制；装配对象改名 MemberServices，避免与能力 artifact 混淆 |
+| [instantiate](../../src/tlon/agents/prototypes/instantiate.py)、[MemberServices](../../src/tlon/agents/member_runtime.py) | 原型复制完整 Behavior；MemberServices 实际为成员服务装配容器 | 保留复制；装配对象改名 MemberServices，避免与能力 artifact 混淆 |
 
 事实纠正：旧 [capabilities](capabilities.md) 中“能力不能 LLM/IO”的笼统描述与代码不符。`CAPABILITY_ACTION_BUILTINS` 已来自全部 `MEMBER_ACTION_NAMES`，包含 model-call/state-get/state-put。当前真正限制是只组合准入的既有动作、不新增宿主原语；目标方案沿用这一权限边界。
 
@@ -60,7 +60,7 @@
 
 宿主操作通过现有领域端口执行，只能由宿主代码增加；复合操作由 tlosure 实现，可以调用宿主操作或其他复合操作。
 
-效果为集合而非一个布尔值：`read`（读取非确定外部状态）与 `write`（修改外部状态）；空集为纯计算。一个既读又写的复合操作保留两项。模型调用按 read 类外部观测记录，并单独计 token/费用预算；“不写业务状态”不意味着免费、确定或无需记录。时间、随机数、目录查询同样不得藏在纯计算里。
+效果为集合而非一个布尔值：`read`（读取非确定外部状态）与 `write`（修改外部状态）；空集为纯计算。一个既读又写的复合操作保留两项。模型请求会产生不可撤销的消费，当前按 write 调度并保存非幂等 intent，同时计 token/费用预算；“不写业务状态”不意味着免费、确定或无需记录。时间、随机数、目录查询同样不得藏在纯计算里。
 
 首版操作间调用必须静态具名。允许语言局部 fn/defn 和受 fuel 约束的递归，但不允许把注册操作值作为参数传递或通过字符串动态寻址来逃避依赖分析；分析必须覆盖局部闭包 body 和所有分支，遇到不能确定目标的操作调用拒载。纯语境不能通过局部闭包隐藏 read/write。
 
@@ -90,7 +90,7 @@
 
 PostOffice 的持久提交与 request_id 去重保留；state-put 与记录同事务保留。没有幂等协议的 shell/外部调用在“执行后、记录前”崩溃只能标为 unknown 并停止自动重试，不能宣称 exactly-once。非幂等写入开始前持久记录 intent，恢复见 intent 无回执时按领域对账，无法对账则 unknown。
 
-预算属于整个根调用：嵌套不重置 fuel、token、截止时间；并发子调用预留/扣减必须原子化。恢复按历史账本重建消费，不二次收费，也不因重启获得新预算。取消会阻止后续调用，无法保证撤销已经提交的效果；结果未知必须保持未知。
+宿主 token 预算与截止时间属于对应执行根，内部模型请求不重置；并发子调用预留/扣减必须原子化。run-loop 是显式会话预算根，保留 recipe 的 total 额度，程序直接请求保留 output 额度。fuel 仍由语言 Evaluator 管理：显式 rule.fuel 在门控和全部动作间共享，未声明时每个动作使用既有默认额度；复合操作跨调用的 fuel 协作在 P5 验收，不将其称为 P4b 已完成。恢复按历史账本重建消费，不二次收费，也不因重启获得新预算。取消会阻止后续调用，无法保证撤销已经提交的效果；结果未知必须保持未知。
 
 ### 5.2 并发和调度
 
@@ -177,7 +177,7 @@ LLM 返回的每个调用必须属于该请求冻结视图，不能因为工具�
 | ProgramEffects/ToolExecutor 中重复业务分发与结果转换 | 删除/收敛 | P4 只留入口适配/驱动职责；领域执行进入共享操作实现 |
 | 纯条件的多张词汇白名单 | 统一 | P6 统一纯操作准入，保留不同数据作用域；读取状态先物化，不注入隐藏 env |
 | 全量工具注册列表就是模型工具列表 | 删除 | P7 使用请求级动态视图；注册表不再可变 unregister 来模拟阶段 |
-| MemberCapabilities 装配容器名称 | 改名 MemberServices | P4 一次改调用点，无旧别名 |
+| 旧 MemberCapabilities 装配容器名称 | 改名 MemberServices | P4b 一次改调用点，无旧别名 |
 | 旧名称/旧 schema/旧存储的自动兼容 | 不增加 | 每阶段原子切换所属操作及调用者，旧入口直接删除；已有不兼容运行明确拒绝，禁止静默清库 |
 
 行为不变先行不是同时维护两份执行器：P2-P3 可以按不同操作域逐 PR 切换，某个操作任何时刻只有一份权威实现。旧域在其切换前继续运行，不能回退调用新域旧路径。schema/存储不兼容时发布说明明确新格式与受影响数据；仅改仓库内受管理的示例/测试，不写用户数据迁移程序、不自动删除用户记录。

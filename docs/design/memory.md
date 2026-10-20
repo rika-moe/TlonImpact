@@ -87,7 +87,7 @@ Distiller 的输入是 **session 事件投影**（`SessionProjection`，[memory/
 
 ## agent 侧接口
 
-agent 通过 [src/tlon/tools/memory/](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_capabilities`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`session-read` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
+agent 通过 [src/tlon/tools/memory/](../../src/tlon/operations/memory.py) 下的四个工具读写自己的记忆，全部在 `assemble_member_services`（[agents/assembly.py](../../src/tlon/agents/assembly.py)）装配成员服务时注册；前三个直接持有本 agent 的 `MemoryManager` 实例，`session-read` 持有本 agent 的 session journal（`SessionLogReader` 端口）：
 
 - `memory-remember`（`remember_fact.py` 的 `RememberFactTool`）——立即写一条 claim（参数为 `fact` 文本与 `importance`）。新 claim 不在当前 session 重新注入（注入只在 session 首步构建一次），但经 `memory-search` 立即可查，下个 session 进 JIT 注入。
 - `memory-search`（`search_memories.py` 的 `SearchMemoriesTool`）——向量检索：query embed 后按相似度取 top-k active claims，每条结果带日期与 `source_session_ids` 来源引用；索引不可用时降级关键词子串匹配。

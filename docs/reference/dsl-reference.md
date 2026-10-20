@@ -54,7 +54,7 @@
 |---|---|---|---|
 | `:name` | 字符串 | 是 | 规则名，用于日志与报错 |
 | `:on` | 关键字 | 是 | 触发事件类型；`:boot` 或 `nil` 表示启动规则（见下） |
-| `:when` | 表达式 form | 否 | 纯谓词门控；缺省 = 恒真 |
+| `:when` | 表达式 form | 否 | 确定性或只读谓词门控；缺省 = 恒真 |
 | `:actions` | 向量 | 否 | 动作 form 列表；每项必须是非空 form |
 | `:fuel` | int | 否 | 本条规则的求值预算；须为正且 ≤ 10000（`MAX_FUEL`）；计量机制见 [tlosure-reference.md](./tlosure-reference.md) 第 2.2 节，多段表达式如何记账见第 3 节 |
 
@@ -110,7 +110,7 @@
 
 ### 2.2 `:when` 门控
 
-纯表达式，环境为 `{msg, event, self}`。`msg` 为来源邮件，非邮件事件为 `nil`；`event` 为原始事件负载；`self` 含 id、name 和 address。门控为假或求值失败时跳过规则，不隐式把邮件标读。
+确定性或明确准入的只读表达式，环境为 `{msg, event, self}`。`msg` 为来源邮件，非邮件事件为 `nil`；`event` 为原始事件负载；`self` 含 id、name 和 address。门控为假或求值失败时跳过规则，不隐式把邮件标读。
 
 ### 2.3 命中后的执行顺序
 
@@ -125,7 +125,7 @@
 - 宿主操作由 DSLAdapter 投影为 builtin，在调用边界交给 OperationExecutor 执行并返回实际结果；仅 `run-loop` 保留 ActionRequest，tlosure 不直接执行系统 I/O。
 - 环境值对表达式不透明：没有属性/方法访问语法，`Mail` 只能经 builtin 检查。
 - map 是数据：键保持字面量，值会被求值——动作选项 map 里可嵌表达式，如 `{:agent (get event :agent_id)}`。
-- **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。生产程序对每次实际经过的调用进行效果交接；同步分析仍可使用 collector。纯门控只能使用纯子集词汇。
+- **动作位置校验**：`validate_member_actions` 使用全量成员词汇，支持条件、函数和传统循环；`defn` 按顺序向后续表达式引入名字。生产程序对每次实际经过的调用进行效果交接；同步分析仍可使用 collector。规则门控使用 pure 或 read_only 准入词汇，外部读取仍挂起、采样及重放；其他条件语境的独立词表不扩大。
 - fuel 记账：规则声明 `:fuel` 时，门控与所有动作共享一个计数器；未声明时分别用默认门控与动作预算。配方的 `:fuel` 单独约束会话终止条件和 stage 条件；硬上限见下表。
 
 <!-- BEGIN GENERATED: dsl-fuel-defaults -->
@@ -166,7 +166,7 @@
 
 ## 4. Builtin 完整清单
 
-语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的纯子集可用于 `:when`、动作参数等一切纯位置。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入），清单见第 4.6 节。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
+语言级通用词汇（`CORE_BUILTINS` / `ARITHMETIC_BUILTINS`，[src/tlosure/builtins.py](../../src/tlosure/builtins.py)，ADR 0018 修订）的清单见 [tlosure-reference.md](./tlosure-reference.md) 第 3 节；本节只列 tlon 领域词汇。领域词汇的模块级注册表在 [src/tlon/agents/vocabulary.py](../../src/tlon/agents/vocabulary.py)；`make_member_builtins` 把 `TRIGGER_BUILTINS` + `SCRIPT_BUILTINS` + `ARITHMETIC_BUILTINS` 合并后再加上 4.5 的动作 builtin（`pure=False`），构成成员统一注册表——合并后的确定性词汇及明确 read_only 的宿主查询可用于规则 `:when`；其他纯语境保持各自词表。另有四个读注册表状态的宿主查询由调用方闭包注入（`ScriptHostQueries`，实现为注册表模块里的 `RegistryQueries`，Adam 与注册表装配的全体成员共用同一份注入），清单见第 4.6 节。它们不在任何模块级注册表——无宿主注入的注册表里没有这些名字，引用即加载校验失败。
 
 **版本纪律**（ADR 0020，[docs/design/bridge-api.md](../design/bridge-api.md)；2026-09-28 修订）：本节清单是 spec 作者面对的稳定界面。演进默认 additive；删除走 deprecation 生命周期——发现坏设计先标记废弃（加载期 warning + 文档标注 + 迁移窗口），窗口后删除并机械迁移磁盘 spec（语料小且可触达，`loads`/`dumps` 对称使迁移可测试）。语义只紧不松：修复式收紧（原来放行的坏输入改为加载拒绝）允许。新增词汇必须声明所属语境注册表，不存在"所有语境可见"的词；加载期校验（`validate_member_spec`）是引用错误的唯一守门人，运行期不存在"未定义词汇"这一类错误。
 
@@ -271,7 +271,7 @@
 
 `:subject`、`:request_id` 可省略；宿主默认生成稳定调用 ID。回复显式传 `:in_reply_to`，收件人显式传 `:to`，不会隐式从触发邮件推断。完整参数以 [邮件操作 schema](../../src/tlon/operations/mail.py) 为权威。拒收和未知结果分别抛带结构化 data 的 `RejectedError` / `UnknownOutcomeError`，不返回伪成功；Tool 入口将同一错误投影为失败结果。请求 ID 相同但内容不同会冲突。邮局已有回执覆盖已入箱而程序尚未记结果的崩溃窗口；unknown 必须复用原 request_id 重试。接受只证明本地信箱提交，网关字段不证明外部送达。
 
-`model-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；每次调用按请求上限预留共享额度，重放也预留。已记录结果直接复用；模型调用属于非幂等写入，已分发但未记录结果时保留 unknown，不自动重发。
+`model-call` 不附工具，保留人格、RULES 和协议。输出上限不超过请求值、规则剩余额度和成员 `llm.max_tokens`；程序直接调用按获准输出上限持久预留且不退款，重放还原既有占用、不再次扣额。已记录结果直接复用；模型调用属于非幂等写入，已分发但未记录结果时保留 unknown，不自动重发。
 
 `mail-field` 读取真实 `Mail` 的 `:id`、`:from`、`:to`、`:cc`、`:subject`、`:content`、`:timestamp`、`:thread-id`、`:in-reply-to`、`:forward-of`、`:endorsing`；非邮件值返回 `nil`，未知字段报错。随包 [报社示例](../../src/tlon/resources/examples/newspaper/README.md) 演示先冻结期刊再逐人幂等投递，不自动创建默认成员。
 
@@ -290,7 +290,7 @@
 ### 4.6 宿主查询端口（闭包注入）
 
 <!-- BEGIN GENERATED: bridge-query-ports -->
-`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+`make_member_builtins` 在调用方注入 `host` 时追加 4 个宿主查询（`pure=False, read_only=True`，只读注册表或投递目录、无宿主即不注册这些词；说明取自 `ScriptHostQueries` 协议方法的 docstring）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | DSL 词 | 宿主方法 | 说明 |
 |---|---|---|
@@ -393,7 +393,9 @@ stage 是"纯变换 + 声明意图"：返回值是 `StageOutcome` 数据（[src/
 3. 按序解释 `:stages`；`think` 失败则本步提前返回。
 4. 若 stage 向量不含 `act`（或本轮 act 未推进迭代），引擎自行推进迭代计数，保证硬顶始终生效。
 
-**token 计量口径（ADR 0023）**：session 内每次经 `StageServices.think` 的 stage LLM 调用（think / critique / plan）计入 `token_usage`——取 `response.usage.total_tokens`，缺失回落 `prompt_tokens + completion_tokens`，无 usage 计 0。stage 在 `StageOutcome.token_usage` 声明用量，引擎先 journal（`tokens` 事件，累加后绝对值）再改内存。compaction 摘要调用不计入；预算通知不调用模型。
+**token 计量口径（P4b 修订 ADR 0023）**：run-loop 创建 recipe.max_tokens 的独立 total 根，stage（think/critique/plan）、compaction 摘要及工具内部模型调用均计入。成员 LLMClient 统一在 ProgramStore 原子预留，成功取可靠的 usage.total_tokens，或完整 prompt_tokens + completion_tokens 结算；无可靠 usage、取消或提交未知时保留预留。实际 total 超过估算时记录真实耗用并阻止后续新调用，估算不是 provider 消费的硬上界。session.token_usage 与 journal tokens 只是账本投影，不能再次独立累加收费；预算通知不调用模型。
+
+程序直接调用使用成员 llm.max_tokens 的 output 根，按获准输出额度预留且成功不退款；run-loop 不消费该程序输出池。底层模型响应与预算结算同事务保存，恢复不重置、重复扣额或自动重发未知请求。额度与有效 UTC deadline 冻结；取消只影响当前进程任务树，不是跨重启的永久撤销。ProgramStore user_version=2 拒绝旧格式，无迁移或自动清库。完整契约见 [执行作用域](../design/execution-scope.md)。
 
 正常会话完成由 act 收集到独立结束工具的成功结果驱动；邮件工具没有结束语义。`:until` 只是限额与故障的兜底。
 

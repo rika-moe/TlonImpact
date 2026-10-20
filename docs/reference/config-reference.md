@@ -150,7 +150,7 @@ agent:
 
 各段与 `MemoryConfig` 字段对应：`distillation.window`（批量蒸馏窗口——已完成且开始时间晚于蒸馏水位线（`memory/distillation.json`）的 session 数达到该值即触发批量蒸馏，ADR 0017）、`context.max_claims_in_context`（注入上下文的 claim 条数）、`reflection.min_interactions`（自驱动记忆审计的最小完成会话数；开/关与间隔在 `behavior.tlon` 的 `:reflect` 声明）。`retrieval` 段是 JIT 检索调参（ADR 0017 阶段 2）：`alpha_similarity`/`beta_recency`/`gamma_importance` 是复合打分 `α·similarity + β·recency + γ·importance` 的三个权重，`recency_half_life_days` 是 recency 指数衰减的半衰期（天），`pool_factor` 是 KNN 候选池相对 k 的放大倍数。`conflict` 段是冲突判定调参（ADR 0017 阶段 3）：`similarity_threshold` 是触发 LLM 判定的相似度门限（余弦，定高控制成本），`candidate_limit` 是每条新 claim 拉取的候选旧 claim 数。ADR 0017 之前的 `summary`/`episodic`/旧 `context` 段与 ADR 0009 之前的 `working`/`triggers` 段读取时自然忽略，无需清理。
 
-> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`——生产装配（[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_capabilities`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
+> **生效路径**：`MemoryManager.load`（成员启动时调用）在 `config.json` 存在时以磁盘文件为准加载并绑定 `agent_id`——生产装配（[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_services`）传入默认 `MemoryConfig()`，不预填 `agent_id`，因此**磁盘调参在生产环境直接生效**。`agent.yaml` 无 `memory:` 段（[base/config.py](../../src/tlon/base/config.py) 的旧 `MemoryConfig` 已删除，其字段从未被消费）。
 
 ## 4. 环境变量
 

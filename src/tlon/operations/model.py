@@ -3,8 +3,14 @@
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    ModelRequestRejectedError,
+    UnknownModelOutcomeError,
+)
 from tlon.operations.core import CallContext, Operation
-from tlon.operations.schema import OperationError, UnknownOutcomeError
+from tlon.operations.schema import OperationError, RejectedError, UnknownOutcomeError
 
 
 class ModelClient(Protocol):
@@ -39,8 +45,17 @@ def make_model_operations(
             if response.tool_calls:
                 raise OperationError("model-call returned unrequested tool calls")
             return {"content": response.content or "", "usage": response.usage or {}}
-        except OperationError:
+        except (OperationError, BudgetExceededError, ExecutionDeadlineError):
             raise
+        except ModelRequestRejectedError as error:
+            raise RejectedError(
+                str(error), {"call_id": context.call_id, "outcome": "rejected"}
+            ) from error
+        except UnknownModelOutcomeError as error:
+            raise UnknownOutcomeError(
+                str(error),
+                {"call_id": context.call_id, "outcome": "unknown", "retry_safe": False},
+            ) from error
         except Exception as error:
             raise UnknownOutcomeError(
                 str(error),

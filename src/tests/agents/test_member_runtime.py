@@ -383,7 +383,7 @@ async def test_rule_fuel_is_shared_by_gate_and_actions(tmp_path: Path) -> None:
 
 
 async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> None:
-    from tlon.agents.member_runtime import MemberCapabilities
+    from tlon.agents.member_runtime import MemberServices
     from tlon.agents.tool_executor import ToolExecutor
     from tlon.base.config import AgentConfig, LLMConfig
     from tlon.base.llm_client import LLMResponse, ToolCall
@@ -408,7 +408,7 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
     memory.load = AsyncMock()
     memory.maybe_distill_completed_sessions = AsyncMock(return_value=0)
     tools = ToolExecutor()
-    caps = MemberCapabilities(
+    caps = MemberServices(
         config=AgentConfig(id="member", name="Member"),
         llm_client=llm,
         memory=memory,
@@ -424,7 +424,7 @@ async def test_real_session_then_forward_uses_same_trigger(tmp_path: Path) -> No
         builtins=make_member_builtins(),
         mailbox=shell._mailbox,
         post_office=shell._post_office,
-        capabilities=caps,
+        services=caps,
     )
     mail = _mail()
     await member._mailbox.append_inbox(mail)

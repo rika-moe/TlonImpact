@@ -5,7 +5,13 @@ from typing import Any
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    UnknownModelOutcomeError,
+)
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, usage_total_tokens
+from tlon.operations.schema import RecoveryMismatchError
 
 
 async def plan_stage(
@@ -45,6 +51,13 @@ async def plan_stage(
     except ContextWindowExceededError:
         # ADR 0008: not a soft failure — the engine force-compacts and
         # retries this stage once.
+        raise
+    except (
+        BudgetExceededError,
+        ExecutionDeadlineError,
+        UnknownModelOutcomeError,
+        RecoveryMismatchError,
+    ):
         raise
     except Exception as e:
         svc.logger.warning("loop_stage_failed", session_id=session.id, stage="plan", error=str(e))

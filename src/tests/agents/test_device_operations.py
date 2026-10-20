@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from tests.operations.test_filesystem_operations import MemoryDevice
-from tlon.agents.member_runtime import MemberCapabilities, MemberRuntime
+from tlon.agents.member_runtime import MemberRuntime, MemberServices
 from tlon.agents.member_spec import MemberSpec
 from tlon.agents.tool_executor import ToolExecutor
 from tlon.agents.vocabulary import make_member_builtins
@@ -31,7 +31,7 @@ def member_at(
     operations = (*make_filesystem_operations(files), *time_operation_definitions())
     if shell:
         operations = (*operations, *make_shell_operations(shell))
-    caps = MemberCapabilities(
+    caps = MemberServices(
         config=AgentConfig(
             id="device-member", name="Device", llm=LLMConfig(model_name="test/model"), docker=config
         ),
@@ -52,7 +52,7 @@ def member_at(
             loads('{:version 1 :rules [{:name "work" :on :boot :actions [' + actions + "]}]}")
         ),
         builtins=make_member_builtins(),
-        capabilities=caps,
+        services=caps,
     )
 
 
@@ -66,7 +66,7 @@ async def test_member_program_and_model_share_file_contract(tmp_path: Path) -> N
     try:
         await member._run_rule_body(member.spec.rules[0], None, run_id="device-run")
         assert member._program_store.state_get("seen") == "共享内容"
-        executor = member._capabilities.tool_executor
+        executor = member._services.tool_executor
         result = await executor.execute(
             "file-read",
             {"file_path": "shared.txt"},
@@ -105,7 +105,7 @@ async def test_shutdown_drains_shell_before_close_and_wake_has_new_handles(tmp_p
     device.close.side_effect = lambda: order.append("device closed")
     shell = MemberShellService(DockerRuntimeConfig(level="L2"), device)
     member = member_at(tmp_path, device, "", shell)
-    tool = member._capabilities.tool_executor
+    tool = member._services.tool_executor
     started = await tool.execute("shell-run", {"command": "wait", "background": True})
     assert started.success
     await asyncio.wait_for(entered.wait(), 1)
@@ -116,7 +116,7 @@ async def test_shutdown_drains_shell_before_close_and_wake_has_new_handles(tmp_p
     new_shell = MemberShellService(DockerRuntimeConfig(level="L2"), new_device)
     awakened = member_at(tmp_path, new_device, "", new_shell)
     try:
-        result = await awakened._capabilities.tool_executor.execute(
+        result = await awakened._services.tool_executor.execute(
             "shell-check",
             {"task_id": started.data["task_id"]},
             CallContext("device-member", "after-wake", "check", origin="tool"),

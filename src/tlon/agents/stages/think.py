@@ -5,7 +5,13 @@ from typing import Any
 from tlon.agents.session import AgentSession
 from tlon.agents.stages.outcome import StageOutcome
 from tlon.agents.stages.services import StageServices
+from tlon.base.execution import (
+    BudgetExceededError,
+    ExecutionDeadlineError,
+    UnknownModelOutcomeError,
+)
 from tlon.base.llm_client import ContextWindowExceededError, LLMResponse, usage_total_tokens
+from tlon.operations.schema import RecoveryMismatchError
 
 
 async def think_stage(
@@ -41,6 +47,13 @@ async def think_stage(
             cache_prefix_len=session.anchor_len,
         )
     except ContextWindowExceededError:
+        raise
+    except (
+        BudgetExceededError,
+        ExecutionDeadlineError,
+        UnknownModelOutcomeError,
+        RecoveryMismatchError,
+    ):
         raise
     except Exception as e:
         svc.logger.error("session_llm_error", session_id=session.id, error=str(e), exc_info=True)

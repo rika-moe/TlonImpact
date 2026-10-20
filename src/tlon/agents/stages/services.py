@@ -22,6 +22,7 @@ from structlog.contextvars import bound_contextvars
 from tlon.agents.trigger import AgentIdentity
 from tlon.base.events.event import Event, EventType
 from tlon.base.events.event_bus import EventBus
+from tlon.base.execution import bind_execution, current_execution
 from tlon.base.llm_client import LLMClient, LLMResponse, _cache_token_counts
 from tlon.base.tracing.trace_context import continue_trace, get_current_trace, start_span
 
@@ -221,14 +222,16 @@ class StageServices:
             )
 
             start_time = time.time()
-            response = await self._llm_client.chat(
-                system_prompt=system_prompt,
-                messages=context,
-                tools=tools if tools else None,
-                purpose=purpose,
-                session_id=session_id,
-                cache_prefix_len=cache_prefix_len,
-            )
+            scope = current_execution()
+            with bind_execution(scope.child("request") if scope else None):
+                response = await self._llm_client.chat(
+                    system_prompt=system_prompt,
+                    messages=context,
+                    tools=tools if tools else None,
+                    purpose=purpose,
+                    session_id=session_id,
+                    cache_prefix_len=cache_prefix_len,
+                )
             duration_ms = int((time.time() - start_time) * 1000)
 
             usage = response.usage or {}
