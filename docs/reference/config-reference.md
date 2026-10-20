@@ -71,7 +71,7 @@
 | `network_mode` | `str` | "none" |  |
 <!-- END GENERATED: agent-yaml-fields-docker -->
 
-`level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——装配时不创建 DockerRuntime，也不注册依赖装置的 shell/filesystem 工具（executeBashCommand/checkBashTask/readFile/writeFile/editFile/listDirectory/searchFiles）；`"L1"`（默认，issue #31 于 2026-10-05 拍板翻转）= 文件层——archive-only，创建文件柜容器并注册 5 个 filesystem 工具，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"` = Docker 完整 userland。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
+`level`（issue #26，L1 落地于 #40）是执行装置能力阶梯声明：`"L0"` = 无执行装置——装配时不创建 DockerRuntime，也不注册依赖装置的 shell/filesystem 工具（shell-run/shell-check/file-read/file-write/file-edit/file-list/file-search）；`"L1"`（默认，issue #31 于 2026-10-05 拍板翻转）= 文件层——archive-only，创建文件柜容器并注册 5 个 filesystem 工具，但结构性零代码执行（容器从不启动、exec 单元从不存在，run() 由装置层直接拒绝）；`"L2"` = Docker 完整 userland。声明即数据、随原型提案一起评审。`docker.level` 也可由原型 spec 的顶层 `:execution` 段（见 [dsl-reference.md](./dsl-reference.md) 1.1 节）在实例化时一次性投影而来——此后运行时权威是本字段，成员自改 behavior.tlon 的 `:execution` 不会重新投影（防自提权）。
 
 ### `tool`
 
@@ -85,7 +85,7 @@
 | `allowed_paths` | `list[str]` | ['/workspace'] |  |
 <!-- END GENERATED: agent-yaml-fields-tool -->
 
-`per_timeout` 是单个工具超时，见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool`；`allowed_paths` 是文件工具只允许触碰的**容器内绝对路径**（writeFile/editFile 的完整白名单），非空、必须 `/` 开头（校验器强制）。readFile/listDirectory/searchFiles 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
+`per_timeout` 是单个工具超时，见 [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `execute_one_tool`；`allowed_paths` 是文件工具只允许触碰的**容器内绝对路径**（file-write/file-edit 的完整白名单），非空、必须 `/` 开头（校验器强制）。file-read/file-list/file-search 在此之上额外放行 `/tlon-home`（agent 自己家目录的只读挂载，见 tools-reference.md filesystem 一节），该路径不进 `allowed_paths` 配置。
 
 ### 完整示例
 

@@ -24,17 +24,17 @@ test("tool.execute_end records the last tool with its success flag", () => {
 
   map = applyEvent(
     map,
-    ev("tool.execute_end", { agent_id: "a", tool_name: "readFile", success: false }, 6000),
+    ev("tool.execute_end", { agent_id: "a", tool_name: "file-read", success: false }, 6000),
   );
-  assert.deepEqual(map["a"]?.lastTool, { name: "readFile", success: false, at: 6000 });
+  assert.deepEqual(map["a"]?.lastTool, { name: "file-read", success: false, at: 6000 });
 });
 
 test("tool.error records a failed tool call", () => {
   const map = applyEvent(
     {},
-    ev("tool.error", { agent_id: "a", tool_name: "readFile", error: "enoent" }, 7000),
+    ev("tool.error", { agent_id: "a", tool_name: "file-read", error: "enoent" }, 7000),
   );
-  assert.deepEqual(map["a"]?.lastTool, { name: "readFile", success: false, at: 7000 });
+  assert.deepEqual(map["a"]?.lastTool, { name: "file-read", success: false, at: 7000 });
 });
 
 test("events are tracked per agent independently", () => {

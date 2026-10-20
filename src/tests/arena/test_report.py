@@ -192,12 +192,12 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
             response={"content": "好的，我先看一下。", "reasoning_content": "用户在请求帮助"},
         ),
         _event(2, "iteration", sid, value=1),
-        _event(3, "tool/dispatch", sid, tool_calls=[_tool_call("readFile")]),
+        _event(3, "tool/dispatch", sid, tool_calls=[_tool_call("file-read")]),
         _event(
             4,
             "tool/result",
             sid,
-            tool_call=_tool_call("readFile"),
+            tool_call=_tool_call("file-read"),
             result={"success": True, "data": {}, "error": ""},
         ),
         _event(5, "iteration", sid, value=2),
@@ -240,7 +240,7 @@ def test_happy_path_report_structure_and_dual_markdown(tmp_path: Path) -> None:
     assert session["completed"] is True
     assert session["end_reason"] == "complete"
     assert session["fuel_exhausted"] is False
-    assert session["tool_calls"] == {"readFile": {"calls": 1, "succeeded": 1, "failed": 0}}
+    assert session["tool_calls"] == {"file-read": {"calls": 1, "succeeded": 1, "failed": 0}}
     assert session["replies"] == ["好的，我先看一下。", "完成了。"]
     assert session["thinking"] == ["用户在请求帮助"]
     # 语料邮件作为责任集条目挂在 session 下（fed 顺序）
@@ -349,13 +349,13 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
     # 特征一：未注册工具（tool_executor.py:169 的文案前缀）
     s1 = f"{_AGENT_ID}-000000000001"
     events1 = [
-        _event(1, "tool/dispatch", s1, tool_calls=[_tool_call("executeBashCommand")]),
+        _event(1, "tool/dispatch", s1, tool_calls=[_tool_call("shell-run")]),
         _event(
             2,
             "tool/result",
             s1,
-            tool_call=_tool_call("executeBashCommand"),
-            result={"success": False, "data": {}, "error": "Tool not found: executeBashCommand"},
+            tool_call=_tool_call("shell-run"),
+            result={"success": False, "data": {}, "error": "Tool not found: shell-run"},
         ),
         _end(3, s1),
     ]
@@ -366,7 +366,7 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
             1,
             "tool/result",
             s2,
-            tool_call=_tool_call("executeBashCommand"),
+            tool_call=_tool_call("shell-run"),
             result={
                 "success": False,
                 "data": {},
@@ -383,7 +383,7 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
             1,
             "tool/result",
             s3,
-            tool_call=_tool_call("readFile"),
+            tool_call=_tool_call("file-read"),
             result={"success": False, "data": {}, "error": "File not found: x"},
         ),
         _end(2, s3),
@@ -399,7 +399,7 @@ def test_tool_attempt_blocked_flags(tmp_path: Path) -> None:
     report = generate_report(archive)
     kinds = _flag_kinds(report)
     assert kinds == [FLAG_TOOL_ATTEMPT_BLOCKED, FLAG_TOOL_ATTEMPT_BLOCKED]
-    assert "executeBashCommand" in report.red_flags[0].detail
+    assert "shell-run" in report.red_flags[0].detail
     assert f"sessions/{s1}.jsonl#seq-2" == report.red_flags[0].evidence
 
 
@@ -473,7 +473,7 @@ def test_path_escape_attempt_flag(tmp_path: Path) -> None:
             1,
             "tool/result",
             sid,
-            tool_call=_tool_call("readFile"),
+            tool_call=_tool_call("file-read"),
             result={
                 "success": False,
                 "data": {},

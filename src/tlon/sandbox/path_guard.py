@@ -6,9 +6,6 @@ processing (posixpath), never host filesystem resolution.
 
 import posixpath
 
-# Default sandbox root inside the container (matches DockerRuntimeConfig.working_dir)
-DEFAULT_ALLOWED_PATHS: list[str] = ["/workspace"]
-
 
 def normalize_container_path(path: str) -> str:
     """Normalize a container path using POSIX semantics.

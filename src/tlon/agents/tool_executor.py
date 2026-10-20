@@ -29,7 +29,7 @@ class ToolExecutor:
         >>> executor = ToolExecutor()
         >>> executor.register_tool(ExecuteBashTool(docker_config, docker_runtime))
         >>> await executor.initialize()
-        >>> result = await executor.execute("executeBashCommand", {"command": "ls"})
+        >>> result = await executor.execute("shell-run", {"command": "ls"})
     """
 
     def __init__(self) -> None:

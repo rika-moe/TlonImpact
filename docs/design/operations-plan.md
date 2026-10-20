@@ -1,6 +1,6 @@
 # 统一操作：分阶段实施计划
 
-状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已实现并通过本地验收，待 PR 审查与合并；合并仍由人类确认。
+状态：2026-10-19 完整方案已认可；用户已授权创建分支、提交设计 PR 并开工 EPIC A。P1 最小契约已通过 #184 合并 main；P2 邮件双入口切换已通过 #185 合并 main；P3a 已实现并通过本地验收，待 PR 审查与合并；合并仍由人类确认。
 
 设计权威：[operations](operations.md)；决策：[ADR 0044](../decisions/0044-unified-operations.md)。代码基线为 `d35c3a546a5e3dacef331b5d39d3e1cc7efd4e9a`。GitHub 跟踪链接见本文末尾；Issue/PR 负责验收证据，不复制一份持续漂移的设计。
 
@@ -199,4 +199,19 @@ EPIC B 完成标准：目标设计完成；工具只是入口，复合能力可�
 - [EPIC A #180](https://github.com/rika-moe/TlonImpact/issues/180)：P1、P2、P3a/P3b/P3c、P4，六个串行 PR。
 - [EPIC B #181](https://github.com/rika-moe/TlonImpact/issues/181)：依赖 A，P5-P8，四个串行 PR。
 
-P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 正在实现，待本地验收、提交与 PR；P3-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+P1 已通过 [#184](https://github.com/rika-moe/TlonImpact/pull/184) 合并 main。P2 已通过 [#185](https://github.com/rika-moe/TlonImpact/pull/185) 合并 main。P3a 已实现，本地完整质量门与真实 Docker/dream/SDK 冒烟通过，待 PR 审查合并；P3b-P8 未实施。关联的 [#173](https://github.com/rika-moe/TlonImpact/issues/173) 继续保留为长期工作方式/习惯学习方向，本计划不将其一并关闭。
+
+## P3a 实施细化（2026-10-20）
+
+P2 #185 已合入 main。P3a 使用 `file-read`、`file-write`、`file-edit`、`file-list`、`file-search`、`shell-run`、`shell-check`、`time-now` 作为两入口的同一操作名，参数继续使用 snake_case；旧 Tool 类和名字直接删除，无别名。文件领域服务复用现有 ExecutionDevice、路径检查与归档读取，不引入宿主文件系统后门；Shell 服务独占后台任务表，成员 shutdown 时先取消任务再关闭装置。
+
+时间和文件/任务查询属于 read，文件写入/编辑与 Shell 执行属于 write。非幂等 write 在现有 ProgramStore 中先持久化调用 intent，再执行；已记录结果直接重放，未记录结果的既有 intent 明确报告 unknown，禁止自动重跑。邮件沿用 PostOffice 幂等回执，可用原 request_id 重试。该最小重放安全声明不扩张成 P4 的统一预算或调用框架。模型会话仍由原 session journal 负责恢复，非幂等操作的孤立 dispatch 明确不可安全重试。
+
+L0 仅装配时间；L1 装配文件和时间；L2 加 Shell。无装置的已声明 L1/L2 操作明确报错，执行边界仍检查等级和路径。仓库原型、提示词、测试和生成参考在同一 PR 更新，用户文件和历史数据库不自动迁移或清理。
+
+
+### P3a 本地验收（2026-10-20）
+
+主会话复核并执行完整 `scripts/check_all.sh`：14/14 全绿，单元 2463 passed / 15 skipped，集成 34 passed。真实 Docker 的 L1 文件柜不启动即可完成五种文件操作；L2 命令成功、非零退出、后台结果查询、取消清理通过，祖先 symlink 越界读写拒绝。真实 dream + SDK 给 Adam 发信，回复线程及标读持久化通过。测试容器、临时 TLON_HOME 和服务均清理，8080 无残留。SDK 冒烟使用服务端身份和显式 X-Tlon-WebUI 标头，未修改既有默认认证问题。
+
+迁移时统一 schema 会明确拒绝越界参数；目录改为先排序再截断，搜索每行展示保留原 200 字符。Docker 路径检查与 I/O 仍有 TOCTOU，未声称原子路径安全。非幂等 intent 是 P3a 验收所需的最小防重跑记录，通用调用恢复与预算仍留给 P4；P3b 及以后未开工。

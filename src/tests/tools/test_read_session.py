@@ -68,7 +68,7 @@ async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> No
         journal,
         sid,
         replies=["先查一下", "在 scripts/deploy.sh"],
-        tools=["searchFiles", "readFile", "readFile"],
+        tools=["file-search", "file-read", "file-read"],
     )
 
     result = await tool.execute(session_id=sid)
@@ -77,7 +77,7 @@ async def test_digest_covers_trigger_replies_tools_and_end(tmp_path: Path) -> No
     digest = result.data["digest"]
     assert "触发语：部署脚本放在哪？" in digest
     assert "结束：complete" in digest
-    assert "工具调用：searchFiles ×1、readFile ×2" in digest
+    assert "工具调用：file-search ×1、file-read ×2" in digest
     assert "第 1 轮回复：先查一下" in digest
     assert "第 2 轮回复：在 scripts/deploy.sh" in digest
     assert result.data["session_id"] == sid

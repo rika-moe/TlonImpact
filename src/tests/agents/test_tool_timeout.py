@@ -154,3 +154,43 @@ async def test_unknown_tool_falls_back_to_engine_limit(tmp_path: Path) -> None:
 
     assert not result.success
     assert "Tool not found" in result.error
+
+
+@pytest.mark.parametrize(
+    "arguments, expected", [({"command": "work"}, 60), ({"command": "work", "timeout": 120}, 120)]
+)
+async def test_operation_shell_timeout_uses_shared_default_and_explicit_value(
+    tmp_path: Path, arguments: dict[str, Any], expected: int
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from tlon.base.config import DockerRuntimeConfig
+    from tlon.operations.adapters import OperationTool
+    from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+    from tlon.operations.shell import make_shell_operations
+    from tlon.sandbox.device import ExecutionDevice, ExecutionResult
+    from tlon.sandbox.shell import MemberShellService
+
+    async def run(*args: Any, **kwargs: Any) -> ExecutionResult:
+        await asyncio.sleep(0.1)
+        return ExecutionResult(0, "done", "")
+
+    device = MagicMock(spec=ExecutionDevice)
+    device.run = AsyncMock(side_effect=run)
+    execution = OperationExecutor(
+        OperationRegistry(
+            make_shell_operations(MemberShellService(DockerRuntimeConfig(level="L2"), device))
+        ),
+        CallContext("agent1", "run", "call"),
+    )
+    executor = ToolExecutor()
+    executor.register_tool(OperationTool(execution, "shell-run"))
+    driver = _make_driver(tmp_path, executor, per_tool_timeout=0.01)
+    call = _tc("shell-run", arguments)
+    seconds, authority = driver._tool_timeout_budget(call)
+    assert seconds == expected + loop_driver_module._TOOL_TIMEOUT_GRACE
+    assert f"declared timeout {expected}s" in authority
+    _, result = await driver.execute_one_tool("s1", call)
+    assert result.success, result.error
+    assert result.data["stdout"] == "done"
+    device.run.assert_awaited_once_with("work", timeout=expected)

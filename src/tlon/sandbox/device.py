@@ -59,6 +59,10 @@ class ExecutionDevice(Protocol):
         """Execute a program (e.g. a shell command) inside the device."""
         ...
 
+    async def check_path(self, path: str, allowed_paths: list[str], *, write: bool = False) -> None:
+        """Reject symbolic links in the path before an archive operation."""
+        ...
+
     async def read_file(self, path: str) -> bytes:
         """Read a file's raw bytes from inside the device."""
         ...
@@ -157,6 +161,10 @@ class AuditedExecutionDevice:
                 duration_ms=duration_ms,
             )
             return result
+
+    async def check_path(self, path: str, allowed_paths: list[str], *, write: bool = False) -> None:
+        """Pass through the sandbox path guard without executing code."""
+        await self._inner.check_path(path, allowed_paths, write=write)
 
     async def read_file(self, path: str) -> bytes:
         """Pass through to the inner device (audit scope is exec only)."""

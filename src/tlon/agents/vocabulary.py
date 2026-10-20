@@ -64,7 +64,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Protocol, TypedDict
 
+from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.mail import mail_builtin_definitions
+from tlon.operations.shell import shell_builtin_definitions
+from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlosure.builtins import (
     ARITHMETIC_BUILTINS,
@@ -585,6 +588,14 @@ MEMBER_ACTION_NAMES = frozenset(
         "mail-check-inbox",
         "mail-search",
         "mail-mark-read",
+        "file-read",
+        "file-write",
+        "file-edit",
+        "file-list",
+        "file-search",
+        "shell-run",
+        "shell-check",
+        "time-now",
     }
 )
 
@@ -629,6 +640,10 @@ def collect_member_effects() -> Iterator[list[ActionRequest]]:
         yield requests
     finally:
         _EFFECT_COLLECTOR.reset(token)
+
+
+def _unavailable_operation(_env: dict[str, Any], *args: Any) -> Any:
+    raise EvalError("Operation unavailable for this member")
 
 
 def make_member_builtins(
@@ -741,6 +756,11 @@ def make_member_builtins(
 
     builtins: dict[str, Builtin] = {
         **mail_builtin_definitions(),
+        **shell_builtin_definitions(),
+        **{
+            operation.name: Builtin(fn=_unavailable_operation, pure=False)
+            for operation in (*filesystem_operation_definitions(), *time_operation_definitions())
+        },
         **TRIGGER_BUILTINS,
         **SCRIPT_BUILTINS,
         **ARITHMETIC_BUILTINS,

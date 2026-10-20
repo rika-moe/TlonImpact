@@ -40,10 +40,15 @@ from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_store import TraceStore
 from tlon.memory.manager import MemoryManager
 from tlon.memory.models import MemoryConfig
+from tlon.operations.filesystem import make_filesystem_operations
+from tlon.operations.shell import make_shell_operations
+from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import address_for_member
 from tlon.organization.mail.store import MailStore
 from tlon.sandbox.device import AuditedExecutionDevice, ExecutionDevice
 from tlon.sandbox.docker_runtime import AGENT_HOME_CONTAINER_PATH, DockerRuntime
+from tlon.sandbox.filesystem import MemberFilesystemService
+from tlon.sandbox.shell import MemberShellService
 from tlon.tools.agents.contacts import ReadContactsTool, UpdateContactTool
 from tlon.tools.agents.list_members import ListMembersTool
 from tlon.tools.agents.propose_behavior import ProposeBehaviorTool
@@ -57,11 +62,6 @@ from tlon.tools.agents.scheduling import (
 from tlon.tools.agents.spawn_agent import SpawnAgentTool
 from tlon.tools.agents.update_persona import UpdatePersonaTool
 from tlon.tools.agents.write_prototype import WritePrototypeTool
-from tlon.tools.filesystem.edit_file import EditFileTool
-from tlon.tools.filesystem.list_directory import ListDirectoryTool
-from tlon.tools.filesystem.read_file import ReadFileTool
-from tlon.tools.filesystem.search_files import SearchFilesTool
-from tlon.tools.filesystem.write_file import WriteFileTool
 from tlon.tools.memory.forget_memory import ForgetMemoryTool
 from tlon.tools.memory.read_session import ReadSessionTool
 from tlon.tools.memory.remember_fact import RememberFactTool
@@ -75,8 +75,6 @@ from tlon.tools.prototypes.get_lineage import GetPrototypeLineageTool
 from tlon.tools.prototypes.list_prototypes import ListPrototypesTool
 from tlon.tools.prototypes.list_staging import ListStagingPrototypesTool
 from tlon.tools.prototypes.review_prototype import ReviewPrototypeTool
-from tlon.tools.shell.execute_bash import CheckBashTaskTool, ExecuteBashTool
-from tlon.tools.system.current_time import GetCurrentTimeTool
 from tlon.tools.tasks.complete_task import CompleteTaskTool
 from tlon.tools.tasks.create_task import CreateTaskTool
 from tlon.tools.tasks.get_current_task import GetCurrentTaskTool
@@ -274,38 +272,20 @@ async def assemble_member_capabilities(
     # Create ToolExecutor (direct execution, no EventBus)
     tool_executor = ToolExecutor()
 
-    # Register tools
-    # Device-dependent tools, gated by the capability ladder
-    # (issue #26/#40): L2 registers the shell pair plus the filesystem five;
-    # L1 (文件层) registers the filesystem five only — 结构性零代码执行;
-    # L0 registers none. Note the gate is the declared level, not
-    # docker_runtime: an L1/L2 member whose daemon is unreachable keeps
-    # the tools (they fail-soft with "Docker runtime not initialized") —
-    # 声明即数据.
-    if config.docker.level == "L2":
-        execute_bash_tool = ExecuteBashTool(config.docker, docker_runtime)
-        tool_executor.register_tool(execute_bash_tool)
-        # checkBashTask shares this agent's task table: no cross-agent visibility.
-        tool_executor.register_tool(CheckBashTaskTool(execute_bash_tool.background_tasks))
+    # Assemble operation definitions from member-owned domain services.
+    operations = list(time_operation_definitions())
+    shell_service = None
     if config.docker.level != "L0":
-        allowed_paths = config.tool.allowed_paths
-        # Read-side tools additionally see the agent's own home (behavior spec,
-        # memory, mailbox) at the read-only mount (docs/design/execution-device.md:
-        # 行为即数据 —
-        # self-awareness is the precondition of self-evolution). Write/edit keep
-        # the configured whitelist: behavior changes go through the prototype
-        # channel, never direct file writes.
-        read_allowed_paths = [*allowed_paths, AGENT_HOME_CONTAINER_PATH]
-        tool_executor.register_tool(ReadFileTool(config.docker, docker_runtime, read_allowed_paths))
-        tool_executor.register_tool(WriteFileTool(config.docker, docker_runtime, allowed_paths))
-        tool_executor.register_tool(EditFileTool(config.docker, docker_runtime, allowed_paths))
-        tool_executor.register_tool(
-            ListDirectoryTool(config.docker, docker_runtime, read_allowed_paths)
+        filesystem = MemberFilesystemService(
+            config.docker,
+            docker_runtime,
+            [*config.tool.allowed_paths, AGENT_HOME_CONTAINER_PATH],
+            config.tool.allowed_paths,
         )
-        tool_executor.register_tool(
-            SearchFilesTool(config.docker, docker_runtime, read_allowed_paths)
-        )
-    tool_executor.register_tool(GetCurrentTimeTool())
+        operations.extend(make_filesystem_operations(filesystem))
+    if config.docker.level == "L2":
+        shell_service = MemberShellService(config.docker, docker_runtime)
+        operations.extend(make_shell_operations(shell_service))
     tool_executor.register_tool(FinishTurnTool())
     tool_executor.register_tool(SleepUntilTool())
     tool_executor.register_tool(ExitAgentTool())
@@ -527,4 +507,6 @@ async def assemble_member_capabilities(
         registry=registry,
         mentor_cc=mentor_cc,
         docker_runtime=docker_runtime,
+        operations=tuple(operations),
+        shell_service=shell_service,
     )
