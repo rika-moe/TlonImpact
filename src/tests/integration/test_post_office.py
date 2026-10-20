@@ -90,9 +90,19 @@ async def test_retired_and_unknown_addresses_refuse_entire_post(tmp_path: Path) 
                     member = runtime.agent_registry.get_agent(retired_id)
                     if member is not None and database.exists():
                         with sqlite3.connect(database) as connection:
-                            runs = connection.execute(
-                                "SELECT rule_edn,completed,error FROM runs"
-                            ).fetchall()
+                            # SQLite creates the file before ProgramStore
+                            # finishes its schema. File existence alone is
+                            # not a readiness signal for this async boot.
+                            initialized = connection.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'"
+                            ).fetchone()
+                            runs = (
+                                connection.execute(
+                                    "SELECT rule_edn,completed,error FROM runs"
+                                ).fetchall()
+                                if initialized
+                                else []
+                            )
                         boot_finished = any(
                             ':name "boot"' in source and completed for source, completed, _ in runs
                         )
