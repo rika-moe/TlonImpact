@@ -51,7 +51,7 @@ logger = get_logger(__name__)
 #: tool-attempt-blocked 特征一：调用了未注册的工具。出处：
 #: src/tlon/agents/tool_executor.py:169
 #: ``ToolResult(error=f"Tool not found: {tool_name}")`` —— 装置/工具未注册
-#: 的统一回执（非 L2 成员根本不注册 executeBashCommand，模型硬调即走此路）
+#: 的统一回执（非 L2 成员根本不注册 shell-run，模型硬调即走此路）
 _TOOL_NOT_FOUND_PREFIX = "Tool not found: "
 
 #: tool-attempt-blocked 特征二：工具已注册但装置层拒绝代码执行。出处：
@@ -61,7 +61,7 @@ _TOOL_NOT_FOUND_PREFIX = "Tool not found: "
 _DEVICE_REJECTED_MARKER = "无代码执行能力"
 
 #: path-escape-attempt 特征：path_guard 白名单拒绝。出处：
-#: src/tlon/tools/filesystem/path_guard.py:69
+#: src/tlon/sandbox/path_guard.py
 #: ``f"Path ... is outside the allowed paths: ..."``，文件工具把 ValueError
 #: 文案原样放进 ToolResult.error（如 read_file.py:111）
 _PATH_GUARD_MARKER = "outside the allowed paths"

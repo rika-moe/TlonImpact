@@ -7,6 +7,7 @@ list/search 工具不再经 ``run()`` 进容器执行 find/grep——archive-onl
 """
 
 import io
+import posixpath
 import tarfile
 from dataclasses import dataclass
 
@@ -53,6 +54,9 @@ class DirectoryArchive:
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tar:
             for member in tar.getmembers():
                 name = member.name.removeprefix("./")
+                if "\x00" in name or name.startswith("/") or ".." in name.split("/"):
+                    raise ValueError(f"Unsafe archive member: {member.name!r}")
+                name = posixpath.normpath(name)
                 if name in ("", "."):
                     continue
                 if root_name and name == root_name:
@@ -76,7 +80,7 @@ class DirectoryArchive:
                 mtime=member.mtime,
             )
         )
-        if member.isfile():
+        if member.isfile() and not member.islnk():
             extracted = tar.extractfile(member)
             self._contents[path] = extracted.read() if extracted is not None else b""
 

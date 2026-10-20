@@ -26,9 +26,12 @@ must be present in the base image or installed via a Dockerfile.
 
 import asyncio
 import io
+import posixpath
+import stat as stat_module
 import tarfile
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
@@ -50,8 +53,8 @@ _T = TypeVar("_T")
 
 #: Container path where the agent's own home directory (``~/.tlon/{agent_id}``)
 #: is bind-mounted read-only (see docs/design/execution-device.md 「纵深防御」):
-#: readFile/listDirectory/searchFiles
-#: whitelist it (agents/assembly.py), writeFile/editFile do not, and the ``ro``
+#: file-read/file-list/file-search
+#: whitelist it (agents/assembly.py), file-write/file-edit do not, and the ``ro``
 #: mount is the kernel-level guarantee. Only the agent's own home is mounted —
 #: other members' homes never enter the container, so cross-agent reads are
 #: structurally impossible.
@@ -337,17 +340,11 @@ class DockerRuntime:
         mount — ``/tlon-home`` stays read-only, so programs that need to
         persist anything must write under ``/workspace``. This makes
         "writable surface = workspace" a kernel-level fact and closes the
-        write-side symlink escape: an agent can plant a symlink in
-        ``/workspace`` pointing at e.g. ``/etc/passwd`` via bash, but
-        ``put_archive`` does not follow it — daemon-side tar extraction
-        *replaces* the symlink with a regular file, leaving the target
-        untouched (verified by live-daemon smoke: ``/etc/passwd`` md5
-        unchanged, ``/workspace/evil-link`` becomes a regular file).
-        Defense chain: path_guard (string level) → ro rootfs (kernel
-        level). The kernel-level half cannot be unit-tested (the suite
-        has no real Docker daemon); it is verified by smoke test against
-        a live daemon. Read-side symlink resolution is unaffected and by
-        design (the container filesystem is readable; see ``read_file``).
+        write-side escapes. File operation services also reject symlink
+        path components through check_path before archive I/O. The daemon
+        API has no atomic open-beneath operation, so the read-only rootfs
+        and member-specific mounts remain the final containment boundary
+        if another process changes a path between validation and I/O.
         """
         image = self.config.image
 
@@ -420,18 +417,24 @@ class DockerRuntime:
             )
         exec_name = f"tlon-agent-{self.agent_id}{EXEC_NAME_MARKER}{uuid.uuid4().hex[:8]}"
         container: Container | None = None
+        creation: asyncio.Task[Container] | None = None
+        starting: asyncio.Task[None] | None = None
         try:
             # All docker SDK calls are blocking — run them in threads so
             # the event loop stays responsive.
-            container = await asyncio.to_thread(
-                self.client.containers.create,
-                **self._container_kwargs(
-                    name=exec_name,
-                    command=["timeout", str(timeout), "bash", "-c", program],
-                    working_dir=workdir or self.config.working_dir,
-                ),
+            creation = asyncio.create_task(
+                asyncio.to_thread(
+                    self.client.containers.create,
+                    **self._container_kwargs(
+                        name=exec_name,
+                        command=["timeout", str(timeout), "bash", "-c", program],
+                        working_dir=workdir or self.config.working_dir,
+                    ),
+                )
             )
-            await asyncio.to_thread(container.start)
+            container = await asyncio.shield(creation)
+            starting = asyncio.create_task(asyncio.to_thread(container.start))
+            await asyncio.shield(starting)
             try:
                 wait_result = await asyncio.wait_for(
                     asyncio.to_thread(container.wait), timeout=timeout + 5
@@ -472,13 +475,40 @@ class DockerRuntime:
             logger.error("command_execution_error", error=str(e), exc_info=True)
             return ExecutionResult(exit_code=-1, stdout="", stderr=str(e))
         finally:
-            if container is not None:
+
+            async def cleanup() -> None:
+                # Cancelling to_thread does not stop its SDK call. Settle
+                # creation/start before removing, or a late SDK completion
+                # could leave a container behind after member shutdown.
+                unit = container
+                if unit is None and creation is not None:
+                    try:
+                        unit = await creation
+                    except Exception:
+                        return
+                if starting is not None:
+                    with suppress(Exception):
+                        await starting
+                if unit is not None:
+                    try:
+                        await asyncio.to_thread(unit.remove, force=True)
+                    except Exception as error:
+                        logger.warning(
+                            "exec_container_remove_error",
+                            container_name=exec_name,
+                            error=str(error),
+                        )
+
+            finishing = asyncio.create_task(cleanup())
+            interrupted = False
+            while not finishing.done():
                 try:
-                    await asyncio.to_thread(container.remove, force=True)
-                except Exception as e:
-                    logger.warning(
-                        "exec_container_remove_error", container_name=exec_name, error=str(e)
-                    )
+                    await asyncio.shield(finishing)
+                except asyncio.CancelledError:
+                    interrupted = True
+            finishing.result()
+            if interrupted:
+                raise asyncio.CancelledError
 
     # ------------------------------------------------------------------
     # File I/O APIs (sandbox-only — Agent never touches host filesystem)
@@ -517,6 +547,38 @@ class DockerRuntime:
             await self.ensure_running()
             return await asyncio.to_thread(call)
 
+    async def check_path(self, path: str, allowed_paths: list[str], *, write: bool = False) -> None:
+        """Check every ancestor using archive headers, without running commands.
+
+        Reject links instead of resolving them. The API provides no atomic
+        open-beneath primitive: another process can replace paths after this
+        check; Docker mount isolation remains the final containment boundary.
+        """
+        from tlon.sandbox.path_guard import resolve_container_path
+
+        resolved = resolve_container_path(path, self.config.working_dir, allowed_paths)
+        if write and (resolved == "/tlon-home" or resolved.startswith("/tlon-home/")):
+            raise ValueError("/tlon-home is read-only")
+        if not self.container:
+            await self.ensure_running()
+        current = ""
+        for part in resolved.strip("/").split("/"):
+            current = posixpath.join(current or "/", part)
+            try:
+                metadata = await asyncio.to_thread(self._path_stat, current)
+            except NotFound:
+                if write:
+                    return  # descendants cannot exist under this missing parent
+                raise FileNotFoundError(f"Path not found: {current}") from None
+            except APIError as exc:
+                raise RuntimeError(f"Cannot validate sandbox path: {exc}") from exc
+            if metadata is None:
+                raise RuntimeError(f"Missing sandbox path metadata: {current}")
+            mode = metadata.get("mode", 0)
+            # Docker headers encode Go FileMode (ModeSymlink = 1 << 27).
+            if metadata.get("linkTarget") or mode & (1 << 27) or stat_module.S_ISLNK(mode & 0xFFFF):
+                raise ValueError(f"Symbolic links are not allowed in file paths: {current}")
+
     async def read_file(self, path: str) -> bytes:
         """Read a file from the container.
 
@@ -524,8 +586,8 @@ class DockerRuntime:
         put_archive), so no software (cat, python3, ...) needs to exist
         inside the container and arbitrary bytes round-trip losslessly —
         the payload never passes through text decoding. The daemon follows
-        symlinks server-side (stat reports ``linkTarget``), matching the
-        old 'cat' behavior.
+        symlinks server-side (stat reports ``linkTarget``). Member file
+        operations must call check_path first to reject linked paths.
 
         Args:
             path: Absolute path inside the container.

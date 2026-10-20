@@ -119,14 +119,14 @@ test("tool events map to tool entries with success/failure", () => {
   assert.equal(ok.title, "a tool mail-send succeeded");
 
   const fail = toActivity(
-    ev("tool.execute_end", { agent_id: "a", tool_name: "readFile", success: false }),
+    ev("tool.execute_end", { agent_id: "a", tool_name: "file-read", success: false }),
   );
-  assert.equal(fail.title, "a tool readFile failed");
+  assert.equal(fail.title, "a tool file-read failed");
 
   const error = toActivity(
-    ev("tool.error", { agent_id: "a", tool_name: "readFile", error: "enoent" }),
+    ev("tool.error", { agent_id: "a", tool_name: "file-read", error: "enoent" }),
   );
-  assert.equal(error.title, "a tool readFile error");
+  assert.equal(error.title, "a tool file-read error");
   assert.equal(error.detail, "enoent");
 });
 

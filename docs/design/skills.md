@@ -9,7 +9,7 @@ Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 
 - **人格**（SOUL.md 等，`(persona)` section）：常驻 system prompt，回答"我是谁"。
 - **记忆**（claims，`(knowledge)` section）：回答"发生过什么"。
 - **技能**（`(skills)` section）：平时只有索引在上下文里，匹配到才读正文，回答"这类事该怎么做"。
-- **工具**（`readFile` 等）：确定性的"能做什么"。skill 不是工具——它是编排工具的知识。
+- **工具**（`file-read` 等）：确定性的"能做什么"。skill 不是工具——它是编排工具的知识。
 
 格式采用 Agent Skills 开放标准（Claude Code / Codex / Cursor 通用），第三方技能包可以被扫描发现；正文和脚本是否可用，还取决于成员执行层级与容器可见路径。
 
@@ -23,7 +23,7 @@ Skill 是"按需加载的技能包"：一个文件夹 + 一个 `SKILL.md`，教 
 
 项目级目录经 workspace bind-mount 进容器，引擎在宿主机直读，不进容器扫描。同名 skill 冲突时 **项目 > agent > 全局**，后出现的被跳过并记日志。
 
-注意：索引当前输出**宿主机绝对路径**，但实际文件工具 `readFile` 只接受容器可见路径；没有通用宿主机 `read_file` 工具。项目级技能的正文位于 `/workspace/.agents/skills/...`，agent 级正文可以通过 `/tlon-home/skills/...` 访问；全局层没有对应容器挂载。
+注意：索引当前输出**宿主机绝对路径**，但实际文件工具 `file-read` 只接受容器可见路径；没有通用宿主机 `read_file` 工具。项目级技能的正文位于 `/workspace/.agents/skills/...`，agent 级正文可以通过 `/tlon-home/skills/...` 访问；全局层没有对应容器挂载。
 
 ## 内置 skill
 
@@ -77,7 +77,7 @@ description: 从 PDF 提取文本与表格。当任务涉及 PDF 解析时使用
 
 **按需加载意图**：模型从索引选择技能，再读取正文；引擎不注入正文，也没有 `use_skill` 工具。
 
-**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 仍提示不存在的 `read_file`，并给出不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `readFile` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 不注册 filesystem 工具，无法通过此机制读取任何正文。脚本需要 L2 的 `executeBashCommand`，并且文件必须位于容器可见路径。
+**当前实现缺口**：`agents/skills.py` 的 `render_skills_index` 仍提示不存在的 `read_file`，并给出不能直接交给容器工具的宿主路径。L1/L2 可在知道映射关系时用 `file-read` 读取 project/agent 层；全局层（包括内置 explain-decision）没有通用正文读取通道。L0 不注册 filesystem 工具，无法通过此机制读取任何正文。脚本需要 L2 的 `shell-run`，并且文件必须位于容器可见路径。
 
 因此三层发现与索引已经实现，不能把它描述为三层正文访问均已跑通。补齐路径映射、全局正文可见性和 L0 加载入口需要独立设计及实现，此次文档整理不改变权限或增加工具。
 

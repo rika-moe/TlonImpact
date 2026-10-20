@@ -9,18 +9,42 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
-from tlon.base.config import ToolConfig
-from tlon.tools.filesystem.edit_file import EditFileTool
-from tlon.tools.filesystem.list_directory import ListDirectoryTool
-from tlon.tools.filesystem.path_guard import normalize_container_path, resolve_container_path
-from tlon.tools.filesystem.read_file import ReadFileTool
-from tlon.tools.filesystem.search_files import SearchFilesTool
-from tlon.tools.filesystem.write_file import WriteFileTool
+from tlon.base.config import DockerRuntimeConfig, ToolConfig
+from tlon.operations.adapters import OperationTool
+from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.filesystem import make_filesystem_operations
+from tlon.sandbox.filesystem import MemberFilesystemService
+from tlon.sandbox.path_guard import normalize_container_path, resolve_container_path
+
+
+class _Projection:
+    """Tests inspect the device boundary while calls use the real contract."""
+
+    def __init__(self, name, config=None, device=None):
+        self.name = name
+        self._docker_config = config or DockerRuntimeConfig()
+        self._docker_runtime = device
+        self._allowed_paths = ["/workspace"]
+
+    async def execute(self, **arguments):
+        service = MemberFilesystemService(
+            self._docker_config, self._docker_runtime, self._allowed_paths, self._allowed_paths
+        )
+        operation = next(op for op in make_filesystem_operations(service) if op.name == self.name)
+        executor = OperationExecutor(
+            OperationRegistry([operation]), CallContext("alice", "run", "call")
+        )
+        return await OperationTool(executor, operation.name).execute(**arguments)
+
+
+def _projection(name, config=None, device=None):
+    return _Projection(name, config, device)
 
 
 def _make_mock_runtime():
     """Create a mock ExecutionDevice with async file I/O methods."""
     runtime = MagicMock()
+    runtime.check_path = AsyncMock()
     runtime.read_file = AsyncMock()
     runtime.write_file = AsyncMock(return_value=True)
     runtime.file_exists = AsyncMock(return_value=False)
@@ -61,7 +85,7 @@ def _make_dir_tar(members: list[tuple[str, bytes | str | None, float]]) -> bytes
 class TestReadFileTool:
     @pytest.fixture
     def read_tool(self):
-        tool = ReadFileTool.__new__(ReadFileTool)
+        tool = _projection("file-read")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -110,8 +134,8 @@ class TestReadFileTool:
 
         result = await read_tool.execute(file_path="test.txt", limit=1000)
 
-        assert result.success is True
-        assert result.data["read_lines"] == 500  # MAX_LIMIT
+        assert result.success is False
+        assert "500" in result.error
 
     async def test_read_file_not_found(self, read_tool):
         read_tool._docker_runtime.read_file.side_effect = FileNotFoundError("not found")
@@ -141,7 +165,7 @@ class TestReadFileTool:
 class TestWriteFileTool:
     @pytest.fixture
     def write_tool(self):
-        tool = WriteFileTool.__new__(WriteFileTool)
+        tool = _projection("file-write")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -205,7 +229,7 @@ class TestWriteFileTool:
 class TestEditFileTool:
     @pytest.fixture
     def edit_tool(self):
-        tool = EditFileTool.__new__(EditFileTool)
+        tool = _projection("file-edit")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -283,13 +307,13 @@ class TestEditFileTool:
 
 
 class TestListDirectoryTool:
-    """listDirectory unpacks the directory's get_archive tar host-side
+    """file-list unpacks the directory's get_archive tar host-side
     (issue #40) — the output contract (entry fields, dir-first sorting,
     truncation) is unchanged, and no command runs in the container."""
 
     @pytest.fixture
     def list_tool(self):
-        tool = ListDirectoryTool.__new__(ListDirectoryTool)
+        tool = _projection("file-list")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -368,7 +392,7 @@ class TestListDirectoryTool:
 
 
 class TestSearchFilesTool:
-    """searchFiles fetches the search root's get_archive tar and matches
+    """file-search fetches the search root's get_archive tar and matches
     host-side (issue #40): filename mode = case-insensitive glob on
     basenames (the old find -iname), content mode = regex with line
     numbers (the old grep -rnIsE). The output contract (match fields,
@@ -377,7 +401,7 @@ class TestSearchFilesTool:
 
     @pytest.fixture
     def search_tool(self):
-        tool = SearchFilesTool.__new__(SearchFilesTool)
+        tool = _projection("file-search")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -451,7 +475,7 @@ class TestSearchFilesTool:
 
         assert result.success is True
         text = result.data["matches"][0]["text"]
-        assert len(text) == SearchFilesTool._MAX_LINE_CHARS + 1
+        assert len(text) == MemberFilesystemService._MAX_LINE_CHARS + 1
         assert text.endswith("…")
 
     async def test_search_content_truncation(self, search_tool):
@@ -524,7 +548,7 @@ class TestSearchFilesTool:
         result = await search_tool.execute(pattern="x", mode="sideways")
 
         assert result.success is False
-        assert "invalid mode" in result.error.lower()
+        assert "content" in result.error.lower()
         search_tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_search_bad_regex(self, search_tool):
@@ -620,7 +644,7 @@ class TestFilesystemToolSandbox:
     """Tools must reject paths outside the whitelist before touching Docker."""
 
     async def test_read_rejects_absolute_path_outside_whitelist(self):
-        tool = ReadFileTool.__new__(ReadFileTool)
+        tool = _projection("file-read")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -632,7 +656,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.read_file.assert_not_awaited()
 
     async def test_read_rejects_dotdot_escape(self):
-        tool = ReadFileTool.__new__(ReadFileTool)
+        tool = _projection("file-read")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -644,7 +668,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.read_file.assert_not_awaited()
 
     async def test_write_rejects_absolute_path_outside_whitelist(self):
-        tool = WriteFileTool.__new__(WriteFileTool)
+        tool = _projection("file-write")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -656,7 +680,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.write_file.assert_not_awaited()
 
     async def test_edit_rejects_dotdot_escape(self):
-        tool = EditFileTool.__new__(EditFileTool)
+        tool = _projection("file-edit")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -668,7 +692,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.read_file.assert_not_awaited()
 
     async def test_list_rejects_absolute_path_outside_whitelist(self):
-        tool = ListDirectoryTool.__new__(ListDirectoryTool)
+        tool = _projection("file-list")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -680,7 +704,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_search_rejects_dotdot_escape(self):
-        tool = SearchFilesTool.__new__(SearchFilesTool)
+        tool = _projection("file-search")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -692,7 +716,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.fetch_archive.assert_not_awaited()
 
     async def test_read_allows_absolute_path_in_whitelist(self):
-        tool = ReadFileTool.__new__(ReadFileTool)
+        tool = _projection("file-read")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace"]
         tool._docker_runtime = _make_mock_runtime()
@@ -704,7 +728,7 @@ class TestFilesystemToolSandbox:
         tool._docker_runtime.read_file.assert_awaited_once_with("/workspace/a/b.txt")
 
     async def test_write_honors_custom_allowed_paths(self):
-        tool = WriteFileTool.__new__(WriteFileTool)
+        tool = _projection("file-write")
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = ["/workspace", "/data/shared"]
         tool._docker_runtime = _make_mock_runtime()
@@ -718,7 +742,7 @@ class TestFilesystemToolSandbox:
         assert "outside the allowed paths" in rejected.error
 
     def test_tool_constructor_defaults_allowed_paths(self):
-        tool = ReadFileTool(MagicMock(working_dir="/workspace"), None)
+        tool = _projection("file-read", MagicMock(working_dir="/workspace"), None)
         assert tool._allowed_paths == ["/workspace"]
 
 
@@ -731,14 +755,14 @@ class TestAgentHomeAccess:
     _WRITE_PATHS = ["/workspace"]
 
     def _make(self, cls, allowed_paths):
-        tool = cls.__new__(cls)
+        tool = _projection(cls)
         tool._docker_config = MagicMock(working_dir="/workspace")
         tool._allowed_paths = allowed_paths
         tool._docker_runtime = _make_mock_runtime()
         return tool
 
     async def test_read_own_home_allowed(self):
-        tool = self._make(ReadFileTool, self._READ_PATHS)
+        tool = self._make("file-read", self._READ_PATHS)
         tool._docker_runtime.read_file.return_value = b":rules []\n"
 
         result = await tool.execute(file_path="/tlon-home/config/behavior.tlon")
@@ -747,7 +771,7 @@ class TestAgentHomeAccess:
         tool._docker_runtime.read_file.assert_awaited_once_with("/tlon-home/config/behavior.tlon")
 
     async def test_read_own_mailbox_allowed(self):
-        tool = self._make(ReadFileTool, self._READ_PATHS)
+        tool = self._make("file-read", self._READ_PATHS)
         tool._docker_runtime.read_file.return_value = b"{}\n"
 
         result = await tool.execute(file_path="/tlon-home/mail/inbox.jsonl")
@@ -755,7 +779,7 @@ class TestAgentHomeAccess:
         assert result.success is True
 
     async def test_list_own_home_allowed(self):
-        tool = self._make(ListDirectoryTool, self._READ_PATHS)
+        tool = self._make("file-list", self._READ_PATHS)
         tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
             [("tlon-home", None, 0.0), ("tlon-home/config", None, _epoch("2026-09-05T14:32"))]
         )
@@ -766,7 +790,7 @@ class TestAgentHomeAccess:
         tool._docker_runtime.fetch_archive.assert_awaited_once_with("/tlon-home")
 
     async def test_search_own_home_allowed(self):
-        tool = self._make(SearchFilesTool, self._READ_PATHS)
+        tool = self._make("file-search", self._READ_PATHS)
         tool._docker_runtime.fetch_archive.return_value = _make_dir_tar(
             [
                 ("config", None, 0.0),
@@ -780,30 +804,30 @@ class TestAgentHomeAccess:
         assert result.data["matches"][0]["file"] == "/tlon-home/config/behavior.tlon"
 
     async def test_write_own_home_rejected(self):
-        tool = self._make(WriteFileTool, self._WRITE_PATHS)
+        tool = self._make("file-write", self._WRITE_PATHS)
 
         result = await tool.execute(file_path="/tlon-home/config/behavior.tlon", content="x")
 
         assert result.success is False
-        assert "outside the allowed paths" in result.error
+        assert "read-only" in result.error
         tool._docker_runtime.write_file.assert_not_awaited()
 
     async def test_edit_own_home_rejected(self):
-        tool = self._make(EditFileTool, self._WRITE_PATHS)
+        tool = self._make("file-edit", self._WRITE_PATHS)
 
         result = await tool.execute(
             file_path="/tlon-home/memory/config.json", old_string="a", new_string="b"
         )
 
         assert result.success is False
-        assert "outside the allowed paths" in result.error
+        assert "read-only" in result.error
         tool._docker_runtime.read_file.assert_not_awaited()
 
     async def test_read_outside_workspace_and_home_rejected(self):
         # Cross-agent reads are structurally impossible (only the agent's own
         # home is mounted into its container); the whitelist rejects anything
         # outside /workspace and /tlon-home, sibling prefixes included.
-        tool = self._make(ReadFileTool, self._READ_PATHS)
+        tool = self._make("file-read", self._READ_PATHS)
 
         for path in ("/etc/passwd", "/tlon-home-other/config/agent.yaml"):
             result = await tool.execute(file_path=path)

@@ -16,7 +16,7 @@
 |---|---|---|
 | L0 | 无 Docker 装置 | tlosure 计量求值及非装置工具；不注册文件、Shell 工具 |
 | L1 | DockerRuntime 的 archive-only 文件柜 | 五个 filesystem 工具；无代码执行 |
-| L2 | 文件柜 + 一次性执行单元 | filesystem 工具及 `executeBashCommand` / `checkBashTask` |
+| L2 | 文件柜 + 一次性执行单元 | filesystem 工具及 `shell-run` / `shell-check` |
 
 [base/config.py](../../src/tlon/base/config.py) 的 `DockerRuntimeConfig` 默认 `level="L1"`。[agents/prototypes/instantiate.py](../../src/tlon/agents/prototypes/instantiate.py) 的 `instantiate` 把原型声明一次性投影到成员配置；[agents/assembly.py](../../src/tlon/agents/assembly.py) 的 `assemble_member_capabilities` 按成员配置装配。即使 Docker 不可用，L1/L2 仍按声明注册工具，调用时返回装置未初始化错误。
 
@@ -30,6 +30,7 @@ L1 是文件层，没有 WASM/WASI 运行时。更强隔离的 gVisor/microVM �
 
 ```python
 async def run(program: str, timeout: int = 60, workdir: str | None = None) -> ExecutionResult
+async def check_path(path: str, allowed_paths: list[str], *, write: bool = False) -> None
 async def read_file(path: str) -> bytes
 async def fetch_archive(path: str) -> bytes
 async def write_file(path: str, content: bytes) -> bool
@@ -52,7 +53,7 @@ def close() -> None
 
 `run()` 在非 L2 时立即拒绝。L2 命令使用容器内 `timeout` 加外层 `asyncio.wait_for(timeout + 5)`；超时返回退出码 -1 和 `Command timed out after … seconds`。默认镜像使用 coreutils；busybox timeout 作为 PID 1 时可能依赖外层兜底，最长多等待约 5 秒。
 
-成员自己启动的后台进程不跨命令存活；`background=true` 使用宿主任务包裹一次性容器，由 CheckBashTask 查询。`/tmp`、根文件系统变化和进程状态随执行单元消失。
+取消发生于容器 create/start 的阻塞线程尚未结束时，宿主等待该步骤完成后清理已创建容器，避免晚完成任务泄漏。成员自己启动的后台进程不跨命令存活；`background=true` 使用宿主任务包裹一次性容器，由 `shell-check` 查询。`/tmp`、根文件系统变化和进程状态随执行单元消失。
 
 文件柜跨睡眠和进程重启保留，但不是永不重建。`ensure_running` 比对镜像、挂载、内存/CPU 限额、网络、只读 rootfs 和 tmpfs，发现配置漂移便移除重建；workspace 在宿主挂载上，重建不删除它。显式删除成员与演武场拆除另有生命周期，不由 `close()` 隐式完成。
 
@@ -69,9 +70,9 @@ def close() -> None
 
 成员可读取自己的行为定义、人格和记忆；邮箱通过邮件工具访问共享邮局，不靠成员目录里的旧邮件文件。只有 workspace 的写入跨执行单元持久保存。
 
-filesystem 工具经 path_guard 检查路径。读侧额外允许 `/tlon-home`；写/edit 使用配置的写白名单。内核只读挂载是第二道边界。其他成员目录不进入容器，但容器自带文件系统可读；字符串路径检查也不等同于禁止所有符号链接读取，不能把它描述为完整的读侧 symlink 沙箱。
+文件领域服务经 path_guard 做容器路径白名单检查，再由装置 check_path 检查目标及其祖先，拒绝符号链接路径。读侧额外允许 `/tlon-home`；写/edit 使用配置的写白名单。归档解析拒绝绝对路径、`..` 等非法条目，链接仅列出而不读取其目标。Docker stat 与 archive API 并非同一个原子 open-beneath 操作；并发 L2 命令改写路径仍有 TOCTOU 窗口，不能声称已消除任意并发 symlink 竞态。成员挂载隔离与内核只读挂载仍是最终边界，其他成员目录和宿主 Docker socket 不进入容器。
 
-`read_file` 与 `write_file` 使用 get_archive / put_archive，字节不经 stdout 解码；ReadFileTool 在工具层另要求 UTF-8 文本。`file_exists` 读 archive 响应头；list/search 把目录 tar 拉回宿主分析，由 [tools/filesystem/archive.py](../../src/tlon/tools/filesystem/archive.py) 完成遍历与匹配，不依赖镜像内 find/grep。搜索内容正则采用 Python `re`。写入父目录通过 tar 目录条目创建，只加入缺失父目录，避免修改已有目录元数据。
+`read_file` 与 `write_file` 使用 get_archive / put_archive，字节不经 stdout 解码；MemberFilesystemService 在领域边界另要求 UTF-8 文本。`file_exists` 读 archive 响应头；list/search 把目录 tar 拉回宿主分析，由 [sandbox/archive.py](../../src/tlon/sandbox/archive.py) 完成遍历与匹配，不依赖镜像内 find/grep。搜索内容正则采用 Python `re`。写入父目录通过 tar 目录条目创建，只加入缺失父目录，避免修改已有目录元数据。
 
 ## 网络与资源
 

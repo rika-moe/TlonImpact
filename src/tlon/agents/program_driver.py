@@ -9,6 +9,7 @@ from tlon.agents.member_spec import MemberRule
 from tlon.agents.program_store import ProgramStore
 from tlon.operations.adapters import DSLAdapter
 from tlon.operations.core import CallContext
+from tlon.operations.schema import UnknownOutcomeError
 from tlosure.builtins import ActionRequest, Builtin, BuiltinCall, EvalError
 from tlosure.edn import dumps, loads
 from tlosure.eval import DEFAULT_FUEL, DEFAULT_MAX_DEPTH, DEFAULT_WHEN_FUEL, Evaluator
@@ -73,6 +74,16 @@ class ProgramDriver:
                 self._charge(result, call)
             return result
         if self.operations is not None and self.operations.owns(call):
+            call_id = f"program:{self.run_id}:{index}:{call.name}"
+            if self.operations.prepare(call):
+                claimed = await asyncio.to_thread(
+                    self.store.claim_intent, self.run_id, index, call.name, args_edn
+                )
+                if not claimed:
+                    raise UnknownOutcomeError(
+                        "Previous operation dispatch has no recorded result; automatic retry refused",
+                        {"call_id": call_id, "outcome": "unknown", "retry_safe": False},
+                    )
             if self.on_operation is not None:
                 self.on_operation()
             result = await self.operations.handle(

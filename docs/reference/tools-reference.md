@@ -1,14 +1,16 @@
 # Tlon 工具手册
 
-agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 [src/tlon/tools/](../../src/tlon/tools)，按域分包；参数表以各工具构造器里的 JSON schema 为准。本文只描述当前实现。
+agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 [src/tlon/tools/](../../src/tlon/tools)，按域分包；已切换域的参数与结果以 `tlon.operations` 中的 Operation 定义为准，其余工具以构造器 JSON schema 为准。本文只描述当前实现。
 
 ## 总述
 
 ### Tool 基类契约
 
-[tools/base.py](../../src/tlon/tools/base.py) 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。`execute(**kwargs)` 是唯一执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，`data` 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用（目前只有 `ExecuteBashTool` 用 `shutdown` 取消未完成的后台任务）。
+[tools/base.py](../../src/tlon/tools/base.py) 的 `Tool`：每个工具有 `name`（LLM 可见的名字）、`description`、`parameters`（JSON schema）三要素，`to_openai_definition()` 输出 OpenAI function calling 格式（`{"type": "function", "function": {...}}`）。旧 Tool 的 `execute(**kwargs)` 为业务执行入口，返回 `ToolResult(success, data, error, message)`；`message` 是给人看的摘要，`data` 是给 LLM 的结构化结果。可选生命周期钩子 `initialize()` / `shutdown()`，由执行器启动/停止时调用；后台命令的生命周期由成员绑定的 `ShellService` 负责。
 
 `Tool.validate_arguments` 在执行前按 schema 校验：缺必填、未知参数、类型不符都会拒绝执行，返回 `success=False, error="Argument validation failed: ..."`；数值参数的 `minimum`/`maximum` 也在此强制（被拒时错误含真实界限值），`enum` 等其余约束不进 `validate_arguments`，靠各工具自己 clamp 或报错。
+
+已切换邮件、文件、Shell 与时间由 `OperationTool` 投影，严格嵌套 JSON Schema 校验在共享 OperationExecutor 完成；DSL 与模型得到同一领域结果。旧 Tool 的浅层校验只描述尚未切换的域。
 
 ### ToolExecutor 执行模型
 
@@ -17,8 +19,8 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 会话循环里的并发分发不在 ToolExecutor，而在引擎侧：
 
 - act stage（[agents/stages/act.py](../../src/tlon/agents/stages/act.py) 的 `act_stage_step`）是纯变换，只把本轮 LLM 的 tool calls 声明进 `StageOutcome.tool_dispatches`，自己不执行。
-- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for`。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `executeBashCommand`）时，引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
-- 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{tool_call_id}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `readFile` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
+- [agents/loop_driver.py](../../src/tlon/agents/loop_driver.py) 的 `LoopDriver.execute_one_tool` 为每个 tool call 起一个后台 asyncio task 并发执行，外层套 `asyncio.wait_for`。等待预算按「模型可见的 schema 必须可兑现」解析：工具自己在 schema 里声明了 `timeout` 参数（如 `shell-run`）时，未显式传 timeout 时读取操作的 default_timeout（shell-run 为 60 秒）；引擎等「声明值 + `_TOOL_TIMEOUT_GRACE`（10 秒）宽限」——工具自身是限时权威，wait_for 只兜底工具挂死；未声明 `timeout` 的工具用引擎兜底 `per_tool_timeout`（来自 agent 配置的 `tool.per_timeout`，[base/config.py](../../src/tlon/base/config.py) 的 `ToolConfig`，默认 30 秒）。超时返回 `success=False`，error 指明真正生效的限制来自哪层（工具声明值 + 引擎宽限，或引擎 per-tool 兜底）。
+- 超大输出 spill：结果在收割前先过 [tools/spill.py](../../src/tlon/tools/spill.py) 的 `ToolSpill`——`data` 序列化超过 16k 字符即整个落盘到 `workspace/spills/{session_id}/{tool_call_id}.json`（缩进 JSON，可分页），模型与 session 日志只见到 locator（路径/大小/preview/检索提示），可用 `file-read` 的 offset/limit 读回（workspace 即容器工作目录的 bind mount）。写盘失败回退原始结果。
 - 收割：`collect_session_results` 把已完成 task 的结果交给 `act_stage_collect`，结果以 `{"role": "tool", ...}` 消息追加回 LLM 上下文（`ToolResult.to_dict()` 的 JSON 序列化）。
 - 结束工具 `finishTurn`、`sleepUntil`、`exitAgent` 必须各自单独占一轮，混用其他工具整轮拒绝。邮件工具不负责结束工作，发信后检查结果，再单独请求结束或睡眠。
 
@@ -29,56 +31,56 @@ agent 通过 OpenAI function calling 调用的全部工具。工具实现位于 
 ### 注册清单
 
 <!-- BEGIN GENERATED: tool-registry -->
-`assemble_member_capabilities` 与 `MemberRuntime` 为满配成员注册 46 个工具（旧 Tool 按 assembly 顺序，邮件 Operation 随后投影；`docker.level: L0` 的无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+满配成员注册 46 个工具（尚未切换的 Tool 按 assembly 顺序，共享 Operation 按域列出；L0 不注册 7 个装置操作，L1 注册 5 个文件操作，L2 再增加 2 个 Shell 操作；时间不依赖装置）：（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 | # | 工具名 | 实现 | 域 |
 |---|---|---|---|
-| 1 | `executeBashCommand` | [tools/shell/execute_bash.py](../../src/tlon/tools/shell/execute_bash.py) 的 `ExecuteBashTool` | shell |
-| 2 | `checkBashTask` | [tools/shell/execute_bash.py](../../src/tlon/tools/shell/execute_bash.py) 的 `CheckBashTaskTool` | shell |
-| 3 | `readFile` | [tools/filesystem/read_file.py](../../src/tlon/tools/filesystem/read_file.py) 的 `ReadFileTool` | filesystem |
-| 4 | `writeFile` | [tools/filesystem/write_file.py](../../src/tlon/tools/filesystem/write_file.py) 的 `WriteFileTool` | filesystem |
-| 5 | `editFile` | [tools/filesystem/edit_file.py](../../src/tlon/tools/filesystem/edit_file.py) 的 `EditFileTool` | filesystem |
-| 6 | `listDirectory` | [tools/filesystem/list_directory.py](../../src/tlon/tools/filesystem/list_directory.py) 的 `ListDirectoryTool` | filesystem |
-| 7 | `searchFiles` | [tools/filesystem/search_files.py](../../src/tlon/tools/filesystem/search_files.py) 的 `SearchFilesTool` | filesystem |
-| 8 | `getCurrentTime` | [tools/system/current_time.py](../../src/tlon/tools/system/current_time.py) 的 `GetCurrentTimeTool` | system |
-| 9 | `finishTurn` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `FinishTurnTool` | agents |
-| 10 | `sleepUntil` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `SleepUntilTool` | agents |
-| 11 | `exitAgent` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `ExitAgentTool` | agents |
-| 12 | `getSelfState` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `GetSelfStateTool` | agents |
-| 13 | `updatePersona` | [tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 的 `UpdatePersonaTool` | agents |
-| 14 | `readContacts` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `ReadContactsTool` | agents |
-| 15 | `updateContact` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `UpdateContactTool` | agents |
-| 16 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
-| 17 | `listStagingPrototypes` | [tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py) 的 `ListStagingPrototypesTool` | prototypes |
-| 18 | `getPrototypeLineage` | [tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py) 的 `GetPrototypeLineageTool` | prototypes |
-| 19 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
-| 20 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
-| 21 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
-| 22 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
-| 23 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
-| 24 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
-| 25 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
-| 26 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
-| 27 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
-| 28 | `readSession` | [tools/memory/read_session.py](../../src/tlon/tools/memory/read_session.py) 的 `ReadSessionTool` | memory |
-| 29 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
-| 30 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
-| 31 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
-| 32 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
-| 33 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
-| 34 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
-| 35 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
-| 36 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
-| 37 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
-| 38 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
-| 39 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
-| 40 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
-| 41 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
-| 42 | `mail-send` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 43 | `mail-forward` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 44 | `mail-check-inbox` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 45 | `mail-search` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
-| 46 | `mail-mark-read` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 1 | `finishTurn` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `FinishTurnTool` | agents |
+| 2 | `sleepUntil` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `SleepUntilTool` | agents |
+| 3 | `exitAgent` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `ExitAgentTool` | agents |
+| 4 | `getSelfState` | [tools/agents/scheduling.py](../../src/tlon/tools/agents/scheduling.py) 的 `GetSelfStateTool` | agents |
+| 5 | `updatePersona` | [tools/agents/update_persona.py](../../src/tlon/tools/agents/update_persona.py) 的 `UpdatePersonaTool` | agents |
+| 6 | `readContacts` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `ReadContactsTool` | agents |
+| 7 | `updateContact` | [tools/agents/contacts.py](../../src/tlon/tools/agents/contacts.py) 的 `UpdateContactTool` | agents |
+| 8 | `listPrototypes` | [tools/prototypes/list_prototypes.py](../../src/tlon/tools/prototypes/list_prototypes.py) 的 `ListPrototypesTool` | prototypes |
+| 9 | `listStagingPrototypes` | [tools/prototypes/list_staging.py](../../src/tlon/tools/prototypes/list_staging.py) 的 `ListStagingPrototypesTool` | prototypes |
+| 10 | `getPrototypeLineage` | [tools/prototypes/get_lineage.py](../../src/tlon/tools/prototypes/get_lineage.py) 的 `GetPrototypeLineageTool` | prototypes |
+| 11 | `reviewPrototype` | [tools/prototypes/review_prototype.py](../../src/tlon/tools/prototypes/review_prototype.py) 的 `ReviewPrototypeTool` | prototypes |
+| 12 | `spawnAgent` | [tools/agents/spawn_agent.py](../../src/tlon/tools/agents/spawn_agent.py) 的 `SpawnAgentTool` | agents |
+| 13 | `listMembers` | [tools/agents/list_members.py](../../src/tlon/tools/agents/list_members.py) 的 `ListMembersTool` | agents |
+| 14 | `writePrototype` | [tools/agents/write_prototype.py](../../src/tlon/tools/agents/write_prototype.py) 的 `WritePrototypeTool` | agents |
+| 15 | `proposeBehavior` | [tools/agents/propose_behavior.py](../../src/tlon/tools/agents/propose_behavior.py) 的 `ProposeBehaviorTool` | agents |
+| 16 | `proposeCapability` | [tools/agents/propose_capability.py](../../src/tlon/tools/agents/propose_capability.py) 的 `ProposeCapabilityTool` | agents |
+| 17 | `rememberFact` | [tools/memory/remember_fact.py](../../src/tlon/tools/memory/remember_fact.py) 的 `RememberFactTool` | memory |
+| 18 | `searchMemories` | [tools/memory/search_memories.py](../../src/tlon/tools/memory/search_memories.py) 的 `SearchMemoriesTool` | memory |
+| 19 | `forget` | [tools/memory/forget_memory.py](../../src/tlon/tools/memory/forget_memory.py) 的 `ForgetMemoryTool` | memory |
+| 20 | `readSession` | [tools/memory/read_session.py](../../src/tlon/tools/memory/read_session.py) 的 `ReadSessionTool` | memory |
+| 21 | `createTask` | [tools/tasks/create_task.py](../../src/tlon/tools/tasks/create_task.py) 的 `CreateTaskTool` | tasks |
+| 22 | `listTasks` | [tools/tasks/list_tasks.py](../../src/tlon/tools/tasks/list_tasks.py) 的 `ListTasksTool` | tasks |
+| 23 | `startTask` | [tools/tasks/start_task.py](../../src/tlon/tools/tasks/start_task.py) 的 `StartTaskTool` | tasks |
+| 24 | `pauseTask` | [tools/tasks/pause_task.py](../../src/tlon/tools/tasks/pause_task.py) 的 `PauseTaskTool` | tasks |
+| 25 | `completeTask` | [tools/tasks/complete_task.py](../../src/tlon/tools/tasks/complete_task.py) 的 `CompleteTaskTool` | tasks |
+| 26 | `removeTask` | [tools/tasks/remove_task.py](../../src/tlon/tools/tasks/remove_task.py) 的 `RemoveTaskTool` | tasks |
+| 27 | `getCurrentTask` | [tools/tasks/get_current_task.py](../../src/tlon/tools/tasks/get_current_task.py) 的 `GetCurrentTaskTool` | tasks |
+| 28 | `getMailStats` | [tools/observability/mail_stats.py](../../src/tlon/tools/observability/mail_stats.py) 的 `GetMailStatsTool` | observability |
+| 29 | `getReputation` | [tools/observability/reputation.py](../../src/tlon/tools/observability/reputation.py) 的 `GetReputationTool` | observability |
+| 30 | `getSocialHealth` | [tools/observability/social_health.py](../../src/tlon/tools/observability/social_health.py) 的 `GetSocialHealthTool` | observability |
+| 31 | `getMetrics` | [tools/observability/get_metrics.py](../../src/tlon/tools/observability/get_metrics.py) 的 `GetMetricsTool` | observability |
+| 32 | `listTraces` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `ListTracesTool` | observability |
+| 33 | `getTrace` | [tools/observability/traces.py](../../src/tlon/tools/observability/traces.py) 的 `GetTraceTool` | observability |
+| 34 | `mail-send` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 35 | `mail-forward` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 36 | `mail-check-inbox` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 37 | `mail-search` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 38 | `mail-mark-read` | [operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |
+| 39 | `file-read` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 40 | `file-write` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 41 | `file-edit` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 42 | `file-list` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 43 | `file-search` | [operations/filesystem.py](../../src/tlon/operations/filesystem.py) 的 `OperationTool` 投影 | filesystem |
+| 44 | `shell-run` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
+| 45 | `shell-check` | [operations/shell.py](../../src/tlon/operations/shell.py) 的 `OperationTool` 投影 | shell |
+| 46 | `time-now` | [operations/time.py](../../src/tlon/operations/time.py) 的 `OperationTool` 投影 | time |
 <!-- END GENERATED: tool-registry -->
 
 上表是正式成员的满配。见习成员不注册 spawnAgent、writePrototype、proposeBehavior、proposeCapability 四个生殖/演化工具；所有成员均可使用绑定自身的四个调度工具。L0 不注册 shell/filesystem 七个装置工具，L1 不注册 shell 两个工具。
@@ -99,7 +101,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 - 发信、转发和标读均不结束工作；完成后下一轮单独调用 finishTurn、sleepUntil 或 exitAgent。
 
 <!-- BEGIN GENERATED: mail-operations -->
-邮件 Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
 ### mail-send
 
@@ -109,10 +111,10 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `request_id` | string | 否 | 稳定投信标识；结果未知时用原值重试，同键不同内容会拒绝。 |
+| `request_id` | string | 否 | 稳定投信标识；结果未知时用原值重试，同键不同内容会拒绝。; minLength=1 |
 | `to` | array[string] | 是 | — |
 | `cc` | array[string] | 否 | — |
-| `content` | string | 是 | — |
+| `content` | string | 是 | minLength=1 |
 | `subject` | string | 否 | — |
 | `in_reply_to` | string | 否 | — |
 | `endorsing` | string | 否 | — |
@@ -121,7 +123,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `status` | string | 是 | — |
+| `status` | string | 是 | enum=['accepted'] |
 | `mail_id` | string | 是 | — |
 | `request_id` | string | 是 | — |
 | `local_recipients` | array[string] | 是 | — |
@@ -136,7 +138,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `request_id` | string | 否 | 稳定投信标识；结果未知时用原值重试，同键不同内容会拒绝。 |
+| `request_id` | string | 否 | 稳定投信标识；结果未知时用原值重试，同键不同内容会拒绝。; minLength=1 |
 | `to` | array[string] | 是 | — |
 | `cc` | array[string] | 否 | — |
 | `mail_id` | string | 是 | — |
@@ -146,7 +148,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `status` | string | 是 | — |
+| `status` | string | 是 | enum=['accepted'] |
 | `mail_id` | string | 是 | — |
 | `request_id` | string | 是 | — |
 | `local_recipients` | array[string] | 是 | — |
@@ -161,7 +163,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `limit` | integer | 否 | — |
+| `limit` | integer | 否 | minimum=1; maximum=50 |
 
 输出：
 
@@ -181,7 +183,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 |---|---|---|---|
 | `query` | string | 否 | — |
 | `mail_id` | string | 否 | — |
-| `limit` | integer | 否 | — |
+| `limit` | integer | 否 | minimum=1; maximum=20 |
 
 输出：
 
@@ -200,7 +202,7 @@ shell 与 filesystem 工具共享同一个 `DockerRuntime` 实例（[sandbox/doc
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `mail_ids` | array[string] | 是 | — |
+| `mail_ids` | array[string] | 是 | minItems=1 |
 
 输出：
 
@@ -231,108 +233,208 @@ reason 可选。只退出自己，不接受 agent_id。当前工作收尾后永�
 
 ## filesystem
 
-五个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [tools/filesystem/path_guard.py](../../src/tlon/tools/filesystem/path_guard.py) 的 `resolve_container_path` 校验：
+五个工具都在 Docker 沙箱容器内操作，agent 不接触宿主机文件系统。路径统一经 [sandbox/path_guard.py](../../src/tlon/sandbox/path_guard.py) 的 `resolve_container_path` 校验：
 
 - 相对路径先拼到容器工作目录（`DockerRuntimeConfig.working_dir`，默认 `/workspace`），再按 POSIX 语义规范化（折叠 [.](./.)/[..](./..)/重复分隔符，[..](./..) 越出根时在 `/` 处截断）。
-- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（readFile/listDirectory/searchFiles）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（见 docs/design/execution-device.md 的纵深防御），可读取自己的行为定义、记忆与邮箱；writeFile/editFile 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
-- 空路径直接拒绝。全部是纯字符串处理，不做宿主机路径解析。
+- 解析结果必须等于或位于 `allowed_paths`（agent 配置 `tool.allowed_paths`，默认 `["/workspace"]`）之下，否则抛 `ValueError`，工具返回 `success=False` 和越界说明。读侧三工具（file-read/file-list/file-search）在配置白名单之外额外放行 `/tlon-home`——agent 自己的家目录（`~/.tlon/{agent_id}/`）以只读 bind-mount 挂进容器（见 docs/design/execution-device.md 的纵深防御），可读取自己的行为定义、记忆与邮箱；file-write/file-edit 不含此路径，且挂载本身是 `ro`，双保险。其他成员的家目录不挂载进本容器，无法跨 agent 读取。
+- 空路径直接拒绝。词法检查后由装置逐级检查目标及祖先，拒绝 symlink；不解析宿主路径。stat 和 archive 之间仍存在并发修改窗口，边界与限制见[执行装置设计](../design/execution-device.md#挂载与文件通道)。
 
-### readFile
+文件操作的字段与输出统一由下方权威定义生成，DSL 和 Tool 使用同一名称及 snake_case 参数。`file-read` 只读 UTF-8 文本，支持分页；`file-write` 整体覆盖并创建缺失父目录；`file-edit` 要求 old_string 唯一匹配。`file-list` 非递归列目录，`file-search` 提供内容正则与文件名 glob 两种模式，跳过 `.git`，保留截断上限。
 
-| 参数 | 类型 | 必填 | 默认 | 约束 |
-|---|---|---|---|---|
-| `file_path` | string | 是 | — | 相对工作目录或白名单内绝对路径 |
-| `offset` | integer | 否 | 1 | ≥1，起始行号（1-based） |
-| `limit` | integer | 否 | 100 | 1–500；代码再 clamp 到 500 上限 |
+<!-- BEGIN GENERATED: filesystem-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
-返回：`content`（选中行，截断时尾部附 `... (N more lines)`）、`total_lines`、`read_lines`、`offset`。失败：文件不存在、非 UTF-8 文本、路径越界、Docker 不可用。
+### file-read
 
-### writeFile
+读取沙箱UTF-8文件；offset默认1，limit默认100，最多500行。/tlon-home只读。
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `file_path` | string | 是 | — | 目标路径 |
-| `content` | string | 是 | — | 完整写入内容 |
+输入：
 
-行为：文件不存在则创建，存在则整体覆盖；自动创建父目录（缺失的父目录作为目录条目随 tar 一并 put_archive，不再 shell out `mkdir -p`，issue #40）。返回 `bytes_written`（UTF-8 字节数）、`existed_before`。失败：路径越界、容器写入错误。
-
-### editFile
-
-old_string/new_string 精确替换模型。
-
-| 参数 | 类型 | 必填 | 说明 |
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `file_path` | string | 是 | 目标路径 |
-| `old_string` | string | 是 | 被替换的精确文本，必须在文件中唯一出现 |
-| `new_string` | string | 是 | 替换后文本 |
+| `file_path` | string | 是 | minLength=1 |
+| `offset` | integer | 否 | minimum=1 |
+| `limit` | integer | 否 | minimum=1; maximum=500 |
 
-行为：`old_string` 出现 0 次 → 失败（提示文本不在文件中）；出现 2 次及以上 → 失败（提示加上下文消歧）；唯一匹配则替换一次写回。返回 `replaced=true`、`old_length`、`new_length`。失败：文件不存在、非 UTF-8、路径越界。
+输出：
 
-### listDirectory
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file_path` | string | 是 | — |
+| `content` | string | 是 | — |
+| `total_lines` | integer | 是 | — |
+| `read_lines` | integer | 是 | — |
+| `offset` | integer | 是 | — |
+| `message` | string | 是 | — |
 
-列目录内容（不递归），结构化返回名称/类型/大小/修改时间，目录在前按名排序。
+### file-write
 
-| 参数 | 类型 | 必填 | 默认 | 约束 |
-|---|---|---|---|---|
-| `path` | string | 否 | `.` | 相对工作目录或白名单内绝对路径 |
-| `max_entries` | integer | 否 | 200 | 1–1000 |
+创建或覆盖沙箱文件，自动创建父目录。结果未知不可自动重试。
 
-返回 `entries`（每项 `name`/`type`（dir/file/symlink）/`size`/`modified`）、`count`、`truncated`。截断时附 `hint` 提示缩小到子目录。失败：路径不存在、不是目录、路径越界、Docker 不可用。
+输入：
 
-### searchFiles
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file_path` | string | 是 | minLength=1 |
+| `content` | string | 是 | — |
 
-文件名 glob 与内容正则检索合一，两个模式都跳过 `.git`。
+输出：
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `pattern` | string | 是 | — | content 模式是正则（host 侧 Python `re`，与 grep -E 大体兼容）；filename 模式是 glob（不区分大小写） |
-| `path` | string | 否 | `.` | 搜索起点目录 |
-| `mode` | string | 否 | `content` | enum：`content` / `filename` |
-| `max_results` | integer | 否 | 50 | 1–200 |
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file_path` | string | 是 | — |
+| `bytes_written` | integer | 是 | — |
+| `existed_before` | boolean | 是 | — |
+| `message` | string | 是 | — |
 
-content 模式返回结构化匹配（`file`/`line`/`text`，`text` 每行截断到 200 字符）；filename 模式返回路径列表。返回 `count`/`truncated`，截断时附 `hint`。无匹配仍 `success=True`、`count=0`。失败：路径不存在、正则非法、路径越界、Docker 不可用。
+### file-edit
 
-## system
+唯一匹配old_string后替换；零个或多个匹配拒绝。结果未知不可自动重试。
 
-### getCurrentTime
+输入：
 
-无参数。返回宿主机本地时间（与用户同处一个时区）：`iso`（ISO 8601 含时区偏移）、`unix`、`timezone`、`weekday`。不依赖 Docker 沙箱，容器不可用时仍可用。
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file_path` | string | 是 | minLength=1 |
+| `old_string` | string | 是 | minLength=1 |
+| `new_string` | string | 是 | — |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file_path` | string | 是 | — |
+| `replaced` | boolean | 是 | — |
+| `old_length` | integer | 是 | — |
+| `new_length` | integer | 是 | — |
+| `message` | string | 是 | — |
+
+### file-list
+
+列目录；目录优先再按名称排序。path默认.，max_entries默认200、最多1000。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `path` | string | 否 | minLength=1 |
+| `max_entries` | integer | 否 | minimum=1; maximum=1000 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `path` | string | 是 | — |
+| `entries` | array[object] | 是 | — |
+| `count` | integer | 是 | — |
+| `truncated` | boolean | 是 | — |
+| `hint` | string | 否 | — |
+| `message` | string | 是 | — |
+
+### file-search
+
+按内容正则或filename glob搜索；忽略.git和二进制内容。path默认.，mode默认content，max_results默认50、最多200。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `pattern` | string | 是 | — |
+| `path` | string | 否 | minLength=1 |
+| `mode` | string | 否 | enum=['content', 'filename'] |
+| `max_results` | integer | 否 | minimum=1; maximum=200 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `mode` | string | 是 | enum=['content', 'filename'] |
+| `pattern` | string | 是 | — |
+| `path` | string | 是 | — |
+| `matches` | array[['string', 'object']] | 是 | — |
+| `count` | integer | 是 | — |
+| `truncated` | boolean | 是 | — |
+| `hint` | string | 否 | — |
+| `message` | string | 是 | — |
+<!-- END GENERATED: filesystem-operations -->
+
+## time
+
+`time-now` 读取宿主机带时区时间，不依赖 Docker，是 read 操作，不能用于纯条件。
+
+<!-- BEGIN GENERATED: time-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
+
+### time-now
+
+Read current host local time with timezone and Unix timestamp.
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `iso` | string | 是 | — |
+| `unix` | integer | 是 | — |
+| `timezone` | string | 是 | — |
+| `weekday` | string | 是 | — |
+<!-- END GENERATED: time-operations -->
 
 ## shell
 
-### executeBashCommand
+`shell-run` 在当前成员的 Docker 沙箱执行 bash。每次使用一个独立执行容器，结束后删除；跨命令持久文件写入 `/workspace`。后台模式立即返回 task_id，`shell-check` 查询同一 ShellService 持有的任务。任务只属于当前成员，已完成结果保留最近 50 个，运行中最多 20 个。任务表不跨进程重启；需长期保存的命令输出应自行写文件，再用 `file-read` 读取。
 
-在 agent 的 Docker 沙箱中执行 bash 命令，支持管道、重定向、分号串接。
+前台、后台命令都受其 timeout 约束。成员 shutdown 先取消并等待服务任务清理，再关闭执行装置。Shell 属于非幂等 write；中断后无法确认结果时保留 unknown，不能自动重跑。后台任务句柄只能查询当前服务，不能作为重启后的执行证明。
 
-执行模型（issue #25）：**每条命令都在全新的一次性容器中执行**（同镜像/挂载/限额/网络加固），命令结束后容器即被删除——环境变量、已安装的软件、`/tmp` 内容、`nohup` 启动的进程都不跨命令保留；跨命令需要保留的文件只能放 `/workspace`（持久 bind mount）。需要后台运行的命令用 `background=true`（host 侧 asyncio 任务包一次性容器），不要用 `nohup`。
+<!-- BEGIN GENERATED: shell-operations -->
+Operation 单一契约；输入与输出字段保留 snake_case。（本区块由 `scripts/gen_reference_docs.py` 生成，勿手改；改了会被 `--check` 打回）
 
-| 参数 | 类型 | 必填 | 默认 | 约束 |
-|---|---|---|---|---|
-| `command` | string | 是 | — | bash 命令 |
-| `background` | boolean | 否 | false | true 时立即返回 task_id |
-| `timeout` | integer | 否 | 60 | 1–300 秒 |
+### shell-run
 
-前台：返回 `exit_code`/`stdout`/`stderr`；`success` 等于 `exit_code == 0`，非零时 `error` 为 stderr 内容。
+在一次性容器执行命令，仅 /workspace 文件持久保留；background 默认为 false，timeout 默认为 60 秒。后台执行返回本成员 task_id。
 
-后台（`background=true`）：立即返回 `success=True` 和 `data={task_id, command(截断200字符), status="running"}`；任务在该 agent 的后台任务表里执行，运行中任务上限 20 个（`_MAX_BACKGROUND_TASKS`，只统计未完成，已完成结果不占配额），超限直接拒绝。任务表是 per-agent 的，agent 之间互不可见。任务完成后结果（exit code/stdout/stderr）保留在任务表中供 `checkBashTask` 查询，每个 agent 最多保留最近 50 个已完成结果（`_MAX_FINISHED_TASKS`），超出后启动新后台任务时从最老的开始逐出。
+输入：
 
-注意事项：
-
-- `timeout` 是前台命令的限时权威：schema 声明的 1–300 秒区间全部可兑现——超界值在参数校验时就被拒（错误信息含实际上限/下限），区间内的值引擎会等足（声明值 + 10 秒宽限，见总述），不会再被 `per_tool_timeout` 提前砍掉。容器内由 `timeout` 命令限时，到点返回 `Command timed out after {n} seconds`。需要超过 300 秒的长跑命令请用 `background=true`（后台任务不受此外层等待约束，因为 `execute` 立即返回）。
-- agent 停止时 `ExecuteBashTool.shutdown` 取消该 agent 全部未完成后台任务。
-
-### checkBashTask
-
-| 参数 | 类型 | 必填 | 说明 |
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `task_id` | string | 是 | `executeBashCommand` 后台模式返回的 id |
+| `command` | string | 是 | minLength=1 |
+| `background` | boolean | 否 | — |
+| `timeout` | integer | 否 | minimum=1; maximum=300 |
 
-返回：执行中 → `status="running"`；完成 → `status="completed"` + `exit_code`/`stdout`/`stderr`；任务被取消 → `success=False, status="cancelled"`；任务抛异常 → `success=False, status="failed"`。
+输出：
 
-注意事项：
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | — |
+| `status` | string | 是 | enum=['running', 'completed'] |
+| `exit_code` | integer / null | 是 | — |
+| `stdout` | string | 是 | — |
+| `stderr` | string | 是 | — |
 
-- 已完成任务的结果保留在 per-agent 任务表中，可重复查询；保留窗口为每个 agent 最近 50 个已完成结果（`_MAX_FINISHED_TASKS`），更早的结果在启动新后台任务时被逐出。
-- 查不到任务时返回 `success=False`，error 说明三种可能：任务从未存在、已完成并被逐出保留窗口、或进程已重启（任务表是内存态，不随重启存活）。无法进一步区分这三种情况——需要长期可靠产出时请让命令自己写文件，再用 `readFile` 读。
+### shell-check
+
+查询本成员后台任务的状态及输出。
+
+输入：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | minLength=1 |
+
+输出：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `task_id` | string | 是 | — |
+| `status` | string | 是 | enum=['running', 'completed'] |
+| `exit_code` | integer / null | 是 | — |
+| `stdout` | string | 是 | — |
+| `stderr` | string | 是 | — |
+<!-- END GENERATED: shell-operations -->
 
 ## memory
 

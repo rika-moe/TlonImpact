@@ -111,3 +111,9 @@ serving 侧在 facade 上装配客户端会话、通知服务、通讯录和 HTT
 | 数据与跨域行为契约 | 领域测试、集成测试、隔离 dream + SDK 冒烟与文档复核 |
 
 统一质量门为 `scripts/check_all.sh`。禁止 re-export 属于开发规范，由脚本检查；ruff、类型检查和测试也由同一质量门编排。自动检查覆盖不到的设计边界仍需评审，不能将「检查全绿」等同于所有架构声明均已被机器证明。
+
+## 已落地的共享操作边界
+
+邮件、文件、Shell、时间的 Operation 保存唯一输入/输出 schema，由 DSLAdapter 和 OperationTool 投影为两种入口。成员作用域服务负责领域行为；工具协议层不保存第二份邮件规则或 Shell 任务表。文件与执行等级在领域执行时检查；在本次切换的装置与时间域，L0 可读时间、L1 加文件、L2 加 Shell，邮件及其他非装置操作沿各自既有约束装配。程序的非幂等写入沿用 ProgramStore intent/result 恢复，模型会话沿用 journal，结果不明保留 unknown。
+
+完整目标与尚未实现的动态工具视图、复合操作及统一预算见[实施计划](design/operations-plan.md)；当前调用契约见[Operation reference](reference/operations-reference.md)。

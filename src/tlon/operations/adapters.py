@@ -3,7 +3,7 @@
 from typing import Any
 
 from tlon.operations.core import CallContext, OperationExecutor
-from tlon.operations.schema import InputError, OperationError, edn_value, json_value
+from tlon.operations.schema import InputError, OperationError, edn_value, json_value, validate
 from tlon.tools.base import Tool, ToolResult
 from tlosure.builtins import Builtin, BuiltinCall
 
@@ -37,6 +37,12 @@ class DSLAdapter:
     def owns(self, call: BuiltinCall) -> bool:
         return self._builtins.get(call.name) is call.builtin
 
+    def prepare(self, call: BuiltinCall) -> bool:
+        """Validate before durable dispatch; return whether replay is unsafe."""
+        operation = self._executor.registry.get(call.name)
+        validate(operation.input_schema, self._arguments(call.args))
+        return "write" in operation.effects and not operation.retry_safe
+
     async def handle(self, call: BuiltinCall, context: CallContext | None = None) -> Any:
         """Handle only this adapter's suspended effectful builtins."""
         if self._builtins.get(call.name) is not call.builtin:
@@ -52,6 +58,10 @@ class OperationTool(Tool):
         self._executor = executor
         self._operation = executor.registry.get(name)
         super().__init__(name, self._operation.description, self._operation.input_schema)
+
+    @property
+    def default_timeout(self) -> float | None:
+        return self._operation.default_timeout
 
     def to_openai_definition(self) -> dict[str, Any]:
         return {
@@ -70,6 +80,8 @@ class OperationTool(Tool):
     def recovery_metadata(self, arguments: dict[str, Any], context: CallContext) -> dict[str, Any]:
         if "write" not in self._operation.effects:
             return {}
+        if not self._operation.retry_safe:
+            return {"call_id": context.call_id, "outcome": "unknown", "retry_safe": False}
         return {"request_id": arguments.get("request_id") or context.call_id, "outcome": "unknown"}
 
     def timeout_result(self, arguments: dict[str, Any], context: CallContext) -> ToolResult:

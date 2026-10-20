@@ -94,7 +94,7 @@ WAKE_TRIGGER_TEMPLATE = "你有 {n} 封未读邮件"
 
 #: Engine grace added on top of a tool's own declared timeout. A tool that
 #: declares a `timeout` parameter is its own timeout authority (e.g.
-#: executeBashCommand kills the command in-container at its declared
+#: shell-run kills the command in-container at its declared
 #: value); the engine's wait_for only guards against the tool itself
 #: hanging past its deadline. Tools without one fall back to the engine's
 #: per-tool limit (tool.per_timeout).
@@ -675,7 +675,9 @@ class LoopDriver:
         except (AttributeError, ValueError):
             schema = None
         if isinstance(schema, dict):
-            declared = tc.arguments.get("timeout", schema.get("default"))
+            declared = tc.arguments.get(
+                "timeout", schema.get("default", getattr(tool, "default_timeout", None))
+            )
             if isinstance(declared, (int, float)) and not isinstance(declared, bool):
                 return float(declared) + _TOOL_TIMEOUT_GRACE, (
                     f"tool '{tc.function_name}' declared timeout {declared}s "

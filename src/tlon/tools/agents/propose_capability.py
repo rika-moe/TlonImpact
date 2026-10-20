@@ -32,7 +32,10 @@ from typing import TYPE_CHECKING, Any
 from tlon.base.llm_client import LLMClient
 from tlon.base.logger import get_logger
 from tlon.base.paths import TlonPaths
+from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
+from tlon.operations.shell import shell_operation_definitions
+from tlon.operations.time import time_operation_definitions
 from tlon.tools.agents.ports import CapabilityProposalError, CapabilitySummary
 from tlon.tools.agents.propose_behavior import _extract_edn, _render_digest
 from tlon.tools.base import Tool, ToolResult
@@ -63,7 +66,13 @@ _ACTION_WORDS = [
     "stop",
 ]
 
-_ACTION_WORDS.extend(operation.name for operation in mail_operation_definitions())
+for definitions in (
+    mail_operation_definitions,
+    filesystem_operation_definitions,
+    shell_operation_definitions,
+    time_operation_definitions,
+):
+    _ACTION_WORDS.extend(operation.name for operation in definitions())
 
 _ARTIFACT_HINT = (
     "artifact 是一个 v1 schema 的 EDN map，形状：\n"

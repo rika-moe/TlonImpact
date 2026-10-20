@@ -29,6 +29,7 @@ class ProgramStore:
         self._runs: dict[str, ProgramRun] = {}
         self._effects: dict[tuple[str, int], tuple[str, str, str]] = {}
         self._state: dict[str, str] = {}
+        self._intents: dict[tuple[str, int], tuple[str, str]] = {}
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -43,6 +44,8 @@ class ProgramStore:
                 "CREATE TABLE IF NOT EXISTS effects (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, "
                 "name TEXT NOT NULL, args_edn TEXT NOT NULL, result_edn TEXT NOT NULL, "
                 "PRIMARY KEY(run_id,ordinal));"
+                "CREATE TABLE IF NOT EXISTS intents (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, "
+                "name TEXT NOT NULL, args_edn TEXT NOT NULL, PRIMARY KEY(run_id,ordinal));"
                 "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value_edn TEXT NOT NULL);"
             )
             connection.execute("BEGIN IMMEDIATE")
@@ -119,6 +122,32 @@ class ProgramStore:
                     (run_id, index),
                 ).fetchone()
                 return self._check(row, name, args_edn)
+
+    def claim_intent(self, run_id: str, index: int, name: str, args_edn: str) -> bool:
+        """Persist before non-idempotent dispatch; False forbids another submission."""
+        with self._lock:
+            if self.database is None:
+                key = (run_id, index)
+                previous = self._intents.get(key)
+                if previous is not None:
+                    if previous != (name, args_edn):
+                        raise ValueError("Program replay intent name/arguments changed")
+                    return False
+                self._intents[key] = (name, args_edn)
+                return True
+            with self._connection() as connection:
+                previous = connection.execute(
+                    "SELECT name,args_edn FROM intents WHERE run_id=? AND ordinal=?",
+                    (run_id, index),
+                ).fetchone()
+                if previous is not None:
+                    if previous != (name, args_edn):
+                        raise ValueError("Program replay intent name/arguments changed")
+                    return False
+                connection.execute(
+                    "INSERT INTO intents VALUES (?,?,?,?)", (run_id, index, name, args_edn)
+                )
+                return True
 
     @staticmethod
     def _record(

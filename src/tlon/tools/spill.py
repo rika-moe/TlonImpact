@@ -6,7 +6,7 @@ When a ``ToolResult.data`` payload exceeds
 member's workspace (``workspace/spills/{session_id}/{tool_call_id}.json``,
 pretty-printed so line-based pagination works) and the model receives a
 small locator instead: path, size, a short preview, and a hint to page
-through the file with ``readFile`` (the workspace is bind-mounted into the
+through the file with ``file-read`` (the workspace is bind-mounted into the
 agent's container at the working dir, so the workspace-relative path is
 directly readable).
 
@@ -100,7 +100,7 @@ class ToolSpill:
             "spill_path": rel_path,
             "size_chars": len(serialized),
             "preview": serialized[:PREVIEW_CHARS],
-            "hint": "工具输出过大，已落盘到工作区文件。用 readFile 工具按 offset/limit 分页读取 spill_path 查看完整内容。",
+            "hint": "工具输出过大，已落盘到工作区文件。用 file-read 工具按 offset/limit 分页读取 spill_path 查看完整内容。",
         }
         return ToolResult(
             success=result.success,

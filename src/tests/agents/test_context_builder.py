@@ -117,7 +117,7 @@ async def _write_completed_session(
             tool_call={
                 "id": "tc1",
                 "type": "function",
-                "function": {"name": "readFile", "arguments": "{}"},
+                "function": {"name": "file-read", "arguments": "{}"},
             },
             result={"success": True, "data": {}, "message": tool_text, "error": None},
         )
@@ -348,7 +348,7 @@ async def test_latest_completed_session_is_recapped(tmp_path: Path) -> None:
     assert recap["content"].startswith("[最近会话摘要]")
     assert "触发语：你有 2 封未读邮件" in recap["content"]
     assert "处理结果：complete" in recap["content"]
-    assert "readFile: 读取 config.toml 成功" in recap["content"]
+    assert "file-read: 读取 config.toml 成功" in recap["content"]
     assert "结论：配置里端口写成了 8081" in recap["content"]
     assert context[1]["content"] == TRIGGER
 
@@ -740,7 +740,7 @@ def test_render_thread_recap_renders_projection() -> None:
         {"type": "session/start", "trigger_content": "你有 3 封未读邮件"},
         {
             "type": "tool/result",
-            "tool_call": {"function": {"name": "executeBashCommand"}},
+            "tool_call": {"function": {"name": "shell-run"}},
             "result": {"message": "ran ok"},
         },
         {"type": "llm/response", "response": {"content": "先看一眼"}},
@@ -753,7 +753,7 @@ def test_render_thread_recap_renders_projection() -> None:
     assert recap.startswith("[最近会话摘要]")
     assert "触发语：你有 3 封未读邮件" in recap
     assert "处理结果：complete" in recap
-    assert "- executeBashCommand: ran ok" in recap
+    assert "- shell-run: ran ok" in recap
     assert "结论：磁盘正常" in recap
     assert "先看一眼" not in recap
 

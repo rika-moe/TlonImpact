@@ -40,15 +40,17 @@ from tlon.base.paths import TlonPaths
 from tlon.base.tracing.trace_context import continue_trace
 from tlon.memory.manager import MemoryManager
 from tlon.operations.adapters import DSLAdapter, OperationTool
-from tlon.operations.core import CallContext, OperationExecutor, OperationRegistry
+from tlon.operations.core import CallContext, Operation, OperationExecutor, OperationRegistry
 from tlon.operations.mail import make_mail_operations
 from tlon.operations.schema import UnknownOutcomeError
+from tlon.operations.time import time_operation_definitions
 from tlon.organization.mail.mail import Mail, address_for_member
 from tlon.organization.mail.mailbox import Mailbox
 from tlon.organization.mail.member_mail import MemberMailService
 from tlon.organization.mail.post_office import PostOffice
 from tlon.organization.mail.store import MailStore
 from tlon.organization.messaging.member import Member
+from tlon.sandbox.shell import MemberShellService
 from tlon.tools.spill import ToolSpill
 from tlon.tools.tasks.manager import TaskManager
 from tlosure.builtins import ActionRequest, Builtin, EvalError, FuelExhaustedError
@@ -97,6 +99,8 @@ class MemberCapabilities:
     # when the daemon was unreachable at assembly time, and for
     # capability sets built without assembly (Adam, tests).
     docker_runtime: "ExecutionDevice | None" = None
+    operations: tuple[Operation, ...] = ()
+    shell_service: MemberShellService | None = None
 
 
 class MemberRuntime(Member):
@@ -143,22 +147,24 @@ class MemberRuntime(Member):
         self._mailbox = mailbox
         self._post_office = post_office
         self._capabilities = capabilities
-        self._operations: DSLAdapter | None = None
+        operations = list(capabilities.operations) if capabilities else []
+        if not any(operation.name == "time-now" for operation in operations):
+            operations.extend(time_operation_definitions())
         if mailbox is not None and post_office is not None:
             mail_service = MemberMailService(
                 member_id, mailbox, post_office, capabilities.mentor_cc if capabilities else None
             )
-            operation_executor = OperationExecutor(
-                OperationRegistry(make_mail_operations(mail_service)),
-                CallContext(member_id, "member", "member"),
-            )
-            self._operations = DSLAdapter(operation_executor)
-            self._builtins = {**builtins, **self._operations.builtins()}
-            if capabilities is not None:
-                for operation in operation_executor.registry.definitions():
-                    capabilities.tool_executor.register_tool(
-                        OperationTool(operation_executor, operation.name)
-                    )
+            operations.extend(make_mail_operations(mail_service))
+        operation_executor = OperationExecutor(
+            OperationRegistry(operations), CallContext(member_id, "member", "member")
+        )
+        self._operations = DSLAdapter(operation_executor)
+        self._builtins = {**builtins, **self._operations.builtins()}
+        if capabilities is not None:
+            for operation in operation_executor.registry.definitions():
+                capabilities.tool_executor.register_tool(
+                    OperationTool(operation_executor, operation.name)
+                )
         self._paths = capabilities.tlon_paths if capabilities else tlon_paths
         self._program_store = ProgramStore(
             self._paths.agent_program_database_file(member_id) if self._paths else None
@@ -297,6 +303,8 @@ class MemberRuntime(Member):
             self.unsubscribe_all()
             if self._capabilities is not None:
                 await self._capabilities.tool_executor.shutdown()
+                if self._capabilities.shell_service is not None:
+                    await self._capabilities.shell_service.shutdown()
                 # Tools first (a background bash task may still be using
                 # the runtime), then the Docker client — its connection
                 # pool must not leak across sleep→wake re-assembly
@@ -651,14 +659,11 @@ class MemberRuntime(Member):
         trigger_event: Event | None = None,
         payload: Any = None,
     ) -> None:
-        """Execute a lifecycle, mail or explicit read-marking action.
+        """Execute retained lifecycle requests outside the Operation domains.
 
-        ``start`` / ``stop`` become lifecycle request decisions for the
-        registry; ``forward`` / ``emit`` build and send a new mail;
-        ``spawn`` delegates to the registry's spawn pipeline. The trace
-        carrier passes through from the triggering event when present, else
-        from the current span (a running session) — the decision joins its
-        trigger's trace tree.
+        ``start`` / ``stop`` publish lifecycle decisions for the registry;
+        ``spawn`` delegates to the registry's spawn pipeline. Mail and
+        device effects use the shared Operation executor instead.
         """
         self._last_action_at = time.monotonic()
         kind = request.kind

@@ -20,7 +20,7 @@ def spill(tmp_path: Path) -> ToolSpill:
 
 
 def _tc(tc_id: str = "c1") -> ToolCall:
-    return ToolCall(id=tc_id, function_name="executeBashCommand", arguments={})
+    return ToolCall(id=tc_id, function_name="shell-run", arguments={})
 
 
 class TestToolSpill:

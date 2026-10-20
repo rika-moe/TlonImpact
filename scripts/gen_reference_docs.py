@@ -53,7 +53,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tlon.operations.core import Operation
+from tlon.operations.filesystem import filesystem_operation_definitions
 from tlon.operations.mail import mail_operation_definitions
+from tlon.operations.shell import shell_operation_definitions
+from tlon.operations.time import time_operation_definitions
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "tlon"
@@ -667,28 +671,41 @@ def render_tool_registry() -> str:
         rows.append(
             f"| {index} | `{info.tool_name}` | {link} 的 `{info.class_name}` | {info.domain} |"
         )
-    # Mail operations are projected at MemberRuntime assembly, after legacy tools.
-    for operation in mail_operation_definitions():
-        rows.append(
-            f"| {len(rows) + 1} | `{operation.name}` | "
-            "[operations/mail.py](../../src/tlon/operations/mail.py) 的 `OperationTool` 投影 | mail |"
-        )
+    for domain, definitions in operation_domains().items():
+        for operation in definitions:
+            rows.append(
+                f"| {len(rows) + 1} | `{operation.name}` | "
+                f"[operations/{domain}.py](../../src/tlon/operations/{domain}.py) "
+                f"的 `OperationTool` 投影 | {domain} |"
+            )
     count = len(rows)
+    domains = operation_domains()
+    device_count = len(domains["filesystem"]) + len(domains["shell"])
     header = (
-        f"`assemble_member_capabilities` 与 `MemberRuntime` 为满配成员注册 {count} 个工具"
-        f"（旧 Tool 按 assembly 顺序，邮件 Operation 随后投影；`docker.level: L0` 的"
-        f"无执行装置成员（issue #26）不注册 shell/filesystem 7 个装置工具，"
-        f"`docker.level: L1` 的文件层成员（issue #40）只注册 filesystem 5 个）：{GENERATED_NOTE}\n\n"
+        f"满配成员注册 {count} 个工具（尚未切换的 Tool 按 assembly 顺序，"
+        f"共享 Operation 按域列出；L0 不注册 {device_count} 个装置操作，"
+        f"L1 注册 {len(domains['filesystem'])} 个文件操作，L2 再增加 "
+        f"{len(domains['shell'])} 个 Shell 操作；时间不依赖装置）：{GENERATED_NOTE}\n\n"
         "| # | 工具名 | 实现 | 域 |\n"
         "|---|---|---|---|"
     )
     return header + "\n" + "\n".join(rows)
 
 
-def render_mail_operations() -> str:
-    """Mail schemas come from the same definitions used by both runtime adapters."""
-    blocks = [f"邮件 Operation 单一契约；输入与输出字段保留 snake_case。{GENERATED_NOTE}"]
-    for operation in mail_operation_definitions():
+def operation_domains() -> dict[str, list[Operation]]:
+    """Definitions shared with production adapters, with no copied operation inventory."""
+    return {
+        "mail": list(mail_operation_definitions()),
+        "filesystem": list(filesystem_operation_definitions()),
+        "shell": list(shell_operation_definitions()),
+        "time": list(time_operation_definitions()),
+    }
+
+
+def render_operations(domain: str) -> str:
+    """Schemas come from the same definitions used by both runtime adapters."""
+    blocks = [f"Operation 单一契约；输入与输出字段保留 snake_case。{GENERATED_NOTE}"]
+    for operation in operation_domains()[domain]:
         blocks.extend([f"### {operation.name}", operation.description])
         for label, schema in (("输入", operation.input_schema), ("输出", operation.output_schema)):
             blocks.append(f"{label}：")
@@ -701,9 +718,24 @@ def render_mail_operations() -> str:
                 if kind == "array":
                     item_type = field["items"]["type"]
                     kind = f"array[{item_type}]"
+                constraints = [
+                    f"{key}={value}"
+                    for key, value in field.items()
+                    if key
+                    not in {
+                        "type",
+                        "items",
+                        "properties",
+                        "required",
+                        "additionalProperties",
+                        "description",
+                    }
+                ]
+                description = field.get("description", "")
+                details = "; ".join(([description] if description else []) + constraints) or "—"
                 rows.append(
                     f"| `{name}` | {_cell(str(kind))} | {'是' if name in required else '否'} | "
-                    f"{_cell(field.get('description', '—'))} |"
+                    f"{_cell(details)} |"
                 )
             blocks.append("\n".join(rows))
     return "\n\n".join(blocks)
@@ -1109,7 +1141,10 @@ def render_bridge_query_ports() -> str:
 def _render_sections() -> dict[tuple[Path, str], str]:
     return {
         (TOOLS_REF, "tool-registry"): render_tool_registry(),
-        (TOOLS_REF, "mail-operations"): render_mail_operations(),
+        **{
+            (TOOLS_REF, f"{domain}-operations"): render_operations(domain)
+            for domain in operation_domains()
+        },
         (API_REF, "event-types"): render_event_types(),
         (TLOSURE_REF, "dsl-special-forms"): render_dsl_special_forms(),
         (TLOSURE_REF, "dsl-builtins-core"): render_builtin_table("CORE_BUILTINS", BUILTINS_FILE),

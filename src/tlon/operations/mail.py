@@ -121,6 +121,7 @@ def make_mail_operations(port: MailPort) -> tuple[Operation, ...]:
             _RECEIPT,
             send,
             effects=frozenset({"write"}),
+            retry_safe=True,
         ),
         Operation(
             "mail-forward",
@@ -131,6 +132,7 @@ def make_mail_operations(port: MailPort) -> tuple[Operation, ...]:
             _RECEIPT,
             forward,
             effects=frozenset({"write"}),
+            retry_safe=True,
         ),
         Operation(
             "mail-check-inbox",
@@ -178,6 +180,7 @@ def make_mail_operations(port: MailPort) -> tuple[Operation, ...]:
             _object(dict.fromkeys(("marked", "already_read", "not_found"), _STRINGS)),
             mark,
             effects=frozenset({"write"}),
+            retry_safe=True,
         ),
     )
 

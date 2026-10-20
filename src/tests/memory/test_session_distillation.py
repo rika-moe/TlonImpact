@@ -48,7 +48,7 @@ async def _completed_session(
 ) -> None:
     """Journal one minimal completed session: start, one LLM round, one
     tool result, end."""
-    tc = ToolCall(id=f"{session_id}-c1", function_name="executeBashCommand", arguments={})
+    tc = ToolCall(id=f"{session_id}-c1", function_name="shell-run", arguments={})
     await journal.append(
         session_id,
         "session/start",
@@ -109,7 +109,7 @@ class TestProjection:
         # working memory quoted the reply and impersonated user input).
         assert projection.trigger_content == "帮我查一下磁盘"
         assert projection.llm_responses == ["已经查完"]
-        assert projection.tool_results == ["executeBashCommand: ran ok"]
+        assert projection.tool_results == ["shell-run: ran ok"]
         assert projection.end_reason == "complete"
 
 

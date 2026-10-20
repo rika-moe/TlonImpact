@@ -124,14 +124,14 @@ class TestFileValuesTakeEffect:
 # The device-dependent tools: the bash pair is L2-only, the filesystem
 # five are also registered at L1 (文件层, issue #40); all seven are
 # withheld from members declaring docker.level: L0 (issue #26).
-BASH_TOOLS = frozenset({"executeBashCommand", "checkBashTask"})
+BASH_TOOLS = frozenset({"shell-run", "shell-check"})
 FILE_TOOLS = frozenset(
     {
-        "readFile",
-        "writeFile",
-        "editFile",
-        "listDirectory",
-        "searchFiles",
+        "file-read",
+        "file-write",
+        "file-edit",
+        "file-list",
+        "file-search",
     }
 )
 DEVICE_TOOLS = BASH_TOOLS | FILE_TOOLS
@@ -185,10 +185,10 @@ class TestExecutionLevelAssembly:
 
         runtime_ctor.assert_not_called()
         assert caps.docker_runtime is None
-        names = set(caps.tool_executor.list_tools())
+        names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names.isdisjoint(DEVICE_TOOLS)
         # 其余工具照常装配
-        assert {"getCurrentTime", "rememberFact"} <= names
+        assert {"time-now", "rememberFact"} <= names
         # Mail tools bind later in MemberRuntime, with its actual mailbox/PostOffice.
         assert "mail-send" not in names
 
@@ -203,7 +203,7 @@ class TestExecutionLevelAssembly:
 
         # 文件 I/O 需要文件柜容器，L1 照常装配 runtime（经审计包装）
         assert caps.docker_runtime is not None
-        names = set(caps.tool_executor.list_tools())
+        names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names >= FILE_TOOLS
         assert names.isdisjoint(BASH_TOOLS)
 
@@ -212,7 +212,7 @@ class TestExecutionLevelAssembly:
     async def test_l2_registers_device_tools(self, tlon_paths: TlonPaths) -> None:
         caps = await self._assemble(tlon_paths, "L2")
 
-        names = set(caps.tool_executor.list_tools())
+        names = set(caps.tool_executor.list_tools()) | {op.name for op in caps.operations}
         assert names >= DEVICE_TOOLS
 
         await caps.tool_executor.shutdown()

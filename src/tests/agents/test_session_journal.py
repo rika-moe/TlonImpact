@@ -586,7 +586,7 @@ class TestDriverJournaling:
         mail = _mail()
         big_stdout = "y" * (SPILL_THRESHOLD_CHARS * 2)
         round1 = LLMResponse(
-            content="working", tool_calls=[_tc("c1", "executeBashCommand", {"command": "big"})]
+            content="working", tool_calls=[_tc("c1", "shell-run", {"command": "big"})]
         )
         round2 = LLMResponse(
             content="done",

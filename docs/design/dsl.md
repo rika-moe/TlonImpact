@@ -1,6 +1,6 @@
 # DSL 设计：行为即数据
 
-> 后续方案（邮件 P2 已接线，待验收；其余分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
+> 后续方案（邮件 P2 已通过 #185 合并；文件/Shell/时间 P3a 正在实施，其余分阶段实施）：[统一操作与可组合行为](operations.md) 已认可能力定义与调用入口分离的方向，施工见 [分阶段计划](operations-plan.md)。本页仍描述当前机制，不能将目标当作已实现。
 
 > 统一成员模型（ADR 0006，2026-08 实施）：成员只有一种。模型总览见 [docs/design/unified-member-model.md](./unified-member-model.md)。
 
